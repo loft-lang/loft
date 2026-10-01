@@ -1398,7 +1398,25 @@ impl Drop for FileGuard {
 /// Regenerates `output_relative` by running `script` through the
 /// release `loft` binary and fails with a clear remediation message
 /// if the result differs from the committed version.
+/// Held by every test that REWRITES a committed `doc/` file in place (the generators below,
+/// restored by `FileGuard` on drop) and by the one that READS every `doc/` page
+/// (`the_generated_pages_match_their_sources`): the reader otherwise copies a file mid-rewrite
+/// and reports a page that is fine as drift.  A FILE lock, not a `Mutex`: nextest runs every
+/// test in its own PROCESS, where a static mutex serialises nothing — the gate saw the race
+/// that `cargo test`'s threads did not.  Released when the returned handle drops.
+fn doc_rewrite_lock() -> fs::File {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("doc-rewrite.lock");
+    let _ = fs::create_dir_all(path.parent().expect("target/"));
+    let f = fs::File::create(&path).expect("create target/doc-rewrite.lock");
+    f.lock().expect("lock target/doc-rewrite.lock");
+    f
+}
+
 fn assert_generator_output_matches_committed(script: &str, output_relative: &str) {
+    // Taken BEFORE the guard, so it is released only after the guard has restored the file.
+    let _rewrite = doc_rewrite_lock();
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let output_path = root.join(output_relative);
     let guard = FileGuard::new(output_path.clone());
@@ -3469,4 +3487,245 @@ fn every_markdown_link_resolves() {
          the content now, or drop the fragment.",
         String::from_utf8_lossy(&out.stderr)
     );
+}
+
+/// loft#1777 — the committed pages under `doc/` are what `gendoc` makes of this tree.
+///
+/// The stdlib reference, the guide pages, the printed reference and the site navigation are
+/// GENERATED, and a source change that is not followed by `cargo run --bin gendoc` leaves the
+/// published page telling readers the old text: `text_from_byte_range`'s corrected doc
+/// comment reached the 2026.10 candidate with the old one still on `stdlib-text.html`.
+///
+/// The check runs the built `gendoc` in a copy of the TRACKED tree, so it never writes into
+/// the checkout a parallel test is reading, and compares every file there with the committed
+/// one.  A hand-written page compares equal because `gendoc` does not touch it; a generated
+/// page that differs, or one `gendoc` creates that was never committed, is drift.
+///
+/// Not compared: what depends on the builder's registry cache (`~/.loft/registry`) rather
+/// than on the tree — the `doc/lib-*.html` pages, and the library entries of
+/// `doc/search-index.js`.  A box with an empty cache renders those differently from the same
+/// tree (measured: 84 pages plus the index), so they are regenerated with a full cache at
+/// release, under `M-doc-validation`, not on every change.
+#[test]
+fn the_generated_pages_match_their_sources() {
+    use std::path::Path;
+    use std::process::Command;
+    let registry_derived = |p: &str| p.starts_with("doc/lib-") && p.ends_with(".html");
+    let without_lib_entries = |s: &str| {
+        s.lines()
+            .filter(|l| !l.contains("url:\"lib-"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let tracked = Command::new("git")
+        .args(["ls-files", "-z"])
+        .output()
+        .expect("git ls-files");
+    assert!(tracked.status.success(), "git ls-files failed");
+    let files: Vec<String> = tracked
+        .stdout
+        .split(|b| *b == 0)
+        .filter(|b| !b.is_empty())
+        .map(|b| String::from_utf8_lossy(b).into_owned())
+        .collect();
+    // The copy and the comparison read committed `doc/` files that the generator tests rewrite
+    // in place; hold their lock for both (see `doc_rewrite_lock`).
+    let _rewrite = doc_rewrite_lock();
+    let copy = std::env::temp_dir().join(format!("loft-gendoc-drift-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&copy);
+    for f in &files {
+        let to = copy.join(f);
+        if let Some(dir) = to.parent() {
+            fs::create_dir_all(dir).expect("create the copy's directory");
+        }
+        // A tracked path can be absent from the checkout (deleted, not yet committed).
+        if Path::new(f).is_file() {
+            fs::copy(f, &to).expect("copy a tracked file");
+        }
+    }
+    let run = Command::new(env!("CARGO_BIN_EXE_gendoc"))
+        .current_dir(&copy)
+        .output()
+        .expect("run gendoc");
+    assert!(
+        run.status.success(),
+        "gendoc failed in the copy:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let mut drift = Vec::new();
+    for f in files
+        .iter()
+        .filter(|f| f.starts_with("doc/") && !registry_derived(f))
+    {
+        let (Ok(made), Ok(committed)) = (fs::read(copy.join(f)), fs::read(f)) else {
+            continue;
+        };
+        let same = if f == "doc/search-index.js" {
+            without_lib_entries(&String::from_utf8_lossy(&made))
+                == without_lib_entries(&String::from_utf8_lossy(&committed))
+        } else {
+            made == committed
+        };
+        if !same {
+            drift.push(format!("{f} differs"));
+        }
+    }
+    let tracked_set: std::collections::HashSet<&str> = files.iter().map(String::as_str).collect();
+    let mut stack = vec![copy.join("doc")];
+    while let Some(dir) = stack.pop() {
+        for entry in fs::read_dir(&dir).expect("read the copy's doc/").flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            // `git ls-files` spells every path with `/`; a Windows path joins with `\`, so
+            // without this every generated page read as untracked there.
+            let rel = path
+                .strip_prefix(&copy)
+                .expect("inside the copy")
+                .to_string_lossy()
+                .replace('\\', "/");
+            if !tracked_set.contains(rel.as_str()) && !registry_derived(&rel) {
+                drift.push(format!("{rel} is generated but not committed"));
+            }
+        }
+    }
+    let _ = fs::remove_dir_all(&copy);
+    assert!(
+        drift.is_empty(),
+        "the committed doc/ pages are not what gendoc makes of this tree — run \
+         `cargo run --bin gendoc` and commit the result (loft#1777):\n  {}",
+        drift.join("\n  ")
+    );
+}
+
+/// The string literals of every compiler diagnostic in `src/` — the text of each
+/// `diagnostic!(…)` and of each `let msg = format!(…)` a lint builds its message from —
+/// with the file and line each starts on.  A `#[cfg(test)]` module is left out: its strings
+/// are assertions, not output.
+fn diagnostic_literals() -> Vec<(String, usize, String)> {
+    fn rs_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        for e in fs::read_dir(dir).expect("src/ is readable") {
+            let p = e.expect("entry").path();
+            if p.is_dir() {
+                rs_files(&p, out);
+            } else if p.extension().is_some_and(|x| x == "rs") {
+                out.push(p);
+            }
+        }
+    }
+    let mut files = Vec::new();
+    rs_files(std::path::Path::new("src"), &mut files);
+    files.sort();
+    let mut out = Vec::new();
+    for f in files {
+        let text = fs::read_to_string(&f).expect("source");
+        let body = text.split("#[cfg(test)]").next().unwrap_or("");
+        for open in ["diagnostic!(", "let msg = format!("] {
+            let mut from = 0;
+            while let Some(at) = body[from..].find(open) {
+                let start = from + at;
+                let end = body[start..].find(");").map_or(body.len(), |e| start + e);
+                let call = &body[start..end];
+                let mut rest = call;
+                while let Some(q) = rest.find('"') {
+                    let lit = &rest[q + 1..];
+                    let mut close = None;
+                    let mut esc = false;
+                    for (i, c) in lit.char_indices() {
+                        if esc {
+                            esc = false;
+                        } else if c == '\\' {
+                            esc = true;
+                        } else if c == '"' {
+                            close = Some(i);
+                            break;
+                        }
+                    }
+                    let Some(close) = close else { break };
+                    let line = body[..start].lines().count() + 1;
+                    out.push((f.display().to_string(), line, lit[..close].to_string()));
+                    rest = &lit[close + 1..];
+                }
+                from = end.max(start + 1);
+            }
+        }
+    }
+    out
+}
+
+/// A tracker tag in a compiler diagnostic: a design-decision id, a plan or issue number.
+fn diagnostic_tag(s: &str) -> Option<&'static str> {
+    let bytes = s.as_bytes();
+    let digit_after = |i: usize| bytes.get(i).is_some_and(u8::is_ascii_digit);
+    for (i, _) in s.char_indices() {
+        let r = &s[i..];
+        if r.starts_with("@PLN") && digit_after(i + 4) {
+            return Some("@PLN<n>");
+        }
+        if r.starts_with("@PLAN") && digit_after(i + 5) {
+            return Some("@PLAN<n>");
+        }
+        if r.starts_with("loft#") && digit_after(i + 5) {
+            return Some("loft#<n>");
+        }
+        if r.starts_with("(C") && digit_after(i + 2) && digit_after(i + 3) {
+            return Some("(C<n>)");
+        }
+        if r.starts_with("(#") && digit_after(i + 2) && digit_after(i + 3) && digit_after(i + 4) {
+            return Some("(#<n>)");
+        }
+    }
+    None
+}
+
+/// A diagnostic is read by someone who has none of this repository's trackers open, so it
+/// names no plan, issue or design-decision id (CLAUDE.md § User-facing output): "(C86)" in
+/// the `lost-write` warning, "(@PLN102 C93)" in the `par` refusal and "(#318)" in the
+/// closure-lifetime refusals said nothing a reader could use.  The reasoning a tag points
+/// at belongs in the message's own words or in DIAGNOSTICS.md.
+#[test]
+fn no_diagnostic_message_carries_a_tracker_tag() {
+    let literals = diagnostic_literals();
+    assert!(
+        literals.len() > 200,
+        "found only {} diagnostic literals — the scanner lost its subject",
+        literals.len()
+    );
+    let tagged: Vec<String> = literals
+        .iter()
+        .filter_map(|(f, l, s)| diagnostic_tag(s).map(|t| format!("{f}:{l} {t}: {s}")))
+        .collect();
+    assert!(
+        tagged.is_empty(),
+        "{} diagnostic message(s) name a tracker tag — say the reason in words instead:\n  {}",
+        tagged.len(),
+        tagged.join("\n  ")
+    );
+}
+
+/// The tag test fires on each spelling it exists to catch, and not on text that only
+/// resembles one: a `#` placeholder, a store number, a width like `C99`.
+#[test]
+fn the_diagnostic_tag_test_sees_each_spelling() {
+    for leak in [
+        "a COPY (C86), so",
+        "(@PLN102 C93)",
+        "see loft#1497",
+        "(#318)",
+        "@PLAN22 phase",
+    ] {
+        assert!(diagnostic_tag(leak).is_some(), "missed {leak}");
+    }
+    for clean in [
+        "store #{}",
+        "def #{d}",
+        "rec={}",
+        "C99 printf",
+        "(a C call)",
+        "`#c`",
+    ] {
+        assert!(diagnostic_tag(clean).is_none(), "false positive on {clean}");
+    }
 }

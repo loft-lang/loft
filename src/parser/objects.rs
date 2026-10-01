@@ -1245,7 +1245,47 @@ impl Parser {
                 // would shadow every later variant reference on the second pass and
                 // bury the real error under a cascade of "Unknown variable".
                 let variant_enums = self.data.enums_with_variant(name);
-                if let Some(&e_nr) = variant_enums.first() {
+                // The target HAS an enum type and the name is a variant of a DIFFERENT enum
+                // (`d: Direction = Up`, `Up` a `Compass`).  The no-context sentence below told
+                // the author to give the target an enum type it already had, and its recovery
+                // typed the value as the other enum, so the assignment added *"cannot change
+                // type from Direction to Compass"* on top.  Name the mismatch instead, and
+                // poison the value so nothing downstream reports it again.
+                let expected_enum = match parent_tp.peel_link() {
+                    Type::Enum(enr, _, _) => Some(*enr),
+                    Type::Reference(enr, _) if self.data.def_type(*enr) == DefType::Enum => {
+                        Some(*enr)
+                    }
+                    _ => None,
+                };
+                if let Some(want) = expected_enum
+                    && !variant_enums.is_empty()
+                    && !variant_enums.contains(&want)
+                {
+                    let want_name = self.data.def(want).name().to_string();
+                    let owners: Vec<String> = variant_enums
+                        .iter()
+                        .map(|&e| format!("'{}'", self.data.def(e).name()))
+                        .collect();
+                    let variants: Vec<String> = self
+                        .data
+                        .def(want)
+                        .attributes
+                        .iter()
+                        .map(|a| a.name.clone())
+                        .collect();
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "'{name}' is not a variant of '{want_name}' — it belongs to {}. Write one \
+                         of '{want_name}''s variants ({}), or give the target the type {}",
+                        owners.join(" and "),
+                        variants.join(", "),
+                        owners.join(" or ")
+                    );
+                    *code = Value::Null;
+                    t = Type::Never;
+                } else if let Some(&e_nr) = variant_enums.first() {
                     // Emit unconditionally (not pass-2-gated): the recovery below
                     // types the target from the variant's enum, so on the SECOND
                     // pass the target has context and this branch is not re-reached
@@ -2297,6 +2337,24 @@ impl Parser {
         // mis-handle the stub and desync the parser into a spurious "Expect
         // token ;".  The stub upgrades to the real struct after this pass, so
         // pass-2 sees a concrete `DefType::Struct` here and builds for real.
+        // @F46 — an alias IS the type it names, "anywhere one works the other does too", and a
+        // construction is one of those places: `type Point = Pt; Point { x: 4 }` builds a `Pt`.
+        // The alias's def is `DefType::Type`, which the construction below never looked
+        // through, so the `{` was left in the stream as `Expect token ;`.  Redirected to the
+        // struct (or record variant) the alias resolves to; an alias whose target is still a
+        // forward stub on pass 1 lands on the stub and defers exactly as that name would.
+        if d_nr != u32::MAX
+            && self.data.def_type(d_nr) == DefType::Type
+            && self.lexer.peek_token("{")
+            && let Type::Reference(target, _) | Type::Unknown(target) =
+                self.data.def(d_nr).returned().base()
+            && matches!(
+                self.data.def_type(*target),
+                DefType::Struct | DefType::EnumValue | DefType::Unknown
+            )
+        {
+            d_nr = *target;
+        }
         if d_nr != u32::MAX && matches!(self.data.def_type(d_nr), DefType::Unknown) {
             d_nr = u32::MAX;
         }
@@ -2573,6 +2631,10 @@ impl Parser {
                 if let Some(msg) = self
                     .data
                     .import_cure("unknown type", name, self.data.source)
+                {
+                    diagnostic_at!(self.lexer, name_pos, Level::Error, "{msg}");
+                } else if let Some(msg) =
+                    super::registry_type_hint("unknown type", name, &self.data.resolved_libraries())
                 {
                     diagnostic_at!(self.lexer, name_pos, Level::Error, "{msg}");
                 } else if let Some(s) = self.suggest_type_name(name) {
@@ -3033,14 +3095,7 @@ impl Parser {
                         has: h,
                         position: _pos,
                     } = self.lexer.peek().clone();
-                    if match h {
-                        LexItem::Token(st) | LexItem::Identifier(st) => {
-                            let s: &str = &st;
-                            !SKIP_WIDTH.contains(&s) && crate::parser::radix_for(s).is_none()
-                        }
-                        LexItem::Integer(_, _) | LexItem::Float(..) => true,
-                        _ => false,
-                    } {
+                    if self.starts_format_width(&h) {
                         // @FR-F-Spec — a leading zero on the WIDTH is the zero-pad flag.
                         // Both literal spellings carry it: `{n:08}` lexes as an Integer and
                         // the dotted `{f:08.2}` — the only spelling that gives a width and a
@@ -3482,6 +3537,43 @@ impl Parser {
         }
     }
 
+    /// Does the item ahead, after a spec's fill and flags, start its WIDTH — read as code — or
+    /// is it the radix letter (or nothing) that closes the spec?  One predicate for the two
+    /// readers of the grammar, `parse_string` and `skip_format_spec_ahead`: the answer picks
+    /// the lexer mode the closing `}` is read in, so the two must never disagree.
+    ///
+    /// A NAME is a width only when it names a value — a variable or capture in scope, a
+    /// constant, a function.  `{42:B}` read `B` as a variable and reported *"Unknown variable
+    /// 'B'"* plus an upper-case-local advice, where the author wrote a radix letter in the
+    /// wrong case (loft#1805); a name that resolves to nothing is left to `get_radix`, which
+    /// says the spec is unknown.  Pass 1 keeps it a width: it is silent about unknown names,
+    /// and has not yet met a variable declared further down.
+    fn starts_format_width(&self, item: &LexItem) -> bool {
+        match item {
+            LexItem::Token(s) => {
+                !SKIP_WIDTH.contains(&s.as_str()) && crate::parser::radix_for(s).is_none()
+            }
+            LexItem::Identifier(s) => {
+                !SKIP_WIDTH.contains(&s.as_str())
+                    && crate::parser::radix_for(s).is_none()
+                    && (self.first_pass
+                        || self.names_a_variable(s)
+                        || self.capture_context.iter().any(|(n, _)| n == s)
+                        || self.data.def_nr(s) != u32::MAX
+                        || self.data.def_nr(&format!("n_{s}")) != u32::MAX)
+            }
+            LexItem::Integer(_, _) | LexItem::Float(..) => true,
+            _ => false,
+        }
+    }
+
+    /// Does `name` name a variable with a value — not merely an entry pass 1 left behind for
+    /// a name it could not resolve (the table keeps one, typed unknown)?
+    fn names_a_variable(&self, name: &str) -> bool {
+        let v = self.vars.var(name);
+        v != u16::MAX && self.vars.is_defined(v) && !self.vars.tp(v).is_unknown()
+    }
+
     /// Read the radix letter closing a `{x:…}` spec, defaulting to decimal when the spec
     /// has none.  The letter set lives in [`crate::parser::radix_for`], which the width
     /// decision above consults too, so the two cannot drift apart.
@@ -3492,7 +3584,21 @@ impl Parser {
         if let Some(radix) = crate::parser::radix_for(&id) {
             radix
         } else {
-            diagnostic!(self.lexer, Level::Error, "Unexpected formatting type: {id}");
+            // Name the letters, and the one meant when only its case is wrong (`B` for `b`):
+            // a name that could have been a width reaches here too (loft#1805).
+            let lower = id.to_lowercase();
+            let meant = if lower != id && crate::parser::radix_for(&lower).is_some() {
+                format!(" — the spec is lower-case `{lower}`")
+            } else {
+                String::new()
+            };
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`{id}` is not a format spec{meant}.  The specs are `d` (decimal), `b` (binary), `o` (octal), \
+                 `x` / `X` (hex), `e` (exponent) and `j` (JSON), after an optional width — a \
+                 number, or a variable in scope"
+            );
             10
         }
     }
@@ -3608,13 +3714,7 @@ impl Parser {
         }
         let mut flags = OUTPUT_DEFAULT;
         self.string_states(&mut flags);
-        let width = match self.lexer.peek().has.clone() {
-            LexItem::Token(s) | LexItem::Identifier(s) => {
-                !SKIP_WIDTH.contains(&s.as_str()) && crate::parser::radix_for(&s).is_none()
-            }
-            LexItem::Integer(_, _) | LexItem::Float(..) => true,
-            _ => false,
-        };
+        let width = self.starts_format_width(&self.lexer.peek().has.clone());
         if width {
             self.lexer.set_mode(Mode::Code);
         }
@@ -3818,7 +3918,19 @@ impl Parser {
         // O8.5: capture range bounds for const-unroll detection.
         self.last_range_from = Some(expr.clone());
         let mut till = Value::Null;
-        let mut till_tp = if self.lexer.peek_token("]") {
+        // `@FR-I-RangeFrom` — `for i in a.. { … }` has no end: it counts up until the body
+        // leaves (`break`, `return`), as a Rust `RangeFrom` does (loft#1813).  With nothing
+        // sliced, a `{` right after the `..` is the loop's body, never a bound — read as
+        // the bound, it made the body an expression (`break` "outside a loop") and compared
+        // the counter with its value.  Lowered as `a..=MAX`: `(I-RangeIncl)` already stops
+        // exactly after the type's maximum, so the counter never has to overflow.
+        if *data == Value::Null && !incl && self.lexer.peek_token("{") {
+            incl = true;
+            till = Value::Long(i64::MAX);
+        }
+        let mut till_tp = if till != Value::Null {
+            crate::data::I64.clone()
+        } else if self.lexer.peek_token("]") {
             till = if *data == Value::Null {
                 Value::Int(i32::MAX)
             } else {
@@ -6185,6 +6297,36 @@ impl Parser {
         self.cl("OpSetInt4", &[code.clone(), Value::Int(item_pos), absent])
     }
 
+    /// An OMITTED nullable USER struct-enum field (`H { n: 1 }` beside `s: Shape?`) is the
+    /// literal `null` spelling loft#1071 answers in `handle_field`: the slot is a four-byte
+    /// record pointer and `0` is its absence (@FR-L-Null), so write that and say so.  Left to
+    /// `to_default` it became the discriminant-shaped `Value::Enum(0, …)`, which
+    /// `set_field_no_check` wrote as `OpCopyRecord(0u8, <field>)` — a record copy from a
+    /// source that is no record: an out-of-range store index on `--interpret`, and rustc
+    /// E0308 (`u8` where a `DbRef` is expected) on `--native` (loft#1782).
+    fn omitted_struct_enum_is_absent(
+        &mut self,
+        list: &mut Vec<Value>,
+        tp: &Type,
+        code: &Value,
+        at: u16,
+        default: &Value,
+    ) -> bool {
+        if self.first_pass
+            || !matches!(tp, Type::Optional(_))
+            || !matches!(tp.base(), Type::Enum(e, true, _)
+                if !self.data.def(*e).name.starts_with("__nullable<"))
+            || *default != Value::Null
+        {
+            return false;
+        }
+        list.push(self.cl(
+            "OpSetInt4",
+            &[code.clone(), Value::Int(i32::from(at)), Value::Int(0)],
+        ));
+        true
+    }
+
     pub(crate) fn object_init(
         &mut self,
         list: &mut Vec<Value>,
@@ -6283,6 +6425,9 @@ impl Parser {
             {
                 let mark = self.mark_collection_absent(code, i32::from(pos + fld));
                 list.push(mark);
+                continue;
+            }
+            if self.omitted_struct_enum_is_absent(list, &tp, code, pos + fld, &default) {
                 continue;
             }
             // #328/#332: a POINTER field (`reference<T>`, the u16::MAX share

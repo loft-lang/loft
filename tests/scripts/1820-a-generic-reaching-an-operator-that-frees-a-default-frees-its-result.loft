@@ -1,0 +1,213 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A generic that hands back what a bound method returned frees that result when the caller
+// reads it inline, as the concrete call does (loft#1820, `(G-Mono)`).
+//
+//   value struct P { x: integer }
+//   fn OpMin(self: P, o: P?) -> P { P { x: self.x - (o ?? P { x: 0 }).x } }
+//   fn diff<T: Subtractable>(a: T, b: T) -> T { a - b }
+//   diff(p, q).x            → 4, and one record left at program exit per call
+//
+// `(p - q).x` and `OpMin(p, q).x` were clean.  An inline result is lifted into a temp that is
+// freed only when the call is proven to hand back a store the caller owns, and for an instance
+// whose tail is a call that proof asks the delegate.  Two answers were wrong.
+//
+// A DELEGATE THAT BUILDS A DEFAULT read as not fresh.  Freeing the default (`o ?? P { x: 0 }`,
+// or an `if` that builds one) makes the scope pass end the operator's body
+// `Object { …; free(default); return __retbuf }`, and the freshness walk had no arm for a
+// `return` inside a block: an unreadable site answers "not proven".  The same operator without
+// the default ends in a bare `__retbuf` and was lifted all along.
+//
+// A DELEGATE THAT RETURNS ITS PARAMETER refused the proof outright — `{ self }`, `{ o ?? self }`,
+// or a mint on one path and `self` on another.  But the instance does not hand that borrow on:
+// its published return carries no dep, so it hoists the call into a `__ret_N` of that type, and
+// a record `Set` into an owned temp copies.  What the caller receives is a copy of `p`, owned by
+// nobody, one record per call.  The concrete call hands back `p` itself and reads as the borrow
+// it is, which is why it never leaked.
+//
+// A delegate that is itself an instance (`d3 → d2 → d1`) is now decided by the chain.  A CYCLE of
+// generics is not, and keeps its leak: the chain is followed to a fixed depth and then refused,
+// which is the direction every freeing gate takes when it cannot name what it would free.
+//
+// The use of the result is an axis: a BOUND result (`r = diff(p, q)`) was always clean because
+// the bind gives the store an owner, so the unbound spellings — a field read and an argument —
+// are the subject.  The record kind is an axis too: a reference struct and a struct enum leaked
+// the same way; a vector did not.
+//
+// ⚠ A lift that fires where it should not frees the CALLER's record, so every cell re-reads its
+// operands after the loop and writes through them: a freed `p` answers another value there.
+//
+// @falsified-by: tests/falsified/1820-a-generic-reaching-an-operator-that-frees-a-default-frees-its-result.patch — interpret leaked kt=91 E×160, kt=92 Vc×160, kt=97 Rj×160, kt=93 Rc×120, kt=94 Vi×120 ... and 4 more -> clean, native leaked kt=91 E×160, kt=92 Vc×160, kt=97 Rj×160, kt=93 Rc×120, kt=94 Vi×120 ... and 4 more -> clean
+
+value struct Vc { x: integer }
+struct Rc { x: integer }
+value struct Vi { x: integer }
+struct Ri { x: integer }
+value struct Vs { x: integer }
+struct Rj { x: integer }
+struct Rn { x: integer }
+value struct Vo { x: integer }
+value struct Vd { x: integer }
+enum E { A { n: integer }, B { s: text } }
+
+// Builds a default, with `??` and with an `if`.
+fn OpMin(self: Vc, o: Vc?) -> Vc { Vc { x: self.x - (o ?? Vc { x: 0 }).x } }
+fn OpMin(self: Rc, o: Rc?) -> Rc { Rc { x: self.x - (o ?? Rc { x: 0 }).x } }
+fn OpMin(self: Vi, o: Vi?) -> Vi {
+  d = if o == null { Vi { x: 0 } } else { o };
+  Vi { x: self.x - d.x }
+}
+fn OpMin(self: Ri, o: Ri?) -> Ri {
+  d = if o == null { Ri { x: 0 } } else { o };
+  Ri { x: self.x - d.x }
+}
+// Hands back `self` on every path.
+fn OpMin(self: Vs, _o: Vs?) -> Vs { self }
+// Mints on one path and hands back `self` on the other.
+fn OpMin(self: Rj, o: Rj?) -> Rj {
+  d = o ?? Rj { x: 0 };
+  if d.x > 100 { return self; }
+  Rj { x: self.x - d.x }
+}
+// Hands back the other parameter.
+fn OpMin(self: Vo, o: Vo?) -> Vo { o ?? self }
+// Hands back `self`, for the chain: a type of its own, because a write through a bound result
+// elsewhere changes how `--native` returns every record of that type.
+fn OpMin(self: Vd, _o: Vd?) -> Vd { self }
+// No default: ends in a bare buffer, which was lifted before the fix.
+fn OpMin(self: Rn, _o: Rn?) -> Rn { Rn { x: self.x - 1 } }
+
+interface Pick {
+  fn pick(self: Self, o: Self) -> Self
+}
+fn pick(self: E, o: E) -> E {
+  k = match o { A { n } => n, B { s } => 0 };
+  if k > 100 { return o; }
+  self
+}
+
+fn diff<T: Subtractable>(a: T, b: T) -> T { a - b }
+fn fp<T: Pick>(a: T, b: T) -> T { a.pick(b) }
+fn d3<T: Subtractable>(a: T, b: T) -> T { d2(a, b) }
+fn d2<T: Subtractable>(a: T, b: T) -> T { d1(a, b) }
+fn d1<T: Subtractable>(a: T, b: T) -> T { a - b }
+fn early<T: Subtractable>(a: T, b: T, n: integer) -> T {
+  if n <= 0 { return a - b; }
+  b - a
+}
+
+fn x_vc(v: Vc) -> integer { v.x }
+fn x_rc(v: Rc) -> integer { v.x }
+fn x_vi(v: Vi) -> integer { v.x }
+fn x_ri(v: Ri) -> integer { v.x }
+
+fn test_a_delegate_that_builds_a_default_frees_the_result() {
+  vp = Vc { x: 7 };
+  vq = Vc { x: 3 };
+  rp = Rc { x: 17 };
+  rq = Rc { x: 5 };
+  ip = Vi { x: 70 };
+  iq = Vi { x: 30 };
+  jp = Ri { x: 9 };
+  jq = Ri { x: 2 };
+  total = 0;
+  for _i in 0..40 {
+    assert(diff(vp, vq).x == 4, "value struct, ??: {diff(vp, vq).x}");
+    assert(diff(rp, rq).x == 12, "struct, ??: {diff(rp, rq).x}");
+    assert(diff(ip, iq).x == 40, "value struct, if-default: {diff(ip, iq).x}");
+    assert(diff(jp, jq).x == 7, "struct, if-default: {diff(jp, jq).x}");
+    total += x_vc(diff(vp, vq)) + x_rc(diff(rp, rq)) + x_vi(diff(ip, iq)) + x_ri(diff(jp, jq));
+  }
+  assert(total == 40 * (4 + 12 + 40 + 7), "argument total {total}");
+  vp.x += 1;
+  rp.x += 1;
+  assert(vp.x == 8 && rp.x == 18 && ip.x == 70 && jp.x == 9, "the left operands are intact");
+  assert(vq.x == 3 && rq.x == 5 && iq.x == 30 && jq.x == 2, "the right operands are intact");
+}
+
+fn test_a_delegate_that_returns_its_parameter_frees_the_copy() {
+  sp = Vs { x: 7 };
+  sq = Vs { x: 3 };
+  jp = Rj { x: 7 };
+  jq = Rj { x: 3 };
+  big = Rj { x: 7 };
+  bq = Rj { x: 500 };
+  op = Vo { x: 7 };
+  oq = Vo { x: 3 };
+  for _i in 0..40 {
+    assert(diff(sp, sq).x == 7, "self: {diff(sp, sq).x}");
+    assert(diff(jp, jq).x == 4, "join, mint arm: {diff(jp, jq).x}");
+    assert(diff(big, bq).x == 7, "join, self arm: {diff(big, bq).x}");
+    assert(diff(op, oq).x == 3, "the other parameter: {diff(op, oq).x}");
+  }
+  s = diff(sp, sq);
+  s.x = 55;
+  sp.x += 1;
+  big.x += 1;
+  oq.x += 1;
+  assert(s.x == 55 && sp.x == 8 && sq.x == 3, "self: bound {s.x}, left {sp.x}, right {sq.x}");
+  assert(jp.x == 7 && jq.x == 3 && big.x == 8 && bq.x == 500, "join operands are intact");
+  assert(op.x == 7 && oq.x == 4, "the other parameter is intact: {op.x} {oq.x}");
+}
+
+fn test_a_struct_enum_through_a_user_interface_frees_the_copy() {
+  ea: E = A { n: 11 };
+  eb: E = B { s: "bee" };
+  far: E = A { n: 500 };
+  t = 0;
+  for _i in 0..40 {
+    m = match fp(ea, eb) { A { n } => n, B { s } => len(s) };
+    k = match fp(eb, far) { A { n } => n, B { s } => len(s) };
+    t += m + k;
+  }
+  assert(t == 40 * (11 + 500), "enum total {t}");
+  assert("{ea} {eb} {far}" == "A {{n:11}} B {{s:\"bee\"}} A {{n:500}}", "operands {ea} {eb} {far}");
+}
+
+fn test_a_chain_of_generics_and_an_early_return_free_the_result() {
+  p = Vd { x: 7 };
+  q = Vd { x: 3 };
+  cp = Vc { x: 7 };
+  cq = Vc { x: 3 };
+  t = 0;
+  for i in 0..40 {
+    t += d3(p, q).x + d3(cp, cq).x + early(p, q, i % 2).x;
+  }
+  assert(t == 40 * (7 + 4) + 20 * 7 + 20 * 3, "chain total {t}");
+  p.x += 1;
+  assert(p.x == 8 && q.x == 3 && cp.x == 7 && cq.x == 3, "chain operands are intact");
+}
+
+fn test_the_shapes_one_axis_away_are_unmoved() {
+  vp = Vc { x: 7 };
+  vq = Vc { x: 3 };
+  ip = Vi { x: 70 };
+  iq = Vi { x: 30 };
+  np = Rn { x: 11 };
+  nq = Rn { x: 1 };
+  sp = Vs { x: 7 };
+  sq = Vs { x: 3 };
+  for _i in 0..40 {
+    // Bound: the bind owns the store.
+    r = diff(vp, vq);
+    assert(r.x == 4, "bound {r.x}");
+    // The concrete spellings, operator and function; the concrete borrow is not freed.
+    assert((vp - vq).x == 4, "concrete operator {(vp - vq).x}");
+    assert(OpMin(ip, iq).x == 40, "concrete function {OpMin(ip, iq).x}");
+    assert((sp - sq).x == 7, "concrete borrow {(sp - sq).x}");
+    // No default: lifted before the fix.
+    assert(diff(np, nq).x == 10, "no default {diff(np, nq).x}");
+  }
+  sp.x += 1;
+  assert(sp.x == 8, "the concrete borrow's operand is intact: {sp.x}");
+}
+
+fn main() {
+  test_a_delegate_that_builds_a_default_frees_the_result();
+  test_a_delegate_that_returns_its_parameter_frees_the_copy();
+  test_a_struct_enum_through_a_user_interface_frees_the_copy();
+  test_a_chain_of_generics_and_an_early_return_free_the_result();
+  test_the_shapes_one_axis_away_are_unmoved();
+  print("1820-a-generic-reaching-an-operator-that-frees-a-default-frees-its-result ok\n");
+}

@@ -1135,6 +1135,11 @@ pub fn build_nav(
     } else {
         parts.push("<a href=\"roadmap.html\">Roadmap</a>".to_string());
     }
+    if active == "report" {
+        parts.push("<span class=\"cur\">Report a problem</span>".to_string());
+    } else {
+        parts.push("<a href=\"report.html\">Report a problem</a>".to_string());
+    }
     // The registry catalogue. It sits with Install and Roadmap rather than under
     // "Library:" because that section is the bundled STDLIB, and a reader looking for
     // `graphics` is asking a different question from one looking for `len`.
@@ -1585,18 +1590,280 @@ fn slugify(name: &str) -> String {
 /// Parsed API section from a package source file.
 struct PkgApiSection {
     name: String,
-    items: Vec<(String, Vec<String>)>, // (signature, doc_lines)
+    items: Vec<PkgApiItem>,
+}
+
+/// One `pub` item as a reader needs it: the WHOLE declaration head, its doc, and — for a
+/// type — every member a program has to name to build or match one.
+struct PkgApiItem {
+    /// The declaration on one line, however many lines it spans in the source.  A
+    /// struct or enum carries its members inline (`pub struct Rect { rx: float, … }`),
+    /// in declaration order: this is the search corpus and the registry's `api` field.
+    sig: String,
+    /// The `//` lines directly above the item; for a one-line item with none, its
+    /// trailing ` // …` comment (the way a constant is usually documented).
+    doc: Vec<String>,
+    /// The declaration head without the member block (`pub struct Rect`), for the
+    /// readers that print members one per line.
+    head: String,
+    /// Each field or variant with its comment, in declaration order.
+    members: Vec<(String, String)>,
+}
+
+/// A character walk over `lines` from `(line, col)` that knows strings, character
+/// literals and `//` comments, so a brace or comma inside one is not structure.
+struct SrcCursor<'a> {
+    lines: &'a [&'a str],
+    line: usize,
+    chars: Vec<char>,
+    col: usize,
+}
+
+enum SrcTok {
+    Char(char),
+    /// A `//` comment running to the end of the line, text without the marker.
+    Comment(String),
+    Newline,
+    End,
+}
+
+impl<'a> SrcCursor<'a> {
+    fn new(lines: &'a [&'a str], line: usize) -> Self {
+        let chars = lines
+            .get(line)
+            .map_or_else(Vec::new, |l| l.chars().collect());
+        SrcCursor {
+            lines,
+            line,
+            chars,
+            col: 0,
+        }
+    }
+
+    /// The next token.  A quote comes back as a `Char`; the caller reads the literal it
+    /// opens with [`Self::literal`], so nothing inside one is taken for structure.
+    fn next(&mut self) -> SrcTok {
+        if self.col >= self.chars.len() {
+            if self.line + 1 >= self.lines.len() {
+                self.line = self.lines.len();
+                return SrcTok::End;
+            }
+            self.line += 1;
+            self.chars = self.lines[self.line].chars().collect();
+            self.col = 0;
+            return SrcTok::Newline;
+        }
+        let c = self.chars[self.col];
+        if c == '/' && self.chars.get(self.col + 1) == Some(&'/') {
+            let text: String = self.chars[self.col..].iter().collect();
+            self.col = self.chars.len();
+            return SrcTok::Comment(text.trim_start_matches('/').trim().to_string());
+        }
+        self.col += 1;
+        SrcTok::Char(c)
+    }
+
+    /// Consume a literal opened by `q` (already read), returning its text with quotes.
+    fn literal(&mut self, q: char) -> String {
+        let mut out = String::from(q);
+        while self.col < self.chars.len() {
+            let c = self.chars[self.col];
+            self.col += 1;
+            out.push(c);
+            if c == '\\' && self.col < self.chars.len() {
+                out.push(self.chars[self.col]);
+                self.col += 1;
+            } else if c == q {
+                break;
+            }
+        }
+        out
+    }
+}
+
+fn squash(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// The members of the body `cur` has just entered (past its `{`): each at brace depth 1,
+/// split at a comma — or, for an interface's methods (`split_at_eol`), at a `;` or a line
+/// end — outside any nested bracket.  A comment on the line a member ends on is that
+/// member's; comment lines before a member are its own.  Leaves `cur` on the closing `}`.
+fn read_members(cur: &mut SrcCursor<'_>, split_at_eol: bool) -> Vec<(String, String)> {
+    let mut members: Vec<(String, String)> = Vec::new();
+    let mut depth = 0i32;
+    let mut member = String::new();
+    let mut leading: Vec<String> = Vec::new();
+    let mut last_line = usize::MAX; // the line the previous member ended on
+    let finish =
+        |member: &mut String, leading: &mut Vec<String>, members: &mut Vec<(String, String)>| {
+            let m = squash(member.trim().trim_start_matches("pub ").trim());
+            if !m.is_empty() {
+                members.push((m, leading.join(" ")));
+            }
+            member.clear();
+            leading.clear();
+        };
+    loop {
+        match cur.next() {
+            SrcTok::Char(c @ ('"' | '\'')) => member.push_str(&cur.literal(c)),
+            SrcTok::Char(c) => match c {
+                '(' | '[' | '{' => {
+                    depth += 1;
+                    member.push(c);
+                }
+                '}' if depth == 0 => {
+                    finish(&mut member, &mut leading, &mut members);
+                    break;
+                }
+                ')' | ']' | '}' => {
+                    depth -= 1;
+                    member.push(c);
+                }
+                ',' | ';' if depth == 0 => {
+                    finish(&mut member, &mut leading, &mut members);
+                    last_line = cur.line;
+                }
+                _ => member.push(c),
+            },
+            SrcTok::Comment(t) => {
+                if member.trim().is_empty() && cur.line == last_line {
+                    if let Some(prev) = members.last_mut()
+                        && prev.1.is_empty()
+                    {
+                        prev.1 = t;
+                    }
+                } else {
+                    leading.push(t);
+                }
+            }
+            SrcTok::Newline => {
+                if split_at_eol && depth == 0 && !member.trim().is_empty() {
+                    finish(&mut member, &mut leading, &mut members);
+                    last_line = cur.line - 1;
+                } else {
+                    member.push(' ');
+                }
+            }
+            SrcTok::End => break,
+        }
+    }
+    members
+}
+
+/// Read the `pub` item that starts on `lines[at]`: its whole head, its trailing comment,
+/// and a struct's, enum's or interface's members.  Returns the item and the index of the
+/// first line after what it consumed (a function body is left to the caller's walk, as
+/// before: its lines hold no `pub` item and clear any pending doc).
+fn read_pub_item(lines: &[&str], at: usize) -> (PkgApiItem, usize) {
+    // `pub value struct` is a struct too.
+    let kind = lines[at]
+        .split_whitespace()
+        .skip(1)
+        .find(|w| *w != "value")
+        .unwrap_or("");
+    let has_members = matches!(kind, "struct" | "enum" | "interface");
+    let mut cur = SrcCursor::new(lines, at);
+    let mut head = String::new();
+    let mut depth = 0i32; // ( and [ — a line break inside them continues the head
+    let mut trailing = String::new();
+    let mut body = false;
+    loop {
+        match cur.next() {
+            SrcTok::Char(c @ ('"' | '\'')) => head.push_str(&cur.literal(c)),
+            SrcTok::Char(c) => {
+                match c {
+                    '(' | '[' => depth += 1,
+                    ')' | ']' => depth -= 1,
+                    '{' if depth <= 0 => {
+                        body = true;
+                        break;
+                    }
+                    ';' if depth <= 0 => {
+                        // The rest of the line may carry the item's comment.
+                        while let SrcTok::Char(_) = cur.next() {}
+                        if let Some(rest) = lines.get(cur.line)
+                            && cur.line == at
+                            && let Some(i) = rest.find("//")
+                        {
+                            trailing = rest[i..].trim_start_matches('/').trim().to_string();
+                        }
+                        break;
+                    }
+                    _ => {}
+                }
+                head.push(c);
+            }
+            SrcTok::Comment(t) => {
+                if cur.line == at && trailing.is_empty() {
+                    trailing = t;
+                }
+            }
+            SrcTok::Newline => {
+                // A head continues past a line break inside parentheses, after a
+                // dangling `,` / `->` / `=`, or when the next line opens with `->`, `)`
+                // or `{` (a return type, a closing paren, a brace on its own line).
+                let h = head.trim_end();
+                let next = lines.get(cur.line).map_or("", |l| l.trim());
+                let continues = depth > 0
+                    || h.ends_with(',')
+                    || h.ends_with("->")
+                    || h.ends_with('=')
+                    || next.starts_with("->")
+                    || next.starts_with(')')
+                    || (has_members && next.starts_with('{'));
+                if !continues {
+                    break;
+                }
+                head.push(' ');
+            }
+            SrcTok::End => break,
+        }
+    }
+    let head = squash(head.trim());
+    let mut members: Vec<(String, String)> = Vec::new();
+    let mut next_line = if body {
+        cur.line + 1
+    } else {
+        cur.line.max(at + 1)
+    };
+    if body && has_members {
+        members = read_members(&mut cur, kind == "interface");
+        next_line = cur.line + 1;
+    }
+    let sig = if members.is_empty() {
+        head.clone()
+    } else {
+        let inner: Vec<&str> = members.iter().map(|(m, _)| m.as_str()).collect();
+        format!("{head} {{ {} }}", inner.join(", "))
+    };
+    let doc = if trailing.is_empty() {
+        Vec::new()
+    } else {
+        vec![trailing]
+    };
+    (
+        PkgApiItem {
+            sig,
+            doc,
+            head,
+            members,
+        },
+        next_line,
+    )
 }
 
 /// Parse `pub` items and `// --- Section ---` headers from a source file.
 fn parse_pkg_api(content: &str) -> Vec<PkgApiSection> {
+    let lines: Vec<&str> = content.lines().collect();
     let mut sections = Vec::new();
     let mut current_name = "General".to_string();
-    let mut items: Vec<(String, Vec<String>)> = Vec::new();
+    let mut items: Vec<PkgApiItem> = Vec::new();
     let mut doc: Vec<String> = Vec::new();
 
-    for line in content.lines() {
-        let trimmed = line.trim();
+    let mut i = 0;
+    while i < lines.len() {
+        let trimmed = lines[i].trim();
         // Section header
         if trimmed.starts_with("// ---") && trimmed.ends_with("---") {
             let inner = trimmed
@@ -1613,6 +1880,7 @@ fn parse_pkg_api(content: &str) -> Vec<PkgApiSection> {
                 }
                 current_name = inner.to_string();
                 doc.clear();
+                i += 1;
                 continue;
             }
         }
@@ -1620,18 +1888,26 @@ fn parse_pkg_api(content: &str) -> Vec<PkgApiSection> {
         if trimmed.starts_with("//") {
             let text = trimmed.trim_start_matches('/').trim().to_string();
             doc.push(text);
+            i += 1;
             continue;
         }
         // Public item
         if trimmed.starts_with("pub ") {
-            let sig = strip_pub_body(trimmed);
-            items.push((sig, std::mem::take(&mut doc)));
+            let (mut item, next) = read_pub_item(&lines, i);
+            // The lines above are the doc; a trailing comment speaks only for an item
+            // that has none (`pub const N = 3; // the count`).
+            if !doc.is_empty() {
+                item.doc = std::mem::take(&mut doc);
+            }
+            items.push(item);
+            i = next;
             continue;
         }
         // Other lines: clear doc accumulation (unless #rust annotation)
         if !trimmed.starts_with('#') {
             doc.clear();
         }
+        i += 1;
     }
     if !items.is_empty() {
         sections.push(PkgApiSection {
@@ -1662,19 +1938,24 @@ pub fn extract_api_items(content: &str) -> Vec<crate::registry_index::ApiItem> {
     parse_pkg_api(content)
         .into_iter()
         .flat_map(|s| s.items)
-        .filter(|(sig, _)| {
+        .filter(|item| {
+            let sig = &item.sig;
+            // `pub type` is how a type alias is written; `pub value struct` is a struct
+            // (`time::DateTime`) — both were missing from search.
             sig.starts_with("pub fn ")
                 || sig.starts_with("pub struct ")
+                || sig.starts_with("pub value struct ")
                 || sig.starts_with("pub enum ")
+                || sig.starts_with("pub type ")
                 || sig.starts_with("pub typedef ")
                 || sig.starts_with("pub interface ")
         })
-        .map(|(sig, doc_lines)| {
+        .map(|item| {
             // The FULL paragraph (every `//` line above the item, newline-joined)
             // is the keyword corpus; the search result displays only its first
             // line as a summary.
-            let doc = doc_lines.join("\n").trim().to_string();
-            crate::registry_index::ApiItem { sig, doc }
+            let doc = item.doc.join("\n").trim().to_string();
+            crate::registry_index::ApiItem { sig: item.sig, doc }
         })
         .collect()
 }
@@ -1705,30 +1986,36 @@ pub fn pkg_api_items(pkg_dir: &std::path::Path) -> Vec<crate::registry_index::Ap
     items
 }
 
-/// Strip function body from a pub declaration, keeping just the signature.
-fn strip_pub_body(line: &str) -> String {
-    // The signature is the declaration HEAD: everything up to the body `{` (a fn
-    // body or a struct/enum field block), with any trailing ` // …` line comment
-    // and `;` removed — so `pub struct Rect {` → `pub struct Rect`,
-    // `pub fn f() -> t;  // note` → `pub fn f() -> t`.  Only a space-prefixed
-    // ` //` is treated as a comment, so a `//` inside a string (e.g. a URL
-    // default) is left intact.
-    let head = line.split('{').next().unwrap_or(line);
-    let head = head.split(" //").next().unwrap_or(head);
-    head.trim().trim_end_matches(';').trim().to_string()
+/// An item as a reader sees it: the one-line signature, or for a type the head with
+/// one member per line and each member's comment beside it.
+fn item_block(item: &PkgApiItem) -> String {
+    if item.members.is_empty() {
+        return item.sig.clone();
+    }
+    let mut out = format!("{} {{\n", item.head);
+    for (m, c) in &item.members {
+        if c.is_empty() {
+            let _ = writeln!(out, "  {m},");
+        } else {
+            let _ = writeln!(out, "  {m},  // {c}");
+        }
+    }
+    out.push('}');
+    out
 }
 
 /// Render an API section page as HTML body content.
 fn render_api_section_body(section: &PkgApiSection) -> String {
     let mut body = String::new();
-    for (sig, doc_lines) in &section.items {
+    for item in &section.items {
         body.push_str("<div class=\"item\">\n");
-        if !sig.is_empty() {
-            writeln!(body, "<pre><code>{}</code></pre>", html_escape(sig)).expect("");
+        let shown = item_block(item);
+        if !shown.is_empty() {
+            writeln!(body, "<pre><code>{}</code></pre>", html_escape(&shown)).expect("");
         }
-        if !doc_lines.is_empty() {
+        if !item.doc.is_empty() {
             body.push_str("<p>");
-            body.push_str(&doc_lines.join(" "));
+            body.push_str(&item.doc.join(" "));
             body.push_str("</p>\n");
         }
         body.push_str("</div>\n");
@@ -1801,12 +2088,12 @@ pub fn render_pkg_api_text(pkg_dir: &std::path::Path) -> std::io::Result<String>
             if section.name != "General" {
                 let _ = writeln!(out, "\n// --- {} ---", section.name);
             }
-            for (sig, doc_lines) in &section.items {
+            for item in &section.items {
                 let _ = writeln!(out);
-                for line in doc_lines {
+                for line in &item.doc {
                     let _ = writeln!(out, "// {line}");
                 }
-                let _ = writeln!(out, "{sig}");
+                let _ = writeln!(out, "{}", item_block(item));
             }
         }
     }
@@ -2084,20 +2371,128 @@ pub const TAU = 6.28;
 pub enum Shape { Circle, Square }
 ";
         let sigs: Vec<String> = extract_api_items(src).into_iter().map(|i| i.sig).collect();
-        // Types are surfaced with the `{ … }` body stripped to a clean head.
+        let valued: Vec<String> =
+            extract_api_items("pub value struct Ms { ms: integer }\npub type Id = integer;\n")
+                .into_iter()
+                .map(|i| i.sig)
+                .collect();
+        assert_eq!(
+            valued,
+            [
+                "pub value struct Ms { ms: integer }",
+                "pub type Id = integer"
+            ],
+            "a value struct and a type alias are part of the usable surface"
+        );
+        // Types carry their members: a program has to name a field to build one, and a
+        // head alone (`pub struct Rect`) sent a reader guessing `x` for `rx`.
         assert!(
-            sigs.contains(&"pub struct Rect".to_string()),
-            "struct gathered"
+            sigs.contains(&"pub struct Rect { x: integer, y: integer }".to_string()),
+            "struct gathered with its fields, got {sigs:?}"
         );
         assert!(
-            sigs.contains(&"pub enum Shape".to_string()),
-            "enum gathered"
+            sigs.contains(&"pub enum Shape { Circle, Square }".to_string()),
+            "enum gathered with its variants, got {sigs:?}"
         );
         // A `pub const` value is NOT part of the callable/usable surface.
         assert!(
             !sigs.iter().any(|s| s.contains("const")),
             "const excluded, got {sigs:?}"
         );
+    }
+
+    /// A signature that wraps is read whole — its later parameters and its return type
+    /// were dropped at the first line break, in 103 of 1663 published signatures.
+    #[test]
+    fn a_wrapped_signature_is_read_whole() {
+        let src = "\
+// Overlap of two boxes given as raw numbers.
+pub fn aabb(ax: float, ay: float,
+            bx: float, by: float)
+    -> boolean {
+  ax < bx
+}
+
+// A later item still parses.
+pub fn after() -> integer { 1 }
+";
+        let items = extract_api_items(src);
+        let sigs: Vec<&str> = items.iter().map(|i| i.sig.as_str()).collect();
+        assert_eq!(
+            sigs,
+            [
+                "pub fn aabb(ax: float, ay: float, bx: float, by: float) -> boolean",
+                "pub fn after() -> integer"
+            ]
+        );
+        assert_eq!(items[1].doc, "A later item still parses.");
+    }
+
+    /// Fields and variants reach `loft api` one per line with their comments, in
+    /// declaration order; a brace or comma inside a string default is not structure,
+    /// and a struct-shaped variant stays one member.
+    #[test]
+    fn members_keep_their_order_comments_and_nesting() {
+        let src = "\
+// A labelled box.
+pub struct Box {
+  // the label shown
+  label: text = \"a, {b}\",
+  w: float,   // width
+  h: float    // height
+}
+
+// A shape.
+pub enum Shape {
+  Dot,
+  Circle { r: float },
+  Rect { w: float, h: float }
+}
+";
+        let sections = parse_pkg_api(src);
+        let items = &sections[0].items;
+        assert_eq!(
+            items[0].members,
+            [
+                (
+                    "label: text = \"a, {b}\"".to_string(),
+                    "the label shown".to_string()
+                ),
+                ("w: float".to_string(), "width".to_string()),
+                ("h: float".to_string(), "height".to_string()),
+            ]
+        );
+        assert_eq!(
+            items[1].sig,
+            "pub enum Shape { Dot, Circle { r: float }, Rect { w: float, h: float } }"
+        );
+        assert_eq!(
+            item_block(&items[0]),
+            "pub struct Box {\n  label: text = \"a, {b}\",  // the label shown\n  w: float,  // width\n  h: float,  // height\n}"
+        );
+    }
+
+    /// A constant is usually documented by a comment at the end of its own line; that
+    /// comment is its doc when no line above speaks for it, and never when one does.
+    #[test]
+    fn a_trailing_comment_documents_an_item_with_no_doc_above() {
+        let src = "\
+pub const FIT_OK = 0;
+pub const FIT_NO_FORM = 1;   // the form is not admissible
+// Documented above.
+pub const FIT_BAD = 2;  // not this
+";
+        let sections = parse_pkg_api(src);
+        let docs: Vec<Vec<String>> = sections[0].items.iter().map(|i| i.doc.clone()).collect();
+        assert_eq!(
+            docs,
+            [
+                Vec::<String>::new(),
+                vec!["the form is not admissible".to_string()],
+                vec!["Documented above.".to_string()],
+            ]
+        );
+        assert_eq!(sections[0].items[1].sig, "pub const FIT_NO_FORM = 1");
     }
 
     /// A worked-example tag DEFINITION is bookkeeping, and a topic page must not print it.

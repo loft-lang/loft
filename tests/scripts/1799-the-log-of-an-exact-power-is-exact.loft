@@ -1,0 +1,65 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1799 — `log10` and `log2` of an exact power answer the exponent exactly.  They
+// were written as `log(x, 10.0)` / `log(x, 2.0)`, and `log` computed a ratio of natural
+// logarithms: `log10(1000.0)` read 2.9999999999999996, and `log10(x) as integer`
+// truncated it to 2 — silently, on both backends.  The `log` operator now takes the
+// dedicated base-10 and base-2 routines for those two bases, so the two-argument
+// spelling `log(x, 10.0)` is exact as well.
+//
+// Axes this file MOVES:  the spelling (log10, log2, log with base 10.0 / 2.0), the width
+//                        (float, single), the exponent (every power the width holds
+//                        exactly, both signs for base 2), the domain edges (0, negative).
+// Axes it HOLDS FIXED:   the argument is a literal-built power; another base keeps `ln/ln`.
+//
+// @falsified-at: 17958fa95 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
+//   native exit 1 -> 0, native 1 assertion failures -> 0
+// HOLDS: leak, panic and refusals are clean on both trees and both backends; the domain
+//   edges and the other-base cell (`log(8.0, 4.0)` is 1.5) pass here unchanged.
+// @falsified-by: tests/falsified/1799-the-log-of-an-exact-power-is-exact.patch — the same channels
+
+fn main() {
+  // Every power of ten a float holds exactly: 10^0 .. 10^22.
+  p = 1.0;
+  bad10 = "";
+  for k in 0..23 {
+    if log10(p) != k as float { bad10 += " log10(1e{k})={log10(p)}"; }
+    if log(p, 10.0) != k as float { bad10 += " log(1e{k},10)={log(p, 10.0)}"; }
+    if ((log10(p) ?? -1.0) as integer) != k { bad10 += " int(1e{k})={(log10(p) ?? -1.0) as integer}"; }
+    p = p * 10.0;
+  }
+  assert(bad10 == "", "powers of ten:{bad10}");
+
+  // Every power of two, both signs: 2^-60 .. 2^60.
+  bad2 = "";
+  for k in -60..61 {
+    q = pow(2.0, k as float);
+    if log2(q) != k as float { bad2 += " log2(2^{k})={log2(q)}"; }
+    if log(q, 2.0) != k as float { bad2 += " log(2^{k},2)={log(q, 2.0)}"; }
+  }
+  assert(bad2 == "", "powers of two:{bad2}");
+
+  // single: 10^0 .. 10^10, 2^0 .. 2^30.
+  s = 1.0f;
+  bads = "";
+  for k in 0..11 {
+    if log10(s) != k as single { bads += " log10f(1e{k})={log10(s)}"; }
+    s = s * 10.0f;
+  }
+  t = 1.0f;
+  for k in 0..31 {
+    if log2(t) != k as single { bads += " log2f(2^{k})={log2(t)}"; }
+    t = t * 2.0f;
+  }
+  assert(bads == "", "single:{bads}");
+
+  // The domain edges keep their answers: null below zero, -inf at zero.
+  assert(!log10(-1.0), "log10 of a negative is null: {log10(-1.0)}");
+  assert("{log10(0.0)}" == "-inf", "log10(0) is -inf: {log10(0.0)}");
+  assert(!log2(-8.0), "log2 of a negative is null: {log2(-8.0)}");
+
+  // Another base still divides natural logarithms: log(8.0, 4.0) is 1.5.
+  assert(log(8.0, 4.0) == 1.5, "log(8, 4) = {log(8.0, 4.0)}");
+  println("ok");
+}

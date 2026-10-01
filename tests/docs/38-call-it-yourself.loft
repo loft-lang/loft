@@ -49,7 +49,7 @@ fn nth_prime(n: integer) -> integer {
 // ## Text goes in, and text comes back
 // `vowels("your name here")` counts the vowels in whatever you type, and
 // `shout("your name here")` hands the text back changed.  A text answer arrives
-// quoted — `shout("hi")` shows `"HI"` — which is how you can tell an empty text
+// quoted — `shout("hi")` shows `"HI!"` — which is how you can tell an empty text
 // from nothing at all.
 fn shout(s: text) -> text {
   "{s.to_uppercase()}!"
@@ -97,7 +97,7 @@ fn walk_to(limit: integer) -> integer {
 }
 
 // ## When the panel says `<unavailable>`
-// Every value shape answers now — a number, a character, a boolean, a text, a
+// Every value shape answers — a number, a character, a boolean, a text, a
 // vector, a struct.  `<unavailable>` is what you get when the expression itself
 // cannot be compiled where the program is paused: a typo, a name that is not in
 // scope there, an unfinished expression.  It is the panel declining to guess

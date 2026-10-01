@@ -88,9 +88,9 @@ fn test_vector_generics() {
 // `-` desugars to the same `OpMin` name at BOTH arities, so unary negation and
 // binary subtraction are two SIGNATURES of one name — and therefore two bounds:
 // `<T: Numeric>` gives you `-a`, `<T: Subtractable>` gives you `a - b`, and
-// `<T: Numeric + Subtractable>` gives you both.  A user type provides one of the
-// two arities and so satisfies one of the two bounds — a concrete method key
-// carries no arity, so a type cannot declare `OpMin` twice.
+// `<T: Numeric + Subtractable>` gives you both.  A user type may declare `OpMin` at
+// both arities, in either order: `a - b` reaches the binary one and `-a` the unary
+// one, so it satisfies both bounds.
 fn gen_diff<T: Subtractable>(gen_a: T, gen_b: T) -> T { gen_a - gen_b }
 fn gen_negdiff<T: Numeric + Subtractable>(gen_a: T, gen_b: T) -> T { -(gen_a - gen_b) }
 

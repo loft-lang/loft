@@ -597,6 +597,76 @@ fn nullable_receiver_implements_its_variant() {
 }
 
 #[test]
+fn a_compound_operator_no_overload_takes_is_refused() {
+    // loft#1819 — a compound assignment resolves its operator on the place's type and the
+    // right side's OWN type, so a right side no overload takes is refused naming both, and
+    // naming the operator as written.  Before, the right side was typed as the place's type:
+    // *"No matching operator 'Min' on 'V' and 'V'"*.
+    code!(
+        "struct V { x: integer }\nfn OpMin(self: V, o: integer) -> V { V { x: self.x - o } }\nfn test() { a = V { x: 5 }; a -= \"t\"; assert(a.x == 5, \"u\"); }"
+    )
+    .error("No matching operator '-=' on 'V' and 'text' at a_compound_operator_no_overload_takes_is_refused:3:37");
+}
+
+#[test]
+fn an_operator_no_overload_takes_is_refused() {
+    // loft#1817 — an operator reaches every member of its overload set (`@FR-F-Recv`), and a
+    // second operand NO member takes is still refused naming both operand types, in either
+    // declaration order.  The refusal is the incumbent's own mismatch, reached once the set's
+    // selection finds no applicable member.
+    code!(
+        "struct V { x: integer }\nfn OpMin(self: V, o: V) -> V { V { x: self.x - o.x } }\nfn OpMin(self: V, o: integer) -> V { V { x: self.x - o } }\nstruct W { x: integer }\nfn OpMin(self: W, o: integer) -> W { W { x: self.x - o } }\nfn OpMin(self: W, o: W) -> W { W { x: self.x - o.x } }\nfn test() { a = V { x: 1 }; b = a - \"t\"; c = W { x: 1 }; d = c - \"t\"; }"
+    )
+    .error("No matching operator '-' on 'V' and 'text' at an_operator_no_overload_takes_is_refused:7:40")
+    .error("No matching operator '-' on 'W' and 'text' at an_operator_no_overload_takes_is_refused:7:69");
+}
+
+#[test]
+fn an_operator_at_an_arity_its_type_lacks_is_refused() {
+    // loft#1794 — a user type defining `-` at ONE arity is refused at the other, naming the
+    // operator the author wrote (loft#1807).  Before, the operator lookup took the receiver
+    // slot's method whatever its arity: `a - b` over a unary-only `OpMin` called it with one
+    // operand too many and answered `-a` in silence, and `-a` over a binary-only one was
+    // refused as a missing argument of `OpMin`.
+    //
+    // Measured against ec35ee1de: FAILS there — no error for `a - b` (it compiled and ran),
+    // and *"missing argument for parameter 'o' of `OpMin`"* for `-c`.
+    code!(
+        "struct Un { x: integer }\nfn OpMin(self: Un) -> Un { Un { x: 0 - self.x } }\nstruct Bi { x: integer }\nfn OpMin(self: Bi, o: Bi) -> Bi { Bi { x: self.x - o.x } }\nfn test() { a = Un { x: 3 }; b = Un { x: 1 }; d = a - b; c = Bi { x: 2 }; e = -c; }"
+    )
+    .error("No matching operator '-' on 'Un' and 'Un' at an_operator_at_an_arity_its_type_lacks_is_refused:5:56")
+    .error("No matching operator '-' on 'Bi' at an_operator_at_an_arity_its_type_lacks_is_refused:5:81");
+}
+
+#[test]
+fn a_prefix_operator_refusal_names_the_token_written() {
+    // loft#1807 — `-x`, `!x` and `~x` resolve the internal `Min`, `Not` and `BitNot`; a refusal
+    // names the token.  Measured against ec35ee1de: FAILS there with *"generic type T:
+    // operator 'Min' requires a concrete type"*.
+    code!("fn neg<T: Subtractable>(x: T) -> T { -x }\nfn bn<T: Subtractable>(x: T) -> T { ~x }")
+        .error("generic type T: operator '-' requires a concrete type at a_prefix_operator_refusal_names_the_token_written:1:41")
+        .error("generic type T: operator '~' requires a concrete type at a_prefix_operator_refusal_names_the_token_written:2:40");
+}
+
+#[test]
+fn a_method_call_over_an_uncovered_pair_is_refused_once_like_the_call() {
+    // loft#1780 — `a.hits(b)` and `hits(a, b)` are one call (`@FR-F-Recv`): over a `self` set
+    // that dispatches past its receiver and misses the (Rd, Rd) pair, BOTH spellings are
+    // refused with the one `Disp-Exhaustive` message naming that pair and every declared
+    // definition — the lone `Rd` definition included — and nothing after it.  Before, @F20
+    // built a one-arm-per-variant dispatcher from the definitions' later parameters and
+    // refused the set as "cannot be dispatched", naming a parameter every definition has.
+    //
+    // Measured against ec35ee1de: FAILS there with *"`hits` cannot be dispatched on `Sh`: this
+    // implementation takes `b`, which the other variants' implementations do not …"*.
+    code!(
+        "enum Sh {\n    Ci { r: integer },\n    Rd { w: integer }\n}\nfn hits(self: Ci, b: Ci) -> integer { self.r + b.r }\nfn hits(self: Ci, b: Rd) -> integer { self.r + b.w }\nfn hits(self: Rd, b: Ci) -> integer { self.w + b.r }\nfn test() { a: Sh = Ci { r: 1 }; b: Sh = Rd { w: 2 }; a.hits(b); hits(a, b); }"
+    )
+    .error("`hits(Sh, Sh)` has no definition for the pair (Rd, Rd) — declared: hits(Ci, Ci), hits(Ci, Rd), hits(Rd, Ci); add one, or a definition at the enum at a_method_call_over_an_uncovered_pair_is_refused_once_like_the_call:8:65")
+    .error("`hits(Sh, Sh)` has no definition for the pair (Rd, Rd) — declared: hits(Ci, Ci), hits(Ci, Rd), hits(Rd, Ci); add one, or a definition at the enum at a_method_call_over_an_uncovered_pair_is_refused_once_like_the_call:8:77");
+}
+
+#[test]
 fn a_second_method_gets_its_own_missing_variant_refusal() {
     // loft#1435 — the dispatcher scan is keyed by the enum AND the method name, so coverage
     // is asked per method.  Keyed by the enum alone, `Sq` implementing `ar` silenced the
@@ -795,7 +865,11 @@ fn direct_call_unimplemented_variant() {
 fn area(self: Circle) -> float { self.r * self.r }
 fn test() { r = Rect { w: 3.0, h: 4.0 }; r.area(); }"
     )
-    .error("Unknown field Rect.area at direct_call_unimplemented_variant:3:49");
+    .error(
+        "`Rect` has no method `area` — it is declared for Circle only.  Give `Rect` its own \
+         `fn area(self: Rect)`, or declare a fallback `fn area(self: Shape)` for the variants \
+         without one at direct_call_unimplemented_variant:3:49",
+    );
 }
 
 // --- parallel_for: extra context-argument count validation ---
@@ -1167,7 +1241,7 @@ fn shadow_different_type() {
     .error(
         "loop variable 'x' shadows a local named 'x' — rename the loop \
          variable (e.g. loop_x) or drop the outer `x` if it was a dead \
-         placeholder; loft does not block-scope loop variables at \
+         placeholder; a loop variable cannot reuse the name of a local still in scope at \
          shadow_different_type:4:17",
     );
 }
@@ -1190,7 +1264,7 @@ fn shadow_same_type_ok() {
     .error(
         "loop variable 'x' shadows a local named 'x' — rename the loop \
          variable (e.g. loop_x) or drop the outer `x` if it was a dead \
-         placeholder; loft does not block-scope loop variables at \
+         placeholder; a loop variable cannot reuse the name of a local still in scope at \
          shadow_same_type_ok:4:17",
     );
 }
@@ -2335,7 +2409,7 @@ fn c61_local_shadow_rejected() {
     .error(
         "loop variable 'x' shadows a local named 'x' — rename the loop \
          variable (e.g. loop_x) or drop the outer `x` if it was a dead \
-         placeholder; loft does not block-scope loop variables at \
+         placeholder; a loop variable cannot reuse the name of a local still in scope at \
          c61_local_shadow_rejected:3:18",
     );
 }
@@ -2572,11 +2646,11 @@ fn test() {
 }"
     )
     // the return tail — the one that landed on the closing brace
-    .error("cannot implicitly narrow integer to i32 (may lose data) — give it a fallback with `?? <value>`, take the checked cast `as i32?` (value or null), or make the value provably fit (a mask, or an `if` range check) at a_narrowing_names_its_own_line_in_every_position:4:3")
+    .error("cannot implicitly narrow integer to i32 (may lose data) — give it a fallback with `?? <value>`, or make the destination `i32?` so a value that does not fit reads null, or make the value provably fit with a mask (`& 2147483647`) at a_narrowing_names_its_own_line_in_every_position:4:3")
     // the three that always worked, pinned so the fix cannot quietly move them
-    .error("cannot implicitly narrow integer to i32 (may lose data) — give it a fallback with `?? <value>`, take the checked cast `as i32?` (value or null), or make the value provably fit (a mask, or an `if` range check) at a_narrowing_names_its_own_line_in_every_position:8:14")
-    .error("cannot implicitly narrow integer to i32 (may lose data) — give it a fallback with `?? <value>`, take the checked cast `as i32?` (value or null), or make the value provably fit (a mask, or an `if` range check) at a_narrowing_names_its_own_line_in_every_position:9:16")
-    .error("cannot implicitly narrow integer to i32 (may lose data) — give it a fallback with `?? <value>`, take the checked cast `as i32?` (value or null), or make the value provably fit (a mask, or an `if` range check) at a_narrowing_names_its_own_line_in_every_position:10:20")
+    .error("cannot implicitly narrow integer to i32 (may lose data) — give it a fallback with `?? <value>`, or make the destination `i32?` so a value that does not fit reads null, or make the value provably fit with a mask (`& 2147483647`) at a_narrowing_names_its_own_line_in_every_position:8:14")
+    .error("cannot implicitly narrow integer to i32 (may lose data) — give it a fallback with `?? <value>`, or make the destination `i32?` so a value that does not fit reads null, or make the value provably fit with a mask (`& 2147483647`) at a_narrowing_names_its_own_line_in_every_position:9:16")
+    .error("cannot implicitly narrow integer to i32 (may lose data) — give it a fallback with `?? <value>`, or make the destination `i32?` so a value that does not fit reads null, or make the value provably fit with a mask (`& 2147483647`) at a_narrowing_names_its_own_line_in_every_position:10:20")
     .warning("Parameter v is never read at a_narrowing_names_its_own_line_in_every_position:2:30");
 }
 
@@ -5070,7 +5144,7 @@ fn insert_refuses_an_element_of_another_type() {
 #[test]
 fn insert_refuses_an_implicit_narrowing() {
     code!("fn test() { v: vector<u8> = [1, 2]; n = 300; insert(v, 1, n); assert(len(v) == 3, \"\"); }")
-        .error("cannot implicitly narrow integer to u8 (may lose data) — give it a fallback with `?? <value>`, take the checked cast `as u8?` (value or null), or make the value provably fit (a mask, or an `if` range check) at insert_refuses_an_implicit_narrowing:1:62");
+        .error("cannot implicitly narrow integer to u8 (may lose data) — give it a fallback with `?? <value>`, or make the destination `u8?` so a value that does not fit reads null, or make the value provably fit with a mask (`& 255`) at insert_refuses_an_implicit_narrowing:1:62");
 }
 
 /// @PLN165 E4 — `sort<T: Ordered>` takes what its bound says, so an element without a `<` is
@@ -5311,14 +5385,14 @@ fn a_par_method_on_a_captured_value_names_the_scalar_route() {
 #[test]
 fn a_tuple_literal_member_that_does_not_fit_is_refused() {
     code!("fn test() {\n  t: (integer, u8) = (1, 256);\n  println(\"{t.1}\");\n}")
-        .error("cannot implicitly narrow integer to u8 (may lose data) — give it a fallback with `?? <value>`, take the checked cast `as u8?` (value or null), or make the value provably fit (a mask, or an `if` range check) at a_tuple_literal_member_that_does_not_fit_is_refused:2:31");
+        .error("cannot implicitly narrow integer to u8 (may lose data) — give it a fallback with `?? <value>`, or make the destination `u8?` so a value that does not fit reads null, or make the value provably fit with a mask (`& 255`) at a_tuple_literal_member_that_does_not_fit_is_refused:2:31");
 }
 
 // A tuple whose member TYPE is wider than the slot's is refused by member (D-types-10).
 #[test]
 fn a_tuple_of_a_wider_member_type_is_refused() {
     code!("fn test() {\n  n = 3 + len(\"\");\n  a = (1, n);\n  t: (integer, u8) = a;\n  println(\"{t.1}\");\n}")
-        .error("cannot implicitly narrow member 1 (integer) to u8 (may lose data) — build the tuple with a value that fits, or take the checked cast `as u8?` at a_tuple_of_a_wider_member_type_is_refused:4:24");
+        .error("cannot implicitly narrow member 1 (integer) to u8 (may lose data) — build the tuple with a value that fits, or make the member `u8?` so a value that does not fit reads null at a_tuple_of_a_wider_member_type_is_refused:4:24");
 }
 
 // A `??` default is stored into the slot, so a constant default must fit it (D-types-11).
@@ -5339,14 +5413,14 @@ fn a_coalesce_default_of_a_wider_type_is_refused() {
 #[test]
 fn a_field_default_that_does_not_fit_is_refused() {
     code!("struct S { f: u8 = 256, k: integer }\nfn test() {\n  s = S { k: 1 };\n  println(\"{s.f}\");\n}")
-        .error("cannot implicitly narrow integer to u8 (may lose data) — give it a fallback with `?? <value>`, take the checked cast `as u8?` (value or null), or make the value provably fit (a mask, or an `if` range check) at a_field_default_that_does_not_fit_is_refused:1:24");
+        .error("cannot implicitly narrow integer to u8 (may lose data) — give it a fallback with `?? <value>`, or make the destination `u8?` so a value that does not fit reads null, or make the value provably fit with a mask (`& 255`) at a_field_default_that_does_not_fit_is_refused:1:24");
 }
 
 // An `if` whose arms all fit is a fitting value (D-types-13); one arm that does not is still refused.
 #[test]
 fn an_arm_that_does_not_fit_is_refused() {
     code!("fn test() {\n  c = len(\"ab\") > 1;\n  x: u8 = if c { 256 } else { 3 };\n  println(\"{x}\");\n}")
-        .error("cannot implicitly narrow integer to u8 (may lose data) — give it a fallback with `?? <value>`, take the checked cast `as u8?` (value or null), or make the value provably fit (a mask, or an `if` range check) at an_arm_that_does_not_fit_is_refused:3:35");
+        .error("cannot implicitly narrow integer to u8 (may lose data) — give it a fallback with `?? <value>`, or make the destination `u8?` so a value that does not fit reads null, or make the value provably fit with a mask (`& 255`) at an_arm_that_does_not_fit_is_refused:3:35");
 }
 
 // `@FR-I-Sub` — a range flows implicitly only into one that CONTAINS it, and a same-width sign
@@ -5355,11 +5429,290 @@ fn an_arm_that_does_not_fit_is_refused() {
 #[test]
 fn a_signed_value_does_not_widen_into_an_unsigned_one() {
     code!("fn test() {\n  a: i8 = -5;\n  x: u8 = a;\n  println(\"{x}\");\n}")
-        .error("cannot implicitly narrow i8 to u8 (may lose data) — give it a fallback with `?? <value>`, take the checked cast `as u8?` (value or null), or make the value provably fit (a mask, or an `if` range check) at a_signed_value_does_not_widen_into_an_unsigned_one:3:13");
+        .error("cannot implicitly narrow i8 to u8 (may lose data) — give it a fallback with `?? <value>`, or make the destination `u8?` so a value that does not fit reads null, or make the value provably fit with a mask (`& 255`) at a_signed_value_does_not_widen_into_an_unsigned_one:3:13");
 }
 
 #[test]
 fn an_unsigned_value_does_not_widen_into_a_signed_one_of_its_width() {
     code!("fn g(p: i16) -> integer { p }\nfn test() {\n  a: u16 = 40000;\n  println(\"{g(a)}\");\n}")
-        .error("cannot implicitly narrow u16 to i16 (may lose data) — give it a fallback with `?? <value>`, take the checked cast `as i16?` (value or null), or make the value provably fit (a mask, or an `if` range check) at an_unsigned_value_does_not_widen_into_a_signed_one_of_its_width:4:18");
+        .error("cannot implicitly narrow u16 to i16 (may lose data) — give it a fallback with `?? <value>`, or make the destination `i16?` so a value that does not fit reads null, or make the value provably fit with a mask (`& 32767`) at an_unsigned_value_does_not_widen_into_a_signed_one_of_its_width:4:18");
+}
+
+// `@FR-G-Scope` — an interface is a generic BOUND, never a value type.  Both positions named
+// something else: an annotated local drew `Expect token ;`, a parameter `Expecting a type` and a
+// call-site `Too many parameters` after it.  One error each now, naming the interface and the
+// bound that replaces it.
+#[test]
+fn an_interface_as_a_local_type_names_the_bound() {
+    code!(
+        "interface Sizable { fn size(self: Self) -> integer }\n\
+         struct Bx { w: integer }\n\
+         fn size(self: Bx) -> integer { self.w }\n\
+         fn test() {\n  x: Sizable = Bx { w: 3 };\n  println(\"{x.size()}\");\n}"
+    )
+    .error(
+        "`Sizable` is an interface, not a type — a value always has a concrete type, and an \
+         interface only constrains one.  Take a type variable bounded by it, `fn f<T: \
+         Sizable>(x: T)`, or name the concrete type at \
+         an_interface_as_a_local_type_names_the_bound:5:15",
+    );
+}
+
+#[test]
+fn an_interface_as_a_parameter_type_names_the_bound() {
+    code!(
+        "interface Sizable { fn size(self: Self) -> integer }\n\
+         struct Bx { w: integer }\n\
+         fn size(self: Bx) -> integer { self.w }\n\
+         fn show(x: Sizable) -> integer { x.size() }\n\
+         fn test() {\n  println(\"{show(Bx { w: 3 })}\");\n}"
+    )
+    .error(
+        "`Sizable` is an interface, not a type — a value always has a concrete type, and an \
+         interface only constrains one.  Take a type variable bounded by it, `fn f<T: \
+         Sizable>(x: T)`, or name the concrete type at \
+         an_interface_as_a_parameter_type_names_the_bound:4:20",
+    );
+}
+
+// A bare variant of ANOTHER enum, where the target has an enum type.  The no-context sentence
+// ("has no type here … give the target an enum type") told the author to do what they had done,
+// and its recovery typed the value as the other enum, so `cannot change type from Direction to
+// Compass` followed.  One error now, naming both enums.
+#[test]
+fn a_variant_of_another_enum_names_both_enums() {
+    code!(
+        "enum Direction { North, South }\n\
+         enum Compass { Up, Down }\n\
+         fn test() {\n  d: Direction = Up;\n  println(\"{d}\");\n}"
+    )
+    .error(
+        "'Up' is not a variant of 'Direction' — it belongs to 'Compass'. Write one of \
+         'Direction''s variants (North, South), or give the target the type 'Compass' at \
+         a_variant_of_another_enum_names_both_enums:4:21",
+    );
+}
+
+// A field capture followed by `and` / `or`: the capture binds for the body alone, so the fault
+// is combining it with a condition — not a missing block, which is what the message said.
+#[test]
+fn a_capture_combined_with_a_condition_names_the_nesting() {
+    code!(
+        "enum Shape { Circle { radius: integer }, Square { side: integer } }\n\
+         fn test() {\n  s = Circle { radius: 5 };\n  if s is Circle { radius } and radius > 3 {\n    println(\"big {radius}\");\n  }\n}"
+    )
+    .error(
+        "a field capture cannot be combined with a condition — `is Circle { radius }` binds its \
+         fields for the body that follows it, and nowhere else.  Nest the test, `if s is Circle \
+         { radius } { if … { … } }`, or use a `match` guard, `match s { Circle { radius } if … \
+         => …, _ => … }` at a_capture_combined_with_a_condition_names_the_nesting:4:32",
+    );
+}
+
+// The narrowing refusal's checked-cast cure for an inline `limit` field is a spelling the parser
+// reads: it printed `as integer(0, 1000000)?`, the type's key, which does not parse.  The cure
+// as printed compiles (`tests/scripts/a-limit-narrowing-cure-compiles-as-printed.loft`).
+#[test]
+fn a_limit_narrowing_cure_is_a_spelling_that_parses() {
+    code!(
+        "struct S { v: integer limit(0, 1000000) }\n\
+         fn test() {\n  n = 5000;\n  s = S { v: n };\n  println(\"{s.v}\");\n}"
+    )
+    .error(
+        "cannot implicitly narrow integer to integer limit(0, 1000000) (may lose data) — give \
+         it a fallback with `?? <value>`, or make the destination `integer limit(0, 1000000)?` \
+         so a value that does not fit reads null, or make the value provably fit with a mask \
+         (`& 524287`) at a_limit_narrowing_cure_is_a_spelling_that_parses:4:17",
+    );
+}
+
+// A function body whose last statements follow a `return` cannot fall off its end: the
+// unreachable-code warning is the one diagnostic, with no false `got void on return` beside it.
+#[test]
+fn statements_after_a_return_do_not_make_the_body_fall_off() {
+    code!(
+        "fn f() -> integer { return 3; println(\"after\"); }\nfn test() {\n  println(\"{f()}\");\n}"
+    )
+    .warning(
+        "Unreachable code after return at \
+             statements_after_a_return_do_not_make_the_body_fall_off:1:31",
+    );
+}
+
+// Replacing a vector while a `&` link into it is live is refused as a REPLACEMENT: the refill
+// is carried by appends, and the refusal named them ("cannot grow `v`").
+#[test]
+fn replacing_a_container_under_a_live_link_says_replace() {
+    code!(
+        "struct R { n: integer }\n\
+         fn test() {\n  v = [R { n: 1 }, R { n: 2 }];\n  c = &v[0];\n  v = [R { n: 5 }];\n  println(\"{c.n}\");\n}"
+    )
+    .error(
+        "cannot give `v` a new value while `c` references a place inside it — `c` names an \
+         element of the value `v` held before, so a write through `c` would no longer reach `v`. \
+         Move it after the last use of `c`, or bind without `&` to work on a copy at \
+         replacing_a_container_under_a_live_link_says_replace:5:1",
+    );
+}
+
+// An `if` range check does not narrow a value's type, so the narrowing refusal inside one must
+// not offer it as the cure; the cures it does print are the ones that compile in a non-null
+// slot (`tests/scripts/a-narrowing-cure-compiles-where-it-is-offered.loft` compiles each).
+#[test]
+fn a_narrowing_refusal_offers_no_range_check() {
+    code!("fn test() {\n  x = 200 + len(\"\");\n  if x >= 0 and x <= 255 { b: u8 = x; println(\"{b}\"); }\n}")
+        .error(
+            "cannot implicitly narrow integer to u8 (may lose data) — give it a fallback with \
+             `?? <value>`, or make the destination `u8?` so a value that does not fit reads \
+             null, or make the value provably fit with a mask (`& 255`) at \
+             a_narrowing_refusal_offers_no_range_check:3:38",
+        );
+}
+
+// A range no `2^k - 1` mask fits (it excludes 0) is offered no mask at all.
+#[test]
+fn a_range_that_excludes_zero_is_offered_no_mask() {
+    code!("struct S { v: integer limit(10, 20) }\nfn test() {\n  n = 15 + len(\"\");\n  s = S { v: n };\n  println(\"{s.v}\");\n}")
+        .error(
+            "cannot implicitly narrow integer to integer limit(10, 20) (may lose data) — give it \
+             a fallback with `?? <value>`, or make the destination `integer limit(10, 20)?` so a \
+             value that does not fit reads null at a_range_that_excludes_zero_is_offered_no_mask:4:17",
+        );
+}
+
+// The explicit-cast refusal: its fallback is spelled directly after the cast (that `??` is the
+// one that arms it), and its mask with the parentheses `as` needs.
+#[test]
+fn a_narrowing_cast_refusal_spells_cures_that_parse() {
+    code!("fn test() {\n  x = 200 + len(\"\");\n  b: u8 = x as u8;\n  println(\"{b}\");\n}").error(
+        "narrowing cast from integer to u8 may not fit at runtime; use `u8?` for a checked \
+             cast (value or null), give it a fallback with `as u8 ?? <value>`, or mask it first, \
+             `(<value> & 255) as u8` at a_narrowing_cast_refusal_spells_cures_that_parse:3:19",
+    );
+}
+
+// A radix letter in the wrong case is a format spec error naming the letter meant, not an
+// unknown variable with an upper-case-local advice beside it.
+#[test]
+fn an_upper_case_radix_is_an_unknown_spec() {
+    code!("fn test() {\n  println(\"{42:B}\");\n}").error(
+        "`B` is not a format spec — the spec is lower-case `b`.  The specs are `d` (decimal), \
+         `b` (binary), `o` (octal), `x` / `X` (hex), `e` (exponent) and `j` (JSON), after an \
+         optional width — a number, or a variable in scope at an_upper_case_radix_is_an_unknown_spec:2:19",
+    );
+}
+
+// A name that is neither a spec nor a value in scope says so; a variable still supplies a width.
+#[test]
+fn an_unknown_name_in_a_format_spec_is_an_unknown_spec() {
+    code!("fn test() {\n  println(\"{42:hex}\");\n}").error(
+        "`hex` is not a format spec.  The specs are `d` (decimal), `b` (binary), `o` (octal), \
+         `x` / `X` (hex), `e` (exponent) and `j` (JSON), after an optional width — a number, or \
+         a variable in scope at an_unknown_name_in_a_format_spec_is_an_unknown_spec:2:21",
+    );
+    code!("fn test() {\n  w = 5;\n  assert(\"{42:w}\" == \"   42\", \"a variable width\");\n}");
+}
+
+// loft#1796 — `@FR-N-Reserve`: a nullable narrow slot holds its USABLE range (`u8?` is
+// 0..=254; 255 is its null), so a CONSTANT outside it could only ever be stored as null.
+// Every position that stores into such a slot refuses it: the declaration, a reassignment, a
+// struct literal field, a call argument and a return tail.  The vector literal element is
+// pinned by tests/scripts/1796-…-element.loft instead: this harness's shared cached stdlib
+// takes another conversion path for it than the compiler does (cold or warm).
+#[test]
+fn a_constant_a_nullable_narrow_slot_cannot_hold_is_refused_in_every_position() {
+    code!(
+        "struct R { b: u8? }
+fn f(p: u8?) -> boolean { p == null }
+fn g() -> u8? {
+  255
+}
+fn test() {
+  a: u8? = 255;
+  a = 300;
+  r = R { b: 255 };
+  c = f(255);
+  assert(a == null && r.b == null && c && g() == null, \"\");
+}"
+    )
+    // the return tail
+    .error("255 does not fit `u8?` — a nullable u8 holds 0..=254 (the remaining code is its null), so this constant would be stored as null.  Use a wider nullable type, or the non-null `u8`, which holds its whole range at a_constant_a_nullable_narrow_slot_cannot_hold_is_refused_in_every_position:4:3")
+    // the fixture reassigns `a` before reading it, which the dead-assignment lint reports
+    .warning("Dead assignment — 'a' is overwritten before being read at a_constant_a_nullable_narrow_slot_cannot_hold_is_refused_in_every_position:7:16")
+    // the declaration
+    .error("255 does not fit `u8?` — a nullable u8 holds 0..=254 (the remaining code is its null), so this constant would be stored as null.  Use a wider nullable type, or the non-null `u8`, which holds its whole range at a_constant_a_nullable_narrow_slot_cannot_hold_is_refused_in_every_position:7:16")
+    // a reassignment
+    .error("300 does not fit `u8?` — a nullable u8 holds 0..=254 (the remaining code is its null), so this constant would be stored as null.  Use a wider nullable type, or the non-null `u8`, which holds its whole range at a_constant_a_nullable_narrow_slot_cannot_hold_is_refused_in_every_position:8:11")
+    // a struct literal field
+    .error("255 does not fit `u8?` — a nullable u8 holds 0..=254 (the remaining code is its null), so this constant would be stored as null.  Use a wider nullable type, or the non-null `u8`, which holds its whole range at a_constant_a_nullable_narrow_slot_cannot_hold_is_refused_in_every_position:9:19")
+    // a call argument
+    .error("255 does not fit `u8?` — a nullable u8 holds 0..=254 (the remaining code is its null), so this constant would be stored as null.  Use a wider nullable type, or the non-null `u8`, which holds its whole range at a_constant_a_nullable_narrow_slot_cannot_hold_is_refused_in_every_position:10:14");
+}
+
+// loft#1796 — `@FR-N-Reserve` for a DEFAULT: a nullable narrow field's or parameter's default
+// is a store into that slot, so a constant outside its usable range is refused there too —
+// once, although the default is converted both where it is written and in the function it is
+// hoisted into.  A `limit` range keeps every value (it widens rather than reserving a code), so
+// its message names the range it holds and no reserved null.
+#[test]
+fn a_nullable_narrow_field_default_that_cannot_fit_is_refused() {
+    code!(
+        "type Lim = integer limit(0, 10);
+struct D { a: u8? = 300, b: Lim? = 12, e: u16? = 70000 }
+fn p(a: u8? = 255) -> text { \"{a}\" }
+fn test() {
+  d = D {};
+  assert(\"{d.a} {d.b} {d.e} {p()}\" == \"\", \"\");
+}"
+    )
+    // the u8? field default
+    .error("300 does not fit `u8?` — a nullable u8 holds 0..=254 (the remaining code is its null), so this constant would be stored as null.  Use a wider nullable type, or the non-null `u8`, which holds its whole range at a_nullable_narrow_field_default_that_cannot_fit_is_refused:2:25")
+    // the `limit` field default, which reserves no code
+    .error("12 does not fit `Lim?` — it holds 0..=10, so this constant would be stored as null.  Use a wider type at a_nullable_narrow_field_default_that_cannot_fit_is_refused:2:39")
+    // the u16? field default
+    .error("70000 does not fit `u16?` — a nullable u16 holds 0..=65534 (the remaining code is its null), so this constant would be stored as null.  Use a wider nullable type, or the non-null `u16`, which holds its whole range at a_nullable_narrow_field_default_that_cannot_fit_is_refused:2:57")
+    // the parameter default
+    .error("255 does not fit `u8?` — a nullable u8 holds 0..=254 (the remaining code is its null), so this constant would be stored as null.  Use a wider nullable type, or the non-null `u8`, which holds its whole range at a_nullable_narrow_field_default_that_cannot_fit_is_refused:3:19");
+}
+
+// loft#1796 — `@FR-N-Reserve` through a JOIN: the constant a nullable narrow slot cannot hold
+// is refused wherever the value that reaches the slot can BE that constant — an arm of an `if`
+// or a `match` (at any depth: an arm of an arm, an `else if`, an arm whose block ends in it)
+// and the default of a `??` (in a chain, or an `if` standing as the default).  Each store is
+// refused once, naming its first constant that does not fit; the fitting shapes beside them
+// compile (tests/scripts/1796-a-constant-a-nullable-narrow-slot-cannot-hold-is-refused.loft).
+#[test]
+fn a_constant_a_nullable_narrow_slot_cannot_hold_is_refused_through_a_join() {
+    code!(
+        "fn g(n: integer) -> integer? { if n > 0 { n } else { null } }
+fn test() {
+  c = len(\"ab\") > 1;
+  k = len(\"a\");
+  a: u8? = if c { 255 } else { 3 };
+  b: u8? = if !c { 1 } else if k == 2 { 2 } else { -1 };
+  d: u8? = if c { if k == 1 { 400 } else { 5 } } else { 6 };
+  e: u8? = match k { 1 => 300, _ => 2 };
+  f: u8? = match k { 1 => { k += 1; 256 }, _ => 2 };
+  h: u8? = g(0) ?? 300;
+  i: u8? = g(0) ?? g(-1) ?? 999;
+  j: i8? = g(0) ?? (if c { 7 } else { -128 });
+  assert(\"{a}{b}{d}{e}{f}{h}{i}{j}\" == \"\", \"\");
+}"
+    )
+    // an `if`'s then arm
+    .error("255 does not fit `u8?` — a nullable u8 holds 0..=254 (the remaining code is its null), so this constant would be stored as null.  Use a wider nullable type, or the non-null `u8`, which holds its whole range at a_constant_a_nullable_narrow_slot_cannot_hold_is_refused_through_a_join:5:36")
+    // an `else if` chain's last arm
+    .error("-1 does not fit `u8?` — a nullable u8 holds 0..=254 (the remaining code is its null), so this constant would be stored as null.  Use a wider nullable type, or the non-null `u8`, which holds its whole range at a_constant_a_nullable_narrow_slot_cannot_hold_is_refused_through_a_join:6:57")
+    // an arm of an arm
+    .error("400 does not fit `u8?` — a nullable u8 holds 0..=254 (the remaining code is its null), so this constant would be stored as null.  Use a wider nullable type, or the non-null `u8`, which holds its whole range at a_constant_a_nullable_narrow_slot_cannot_hold_is_refused_through_a_join:7:61")
+    // a `match` arm
+    .error("300 does not fit `u8?` — a nullable u8 holds 0..=254 (the remaining code is its null), so this constant would be stored as null.  Use a wider nullable type, or the non-null `u8`, which holds its whole range at a_constant_a_nullable_narrow_slot_cannot_hold_is_refused_through_a_join:8:41")
+    // a `match` arm whose block ends in it
+    .error("256 does not fit `u8?` — a nullable u8 holds 0..=254 (the remaining code is its null), so this constant would be stored as null.  Use a wider nullable type, or the non-null `u8`, which holds its whole range at a_constant_a_nullable_narrow_slot_cannot_hold_is_refused_through_a_join:9:53")
+    // a `??` default
+    .error("300 does not fit `u8?` — a nullable u8 holds 0..=254 (the remaining code is its null), so this constant would be stored as null.  Use a wider nullable type, or the non-null `u8`, which holds its whole range at a_constant_a_nullable_narrow_slot_cannot_hold_is_refused_through_a_join:10:24")
+    // a `??` chain's last default
+    .error("999 does not fit `u8?` — a nullable u8 holds 0..=254 (the remaining code is its null), so this constant would be stored as null.  Use a wider nullable type, or the non-null `u8`, which holds its whole range at a_constant_a_nullable_narrow_slot_cannot_hold_is_refused_through_a_join:11:33")
+    // an `if` standing as a `??` default, into an `i8?`
+    .error("-128 does not fit `i8?` — a nullable i8 holds -127..=127 (the remaining code is its null), so this constant would be stored as null.  Use a wider nullable type, or the non-null `i8`, which holds its whole range at a_constant_a_nullable_narrow_slot_cannot_hold_is_refused_through_a_join:12:47");
 }

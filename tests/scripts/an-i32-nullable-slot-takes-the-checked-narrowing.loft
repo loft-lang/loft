@@ -1,0 +1,76 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `(I-Narrow-Opt)`: a narrowing into `τ?` is the checked cast `e as τ?` — the value when it
+// fits, `null` when it does not — in every slot.  `i32?` was the one width outside it: the
+// test that decides it asked range containment, and `integer` → `i32` differs in storage
+// width alone (loft#931), so a local kept `5000000000`, a field or element answered the `??`
+// fallback where every other width answers null, and a return was refused with a
+// `?? <value>` cure a nullable slot cannot take (loft#1812).
+//
+// @falsified-at: 514f99913 — measured by hand on that build before the fix: the
+//   `x`/`s.f` pair below printed `5000000000 7`, and `fn r(a: integer) -> i32? { a }`
+//   was refused.
+// @falsified-by: tests/falsified/an-i32-nullable-slot-takes-the-checked-narrowing.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   The patch is the fix commit 30b551fcc's source diff reversed, since the control above lives in no
+//   pushed ref; its channels match that control's.  Re-score:
+//   scripts/falsify.sh tests/scripts/an-i32-nullable-slot-takes-the-checked-narrowing.loft --patch tests/falsified/an-i32-nullable-slot-takes-the-checked-narrowing.patch
+//   CHANNEL: exit — the control refuses to compile `r` and `rr`, so nothing runs; with those
+//   two removed it runs and the `x` and `s.f` assertions fail (VALUE).
+//   WITNESS: `error: cannot implicitly narrow integer to i32 (may lose data) — give it a
+//   fallback with `?? <value>`, …` at the `a` of `r`; `x` holds 5000000000, `s.f` holds 7.
+//   HOLDS: here no diagnostic, every assertion passes and nothing leaks, on both backends.
+
+struct S { f: i32? }
+
+fn r(a: integer) -> i32? { a }
+
+fn rr(a: integer) -> i32? {
+  return a;
+}
+
+fn p(q: i32?) -> integer {
+  q ?? -1
+}
+
+fn main() {
+  big = 5000000000;
+  zero = big - big;
+  mm: integer? = big;
+  nn: integer? = null;
+  // A discharged value out of range: the whole store is the checked cast, as for `u8?`.
+  x: i32? = mm ?? 7;
+  assert(!x, "an out-of-range value into an i32? local is null");
+  y: i32? = nn ?? 7;
+  assert(y == 7, "an in-range fallback is kept");
+  s = S { f: mm ?? 7 };
+  assert(!s.f, "a field answers as the local does");
+  v: vector<i32?> = [mm ?? 7, 12];
+  assert(!v[0] && v[1] == 12, "an element answers as the local does");
+  t: (i32?, integer) = (mm ?? 7, 1);
+  assert(!t.0, "a tuple member answers as the local does");
+  // The return and the argument take it too.
+  assert(!r(big), "a return is the checked cast, not a refusal");
+  assert(r(123) == 123, "a return in range keeps its value");
+  assert(!rr(big), "an explicit return answers as the tail does");
+  assert(rr(-9) == -9, "and keeps an in-range value");
+  assert(p(big) == -1, "an argument out of range arrives as null");
+  assert(p(44) == 44, "an argument in range arrives unchanged");
+  // The range's edges: `i32` is -2147483647 ..= 2147483647 (formal/types.md, the one code
+  // below it is the null), so -2147483648 does not fit.
+  hi: i32? = 2147483647 + zero;
+  assert(hi == 2147483647, "the top of the range fits");
+  lo: i32? = -2147483647 + zero;
+  assert(lo == -2147483647, "the bottom of the range fits");
+  under: i32? = -2147483648 + zero;
+  assert(!under, "one below the range is null");
+  z: i32? = 5;
+  assert(z == 5, "a literal in range");
+  z = big;
+  assert(!z, "a reassignment is a store");
+  c: i32? = 2147483000;
+  c += 1000 + zero;
+  assert(!c, "a compound step past the top is null");
+  k: i32? = mm;
+  assert(!k, "a nullable source out of range is null");
+}

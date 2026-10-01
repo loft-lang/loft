@@ -4,7 +4,8 @@
 // @TITLE: Fast lookup and range queries over records
 // An 'index' lets you find records instantly by key and iterate over ranges of keys in order.
 // It supports multi-part keys: you can sort by a primary key and break ties with a secondary key.
-// Declare the key fields inside angle brackets: 'field' sorts ascending, '-field' descending.
+// Name the key fields in square brackets after the record type, as in 'index<Elm[nr, -key]>':
+// 'field' sorts ascending, '-field' descending.
 //
 // Two keyed collections over the SAME element type are two ROUTES to one set of records, not
 // two collections. Give records to either one and both see them; write through one and the
@@ -67,7 +68,7 @@ fn main() {
   // ## Loop Helpers: #first and #count
   // 'r#first' is true for the very first element visited.
   // 'r#count' is a running counter starting at 0.
-  // Note: #index is not meaningful on index collections — use #count instead.
+  // Note: '#index' is a compile error on index collections — use '#count' instead.
   first_nr = 0;
   count_total = 0;
   for r in db.map {

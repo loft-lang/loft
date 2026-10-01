@@ -558,7 +558,7 @@ pub fn report(data: &crate::data::Data) -> usize {
             def.name,
             var_name,
             origin_note,
-            data.type_name_str(def.variables.tp(s.var)),
+            data.display_type_name(def.variables.tp(s.var)),
             who,
         );
     }

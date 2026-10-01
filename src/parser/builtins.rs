@@ -235,6 +235,28 @@ impl Parser {
                 "Expect '(' after function name '{first_id}' in parallel clause"
             );
         }
+        // loft#1803 — a `self` function has both spellings everywhere, so `get_value(a)` is
+        // `a.get_value()` here too: the worker is called with the element first, which is
+        // exactly the receiver.  The method is filed under the element type's key
+        // (`t_<len><Type>_<name>`) — the dense struct's for a nullable element, as the
+        // method form resolves it — and not under the bare name this lookup asked.
+        if d_nr == u32::MAX {
+            let type_name = match elem_tp {
+                Type::Enum(d, _, _) if self.data.def(*d).name().starts_with("__nullable<") => {
+                    let nm = self.data.def(*d).name();
+                    Some(nm["__nullable<".len()..nm.len() - 1].to_string())
+                }
+                Type::Reference(d, _) | Type::Enum(d, _, _) => {
+                    Some(self.data.def(*d).name().to_string())
+                }
+                _ => None,
+            };
+            if let Some(type_name) = type_name {
+                d_nr = self
+                    .data
+                    .def_nr(&crate::data::Data::mangle_method(&type_name, first_id));
+            }
+        }
         if d_nr == u32::MAX {
             if !self.first_pass {
                 diagnostic!(self.lexer, Level::Error, "Unknown function '{first_id}'");
@@ -477,7 +499,7 @@ impl Parser {
         // `Reference(__nullable<S>)` for a KEYED par (hash/sorted/index): `materialise_keyed_for_par`
         // builds the temp vector with `Reference(content_d)` element refs.  Both need the wrapper
         // so the worker reads the dense-`S` payload, not the element's discriminant @0.
-        let elem_enum_d = match elem_tp {
+        let elem_enum_d = match elem_tp.base() {
             Type::Enum(d, true, _) => Some(*d),
             Type::Reference(d, _) if self.data.def(*d).name().starts_with("__nullable<") => {
                 Some(*d)

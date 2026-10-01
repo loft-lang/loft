@@ -1330,6 +1330,24 @@ struct Disturbance {
     /// The container the view names — carried so a diagnostic can name it without re-deriving
     /// the view→container mapping from a frame that has since closed.
     container: u16,
+    /// A `Grown` that is the REFILL of a whole-value assignment, `v = [R { n: 5 }]`: a
+    /// vector local is given its new value as a `Set` of a fresh store followed by the appends
+    /// that fill it, so the disturbance a view sees is the append.  The cause stays `Grown`,
+    /// because that is what decides which bindings survive; this only picks the SENTENCE —
+    /// "cannot grow `v`" named an act the line does not perform.
+    replaced: bool,
+}
+
+impl Disturbance {
+    /// The cause as the AUTHOR reads it: a refill after a whole-value assignment is a
+    /// replacement, whatever mechanism carried it (`Disturbance::replaced`).
+    fn reported_cause(&self) -> ViewCause {
+        if self.replaced {
+            ViewCause::Reassigned
+        } else {
+            self.cause
+        }
+    }
 }
 
 /// Record `d` for `view`, keeping [`ViewCause::Reshaped`] when both apply.
@@ -1817,6 +1835,12 @@ struct ViewWalk<'a> {
     /// The source line of the statement being walked, tracked from the `Value::Line` markers
     /// a block interleaves with its operators — the only line information the IR carries.
     line: u32,
+    /// The collection variable the CURRENT statement gave a whole new value — read by the
+    /// growth that fills it, which is a replacement to the author (`Disturbance::replaced`).
+    /// Cleared at every `Line` marker, the statement boundary the parser leaves even between
+    /// statements on one source line.  One slot, not a set: a statement replaces one
+    /// collection local, and the front end's allocation pin counts every walk.
+    rebound: Option<u16>,
 }
 
 impl ViewWalk<'_> {
@@ -1849,6 +1873,7 @@ impl ViewWalk<'_> {
             database,
             cleared: HashSet::default(),
             line: start_line,
+            rebound: None,
         };
         walk.walk_block(std::slice::from_ref(code));
         walk.out
@@ -1858,6 +1883,7 @@ impl ViewWalk<'_> {
         for stmt in stmts {
             if let Value::Line(n) = stmt.unspan() {
                 self.line = *n;
+                self.rebound = None;
             }
             self.walk_stmt(stmt);
         }
@@ -1980,6 +2006,20 @@ impl ViewWalk<'_> {
 
     /// Shake for everything `stmt` disturbs, at any depth inside it.
     fn disturb(&mut self, stmt: &Value) {
+        if let Value::Set(v, _) = stmt.unspan()
+            && !self.function.is_compiler_generated(*v)
+            && matches!(
+                self.function.tp(*v).peel_link(),
+                Type::Vector(..)
+                    | Type::Hash(..)
+                    | Type::Index(..)
+                    | Type::Sorted(..)
+                    | Type::Radix(..)
+                    | Type::Trie(..)
+            )
+        {
+            self.rebound = Some(*v);
+        }
         self.shake_places_keyed(
             &reshaped_containers(stmt, self.data, self.function),
             ViewCause::Reshaped,
@@ -2460,6 +2500,9 @@ impl ViewWalk<'_> {
                 line: self.line,
                 via,
                 container,
+                replaced: cause == ViewCause::Grown
+                    && via.is_none()
+                    && self.rebound == Some(container),
             };
             record_cause(&mut self.shaken, view, d);
         }
@@ -2899,6 +2942,13 @@ fn def_reshape_refusals(
                      `{view_name}` would no longer reach the element it names"
                 ),
             ),
+            ViewCause::Grown if d.replaced => (
+                format!("give `{container}` a new value"),
+                format!(
+                    "`{view_name}` names an element of the value `{container}` held before, \
+                     so a write through `{view_name}` would no longer reach `{container}`"
+                ),
+            ),
             ViewCause::Grown => (
                 format!("grow `{container}`"),
                 format!(
@@ -2928,7 +2978,7 @@ fn def_reshape_refusals(
             format!(
                 "`{view_name}` would be given its own copy of `{tp}`, and a copy of a value that \
                  owns a resource is a second structure releasing that resource a second time",
-                tp = data.type_name_str(function.tp(view))
+                tp = data.display_type_name(function.tp(view))
             )
         };
         // The way out differs too, and the `&` one is WRONG here: "bind without `&` to work on a
@@ -2939,7 +2989,7 @@ fn def_reshape_refusals(
         } else {
             format!(
                 "or read `{tp}` where it lives",
-                tp = data.type_name_str(function.tp(view))
+                tp = data.display_type_name(function.tp(view))
             )
         };
         // The CALLEE form names the callee's act before the reason, and the JOINER between them
@@ -11825,7 +11875,13 @@ impl Scopes<'_> {
                     let cname = function.name(cause.container).to_string();
                     let fname = data.def(self.d_nr).original_name();
                     let via = disturbance_via(data, &cause);
-                    report_materialised_view(cause.cause, &vname, &cname, &fname, via.as_deref());
+                    report_materialised_view(
+                        cause.reported_cause(),
+                        &vname,
+                        &cname,
+                        &fname,
+                        via.as_deref(),
+                    );
                 }
                 Value::Null
             }
@@ -13603,7 +13659,13 @@ impl Scopes<'_> {
             // they are different, and only one of them was reassigned.
             let cname = function.name(cause.container).to_string();
             let via = disturbance_via(data, &cause);
-            report_materialised_view(cause.cause, &vname, &cname, &fname, via.as_deref());
+            report_materialised_view(
+                cause.reported_cause(),
+                &vname,
+                &cname,
+                &fname,
+                via.as_deref(),
+            );
         }
         // Companion to the !adopts_fresh_store (deep-copy) branch above for the
         // var-to-var deep-copy path.  When `Set(v, Var(src))` and
@@ -13680,7 +13742,7 @@ impl Scopes<'_> {
             {
                 let via = disturbance_via(data, &cause);
                 report_materialised_view(
-                    cause.cause,
+                    cause.reported_cause(),
                     function.name(v),
                     function.name(cause.container),
                     &data.def(self.d_nr).original_name(),
@@ -20590,24 +20652,51 @@ impl Scopes<'_> {
     /// would make the lift free the caller's record — and must itself be proven fresh, so
     /// the proof stays positive and one unreadable link refuses the chain.
     ///
-    /// One level, deliberately. A delegate that itself delegates answers `false` and keeps
-    /// its leak, which is the direction every gate here takes when it cannot name what it
-    /// would be freeing; recursing would also need a cycle guard for mutual recursion.
+    /// A delegate that is itself an instance is asked the same question, so a generic that
+    /// forwards to another generic (`diff2<T>(a, b) { diff(a, b) }`) is decided by the chain
+    /// rather than refused at its first link.  [`DELEGATION_DEPTH`] is the cycle guard mutual
+    /// recursion needs: past it the answer is `false`, the direction every gate here takes
+    /// when it cannot name what it would be freeing.
     /// No `self`: unlike the fn-ref twin, which resolves a closure through the caller's
     /// `fnref_target`, the target here is written in the IR and only `Data` is needed.
+    ///
+    /// A target that returns a BORROW of one of its parameters is fresh here too, where the
+    /// instance COPIES what it is handed (loft#1820).  An instance whose published return
+    /// carries no dep hoists a call tail into a `__ret_N` typed with that return, and a
+    /// record `Set` into an owned temp copies a borrowed source.  The hoist happens whenever
+    /// free ops follow the tail, and a target taking a `__retbuf` guarantees one: the
+    /// instance passes its own work ref and releases it after the call.  So `diff(p, q)`
+    /// over `fn OpMin(self: P, o: P?) -> P { self }` hands its caller a copy of `p`.  Declined,
+    /// that copy was owned by nobody, one record per inline call, while `(p - q).x` — which
+    /// hands back `p` itself and is read as the borrow it is — was clean.
     fn monomorph_delegated_return_is_fresh(data: &Data, def: &crate::data::Definition) -> bool {
+        Self::delegated_return_is_fresh_at(data, def, 0)
+    }
+
+    fn delegated_return_is_fresh_at(
+        data: &Data,
+        def: &crate::data::Definition,
+        depth: usize,
+    ) -> bool {
         let null_ref = data.def_nr("OpNullRefSentinel");
         let Some(targets) = def.monomorph_direct_call_return_targets(null_ref) else {
             return false;
         };
+        let instance_copies = def.returned.depend().is_empty();
         targets.iter().all(|&d_nr| {
             if d_nr as usize >= data.definitions() as usize {
                 return false;
             }
             let target = data.def(d_nr);
             target.code != Value::Null
-                && !target.returns_borrowed_view()
-                && target.monomorph_return_is_fresh(null_ref)
+                && if target.returns_borrowed_view() {
+                    instance_copies && target.attr_names.contains_key("__retbuf")
+                } else {
+                    target.monomorph_return_is_fresh(null_ref)
+                        || (target.is_instance()
+                            && depth < DELEGATION_DEPTH
+                            && Self::delegated_return_is_fresh_at(data, target, depth + 1))
+                }
         })
     }
 
@@ -23817,6 +23906,11 @@ fn inject_per_arm(
 /// travels with the node, unlike a set keyed on a variable number that a re-derived `Scopes`
 /// starts empty.
 const ARMED_VIEW_RETURN: &str = "materialized_view_return_armed";
+
+/// How many generic instances deep [`Scopes::monomorph_delegated_return_is_fresh`] follows a
+/// chain of delegating tails before it answers `false`.  The bound is the cycle guard mutual
+/// recursion needs (`f<T>` forwarding to `g<T>` forwarding to `f<T>`), not a measured depth.
+const DELEGATION_DEPTH: usize = 8;
 
 /// The join feeding a `materialized_view_return`'s copy, if the return has that shape.
 ///

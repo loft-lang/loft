@@ -22,7 +22,7 @@
 // in the standard library, and no formatting. That is deliberate — calendar
 // arithmetic is a large, opinionated subject — and it is a package away:
 //
-//   use time;
+//   use time::*;
 //   fn main() {
 //       ms = now();
 //       println(format_iso(ms));                    // 2026-09-01T09:03:58Z
@@ -78,7 +78,7 @@ fn main() {
   // Seed the random number generator with the current time. The generator is
   // in the 'random' package rather than the standard library, so the import is
   // part of the pattern — without it the name does not resolve:
-  //   use random;
+  //   use random::(rand_seed);
   //   rand_seed(now())
   //
   // Simple stopwatch (integer division, so this truncates to whole ms):

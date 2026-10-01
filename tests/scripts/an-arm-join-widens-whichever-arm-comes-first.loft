@@ -1,0 +1,132 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-I-Widen` / `(C-Num)` — `integer ⤳ float`, `integer ⤳ single` and `single ⤳ float` are
+// implicit widenings — and the join `⊔` (formal/types.md: the least type containing both
+// arms).  An `if` or `match` whose arms answer an integer and a float is therefore a FLOAT,
+// whichever arm comes first.  Only the float-first order compiled: `if c { 2.5 } else { 1 }`
+// was float, while `if c { 1 } else { 2.5 }` was refused *"expected integer, got float on
+// else"* — the else arm was converted to the then arm's type and `float ⤳ integer` is no
+// conversion — and `match k { 1 => 1, _ => 2.5 }` the same *"on a match arm"* (loft#1793).
+// The widened arm must also hold a FLOAT on both backends, so every cell divides by 2: an
+// integer arm left unconverted answers `0`, a converted one `0.5`.
+//
+// The cells (hand-computed):
+//   if / else          `if c { 1 } else { 2.5 }` / 2 → 0.5 and 1.25; the mirror the same
+//   else-if chains     the wide arm first, middle and last
+//   match              scalar, enum (named arm and wildcard), text, tuple and vector subjects,
+//                      bare and block arms, a `null` arm first
+//   single             `integer ⊔ single = single`, `single ⊔ float = float`
+//   destinations       an inferred local, a `float` local, a `-> float` tail, an operand,
+//                      a `+=` in a loop, a statement-position `if`
+//   nullable           `integer? ⊔ float = float?`, the absent arm staying absent
+//
+// Axes this file MOVES: construct (if, else-if chain, match per subject kind), which arm is
+//                       the wide one, arm spelling (bare, block, call), the numeric pair,
+//                       nullability, the destination.
+// Axes it HOLDS FIXED:  literal and call arms only — no arm reads a variable of the other
+//                       numeric type; the float function a call arm names is declared first.
+//
+// @falsified-at: e82943091 — interpret exit 1 -> 0 (the file is refused as parse errors on the
+//   control); native refuses the same repro cells ("on else", "on a match arm", "on if") before
+//   code generation, measured by hand on the issue's programs — the refusal is the parser's.
+// @falsified-by: tests/falsified/an-arm-join-widens-whichever-arm-comes-first.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   The patch is the fix commit 3d1f03bf0's source diff reversed, since the control above lives in no
+//   pushed ref; its channels match that control's.  Re-score:
+//   scripts/falsify.sh tests/scripts/an-arm-join-widens-whichever-arm-comes-first.loft --patch tests/falsified/an-arm-join-widens-whichever-arm-comes-first.patch
+//   CHANNEL: exit — a refusal on both backends before any assertion runs.
+//   ARMED: nothing.
+//   WITNESS: on e82943091 `if c { 1 } else { 2.5 }` is refused "expected integer, got float on
+//     else" at the `2.5`, while its mirror `if c { 2.5 } else { 1 }` compiles and answers 0.5.
+//   HOLDS: the float-first cells answer the same on both trees; no leak or panic on either.
+
+enum Sh1793 { Ci, Sq, Tr }
+
+fn maybe1793(k: integer) -> integer? { if k > 0 { k } else { null } }
+fn wide1793() -> float { 2.5 }
+fn ret_if1793(c: boolean) -> float { if c { 1 } else { 2.5 } }
+fn ret_match1793(k: integer) -> float { match k { 1 => 1, _ => 2.5 } }
+
+fn test_if_else_joins_in_either_order() {
+  for c in [true, false] {
+    a = if c { 1 } else { 2.5 };
+    b = if c { 2.5 } else { 1 };
+    want_a = if c { 0.5 } else { 1.25 };
+    want_b = if c { 1.25 } else { 0.5 };
+    assert(a / 2 == want_a, "int-first if: {a / 2}");
+    assert(b / 2 == want_b, "float-first if: {b / 2}");
+  }
+}
+
+fn test_an_else_if_chain_joins_wherever_the_float_sits() {
+  wants1 = [0.5, 1.25, 1.5];
+  wants2 = [0.5, 1.0, 1.75];
+  wants3 = [0.75, 1.0, 1.5];
+  for k in [1, 2, 3] {
+    e1 = if k == 1 { 1 } else if k == 2 { 2.5 } else { 3 };
+    e2 = if k == 1 { 1 } else if k == 2 { 2 } else { 3.5 };
+    e3 = if k == 1 { 1.5 } else if k == 2 { 2 } else { 3 };
+    assert(e1 / 2 == wants1[k - 1], "float in the middle, k={k}: {e1 / 2}");
+    assert(e2 / 2 == wants2[k - 1], "float last, k={k}: {e2 / 2}");
+    assert(e3 / 2 == wants3[k - 1], "float first, k={k}: {e3 / 2}");
+  }
+}
+
+fn test_a_match_joins_whichever_arm_is_wide() {
+  wants1 = [0.5, 1.25, 1.5];
+  wants2 = [0.5, 1.0, 1.75];
+  for k in [1, 2, 3] {
+    m1 = match k { 1 => 1, 2 => 2.5, _ => 3 };
+    m2 = match k { 1 => { 1 }, 2 => { 2 }, _ => { 3.5 } };
+    assert(m1 / 2 == wants1[k - 1], "scalar match, float in the middle, k={k}: {m1 / 2}");
+    assert(m2 / 2 == wants2[k - 1], "block arms, float last, k={k}: {m2 / 2}");
+  }
+  s = Sh1793.Sq;
+  me = match s { Ci => 1, Sq => 2.5, _ => 3 };
+  mw = match s { Ci => 1, _ => 2.5 };
+  assert(me / 2 == 1.25 && mw / 2 == 1.25, "enum match: {me / 2} {mw / 2}");
+  c = Sh1793.Ci;
+  mc = match c { Ci => 1, _ => 2.5 };
+  assert(mc / 2 == 0.5, "enum match, the narrow arm taken: {mc / 2}");
+  t = (1, 0);
+  mt = match t { (1, _) => 1, _ => 2.5 };
+  v = [2];
+  mv = match v { [1, ..] => 1, _ => 2.5 };
+  x = "a";
+  mx = match x { "a" => 1, _ => 2.5 };
+  assert(mt / 2 == 0.5 && mv / 2 == 1.25 && mx / 2 == 0.5, "tuple/vector/text: {mt} {mv} {mx}");
+  mcall = match 1 { 1 => 1, _ => wide1793() };
+  assert(mcall / 2 == 0.5, "a call arm: {mcall / 2}");
+}
+
+fn test_single_joins_as_float_does() {
+  a = if true { 1 } else { 2.5f };
+  b = if true { 1.5f } else { 2.25 };
+  assert(a / 2 == 0.5f, "integer ⊔ single: {a / 2}");
+  assert(b == 1.5, "single ⊔ float: {b}");
+}
+
+fn test_every_destination_sees_the_float() {
+  x: float = if true { 1 } else { 2.5 };
+  y = (if false { 1 } else { 2.5 }) * 2.0;
+  assert(x / 2 == 0.5 && y == 5.0, "declared {x}, operand {y}");
+  assert(ret_if1793(true) / 2 == 0.5 && ret_if1793(false) == 2.5, "an if as a float tail");
+  assert(ret_match1793(1) / 2 == 0.5 && ret_match1793(2) == 2.5, "a match as a float tail");
+  s = 0.0;
+  for i in 0..4 { s += if i % 2 == 0 { i } else { 0.5 }; }
+  assert(s == 3.0, "accumulated: {s}");
+  if true { 1 } else { 2.5 };
+}
+
+fn test_a_nullable_arm_joins_to_a_nullable_float() {
+  for k in [0, 1, 2] {
+    c = match k { 0 => null, 1 => 1, _ => 2.5 };
+    e = if k == 0 { maybe1793(0) } else if k == 1 { maybe1793(4) } else { 2.5 };
+    want_c = if k == 0 { -1.0 } else if k == 1 { 0.5 } else { 1.25 };
+    want_e = if k == 0 { -1.0 } else if k == 1 { 2.0 } else { 1.25 };
+    got_c = if c == null { -1.0 } else { (c ?? 0.0) / 2 };
+    got_e = if e == null { -1.0 } else { (e ?? 0.0) / 2 };
+    assert(got_c == want_c, "null-first match, k={k}: {got_c}");
+    assert(got_e == want_e, "nullable chain, k={k}: {got_e}");
+  }
+}

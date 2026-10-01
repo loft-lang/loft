@@ -1,0 +1,95 @@
+diff --git a/default/01_code.loft b/default/01_code.loft
+index 164298b7e..4ceb5fa18 100644
+--- a/default/01_code.loft
++++ b/default/01_code.loft
+@@ -789,10 +789,8 @@ fn OpConstText(_value: const text) -> text;
+ #rust"s.string_from_code();"
+ fn OpConvTextFromNull() -> text;
+ #rust"Str::new(crate::state::STRING_NULL)"
+-// @FR-L-Null-Text — the absent text is stored as the `STRING_NULL` bytes, and a reader tests
+-// the content: it has no characters, as `for c in t` over it makes no trips (loft#1795).
+ fn OpLengthText(v1: text) -> integer;
+-#rust"{{ let __t = @v1; if __t == crate::state::STRING_NULL {{ 0 }} else {{ __t.chars().count() as i64 }} }}"
++#rust"@v1.chars().count() as i64"
+ /// Number of characters (Unicode code points) in the text — the human
+ /// count, as in every mainstream language. For a byte length (bounds checks, the
+ /// limit of byte-positioned indexing / slicing) use `size`.
+@@ -801,9 +799,8 @@ pub fn len(self: text) -> integer {
+ }
+ #pure
+ 
+-// @FR-L-Null-Text — as `OpLengthText`: the absent text holds no bytes a program can index.
+ fn OpSizeText(v1: text) -> integer;
+-#rust"{{ let __t = @v1; if __t == crate::state::STRING_NULL {{ 0 }} else {{ __t.len() as i64 }} }}"
++#rust"@v1.len() as i64"
+ /// Number of bytes in the text. This is the bound for byte-positioned
+ /// operations: `s[i]`, slices `s[a..b]`, and `find`/`rfind` all use byte offsets.
+ /// For the human character count use `len`.
+diff --git a/src/codegen_runtime.rs b/src/codegen_runtime.rs
+index a6ea8bbcf..18bacf5d9 100644
+--- a/src/codegen_runtime.rs
++++ b/src/codegen_runtime.rs
+@@ -954,11 +954,11 @@ fn get_record_lookup(
+ /// else can reach the vector the call would have built.
+ ///
+ /// It yields exactly the elements `split` in `default/02_files.loft` returns: none for an
+-/// empty text or the absent one (`@FR-L-Null-Text`: an absent text has no characters, so
+-/// `split`'s trailing-piece test `len > 0` does not fire — loft#1795), and otherwise one
+-/// piece per separator plus the trailing piece, which is empty when the text ends in a
+-/// separator.  The separator is a character, so a multi-byte one splits on the whole
+-/// character and never inside another.
++/// empty text, and otherwise one piece per separator plus the trailing piece, which is
++/// empty when the text ends in a separator.  A NULL text is not empty — it is the one
++/// character of the null sentinel — so it answers itself as its only piece, as `split`
++/// does.  The separator is a character, so a multi-byte one splits on the whole character
++/// and never inside another.
+ pub struct LazySplit<'a> {
+     rest: Option<&'a str>,
+     separator: char,
+@@ -984,11 +984,7 @@ impl<'a> Iterator for LazySplit<'a> {
+ #[inline]
+ #[must_use]
+ pub fn lazy_split(text: &str, separator: char) -> LazySplit<'_> {
+-    let rest = if text.is_empty() || text == crate::state::STRING_NULL {
+-        None
+-    } else {
+-        Some(text)
+-    };
++    let rest = if text.is_empty() { None } else { Some(text) };
+     LazySplit { rest, separator }
+ }
+ 
+diff --git a/src/fill.rs b/src/fill.rs
+index 19e3a7393..2c3ab98ca 100644
+--- a/src/fill.rs
++++ b/src/fill.rs
+@@ -1638,27 +1638,13 @@ fn conv_text_from_null(s: &mut State) {
+ 
+ fn length_text(s: &mut State) {
+     let v_v1 = s.string();
+-    let new_value = {
+-        let __t = v_v1.str();
+-        if __t == crate::state::STRING_NULL {
+-            0
+-        } else {
+-            __t.chars().count() as i64
+-        }
+-    };
++    let new_value = v_v1.str().chars().count() as i64;
+     s.put_stack(new_value);
+ }
+ 
+ fn size_text(s: &mut State) {
+     let v_v1 = s.string();
+-    let new_value = {
+-        let __t = v_v1.str();
+-        if __t == crate::state::STRING_NULL {
+-            0
+-        } else {
+-            __t.len() as i64
+-        }
+-    };
++    let new_value = v_v1.str().len() as i64;
+     s.put_stack(new_value);
+ }
+ 

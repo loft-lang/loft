@@ -87,13 +87,15 @@ fn main() {
   gt = gsl(ts);
   assert(len(gt) == 2 && gt[0] == "bb", "c9 text {gt[0]}");
 
-  // c10: a slice of a MAPPED file's bytes — the copy reads the foreign store's span
-  assert(write_bytes("loft_174_slice.tmp", bytes), "c10 write");
-  fm = file_map("loft_174_slice.tmp") ?? [];
+  // c10: a slice of a MAPPED file's bytes — the copy reads the foreign store's span.  The
+  // file name is this run's own: `slice_copy.rs` runs this file beside the corpus suites.
+  mapped = "loft_174_slice_{now()}_{ticks()}.tmp";
+  assert(write_bytes(mapped, bytes), "c10 write");
+  fm = file_map(mapped) ?? [];
   fms = fm[2..5];
   assert(len(fms) == 3 && fms[0] == 202 && fms[2] == 204, "c10 {len(fms)} {fms[0]} {fms[2]}");
   fmt = fm[-1..];
   assert(len(fmt) == 1 && fmt[0] == 209, "c10 tail {fmt[0]}");
-  assert(delete("loft_174_slice.tmp"), "cleanup");
+  assert(delete(mapped), "cleanup");
   println("slice copy ok");
 }

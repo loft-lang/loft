@@ -98,9 +98,12 @@ advice: in `f`, `c` was copied out of `bx` because `bx` is reassigned while `c`
   leaves nothing for it to point at. Writes through `c` no longer reach `bx`.
 ```
 
-Three things end the place: **removing** from the container (`v.remove(i)`
-renumbers the rest), **writing a key field** through the view on a keyed
-collection, and **reassigning the container itself** (`bx = T{…}`).  After the
+Four things end the place: **removing** from the container (`v.remove(i)`
+renumbers the rest), **growing** it (`v += [x]`, an insert, a keyed add — a
+container that outgrows its room moves every element), **writing a key field**
+through the view on a keyed collection, and **reassigning the container itself**
+(`bx = T{…}`).  Each counts where it happens: in this function, or in a function it
+calls with the container.  After the
 copy, writes through the binding no longer reach the container — which is why it
 is reported and not silent.  To keep writing through, re-read the view after the
 change (`c = bx.v[0]`).
@@ -127,9 +130,9 @@ through.
 
 **Write `&` and you get an error instead of a copy.**  `c = &v[0]` says *"I want a
 live link"* — an ownership decision, not a hint — so loft will not quietly hand you a
-copy.  Where it cannot honour the link, it refuses the program instead.  All three
-things that end a place do this: removing from the container, writing a KEY field
-through the reference, and replacing the container itself.
+copy.  Where it cannot honour the link, it refuses the program instead.  All four
+things that end a place do this: removing from the container, growing it, writing a
+KEY field through the reference, and replacing the container itself.
 
 ```
 error: cannot remove from `v` while `c` references an element of it — a removal
@@ -457,10 +460,12 @@ rather than a bag of functions.  Mark the type and these functions `pub` to use 
 - **Operators** — define `fn OpLt(self: T, other: T) -> boolean` (and `OpLe/OpGt/OpGe/OpEq/OpNe`),
   `fn OpAdd/OpMin/OpMul(self: T, …) -> …`, etc., and `a < b` / `a - b` dispatch them **directly**
   (not only inside `<T: Ordered>`).  `OpMin` is the `-` operator (subtraction), `OpAdd` is `+`.
-  **Operators key on `(OpName, receiver type)`** — you cannot overload the *same* operator by the
-  *second* operand's type (e.g. one `OpMin(T, T)` and one `OpMin(T, U)` collide); give the second
-  form a named method instead.  A type with no such op errors as before (`dt + 5` stays a compile
-  error — distinct-type safety is free).
+  **One operator may be overloaded on its second operand's type** — `OpMin(self: T, o: T)` beside
+  `OpMin(self: T, o: integer)`, in either order: `a - b` reaches the one the call `OpMin(a, b)`
+  would, the exact type preferred over a conversion ((F-Recv), `formal/calls.md`), and a
+  `<T: Subtractable>` body takes the `(T, T)` one.  A second operand no overload takes errors
+  (`No matching operator '-' on 'T' and 'text'`), and so does a type with no such op (`dt + 5`
+  stays a compile error — distinct-type safety is free).
 - **Scope end** — define `fn OpDrop(self: T)` and it runs when the value's OWNER dies: the
   binding's own scope exit, the early-`return`/`break` paths, reverse-declaration order within a
   scope (@PLN125 arc B), and a REASSIGNMENT of the binding, which releases the record it
@@ -660,15 +665,21 @@ sizeof(integer)    // 8
 sizeof(u8)         // 1 (packed field size)
 sizeof(u16)        // 2
 sizeof(MyStruct)   // sum of packed field sizes
+sizeof(vector<T>)  // 4 — every collection field is one record pointer
+sizeof((u8, u8))   // 2 — a tuple is packed as a struct with those members
 sizeof(my_var)     // size of the variable's type
 ```
 
 `sizeof(TYPE)` returns the packed byte size used when the type is stored as a struct
 field or vector element. For range-constrained integer types (`u8`, `u16`, etc.) this
-is the packed size (1 or 2 bytes), not the stack slot size. For polymorphic enums and
-references, the size is computed at runtime from the actual variant.
+is the packed size (1 or 2 bytes), not the stack slot size. `sizeof(expr)` answers
+`sizeof` of the expression's type — a `u8` local or field is 1, a `vector` local 4 —
+except a struct-enum value, whose size is computed at runtime from the variant it holds.
+An absent struct-enum value holds no variant and sizes as its type, like `sizeof(Shape)`.
 
-Catalogue: @F45; guard: `tests/scripts/89-sizeof.loft`.
+Catalogue: @F45; guards: `tests/scripts/89-sizeof.loft`,
+`tests/scripts/1779-sizeof-of-an-expression-is-sizeof-of-its-type.loft`,
+`tests/scripts/1781-sizeof-and-type-name-read-a-tuple-type.loft`.
 
 ---
 

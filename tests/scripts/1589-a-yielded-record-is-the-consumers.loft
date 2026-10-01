@@ -18,9 +18,10 @@
 //
 // Every expected value, trace and drop order is worked out by hand from the rule.  The drop
 // hook writes a trace FILE, as `139-drop-cascade.loft` does and for its reason.  A loop-body
-// yield and a `yield from` run EAGERLY on `--native` (COROUTINE.md CL-9: every value is made
-// before the first is read), so those two cells assert what the rule fixes — the values, and
-// one release per record — rather than the interleaving.
+// yield and a `yield from` ran EAGERLY on `--native` when this file was written (every value
+// made before the first is read), so those two cells assert what the rule fixes — the values,
+// and one release per record — rather than the interleaving.  Both are lazy since loft#1798;
+// `a-record-yielded-from-a-loop-is-handed-over-lazily` pins a record loop's order.
 //
 // @falsified-at: 516587d5c — interpret exit 1 -> 0, native exit 1 -> 0, native 1 assertion failures
 //   -> 0 (LOFT_STRICT_STORES=1 make falsify …)
@@ -107,11 +108,11 @@ fn two() -> iterator<H> { yield mk(1); yield mk(2); }
 fn c8_run() { g = two(); a = next(g) ?? H { id: 0 }; b = next(g) ?? H { id: 0 }; note("r{a.id}{b.id}"); }
 fn c8() -> text { c8_run(); "" }
 
-// 9 — a loop-body yield (eager on --native): the values, one release each.
+// 9 — a loop-body yield: the values, one release each.
 fn looped() -> iterator<H> { for i in 1..4 { yield mk(i); } }
 fn c9() -> text { s = 0; for e in looped() { s += e.id; } "{s}" }
 
-// 10 — `yield from` hands each of the inner generator's values on (eager on --native).
+// 10 — `yield from` hands each of the inner generator's values on.
 fn inner() -> iterator<H> { yield mk(21); yield mk(22); }
 fn outer() -> iterator<H> { yield mk(20); yield from inner(); yield mk(23); }
 fn c10() -> text { s = 0; for e in outer() { s += e.id; } "{s}" }

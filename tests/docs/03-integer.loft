@@ -35,16 +35,17 @@ fn main() {
   //   pow(base, exp) as integer?           // the number, or null
   //   (pow(base, exp) ?? 0.0) as integer   // your own default instead
   // A bare 'as integer' is refused ("cannot cast a possibly-null `float?` to the
-  // non-null `integer`"). It does compile when BOTH arguments are literals, and that
-  // is the one shape which does not generalise — write the '?' and it works wherever
-  // the base is a variable, which is everywhere real.
+  // non-null `integer`") unless loft can prove the power is defined: a whole-number
+  // constant exponent, or a base it knows is not negative. That proof depends on the
+  // arguments, so it does not generalise — write the '?' and it works for any
+  // arguments.
   assert(1 + 2 * 4 == 9, "Multiplication before addition");
   assert(1 + 2 << 2 == 12, "Shift: (1+2) << 2 = 12");
   assert(0x0a8 & 15 == 8, "Bitwise AND masks low 4 bits");
   assert(42 ^ 0b111111 == 21, "Bitwise XOR");
   assert(105 % 100 == 5, "Modulus (remainder)");
-  // Raised from a VARIABLE base on purpose: the literal-only spelling is exactly the
-  // one that stops compiling the moment a reader puts their own number in it.
+  // Written with the '?' on purpose: it keeps compiling whatever numbers a reader
+  // puts in.
   pw_base = 2.0;
   assert(pow(pw_base, 3.0) as integer? == 8, "pow() for exponentiation");
   assert((pow(pw_base, 10.0) ?? 0.0) as integer == 1024, "…or discharge, then cast");
@@ -96,7 +97,7 @@ fn main() {
   assert(0xFF == 255, "Uppercase hex literal");
   assert(0x2A == 42, "Uppercase hex digit");
   // ## Large integers
-  // Because 'integer' is 64-bit, values far past the old 2-billion limit work
+  // Because 'integer' is 64-bit, values far past the 32-bit limit of 2 billion work
   // directly — no separate type is needed. Arithmetic, comparisons, and the
   // format specifiers above all behave the same at these magnitudes.
   big = 1000000000 * 5;

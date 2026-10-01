@@ -418,3 +418,14 @@ Each entry is the stamped phrase as it stood; the rule sentence it sat in remain
 - (A value already home is not copied to a second one) `**BUILT 2026-09-25** (`LOFT_NO_CONST_VIEW``
 - (A value already home is not copied to a second one) `**BUILT 2026-09-25** (`LOFT_NO_VALUE_LOCAL``
 - (A value already home is not copied to a second one) `the terminal copy (2026-09-27, @PLN158;`
+
+## 2026-09-30 — `(R-LazySplit)` and the absent text (loft#1795)
+
+The NULL text was the edge the lazy split's first build got wrong: it answered no pieces, by
+analogy with the empty text, where `split` then answered one — `len(null)` was 1, so its
+trailing-piece rule fired — and lazy native disagreed with the interpreter AND with its own
+switch-off form (`count=0` for `count=1`).  The cell that found it passed a real null (s2,
+s21); the first s2 passed `nothing ?? ""`, an empty text, and saw nothing.  The iterator was
+then made to answer the null text as one piece, matching `split`.  loft#1795 made `len` and
+`size` of an absent text 0, as `for c in t` over it already was, and the iterator, `split`
+and the split table now all answer no pieces.

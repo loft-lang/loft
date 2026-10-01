@@ -1,0 +1,81 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1822 — @F45: `sizeof` of a struct-enum value is the size of the variant it holds,
+// wherever the value sits.  It read the type from a record HEADER, which only a standalone
+// record has: an element of a vector answered 4, a struct field its whole struct (56), a
+// field of a vector element 8, a field of a hash entry that entry's size — silently, on both
+// backends.  It now reads the discriminant, the byte `is` and `match` test.
+//
+// Circle is 16 (discriminant, then one float) and Rect 40; no container here is 16, so a
+// cell that sized its container instead cannot pass by accident.
+//
+// Axes this file MOVES:  where the value sits (a local, a vector element bound / inline /
+//                        as loop variable / as argument, a struct field, a field of a vector
+//                        element, a field of a hash entry, a function's return, a tuple
+//                        member), the variant held (Circle, Rect), nullable vs not, and an
+//                        ABSENT value in each place it can be absent (a null local, a null
+//                        field, a read past a vector's end, a missing hash entry, a null
+//                        return), which sizes as its TYPE, 40, as `sizeof(Shape)` does.
+// Axes it HOLDS FIXED:   one struct-enum with two variants.
+//
+// @falsified-at: 2e62a8a34 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
+//   native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-at: 64e920e9d — the absent cells alone (a read past a vector's end answered 0):
+//   interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1
+//   assertion failures -> 0
+// @falsified-by: tests/falsified/1822-sizeof-of-a-struct-enum-value-is-its-variants.patch — the same channels
+// HOLDS: leak, panic and refusals are clean on both trees and both backends; the local and
+//   return cells (standalone records) and `sizeof(Shape)` answer the same on both trees.
+
+enum Shape { Circle { r: float }, Rect { w: float, h: float, x: float, y: float } }
+struct K { k: integer, s: Shape }
+struct Hold { tag: integer, s: Shape, z: integer }
+struct Maybe { tag: integer, s: Shape? }
+
+fn made(n: integer) -> Shape {
+  if n > 0 { Rect { w: 1.0, h: 1.0, x: 0.0, y: 0.0 } } else { Circle { r: 2.0 } }
+}
+fn size_of_arg(s: Shape) -> integer { sizeof(s) }
+fn nothing() -> Shape? { null }
+
+fn main() {
+  c = Circle { r: 1.0 };
+  r = Rect { w: 1.0, h: 2.0, x: 0.0, y: 0.0 };
+  assert(sizeof(c) == 16 && sizeof(r) == 40, "local: {sizeof(c)} {sizeof(r)}");
+
+  ss = [Circle { r: 1.0 }, Rect { w: 1.0, h: 2.0, x: 0.0, y: 0.0 }];
+  e0 = ss[0];
+  e1 = ss[1];
+  walked = "";
+  for s in ss { walked += "{sizeof(s)} "; }
+  assert(sizeof(e0) == 16 && sizeof(e1) == 40, "vector element bound: {sizeof(e0)} {sizeof(e1)}");
+  assert(sizeof(ss[0]) == 16 && sizeof(ss[1]) == 40, "vector element inline: {sizeof(ss[0])} {sizeof(ss[1])}");
+  assert(walked == "16 40 ", "loop variable: {walked}");
+  assert(size_of_arg(ss[0]) == 16, "argument from a vector: {size_of_arg(ss[0])}");
+
+  h = Hold { tag: 7, s: Circle { r: 1.0 }, z: 9 };
+  f = h.s;
+  assert(sizeof(f) == 16 && sizeof(h.s) == 16, "struct field: {sizeof(f)} {sizeof(h.s)}");
+  vs = [Hold { tag: 1, s: Circle { r: 1.0 }, z: 2 }];
+  assert(sizeof(vs[0].s) == 16, "field of a vector element: {sizeof(vs[0].s)}");
+
+  hm: hash<K[k]> = [K { k: 1, s: Rect { w: 1.0, h: 1.0, x: 0.0, y: 0.0 } }, K { k: 2, s: Circle { r: 1.5 } }];
+  assert(sizeof(hm[2].s) == 16 && sizeof(hm[1].s) == 40, "field of a hash entry: {sizeof(hm[2].s)} {sizeof(hm[1].s)}");
+
+  assert(sizeof(made(0)) == 16 && sizeof(made(1)) == 40, "return: {sizeof(made(0))} {sizeof(made(1))}");
+  t = (Circle { r: 3.0 }, 5);
+  assert(sizeof(t.0) == 16, "tuple member: {sizeof(t.0)}");
+
+  // The type itself is sized statically, as the largest variant — and an ABSENT value holds
+  // no variant, so it sizes as its type, wherever it is absent.
+  assert(sizeof(Shape) == 40, "the type: {sizeof(Shape)}");
+  gone: Shape? = null;
+  m = Maybe { tag: 1, s: null };
+  assert(sizeof(gone) == 40, "a null local: {sizeof(gone)}");
+  assert(sizeof(m.s) == 40, "a null field: {sizeof(m.s)}");
+  assert(sizeof(ss[5]) == 40, "a read past the vector's end: {sizeof(ss[5])}");
+  assert(sizeof(hm[9].s) == 40, "a missing hash entry: {sizeof(hm[9].s)}");
+  assert(sizeof(nothing()) == 40, "a null return: {sizeof(nothing())}");
+  println("ok");
+}

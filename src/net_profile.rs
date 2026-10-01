@@ -216,8 +216,7 @@ impl IoVolume for std::net::TcpStream {
 /// A consumer arming the switch against a program built on a networking LIBRARY got
 /// silence, and silence is indistinguishable from "the switch is broken" (loft#1088).
 /// Naming the reach turns that into a one-line answer.
-const RUNTIME_SITES: &str =
-    "engine_host (@PLN18 kernel), `loft debug --serve`, and placed-library workers";
+const RUNTIME_SITES: &str = "engine_host, `loft debug --serve`, and placed-library workers";
 
 /// Wrap a listener's `incoming()` so each accepted connection is an event.
 ///

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @F106 — GENERATED from loft-lang/features#106 by tools/features/gen.loft — DO NOT EDIT.
 struct Box { n: integer }
-struct Holder { b: Box, tag: integer }
+struct Holder { b: Box, tag: integer, list: vector<integer> }
 
 fn main() {
     a = Box { n: 1 };
@@ -11,12 +11,19 @@ fn main() {
     println("{a.n} {b.n}");        // 1 2  — writing `b` left `a` alone
 
     v = [Box { n: 10 }];
-    e = v[0];           // element read — `e` is a view of the element
+    e = v[0];           // a record element — `e` is a view of it
     e.n = 20;
     println("{v[0].n}");           // 20   — writing `e` reached the vector
 
-    h = Holder { b: Box { n: 30 }, tag: 1 };
-    w = h.b;            // a view into `h`
-    h = Holder { b: Box { n: 40 }, tag: 2 };   // `h` reassigned — `w`'s place is gone
+    h = Holder { b: Box { n: 30 }, tag: 1, list: [5] };
+    l = h.list;         // a collection field one level down — a copy
+    l[0] = 6;
+    println("{h.list[0]} {l[0]}"); // 5 6
+
+    w = h.b;            // a struct field — a view into `h`
+    h = Holder { b: Box { n: 40 }, tag: 2, list: [] };   // `h` reassigned — `w`'s place is gone
+    // advice: in `main`, `w` was copied out of `h` because `h` is reassigned while `w` is in
+    //   use — a view names a place inside `h`, and giving `h` a new value leaves nothing for
+    //   it to point at. Writes through `w` no longer reach `h`.
     println("{w.n} {h.b.n}");      // 30 40 — `w` kept the value it was bound to
 }

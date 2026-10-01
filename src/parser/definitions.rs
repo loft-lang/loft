@@ -309,8 +309,13 @@ impl Parser {
             }
             group.2.push(d_nr as u32);
         }
-        for ((name, _), (at_enum, at_variant, members)) in groups {
-            if !(at_enum && at_variant) {
+        for ((name, e_nr), (at_enum, at_variant, members)) in groups {
+            // A set that dispatches PAST its receiver is one set over the whole enum too: a
+            // variant whose only definition collided with none (`hits(self: Rect, b: Circle)`
+            // beside two on `Circle`) stayed a lone method outside it, so the set's
+            // dispatcher named that variant's pairs uncovered and listed the rest as all
+            // that was declared (loft#1780).
+            if !(at_variant && (at_enum || self.data.dispatches_past_receiver(&name, e_nr))) {
                 continue;
             }
             let main = self.data.def_nr(&name);
@@ -489,12 +494,17 @@ impl Parser {
         let get_enum = self.cl("OpGetEnum", &[Value::Var(0), Value::Int(0)]);
         let get_int = self.cl("OpConvIntFromEnum", &[get_enum]);
         self.enum_numbers(nrs.to_vec(), &name, &mut ls, &get_int, &forwarded);
-        // No-variant-matched fallback: an explicit `return null`, not a bare
-        // `Null` tail. As the tail of a value-typed (e.g. text) block the bare
-        // Null was wrapped in `Str::new(<dispatch if>)` and emitted `Str::new(())`
-        // (E0308) under --native; `Return(Null)` routes through the typed-null
-        // return path (STRING_NULL for text, i64::MIN for int, …) on both backends.
-        ls.push(Value::Return(Box::new(Value::Null)));
+        // No-variant-matched fallback, which only an ABSENT receiver reaches: discriminant 0
+        // is no variant, and an uncovered variant is refused (`Disp-Exhaustive`).  An explicit
+        // `return`, not a bare tail — as the tail of a value-typed block a bare Null was
+        // wrapped in `Str::new(<dispatch if>)` (E0308 under --native).  And the returned
+        // null is the TYPED one (`null_value`, what a user `return null` gets): the match
+        // this dispatcher is answers null for an absent subject (@FR-M-Variant, the
+        // nullable-subject paragraph), and an untyped `Value::Null` pushes nothing — the
+        // interpreter returned stale eval-stack bytes and native `return 0` (loft#1778).
+        let returned = self.data.def(from_nr).returned().clone();
+        let null = self.null_value(&returned);
+        ls.push(Value::Return(Box::new(null)));
         self.data.definitions[fn_nr as usize].code =
             v_block(ls, self.data.def(from_nr).returned().clone(), "dynamic_fn");
         self.data.definitions[self.context as usize].variables = self.vars.clone();
@@ -506,6 +516,7 @@ impl Parser {
         }
         self.join_enum_lattice_sets();
         let mut todo = HashMap::new();
+        let mut members: Vec<(u32, String)> = Vec::new();
         for (d_nr, d) in self.data.definitions.iter().enumerate() {
             if d.def_type != DefType::Function || d.attributes.is_empty() {
                 continue;
@@ -530,11 +541,31 @@ impl Parser {
                 // compiler. A method lives in its type's own attribute table, which is
                 // shared and source-independent, so it answers the same from anywhere.
                 && self.data.attr(*e_nr, &d.original_name()) == usize::MAX
+            {
                 // @PLN162 — an overload set that receives the enum, or holds a FREE
                 // definition, owns its dispatch: the enum-level definition is the author's
                 // (`Disp-Fallback`), and a free overload is no method to hang a dispatcher on.
-                && !self.data.overload_set_owns_dispatch(&d.original_name(), *e_nr)
-            {
+                // A `self` set that dispatches PAST its receiver owns it too, but it IS a
+                // method, so the enum still carries its NAME — membership, which is what
+                // brings `x.m(…)` to `select_method_def` and so to the set's own dispatcher
+                // (@FR-F-Recv: both spellings resolve alike, loft#1780).
+                if self
+                    .data
+                    .overload_set_owns_dispatch(&d.original_name(), *e_nr)
+                {
+                    let name = d.original_name().clone();
+                    if self.data.dispatches_past_receiver(&name, *e_nr)
+                        && !self
+                            .data
+                            .overload_routines(&name)
+                            .iter()
+                            .any(|r| self.data.def(*r).name.starts_with("f_"))
+                        && !members.contains(&(*e_nr, name.clone()))
+                    {
+                        members.push((*e_nr, name));
+                    }
+                    continue;
+                }
                 // Keyed by the enum AND the method NAME: a dispatcher dispatches ONE method,
                 // and `create_enum_dispatch_fn` names it after `nrs[0]`.  Keyed by the enum
                 // alone, an enum with two methods per variant put both lists in one bucket, so
@@ -557,6 +588,19 @@ impl Parser {
         for key in keys {
             let nrs = self.one_implementation_per_variant(&todo[&key]);
             self.create_enum_dispatch_fn(key.0, &nrs);
+        }
+        // The slot carries the set's bare dispatcher, as a `both` name's does: the call
+        // reaches it through `select_method_def`, which asks the set with the argument types.
+        for (e_nr, name) in members {
+            let main = self.data.def_nr(&name);
+            if main == u32::MAX || self.data.attr(e_nr, &name) != usize::MAX {
+                continue;
+            }
+            let a_nr = self
+                .data
+                .add_attribute(&mut self.lexer, e_nr, &name, Type::Routine(main));
+            self.data.definitions[e_nr as usize].attributes[a_nr].mutable = false;
+            self.data.definitions[e_nr as usize].attributes[a_nr].constant = true;
         }
     }
 
@@ -2930,7 +2974,7 @@ impl Parser {
                          the closure references state owned by this function's frame, so \
                          the value cannot outlive it — construct the struct in the frame \
                          that owns the captured state and pass it down, or return the \
-                         closure itself (#318)"
+                         closure itself"
                     );
                 }
             }
@@ -4106,6 +4150,22 @@ impl Parser {
             );
         }
         let dt = self.data.def_type(tp_nr);
+        // `@FR-G-Scope` — an interface is a BOUND on a type variable, never a value type.  It
+        // fell to the `None` below, which every caller spells in its own words — `Expecting a
+        // type` for a parameter, `Expect token ;` for an annotated local — and none of them
+        // named the interface or the bound that replaces it.  Reported on BOTH passes: a
+        // local's annotation is parsed on pass 1, where the derail stops the run.  `Never`
+        // poisons the site, so the call or the assignment that follows adds no second error.
+        if tp_nr != u32::MAX && dt == DefType::Interface {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`{type_name}` is an interface, not a type — a value always has a concrete \
+                 type, and an interface only constrains one.  Take a type variable bounded by \
+                 it, `fn f<T: {type_name}>(x: T)`, or name the concrete type"
+            );
+            return Some(Type::Never);
+        }
         // `D-Template` — a generic struct is not a type until its arguments are named.
         if tp_nr != u32::MAX && dt == DefType::TypeTemplate && !self.lexer.peek_token("<") {
             if !self.first_pass {
@@ -4283,7 +4343,7 @@ impl Parser {
                 "collection of a struct type that holds a capturing closure is not \
                  supported — element copies would dangle into the constructing \
                  function's frame; keep closure holders in local variables and pass \
-                 them down as arguments (#318)"
+                 them down as arguments"
             );
         }
         Some(tp)
@@ -6532,7 +6592,13 @@ impl Parser {
         // turns out to need a temporary is re-parsed from here into a
         // function of its own (`default_value_fn`).
         let value_start = self.lexer.link();
+        let unresolved_before = (self.unresolved_names, self.unresolved_types);
         let tp = self.expression(value);
+        // A bare call to a function declared below moves neither counter: its name resolves
+        // and only its type is missing.
+        let forward_reference = self.first_pass
+            && (tp.is_unknown()
+                || (self.unresolved_names, self.unresolved_types) != unresolved_before);
         self.expected = Type::Unknown(0);
         self.init_field_tracking = false;
         if a_type.is_unknown() {
@@ -6589,7 +6655,14 @@ impl Parser {
         let dflt_fn = format!("__dflt_{}_{a_name}", self.data.def(d_nr).name());
         // The checked narrowing `convert` gives a nullable narrow field is pass 2's alone, so
         // pass 1 asks the same TYPE question to mint the function it will be hoisted into.
-        let checked_narrow = self.first_pass && Self::takes_checked_narrow(&tp, a_type);
+        // A default reading a function declared further down has no type yet in pass 1
+        // (`c: u8? = later(7)`), and pass 2 — where it reads `integer` — then hoisted it into
+        // a function pass 1 never minted: the re-parse found nothing and the struct stopped
+        // parsing at the call.  So a forward reference is asked as the integer it will be,
+        // as the parameter default's forward reference is hoisted (loft#1086, loft#1170).
+        let checked_narrow = self.first_pass
+            && (Self::takes_checked_narrow(&tp, a_type)
+                || (forward_reference && Self::takes_checked_narrow(&crate::data::I32, a_type)));
         if self.default_hoisted_in_pass_1(&dflt_fn)
             || checked_narrow
             || !default_replayable_in_place(value, site)

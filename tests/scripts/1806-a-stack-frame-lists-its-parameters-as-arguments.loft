@@ -1,0 +1,45 @@
+// A stack frame's `arguments` lists the parameters of the frame's function, by name, type and
+// value — the field `ArgInfo` and STACKTRACE.md always described and nothing filled (loft#1806).
+// The parameters are also among `variables`, which holds every live local.  Under `--native` a
+// compiled frame has no reader for its slots, so both lists are empty (STACKTRACE.md ST-6);
+// this guard asserts the interpreter's answer and the native one's emptiness alike.
+//
+// @falsified-at: 40e676d1b — scored by hand: that tree answered `inner args=0` on the
+//   interpreter (the parameters were only in `variables`); here `args=2`, k = 5, s = "hi".
+// CHANNEL: the assertions below (`len(f.arguments) == 2` failed on the control).
+// HOLDS: native's empty lists on both trees; the frame's `variables` still include the
+//   parameters.
+
+fn arg_int(v: ArgValue) -> integer {
+  match v { IntVal { n } => n, LongVal { n } => n, _ => -1 }
+}
+
+fn arg_text(v: ArgValue) -> text {
+  match v { TextVal { t } => t, _ => "?" }
+}
+
+fn inner(k: integer, s: text) -> integer {
+  frames = stack_trace();
+  f = frames[len(frames) - 1];
+  assert(f.function == "inner", "innermost frame is inner: {f.function}");
+  if len(f.variables) > 0 {
+    // the interpreter: the parameters, in order, with their values
+    assert(len(f.arguments) == 2, "two parameters: {len(f.arguments)}");
+    assert(f.arguments[0].name == "k" && f.arguments[0].type_name == "integer", "k");
+    assert(arg_int(f.arguments[0].value) == 5, "k = 5");
+    assert(f.arguments[1].name == "s" && f.arguments[1].type_name == "text", "s");
+    assert(arg_text(f.arguments[1].value) == "hi", "s = hi");
+    names = "";
+    for v in f.variables { names += "{v.name},"; }
+    assert(names.contains("k,") && names.contains("s,"), "parameters are variables too: {names}");
+  } else {
+    // --native (ST-6): no slot reader, so no arguments either
+    assert(len(f.arguments) == 0, "native frames carry no arguments");
+  }
+  k + len(s)
+}
+
+fn main() {
+  assert(inner(5, "hi") == 7, "the call's own answer");
+  println("ok");
+}

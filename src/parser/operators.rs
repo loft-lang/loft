@@ -182,6 +182,10 @@ impl Parser {
                     for c in cd {
                         ls.push(c.clone());
                     }
+                } else if Self::appends_rendering(tp) {
+                    if let Value::Insert(parts) = self.append_rendering(var_nr, tp, code) {
+                        ls.extend(parts);
+                    }
                 } else if *tp == Type::Character {
                     ls.push(self.cl("OpAppendCharacter", &[Value::Var(var_nr), code.clone()]));
                 } else {
@@ -244,6 +248,8 @@ impl Parser {
             }
         } else if self.format_append_in_place(var_nr, code, false) {
             // `@FR-R-FormatAppend` — the format's parts are written into the destination.
+        } else if Self::appends_rendering(tp) {
+            *code = self.append_rendering(var_nr, tp, code);
         } else if *tp == Type::Character {
             *code = self.cl("OpAppendCharacter", &[Value::Var(var_nr), code.clone()]);
         } else {
@@ -1159,22 +1165,57 @@ impl Parser {
 
     /** Mutate current code when it reads a value into writing it. This is needed for assignments.
      */
+    ///
+    /// `(E-Asgn-Compound)` step 4 — `place op= e` computes `v₁ op v₂` by `(E-Op)`, so the
+    /// operator is resolved on the PLACE's type and the RIGHT side's own type `src_tp`, exactly
+    /// as the plain `place op e` is.  Typing both operands as the place's type claimed the
+    /// right side was something it is not: `p.f += 1` on a `float` field handed `OpAddFloat`
+    /// the integer's bits (`1.5` unchanged on the interpreter, rustc refusing the native
+    /// source), and `a -= 1` over `OpMin(self: V, o: integer)` looked for `OpMin(V, V)`
+    /// (loft#1819).  Answers the composed value and its type; the caller judges the type
+    /// against the place.
     pub(crate) fn compute_op_code(
         &mut self,
         op: &str,
         to: &Value,
         val: &Value,
         f_type: &Type,
-    ) -> Value {
+        src_tp: &Type,
+    ) -> (Value, Type) {
         if op == "=" {
-            val.clone()
-        } else if op == ">" {
-            self.op("Lt", val.clone(), to.clone(), f_type.clone())
-        } else if op == ">=" {
-            self.op("Le", val.clone(), to.clone(), f_type.clone())
-        } else {
-            self.op(rename(op), to.clone(), val.clone(), f_type.clone())
+            return (val.clone(), src_tp.clone());
         }
+        let (name, operands, types) = if op == ">" {
+            (
+                "Lt",
+                [val.clone(), to.clone()],
+                [src_tp.clone(), f_type.clone()],
+            )
+        } else if op == ">=" {
+            (
+                "Le",
+                [val.clone(), to.clone()],
+                [src_tp.clone(), f_type.clone()],
+            )
+        } else {
+            (
+                rename(op),
+                [to.clone(), val.clone()],
+                [f_type.clone(), src_tp.clone()],
+            )
+        };
+        // A refusal names the operator the author wrote, `-=`, not the internal `Min`.
+        let spelled = match op {
+            "+" => "+=",
+            "-" => "-=",
+            "*" => "*=",
+            "/" => "/=",
+            "%" => "%=",
+            other => other,
+        };
+        let mut code = Value::Null;
+        let tp = self.call_op_as(&mut code, name, spelled, &operands, &types);
+        (code, tp)
     }
 
     /// Dispatch an `OpGetX` getter name to the corresponding `OpSetX` setter call.
@@ -1312,6 +1353,21 @@ impl Parser {
                 Value::Null
             }
         }
+    }
+
+    /// Is the next token one that cannot begin a value — a separator, a closer, or the
+    /// end of the input?  Asked where a value is REQUIRED (the right of an operator or of
+    /// an assignment), so a missing one is named instead of read as nothing.
+    pub(crate) fn operand_absent(&mut self) -> bool {
+        // After a fatal lexing error (an unterminated string) the input ends where the
+        // error is, so a missing value there is that error's echo, not a second fault.
+        if self.lexer.diagnostics().level() == Level::Fatal {
+            return false;
+        }
+        [";", "}", ")", "]", ","]
+            .iter()
+            .any(|t| self.lexer.peek_token(t))
+            || self.lexer.peek().has == crate::lexer::LexItem::None
     }
 
     // @F37 — operator set (arithmetic/comparison/logical/bitwise/unary, precedence, **)
@@ -1532,6 +1588,19 @@ impl Parser {
                     operator = op;
                     break;
                 }
+            }
+            // `3 + ;` — an operator with nothing on its right.  Reported here, by name, where
+            // the right operand is missing; left to run on, the operator's call was built with
+            // one argument and refused as "missing argument for parameter 'v2' of `OpAddInt`".
+            if !operator.is_empty() && self.operand_absent() {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "Expected a value after `{operator}`"
+                );
+                *code = Value::Null;
+                current_type = Type::Unknown(0);
+                continue;
             }
             if operator.is_empty() {
                 // `expr is VariantName` — variant check at comparison precedence.
@@ -2850,6 +2919,30 @@ impl Parser {
             if matches!(self.data.def(*d).returned(), Type::Optional(_)))
     }
 
+    /// `return` is the one control word `??` takes (@F2): a `continue` or `break` after it
+    /// was read as a missing default and reported only as "Expect token ;", which names
+    /// neither the rule nor the spelling that works.  Refuses it by name, with the cure, and
+    /// consumes the keyword so the statement ends where the author ended it.  Answers
+    /// whether it refused.
+    fn refuse_coalesce_loop_control(&mut self) -> bool {
+        let Some(kw) = ["continue", "break"]
+            .into_iter()
+            .find(|kw| self.lexer.peek_token(kw))
+        else {
+            return false;
+        };
+        self.lexer.has_token(kw);
+        if !self.first_pass {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`?? {kw}` is not supported — after `??` comes a value or `return`.  To \
+                 {kw} on a null, test it first: `if v == null {{ {kw}; }}`"
+            );
+        }
+        true
+    }
+
     /// Desugar `lhs ?? ...` — both the plain-default form and the
     /// `?? return ret_expr` early-return form.  Lifted out of
     /// [`Self::handle_operator`] so each shape has its own focused helper.
@@ -3006,6 +3099,8 @@ impl Parser {
         // `false ?? x` stays `false` (false is not null); `null ?? x` → x.
         if self.lexer.has_token("return") {
             self.build_null_coalesce_return(code, ctp, &lhs_type);
+        } else if self.refuse_coalesce_loop_control() {
+            // the operand stands as written; the refusal is reported
         } else {
             self.build_null_coalesce_default(var_tp, code, parent_tp, precedence, ctp, &lhs_type);
         }
@@ -4622,15 +4717,34 @@ impl Parser {
                             // Remember the narrow target so the discharging `??` types its
                             // result as `N` (build_null_coalesce_default); the cast BLOCK
                             // itself stays `integer` to keep the null sentinel at full width.
-                            self.dn4_checked_narrow = Some(tp.clone());
+                            //
+                            // Armed only when that `??` is the very next token: a cast that
+                            // ends its operand (`D { w: n as u8?, v: n ?? 7 }`, or the end of
+                            // a statement) has no discharge, and a target left armed was taken
+                            // by the next unrelated `??`, which then refused its own store
+                            // with the `?? <value>` cure it was written with (loft#1791).
+                            self.dn4_checked_narrow =
+                                self.lexer.peek_token("??").then(|| tp.clone());
                             tp = self.dn4_checked_cast(code, &tp, &src_base);
                         } else {
+                            // Each cure has to compile where the cast stands (loft#1804): the
+                            // `??` directly after the cast is what arms the fallback, so it
+                            // is spelled `as τ ?? <value>`; loft does not narrow after an
+                            // `if` test, so none is offered; and a mask is named only when
+                            // one fits the range.
+                            // The target is rendered, not echoed: `tps` is the one identifier
+                            // the author typed, which for `as integer limit(0, 10)` is
+                            // `integer`, and `integer?` is no cure for that cast.
+                            let dst = self.int_type_name(&tp);
+                            let mask = Self::narrowing_mask(&tp).map_or(String::new(), |m| {
+                                format!(", or mask it first, `(<value> & {m}) as {dst}`")
+                            });
                             diagnostic!(
                                 self.lexer,
                                 Level::Error,
-                                "narrowing cast from {} to {tps} may not fit at runtime; \
-                                 use `{tps}?` for a checked cast (value or null), or guard \
-                                 the value (`?? d`, mask, or an `if` range check)",
+                                "narrowing cast from {} to {dst} may not fit at runtime; \
+                                 use `{dst}?` for a checked cast (value or null), give it a \
+                                 fallback with `as {dst} ?? <value>`{mask}",
                                 self.int_type_name(&src_base),
                             );
                         }

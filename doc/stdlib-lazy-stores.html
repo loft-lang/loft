@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lazy stores — Loft, a programming language for small browser games</title>
+  <meta name="description" content="">
+<link rel="canonical" href="https://loft-lang.org/loft/stdlib-lazy-stores.html">
+<meta property="og:title" content="Lazy stores — Loft, a programming language for small browser games">
+<meta property="og:description" content="">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://loft-lang.org/loft/stdlib-lazy-stores.html">
+<meta property="og:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<meta property="og:site_name" content="Loft">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Lazy stores — Loft, a programming language for small browser games">
+<meta name="twitter:description" content="">
+<meta name="twitter:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<link rel="stylesheet" href="style.css">
+<style>.playground-link{display:inline-block;margin:0.3em 0 0.8em;padding:4px 12px;background:#2563eb;color:#fff;border-radius:4px;text-decoration:none;font-size:0.85em}.playground-link:hover{filter:brightness(1.15)}@media print{.playground-link{display:none}}</style>
+</head>
+<body>
+<nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <a href="libraries.html">Libraries</a> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <span class="cur">Lazy stores</span> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
+<h1>Lazy stores</h1>
+<article>
+<div class="item">
+<pre><code>pub fn store_bind_lazy(local: reference, source: text) -&gt; boolean</code></pre>
+<p>Bind a COLLECTION to a lazy source. After this, a lookup that MISSES fetches that one entry and inserts it, so the next lookup is an ordinary resident hit; a lookup that hits never leaves the process. The collection is therefore automatically the cached data set — there is no separate cache.</p>
+<p>Per COLLECTION, not per store: `persons` and `companies` are different sources, and two collections of one type can bind differently. Binding replaces, and may be done before the collection holds anything.</p>
+<p>`source` is either an IMAGE — what `store_load_key` accepts: a local `.store` file or an `http(s)://` URL served with Range — or a DATABASE, named by a driver prefix. Returns false for a null collection. persons: hash&lt;Person[id]&gt; = [] store_bind_lazy(persons, &quot;people.store&quot;) p = persons[42]        // fetches exactly entry 42, then holds it</p>
+<p>`sqlite:&lt;path&gt;` binds to a table instead, and the query is DERIVED from the collection's own type: the table is the element type's name lowercased, the columns are its fields, and the `WHERE` is the collection's key. Nothing is written down twice. persons: hash&lt;Person[id]&gt; = []              // struct Person { id: integer, name: text } store_bind_lazy(persons, &quot;sqlite:people.db&quot;) p = persons[42]        // SELECT &quot;id&quot;,&quot;name&quot; FROM &quot;person&quot; WHERE &quot;id&quot; = 42</p>
+<p>Read-only, and the connection enforces it. A binding that cannot be served — a field that is not a column, a collection whose KIND the source cannot read — is REFUSED rather than served wrongly, and says so through `store_lazy_error`. sqlite is opened on the first fault, so a program that binds no database loads nothing.</p>
+<p>FALSE means the binding was not made, and it is worth checking. A `.store` IMAGE is read a page at a time, which only a `hash`, a `trie` or a `spatial` supports: a `sorted` or `index` bound to one is refused HERE, at the call that is wrong, rather than answering `null` at every later lookup. Those kinds load whole — `store_load` / `store_load_url_trusted` carry all of them. A DATABASE source judges its own schema on the first fault instead, since what it can serve is a fact about the other end. if !store_bind_lazy(tiles, &quot;tiles.store&quot;) { store_load(tiles, &quot;tiles.store&quot;);     // whole-image, every kind }</p>
+</div>
+<div class="item">
+<pre><code>pub fn store_lazy_query(local: reference, condition: text) -&gt; integer</code></pre>
+<p>Run an explicit condition against this collection's bound DATABASE source and pull every matching row into the collection. Answers how many records the collection gained.</p>
+<p>The escape hatch for what the collection's KEY cannot express — a predicate on another column, a pattern, a range nobody declared an index for. A keyed lookup derives its own query and needs no call; this one cannot be derived, so it is written down and visible rather than happening behind a lookup.</p>
+<p>found = store_lazy_query(persons, &quot;name LIKE 'Ada%'&quot;); p = persons[42]        // hits what the query already brought in</p>
+<p>The rows land IN the collection, not in a separate result: a person reached by this query and the same person reached by a later lookup are ONE record, and a row already resident is left alone rather than fetched twice. So `len` and iteration keep answering &quot;what have I got&quot; — after this, more.</p>
+<p>`condition` is SQL, sent as written (the connection is read-only). Answers 0 both when nothing matched and when the query could not run; `store_lazy_error` tells those apart.</p>
+</div>
+<div class="item">
+<pre><code>pub fn store_lazy_range(local: reference, lo: integer, hi: integer) -&gt; integer</code></pre>
+<p>Pull a whole KEY RANGE from this collection's bound DATABASE source in ONE query. Answers how many records the collection gained.</p>
+<p>This is what keeps lazy reading usable rather than merely correct. Fetching 500 records one lookup at a time is 500 round trips; the same 500 as a range is one. So when you know the span you want, ask for the span:</p>
+<p>store_lazy_range(events, 100, 199);   // one query, up to 100 records for e in events { .. }               // all resident, no further fetching</p>
+<p>The collection must be ORDERED (`sorted` or `index`) — a `hash` has no order to range over — and keyed on ONE column, since two numbers cannot say which value pins a composite key's leading column; use `store_lazy_query` for that. Both bounds are inclusive, in the collection's own key order. A record already resident is left alone. Answers 0 when nothing matched AND when the query could not run; `store_lazy_error` tells those apart.</p>
+</div>
+<div class="item">
+<pre><code>pub fn store_lazy_error(local: const reference) -&gt; text</code></pre>
+<p>Why a lazy fetch for this collection could not REACH its source, or &quot;&quot; when it is healthy.</p>
+<p>A lookup cannot tell you this. C80 says a value read never raises, so a miss answers `null` whether the key is genuinely absent or the source is unreachable — and those are different facts, one stable and one not. Ask this after a null to tell them apart:</p>
+<p>p = persons[42]; if p == null { why = store_lazy_error(persons); if why == &quot;&quot; { /* really no such person */ } else { /* could not reach: {why} */ } }</p>
+<p>The FIRST failure's reason, kept — not the last: it names the original cause, and later ones are usually the same failure repeating. Nothing clears it but `store_lazy_clear`. An absence does NOT, and neither does a later success: reaching the source now says nothing about what an earlier failure already lost, and answering &quot;healthy&quot; over a traversal that missed data is the silent wrong answer this channel exists to prevent.</p>
+</div>
+<div class="item">
+<pre><code>pub fn store_lazy_faults(local: const reference) -&gt; integer</code></pre>
+<p>How many fetches could not REACH this collection's source. 0 is healthy. The magnitude behind `store_lazy_error`: after a traversal it answers &quot;how incomplete am I&quot;.</p>
+</div>
+<div class="item">
+<pre><code>pub fn store_lazy_clear(local: reference) -&gt; boolean</code></pre>
+<p>Acknowledge this collection's fetch failures, returning whether there was anything to acknowledge.</p>
+<p>The ONLY thing that clears them. A later fetch happening to succeed does NOT: a traversal whose first lookup could not reach the source and whose second could is MISSING data, and answering &quot;healthy&quot; afterwards would be exactly the silent wrong answer this channel exists to prevent. Clearing is a caller saying &quot;I have seen this&quot;, which is a different event entirely.</p>
+</div>
+<div class="item">
+<pre><code>pub fn store_lazy_fail(local: reference, why: text) fs#read</code></pre>
+<p>A loft DRIVER reporting that it could not reach its source.</p>
+<p>The writing end of the channel `store_lazy_error` reads. A driver written in loft (`fn lazy_fetch(...)`) has the same three answers a Rust source has, and two of them are an integer: `1` inserted, `0` absent. The third is not — &quot;the source is down&quot; carries a REASON, and answering `0` for it would be a silent wrong answer, because a caller cannot tell it from &quot;no such person&quot;.</p>
+<p>fn lazy_fetch(coll: hash&lt;Person[id]&gt;, source: text, key_int: integer, key_text: text) -&gt; integer { if !db.db_open(source) { store_lazy_fail(coll, &quot;cannot open {source}: {db.db_last_error()}&quot;); return 0; } .. }</p>
+<p>Sticky and counted exactly like a Rust source's failure: the FIRST reason is kept, every failure is counted, and only `store_lazy_clear` clears them.</p>
+</div>
+
+  </article>
+<script src="search-index.js"></script>
+<script src="search.js"></script>
+<script>
+(function(){
+var m={"Keywords":"keywords","Texts":"texts","Integers":"integers","Boolean":"boolean","Float":"float","Functions":"functions","Vector":"vector","Structs":"structs","Enums":"enums","Sorted":"sorted","Index":"index","Hash":"hash","File":"file","Lexer":"lexer","Parser":"parser","Libraries":"libraries","Store Locks":"store_locks","Parallel execution":"parallel_execution","Logging":"logging","Time":"time","Safety":"safety","JSON":"json","Generics":"generics","Closures":"closures","Coroutines":"coroutines","Tuples":"tuples","Match":"match","Formatting":"formatting"};
+var h=document.querySelector('h1');
+if(!h)return;
+var key=m[h.textContent];
+if(!key)return;
+var a=document.createElement('a');
+a.className='playground-link';
+a.href='playground.html?example='+key;
+a.textContent='\u25B6 Try in Playground';
+h.parentNode.insertBefore(a,h.nextSibling);
+})();
+</script>
+</body>
+</html>

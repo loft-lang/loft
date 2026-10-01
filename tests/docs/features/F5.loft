@@ -4,7 +4,12 @@
 fn main() {
     pi: float = 3.75;
     whole = pi as integer;      // 3  (drops the fraction)
+    m: float = -3.75;
+    neg = m as integer;         // -3 (toward zero, not down to -4)
     parsed = "42" as integer?;  // text turned into a number (or null)
+    bad = "4x" as integer ?? 0; // 0  (a bad parse takes the fallback)
     code = 'A' as integer;      // 65 (the character's code)
-    println("{whole} {parsed} {code}");   // 3 42 65
+    n = 400;
+    small = n as u8?;           // null (400 does not fit a u8)
+    println("{whole} {neg} {parsed} {bad} {code} {small}");   // 3 -3 42 0 65 null
 }

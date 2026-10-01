@@ -168,6 +168,25 @@ fn binary_signature_tag() -> String {
     }
 }
 
+/// Which `loft` EXECUTABLE this is: its build id and the binary's own modification time
+/// ([`binary_signature_tag`]).  An auto-native library artifact holds code THIS binary's
+/// generator emitted and is called through THIS binary's store layout, so it must never be
+/// reused by another one — not even by a binary that finds the same `libloft.rlib`.  Keyed
+/// on the rlib alone, an installed `loft` upgraded without its rlib reused the previous
+/// binary's artifact and corrupted the store on the first call (loft#1776).
+#[must_use]
+pub fn loft_exe_identity() -> u64 {
+    use std::hash::{Hash, Hasher};
+    use std::sync::OnceLock;
+    static ID: OnceLock<u64> = OnceLock::new();
+    *ID.get_or_init(|| {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        BUILD_ID.hash(&mut h);
+        binary_signature_tag().hash(&mut h);
+        h.finish()
+    })
+}
+
 /// @PLN11 G2 / track 1 — whether the whole-program startup cache is active for
 /// this run.  **Default ON** (the 3–3.6× warm-start win, no longer hidden behind
 /// an opt-in flag), with three overrides; see [`cache_decision`] for the policy.

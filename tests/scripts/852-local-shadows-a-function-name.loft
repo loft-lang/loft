@@ -78,9 +78,9 @@ fn plain852(v: integer) -> integer {
   v - 1
 }
 
-// A `for` variable named after a stdlib function.  Its own function because loft
-// does not block-scope loop variables: reusing a name already local to `test()`
-// is a separate, deliberate error and would mask what this cell checks.
+// A `for` variable named after a stdlib function.  Its own function because a loop
+// variable cannot reuse the name of a local still in scope: reusing a name already
+// local to `test()` is a separate, deliberate error and would mask what this cell checks.
 fn loop852() -> integer {
   total = 0;
   for now in 3..6 {

@@ -1,0 +1,61 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1782 — a struct literal that OMITS a nullable user struct-enum field leaves it ABSENT.
+//
+// @FR-L-Null: absence is a sentinel in the field's own bytes, and a user struct-enum field is a
+// four-byte record pointer whose absence is `0` — the value the MENTIONED spelling
+// `H { s: null }` writes (loft#1071).  The omitted spelling took the generic default instead:
+// `to_default` gave the discriminant-shaped `Value::Enum(0, …)`, and the field store wrote it as
+// a RECORD COPY from a source that is no record — `h.s == null` answered false on
+// `--interpret` (some runs an out-of-range store index), rustc E0308 on `--native`, and inside a
+// vector literal a compile-time panic ("Incorrect var _elm_1").
+//
+// Axes this file MOVES:  where the literal sits (a local · a vector literal element · a
+//                        function's return · a nested struct's field), how many nullable
+//                        struct-enum fields are omitted (one · two, with a present one between
+//                        them), the field's position (first · middle · last), and what follows
+//                        (a read · a dispatch on the absent field · a later assignment).
+// Axes it HOLDS FIXED:   one two-variant struct-enum with integer payloads.
+// Controls: the mentioned `null` spelling and a present value, beside every omitted cell.
+//
+// @falsified-at: ec35ee1de — interpret exit 101 -> 0, native exit 101 -> 0.
+//   CHANNEL: panic on both backends — the control's code generator stops on this file
+//   ("Incorrect var t[236] versus 232 on n_main"), before either backend runs it.  Measured
+//   cell by cell on the control: the local cell alone answers `h.s == null` false on
+//   `--interpret` and fails rustc (E0308) on `--native`.
+//   HOLDS: the mentioned-`null` and present controls answer the same on both trees; this tree
+//   is clean under LOFT_POISON=1 with LOFT_STRICT_STORES=1, on both backends.
+
+enum Shape { Circle { r: integer }, Rect { w: integer, h: integer } }
+struct Holder { s: Shape?, n: integer }
+struct Two { a: Shape?, m: integer, b: Shape?, c: Shape? }
+struct Outer { h: Holder, k: integer }
+
+fn ai(self: Circle) -> integer { self.r * 100 + 7 }
+fn ai(self: Rect) -> integer { self.w * self.h }
+
+fn mk(n: integer) -> Holder { Holder { n: n } }
+
+fn main() {
+  h = Holder { n: 1 };
+  assert(h.s == null, "omitted local is absent");
+  assert(h.n == 1, "sibling field: {h.n}");
+  assert(h.s.ai() == null, "dispatch on the absent field: {h.s.ai()}");
+  g = Holder { s: null, n: 2 };
+  assert(g.s == null && g.n == 2, "mentioned null control");
+  k = Holder { s: Circle { r: 3 }, n: 4 };
+  assert(k.s != null && k.s.ai() == 307 && k.n == 4, "present control: {k.s.ai()}");
+  h.s = Rect { w: 2, h: 5 };
+  assert(h.s.ai() == 10 && h.n == 1, "later assignment: {h.s.ai()} {h.n}");
+  hs = [Holder { n: 7 }, Holder { s: Circle { r: 1 }, n: 8 }];
+  assert(hs[0].s == null && hs[0].n == 7, "vector element omitted");
+  assert(hs[1].s.ai() == 107 && hs[1].n == 8, "vector element present: {hs[1].s.ai()}");
+  m = mk(9);
+  assert(m.s == null && m.n == 9, "returned literal");
+  t = Two { m: 5, b: Rect { w: 3, h: 3 } };
+  assert(t.a == null && t.c == null, "two omitted around a present one");
+  assert(t.b.ai() == 9 && t.m == 5, "present between: {t.b.ai()} {t.m}");
+  o = Outer { h: Holder { n: 11 }, k: 12 };
+  assert(o.h.s == null && o.h.n == 11 && o.k == 12, "nested struct field");
+}

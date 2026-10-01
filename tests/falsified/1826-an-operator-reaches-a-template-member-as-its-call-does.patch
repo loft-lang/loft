@@ -1,0 +1,89 @@
+diff --git b/src/data.rs a/src/data.rs
+index 094a00584..eee337c83 100644
+--- b/src/data.rs
++++ a/src/data.rs
+@@ -7566,11 +7566,9 @@ impl Data {
+     /// member was declared first (`@FR-F-Recv`, loft#1817).
+     #[must_use]
+     pub fn overload_with_params(&self, start: &str, params: &[Type]) -> Option<u32> {
+-        // A CONCRETE member only (`@FR-G-Sat`): a template takes any list at its variables,
+-        // and the monomorph that binds the answer has no step that would instantiate it.
+         self.overload_routines(start)
+             .into_iter()
+-            .find(|&d| self.def(d).def_type != DefType::Generic && self.params_fit(d, params))
++            .find(|&d| self.params_fit(d, params))
+     }
+ 
+     /// @PLN99 Arc C — register `d_nr` into the `possible[prefix]` operator map.
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index 367f89c4f..b61fb1e0a 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -10201,28 +10201,7 @@ impl Parser {
+             let mut misfit = None;
+             if found != u32::MAX {
+                 let params = self.bound_params_at(child_nr, &concrete_type);
+-                // `@FR-G-Sat` asks for a CONCRETE function of the signature.  A template member
+-                // (`fn OpAdd<U>(self: W, o: U)`) is not one: the monomorph resolves the bound's
+-                // call to a definition and has no instantiation step, so the template itself
+-                // reached the bytecode — an internal compiler error on both backends
+-                // (loft#1826).  A concrete member of the set that takes the list still
+-                // satisfies; otherwise the refusal names the template.
+-                if self.data.def_type(found) == DefType::Generic {
+-                    if let Some(member) = self.data.overload_with_params(&method_suffix, &params) {
+-                        found = member;
+-                    } else {
+-                        misfit = Some(format!(
+-                            "'{method_suffix}' is a template, and a bound takes a concrete \
+-                             '{method_suffix}' of its signature; declare one for '{}'",
+-                            concrete_type.source_name(&self.data)
+-                        ));
+-                        // Refused outright, `==` included: the type HAS an `OpEq`, which the
+-                        // concrete `a == b` instantiates, so a content comparison in the
+-                        // generic would answer differently from the concrete site.
+-                        out.extend(misfit.take());
+-                        continue;
+-                    }
+-                } else if !self.data.params_fit(found, &params) {
++                if !self.data.params_fit(found, &params) {
+                     if let Some(member) = self.data.overload_with_params(&method_suffix, &params) {
+                         found = member;
+                     } else {
+@@ -10819,11 +10798,7 @@ impl Parser {
+                             .clone()
+                     })
+                     .collect();
+-                // A template member fits any list at its variables, and nothing here can
+-                // instantiate it: the concrete member of the set is the one to bind (loft#1826).
+-                if data.def(resolved).def_type == DefType::Generic
+-                    || !data.params_fit(resolved, &params)
+-                {
++                if !data.params_fit(resolved, &params) {
+                     if let Some(by_params) = data.overload_with_params(fn_name, &params) {
+                         resolved = by_params;
+                     } else if eq_stub {
+@@ -16127,24 +16102,6 @@ impl Parser {
+                         Type::Never
+                     };
+                 };
+-                // `@FR-F-Recv` — a TEMPLATE member (`fn OpAdd<U>(self: W, o: U)`) is reached the
+-                // way the call spelling `OpAdd(a, b)` reaches it: instantiated at the operand
+-                // types.  Handed to `call_nr` as the template, it matched nothing and `a + b`
+-                // was refused while `OpAdd(a, b)` beside it answered (loft#1826).
+-                let m = if m != u32::MAX && self.data.def_type(m) == DefType::Generic {
+-                    if self.first_pass {
+-                        let predicted = self.predict_template_return(m, &op_name, types);
+-                        if !predicted.is_unknown() {
+-                            *code = Value::Null;
+-                            return predicted;
+-                        }
+-                        u32::MAX
+-                    } else {
+-                        self.instantiate_template(m, &op_name, types)
+-                    }
+-                } else {
+-                    m
+-                };
+                 if m != u32::MAX {
+                     let tp = self.call_nr(code, m, list, types, false, &[], None);
+                     if tp != Type::Null {

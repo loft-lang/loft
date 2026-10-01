@@ -10118,7 +10118,7 @@ extern crate loft;"
                     });
             writeln!(
                 w,
-                "{{ compile_error!(\"loft: `{name}` is bound to the C symbol '{}' with #c{from}, and the {which} target has no C ABI to reach it — a wasm module cannot open a shared library. Give the library a wasm implementation, host it out of process (@PLN119), or drop the {flag} claim (@PLN24 arc E)\") }}",
+                "{{ compile_error!(\"loft: `{name}` is bound to the C symbol '{}' with #c{from}, and the {which} target has no C ABI to reach it — a wasm module cannot open a shared library. Give the library a wasm implementation, host it out of process, or drop the {flag} claim\") }}",
                 sig.symbol
             )?;
             return Ok(());

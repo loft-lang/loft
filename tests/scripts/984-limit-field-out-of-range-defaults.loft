@@ -64,6 +64,11 @@ struct Null984 {
 
 fn to_u16_984(v: integer) -> u16 { (v & 65535) as u16 }
 
+// A value the compiler cannot fold.  Since loft#1796 a CONSTANT a nullable slot cannot hold
+// (`n984 = 300` on a `limit(0, 255)?`) is refused at compile time, so the nullable-variable
+// cell reaches its slot through this, which is the run-time arrival the cell is about.
+fn rt984(n: integer) -> integer { n }
+
 fn main() {
   // ── In range: unchanged, both edges ───────────────────────────────────────────────
   x = L984 { b: 7, s: 7 };
@@ -163,7 +168,7 @@ fn main() {
 
   // A nullable target takes NULL rather than the low end — absence is a value it holds.
   n984: integer limit(0, 255)? = 7;
-  n984 = 300;
+  n984 = rt984(300);
   assert(n984 == null, "a nullable slot defaults to null, not to `lo`: {n984}");
   n984 = 42;
   assert(n984 == 42, "in range, untouched: {n984}");

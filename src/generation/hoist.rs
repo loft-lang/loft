@@ -12524,6 +12524,18 @@ fn value_shape(node: &Value, ctx: &ShapeCtx) -> Option<u16> {
                 return None;
             }
             let tp = vars.tp(*var);
+            // The same bind in its other spellings: a whole-record bind into a LOCAL copies
+            // (`@FR-B-Copy`), and the bind emitter aliases a borrowed call result only into a
+            // `skip_free` destination (`dispatch.rs`, loft#974) — any other local takes the
+            // copy arm and OWNS what it holds, whatever its deps say.  `__ret_tail_N =
+            // op(a, b, __ref_N)` over an operator that answers its `self` is that bind, and
+            // the oracle reads it through the call as Borrowed of `a`: read as a view the copy
+            // was freed by nobody, one record per call on `--native` alone, in a concrete
+            // function and an instance alike (Found-via loft#1820).  A parameter is exempt —
+            // the frame never owns it.
+            if !vars.is_argument(*var) && !vars.is_skip_free(*var) {
+                return None;
+            }
             // A VIEW by the ownership oracle (`@FR-O-Oracle`), not by the dep list: then_v
             // `__ret_N` typed `ref(P)["then_v"]` holds the parameter's store on one arm and then_v
             // minted default on the other (`Own::Join`), and reading it as then_v tuple would

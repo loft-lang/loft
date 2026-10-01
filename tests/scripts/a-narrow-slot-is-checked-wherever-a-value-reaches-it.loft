@@ -16,6 +16,18 @@
 // Their refusals are pinned in tests/parse_errors.rs; these are the cells that must RUN.
 // Every value is distinctive, and a nullable slot's out-of-range cell reads `null`.
 //
+// loft#1796 (`@FR-N-Reserve`): a CONSTANT outside a nullable narrow slot's usable range is now
+// refused at compile time rather than stored as null.  Two cells moved with it:
+//   - the tuple member `(1, 300)` into a `u8?` member now takes its 300 from `rt`, a value the
+//     compiler cannot fold, so it still pins the RUN-TIME answer (null);
+//   - the nullable FIELD DEFAULTS `a: u8? = 300`, `b: Lim? = 12`, `e: u16? = 70000` are refused
+//     as constants — pinned by tests/parse_errors.rs
+//     `a_nullable_narrow_field_default_that_cannot_fit_is_refused` — and here take the same
+//     values from `rt`, declared below the struct, so each still meets the field's checked
+//     narrowing at RUN TIME and reads null;
+//   - the `??` default `o: u8? = g(0) ?? 300` is refused as a constant (tests/parse_errors.rs
+//     `…_refused_through_a_join`) and takes its 300 from `rt`, so it still reads null.
+//
 // Axes this file MOVES:  how the value reaches the slot (tuple literal: local / argument / return
 //                        / field / vector element / nested; `??` default: constant / narrow var /
 //                        field read / chain; field default), the slot's nullability, the width
@@ -29,12 +41,14 @@
 
 type Lim = integer limit(0, 10);
 struct F { f: u8 }
-struct D { a: u8? = 300, b: Lim? = 12, c: Lim = 4, d: u8 = 200, e: u16? = 70000 }
+struct D { a: u8? = rt(300), b: Lim? = rt(12), c: Lim = 4, d: u8 = 200, e: u16? = rt(70000) }
 struct H { t: (integer, u8) }
 
 fn g(n: integer) -> integer? { if n > 0 { n * 100 } else { null } }
 fn take(t: (integer, u8)) -> integer { t.1 }
 fn ret(k: integer) -> (integer, u8) { (k, 250) }
+// A value the compiler cannot fold, so it reaches the slot at run time.
+fn rt(n: integer) -> integer { n }
 
 fn test_a_tuple_literal_meets_each_member() {
   t: (integer, u8) = (1, 255);
@@ -42,7 +56,7 @@ fn test_a_tuple_literal_meets_each_member() {
   v: vector<(integer, u8)> = [(1, 254)];
   v += [(2, 3)];
   n: ((integer, u8), integer) = ((1, 66), 2);
-  o: (integer, u8?) = (1, 300);
+  o: (integer, u8?) = (1, rt(300));
   got = "{t.1} {take((1, 99))} {ret(1).1} {h.t.1} {v[0].1} {v[1].1} {n.0.1} {o.1}";
   assert(got == "255 99 250 77 254 3 66 null", "tuple members: {got}");
 }
@@ -57,7 +71,7 @@ fn test_a_coalesce_default_is_stored_into_the_slot() {
   e: u8 = g(3) ?? 7;
   f: u8 = g(0) ?? g(3) ?? 6;
   h: u8 = g(3) ?? g(2) ?? 6;
-  o: u8? = g(0) ?? 300;
+  o: u8? = g(0) ?? rt(300);
   got = "{a} {b} {c} {d} {e} {f} {h} {o}";
   assert(got == "7 100 9 44 7 6 200 null", "coalesce defaults: {got}");
 }

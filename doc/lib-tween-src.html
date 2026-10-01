@@ -20,12 +20,980 @@
 <style>.playground-link{display:inline-block;margin:0.3em 0 0.8em;padding:4px 12px;background:#2563eb;color:#fff;border-radius:4px;text-decoration:none;font-size:0.85em}.playground-link:hover{filter:brightness(1.15)}@media print{.playground-link{display:none}}</style>
 </head>
 <body>
-<nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-vector-operations.html">Vector operations</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
+<nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>tween source</h1>
 <article>
 <p><a href="lib-tween.html">← tween</a> · <a href="lib-tween-api.html">API reference</a> · version 0.1.1</p>
-<p>The source for <code>tween</code> 0.1.1 is not on this build box, so this page could not be rendered from it. <code>loft install tween</code> fetches the package, and the repository is the other route.</p>
-<p><a href="https://github.com/loft-lang/loft-libs-graphics/tree/main/tween">https://github.com/loft-lang/loft-libs-graphics/tree/main/tween</a></p>
+<p class="lib-legend">5 file(s), 931 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<h2 id="items">Public items</h2>
+<p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
+<table class="lib-table">
+<tr><th>Item</th><th>Defined</th><th>Worked example</th><th>Call sites</th></tr>
+<tr><td><code>Curve</code> <span class="search-kind">enum</span></td><td><a href="#src-easing-loft-L76">76</a></td><td>—</td><td><a href="#src-easing-loft-L108">108</a> <a href="#src-easing-loft-L129">129</a> <a href="#src-easing-loft-L141">141</a> <a href="#src-tween-loft-L135">135</a> <a href="#src-tween-loft-L141">141</a> <a href="#tests-curves-loft-L21">21</a> … (36 total)</td></tr>
+<tr><td><code>Shape</code> <span class="search-kind">enum</span></td><td><a href="#src-easing-loft-L84">84</a></td><td>—</td><td><a href="#src-easing-loft-L108">108</a> <a href="#src-tween-loft-L136">136</a> <a href="#src-tween-loft-L141">141</a> <a href="#tests-curves-loft-L21">21</a> <a href="#tests-curves-loft-L22">22</a> <a href="#tests-curves-loft-L23">23</a> … (32 total)</td></tr>
+<tr><td><code>ease</code> <span class="search-kind">fn</span></td><td><a href="#src-easing-loft-L108">108</a></td><td>—</td><td><a href="#src-tween-loft-L201">201</a> <a href="#tests-curves-loft-L21">21</a> <a href="#tests-curves-loft-L22">22</a> <a href="#tests-curves-loft-L23">23</a> <a href="#tests-curves-loft-L26">26</a> <a href="#tests-curves-loft-L27">27</a> … (29 total)</td></tr>
+<tr><td><code>curve_at</code> <span class="search-kind">fn</span></td><td><a href="#src-easing-loft-L129">129</a></td><td>—</td><td><a href="#src-easing-loft-L110">110</a> <a href="#src-easing-loft-L111">111</a> <a href="#src-easing-loft-L113">113</a> <a href="#src-easing-loft-L114">114</a></td></tr>
+<tr><td><code>curve_in</code> <span class="search-kind">fn</span></td><td><a href="#src-easing-loft-L141">141</a></td><td>—</td><td><a href="#src-easing-loft-L132">132</a> <a href="#tests-curves-loft-L93">93</a> <a href="#tests-curves-loft-L101">101</a> <a href="#tests-curves-loft-L104">104</a> <a href="#tests-curves-loft-L114">114</a></td></tr>
+<tr><td><code>lerp</code> <span class="search-kind">fn</span></td><td><a href="#src-tween-loft-L111">111</a></td><td>—</td><td><a href="#src-tween-loft-L201">201</a> <a href="#tests-value-loft-L72">72</a> <a href="#tests-value-loft-L73">73</a></td></tr>
+<tr><td><code>Tween</code> <span class="search-kind">struct</span></td><td><a href="#src-tween-loft-L122">122</a></td><td>—</td><td><a href="#src-tween-loft-L141">141</a> <a href="#src-tween-loft-L142">142</a> <a href="#src-tween-loft-L151">151</a> <a href="#src-tween-loft-L161">161</a> <a href="#src-tween-loft-L188">188</a> <a href="#src-tween-loft-L200">200</a> … (10 total)</td></tr>
+<tr><td><code>tween_new</code> <span class="search-kind">fn</span></td><td><a href="#src-tween-loft-L140">140</a></td><td>—</td><td><a href="#tests-track-loft-L19">19</a> <a href="#tests-track-loft-L84">84</a> <a href="#tests-track-loft-L85">85</a> <a href="#tests-track-loft-L111">111</a> <a href="#tests-track-loft-L112">112</a> <a href="#tests-value-loft-L20">20</a> … (13 total)</td></tr>
+<tr><td><code>delay</code> <span class="search-kind">fn</span></td><td><a href="#src-tween-loft-L151">151</a></td><td>—</td><td><a href="#tests-value-loft-L104">104</a> <a href="#tests-value-loft-L107">107</a></td></tr>
+<tr><td><code>advance</code> <span class="search-kind">fn</span></td><td><a href="#src-tween-loft-L161">161</a></td><td>—</td><td><a href="#src-tween-loft-L249">249</a> <a href="#src-tween-loft-L269">269</a> <a href="#src-tween-loft-L289">289</a> <a href="#tests-track-loft-L27">27</a> <a href="#tests-track-loft-L88">88</a> <a href="#tests-track-loft-L92">92</a> … (29 total)</td></tr>
+<tr><td><code>progress</code> <span class="search-kind">fn</span></td><td><a href="#src-tween-loft-L188">188</a></td><td>—</td><td><a href="#src-tween-loft-L201">201</a> <a href="#tests-value-loft-L80">80</a> <a href="#tests-value-loft-L82">82</a> <a href="#tests-value-loft-L84">84</a> <a href="#tests-value-loft-L86">86</a></td></tr>
+<tr><td><code>value</code> <span class="search-kind">fn</span></td><td><a href="#src-tween-loft-L200">200</a></td><td>—</td><td><a href="#src-tween-loft-L314">314</a> <a href="#tests-track-loft-L94">94</a> <a href="#tests-track-loft-L104">104</a> <a href="#tests-value-loft-L26">26</a> <a href="#tests-value-loft-L27">27</a> <a href="#tests-value-loft-L29">29</a> … (18 total)</td></tr>
+<tr><td><code>done</code> <span class="search-kind">fn</span></td><td><a href="#src-tween-loft-L205">205</a></td><td>—</td><td><a href="#src-tween-loft-L270">270</a> <a href="#src-tween-loft-L296">296</a> <a href="#src-tween-loft-L298">298</a> <a href="#tests-track-loft-L26">26</a> <a href="#tests-track-loft-L100">100</a> <a href="#tests-track-loft-L103">103</a> … (19 total)</td></tr>
+<tr><td><code>rewind</code> <span class="search-kind">fn</span></td><td><a href="#src-tween-loft-L211">211</a></td><td>—</td><td><a href="#src-tween-loft-L320">320</a> <a href="#src-tween-loft-L323">323</a> <a href="#tests-track-loft-L144">144</a> <a href="#tests-track-loft-L145">145</a> <a href="#tests-value-loft-L130">130</a> <a href="#tests-value-loft-L131">131</a></td></tr>
+<tr><td><code>Play</code> <span class="search-kind">enum</span></td><td><a href="#src-tween-loft-L217">217</a></td><td>—</td><td><a href="#src-tween-loft-L231">231</a> <a href="#src-tween-loft-L238">238</a> <a href="#tests-track-loft-L18">18</a> <a href="#tests-track-loft-L83">83</a> <a href="#tests-track-loft-L110">110</a> <a href="#tests-track-loft-L130">130</a> … (7 total)</td></tr>
+<tr><td><code>Track</code> <span class="search-kind">struct</span></td><td><a href="#src-tween-loft-L229">229</a></td><td>—</td><td><a href="#src-tween-loft-L238">238</a> <a href="#src-tween-loft-L239">239</a> <a href="#src-tween-loft-L243">243</a> <a href="#src-tween-loft-L249">249</a> <a href="#src-tween-loft-L263">263</a> <a href="#src-tween-loft-L284">284</a> … (12 total)</td></tr>
+<tr><td><code>track_new</code> <span class="search-kind">fn</span></td><td><a href="#src-tween-loft-L238">238</a></td><td>—</td><td><a href="#tests-track-loft-L18">18</a> <a href="#tests-track-loft-L83">83</a> <a href="#tests-track-loft-L110">110</a> <a href="#tests-track-loft-L130">130</a> <a href="#tests-track-loft-L134">134</a></td></tr>
+<tr><td><code>add</code> <span class="search-kind">fn</span></td><td><a href="#src-tween-loft-L243">243</a></td><td>—</td><td><a href="#tests-track-loft-L19">19</a> <a href="#tests-track-loft-L84">84</a> <a href="#tests-track-loft-L85">85</a> <a href="#tests-track-loft-L111">111</a> <a href="#tests-track-loft-L112">112</a></td></tr>
+<tr><td><code>advance</code> <span class="search-kind">fn</span></td><td><a href="#src-tween-loft-L249">249</a></td><td>—</td><td><a href="#src-tween-loft-L161">161</a> <a href="#src-tween-loft-L269">269</a> <a href="#src-tween-loft-L289">289</a> <a href="#tests-track-loft-L27">27</a> <a href="#tests-track-loft-L88">88</a> <a href="#tests-track-loft-L92">92</a> … (29 total)</td></tr>
+<tr><td><code>done</code> <span class="search-kind">fn</span></td><td><a href="#src-tween-loft-L296">296</a></td><td>—</td><td><a href="#src-tween-loft-L205">205</a> <a href="#src-tween-loft-L270">270</a> <a href="#src-tween-loft-L298">298</a> <a href="#tests-track-loft-L26">26</a> <a href="#tests-track-loft-L100">100</a> <a href="#tests-track-loft-L103">103</a> … (19 total)</td></tr>
+<tr><td><code>active</code> <span class="search-kind">fn</span></td><td><a href="#src-tween-loft-L304">304</a></td><td>—</td><td><a href="#tests-track-loft-L87">87</a> <a href="#tests-track-loft-L93">93</a> <a href="#tests-track-loft-L146">146</a></td></tr>
+<tr><td><code>value_at</code> <span class="search-kind">fn</span></td><td><a href="#src-tween-loft-L312">312</a></td><td>—</td><td><a href="#tests-track-loft-L89">89</a> <a href="#tests-track-loft-L90">90</a> <a href="#tests-track-loft-L94">94</a> <a href="#tests-track-loft-L99">99</a> <a href="#tests-track-loft-L104">104</a> <a href="#tests-track-loft-L115">115</a> … (8 total)</td></tr>
+<tr><td><code>rewind</code> <span class="search-kind">fn</span></td><td><a href="#src-tween-loft-L320">320</a></td><td>—</td><td><a href="#src-tween-loft-L211">211</a> <a href="#src-tween-loft-L323">323</a> <a href="#tests-track-loft-L144">144</a> <a href="#tests-track-loft-L145">145</a> <a href="#tests-value-loft-L130">130</a> <a href="#tests-value-loft-L131">131</a></td></tr>
+</table>
+<h2 id="src-easing-loft">src/easing.loft</h2>
+<pre class="src"><code><span id="src-easing-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
+<span id="src-easing-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
+<span id="src-easing-loft-L3"><span class="cm">//</span></span>
+<span id="src-easing-loft-L4"><span class="cm">// The easing curves — eleven shapes, three directions, and ONE place that</span></span>
+<span id="src-easing-loft-L5"><span class="cm">// decides what happens at the ends.</span></span>
+<span id="src-easing-loft-L6"><span class="cm">//</span></span>
+<span id="src-easing-loft-L7"><span class="cm">// ── ⚠⚠ WHY THIS IS ONE FUNCTION AND NOT THIRTY-THREE ────────────</span></span>
+<span id="src-easing-loft-L8"><span class="cm">//</span></span>
+<span id="src-easing-loft-L9"><span class="cm">// An easing set is normally written out as `ease_quad_in`, `ease_quad_out`,</span></span>
+<span id="src-easing-loft-L10"><span class="cm">// `ease_quad_in_out`, … — thirty-three functions, each of which has to land on</span></span>
+<span id="src-easing-loft-L11"><span class="cm">// **exactly** 0 at `t = 0` and **exactly** 1 at `t = 1`.  That is thirty-three</span></span>
+<span id="src-easing-loft-L12"><span class="cm">// independent chances to get an endpoint wrong, and getting one wrong is</span></span>
+<span id="src-easing-loft-L13"><span class="cm">// SILENT: a curve that answers 0.999999 at the end leaves whatever it was</span></span>
+<span id="src-easing-loft-L14"><span class="cm">// driving a hair short of its target, for ever, with nothing to report.</span></span>
+<span id="src-easing-loft-L15"><span class="cm">//</span></span>
+<span id="src-easing-loft-L16"><span class="cm">// ⚠ It is not a hypothetical.  The textbook exponential ease is</span></span>
+<span id="src-easing-loft-L17"><span class="cm">// `2^(10(t−1))`, which answers **0.0009765625 at t = 0** rather than zero —</span></span>
+<span id="src-easing-loft-L18"><span class="cm">// every library that ships it patches the hole with an `if t == 0` special</span></span>
+<span id="src-easing-loft-L19"><span class="cm">// case, and that special case is the thirty-three-chances problem in its</span></span>
+<span id="src-easing-loft-L20"><span class="cm">// natural habitat.  The textbook sine ease has the same hole at the other</span></span>
+<span id="src-easing-loft-L21"><span class="cm">// end: `1 − cos(t·π/2)` at `t = 1` is `0.9999999999999999`, because</span></span>
+<span id="src-easing-loft-L22"><span class="cm">// `cos(π/2)` in binary floating point is `6.1e−17` and not zero.</span></span>
+<span id="src-easing-loft-L23"><span class="cm">//</span></span>
+<span id="src-easing-loft-L24"><span class="cm">// So the endpoints are decided in **one** place — `curve_at`, the clamped</span></span>
+<span id="src-easing-loft-L25"><span class="cm">// accessor that every direction reads the curve through:</span></span>
+<span id="src-easing-loft-L26"><span class="cm">//</span></span>
+<span id="src-easing-loft-L27"><span class="cm">//   1. `curve_at` CLAMPS — outside `(0, 1)` it answers 0 or 1 and never</span></span>
+<span id="src-easing-loft-L28"><span class="cm">//      consults the curve at all.  Every one of the thirty-three combinations</span></span>
+<span id="src-easing-loft-L29"><span class="cm">//      is exact at both ends because none of them is asked.</span></span>
+<span id="src-easing-loft-L30"><span class="cm">//   2. Only the **In** direction of each curve is written down.  `Out` and</span></span>
+<span id="src-easing-loft-L31"><span class="cm">//      `InOut` are REFLECTIONS of it:</span></span>
+<span id="src-easing-loft-L32"><span class="cm">//</span></span>
+<span id="src-easing-loft-L33"><span class="cm">//          out(t)   = 1 − in(1 − t)</span></span>
+<span id="src-easing-loft-L34"><span class="cm">//          inout(t) = in(2t)/2                for t &lt; ½</span></span>
+<span id="src-easing-loft-L35"><span class="cm">//                   = 1 − in(2 − 2t)/2        for t ≥ ½</span></span>
+<span id="src-easing-loft-L36"><span class="cm">//</span></span>
+<span id="src-easing-loft-L37"><span class="cm">//      so eleven curves cover thirty-three, and a new curve is one arm of one</span></span>
+<span id="src-easing-loft-L38"><span class="cm">//      match rather than three functions.</span></span>
+<span id="src-easing-loft-L39"><span class="cm">//</span></span>
+<span id="src-easing-loft-L40"><span class="cm">// ⚠ Rule 1 is what makes the contract exact; rule 2 is what keeps the file</span></span>
+<span id="src-easing-loft-L41"><span class="cm">// short enough to read.  They are independent, and the test suite gates them</span></span>
+<span id="src-easing-loft-L42"><span class="cm">// separately — `curves.loft` asserts that the raw sine curve MISSES 1.0 while</span></span>
+<span id="src-easing-loft-L43"><span class="cm">// `ease` hits it, so the clamp is proven load-bearing rather than decorative.</span></span>
+<span id="src-easing-loft-L44"><span class="cm">//</span></span>
+<span id="src-easing-loft-L45"><span class="cm">// ⚠⚠ **And the clamp has to sit under the reflections, not in front of them.**</span></span>
+<span id="src-easing-loft-L46"><span class="cm">// The first cut of this file clamped `ease`'s own `t` instead, which looks</span></span>
+<span id="src-easing-loft-L47"><span class="cm">// equivalent and is not: rule 2 evaluates the curve at `1 − t` and at `2 − 2t`,</span></span>
+<span id="src-easing-loft-L48"><span class="cm">// so an in-out at exactly the midpoint asks the raw curve for `in(1)` — the</span></span>
+<span id="src-easing-loft-L49"><span class="cm">// very value that misses.  It answered `0.5000000000000001`, and the test that</span></span>
+<span id="src-easing-loft-L50"><span class="cm">// caught it is `test_out_and_inout_are_exact_reflections_of_in`.  A guard in</span></span>
+<span id="src-easing-loft-L51"><span class="cm">// front of three derivations is three chances to bypass it; one underneath</span></span>
+<span id="src-easing-loft-L52"><span class="cm">// them is none.</span></span>
+<span id="src-easing-loft-L53"><span class="cm">//</span></span>
+<span id="src-easing-loft-L54"><span class="cm">// ── ⚠ WHAT THE REFLECTION COSTS, STATED RATHER THAN HIDDEN ──────</span></span>
+<span id="src-easing-loft-L55"><span class="cm">//</span></span>
+<span id="src-easing-loft-L56"><span class="cm">// Penner's originals tune `back` and `elastic` with a SECOND constant for</span></span>
+<span id="src-easing-loft-L57"><span class="cm">// their in-out variants, so a hand-written `ease_back_in_out` overshoots</span></span>
+<span id="src-easing-loft-L58"><span class="cm">// harder than the reflection of `ease_back_in` does.  This file does not:</span></span>
+<span id="src-easing-loft-L59"><span class="cm">// `InOut` is the reflection, always, and the two overshooting curves are</span></span>
+<span id="src-easing-loft-L60"><span class="cm">// therefore gentler in the middle than their textbook namesakes.  That is a</span></span>
+<span id="src-easing-loft-L61"><span class="cm">// deliberate trade — one rule in one place against thirty-three hand-tuned</span></span>
+<span id="src-easing-loft-L62"><span class="cm">// functions — and a consumer who needs the sharper overshoot raises the</span></span>
+<span id="src-easing-loft-L63"><span class="cm">// amplitude at the call site.</span></span>
+<span id="src-easing-loft-L64"><span class="cm">//</span></span>
+<span id="src-easing-loft-L65"><span class="cm">// ── WHAT IS NOT HERE ────────────────────────────────────────────</span></span>
+<span id="src-easing-loft-L66"><span class="cm">//</span></span>
+<span id="src-easing-loft-L67"><span class="cm">// **No time, no state, no value.**  A curve maps `[0, 1]` to roughly `[0, 1]`</span></span>
+<span id="src-easing-loft-L68"><span class="cm">// and knows nothing about durations or what is being animated.  `tween.loft`</span></span>
+<span id="src-easing-loft-L69"><span class="cm">// owns both.</span></span>
+<span id="src-easing-loft-L70"></span>
+<span id="src-easing-loft-L71"><span class="cm">// Which shape the curve has.</span></span>
+<span id="src-easing-loft-L72"><span class="cm">//</span></span>
+<span id="src-easing-loft-L73"><span class="cm">// ⚠ `Back` and `Elastic` leave `[0, 1]` on purpose — they overshoot and come</span></span>
+<span id="src-easing-loft-L74"><span class="cm">// back — so a consumer clamping the RESULT of an ease is undoing the effect it</span></span>
+<span id="src-easing-loft-L75"><span class="cm">// asked for.  Every other curve stays inside.</span></span>
+<span id="src-easing-loft-L76"><span class="kw">pub</span> <span class="kw">enum</span> <span class="en">Curve</span> {</span>
+<span id="src-easing-loft-L77">    <span class="en">Linear</span>,</span>
+<span id="src-easing-loft-L78">    <span class="en">Quad</span>, <span class="en">Cubic</span>, <span class="en">Quart</span>, <span class="en">Quint</span>,</span>
+<span id="src-easing-loft-L79">    <span class="en">Sine</span>, <span class="en">Expo</span>, <span class="en">Circ</span>,</span>
+<span id="src-easing-loft-L80">    <span class="en">Back</span>, <span class="en">Elastic</span>, <span class="en">Bounce</span>,</span>
+<span id="src-easing-loft-L81">}</span>
+<span id="src-easing-loft-L82"></span>
+<span id="src-easing-loft-L83"><span class="cm">// Which direction the curve runs: slow at the start, slow at the end, or both.</span></span>
+<span id="src-easing-loft-L84"><span class="kw">pub</span> <span class="kw">enum</span> <span class="en">Shape</span> { <span class="en">In</span>, <span class="en">Out</span>, <span class="en">InOut</span> }</span>
+<span id="src-easing-loft-L85"></span>
+<span id="src-easing-loft-L86">const <span class="en">HALF_PI</span>  = <span class="nm">1.5707963267948966</span>;    <span class="cm">// π/2</span></span>
+<span id="src-easing-loft-L87">const <span class="en">ELASTIC_P</span> = <span class="nm">2.0943951023931953</span>;   <span class="cm">// 2π/3 — elastic's period</span></span>
+<span id="src-easing-loft-L88">const <span class="en">BACK_C1</span>  = <span class="nm">1.70158</span>;               <span class="cm">// the classic overshoot constant</span></span>
+<span id="src-easing-loft-L89"></span>
+<span id="src-easing-loft-L90"><span class="cm">// `2^-10` and `1 − 2^-10`: what an un-normalised exponential curve answers at</span></span>
+<span id="src-easing-loft-L91"><span class="cm">// `t = 0`, and the span that divides it back out.  See the header.</span></span>
+<span id="src-easing-loft-L92">const <span class="en">EXPO_ZERO</span> = <span class="nm">0.0009765625</span>;</span>
+<span id="src-easing-loft-L93">const <span class="en">EXPO_SPAN</span> = <span class="nm">0.9990234375</span>;</span>
+<span id="src-easing-loft-L94"></span>
+<span id="src-easing-loft-L95">const <span class="en">BOUNCE_N</span>  = <span class="nm">7.5625</span>;</span>
+<span id="src-easing-loft-L96">const <span class="en">BOUNCE_B1</span> = <span class="nm">0.36363636363636365</span>;  <span class="cm">// 1     / 2.75</span></span>
+<span id="src-easing-loft-L97">const <span class="en">BOUNCE_B2</span> = <span class="nm">0.7272727272727273</span>;   <span class="cm">// 2     / 2.75</span></span>
+<span id="src-easing-loft-L98">const <span class="en">BOUNCE_B3</span> = <span class="nm">0.9090909090909091</span>;   <span class="cm">// 2.5   / 2.75</span></span>
+<span id="src-easing-loft-L99">const <span class="en">BOUNCE_S2</span> = <span class="nm">0.5454545454545454</span>;   <span class="cm">// 1.5   / 2.75</span></span>
+<span id="src-easing-loft-L100">const <span class="en">BOUNCE_S3</span> = <span class="nm">0.8181818181818182</span>;   <span class="cm">// 2.25  / 2.75</span></span>
+<span id="src-easing-loft-L101">const <span class="en">BOUNCE_S4</span> = <span class="nm">0.9545454545454546</span>;   <span class="cm">// 2.625 / 2.75</span></span>
+<span id="src-easing-loft-L102"></span>
+<span id="src-easing-loft-L103"><span class="cm">// Ease `t` — the entry point, and the three reflections of the header's rule 2.</span></span>
+<span id="src-easing-loft-L104"><span class="cm">//</span></span>
+<span id="src-easing-loft-L105"><span class="cm">// ⚠ There is no clamp HERE on purpose; every arm reads the curve through</span></span>
+<span id="src-easing-loft-L106"><span class="cm">// `curve_at`, which is where the endpoints are decided.  See the header for</span></span>
+<span id="src-easing-loft-L107"><span class="cm">// why in front of the reflections is the wrong side of them.</span></span>
+<span id="src-easing-loft-L108"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">ease</span>(c: <span class="en">Curve</span>, s: <span class="en">Shape</span>, t: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="src-easing-loft-L109">    match s {</span>
+<span id="src-easing-loft-L110">        <span class="en">In</span>    =&gt; <span class="fn-call">curve_at</span>(c, t),</span>
+<span id="src-easing-loft-L111">        <span class="en">Out</span>   =&gt; <span class="nm">1.0</span> - <span class="fn-call">curve_at</span>(c, <span class="nm">1.0</span> - t),</span>
+<span id="src-easing-loft-L112">        <span class="en">InOut</span> =&gt; {</span>
+<span id="src-easing-loft-L113">            <span class="kw">if</span> t &lt; <span class="nm">0.5</span> { <span class="fn-call">curve_at</span>(c, t * <span class="nm">2.0</span>) * <span class="nm">0.5</span> }</span>
+<span id="src-easing-loft-L114">            <span class="kw">else</span>       { <span class="nm">1.0</span> - <span class="fn-call">curve_at</span>(c, (<span class="nm">1.0</span> - t) * <span class="nm">2.0</span>) * <span class="nm">0.5</span> }</span>
+<span id="src-easing-loft-L115">        },</span>
+<span id="src-easing-loft-L116">    }</span>
+<span id="src-easing-loft-L117">}</span>
+<span id="src-easing-loft-L118"></span>
+<span id="src-easing-loft-L119"><span class="cm">// The curve, clamped — **the one place all thirty-three combinations get their</span></span>
+<span id="src-easing-loft-L120"><span class="cm">// endpoints from.**</span></span>
+<span id="src-easing-loft-L121"><span class="cm">//</span></span>
+<span id="src-easing-loft-L122"><span class="cm">// ⚠ **Clamped, not trusted.**  `t &lt;= 0` answers exactly 0.0 and `t &gt;= 1`</span></span>
+<span id="src-easing-loft-L123"><span class="cm">// exactly 1.0 without consulting the curve, which is what makes the endpoints</span></span>
+<span id="src-easing-loft-L124"><span class="cm">// exact — including for the two curves whose textbook definitions miss them.</span></span>
+<span id="src-easing-loft-L125"><span class="cm">//</span></span>
+<span id="src-easing-loft-L126"><span class="cm">// ⚠ A `null` progress (a NaN) is neither `&lt;= 0.0` nor `&gt;= 1.0`, so it reaches</span></span>
+<span id="src-easing-loft-L127"><span class="cm">// the curve and comes back null.  That is deliberate: an unanswerable progress</span></span>
+<span id="src-easing-loft-L128"><span class="cm">// must not silently read as "finished".</span></span>
+<span id="src-easing-loft-L129"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">curve_at</span>(c: <span class="en">Curve</span>, t: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="src-easing-loft-L130">    <span class="kw">if</span> t &lt;= <span class="nm">0.0</span> { <span class="kw">return</span> <span class="nm">0.0</span>; }</span>
+<span id="src-easing-loft-L131">    <span class="kw">if</span> t &gt;= <span class="nm">1.0</span> { <span class="kw">return</span> <span class="nm">1.0</span>; }</span>
+<span id="src-easing-loft-L132">    <span class="fn-call">curve_in</span>(c, t)</span>
+<span id="src-easing-loft-L133">}</span>
+<span id="src-easing-loft-L134"></span>
+<span id="src-easing-loft-L135"><span class="cm">// The **In** direction of each curve, raw — the eleven definitions everything</span></span>
+<span id="src-easing-loft-L136"><span class="cm">// else is reflected from.</span></span>
+<span id="src-easing-loft-L137"><span class="cm">//</span></span>
+<span id="src-easing-loft-L138"><span class="cm">// ⚠ **Public so it can be gated, not because it is the door.**  It is NOT</span></span>
+<span id="src-easing-loft-L139"><span class="cm">// clamped: `curve_in(Sine, 1.0)` is `0.9999999999999999`, which is exactly the</span></span>
+<span id="src-easing-loft-L140"><span class="cm">// hole `ease` exists to close.  Reach for `ease`.</span></span>
+<span id="src-easing-loft-L141"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">curve_in</span>(c: <span class="en">Curve</span>, t: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="src-easing-loft-L142">    match c {</span>
+<span id="src-easing-loft-L143">        <span class="en">Linear</span>  =&gt; t,</span>
+<span id="src-easing-loft-L144">        <span class="en">Quad</span>    =&gt; t * t,</span>
+<span id="src-easing-loft-L145">        <span class="en">Cubic</span>   =&gt; t * t * t,</span>
+<span id="src-easing-loft-L146">        <span class="en">Quart</span>   =&gt; t * t * t * t,</span>
+<span id="src-easing-loft-L147">        <span class="en">Quint</span>   =&gt; t * t * t * t * t,</span>
+<span id="src-easing-loft-L148">        <span class="en">Sine</span>    =&gt; <span class="nm">1.0</span> - <span class="bi"><a href="stdlib-math.html">cos</a></span>(t * <span class="en">HALF_PI</span>),</span>
+<span id="src-easing-loft-L149">        <span class="cm">// Normalised so it starts at zero rather than at 2^-10 — the header's</span></span>
+<span id="src-easing-loft-L150">        <span class="cm">// first example.</span></span>
+<span id="src-easing-loft-L151">        <span class="en">Expo</span>    =&gt; ((<span class="fn-call">pow2</span>(<span class="nm">10.0</span> * t - <span class="nm">10.0</span>) - <span class="en">EXPO_ZERO</span>) / <span class="en">EXPO_SPAN</span>)?,</span>
+<span id="src-easing-loft-L152">        <span class="en">Circ</span>    =&gt; <span class="nm">1.0</span> - (<span class="bi"><a href="stdlib-math.html">sqrt</a></span>(<span class="nm">1.0</span> - t * t) ?? <span class="nm">0.0</span>),</span>
+<span id="src-easing-loft-L153">        <span class="en">Back</span>    =&gt; (<span class="en">BACK_C1</span> + <span class="nm">1.0</span>) * t * t * t - <span class="en">BACK_C1</span> * t * t,</span>
+<span id="src-easing-loft-L154">        <span class="en">Elastic</span> =&gt; -<span class="fn-call">pow2</span>(<span class="nm">10.0</span> * t - <span class="nm">10.0</span>) * <span class="bi"><a href="stdlib-math.html">sin</a></span>((t * <span class="nm">10.0</span> - <span class="nm">10.75</span>) * <span class="en">ELASTIC_P</span>),</span>
+<span id="src-easing-loft-L155">        <span class="en">Bounce</span>  =&gt; <span class="nm">1.0</span> - <span class="fn-call">bounce</span>(<span class="nm">1.0</span> - t),</span>
+<span id="src-easing-loft-L156">    }</span>
+<span id="src-easing-loft-L157">}</span>
+<span id="src-easing-loft-L158"></span>
+<span id="src-easing-loft-L159"><span class="cm">// `2^x`, with the nullable discharged — `pow` answers `float?`.</span></span>
+<span id="src-easing-loft-L160"><span class="kw">fn</span> <span class="fn-call">pow2</span>(x: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="src-easing-loft-L161">    <span class="fn-call"><a href="stdlib-math.html">pow</a></span>(<span class="nm">2.0</span>, x) ?? <span class="nm">0.0</span></span>
+<span id="src-easing-loft-L162">}</span>
+<span id="src-easing-loft-L163"></span>
+<span id="src-easing-loft-L164"><span class="cm">// The four parabolic hops, written in the direction they are natural in.</span></span>
+<span id="src-easing-loft-L165"><span class="cm">//</span></span>
+<span id="src-easing-loft-L166"><span class="cm">// ⚠ Bounce is the one curve whose textbook form is the OUT direction, so</span></span>
+<span id="src-easing-loft-L167"><span class="cm">// `curve_in` reflects THIS rather than the other way round — which is why the</span></span>
+<span id="src-easing-loft-L168"><span class="cm">// eleven-curve table still holds.</span></span>
+<span id="src-easing-loft-L169"><span class="kw">fn</span> <span class="fn-call">bounce</span>(t: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="src-easing-loft-L170">    <span class="kw">if</span> t &lt; <span class="en">BOUNCE_B1</span> { <span class="kw">return</span> <span class="en">BOUNCE_N</span> * t * t; }</span>
+<span id="src-easing-loft-L171">    <span class="kw">if</span> t &lt; <span class="en">BOUNCE_B2</span> {</span>
+<span id="src-easing-loft-L172">        b = t - <span class="en">BOUNCE_S2</span>;</span>
+<span id="src-easing-loft-L173">        <span class="kw">return</span> <span class="en">BOUNCE_N</span> * b * b + <span class="nm">0.75</span>;</span>
+<span id="src-easing-loft-L174">    }</span>
+<span id="src-easing-loft-L175">    <span class="kw">if</span> t &lt; <span class="en">BOUNCE_B3</span> {</span>
+<span id="src-easing-loft-L176">        b = t - <span class="en">BOUNCE_S3</span>;</span>
+<span id="src-easing-loft-L177">        <span class="kw">return</span> <span class="en">BOUNCE_N</span> * b * b + <span class="nm">0.9375</span>;</span>
+<span id="src-easing-loft-L178">    }</span>
+<span id="src-easing-loft-L179">    b = t - <span class="en">BOUNCE_S4</span>;</span>
+<span id="src-easing-loft-L180">    <span class="en">BOUNCE_N</span> * b * b + <span class="nm">0.984375</span></span>
+<span id="src-easing-loft-L181">}</span>
+</code></pre>
+<h2 id="src-tween-loft">src/tween.loft</h2>
+<pre class="src"><code><span id="src-tween-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
+<span id="src-tween-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
+<span id="src-tween-loft-L3"><span class="cm">//</span></span>
+<span id="src-tween-loft-L4"><span class="cm">// tween — a value moving from one number to another over an exact duration.</span></span>
+<span id="src-tween-loft-L5"><span class="cm">//</span></span>
+<span id="src-tween-loft-L6"><span class="cm">// ── ⚠⚠ THE INVARIANT ────────────────────────────────────────────</span></span>
+<span id="src-tween-loft-L7"><span class="cm">//</span></span>
+<span id="src-tween-loft-L8"><span class="cm">// &gt; **A tween's value is a function of the exact ratio `elapsed / duration`</span></span>
+<span id="src-tween-loft-L9"><span class="cm">// &gt; alone — never of how the frames were cut — and both endpoints are values</span></span>
+<span id="src-tween-loft-L10"><span class="cm">// &gt; it returns EXACTLY.**</span></span>
+<span id="src-tween-loft-L11"><span class="cm">//</span></span>
+<span id="src-tween-loft-L12"><span class="cm">// Two halves, and each of them was measured before it was written.</span></span>
+<span id="src-tween-loft-L13"><span class="cm">//</span></span>
+<span id="src-tween-loft-L14"><span class="cm">// ── ⚠ HALF ONE: TIME IS AN INTEGER, AND THE ALTERNATIVE IS NOT A ROUNDING</span></span>
+<span id="src-tween-loft-L15"><span class="cm">//    DIFFERENCE ─────────────────────────────────────────────────</span></span>
+<span id="src-tween-loft-L16"><span class="cm">//</span></span>
+<span id="src-tween-loft-L17"><span class="cm">// The obvious tween keeps `elapsed` in float seconds and adds `dt` each frame.</span></span>
+<span id="src-tween-loft-L18"><span class="cm">// Measured, one second of it:</span></span>
+<span id="src-tween-loft-L19"><span class="cm">//</span></span>
+<span id="src-tween-loft-L20"><span class="cm">//     30 frames of 1/30 s   sums to   0.99999999999999989</span></span>
+<span id="src-tween-loft-L21"><span class="cm">//     60 frames of 1/60 s   sums to   1.00000000000000133</span></span>
+<span id="src-tween-loft-L22"><span class="cm">//</span></span>
+<span id="src-tween-loft-L23"><span class="cm">// Neither is 1.0 and neither is the other.  So the same animation, at the two</span></span>
+<span id="src-tween-loft-L24"><span class="cm">// most ordinary frame rates, **ends in two different places** — and the 30 Hz</span></span>
+<span id="src-tween-loft-L25"><span class="cm">// one never arrives at all: it stops a hair short of its target and stays</span></span>
+<span id="src-tween-loft-L26"><span class="cm">// there, which is the "it lands on end − ε" bug wearing its other face.</span></span>
+<span id="src-tween-loft-L27"><span class="cm">//</span></span>
+<span id="src-tween-loft-L28"><span class="cm">// ⚠ **They are one defect, not two.**  Fix the accumulation and both go away;</span></span>
+<span id="src-tween-loft-L29"><span class="cm">// clamp the endpoint and only the visible half does.</span></span>
+<span id="src-tween-loft-L30"><span class="cm">//</span></span>
+<span id="src-tween-loft-L31"><span class="cm">// So a duration here is an **integer count of base units**, and `advance` adds</span></span>
+<span id="src-tween-loft-L32"><span class="cm">// integers.  Sixty units of 50 000 and thirty of 100 000 are both exactly</span></span>
+<span id="src-tween-loft-L33"><span class="cm">// 3 000 000, to the bit, and there is nothing left for a frame rate to change.</span></span>
+<span id="src-tween-loft-L34"><span class="cm">//</span></span>
+<span id="src-tween-loft-L35"><span class="cm">// ⚠ **The unit is yours.**  This package never converts seconds to units and</span></span>
+<span id="src-tween-loft-L36"><span class="cm">// never names a rate — feed it whatever integer unit your clock already runs</span></span>
+<span id="src-tween-loft-L37"><span class="cm">// in, as long as it is the same one everywhere.  With `fixstep` that is</span></span>
+<span id="src-tween-loft-L38"><span class="cm">// `CLOCK_UNITS_PER_SECOND` and its `clock_units_from_seconds`; **that is also</span></span>
+<span id="src-tween-loft-L39"><span class="cm">// why this package declares no dependency on it** — a second definition of</span></span>
+<span id="src-tween-loft-L40"><span class="cm">// "how long a second is" is two facts that can disagree, and the conversion</span></span>
+<span id="src-tween-loft-L41"><span class="cm">// already has a home.</span></span>
+<span id="src-tween-loft-L42"><span class="cm">//</span></span>
+<span id="src-tween-loft-L43"><span class="cm">// ── ⚠ HALF TWO: WHICH INTERPOLATION, MEASURED ───────────────────</span></span>
+<span id="src-tween-loft-L44"><span class="cm">//</span></span>
+<span id="src-tween-loft-L45"><span class="cm">// There are two ways to write a linear interpolation and they are not</span></span>
+<span id="src-tween-loft-L46"><span class="cm">// equivalent at the ends:</span></span>
+<span id="src-tween-loft-L47"><span class="cm">//</span></span>
+<span id="src-tween-loft-L48"><span class="cm">//     a + (b − a)·t        lands on `b` for 5 of 8 ordinary pairs</span></span>
+<span id="src-tween-loft-L49"><span class="cm">//     a·(1 − t) + b·t      lands on `b` for 8 of 8</span></span>
+<span id="src-tween-loft-L50"><span class="cm">//</span></span>
+<span id="src-tween-loft-L51"><span class="cm">// ⚠⚠ And the miss is not always an ε.  For `a = 1e17, b = 1.0` the first form</span></span>
+<span id="src-tween-loft-L52"><span class="cm">// answers **0.0** — `(b − a)` loses `b` entirely, and adding it back to `a`</span></span>
+<span id="src-tween-loft-L53"><span class="cm">// cancels to nothing.  A camera pulled from a far coordinate to the origin</span></span>
+<span id="src-tween-loft-L54"><span class="cm">// arrives at zero instead of at one, and no clamp on `t` can see it, because</span></span>
+<span id="src-tween-loft-L55"><span class="cm">// `t` was perfectly 1.0 the whole time.</span></span>
+<span id="src-tween-loft-L56"><span class="cm">//</span></span>
+<span id="src-tween-loft-L57"><span class="cm">// This package uses the second form (`lerp`), so **both** endpoints are exact</span></span>
+<span id="src-tween-loft-L58"><span class="cm">// by construction rather than by a special case.  Swept over `[0, 1]` it also</span></span>
+<span id="src-tween-loft-L59"><span class="cm">// never left `[min(a,b), max(a,b)]` in 8008 samples.</span></span>
+<span id="src-tween-loft-L60"><span class="cm">//</span></span>
+<span id="src-tween-loft-L61"><span class="cm">// ── THE RULES UNDER IT, INHERITED FROM `fixstep` ────────────────</span></span>
+<span id="src-tween-loft-L62"><span class="cm">//</span></span>
+<span id="src-tween-loft-L63"><span class="cm">// 1. **No callbacks, and nothing calls your tick.**  `advance` answers how</span></span>
+<span id="src-tween-loft-L64"><span class="cm">//    much time it did NOT use; `done` answers whether it finished.  A</span></span>
+<span id="src-tween-loft-L65"><span class="cm">//    consumer polls.  That is what lets one tween serve a frame loop, a</span></span>
+<span id="src-tween-loft-L66"><span class="cm">//    server pump, a script runner and a test.</span></span>
+<span id="src-tween-loft-L67"><span class="cm">// 2. **Time never runs backwards.**  A non-positive `advance` is dropped</span></span>
+<span id="src-tween-loft-L68"><span class="cm">//    rather than owed, so a paused consumer handing down zero cannot creep.</span></span>
+<span id="src-tween-loft-L69"><span class="cm">//</span></span>
+<span id="src-tween-loft-L70"><span class="cm">// ── ⚠⚠ WHY `advance` ANSWERS A LEFTOVER, WHICH IS THE WHOLE OF SEQUENCING</span></span>
+<span id="src-tween-loft-L71"><span class="cm">//</span></span>
+<span id="src-tween-loft-L72"><span class="cm">// `fixstep`'s `Timer` DISCARDS whatever time overshoots its boundary, on</span></span>
+<span id="src-tween-loft-L73"><span class="cm">// purpose: a one-shot's residue means nothing afterwards.  In a CHAIN it means</span></span>
+<span id="src-tween-loft-L74"><span class="cm">// everything — it is exactly the time the next link should already have run</span></span>
+<span id="src-tween-loft-L75"><span class="cm">// for.  Measured, ten links of 0.07 s each:</span></span>
+<span id="src-tween-loft-L76"><span class="cm">//</span></span>
+<span id="src-tween-loft-L77"><span class="cm">//     frame rate   discard the residue      carry it</span></span>
+<span id="src-tween-loft-L78"><span class="cm">//     60 Hz        0.833 s                  0.700 s</span></span>
+<span id="src-tween-loft-L79"><span class="cm">//     30 Hz        1.000 s                  0.700 s</span></span>
+<span id="src-tween-loft-L80"><span class="cm">//     24 Hz        0.833 s                  0.708 s</span></span>
+<span id="src-tween-loft-L81"><span class="cm">//</span></span>
+<span id="src-tween-loft-L82"><span class="cm">// ⚠ Discarding does not merely round — it makes the chain's total duration a</span></span>
+<span id="src-tween-loft-L83"><span class="cm">// function of the frame rate, and **43 % long at 30 Hz**.  Carrying costs at</span></span>
+<span id="src-tween-loft-L84"><span class="cm">// most one frame for the WHOLE chain (the 24 Hz cell, whose frame does not</span></span>
+<span id="src-tween-loft-L85"><span class="cm">// divide the total), rather than up to one frame PER LINK.</span></span>
+<span id="src-tween-loft-L86"><span class="cm">//</span></span>
+<span id="src-tween-loft-L87"><span class="cm">// That is why `advance` returns an integer instead of a boolean, and why</span></span>
+<span id="src-tween-loft-L88"><span class="cm">// `Track` is eleven lines rather than a scheduler.</span></span>
+<span id="src-tween-loft-L89"><span class="cm">//</span></span>
+<span id="src-tween-loft-L90"><span class="cm">// ── WHAT IS DELIBERATELY NOT HERE ───────────────────────────────</span></span>
+<span id="src-tween-loft-L91"><span class="cm">//</span></span>
+<span id="src-tween-loft-L92"><span class="cm">// **No setter and no property.**  A tween ANSWERS a number; writing it</span></span>
+<span id="src-tween-loft-L93"><span class="cm">// somewhere is the consumer's, and binding one to a scene-graph property is</span></span>
+<span id="src-tween-loft-L94"><span class="cm">// `@PLN145 C2`'s.  Keeping the write out is what lets the same type drive a</span></span>
+<span id="src-tween-loft-L95"><span class="cm">// camera, a colour channel, an audio gain and a value on a server.</span></span>
+<span id="src-tween-loft-L96"><span class="cm">//</span></span>
+<span id="src-tween-loft-L97"><span class="cm">// **No seconds, no frame rate, no clock.**  See the unit note above.</span></span>
+<span id="src-tween-loft-L98"><span class="cm">//</span></span>
+<span id="src-tween-loft-L99"><span class="cm">// **No vector, colour or transform tween.**  Those are N tweens sharing one</span></span>
+<span id="src-tween-loft-L100"><span class="cm">// clock, and N of these is already that.</span></span>
+<span id="src-tween-loft-L101"><span class="kw">pub</span> <span class="kw">use</span> easing::*;</span>
+<span id="src-tween-loft-L102"></span>
+<span id="src-tween-loft-L103"><span class="cm">// A linear interpolation that lands EXACTLY on both endpoints.</span></span>
+<span id="src-tween-loft-L104"><span class="cm">//</span></span>
+<span id="src-tween-loft-L105"><span class="cm">// ⚠ **`a·(1−t) + b·t`, and the other spelling is not equivalent** — see the</span></span>
+<span id="src-tween-loft-L106"><span class="cm">// header: `a + (b−a)·t` answers 0.0 for `lerp(1e17, 1.0, 1.0)`.  Reach for</span></span>
+<span id="src-tween-loft-L107"><span class="cm">// this one whenever an endpoint has to be hit rather than approached.</span></span>
+<span id="src-tween-loft-L108"><span class="cm">//</span></span>
+<span id="src-tween-loft-L109"><span class="cm">// `t` outside `[0, 1]` extrapolates, which is what makes the overshooting</span></span>
+<span id="src-tween-loft-L110"><span class="cm">// curves (`Back`, `Elastic`) work.</span></span>
+<span id="src-tween-loft-L111"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">lerp</span>(a: <span class="ty"><a href="stdlib-types.html">float</a></span>, b: <span class="ty"><a href="stdlib-types.html">float</a></span>, t: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="src-tween-loft-L112">    a * (<span class="nm">1.0</span> - t) + b * t</span>
+<span id="src-tween-loft-L113">}</span>
+<span id="src-tween-loft-L114"></span>
+<span id="src-tween-loft-L115"><span class="cm">// One value moving from `from` to `to` over `duration` base units.</span></span>
+<span id="src-tween-loft-L116"><span class="cm">//</span></span>
+<span id="src-tween-loft-L117"><span class="cm">// ⚠ **`duration &lt;= 0` means INSTANT, not unarmed** — it reads `to` and is</span></span>
+<span id="src-tween-loft-L118"><span class="cm">// `done` immediately.  That is the opposite of `fixstep`'s `Timer`, where a</span></span>
+<span id="src-tween-loft-L119"><span class="cm">// zero total means nothing is running, and it is deliberate: "move there over</span></span>
+<span id="src-tween-loft-L120"><span class="cm">// no time" is a step, and a chain built from one must pass straight through</span></span>
+<span id="src-tween-loft-L121"><span class="cm">// it rather than stall.</span></span>
+<span id="src-tween-loft-L122"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Tween</span> {</span>
+<span id="src-tween-loft-L123">    from: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-tween-loft-L124">    to: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-tween-loft-L125"></span>
+<span id="src-tween-loft-L126">    <span class="cm">// The whole duration, in base units.  Zero or less is instant.</span></span>
+<span id="src-tween-loft-L127">    duration: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-tween-loft-L128"></span>
+<span id="src-tween-loft-L129">    <span class="cm">// Base units of it that have gone by.  Never past `duration`.</span></span>
+<span id="src-tween-loft-L130">    elapsed: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-tween-loft-L131"></span>
+<span id="src-tween-loft-L132">    <span class="cm">// Base units still to wait before `elapsed` starts moving.</span></span>
+<span id="src-tween-loft-L133">    lead: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-tween-loft-L134"></span>
+<span id="src-tween-loft-L135">    curve: <span class="en">Curve</span> = <span class="en">Curve</span>.<span class="en">Linear</span>,</span>
+<span id="src-tween-loft-L136">    shape: <span class="en">Shape</span> = <span class="en">Shape</span>.<span class="en">In</span>,</span>
+<span id="src-tween-loft-L137">}</span>
+<span id="src-tween-loft-L138"></span>
+<span id="src-tween-loft-L139"><span class="cm">// A tween ready to run.</span></span>
+<span id="src-tween-loft-L140"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">tween_new</span>(from: <span class="ty"><a href="stdlib-types.html">float</a></span>, to: <span class="ty"><a href="stdlib-types.html">float</a></span>, duration: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-tween-loft-L141">                 c: <span class="en">Curve</span> = <span class="en">Curve</span>.<span class="en">Linear</span>, s: <span class="en">Shape</span> = <span class="en">Shape</span>.<span class="en">In</span>) -&gt; <span class="en">Tween</span> {</span>
+<span id="src-tween-loft-L142">    <span class="en">Tween</span> { from: from, to: to, duration: <span class="bi"><a href="stdlib-min-max-clamp.html">max</a></span>(duration, <span class="nm">0</span>), elapsed: <span class="nm">0</span>, lead: <span class="nm">0</span>,</span>
+<span id="src-tween-loft-L143">            curve: c, shape: s }</span>
+<span id="src-tween-loft-L144">}</span>
+<span id="src-tween-loft-L145"></span>
+<span id="src-tween-loft-L146"><span class="cm">// Wait `units` before starting.</span></span>
+<span id="src-tween-loft-L147"><span class="cm">//</span></span>
+<span id="src-tween-loft-L148"><span class="cm">// ⚠ A door rather than a sixth parameter, for `fixstep`'s reason: a delay is a</span></span>
+<span id="src-tween-loft-L149"><span class="cm">// case some callers have and most do not.  During the wait the tween reads</span></span>
+<span id="src-tween-loft-L150"><span class="cm">// `from` and is not `done`.</span></span>
+<span id="src-tween-loft-L151"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">delay</span>(self: <span class="en">Tween</span>, units: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-tween-loft-L152">    self.lead = <span class="bi"><a href="stdlib-min-max-clamp.html">max</a></span>(units, <span class="nm">0</span>);</span>
+<span id="src-tween-loft-L153">}</span>
+<span id="src-tween-loft-L154"></span>
+<span id="src-tween-loft-L155"><span class="cm">// Spend `units` of time on it, and answer how many were LEFT OVER — the time</span></span>
+<span id="src-tween-loft-L156"><span class="cm">// past its end, which is what the next link of a chain must already have run</span></span>
+<span id="src-tween-loft-L157"><span class="cm">// for.  Zero while it is still running.</span></span>
+<span id="src-tween-loft-L158"><span class="cm">//</span></span>
+<span id="src-tween-loft-L159"><span class="cm">// ⚠ Non-positive time is dropped rather than owed (`fixstep`'s rule 2), so a</span></span>
+<span id="src-tween-loft-L160"><span class="cm">// paused consumer may call this every frame.</span></span>
+<span id="src-tween-loft-L161"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">advance</span>(self: <span class="en">Tween</span>, units: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-tween-loft-L162">    <span class="kw">if</span> units &lt;= <span class="nm">0</span> { <span class="kw">return</span> <span class="nm">0</span>; }</span>
+<span id="src-tween-loft-L163">    left = units;</span>
+<span id="src-tween-loft-L164">    <span class="kw">if</span> self.lead &gt; <span class="nm">0</span> {</span>
+<span id="src-tween-loft-L165">        eat = <span class="bi"><a href="stdlib-min-max-clamp.html">min</a></span>(self.lead, left);</span>
+<span id="src-tween-loft-L166">        self.lead = self.lead - eat;</span>
+<span id="src-tween-loft-L167">        left = left - eat;</span>
+<span id="src-tween-loft-L168">        <span class="kw">if</span> left &lt;= <span class="nm">0</span> { <span class="kw">return</span> <span class="nm">0</span>; }</span>
+<span id="src-tween-loft-L169">    }</span>
+<span id="src-tween-loft-L170">    <span class="kw">if</span> self.duration &lt;= <span class="nm">0</span> { <span class="kw">return</span> left; }</span>
+<span id="src-tween-loft-L171">    room = self.duration - self.elapsed;</span>
+<span id="src-tween-loft-L172">    <span class="kw">if</span> room &lt;= <span class="nm">0</span> { <span class="kw">return</span> left; }</span>
+<span id="src-tween-loft-L173">    <span class="kw">if</span> left &lt; room {</span>
+<span id="src-tween-loft-L174">        self.elapsed = self.elapsed + left;</span>
+<span id="src-tween-loft-L175">        <span class="kw">return</span> <span class="nm">0</span>;</span>
+<span id="src-tween-loft-L176">    }</span>
+<span id="src-tween-loft-L177">    self.elapsed = self.duration;</span>
+<span id="src-tween-loft-L178">    left - room</span>
+<span id="src-tween-loft-L179">}</span>
+<span id="src-tween-loft-L180"></span>
+<span id="src-tween-loft-L181"><span class="cm">// How far through it is, before easing — the exact ratio `elapsed / duration`,</span></span>
+<span id="src-tween-loft-L182"><span class="cm">// in `[0, 1]`.</span></span>
+<span id="src-tween-loft-L183"><span class="cm">//</span></span>
+<span id="src-tween-loft-L184"><span class="cm">// ⚠ **It reaches 1.0 and STAYS there**, which is the difference from</span></span>
+<span id="src-tween-loft-L185"><span class="cm">// `fixstep`'s `timer_fraction` (documented `[0, 1)`, and 0.0 again once the</span></span>
+<span id="src-tween-loft-L186"><span class="cm">// timer fires — a tween built on one would snap back to its start the instant</span></span>
+<span id="src-tween-loft-L187"><span class="cm">// it finished).</span></span>
+<span id="src-tween-loft-L188"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">progress</span>(self: const <span class="en">Tween</span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="src-tween-loft-L189">    <span class="kw">if</span> self.duration &lt;= <span class="nm">0</span> { <span class="kw">return</span> <span class="nm">1.0</span>; }</span>
+<span id="src-tween-loft-L190">    <span class="kw">if</span> self.elapsed &gt;= self.duration { <span class="kw">return</span> <span class="nm">1.0</span>; }</span>
+<span id="src-tween-loft-L191">    <span class="kw">if</span> self.elapsed &lt;= <span class="nm">0</span> { <span class="kw">return</span> <span class="nm">0.0</span>; }</span>
+<span id="src-tween-loft-L192">    ((self.elapsed <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) / (self.duration <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>)) ?? <span class="nm">0.0</span></span>
+<span id="src-tween-loft-L193">}</span>
+<span id="src-tween-loft-L194"></span>
+<span id="src-tween-loft-L195"><span class="cm">// What it reads right now.</span></span>
+<span id="src-tween-loft-L196"><span class="cm">//</span></span>
+<span id="src-tween-loft-L197"><span class="cm">// ⚠ Exactly `from` before it starts and exactly `to` once it has finished —</span></span>
+<span id="src-tween-loft-L198"><span class="cm">// see the header for why that needs the interpolation to be written one way</span></span>
+<span id="src-tween-loft-L199"><span class="cm">// and not the other.</span></span>
+<span id="src-tween-loft-L200"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">value</span>(self: const <span class="en">Tween</span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="src-tween-loft-L201">    <span class="fn-call">lerp</span>(self.from, self.to, <span class="fn-call">ease</span>(self.curve, self.shape, <span class="fn-call">progress</span>(self)))</span>
+<span id="src-tween-loft-L202">}</span>
+<span id="src-tween-loft-L203"></span>
+<span id="src-tween-loft-L204"><span class="cm">// Has it finished?  A tween still waiting out its `delay` has not.</span></span>
+<span id="src-tween-loft-L205"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">done</span>(self: const <span class="en">Tween</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-tween-loft-L206">    <span class="kw">if</span> self.lead &gt; <span class="nm">0</span> { <span class="kw">return</span> <span class="kw">false</span>; }</span>
+<span id="src-tween-loft-L207">    self.duration &lt;= <span class="nm">0</span> || self.elapsed &gt;= self.duration</span>
+<span id="src-tween-loft-L208">}</span>
+<span id="src-tween-loft-L209"></span>
+<span id="src-tween-loft-L210"><span class="cm">// Put it back at the start, delay and all — the same tween, run again.</span></span>
+<span id="src-tween-loft-L211"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">rewind</span>(self: <span class="en">Tween</span>, lead: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>) {</span>
+<span id="src-tween-loft-L212">    self.elapsed = <span class="nm">0</span>;</span>
+<span id="src-tween-loft-L213">    self.lead = <span class="bi"><a href="stdlib-min-max-clamp.html">max</a></span>(lead, <span class="nm">0</span>);</span>
+<span id="src-tween-loft-L214">}</span>
+<span id="src-tween-loft-L215"></span>
+<span id="src-tween-loft-L216"><span class="cm">// How several tweens share one stream of time.</span></span>
+<span id="src-tween-loft-L217"><span class="kw">pub</span> <span class="kw">enum</span> <span class="en">Play</span> {</span>
+<span id="src-tween-loft-L218">    <span class="cm">// One after another; each link starts where the one before it ended.</span></span>
+<span id="src-tween-loft-L219">    <span class="en">Chain</span>,</span>
+<span id="src-tween-loft-L220">    <span class="cm">// All at once, off the same clock.</span></span>
+<span id="src-tween-loft-L221">    <span class="en">Parallel</span>,</span>
+<span id="src-tween-loft-L222">}</span>
+<span id="src-tween-loft-L223"></span>
+<span id="src-tween-loft-L224"><span class="cm">// Several tweens driven together.</span></span>
+<span id="src-tween-loft-L225"><span class="cm">//</span></span>
+<span id="src-tween-loft-L226"><span class="cm">// ⚠ **It is a rule about time, not a scheduler** — there is no queue, no</span></span>
+<span id="src-tween-loft-L227"><span class="cm">// priority and no callback.  `Chain` hands each link's leftover to the next,</span></span>
+<span id="src-tween-loft-L228"><span class="cm">// which is the entire reason `advance` answers one.</span></span>
+<span id="src-tween-loft-L229"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Track</span> {</span>
+<span id="src-tween-loft-L230">    steps: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Tween</span>&gt;,</span>
+<span id="src-tween-loft-L231">    mode: <span class="en">Play</span> = <span class="en">Play</span>.<span class="en">Chain</span>,</span>
+<span id="src-tween-loft-L232"></span>
+<span id="src-tween-loft-L233">    <span class="cm">// Which link is running, for `Chain`.  Past the end when it has finished.</span></span>
+<span id="src-tween-loft-L234">    at: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-tween-loft-L235">}</span>
+<span id="src-tween-loft-L236"></span>
+<span id="src-tween-loft-L237"><span class="cm">// An empty track.</span></span>
+<span id="src-tween-loft-L238"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">track_new</span>(mode: <span class="en">Play</span> = <span class="en">Play</span>.<span class="en">Chain</span>) -&gt; <span class="en">Track</span> {</span>
+<span id="src-tween-loft-L239">    <span class="en">Track</span> { steps: [], mode: mode, at: <span class="nm">0</span> }</span>
+<span id="src-tween-loft-L240">}</span>
+<span id="src-tween-loft-L241"></span>
+<span id="src-tween-loft-L242"><span class="cm">// Add a link.  For `Chain` the order of the calls is the order they run in.</span></span>
+<span id="src-tween-loft-L243"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">add</span>(self: <span class="en">Track</span>, tw: <span class="en">Tween</span>) {</span>
+<span id="src-tween-loft-L244">    self.steps += [tw];</span>
+<span id="src-tween-loft-L245">}</span>
+<span id="src-tween-loft-L246"></span>
+<span id="src-tween-loft-L247"><span class="cm">// Spend `units` on the track, and answer the leftover — the same contract one</span></span>
+<span id="src-tween-loft-L248"><span class="cm">// tween has, so a track composes into a chain exactly like a tween does.</span></span>
+<span id="src-tween-loft-L249"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">advance</span>(self: <span class="en">Track</span>, units: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-tween-loft-L250">    <span class="kw">if</span> units &lt;= <span class="nm">0</span> { <span class="kw">return</span> <span class="nm">0</span>; }</span>
+<span id="src-tween-loft-L251">    match self.mode {</span>
+<span id="src-tween-loft-L252">        <span class="en">Chain</span>    =&gt; <span class="fn-call">chain_advance</span>(self, units),</span>
+<span id="src-tween-loft-L253">        <span class="en">Parallel</span> =&gt; <span class="fn-call">group_advance</span>(self, units),</span>
+<span id="src-tween-loft-L254">    }</span>
+<span id="src-tween-loft-L255">}</span>
+<span id="src-tween-loft-L256"></span>
+<span id="src-tween-loft-L257"><span class="cm">// Each link gets what the previous one did not use.</span></span>
+<span id="src-tween-loft-L258"><span class="cm">//</span></span>
+<span id="src-tween-loft-L259"><span class="cm">// ⚠ The loop is a `for` over a written-down bound rather than a `while`, and</span></span>
+<span id="src-tween-loft-L260"><span class="cm">// that is not a style choice: one pass either finishes a link (so `at` grows)</span></span>
+<span id="src-tween-loft-L261"><span class="cm">// or returns, so `len(steps) + 1` passes is the exact worst case — and a loop</span></span>
+<span id="src-tween-loft-L262"><span class="cm">// whose bound a reader can see is also one loft's admission control can.</span></span>
+<span id="src-tween-loft-L263"><span class="kw">fn</span> <span class="fn-call">chain_advance</span>(self: <span class="en">Track</span>, units: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-tween-loft-L264">    left = units;</span>
+<span id="src-tween-loft-L265">    <span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..</span>=<span class="bi"><a href="stdlib-text.html">len</a></span>(self.steps) {</span>
+<span id="src-tween-loft-L266">        <span class="kw">if</span> left &lt;= <span class="nm">0</span> { <span class="kw">return</span> <span class="nm">0</span>; }</span>
+<span id="src-tween-loft-L267">        i = self.at;</span>
+<span id="src-tween-loft-L268">        <span class="kw">if</span> i &lt; <span class="bi"><a href="stdlib-text.html">len</a></span>(self.steps) {</span>
+<span id="src-tween-loft-L269">            left = <span class="fn-call">advance</span>(self.steps[i], left);</span>
+<span id="src-tween-loft-L270">            <span class="kw">if</span> !<span class="fn-call">done</span>(self.steps[i]) { <span class="kw">return</span> <span class="nm">0</span>; }</span>
+<span id="src-tween-loft-L271">            self.at = i + <span class="nm">1</span>;</span>
+<span id="src-tween-loft-L272">        } <span class="kw">else</span> {</span>
+<span id="src-tween-loft-L273">            <span class="kw">return</span> left;</span>
+<span id="src-tween-loft-L274">        }</span>
+<span id="src-tween-loft-L275">    }</span>
+<span id="src-tween-loft-L276">    left</span>
+<span id="src-tween-loft-L277">}</span>
+<span id="src-tween-loft-L278"></span>
+<span id="src-tween-loft-L279"><span class="cm">// Every link gets the same time.</span></span>
+<span id="src-tween-loft-L280"><span class="cm">//</span></span>
+<span id="src-tween-loft-L281"><span class="cm">// ⚠ The group's leftover is the SMALLEST of its links', because the group ends</span></span>
+<span id="src-tween-loft-L282"><span class="cm">// when the last one does — a link that finished early has more time to spare,</span></span>
+<span id="src-tween-loft-L283"><span class="cm">// and reporting that would run the next link of an enclosing chain too far.</span></span>
+<span id="src-tween-loft-L284"><span class="kw">fn</span> <span class="fn-call">group_advance</span>(self: <span class="en">Track</span>, units: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-tween-loft-L285">    <span class="kw">if</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(self.steps) == <span class="nm">0</span> { <span class="kw">return</span> units; }</span>
+<span id="src-tween-loft-L286">    out = units;</span>
+<span id="src-tween-loft-L287">    <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..l</span><span class="fn-call">en</span>(self.steps) {</span>
+<span id="src-tween-loft-L288">        <span class="kw">if</span> i &lt; <span class="bi"><a href="stdlib-text.html">len</a></span>(self.steps) {</span>
+<span id="src-tween-loft-L289">            out = <span class="bi"><a href="stdlib-min-max-clamp.html">min</a></span>(out, <span class="fn-call">advance</span>(self.steps[i], units));</span>
+<span id="src-tween-loft-L290">        }</span>
+<span id="src-tween-loft-L291">    }</span>
+<span id="src-tween-loft-L292">    out</span>
+<span id="src-tween-loft-L293">}</span>
+<span id="src-tween-loft-L294"></span>
+<span id="src-tween-loft-L295"><span class="cm">// Have all its links finished?</span></span>
+<span id="src-tween-loft-L296"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">done</span>(self: const <span class="en">Track</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-tween-loft-L297">    <span class="kw">for</span> s <span class="kw">in</span> self.steps {</span>
+<span id="src-tween-loft-L298">        <span class="kw">if</span> !<span class="fn-call">done</span>(s) { <span class="kw">return</span> <span class="kw">false</span>; }</span>
+<span id="src-tween-loft-L299">    }</span>
+<span id="src-tween-loft-L300">    <span class="kw">true</span></span>
+<span id="src-tween-loft-L301">}</span>
+<span id="src-tween-loft-L302"></span>
+<span id="src-tween-loft-L303"><span class="cm">// Which link is running, for `Chain` — `len(steps)` once it has finished.</span></span>
+<span id="src-tween-loft-L304"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">active</span>(self: const <span class="en">Track</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-tween-loft-L305">    self.at</span>
+<span id="src-tween-loft-L306">}</span>
+<span id="src-tween-loft-L307"></span>
+<span id="src-tween-loft-L308"><span class="cm">// What the link at `i` reads right now.</span></span>
+<span id="src-tween-loft-L309"><span class="cm">//</span></span>
+<span id="src-tween-loft-L310"><span class="cm">// ⚠ A door rather than making a consumer index `steps` itself, because an</span></span>
+<span id="src-tween-loft-L311"><span class="cm">// out-of-range index there reads `null` and this answers `0.0`.</span></span>
+<span id="src-tween-loft-L312"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">value_at</span>(self: const <span class="en">Track</span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="src-tween-loft-L313">    <span class="kw">if</span> i &gt;= <span class="nm">0</span> {</span>
+<span id="src-tween-loft-L314">        <span class="kw">if</span> i &lt; <span class="bi"><a href="stdlib-text.html">len</a></span>(self.steps) { <span class="kw">return</span> <span class="fn-call">value</span>(self.steps[i]); }</span>
+<span id="src-tween-loft-L315">    }</span>
+<span id="src-tween-loft-L316">    <span class="nm">0.0</span></span>
+<span id="src-tween-loft-L317">}</span>
+<span id="src-tween-loft-L318"></span>
+<span id="src-tween-loft-L319"><span class="cm">// Put every link back at its start.</span></span>
+<span id="src-tween-loft-L320"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">rewind</span>(self: <span class="en">Track</span>) {</span>
+<span id="src-tween-loft-L321">    <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..l</span><span class="fn-call">en</span>(self.steps) {</span>
+<span id="src-tween-loft-L322">        <span class="kw">if</span> i &lt; <span class="bi"><a href="stdlib-text.html">len</a></span>(self.steps) {</span>
+<span id="src-tween-loft-L323">            <span class="fn-call">rewind</span>(self.steps[i], <span class="nm">0</span>);</span>
+<span id="src-tween-loft-L324">        }</span>
+<span id="src-tween-loft-L325">    }</span>
+<span id="src-tween-loft-L326">    self.at = <span class="nm">0</span>;</span>
+<span id="src-tween-loft-L327">}</span>
+</code></pre>
+<h2 id="tests-curves-loft">tests/curves.loft</h2>
+<pre class="src"><code><span id="tests-curves-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
+<span id="tests-curves-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
+<span id="tests-curves-loft-L3"><span class="cm">//</span></span>
+<span id="tests-curves-loft-L4"><span class="cm">// @PLN145 C1 — the easing table, and the one rule that decides its endpoints.</span></span>
+<span id="tests-curves-loft-L5"><span class="cm">//</span></span>
+<span id="tests-curves-loft-L6"><span class="cm">// The hand-computed values below are split into two groups ON PURPOSE.  The</span></span>
+<span id="tests-curves-loft-L7"><span class="cm">// polynomial curves are asserted with `==`, because their sample points are</span></span>
+<span id="tests-curves-loft-L8"><span class="cm">// dyadic — `quad_in(½) = ¼` is exact in binary and any tolerance there would</span></span>
+<span id="tests-curves-loft-L9"><span class="cm">// hide a real error.  The rest go through `cos`, `sqrt` or `pow`, so they are</span></span>
+<span id="tests-curves-loft-L10"><span class="cm">// asserted to within 1e-15 and the test says so rather than pretending.</span></span>
+<span id="tests-curves-loft-L11"><span class="kw">use</span> tween::*;</span>
+<span id="tests-curves-loft-L12"></span>
+<span id="tests-curves-loft-L13"><span class="kw">fn</span> <span class="fn-call">close</span>(a: <span class="ty"><a href="stdlib-types.html">float</a></span>, b: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="tests-curves-loft-L14">    <span class="bi"><a href="stdlib-math.html">abs</a></span>(a - b) &lt; <span class="nm">0.000000000000001</span></span>
+<span id="tests-curves-loft-L15">}</span>
+<span id="tests-curves-loft-L16"></span>
+<span id="tests-curves-loft-L17"><span class="cm">// THE HAND-COMPUTED TABLE.  Every expected value here was derived on paper</span></span>
+<span id="tests-curves-loft-L18"><span class="cm">// from the definition in `easing.loft`, not read off a run.</span></span>
+<span id="tests-curves-loft-L19"><span class="kw">fn</span> <span class="fn-call">test_the_easing_table_is_what_was_computed_by_hand</span>() {</span>
+<span id="tests-curves-loft-L20">  <span class="cm">// Linear is the identity, exactly.</span></span>
+<span id="tests-curves-loft-L21">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">ease</span>(<span class="en">Curve</span>.<span class="en">Linear</span>, <span class="en">Shape</span>.<span class="en">In</span>, <span class="nm">0.25</span>) == <span class="nm">0.25</span>, <span class="st">"linear is the identity"</span>);</span>
+<span id="tests-curves-loft-L22">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">ease</span>(<span class="en">Curve</span>.<span class="en">Linear</span>, <span class="en">Shape</span>.<span class="en">Out</span>, <span class="nm">0.25</span>) == <span class="nm">0.25</span>, <span class="st">"and has no direction"</span>);</span>
+<span id="tests-curves-loft-L23">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">ease</span>(<span class="en">Curve</span>.<span class="en">Linear</span>, <span class="en">Shape</span>.<span class="en">InOut</span>, <span class="nm">0.25</span>) == <span class="nm">0.25</span>, <span class="st">"in any of the three"</span>);</span>
+<span id="tests-curves-loft-L24"></span>
+<span id="tests-curves-loft-L25">  <span class="cm">// t², t³, t⁴, t⁵ at t = ½ — all dyadic, so exact.</span></span>
+<span id="tests-curves-loft-L26">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">ease</span>(<span class="en">Curve</span>.<span class="en">Quad</span>,  <span class="en">Shape</span>.<span class="en">In</span>, <span class="nm">0.5</span>) == <span class="nm">0.25</span>,    <span class="st">"quad in ½ = ¼"</span>);</span>
+<span id="tests-curves-loft-L27">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">ease</span>(<span class="en">Curve</span>.<span class="en">Cubic</span>, <span class="en">Shape</span>.<span class="en">In</span>, <span class="nm">0.5</span>) == <span class="nm">0.125</span>,   <span class="st">"cubic in ½ = ⅛"</span>);</span>
+<span id="tests-curves-loft-L28">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">ease</span>(<span class="en">Curve</span>.<span class="en">Quart</span>, <span class="en">Shape</span>.<span class="en">In</span>, <span class="nm">0.5</span>) == <span class="nm">0.0625</span>,  <span class="st">"quart in ½ = 1/16"</span>);</span>
+<span id="tests-curves-loft-L29">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">ease</span>(<span class="en">Curve</span>.<span class="en">Quint</span>, <span class="en">Shape</span>.<span class="en">In</span>, <span class="nm">0.5</span>) == <span class="nm">0.03125</span>, <span class="st">"quint in ½ = 1/32"</span>);</span>
+<span id="tests-curves-loft-L30"></span>
+<span id="tests-curves-loft-L31">  <span class="cm">// Out is the reflection: 1 − in(1 − t).</span></span>
+<span id="tests-curves-loft-L32">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">ease</span>(<span class="en">Curve</span>.<span class="en">Quad</span>, <span class="en">Shape</span>.<span class="en">Out</span>, <span class="nm">0.5</span>)  == <span class="nm">0.75</span>,   <span class="st">"quad out ½ = 1 − ¼"</span>);</span>
+<span id="tests-curves-loft-L33">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">ease</span>(<span class="en">Curve</span>.<span class="en">Quad</span>, <span class="en">Shape</span>.<span class="en">Out</span>, <span class="nm">0.25</span>) == <span class="nm">0.4375</span>, <span class="st">"quad out ¼ = 1 − 0.75²"</span>);</span>
+<span id="tests-curves-loft-L34">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">ease</span>(<span class="en">Curve</span>.<span class="en">Quad</span>, <span class="en">Shape</span>.<span class="en">In</span>,  <span class="nm">0.25</span>) == <span class="nm">0.0625</span>, <span class="st">"quad in ¼ = 1/16"</span>);</span>
+<span id="tests-curves-loft-L35"></span>
+<span id="tests-curves-loft-L36">  <span class="cm">// InOut is in(2t)/2 below the midpoint and its mirror above.</span></span>
+<span id="tests-curves-loft-L37">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">ease</span>(<span class="en">Curve</span>.<span class="en">Quad</span>,  <span class="en">Shape</span>.<span class="en">InOut</span>, <span class="nm">0.25</span>) == <span class="nm">0.125</span>,  <span class="st">"quad in-out ¼ = ¼/2"</span>);</span>
+<span id="tests-curves-loft-L38">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">ease</span>(<span class="en">Curve</span>.<span class="en">Quad</span>,  <span class="en">Shape</span>.<span class="en">InOut</span>, <span class="nm">0.75</span>) == <span class="nm">0.875</span>,  <span class="st">"quad in-out ¾ = 1 − ¼/2"</span>);</span>
+<span id="tests-curves-loft-L39">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">ease</span>(<span class="en">Curve</span>.<span class="en">Cubic</span>, <span class="en">Shape</span>.<span class="en">InOut</span>, <span class="nm">0.25</span>) == <span class="nm">0.0625</span>, <span class="st">"cubic in-out ¼ = ⅛/2"</span>);</span>
+<span id="tests-curves-loft-L40"></span>
+<span id="tests-curves-loft-L41">  <span class="cm">// The transcendental four, to 1e-15 — see the file header.</span></span>
+<span id="tests-curves-loft-L42">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">close</span>(<span class="fn-call">ease</span>(<span class="en">Curve</span>.<span class="en">Sine</span>, <span class="en">Shape</span>.<span class="en">In</span>, <span class="nm">0.5</span>), <span class="nm">0.2928932188134524</span>),</span>
+<span id="tests-curves-loft-L43">         <span class="st">"sine in ½ = 1 − cos(π/4) = 1 − √2/2"</span>);</span>
+<span id="tests-curves-loft-L44">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">close</span>(<span class="fn-call">ease</span>(<span class="en">Curve</span>.<span class="en">Circ</span>, <span class="en">Shape</span>.<span class="en">In</span>, <span class="nm">0.5</span>), <span class="nm">0.1339745962155614</span>),</span>
+<span id="tests-curves-loft-L45">         <span class="st">"circ in ½ = 1 − √0.75"</span>);</span>
+<span id="tests-curves-loft-L46">  <span class="cm">// (2^-5 − 2^-10) / (1 − 2^-10) = 31/1023 exactly, as a rational.</span></span>
+<span id="tests-curves-loft-L47">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">close</span>(<span class="fn-call">ease</span>(<span class="en">Curve</span>.<span class="en">Expo</span>, <span class="en">Shape</span>.<span class="en">In</span>, <span class="nm">0.5</span>), <span class="nm">0.030303030303030304</span>),</span>
+<span id="tests-curves-loft-L48">         <span class="st">"expo in ½ = 31/1023"</span>);</span>
+<span id="tests-curves-loft-L49">  <span class="cm">// 2.70158·⅛ − 1.70158·¼ — negative, because `back` starts by pulling away.</span></span>
+<span id="tests-curves-loft-L50">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">close</span>(<span class="fn-call">ease</span>(<span class="en">Curve</span>.<span class="en">Back</span>, <span class="en">Shape</span>.<span class="en">In</span>, <span class="nm">0.5</span>), -<span class="nm">0.0876975</span>),</span>
+<span id="tests-curves-loft-L51">         <span class="st">"back in ½ dips below zero"</span>);</span>
+<span id="tests-curves-loft-L52">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">ease</span>(<span class="en">Curve</span>.<span class="en">Back</span>, <span class="en">Shape</span>.<span class="en">In</span>, <span class="nm">0.5</span>) &lt; <span class="nm">0.0</span>, <span class="st">"and that is the point of it"</span>);</span>
+<span id="tests-curves-loft-L53"></span>
+<span id="tests-curves-loft-L54">  <span class="cm">// Bounce's last hop: 7.5625·(½ − 1.5/2.75)² + 0.75 = 1/64 + ¾.</span></span>
+<span id="tests-curves-loft-L55">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">close</span>(<span class="fn-call">ease</span>(<span class="en">Curve</span>.<span class="en">Bounce</span>, <span class="en">Shape</span>.<span class="en">Out</span>, <span class="nm">0.5</span>), <span class="nm">0.765625</span>),</span>
+<span id="tests-curves-loft-L56">         <span class="st">"bounce out ½ = 1/64 + ¾"</span>);</span>
+<span id="tests-curves-loft-L57">}</span>
+<span id="tests-curves-loft-L58"></span>
+<span id="tests-curves-loft-L59"><span class="kw">fn</span> <span class="fn-call">all_curves</span>() -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Curve</span>&gt; {</span>
+<span id="tests-curves-loft-L60">  [<span class="en">Curve</span>.<span class="en">Linear</span>, <span class="en">Curve</span>.<span class="en">Quad</span>, <span class="en">Curve</span>.<span class="en">Cubic</span>, <span class="en">Curve</span>.<span class="en">Quart</span>, <span class="en">Curve</span>.<span class="en">Quint</span>,</span>
+<span id="tests-curves-loft-L61">   <span class="en">Curve</span>.<span class="en">Sine</span>, <span class="en">Curve</span>.<span class="en">Expo</span>, <span class="en">Curve</span>.<span class="en">Circ</span>, <span class="en">Curve</span>.<span class="en">Back</span>, <span class="en">Curve</span>.<span class="en">Elastic</span>, <span class="en">Curve</span>.<span class="en">Bounce</span>]</span>
+<span id="tests-curves-loft-L62">}</span>
+<span id="tests-curves-loft-L63"></span>
+<span id="tests-curves-loft-L64"><span class="kw">fn</span> <span class="fn-call">all_shapes</span>() -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Shape</span>&gt; {</span>
+<span id="tests-curves-loft-L65">  [<span class="en">Shape</span>.<span class="en">In</span>, <span class="en">Shape</span>.<span class="en">Out</span>, <span class="en">Shape</span>.<span class="en">InOut</span>]</span>
+<span id="tests-curves-loft-L66">}</span>
+<span id="tests-curves-loft-L67"></span>
+<span id="tests-curves-loft-L68"><span class="cm">// THE GATE THE WHOLE FILE IS BUILT AROUND.  Every one of the thirty-three</span></span>
+<span id="tests-curves-loft-L69"><span class="cm">// combinations lands on exactly 0 and exactly 1 — not near them.</span></span>
+<span id="tests-curves-loft-L70"><span class="kw">fn</span> <span class="fn-call">test_every_curve_lands_exactly_on_both_endpoints</span>() {</span>
+<span id="tests-curves-loft-L71">  n = <span class="nm">0</span>;</span>
+<span id="tests-curves-loft-L72">  <span class="kw">for</span> c <span class="kw">in</span> <span class="fn-call">all_curves</span>() {</span>
+<span id="tests-curves-loft-L73">    <span class="kw">for</span> s <span class="kw">in</span> <span class="fn-call">all_shapes</span>() {</span>
+<span id="tests-curves-loft-L74">      lo = <span class="fn-call">ease</span>(c, s, <span class="nm">0.0</span>);</span>
+<span id="tests-curves-loft-L75">      hi = <span class="fn-call">ease</span>(c, s, <span class="nm">1.0</span>);</span>
+<span id="tests-curves-loft-L76">      <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(lo == <span class="nm">0.0</span>, <span class="st">"a curve started at {lo} instead of exactly 0"</span>);</span>
+<span id="tests-curves-loft-L77">      <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hi == <span class="nm">1.0</span>, <span class="st">"a curve ended at {hi} instead of exactly 1"</span>);</span>
+<span id="tests-curves-loft-L78">      <span class="cm">// and outside the interval it stays put rather than extrapolating</span></span>
+<span id="tests-curves-loft-L79">      <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">ease</span>(c, s, -<span class="nm">3.0</span>) == <span class="nm">0.0</span>, <span class="st">"before the start it holds at 0"</span>);</span>
+<span id="tests-curves-loft-L80">      <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">ease</span>(c, s, <span class="nm">7.5</span>) == <span class="nm">1.0</span>, <span class="st">"after the end it holds at 1"</span>);</span>
+<span id="tests-curves-loft-L81">      n = n + <span class="nm">1</span>;</span>
+<span id="tests-curves-loft-L82">    }</span>
+<span id="tests-curves-loft-L83">  }</span>
+<span id="tests-curves-loft-L84">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(n == <span class="nm">33</span>, <span class="st">"eleven curves times three directions is 33, counted {n}"</span>);</span>
+<span id="tests-curves-loft-L85">}</span>
+<span id="tests-curves-loft-L86"></span>
+<span id="tests-curves-loft-L87"><span class="cm">// ⚠ THE CONTROL, and it is the reason the clamp is in `ease` rather than in</span></span>
+<span id="tests-curves-loft-L88"><span class="cm">// each curve: the RAW curves genuinely miss their endpoints.  If this test</span></span>
+<span id="tests-curves-loft-L89"><span class="cm">// ever goes green by the raw values being exact, the gate above has stopped</span></span>
+<span id="tests-curves-loft-L90"><span class="cm">// proving anything.</span></span>
+<span id="tests-curves-loft-L91"><span class="kw">fn</span> <span class="fn-call">test_the_raw_curves_miss_the_endpoints_that_ease_hits</span>() {</span>
+<span id="tests-curves-loft-L92">  <span class="cm">// 1 − cos(π/2), and cos(π/2) is 6.1e-17 in binary rather than zero.</span></span>
+<span id="tests-curves-loft-L93">  raw_sine = <span class="fn-call">curve_in</span>(<span class="en">Curve</span>.<span class="en">Sine</span>, <span class="nm">1.0</span>);</span>
+<span id="tests-curves-loft-L94">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(raw_sine != <span class="nm">1.0</span>, <span class="st">"the raw sine curve is expected to MISS 1.0"</span>);</span>
+<span id="tests-curves-loft-L95">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(raw_sine &gt; <span class="nm">0.9999999999999</span>, <span class="st">"…but only just — it is a last-bit miss"</span>);</span>
+<span id="tests-curves-loft-L96">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">ease</span>(<span class="en">Curve</span>.<span class="en">Sine</span>, <span class="en">Shape</span>.<span class="en">In</span>, <span class="nm">1.0</span>) == <span class="nm">1.0</span>, <span class="st">"while `ease` lands on it"</span>);</span>
+<span id="tests-curves-loft-L97"></span>
+<span id="tests-curves-loft-L98">  <span class="cm">// The textbook exponential answers 2^-10 at t = 0; the normalised one is 0.</span></span>
+<span id="tests-curves-loft-L99">  textbook_expo = <span class="fn-call"><a href="stdlib-math.html">pow</a></span>(<span class="nm">2.0</span>, -<span class="nm">10.0</span>) ?? <span class="nm">0.0</span>;</span>
+<span id="tests-curves-loft-L100">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(textbook_expo == <span class="nm">0.0009765625</span>, <span class="st">"the textbook expo starts at 2^-10"</span>);</span>
+<span id="tests-curves-loft-L101">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">curve_in</span>(<span class="en">Curve</span>.<span class="en">Expo</span>, <span class="nm">0.0</span>) == <span class="nm">0.0</span>, <span class="st">"the normalised one starts at zero"</span>);</span>
+<span id="tests-curves-loft-L102"></span>
+<span id="tests-curves-loft-L103">  <span class="cm">// Elastic's raw form misses at both ends.</span></span>
+<span id="tests-curves-loft-L104">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">curve_in</span>(<span class="en">Curve</span>.<span class="en">Elastic</span>, <span class="nm">0.0</span>) != <span class="nm">0.0</span>, <span class="st">"raw elastic misses 0"</span>);</span>
+<span id="tests-curves-loft-L105">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">ease</span>(<span class="en">Curve</span>.<span class="en">Elastic</span>, <span class="en">Shape</span>.<span class="en">In</span>, <span class="nm">0.0</span>) == <span class="nm">0.0</span>, <span class="st">"`ease` does not"</span>);</span>
+<span id="tests-curves-loft-L106">}</span>
+<span id="tests-curves-loft-L107"></span>
+<span id="tests-curves-loft-L108"><span class="cm">// The reflection rule is an identity, not an approximation — this is what</span></span>
+<span id="tests-curves-loft-L109"><span class="cm">// lets eleven definitions cover thirty-three.</span></span>
+<span id="tests-curves-loft-L110"><span class="kw">fn</span> <span class="fn-call">test_out_and_inout_are_exact_reflections_of_in</span>() {</span>
+<span id="tests-curves-loft-L111">  ts = [<span class="nm">0.1</span>, <span class="nm">0.25</span>, <span class="nm">0.375</span>, <span class="nm">0.5</span>, <span class="nm">0.625</span>, <span class="nm">0.75</span>, <span class="nm">0.9</span>];</span>
+<span id="tests-curves-loft-L112">  <span class="kw">for</span> c <span class="kw">in</span> <span class="fn-call">all_curves</span>() {</span>
+<span id="tests-curves-loft-L113">    <span class="kw">for</span> t <span class="kw">in</span> ts {</span>
+<span id="tests-curves-loft-L114">      out_direct = <span class="nm">1.0</span> - <span class="fn-call">curve_in</span>(c, <span class="nm">1.0</span> - t);</span>
+<span id="tests-curves-loft-L115">      <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">ease</span>(c, <span class="en">Shape</span>.<span class="en">Out</span>, t) == out_direct,</span>
+<span id="tests-curves-loft-L116">             <span class="st">"out(t) must be exactly 1 − in(1 − t)"</span>);</span>
+<span id="tests-curves-loft-L117">    }</span>
+<span id="tests-curves-loft-L118">    <span class="cm">// The midpoint of an in-out is exactly half, for every curve.</span></span>
+<span id="tests-curves-loft-L119">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">ease</span>(c, <span class="en">Shape</span>.<span class="en">InOut</span>, <span class="nm">0.5</span>) == <span class="nm">0.5</span>,</span>
+<span id="tests-curves-loft-L120">           <span class="st">"an in-out curve passes exactly through (½, ½)"</span>);</span>
+<span id="tests-curves-loft-L121">  }</span>
+<span id="tests-curves-loft-L122">}</span>
+<span id="tests-curves-loft-L123"></span>
+<span id="tests-curves-loft-L124"><span class="cm">// The two overshooting curves leave [0,1] on purpose; the other nine do not.</span></span>
+<span id="tests-curves-loft-L125"><span class="kw">fn</span> <span class="fn-call">test_only_back_and_elastic_leave_the_unit_interval</span>() {</span>
+<span id="tests-curves-loft-L126">  <span class="kw">for</span> c <span class="kw">in</span> <span class="fn-call">all_curves</span>() {</span>
+<span id="tests-curves-loft-L127">    out = <span class="nm">0</span>;</span>
+<span id="tests-curves-loft-L128">    <span class="kw">for</span> k <span class="kw">in</span> <span class="nm">0..</span>=<span class="nm">200</span> {</span>
+<span id="tests-curves-loft-L129">      t = (k <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) / <span class="nm">200.0</span>;</span>
+<span id="tests-curves-loft-L130">      v = <span class="fn-call">ease</span>(c, <span class="en">Shape</span>.<span class="en">In</span>, t);</span>
+<span id="tests-curves-loft-L131">      <span class="kw">if</span> v &lt; <span class="nm">0.0</span> || v &gt; <span class="nm">1.0</span> { out = out + <span class="nm">1</span>; }</span>
+<span id="tests-curves-loft-L132">    }</span>
+<span id="tests-curves-loft-L133">    <span class="kw">if</span> c == <span class="en">Curve</span>.<span class="en">Back</span> || c == <span class="en">Curve</span>.<span class="en">Elastic</span> {</span>
+<span id="tests-curves-loft-L134">      <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(out &gt; <span class="nm">0</span>, <span class="st">"back and elastic are supposed to overshoot"</span>);</span>
+<span id="tests-curves-loft-L135">    } <span class="kw">else</span> {</span>
+<span id="tests-curves-loft-L136">      <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(out == <span class="nm">0</span>, <span class="st">"a curve left [0,1] {out} times and should not have"</span>);</span>
+<span id="tests-curves-loft-L137">    }</span>
+<span id="tests-curves-loft-L138">  }</span>
+<span id="tests-curves-loft-L139">}</span>
+</code></pre>
+<h2 id="tests-track-loft">tests/track.loft</h2>
+<pre class="src"><code><span id="tests-track-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
+<span id="tests-track-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
+<span id="tests-track-loft-L3"><span class="cm">//</span></span>
+<span id="tests-track-loft-L4"><span class="cm">// @PLN145 C1 — sequencing, and the one number that makes it exact: the</span></span>
+<span id="tests-track-loft-L5"><span class="cm">// LEFTOVER a link hands to the next.</span></span>
+<span id="tests-track-loft-L6"><span class="cm">//</span></span>
+<span id="tests-track-loft-L7"><span class="cm">// `fixstep`'s `Timer` throws its overshoot away on purpose — a one-shot's</span></span>
+<span id="tests-track-loft-L8"><span class="cm">// residue means nothing afterwards.  A chain's residue means everything, and</span></span>
+<span id="tests-track-loft-L9"><span class="cm">// the control below computes what throwing it away would have cost.</span></span>
+<span id="tests-track-loft-L10"><span class="kw">use</span> tween::*;</span>
+<span id="tests-track-loft-L11"></span>
+<span id="tests-track-loft-L12">const <span class="en">SECOND</span> = <span class="nm">3000000</span>;</span>
+<span id="tests-track-loft-L13">const <span class="en">LINK</span>   = <span class="nm">210000</span>;    <span class="cm">// 0.07 s — chosen because no ordinary frame divides it</span></span>
+<span id="tests-track-loft-L14">const <span class="en">LINKS</span>  = <span class="nm">10</span>;</span>
+<span id="tests-track-loft-L15">const <span class="en">TOTAL</span>  = <span class="nm">2100000</span>;   <span class="cm">// 0.70 s</span></span>
+<span id="tests-track-loft-L16"></span>
+<span id="tests-track-loft-L17"><span class="kw">fn</span> <span class="fn-call">chain_of</span>(n: <span class="ty"><a href="stdlib-types.html">integer</a></span>, each: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Track</span> {</span>
+<span id="tests-track-loft-L18">  tr = <span class="fn-call">track_new</span>(<span class="en">Play</span>.<span class="en">Chain</span>);</span>
+<span id="tests-track-loft-L19">  <span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..</span>n { tr.<span class="fn-call">add</span>(<span class="fn-call">tween_new</span>(<span class="nm">0.0</span>, <span class="nm">1.0</span>, each)); }</span>
+<span id="tests-track-loft-L20">  tr</span>
+<span id="tests-track-loft-L21">}</span>
+<span id="tests-track-loft-L22"></span>
+<span id="tests-track-loft-L23"><span class="cm">// How many frames of `frame` units it takes to finish.</span></span>
+<span id="tests-track-loft-L24"><span class="kw">fn</span> <span class="fn-call">frames_to_finish</span>(tr: <span class="en">Track</span>, frame: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="tests-track-loft-L25">  f = <span class="nm">0</span>;</span>
+<span id="tests-track-loft-L26">  while !tr.<span class="fn-call">done</span>() {</span>
+<span id="tests-track-loft-L27">    _ = tr.<span class="fn-call">advance</span>(frame);</span>
+<span id="tests-track-loft-L28">    f = f + <span class="nm">1</span>;</span>
+<span id="tests-track-loft-L29">    <span class="kw">if</span> f &gt; <span class="nm">10000</span> { <span class="kw">return</span> f; }        <span class="cm">// the harness must not hang on a bug</span></span>
+<span id="tests-track-loft-L30">  }</span>
+<span id="tests-track-loft-L31">  f</span>
+<span id="tests-track-loft-L32">}</span>
+<span id="tests-track-loft-L33"></span>
+<span id="tests-track-loft-L34"><span class="cm">// THE GATE.  Ten links of 0.07 s take 0.70 s of wall time, and the frame rate</span></span>
+<span id="tests-track-loft-L35"><span class="cm">// does not get a say — bar the single partial frame at the end of the whole</span></span>
+<span id="tests-track-loft-L36"><span class="cm">// chain when the rate does not divide it.</span></span>
+<span id="tests-track-loft-L37"><span class="kw">fn</span> <span class="fn-call">test_a_chain_keeps_exact_time_at_every_frame_rate</span>() {</span>
+<span id="tests-track-loft-L38">  at60 = <span class="fn-call">frames_to_finish</span>(<span class="fn-call">chain_of</span>(<span class="en">LINKS</span>, <span class="en">LINK</span>), <span class="nm">50000</span>);</span>
+<span id="tests-track-loft-L39">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(at60 == <span class="nm">42</span>, <span class="st">"60 Hz: 2 100 000 / 50 000 = 42 frames, got {at60}"</span>);</span>
+<span id="tests-track-loft-L40"></span>
+<span id="tests-track-loft-L41">  at30 = <span class="fn-call">frames_to_finish</span>(<span class="fn-call">chain_of</span>(<span class="en">LINKS</span>, <span class="en">LINK</span>), <span class="nm">100000</span>);</span>
+<span id="tests-track-loft-L42">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(at30 == <span class="nm">21</span>, <span class="st">"30 Hz: the same 0.70 s, in 21 frames, got {at30}"</span>);</span>
+<span id="tests-track-loft-L43"></span>
+<span id="tests-track-loft-L44">  at24 = <span class="fn-call">frames_to_finish</span>(<span class="fn-call">chain_of</span>(<span class="en">LINKS</span>, <span class="en">LINK</span>), <span class="nm">125000</span>);</span>
+<span id="tests-track-loft-L45">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(at24 == <span class="nm">17</span>, <span class="st">"24 Hz: 16.8 frames, so 17 — got {at24}"</span>);</span>
+<span id="tests-track-loft-L46"></span>
+<span id="tests-track-loft-L47">  <span class="cm">// The 24 Hz cell overruns by ONE frame for the whole chain, not per link.</span></span>
+<span id="tests-track-loft-L48">  over = at24 * <span class="nm">125000</span> - <span class="en">TOTAL</span>;</span>
+<span id="tests-track-loft-L49">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(over == <span class="nm">25000</span>, <span class="st">"the overrun is {over} units — under one frame"</span>);</span>
+<span id="tests-track-loft-L50">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(over &lt; <span class="nm">125000</span>, <span class="st">"and strictly less than a frame, for ten links"</span>);</span>
+<span id="tests-track-loft-L51">}</span>
+<span id="tests-track-loft-L52"></span>
+<span id="tests-track-loft-L53"><span class="cm">// ⚠ THE CONTROL.  A chain whose links dropped their overshoot — which is what</span></span>
+<span id="tests-track-loft-L54"><span class="cm">// building one on a one-shot timer gives you — runs long, and by an amount</span></span>
+<span id="tests-track-loft-L55"><span class="cm">// that depends on the frame rate.  This computes that model directly, so the</span></span>
+<span id="tests-track-loft-L56"><span class="cm">// gate above is measured against the alternative rather than against itself.</span></span>
+<span id="tests-track-loft-L57"><span class="kw">fn</span> <span class="fn-call">test_discarding_the_leftover_would_run_long_and_vary_by_rate</span>() {</span>
+<span id="tests-track-loft-L58">  rates = [<span class="nm">50000</span>, <span class="nm">100000</span>, <span class="nm">125000</span>];</span>
+<span id="tests-track-loft-L59">  answers: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
+<span id="tests-track-loft-L60">  <span class="kw">for</span> frame <span class="kw">in</span> rates {</span>
+<span id="tests-track-loft-L61">    f = <span class="nm">0</span>;</span>
+<span id="tests-track-loft-L62">    <span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..</span><span class="en">LINKS</span> {</span>
+<span id="tests-track-loft-L63">      spent = <span class="nm">0</span>;</span>
+<span id="tests-track-loft-L64">      while spent &lt; <span class="en">LINK</span> { spent = spent + frame; f = f + <span class="nm">1</span>; }</span>
+<span id="tests-track-loft-L65">    }</span>
+<span id="tests-track-loft-L66">    answers += [f];</span>
+<span id="tests-track-loft-L67">  }</span>
+<span id="tests-track-loft-L68">  d60 = answers[<span class="nm">0</span>] ?? <span class="nm">0</span>;</span>
+<span id="tests-track-loft-L69">  d30 = answers[<span class="nm">1</span>] ?? <span class="nm">0</span>;</span>
+<span id="tests-track-loft-L70">  d24 = answers[<span class="nm">2</span>] ?? <span class="nm">0</span>;</span>
+<span id="tests-track-loft-L71">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(d60 == <span class="nm">50</span>, <span class="st">"discarding costs 50 frames at 60 Hz, not 42"</span>);</span>
+<span id="tests-track-loft-L72">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(d30 == <span class="nm">30</span>, <span class="st">"and 30 at 30 Hz — a full second for a 0.70 s chain"</span>);</span>
+<span id="tests-track-loft-L73">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(d24 == <span class="nm">20</span>, <span class="st">"and 20 at 24 Hz"</span>);</span>
+<span id="tests-track-loft-L74">  <span class="cm">// 30 frames of 1/30 s is 1.0 s against a true 0.70 s: 43 % long.</span></span>
+<span id="tests-track-loft-L75">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(d30 * <span class="nm">100000</span> == <span class="en">SECOND</span>, <span class="st">"the 30 Hz cell runs a whole second"</span>);</span>
+<span id="tests-track-loft-L76">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(d30 * <span class="nm">100000</span> &gt; <span class="en">TOTAL</span>, <span class="st">"which is longer than the chain actually is"</span>);</span>
+<span id="tests-track-loft-L77">}</span>
+<span id="tests-track-loft-L78"></span>
+<span id="tests-track-loft-L79"><span class="cm">// A chain runs its links in order, and each one really does move — the link</span></span>
+<span id="tests-track-loft-L80"><span class="cm">// lives inside the track's own vector, so this also gates that advancing it</span></span>
+<span id="tests-track-loft-L81"><span class="cm">// through the collection reaches the stored record rather than a copy.</span></span>
+<span id="tests-track-loft-L82"><span class="kw">fn</span> <span class="fn-call">test_a_chain_runs_its_links_in_order</span>() {</span>
+<span id="tests-track-loft-L83">  tr = <span class="fn-call">track_new</span>(<span class="en">Play</span>.<span class="en">Chain</span>);</span>
+<span id="tests-track-loft-L84">  tr.<span class="fn-call">add</span>(<span class="fn-call">tween_new</span>(<span class="nm">0.0</span>, <span class="nm">10.0</span>, <span class="en">SECOND</span>));</span>
+<span id="tests-track-loft-L85">  tr.<span class="fn-call">add</span>(<span class="fn-call">tween_new</span>(<span class="nm">100.0</span>, <span class="nm">200.0</span>, <span class="en">SECOND</span>));</span>
+<span id="tests-track-loft-L86"></span>
+<span id="tests-track-loft-L87">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(tr.<span class="fn-call">active</span>() == <span class="nm">0</span>, <span class="st">"it starts on the first link"</span>);</span>
+<span id="tests-track-loft-L88">  _ = tr.<span class="fn-call">advance</span>(<span class="en">SECOND</span> / <span class="nm">2</span> ?? <span class="nm">0</span>);</span>
+<span id="tests-track-loft-L89">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(tr.<span class="fn-call">value_at</span>(<span class="nm">0</span>) == <span class="nm">5.0</span>, <span class="st">"the first link moved to its half-way point"</span>);</span>
+<span id="tests-track-loft-L90">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(tr.<span class="fn-call">value_at</span>(<span class="nm">1</span>) == <span class="nm">100.0</span>, <span class="st">"and the second has not started"</span>);</span>
+<span id="tests-track-loft-L91"></span>
+<span id="tests-track-loft-L92">  _ = tr.<span class="fn-call">advance</span>(<span class="en">SECOND</span> / <span class="nm">2</span> ?? <span class="nm">0</span>);</span>
+<span id="tests-track-loft-L93">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(tr.<span class="fn-call">active</span>() == <span class="nm">1</span>, <span class="st">"the first link finished, so the second is active"</span>);</span>
+<span id="tests-track-loft-L94">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(tr.<span class="fn-call">value_at</span>(<span class="nm">0</span>) == <span class="nm">10.0</span>, <span class="st">"and the first is parked on its end value"</span>);</span>
+<span id="tests-track-loft-L95"></span>
+<span id="tests-track-loft-L96">  <span class="cm">// Three quarters of a second lands the second link three quarters along —</span></span>
+<span id="tests-track-loft-L97">  <span class="cm">// which is only true if the first link handed over its unused time.</span></span>
+<span id="tests-track-loft-L98">  _ = tr.<span class="fn-call">advance</span>((<span class="en">SECOND</span> * <span class="nm">3</span>) / <span class="nm">4</span> ?? <span class="nm">0</span>);</span>
+<span id="tests-track-loft-L99">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(tr.<span class="fn-call">value_at</span>(<span class="nm">1</span>) == <span class="nm">175.0</span>, <span class="st">"the second link is at 175, got {tr.value_at(1)}"</span>);</span>
+<span id="tests-track-loft-L100">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!tr.<span class="fn-call">done</span>(), <span class="st">"and the chain is not finished yet"</span>);</span>
+<span id="tests-track-loft-L101"></span>
+<span id="tests-track-loft-L102">  spare = tr.<span class="fn-call">advance</span>(<span class="en">SECOND</span>);</span>
+<span id="tests-track-loft-L103">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(tr.<span class="fn-call">done</span>(), <span class="st">"one more second finishes it"</span>);</span>
+<span id="tests-track-loft-L104">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(tr.<span class="fn-call">value_at</span>(<span class="nm">1</span>) == <span class="nm">200.0</span>, <span class="st">"on its exact end value"</span>);</span>
+<span id="tests-track-loft-L105">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(spare == (<span class="en">SECOND</span> * <span class="nm">3</span>) / <span class="nm">4</span> ?? <span class="nm">0</span>, <span class="st">"handing back what it did not use"</span>);</span>
+<span id="tests-track-loft-L106">}</span>
+<span id="tests-track-loft-L107"></span>
+<span id="tests-track-loft-L108"><span class="cm">// One stream of time, every link at once.</span></span>
+<span id="tests-track-loft-L109"><span class="kw">fn</span> <span class="fn-call">test_a_group_runs_its_links_together</span>() {</span>
+<span id="tests-track-loft-L110">  tr = <span class="fn-call">track_new</span>(<span class="en">Play</span>.<span class="en">Parallel</span>);</span>
+<span id="tests-track-loft-L111">  tr.<span class="fn-call">add</span>(<span class="fn-call">tween_new</span>(<span class="nm">0.0</span>, <span class="nm">10.0</span>, <span class="en">SECOND</span>));</span>
+<span id="tests-track-loft-L112">  tr.<span class="fn-call">add</span>(<span class="fn-call">tween_new</span>(<span class="nm">0.0</span>, <span class="nm">20.0</span>, <span class="en">SECOND</span> * <span class="nm">2</span>));</span>
+<span id="tests-track-loft-L113"></span>
+<span id="tests-track-loft-L114">  _ = tr.<span class="fn-call">advance</span>(<span class="en">SECOND</span>);</span>
+<span id="tests-track-loft-L115">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(tr.<span class="fn-call">value_at</span>(<span class="nm">0</span>) == <span class="nm">10.0</span>, <span class="st">"the short link finished"</span>);</span>
+<span id="tests-track-loft-L116">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(tr.<span class="fn-call">value_at</span>(<span class="nm">1</span>) == <span class="nm">10.0</span>, <span class="st">"and the long one is half way"</span>);</span>
+<span id="tests-track-loft-L117">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!tr.<span class="fn-call">done</span>(), <span class="st">"so the group is not done"</span>);</span>
+<span id="tests-track-loft-L118"></span>
+<span id="tests-track-loft-L119">  spare = tr.<span class="fn-call">advance</span>(<span class="en">SECOND</span> * <span class="nm">2</span>);</span>
+<span id="tests-track-loft-L120">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(tr.<span class="fn-call">done</span>(), <span class="st">"now every link has finished"</span>);</span>
+<span id="tests-track-loft-L121">  <span class="cm">// ⚠ The group's leftover is the SMALLEST of its links'.  The short link had</span></span>
+<span id="tests-track-loft-L122">  <span class="cm">// two spare seconds; the long one had one.  Reporting the short link's would</span></span>
+<span id="tests-track-loft-L123">  <span class="cm">// run an enclosing chain a second too far.</span></span>
+<span id="tests-track-loft-L124">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(spare == <span class="en">SECOND</span>, <span class="st">"the group's leftover is the slowest link's: {spare}"</span>);</span>
+<span id="tests-track-loft-L125">}</span>
+<span id="tests-track-loft-L126"></span>
+<span id="tests-track-loft-L127"><span class="cm">// An empty track is finished, and hands every unit straight back — which is</span></span>
+<span id="tests-track-loft-L128"><span class="cm">// what lets a chain step over one without stalling.</span></span>
+<span id="tests-track-loft-L129"><span class="kw">fn</span> <span class="fn-call">test_an_empty_track_passes_time_straight_through</span>() {</span>
+<span id="tests-track-loft-L130">  tr = <span class="fn-call">track_new</span>(<span class="en">Play</span>.<span class="en">Chain</span>);</span>
+<span id="tests-track-loft-L131">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(tr.<span class="fn-call">done</span>(), <span class="st">"an empty chain has nothing left to do"</span>);</span>
+<span id="tests-track-loft-L132">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(tr.<span class="fn-call">advance</span>(<span class="nm">12345</span>) == <span class="nm">12345</span>, <span class="st">"and consumes none of the time"</span>);</span>
+<span id="tests-track-loft-L133"></span>
+<span id="tests-track-loft-L134">  gr = <span class="fn-call">track_new</span>(<span class="en">Play</span>.<span class="en">Parallel</span>);</span>
+<span id="tests-track-loft-L135">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(gr.<span class="fn-call">done</span>(), <span class="st">"the same for an empty group"</span>);</span>
+<span id="tests-track-loft-L136">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(gr.<span class="fn-call">advance</span>(<span class="nm">12345</span>) == <span class="nm">12345</span>, <span class="st">"which is what makes them composable"</span>);</span>
+<span id="tests-track-loft-L137">}</span>
+<span id="tests-track-loft-L138"></span>
+<span id="tests-track-loft-L139"><span class="cm">// Rewind puts every link back, so a track can be replayed.</span></span>
+<span id="tests-track-loft-L140"><span class="kw">fn</span> <span class="fn-call">test_rewind_replays_the_whole_track</span>() {</span>
+<span id="tests-track-loft-L141">  tr = <span class="fn-call">chain_of</span>(<span class="nm">3</span>, <span class="en">SECOND</span>);</span>
+<span id="tests-track-loft-L142">  _ = tr.<span class="fn-call">advance</span>(<span class="en">SECOND</span> * <span class="nm">5</span>);</span>
+<span id="tests-track-loft-L143">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(tr.<span class="fn-call">done</span>(), <span class="st">"it ran to the end"</span>);</span>
+<span id="tests-track-loft-L144">  tr.<span class="fn-call">rewind</span>();</span>
+<span id="tests-track-loft-L145">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!tr.<span class="fn-call">done</span>(), <span class="st">"rewind put it back"</span>);</span>
+<span id="tests-track-loft-L146">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(tr.<span class="fn-call">active</span>() == <span class="nm">0</span>, <span class="st">"on its first link"</span>);</span>
+<span id="tests-track-loft-L147">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(tr.<span class="fn-call">value_at</span>(<span class="nm">2</span>) == <span class="nm">0.0</span>, <span class="st">"with the last link at its start again"</span>);</span>
+<span id="tests-track-loft-L148">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">frames_to_finish</span>(tr, <span class="en">SECOND</span>) == <span class="nm">3</span>, <span class="st">"and it runs the same length again"</span>);</span>
+<span id="tests-track-loft-L149">}</span>
+</code></pre>
+<h2 id="tests-value-loft">tests/value.loft</h2>
+<pre class="src"><code><span id="tests-value-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
+<span id="tests-value-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
+<span id="tests-value-loft-L3"><span class="cm">//</span></span>
+<span id="tests-value-loft-L4"><span class="cm">// @PLN145 C1 — the tween core: the same animation must come out the same</span></span>
+<span id="tests-value-loft-L5"><span class="cm">// however the frames were cut, and it must ARRIVE.</span></span>
+<span id="tests-value-loft-L6"><span class="cm">//</span></span>
+<span id="tests-value-loft-L7"><span class="cm">// Both gates below are paired with a control that computes the same thing the</span></span>
+<span id="tests-value-loft-L8"><span class="cm">// obvious way (float seconds, or the other spelling of a linear</span></span>
+<span id="tests-value-loft-L9"><span class="cm">// interpolation) and asserts that it DISAGREES.  Without those, a green run</span></span>
+<span id="tests-value-loft-L10"><span class="cm">// here would only prove that this file agrees with itself.</span></span>
+<span id="tests-value-loft-L11"><span class="kw">use</span> tween::*;</span>
+<span id="tests-value-loft-L12"></span>
+<span id="tests-value-loft-L13"><span class="cm">// 3 000 000 base units per second — `fixstep`'s unit, and the divisor that</span></span>
+<span id="tests-value-loft-L14"><span class="cm">// makes 24, 25, 30, 50, 60 and 120 Hz all whole numbers.</span></span>
+<span id="tests-value-loft-L15">const <span class="en">SECOND</span> = <span class="nm">3000000</span>;</span>
+<span id="tests-value-loft-L16"></span>
+<span id="tests-value-loft-L17"><span class="cm">// THE GATE.  One second of animation, sampled at the same ten instants, is</span></span>
+<span id="tests-value-loft-L18"><span class="cm">// bit-identical at 30 Hz and at 60 Hz.</span></span>
+<span id="tests-value-loft-L19"><span class="kw">fn</span> <span class="fn-call">test_thirty_hertz_and_sixty_hertz_agree_to_the_bit</span>() {</span>
+<span id="tests-value-loft-L20">  slow = <span class="fn-call">tween_new</span>(<span class="nm">0.0</span>, <span class="nm">100.0</span>, <span class="en">SECOND</span>, <span class="en">Curve</span>.<span class="en">Cubic</span>, <span class="en">Shape</span>.<span class="en">InOut</span>);</span>
+<span id="tests-value-loft-L21">  fast = <span class="fn-call">tween_new</span>(<span class="nm">0.0</span>, <span class="nm">100.0</span>, <span class="en">SECOND</span>, <span class="en">Curve</span>.<span class="en">Cubic</span>, <span class="en">Shape</span>.<span class="en">InOut</span>);</span>
+<span id="tests-value-loft-L22">  <span class="kw">for</span> k <span class="kw">in</span> <span class="nm">0..30</span> {</span>
+<span id="tests-value-loft-L23">    _ = slow.<span class="fn-call">advance</span>(<span class="nm">100000</span>);      <span class="cm">// one frame at 30 Hz</span></span>
+<span id="tests-value-loft-L24">    _ = fast.<span class="fn-call">advance</span>(<span class="nm">50000</span>);       <span class="cm">// two frames at 60 Hz</span></span>
+<span id="tests-value-loft-L25">    _ = fast.<span class="fn-call">advance</span>(<span class="nm">50000</span>);</span>
+<span id="tests-value-loft-L26">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(slow.<span class="fn-call">value</span>() == fast.<span class="fn-call">value</span>(),</span>
+<span id="tests-value-loft-L27">           <span class="st">"at instant {k} the two rates parted: {slow.value()} vs {fast.value()}"</span>);</span>
+<span id="tests-value-loft-L28">  }</span>
+<span id="tests-value-loft-L29">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(slow.<span class="fn-call">value</span>() == <span class="nm">100.0</span>, <span class="st">"and 30 Hz ARRIVED, exactly"</span>);</span>
+<span id="tests-value-loft-L30">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(fast.<span class="fn-call">value</span>() == <span class="nm">100.0</span>, <span class="st">"and so did 60 Hz"</span>);</span>
+<span id="tests-value-loft-L31">}</span>
+<span id="tests-value-loft-L32"></span>
+<span id="tests-value-loft-L33"><span class="cm">// ⚠ THE CONTROL for the gate above: the obvious float-seconds accumulation</span></span>
+<span id="tests-value-loft-L34"><span class="cm">// does NOT agree, and does NOT arrive.  If this ever passes, integer time has</span></span>
+<span id="tests-value-loft-L35"><span class="cm">// stopped being the reason the gate holds.</span></span>
+<span id="tests-value-loft-L36"><span class="kw">fn</span> <span class="fn-call">test_float_seconds_would_disagree_and_would_not_arrive</span>() {</span>
+<span id="tests-value-loft-L37">  slow = <span class="nm">0.0</span>;</span>
+<span id="tests-value-loft-L38">  <span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..30</span> { slow = slow + (<span class="nm">1.0</span> / <span class="nm">30.0</span> ?? <span class="nm">0.0</span>); }</span>
+<span id="tests-value-loft-L39">  fast = <span class="nm">0.0</span>;</span>
+<span id="tests-value-loft-L40">  <span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..60</span> { fast = fast + (<span class="nm">1.0</span> / <span class="nm">60.0</span> ?? <span class="nm">0.0</span>); }</span>
+<span id="tests-value-loft-L41">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(slow != fast, <span class="st">"float seconds are expected to part at the two rates"</span>);</span>
+<span id="tests-value-loft-L42">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(slow != <span class="nm">1.0</span>, <span class="st">"30 Hz in float seconds stops SHORT of the end"</span>);</span>
+<span id="tests-value-loft-L43">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(fast != <span class="nm">1.0</span>, <span class="st">"60 Hz in float seconds runs PAST it"</span>);</span>
+<span id="tests-value-loft-L44">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(slow &lt; <span class="nm">1.0</span> &amp;&amp; fast &gt; <span class="nm">1.0</span>, <span class="st">"and they miss in opposite directions"</span>);</span>
+<span id="tests-value-loft-L45">}</span>
+<span id="tests-value-loft-L46"></span>
+<span id="tests-value-loft-L47"><span class="cm">// A tween reads exactly `from` before it moves and exactly `to` once it is</span></span>
+<span id="tests-value-loft-L48"><span class="cm">// done — for pairs where the arithmetic makes that hard.</span></span>
+<span id="tests-value-loft-L49"><span class="kw">fn</span> <span class="fn-call">test_it_lands_on_the_endpoints_exactly</span>() {</span>
+<span id="tests-value-loft-L50">  froms = [<span class="nm">0.1</span>,  -<span class="nm">3.7</span>, <span class="nm">100.0</span>, <span class="nm">1</span>e17, <span class="nm">0.0</span>];</span>
+<span id="tests-value-loft-L51">  tos   = [<span class="nm">0.3</span>,   <span class="nm">9.1</span>,   <span class="nm">0.7</span>,  <span class="nm">1.0</span>, <span class="nm">1.0</span>];</span>
+<span id="tests-value-loft-L52">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..l</span><span class="fn-call">en</span>(froms) {</span>
+<span id="tests-value-loft-L53">    a = froms[i] ?? <span class="nm">0.0</span>;</span>
+<span id="tests-value-loft-L54">    b = tos[i] ?? <span class="nm">0.0</span>;</span>
+<span id="tests-value-loft-L55">    tw = <span class="fn-call">tween_new</span>(a, b, <span class="en">SECOND</span>, <span class="en">Curve</span>.<span class="en">Elastic</span>, <span class="en">Shape</span>.<span class="en">InOut</span>);</span>
+<span id="tests-value-loft-L56">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(tw.<span class="fn-call">value</span>() == a, <span class="st">"before it starts a tween reads exactly `from`"</span>);</span>
+<span id="tests-value-loft-L57">    _ = tw.<span class="fn-call">advance</span>(<span class="en">SECOND</span>);</span>
+<span id="tests-value-loft-L58">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(tw.<span class="fn-call">done</span>(), <span class="st">"one full duration finishes it"</span>);</span>
+<span id="tests-value-loft-L59">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(tw.<span class="fn-call">value</span>() == b, <span class="st">"and it lands on exactly `to`, not near it"</span>);</span>
+<span id="tests-value-loft-L60">  }</span>
+<span id="tests-value-loft-L61">}</span>
+<span id="tests-value-loft-L62"></span>
+<span id="tests-value-loft-L63"><span class="cm">// ⚠ THE CONTROL for the endpoints: the other spelling of a linear</span></span>
+<span id="tests-value-loft-L64"><span class="cm">// interpolation misses — and for the far-apart pair it does not merely miss,</span></span>
+<span id="tests-value-loft-L65"><span class="cm">// it answers zero.</span></span>
+<span id="tests-value-loft-L66"><span class="kw">fn</span> <span class="fn-call">test_the_other_interpolation_spelling_misses</span>() {</span>
+<span id="tests-value-loft-L67">  a = <span class="nm">1</span>e17;</span>
+<span id="tests-value-loft-L68">  b = <span class="nm">1.0</span>;</span>
+<span id="tests-value-loft-L69">  naive = a + (b - a) * <span class="nm">1.0</span>;</span>
+<span id="tests-value-loft-L70">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(naive != b, <span class="st">"`a + (b−a)·t` is expected to miss at t = 1"</span>);</span>
+<span id="tests-value-loft-L71">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(naive == <span class="nm">0.0</span>, <span class="st">"and for this pair it loses `b` completely"</span>);</span>
+<span id="tests-value-loft-L72">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">lerp</span>(a, b, <span class="nm">1.0</span>) == b, <span class="st">"while `lerp` lands on it"</span>);</span>
+<span id="tests-value-loft-L73">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">lerp</span>(a, b, <span class="nm">0.0</span>) == a, <span class="st">"at both ends"</span>);</span>
+<span id="tests-value-loft-L74">}</span>
+<span id="tests-value-loft-L75"></span>
+<span id="tests-value-loft-L76"><span class="cm">// Progress reaches 1.0 and STAYS there — the difference from a one-shot timer,</span></span>
+<span id="tests-value-loft-L77"><span class="cm">// which disarms at its boundary and reads zero again afterwards.</span></span>
+<span id="tests-value-loft-L78"><span class="kw">fn</span> <span class="fn-call">test_progress_reaches_one_and_stays</span>() {</span>
+<span id="tests-value-loft-L79">  tw = <span class="fn-call">tween_new</span>(<span class="nm">0.0</span>, <span class="nm">1.0</span>, <span class="en">SECOND</span>);</span>
+<span id="tests-value-loft-L80">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(tw.<span class="fn-call">progress</span>() == <span class="nm">0.0</span>, <span class="st">"it starts at zero"</span>);</span>
+<span id="tests-value-loft-L81">  _ = tw.<span class="fn-call">advance</span>(<span class="en">SECOND</span> / <span class="nm">2</span> ?? <span class="nm">0</span>);</span>
+<span id="tests-value-loft-L82">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(tw.<span class="fn-call">progress</span>() == <span class="nm">0.5</span>, <span class="st">"half the duration is exactly half way"</span>);</span>
+<span id="tests-value-loft-L83">  _ = tw.<span class="fn-call">advance</span>(<span class="en">SECOND</span>);</span>
+<span id="tests-value-loft-L84">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(tw.<span class="fn-call">progress</span>() == <span class="nm">1.0</span>, <span class="st">"and it reaches exactly one"</span>);</span>
+<span id="tests-value-loft-L85">  _ = tw.<span class="fn-call">advance</span>(<span class="en">SECOND</span> * <span class="nm">10</span>);</span>
+<span id="tests-value-loft-L86">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(tw.<span class="fn-call">progress</span>() == <span class="nm">1.0</span>, <span class="st">"…and stays there however long it is fed"</span>);</span>
+<span id="tests-value-loft-L87">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(tw.<span class="fn-call">value</span>() == <span class="nm">1.0</span>, <span class="st">"so the value stays at the end, not back at the start"</span>);</span>
+<span id="tests-value-loft-L88">}</span>
+<span id="tests-value-loft-L89"></span>
+<span id="tests-value-loft-L90"><span class="cm">// Time never runs backwards, and a paused consumer handing down nothing cannot</span></span>
+<span id="tests-value-loft-L91"><span class="cm">// creep.</span></span>
+<span id="tests-value-loft-L92"><span class="kw">fn</span> <span class="fn-call">test_non_positive_time_is_dropped</span>() {</span>
+<span id="tests-value-loft-L93">  tw = <span class="fn-call">tween_new</span>(<span class="nm">0.0</span>, <span class="nm">1.0</span>, <span class="en">SECOND</span>);</span>
+<span id="tests-value-loft-L94">  _ = tw.<span class="fn-call">advance</span>(<span class="en">SECOND</span> / <span class="nm">4</span> ?? <span class="nm">0</span>);</span>
+<span id="tests-value-loft-L95">  before = tw.<span class="fn-call">value</span>();</span>
+<span id="tests-value-loft-L96">  <span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..100</span> { _ = tw.<span class="fn-call">advance</span>(<span class="nm">0</span>); }</span>
+<span id="tests-value-loft-L97">  <span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..100</span> { _ = tw.<span class="fn-call">advance</span>(-<span class="nm">50000</span>); }</span>
+<span id="tests-value-loft-L98">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(tw.<span class="fn-call">value</span>() == before, <span class="st">"zero and negative time moved it"</span>);</span>
+<span id="tests-value-loft-L99">}</span>
+<span id="tests-value-loft-L100"></span>
+<span id="tests-value-loft-L101"><span class="cm">// A delay holds it at the start without finishing it, then it runs normally.</span></span>
+<span id="tests-value-loft-L102"><span class="kw">fn</span> <span class="fn-call">test_a_delay_holds_it_at_the_start</span>() {</span>
+<span id="tests-value-loft-L103">  tw = <span class="fn-call">tween_new</span>(<span class="nm">5.0</span>, <span class="nm">9.0</span>, <span class="en">SECOND</span>);</span>
+<span id="tests-value-loft-L104">  tw.<span class="fn-call">delay</span>(<span class="en">SECOND</span>);</span>
+<span id="tests-value-loft-L105">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!tw.<span class="fn-call">done</span>(), <span class="st">"a delayed tween has not finished"</span>);</span>
+<span id="tests-value-loft-L106">  _ = tw.<span class="fn-call">advance</span>(<span class="en">SECOND</span>);</span>
+<span id="tests-value-loft-L107">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(tw.<span class="fn-call">value</span>() == <span class="nm">5.0</span>, <span class="st">"the whole delay passed and it has not moved"</span>);</span>
+<span id="tests-value-loft-L108">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!tw.<span class="fn-call">done</span>(), <span class="st">"and it is still not finished"</span>);</span>
+<span id="tests-value-loft-L109">  _ = tw.<span class="fn-call">advance</span>(<span class="en">SECOND</span> / <span class="nm">2</span> ?? <span class="nm">0</span>);</span>
+<span id="tests-value-loft-L110">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(tw.<span class="fn-call">value</span>() == <span class="nm">7.0</span>, <span class="st">"then it runs: half of 5 → 9 is 7"</span>);</span>
+<span id="tests-value-loft-L111">  over = tw.<span class="fn-call">advance</span>(<span class="en">SECOND</span>);</span>
+<span id="tests-value-loft-L112">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(tw.<span class="fn-call">done</span>() &amp;&amp; tw.<span class="fn-call">value</span>() == <span class="nm">9.0</span>, <span class="st">"and it arrives"</span>);</span>
+<span id="tests-value-loft-L113">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(over == (<span class="en">SECOND</span> / <span class="nm">2</span> ?? <span class="nm">0</span>), <span class="st">"with the unused half handed back"</span>);</span>
+<span id="tests-value-loft-L114">}</span>
+<span id="tests-value-loft-L115"></span>
+<span id="tests-value-loft-L116"><span class="cm">// A duration of zero is INSTANT, not unarmed — the deliberate divergence from</span></span>
+<span id="tests-value-loft-L117"><span class="cm">// `fixstep`'s `Timer`, where a zero total means nothing is running.</span></span>
+<span id="tests-value-loft-L118"><span class="kw">fn</span> <span class="fn-call">test_a_zero_duration_is_instant</span>() {</span>
+<span id="tests-value-loft-L119">  tw = <span class="fn-call">tween_new</span>(<span class="nm">2.0</span>, <span class="nm">8.0</span>, <span class="nm">0</span>);</span>
+<span id="tests-value-loft-L120">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(tw.<span class="fn-call">done</span>(), <span class="st">"a zero-duration tween is already finished"</span>);</span>
+<span id="tests-value-loft-L121">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(tw.<span class="fn-call">value</span>() == <span class="nm">8.0</span>, <span class="st">"and reads its destination"</span>);</span>
+<span id="tests-value-loft-L122">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(tw.<span class="fn-call">advance</span>(<span class="nm">1234</span>) == <span class="nm">1234</span>, <span class="st">"it consumes no time at all"</span>);</span>
+<span id="tests-value-loft-L123">}</span>
+<span id="tests-value-loft-L124"></span>
+<span id="tests-value-loft-L125"><span class="cm">// Rewind runs the same tween again, delay and all.</span></span>
+<span id="tests-value-loft-L126"><span class="kw">fn</span> <span class="fn-call">test_rewind_runs_it_again</span>() {</span>
+<span id="tests-value-loft-L127">  tw = <span class="fn-call">tween_new</span>(<span class="nm">0.0</span>, <span class="nm">4.0</span>, <span class="en">SECOND</span>);</span>
+<span id="tests-value-loft-L128">  _ = tw.<span class="fn-call">advance</span>(<span class="en">SECOND</span>);</span>
+<span id="tests-value-loft-L129">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(tw.<span class="fn-call">done</span>(), <span class="st">"it finished once"</span>);</span>
+<span id="tests-value-loft-L130">  tw.<span class="fn-call">rewind</span>();</span>
+<span id="tests-value-loft-L131">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!tw.<span class="fn-call">done</span>(), <span class="st">"and rewind put it back"</span>);</span>
+<span id="tests-value-loft-L132">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(tw.<span class="fn-call">value</span>() == <span class="nm">0.0</span>, <span class="st">"at the start"</span>);</span>
+<span id="tests-value-loft-L133">  _ = tw.<span class="fn-call">advance</span>(<span class="en">SECOND</span> / <span class="nm">2</span> ?? <span class="nm">0</span>);</span>
+<span id="tests-value-loft-L134">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(tw.<span class="fn-call">value</span>() == <span class="nm">2.0</span>, <span class="st">"running the same way as before"</span>);</span>
+<span id="tests-value-loft-L135">}</span>
+</code></pre>
 
   </article>
 <script src="search-index.js"></script>

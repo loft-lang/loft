@@ -38,10 +38,10 @@ fn s1() {
   println("s1 {r}");
 }
 
-// s2 — an EMPTY text has no pieces.  A NULL text is not empty: it is the one character of
-// the null sentinel, so `split` answers it as its only piece — and so must the loop.  (A
-// null reaches a `text` parameter only past the compiler's null-into-non-null warning,
-// which this cell draws on purpose.)
+// s2 — an EMPTY text has no pieces, and neither has the ABSENT one: `@FR-L-Null-Text` makes
+// it a text with no characters (loft#1795), so `split` answers no pieces for it — and so
+// must the loop.  (A null reaches a `text` parameter only past the compiler's
+// null-into-non-null warning, which this cell draws on purpose.)
 fn count_of(src: text) -> integer {
   n = 0;
   for _p in src.split(',') { n += 1; }
@@ -59,7 +59,7 @@ fn s2() {
   a = count_of("");
   b = count_of(nothing);
   c = null_piece(nothing);
-  assert(a == 0 && b == 1 && c == "[null|1]", "s2 {a} {b} {c}");
+  assert(a == 0 && b == 0 && c == "", "s2 {a} {b} {c}");
   println("s2 {a} {b} {c}");
 }
 
@@ -303,7 +303,7 @@ fn s20() {
 
 // s21 — a NULLABLE text parameter, discharged both ways the language offers: a default
 // for the text (an empty text: no pieces), and the type's default for the vector (the
-// call still runs on the null text, which answers itself: one piece).
+// call still runs on the null text, which has no characters: no pieces either).
 fn opt_shape(src: text?) -> text {
   out = "";
   n = 0;
@@ -316,7 +316,7 @@ fn opt_shape(src: text?) -> text {
 fn s21() {
   a = opt_shape(null as text?);
   b = opt_shape("x,,y");
-  assert(a == "01" && b == "3[x][][y]3", "s21 {a} {b}");
+  assert(a == "00" && b == "3[x][][y]3", "s21 {a} {b}");
   println("s21 {a} {b}");
 }
 

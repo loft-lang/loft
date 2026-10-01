@@ -77,7 +77,7 @@ Home · Language: vs Rust · Keywords · … · Library: Types · Math · … [s
 
 | File | Role |
 |---|---|
-| `src/gendoc.rs` | Binary entry point (`cargo run --bin gendoc`). Reads the default library files and suite `.loft` files, extracts public declarations and doc comments, builds the `link_map`, then calls functions in `src/documentation.rs` to emit HTML. |
+| `src/gendoc.rs` | Binary entry point (`cargo run --bin gendoc`). Reads the default library files and suite `.loft` files, extracts public declarations and doc comments, builds the `link_map`, then calls functions in `src/documentation.rs` to emit HTML.  The hand-written pages (`install`, `roadmap`, `report`) keep their own body, but gendoc writes their `<nav>` (`HAND_WRITTEN_PAGES`), so the committed-pages check covers their navigation too. |
 | `src/documentation.rs` | HTML generation library. Provides `generate_docs` (index + topic pages), `gather_topic_info`, `build_nav`, `page_html`, and `highlight_loft` (syntax highlighting with inline stdlib links). |
 
 `gendoc.rs` is the **orchestrator** — it owns the data-gathering loop and calls `documentation.rs` for all HTML emission. `documentation.rs` contains no file I/O of its own beyond writing the output files it is explicitly told to write.
@@ -166,9 +166,13 @@ render one, and its output stays local.
 
 ## Adding documentation to the standard library
 
-Add a doc comment directly above each `pub` declaration in `default/*.loft`.  Both
-`//` and `///` lines are read as documentation (gendoc and the LSP accept either), so
-follow the file's own form.
+Add a `///` doc comment directly above each `pub` declaration in `default/*.loft`.  In
+the standard library `///` is the user's documentation and `//` the maintainer's: gendoc
+publishes only `///` lines, and a `//` line neither joins a doc block nor ends it, so a
+maintainer note may sit next to a `pub` item without reaching the reference.  The LSP
+hover follows the same rule for a `default/` definition.  A forgotten `///` leaves the item
+bare, which `every_published_stdlib_entry_carries_its_documentation` reports.  (A library
+outside `default/` documents with either spelling.)
 Use `// --- Section Name ---` lines to group related items under a heading.
 Run `cargo run --bin gendoc` to regenerate the section pages and update the link map.
 
@@ -183,7 +187,8 @@ conclude that a hover or a REPL `:doc` cannot show `///` text. That conclusion i
 Every `Definition` carries `position: Position { file, line, pos }` (set at `add_def` from
 the lexer's position) pointing into real, readable source, stdlib and library definitions
 included (a stdlib symbol resolves to e.g. `default/04_stacktrace.loft:41`; `file` is
-repo-root-relative). The `//` or `///` lines directly above that line ARE the documentation, and
+repo-root-relative). The `//` or `///` lines directly above that line ARE the documentation
+(only `///` in `default/`, see above), and
 reading them there is the same route `gendoc` takes. Do not add a doc field to `Definition`
 to serve a tool; read the source at the position it already records.
 

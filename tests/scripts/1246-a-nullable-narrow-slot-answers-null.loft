@@ -45,6 +45,11 @@
 //   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
 //   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
 //   both. The native side was not scored in this sweep.
+//
+// loft#1796 moved one cell: the i8? subtraction started from `-128`, which is that slot's
+// null (`@FR-N-Reserve`: `i8?` holds -127..=127), so the cell measured nothing, and a constant
+// a nullable narrow slot cannot hold is now refused at compile time.  It starts from `-127`,
+// the lowest value the slot holds, so the subtraction is what leaves the range.
 
 struct S1246 {
   au: u8?,          al: integer limit(0,255)?,
@@ -119,8 +124,8 @@ fn test_every_direction_and_operator_agrees() {
   assert(a == null, "a u8? below 0 is null, got {a}");
   b: u8? = 200;   b *= 2;
   assert(b == null, "a u8? past 255 by multiplication is null, got {b}");
-  c: i8? = -128;  c -= 1;
-  assert(c == null, "an i8? below -128 is null, got {c}");
+  c: i8? = -127;  c -= 1;
+  assert(c == null, "an i8? below -127 is null, got {c}");
   z = 0;
   d: u8? = 200;   d /= z;
   assert(d == null, "a divide by zero into a u8? is null, got {d}");

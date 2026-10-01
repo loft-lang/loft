@@ -14,7 +14,7 @@ mark is how that gate is administered; this file is the worklist that
 gets each library there.
 
 This is a **2026-07-cycle stabilization effort** (see
-[ROADMAP.md § Feature freeze](../../ROADMAP.md#feature-freeze--heading-into-the-2026-07-cycle-added-2026-06-07)):
+[ROADMAP.md § Scope during a cycle](../../ROADMAP.md#scope-during-a-cycle--the-warm-feature-freeze)):
 making libraries work on loft is the only new-feature track during the
 freeze, and "work" means *passing the rules*, not just compiling.
 

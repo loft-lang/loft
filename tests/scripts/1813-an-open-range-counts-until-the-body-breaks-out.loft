@@ -1,0 +1,47 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `for i in a.. { … }` COUNTS UP UNTIL THE BODY LEAVES IT (loft#1813, @FR-I-RangeFrom).
+// The `{` after `..` was read as the range's upper bound, so the body became an expression:
+// a `break` in it was "outside a loop", and without one the counter was compared with the
+// block's value ("No matching operator '<=' on 'void'").  Now `a..` is Rust's `RangeFrom`: a
+// `break` or a `return` leaves it, it nests, it feeds a comprehension, it starts past
+// `i32::MAX`, and at the type's maximum it stops after yielding that value instead of
+// overflowing — `(I-RangeIncl)`'s exact stop, which is how it is lowered.
+//
+// @falsified-at: 5f5cabed2 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/1813-an-open-range-counts-until-the-body-breaks-out.patch — interpret exit 1 -> 0, native exit 1 -> 0
+// CHANNEL: exit — the control tree refuses the first open range ("Cannot break outside a loop").
+// HOLDS: leak and panic are equal on both trees.
+
+fn first_square_over(limit: integer) -> integer {
+  for i in 1.. {
+    if i * i > limit { return i; }
+  }
+  0
+}
+
+fn main() {
+  t = 0;
+  for i in 5.. { t += i; if i == 9 { break; } }
+  assert(t == 35, "5 + 6 + 7 + 8 + 9: {t}");
+  assert(first_square_over(50) == 8, "return leaves the loop: {first_square_over(50)}");
+  pairs = 0;
+  for i in 0.. {
+    for j in 0.. { if j > 1 { break; } pairs += 10 * i + j; }
+    if i > 0 { break; }
+  }
+  // (00 + 01) + (10 + 11) = 22
+  assert(pairs == 22, "nested open ranges: {pairs}");
+  v = [for i in 0.. { if i > 3 { break; } i * 10 }];
+  assert("{v}" == "[0,10,20,30]", "a comprehension over an open range: {v}");
+  big = 3000000000;
+  n = 0;
+  for i in big.. { if i > big + 1 { break; } n += i - big; }
+  assert(n == 1, "a start past i32::MAX: {n}");
+  rounds = 0;
+  last = 0;
+  for i in 9223372036854775805.. { rounds += 1; last = i; }
+  assert(rounds == 3 && last == 9223372036854775807, "stops after the maximum: {rounds} {last}");
+  println("1813 ok");
+}

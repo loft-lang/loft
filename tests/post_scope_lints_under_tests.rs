@@ -293,3 +293,38 @@ fn a_claimed_warning_alone_still_passes_under_deny() {
         "an expected warning is intentional and must not fail the file\n{out}"
     );
 }
+
+/// `variant-overwritten-binding` where the stale read is an arm's TAIL value.  A tail is not a
+/// statement, so no span wraps it, and the lint's nearest position was the FUNCTION's: the
+/// warning pointed at `fn get(o: Outer) -> integer {` (line 4 here).  It now reads the block's
+/// `Line` markers and reports the read's own line, 8.
+#[test]
+fn an_overwritten_binding_read_as_the_arm_tail_is_located_at_the_read() {
+    const SRC: &str = "
+enum Inner { Full { v: integer }, Empty { z: integer } }
+struct Outer { inner: Inner }
+fn get(o: Outer) -> integer {
+  match o.inner {
+    Full { v } => {
+      o.inner = Empty { z: 9 };
+      v
+    },
+    Empty { z } => z
+  }
+}
+fn test_get() { assert(get(Outer { inner: Full { v: 7 } }) == 7, \"the slot still reads 7\"); }
+";
+    let (out, _) = run_tests("vob_tail", SRC, &[]);
+    assert!(
+        out.contains("variant-overwritten-binding"),
+        "the tail read must still warn; got:\n{out}"
+    );
+    assert!(
+        out.contains(".loft:8:"),
+        "the warning must point at the tail read on line 8; got:\n{out}"
+    );
+    assert!(
+        !out.contains(".loft:4:"),
+        "and not at the function's signature; got:\n{out}"
+    );
+}

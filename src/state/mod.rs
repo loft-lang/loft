@@ -1285,6 +1285,7 @@ impl State {
                                     name: fv.name,
                                     type_name,
                                     value,
+                                    is_argument: fv.is_argument,
                                 }
                             })
                             .collect()

@@ -44,6 +44,7 @@
 // says so as it starts.
 //
 //     loft
+//     loft REPL — :help for commands, :quit to exit
 //     restored 2 statement(s) from last session
 //     loft>
 //

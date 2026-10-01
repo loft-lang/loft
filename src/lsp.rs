@@ -31,7 +31,7 @@ fn load_stdlib(p: &mut Parser, stdlib_dir: &str) {
     // The stdlib prelude (STD_SOURCE) must be registered before the user buffer,
     // or every stdlib symbol reads as undefined — both paths do that first.
     if !crate::startup_cache::warm_load_stdlib(p, stdlib_dir) {
-        let _ = p.parse_dir(stdlib_dir, true, false);
+        let _ = p.parse_stdlib(stdlib_dir);
         crate::startup_cache::save_stdlib_cache(p, stdlib_dir);
     }
 }
@@ -245,9 +245,9 @@ fn hover_of_def(data: &Data, d: u32, text: &str, name: &str, stdlib_dir: &str) -
     // Read the definition's own source ONCE — for the `///` doc AND to locate the
     // name (the parser records `pos` at the body start, past the name).
     let src = read_def_source(text, name, stdlib_dir, &pos);
-    let doc = src
-        .as_deref()
-        .map_or_else(Vec::new, |s| doc_block_above(s, pos.line));
+    let doc = src.as_deref().map_or_else(Vec::new, |s| {
+        doc_block_above(s, pos.line, pos.file.starts_with("default/"))
+    });
     let def_col = src
         .as_deref()
         .and_then(|s| name_col_on_line(s, pos.line, &cname))
@@ -291,7 +291,7 @@ pub fn resolve_at(text: &str, stdlib_dir: &str, line: u32, col: u32) -> Option<H
             }
             let vars = p.data.def(fn_def).variables();
             let vname = vars.name(var_nr).to_string();
-            let sig = format!("{vname}: {}", p.data.type_name_str(vars.tp(var_nr)));
+            let sig = format!("{vname}: {}", p.data.display_type_name(vars.tp(var_nr)));
             // The declaration is the binding's earliest occurrence in the buffer.
             let decl = p
                 .resolutions()
@@ -319,7 +319,7 @@ pub fn resolve_at(text: &str, stdlib_dir: &str, line: u32, col: u32) -> Option<H
             let tname = p.data.def(type_def).name().to_string();
             let sig = format!(
                 "{tname}.{fname}: {}",
-                p.data.type_name_str(&p.data.attr_type(type_def, attr))
+                p.data.display_type_name(&p.data.attr_type(type_def, attr))
             );
             let pos = p.data.def(type_def).position.clone();
             Some(Hover {
@@ -401,7 +401,12 @@ fn read_def_source(buf: &str, buf_name: &str, stdlib_dir: &str, pos: &Position) 
 /// the group below it, so folding it into the first function's doc would attach a heading to
 /// one arbitrary member.  That is also the one shape a plain-`//` reading could plausibly get
 /// wrong, which is why it is excluded here rather than left to chance.
-fn doc_block_above(src: &str, decl_line: u32) -> Vec<String> {
+///
+/// The standard library (`stdlib`) keeps the two apart (loft#1808): there `///` is the
+/// user's documentation and `//` the maintainer's, so only `///` lines count and a `//` line
+/// is passed over without ending the block — the rule `gendoc` publishes by, so a hover
+/// shows what the reference shows.
+fn doc_block_above(src: &str, decl_line: u32, stdlib: bool) -> Vec<String> {
     let lines: Vec<&str> = src.lines().collect();
     let mut doc: Vec<String> = Vec::new();
     // The line above the declaration is index `decl_line - 2`.
@@ -420,10 +425,15 @@ fn doc_block_above(src: &str, decl_line: u32) -> Vec<String> {
         if is_section_marker(trimmed) {
             break;
         }
-        let Some(rest) = trimmed
-            .strip_prefix("///")
-            .or_else(|| trimmed.strip_prefix("//"))
-        else {
+        let rest = if let Some(rest) = trimmed.strip_prefix("///") {
+            rest
+        } else if let Some(rest) = trimmed.strip_prefix("//") {
+            if stdlib {
+                i -= 1;
+                continue;
+            }
+            rest
+        } else {
             break;
         };
         doc.push(rest.strip_prefix(' ').unwrap_or(rest).to_string());
@@ -1415,7 +1425,7 @@ pub fn inlay_hints(text: &str, name: &str, stdlib_dir: &str) -> Vec<InlayHint> {
         if matches!(tp, Type::Unknown(_) | Type::Never | Type::Null | Type::Void) {
             continue;
         }
-        let label = p.data.type_name_str(tp);
+        let label = p.data.display_type_name(tp);
         if label.is_empty() {
             continue;
         }
@@ -1554,7 +1564,7 @@ fn identifier_completions(data: &Data, prefix: &str, cursor_line: u32) -> Vec<Co
                 Completion {
                     label: vname.to_string(),
                     kind: 6, // Variable
-                    detail: data.type_name_str(vars.tp(v)),
+                    detail: data.display_type_name(vars.tp(v)),
                 },
             ));
         }
@@ -1670,7 +1680,7 @@ fn member_completions(data: &Data, receiver: &str, cursor_line: u32) -> Vec<Comp
             out.push(Completion {
                 label: a.name.clone(),
                 kind: 5, // Field
-                detail: data.type_name_str(&a.typedef),
+                detail: data.display_type_name(&a.typedef),
             });
         }
     }
@@ -2111,7 +2121,7 @@ pub fn extract_function(
     {
         return None;
     }
-    let ty = |v: u16| data.type_name_str(vars.tp(v));
+    let ty = |v: u16| data.display_type_name(vars.tp(v));
     let params: Vec<String> = inputs
         .iter()
         .map(|&v| format!("{}: {}", vars.written_name(v), ty(v)))

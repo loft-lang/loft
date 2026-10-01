@@ -6,7 +6,10 @@ fn add_to(x: &integer, amount: integer) {
 }
 fn main() {
     total = 10;
-    add_to(total, 5);
+    add_to(total, 5);              // no `&` at the call
     add_to(total, 100);
     println("total = {total}");    // total = 115
+    alias = &total;                // a local reference
+    alias += 1;
+    println("total = {total}");    // total = 116
 }

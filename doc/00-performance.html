@@ -12,181 +12,135 @@
 <h1>Performance</h1>
 <article>
 
-<p>Loft offers four execution modes — interpreter, native (compiled to Rust via <code>--native</code>), WebAssembly (<code>--native-wasm</code>), and Rust (hand-written reference). The table below shows wall-clock time for ten micro-benchmarks run on the same machine, alongside CPython 3 for comparison.</p>
+<p>Loft runs a program four ways: the interpreter, native (compiled to Rust via <code>--native</code>), WebAssembly (<code>--native-wasm</code>), and — for comparison — a hand-written Rust version of the same benchmark. The table below shows the time per operation of the ten engine benchmarks in <code>bench/</code>, loft native against its Rust twin.</p>
 
 <div class="bench-legend">
-  <span class="bench-legend-item"><span class="bench-legend-swatch" style="background:#3b82f6"></span>Python 3 (CPython)</span>
-  <span class="bench-legend-item"><span class="bench-legend-swatch" style="background:#8b5cf6"></span>loft interpreter</span>
-  <span class="bench-legend-item"><span class="bench-legend-swatch" style="background:#10b981"></span>loft native (rustc -O)</span>
-  <span class="bench-legend-item"><span class="bench-legend-swatch" style="background:#f59e0b"></span>loft wasm (wasm32-wasip2)</span>
-  <span class="bench-legend-item"><span class="bench-legend-swatch" style="background:#ef4444"></span>Rust reference (rustc -O)</span>
+  <span class="bench-legend-item"><span class="bench-legend-swatch" style="background:#10b981"></span>loft native (<code>rustc -C opt-level=3</code>)</span>
+  <span class="bench-legend-item"><span class="bench-legend-swatch" style="background:#ef4444"></span>Rust reference (<code>rustc -O</code>)</span>
 </div>
 
 <table class="bench-table">
 <thead>
 <tr>
   <th>Benchmark</th>
-  <th>Python</th>
-  <th>loft interp</th>
   <th>loft native</th>
-  <th>loft wasm</th>
   <th>Rust</th>
+  <th>native ÷ Rust</th>
 </tr>
 </thead>
 <tbody>
 
-<!-- Row helper: max=14379 for collatz row, scale each bar to 100% of that row's max -->
-
-<!-- 01 fibonacci: max=4819 -->
 <tr>
-  <td class="bench-name">01 fibonacci (recursive, n=38) <a class="playground-link" href="playground.html?example=perf_fibonacci">&#9654; Try</a></td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar python"  style="width:calc(3395/4819*120px)"></div><span class="bench-ms">3395 ms</span></div></td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar interp" style="width:120px"></div><span class="bench-ms">4819 ms</span></div></td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar native" style="width:calc(169/4819*120px)"></div><span class="bench-ms">169 ms</span></div></td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar wasm"   style="width:calc(257/4819*120px)"></div><span class="bench-ms">257 ms</span></div></td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar rust"   style="width:calc(92/4819*120px)"></div><span class="bench-ms">92 ms</span></div></td>
+  <td class="bench-name">01 fibonacci (recursive <code>fib(30)</code> / <code>fib(31)</code>)</td>
+  <td><div class="bench-bar-wrap"><div class="bench-bar native" style="width:120px"></div><span class="bench-ms">8.29 ms</span></div></td>
+  <td><div class="bench-bar-wrap"><div class="bench-bar rust" style="width:calc(2.64/8.29*120px)"></div><span class="bench-ms">2.64 ms</span></div></td>
+  <td class="ms">3.14×</td>
 </tr>
-
-<!-- 02 sum_loop: max=584 -->
 <tr>
-  <td class="bench-name">02 sum loop (10 M integers)</td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar python"  style="width:calc(66/584*120px)"></div><span class="bench-ms">66 ms</span></div></td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar interp" style="width:120px"></div><span class="bench-ms">584 ms</span></div></td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar native" style="width:calc(15/584*120px)"></div><span class="bench-ms">15 ms</span></div></td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar wasm"   style="width:calc(21/584*120px)"></div><span class="bench-ms">21 ms</span></div></td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar rust"   style="width:calc(8/584*120px)"></div><span class="bench-ms">8 ms</span></div></td>
+  <td class="bench-name">02 sum loop (5 M steps of a loop-carried integer mix)</td>
+  <td><div class="bench-bar-wrap"><div class="bench-bar native" style="width:120px"></div><span class="bench-ms">5.39 ms</span></div></td>
+  <td><div class="bench-bar-wrap"><div class="bench-bar rust" style="width:calc(2.98/5.39*120px)"></div><span class="bench-ms">2.98 ms</span></div></td>
+  <td class="ms">1.81×</td>
 </tr>
-
-<!-- 03 sieve: max=141 -->
 <tr>
-  <td class="bench-name">03 prime sieve (trial division, n=100 000) <a class="playground-link" href="playground.html?example=perf_sieve">&#9654; Try</a></td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar python"  style="width:calc(49/141*120px)"></div><span class="bench-ms">49 ms</span></div></td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar interp" style="width:120px"></div><span class="bench-ms">141 ms</span></div></td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar native" style="width:calc(4/141*120px)"></div><span class="bench-ms">4 ms</span></div></td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar wasm"   style="width:calc(6/141*120px)"></div><span class="bench-ms">6 ms</span></div></td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar rust"   style="width:calc(4/141*120px)"></div><span class="bench-ms">4 ms</span></div></td>
+  <td class="bench-name">03 prime sieve (trial division below 300 000)</td>
+  <td><div class="bench-bar-wrap"><div class="bench-bar native" style="width:120px"></div><span class="bench-ms">10.85 ms</span></div></td>
+  <td><div class="bench-bar-wrap"><div class="bench-bar rust" style="width:calc(10.65/10.85*120px)"></div><span class="bench-ms">10.65 ms</span></div></td>
+  <td class="ms">1.02×</td>
 </tr>
-
-<!-- 04 collatz: max=14379 -->
 <tr>
-  <td class="bench-name">04 Collatz lengths (1 .. 1 M) <a class="playground-link" href="playground.html?example=perf_collatz">&#9654; Try</a></td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar python"  style="width:calc(7393/14379*120px)"></div><span class="bench-ms">7393 ms</span></div></td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar interp" style="width:120px"></div><span class="bench-ms">14 379 ms</span></div></td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar native" style="width:calc(334/14379*120px)"></div><span class="bench-ms">334 ms</span></div></td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar wasm"   style="width:calc(599/14379*120px)"></div><span class="bench-ms">599 ms</span></div></td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar rust"   style="width:calc(149/14379*120px)"></div><span class="bench-ms">149 ms</span></div></td>
+  <td class="bench-name">04 Collatz lengths (starts below 200 000)</td>
+  <td><div class="bench-bar-wrap"><div class="bench-bar native" style="width:120px"></div><span class="bench-ms">51.03 ms</span></div></td>
+  <td><div class="bench-bar-wrap"><div class="bench-bar rust" style="width:calc(25.69/51.03*120px)"></div><span class="bench-ms">25.69 ms</span></div></td>
+  <td class="ms">1.99×</td>
 </tr>
-
-<!-- 05 mandelbrot: max=344 -->
 <tr>
-  <td class="bench-name">05 Mandelbrot (200×200, 256 iter) <a class="playground-link" href="playground.html?example=perf_mandelbrot">&#9654; Try</a></td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar python"  style="width:calc(135/344*120px)"></div><span class="bench-ms">135 ms</span></div></td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar interp" style="width:120px"></div><span class="bench-ms">344 ms</span></div></td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar native" style="width:calc(7/344*120px)"></div><span class="bench-ms">7 ms</span></div></td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar wasm"   style="width:calc(10/344*120px)"></div><span class="bench-ms">10 ms</span></div></td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar rust"   style="width:calc(6/344*120px)"></div><span class="bench-ms">6 ms</span></div></td>
+  <td class="bench-name">05 Mandelbrot (200×200, 256 iter)</td>
+  <td><div class="bench-bar-wrap"><div class="bench-bar native" style="width:120px"></div><span class="bench-ms">6.18 ms</span></div></td>
+  <td><div class="bench-bar-wrap"><div class="bench-bar rust" style="width:calc(6.13/6.18*120px)"></div><span class="bench-ms">6.13 ms</span></div></td>
+  <td class="ms">1.01×</td>
 </tr>
-
-<!-- 06 newton_sqrt: max=3437 -->
 <tr>
-  <td class="bench-name">06 Newton sqrt (1 M calls)</td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar python"  style="width:calc(1481/3437*120px)"></div><span class="bench-ms">1481 ms</span></div></td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar interp" style="width:120px"></div><span class="bench-ms">3437 ms</span></div></td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar native" style="width:calc(159/3437*120px)"></div><span class="bench-ms">159 ms</span></div></td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar wasm"   style="width:calc(159/3437*120px)"></div><span class="bench-ms">159 ms</span></div></td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar rust"   style="width:calc(152/3437*120px)"></div><span class="bench-ms">152 ms</span></div></td>
+  <td class="bench-name">06 Newton sqrt (100 000 calls of 50 steps)</td>
+  <td><div class="bench-bar-wrap"><div class="bench-bar native" style="width:120px"></div><span class="bench-ms">28.71 ms</span></div></td>
+  <td><div class="bench-bar-wrap"><div class="bench-bar rust" style="width:calc(13.0/28.71*120px)"></div><span class="bench-ms">13.00 ms</span></div></td>
+  <td class="ms">2.21×</td>
 </tr>
-
-<!-- 07 string_build: max=70 -->
 <tr>
-  <td class="bench-name">07 string build (500 K appends)</td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar python"  style="width:120px"></div><span class="bench-ms">70 ms</span></div></td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar interp" style="width:calc(61/70*120px)"></div><span class="bench-ms">61 ms</span></div></td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar native" style="width:calc(33/70*120px)"></div><span class="bench-ms">33 ms</span></div></td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar wasm"   style="width:calc(68/70*120px)"></div><span class="bench-ms">68 ms</span></div></td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar rust"   style="width:calc(23/70*120px)"></div><span class="bench-ms">23 ms</span></div></td>
+  <td class="bench-name">07 string build (200 000 formatted appends)</td>
+  <td><div class="bench-bar-wrap"><div class="bench-bar native" style="width:120px"></div><span class="bench-ms">9.38 ms</span></div></td>
+  <td><div class="bench-bar-wrap"><div class="bench-bar rust" style="width:calc(4.41/9.38*120px)"></div><span class="bench-ms">4.41 ms</span></div></td>
+  <td class="ms">2.12×</td>
 </tr>
-
-<!-- 08 word_count: max=169 -->
 <tr>
-  <td class="bench-name">08 word frequency (hash map)</td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar python"  style="width:calc(46/169*120px)"></div><span class="bench-ms">46 ms</span></div></td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar interp" style="width:120px"></div><span class="bench-ms">169 ms</span></div></td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar native" style="width:calc(32/169*120px)"></div><span class="bench-ms">32 ms</span></div></td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar wasm"   style="width:calc(60/169*120px)"></div><span class="bench-ms">60 ms</span></div></td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar rust"   style="width:calc(2/169*120px)"></div><span class="bench-ms">2 ms</span></div></td>
+  <td class="bench-name">08 word frequency (hash map, 300 000 operations)</td>
+  <td><div class="bench-bar-wrap"><div class="bench-bar native" style="width:120px"></div><span class="bench-ms">18.69 ms</span></div></td>
+  <td><div class="bench-bar-wrap"><div class="bench-bar rust" style="width:calc(5.27/18.69*120px)"></div><span class="bench-ms">5.27 ms</span></div></td>
+  <td class="ms">3.55×</td>
 </tr>
-
-<!-- 09 matrix_mul: max=428 -->
 <tr>
-  <td class="bench-name">09 dot product (5 M floats)</td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar python"  style="width:calc(158/428*120px)"></div><span class="bench-ms">158 ms</span></div></td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar interp" style="width:120px"></div><span class="bench-ms">428 ms</span></div></td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar native" style="width:calc(36/428*120px)"></div><span class="bench-ms">36 ms</span></div></td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar wasm"   style="width:calc(86/428*120px)"></div><span class="bench-ms">86 ms</span></div></td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar rust"   style="width:calc(3/428*120px)"></div><span class="bench-ms">3 ms</span></div></td>
+  <td class="bench-name">09 dot product (2 M floats)</td>
+  <td><div class="bench-bar-wrap"><div class="bench-bar native" style="width:120px"></div><span class="bench-ms">2.01 ms</span></div></td>
+  <td><div class="bench-bar-wrap"><div class="bench-bar rust" style="width:calc(1.89/2.01*120px)"></div><span class="bench-ms">1.89 ms</span></div></td>
+  <td class="ms">1.06×</td>
 </tr>
-
-<!-- 10 sort: max=291 -->
 <tr>
   <td class="bench-name">10 insertion sort (3 000 integers)</td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar python"  style="width:calc(131/291*120px)"></div><span class="bench-ms">131 ms</span></div></td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar interp" style="width:120px"></div><span class="bench-ms">291 ms</span></div></td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar native" style="width:calc(29/291*120px)"></div><span class="bench-ms">29 ms</span></div></td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar wasm"   style="width:calc(56/291*120px)"></div><span class="bench-ms">56 ms</span></div></td>
-  <td><div class="bench-bar-wrap"><div class="bench-bar rust"   style="width:calc(4/291*120px)"></div><span class="bench-ms">4 ms</span></div></td>
+  <td><div class="bench-bar-wrap"><div class="bench-bar native" style="width:120px"></div><span class="bench-ms">3.43 ms</span></div></td>
+  <td><div class="bench-bar-wrap"><div class="bench-bar rust" style="width:calc(0.9/3.43*120px)"></div><span class="bench-ms">0.90 ms</span></div></td>
+  <td class="ms">3.81×</td>
 </tr>
 
 </tbody>
 </table>
-<p class="bench-note">Measured on a single core, Linux x86-64. Times are wall clock, best of one warm run. <strong>These figures are indicative only:</strong> they were captured before 2026-07 and predate the null-flow default (<code>float</code> division, <code>sqrt</code>, and the other partial float operations now flow through the null-tracking model), so the float-heavy rows may have shifted. Run <code>bench/run_bench.sh</code> from the project root to reproduce on your own hardware.</p>
+<p class="bench-note">Time per operation: the median of seven interleaved samples, pinned to the fastest core of an x86-64 Linux machine, and both lanes printed the same result hash. The source is the performance portal (<code>make perf-portal</code>), which also covers the standard library and the published libraries. Run <code>bench/run_bench.sh</code> from the project root for a quick look on your own hardware, with the Python, loft interpreter and loft wasm lanes beside these two.</p>
 
 <h2 id="takeaways">Key takeaways</h2>
 
 <p>The four loft execution modes have very different performance profiles depending on what the program does.</p>
 
 <h3>loft interpreter vs Python</h3>
-<p>The loft interpreter runs your program directly without a separate compilation step. For tight numeric loops it is <strong>slower than CPython</strong> — typically 1.4–10× — because CPython's core is written in highly-optimised C while loft's is Rust and must also determine the type of each value before acting on it. The gap is largest for integer-heavy workloads (sum loop: 9×). For float arithmetic the gap narrows (Mandelbrot: 2.5×). Notably, <strong>string building is faster</strong> in the loft interpreter (61 ms vs Python's 70 ms) because loft's format-string concatenation creates fewer temporary objects.</p>
+<p>The interpreter runs your program without a separate compilation step. Loft is statically typed, so the interpreter never checks the type of a value at run time; its cost is dispatching each bytecode operation and reaching collection data through the store layer. It is <strong>slower than CPython</strong> on these benchmarks: close to it on an integer loop and on string building, several times slower on hash lookups and float kernels. For hot code, compile with <code>--native</code>.</p>
 
 <h3>loft native vs Rust</h3>
-<p>The native pipeline compiles loft source to Rust via <code>--native</code> or <code>--native-release</code>, then invokes <code>rustc -O</code>. For pure <strong>floating-point workloads</strong> the generated Rust is essentially as fast as hand-written Rust (Newton sqrt: 159 ms vs 152 ms, Mandelbrot: 7 ms vs 6 ms). For integer arithmetic the gap is 1.8–2.5×, and for <strong>data-structure workloads</strong> (word count, matrix, sort) the gap is 7–16×. The bottleneck in those cases is the <code>codegen_runtime</code> layer: the generated code calls runtime helpers (hash lookup, text comparison, vector index) that carry more overhead than the idiomatic Rust equivalents.</p>
+<p>The native pipeline compiles loft source to Rust via <code>--native</code> or <code>--native-release</code>, then invokes <code>rustc</code>. For <strong>floating-point kernels</strong> the generated Rust is as fast as hand-written Rust (Mandelbrot 1.01×, dot product 1.06×), and so is trial division (sieve 1.02×). <strong>Integer loops</strong> run about 2× (sum loop 1.81×, Collatz 1.99×), because loft integer arithmetic is checked: an overflow answers null instead of wrapping. Newton sqrt (2.21×) pays the same for its float division, whose result may be null. <strong>Recursion</strong> (Fibonacci 3.14×) and <strong>collection-heavy code</strong> (word count 3.55×, insertion sort 3.81×) are the widest gaps.</p>
 
 <h3>loft wasm vs loft native</h3>
-<p>WebAssembly adds a modest 1.5–2× overhead over native for most workloads. The exception is <strong>floating-point throughput</strong>: Newton sqrt runs at identical speed in wasm and native (both 159 ms), because the bottleneck is the FPU, not the wasm runtime. String building is slower in wasm (68 ms) than native (33 ms) due to wasm's memory model for dynamic strings. Wasm is a good target when native compilation is unavailable — it runs everywhere wasmtime or a browser is installed.</p>
+<p>The wasm build compiles the same generated Rust for <code>wasm32-wasip2</code>, so it runs everywhere wasmtime or a browser is installed. Arithmetic runs close to native speed; text building trails native most, because every text allocation goes through the allocator inside wasm linear memory. Wasm is a good target when native compilation is unavailable.</p>
 
-<h2 id="bottlenecks">Current bottlenecks</h2>
+<h2 id="bottlenecks">Bottlenecks</h2>
 
 <div class="bottleneck">
-  <strong>Interpreter — bytecode dispatch overhead</strong>
-  The interpreter executes one instruction at a time and must check the type of each value before every operation. There is no just-in-time compiler (JIT) or other technique to speed up code that runs repeatedly. Each iteration of a tight loop pays this per-instruction cost, which is the dominant overhead for sum-loop and Collatz.
+  <strong>Interpreter — bytecode dispatch</strong>
+  The interpreter executes bytecode. The most frequent operator shapes — an integer operator over locals, a compare-and-jump, an element read of an integer vector, the step of a text walk — run as one fused instruction, and every other operation is one dispatch. There is no just-in-time compiler (JIT). Each iteration of a tight loop pays this per-instruction cost.
 </div>
 
 <div class="bottleneck">
-  <strong>Interpreter — long arithmetic uses <code>i64</code> always</strong>
-  The Collatz benchmark uses <code>long</code> for range safety. Loft's <code>long</code> arithmetic goes through a separate opcode path with additional null-sentinel checks, making it roughly 2× slower than <code>integer</code> on the interpreter. The native path closes this gap (334 ms vs 149 ms for Rust).
-</div>
-
-<div class="bottleneck">
-  <strong>Native — <code>codegen_runtime</code> helper overhead for data structures</strong>
-  Hash lookup (<code>word_count</code>: 32 ms native vs 2 ms Rust = 16×), vector indexing (<code>matrix_mul</code>: 36 ms vs 3 ms = 12×), and sort (29 ms vs 4 ms = 7×) all go through <code>src/codegen_runtime.rs</code> helpers. These functions perform bounds checks, null-sentinel tests, and store-pointer indirections that hand-written Rust avoids. Eliminating these indirections for simple in-memory collections is a planned optimisation.
+  <strong>Native — collection access through the store layer</strong>
+  Hash lookup (word count: 3.55×) and indexed vector reads and writes (insertion sort: 3.81×) go through the helpers in <code>src/codegen_runtime.rs</code>. They perform bounds checks, null-sentinel tests and store-pointer indirections that hand-written Rust avoids.
 </div>
 
 <div class="bottleneck">
   <strong>Native — function call overhead for recursive code</strong>
-  The recursive Fibonacci benchmark is 1.8× slower in native loft (169 ms) than hand-written Rust (92 ms). The generated code passes stores and additional runtime context through every call frame. Reducing per-call overhead for pure functions that do not touch the heap is a planned optimisation.
+  The recursive Fibonacci benchmark runs at 3.14× hand-written Rust. The generated code passes the stores and other runtime context through every call frame, also for a function that does not touch the heap.
 </div>
 
 <div class="bottleneck">
-  <strong>wasm — dynamic string memory model</strong>
-  String building in wasm (68 ms) is roughly 2× slower than native (33 ms). Dynamic strings in the wasm build are heap-allocated inside the linear memory model with an extra indirection layer compared to native Rust <code>String</code>. This is a structural limitation of the wasm target; the loft wasm build prioritises compatibility over raw string throughput.
+  <strong>Native — checked integer arithmetic</strong>
+  Integer overflow answers null rather than wrapping, so every integer operator checks its result. Counted loops run their index arithmetic unchecked behind one guard; straight-line arithmetic stays checked.
 </div>
 
-<h2 id="roadmap">What is planned</h2>
+<div class="bottleneck">
+  <strong>wasm — text allocation</strong>
+  Text in the wasm build is a Rust <code>String</code> allocated inside wasm linear memory, which grows with <code>memory.grow</code>; each append that reallocates costs more than it does natively.
+</div>
+
+<h2 id="roadmap">Open performance work</h2>
 <ul>
-  <li><strong>Interpreter speedup</strong> — superinstruction merging for common opcode pairs (e.g. load + add + store in a loop); reduces dispatch count by 2–3× for arithmetic-heavy loops.</li>
-  <li><strong>Native data-structure inlining</strong> — for vectors and hashes that do not cross function boundaries, emit direct Rust <code>Vec</code> / <code>HashMap</code> operations instead of <code>codegen_runtime</code> helper calls.</li>
-  <li><strong>Native function call reduction</strong> — inline small pure functions at the IR level before native codegen.</li>
-  <li><strong>wasm string optimisation</strong> — use wasm-native string representation to close the 2× gap on string-building workloads.</li>
+  <li><strong>Native collections without the store layer</strong> — emit direct Rust <code>Vec</code> / <code>HashMap</code> operations for collections whose ownership allows it, instead of <code>codegen_runtime</code> helper calls.</li>
+  <li><strong>Native calls without the stores</strong> — the compiler knows which functions are pure, and their generated code takes the stores parameter all the same.</li>
+  <li><strong>Unchecked integer arithmetic</strong> — where the operands are provably non-null and cannot overflow, emit plain Rust arithmetic.</li>
+  <li><strong>wasm text representation</strong> — a string layout for the wasm target that closes its gap on text building.</li>
 </ul>
 
 </article>

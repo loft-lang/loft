@@ -604,6 +604,64 @@ impl Output<'_> {
         Ok(result)
     }
 
+    /// `@FR-E-Left` — the arguments that must be lifted into a `let _pre_N` to keep LEFT-TO-RIGHT
+    /// order, beside the ones hoisting already lifts.
+    ///
+    /// A hoisted argument is evaluated where its `let` lands — in front of the whole
+    /// statement — so an EARLIER argument left inline is read AFTER it.  When the later one
+    /// writes a local the earlier one reads, that read sees the new value: `x + { x = 50; 1 }`
+    /// answered 51 on `--native` where E-Left gives 2, and `f(x, { x = 50; 1 })` 5001 for 101.
+    /// Lifting the earlier argument too puts its `let` first, which is exactly its left-first
+    /// value.
+    ///
+    /// Only a `Copy` SCALAR is lifted (a copy is its value; a lifted text or handle would be a
+    /// borrow held across the write), and never a place the callee writes through (`&x`).  A
+    /// write is a `Set` or `TuplePut` of the local, or the local handed to a `&` parameter,
+    /// anywhere inside the later argument: every such write sits in a block, which is hoisted
+    /// at this level or a deeper one, so asking the whole argument is exact where it matters
+    /// and a lift it adds without need only moves a scalar read to where E-Left puts it anyway.
+    fn left_first(&self, vals: &[Value]) -> Vec<bool> {
+        let mut lift = vec![false; vals.len()];
+        for k in 1..vals.len() {
+            let mut written = HashSet::new();
+            vals[k].walk(&mut |n| match n {
+                Value::Set(x, _) | Value::TuplePut(x, _, _) => {
+                    written.insert(*x);
+                }
+                Value::Call(d, args)
+                    if self.data.def(*d).name() == "OpCreateStack"
+                        && let [Value::Var(x)] = args.as_slice() =>
+                {
+                    written.insert(*x);
+                }
+                _ => {}
+            });
+            if written.is_empty() {
+                continue;
+            }
+            for j in 0..k {
+                if lift[j] || self.create_stack_var(&vals[j]).is_some() {
+                    continue;
+                }
+                let scalar = self.infer_type(IrNode::Native(&vals[j])).is_some_and(|t| {
+                    matches!(
+                        t.base(),
+                        Type::Integer(_)
+                            | Type::Float
+                            | Type::Single
+                            | Type::Boolean
+                            | Type::Character
+                            | Type::Enum(_, false, _)
+                    )
+                });
+                if scalar && value_refs_any(IrNode::Native(&vals[j]), &written) {
+                    lift[j] = true;
+                }
+            }
+        }
+        lift
+    }
+
     /// Use this as the recursive worker for `collect_pre_evals`.
     /// Splitting from the wrapper keeps the result allocated once, and the pre-eval
     ///  counter is globally unique within a block.
@@ -644,12 +702,14 @@ impl Output<'_> {
         if let Value::CallRef(_, args) = v {
             // @P312 — same ref-alias hoist as the user-fn Call arm below.
             let borrowed = self.borrowed_arg_vars(args);
-            for arg in args {
-                let needs_pre = self.create_stack_var(arg).is_none()
-                    && (Self::is_sequence_arg(arg)
-                        || self.needs_pre_eval(arg)
-                        || (!borrowed.is_empty()
-                            && value_refs_any(IrNode::Native(arg), &borrowed)));
+            let left = self.left_first(args);
+            for (at, arg) in args.iter().enumerate() {
+                let needs_pre = left[at]
+                    || (self.create_stack_var(arg).is_none()
+                        && (Self::is_sequence_arg(arg)
+                            || self.needs_pre_eval(arg)
+                            || (!borrowed.is_empty()
+                                && value_refs_any(IrNode::Native(arg), &borrowed))));
                 if needs_pre {
                     let name = format!("_pre_{}", self.counter);
                     self.counter += 1;
@@ -731,12 +791,14 @@ impl Output<'_> {
                 // `f(&mut var_x, g(var_x))` and the Copy-read of `var_x` while it is
                 // mutably borrowed trips rustc E0503.
                 let borrowed = self.borrowed_arg_vars(vals);
-                for arg in vals {
-                    let needs_pre = self.create_stack_var(arg).is_none()
-                        && (Self::is_sequence_arg(arg)
-                            || self.needs_pre_eval(arg)
-                            || (!borrowed.is_empty()
-                                && value_refs_any(IrNode::Native(arg), &borrowed)));
+                let left = self.left_first(vals);
+                for (at, arg) in vals.iter().enumerate() {
+                    let needs_pre = left[at]
+                        || (self.create_stack_var(arg).is_none()
+                            && (Self::is_sequence_arg(arg)
+                                || self.needs_pre_eval(arg)
+                                || (!borrowed.is_empty()
+                                    && value_refs_any(IrNode::Native(arg), &borrowed))));
                     if needs_pre {
                         let name = format!("_pre_{}", self.counter);
                         self.counter += 1;
@@ -792,13 +854,15 @@ impl Output<'_> {
                     || def_fn.rust().contains("s.vec_get_or_raise(")
                     || def_fn.rust().contains("s.vec_ref_or_raise(")
                     || def_fn.rust().contains("s.text_char_or_raise(");
+                let left = self.left_first(vals);
                 let needs_pre_eval_args = block_count > 0
                     || user_fn_count > 1
                     || (template_uses_stores && user_fn_count > 0)
-                    || has_dup_param;
+                    || has_dup_param
+                    || left.contains(&true);
                 if needs_pre_eval_args {
                     for (arg_idx, arg) in vals.iter().enumerate() {
-                        let is_block = Self::is_sequence_arg(arg);
+                        let is_block = Self::is_sequence_arg(arg) || left[arg_idx];
                         let is_multi_user_fn = user_fn_count > 1 && self.needs_pre_eval(arg);
                         let is_stores_conflict = template_uses_stores && self.needs_pre_eval(arg);
                         let is_dup = if arg_idx < def_fn.attributes().len() {

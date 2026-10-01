@@ -1,0 +1,32 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A `self` FUNCTION IS A `par` WORKER UNDER ITS FREE-FUNCTION SPELLING TOO (loft#1803).
+// `get_value(a)` and `a.get_value()` are one call everywhere, but inside `par(…)` the free
+// spelling looked the name up bare, while the method is filed under the element type's key,
+// so it answered "Unknown function 'get_value'".  The worker is called with the element
+// first, which is exactly the receiver.  Extra arguments follow as for any worker.
+//
+// @falsified-at: 842cc4962 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/1803-a-self-function-is-a-par-worker-under-both-spellings.patch — interpret exit 1 -> 0, native exit 1 -> 0
+// CHANNEL: exit — the control tree refuses `get_value(a)` inside `par` ("Unknown function").
+// HOLDS: leak and panic are equal on both trees; the method-spelling cell ran on both before.
+
+struct S { v: integer }
+fn get_value(self: S) -> integer { self.v * 2 }
+fn bump(self: S, by: integer) -> integer { self.v + by }
+
+fn main() {
+  v = [S { v: 1 }, S { v: 2 }, S { v: 5 }];
+  free = 0;
+  for a in v par(b = get_value(a), 2) { free += b; }
+  method = 0;
+  for a in v par(b = a.get_value(), 2) { method += b; }
+  extra = 0;
+  for a in v par(b = bump(a, 10), 2) { extra += b; }
+  // 2 + 4 + 10 under both spellings; 11 + 12 + 15 with the extra argument.
+  assert(free == 16, "free spelling: {free}");
+  assert(method == 16, "method spelling: {method}");
+  assert(extra == 38, "with an extra argument: {extra}");
+  println("1803 ok");
+}

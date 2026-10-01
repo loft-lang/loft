@@ -70,6 +70,7 @@
 // Inside the package, 'loft check' compiles everything and reports problems:
 //
 //     $ cd greeter && loft check
+//     loft build: src/greeter.loft → target(s): native
 //     loft build: building `native` (Native) …
 //     ok
 //     loft build: `native` ✓
@@ -78,8 +79,8 @@
 // to run — 'check' still tells you the code compiles, which is what you wanted
 // to know.
 // ## Coverage — what the tests did not reach
-// After the result, 'loft test' tells you which of your functions no test ever
-// entered. The 'sums' package next door has two functions and a test for one
+// Just above its result line, 'loft test' tells you which of your functions no
+// test ever entered. The 'sums' package next door has two functions and a test for one
 // of them, so it names the other:
 //
 //     $ cd sums && loft test

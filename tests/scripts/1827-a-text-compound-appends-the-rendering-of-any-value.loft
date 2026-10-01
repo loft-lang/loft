@@ -1,0 +1,71 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A TEXT COMPOUND APPENDS THE RENDERING OF ANY VALUE (loft#1827, @FR-E-Asgn-Compound).
+// `t += x` is `t + x` written back, and `t + x` appends `x` rendered as `"{x}"` renders it.
+// With `x` not a text or a character, `t += x` was refused on a local ("cannot change type
+// from text to integer") and silently wrong elsewhere: `r.s += 5` left `r.s` unchanged and
+// `v[1] += 7` appended garbage bytes.  A `&text` parameter whose only write was `t += "{5}"` or
+// `t = t + 5` was refused as never modified, and `t += [1, 2]` built the list into the text.
+// An absent text stays absent, as `t + x` answers null for it.
+//
+// Axes this file MOVES:  the place (a local · a field · a vector element · a `&text` and a
+// `&text?` parameter · a `text?` local), the right side (integer · float · boolean · a struct ·
+// a bracket literal · a vector local · a plain enum · a character · a text), and repetition.
+// Axes it HOLDS FIXED:   `+=` (the only operator a text takes).
+//
+// @falsified-at: 29d73dc8d — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/1827-a-text-compound-appends-the-rendering-of-any-value.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the control refuses this file at compile time.
+//   WITNESS: measured cell by cell on the control (interpreter): `t += 5` is refused
+//   "cannot change type from text to integer"; `r.s += 5` leaves "a"; `v[1] += 7`
+//   appends garbage bytes after "b"; `t += "{5}"` into `&text` is refused "never modified".
+//   HOLDS: leak and panic are equal on both trees.
+
+struct V { x: integer }
+enum Col { Red, Green }
+struct R { s: text }
+fn add(t: &text) { t += 5; }
+fn add_fmt(t: &text) { t += "{6}"; }
+fn add_plus(t: &text) { t = t + 7; }
+fn add_q(t: &text?) { t += 8; }
+fn mk(n: integer) -> text? { if n > 0 { "q" } else { null } }
+
+fn main() {
+  t = "a";
+  t += 5;
+  t += 1.5;
+  t += true;
+  assert(t == "a51.5true" && t == "a" + 5 + 1.5 + true, "scalars: {t}");
+  u = "b";
+  u += V { x: 1 };
+  u += [1, 2];
+  v = [3];
+  u += v;
+  u += Col.Green;
+  u += 'c';
+  u += "d";
+  assert(u == "b{{x:1}}[1,2][3]Greencd", "records, lists, enums: {u}");
+  r = R { s: "a" };
+  r.s += 5;
+  assert(r.s == "a5", "field: {r.s}");
+  w = ["a", "b"];
+  w[1] += 7;
+  assert(w[1] == "b7" && len(w[1]) == 2, "element: {w[1]}");
+  p = "p";
+  add(p);
+  add_fmt(p);
+  add_plus(p);
+  assert(p == "p567", "&text parameter: {p}");
+  absent = mk(0);
+  add_q(absent);
+  present = mk(1);
+  add_q(present);
+  assert(absent == null && present == "q8", "&text? parameter: {present}");
+  n: text? = null;
+  n += 5;
+  assert(n == null, "an absent text stays absent");
+  s = "";
+  for i in 0..4 { s += i; }
+  assert(s == "0123", "loop: {s}");
+}

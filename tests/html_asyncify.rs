@@ -22,6 +22,10 @@
 //    killed before the page runs (the headless / backgrounded-tab condition
 //    where Chromium pauses rAF).  Only the non-rAF MessageChannel pump can
 //    drive the page here, so this leg guards the scheduler half of the fix.
+//  - STALLED — the page stays VISIBLE but requestAnimationFrame never fires:
+//    a throttled or occluded renderer that withholds frames without setting
+//    document.hidden (loft#1830 — CI's loaded ubuntu runner stopped the visible
+//    leg at `tick 0`).  Only the scheduler's fallback can drive it.
 //
 // Skips cleanly when prerequisites (node, chrome, wasm32 toolchain, the host
 // loft binary) are missing — same shape as the sibling html_* gates.
@@ -116,18 +120,27 @@ fn build_html(root: &Path) -> Option<PathBuf> {
     let _guard = build_lock()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let status = Command::new(&loft_bin)
+    let out = Command::new(&loft_bin)
         .args(["--html", html.to_str().unwrap()])
         .arg(src.to_str().unwrap())
-        .status()
+        .output()
         .expect("invoke loft --html");
-    assert!(status.success(), "loft --html build failed");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "loft --html build failed:\n{stderr}");
+    // The page provides `loft_gl_swap_buffers` itself, so the host's native libraries play
+    // no part in a browser build and an unloaded one is nothing to report (loft#1830).
+    assert!(
+        !stderr.contains("did not load"),
+        "a --html build reported a host native library:\n{stderr}"
+    );
     Some(html)
 }
 
 /// Run the headless-Chromium harness against `html`, asserting `#out` reaches
-/// `done`.  `hidden` forces the no-rAF (headless/backgrounded) condition.
-fn assert_resumes(root: &Path, html: &Path, hidden: bool) {
+/// `done`.  `mode` is the harness flag that withholds frames: `--hidden` (the
+/// headless/backgrounded condition) or `--stalled-raf` (a visible page that gets
+/// no frames); `None` is the ordinary visible page.
+fn assert_resumes(root: &Path, html: &Path, mode: Option<&str>) {
     let harness = root.join("tools/html_asyncify_check.mjs");
     assert!(harness.exists(), "tools/html_asyncify_check.mjs missing");
     let port = pick_free_port().expect("pick a free port");
@@ -138,8 +151,8 @@ fn assert_resumes(root: &Path, html: &Path, hidden: bool) {
         .args(["--expect", "done"])
         .args(["--wait-ms", "5000"])
         .args(["--port", &port.to_string()]);
-    if hidden {
-        cmd.arg("--hidden");
+    if let Some(flag) = mode {
+        cmd.arg(flag);
     }
     let out = cmd.output().expect("invoke node harness");
 
@@ -149,7 +162,7 @@ fn assert_resumes(root: &Path, html: &Path, hidden: bool) {
     }
     assert!(
         out.status.success(),
-        "asyncify resume gate failed (hidden={hidden}) — the page did not reach \
+        "asyncify resume gate failed (mode={mode:?}) — the page did not reach \
          `done` past its first suspend (issue #450).\nstdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr),
@@ -178,6 +191,7 @@ fn html_asyncify_program_resumes_to_completion() {
     let Some(html) = build_html(&root) else {
         return;
     };
-    assert_resumes(&root, &html, false); // visible — requestAnimationFrame
-    assert_resumes(&root, &html, true); // hidden  — MessageChannel pump
+    assert_resumes(&root, &html, None); // visible — requestAnimationFrame
+    assert_resumes(&root, &html, Some("--hidden")); // hidden  — MessageChannel pump
+    assert_resumes(&root, &html, Some("--stalled-raf")); // visible, no frames — the fallback
 }

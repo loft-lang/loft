@@ -5126,7 +5126,7 @@ pub fn drop_copy_census(
                 op_append: data.def_nr("OpAppendVector"),
                 returned: data
                     .type_owns_droppable_anywhere(def.returned.base())
-                    .then(|| data.type_name_str(&def.returned)),
+                    .then(|| data.display_type_name(&def.returned)),
                 whole_tuple: None,
                 rhs_of: None,
                 placement: crate::lease::Placement::Structure,
@@ -5153,7 +5153,7 @@ pub fn drop_copy_census(
                 let lease = cx
                     .frame
                     .written_var_verdict(var, crate::lease::Placement::Structure);
-                let tp = data.type_name_str(func.tp(var));
+                let tp = data.display_type_name(func.tp(var));
                 cx.emit(
                     "bind",
                     &tp,
@@ -5180,7 +5180,7 @@ pub fn drop_copy_census(
                 let lease = cx
                     .frame
                     .written_var_verdict(src, crate::lease::Placement::Structure);
-                let tp = data.type_name_str(func.tp(var));
+                let tp = data.display_type_name(func.tp(var));
                 cx.emit(
                     "bind",
                     &tp,
@@ -5509,7 +5509,7 @@ impl Census<'_> {
                                 ),
                             )
                         };
-                        let tp = self.data.type_name_str(self.func.tp(hold));
+                        let tp = self.data.display_type_name(self.func.tp(hold));
                         self.emit("tuple", &tp, &[root], "-", (Some(&lease), &liveness), false);
                         crate::copy_manifest::note_lease_return(self.d_nr);
                         whole = Some(root);
@@ -5605,7 +5605,7 @@ impl Census<'_> {
                 };
                 let mut from = Vec::new();
                 copy_source_roots(&args[1], self.data, self.func, &mut from);
-                let tp = self.data.type_name_str(self.func.tp(*dest));
+                let tp = self.data.display_type_name(self.func.tp(*dest));
                 let into = self.func.name(*dest).to_string();
                 let lease = self.frame.written_verdict(&args[1], self.placement);
                 let liveness = lease_column(self.func, self.frame.liveness_verdict(node, &args[1]));
@@ -5648,7 +5648,7 @@ impl Census<'_> {
                 } else {
                     "bind-view"
                 };
-                let tp = self.data.type_name_str(self.func.tp(*v));
+                let tp = self.data.display_type_name(self.func.tp(*v));
                 let into = self.func.name(*v).to_string();
                 let lease = self.frame.written_var_verdict(*src, self.placement);
                 let liveness = lease_column(self.func, self.frame.liveness_var_verdict(node, *src));
@@ -5675,7 +5675,7 @@ impl Census<'_> {
                 let mut arms = Vec::new();
                 join_var_arms(rhs, &mut arms);
                 let into = self.func.name(*v).to_string();
-                let tp = self.data.type_name_str(self.func.tp(*v));
+                let tp = self.data.display_type_name(self.func.tp(*v));
                 let dest_deps = self.func.tp(*v).depend();
                 let placement = if into.starts_with("__ret_") {
                     Placement::Return
@@ -5724,7 +5724,7 @@ impl Census<'_> {
                                 ),
                             )
                         };
-                        let tp = self.data.type_name_str(self.func.tp(base));
+                        let tp = self.data.display_type_name(self.func.tp(base));
                         self.emit("tuple", &tp, &[root], "-", (Some(&lease), &liveness), false);
                     }
                     if let Some((rhs, v)) = self.rhs_of
@@ -5752,7 +5752,7 @@ impl Census<'_> {
                             let lease = self.frame.written_verdict(item, self.placement);
                             let mut from = Vec::new();
                             copy_source_roots(item, self.data, func, &mut from);
-                            let tp = self.data.type_name_str(elm);
+                            let tp = self.data.display_type_name(elm);
                             self.emit("item", &tp, &from, func.name(v), (Some(&lease), "-"), false);
                         }
                     }
@@ -6057,6 +6057,7 @@ pub fn warn_variant_overwritten(
                 bound: HashSet::default(),
                 stale: false,
                 at: def.position.clone(),
+                written_at: None,
                 hits: Vec::new(),
             };
             w.walk(arm);
@@ -6166,11 +6167,27 @@ struct VariantWatch<'a> {
     /// The nearest source position seen, so the report lands on the READ rather than on the
     /// function — a warning a reader cannot locate is a warning they cannot act on.
     at: crate::lexer::Position,
+    /// Where the overwrite was — the fallback for a read that carries no position of its own.
+    /// An arm's TAIL value (`Full { v } => { o.inner = Empty {…}; v }`) is not a statement,
+    /// so no span wraps it, and the nearest position left was the FUNCTION's: the warning
+    /// pointed at `fn main() {`.  The write is inside the arm and names the subject the
+    /// message names, so it is the next best place to look.
+    written_at: Option<crate::lexer::Position>,
     hits: Vec<(u16, crate::lexer::Position)>,
 }
 
 impl VariantWatch<'_> {
     fn walk(&mut self, node: &Value) {
+        // A block interleaves `Line` markers with its statements, and they are the only
+        // position most statements carry: a marker moves the position for the SIBLINGS after
+        // it, so it is not restored here — the enclosing node's own restore ends its reach.
+        if let Value::Line(n) = node.unspan() {
+            if *n != self.at.line {
+                self.at.line = *n;
+                self.at.pos = 1;
+            }
+            return;
+        }
         let outer = self.at.clone();
         if let Some(p) = node.span_pos() {
             self.at = p.clone();
@@ -6198,7 +6215,12 @@ impl VariantWatch<'_> {
                 return;
             }
             Value::Var(v) if self.stale && self.bound.contains(v) => {
-                self.hits.push((*v, self.at.clone()));
+                // A position no nearer than the write's own, when the read has none.
+                let at = match &self.written_at {
+                    Some(w) if (self.at.line, self.at.pos) < (w.line, w.pos) => w.clone(),
+                    _ => self.at.clone(),
+                };
+                self.hits.push((*v, at));
             }
             Value::Call(d, args) if self.data.def(*d).name() == "OpSetEnum" => {
                 if let (Some(p), Some(Value::Enum(m, _))) = (
@@ -6209,6 +6231,9 @@ impl VariantWatch<'_> {
                     && i32::from(*m) != self.tag
                 {
                     self.stale = true;
+                    if self.written_at.is_none() {
+                        self.written_at = Some(self.at.clone());
+                    }
                 }
             }
             _ => {}
@@ -6505,7 +6530,7 @@ pub fn warn_dead_stores(
             // inferred — see alias-where-correct.md: copy is the semantics, links are explicit.)
             let msg = format!(
                 "'{name}' is mutated but its value is never read — the write is LOST. A whole-value \
-                 bind (`{name} = …`) COPIES the heap value (C86), so the mutation lands in the copy, \
+                 bind (`{name} = …`) COPIES the heap value, so the mutation lands in the copy, \
                  not the source."
             );
             diags.add_at_coded(
@@ -7086,7 +7111,7 @@ pub fn warn_double_move(
         cx.report_all_projections();
         for (src, first, at) in std::mem::take(&mut cx.found) {
             let name = def.variables.name(src);
-            let ty = data.type_name_str(def.variables.tp(src));
+            let ty = data.display_type_name(def.variables.tp(src));
             let file = if at.file.is_empty() {
                 def_file
             } else {
@@ -7606,7 +7631,7 @@ pub fn warn_lost_temp_writes(
             let msg = format!(
                 "`{fn_name}` writes to `{param_name}`, but the argument here is a value RETURNED \
                  by a call — a temporary that is freed at the end of this statement, so the write \
-                 is LOST. Returning a struct hands back a COPY (C86); pass the element itself, or \
+                 is LOST. Returning a struct hands back a COPY; pass the element itself, or \
                  bind the result and read it back."
             );
             diags.add_at_coded(
@@ -7851,7 +7876,7 @@ pub fn warn_copies(data: &Data, diags: &mut crate::diagnostics::Diagnostics, fal
             let ty = if r.source == u16::MAX {
                 "a structure".to_string()
             } else {
-                data.type_name_str(def.variables.tp(r.source))
+                data.display_type_name(def.variables.tp(r.source))
             };
             // The copy op carries no span; it borrows the nearest span or (S5.2) the enclosing
             // line marker. A line-only fallback has an empty `file`, and the file that line
@@ -8025,7 +8050,7 @@ pub fn report_copies(data: &Data) {
             let ty = if r.source == u16::MAX {
                 "a structure".to_string()
             } else {
-                data.type_name_str(def.variables.tp(r.source))
+                data.display_type_name(def.variables.tp(r.source))
             };
             rows.push(Row {
                 fname: def.name.clone(),
@@ -8916,7 +8941,7 @@ pub fn lease_calls(data: &mut Data) {
                 op_append: data.def_nr("OpAppendVector"),
                 returned: data
                     .type_owns_droppable_anywhere(def.returned.base())
-                    .then(|| data.type_name_str(&def.returned)),
+                    .then(|| data.display_type_name(&def.returned)),
                 whole_tuple: None,
                 rhs_of: None,
                 placement: crate::lease::Placement::Structure,

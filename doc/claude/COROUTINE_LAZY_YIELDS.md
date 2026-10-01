@@ -4,10 +4,13 @@ The design for native lazy loop yields.  Part of [COROUTINE.md](COROUTINE.md), w
 
 ## Design: lazy loop yields (CL-9)
 
-> **Status: slice 1 built (loft#836, 2026-08-10); the `while` half of slice 3 and the statement
-> after the yield built (loft#1586, 2026-09-22); slice 2, nested loops and slice 4 open.** A loop
+> **Status: slices 1–3 built (loft#836, #1586, #1798) — every loop whose yields are statements
+> is lazy on `--native`; slice 4 (text-in-loop interning) open.**  Two lowerings share the work,
+> described under § Re-descent below: the ROTATED loop for one yield on the body's straight
+> line, and RE-DESCENT for every other shape.  What still takes the eager buffer is a `yield`
+> inside an expression re-descent cannot hoist (COROUTINE.md § CL-9).  A loop
 > with ONE `yield` on its body's straight line is lowered to a header+body state pair — one
-> iteration per advance, the cursor persisted — and everything else keeps the eager buffer.  A
+> iteration per advance, the cursor persisted.  A
 > `while` is the same lowering with no setup (the parser emits it as a bare `Loop`).  Statements
 > after the yield ROTATE the loop: a third state runs them at the start of the next advance,
 > before the header, so a `break` among them still ends the loop.  A lazy loop's hidden record
@@ -24,7 +27,38 @@ The design for native lazy loop yields.  Part of [COROUTINE.md](COROUTINE.md), w
 > last yield, where its scope-exit frees live) once the buffer is filled; it used to drop it,
 > which leaked every persistent heap local and lost a `print` after the loop (loft#1356;
 > guard `tests/scripts/1356-a-record-yielded-from-a-loop-body-is-the-value-at-the-yield.loft`).
-> The rest below is the original design, kept as the map for slices 2-4.
+> The sections after § Re-descent are the original design, kept as the map for slice 4.
+
+### Re-descent (slices 2–3, loft#1798)
+
+Rust has no jump into a loop or a branch, so a lowering that must resume at an arbitrary yield
+emits the body as the Rust `loop` / `if` / block it is and re-enters it FROM THE TOP
+(`YieldSegment::Resumable` in `src/generation/coroutine.rs`):
+
+- every `yield` is numbered `1..=n` in source order, and a suspending one stores its number in
+  the struct field `__resume_<seg>`;
+- the next advance starts with `__seek` set to that number.  While seeking, a statement that
+  holds no yield is skipped, a statement holding the target is entered, an `if` takes the
+  branch holding it without testing its condition, and a loop is entered without its header
+  running; the target yield clears `__seek`, and execution goes on after it;
+- a `continue` or `break` is the Rust one of the loop it names — nothing to translate;
+- every local the body carries from one of its units (a run of yield-free statements, a
+  condition, a yielded value) to another is a struct field (`resumable_carried`), so what the
+  re-descent skips is exactly what already ran;
+- a yield inside a VALUE is first rewritten into a statement (`Sink`): the statements in front
+  of the value move in front of the statement using it, an assignment sinks into each branch
+  of a value `if`, and an operand's yield is hoisted only when the operands before it are
+  literals or scalar locals the hoisted statements do not write;
+- each yield hands over through the code a straight-line yield uses (`emit_yield_handover`),
+  so every channel — value, `next_into` for tuples and fn-refs, a record the generator then
+  forgets (`(G-Own)`) — works the same lazily.
+
+The rotated loop stays for the shape it already covers.  A loop it cannot carry (a record or
+tuple channel, a setup or resume slice with a local that is not a field) is re-descended
+instead.  `LOFT_NO_REDESCENT=1` restores the eager buffer for every re-descended loop (the bisect
+step, NATIVE_SWITCHES.md § Generators).  Guards:
+`tests/scripts/a-generator-resumes-at-the-yield-it-suspended-at.loft` (control-flow shapes) and
+`tests/scripts/a-record-yielded-from-a-loop-is-handed-over-lazily.loft` (every channel).
 
 ### The problem, precisely
 

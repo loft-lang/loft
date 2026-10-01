@@ -3,13 +3,15 @@ Copyright (c) 2026 Jurjen Stellingwerff
 SPDX-License-Identifier: LGPL-3.0-or-later
 -->
 
-# Library documentation review — monthly by-hand protocol
+# Library documentation review — the by-hand protocol
 
 > Origin: [@PLN141](lib_plans/141-library-worked-examples/README.md) (worked
-> examples). Run once per monthly release cycle, alongside the
-> [RELEASE.md](RELEASE.md) checklist. This is a **hygiene ratchet, not a gate** —
-> it never blocks a release; the automated `check_doc_drift.sh examples` gate
-> does that inside loft, and only advises in a library repo (below).
+> examples). Run for **every release**, before the tag: it is part 1 of the release's
+> documentation validation ([RELEASE.md § Documentation validation — required for EVERY
+> release](RELEASE.md)): it runs in full halfway through the cycle (`M-doc-validation-mid`)
+> and over what moved since then before the tag (`M-doc-validation`); both rows block the tag
+> until they are done.  The automated `check_doc_drift.sh examples` gate additionally blocks dangling or
+> duplicate citations inside loft, and only advises in a library repo (below).
 
 ## Why a by-hand pass exists
 
@@ -70,19 +72,20 @@ actually moved, not all ~350 public functions.
 
 ## Cadence and scope
 
-- **When:** once per monthly cycle (the `YYYY-MM` branch), before tagging the
-  release. Libraries are not release-coupled for *publishing* (RELEASE.md § What
-  forces a release), but their docs share the monthly beat for *review*.
+- **When:** every release, before tagging it. Libraries are not release-coupled for
+  *publishing* (RELEASE.md § What forces a release), but their docs are reviewed with
+  every release.
 - **Who:** one reviewer per pass — a human, or an agent steered through the steps
   below. Splitting libraries across passes is fine; the watermark carries state.
 - **What:** the whole distribution — the loft stdlib (`default/`), the in-tree
   libraries (`lib/*`), and every package in the registry. `make libraries-review`
   names the population and says which part of it this pass owes; you never pick
   the list by hand.
-- **The other half of the pass:** the feature catalogue (`@F`/`@I`) rides the same
-  monthly beat through `make features-review`, with `make features-check` as its
-  pre-flight. Same two questions, same non-gate status — the halves differ only in
-  what they review, so run both and treat the union as one worklist.
+- **The other half of the pass:** the feature catalogue (`@F`/`@I`) is reviewed with
+  the same release through `make features-review SINCE=<previous release tag>`, with
+  `make features-check` as its pre-flight — the previous tag is its watermark. Same two
+  questions, and the same requirement: both halves are part of `M-doc-validation-mid` and `M-doc-validation`, so
+  run both and treat the union as one worklist.
 
 ## The pass — per library
 
@@ -233,13 +236,13 @@ as a STALE ROW rather than ignored.
 
 | library | reviewed through | at commit | notes |
 |---|---|---|---|
-| `default` | 2026-09 | `32700867` | @STD-001..012 authored across text / collections / JSON / files-IO; docs read while tagging. 2026-09: the only change since is two compiler-internal ops (`OpDistinctStore`, `OpRefAlias`), non-`pub` and undocumented by design — the reference chapter's promises are unchanged. 2026-09-04 re-read: loft#1348 removed every tracker tag from the published descriptions and rewrote the `min`/`max` section, `sum_of` and `File.format` for their readers; `Walkable`, `tree_walk`'s cap edge and the three interfaces documented; the `assert_eq` and `03_text` maintainer notes moved off the page. Each authored behaviour sentence was probed on both backends and holds |
-| `lib/git` | 2026-09 | `2966e9b5` | @GIT-001..005 tagged to live uses in `scan.loft` + `refresh.loft`; 13 pub fns read while tagging. 2026-09: a query that cannot be ASKED now halts instead of answering `""` (loft#1061) and the doc above `git_query` and `branch` moved with the code |
-| `lib/lexer.loft` | 2026-09 | `32700867` | @LEX-001 (matches/test/identifier), @LEX-002 (anchor/revert backtracking) — both tagged to live uses in `parser.loft` (`function`, `object`), exercised by the `16-parser` doc test; format-protocol/comment fns still owe examples (need a non-rendered demo). 2026-09: `Anchor.start` (a revert can land at a token's START), `split_token` (maximal munch undone for a nested `>>`) and `offset` (a stalled-loop guard) — each documented with its reason and with live callers in `lib/parser.loft`. 2026-09-04: `Lexer` itself documented (the token/keyword tables must be set before the first parse); no `pub fn` moved |
-| `lib/parser.loft` | 2026-09 | `69af7b6a` | First review. One `pub fn` (`parse`), doc read against the body and found current; @PAR-001 tags the doc test `tests/docs/16-parser.loft`, which is the clearest call site there is. Its prelude load names `default/01_code.lav`, an extension this repo has never had — filed as loft#1339, not fixed here because dropping it renumbers `cur_file`. 2026-09-04 after loft#1339: the phantom `.lav` prelude load is gone, with the comment saying why a real one would regress `parse`'s count; no `pub fn` moved |
-| `lib/code.loft` | 2026-09 | `32700867` | First review. 24 `pub fn`, no doc comment on any of them and no module header; header written naming what `Code` is, what `cur_arg` switches, and which half is reached. `deferred` in `examples-exempt.tsv`: the emitter half has no call site to cite. Two defects it hides — `null_value` emits `Boolean`, `blocks` is popped but never pushed — filed as loft#1340. 2026-09-04 re-read after loft#1340: `add_block`/`add_loop`/`add_if` record the header they open, `end_if` spans are consistent, `null_value` emits `Null`; `Code` and `Structure` documented. Still `deferred` — the emitter has no caller to cite |
-| `lib/testlib.loft` | 2026-09 | `32700867` | First review. `exempt` in `examples-exempt.tsv` — a fixture for `tests/docs/17-libraries.loft` and `tests/diagnostic_reach.rs`, deliberately trivial, so a call site teaches nothing its signature does not. Docs read; nothing stale. 2026-09-04: `Point` and `Bag` documented as the fixtures they are; no `pub fn` moved |
-| `lib/audience_crystal` | 2026-08 | `7786d28c` | @ACR-001..003 tagged to the `01-editor-helpers` test (picking inverse, incr editor loop, erase) |
+| `default` | 2026-10 | `892ff4743` | @STD-001..012 authored across text / collections / JSON / files-IO; docs read while tagging. 2026-09: the only change since is two compiler-internal ops (`OpDistinctStore`, `OpRefAlias`), non-`pub` and undocumented by design — the reference chapter's promises are unchanged. 2026-09-04 re-read: loft#1348 removed every tracker tag from the published descriptions and rewrote the `min`/`max` section, `sum_of` and `File.format` for their readers; `Walkable`, `tree_walk`'s cap edge and the three interfaces documented; the `assert_eq` and `03_text` maintainer notes moved off the page. Each authored behaviour sentence was probed on both backends and holds 2026-10: every published section read against the release and each authored sentence probed on both backends (the docs pass; `.doc_review_ledger` 264/264); since then `len`/`size` of an absent text answer 0, `log10`/`log2` are exact at powers, `StackFrame.arguments` lists the parameters, and only `///` lines are published (loft#1808) — each probed; no `pub fn` line moved |
+| `lib/git` | 2026-10 | `892ff4743` | @GIT-001..005 tagged to live uses in `scan.loft` + `refresh.loft`; 13 pub fns read while tagging. 2026-09: a query that cannot be ASKED now halts instead of answering `""` (loft#1061) and the doc above `git_query` and `branch` moved with the code 2026-10: one maintainer comment re-pointed from a design-decision id to the plan that records the decision; no `pub fn` moved |
+| `lib/lexer.loft` | 2026-10 | `892ff4743` | @LEX-001 (matches/test/identifier), @LEX-002 (anchor/revert backtracking) — both tagged to live uses in `parser.loft` (`function`, `object`), exercised by the `16-parser` doc test; format-protocol/comment fns still owe examples (need a non-rendered demo). 2026-09: `Anchor.start` (a revert can land at a token's START), `split_token` (maximal munch undone for a nested `>>`) and `offset` (a stalled-loop guard) — each documented with its reason and with live callers in `lib/parser.loft`. 2026-09-04: `Lexer` itself documented (the token/keyword tables must be set before the first parse); no `pub fn` moved 2026-10: one keyed read discharges with `?? []` (no entry means no token starts there); no `pub fn` moved |
+| `lib/parser.loft` | 2026-10 | `892ff4743` | First review. One `pub fn` (`parse`), doc read against the body and found current; @PAR-001 tags the doc test `tests/docs/16-parser.loft`, which is the clearest call site there is. Its prelude load names `default/01_code.lav`, an extension this repo has never had — filed as loft#1339, not fixed here because dropping it renumbers `cur_file`. 2026-09-04 after loft#1339: the phantom `.lav` prelude load is gone, with the comment saying why a real one would regress `parse`'s count; no `pub fn` moved 2026-10: the grammar grew `while`, `match` with guards, both lambda forms, `::` names and the optional `;` after a block (loft#1800); `parse`'s doc still states its contract, and `tests/docs/16-parser.loft` now asserts both what it parses and the listed constructs it does not |
+| `lib/code.loft` | 2026-10 | `892ff4743` | First review. 24 `pub fn`, no doc comment on any of them and no module header; header written naming what `Code` is, what `cur_arg` switches, and which half is reached. `deferred` in `examples-exempt.tsv`: the emitter half has no call site to cite. Two defects it hides — `null_value` emits `Boolean`, `blocks` is popped but never pushed — filed as loft#1340. 2026-09-04 re-read after loft#1340: `add_block`/`add_loop`/`add_if` record the header they open, `end_if` spans are consistent, `null_value` emits `Null`; `Code` and `Structure` documented. Still `deferred` — the emitter has no caller to cite 2026-10: the `as Block` / `as If` / `as Loop` downcasts are now guarded by an `is` test and two keyed reads discharge with `?? 0` / `?? []`; the module header and type descriptions still describe it. Still `deferred` |
+| `lib/testlib.loft` | 2026-10 | `892ff4743` | First review. `exempt` in `examples-exempt.tsv` — a fixture for `tests/docs/17-libraries.loft` and `tests/diagnostic_reach.rs`, deliberately trivial, so a call site teaches nothing its signature does not. Docs read; nothing stale. 2026-09-04: `Point` and `Bag` documented as the fixtures they are; no `pub fn` moved 2026-10: no source change beyond the join; nothing stale |
+| `lib/audience_crystal` | 2026-10 | `892ff4743` | @ACR-001..003 tagged to the `01-editor-helpers` test (picking inverse, incr editor loop, erase) 2026-10: the `gridmesh` dependency moved to 0.2.3 with `use gridmesh::*`; one maintainer comment restated without its history; no `pub fn` moved |
 | `lib/engine_host` | 2026-08 | `7786d28c` | @EHK-001..004 tagged to CI-spawned audience-demo kernels (run loop, broadcast, sync lanes, run_client drain); 37 pub fns read while tagging |
 
 `7786d28c` is the commit that authored every in-tree worked-example tag (squash-merged
@@ -261,9 +264,9 @@ release is the owner's step.
 
 ## What this is NOT
 
-- **Not a gate.** It never blocks a release — the `examples` gate blocks on
-  dangling/duplicate inside loft and advises in a library repo; this is a report,
-  like `make speed`.
+- **Not a gate on its own aids.** `make libraries-review` and `make features-review` are
+  reports that never fail; what blocks the release is the checklist row
+  `M-doc-validation-mid` and `M-doc-validation`, ticked once the reads they list are done.
 - **Not a full re-sweep.** The watermark + changed-since worklist bound each
   pass to what moved. A month with no library changes is a five-minute pass.
 - **Not a coverage mandate.** A low citation count is healthy when the uncited

@@ -61,6 +61,12 @@ CORPORA = [
     ("E. Flags & routines  (Makefile help / CLI — references resolved)", ["Makefile"], set()),
     ("F. Language reference — fault/limitation claims (anchored + recheck)",
      ["doc/claude/LOFT.md"], {"claims", "recheck"}),
+    # The hand-written pages a new user meets first: the repository front page and the site's
+    # entry points.  gendoc READS install.html and roadmap.html into the printed reference, so
+    # they are sources, not outputs; the numbered guide pages are rendered from tests/docs/.
+    ("G. Entry pages  (README + hand-written site pages)",
+     ["README.md", "doc/install.html", "doc/roadmap.html", "doc/docs.html",
+      "doc/examples.html", "doc/report.html"], {"recheck"}),
 ]
 
 CODE_SPAN = re.compile(r"`([^`]+)`")
@@ -192,7 +198,9 @@ def prose_lines(path, block):
     """Human-readable lines of a section block (drop code / tags)."""
     if path.endswith((".html", ".htm", ".md")):
         return [re.sub(r"<[^>]+>", " ", l) for l in block]
-    return [l for l in block if l.strip().startswith("//")]
+    # The stdlib publishes `///` only; its `//` lines are maintainer notes (loft#1808).
+    mark = "///" if os.path.basename(os.path.dirname(os.path.abspath(path))) == "default" else "//"
+    return [l for l in block if l.strip().startswith(mark)]
 
 
 def hedge_hits(path, block):

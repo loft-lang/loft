@@ -68,6 +68,38 @@ fn registry_fn_hint(_name: &str, _resolved: &[String]) -> Option<String> {
     None
 }
 
+/// The type half of [`registry_fn_hint`]: the message for an unresolved TYPE that a
+/// published package declares — `what` is the message's head (`Undefined type`, `unknown
+/// type`, …).  Without it an un-imported `Rect` read "did you mean 'text'?" and `Canvas` a
+/// bare "Undefined type", while the same file's un-imported `canvas(…)` named its package.
+#[cfg(feature = "registry")]
+pub(crate) fn registry_type_hint(what: &str, name: &str, resolved: &[String]) -> Option<String> {
+    let pkgs = crate::registry_index::packages_exporting_type(name);
+    let first = pkgs.first()?;
+    if let Some(here) = pkgs.iter().find(|p| resolved.iter().any(|r| &r == p)) {
+        return Some(format!(
+            "{what} {name} — the `{here}` this build resolved does not have it, and the \
+             registry's `{here}` does. These are different packages of the same name"
+        ));
+    }
+    let provider = if pkgs.len() == 1 {
+        format!("the `{first}` package provides it")
+    } else {
+        let names: Vec<String> = pkgs.iter().map(|p| format!("`{p}`")).collect();
+        format!("the {} packages provide it", names.join(" / "))
+    };
+    Some(format!(
+        "{what} {name} — {provider}; write `{first}::{name}` after `use {first};`, or add \
+         `use {first}::({name});` and write it bare"
+    ))
+}
+
+/// Registry-less build: no index to consult, so no hint.
+#[cfg(not(feature = "registry"))]
+pub(crate) fn registry_type_hint(_what: &str, _name: &str, _resolved: &[String]) -> Option<String> {
+    None
+}
+
 /// Where a value is handed to a parameter, for [`Parser::report_const_argument`] (loft#1540,
 /// C124): which signature is asked, and how the diagnostic names it.
 #[derive(Clone, Copy)]
@@ -3296,6 +3328,15 @@ impl Parser {
             // derived from it) and has its append shape: name-keyed, idempotent, at the end.
             let lazy_struct_instance =
                 matches!(dt, DefType::Struct) && self.data.def(d as u32).instance_of != u32::MAX;
+            // The eighth: a DESTRUCTURING `par` loop's worker wrapper,
+            // `__par_destructure_w_<line>_<col>_<worker>` — pass-2-only by design (pass 1
+            // answers with the user's worker; `parse_destructure_par_worker` mints the wrapper
+            // once the tuple's element types and offsets are final), minted once per loop site
+            // and appended at the end.  Unrecognised, every `for (a, b) in v par(…)` stopped
+            // the compiler with this assertion on both backends, while the `code!` harness,
+            // which does not run H5, kept its tests green (loft#1802's matrix).
+            let lazy_par_wrapper =
+                matches!(dt, DefType::Function) && name.starts_with("__par_destructure_w_");
             assert!(
                 lazy_wrapper
                     || lazy_instantiation
@@ -3303,7 +3344,8 @@ impl Parser {
                     || lazy_tuple
                     || lazy_dispatcher
                     || lazy_lambda_instance
-                    || lazy_struct_instance,
+                    || lazy_struct_instance
+                    || lazy_par_wrapper,
                 "H5: pass-2-only definition `{name}` (#{d}, {dt:?}) is not a lazy vector \
                  wrapper or generic instantiation — a real cross-pass divergence \
                  (pass1={}, pass2={})\n{}",
@@ -3687,6 +3729,12 @@ impl Parser {
                 note
             } else if let Some(msg) = self.data.import_cure("Undefined type", &stub_name, source) {
                 msg
+            } else if let Some(msg) = registry_type_hint(
+                "Undefined type",
+                &stub_name,
+                &self.data.resolved_libraries(),
+            ) {
+                msg
             } else if let Some(s) = self.data.suggest_type_name(&stub_name) {
                 format!("Undefined type {stub_name} — did you mean '{s}'?")
             } else {
@@ -3900,6 +3948,29 @@ impl Parser {
         // reference (`stdlib_ops`).
         if default && let Err(msg) = crate::stdlib_ops::verify(&self.data, dir) {
             return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, msg));
+        }
+        Ok(())
+    }
+
+    /// Load the standard library from `dir`, or — when there is no such directory — from
+    /// the sources this binary embeds (loft#1801).  A binary copied onto the PATH or
+    /// installed by `cargo install` has no `default/` beside it, but it carries the stdlib
+    /// it was built from (`stdlib_sources`, the same text the browser build and `loft
+    /// search` read), and that text cannot mismatch its dispatch table.  A directory that
+    /// exists is read and checked exactly as [`Self::parse_dir`] does.
+    /// # Errors
+    /// As [`Self::parse_dir`]; and `InvalidData` if the embedded stdlib does not parse.
+    pub fn parse_stdlib(&mut self, dir: &str) -> std::io::Result<()> {
+        if std::path::Path::new(dir).is_dir() {
+            return self.parse_dir(dir, true, false);
+        }
+        for (name, content) in crate::stdlib_sources::STDLIB_SOURCES {
+            if !self.parse_source(content, name, true) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("the embedded standard library `{name}` does not parse"),
+                ));
+            }
         }
         Ok(())
     }
@@ -4797,6 +4868,14 @@ impl Parser {
         let Type::Optional(inner) = should else {
             return false;
         };
+        // The assignment seam reaches this without `convert` (whose entry asks the same
+        // question), so it asks too; the constant is then replaced by the null it would have
+        // become, so the seam's own check (`narrow_store_checks`) does not report it twice.
+        if let Some(msg) = self.nullable_narrow_constant_refusal(code, should) {
+            self.refuse_nullable_narrow_constant(&msg);
+            *code = self.cl("OpConvIntFromNull", &[]);
+            return true;
+        }
         let dst_base = inner.base().clone();
         let src_base = is_type.base().clone();
         self.dn4_checked_cast(code, &dst_base, &src_base);
@@ -4805,11 +4884,18 @@ impl Parser {
 
     /// Does a value of `is_type` meet `should` through the implicit checked narrowing?  A
     /// question of the two TYPES alone, so pass 1 — which converts nothing — can ask it too.
+    ///
+    /// It asks the implicit-STORE test, not range containment: this is a store, and
+    /// `integer` → `i32` is the one narrowing containment cannot see (loft#931).  Asking
+    /// containment left `i32?` outside `(I-Narrow-Opt)` alone of every width — its local
+    /// kept `5000000000`, its field answered a `??` fallback where every other width
+    /// answers null, and its return was refused with `?? <value>`, a cure a nullable slot
+    /// cannot take (loft#1812).
     pub(crate) fn takes_checked_narrow(is_type: &Type, should: &Type) -> bool {
         let Type::Optional(inner) = should else {
             return false;
         };
-        Self::is_narrowing_int(is_type.base(), inner.base())
+        Self::is_narrowing_int_store(is_type.base(), inner.base())
     }
 
     /// Does converting a `from` value to `to` change its representation — a numeric widening
@@ -4901,56 +4987,20 @@ impl Parser {
         let Some(d_width) = d.forced_size.map(std::num::NonZeroU8::get) else {
             return false;
         };
-        s.byte_width(false) > d_width
+        // Only the full integer's bounds under-report its value; any other source's range
+        // is its value's, and containment has already answered for it.  A contained
+        // `limit` range wider than 65 536 codes has no 4-byte width bucket
+        // (`range_to_width` answers 8), so asking width of it refused `x & 2147483647`
+        // into an `i32` — the mask the refusal itself offers as the cure (loft#1814).
+        let full = s.forced_size.is_none() && (s.is_signed32_template() || s.is_wide_template());
+        full && s.byte_width(false) > d_width
     }
 
     /// @PLAN48 P2: render an integer type with its explicit narrow alias
     /// (`i32`/`u8`/`u16`/`i8`/`i16`) so a narrowing diagnostic doesn't print
     /// the bare `integer` for both sides (they share bounds).
     fn int_type_name(&self, t: &Type) -> String {
-        let Type::Integer(s) = t else {
-            return t.source_name(&self.data);
-        };
-        if s.forced_size.is_none() {
-            // A `limit(lo, hi)` range has no forced width and is still the author's alias —
-            // `integer(0, 10)` is true and no spelling the parser reads, so the cure built from
-            // it (`as integer(0, 10)?`) could not be typed back in.  The full integer keeps its
-            // own name: an alias of it (`type Count = integer`) must not rename every integer.
-            if s.is_wide_template() || s.is_signed32_template() {
-                return t.source_name(&self.data);
-            }
-            return self
-                .data
-                .integer_alias_any_source(s, false)
-                .map_or_else(|| t.source_name(&self.data), str::to_string);
-        }
-        // A stdlib alias is named by its own RANGE, never by its width and sign.  This spelled
-        // a type from `forced_size` plus `min < 0` alone, which is right for the six aliases
-        // and wrong for every other declared range: `type Lim = integer limit(1000, 1100)
-        // size(1)` was reported as `u8`, so the refusal told an author to fit 1050 into
-        // `0..=255` and its own cure (`as u8?`) could never succeed (loft#1641).  Matching the
-        // whole range keeps loft#1247's fix — `u32` and `i32` share a width and differ in
-        // range, so neither can be named as the other — and makes it impossible to name a type
-        // whose values are not the named one's.
-        let named = match (s.min, s.max) {
-            (0, 255) => Some("u8"),
-            (-128, 127) => Some("i8"),
-            (0, 65535) => Some("u16"),
-            (-32768, 32767) => Some("i16"),
-            (0, 4_294_967_294) => Some("u32"),
-            _ if s.is_signed32_template() => Some("i32"),
-            _ => None,
-        };
-        if let Some(n) = named {
-            return n.to_string();
-        }
-        // Otherwise the alias the AUTHOR declared, which is the only spelling they can act on:
-        // `integer(1000, 1100)` is true and is no syntax the parser reads, so a cure built from
-        // it (`as integer(1000, 1100)?`) cannot be typed back in.
-        if let Some(name) = self.data.integer_alias_any_source(s, false) {
-            return name.to_string();
-        }
-        t.source_name(&self.data)
+        self.data.integer_name(t)
     }
 
     /// @PLAN48 P2: literal exemption — true when `code` is a constant integer that
@@ -4990,6 +5040,109 @@ impl Parser {
         }
     }
 
+    /// `@FR-N-Reserve` — a NULLABLE narrow slot (`u8?`, `i16?`, a nullable `limit(lo, hi)`) holds
+    /// its USABLE range: where the range fills a fixed width, one code at its edge is its null.
+    /// A CONSTANT outside that range can only be stored as null, which is never what the author
+    /// wrote, so it is refused the way its non-null twin refuses a constant that does not fit
+    /// (C80's compile-time valve) rather than becoming null in silence (loft#1796: `x: u8? =
+    /// 255`, `R { b: 255 }`, `[255]` all read null).
+    fn nullable_narrow_constant_refusal(&self, code: &Value, dst: &Type) -> Option<String> {
+        let Type::Optional(inner) = dst else {
+            return None;
+        };
+        let Type::Integer(spec) = inner.base() else {
+            return None;
+        };
+        // The full integer is no narrow slot; a width alias or a user range is.
+        if spec.forced_size.is_none() && (spec.is_wide_template() || spec.is_signed32_template()) {
+            return None;
+        }
+        let (lo, hi) = (i64::from(spec.usable_min(true)), spec.usable_max(true));
+        let n = self.unfitting_stored_constant(code, lo, hi)?;
+        // A range that fills a fixed width gives up one code to its null; a `limit` range
+        // widens instead and keeps every value, so its non-null twin holds no more than it.
+        if lo > i64::from(spec.min) || hi < spec.max {
+            let name = self.int_type_name(inner);
+            return Some(format!(
+                "{n} does not fit `{name}?` — a nullable {name} holds {lo}..={hi} (the remaining \
+                 code is its null), so this constant would be stored as null.  Use a wider \
+                 nullable type, or the non-null `{name}`, which holds its whole range"
+            ));
+        }
+        // A reserving alias names a FIXED width (`u8?` holds 0..=254), so a `limit` range that
+        // shares its bounds is spelled as written rather than by that alias's name.
+        let mut name = self.int_type_name(inner);
+        if matches!(name.as_str(), "u8" | "i8" | "u16" | "i16") {
+            name = format!("integer limit({lo}, {hi})");
+        }
+        Some(format!(
+            "{n} does not fit `{name}?` — it holds {lo}..={hi}, so this constant would be stored \
+             as null.  Use a wider type"
+        ))
+    }
+
+    /// The first constant a value can reach its slot as that lies outside `lo..=hi`: the value
+    /// itself when it is one, and otherwise every leaf a JOIN can deliver — each arm of a value
+    /// `if` or `match`, the default of a `??` (whose lowering is an `if` or a block ending in
+    /// one), and a value block's answer.  Asked by the nullable narrow refusal, so a constant
+    /// that cannot fit is refused however it reaches the slot (`if c { 255 } else { 3 }`,
+    /// `g() ?? 300`); a leaf that is not a constant — the `??` subject, a call, a variable — is
+    /// no constant to judge.  Every store into such a slot asks, so it allocates nothing.
+    fn unfitting_stored_constant(&self, code: &Value, lo: i64, hi: i64) -> Option<i64> {
+        let n = match code.unspan() {
+            Value::Int(n) => i64::from(*n),
+            Value::Long(n) => *n,
+            Value::Null => return None,
+            Value::If(_, then, other) => {
+                return self
+                    .unfitting_stored_constant(then, lo, hi)
+                    .or_else(|| self.unfitting_stored_constant(other, lo, hi));
+            }
+            Value::Block(bl) => {
+                return bl
+                    .operators
+                    .last()
+                    .and_then(|last| self.unfitting_stored_constant(last, lo, hi));
+            }
+            // Only an operator folds (`-1`, `200 + 100`, `255 as u8?`); a call to a function
+            // is no constant, and asking `const_eval` about one allocates for its arguments.
+            Value::Call(op, _) if self.data.def(*op).name.starts_with("Op") => {
+                match crate::const_eval::const_eval(code, &self.data) {
+                    Some(Value::Int(n)) => i64::from(n),
+                    Some(Value::Long(n)) => n,
+                    _ => return None,
+                }
+            }
+            _ => return None,
+        };
+        (n < lo || n > hi).then_some(n)
+    }
+
+    /// Report [`Self::nullable_narrow_constant_refusal`]'s message once per source position.
+    /// A nullable narrow DEFAULT (a field's or a parameter's) is converted where it is written
+    /// and again in the function it is hoisted into, both at the default's own position, so
+    /// the second report of the same message there is dropped.
+    fn refuse_nullable_narrow_constant(&mut self, msg: &str) {
+        let mark = self.lexer.diagnostics().mark();
+        diagnostic!(self.lexer, Level::Error, "{msg}");
+        let repeated = self
+            .lexer
+            .diagnostics()
+            .entries()
+            .split_last()
+            .is_some_and(|(new, old)| {
+                old.iter().any(|e| {
+                    e.message == new.message
+                        && e.file == new.file
+                        && e.line == new.line
+                        && e.col == new.col
+                })
+            });
+        if repeated {
+            self.lexer.rewind_diagnostics(mark);
+        }
+    }
+
     /// When a literal stored into a NULLABLE narrow field fits the type's full
     /// range but lands on the reserved null sentinel (out of the usable range),
     /// return a hint explaining WHY — e.g. `255` in a nullable `u8`.  This tells
@@ -5003,8 +5156,8 @@ impl Parser {
         // @PLN25 F2 (range reconciliation): a plain (non-`Optional`) narrow integer is NON-null
         // under DN1, so it uses the FULL width — no reserved sentinel, nothing to reject. `dst`
         // here is a `Type::Integer` (an `Optional` target hit the let-else above), i.e. exactly
-        // the non-null narrow that F2 makes full-range. (Reserving the sentinel for an `Optional`
-        // narrow — rejecting the literal `255` into a `u8?` — is a separate Part-2 slice.)
+        // the non-null narrow that F2 makes full-range. (The `Optional` narrow's constant that
+        // lands outside its usable range is `nullable_narrow_constant_refusal`'s, loft#1796.)
         if crate::keys::pln25_f2_enabled() {
             return None;
         }
@@ -5465,7 +5618,7 @@ impl Parser {
 
     /// Bring a CONDITION to `boolean` — the `if` / `while` position, where LOFT.md
     /// § Conversions promises the coercion for every type: *"`false` and null are falsy;
-    /// integer `i32::MIN` is falsy; every other value is truthy"*.
+    /// an `integer` holding its null, `i64::MIN`, is falsy; every other value is truthy"*.
     ///
     /// Separate from [`convert`](Parser::convert) because the promise is about this
     /// POSITION, not about the pair of types: passing a `vector` where a `boolean`
@@ -5712,6 +5865,21 @@ impl Parser {
     #[track_caller]
     #[expect(clippy::too_many_lines, reason = "inherited")]
     fn convert(&mut self, code: &mut Value, is_type: &Type, should: &Type) -> bool {
+        // @FR-N-Reserve (loft#1796) — a CONSTANT stored into a NULLABLE narrow slot must lie in
+        // its usable range: one code at the edge is the slot's null, so `255` into a `u8?`, or
+        // `300`, could only ever be stored as null.  Asked at the top because a literal that
+        // fits the FULL width (`255`) needs no narrowing and takes no later branch; the
+        // assignment seam asks the same predicate (`narrow_store_checks`).  An author's own
+        // `e as u8?` never reaches a slot as a bare constant, so asking for null still works.
+        if !self.first_pass
+            && let Some(msg) = self.nullable_narrow_constant_refusal(code, should)
+        {
+            self.refuse_nullable_narrow_constant(&msg);
+            // The null it would have become, so a later check of the same value (the
+            // assignment seam's) meets a null and does not report it again.
+            *code = self.cl("OpConvIntFromNull", &[]);
+            return true;
+        }
         // @PLN167 C3 (loft#1656) — a text field or element reaching a `&text` parameter HERE
         // comes through a FUNCTION VALUE: a direct call lowers it to the place before any
         // conversion (`process_call_args`).  It is lowered the same way: the argument is the
@@ -5767,7 +5935,7 @@ impl Parser {
         if !discharged && !self.first_pass && narrows && !self.int_value_fits(code, should) {
             let src = self.int_type_name(is_type);
             let dst = self.int_type_name(should);
-            let cures = Self::narrowing_cures(code, &dst);
+            let cures = Self::narrowing_cures(code, should, &dst);
             diagnostic!(
                 self.lexer,
                 Level::Error,
@@ -6039,9 +6207,14 @@ impl Parser {
             // @FR-N-Store — a tuple stores ELEMENT-WISE, so each member is its own slot and
             // the diagnostic names which (`element 0 of the field`); the six tuple-literal
             // cells loft#1366 lists were silent because nothing named them.
+            // With no enclosing store named, a member is still a SLOT (`(N-Reserve)`, and
+            // `(L-Tuple)` lays it out as a field), so a narrow one keeps `(N-Store)`'s hard
+            // error: `never_error` defaulted to true here, and `t: (integer, u8) = (1, x as
+            // u8?)` warned and stored null into the non-null `u8` (loft#1815).  Only a narrow
+            // integer member is affected — a heap member never escalates either way.
             let (what, at, lenient) = match self.store_ctx.last() {
                 Some(c) => (c.what.clone(), c.at.clone(), c.never_error),
-                None => ("this tuple".to_string(), None, true),
+                None => ("this tuple".to_string(), None, false),
             };
             for (i, (s, d)) in src_elems.iter().zip(dst_elems.iter()).enumerate() {
                 let mut placeholder = Value::Null;
@@ -9971,8 +10144,51 @@ impl Parser {
                     .possible_with_signature(&method_suffix, want, &concrete_type)
                     .unwrap_or(u32::MAX);
             }
+            // `@FR-G-Sat` — the signature is `[Self ↦ C](p̄ -> R)`, and `p̄` is a parameter LIST,
+            // not a count.  A member of the right arity whose parameters are other types does
+            // not take the call the bound promises: `OpMin(self: W, o: integer)` satisfied
+            // `Subtractable`, and the monomorph handed the `integer` parameter a record —
+            // `-3` on the interpreter, a SIGSEGV or a panic for `<` over `text` and `scale`
+            // over `text`, rustc refusing the native source (loft#1818).  A member of the
+            // name's overload set that does take it is the one the monomorph binds
+            // (`re_resolve_call` asks `Data::overload_with_params`, the same question).
+            let mut misfit = None;
+            if found != u32::MAX {
+                let params = self.bound_params_at(child_nr, &concrete_type);
+                // `@FR-G-Sat` asks for a CONCRETE function of the signature.  A template member
+                // (`fn OpAdd<U>(self: W, o: U)`) is not one: the monomorph resolves the bound's
+                // call to a definition and has no instantiation step, so the template itself
+                // reached the bytecode — an internal compiler error on both backends
+                // (loft#1826).  A concrete member of the set that takes the list still
+                // satisfies; otherwise the refusal names the template.
+                if self.data.def_type(found) == DefType::Generic {
+                    if let Some(member) = self.data.overload_with_params(&method_suffix, &params) {
+                        found = member;
+                    } else {
+                        misfit = Some(format!(
+                            "'{method_suffix}' is a template, and a bound takes a concrete \
+                             '{method_suffix}' of its signature; declare one for '{}'",
+                            concrete_type.source_name(&self.data)
+                        ));
+                        // Refused outright, `==` included: the type HAS an `OpEq`, which the
+                        // concrete `a == b` instantiates, so a content comparison in the
+                        // generic would answer differently from the concrete site.
+                        out.extend(misfit.take());
+                        continue;
+                    }
+                } else if !self.data.params_fit(found, &params) {
+                    if let Some(member) = self.data.overload_with_params(&method_suffix, &params) {
+                        found = member;
+                    } else {
+                        misfit = self.param_misfit(found, &params, &method_suffix);
+                        found = u32::MAX;
+                    }
+                }
+            }
             // `(G-Sat-Eq)`, @C91 — every type satisfies `==`: one with no `OpEq` of its own is
-            // compared by content, which the monomorph lowers (`content_eq_pending`).
+            // compared by content, which the monomorph lowers (`content_eq_pending`).  An
+            // `OpEq` that does not take `(Self, Self)` is not its own for this purpose: the
+            // concrete `a == b` compares such a type by content too.
             if found == u32::MAX
                 && method_suffix == "OpEq"
                 && want == 2
@@ -9980,7 +10196,9 @@ impl Parser {
             {
                 continue;
             }
-            if found == u32::MAX {
+            if let Some(msg) = misfit {
+                out.push(msg);
+            } else if found == u32::MAX {
                 out.push(format!("missing {method_suffix}"));
             } else if let Some(msg) =
                 self.return_type_mismatch(child_nr, found, concrete_nr, &method_suffix)
@@ -10164,6 +10382,55 @@ impl Parser {
     ///
     /// `Self` in the interface's return substitutes to the concrete type first,
     /// so `fn mk(self: Self) -> Self` against `fn mk(self: A) -> A` agrees.
+    /// The visible parameter types an interface member `iface_method` declares, at the
+    /// implementor `concrete` (`[Self ↦ C]`).  A parameter typed by one of the interface's own
+    /// ASSOCIATED types (`Self.X`) stands for whatever companion the implementor supplies, so
+    /// it answers `Unknown` and asks nothing — as [`Self::return_type_mismatch`] leaves such a
+    /// return unchecked.
+    fn bound_params_at(&self, iface_method: u32, concrete: &Type) -> Vec<Type> {
+        let self_nr = self.data.def_nr("Self");
+        let iface = self.data.def(iface_method).parent;
+        self.data
+            .def(iface_method)
+            .attributes
+            .iter()
+            .filter(|a| !a.hidden)
+            .map(|a| {
+                let t = if self_nr == u32::MAX {
+                    a.typedef.clone()
+                } else {
+                    Self::substitute_type(a.typedef.clone(), self_nr, concrete)
+                };
+                match t.base() {
+                    Type::Reference(d, _)
+                        if iface != u32::MAX
+                            && self.data.def(*d).parent == iface
+                            && matches!(self.data.def_type(*d), DefType::Struct) =>
+                    {
+                        Type::Unknown(0)
+                    }
+                    _ => t,
+                }
+            })
+            .collect()
+    }
+
+    /// The `(G-Sat)` refusal for a member whose parameter list does not take `params`: the
+    /// first position that does not, named as the author wrote both types.
+    fn param_misfit(&self, found: u32, params: &[Type], method: &str) -> Option<String> {
+        let have = self.data.visible_params(found);
+        have.iter()
+            .zip(params)
+            .find(|(h, w)| !self.data.param_fits(h, w))
+            .map(|(h, w)| {
+                format!(
+                    "'{method}' takes '{}' where the interface declares '{}'",
+                    h.source_name(&self.data),
+                    w.source_name(&self.data)
+                )
+            })
+    }
+
     fn return_type_mismatch(
         &self,
         iface_method: u32,
@@ -10481,11 +10748,46 @@ impl Parser {
         // stub reaches runtime with no diagnostic to attach.)
         if resolved != u32::MAX {
             let want = def.attributes().iter().filter(|a| !a.hidden).count();
-            if data.attributes(resolved) != want
+            // VISIBLE on both sides: a user operator returning a struct carries a hidden
+            // return buffer, so its raw count matched the other arity's visible one and the
+            // unary `OpMin(self: V) -> V` (raw 2) was kept for a binary `a - b` (loft#1794).
+            if Self::visible_arity(data, resolved) != want
                 && let Some(by_signature) =
                     data.possible_with_signature(fn_name, want, &concrete_arg)
             {
                 resolved = by_signature;
+            }
+            // `@FR-F-Recv` — at ONE arity the incumbent is still only the member declared
+            // first: over `OpMin(self: V, o: integer)` declared before `OpMin(self: V, o: V)`,
+            // `diff<T: Subtractable>(a, b)` at `V` bound the integer member and passed it a
+            // record (loft#1817).  The stub's own parameters, at this instance, name the member.
+            let eq_stub = Data::is_bound_stub_for(def.name(), "OpEq", 2);
+            if eq_stub || data.has_overload_set(fn_name) {
+                let params: Vec<Type> = def
+                    .attributes()
+                    .iter()
+                    .filter(|a| !a.hidden)
+                    .map(|a| {
+                        Self::substitute_type(a.typedef.clone(), tv_nr, concrete)
+                            .base()
+                            .clone()
+                    })
+                    .collect();
+                // A template member fits any list at its variables, and nothing here can
+                // instantiate it: the concrete member of the set is the one to bind (loft#1826).
+                if data.def(resolved).def_type == DefType::Generic
+                    || !data.params_fit(resolved, &params)
+                {
+                    if let Some(by_params) = data.overload_with_params(fn_name, &params) {
+                        resolved = by_params;
+                    } else if eq_stub {
+                        // `(G-Sat-Eq)`: an `OpEq` that does not take `(Self, Self)` is not the
+                        // type's own `==`, and `satisfaction_failures` admitted the type for
+                        // its CONTENT comparison — which the caller lowers for a stub left as
+                        // it is, as the concrete `a == b` does (loft#1818).
+                        return d_nr;
+                    }
+                }
             }
         }
         // @PLN25 E2 — a bounded-generic method call whose receiver monomorphises to a synth
@@ -14722,7 +15024,7 @@ impl Parser {
                 "field `{nm}` would store a value of a type that holds a capturing \
                  closure; such values are bound to the function frame that owns the \
                  captures and cannot be copied into another struct — keep the closure \
-                 holder in a local variable and pass it down as an argument (#318)"
+                 holder in a local variable and pass it down as an argument"
             );
             return Value::Null;
         }
@@ -14952,7 +15254,7 @@ impl Parser {
                              argument — the closure references state owned by this \
                              function's frame, which the argument's struct outlives; \
                              construct the closure in the frame that owns the captured \
-                             state (#318)"
+                             state"
                         );
                         return Value::Null;
                     }
@@ -15528,7 +15830,7 @@ impl Parser {
             _ => "other",
         };
         let pos = self.lexer.pos();
-        let name = |t: Option<&Type>| t.map_or(String::new(), |t| self.data.type_name_str(t));
+        let name = |t: Option<&Type>| t.map_or(String::new(), |t| self.data.display_type_name(t));
         eprintln!(
             "[eq-identity] {}:{}  {kind}  {} {op} {}",
             pos.file,
@@ -15536,6 +15838,53 @@ impl Parser {
             name(types.first()),
             name(types.get(1)),
         );
+    }
+
+    /// The user operator METHOD `op_name` a concrete operator site reaches for operands of
+    /// `types` — `u32::MAX` when the first operand's type defines none, `None` when the
+    /// overload set ties and the tie was reported.
+    ///
+    /// `@FR-F-Recv` — `a - 1` is a third spelling of the call `OpMin(a, 1)`, and the spellings
+    /// of one call resolve identically.  The method KEY names only the slot's incumbent, the
+    /// definition declared FIRST, so an operator overloaded on its second operand reached that
+    /// one alone and refused the rest, while `OpMin(a, 1)` and `a.OpMin(1)` dispatched both
+    /// (loft#1817).  Where the name carries an overload set the call spelling's own selection
+    /// (`Disp-Select`) decides; the incumbent, re-asked at this call's arity (loft#1794),
+    /// answers only a name with no set, or a set that no member of takes the operands — the
+    /// mismatch the caller then reports as "No matching operator".
+    fn user_op_method(&mut self, op_name: &str, types: &[Type]) -> Option<u32> {
+        let first = types.first()?;
+        let mut m = self.data.find_op_method(u16::MAX, op_name, first);
+        if m == u32::MAX {
+            return Some(m);
+        }
+        if !self.data.has_overload_set(op_name) {
+            if Self::visible_arity(&self.data, m) != types.len() {
+                m = self
+                    .data
+                    .possible_with_signature(op_name, types.len(), first)
+                    .unwrap_or(u32::MAX);
+            }
+            return Some(m);
+        }
+        let routed = self.data.routed_types(types);
+        match self.select_overload(u16::MAX, op_name, &routed) {
+            crate::parser::dispatch::Selection::One(d) => return Some(d),
+            sel @ crate::parser::dispatch::Selection::Ambiguous(_) => {
+                if !self.first_pass {
+                    self.report_selection(op_name, &routed, &sel, None);
+                }
+                return None;
+            }
+            _ => {}
+        }
+        if Self::visible_arity(&self.data, m) != types.len() {
+            m = self
+                .data
+                .possible_with_signature(op_name, types.len(), first)
+                .unwrap_or(u32::MAX);
+        }
+        Some(m)
     }
 
     /// [`Self::call_op`] where the operator the author WROTE differs from the one being
@@ -15546,7 +15895,9 @@ impl Parser {
     /// is gone and the message named an operator the author never typed: `a >= b` on an
     /// unbounded `<T>` reported *"operator '<=' requires a concrete type"*.  `spelled` is
     /// carried for the DIAGNOSTIC only; every resolution decision still reads `op`, so the two
-    /// cannot drift into disagreeing about what is being resolved.
+    /// cannot drift into disagreeing about what is being resolved.  The prefix operators pass
+    /// the token too — `-x` resolves `Min`, `!x` `Not`, `~x` `BitNot` — so a refusal names
+    /// `-` and not the internal `Min` (loft#1807).
     #[expect(clippy::too_many_lines, reason = "inherited")]
     fn call_op_as(
         &mut self,
@@ -15721,10 +16072,33 @@ impl Parser {
             // A built-in `integer` never coerces itself away; a user type must not either.
             // Method-only lookup (NOT full `find_fn`, whose `possible` fallback would
             // pre-empt the coercion the loop legitimately does for mixed built-in operands).
-            if let Some(first) = types.first() {
-                let m = self
-                    .data
-                    .find_op_method(u16::MAX, &format!("Op{}", rename(op)), first);
+            if !types.is_empty() {
+                let op_name = format!("Op{}", rename(op));
+                let Some(m) = self.user_op_method(&op_name, types) else {
+                    return if self.first_pass {
+                        Type::Unknown(0)
+                    } else {
+                        Type::Never
+                    };
+                };
+                // `@FR-F-Recv` — a TEMPLATE member (`fn OpAdd<U>(self: W, o: U)`) is reached the
+                // way the call spelling `OpAdd(a, b)` reaches it: instantiated at the operand
+                // types.  Handed to `call_nr` as the template, it matched nothing and `a + b`
+                // was refused while `OpAdd(a, b)` beside it answered (loft#1826).
+                let m = if m != u32::MAX && self.data.def_type(m) == DefType::Generic {
+                    if self.first_pass {
+                        let predicted = self.predict_template_return(m, &op_name, types);
+                        if !predicted.is_unknown() {
+                            *code = Value::Null;
+                            return predicted;
+                        }
+                        u32::MAX
+                    } else {
+                        self.instantiate_template(m, &op_name, types)
+                    }
+                } else {
+                    m
+                };
                 if m != u32::MAX {
                     let tp = self.call_nr(code, m, list, types, false, &[], None);
                     if tp != Type::Null {
@@ -15740,16 +16114,14 @@ impl Parser {
             // and `a != b` both true.
             if op == "!="
                 && list.len() == 2
-                && let Some(first) = types.first()
+                && let Some(eq) = self.user_op_method("OpEq", types)
+                && eq != u32::MAX
             {
-                let eq = self.data.find_op_method(u16::MAX, "OpEq", first);
-                if eq != u32::MAX {
-                    let mut eq_code = Value::Null;
-                    let tp = self.call_nr(&mut eq_code, eq, list, types, false, &[], None);
-                    if tp != Type::Null {
-                        *code = self.cl("OpNot", &[eq_code]);
-                        return Type::Boolean;
-                    }
+                let mut eq_code = Value::Null;
+                let tp = self.call_nr(&mut eq_code, eq, list, types, false, &[], None);
+                if tp != Type::Null {
+                    *code = self.cl("OpNot", &[eq_code]);
+                    return Type::Boolean;
                 }
             }
             // `@FR-E-Eq`, @C91 — vectors, keyed collections and struct-enum values compare by
@@ -15829,7 +16201,11 @@ impl Parser {
                 let user_op = self
                     .data
                     .find_fn(u16::MAX, &format!("Op{}", rename(op)), first);
-                if user_op != u32::MAX {
+                // Only at this call's arity (loft#1794): a type defining `-` at ONE arity
+                // answered the other spelling with it — `a - b` over a unary-only `OpMin`
+                // computed `-a` and dropped `b`, silently.  Refused below instead, as the
+                // operator that it is not.
+                if user_op != u32::MAX && Self::visible_arity(&self.data, user_op) == list.len() {
                     let tp = self.call_nr(code, user_op, list, types, false, &[], None);
                     if tp != Type::Null {
                         return tp;
@@ -15895,7 +16271,7 @@ impl Parser {
                 self.lexer,
                 &self.lexer.peek().clone(),
                 Level::Error,
-                "No matching operator {spelled} on {}",
+                "No matching operator '{spelled}' on '{}'",
                 types[0].source_name(&self.data)
             );
         }
@@ -21767,6 +22143,11 @@ pub(crate) fn op_writes_first_arg(name: &str) -> bool {
         || name.starts_with("OpPush")
         || name.starts_with("OpAppendStack")
         || name.starts_with("OpClearStack")
+        // Every `OpFormat*` renders INTO the text its first argument names — the `"{x}"`
+        // interpolation, `t + x` and `t += x` all lower to them.  Missing here, a `&text`
+        // parameter whose only write was `t += "{5}"`, `t = t + 5` or `t += 5` was refused
+        // as never modified (loft#1827).
+        || name.starts_with("OpFormat")
         || name == "OpNewRecord"
         || name == "OpAppendCopy"
         || name == "OpAppendVector"

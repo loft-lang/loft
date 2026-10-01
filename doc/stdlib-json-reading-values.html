@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JSON: reading values — Loft, a programming language for small browser games</title>
+  <meta name="description" content="">
+<link rel="canonical" href="https://loft-lang.org/loft/stdlib-json-reading-values.html">
+<meta property="og:title" content="JSON: reading values — Loft, a programming language for small browser games">
+<meta property="og:description" content="">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://loft-lang.org/loft/stdlib-json-reading-values.html">
+<meta property="og:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<meta property="og:site_name" content="Loft">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="JSON: reading values — Loft, a programming language for small browser games">
+<meta name="twitter:description" content="">
+<meta name="twitter:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<link rel="stylesheet" href="style.css">
+<style>.playground-link{display:inline-block;margin:0.3em 0 0.8em;padding:4px 12px;background:#2563eb;color:#fff;border-radius:4px;text-decoration:none;font-size:0.85em}.playground-link:hover{filter:brightness(1.15)}@media print{.playground-link{display:none}}</style>
+</head>
+<body>
+<nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <a href="libraries.html">Libraries</a> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <span class="cur">JSON: reading values</span> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
+<h1>JSON: reading values</h1>
+<article>
+<div class="item">
+<pre><code>pub fn field(self: const JsonValue, name: text) -&gt; JsonValue[self]</code></pre>
+<p>JObject indexer — returns the value at `name`, or `JNull` when `self` isn't a JObject or the key is missing.  Chained access like `root.field(&quot;a&quot;).field(&quot;b&quot;)` is safe — every intermediate missing produces `JNull`, never a trap.</p>
+</div>
+<div class="item">
+<pre><code>pub fn item(self: const JsonValue, index: integer) -&gt; JsonValue[self]</code></pre>
+<p>JArray indexer — returns the element at `index`, or `JNull` when `self` isn't a JArray or the index is out of bounds.</p>
+</div>
+<div class="item">
+<pre><code>pub fn len(self: const JsonValue) -&gt; integer</code></pre>
+<p>Length of a JArray's items vector or a JObject's fields vector. Returns `null` for any other variant.</p>
+</div>
+<div class="item">
+<pre><code>pub fn as_text(self: const JsonValue) -&gt; text</code></pre>
+<p>Typed extractor — returns `null` on kind mismatch.</p>
+<p>The null is NOT the empty text, and only `??` tells the two apart: on a mismatch `s == &quot;&quot;` is false and `len(s)` is 1, while a field that really holds `&quot;&quot;` compares equal and measures 0.  Reach for `as_text(...) ?? fallback`, never `== &quot;&quot;`.</p>
+</div>
+<div class="item">
+<pre><code>pub fn as_number(self: const JsonValue) -&gt; float</code></pre>
+<p>Typed extractor — returns `null` on kind mismatch.</p>
+</div>
+<div class="item">
+<pre><code>pub fn as_long(self: const JsonValue) -&gt; integer</code></pre>
+<p>Typed extractor — returns `null` on kind mismatch.  A `JInteger` answers its exact value; a `JNumber` is truncated toward zero.</p>
+</div>
+<div class="item">
+<pre><code>pub fn as_bool(self: const JsonValue) -&gt; boolean?</code></pre>
+<p>Typed extractor — returns `null` on kind mismatch.</p>
+<p>Declared `boolean?`, so a mismatch — an absent field, the string `&quot;true&quot;`, the number `1` — is `null` and never reads as a field that really says `false`.</p>
+</div>
+<div class="item">
+<pre><code>pub fn kind(self: const JsonValue) -&gt; text</code></pre>
+<p>Returns the variant name as text: `&quot;JNull&quot;`, `&quot;JBool&quot;`, `&quot;JNumber&quot;`, `&quot;JString&quot;`, `&quot;JArray&quot;`, `&quot;JObject&quot;` or `&quot;JInteger&quot;`.  Cheap: reads the discriminant byte, formats a literal.  Useful for logs and conditional branches that don't want to commit to a full pattern match.</p>
+</div>
+<div class="item">
+<pre><code>pub fn keys(self: const JsonValue) -&gt; vector&lt;text&gt;</code></pre>
+<p>Returns the field-name list of a `JObject` in insertion order, or an empty vector for any other variant. Safe idiom: `for k in v.keys() { ... }` works on any JsonValue because non-objects yield an empty walk.</p>
+</div>
+<div class="item">
+<pre><code>pub fn fields(self: const JsonValue) -&gt; vector&lt;JsonField&gt;</code></pre>
+<p>Returns the (name, value) entries of a `JObject` in insertion order so callers can iterate as `for entry in fields(v) { … entry.name … entry.value … }`. Values deep-copy (primitives + nested containers — full tree). Empty vector for any other variant.</p>
+</div>
+<div class="item">
+<pre><code>pub fn has_field(self: const JsonValue, name: text) -&gt; boolean</code></pre>
+<p>Returns true iff `self` is a `JObject` variant carrying a field named `name`.  All other variants (including `JNull` on a parse error) return false, so the common pattern `if v.has_field(&quot;users&quot;) { … }` is safe to write on any JsonValue without first destructuring. Distinguishes &quot;absent&quot; from &quot;present-but-null&quot; — a field whose value is `JNull` still returns `true`.</p>
+</div>
+
+  </article>
+<script src="search-index.js"></script>
+<script src="search.js"></script>
+<script>
+(function(){
+var m={"Keywords":"keywords","Texts":"texts","Integers":"integers","Boolean":"boolean","Float":"float","Functions":"functions","Vector":"vector","Structs":"structs","Enums":"enums","Sorted":"sorted","Index":"index","Hash":"hash","File":"file","Lexer":"lexer","Parser":"parser","Libraries":"libraries","Store Locks":"store_locks","Parallel execution":"parallel_execution","Logging":"logging","Time":"time","Safety":"safety","JSON":"json","Generics":"generics","Closures":"closures","Coroutines":"coroutines","Tuples":"tuples","Match":"match","Formatting":"formatting"};
+var h=document.querySelector('h1');
+if(!h)return;
+var key=m[h.textContent];
+if(!key)return;
+var a=document.createElement('a');
+a.className='playground-link';
+a.href='playground.html?example='+key;
+a.textContent='\u25B6 Try in Playground';
+h.parentNode.insertBefore(a,h.nextSibling);
+})();
+</script>
+</body>
+</html>

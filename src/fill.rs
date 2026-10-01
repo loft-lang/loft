@@ -1323,7 +1323,16 @@ fn math_func2_single(s: &mut State) {
     let v_v1 = s.get_stack::<f32>();
     let new_value = match v_fn_id {
         0 => v_v1.atan2(v_v2),
-        1 => v_v1.log(v_v2),
+        1 => {
+            let __b = v_v2;
+            if __b.to_bits() == 10.0_f32.to_bits() {
+                v_v1.log10()
+            } else if __b.to_bits() == 2.0_f32.to_bits() {
+                v_v1.log2()
+            } else {
+                v_v1.log(__b)
+            }
+        }
         _ => f32::NAN,
     };
     s.put_stack(new_value);
@@ -1442,7 +1451,16 @@ fn math_func2_float(s: &mut State) {
     let v_v1 = s.get_stack::<f64>();
     let new_value = match v_fn_id {
         0 => v_v1.atan2(v_v2),
-        1 => v_v1.log(v_v2),
+        1 => {
+            let __b = v_v2;
+            if __b.to_bits() == 10.0_f64.to_bits() {
+                v_v1.log10()
+            } else if __b.to_bits() == 2.0_f64.to_bits() {
+                v_v1.log2()
+            } else {
+                v_v1.log(__b)
+            }
+        }
         _ => f64::NAN,
     };
     s.put_stack(new_value);
@@ -1620,13 +1638,27 @@ fn conv_text_from_null(s: &mut State) {
 
 fn length_text(s: &mut State) {
     let v_v1 = s.string();
-    let new_value = v_v1.str().chars().count() as i64;
+    let new_value = {
+        let __t = v_v1.str();
+        if __t == crate::state::STRING_NULL {
+            0
+        } else {
+            __t.chars().count() as i64
+        }
+    };
     s.put_stack(new_value);
 }
 
 fn size_text(s: &mut State) {
     let v_v1 = s.string();
-    let new_value = v_v1.str().len() as i64;
+    let new_value = {
+        let __t = v_v1.str();
+        if __t == crate::state::STRING_NULL {
+            0
+        } else {
+            __t.len() as i64
+        }
+    };
     s.put_stack(new_value);
 }
 

@@ -371,8 +371,8 @@ fn an_update_that_would_not_be_the_stdlib_that_loads_is_refused() {
         "the refusal must say WHY, naming both trees: {err}"
     );
     assert!(
-        err.contains("share") && err.contains("loft#1497"),
-        "the refusal must name the shadowing tree and the issue: {err}"
+        err.contains("share") && err.contains("version"),
+        "the refusal must name the shadowing tree and the version skew: {err}"
     );
     // Nothing moved — the whole point of refusing before the write.
     assert_eq!(

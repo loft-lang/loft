@@ -20,14 +20,25 @@
 // @falsified-by: tests/falsified/arms-and-nullable-parameter-defaults-meet-a-narrow-slot.patch — interpret exit 1 -> 0, native exit 1 -> 0
 //   CHANNEL: exit — both defects were refusals, so the control does not compile this file.
 // HOLDS: leak, panic and free-refusal are clean on both trees and both backends.
+//
+// loft#1796 (`@FR-N-Reserve`): a CONSTANT default outside a nullable narrow parameter's usable
+// range (`u8? = 300`, `u8? = 255`, `u16? = 70000`) is now refused at compile time — it could
+// only ever be stored as null; tests/parse_errors.rs pins the refusal
+// (`a_nullable_narrow_field_default_that_cannot_fit_is_refused` holds the parameter default
+// beside the field's).  Those three defaults now take their value from `rt`, which the compiler
+// cannot fold, so each still pins the RUN-TIME answer: a default that does not fit reads null.
+// The same holds for an ARM: `o: u8? = if c { 255 } else { 3 }` is refused (tests/parse_errors.rs
+// `…_refused_through_a_join`), so the `o` cell takes its 255 from `rt` and still reads null.
 
 type Lim = integer limit(0, 10);
 enum K { Ka, Kb, Kc }
 
 fn p8(a: u8? = 5) -> text { "{a}" }
-fn p8o(a: u8? = 300) -> text { "{a}" }
-fn p8s(a: u8? = 255) -> text { "{a}" }
-fn p16(a: u16? = 70000) -> text { "{a}" }
+fn p8o(a: u8? = rt(300)) -> text { "{a}" }
+fn p8s(a: u8? = rt(255)) -> text { "{a}" }
+fn p16(a: u16? = rt(70000)) -> text { "{a}" }
+// A value the compiler cannot fold, so a default reaches its parameter at run time.
+fn rt(n: integer) -> integer { n }
 fn pi8(a: i8? = -100) -> text { "{a}" }
 fn dep(b: integer, a: u8? = b + 1) -> text { "{a}" }
 fn lim(b: integer, a: Lim? = b * 5) -> text { "{a}" }
@@ -40,7 +51,7 @@ fn test_arms_that_all_fit_are_a_fitting_value() {
   y: u8 = if m == 1 { 1 } else if m == 3 { 250 } else { 3 };
   z: u8 = match k { Ka => 9, Kb => 255, Kc => 0 };
   w: u8 = if c { assert(m > 0, "m"); 17 } else { 3 };
-  o: u8? = if c { 255 } else { 3 };
+  o: u8? = if c { rt(255) } else { 3 };
   got = "{x} {y} {z} {w} {o}";
   assert(got == "200 250 255 17 null", "arms: {got}");
 }

@@ -56,6 +56,8 @@ correctly on the same file.
 
 - Describe *why to use* the function (preconditions, trade-offs, when to use) and what a caller may rely on — not a restatement of its code, and not *why it was written*. Link to a doc or issue for the design reason. See [DOC_QUALITY.md](DOC_QUALITY.md).
 - Inline comments only where the algorithm is non-obvious. Avoid restating what the code says.
+- In `default/*.loft`, `///` is published as the user's reference and `//` is a maintainer
+  note that never is — [DOC.md § Adding documentation to the standard library](DOC.md#adding-documentation-to-the-standard-library).
 
 ## Test Suite (`tests/docs/`, `tests/scripts/`)
 

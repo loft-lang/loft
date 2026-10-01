@@ -63,7 +63,8 @@
 //   loop body answer correctly on the control tree, because a block, loop or `if` containing
 //   a yield sends the whole generator to the EAGER collector and the state machine is never
 //   reached.  So the defect is exactly a `yield from` at the generator's TOP LEVEL, and the
-//   cells written expecting a PASS are what established that.
+//   cells written expecting a PASS are what established that.  (Since loft#1798 both shapes
+//   are re-descended lazily instead, and still run their prefix once.)
 //
 // Cross-backend; `main` runs every cell so the leak gate reads the file.
 
@@ -237,7 +238,8 @@ fn test_a_delegation_under_a_branch_or_in_a_loop_keeps_its_prefix_once() {
   // correctly on the control tree.  A block, loop or `if` containing a yield sends the whole
   // generator to the EAGER collector (`collect_segments`), whose factory runs the body once
   // up front — so the state machine, and with it the question this file is about, is never
-  // reached.  The defect is exactly a `yield from` at the generator's TOP LEVEL.
+  // reached.  The defect is exactly a `yield from` at the generator's TOP LEVEL.  Since
+  // loft#1798 both are re-descended by the state machine, which runs each prefix once too.
   a = GdLog { n: 0, m: 0 };
   ta = 0;
   for x in delegation_under_a_branch(a, true) { ta = ta + x; }

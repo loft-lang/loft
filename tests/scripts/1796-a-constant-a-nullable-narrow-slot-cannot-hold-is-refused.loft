@@ -1,0 +1,66 @@
+// @FR-N-Reserve — a NULLABLE narrow slot holds its USABLE range; one code at its edge is its
+// null (`u8?` holds 0..=254, `i8?` holds -127..=127).  A CONSTANT outside that range could only
+// be stored as null, which is never what the author wrote, so it is refused at compile time the
+// way its non-null twin refuses a constant that does not fit (C80's compile-time valve) — in
+// every position that stores into such a slot: a local, a reassignment, a struct literal field,
+// a vector literal element, a call argument and a return (loft#1796) — and through a JOIN, as
+// an arm of an `if` / `match` or the default of a `??`, at any depth.  What stays: an in-range
+// constant, `null` itself, an author's own `300 as u8?` (asking for the checked cast is asking
+// for the null), a RUNTIME value outside the range (null, by design), and a wider slot (`u16?`
+// holds 255).
+//
+// @falsified-at: 40e676d1b — scored by hand on the diagnostic channel: each refused cell below
+//   compiled silently there and stored null (`x: u8? = 255; x == null` read true on both
+//   backends); here each is one `error:` naming the slot's usable range.
+// CHANNEL: the compile-time refusal of the six store positions (checked by the parse-error
+//   tests in tests/parse_errors.rs); this file pins the cases that must STILL compile and
+//   their values.
+// HOLDS: every value cell on both backends.
+
+struct R { b: u8?, s: i8? }
+
+fn f(p: u8?) -> boolean { p == null }
+fn f2(n: integer) -> integer? { if n > 0 { n } else { null } }
+// A value the compiler cannot fold, so it reaches the slot at run time.
+fn rt(n: integer) -> integer { n }
+
+fn main() {
+  x: u8? = 254;
+  assert(x == 254, "in range: {x}");
+  r = R { b: 0, s: -127 };
+  assert(r.b == 0 && r.s == -127, "field literals in range: {r.b} {r.s}");
+  v: vector<u8?> = [0, 254];
+  assert(v[1] == 254, "element literal in range: {v[1]}");
+  assert(!f(3), "argument in range");
+  n: u8? = null;
+  assert(n == null, "null stays null");
+  e = 300 as u8?;
+  assert(e == null, "an explicit checked cast still answers null");
+  big = 400;
+  y: u8? = big;
+  assert(y == null, "a runtime value outside the range is null, by design");
+  w: u16? = 255;
+  assert(w == 255, "a wider slot holds 255: {w}");
+  // Through a JOIN (the arms of an `if` / `match`, the default of a `??`): every constant leaf
+  // that fits compiles and is the value, and an out-of-range one that arrives at RUN TIME is
+  // null beside a fitting constant in the same expression.  The refused spellings are
+  // tests/parse_errors.rs `…_refused_through_a_join`.
+  t = len("ab") > 1;
+  k = len("a");
+  j1: u8? = if t { 254 } else { 0 };
+  j2: u8? = if !t { 254 } else { 0 };
+  j3: u8? = if !t { 1 } else if k == 1 { 2 } else { 3 };
+  j4: u8? = if t { if k == 2 { 250 } else { 251 } } else { 252 };
+  j5: u8? = match k { 1 => 253, _ => 0 };
+  j6: u8? = match k { 1 => { k += 1; 249 }, _ => 0 };
+  j7: u8? = f2(0) ?? 254;
+  j8: u8? = f2(0) ?? f2(-1) ?? 248;
+  j9: u8? = f2(0) ?? (if t { 247 } else { 0 });
+  jr: u8? = if t { rt(300) } else { 3 };
+  jd: u8? = f2(0) ?? rt(999);
+  js: i8? = f2(0) ?? (if !t { 7 } else { rt(-128) });
+  jn: u8? = if t { null } else { 3 };
+  got = "{j1} {j2} {j3} {j4} {j5} {j6} {j7} {j8} {j9} {jr} {jd} {js} {jn}";
+  assert(got == "254 0 2 251 253 249 254 248 247 null null null null", "joins: {got}");
+  println("ok");
+}

@@ -4,10 +4,11 @@
 pub fn square(n: integer) -> integer {
     n * n
 }
-fn greet(name: text) -> text {
-    "Hello, {name}"
+fn greet(name: text, greeting: text = "Hello") -> text {
+    "{greeting}, {name}"
 }
 fn main() {
     println(greet("world"));               // Hello, world
+    println(greet("Ada", "Hi"));           // Hi, Ada
     println("square(6) = {square(6)}");    // square(6) = 36
 }

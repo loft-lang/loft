@@ -1,0 +1,149 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1778 — an ABSENT enum value sent through a synthesised dispatcher answers the TYPED null
+// of the method's return type, on both backends.
+//
+// The rule is @FR-M-Variant read on a nullable subject (`formal/matching.md`): an
+// absent value (discriminant 0) matches no variant arm, and a match with no `_` answers null.
+// The @F20 variant dispatcher and the @PLN162 multiple-dispatch dispatcher ARE that match,
+// synthesised; an uncovered variant is refused at compile time (`Disp-Exhaustive`), so their
+// no-variant tail is reached by an absent value and nothing else.  Both tails returned an
+// untyped `Value::Null`, which pushes nothing: `--interpret` returned stale eval-stack bytes
+// (`8462`, a panic for a struct-enum return) and `--native` `return 0` (rustc E0308 for a
+// struct-enum return).
+//
+// Axes this file MOVES:  the return kind (integer · float · text · boolean · plain enum ·
+//                        struct · single · character · struct-enum), an extra parameter, the
+//                        spelling (method · call), where the absent value sits (a `Shape?`
+//                        local · a `Shape?` field set to null · a null `vector<Shape?>` element
+//                        · a DENSE `Shape` parameter that received a null), and the dispatcher
+//                        (single-receiver @F20 · a multiple-dispatch set with no enum-level
+//                        definition, absent in the first or the second position).
+// Axes it HOLDS FIXED:   one three-variant struct-enum with integer payloads; every
+//                        implementation dense (the `self: V?` spelling is 1427's subject).
+// Controls: every return kind on a PRESENT value, hand-computed, so a fix that answered null
+// for everything fails too.
+//
+// @falsified-at: ec35ee1de — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native
+//   exit 1 -> 0, native 1 assertion failures -> 0.
+//   CHANNEL: exit and asserts on both backends — the first cell stops the control:
+//   `integer: 9897` (stale eval-stack bytes, varies per run) on `--interpret`, `integer: 0` on
+//   `--native`.
+//   HOLDS: the present-value controls answer the same on both trees; this tree is clean under
+//   LOFT_POISON=1, LOFT_STRICT_STORES=1 and both together, on both backends.
+
+enum Shape { Circle { r: integer }, Rect { w: integer, h: integer }, Tri { b: integer } }
+enum Col { Red, Green }
+struct Pt { x: integer, y: integer }
+struct Holder { s: Shape?, n: integer }
+
+fn ai(self: Circle) -> integer { self.r * 100 + 7 }
+fn ai(self: Rect) -> integer { self.w * self.h }
+fn ai(self: Tri) -> integer { self.b }
+
+fn af(self: Circle) -> float { 1.5 }
+fn af(self: Rect) -> float { 2.5 + self.w }
+fn af(self: Tri) -> float { 3.5 }
+
+fn at(self: Circle) -> text { "circle{self.r}" }
+fn at(self: Rect) -> text { "rect{self.w}" }
+fn at(self: Tri) -> text { "tri" }
+
+fn ab(self: Circle) -> boolean { self.r > 0 }
+fn ab(self: Rect) -> boolean { self.w < 0 }
+fn ab(self: Tri) -> boolean { true }
+
+fn ae(self: Circle) -> Col { Col.Red }
+fn ae(self: Rect) -> Col { Col.Green }
+fn ae(self: Tri) -> Col { Col.Green }
+
+fn ap(self: Circle) -> Pt { Pt { x: self.r, y: 1 } }
+fn ap(self: Rect) -> Pt { Pt { x: self.w, y: self.h } }
+fn ap(self: Tri) -> Pt { Pt { x: self.b, y: 0 } }
+
+fn asg(self: Circle) -> single { 1.25f }
+fn asg(self: Rect) -> single { 2.25f }
+fn asg(self: Tri) -> single { 3.25f }
+
+fn ac(self: Circle) -> character { 'c' }
+fn ac(self: Rect) -> character { 'r' }
+fn ac(self: Tri) -> character { 't' }
+
+fn ax(self: Circle, k: integer) -> integer { self.r + k }
+fn ax(self: Rect, k: integer) -> integer { self.w + k * 10 }
+fn ax(self: Tri, k: integer) -> integer { self.b + k * 100 }
+
+fn ash(self: Circle) -> Shape { Rect { w: self.r, h: 9 } }
+fn ash(self: Rect) -> Shape { Circle { r: self.w } }
+fn ash(self: Tri) -> Shape { Tri { b: 5 } }
+
+// A dense parameter: a null reaches it behind the (N-Store) warning, and then the dispatcher.
+fn through(s: Shape) -> integer { s.ai() }
+
+// A multiple-dispatch set covering every pair, with no enum-level definition.
+fn md(a: Circle, b: Circle) -> integer { 11 }
+fn md(a: Circle, b: Rect) -> integer { 12 }
+fn md(a: Circle, b: Tri) -> integer { 13 }
+fn md(a: Rect, b: Circle) -> integer { 21 }
+fn md(a: Rect, b: Rect) -> integer { 22 }
+fn md(a: Rect, b: Tri) -> integer { 23 }
+fn md(a: Tri, b: Circle) -> integer { 31 }
+fn md(a: Tri, b: Rect) -> integer { 32 }
+fn md(a: Tri, b: Tri) -> integer { 33 }
+fn mt(a: Circle, b: Shape) -> text { "c" }
+fn mt(a: Rect, b: Shape) -> text { "r" }
+fn mt(a: Tri, b: Shape) -> text { "t" }
+fn md_in(x: Shape, y: Shape) -> integer { md(x, y) }
+fn mt_in(x: Shape, y: Shape) -> text { mt(x, y) }
+
+fn main() {
+  s: Shape? = null;
+  // Every return kind, method spelling, on an absent local.
+  assert(s.ai() == null, "integer: {s.ai()}");
+  assert(s.af() == null, "float: {s.af()}");
+  assert(s.at() == null, "text: {s.at()}");
+  assert(s.ab() == null, "boolean");
+  assert(s.ae() == null, "plain enum");
+  assert(s.asg() == null, "single: {s.asg()}");
+  assert(s.ac() == null, "character");
+  assert(s.ax(3) == null, "extra parameter: {s.ax(3)}");
+  p = s.ap();
+  assert(p == null, "struct");
+  sh = s.ash();
+  assert(sh == null, "struct-enum");
+  // The call spelling reaches the same dispatcher.
+  assert(ai(s) == null, "call integer: {ai(s)}");
+  assert(at(s) == null, "call text: {at(s)}");
+  assert(ax(s, 3) == null, "call extra: {ax(s, 3)}");
+  // Absent in a field, in a vector element, in a dense parameter.
+  h = Holder { s: null, n: 1 };
+  assert(h.s.ai() == null, "field: {h.s.ai()}");
+  assert(h.s.at() == null, "field text: {h.s.at()}");
+  v: vector<Shape?> = [null, Circle { r: 4 }];
+  assert(v[0].ai() == null, "element: {v[0].ai()}");
+  assert(v[1].ai() == 407, "present element: {v[1].ai()}");
+  assert(through(s) == null, "dense parameter: {through(s)}");
+  // Multiple dispatch: absent first, absent second, and the present pair.
+  cc: Shape = Circle { r: 1 };
+  assert(md_in(s, cc) == null, "md absent first: {md_in(s, cc)}");
+  assert(md_in(cc, s) == null, "md absent second: {md_in(cc, s)}");
+  assert(md_in(cc, cc) == 11, "md present: {md_in(cc, cc)}");
+  assert(mt_in(s, cc) == null, "mt absent: {mt_in(s, cc)}");
+  assert(mt_in(cc, s) == "c", "mt undispatched second: {mt_in(cc, s)}");
+  // Controls on present values, hand-computed.
+  c: Shape = Circle { r: 2 };
+  r: Shape = Rect { w: 3, h: 4 };
+  tr: Shape = Tri { b: 6 };
+  assert(c.ai() == 207 && r.ai() == 12 && tr.ai() == 6, "ai {c.ai()} {r.ai()} {tr.ai()}");
+  assert(c.af() == 1.5 && r.af() == 5.5, "af {c.af()} {r.af()}");
+  assert(c.at() == "circle2" && r.at() == "rect3", "at {c.at()} {r.at()}");
+  assert(c.ab() && !r.ab(), "ab");
+  assert(r.ae() == Col.Green && c.ae() == Col.Red, "ae");
+  assert(c.asg() == 1.25f, "asg {c.asg()}");
+  assert(r.ac() == 'r', "ac {r.ac()}");
+  assert(c.ax(3) == 5 && r.ax(3) == 33 && tr.ax(3) == 306, "ax {c.ax(3)} {r.ax(3)} {tr.ax(3)}");
+  assert(c.ap().x == 2 && r.ap().y == 4, "ap");
+  assert(r.ash().ai() == 307 && c.ash().ai() == 18, "ash {r.ash().ai()} {c.ash().ai()}");
+  assert(h.n == 1, "holder untouched");
+}

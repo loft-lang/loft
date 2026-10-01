@@ -28,7 +28,7 @@ let y = 42;     // immutable by default; compiler-enforced</code></pre>
 </div>
 </div>
 <div class="verdict">
-<p class="up"><strong>Upside</strong> Less boilerplate. No need to decide upfront whether a variable will be mutated. Variables are mutable by default, so refactoring is frictionless. Use <code>const</code> to say a value must not change — the compiler refuses every write it forbids.</p>
+<p class="up"><strong>Upside</strong> Less boilerplate. No need to decide upfront whether a variable is mutable. Variables are mutable by default, so refactoring is frictionless. Use <code>const</code> to say a value must not change — the compiler refuses every write it forbids.</p>
 <p class="down"><strong>Downside</strong> Immutability is opt-in, not the default. Rust makes variables immutable unless you write <code>mut</code>, so every binding is protected for free; in loft only the ones you mark <code>const</code> are.</p>
 </div>
 
@@ -63,7 +63,7 @@ assert!(p.label.is_none());</code></pre>
 <div>
   <p class="lang-label loft-label">Loft</p>
   <pre><code><span class="cm">// a plain collection parameter is already shared — the append reaches the caller</span>
-<span class="kw">fn</span> <span class="fn-call">push_two</span>(v: &amp;<span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;) {
+<span class="kw">fn</span> <span class="fn-call">push_two</span>(v: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;) {
     v += [<span class="nm">1</span>, <span class="nm">2</span>];  <span class="cm">// caller sees the change</span>
 }
 <span class="cm">// const: read-only (a write through it is a compile error)</span>
@@ -161,7 +161,7 @@ loop {           // truly infinite — no bound needed
 </div>
 <div class="verdict">
 <p class="up"><strong>Upside</strong> Reads like natural language. No closure syntax, no double-reference in the filter predicate. <code>v#remove</code> inside a filtered loop also safely removes the current element while iterating — something that requires careful index management in Rust.</p>
-<p class="down"><strong>Downside</strong> The inline <code>if</code> filter is limited to the loop it lives in. For multi-stage pipelines, loft now offers <code>map(v, fn f)</code>, <code>filter(v, fn pred)</code>, and <code>reduce(v, fn f, init)</code> as composable higher-order functions — see section 11. Rust's lazy iterator chain (<code>.filter().map().take_while()</code>) avoids intermediate allocations; loft's higher-order functions allocate a new vector at each stage.</p>
+<p class="down"><strong>Downside</strong> The inline <code>if</code> filter is limited to the loop it lives in. For multi-stage pipelines, loft offers <code>map(v, f)</code>, <code>filter(v, pred)</code>, and <code>reduce(v, init, f)</code> as composable higher-order functions — see section 11. Rust's lazy iterator chain (<code>.filter().map().take_while()</code>) avoids intermediate allocations; loft's higher-order functions allocate a new vector at each stage.</p>
 </div>
 
 <h2 id="loop-attributes">7. Loop attributes: <code>#first</code>, <code>#count</code>, <code>#index</code></h2>
@@ -311,7 +311,7 @@ fn make_adder(n: i32) -&gt; impl Fn(i32) -&gt; i32 {
 </div>
 </div>
 <div class="verdict">
-<p class="up"><strong>Upside</strong> Capture works for every type — scalars, text, structs and every collection kind — with no capture modes (<code>move</code> vs borrow), no <code>Fn</code>/<code>FnMut</code>/<code>FnOnce</code> trait bounds, and no lifetime annotations. The compiler picks the mode from the type: a scalar or text is copied at definition time, a struct or collection is shared with the enclosing scope, and a scalar the closure writes to is shared as well, so an accumulator needs no declaration. Both long-form (<code>fn(x: integer) -&gt; integer { x * 2 }</code>) and short-form (<code>|x| { x * 2 }</code>) lambdas are supported. Named function references (<code>fn name</code>) are compile-checked.</p>
+<p class="up"><strong>Upside</strong> Capture works for every type — scalars, text, structs and every collection kind — with no capture modes (<code>move</code> vs borrow), no <code>Fn</code>/<code>FnMut</code>/<code>FnOnce</code> trait bounds, and no lifetime annotations. The compiler picks the mode from the type: a scalar or text is copied at definition time, a struct or collection is shared with the enclosing scope, and a scalar the closure writes to is shared as well, so an accumulator needs no declaration. Both long-form (<code>fn(x: integer) -&gt; integer { x * 2 }</code>) and short-form (<code>|x| { x * 2 }</code>) lambdas are supported. Named function references (a bare name: <code>map(v, double)</code>) are compile-checked.</p>
 <p class="down"><strong>Downside</strong> You do not choose the capture mode, so a case Rust expresses by picking one has no spelling here. Three limits have no Rust counterpart: a capturing closure cannot be stored in a <em>collection</em> (a struct field holds one fine), a closure cannot write a captured <code>&amp;integer</code> or <code>&amp;text</code> parameter (it holds a copy), and a scalar the closure <em>writes</em> to may be captured by only one closure — the cure for the last two is a local the closure updates, or state held in a struct and captured.</p>
 </div>
 

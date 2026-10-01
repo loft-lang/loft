@@ -7,10 +7,10 @@
 // promise about a STRING that no chapter can keep — an `assert` cannot reach a program that
 // does not compile.  So the chapter stays readable and the sentences are pinned here.
 //
-//   * THE TWO CALL FORMS.  A function whose first parameter is `self` is reachable only as
-//     `a.m()`, and a free function only as `f(a)`.  The chapter used to call these
-//     "syntactic sugar — equivalent" for one another, which is how this was found: written
-//     the other way round, each is an unknown name.
+//   * THE METHOD FORM OF A FREE FUNCTION.  A free function is reachable only as `f(a)`;
+//     written `a.f()` it is an unknown method, inside `par` as everywhere else.  (A `self`
+//     function answers both forms — C123 — and inside `par` it now does too, loft#1803;
+//     this file used to pin that as a refusal.)
 //   * WHAT MAY BE CAPTURED.  A worker runs on its own store clone, so only the LOOP ELEMENT
 //     may be a reference; any other captured argument must be a scalar.  The chapter's
 //     "extra arguments from the calling scope" reads as unrestricted, and forwarding a
@@ -27,26 +27,18 @@
 //   Measured by hand, ONE CELL AT A TIME in its own file, because a multi-cell
 //   `@EXPECT_ERROR` file credits every declaration after a firing one without matching
 //   (loft#1261) — run whole, this file cannot tell a live cell from a dead one.  Each of the
-//   three substrings was replaced in turn by a word the compiler never prints and each cell,
+//   substrings was replaced in turn by a word the compiler never prints and each cell,
 //   alone, failed; restoring it returns each to green.  The running cell at the end is the
 //   other direction: it is the shape the third refusal names as the cure, and it works.
 
 struct PS { value: integer }
 struct PCfg { factor: integer }
 
-fn p_get(self: const PS) -> integer { self.value }
 fn p_thrice(p_r: const PS) -> integer { p_r.value * 3 }
 fn p_scaled(p_r: const PS, p_c: const PCfg) -> integer { p_r.value * p_c.factor }
 fn p_scale(p_r: const PS, p_f: integer) -> integer { p_r.value * p_f }
 
-// A method is not reachable by the free-call spelling.
-// @EXPECT_ERROR: Unknown function 'p_get'
-fn the_free_form_cannot_reach_a_method() {
-  p_v: vector<PS> = [ PS { value: 4 } ];
-  for p_a in p_v par(p_b = p_get(p_a), 2) { assert(p_b == 4, "unreachable"); }
-}
-
-// …and a free function is not reachable by the method spelling.
+// A free function is not reachable by the method spelling.
 // @EXPECT_ERROR: Unknown method 'p_thrice' on type 'PS'
 fn the_method_form_cannot_reach_a_free_function() {
   p_v: vector<PS> = [ PS { value: 4 } ];

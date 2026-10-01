@@ -46,7 +46,7 @@
 // - **@F22** — Closures & lambdas (value capture, cross-scope)
 // - **@F23** — Function references as first-class values
 // - **@F24** — Higher-order functions (map / filter / reduce)
-// - **@F25** — Generics — single type variable `<T>`, inferred
+// - **@F25** — Generics — type variables `<T>`, `<K, V>`, inferred; generic structs
 // - **@F26** — Interfaces & bounded generics (`<T: A + B>`, operator interfaces)
 // - **@F27** — `if` / `else` as an expression
 // - **@F28** — `for`-in loops — ranges, loop attributes, filtered, `rev()`
@@ -59,7 +59,7 @@
 // - **@F35** — String literals — `{expr}` interpolation + backtick multiline
 // - **@F36** — String formatting / format specifiers (+ for-expressions)
 // - **@F37** — Operator set — arithmetic/comparison/logical/bitwise/unary, `**`
-// - **@F38** — Arithmetic safety — overflow/÷0 → null, nullable peers
+// - **@F38** — Arithmetic safety — integer overflow/÷0 → null; null propagates through arithmetic
 // - **@F39** — Math & trigonometry library
 // - **@F40** — File & directory I/O (+ durable-store binding)
 // - **@F41** — Environment & arguments (env vars, arguments(), program dirs, path resolution)

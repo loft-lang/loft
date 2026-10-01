@@ -15,8 +15,9 @@
 //     `i64` inside a method returning `DbRef`.
 //
 // The cells below are the ones that must WORK.  The refusals — a tuple with a `text` element,
-// a nested tuple, a tuple carrying a store handle from a LOOP body — are pinned at the emit
-// level in `tests/native_yield_channel.rs`, because a refused program has no run to assert on.
+// a nested tuple, a tuple carrying a store handle from a loop body the EAGER collector runs —
+// are pinned at the emit level in `tests/native_yield_channel.rs`, because a refused program
+// has no run to assert on.
 //
 // @falsified-at: 6bb9918d — native exit 0 -> 1: `error[E0308]`/`error[E0605]` against the
 // generated source for the keyed, tuple-in-loop and boolean-member cells; `--interpret` was
@@ -47,9 +48,11 @@ fn keyed_gen(n: integer) -> iterator<hash<Ck[k]>> {
   for i in 0..n { yield [Ck { k: i, v: i * 11 }]; }
 }
 
-// A by-value TUPLE yielded from a loop body: the eager collector buffers the elements' i64
-// images FLAT and one advance pops one stride, so the values are the author's, not the last
-// iteration's.  A per-element check, because a length can never witness an element.
+// A by-value TUPLE yielded from a loop body: handed over through the `next_into` transport
+// buffer one advance at a time since loft#1798 (the eager collector, which buffered the
+// elements' images FLAT, is `native_yield_channel.rs`'s to pin), so the values are the
+// author's, not the last iteration's.  A per-element check, because a length can never
+// witness an element.
 fn test_a_by_value_tuple_from_a_loop_body() {
   ints = 0;
   floats = 0.0;

@@ -21,8 +21,16 @@
 //   stored code.
 // WITNESS: `u8?: 259 0` (a null read as 255, no null seen).
 // HOLDS: the controls, on both trees.
+//
+// The `(N-Reserve)` cell's `255` arrives through `rt`: since loft#1796 a CONSTANT 255 into a
+// `u8?` element is refused at compile time (tests/scripts/1796-…-element.loft), so the cell
+// keeps its subject — a 255 that reaches the slot at RUN TIME reads null — by a value the
+// compiler cannot fold.
 
 struct H { v: vector<u8?> }
+
+// A value the compiler cannot fold, so it reaches the slot at run time.
+fn rt(n: integer) -> integer { n }
 
 fn main() {
   a: vector<u8?> = [1, null, 3];
@@ -58,8 +66,8 @@ fn main() {
   copies: vector<u8?> = [];
   for x in a { y: u8? = x; copies += [y]; }
   assert(!copies[1] && (copies[2] ?? 0) == 3, "a copy of the loop variable: {copies}");
-  // (N-Reserve): 255 is the null of a u8?, so a 255 written into the slot reads null
-  w: vector<u8?> = [255, 254];
+  // (N-Reserve): 255 is the null of a u8?, so a 255 written into the slot at run time reads null
+  w: vector<u8?> = [rt(255), 254];
   n8 = 0;
   for x in w { if !x { n8 += 1; } }
   assert(n8 == 1 && (w[1] ?? 0) == 254, "the reserved code is the null: {n8}");

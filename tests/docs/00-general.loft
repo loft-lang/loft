@@ -22,13 +22,14 @@
 // Short helper functions need no 'return' statement, which keeps them clean.
 // You can still write 'return value;' to exit early from the middle of a function.
 // ## Null is visible, not hidden
-// Any value can be null unless you explicitly mark it otherwise.
-// Null means "no value" — like a missing search result or a failed conversion.
+// A value that may be missing says so in its type: 'integer?' may hold null,
+// a plain 'integer' may not. Null means "no value" — like a missing search
+// result or a failed conversion.
 // A null value behaves like false in a condition, so you can test for it with '!'.
 // There is no NullPointerException waiting to surprise you: null is just false.
 // ## Text is UTF-8
 // Text in Loft is stored as UTF-8, the same encoding used on the web.
-// 'len()' counts bytes, not visible characters.
+// 'len()' counts characters, while 'size()' and slice positions count bytes.
 // Be mindful of multi-byte characters like emoji when slicing text by position.
 // Everything from ASCII to emoji to Chinese characters works correctly.
 // ## Collections share their records
@@ -51,12 +52,11 @@ fn main() {
   // Format strings use '{expression}' — you can embed any expression, not just names.
   assert("{greeting} The answer is {x * y}." == "Hello, Loft! The answer is 42.", "Format strings interpolate expressions");
   // ## Null in practice
-  // Dividing by zero produces null when defended with `?? null` or a
-  // following null-check, instead of crashing.  In a condition, null
-  // is treated as false, so '!' turns it into true.  This makes it
-  // easy to handle unexpected values gracefully.  Without a defense,
-  // bare `1 / 0` halts in development with a typed error; in
-  // production it logs a warning + continues with the null sentinel.
+  // Dividing by zero produces null instead of crashing, and the program
+  // keeps running. In a condition, null is treated as false, so '!' turns
+  // it into true. This makes it easy to handle unexpected values
+  // gracefully. `?? fallback` replaces the null with a value of your
+  // choice; here `?? null` keeps it, which marks the null as expected.
   zero = 0;
   result = 12 / zero ?? null;
   assert(!result, "Dividing by zero gives null when defended");

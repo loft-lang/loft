@@ -1,19 +1,27 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// Format-string errors reported as `Unknown variable` — a PASS-2 diagnostic, so it
-// needs a file with no pass-1 error in it.  The parser skips pass 2 the moment pass 1
-// reports an error (`Parser::parse`), and `known_var_or_type` only speaks when
-// `!first_pass`; sharing a file with 35-format-errors.loft's `Unexpected formatting
-// type` (pass 1) is what kept both of these silently unasserted (loft#929).
+// Format-string errors that are PASS-2 diagnostics, so they need a file with no pass-1
+// error in it.  The parser skips pass 2 the moment pass 1 reports an error
+// (`Parser::parse`), and a name is resolved only when `!first_pass`; sharing a file with
+// 35-format-errors.loft's pass-1 spec refusals is what kept these silently unasserted
+// (loft#929).
 
-// A bare unknown specifier has no width digits in front of it, so the parser reads
-// `z` as the WIDTH EXPRESSION — a name, and an undefined one.  (With digits, as in
-// `{n:5z}`, the specifier grammar owns the `z` and says so directly; that twin lives
-// in 35-format-errors.loft.)
-// @EXPECT_ERROR: Unknown variable 'z'
+// A bare unknown specifier has no width digits in front of it, so it could be a WIDTH
+// EXPRESSION — a name.  It names nothing, so it is reported as the spec it was meant as,
+// not as *"Unknown variable 'z'"* (loft#1805).  Pass 2 only: pass 1 has not yet met a
+// variable declared further down, so it cannot tell.  (With digits, as in `{n:5z}`, the
+// specifier grammar owns the `z` on both passes; that twin lives in 35-format-errors.loft.)
+// @EXPECT_ERROR: `z` is not a format spec
 fn test_bare_specifier_z() {
   n = 42;
   s = "{n:z}";
+}
+
+// A radix letter in the wrong case names the one meant (loft#1805).
+// @EXPECT_ERROR: `B` is not a format spec — the spec is lower-case `b`
+fn test_bare_uppercase_b() {
+  n = 42;
+  s = "{n:B}";
 }
 
 // A name interpolated BEFORE its assignment is undefined at the point it is read —

@@ -6,7 +6,7 @@ Source files use the `.loft` extension. The language compiles to an internal byt
 and can emit Rust code for host integration.
 
 **Quick reference with common patterns and gotchas:** see the loft-write skill (`.claude/skills/loft-write/SKILL.md`).
-This page states the language as it stands; a limitation the language has since lost is
+This page states the language as it stands; behaviour the language has since dropped is
 recorded in [LOFT-history.md](LOFT-history.md), not here.
 
 ---
@@ -47,20 +47,20 @@ recorded in [LOFT-history.md](LOFT-history.md), not here.
 | `float`     | 64-bit floating-point; literals contain a `.`    |
 | `single`    | 32-bit float; literals end with `f`              |
 | `character` | A single Unicode character                       |
-| `text`      | A UTF-8 string; `len()` counts bytes             |
+| `text`      | A UTF-8 string; `len()` counts characters, `size()` bytes |
 
 A type is **non-null by default**: a plain `integer` / `text` / `Row` is not a slot for
 `null`, and the compiler says so wherever one is written — discharge it (`??`, `?`,
 `match`) or declare the slot `integer?`. Add `?` to make it nullable: `integer?` holds a
 value or `null`. (The old `not null` modifier is now the default and is **deprecated** —
-it parses as a no-op and warns; delete it. See "Fields" below.)
+it parses as a no-op and draws `advice[not-null-deprecated]`; delete it. See "Struct types" below.)
 
-How loudly depends on whether the slot has room for a null. Declaring a **local** `x: Row
-= null` is refused outright. A **field**, a **return**, a **vector element** and a **call
-argument** get a warning and the store proceeds, because the slot does reserve a null it
-can hold and read back — with one exception: a narrow width (`u8`…`u32`) spends its whole
-range on real values, so a null there is an error too. This applies to every type, records
-and collections alongside the scalars.
+How loudly depends on whether the slot has room for a null. A **local**, a **field**, a
+**return**, a **vector element** and a **call argument** get a warning and the store
+proceeds, because the slot does reserve a null it can hold and read back — with one
+exception: a narrow width (`u8`…`u32`) spends its whole range on real values, so a null
+there is an error. This applies to every type, records and collections alongside the
+scalars ([formal/types.md](formal/types.md) `(N-Store)`).
 
 **Non-null is a rule about writes, not a guarantee about reads.** A *fault* can still
 leave the reserved pattern in a non-null slot: an integer overflow writes the sentinel
@@ -77,12 +77,12 @@ Loft uses in-band sentinel values to represent `null`. Each type has a dedicated
 
 | Type | Null sentinel | Notes |
 |------|---------------|-------|
-| `boolean` | byte `255` (@PLN17) | Three-state: `false`=0, `true`=1, `null`=255 — stored like a 2-variant plain enum.  `null` is held and distinguished everywhere a boolean lives (locals, params, returns, fields, vector/keyed elements); test it with `b == null`.  `null` coerces to `false` only in boolean *logic* (`if`/`while`/`!`/`&&`/`\|\|`); `==`/`!=` are raw, so `null == false` is `false`.  A `boolean not null` is 2-state (false/true).  `!b` is true for both `null` and `false` (both coerce to false). |
-| `integer` | `i64::MIN` | Post-2c (0.9.0): 8-byte storage, sentinel moved from `i32::MIN`.  Accidental sentinel collisions effectively vanish at the i64 boundary. |
+| `boolean` | byte `255` (@PLN17) | Three-state: `false`=0, `true`=1, `null`=255 — stored like a 2-variant plain enum.  `null` is held and distinguished everywhere a boolean lives (locals, params, returns, fields, vector/keyed elements); test it with `b == null`.  `null` coerces to `false` only in boolean *logic* (`if`/`while`/`!`/`&&`/`\|\|`); `==`/`!=` are raw, so `null == false` is `false`.  A plain `boolean` is non-null: storing `null` into one warns (`(N-Store)`); declare `boolean?` for the third state.  `!b` is true for both `null` and `false` (both coerce to false). |
+| `integer` | `i64::MIN` | 8-byte storage; the sentinel sits at the far edge of the i64 range. |
 | `float` | `NaN` | IEEE 754: `NaN != NaN`, but `!f` correctly detects null |
 | `single` | `NaN` (32-bit) | Same as `float` |
 | `character` | `'\0'` (NUL) | The null character is not a valid loft character value |
-| `text` | internal null pointer | Opaque; `!t` detects it; `len(t)` returns null |
+| `text` | internal null pointer | Opaque; `!t` and `t == null` detect it.  `len` / `size` take a non-null `text`, so passing a `text?` warns — discharge it first (`len(t?)`) |
 | `reference` | record 0 | Opaque; `!r` detects it |
 | plain `enum` | byte `255` **or** byte `0` | Limits plain enums to 255 variants.  **Two bytes mean absent, and every test accepts both:** an explicit `null` writes `255`, while zero-initialised storage and a read of an absent record produce `0`.  Variants are numbered from 1, so `0` is a variant of no enum — which is why the renderer has always shown both as `null`.  A `??` that recognised only `255` let `v[9] ?? d` and a field never set answer `null` through a coalesce. |
 | narrow int (`u8`/`u16`/`i8`/`i16`) | top of the packed range | e.g. `i8::MIN` for `i8`; stored compactly in `Parts::Byte`/`Short` |
@@ -126,17 +126,11 @@ Narrow alias fields (`i32` / `u8` / `u16` / `i8` / `i16`) store their own narrow
 sentinel but widen to i64 on the stack, so arithmetic is uniform.  Both the
 interpreter and the native backend produce the same null on the same fault.
 
-**History:** 0.9.0's C54.G-hybrid made overflow / div0 **trap** (a halt, with a
-`??`-only discharge).  C80 (the spreadsheet model) reverses that to
-null-and-continue everywhere — so `??` is now a plain fallback, not a trap mode.
-
-**Binary file I/O caveat:** post-2c `f += <integer_expression>` on a
-`BigEndian` / `LittleEndian` file writes **8 bytes**.  Pre-2c
-wrote 4.  Writers of binary formats must add an explicit width
-cast — `f += 2 as i32;` for a 4-byte u32 field, `f += 0 as u8;`
-for a byte, `f += v as u16;` for a 2-byte field.  The GLB / PNG
-writers in the stdlib were updated accordingly; custom binary
-protocols need the same audit.
+**Binary file I/O caveat:** `f += <integer_expression>` on a
+`BigEndian` / `LittleEndian` file writes **8 bytes**, because `integer` is 64-bit.
+A binary format with narrower fields needs an explicit width cast —
+`f += 2 as i32;` for a 4-byte field, `f += 0 as u8;` for a byte, `f += v as u16;`
+for a 2-byte field.
 
 **`!value` asymmetry — read carefully:** the unary `!` operator reads as "is null
 or default?" but the answer differs by type because the null sentinel is in-band.
@@ -160,8 +154,9 @@ The idiomatic "zero or null" check on an integer is `count == 0 or !count`,
 or simply `count == 0` if the sentinel and zero should be treated the same.
 This asymmetry is a deliberate, settled choice — see
 [DESIGN_DECISIONS.md § C69](DESIGN_DECISIONS_VALUES.md#c69--x-on-a-non-boolean-is-a-null-test-not-logical-not).
-The compiler warns when `!` is applied to a statically `not null` operand
-(`!x` there is always false, since the value can never be the null sentinel).
+The compiler warns (`redundant-null-negation`) when `!` is applied to a value whose type
+keeps no code for null — a non-null `u8` / `i8` / `u16` / `i16` / `u32` / `limit` slot —
+since `!x` there is always false; the one exception, directly after a store, is below.
 
 Integer ranges can be constrained with `limit`:
 ```
@@ -171,8 +166,10 @@ integer limit(0, 65535)    // fits in a short
 
 A `limit` type is a narrow integer exactly as `u8` is: a value the compiler cannot prove in
 range is refused at the store, the call and the literal, and the refusal names the cure —
-write what the value becomes when it does not fit, `x ?? 0`, or take the checked cast
-`x as integer limit(0, 7)?`, which is `null` when it does not fit.  The one way an
+write what the value becomes when it does not fit, `x ?? 0`; make the slot nullable,
+`integer limit(0, 7)?`, which takes the value as a checked cast and holds `null` when it
+does not fit; or mask it, `x & 7`.  An `if` range check is not a cure: loft does not narrow
+a value's type after a test.  The one way an
 out-of-range value reaches such a slot at run time is the slot's own arithmetic stepping past
 its range (`b += 253`), and then it takes the type's default — the value nearest zero in the
 range — never a wrapped one.
@@ -200,8 +197,9 @@ The reserved code is expressed in the effective `min`/`max` of the integer
 type behind the field, and the read/write contract is symmetric: reading a
 narrow field into an `integer` widens the stored sentinel to integer null,
 and writing integer null (or `null`) stores the sentinel — a null always
-round-trips, at every width.  `not null` on the field unlocks the full
-range (256 / 65 536 / 2³²) when it never carries null.  Typical `u32` use:
+round-trips, at every width.  A plain (non-null) `u8` / `u16` field has no
+null to encode and uses the full range (256 / 65 536); `u32` keeps its top
+code out of range either way ([formal/types.md](formal/types.md) `(N-Reserve)`).  Typical `u32` use:
 RGBA pixels, large file offsets, bitmasks wider than i32.
 
 **A NON-nullable narrow slot has no code for a failure, so `!` reads it beside the
@@ -232,12 +230,6 @@ written — and `!health` answers whether the store fit.  Two rules bound it:
 
 `?? <value>` is the other half of the same edge and works in the same place: it names
 what the slot takes instead of the type's default (`health = (health + 10) ?? 255`).
-
-**Migration note:** the `long` type keyword and the `l` literal
-suffix (e.g. `42l`) were removed in 0.9.0.  There are no external
-users of pre-0.9.0 loft, so no migration path is needed in
-practice; the `loft --migrate-long <path>` CLI exists as an
-internal utility should one become necessary.
 
 ### Composite types
 
@@ -418,11 +410,11 @@ NAME freezes the *binding* (the slot), `const` before the TYPE freezes the *valu
   contents distinct from its binding, so BOTH axes make it fully immutable — `const n: integer`
   *and* `n: const integer` reject `t.n = …` and `t.n += …`. Example: `const id: integer`.
 
-Value-const enforcement covers DIRECT writes (the write's LHS resolved at compile time). A
-value-const value that escapes via a local (`x = t.v; x[i]=…`), a function return, or a
-`vector<const T>` generic is not yet frozen through that laundering — that transitivity is
-type-carried const, deferred to Phase 3.
-(@PLN40; doc/claude/plans/40-const-fields/const-model-phase2.md.)
+Value-const covers every VIEW of the value: a write through a local bound to it (`q = t.r;
+q.x = 5`), a loop variable over its elements or a `&` link is refused like a direct one. A
+COPY out of it is the reader's own — `x = t.v` copies a vector and a function return is a
+value, so writing `x[i]` leaves `t.v` unchanged ([formal/binding.md](formal/binding.md)
+`(Const-Value)`).
 
 Defaults are applied in DECLARATION order, and `$` reads the record as it stands at that
 moment. A field the construction site supplies is already written, whichever order the two
@@ -443,12 +435,13 @@ struct Circle {
 }
 ```
 
-Example with all modifiers:
+Example with the modifiers together:
 ```
 struct Point {
-    r: integer limit(0, 255) not null,
-    g: integer limit(0, 255) not null,
-    b: integer limit(0, 255) not null
+    r: integer limit(0, 255),
+    g: integer limit(0, 255) = 128,
+    b: integer limit(0, 255) assert($.b != 7),
+    grey: integer computed(($.r + $.g + $.b) / 3)
 }
 ```
 
@@ -546,7 +539,7 @@ ones are equal — so `(1, 9) < (2, 0)` and `(1, 9) < (1, 10)`, while `(1, 9) < 
 false and `(1, 9) <= (1, 9)` is true. Elements are compared with their OWN operators, so
 text compares by value (`(1, "abc") == (1, "abc")`) and a nested tuple recurses. An element
 type with no such operator says so about the element — `(false, 1) < (true, 0)` reports
-*"No matching operator `<` on `boolean` and `boolean`"*, because a tuple never invents an
+*"No matching operator '<' on 'boolean' and 'boolean'"*, because a tuple never invents an
 ordering its elements do not have. Different arities are not comparable.
 See [TUPLES.md § Comparison](TUPLES.md).
 
@@ -592,8 +585,8 @@ If `lhs` has a statically-known `null` type (the bare `null` literal), `??` retu
 **Result type — the discharge is only as complete as the fallback.** `a ?? b` yields `a` when
 non-null else `b`, so it can still be null exactly when `b` can: the result type is the non-null
 base **only if the fallback `b` is non-null**. A nullable fallback — a bare `null` literal, or a
-`τ?`-typed expression — keeps the result `τ?`, so `y: integer = x ?? null` is a compile error (a
-null would reach the non-null slot). A chain discharges to non-null iff its *last* fallback is
+`τ?`-typed expression — keeps the result `τ?`, so `y: integer = x ?? null` warns that a null
+reaches the non-null slot (`(N-Store)`). A chain discharges to non-null iff its *last* fallback is
 non-null: `x ?? (a / b) ?? 7` is `integer` (ends in `7`), while `x ?? null` is `integer?`. Discharge
 into a non-null slot with a real default (`x ?? 0`), or keep the slot `τ?`.
 
@@ -638,8 +631,8 @@ static well-definedness check, fully consistent with "no *runtime* errors ever" 
   So a *bare* enum discharges to its first variant, but an enum *field inside a record* needs an
   explicit choice before the record itself can default.
 
-`x?` on an already-non-null operand is an identity plus a redundant-`?` warning (mirrors the
-redundant-`??` lint).
+`x?` on a value whose type cannot hold null (a non-null `u8` field, say) is an identity plus
+`warning[redundant-default-fallback]` (mirrors `redundant-coalesce` for `??`).
 
 **On the left of an assignment, the `?` is on the READ.** `place? op= e` writes `place`; the
 `?` says which value to read when `place` is null. So `x? += 3` on a null `x` is `3` — the
@@ -672,14 +665,14 @@ Used for explicit type casts and conversions:
 **`as` has two different jobs — a numeric cast vs. a fallible parse.** When the left
 operand is a *number*, `as` reinterprets it (truncate/narrow/widen). When the left
 operand is **text**, `as integer` / `as float` / `as single` is a **parse that can
-fail**, so it types `integer?` / `float?` / `single?` — you get `null` on a bad parse
-and must discharge it:
+fail**, so a bare cast — which asserts it cannot — is a compile error
+(`error[text-parse-may-fail]`). Say what a bad parse becomes:
 ```
-n = "42" as integer          // n : integer?   (NOT integer — the parse can fail)
-n = "42" as integer ?? 0     // n : integer    (discharge with a default)
-n = s as integer?            // n : integer?   (keep it nullable, discharge later)
+n = s as integer             // COMPILE ERROR — a parse cannot be asserted
+n = s as integer ?? 0        // n : integer    (a bad parse gives the default)
+n = s as integer?            // n : integer?   (null on a bad parse, discharge later)
 ```
-(This is the @PLN25 `(N-Parse)` rule — a bad parse is a reachable fault like `÷0`/OOB.)
+(`(N-Cast)` in [formal/types.md](formal/types.md) — a bad parse is a reachable fault like `÷0`/OOB.)
 
 ### Type-conversion rules — when does loft convert automatically?
 
@@ -691,16 +684,16 @@ do by looking up the pair in this table:
 
 | From → To                          | Mode          | Notes |
 |------------------------------------|---------------|-------|
-| Any type → `boolean` (in `if`, `!v`, `while`, `assert`) | Implicit | `false` and null are falsy; integer `i32::MIN` is falsy; every other value is truthy.  See § Pattern matching for the null-sentinel table.  **These four POSITIONS are the whole of it** — a `vector` passed where a `boolean` PARAMETER is declared stays an error, because there the coercion would hide a mistake rather than express one.  An EMPTY collection and a payload-less enum variant are values, so both are truthy; only null is falsy. |
+| Any type → `boolean` (in `if`, `!v`, `while`, `assert`) | Implicit | `false` and null are falsy (an `integer` holding its null, `i64::MIN`, is falsy); every other value is truthy.  See [§ Null representation](#null-representation) for the null-sentinel table.  **These four POSITIONS are the whole of it** — a `vector` passed where a `boolean` PARAMETER is declared stays an error, because there the coercion would hide a mistake rather than express one.  An EMPTY collection and a payload-less enum variant are values, so both are truthy; only null is falsy. |
 | Integer ↔ `float` in arithmetic    | Implicit      | `3 + 1.5` is `4.5` — the integer widens to the float operand's width |
 | Integer / `single` → `float`       | Implicit      | widening; `single` (32-bit) widens to `float` (64-bit) with no loss |
 | Integer → `single`                 | Implicit      | `[1, 2]` is a valid `vector<single>` |
 | `float` → `single`                 | Explicit `as` | NARROWING (64→32-bit loses precision).  A bare decimal literal is `float`; write a **`single` literal** with the `f` suffix (`1.0f`) or cast (`x as single`).  This is enforced element-wise: a `vector<single>` literal must be `[1.0f, 2.0f]` or `[a as single, …]` — `[1.0, 2.0]` (float literals) is a compile error ("would lose precision"), never a silent truncation |
 | `i32` / narrow int → `integer`     | Implicit      | widening; a 4-byte `i32` (or `u8`/`u16`/`i8`/`i16`) widens into the 8-byte `integer` with no loss |
-| `integer` → `u8`/`u16`/`i8`/`i16`/`u32`/`i32` | Explicit `as` at storage sites | NARROWING — a plain `integer` is 64-bit; writing one into a narrow **struct field**, local, parameter or return (any narrow storage) requires `as` ("cannot implicitly narrow integer to u16 … cast explicitly").  A **constant that provably fits** the target is exempt (`x: u16 = 5`, `f(200)`).  The check is range containment **or a drop in storage width**, so it covers every narrow alias — including `i32`, which the range half cannot see (see the row below).  (guard `tests/scripts/931-i32-narrowing-is-checked.loft`) |
-| `integer` → `i32` — why it needs the width half | Explicit `as` | `i32` spans the whole 32-bit range, which is the range a plain `integer` *reports*: the 64-bit value lives in an 8-byte slot the bounds do not describe.  So the two specs differ in `forced_size` alone and `[s.min,s.max] ⊆ [d.min,d.max]` holds for a pair whose storage drops 8 → 4 — the one alias whose NAME says "32 bits" was the one range containment never checked, so an `i32` field would take `5000000000` and store `705032704` in silence.  The **implicit** stores compare storage width; an **explicit** `as i32` keeps the range rule alone, so it stays spellable as the cure this diagnostic prescribes |
+| `integer` → `u8`/`u16`/`i8`/`i16`/`u32`/`i32` | `?? d`, a `τ?` destination, or a mask | NARROWING — a plain `integer` is 64-bit; writing one into a narrow **struct field**, local, parameter or return (any narrow storage) that the compiler cannot prove fits is refused, and so is a bare `as` there: "narrowing cast from integer to u16 may not fit at runtime; use `u16?` for a checked cast (value or null), give it a fallback with `as u16 ?? <value>`, or mask it first, `(<value> & 65535) as u16`".  A **constant that provably fits** the target is exempt (`x: u16 = 5`, `f(200)`).  The check is range containment **or a drop in storage width**, so it covers every narrow alias — including `i32`, which the range half cannot see (see the row below).  (guard `tests/scripts/931-i32-narrowing-is-checked.loft`) |
+| `integer` → `i32` — why it needs the width half | Explicit `as` | `i32` spans the whole 32-bit range, which is the range a plain `integer` *reports*: the 64-bit value lives in an 8-byte slot the bounds do not describe.  So the two specs differ in `forced_size` alone and `[s.min,s.max] ⊆ [d.min,d.max]` holds for a pair whose storage drops 8 → 4 — the one alias whose NAME says "32 bits" was the one range containment never checked, so an `i32` field would take `5000000000` and store `705032704` in silence.  The **implicit** stores compare storage width; an **explicit** `as i32` is refused the same way (`i32?`, `as i32 ?? <value>` or a mask are the cures) |
 | `float` → integer                  | Explicit `as` | `pi as integer` truncates toward zero; preserves the current sentinel semantics |
-| `text` → integer / float / single  | Explicit `as` — **a PARSE, types `τ?`** | `"42" as integer` is a fallible parse, so it types **`integer?`** (`float?` / `single?`), not `integer`. A non-numeric text yields `null`. You MUST discharge before storing into non-null: `"42" as integer ?? 0`, `s as integer?` (keep it nullable), or `match`. This is `(N-Parse)` — a bad parse is a reachable fault, exactly like `÷0` and out-of-bounds indexing (§ @PLN25). Contrast the *numeric* casts above (`float`→`integer`, width narrowing), which reinterpret an existing number rather than parse text |
+| `text` → integer / float / single  | Explicit `as ?? d` or `as τ?` — **a PARSE** | `s as integer` is a fallible parse, so the bare cast is refused (`text-parse-may-fail`). Say what a bad parse becomes: `s as integer ?? 0` (a default) or `s as integer?` (`integer?`, null on a bad parse). This is `(N-Cast)` — a bad parse is a reachable fault, exactly like `÷0` and out-of-bounds indexing. Contrast the *numeric* casts above (`float`→`integer`, width narrowing), which reinterpret an existing number rather than parse text |
 | Integer / float / boolean → `text` | **Format-only** | `"n={m}"` renders the value inline; `t = m` with `t: text` is a compile error.  If you want the rendered form as a standalone text value, assign through interpolation: `t = "{m}"` |
 | `character` → `integer` (codepoint)| Explicit `as` | `'a' as integer` yields 97 |
 | `character` ↔ `text`               | See § String literals | Indexing vs. slicing asymmetry; concatenation via interpolation |

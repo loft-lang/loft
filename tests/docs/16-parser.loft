@@ -28,15 +28,25 @@
 // * 'fn name(params) [-> type] { body }' — functions with a block body
 // * 'fn name(params) [-> type]; #rust "template"' — operator templates backed by Rust
 // * 'use module;' — module imports
-// * Expressions: binary operators with precedence, function calls, field access,
-//   if/else, for loops, and blocks
-// * Type expressions: plain names, generic types like 'vector<T>', keyed
-//   collections (sorted/hash/index), and integer ranges with
-//   'integer limit(min, max)' — in parameter, field, and return position
+// * Statements: 'for' and 'while' loops, 'if' / 'else if' / 'else', 'return', typed
+//   locals ('c: (text?, integer) = ("c0", 3);') and expressions; a statement that ends
+//   in a block needs no ';'
+// * Expressions: binary operators with precedence, function calls, field access
+//   ('p.x', 'pair.0'), attributes ('f#size'), 'match' with guards and patterns, both
+//   lambda forms ('|x| { x * 2 }' and 'fn(x: integer) -> integer { x + 1 }'), tuples,
+//   vectors, struct literals and blocks — each also as a value ('y = match x { … }')
+// * Type expressions: plain and qualified names ('lexer::Lexer'), generic types like
+//   'vector<T>', keyed collections (sorted/hash/index), tuples, 'fn(…) -> T' and
+//   integer ranges with 'integer limit(min, max)' — in parameter, field, and return
+//   position
 //
 // It reads an index expression ('v[0]'), the null-coalescing operator ('a ?? 0')
-// and a formatted string literal ('"v={n}"') as the compiler does, so a validator
-// built on this accepts what the compiler accepts.
+// and a formatted string literal ('"v={n}"') as the compiler does.
+//
+// Outside its grammar, so a snippet using one answers a non-zero count although the
+// compiler accepts it: 'const' fields and top-level 'const', '**', '/=', hex and
+// 'f'-suffixed literals, generic functions ('fn f<T>'), filtered loops
+// ('for e in v if e > 1'), 'is' patterns, slices ('v[1..]') and backtick strings.
 use parser;
 // @PAR-001 — validate a source string before acting on it: `== 0` is good, `> 0` is not
 fn main() {
@@ -68,6 +78,15 @@ fn main() {
   // tokens back so the loop can claim them.
   assert(parser::parse("loop", "fn sum(n: integer) -> integer {{ t = 0; for i in 1..=n {{ t += i; }} t }}") == 0,
          "a for loop over a range parses cleanly");
+  // ## Parsing while, match and lambdas
+  // Each of these is a value as well as a statement: a 'match' or a lambda can stand on
+  // the right of '='.
+  assert(parser::parse("while", "fn f() {{ n = 0; while n < 3 {{ n += 1; }} }}") == 0,
+         "a while loop parses cleanly");
+  assert(parser::parse("match", "fn f(x: integer) -> integer {{ match x {{ 0 => 1, n if n > 9 => 2, 2 | 3 => 3, _ => 0 }} }}") == 0,
+         "a match with a guard and alternatives parses cleanly");
+  assert(parser::parse("lambdas", "fn f() {{ g = |x| {{ x * 2 }}; h = fn(x: integer) -> integer {{ x + 1 }}; }}") == 0,
+         "both lambda forms parse cleanly");
   // ## Practical use: validating user-supplied code
   //
   // If your application lets users write Loft snippets (for scripting or
@@ -85,5 +104,26 @@ fn main() {
   // number, so a caller can tell the two apart. Watching the call not crash cannot.
   assert(parser::parse("broken", "fn main() {{ println(\"hi\");") > 0,
          "an unterminated body reports at least one error");
+  // A missing operand is an error too, and so is text after the last definition.
+  assert(parser::parse("no_value", "fn f() {{ x = ; }}") > 0, "a missing value is reported");
+  assert(parser::parse("stray", "fn f() {{ }} }}") > 0, "a stray brace is reported");
+  // ## What it does not parse
+  // Each construct in the list at the top of this page answers a non-zero count here.
+  outside = [
+    "const K = 3;",
+    "struct S {{ const k: integer }}",
+    "fn f() {{ x = 2 ** 3; }}",
+    "fn f() {{ x = 6; x /= 2; }}",
+    "fn f() {{ x = 0xff; }}",
+    "fn f() {{ x = 1.5f; }}",
+    "fn f<T>(x: T) -> T {{ x }}",
+    "fn f(v: vector<integer>) {{ for e in v if e > 1 {{ }} }}",
+    "fn f(x: integer) {{ if x is 3 {{ }} }}",
+    "fn f(v: vector<integer>) {{ w = v[1..]; }}",
+    "fn f() {{ x = `a`; }}"
+  ];
+  for snippet in outside {
+    assert(parser::parse("outside", snippet) > 0, "{snippet} is outside the grammar");
+  }
   println("parser test passed");
 }

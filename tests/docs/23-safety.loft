@@ -125,11 +125,11 @@ fn main() {
   // Floats store null as `NaN` internally, but null COMPARISON is uniform with
   // every other scalar type: `null == null` is TRUE, null is
   // not equal to any real value, and null orders as the low extreme. Detect a
-  // null float with `f == null` (or `!f` / `f ?? default`) — NOT the old `f != f`
-  // trick, which no longer works now that `null == null` is true.
-  // Both the defended and the undefended division yield null and continue
-  // (C80 / E-Uncomp — see tests/scripts/184-i333-div-zero-null-continues.loft);
-  // the undefended site additionally reports a warning.
+  // null float with `f == null` (or `!f` / `f ?? default`) — NOT the `f != f`
+  // trick from other languages, which never fires here because `null == null`
+  // is true.
+  // Both the defended and the undefended division yield null and the program
+  // continues; the undefended site also writes a warning to the log.
   bad = 0.0 / 0.0 ?? null;
   assert(!bad, "a null float is falsy");
   assert(bad == null, "detect a null float with `== null`");
@@ -323,16 +323,16 @@ fn main() {
   // `match` arm or an `is` test, which is per-variant and cannot reach the
   // wrong one.
 
-  // ## A conditional `yield` in a loop runs eagerly on --native
-  // A generator is suspended at each `yield` on the interpreter.  On --native
-  // a `for` or `while` loop is too when its one `yield` sits on the body's
-  // straight line; a yield inside an `if` or `match`, two yields in one
-  // iteration, a nested loop, a `continue`, or a yield of a struct, vector or
-  // tuple runs the whole loop before the first value is handed out.  The values
-  // agree, the side effects do not — and an endless
-  // `while true { if ready { yield x; } }` never hands out a value on --native,
-  // it runs until memory runs out.  Keep the yield unconditional and yield a
-  // number or a text: `while true { …; yield x; }` is lazy on both backends.
+  // ## A yield inside an expression runs eagerly on --native
+  // A generator is suspended at each `yield` on both backends when the `yield`
+  // is a statement — in any loop, `if`, `match`, nested loop or beside a
+  // `continue`, for any yielded type.  A `yield` inside an expression is
+  // different when an operand before it could change while the generator is
+  // suspended, as in `s = s + { yield x; "b" }` with `s` a text.  On --native
+  // that loop runs to its end before the first value is handed out.  The
+  // values agree, the side effects do not, and an endless loop of that shape
+  // never hands out a value on --native: it runs until memory runs out.  Make
+  // the `yield` a statement of its own: `yield x; s = s + "b";`.
 
   // ## XOR is `^`, not exponentiation
   // Unlike some languages where `^` means "power", in loft `^` is bitwise

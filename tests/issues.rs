@@ -375,8 +375,8 @@ fn d2_signed_narrowing_i8_to_u8_needs_cast() {
     )
     .error(
         "cannot implicitly narrow i8 to u8 (may lose data) — \
-give it a fallback with `?? <value>`, take the checked cast `as u8?` (value or null), \
-or make the value provably fit (a mask, or an `if` range check) \
+give it a fallback with `?? <value>`, or make the destination `u8?` so a value that \
+does not fit reads null, or make the value provably fit with a mask (`& 255`) \
 at d2_signed_narrowing_i8_to_u8_needs_cast:3:15",
     );
 }
@@ -16058,7 +16058,7 @@ fn test_it() { k = make(); c = k.cb; c(); }"
         "function returns a struct type that holds a capturing closure; the \
          closure references state owned by this function's frame, so the value \
          cannot outlive it — construct the struct in the frame that owns the \
-         captured state and pass it down, or return the closure itself (#318) \
+         captured state and pass it down, or return the closure itself \
          at issue_318_returning_closure_carrying_struct_rejected:3:17",
     );
 }
@@ -16082,7 +16082,7 @@ fn test_it() {
         "cannot store a capturing closure into a struct received as an argument \
          — the closure references state owned by this function's frame, which \
          the argument's struct outlives; construct the closure in the frame \
-         that owns the captured state (#318) \
+         that owns the captured state \
          at issue_318_closure_into_argument_struct_rejected:6:44",
     );
 }
@@ -16101,14 +16101,14 @@ fn test_it() {
         "collection of a struct type that holds a capturing closure is not \
          supported — element copies would dangle into the constructing \
          function's frame; keep closure holders in local variables and pass \
-         them down as arguments (#318) \
+         them down as arguments \
          at issue_318_vector_of_closure_carrying_struct_rejected:5:19",
     )
     .error(
         "field `vector` would store a value of a type that holds a capturing \
          closure; such values are bound to the function frame that owns the \
          captures and cannot be copied into another struct — keep the closure \
-         holder in a local variable and pass it down as an argument (#318) \
+         holder in a local variable and pass it down as an argument \
          at issue_318_vector_of_closure_carrying_struct_rejected:5:55",
     );
 }

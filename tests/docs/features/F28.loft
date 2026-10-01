@@ -5,4 +5,13 @@ fn main() {
     total = 0;
     for i in 1..=5 { total = total + i; }
     println("sum 1..=5 = {total}");    // sum 1..=5 = 15
+
+    v = [3, 8, 2, 12, 7];
+    for x in v if x > 5 {
+        println("{x#index}: {x}");     // 1: 8, then 3: 12, then 4: 7
+    }
+    for i in rev(1..4) { print("{i} "); }
+    println("");                       // 3 2 1
+    for c in "héj" { print("[{c}]"); }
+    println("");                       // [h][é][j]
 }

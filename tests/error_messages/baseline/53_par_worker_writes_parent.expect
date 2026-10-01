@@ -7,7 +7,7 @@ error: par worker 'add53': captured argument 'bag' is a reference (Bag53); a par
 11 |   for x in v par(b = add53(x, bag), 4) {
    |                                    ^
 
-error: par() worker add53 writes captured `bag` — a par worker's captured state is READ-ONLY (@PLN102 C93): a write to shared parent state is a data race, which loft disallows rather than run.  Return the value from the worker and accumulate it in the fold body instead.
+error: par() worker add53 writes captured `bag` — a par worker's captured state is READ-ONLY: a write to shared parent state is a data race, which loft disallows rather than run.  Return the value from the worker and accumulate it in the fold body instead.
   --> <cases>/53_par_worker_writes_parent.loft:11:36
    |
 11 |   for x in v par(b = add53(x, bag), 4) {

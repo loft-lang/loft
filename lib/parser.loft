@@ -19,7 +19,10 @@ struct Parser {
   log: logger::Log,
   code: code::Code,
   cur_file: integer = 0,
-  operators: hash < Operator[op] >
+  operators: hash < Operator[op] >,
+  // Where the cursor stood right after the last `}}` that closed a block or a `match`: a
+  // statement that ends there needs no `;` (loft#1800).
+  block_end: integer = -1
 }
 
 struct FormatSpec {
@@ -64,9 +67,10 @@ pub fn parse(name: text, s: text) -> integer {
   // one step looser than `||`.  Listing it as a TOKEN is what makes @FR-G-Lex-Coal hold
   // — the scanner prefers the longest token starting with `?`, so a `??` never arrives
   // as two `?`, and the postfix `?` in `suffixes` cannot claim half of one.
-  p.lexer.set_tokens(["+=", "*=", "-=", "<=", ">=", "!=", "==", ">>", "<<", "->", "=>", ">>>", "..", "..=", "&&", "||", "??"]);
+  p.lexer.set_tokens(["+=", "*=", "-=", "<=", ">=", "!=", "==", ">>", "<<", "->", "=>", ">>>", "..", "..=", "&&", "||", "??", "::"]);
   p.lexer.set_keywords([
-  "for", "in", "if", "else", "fn", "pub", "use", "struct", "enum", "match", "and", "or", "true", "false", "null"
+  "for", "in", "if", "else", "fn", "pub", "use", "struct", "enum", "match", "and", "or", "true", "false", "null",
+  "while"
   ]);
   // No prelude is loaded, and pointing one at `default/01_code.loft` would be a
   // REGRESSION rather than the fix it looks like.  `parse` answers a count of the errors
@@ -89,6 +93,11 @@ pub fn parse(name: text, s: text) -> integer {
 // <file> ::= { 'use' <identifier> ';' } { 'pub' ( <structure> | <def_enumerate> | <def_type> | <function> | <constant> ) }
 
 fn parse_file(self: Parser) {
+  // A file-level directive (`#cwd`) comes before everything else.
+  if self.lexer.matches("#") {
+    self.lexer.identifier();
+    self.lexer.matches(";");
+  }
   for u in 0..100 {
     if !self.lexer.matches("use") {
       u# break;
@@ -122,6 +131,11 @@ fn parse_file(self: Parser) {
     if self.stalled(at) {
       x# break;
     }
+  }
+  // Input left over is input nobody read — a stray `}}`, a statement at file scope —
+  // and a file ending there is not well formed (loft#1800: it answered 0 errors).
+  if !self.lexer.is_finished() && self.log.level != Fatal {
+    self.log.error("Expected a definition{self.lexer.at()}");
   }
 }
 // <structure> :: 'struct' <identifier> '{' { <identifier> ':' <type> [ '=' <value> ] [ ',' ] } '}'
@@ -257,7 +271,7 @@ fn function(self: Parser, _public: boolean) -> boolean {
   }
   true
 }
-// <block> ::= '{' { ( <for_statement> | <return_statement> | <expression> ) [ ';' ] } '}'
+// <block> ::= '{' { ( <for_statement> | <while_statement> | <return_statement> | <expression> ) [ ';' ] } '}'
 
 fn block(self: Parser) -> boolean {
   if !self.lexer.matches("{{") {
@@ -273,9 +287,13 @@ fn block(self: Parser) -> boolean {
     // out of its loop, so the tail expression after a `for` was never read and the body
     // failed with `Expected }`: `fn sum(n) {{ t = 0; for i in 1..=n {{ … }} t }}` did
     // not parse (@PLN121 E2 — the page claiming it did asserted nothing).
-    block_ended = self.for_statement();
-    if !block_ended and !self.return_statement() {
+    block_ended = self.for_statement() || self.while_statement();
+    if !block_ended and !self.return_statement() and !self.declaration() {
       self.expression();
+      // An `if`, a `match` or a bare block used as a statement ends at its own `}}`
+      // too — `if x {{ … }} y = 1;` — so the separator is optional after it, as after
+      // a `for` (loft#1800).
+      block_ended = self.block_end == self.lexer.offset();
     }
     // The closing brace is tested on BOTH sides of the separator, because a body can
     // end either way and each test alone breaks the other: before it, so a TAIL
@@ -285,7 +303,9 @@ fn block(self: Parser) -> boolean {
     if self.lexer.test("}}") {
       statement# break;
     }
-    if !block_ended and !self.lexer.matches(";") {
+    // The `;` is always accepted and required only after a statement that did not end
+    // in a block — `y = match x {{ … }};` ends in one and still carries it.
+    if !self.lexer.matches(";") and !block_ended {
       statement# break;
     }
     if self.lexer.test("}}") {
@@ -296,7 +316,151 @@ fn block(self: Parser) -> boolean {
     }
   }
   self.expect("}}");
+  self.block_end = self.lexer.offset();
   true
+}
+// A loop or `if` body: reported when missing rather than silently skipped.
+fn need_block(self: Parser) {
+  if !self.block() {
+    self.log.error("Expected {{{self.lexer.at()}");
+  }
+}
+// <declaration> ::= <identifier> ':' <type> [ '=' <expression> ]
+
+// A typed local, `c: (text?, integer) = ("c0", 3);`.  Tried first and undone when the
+// statement turns out not to be one, so every other statement starting with a name is
+// read as before.
+fn declaration(self: Parser) -> boolean {
+  before = self.lexer.anchor();
+  if !self.lexer.identifier() || !self.lexer.matches(":") {
+    self.lexer.revert(before);
+    return false;
+  }
+  self.type_def(false);
+  if self.lexer.matches("=") {
+    if !self.expression() {
+      self.log.error("Expected a value after ={self.lexer.at()}");
+    }
+  }
+  true
+}
+// <while_statement> ::= 'while' <expression> <block>
+
+fn while_statement(self: Parser) -> boolean {
+  if !self.lexer.matches("while") {
+    return false;
+  }
+  self.expression();
+  self.need_block();
+  true
+}
+// <match> ::= 'match' <expression> '{' { <pattern> [ 'if' <expression> ] '=>' <expression> [ ',' ] } '}'
+
+// A pattern is read leniently — every token up to the arm's `=>` (or its `if` guard) at
+// bracket depth 0 — because loft's patterns (`Circle {{ r }}`, `Rect {{ w, .. }}`, `2 | 3`,
+// `4..=9`, `(a, b)`, `_`) are not expressions, and this parser answers only whether the
+// source is well formed.  The arm's value is an expression, a block included.
+fn match_expr(self: Parser) -> boolean {
+  if !self.lexer.matches("match") {
+    return false;
+  }
+  self.expression();
+  self.expect("{{");
+  for arm in 0..10000 {
+    if self.lexer.test("}}") || self.lexer.is_finished() || self.log.level == Fatal {
+      arm# break;
+    }
+    at = self.lexer.offset();
+    self.pattern();
+    if self.lexer.matches("if") {
+      self.expression();
+    }
+    self.expect("=>");
+    if !self.expression() {
+      self.log.error("Expected a value after =>{self.lexer.at()}");
+    }
+    self.lexer.matches(",");
+    if self.stalled(at) {
+      arm# break;
+    }
+  }
+  self.expect("}}");
+  self.block_end = self.lexer.offset();
+  true
+}
+
+fn pattern(self: Parser) {
+  depth = 0;
+  for token in 0..10000 {
+    if self.lexer.is_finished() {
+      token# break;
+    }
+    // A `,` at depth 0 ends the ARM, so a pattern reaching one has no `=>`.
+    if depth == 0
+      && (self.lexer.test("=>") || self.lexer.test("if") || self.lexer.test("}}") || self.lexer.test(",")) {
+      token# break;
+    }
+    t = self.lexer.peek();
+    if t == "(" || t == "[" || t == "{{" {
+      depth += 1;
+    } else if t == ")" || t == "]" || t == "}}" {
+      depth -= 1;
+    }
+    if !self.lexer.matches(t) && !self.value() {
+      token# break;
+    }
+  }
+}
+// <lambda> ::= ( '|' [ <identifier> { ',' <identifier> } ] '|' | '||' ) <block>
+//            |  'fn' '(' [ <param> { ',' <param> } ] ')' [ '->' <type> ] <block>
+// <param>  ::= <identifier> ':' <type>
+//
+// The two forms are the compiler's: a `|x|` lambda names its parameters bare and infers
+// their types, a `fn(x: integer) -> integer` lambda writes them; both bodies are blocks.
+
+fn lambda(self: Parser) -> boolean {
+  typed = false;
+  if self.lexer.matches("fn") {
+    self.expect("(");
+    self.lambda_params(")", true);
+    typed = true;
+  } else if self.lexer.matches("|") {
+    self.lambda_params("|", false);
+  } else if !self.lexer.matches("||") {
+    return false;
+  }
+  if self.lexer.matches("->") {
+    if !typed {
+      self.log.error("A |x| lambda has no return type — use fn(…) -> type{self.lexer.at()}");
+    }
+    self.type_def(false);
+  }
+  self.need_block();
+  true
+}
+
+fn lambda_params(self: Parser, close: text, typed: boolean) {
+  for param in 0..255 {
+    if self.lexer.matches(close) {
+      return;
+    }
+    if !self.lexer.identifier() {
+      self.log.error("Expected a parameter name{self.lexer.at()}");
+      return;
+    }
+    if self.lexer.matches(":") {
+      if !typed {
+        self.log.error("A |x| lambda names its parameters without types — use fn(x: type){self.lexer.at()}");
+      }
+      self.type_def(false);
+    } else if typed {
+      self.log.error("Expected : and the parameter's type{self.lexer.at()}");
+    }
+    if !self.lexer.matches(",") {
+      self.expect(close);
+      return;
+    }
+  }
 }
 // <for_statement> :: = 'for' <identifier> 'in' <expression> <block>
 
@@ -307,7 +471,7 @@ fn for_statement(self: Parser) -> boolean {
   self.lexer.identifier();
   self.lexer.matches("in");
   self.expression();
-  self.block();
+  self.need_block();
   true
 }
 // <return_statement> :: 'return' [ <expression> ]
@@ -379,19 +543,22 @@ fn for_list(self: Parser) -> boolean {
   self.lexer.identifier();
   self.lexer.matches("in");
   self.expression();
-  self.block();
+  self.need_block();
   true
 }
-// <if_statement> ::= 'if' <expression> <block> [ 'else' <block> ]
+// <if_statement> ::= 'if' <expression> <block> [ 'else' ( <if_statement> | <block> ) ]
 
 fn if_statement(self: Parser) -> boolean {
   if !self.lexer.matches("if") {
     return false;
   }
   self.expression();
-  self.block();
+  self.need_block();
   if self.lexer.matches("else") {
-    self.block();
+    // `else if …` chains: the else arm is itself an `if`.
+    if !self.if_statement() {
+      self.need_block();
+    }
   }
   true
 }
@@ -407,6 +574,10 @@ fn object(self: Parser) -> boolean {
   before = self.lexer.anchor();
   if !self.lexer.matches("{{") {
     return false;
+  }
+  // `Name {{ }}` builds a whole default record.
+  if self.lexer.matches("}}") {
+    return true;
   }
   for field in 0..255 {
     i = self.lexer.identifier();
@@ -446,24 +617,46 @@ fn do_operators(self: Parser) -> boolean {
     // `t == 0` and `t + 1` each failed at the operator, while a bare `t;` was fine
     // (loft#1092).
     self.lexer.matches(o.op);
-    self.single_part();
+    if !self.single_part() {
+      // `x = ;` used to parse cleanly: a missing operand read as nothing at all.
+      self.log.error("Expected a value after {o.op}{self.lexer.at()}");
+      do# break;
+    }
     if self.lexer.matches("as") {
       self.type_def(false);
     }
   }
   true
 }
-// <single_part> ::= [ '-' | '!' ] ('(' <expression> ')' | <id> | <value>) <suffixes>
+// <single_part> ::= [ '-' | '!' ] ( <list> | <if_statement> | <match> | <lambda> | <object> | <block> | '(' <expression> ')' | <id> | <value> ) <suffixes>
 
+// A compound value — a vector, `if`, `match`, a lambda, a struct literal or a block — is an operand
+// like any other: `y = match x {{ … }}` and `g = |x| {{ x }}` put it on the right of an
+// operator, where only a plain operand used to be read (loft#1800).  An operand that is
+// none of these is reported rather than read as nothing.
 fn single_part(self: Parser) -> boolean {
-  if self.lexer.matches("-") {
-  } else if self.lexer.matches("!") {
-  }
-  if self.lexer.matches("(") {
-    self.expression();
+  prefixed = self.lexer.matches("-") || self.lexer.matches("!");
+  if self.list()
+    || self.if_statement()
+    || self.match_expr()
+    || self.lambda()
+    || self.object()
+    || self.block() {
+  } else if self.lexer.matches("(") {
+    // A parenthesised expression, or a TUPLE `(a, b)`.
+    for member in 0..256 {
+      at = self.lexer.offset();
+      self.expression();
+      if !self.lexer.matches(",") || self.lexer.test(")") || self.stalled(at) {
+        member# break;
+      }
+    }
     self.expect(")");
-  } else if !self.id() {
-    self.value();
+  } else if !self.id() && !self.value() {
+    if prefixed {
+      self.log.error("Expected a value{self.lexer.at()}");
+    }
+    return false;
   }
   self.suffixes();
   true
@@ -495,25 +688,25 @@ fn suffixes(self: Parser) {
     part# break;
   }
 }
-// <id> ::= <identifier> [ '#' ( 'break' | 'continue' | 'count' | 'index' ) | <object> ]
+// <id> ::= <identifier> { '::' <identifier> } [ '#' <identifier> | <object> ]
 
 fn id(self: Parser) -> boolean {
   name = self.lexer.identifier();
   if !name {
     return false;
   }
+  // A name another module declares: `parser::parse`, `lexer::Lexer {{ … }}`.
+  for part in 0..16 {
+    if !self.lexer.matches("::") {
+      part# break;
+    }
+    self.lexer.identifier();
+  }
   if self.lexer.matches("#") {
-    if self.lexer.matches("break") {
-      return true;
-    }
-    if self.lexer.matches("continue") {
-      return true;
-    }
-    if self.lexer.matches("count") {
-      return true;
-    }
-    if self.lexer.matches("index") {
-      return true;
+    // A loop's `#break` / `#continue` / `#count` / `#index`, and a value's attribute
+    // (`f#format`, `f#size`), which can be assigned: `f#format = LittleEndian;`.
+    if !self.lexer.identifier() {
+      self.log.error("Expected a name after #{self.lexer.at()}");
     }
   } else {
     self.object();
@@ -542,13 +735,16 @@ fn fn_call(self: Parser) -> boolean {
   self.expect(")");
   true
 }
-// <field> ::= '.' <identifier>
+// <field> ::= '.' ( <identifier> | <integer> )
 
 fn field(self: Parser) -> boolean {
   if !self.lexer.matches(".") {
     return false;
   }
-  self.lexer.identifier();
+  // `.name`, or a tuple member by position: `pair.0`.
+  if !self.lexer.identifier() && !self.lexer.int() {
+    self.log.error("Expected a field name{self.lexer.at()}");
+  }
   true
 }
 // <index> ::= '[' { <expression> [ ',' ] } ']'
@@ -634,7 +830,42 @@ fn key_fields(self: Parser, flds: &vector<text>) -> text {
 }
 
 fn type_def(self: Parser, define: boolean) -> u16 {
+  // A TUPLE type `(integer, text?)` and a FUNCTION type `fn(integer) -> text` are types
+  // too; this parser used to stop at their `(` and answer 0 errors for the whole rest of
+  // the file (loft#1800).  They are read, not resolved: this parser answers whether the
+  // source is well formed.
+  if self.lexer.test("(") || self.lexer.test("fn") {
+    is_fn = self.lexer.matches("fn");
+    self.expect("(");
+    for member in 0..256 {
+      if self.lexer.matches(")") {
+        member# break;
+      }
+      at = self.lexer.offset();
+      self.type_def(false);
+      if !self.lexer.matches(",") {
+        self.expect(")");
+        member# break;
+      }
+      if self.stalled(at) {
+        member# break;
+      }
+    }
+    if is_fn && self.lexer.matches("->") {
+      self.type_def(false);
+    }
+    self.lexer.matches("?");
+    return 65535;
+  }
   id = self.lexer.identifier() ?? "";
+  // A type another module declares: `lexer::Lexer`.
+  for part in 0..16 {
+    if !self.lexer.matches("::") {
+      part# break;
+    }
+    id += "::";
+    id += self.lexer.identifier() ?? "";
+  }
   parameters =[];
   flds: vector<text> = [];
   if self.lexer.matches("<") {

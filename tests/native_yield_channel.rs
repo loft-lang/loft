@@ -91,33 +91,52 @@ fn a_nested_tuple_yield_is_refused_by_name() {
     );
 }
 
-/// A tuple carrying a store HANDLE, from a loop body.  The type has a channel — it is the
-/// eager collector that cannot hold it, because a handle pushed once per iteration aliases
-/// the work record the next iteration overwrites.  So this cell refuses for a different
-/// reason than the two above, and the straight-line form of the SAME type must not.
+/// A tuple carrying a store HANDLE, from a loop body the EAGER collector has to run.  The type
+/// has a channel — it is the eager collector that cannot hold it, because a handle pushed once
+/// per iteration aliases the work record the next iteration overwrites.  So this cell refuses
+/// for a different reason than the two above.
+///
+/// Since loft#1798 a loop whose yields are statements is re-descended lazily and hands each
+/// value over as a straight-line yield does, so the SAME type from a plain loop body must not
+/// be refused either; what still runs eagerly is a `yield` inside an expression re-descent
+/// cannot hoist — here, behind a `text` operand the suspend could change.
 #[test]
-fn a_handle_carrying_tuple_from_a_loop_body_is_refused_but_not_straight_line() {
+fn a_handle_carrying_tuple_the_eager_collector_would_hold_is_refused() {
     assert_refused(
-        "loop_handle",
+        "eager_handle",
         "struct P1132 { n: integer }\n\
          fn g(k: integer) -> iterator<(integer, P1132)> {\n\
+         \x20 s = \"a\";\n\
          \x20 i = 0;\n\
-         \x20 while i < k { yield (i, P1132 { n: i * 10 }); i += 1; }\n\
+         \x20 while i < k { s = s + { yield (i, P1132 { n: i * 10 }); \"b\" }; i += 1; }\n\
          }\n\
          fn main() { for t in g(3) { print(\"{t.0} {t.1.n}\\n\"); } }\n",
         "(integer, P1132)",
     );
-    let straight = emit(
-        "straight_handle",
-        "struct P1132 { n: integer }\n\
-         fn g() -> iterator<(integer, P1132)> { yield (1, P1132 { n: 10 }); }\n\
-         fn main() { for t in g() { print(\"{t.0} {t.1.n}\\n\"); } }\n",
-    );
-    assert!(
-        !straight.contains("compile_error!"),
-        "the SAME yield type is fine straight-line — it is the eager collector that cannot \
-         hold a handle, so refusing the type outright would take a working shape with it"
-    );
+    for (tag, src) in [
+        (
+            "straight_handle",
+            "struct P1132 { n: integer }\n\
+             fn g() -> iterator<(integer, P1132)> { yield (1, P1132 { n: 10 }); }\n\
+             fn main() { for t in g() { print(\"{t.0} {t.1.n}\\n\"); } }\n",
+        ),
+        (
+            "loop_handle",
+            "struct P1132 { n: integer }\n\
+             fn g(k: integer) -> iterator<(integer, P1132)> {\n\
+             \x20 i = 0;\n\
+             \x20 while i < k { yield (i, P1132 { n: i * 10 }); i += 1; }\n\
+             }\n\
+             fn main() { for t in g(3) { print(\"{t.0} {t.1.n}\\n\"); } }\n",
+        ),
+    ] {
+        assert!(
+            !emit(tag, src).contains("compile_error!"),
+            "{tag}: the SAME yield type is carried when the yield is a statement — it is the \
+             eager collector that cannot hold a handle, so refusing the type outright would \
+             take a working shape with it"
+        );
+    }
 }
 
 /// A refused type whose NAME carries quotes — a keyed collection renders its key list as
@@ -152,14 +171,18 @@ fn a_refused_type_whose_name_contains_quotes_still_renders_one_message() {
     );
 }
 
-/// The control that keeps the refusal from widening: a by-value tuple from a loop body is
-/// exactly what the eager buffer was taught to carry, so it must emit no refusal at all.
+/// The control that keeps the refusal from widening: a by-value tuple from a loop body the
+/// eager collector runs is exactly what the eager buffer was taught to carry, so it must emit
+/// no refusal at all.  The yield sits inside an expression behind a `text` operand, the shape
+/// that still runs eagerly since loft#1798; the plain loop is re-descended and hands its
+/// tuples over through `next_into`, with no buffer to pack them into.
 #[test]
 fn a_by_value_tuple_from_a_loop_body_is_not_refused() {
     let rs = emit(
         "by_value",
         "fn g(k: integer) -> iterator<(integer, boolean)> {\n\
-         \x20 for i in 0..k { yield (i * 10, i % 2 == 0); }\n\
+         \x20 s = \"a\";\n\
+         \x20 for i in 0..k { s = s + { yield (i * 10, i % 2 == 0); \"b\" }; }\n\
          }\n\
          fn main() { for t in g(3) { print(\"{t.0} {t.1}\\n\"); } }\n",
     );
@@ -171,6 +194,17 @@ fn a_by_value_tuple_from_a_loop_body_is_not_refused() {
     assert!(
         rs.contains("__values.push("),
         "…and it packs through the eager collector, which is what the stride pop reads back"
+    );
+    let lazy = emit(
+        "by_value_lazy",
+        "fn g(k: integer) -> iterator<(integer, boolean)> {\n\
+         \x20 for i in 0..k { yield (i * 10, i % 2 == 0); }\n\
+         }\n\
+         fn main() { for t in g(3) { print(\"{t.0} {t.1}\\n\"); } }\n",
+    );
+    assert!(
+        !lazy.contains("compile_error!") && !lazy.contains("__values.push("),
+        "a plain loop yielding the same tuple is handed over lazily, through no buffer"
     );
 }
 
@@ -196,7 +230,8 @@ fn a_refused_loop_body_yield_emits_the_refusal_and_no_rustc_error() {
         &lf,
         "struct Ck1467 { k: integer, v: integer }\n\
          fn g(n: integer) -> iterator<(Ck1467, integer)> {\n\
-         \x20 for i in 0..n { yield (Ck1467 { k: i, v: i * 11 }, i); }\n\
+         \x20 s = \"a\";\n\
+         \x20 for i in 0..n { s = s + { yield (Ck1467 { k: i, v: i * 11 }, i); \"b\" }; }\n\
          }\n\
          fn main() { s = 0; for t in g(3) { s += t.1 + t.0.v; } print(\"{s}\\n\"); }\n",
     )

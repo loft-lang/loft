@@ -1,0 +1,45 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @F46 — a type alias IS the type it names: "anywhere one works the other does too".  A
+// construction is one of those places, and it was the one where the two parted company:
+// `type Point = Pt; Point { x: 4 }` left the `{` in the stream and was refused as
+// `Expect token ;`.  The alias now builds the struct it names — through a second alias, for a
+// struct-enum VARIANT, for a generic INSTANCE, and whichever of the alias and the struct is
+// declared first.  The value is the struct's, so it passes where the struct is wanted.
+//
+// @falsified-at: ec35ee1de — measured by hand: the parent refuses `Point { x: 4, y: 5 }` with
+//   `Expect token ;` (and `Unknown variable` for every binding after it), on both backends;
+//   here every cell below runs and asserts clean on both.
+//   CHANNEL: exit — the control refuses to compile, so nothing runs.
+//   WITNESS: `error: Expect token ;` at the `{` of `Point { x: 4, y: 5 }`.
+//   HOLDS: here no diagnostic, every assertion passes and nothing leaks, on both backends.
+
+fn sum_pt(p: Pt) -> integer { p.x + p.y }
+
+fn main() {
+  p = Point { x: 4, y: 5 };
+  assert(p.x == 4 && p.y == 5, "an alias declared after its use builds the struct");
+  q: Point = Point { x: 1, y: 2 };
+  assert(sum_pt(q) == 3, "the alias's value passes where the struct is wanted");
+  pp = P2 { x: 7, y: 8 };
+  assert(pp.y == 8, "an alias of an alias builds the struct");
+  s: Sh = Round { r: 3 };
+  r3 = match s { Circ { r } => r, Sq { s } => s };
+  assert(r3 == 3, "an alias of a record variant builds the variant");
+  b = IntBox { v: 9 };
+  assert(b.v == 9, "an alias of a generic instance builds the instance");
+  f = Fwd { a: 11 };
+  assert(f.a == 11, "an alias declared before a forward struct builds it");
+}
+
+type Point = Pt;
+type P2 = Point;
+type Fwd = Later;
+struct Pt { x: integer, y: integer }
+enum Shape { Circ { r: integer }, Sq { s: integer } }
+type Sh = Shape;
+type Round = Circ;
+struct Box<T> { v: T }
+type IntBox = Box<integer>;
+struct Later { a: integer }

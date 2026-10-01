@@ -20,12 +20,427 @@
 <style>.playground-link{display:inline-block;margin:0.3em 0 0.8em;padding:4px 12px;background:#2563eb;color:#fff;border-radius:4px;text-decoration:none;font-size:0.85em}.playground-link:hover{filter:brightness(1.15)}@media print{.playground-link{display:none}}</style>
 </head>
 <body>
-<nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-vector-operations.html">Vector operations</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
+<nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>regex source</h1>
 <article>
 <p><a href="lib-regex.html">← regex</a> · <a href="lib-regex-api.html">API reference</a> · version 0.3.3</p>
-<p>The source for <code>regex</code> 0.3.3 is not on this build box, so this page could not be rendered from it. <code>loft install regex</code> fetches the package, and the repository is the other route.</p>
-<p><a href="https://github.com/loft-lang/loft-libs-core/tree/main/regex">https://github.com/loft-lang/loft-libs-core/tree/main/regex</a></p>
+<p class="lib-legend">4 file(s), 396 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<h2 id="items">Public items</h2>
+<p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
+<table class="lib-table">
+<tr><th>Item</th><th>Defined</th><th>Worked example</th><th>Call sites</th></tr>
+<tr><td><code>search</code> <span class="search-kind">fn</span></td><td><a href="#src-regex-loft-L77">77</a></td><td><a href="#tests-worked-examples-loft-L51">RGX-002</a></td><td><a href="#src-regex-loft-L111">111</a> <a href="#src-regex-loft-L113">113</a> <a href="#src-regex-loft-L127">127</a> <a href="#src-regex-loft-L129">129</a> <a href="#tests-auto-trigger-loft-L19">19</a> <a href="#tests-regex-loft-L24">24</a> … (19 total)</td></tr>
+<tr><td><code>matches</code> <span class="search-kind">fn</span></td><td><a href="#src-regex-loft-L86">86</a></td><td><a href="#tests-worked-examples-loft-L80">RGX-003</a></td><td><a href="#tests-auto-trigger-loft-L17">17</a> <a href="#tests-auto-trigger-loft-L18">18</a> <a href="#tests-regex-loft-L18">18</a> <a href="#tests-regex-loft-L19">19</a> <a href="#tests-regex-loft-L21">21</a> <a href="#tests-regex-loft-L29">29</a> … (18 total)</td></tr>
+<tr><td><code>split_on</code> <span class="search-kind">fn</span></td><td><a href="#src-regex-loft-L97">97</a></td><td><a href="#tests-worked-examples-loft-L104">RGX-004</a></td><td><a href="#src-regex-loft-L118">118</a> <a href="#src-regex-loft-L120">120</a> <a href="#src-regex-loft-L135">135</a> <a href="#src-regex-loft-L137">137</a> <a href="#tests-auto-trigger-loft-L21">21</a> <a href="#tests-auto-trigger-loft-L24">24</a> … (16 total)</td></tr>
+<tr><td><code>find</code> <span class="search-kind">fn</span></td><td><a href="#src-regex-loft-L110">110</a></td><td><a href="#tests-worked-examples-loft-L23">RGX-001</a></td><td><a href="#tests-regex-loft-L97">97</a> <a href="#tests-worked-examples-loft-L40">40</a> <a href="#tests-worked-examples-loft-L42">42</a></td></tr>
+<tr><td><code>split</code> <span class="search-kind">fn</span></td><td><a href="#src-regex-loft-L117">117</a></td><td><a href="#tests-worked-examples-loft-L23">RGX-001</a></td><td><a href="#tests-regex-loft-L80">80</a> <a href="#tests-regex-loft-L81">81</a> <a href="#tests-worked-examples-loft-L120">120</a></td></tr>
+<tr><td><code>regex_find</code> <span class="search-kind">fn</span></td><td><a href="#src-regex-loft-L126">126</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>regex_split</code> <span class="search-kind">fn</span></td><td><a href="#src-regex-loft-L134">134</a></td><td>—</td><td>none in this package</td></tr>
+</table>
+<h2 id="src-regex-loft">src/regex.loft</h2>
+<pre class="src"><code><span id="src-regex-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
+<span id="src-regex-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
+<span id="src-regex-loft-L3"><span class="cm">// --- Regex ---</span></span>
+<span id="src-regex-loft-L4"><span class="cm">// Regular expressions for loft, backed by the Rust `regex` crate.</span></span>
+<span id="src-regex-loft-L5"><span class="cm">//</span></span>
+<span id="src-regex-loft-L6"><span class="cm">// Deliberately minimal — regex here is the *small-script* text tool (log</span></span>
+<span id="src-regex-loft-L7"><span class="cm">// scanning, CLI fields, quick extraction).  You pass the pattern inline;</span></span>
+<span id="src-regex-loft-L8"><span class="cm">// compiled patterns are cached in a thread-local table, so repeated calls</span></span>
+<span id="src-regex-loft-L9"><span class="cm">// with the same pattern are cheap.  Structured parsing — grammars, ASTs,</span></span>
+<span id="src-regex-loft-L10"><span class="cm">// recursion — is NOT this library's job; that is the match-pattern parser</span></span>
+<span id="src-regex-loft-L11"><span class="cm">// framework (jjstwerff/loft `plans/.../26-match-peg`).</span></span>
+<span id="src-regex-loft-L12"><span class="cm">//</span></span>
+<span id="src-regex-loft-L13"><span class="cm">// The public API is subject-first text methods, named with the conventional</span></span>
+<span id="src-regex-loft-L14"><span class="cm">// regex verbs so they read naturally on a `text`:</span></span>
+<span id="src-regex-loft-L15"><span class="cm">//   * line.search("[0-9]+")     -&gt; byte offset of the first match, or null</span></span>
+<span id="src-regex-loft-L16"><span class="cm">//   * line.matches("[0-9]+")    -&gt; true if the pattern matches anywhere</span></span>
+<span id="src-regex-loft-L17"><span class="cm">//   * for f in line.split_on("[,;]") { … }   -&gt; lazy split on the pattern</span></span>
+<span id="src-regex-loft-L18"><span class="cm">// The verbs dodge the stdlib literal-text methods deliberately: bare `find`</span></span>
+<span id="src-regex-loft-L19"><span class="cm">// and `split` on `text` are already the stdlib's *literal* substring-find and</span></span>
+<span id="src-regex-loft-L20"><span class="cm">// character-split (C95 blocks reusing either name, even as an overload), so</span></span>
+<span id="src-regex-loft-L21"><span class="cm">// regex uses `search` (cf. JS `String.search`, Python `re.search`) and</span></span>
+<span id="src-regex-loft-L22"><span class="cm">// `split_on`.  `matches` is collision-free and keeps its bare name.</span></span>
+<span id="src-regex-loft-L23"><span class="cm">//</span></span>
+<span id="src-regex-loft-L24"><span class="cm">// Phase 0: matches, search, split_on.  match_groups / replace are the next</span></span>
+<span id="src-regex-loft-L25"><span class="cm">// increment (capture-group spans + 3-arg-text returns).</span></span>
+<span id="src-regex-loft-L26"></span>
+<span id="src-regex-loft-L27"><span class="cm">// --- Internal natives (bridge to the Rust `regex` crate) ---</span></span>
+<span id="src-regex-loft-L28"></span>
+<span id="src-regex-loft-L29"><span class="cm">// True if `pattern` matches anywhere in `input`.</span></span>
+<span id="src-regex-loft-L30"><span class="kw">fn</span> <span class="fn-call">is_match</span>(pattern: <span class="ty"><a href="stdlib-types.html">text</a></span>, input: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span>;</span>
+<span id="src-regex-loft-L31">#native</span>
+<span id="src-regex-loft-L32"></span>
+<span id="src-regex-loft-L33"><span class="cm">// Byte offset of the START of the first match, or null.  Named distinctly</span></span>
+<span id="src-regex-loft-L34"><span class="cm">// from stdlib `text.find` so unqualified calls inside this module resolve</span></span>
+<span id="src-regex-loft-L35"><span class="cm">// here, not to the (reverse-argument) text method.</span></span>
+<span id="src-regex-loft-L36"><span class="kw">fn</span> <span class="fn-call">match_start</span>(pattern: <span class="ty"><a href="stdlib-types.html">text</a></span>, input: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-regex-loft-L37">#native</span>
+<span id="src-regex-loft-L38"></span>
+<span id="src-regex-loft-L39"><span class="cm">// Byte offset of the END of the first match, or null.</span></span>
+<span id="src-regex-loft-L40"><span class="kw">fn</span> <span class="fn-call">match_end</span>(pattern: <span class="ty"><a href="stdlib-types.html">text</a></span>, input: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-regex-loft-L41">#native</span>
+<span id="src-regex-loft-L42"></span>
+<span id="src-regex-loft-L43"><span class="cm">// (internal) The split loop.  Distinct name so unqualified calls inside this</span></span>
+<span id="src-regex-loft-L44"><span class="cm">// module resolve here, not to stdlib `text.split` (character separator).</span></span>
+<span id="src-regex-loft-L45"><span class="cm">// Yields each piece lazily; regex byte offsets line up with loft's</span></span>
+<span id="src-regex-loft-L46"><span class="cm">// byte-indexed text slicing — so the running bound is `size()` (bytes), not</span></span>
+<span id="src-regex-loft-L47"><span class="cm">// `len()` (characters).</span></span>
+<span id="src-regex-loft-L48"><span class="kw">fn</span> <span class="fn-call">split_iter</span>(pattern: <span class="ty"><a href="stdlib-types.html">text</a></span>, input: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; iterator&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt; {</span>
+<span id="src-regex-loft-L49">  pos = <span class="nm">0</span>;</span>
+<span id="src-regex-loft-L50">  n = input.<span class="fn-call"><a href="stdlib-text.html">size</a></span>();</span>
+<span id="src-regex-loft-L51">  while <span class="kw">true</span> {</span>
+<span id="src-regex-loft-L52">    rest = input[pos..n];</span>
+<span id="src-regex-loft-L53">    s = <span class="fn-call">match_start</span>(pattern, rest);</span>
+<span id="src-regex-loft-L54">    <span class="kw">if</span> s &lt; <span class="nm">0</span> {</span>
+<span id="src-regex-loft-L55">      yield rest;</span>
+<span id="src-regex-loft-L56">      <span class="kw">break</span>;</span>
+<span id="src-regex-loft-L57">    }</span>
+<span id="src-regex-loft-L58">    yield input[pos..pos + s];</span>
+<span id="src-regex-loft-L59">    e = <span class="fn-call">match_end</span>(pattern, rest);</span>
+<span id="src-regex-loft-L60">    <span class="kw">if</span> e &lt;= s {</span>
+<span id="src-regex-loft-L61">      e = s + <span class="nm">1</span>;</span>
+<span id="src-regex-loft-L62">    }</span>
+<span id="src-regex-loft-L63">    pos = pos + e;</span>
+<span id="src-regex-loft-L64">  }</span>
+<span id="src-regex-loft-L65">}</span>
+<span id="src-regex-loft-L66"></span>
+<span id="src-regex-loft-L67"><span class="cm">// --- Public API: subject-first text methods (call as line.verb(pattern)) ---</span></span>
+<span id="src-regex-loft-L68"></span>
+<span id="src-regex-loft-L69"><span class="cm">// Byte offset of the first match of `pattern` in the text, or null when there</span></span>
+<span id="src-regex-loft-L70"><span class="cm">// is no match (or the pattern is invalid).  The conventional regex-search verb</span></span>
+<span id="src-regex-loft-L71"><span class="cm">// — named `search`, not `find`, because bare `find` on text is the stdlib's</span></span>
+<span id="src-regex-loft-L72"><span class="cm">// literal substring search.  Call as  line.search("[0-9]+").</span></span>
+<span id="src-regex-loft-L73"><span class="cm">// Example: @RGX-001 — why this is `search` and not `find`, and what a bare</span></span>
+<span id="src-regex-loft-L74"><span class="cm">// `find(pattern, input)` answers instead.</span></span>
+<span id="src-regex-loft-L75"><span class="cm">// Example: @RGX-002 — the answer is a BYTE offset (slice with it, compare it to</span></span>
+<span id="src-regex-loft-L76"><span class="cm">// `size()` not `len()`), and a miss is null despite the `integer` return type.</span></span>
+<span id="src-regex-loft-L77"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">search</span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>, pattern: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-regex-loft-L78">  <span class="fn-call">match_start</span>(pattern, self)</span>
+<span id="src-regex-loft-L79">}</span>
+<span id="src-regex-loft-L80"></span>
+<span id="src-regex-loft-L81"><span class="cm">// True if `pattern` matches anywhere in the text.  `self` registers this as</span></span>
+<span id="src-regex-loft-L82"><span class="cm">// BOTH a method (`line.matches(p)`) and a free function (`matches(line, p)`).</span></span>
+<span id="src-regex-loft-L83"><span class="cm">// Collision-free on `text` (the stdlib has `contains`, not `matches`).</span></span>
+<span id="src-regex-loft-L84"><span class="cm">// Example: @RGX-003 — a pattern that never compiled answers false, exactly like</span></span>
+<span id="src-regex-loft-L85"><span class="cm">// text that simply did not match.</span></span>
+<span id="src-regex-loft-L86"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">matches</span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>, pattern: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-regex-loft-L87">  <span class="fn-call">is_match</span>(pattern, self)</span>
+<span id="src-regex-loft-L88">}</span>
+<span id="src-regex-loft-L89"></span>
+<span id="src-regex-loft-L90"><span class="cm">// Split the text on matches of `pattern`, yielding each piece lazily through</span></span>
+<span id="src-regex-loft-L91"><span class="cm">// an `iterator&lt;text&gt;` (reuses loft's coroutine channel — nothing is</span></span>
+<span id="src-regex-loft-L92"><span class="cm">// materialised).  Named `split_on`, not `split`, because bare `split` on text</span></span>
+<span id="src-regex-loft-L93"><span class="cm">// is the stdlib character-separator split.  Call as</span></span>
+<span id="src-regex-loft-L94"><span class="cm">//   for piece in line.split_on("[,;]") { }.</span></span>
+<span id="src-regex-loft-L95"><span class="cm">// Example: @RGX-004 — it yields the gaps between matches, so a separator at</span></span>
+<span id="src-regex-loft-L96"><span class="cm">// either end leaves an empty piece and unmatched text comes back as ONE piece.</span></span>
+<span id="src-regex-loft-L97"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">split_on</span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>, pattern: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; iterator&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt; {</span>
+<span id="src-regex-loft-L98">  yield from <span class="fn-call">split_iter</span>(pattern, self);</span>
+<span id="src-regex-loft-L99">}</span>
+<span id="src-regex-loft-L100"></span>
+<span id="src-regex-loft-L101"><span class="cm">// --- Superseded spellings (kept working; steered to the clean verbs) ---</span></span>
+<span id="src-regex-loft-L102"><span class="cm">// An earlier release shipped these two extra call styles: a pattern-first free</span></span>
+<span id="src-regex-loft-L103"><span class="cm">// function (`regex::find` / `regex::split`) and a `regex_`-prefixed method</span></span>
+<span id="src-regex-loft-L104"><span class="cm">// (`line.regex_find` / `line.regex_split`).  Both still work unchanged; the</span></span>
+<span id="src-regex-loft-L105"><span class="cm">// recommended-idiom channel (@PLN102 arc C) steers new calls to `search` /</span></span>
+<span id="src-regex-loft-L106"><span class="cm">// `split_on` so the surface converges on one clean spelling per operation.</span></span>
+<span id="src-regex-loft-L107"></span>
+<span id="src-regex-loft-L108"><span class="cm">// Example: @RGX-001 — reachable only as `regex::find`; the bare spelling</span></span>
+<span id="src-regex-loft-L109"><span class="cm">// resolves the stdlib `text` method and answers something else entirely.</span></span>
+<span id="src-regex-loft-L110"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-text.html">find</a></span>(pattern: <span class="ty"><a href="stdlib-types.html">text</a></span>, input: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-regex-loft-L111">  input.<span class="fn-call">search</span>(pattern)</span>
+<span id="src-regex-loft-L112">}</span>
+<span id="src-regex-loft-L113">#superseded <span class="st">"search"</span></span>
+<span id="src-regex-loft-L114"></span>
+<span id="src-regex-loft-L115"><span class="cm">// Example: @RGX-001 — same shadow as `find`: bare `split` is the stdlib's</span></span>
+<span id="src-regex-loft-L116"><span class="cm">// character split, not this one.</span></span>
+<span id="src-regex-loft-L117"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-text.html">split</a></span>(pattern: <span class="ty"><a href="stdlib-types.html">text</a></span>, input: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; iterator&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt; {</span>
+<span id="src-regex-loft-L118">  yield from input.<span class="fn-call">split_on</span>(pattern);</span>
+<span id="src-regex-loft-L119">}</span>
+<span id="src-regex-loft-L120">#superseded <span class="st">"split_on"</span></span>
+<span id="src-regex-loft-L121"></span>
+<span id="src-regex-loft-L122"><span class="cm">// `find` as a METHOD on the text, for a caller that prefers `s.regex_find(p)`.</span></span>
+<span id="src-regex-loft-L123"><span class="cm">// Superseded by the stdlib's `search`, which is the same operation without an</span></span>
+<span id="src-regex-loft-L124"><span class="cm">// import — the prefix exists only because a bare `find` resolves to the</span></span>
+<span id="src-regex-loft-L125"><span class="cm">// stdlib's method first.</span></span>
+<span id="src-regex-loft-L126"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">regex_find</span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>, pattern: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-regex-loft-L127">  self.<span class="fn-call">search</span>(pattern)</span>
+<span id="src-regex-loft-L128">}</span>
+<span id="src-regex-loft-L129">#superseded <span class="st">"search"</span></span>
+<span id="src-regex-loft-L130"></span>
+<span id="src-regex-loft-L131"><span class="cm">// `split` as a method, and superseded by `split_on` for the same reason.  The</span></span>
+<span id="src-regex-loft-L132"><span class="cm">// distinction that matters: this splits on a PATTERN, while the stdlib's bare</span></span>
+<span id="src-regex-loft-L133"><span class="cm">// `split` splits on a character.</span></span>
+<span id="src-regex-loft-L134"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">regex_split</span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>, pattern: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; iterator&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt; {</span>
+<span id="src-regex-loft-L135">  yield from self.<span class="fn-call">split_on</span>(pattern);</span>
+<span id="src-regex-loft-L136">}</span>
+<span id="src-regex-loft-L137">#superseded <span class="st">"split_on"</span></span>
+</code></pre>
+<h2 id="tests-auto-trigger-loft">tests/auto_trigger.loft</h2>
+<pre class="src"><code><span id="tests-auto-trigger-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
+<span id="tests-auto-trigger-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
+<span id="tests-auto-trigger-loft-L3"><span class="cm">// Tier-1 trigger: the text-method form with NO `use regex;`.  The parser</span></span>
+<span id="tests-auto-trigger-loft-L4"><span class="cm">// auto-loads regex via its declared `[triggers] enabled` — the `matches` /</span></span>
+<span id="tests-auto-trigger-loft-L5"><span class="cm">// `search` / `split_on` text-methods derived from this package's source.</span></span>
+<span id="tests-auto-trigger-loft-L6"><span class="cm">// The two `#superseded` spellings `find` / `split` ARE shadowed by the stdlib</span></span>
+<span id="tests-auto-trigger-loft-L7"><span class="cm">// `text` methods of the same name — that is precisely why `search` / `split_on`</span></span>
+<span id="tests-auto-trigger-loft-L8"><span class="cm">// exist and why those two are superseded.  Asserting the warning rather than</span></span>
+<span id="tests-auto-trigger-loft-L9"><span class="cm">// suppressing it: if the shadow ever disappears (the superseded pair removed, or</span></span>
+<span id="tests-auto-trigger-loft-L10"><span class="cm">// the stdlib method renamed) this annotation goes red and asks to be deleted.</span></span>
+<span id="tests-auto-trigger-loft-L11"><span class="cm">// It does couple THIS SUITE to a loft carrying `shadowed-by-method` (2026-08-16</span></span>
+<span id="tests-auto-trigger-loft-L12"><span class="cm">// onward); the library's own runtime behaviour is unchanged, so the package's</span></span>
+<span id="tests-auto-trigger-loft-L13"><span class="cm">// `loft` floor stays where it is.</span></span>
+<span id="tests-auto-trigger-loft-L14"><span class="cm">// @EXPECT_WARNING: `find` is also a method on `text`</span></span>
+<span id="tests-auto-trigger-loft-L15"><span class="cm">// @EXPECT_WARNING: `split` is also a method on `text`</span></span>
+<span id="tests-auto-trigger-loft-L16"><span class="kw">fn</span> <span class="fn-call">main</span>() {</span>
+<span id="tests-auto-trigger-loft-L17">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"abc123"</span>.<span class="fn-call">matches</span>(<span class="st">"[0-9]+"</span>), <span class="st">"matches auto-loads regex (no use)"</span>);</span>
+<span id="tests-auto-trigger-loft-L18">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="st">"abcdef"</span>.<span class="fn-call">matches</span>(<span class="st">"[0-9]+"</span>), <span class="st">"no digits -&gt; no match"</span>);</span>
+<span id="tests-auto-trigger-loft-L19">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"abc123"</span>.<span class="fn-call">search</span>(<span class="st">"[0-9]+"</span>) == <span class="nm">3</span>, <span class="st">"search auto-loads"</span>);</span>
+<span id="tests-auto-trigger-loft-L20">  out = <span class="st">""</span>;</span>
+<span id="tests-auto-trigger-loft-L21">  <span class="kw">for</span> p <span class="kw">in</span> <span class="st">"a,b,c"</span>.<span class="fn-call">split_on</span>(<span class="st">","</span>) {</span>
+<span id="tests-auto-trigger-loft-L22">    out = <span class="st">"{out}{p}."</span>;</span>
+<span id="tests-auto-trigger-loft-L23">  }</span>
+<span id="tests-auto-trigger-loft-L24">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(out == <span class="st">"a.b.c."</span>, <span class="st">"split_on auto-loads (got {out})"</span>);</span>
+<span id="tests-auto-trigger-loft-L25">}</span>
+</code></pre>
+<h2 id="tests-regex-loft">tests/regex.loft</h2>
+<pre class="src"><code><span id="tests-regex-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
+<span id="tests-regex-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
+<span id="tests-regex-loft-L3"><span class="cm">// Regex Phase 0: matches / find / split, as free functions AND text methods.</span></span>
+<span id="tests-regex-loft-L4"><span class="cm">// The two `#superseded` spellings `find` / `split` ARE shadowed by the stdlib</span></span>
+<span id="tests-regex-loft-L5"><span class="cm">// `text` methods of the same name — that is precisely why `search` / `split_on`</span></span>
+<span id="tests-regex-loft-L6"><span class="cm">// exist and why those two are superseded.  Asserting the warning rather than</span></span>
+<span id="tests-regex-loft-L7"><span class="cm">// suppressing it: if the shadow ever disappears (the superseded pair removed, or</span></span>
+<span id="tests-regex-loft-L8"><span class="cm">// the stdlib method renamed) this annotation goes red and asks to be deleted.</span></span>
+<span id="tests-regex-loft-L9"><span class="cm">// It does couple THIS SUITE to a loft carrying `shadowed-by-method` (2026-08-16</span></span>
+<span id="tests-regex-loft-L10"><span class="cm">// onward); the library's own runtime behaviour is unchanged, so the package's</span></span>
+<span id="tests-regex-loft-L11"><span class="cm">// `loft` floor stays where it is.</span></span>
+<span id="tests-regex-loft-L12"><span class="cm">// @EXPECT_WARNING: `find` is also a method on `text`</span></span>
+<span id="tests-regex-loft-L13"><span class="cm">// @EXPECT_WARNING: `split` is also a method on `text`</span></span>
+<span id="tests-regex-loft-L14"><span class="kw">use</span> regex::*;</span>
+<span id="tests-regex-loft-L15"></span>
+<span id="tests-regex-loft-L16"><span class="kw">fn</span> <span class="fn-call">main</span>() {</span>
+<span id="tests-regex-loft-L17">  <span class="cm">// --- matches: text method (subject.matches(pattern)) ---</span></span>
+<span id="tests-regex-loft-L18">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"abc123"</span>.<span class="fn-call">matches</span>(<span class="st">"[0-9]+"</span>), <span class="st">"digits present -&gt; match"</span>);</span>
+<span id="tests-regex-loft-L19">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="st">"abcdef"</span>.<span class="fn-call">matches</span>(<span class="st">"[0-9]+"</span>), <span class="st">"no digits -&gt; no match"</span>);</span>
+<span id="tests-regex-loft-L20">  <span class="cm">// ...and the free form (subject-first, via `both`)</span></span>
+<span id="tests-regex-loft-L21">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(regex::<span class="fn-call">matches</span>(<span class="st">"abc123"</span>, <span class="st">"[0-9]+"</span>), <span class="st">"free matches(input, pattern)"</span>);</span>
+<span id="tests-regex-loft-L22"></span>
+<span id="tests-regex-loft-L23">  <span class="cm">// --- find: free fn (pattern-first) AND search method (subject-first) ---</span></span>
+<span id="tests-regex-loft-L24">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"abc123"</span>.<span class="fn-call">search</span>(<span class="st">"[0-9]+"</span>) == <span class="nm">3</span>, <span class="st">"search -&gt; offset 3"</span>);</span>
+<span id="tests-regex-loft-L25">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"abc123"</span>.<span class="fn-call">search</span>(<span class="st">"[0-9]+"</span>) == <span class="nm">3</span>, <span class="st">"method search -&gt; offset 3"</span>);</span>
+<span id="tests-regex-loft-L26">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="st">"abcdef"</span>.<span class="fn-call">search</span>(<span class="st">"[0-9]+"</span>), <span class="st">"search no match -&gt; null"</span>);</span>
+<span id="tests-regex-loft-L27"></span>
+<span id="tests-regex-loft-L28">  <span class="cm">// --- anchored pattern ---</span></span>
+<span id="tests-regex-loft-L29">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"foobar"</span>.<span class="fn-call">matches</span>(<span class="st">"^foo"</span>), <span class="st">"^foo matches foobar"</span>);</span>
+<span id="tests-regex-loft-L30">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="st">"barfoo"</span>.<span class="fn-call">matches</span>(<span class="st">"^foo"</span>), <span class="st">"^foo does not match barfoo"</span>);</span>
+<span id="tests-regex-loft-L31"></span>
+<span id="tests-regex-loft-L32">  <span class="cm">// --- invalid pattern fails safely (no raise) ---</span></span>
+<span id="tests-regex-loft-L33">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="st">"anything"</span>.<span class="fn-call">matches</span>(<span class="st">"[unclosed"</span>), <span class="st">"invalid pattern -&gt; false"</span>);</span>
+<span id="tests-regex-loft-L34">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="st">"anything"</span>.<span class="fn-call">search</span>(<span class="st">"("</span>), <span class="st">"invalid pattern -&gt; null"</span>);</span>
+<span id="tests-regex-loft-L35"></span>
+<span id="tests-regex-loft-L36">  <span class="cm">// --- cache: many repeated calls with the same pattern stay correct ---</span></span>
+<span id="tests-regex-loft-L37">  ok = <span class="kw">true</span>;</span>
+<span id="tests-regex-loft-L38">  <span class="kw">for</span> _i <span class="kw">in</span> <span class="nm">0..200</span> {</span>
+<span id="tests-regex-loft-L39">    <span class="kw">if</span> !<span class="st">"hello"</span>.<span class="fn-call">matches</span>(<span class="st">"[a-z]+"</span>) {</span>
+<span id="tests-regex-loft-L40">      ok = <span class="kw">false</span>;</span>
+<span id="tests-regex-loft-L41">    }</span>
+<span id="tests-regex-loft-L42">  }</span>
+<span id="tests-regex-loft-L43">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(ok, <span class="st">"cached repeated calls remain correct"</span>);</span>
+<span id="tests-regex-loft-L44"></span>
+<span id="tests-regex-loft-L45">  <span class="cm">// --- split: free fn (pattern-first) ---</span></span>
+<span id="tests-regex-loft-L46">  parts = <span class="st">""</span>;</span>
+<span id="tests-regex-loft-L47">  count = <span class="nm">0</span>;</span>
+<span id="tests-regex-loft-L48">  <span class="kw">for</span> piece <span class="kw">in</span> <span class="st">"a,b;c"</span>.<span class="fn-call">split_on</span>(<span class="st">"[,;]"</span>) {</span>
+<span id="tests-regex-loft-L49">    parts = <span class="st">"{parts}{piece}|"</span>;</span>
+<span id="tests-regex-loft-L50">    count = count + <span class="nm">1</span>;</span>
+<span id="tests-regex-loft-L51">  }</span>
+<span id="tests-regex-loft-L52">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(count == <span class="nm">3</span>, <span class="st">"split_on -&gt; 3 pieces (got {count})"</span>);</span>
+<span id="tests-regex-loft-L53">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(parts == <span class="st">"a|b|c|"</span>, <span class="st">"split_on pieces = a|b|c| (got {parts})"</span>);</span>
+<span id="tests-regex-loft-L54"></span>
+<span id="tests-regex-loft-L55">  <span class="cm">// --- split: split_on method (subject-first) ---</span></span>
+<span id="tests-regex-loft-L56">  mparts = <span class="st">""</span>;</span>
+<span id="tests-regex-loft-L57">  <span class="kw">for</span> piece <span class="kw">in</span> <span class="st">"x,y,z"</span>.<span class="fn-call">split_on</span>(<span class="st">","</span>) {</span>
+<span id="tests-regex-loft-L58">    mparts = <span class="st">"{mparts}{piece}."</span>;</span>
+<span id="tests-regex-loft-L59">  }</span>
+<span id="tests-regex-loft-L60">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(mparts == <span class="st">"x.y.z."</span>, <span class="st">"method split_on pieces (got {mparts})"</span>);</span>
+<span id="tests-regex-loft-L61">}</span>
+<span id="tests-regex-loft-L62"></span>
+<span id="tests-regex-loft-L63"><span class="kw">fn</span> <span class="fn-call">test_matches_method</span>() {</span>
+<span id="tests-regex-loft-L64">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"abc123"</span>.<span class="fn-call">matches</span>(<span class="st">"[0-9]+"</span>), <span class="st">"digits present"</span>);</span>
+<span id="tests-regex-loft-L65">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="st">"xyz"</span>.<span class="fn-call">matches</span>(<span class="st">"[0-9]+"</span>), <span class="st">"no digits"</span>);</span>
+<span id="tests-regex-loft-L66">}</span>
+<span id="tests-regex-loft-L67"></span>
+<span id="tests-regex-loft-L68"><span class="kw">fn</span> <span class="fn-call">test_search_method</span>() {</span>
+<span id="tests-regex-loft-L69">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"hello world"</span>.<span class="fn-call">search</span>(<span class="st">"world"</span>) == <span class="nm">6</span>, <span class="st">"world at offset 6"</span>);</span>
+<span id="tests-regex-loft-L70">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="st">"hello there"</span>.<span class="fn-call">search</span>(<span class="st">"world"</span>), <span class="st">"no world -&gt; null"</span>);</span>
+<span id="tests-regex-loft-L71">}</span>
+<span id="tests-regex-loft-L72"></span>
+<span id="tests-regex-loft-L73"><span class="kw">fn</span> <span class="fn-call">test_split_on_method</span>() {</span>
+<span id="tests-regex-loft-L74">  out = <span class="st">""</span>;</span>
+<span id="tests-regex-loft-L75">  n = <span class="nm">0</span>;</span>
+<span id="tests-regex-loft-L76">  <span class="kw">for</span> p <span class="kw">in</span> <span class="st">"one  two   three"</span>.<span class="fn-call">split_on</span>(<span class="st">" +"</span>) {</span>
+<span id="tests-regex-loft-L77">    out = <span class="st">"{out}{p}."</span>;</span>
+<span id="tests-regex-loft-L78">    n = n + <span class="nm">1</span>;</span>
+<span id="tests-regex-loft-L79">  }</span>
+<span id="tests-regex-loft-L80">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(n == <span class="nm">3</span>, <span class="st">"whitespace-run split -&gt; 3 (got {n})"</span>);</span>
+<span id="tests-regex-loft-L81">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(out == <span class="st">"one.two.three."</span>, <span class="st">"split on ' +' (got {out})"</span>);</span>
+<span id="tests-regex-loft-L82">}</span>
+<span id="tests-regex-loft-L83"></span>
+<span id="tests-regex-loft-L84"><span class="kw">fn</span> <span class="fn-call">test_free_functions</span>() {</span>
+<span id="tests-regex-loft-L85">  <span class="cm">// the pattern-first free forms still work</span></span>
+<span id="tests-regex-loft-L86">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"abc123"</span>.<span class="fn-call">search</span>(<span class="st">"[0-9]+"</span>) == <span class="nm">3</span>, <span class="st">"search"</span>);</span>
+<span id="tests-regex-loft-L87">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(regex::<span class="fn-call">matches</span>(<span class="st">"abc123"</span>, <span class="st">"[0-9]+"</span>), <span class="st">"free matches subject-first"</span>);</span>
+<span id="tests-regex-loft-L88">  c = <span class="nm">0</span>;</span>
+<span id="tests-regex-loft-L89">  <span class="kw">for</span> _p <span class="kw">in</span> <span class="st">"a,b"</span>.<span class="fn-call">split_on</span>(<span class="st">","</span>) {</span>
+<span id="tests-regex-loft-L90">    c = c + <span class="nm">1</span>;</span>
+<span id="tests-regex-loft-L91">  }</span>
+<span id="tests-regex-loft-L92">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(c == <span class="nm">2</span>, <span class="st">"split_on count"</span>);</span>
+<span id="tests-regex-loft-L93">}</span>
+<span id="tests-regex-loft-L94"></span>
+<span id="tests-regex-loft-L95"><span class="kw">fn</span> <span class="fn-call">test_invalid_pattern_safe</span>() {</span>
+<span id="tests-regex-loft-L96">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="st">"x"</span>.<span class="fn-call">matches</span>(<span class="st">"("</span>), <span class="st">"invalid -&gt; no match"</span>);</span>
+<span id="tests-regex-loft-L97">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="st">"x"</span>.<span class="fn-call">search</span>(<span class="st">"["</span>), <span class="st">"invalid -&gt; null find"</span>);</span>
+<span id="tests-regex-loft-L98">}</span>
+</code></pre>
+<h2 id="tests-worked-examples-loft">tests/worked-examples.loft</h2>
+<pre class="src"><code><span id="tests-worked-examples-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
+<span id="tests-worked-examples-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
+<span id="tests-worked-examples-loft-L3"><span class="cm">//</span></span>
+<span id="tests-worked-examples-loft-L4"><span class="cm">// Worked examples for the `regex` library (@PLN141).  Each `test_*` below is a</span></span>
+<span id="tests-worked-examples-loft-L5"><span class="cm">// REAL, run-every-CI demonstration of a contract the signature cannot state; the</span></span>
+<span id="tests-worked-examples-loft-L6"><span class="cm">// function documents itself by CITING the tag with `// Example: @RGX-00N`, and</span></span>
+<span id="tests-worked-examples-loft-L7"><span class="cm">// `check_doc_drift.sh examples` fails if a citation goes dangling (no test carries</span></span>
+<span id="tests-worked-examples-loft-L8"><span class="cm">// the tag).  These are teaching examples, distinct from the per-function</span></span>
+<span id="tests-worked-examples-loft-L9"><span class="cm">// assertion suite in `regex.loft`.</span></span>
+<span id="tests-worked-examples-loft-L10"><span class="cm">//</span></span>
+<span id="tests-worked-examples-loft-L11"><span class="cm">// Every entry point here is `text` in and `integer`/`boolean` out, so the type</span></span>
+<span id="tests-worked-examples-loft-L12"><span class="cm">// checker can see none of what follows: which spelling actually reaches this</span></span>
+<span id="tests-worked-examples-loft-L13"><span class="cm">// library, which UNIT the offset is in, and that a broken pattern answers the</span></span>
+<span id="tests-worked-examples-loft-L14"><span class="cm">// same thing as a pattern that simply did not match.</span></span>
+<span id="tests-worked-examples-loft-L15"><span class="cm">//</span></span>
+<span id="tests-worked-examples-loft-L16"><span class="cm">// The superseded `find` demonstrated by @RGX-001 is what the steer channel exists</span></span>
+<span id="tests-worked-examples-loft-L17"><span class="cm">// to warn about, and the shadow it collides with is real — both are asserted here</span></span>
+<span id="tests-worked-examples-loft-L18"><span class="cm">// rather than silenced, so this file goes red if either ever stops being true.</span></span>
+<span id="tests-worked-examples-loft-L19"><span class="cm">// @EXPECT_WARNING: `find` is also a method on `text`</span></span>
+<span id="tests-worked-examples-loft-L20"><span class="cm">// @EXPECT_WARNING: `split` is also a method on `text`</span></span>
+<span id="tests-worked-examples-loft-L21"><span class="kw">use</span> regex::*;</span>
+<span id="tests-worked-examples-loft-L22"></span>
+<span id="tests-worked-examples-loft-L23"><span class="cm">// @RGX-001 — the spelling decides which library you called, and the wrong one</span></span>
+<span id="tests-worked-examples-loft-L24"><span class="cm">// still compiles.  `find` and `split` are stdlib `text` METHODS (literal</span></span>
+<span id="tests-worked-examples-loft-L25"><span class="cm">// substring search, character split), and loft resolves a method spelling before</span></span>
+<span id="tests-worked-examples-loft-L26"><span class="cm">// a library's free function — so a bare `find(pattern, input)` does not reach</span></span>
+<span id="tests-worked-examples-loft-L27"><span class="cm">// this library at all.  It type-checks, because the stdlib's `find` takes the</span></span>
+<span id="tests-worked-examples-loft-L28"><span class="cm">// same two texts, and it answers by looking for the literal text `"[0-9]+"`</span></span>
+<span id="tests-worked-examples-loft-L29"><span class="cm">// inside `"abc123"` — the arguments read the other way round — so it reports "not</span></span>
+<span id="tests-worked-examples-loft-L30"><span class="cm">// found" for a pattern that plainly matches.  That is why this library's</span></span>
+<span id="tests-worked-examples-loft-L31"><span class="cm">// recommended verbs are `search` / `split_on`, called subject-first on the text,</span></span>
+<span id="tests-worked-examples-loft-L32"><span class="cm">// and why `regex::find` / `regex::split` survive only as `#superseded` spellings</span></span>
+<span id="tests-worked-examples-loft-L33"><span class="cm">// reachable through the qualifier.</span></span>
+<span id="tests-worked-examples-loft-L34"><span class="kw">fn</span> <span class="fn-call">test_the_spelling_decides_which_library_you_called</span>() {</span>
+<span id="tests-worked-examples-loft-L35">  <span class="cm">// The recommended form: subject-first, on the text.</span></span>
+<span id="tests-worked-examples-loft-L36">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"abc123"</span>.<span class="fn-call">search</span>(<span class="st">"[0-9]+"</span>) == <span class="nm">3</span>, <span class="st">"search finds the digits at byte 3"</span>);</span>
+<span id="tests-worked-examples-loft-L37"></span>
+<span id="tests-worked-examples-loft-L38">  <span class="cm">// A bare `find` compiles and is NOT this library — the stdlib method wins, and</span></span>
+<span id="tests-worked-examples-loft-L39">  <span class="cm">// it reads its arguments the other way round (needle in haystack).</span></span>
+<span id="tests-worked-examples-loft-L40">  bare = <span class="fn-call"><a href="stdlib-text.html">find</a></span>(<span class="st">"[0-9]+"</span>, <span class="st">"abc123"</span>);</span>
+<span id="tests-worked-examples-loft-L41">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(bare == <span class="kw">null</span>,</span>
+<span id="tests-worked-examples-loft-L42">         <span class="st">"bare find() looked for the literal \"</span>[<span class="nm">0</span>-<span class="nm">9</span>]+\<span class="st">" INSIDE \"</span>abc123\<span class="st">" and found nothing"</span>);</span>
+<span id="tests-worked-examples-loft-L43">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(bare != <span class="st">"abc123"</span>.<span class="fn-call">search</span>(<span class="st">"[0-9]+"</span>),</span>
+<span id="tests-worked-examples-loft-L44">         <span class="st">"so the two spellings answer differently on the same arguments"</span>);</span>
+<span id="tests-worked-examples-loft-L45"></span>
+<span id="tests-worked-examples-loft-L46">  <span class="cm">// `matches` has no stdlib namesake, so its bare form is safe.</span></span>
+<span id="tests-worked-examples-loft-L47">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">matches</span>(<span class="st">"abc123"</span>, <span class="st">"[0-9]+"</span>), <span class="st">"matches is collision-free and works bare"</span>);</span>
+<span id="tests-worked-examples-loft-L48">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"abc123"</span>.<span class="fn-call">matches</span>(<span class="st">"[0-9]+"</span>), <span class="st">"and as a method"</span>);</span>
+<span id="tests-worked-examples-loft-L49">}</span>
+<span id="tests-worked-examples-loft-L50"></span>
+<span id="tests-worked-examples-loft-L51"><span class="cm">// @RGX-002 — `search` answers a BYTE offset, and it answers null on a miss even</span></span>
+<span id="tests-worked-examples-loft-L52"><span class="cm">// though its type says `integer`.  Both halves bite.  The offset is right for</span></span>
+<span id="tests-worked-examples-loft-L53"><span class="cm">// slicing, because loft's text slicing is byte-indexed too — but `len()` counts</span></span>
+<span id="tests-worked-examples-loft-L54"><span class="cm">// CHARACTERS, so comparing an offset against `len()` is a units error that only</span></span>
+<span id="tests-worked-examples-loft-L55"><span class="cm">// shows up on non-ASCII input, silently and late.  `size()` is the byte count and</span></span>
+<span id="tests-worked-examples-loft-L56"><span class="cm">// the one to compare against.  And because the declared return is non-null</span></span>
+<span id="tests-worked-examples-loft-L57"><span class="cm">// `integer`, nothing makes a caller guard the miss: an unchecked offset flows on</span></span>
+<span id="tests-worked-examples-loft-L58"><span class="cm">// as loft's null integer, and a negative index counts from the END of the text</span></span>
+<span id="tests-worked-examples-loft-L59"><span class="cm">// rather than reading as absent.</span></span>
+<span id="tests-worked-examples-loft-L60"><span class="kw">fn</span> <span class="fn-call">test_the_offset_is_bytes_and_the_miss_is_null</span>() {</span>
+<span id="tests-worked-examples-loft-L61">  t = <span class="st">"héllo wörld"</span>;</span>
+<span id="tests-worked-examples-loft-L62">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(t) == <span class="nm">11</span>, <span class="st">"eleven characters"</span>);</span>
+<span id="tests-worked-examples-loft-L63">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call"><a href="stdlib-text.html">size</a></span>(t) == <span class="nm">13</span>, <span class="st">"thirteen bytes — two of them are two-byte characters"</span>);</span>
+<span id="tests-worked-examples-loft-L64"></span>
+<span id="tests-worked-examples-loft-L65">  at = t.<span class="fn-call">search</span>(<span class="st">"wörld"</span>);</span>
+<span id="tests-worked-examples-loft-L66">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(at == <span class="nm">7</span>, <span class="st">"the answer is the BYTE offset, not the character index 6"</span>);</span>
+<span id="tests-worked-examples-loft-L67">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(at &lt; <span class="bi"><a href="stdlib-text.html">len</a></span>(t), <span class="st">"which happens to be true here..."</span>);</span>
+<span id="tests-worked-examples-loft-L68">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(at &lt; <span class="fn-call"><a href="stdlib-text.html">size</a></span>(t), <span class="st">"...but size() is the bound that is true in general"</span>);</span>
+<span id="tests-worked-examples-loft-L69"></span>
+<span id="tests-worked-examples-loft-L70">  <span class="cm">// The offset is exactly what byte-indexed slicing wants.</span></span>
+<span id="tests-worked-examples-loft-L71">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(t[<span class="nm">0..</span>at] == <span class="st">"héllo "</span>, <span class="st">"slicing with it lands on a character boundary"</span>);</span>
+<span id="tests-worked-examples-loft-L72"></span>
+<span id="tests-worked-examples-loft-L73">  <span class="cm">// A miss is null, from a function declared to return `integer`.</span></span>
+<span id="tests-worked-examples-loft-L74">  miss = t.<span class="fn-call">search</span>(<span class="st">"[0-9]+"</span>);</span>
+<span id="tests-worked-examples-loft-L75">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(miss == <span class="kw">null</span>, <span class="st">"no digits — the answer is null"</span>);</span>
+<span id="tests-worked-examples-loft-L76">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!miss, <span class="st">"so `if !offset` is a valid guard"</span>);</span>
+<span id="tests-worked-examples-loft-L77">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(miss &lt; <span class="nm">0</span>, <span class="st">"and so is a `&lt; 0` test — loft's null integer is i64::MIN"</span>);</span>
+<span id="tests-worked-examples-loft-L78">}</span>
+<span id="tests-worked-examples-loft-L79"></span>
+<span id="tests-worked-examples-loft-L80"><span class="cm">// @RGX-003 — a broken pattern is not an error, it is a miss.  An invalid regex</span></span>
+<span id="tests-worked-examples-loft-L81"><span class="cm">// (an unclosed class, a stray quantifier) does not raise and does not report</span></span>
+<span id="tests-worked-examples-loft-L82"><span class="cm">// itself: `search` answers the same null it answers for text that simply does not</span></span>
+<span id="tests-worked-examples-loft-L83"><span class="cm">// contain the pattern, and `matches` answers the same false.  So a typo in a</span></span>
+<span id="tests-worked-examples-loft-L84"><span class="cm">// pattern — especially one built by interpolation from configuration or user</span></span>
+<span id="tests-worked-examples-loft-L85"><span class="cm">// input — presents as "nothing matched today", which is indistinguishable from a</span></span>
+<span id="tests-worked-examples-loft-L86"><span class="cm">// quiet input and survives every test written against matching input.  If a</span></span>
+<span id="tests-worked-examples-loft-L87"><span class="cm">// pattern comes from outside the program, prove it matches something known before</span></span>
+<span id="tests-worked-examples-loft-L88"><span class="cm">// trusting a negative answer from it.</span></span>
+<span id="tests-worked-examples-loft-L89"><span class="kw">fn</span> <span class="fn-call">test_a_broken_pattern_reports_a_miss_not_an_error</span>() {</span>
+<span id="tests-worked-examples-loft-L90">  good_miss = <span class="st">"abc"</span>.<span class="fn-call">search</span>(<span class="st">"[0-9]+"</span>);     <span class="cm">// valid pattern, no digits present</span></span>
+<span id="tests-worked-examples-loft-L91">  broken = <span class="st">"abc"</span>.<span class="fn-call">search</span>(<span class="st">"["</span>);             <span class="cm">// unclosed character class</span></span>
+<span id="tests-worked-examples-loft-L92">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(good_miss == <span class="kw">null</span>, <span class="st">"a genuine miss is null"</span>);</span>
+<span id="tests-worked-examples-loft-L93">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(broken == <span class="kw">null</span>, <span class="st">"and so is a pattern that never compiled"</span>);</span>
+<span id="tests-worked-examples-loft-L94">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(broken == good_miss, <span class="st">"the caller cannot tell the two apart"</span>);</span>
+<span id="tests-worked-examples-loft-L95"></span>
+<span id="tests-worked-examples-loft-L96">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="st">"abc"</span>.<span class="fn-call">matches</span>(<span class="st">"[0-9]+"</span>), <span class="st">"the boolean door: a genuine miss is false"</span>);</span>
+<span id="tests-worked-examples-loft-L97">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="st">"abc"</span>.<span class="fn-call">matches</span>(<span class="st">"["</span>), <span class="st">"a broken pattern is false as well"</span>);</span>
+<span id="tests-worked-examples-loft-L98"></span>
+<span id="tests-worked-examples-loft-L99">  <span class="cm">// The canary: check the pattern against input it MUST match.</span></span>
+<span id="tests-worked-examples-loft-L100">  suspect = <span class="st">"[0-9]+"</span>;</span>
+<span id="tests-worked-examples-loft-L101">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"0"</span>.<span class="fn-call">matches</span>(suspect), <span class="st">"a pattern proved against a known sample is one you can trust"</span>);</span>
+<span id="tests-worked-examples-loft-L102">}</span>
+<span id="tests-worked-examples-loft-L103"></span>
+<span id="tests-worked-examples-loft-L104"><span class="cm">// @RGX-004 — `split_on` yields pieces, not fields, and it never yields none.  It</span></span>
+<span id="tests-worked-examples-loft-L105"><span class="cm">// is a lazy `iterator&lt;text&gt;` over the gaps BETWEEN matches, so a separator at</span></span>
+<span id="tests-worked-examples-loft-L106"><span class="cm">// either end produces an empty piece rather than being trimmed, and text with no</span></span>
+<span id="tests-worked-examples-loft-L107"><span class="cm">// match at all comes back as a single piece — the whole input.  That last one is</span></span>
+<span id="tests-worked-examples-loft-L108"><span class="cm">// the case a caller usually gets wrong: a split that "failed" still gives you one</span></span>
+<span id="tests-worked-examples-loft-L109"><span class="cm">// element, so testing the piece count for zero never fires, and code that assumes</span></span>
+<span id="tests-worked-examples-loft-L110"><span class="cm">// two pieces reads the whole line as its first field.</span></span>
+<span id="tests-worked-examples-loft-L111"><span class="kw">fn</span> <span class="fn-call">test_split_yields_the_gaps_including_the_empty_ones</span>() {</span>
+<span id="tests-worked-examples-loft-L112">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">wex_pieces</span>(<span class="st">"a,b,c"</span>) == <span class="st">"[a][b][c]"</span>, <span class="st">"the ordinary case: three pieces"</span>);</span>
+<span id="tests-worked-examples-loft-L113">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">wex_pieces</span>(<span class="st">"a,b,"</span>) == <span class="st">"[a][b][]"</span>, <span class="st">"a TRAILING separator leaves an empty piece"</span>);</span>
+<span id="tests-worked-examples-loft-L114">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">wex_pieces</span>(<span class="st">",a"</span>) == <span class="st">"[][a]"</span>, <span class="st">"and a leading one leaves an empty piece first"</span>);</span>
+<span id="tests-worked-examples-loft-L115">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">wex_pieces</span>(<span class="st">"abc"</span>) == <span class="st">"[abc]"</span>, <span class="st">"no match at all is ONE piece — the whole input"</span>);</span>
+<span id="tests-worked-examples-loft-L116">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">wex_pieces</span>(<span class="st">""</span>) == <span class="st">"[]"</span>, <span class="st">"even empty input yields one (empty) piece"</span>);</span>
+<span id="tests-worked-examples-loft-L117"></span>
+<span id="tests-worked-examples-loft-L118">  <span class="cm">// So a count is never 0, and "did it split?" is a count &gt; 1 question.</span></span>
+<span id="tests-worked-examples-loft-L119">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">wex_count</span>(<span class="st">"abc"</span>) == <span class="nm">1</span>, <span class="st">"an unsplit line still has a piece"</span>);</span>
+<span id="tests-worked-examples-loft-L120">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">wex_count</span>(<span class="st">"a,b"</span>) == <span class="nm">2</span>, <span class="st">"a split line has more than one"</span>);</span>
+<span id="tests-worked-examples-loft-L121">}</span>
+<span id="tests-worked-examples-loft-L122"></span>
+<span id="tests-worked-examples-loft-L123"><span class="cm">// Render a split as `[piece][piece]…` so the expected value can be written out in</span></span>
+<span id="tests-worked-examples-loft-L124"><span class="cm">// full rather than asserted one index at a time.</span></span>
+<span id="tests-worked-examples-loft-L125"><span class="kw">fn</span> <span class="fn-call">wex_pieces</span>(input: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="tests-worked-examples-loft-L126">  out = <span class="st">""</span>;</span>
+<span id="tests-worked-examples-loft-L127">  <span class="kw">for</span> p <span class="kw">in</span> input.<span class="fn-call">split_on</span>(<span class="st">","</span>) { out = <span class="st">"{out}[{p}]"</span>; }</span>
+<span id="tests-worked-examples-loft-L128">  out</span>
+<span id="tests-worked-examples-loft-L129">}</span>
+<span id="tests-worked-examples-loft-L130"></span>
+<span id="tests-worked-examples-loft-L131"><span class="cm">// How many pieces a split yields.</span></span>
+<span id="tests-worked-examples-loft-L132"><span class="kw">fn</span> <span class="fn-call">wex_count</span>(input: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="tests-worked-examples-loft-L133">  n = <span class="nm">0</span>;</span>
+<span id="tests-worked-examples-loft-L134">  <span class="kw">for</span> _ <span class="kw">in</span> input.<span class="fn-call">split_on</span>(<span class="st">","</span>) { n += <span class="nm">1</span>; }</span>
+<span id="tests-worked-examples-loft-L135">  n</span>
+<span id="tests-worked-examples-loft-L136">}</span>
+</code></pre>
 
   </article>
 <script src="search-index.js"></script>

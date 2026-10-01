@@ -81,7 +81,7 @@ fn main() {
   // 'abs()' returns the absolute value — the distance from zero, always non-negative.
   // Useful any time you care about magnitude but not direction.
   assert(abs(-2.5) == 2.5, "Absolute value of float");
-  // 'round()' picks the nearest whole number (0.5 rounds up).
+  // 'round()' picks the nearest whole number; a half rounds away from zero (2.5 → 3, -2.5 → -3).
   // 'ceil()' always rounds up to the next whole number, even for 2.01.
   // 'floor()' always rounds down to the previous whole number, even for 2.99.
   // All three give back a float, not an integer — so 3.0, not 3.

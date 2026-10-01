@@ -20,12 +20,759 @@
 <style>.playground-link{display:inline-block;margin:0.3em 0 0.8em;padding:4px 12px;background:#2563eb;color:#fff;border-radius:4px;text-decoration:none;font-size:0.85em}.playground-link:hover{filter:brightness(1.15)}@media print{.playground-link{display:none}}</style>
 </head>
 <body>
-<nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-vector-operations.html">Vector operations</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
+<nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>input source</h1>
 <article>
 <p><a href="lib-input.html">← input</a> · <a href="lib-input-api.html">API reference</a> · version 0.2.2</p>
-<p>The source for <code>input</code> 0.2.2 is not on this build box, so this page could not be rendered from it. <code>loft install input</code> fetches the package, and the repository is the other route.</p>
-<p><a href="https://github.com/loft-lang/loft-libs-game/tree/main/input">https://github.com/loft-lang/loft-libs-game/tree/main/input</a></p>
+<p class="lib-legend">3 file(s), 716 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<h2 id="items">Public items</h2>
+<p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
+<table class="lib-table">
+<tr><th>Item</th><th>Defined</th><th>Worked example</th><th>Call sites</th></tr>
+<tr><td><code>MB_LEFT</code> <span class="search-kind">const</span></td><td><a href="#src-input-loft-L53">53</a></td><td>—</td><td><a href="#tests-01-basics-loft-L101">101</a> <a href="#tests-01-basics-loft-L104">104</a> <a href="#tests-01-basics-loft-L106">106</a> <a href="#tests-01-basics-loft-L112">112</a> <a href="#tests-01-basics-loft-L113">113</a> <a href="#tests-01-basics-loft-L115">115</a> … (15 total)</td></tr>
+<tr><td><code>MB_RIGHT</code> <span class="search-kind">const</span></td><td><a href="#src-input-loft-L54">54</a></td><td>—</td><td><a href="#tests-01-basics-loft-L105">105</a> <a href="#tests-01-basics-loft-L112">112</a> <a href="#tests-01-basics-loft-L114">114</a> <a href="#tests-01-basics-loft-L116">116</a> <a href="#tests-01-basics-loft-L123">123</a> <a href="#tests-02-worked-examples-loft-L169">169</a> … (13 total)</td></tr>
+<tr><td><code>MB_MIDDLE</code> <span class="search-kind">const</span></td><td><a href="#src-input-loft-L55">55</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>ActionBinding</code> <span class="search-kind">struct</span></td><td><a href="#src-input-loft-L60">60</a></td><td>—</td><td><a href="#src-input-loft-L78">78</a> <a href="#tests-01-basics-loft-L34">34</a> <a href="#tests-01-basics-loft-L35">35</a> <a href="#tests-01-basics-loft-L130">130</a> <a href="#tests-01-basics-loft-L159">159</a> <a href="#tests-02-worked-examples-loft-L53">53</a> … (9 total)</td></tr>
+<tr><td><code>AxisBinding</code> <span class="search-kind">struct</span></td><td><a href="#src-input-loft-L68">68</a></td><td>—</td><td><a href="#src-input-loft-L79">79</a> <a href="#tests-01-basics-loft-L38">38</a> <a href="#tests-02-worked-examples-loft-L57">57</a></td></tr>
+<tr><td><code>Bindings</code> <span class="search-kind">struct</span></td><td><a href="#src-input-loft-L77">77</a></td><td>—</td><td><a href="#src-input-loft-L91">91</a> <a href="#src-input-loft-L106">106</a> <a href="#src-input-loft-L130">130</a> <a href="#tests-01-basics-loft-L32">32</a> <a href="#tests-01-basics-loft-L128">128</a> <a href="#tests-01-basics-loft-L157">157</a> … (9 total)</td></tr>
+<tr><td><code>InputState</code> <span class="search-kind">struct</span></td><td><a href="#src-input-loft-L90">90</a></td><td>—</td><td><a href="#src-input-loft-L106">106</a> <a href="#src-input-loft-L113">113</a> <a href="#src-input-loft-L130">130</a> <a href="#src-input-loft-L137">137</a> <a href="#src-input-loft-L153">153</a> <a href="#src-input-loft-L182">182</a> … (19 total)</td></tr>
+<tr><td><code>input_new</code> <span class="search-kind">fn</span></td><td><a href="#src-input-loft-L106">106</a></td><td>—</td><td><a href="#tests-01-basics-loft-L41">41</a> <a href="#tests-01-basics-loft-L134">134</a> <a href="#tests-02-worked-examples-loft-L60">60</a></td></tr>
+<tr><td><code>input_set_bindings</code> <span class="search-kind">fn</span></td><td><a href="#src-input-loft-L130">130</a></td><td><a href="#tests-02-worked-examples-loft-L194">INP-004</a></td><td><a href="#tests-01-basics-loft-L163">163</a> <a href="#tests-02-worked-examples-loft-L210">210</a> <a href="#tests-02-worked-examples-loft-L235">235</a></td></tr>
+<tr><td><code>input_tick</code> <span class="search-kind">fn</span></td><td><a href="#src-input-loft-L153">153</a></td><td><a href="#tests-02-worked-examples-loft-L63">INP-001</a></td><td>none in this package</td></tr>
+<tr><td><code>input_tick_from_state</code> <span class="search-kind">fn</span></td><td><a href="#src-input-loft-L181">181</a></td><td><a href="#tests-02-worked-examples-loft-L63">INP-001</a></td><td><a href="#tests-01-basics-loft-L48">48</a> <a href="#tests-01-basics-loft-L54">54</a> <a href="#tests-01-basics-loft-L60">60</a> <a href="#tests-01-basics-loft-L66">66</a> <a href="#tests-01-basics-loft-L78">78</a> <a href="#tests-01-basics-loft-L82">82</a> … (33 total)</td></tr>
+<tr><td><code>is_action_pressed</code> <span class="search-kind">fn</span></td><td><a href="#src-input-loft-L201">201</a></td><td><a href="#tests-02-worked-examples-loft-L109">INP-002</a></td><td><a href="#tests-01-basics-loft-L49">49</a> <a href="#tests-01-basics-loft-L55">55</a> <a href="#tests-01-basics-loft-L61">61</a> <a href="#tests-01-basics-loft-L70">70</a> <a href="#tests-01-basics-loft-L137">137</a> <a href="#tests-01-basics-loft-L141">141</a> … (18 total)</td></tr>
+<tr><td><code>is_action_just_pressed</code> <span class="search-kind">fn</span></td><td><a href="#src-input-loft-L216">216</a></td><td><a href="#tests-02-worked-examples-loft-L63">INP-001</a></td><td><a href="#tests-01-basics-loft-L50">50</a> <a href="#tests-01-basics-loft-L56">56</a> <a href="#tests-01-basics-loft-L62">62</a> <a href="#tests-01-basics-loft-L71">71</a> <a href="#tests-01-basics-loft-L138">138</a> <a href="#tests-01-basics-loft-L145">145</a> … (14 total)</td></tr>
+<tr><td><code>is_action_just_released</code> <span class="search-kind">fn</span></td><td><a href="#src-input-loft-L230">230</a></td><td><a href="#tests-02-worked-examples-loft-L63">INP-001</a></td><td><a href="#tests-01-basics-loft-L51">51</a> <a href="#tests-01-basics-loft-L57">57</a> <a href="#tests-01-basics-loft-L63">63</a> <a href="#tests-01-basics-loft-L67">67</a> <a href="#tests-02-worked-examples-loft-L91">91</a></td></tr>
+<tr><td><code>get_axis</code> <span class="search-kind">fn</span></td><td><a href="#src-input-loft-L245">245</a></td><td><a href="#tests-02-worked-examples-loft-L109">INP-002</a></td><td><a href="#tests-01-basics-loft-L79">79</a> <a href="#tests-01-basics-loft-L83">83</a> <a href="#tests-01-basics-loft-L87">87</a> <a href="#tests-01-basics-loft-L91">91</a> <a href="#tests-01-basics-loft-L94">94</a> <a href="#tests-02-worked-examples-loft-L129">129</a> … (10 total)</td></tr>
+<tr><td><code>mouse_x</code> <span class="search-kind">fn</span></td><td><a href="#src-input-loft-L259">259</a></td><td>—</td><td><a href="#tests-01-basics-loft-L102">102</a> <a href="#tests-02-worked-examples-loft-L171">171</a></td></tr>
+<tr><td><code>mouse_y</code> <span class="search-kind">fn</span></td><td><a href="#src-input-loft-L261">261</a></td><td>—</td><td><a href="#tests-01-basics-loft-L103">103</a> <a href="#tests-02-worked-examples-loft-L171">171</a></td></tr>
+<tr><td><code>mouse_button_down</code> <span class="search-kind">fn</span></td><td><a href="#src-input-loft-L266">266</a></td><td><a href="#tests-02-worked-examples-loft-L155">INP-003</a></td><td><a href="#tests-01-basics-loft-L104">104</a> <a href="#tests-01-basics-loft-L105">105</a> <a href="#tests-01-basics-loft-L113">113</a> <a href="#tests-01-basics-loft-L114">114</a> <a href="#tests-01-basics-loft-L121">121</a> <a href="#tests-02-worked-examples-loft-L168">168</a> … (9 total)</td></tr>
+<tr><td><code>mouse_button_just_pressed</code> <span class="search-kind">fn</span></td><td><a href="#src-input-loft-L273">273</a></td><td><a href="#tests-02-worked-examples-loft-L155">INP-003</a></td><td><a href="#tests-01-basics-loft-L106">106</a> <a href="#tests-01-basics-loft-L115">115</a> <a href="#tests-01-basics-loft-L116">116</a> <a href="#tests-02-worked-examples-loft-L170">170</a> <a href="#tests-02-worked-examples-loft-L180">180</a> <a href="#tests-02-worked-examples-loft-L184">184</a></td></tr>
+<tr><td><code>mouse_button_just_released</code> <span class="search-kind">fn</span></td><td><a href="#src-input-loft-L281">281</a></td><td>—</td><td><a href="#tests-01-basics-loft-L122">122</a> <a href="#tests-01-basics-loft-L123">123</a> <a href="#tests-02-worked-examples-loft-L189">189</a> <a href="#tests-02-worked-examples-loft-L191">191</a></td></tr>
+<tr><td><code>mouse_wheel</code> <span class="search-kind">fn</span></td><td><a href="#src-input-loft-L289">289</a></td><td>—</td><td><a href="#tests-01-basics-loft-L107">107</a> <a href="#tests-01-basics-loft-L117">117</a> <a href="#tests-02-worked-examples-loft-L104">104</a> <a href="#tests-02-worked-examples-loft-L106">106</a></td></tr>
+</table>
+<h2 id="src-input-loft">src/input.loft</h2>
+<pre class="src"><code><span id="src-input-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
+<span id="src-input-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
+<span id="src-input-loft-L3"><span class="cm">//</span></span>
+<span id="src-input-loft-L4"><span class="cm">// input — abstract input state + key bindings for loft games.</span></span>
+<span id="src-input-loft-L5"><span class="cm">//</span></span>
+<span id="src-input-loft-L6"><span class="cm">// (This library was parked from 2026-06-01 to 2026-06-04 on two loft</span></span>
+<span id="src-input-loft-L7"><span class="cm">// compiler bugs — a cross-package constructor landing in CONST_STORE</span></span>
+<span id="src-input-loft-L8"><span class="cm">// (loft#248) and a nested `&amp;self` method call whose writes did not</span></span>
+<span id="src-input-loft-L9"><span class="cm">// persist on the interpreter (loft#266).  Both are fixed and the test</span></span>
+<span id="src-input-loft-L10"><span class="cm">// gate is gone; the suite runs on the interpreter and `--native`.)</span></span>
+<span id="src-input-loft-L11"><span class="cm">//</span></span>
+<span id="src-input-loft-L12"><span class="cm">// Wraps the polled input primitives exposed by the `graphics` library</span></span>
+<span id="src-input-loft-L13"><span class="cm">// (`gl_key_pressed`, `gl_mouse_x`/`gl_mouse_y`, `gl_mouse_button`,</span></span>
+<span id="src-input-loft-L14"><span class="cm">// `gl_mouse_wheel`) into:</span></span>
+<span id="src-input-loft-L15"><span class="cm">//</span></span>
+<span id="src-input-loft-L16"><span class="cm">//   - **Action bindings**: map a high-level action name (e.g. "jump")</span></span>
+<span id="src-input-loft-L17"><span class="cm">//     to one or more key codes — game code queries `is_action_pressed`</span></span>
+<span id="src-input-loft-L18"><span class="cm">//     instead of hardcoding `gl_key_pressed(KEY_SPACE)`.</span></span>
+<span id="src-input-loft-L19"><span class="cm">//   - **Edge detection**: `is_action_just_pressed` returns true on the</span></span>
+<span id="src-input-loft-L20"><span class="cm">//     exact tick a binding went from up to down (single-tick edge);</span></span>
+<span id="src-input-loft-L21"><span class="cm">//     same for `mouse_button_just_pressed`.  Built by keeping</span></span>
+<span id="src-input-loft-L22"><span class="cm">//     last-frame state alongside this-frame state.</span></span>
+<span id="src-input-loft-L23"><span class="cm">//   - **Axis abstraction**: pair of keys → -1.0 / 0.0 / +1.0 (e.g.</span></span>
+<span id="src-input-loft-L24"><span class="cm">//     "horizontal" binds Left=-1 / Right=+1; query with `get_axis`).</span></span>
+<span id="src-input-loft-L25"><span class="cm">//</span></span>
+<span id="src-input-loft-L26"><span class="cm">// Per-tick contract:</span></span>
+<span id="src-input-loft-L27"><span class="cm">//</span></span>
+<span id="src-input-loft-L28"><span class="cm">//     state.input_tick();           // poll graphics primitives</span></span>
+<span id="src-input-loft-L29"><span class="cm">//     if state.is_action_just_pressed("jump") { ... }</span></span>
+<span id="src-input-loft-L30"><span class="cm">//     vx = state.get_axis("horizontal");</span></span>
+<span id="src-input-loft-L31"><span class="cm">//</span></span>
+<span id="src-input-loft-L32"><span class="cm">// Headless / replay / test usage: `input_tick_from_state` advances</span></span>
+<span id="src-input-loft-L33"><span class="cm">// the state from a caller-supplied snapshot instead of polling</span></span>
+<span id="src-input-loft-L34"><span class="cm">// graphics — the same edge-detection logic runs on either input</span></span>
+<span id="src-input-loft-L35"><span class="cm">// source, so tests don't need a real GL context.</span></span>
+<span id="src-input-loft-L36"><span class="cm">//</span></span>
+<span id="src-input-loft-L37"><span class="cm">// `input_tick` is the only function CI cannot exercise — it polls a live</span></span>
+<span id="src-input-loft-L38"><span class="cm">// GL context.  Everything else runs headless through</span></span>
+<span id="src-input-loft-L39"><span class="cm">// `input_tick_from_state`, which takes the same snapshot a replay or a</span></span>
+<span id="src-input-loft-L40"><span class="cm">// network rollback would feed it.</span></span>
+<span id="src-input-loft-L41"></span>
+<span id="src-input-loft-L42"><span class="kw">use</span> graphics::*;</span>
+<span id="src-input-loft-L43"></span>
+<span id="src-input-loft-L44"><span class="cm">// Maximum key code the library tracks.  Graphics's highest constant</span></span>
+<span id="src-input-loft-L45"><span class="cm">// today is `KEY_F12 = 146`; 256 leaves room for future additions and</span></span>
+<span id="src-input-loft-L46"><span class="cm">// matches the byte-indexable shape of a typical keyboard scan-code</span></span>
+<span id="src-input-loft-L47"><span class="cm">// table.  Bindings referencing a key code &gt;= this are silently</span></span>
+<span id="src-input-loft-L48"><span class="cm">// ignored at query time (a `pressed` query for an out-of-range</span></span>
+<span id="src-input-loft-L49"><span class="cm">// binding returns false).</span></span>
+<span id="src-input-loft-L50"><span class="en">KEY_MAX</span> = <span class="nm">256</span>;</span>
+<span id="src-input-loft-L51"></span>
+<span id="src-input-loft-L52"><span class="cm">// Mouse-button bitmask values (mirrors `graphics::gl_mouse_button`).</span></span>
+<span id="src-input-loft-L53"><span class="kw">pub</span> const <span class="en">MB_LEFT</span>   = <span class="nm">1</span>;</span>
+<span id="src-input-loft-L54"><span class="kw">pub</span> const <span class="en">MB_RIGHT</span>  = <span class="nm">2</span>;</span>
+<span id="src-input-loft-L55"><span class="kw">pub</span> const <span class="en">MB_MIDDLE</span> = <span class="nm">4</span>;</span>
+<span id="src-input-loft-L56"></span>
+<span id="src-input-loft-L57"><span class="cm">// One named action: "jump" → [KEY_SPACE, KEY_UP] (any of the listed</span></span>
+<span id="src-input-loft-L58"><span class="cm">// keys triggers the action).  An empty `ab_keys` is degenerate but</span></span>
+<span id="src-input-loft-L59"><span class="cm">// valid — the action will simply never fire.</span></span>
+<span id="src-input-loft-L60"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">ActionBinding</span> {</span>
+<span id="src-input-loft-L61">  const ab_name: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
+<span id="src-input-loft-L62">  const ab_keys: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;</span>
+<span id="src-input-loft-L63">}</span>
+<span id="src-input-loft-L64"></span>
+<span id="src-input-loft-L65"><span class="cm">// One named axis: pair of (negative key, positive key) → -1.0 / 0.0</span></span>
+<span id="src-input-loft-L66"><span class="cm">// / +1.0.  If both are down simultaneously the axis reads 0.0 (they</span></span>
+<span id="src-input-loft-L67"><span class="cm">// cancel) — same convention as Unity / Godot's built-in axis pairs.</span></span>
+<span id="src-input-loft-L68"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">AxisBinding</span> {</span>
+<span id="src-input-loft-L69">  const ax_name: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
+<span id="src-input-loft-L70">  const ax_neg: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-input-loft-L71">  const ax_pos: <span class="ty"><a href="stdlib-types.html">integer</a></span></span>
+<span id="src-input-loft-L72">}</span>
+<span id="src-input-loft-L73"></span>
+<span id="src-input-loft-L74"><span class="cm">// Full binding set — game code constructs this once and passes it</span></span>
+<span id="src-input-loft-L75"><span class="cm">// into `input_new`.  Re-binding at runtime: mutate this struct in</span></span>
+<span id="src-input-loft-L76"><span class="cm">// place (or build a new one) and call `input_set_bindings`.</span></span>
+<span id="src-input-loft-L77"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Bindings</span> {</span>
+<span id="src-input-loft-L78">  const bnd_actions: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">ActionBinding</span>&gt;,</span>
+<span id="src-input-loft-L79">  const bnd_axes: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">AxisBinding</span>&gt;</span>
+<span id="src-input-loft-L80">}</span>
+<span id="src-input-loft-L81"></span>
+<span id="src-input-loft-L82"><span class="cm">// Abstract input state.  Fields are documented but considered</span></span>
+<span id="src-input-loft-L83"><span class="cm">// opaque — query via the `is_action_*` / `get_axis` / `mouse_*`</span></span>
+<span id="src-input-loft-L84"><span class="cm">// functions below.</span></span>
+<span id="src-input-loft-L85"><span class="cm">//</span></span>
+<span id="src-input-loft-L86"><span class="cm">// `is_keys_now[i]` is true if key code `i` is currently down;</span></span>
+<span id="src-input-loft-L87"><span class="cm">// `is_keys_prev[i]` holds the same flag from the previous tick so</span></span>
+<span id="src-input-loft-L88"><span class="cm">// edge detection compares the two.  Mouse buttons are a bitmask</span></span>
+<span id="src-input-loft-L89"><span class="cm">// (`MB_LEFT | MB_RIGHT | …`).</span></span>
+<span id="src-input-loft-L90"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">InputState</span> {</span>
+<span id="src-input-loft-L91">  is_bindings: <span class="en">Bindings</span>,</span>
+<span id="src-input-loft-L92">  const is_keys_now: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">boolean</a></span>&gt;,</span>
+<span id="src-input-loft-L93">  const is_keys_prev: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">boolean</a></span>&gt;,</span>
+<span id="src-input-loft-L94">  is_mouse_x: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-input-loft-L95">  is_mouse_y: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-input-loft-L96">  is_mouse_buttons_now: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-input-loft-L97">  is_mouse_buttons_prev: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-input-loft-L98">  is_mouse_wheel: <span class="ty"><a href="stdlib-types.html">integer</a></span></span>
+<span id="src-input-loft-L99">}</span>
+<span id="src-input-loft-L100"></span>
+<span id="src-input-loft-L101"><span class="cm">// Construct an `InputState` from a `Bindings` set.  Both key tables</span></span>
+<span id="src-input-loft-L102"><span class="cm">// start fully released; the first call to `input_tick` populates</span></span>
+<span id="src-input-loft-L103"><span class="cm">// `is_keys_now` (and `is_keys_prev` stays all-false, so any key down</span></span>
+<span id="src-input-loft-L104"><span class="cm">// on the first tick fires its `just_pressed` edge — the documented</span></span>
+<span id="src-input-loft-L105"><span class="cm">// "first frame counts as a transition" semantics).</span></span>
+<span id="src-input-loft-L106"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">input_new</span>(b: <span class="en">Bindings</span>) -&gt; <span class="en">InputState</span> {</span>
+<span id="src-input-loft-L107">  keys_now: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">boolean</a></span>&gt; = [];</span>
+<span id="src-input-loft-L108">  keys_prev: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">boolean</a></span>&gt; = [];</span>
+<span id="src-input-loft-L109">  <span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..</span><span class="en">KEY_MAX</span> {</span>
+<span id="src-input-loft-L110">    keys_now += [<span class="kw">false</span>];</span>
+<span id="src-input-loft-L111">    keys_prev += [<span class="kw">false</span>];</span>
+<span id="src-input-loft-L112">  }</span>
+<span id="src-input-loft-L113">  <span class="en">InputState</span>{</span>
+<span id="src-input-loft-L114">    is_bindings: b,</span>
+<span id="src-input-loft-L115">    is_keys_now: keys_now,</span>
+<span id="src-input-loft-L116">    is_keys_prev: keys_prev,</span>
+<span id="src-input-loft-L117">    is_mouse_x: <span class="nm">0.0</span>,</span>
+<span id="src-input-loft-L118">    is_mouse_y: <span class="nm">0.0</span>,</span>
+<span id="src-input-loft-L119">    is_mouse_buttons_now: <span class="nm">0</span>,</span>
+<span id="src-input-loft-L120">    is_mouse_buttons_prev: <span class="nm">0</span>,</span>
+<span id="src-input-loft-L121">    is_mouse_wheel: <span class="nm">0</span></span>
+<span id="src-input-loft-L122">  }</span>
+<span id="src-input-loft-L123">}</span>
+<span id="src-input-loft-L124"></span>
+<span id="src-input-loft-L125"><span class="cm">// Replace the binding set on a live state (e.g. after the player</span></span>
+<span id="src-input-loft-L126"><span class="cm">// remaps keys in a settings menu).  Does NOT clear the key tables —</span></span>
+<span id="src-input-loft-L127"><span class="cm">// in-flight key presses survive the rebind so a remap doesn't</span></span>
+<span id="src-input-loft-L128"><span class="cm">// strand an already-held key.</span></span>
+<span id="src-input-loft-L129"><span class="cm">// Example: @INP-004</span></span>
+<span id="src-input-loft-L130"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">input_set_bindings</span>(self: &amp;<span class="en">InputState</span>, b: <span class="en">Bindings</span>) {</span>
+<span id="src-input-loft-L131">  self.is_bindings = b;</span>
+<span id="src-input-loft-L132">}</span>
+<span id="src-input-loft-L133"></span>
+<span id="src-input-loft-L134"><span class="cm">// Internal: shift `is_keys_now → is_keys_prev` and zero `is_keys_now`</span></span>
+<span id="src-input-loft-L135"><span class="cm">// in preparation for the next poll.  Same for mouse buttons.  Public</span></span>
+<span id="src-input-loft-L136"><span class="cm">// surface uses `input_tick` (or `input_tick_from_state` for tests).</span></span>
+<span id="src-input-loft-L137"><span class="kw">fn</span> <span class="fn-call">advance_tick</span>(self: &amp;<span class="en">InputState</span>) {</span>
+<span id="src-input-loft-L138">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..</span><span class="en">KEY_MAX</span> {</span>
+<span id="src-input-loft-L139">    self.is_keys_prev[i] = self.is_keys_now[i];</span>
+<span id="src-input-loft-L140">    self.is_keys_now[i] = <span class="kw">false</span>;</span>
+<span id="src-input-loft-L141">  }</span>
+<span id="src-input-loft-L142">  self.is_mouse_buttons_prev = self.is_mouse_buttons_now;</span>
+<span id="src-input-loft-L143">  self.is_mouse_buttons_now = <span class="nm">0</span>;</span>
+<span id="src-input-loft-L144">  self.is_mouse_wheel = <span class="nm">0</span>;</span>
+<span id="src-input-loft-L145">}</span>
+<span id="src-input-loft-L146"></span>
+<span id="src-input-loft-L147"><span class="cm">// Poll the graphics input primitives and refresh state for one tick.</span></span>
+<span id="src-input-loft-L148"><span class="cm">// Reads `gl_key_pressed` for every key code referenced by the</span></span>
+<span id="src-input-loft-L149"><span class="cm">// current bindings (avoids a 256-call sweep — only ask about keys</span></span>
+<span id="src-input-loft-L150"><span class="cm">// the game actually cares about), plus `gl_mouse_x`/`gl_mouse_y`/</span></span>
+<span id="src-input-loft-L151"><span class="cm">// `gl_mouse_button`/`gl_mouse_wheel` unconditionally.</span></span>
+<span id="src-input-loft-L152"><span class="cm">// Example: @INP-001</span></span>
+<span id="src-input-loft-L153"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">input_tick</span>(self: &amp;<span class="en">InputState</span>) {</span>
+<span id="src-input-loft-L154">  self.<span class="fn-call">advance_tick</span>();</span>
+<span id="src-input-loft-L155">  <span class="kw">for</span> ab <span class="kw">in</span> self.is_bindings.bnd_actions {</span>
+<span id="src-input-loft-L156">    <span class="kw">for</span> k <span class="kw">in</span> ab.ab_keys {</span>
+<span id="src-input-loft-L157">      <span class="kw">if</span> k &gt;= <span class="nm">0</span> &amp;&amp; k &lt; <span class="en">KEY_MAX</span> {</span>
+<span id="src-input-loft-L158">        self.is_keys_now[k] = graphics::<span class="fn-call">gl_key_pressed</span>(k);</span>
+<span id="src-input-loft-L159">      }</span>
+<span id="src-input-loft-L160">    }</span>
+<span id="src-input-loft-L161">  }</span>
+<span id="src-input-loft-L162">  <span class="kw">for</span> ax <span class="kw">in</span> self.is_bindings.bnd_axes {</span>
+<span id="src-input-loft-L163">    <span class="kw">if</span> ax.ax_neg &gt;= <span class="nm">0</span> &amp;&amp; ax.ax_neg &lt; <span class="en">KEY_MAX</span> {</span>
+<span id="src-input-loft-L164">      self.is_keys_now[ax.ax_neg] = graphics::<span class="fn-call">gl_key_pressed</span>(ax.ax_neg);</span>
+<span id="src-input-loft-L165">    }</span>
+<span id="src-input-loft-L166">    <span class="kw">if</span> ax.ax_pos &gt;= <span class="nm">0</span> &amp;&amp; ax.ax_pos &lt; <span class="en">KEY_MAX</span> {</span>
+<span id="src-input-loft-L167">      self.is_keys_now[ax.ax_pos] = graphics::<span class="fn-call">gl_key_pressed</span>(ax.ax_pos);</span>
+<span id="src-input-loft-L168">    }</span>
+<span id="src-input-loft-L169">  }</span>
+<span id="src-input-loft-L170">  self.is_mouse_x = graphics::<span class="fn-call">gl_mouse_x</span>();</span>
+<span id="src-input-loft-L171">  self.is_mouse_y = graphics::<span class="fn-call">gl_mouse_y</span>();</span>
+<span id="src-input-loft-L172">  self.is_mouse_buttons_now = graphics::<span class="fn-call">gl_mouse_button</span>();</span>
+<span id="src-input-loft-L173">  self.is_mouse_wheel = graphics::<span class="fn-call">gl_mouse_wheel</span>();</span>
+<span id="src-input-loft-L174">}</span>
+<span id="src-input-loft-L175"></span>
+<span id="src-input-loft-L176"><span class="cm">// Advance state from a caller-supplied snapshot instead of polling</span></span>
+<span id="src-input-loft-L177"><span class="cm">// `graphics`.  Used by tests (no GL context) and by network replay</span></span>
+<span id="src-input-loft-L178"><span class="cm">// / record-playback systems.  `keys` length is clamped to KEY_MAX;</span></span>
+<span id="src-input-loft-L179"><span class="cm">// out-of-range entries are ignored.</span></span>
+<span id="src-input-loft-L180"><span class="cm">// Example: @INP-001</span></span>
+<span id="src-input-loft-L181"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">input_tick_from_state</span>(</span>
+<span id="src-input-loft-L182">  self: &amp;<span class="en">InputState</span>,</span>
+<span id="src-input-loft-L183">  keys: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">boolean</a></span>&gt;,</span>
+<span id="src-input-loft-L184">  mx: <span class="ty"><a href="stdlib-types.html">float</a></span>, my: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-input-loft-L185">  mbtn: <span class="ty"><a href="stdlib-types.html">integer</a></span>, wheel: <span class="ty"><a href="stdlib-types.html">integer</a></span></span>
+<span id="src-input-loft-L186">) {</span>
+<span id="src-input-loft-L187">  self.<span class="fn-call">advance_tick</span>();</span>
+<span id="src-input-loft-L188">  n = <span class="bi"><a href="stdlib-text.html">len</a></span>(keys);</span>
+<span id="src-input-loft-L189">  <span class="kw">if</span> n &gt; <span class="en">KEY_MAX</span> { n = <span class="en">KEY_MAX</span>; }</span>
+<span id="src-input-loft-L190">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..</span>n {</span>
+<span id="src-input-loft-L191">    self.is_keys_now[i] = keys[i];</span>
+<span id="src-input-loft-L192">  }</span>
+<span id="src-input-loft-L193">  self.is_mouse_x = mx;</span>
+<span id="src-input-loft-L194">  self.is_mouse_y = my;</span>
+<span id="src-input-loft-L195">  self.is_mouse_buttons_now = mbtn;</span>
+<span id="src-input-loft-L196">  self.is_mouse_wheel = wheel;</span>
+<span id="src-input-loft-L197">}</span>
+<span id="src-input-loft-L198"></span>
+<span id="src-input-loft-L199"><span class="cm">// True if ANY of the action's bound keys is currently down.</span></span>
+<span id="src-input-loft-L200"><span class="cm">// Example: @INP-002</span></span>
+<span id="src-input-loft-L201"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">is_action_pressed</span>(self: const <span class="en">InputState</span>, action: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-input-loft-L202">  <span class="kw">for</span> ab <span class="kw">in</span> self.is_bindings.bnd_actions {</span>
+<span id="src-input-loft-L203">    <span class="kw">if</span> ab.ab_name != action { <span class="kw">continue</span>; }</span>
+<span id="src-input-loft-L204">    <span class="kw">for</span> k <span class="kw">in</span> ab.ab_keys {</span>
+<span id="src-input-loft-L205">      <span class="kw">if</span> k &gt;= <span class="nm">0</span> &amp;&amp; k &lt; <span class="en">KEY_MAX</span> &amp;&amp; self.is_keys_now[k] { <span class="kw">return</span> <span class="kw">true</span>; }</span>
+<span id="src-input-loft-L206">    }</span>
+<span id="src-input-loft-L207">    <span class="kw">return</span> <span class="kw">false</span>;</span>
+<span id="src-input-loft-L208">  }</span>
+<span id="src-input-loft-L209">  <span class="kw">false</span></span>
+<span id="src-input-loft-L210">}</span>
+<span id="src-input-loft-L211"></span>
+<span id="src-input-loft-L212"><span class="cm">// True for exactly one tick: the moment any of the action's bound</span></span>
+<span id="src-input-loft-L213"><span class="cm">// keys transitions from up to down.  If multiple bound keys all</span></span>
+<span id="src-input-loft-L214"><span class="cm">// transition on the same tick it still fires once.</span></span>
+<span id="src-input-loft-L215"><span class="cm">// Example: @INP-001</span></span>
+<span id="src-input-loft-L216"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">is_action_just_pressed</span>(self: const <span class="en">InputState</span>, action: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-input-loft-L217">  <span class="kw">for</span> ab <span class="kw">in</span> self.is_bindings.bnd_actions {</span>
+<span id="src-input-loft-L218">    <span class="kw">if</span> ab.ab_name != action { <span class="kw">continue</span>; }</span>
+<span id="src-input-loft-L219">    <span class="kw">for</span> k <span class="kw">in</span> ab.ab_keys {</span>
+<span id="src-input-loft-L220">      <span class="kw">if</span> k &gt;= <span class="nm">0</span> &amp;&amp; k &lt; <span class="en">KEY_MAX</span> &amp;&amp; self.is_keys_now[k] &amp;&amp; !self.is_keys_prev[k] { <span class="kw">return</span> <span class="kw">true</span>; }</span>
+<span id="src-input-loft-L221">    }</span>
+<span id="src-input-loft-L222">    <span class="kw">return</span> <span class="kw">false</span>;</span>
+<span id="src-input-loft-L223">  }</span>
+<span id="src-input-loft-L224">  <span class="kw">false</span></span>
+<span id="src-input-loft-L225">}</span>
+<span id="src-input-loft-L226"></span>
+<span id="src-input-loft-L227"><span class="cm">// True for exactly one tick: the moment any of the action's bound</span></span>
+<span id="src-input-loft-L228"><span class="cm">// keys transitions from down to up.</span></span>
+<span id="src-input-loft-L229"><span class="cm">// Example: @INP-001</span></span>
+<span id="src-input-loft-L230"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">is_action_just_released</span>(self: const <span class="en">InputState</span>, action: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-input-loft-L231">  <span class="kw">for</span> ab <span class="kw">in</span> self.is_bindings.bnd_actions {</span>
+<span id="src-input-loft-L232">    <span class="kw">if</span> ab.ab_name != action { <span class="kw">continue</span>; }</span>
+<span id="src-input-loft-L233">    <span class="kw">for</span> k <span class="kw">in</span> ab.ab_keys {</span>
+<span id="src-input-loft-L234">      <span class="kw">if</span> k &gt;= <span class="nm">0</span> &amp;&amp; k &lt; <span class="en">KEY_MAX</span> &amp;&amp; !self.is_keys_now[k] &amp;&amp; self.is_keys_prev[k] { <span class="kw">return</span> <span class="kw">true</span>; }</span>
+<span id="src-input-loft-L235">    }</span>
+<span id="src-input-loft-L236">    <span class="kw">return</span> <span class="kw">false</span>;</span>
+<span id="src-input-loft-L237">  }</span>
+<span id="src-input-loft-L238">  <span class="kw">false</span></span>
+<span id="src-input-loft-L239">}</span>
+<span id="src-input-loft-L240"></span>
+<span id="src-input-loft-L241"><span class="cm">// Read an axis pair: -1.0 if only `ax_neg` is down, +1.0 if only</span></span>
+<span id="src-input-loft-L242"><span class="cm">// `ax_pos` is down, 0.0 if neither or both.  Unknown axis name</span></span>
+<span id="src-input-loft-L243"><span class="cm">// returns 0.0.</span></span>
+<span id="src-input-loft-L244"><span class="cm">// Example: @INP-002</span></span>
+<span id="src-input-loft-L245"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">get_axis</span>(self: const <span class="en">InputState</span>, axis: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="src-input-loft-L246">  <span class="kw">for</span> ax <span class="kw">in</span> self.is_bindings.bnd_axes {</span>
+<span id="src-input-loft-L247">    <span class="kw">if</span> ax.ax_name != axis { <span class="kw">continue</span>; }</span>
+<span id="src-input-loft-L248">    neg = ax.ax_neg &gt;= <span class="nm">0</span> &amp;&amp; ax.ax_neg &lt; <span class="en">KEY_MAX</span> &amp;&amp; self.is_keys_now[ax.ax_neg];</span>
+<span id="src-input-loft-L249">    pos = ax.ax_pos &gt;= <span class="nm">0</span> &amp;&amp; ax.ax_pos &lt; <span class="en">KEY_MAX</span> &amp;&amp; self.is_keys_now[ax.ax_pos];</span>
+<span id="src-input-loft-L250">    <span class="kw">if</span> neg &amp;&amp; !pos { <span class="kw">return</span> -<span class="nm">1.0</span>; }</span>
+<span id="src-input-loft-L251">    <span class="kw">if</span> pos &amp;&amp; !neg { <span class="kw">return</span> <span class="nm">1.0</span>; }</span>
+<span id="src-input-loft-L252">    <span class="kw">return</span> <span class="nm">0.0</span>;</span>
+<span id="src-input-loft-L253">  }</span>
+<span id="src-input-loft-L254">  <span class="nm">0.0</span></span>
+<span id="src-input-loft-L255">}</span>
+<span id="src-input-loft-L256"></span>
+<span id="src-input-loft-L257"><span class="cm">// Mouse position — pixels from the top-left of the window</span></span>
+<span id="src-input-loft-L258"><span class="cm">// (matches `graphics::gl_mouse_x` / `gl_mouse_y`).</span></span>
+<span id="src-input-loft-L259"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">mouse_x</span>(self: const <span class="en">InputState</span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> { self.is_mouse_x }</span>
+<span id="src-input-loft-L260"><span class="cm">// The pointer's y this frame, the companion of `mouse_x`.</span></span>
+<span id="src-input-loft-L261"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">mouse_y</span>(self: const <span class="en">InputState</span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> { self.is_mouse_y }</span>
+<span id="src-input-loft-L262"></span>
+<span id="src-input-loft-L263"><span class="cm">// True if the given mouse button (`MB_LEFT` / `MB_RIGHT` / `MB_MIDDLE`)</span></span>
+<span id="src-input-loft-L264"><span class="cm">// is currently down.  Pass the constant, not a bitmask of multiple.</span></span>
+<span id="src-input-loft-L265"><span class="cm">// Example: @INP-003</span></span>
+<span id="src-input-loft-L266"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">mouse_button_down</span>(self: const <span class="en">InputState</span>, button: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-input-loft-L267">  (self.is_mouse_buttons_now &amp; button) != <span class="nm">0</span></span>
+<span id="src-input-loft-L268">}</span>
+<span id="src-input-loft-L269"></span>
+<span id="src-input-loft-L270"><span class="cm">// True for exactly one tick — the moment the button transitions</span></span>
+<span id="src-input-loft-L271"><span class="cm">// from up to down.</span></span>
+<span id="src-input-loft-L272"><span class="cm">// Example: @INP-003</span></span>
+<span id="src-input-loft-L273"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">mouse_button_just_pressed</span>(self: const <span class="en">InputState</span>, button: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-input-loft-L274">  now_down = (self.is_mouse_buttons_now &amp; button) != <span class="nm">0</span>;</span>
+<span id="src-input-loft-L275">  prev_down = (self.is_mouse_buttons_prev &amp; button) != <span class="nm">0</span>;</span>
+<span id="src-input-loft-L276">  now_down &amp;&amp; !prev_down</span>
+<span id="src-input-loft-L277">}</span>
+<span id="src-input-loft-L278"></span>
+<span id="src-input-loft-L279"><span class="cm">// True for exactly one tick — the moment the button transitions</span></span>
+<span id="src-input-loft-L280"><span class="cm">// from down to up.</span></span>
+<span id="src-input-loft-L281"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">mouse_button_just_released</span>(self: const <span class="en">InputState</span>, button: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-input-loft-L282">  now_down = (self.is_mouse_buttons_now &amp; button) != <span class="nm">0</span>;</span>
+<span id="src-input-loft-L283">  prev_down = (self.is_mouse_buttons_prev &amp; button) != <span class="nm">0</span>;</span>
+<span id="src-input-loft-L284">  prev_down &amp;&amp; !now_down</span>
+<span id="src-input-loft-L285">}</span>
+<span id="src-input-loft-L286"></span>
+<span id="src-input-loft-L287"><span class="cm">// Accumulated scroll-wheel delta since the last `input_tick` —</span></span>
+<span id="src-input-loft-L288"><span class="cm">// positive = scroll up.  Mirrors `graphics::gl_mouse_wheel`.</span></span>
+<span id="src-input-loft-L289"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">mouse_wheel</span>(self: const <span class="en">InputState</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> { self.is_mouse_wheel }</span>
+</code></pre>
+<h2 id="tests-01-basics-loft">tests/01-basics.loft</h2>
+<pre class="src"><code><span id="tests-01-basics-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
+<span id="tests-01-basics-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
+<span id="tests-01-basics-loft-L3"><span class="cm">//</span></span>
+<span id="tests-01-basics-loft-L4"><span class="cm">// Smoke test for the input library.  Drives state via</span></span>
+<span id="tests-01-basics-loft-L5"><span class="cm">// `input_tick_from_state` (no GL context needed); validates:</span></span>
+<span id="tests-01-basics-loft-L6"><span class="cm">//   - construction from bindings</span></span>
+<span id="tests-01-basics-loft-L7"><span class="cm">//   - pressed / just_pressed / just_released for actions</span></span>
+<span id="tests-01-basics-loft-L8"><span class="cm">//   - axis pair direction + cancellation</span></span>
+<span id="tests-01-basics-loft-L9"><span class="cm">//   - mouse button bitmask + edge detection</span></span>
+<span id="tests-01-basics-loft-L10"><span class="cm">//   - unknown action / axis names return safe defaults</span></span>
+<span id="tests-01-basics-loft-L11"><span class="cm">//</span></span>
+<span id="tests-01-basics-loft-L12"><span class="cm">// Action coverage: every public symbol of the library is exercised</span></span>
+<span id="tests-01-basics-loft-L13"><span class="cm">// at least once here.</span></span>
+<span id="tests-01-basics-loft-L14"></span>
+<span id="tests-01-basics-loft-L15"><span class="kw">use</span> input::*;</span>
+<span id="tests-01-basics-loft-L16"></span>
+<span id="tests-01-basics-loft-L17"><span class="en">KEY_SPACE</span> = <span class="nm">32</span>;</span>
+<span id="tests-01-basics-loft-L18"><span class="en">KEY_LEFT</span>  = <span class="nm">130</span>;</span>
+<span id="tests-01-basics-loft-L19"><span class="en">KEY_RIGHT</span> = <span class="nm">131</span>;</span>
+<span id="tests-01-basics-loft-L20"><span class="en">KEY_A</span>     = <span class="nm">97</span>;</span>
+<span id="tests-01-basics-loft-L21"></span>
+<span id="tests-01-basics-loft-L22"><span class="cm">// Build a snapshot of length KEY_MAX with `down` set on the given</span></span>
+<span id="tests-01-basics-loft-L23"><span class="cm">// keys.  Mirrors the shape `input_tick_from_state` expects.</span></span>
+<span id="tests-01-basics-loft-L24"><span class="kw">fn</span> <span class="fn-call">snap</span>(keys: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">boolean</a></span>&gt; {</span>
+<span id="tests-01-basics-loft-L25">  v: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">boolean</a></span>&gt; = [];</span>
+<span id="tests-01-basics-loft-L26">  <span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..256</span> { v += [<span class="kw">false</span>]; }</span>
+<span id="tests-01-basics-loft-L27">  <span class="kw">for</span> k <span class="kw">in</span> keys { <span class="kw">if</span> k &gt;= <span class="nm">0</span> &amp;&amp; k &lt; <span class="nm">256</span> { v[k] = <span class="kw">true</span>; } }</span>
+<span id="tests-01-basics-loft-L28">  v</span>
+<span id="tests-01-basics-loft-L29">}</span>
+<span id="tests-01-basics-loft-L30"></span>
+<span id="tests-01-basics-loft-L31"><span class="kw">fn</span> <span class="fn-call">make_state</span>() -&gt; input::<span class="en">InputState</span> {</span>
+<span id="tests-01-basics-loft-L32">  b = input::<span class="en">Bindings</span>{</span>
+<span id="tests-01-basics-loft-L33">    bnd_actions: [</span>
+<span id="tests-01-basics-loft-L34">      input::<span class="en">ActionBinding</span>{ab_name: <span class="st">"jump"</span>, ab_keys: [<span class="en">KEY_SPACE</span>]},</span>
+<span id="tests-01-basics-loft-L35">      input::<span class="en">ActionBinding</span>{ab_name: <span class="st">"use"</span>,  ab_keys: [<span class="en">KEY_A</span>]}</span>
+<span id="tests-01-basics-loft-L36">    ],</span>
+<span id="tests-01-basics-loft-L37">    bnd_axes: [</span>
+<span id="tests-01-basics-loft-L38">      input::<span class="en">AxisBinding</span>{ax_name: <span class="st">"horizontal"</span>, ax_neg: <span class="en">KEY_LEFT</span>, ax_pos: <span class="en">KEY_RIGHT</span>}</span>
+<span id="tests-01-basics-loft-L39">    ]</span>
+<span id="tests-01-basics-loft-L40">  };</span>
+<span id="tests-01-basics-loft-L41">  input::<span class="fn-call">input_new</span>(b)</span>
+<span id="tests-01-basics-loft-L42">}</span>
+<span id="tests-01-basics-loft-L43"></span>
+<span id="tests-01-basics-loft-L44"><span class="kw">fn</span> <span class="fn-call">test_pressed_and_edges</span>() {</span>
+<span id="tests-01-basics-loft-L45">  s = <span class="fn-call">make_state</span>();</span>
+<span id="tests-01-basics-loft-L46"></span>
+<span id="tests-01-basics-loft-L47">  <span class="cm">// Tick 1: SPACE down — pressed AND just_pressed (rises from idle).</span></span>
+<span id="tests-01-basics-loft-L48">  s.<span class="fn-call">input_tick_from_state</span>(<span class="fn-call">snap</span>([<span class="en">KEY_SPACE</span>]), <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0</span>, <span class="nm">0</span>);</span>
+<span id="tests-01-basics-loft-L49">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(s.<span class="fn-call">is_action_pressed</span>(<span class="st">"jump"</span>), <span class="st">"tick1: jump pressed"</span>);</span>
+<span id="tests-01-basics-loft-L50">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(s.<span class="fn-call">is_action_just_pressed</span>(<span class="st">"jump"</span>), <span class="st">"tick1: jump just pressed"</span>);</span>
+<span id="tests-01-basics-loft-L51">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!s.<span class="fn-call">is_action_just_released</span>(<span class="st">"jump"</span>), <span class="st">"tick1: jump NOT just released"</span>);</span>
+<span id="tests-01-basics-loft-L52"></span>
+<span id="tests-01-basics-loft-L53">  <span class="cm">// Tick 2: SPACE still down — pressed but no edge.</span></span>
+<span id="tests-01-basics-loft-L54">  s.<span class="fn-call">input_tick_from_state</span>(<span class="fn-call">snap</span>([<span class="en">KEY_SPACE</span>]), <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0</span>, <span class="nm">0</span>);</span>
+<span id="tests-01-basics-loft-L55">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(s.<span class="fn-call">is_action_pressed</span>(<span class="st">"jump"</span>), <span class="st">"tick2: jump still pressed"</span>);</span>
+<span id="tests-01-basics-loft-L56">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!s.<span class="fn-call">is_action_just_pressed</span>(<span class="st">"jump"</span>), <span class="st">"tick2: jump NOT just pressed"</span>);</span>
+<span id="tests-01-basics-loft-L57">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!s.<span class="fn-call">is_action_just_released</span>(<span class="st">"jump"</span>), <span class="st">"tick2: jump NOT just released"</span>);</span>
+<span id="tests-01-basics-loft-L58"></span>
+<span id="tests-01-basics-loft-L59">  <span class="cm">// Tick 3: SPACE released — just_released fires once.</span></span>
+<span id="tests-01-basics-loft-L60">  s.<span class="fn-call">input_tick_from_state</span>(<span class="fn-call">snap</span>([]), <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0</span>, <span class="nm">0</span>);</span>
+<span id="tests-01-basics-loft-L61">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!s.<span class="fn-call">is_action_pressed</span>(<span class="st">"jump"</span>), <span class="st">"tick3: jump released"</span>);</span>
+<span id="tests-01-basics-loft-L62">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!s.<span class="fn-call">is_action_just_pressed</span>(<span class="st">"jump"</span>), <span class="st">"tick3: jump NOT just pressed"</span>);</span>
+<span id="tests-01-basics-loft-L63">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(s.<span class="fn-call">is_action_just_released</span>(<span class="st">"jump"</span>), <span class="st">"tick3: jump just released"</span>);</span>
+<span id="tests-01-basics-loft-L64"></span>
+<span id="tests-01-basics-loft-L65">  <span class="cm">// Tick 4: idle — no edges.</span></span>
+<span id="tests-01-basics-loft-L66">  s.<span class="fn-call">input_tick_from_state</span>(<span class="fn-call">snap</span>([]), <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0</span>, <span class="nm">0</span>);</span>
+<span id="tests-01-basics-loft-L67">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!s.<span class="fn-call">is_action_just_released</span>(<span class="st">"jump"</span>), <span class="st">"tick4: edge cleared"</span>);</span>
+<span id="tests-01-basics-loft-L68"></span>
+<span id="tests-01-basics-loft-L69">  <span class="cm">// Unknown action name — all queries return safe defaults.</span></span>
+<span id="tests-01-basics-loft-L70">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!s.<span class="fn-call">is_action_pressed</span>(<span class="st">"nope"</span>), <span class="st">"unknown action !pressed"</span>);</span>
+<span id="tests-01-basics-loft-L71">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!s.<span class="fn-call">is_action_just_pressed</span>(<span class="st">"nope"</span>), <span class="st">"unknown action !just_pressed"</span>);</span>
+<span id="tests-01-basics-loft-L72">}</span>
+<span id="tests-01-basics-loft-L73"></span>
+<span id="tests-01-basics-loft-L74"><span class="kw">fn</span> <span class="fn-call">test_axis_pair</span>() {</span>
+<span id="tests-01-basics-loft-L75">  s = <span class="fn-call">make_state</span>();</span>
+<span id="tests-01-basics-loft-L76"></span>
+<span id="tests-01-basics-loft-L77">  <span class="cm">// Neutral: zero.</span></span>
+<span id="tests-01-basics-loft-L78">  s.<span class="fn-call">input_tick_from_state</span>(<span class="fn-call">snap</span>([]), <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0</span>, <span class="nm">0</span>);</span>
+<span id="tests-01-basics-loft-L79">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(s.<span class="fn-call">get_axis</span>(<span class="st">"horizontal"</span>) == <span class="nm">0.0</span>, <span class="st">"axis neutral=0"</span>);</span>
+<span id="tests-01-basics-loft-L80"></span>
+<span id="tests-01-basics-loft-L81">  <span class="cm">// Right only: +1.</span></span>
+<span id="tests-01-basics-loft-L82">  s.<span class="fn-call">input_tick_from_state</span>(<span class="fn-call">snap</span>([<span class="en">KEY_RIGHT</span>]), <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0</span>, <span class="nm">0</span>);</span>
+<span id="tests-01-basics-loft-L83">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(s.<span class="fn-call">get_axis</span>(<span class="st">"horizontal"</span>) == <span class="nm">1.0</span>, <span class="st">"axis right=+1"</span>);</span>
+<span id="tests-01-basics-loft-L84"></span>
+<span id="tests-01-basics-loft-L85">  <span class="cm">// Left only: -1.</span></span>
+<span id="tests-01-basics-loft-L86">  s.<span class="fn-call">input_tick_from_state</span>(<span class="fn-call">snap</span>([<span class="en">KEY_LEFT</span>]), <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0</span>, <span class="nm">0</span>);</span>
+<span id="tests-01-basics-loft-L87">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(s.<span class="fn-call">get_axis</span>(<span class="st">"horizontal"</span>) == -<span class="nm">1.0</span>, <span class="st">"axis left=-1"</span>);</span>
+<span id="tests-01-basics-loft-L88"></span>
+<span id="tests-01-basics-loft-L89">  <span class="cm">// Both: cancel to 0.</span></span>
+<span id="tests-01-basics-loft-L90">  s.<span class="fn-call">input_tick_from_state</span>(<span class="fn-call">snap</span>([<span class="en">KEY_LEFT</span>, <span class="en">KEY_RIGHT</span>]), <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0</span>, <span class="nm">0</span>);</span>
+<span id="tests-01-basics-loft-L91">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(s.<span class="fn-call">get_axis</span>(<span class="st">"horizontal"</span>) == <span class="nm">0.0</span>, <span class="st">"axis both=cancel"</span>);</span>
+<span id="tests-01-basics-loft-L92"></span>
+<span id="tests-01-basics-loft-L93">  <span class="cm">// Unknown axis name: 0.0.</span></span>
+<span id="tests-01-basics-loft-L94">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(s.<span class="fn-call">get_axis</span>(<span class="st">"vertical"</span>) == <span class="nm">0.0</span>, <span class="st">"unknown axis=0"</span>);</span>
+<span id="tests-01-basics-loft-L95">}</span>
+<span id="tests-01-basics-loft-L96"></span>
+<span id="tests-01-basics-loft-L97"><span class="kw">fn</span> <span class="fn-call">test_mouse</span>() {</span>
+<span id="tests-01-basics-loft-L98">  s = <span class="fn-call">make_state</span>();</span>
+<span id="tests-01-basics-loft-L99"></span>
+<span id="tests-01-basics-loft-L100">  <span class="cm">// Tick 1: left button down, mouse at (10, 20).</span></span>
+<span id="tests-01-basics-loft-L101">  s.<span class="fn-call">input_tick_from_state</span>(<span class="fn-call">snap</span>([]), <span class="nm">10.0</span>, <span class="nm">20.0</span>, input::<span class="en">MB_LEFT</span>, <span class="nm">3</span>);</span>
+<span id="tests-01-basics-loft-L102">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(s.<span class="fn-call">mouse_x</span>() == <span class="nm">10.0</span>, <span class="st">"mouse_x"</span>);</span>
+<span id="tests-01-basics-loft-L103">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(s.<span class="fn-call">mouse_y</span>() == <span class="nm">20.0</span>, <span class="st">"mouse_y"</span>);</span>
+<span id="tests-01-basics-loft-L104">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(s.<span class="fn-call">mouse_button_down</span>(input::<span class="en">MB_LEFT</span>), <span class="st">"left button down"</span>);</span>
+<span id="tests-01-basics-loft-L105">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!s.<span class="fn-call">mouse_button_down</span>(input::<span class="en">MB_RIGHT</span>), <span class="st">"right NOT down"</span>);</span>
+<span id="tests-01-basics-loft-L106">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(s.<span class="fn-call">mouse_button_just_pressed</span>(input::<span class="en">MB_LEFT</span>), <span class="st">"left just pressed"</span>);</span>
+<span id="tests-01-basics-loft-L107">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(s.<span class="fn-call">mouse_wheel</span>() == <span class="nm">3</span>, <span class="st">"wheel=+3"</span>);</span>
+<span id="tests-01-basics-loft-L108"></span>
+<span id="tests-01-basics-loft-L109">  <span class="cm">// Tick 2: left still down + right also down — left edge cleared,</span></span>
+<span id="tests-01-basics-loft-L110">  <span class="cm">// right edge fires.</span></span>
+<span id="tests-01-basics-loft-L111">  s.<span class="fn-call">input_tick_from_state</span>(<span class="fn-call">snap</span>([]), <span class="nm">10.0</span>, <span class="nm">20.0</span>,</span>
+<span id="tests-01-basics-loft-L112">    input::<span class="en">MB_LEFT</span> | input::<span class="en">MB_RIGHT</span>, <span class="nm">0</span>);</span>
+<span id="tests-01-basics-loft-L113">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(s.<span class="fn-call">mouse_button_down</span>(input::<span class="en">MB_LEFT</span>), <span class="st">"left still down"</span>);</span>
+<span id="tests-01-basics-loft-L114">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(s.<span class="fn-call">mouse_button_down</span>(input::<span class="en">MB_RIGHT</span>), <span class="st">"right now down"</span>);</span>
+<span id="tests-01-basics-loft-L115">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!s.<span class="fn-call">mouse_button_just_pressed</span>(input::<span class="en">MB_LEFT</span>), <span class="st">"left edge cleared"</span>);</span>
+<span id="tests-01-basics-loft-L116">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(s.<span class="fn-call">mouse_button_just_pressed</span>(input::<span class="en">MB_RIGHT</span>), <span class="st">"right just pressed"</span>);</span>
+<span id="tests-01-basics-loft-L117">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(s.<span class="fn-call">mouse_wheel</span>() == <span class="nm">0</span>, <span class="st">"wheel resets per tick"</span>);</span>
+<span id="tests-01-basics-loft-L118"></span>
+<span id="tests-01-basics-loft-L119">  <span class="cm">// Tick 3: all released — just_released fires for both.</span></span>
+<span id="tests-01-basics-loft-L120">  s.<span class="fn-call">input_tick_from_state</span>(<span class="fn-call">snap</span>([]), <span class="nm">10.0</span>, <span class="nm">20.0</span>, <span class="nm">0</span>, <span class="nm">0</span>);</span>
+<span id="tests-01-basics-loft-L121">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!s.<span class="fn-call">mouse_button_down</span>(input::<span class="en">MB_LEFT</span>), <span class="st">"left released"</span>);</span>
+<span id="tests-01-basics-loft-L122">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(s.<span class="fn-call">mouse_button_just_released</span>(input::<span class="en">MB_LEFT</span>), <span class="st">"left just released"</span>);</span>
+<span id="tests-01-basics-loft-L123">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(s.<span class="fn-call">mouse_button_just_released</span>(input::<span class="en">MB_RIGHT</span>), <span class="st">"right just released"</span>);</span>
+<span id="tests-01-basics-loft-L124">}</span>
+<span id="tests-01-basics-loft-L125"></span>
+<span id="tests-01-basics-loft-L126"><span class="kw">fn</span> <span class="fn-call">test_multi_key_action</span>() {</span>
+<span id="tests-01-basics-loft-L127">  <span class="cm">// Action bound to MULTIPLE keys — pressing either fires it.</span></span>
+<span id="tests-01-basics-loft-L128">  b = input::<span class="en">Bindings</span>{</span>
+<span id="tests-01-basics-loft-L129">    bnd_actions: [</span>
+<span id="tests-01-basics-loft-L130">      input::<span class="en">ActionBinding</span>{ab_name: <span class="st">"fire"</span>, ab_keys: [<span class="en">KEY_SPACE</span>, <span class="en">KEY_A</span>]}</span>
+<span id="tests-01-basics-loft-L131">    ],</span>
+<span id="tests-01-basics-loft-L132">    bnd_axes: []</span>
+<span id="tests-01-basics-loft-L133">  };</span>
+<span id="tests-01-basics-loft-L134">  s = input::<span class="fn-call">input_new</span>(b);</span>
+<span id="tests-01-basics-loft-L135"></span>
+<span id="tests-01-basics-loft-L136">  s.<span class="fn-call">input_tick_from_state</span>(<span class="fn-call">snap</span>([<span class="en">KEY_A</span>]), <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0</span>, <span class="nm">0</span>);</span>
+<span id="tests-01-basics-loft-L137">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(s.<span class="fn-call">is_action_pressed</span>(<span class="st">"fire"</span>), <span class="st">"fire via A"</span>);</span>
+<span id="tests-01-basics-loft-L138">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(s.<span class="fn-call">is_action_just_pressed</span>(<span class="st">"fire"</span>), <span class="st">"fire edge via A"</span>);</span>
+<span id="tests-01-basics-loft-L139"></span>
+<span id="tests-01-basics-loft-L140">  s.<span class="fn-call">input_tick_from_state</span>(<span class="fn-call">snap</span>([<span class="en">KEY_SPACE</span>]), <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0</span>, <span class="nm">0</span>);</span>
+<span id="tests-01-basics-loft-L141">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(s.<span class="fn-call">is_action_pressed</span>(<span class="st">"fire"</span>), <span class="st">"fire via SPACE"</span>);</span>
+<span id="tests-01-basics-loft-L142">  <span class="cm">// A went up, SPACE went down — both transitions in one tick.  The</span></span>
+<span id="tests-01-basics-loft-L143">  <span class="cm">// SPACE-down transition fires `just_pressed` even though the</span></span>
+<span id="tests-01-basics-loft-L144">  <span class="cm">// action was held last tick (different key, different transition).</span></span>
+<span id="tests-01-basics-loft-L145">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(s.<span class="fn-call">is_action_just_pressed</span>(<span class="st">"fire"</span>), <span class="st">"fire edge via SPACE"</span>);</span>
+<span id="tests-01-basics-loft-L146">}</span>
+<span id="tests-01-basics-loft-L147"></span>
+<span id="tests-01-basics-loft-L148"><span class="kw">fn</span> <span class="fn-call">test_rebind</span>() {</span>
+<span id="tests-01-basics-loft-L149">  s = <span class="fn-call">make_state</span>();</span>
+<span id="tests-01-basics-loft-L150"></span>
+<span id="tests-01-basics-loft-L151">  <span class="cm">// SPACE down → jump fires.</span></span>
+<span id="tests-01-basics-loft-L152">  s.<span class="fn-call">input_tick_from_state</span>(<span class="fn-call">snap</span>([<span class="en">KEY_SPACE</span>]), <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0</span>, <span class="nm">0</span>);</span>
+<span id="tests-01-basics-loft-L153">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(s.<span class="fn-call">is_action_pressed</span>(<span class="st">"jump"</span>), <span class="st">"pre-rebind jump pressed"</span>);</span>
+<span id="tests-01-basics-loft-L154"></span>
+<span id="tests-01-basics-loft-L155">  <span class="cm">// Rebind: "jump" now needs A instead.  SPACE is still held but no</span></span>
+<span id="tests-01-basics-loft-L156">  <span class="cm">// longer counts.</span></span>
+<span id="tests-01-basics-loft-L157">  new_b = input::<span class="en">Bindings</span>{</span>
+<span id="tests-01-basics-loft-L158">    bnd_actions: [</span>
+<span id="tests-01-basics-loft-L159">      input::<span class="en">ActionBinding</span>{ab_name: <span class="st">"jump"</span>, ab_keys: [<span class="en">KEY_A</span>]}</span>
+<span id="tests-01-basics-loft-L160">    ],</span>
+<span id="tests-01-basics-loft-L161">    bnd_axes: []</span>
+<span id="tests-01-basics-loft-L162">  };</span>
+<span id="tests-01-basics-loft-L163">  s.<span class="fn-call">input_set_bindings</span>(new_b);</span>
+<span id="tests-01-basics-loft-L164">  <span class="cm">// Re-tick at the SAME hardware state — SPACE no longer triggers.</span></span>
+<span id="tests-01-basics-loft-L165">  s.<span class="fn-call">input_tick_from_state</span>(<span class="fn-call">snap</span>([<span class="en">KEY_SPACE</span>]), <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0</span>, <span class="nm">0</span>);</span>
+<span id="tests-01-basics-loft-L166">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!s.<span class="fn-call">is_action_pressed</span>(<span class="st">"jump"</span>), <span class="st">"post-rebind: SPACE no longer triggers"</span>);</span>
+<span id="tests-01-basics-loft-L167"></span>
+<span id="tests-01-basics-loft-L168">  s.<span class="fn-call">input_tick_from_state</span>(<span class="fn-call">snap</span>([<span class="en">KEY_A</span>]), <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0</span>, <span class="nm">0</span>);</span>
+<span id="tests-01-basics-loft-L169">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(s.<span class="fn-call">is_action_pressed</span>(<span class="st">"jump"</span>), <span class="st">"post-rebind: A triggers"</span>);</span>
+<span id="tests-01-basics-loft-L170">}</span>
+<span id="tests-01-basics-loft-L171"></span>
+<span id="tests-01-basics-loft-L172"><span class="kw">fn</span> <span class="fn-call">main</span>() {</span>
+<span id="tests-01-basics-loft-L173">  <span class="fn-call">test_pressed_and_edges</span>();</span>
+<span id="tests-01-basics-loft-L174">  <span class="fn-call">test_axis_pair</span>();</span>
+<span id="tests-01-basics-loft-L175">  <span class="fn-call">test_mouse</span>();</span>
+<span id="tests-01-basics-loft-L176">  <span class="fn-call">test_multi_key_action</span>();</span>
+<span id="tests-01-basics-loft-L177">  <span class="fn-call">test_rebind</span>();</span>
+<span id="tests-01-basics-loft-L178">  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"input lib: all checks passed"</span>);</span>
+<span id="tests-01-basics-loft-L179">}</span>
+</code></pre>
+<h2 id="tests-02-worked-examples-loft">tests/02-worked-examples.loft</h2>
+<pre class="src"><code><span id="tests-02-worked-examples-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
+<span id="tests-02-worked-examples-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
+<span id="tests-02-worked-examples-loft-L3"><span class="cm">//</span></span>
+<span id="tests-02-worked-examples-loft-L4"><span class="cm">// One test per non-obvious contract, and each one is that contract's</span></span>
+<span id="tests-02-worked-examples-loft-L5"><span class="cm">// worked EXAMPLE.</span></span>
+<span id="tests-02-worked-examples-loft-L6"><span class="cm">//</span></span>
+<span id="tests-02-worked-examples-loft-L7"><span class="cm">// ⚠⚠ **The pair is the deliverable.**  A snippet in a doc comment rots</span></span>
+<span id="tests-02-worked-examples-loft-L8"><span class="cm">// silently — nothing compiles it, so it goes stale at the first</span></span>
+<span id="tests-02-worked-examples-loft-L9"><span class="cm">// signature change and the reader finds out.  A test nobody links to is</span></span>
+<span id="tests-02-worked-examples-loft-L10"><span class="cm">// correct and invisible.  So every function below carries an</span></span>
+<span id="tests-02-worked-examples-loft-L11"><span class="cm">// `// Example: @INP-0NN` line pointing here, and every tag here is</span></span>
+<span id="tests-02-worked-examples-loft-L12"><span class="cm">// reachable from the functions it demonstrates.</span></span>
+<span id="tests-02-worked-examples-loft-L13"><span class="cm">//</span></span>
+<span id="tests-02-worked-examples-loft-L14"><span class="cm">// ⚠ These are examples FIRST and assertions second: each is written the</span></span>
+<span id="tests-02-worked-examples-loft-L15"><span class="cm">// way a game's frame loop would actually write it.  `01-basics` already</span></span>
+<span id="tests-02-worked-examples-loft-L16"><span class="cm">// pins that each query answers correctly; what these pin is the shape of</span></span>
+<span id="tests-02-worked-examples-loft-L17"><span class="cm">// a CORRECT CALL.</span></span>
+<span id="tests-02-worked-examples-loft-L18"><span class="cm">//</span></span>
+<span id="tests-02-worked-examples-loft-L19"><span class="cm">// Why this library owes them: **an edge is a difference between two</span></span>
+<span id="tests-02-worked-examples-loft-L20"><span class="cm">// ticks, and a name is a bare `text`.**  Nothing in a signature says how</span></span>
+<span id="tests-02-worked-examples-loft-L21"><span class="cm">// often to tick, that a misspelt action is silently never pressed, that</span></span>
+<span id="tests-02-worked-examples-loft-L22"><span class="cm">// a combined button mask means "either", or that a rebind inherits the</span></span>
+<span id="tests-02-worked-examples-loft-L23"><span class="cm">// keys already held.  Every one of those is a well-typed call answering</span></span>
+<span id="tests-02-worked-examples-loft-L24"><span class="cm">// the same `false` / `0.0` a correct one answers.</span></span>
+<span id="tests-02-worked-examples-loft-L25"><span class="cm">//</span></span>
+<span id="tests-02-worked-examples-loft-L26"><span class="cm">// Every example drives the state through `input_tick_from_state`, so</span></span>
+<span id="tests-02-worked-examples-loft-L27"><span class="cm">// they run headless — no GL context, and the same edge-detection code</span></span>
+<span id="tests-02-worked-examples-loft-L28"><span class="cm">// path a polled game takes.</span></span>
+<span id="tests-02-worked-examples-loft-L29"><span class="kw">use</span> input::*;</span>
+<span id="tests-02-worked-examples-loft-L30"></span>
+<span id="tests-02-worked-examples-loft-L31"><span class="cm">// Key codes as `graphics` numbers them (`KEY_A` = 97, `KEY_SPACE` = 32,</span></span>
+<span id="tests-02-worked-examples-loft-L32"><span class="cm">// `KEY_LEFT` = 130, `KEY_RIGHT` = 131).  A game reads them from</span></span>
+<span id="tests-02-worked-examples-loft-L33"><span class="cm">// `graphics`; the tests restate them so they need no GL build.</span></span>
+<span id="tests-02-worked-examples-loft-L34"><span class="en">KEY_SPACE</span> = <span class="nm">32</span>;</span>
+<span id="tests-02-worked-examples-loft-L35"><span class="en">KEY_LEFT</span>  = <span class="nm">130</span>;</span>
+<span id="tests-02-worked-examples-loft-L36"><span class="en">KEY_RIGHT</span> = <span class="nm">131</span>;</span>
+<span id="tests-02-worked-examples-loft-L37"><span class="en">KEY_A</span>     = <span class="nm">97</span>;</span>
+<span id="tests-02-worked-examples-loft-L38"><span class="en">KEY_B</span>     = <span class="nm">98</span>;</span>
+<span id="tests-02-worked-examples-loft-L39"></span>
+<span id="tests-02-worked-examples-loft-L40"><span class="cm">// One frame's worth of keyboard, as `input_tick_from_state` wants it:</span></span>
+<span id="tests-02-worked-examples-loft-L41"><span class="cm">// a flag per key code, index = code.</span></span>
+<span id="tests-02-worked-examples-loft-L42"><span class="kw">fn</span> <span class="fn-call">keys_down</span>(kd_codes: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">boolean</a></span>&gt; {</span>
+<span id="tests-02-worked-examples-loft-L43">  kd_v: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">boolean</a></span>&gt; = [];</span>
+<span id="tests-02-worked-examples-loft-L44">  <span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..256</span> { kd_v += [<span class="kw">false</span>]; }</span>
+<span id="tests-02-worked-examples-loft-L45">  <span class="kw">for</span> kd_k <span class="kw">in</span> kd_codes { <span class="kw">if</span> kd_k &gt;= <span class="nm">0</span> &amp;&amp; kd_k &lt; <span class="nm">256</span> { kd_v[kd_k] = <span class="kw">true</span>; } }</span>
+<span id="tests-02-worked-examples-loft-L46">  kd_v</span>
+<span id="tests-02-worked-examples-loft-L47">}</span>
+<span id="tests-02-worked-examples-loft-L48"></span>
+<span id="tests-02-worked-examples-loft-L49"><span class="cm">// A small platformer's bindings: two actions and one axis.</span></span>
+<span id="tests-02-worked-examples-loft-L50"><span class="kw">fn</span> <span class="fn-call">platformer_state</span>() -&gt; input::<span class="en">InputState</span> {</span>
+<span id="tests-02-worked-examples-loft-L51">  ps_b = input::<span class="en">Bindings</span>{</span>
+<span id="tests-02-worked-examples-loft-L52">    bnd_actions: [</span>
+<span id="tests-02-worked-examples-loft-L53">      input::<span class="en">ActionBinding</span>{ab_name: <span class="st">"jump"</span>, ab_keys: [<span class="en">KEY_SPACE</span>]},</span>
+<span id="tests-02-worked-examples-loft-L54">      input::<span class="en">ActionBinding</span>{ab_name: <span class="st">"use"</span>,  ab_keys: [<span class="en">KEY_A</span>]}</span>
+<span id="tests-02-worked-examples-loft-L55">    ],</span>
+<span id="tests-02-worked-examples-loft-L56">    bnd_axes: [</span>
+<span id="tests-02-worked-examples-loft-L57">      input::<span class="en">AxisBinding</span>{ax_name: <span class="st">"horizontal"</span>, ax_neg: <span class="en">KEY_LEFT</span>, ax_pos: <span class="en">KEY_RIGHT</span>}</span>
+<span id="tests-02-worked-examples-loft-L58">    ]</span>
+<span id="tests-02-worked-examples-loft-L59">  };</span>
+<span id="tests-02-worked-examples-loft-L60">  input::<span class="fn-call">input_new</span>(ps_b)</span>
+<span id="tests-02-worked-examples-loft-L61">}</span>
+<span id="tests-02-worked-examples-loft-L62"></span>
+<span id="tests-02-worked-examples-loft-L63"><span class="cm">// The frame loop, and the one rule it has to obey.</span></span>
+<span id="tests-02-worked-examples-loft-L64"><span class="cm">//</span></span>
+<span id="tests-02-worked-examples-loft-L65"><span class="cm">// ⚠⚠ **Tick exactly once per frame.**  An edge is the difference between</span></span>
+<span id="tests-02-worked-examples-loft-L66"><span class="cm">// the tick's table and the previous tick's, so the TICK is what consumes</span></span>
+<span id="tests-02-worked-examples-loft-L67"><span class="cm">// it — not the query.  Ask as many times as you like; tick twice in one</span></span>
+<span id="tests-02-worked-examples-loft-L68"><span class="cm">// frame and the press is gone, with nothing anywhere reporting it.</span></span>
+<span id="tests-02-worked-examples-loft-L69"><span class="cm">// @INP-001 — the edge lives between two ticks, so tick once per frame</span></span>
+<span id="tests-02-worked-examples-loft-L70"><span class="kw">fn</span> <span class="fn-call">test_a_frame_loop_ticks_once</span>() {</span>
+<span id="tests-02-worked-examples-loft-L71">  fl_s = <span class="fn-call">platformer_state</span>();</span>
+<span id="tests-02-worked-examples-loft-L72"></span>
+<span id="tests-02-worked-examples-loft-L73">  <span class="cm">// Frame 1 — the player is holding jump as the level starts.  Both</span></span>
+<span id="tests-02-worked-examples-loft-L74">  <span class="cm">// tables begin all-false, so the first tick counts as a transition:</span></span>
+<span id="tests-02-worked-examples-loft-L75">  <span class="cm">// an already-held key fires its edge on frame one, by design.</span></span>
+<span id="tests-02-worked-examples-loft-L76">  fl_s.<span class="fn-call">input_tick_from_state</span>(<span class="fn-call">keys_down</span>([<span class="en">KEY_SPACE</span>]), <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0</span>, <span class="nm">0</span>);</span>
+<span id="tests-02-worked-examples-loft-L77">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(fl_s.<span class="fn-call">is_action_just_pressed</span>(<span class="st">"jump"</span>), <span class="st">"frame 1: the edge fires"</span>);</span>
+<span id="tests-02-worked-examples-loft-L78"></span>
+<span id="tests-02-worked-examples-loft-L79">  <span class="cm">// ⚠ Queries are free and repeatable — two systems can both ask.</span></span>
+<span id="tests-02-worked-examples-loft-L80">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(fl_s.<span class="fn-call">is_action_just_pressed</span>(<span class="st">"jump"</span>), <span class="st">"a second reader lost the edge"</span>);</span>
+<span id="tests-02-worked-examples-loft-L81">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(fl_s.<span class="fn-call">is_action_pressed</span>(<span class="st">"jump"</span>), <span class="st">"held, as well as risen"</span>);</span>
+<span id="tests-02-worked-examples-loft-L82"></span>
+<span id="tests-02-worked-examples-loft-L83">  <span class="cm">// Frame 2 — still held: pressed, but no edge.  This is what makes</span></span>
+<span id="tests-02-worked-examples-loft-L84">  <span class="cm">// `just_pressed` the right query for "fire once per press".</span></span>
+<span id="tests-02-worked-examples-loft-L85">  fl_s.<span class="fn-call">input_tick_from_state</span>(<span class="fn-call">keys_down</span>([<span class="en">KEY_SPACE</span>]), <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0</span>, <span class="nm">0</span>);</span>
+<span id="tests-02-worked-examples-loft-L86">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(fl_s.<span class="fn-call">is_action_pressed</span>(<span class="st">"jump"</span>), <span class="st">"frame 2: still held"</span>);</span>
+<span id="tests-02-worked-examples-loft-L87">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!fl_s.<span class="fn-call">is_action_just_pressed</span>(<span class="st">"jump"</span>), <span class="st">"frame 2: the edge is spent"</span>);</span>
+<span id="tests-02-worked-examples-loft-L88"></span>
+<span id="tests-02-worked-examples-loft-L89">  <span class="cm">// Frame 3 — released: the falling edge, once.</span></span>
+<span id="tests-02-worked-examples-loft-L90">  fl_s.<span class="fn-call">input_tick_from_state</span>(<span class="fn-call">keys_down</span>([]), <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0</span>, <span class="nm">0</span>);</span>
+<span id="tests-02-worked-examples-loft-L91">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(fl_s.<span class="fn-call">is_action_just_released</span>(<span class="st">"jump"</span>), <span class="st">"frame 3: the release fires"</span>);</span>
+<span id="tests-02-worked-examples-loft-L92">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!fl_s.<span class="fn-call">is_action_pressed</span>(<span class="st">"jump"</span>), <span class="st">"frame 3: no longer held"</span>);</span>
+<span id="tests-02-worked-examples-loft-L93"></span>
+<span id="tests-02-worked-examples-loft-L94">  <span class="cm">// ⚠ The failure this door exists to prevent: a second tick inside one</span></span>
+<span id="tests-02-worked-examples-loft-L95">  <span class="cm">// frame — a menu that polls, or a fixed-step loop that ticks input</span></span>
+<span id="tests-02-worked-examples-loft-L96">  <span class="cm">// alongside every simulation step — hands the press to nobody.</span></span>
+<span id="tests-02-worked-examples-loft-L97">  fl_lost = <span class="fn-call">platformer_state</span>();</span>
+<span id="tests-02-worked-examples-loft-L98">  fl_lost.<span class="fn-call">input_tick_from_state</span>(<span class="fn-call">keys_down</span>([<span class="en">KEY_SPACE</span>]), <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0</span>, <span class="nm">0</span>);</span>
+<span id="tests-02-worked-examples-loft-L99">  fl_lost.<span class="fn-call">input_tick_from_state</span>(<span class="fn-call">keys_down</span>([<span class="en">KEY_SPACE</span>]), <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0</span>, <span class="nm">0</span>);</span>
+<span id="tests-02-worked-examples-loft-L100">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!fl_lost.<span class="fn-call">is_action_just_pressed</span>(<span class="st">"jump"</span>),</span>
+<span id="tests-02-worked-examples-loft-L101">         <span class="st">"the second tick in one frame swallowed the press"</span>);</span>
+<span id="tests-02-worked-examples-loft-L102">  <span class="cm">// The wheel is a per-tick delta and is zeroed the same way.</span></span>
+<span id="tests-02-worked-examples-loft-L103">  fl_lost.<span class="fn-call">input_tick_from_state</span>(<span class="fn-call">keys_down</span>([]), <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0</span>, <span class="nm">4</span>);</span>
+<span id="tests-02-worked-examples-loft-L104">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(fl_lost.<span class="fn-call">mouse_wheel</span>() == <span class="nm">4</span>, <span class="st">"wheel this tick"</span>);</span>
+<span id="tests-02-worked-examples-loft-L105">  fl_lost.<span class="fn-call">input_tick_from_state</span>(<span class="fn-call">keys_down</span>([]), <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0</span>, <span class="nm">0</span>);</span>
+<span id="tests-02-worked-examples-loft-L106">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(fl_lost.<span class="fn-call">mouse_wheel</span>() == <span class="nm">0</span>, <span class="st">"the wheel does not accumulate across ticks"</span>);</span>
+<span id="tests-02-worked-examples-loft-L107">}</span>
+<span id="tests-02-worked-examples-loft-L108"></span>
+<span id="tests-02-worked-examples-loft-L109"><span class="cm">// Querying an action and an axis — and what a typo does.</span></span>
+<span id="tests-02-worked-examples-loft-L110"><span class="cm">//</span></span>
+<span id="tests-02-worked-examples-loft-L111"><span class="cm">// ⚠⚠ **A name is a bare `text` that is never declared anywhere.**  An</span></span>
+<span id="tests-02-worked-examples-loft-L112"><span class="cm">// unknown action answers `false`, which is exactly what an action that</span></span>
+<span id="tests-02-worked-examples-loft-L113"><span class="cm">// is simply not pressed answers; an unknown axis answers `0.0`, which is</span></span>
+<span id="tests-02-worked-examples-loft-L114"><span class="cm">// exactly what a centred one answers.  So a misspelt binding is not an</span></span>
+<span id="tests-02-worked-examples-loft-L115"><span class="cm">// error, it is a control that never works, for the life of the build.</span></span>
+<span id="tests-02-worked-examples-loft-L116"><span class="cm">// @INP-002 — every failure answers what success answers</span></span>
+<span id="tests-02-worked-examples-loft-L117"><span class="kw">fn</span> <span class="fn-call">test_a_misspelt_name_is_silent</span>() {</span>
+<span id="tests-02-worked-examples-loft-L118">  sn_s = <span class="fn-call">platformer_state</span>();</span>
+<span id="tests-02-worked-examples-loft-L119">  sn_s.<span class="fn-call">input_tick_from_state</span>(<span class="fn-call">keys_down</span>([<span class="en">KEY_SPACE</span>]), <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0</span>, <span class="nm">0</span>);</span>
+<span id="tests-02-worked-examples-loft-L120"></span>
+<span id="tests-02-worked-examples-loft-L121">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(sn_s.<span class="fn-call">is_action_pressed</span>(<span class="st">"jump"</span>), <span class="st">"the bound name works"</span>);</span>
+<span id="tests-02-worked-examples-loft-L122"></span>
+<span id="tests-02-worked-examples-loft-L123">  <span class="cm">// ⚠ These two lines are indistinguishable at the call site:</span></span>
+<span id="tests-02-worked-examples-loft-L124">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!sn_s.<span class="fn-call">is_action_pressed</span>(<span class="st">"jmup"</span>), <span class="st">"a typo answers false"</span>);</span>
+<span id="tests-02-worked-examples-loft-L125">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!sn_s.<span class="fn-call">is_action_pressed</span>(<span class="st">"use"</span>), <span class="st">"an unpressed action answers false"</span>);</span>
+<span id="tests-02-worked-examples-loft-L126">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!sn_s.<span class="fn-call">is_action_just_pressed</span>(<span class="st">"jmup"</span>), <span class="st">"and so does its edge"</span>);</span>
+<span id="tests-02-worked-examples-loft-L127"></span>
+<span id="tests-02-worked-examples-loft-L128">  <span class="cm">// ⚠ Same for an axis, where `0.0` carries three different meanings:</span></span>
+<span id="tests-02-worked-examples-loft-L129">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(sn_s.<span class="fn-call">get_axis</span>(<span class="st">"horizonal"</span>) == <span class="nm">0.0</span>, <span class="st">"unknown axis reads centred"</span>);</span>
+<span id="tests-02-worked-examples-loft-L130">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(sn_s.<span class="fn-call">get_axis</span>(<span class="st">"horizontal"</span>) == <span class="nm">0.0</span>, <span class="st">"neither key down reads centred"</span>);</span>
+<span id="tests-02-worked-examples-loft-L131">  sn_s.<span class="fn-call">input_tick_from_state</span>(<span class="fn-call">keys_down</span>([<span class="en">KEY_LEFT</span>, <span class="en">KEY_RIGHT</span>]), <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0</span>, <span class="nm">0</span>);</span>
+<span id="tests-02-worked-examples-loft-L132">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(sn_s.<span class="fn-call">get_axis</span>(<span class="st">"horizontal"</span>) == <span class="nm">0.0</span>, <span class="st">"both keys down CANCEL to centred"</span>);</span>
+<span id="tests-02-worked-examples-loft-L133"></span>
+<span id="tests-02-worked-examples-loft-L134">  <span class="cm">// ...so `get_axis(a) == 0.0` can never be read as "the player is not</span></span>
+<span id="tests-02-worked-examples-loft-L135">  <span class="cm">// steering".  The values that do mean something are the poles:</span></span>
+<span id="tests-02-worked-examples-loft-L136">  sn_s.<span class="fn-call">input_tick_from_state</span>(<span class="fn-call">keys_down</span>([<span class="en">KEY_RIGHT</span>]), <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0</span>, <span class="nm">0</span>);</span>
+<span id="tests-02-worked-examples-loft-L137">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(sn_s.<span class="fn-call">get_axis</span>(<span class="st">"horizontal"</span>) == <span class="nm">1.0</span>, <span class="st">"ax_pos is +1"</span>);</span>
+<span id="tests-02-worked-examples-loft-L138">  sn_s.<span class="fn-call">input_tick_from_state</span>(<span class="fn-call">keys_down</span>([<span class="en">KEY_LEFT</span>]), <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0</span>, <span class="nm">0</span>);</span>
+<span id="tests-02-worked-examples-loft-L139">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(sn_s.<span class="fn-call">get_axis</span>(<span class="st">"horizontal"</span>) == -<span class="nm">1.0</span>, <span class="st">"ax_neg is -1"</span>);</span>
+<span id="tests-02-worked-examples-loft-L140"></span>
+<span id="tests-02-worked-examples-loft-L141">  <span class="cm">// The check that does hold, if a typo must be caught: ask the bindings.</span></span>
+<span id="tests-02-worked-examples-loft-L142">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">has_action</span>(sn_s, <span class="st">"jump"</span>), <span class="st">"jump is bound"</span>);</span>
+<span id="tests-02-worked-examples-loft-L143">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="fn-call">has_action</span>(sn_s, <span class="st">"jmup"</span>), <span class="st">"jmup is not"</span>);</span>
+<span id="tests-02-worked-examples-loft-L144">}</span>
+<span id="tests-02-worked-examples-loft-L145"></span>
+<span id="tests-02-worked-examples-loft-L146"><span class="cm">// The lookup the example above recommends when a name comes from config or a</span></span>
+<span id="tests-02-worked-examples-loft-L147"><span class="cm">// remap screen: the binding list is the only place a name exists.</span></span>
+<span id="tests-02-worked-examples-loft-L148"><span class="kw">fn</span> <span class="fn-call">has_action</span>(ha_s: const input::<span class="en">InputState</span>, ha_name: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="tests-02-worked-examples-loft-L149">  <span class="kw">for</span> ha_ab <span class="kw">in</span> ha_s.is_bindings.bnd_actions {</span>
+<span id="tests-02-worked-examples-loft-L150">    <span class="kw">if</span> ha_ab.ab_name == ha_name { <span class="kw">return</span> <span class="kw">true</span>; }</span>
+<span id="tests-02-worked-examples-loft-L151">  }</span>
+<span id="tests-02-worked-examples-loft-L152">  <span class="kw">false</span></span>
+<span id="tests-02-worked-examples-loft-L153">}</span>
+<span id="tests-02-worked-examples-loft-L154"></span>
+<span id="tests-02-worked-examples-loft-L155"><span class="cm">// Reading mouse buttons.</span></span>
+<span id="tests-02-worked-examples-loft-L156"><span class="cm">//</span></span>
+<span id="tests-02-worked-examples-loft-L157"><span class="cm">// ⚠⚠ **A button argument is a MASK and the test is `&amp; != 0`, so passing</span></span>
+<span id="tests-02-worked-examples-loft-L158"><span class="cm">// two bits asks "either", not "both".**  `MB_LEFT | MB_RIGHT` is a</span></span>
+<span id="tests-02-worked-examples-loft-L159"><span class="cm">// well-typed integer that reads true while only the left is down — and</span></span>
+<span id="tests-02-worked-examples-loft-L160"><span class="cm">// its `just_pressed` then MISSES the right button entirely, because the</span></span>
+<span id="tests-02-worked-examples-loft-L161"><span class="cm">// mask was already non-zero.  Pass one constant per call.</span></span>
+<span id="tests-02-worked-examples-loft-L162"><span class="cm">// @INP-003 — a combined button mask means "either", and hides an edge</span></span>
+<span id="tests-02-worked-examples-loft-L163"><span class="kw">fn</span> <span class="fn-call">test_one_button_constant_per_call</span>() {</span>
+<span id="tests-02-worked-examples-loft-L164">  mb_s = <span class="fn-call">platformer_state</span>();</span>
+<span id="tests-02-worked-examples-loft-L165"></span>
+<span id="tests-02-worked-examples-loft-L166">  <span class="cm">// Frame 1 — the left button goes down.</span></span>
+<span id="tests-02-worked-examples-loft-L167">  mb_s.<span class="fn-call">input_tick_from_state</span>(<span class="fn-call">keys_down</span>([]), <span class="nm">12.0</span>, <span class="nm">34.0</span>, input::<span class="en">MB_LEFT</span>, <span class="nm">0</span>);</span>
+<span id="tests-02-worked-examples-loft-L168">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(mb_s.<span class="fn-call">mouse_button_down</span>(input::<span class="en">MB_LEFT</span>), <span class="st">"left is down"</span>);</span>
+<span id="tests-02-worked-examples-loft-L169">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!mb_s.<span class="fn-call">mouse_button_down</span>(input::<span class="en">MB_RIGHT</span>), <span class="st">"right is not"</span>);</span>
+<span id="tests-02-worked-examples-loft-L170">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(mb_s.<span class="fn-call">mouse_button_just_pressed</span>(input::<span class="en">MB_LEFT</span>), <span class="st">"left's edge"</span>);</span>
+<span id="tests-02-worked-examples-loft-L171">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(mb_s.<span class="fn-call">mouse_x</span>() == <span class="nm">12.0</span> &amp;&amp; mb_s.<span class="fn-call">mouse_y</span>() == <span class="nm">34.0</span>, <span class="st">"pointer, top-left origin"</span>);</span>
+<span id="tests-02-worked-examples-loft-L172"></span>
+<span id="tests-02-worked-examples-loft-L173">  <span class="cm">// ⚠ Only the left is down, and the combined mask says yes:</span></span>
+<span id="tests-02-worked-examples-loft-L174">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(mb_s.<span class="fn-call">mouse_button_down</span>(input::<span class="en">MB_LEFT</span> | input::<span class="en">MB_RIGHT</span>),</span>
+<span id="tests-02-worked-examples-loft-L175">         <span class="st">"a combined mask answers `either`, not `both`"</span>);</span>
+<span id="tests-02-worked-examples-loft-L176"></span>
+<span id="tests-02-worked-examples-loft-L177">  <span class="cm">// Frame 2 — the right joins while the left stays down.</span></span>
+<span id="tests-02-worked-examples-loft-L178">  mb_s.<span class="fn-call">input_tick_from_state</span>(<span class="fn-call">keys_down</span>([]), <span class="nm">12.0</span>, <span class="nm">34.0</span>,</span>
+<span id="tests-02-worked-examples-loft-L179">                             input::<span class="en">MB_LEFT</span> | input::<span class="en">MB_RIGHT</span>, <span class="nm">0</span>);</span>
+<span id="tests-02-worked-examples-loft-L180">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(mb_s.<span class="fn-call">mouse_button_just_pressed</span>(input::<span class="en">MB_RIGHT</span>),</span>
+<span id="tests-02-worked-examples-loft-L181">         <span class="st">"asked per button, the new press is seen"</span>);</span>
+<span id="tests-02-worked-examples-loft-L182">  <span class="cm">// ⚠ ...and asked as a mask, it is not: the mask was already non-zero</span></span>
+<span id="tests-02-worked-examples-loft-L183">  <span class="cm">// last tick, so `now &amp;&amp; !prev` is false and the click is dropped.</span></span>
+<span id="tests-02-worked-examples-loft-L184">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!mb_s.<span class="fn-call">mouse_button_just_pressed</span>(input::<span class="en">MB_LEFT</span> | input::<span class="en">MB_RIGHT</span>),</span>
+<span id="tests-02-worked-examples-loft-L185">         <span class="st">"the combined mask hid the right-button press"</span>);</span>
+<span id="tests-02-worked-examples-loft-L186"></span>
+<span id="tests-02-worked-examples-loft-L187">  <span class="cm">// Frame 3 — the left lifts, the right stays.</span></span>
+<span id="tests-02-worked-examples-loft-L188">  mb_s.<span class="fn-call">input_tick_from_state</span>(<span class="fn-call">keys_down</span>([]), <span class="nm">12.0</span>, <span class="nm">34.0</span>, input::<span class="en">MB_RIGHT</span>, <span class="nm">0</span>);</span>
+<span id="tests-02-worked-examples-loft-L189">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(mb_s.<span class="fn-call">mouse_button_just_released</span>(input::<span class="en">MB_LEFT</span>), <span class="st">"left's release"</span>);</span>
+<span id="tests-02-worked-examples-loft-L190">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(mb_s.<span class="fn-call">mouse_button_down</span>(input::<span class="en">MB_RIGHT</span>), <span class="st">"right still held"</span>);</span>
+<span id="tests-02-worked-examples-loft-L191">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!mb_s.<span class="fn-call">mouse_button_just_released</span>(input::<span class="en">MB_RIGHT</span>), <span class="st">"right did not release"</span>);</span>
+<span id="tests-02-worked-examples-loft-L192">}</span>
+<span id="tests-02-worked-examples-loft-L193"></span>
+<span id="tests-02-worked-examples-loft-L194"><span class="cm">// The settings screen: the player remaps a control mid-game.</span></span>
+<span id="tests-02-worked-examples-loft-L195"><span class="cm">//</span></span>
+<span id="tests-02-worked-examples-loft-L196"><span class="cm">// ⚠⚠ **`input_set_bindings` swaps the names, never the key tables.**</span></span>
+<span id="tests-02-worked-examples-loft-L197"><span class="cm">// That is what keeps a key held across a remap from being stranded —</span></span>
+<span id="tests-02-worked-examples-loft-L198"><span class="cm">// and it means the new binding INHERITS both tables, so an action bound</span></span>
+<span id="tests-02-worked-examples-loft-L199"><span class="cm">// onto an already-held key reads pressed at once, and fires a</span></span>
+<span id="tests-02-worked-examples-loft-L200"><span class="cm">// `just_pressed` edge the player never made for it.</span></span>
+<span id="tests-02-worked-examples-loft-L201"><span class="cm">// @INP-004 — a rebind inherits the keys already held, edges included</span></span>
+<span id="tests-02-worked-examples-loft-L202"><span class="kw">fn</span> <span class="fn-call">test_a_remap_inherits_the_held_keys</span>() {</span>
+<span id="tests-02-worked-examples-loft-L203">  rb_s = <span class="fn-call">platformer_state</span>();</span>
+<span id="tests-02-worked-examples-loft-L204"></span>
+<span id="tests-02-worked-examples-loft-L205">  <span class="cm">// The player is holding A, which is "use".</span></span>
+<span id="tests-02-worked-examples-loft-L206">  rb_s.<span class="fn-call">input_tick_from_state</span>(<span class="fn-call">keys_down</span>([<span class="en">KEY_A</span>]), <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0</span>, <span class="nm">0</span>);</span>
+<span id="tests-02-worked-examples-loft-L207">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(rb_s.<span class="fn-call">is_action_just_pressed</span>(<span class="st">"use"</span>), <span class="st">"A rose for `use`"</span>);</span>
+<span id="tests-02-worked-examples-loft-L208"></span>
+<span id="tests-02-worked-examples-loft-L209">  <span class="cm">// They remap "jump" onto A while still holding it.</span></span>
+<span id="tests-02-worked-examples-loft-L210">  rb_s.<span class="fn-call">input_set_bindings</span>(input::<span class="en">Bindings</span>{</span>
+<span id="tests-02-worked-examples-loft-L211">    bnd_actions: [input::<span class="en">ActionBinding</span>{ab_name: <span class="st">"jump"</span>, ab_keys: [<span class="en">KEY_A</span>]}],</span>
+<span id="tests-02-worked-examples-loft-L212">    bnd_axes: []</span>
+<span id="tests-02-worked-examples-loft-L213">  });</span>
+<span id="tests-02-worked-examples-loft-L214"></span>
+<span id="tests-02-worked-examples-loft-L215">  <span class="cm">// ⚠ `jump` is held immediately — the intended half: a key down across</span></span>
+<span id="tests-02-worked-examples-loft-L216">  <span class="cm">// the remap is not stranded until the player lets go and presses again.</span></span>
+<span id="tests-02-worked-examples-loft-L217">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(rb_s.<span class="fn-call">is_action_pressed</span>(<span class="st">"jump"</span>), <span class="st">"the held key carries into the new binding"</span>);</span>
+<span id="tests-02-worked-examples-loft-L218">  <span class="cm">// ⚠ ...and the unintended half: `jump` also fires its rising edge on</span></span>
+<span id="tests-02-worked-examples-loft-L219">  <span class="cm">// this tick, off a press aimed at `use`.  Apply a remap on a frame</span></span>
+<span id="tests-02-worked-examples-loft-L220">  <span class="cm">// where the key is up, or absorb one frame of edges after applying it.</span></span>
+<span id="tests-02-worked-examples-loft-L221">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(rb_s.<span class="fn-call">is_action_just_pressed</span>(<span class="st">"jump"</span>), <span class="st">"the new binding inherited the edge"</span>);</span>
+<span id="tests-02-worked-examples-loft-L222"></span>
+<span id="tests-02-worked-examples-loft-L223">  <span class="cm">// The next tick with A still down settles it: held, no edge.</span></span>
+<span id="tests-02-worked-examples-loft-L224">  rb_s.<span class="fn-call">input_tick_from_state</span>(<span class="fn-call">keys_down</span>([<span class="en">KEY_A</span>]), <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0</span>, <span class="nm">0</span>);</span>
+<span id="tests-02-worked-examples-loft-L225">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(rb_s.<span class="fn-call">is_action_pressed</span>(<span class="st">"jump"</span>) &amp;&amp; !rb_s.<span class="fn-call">is_action_just_pressed</span>(<span class="st">"jump"</span>),</span>
+<span id="tests-02-worked-examples-loft-L226">         <span class="st">"one frame later the inherited edge is spent"</span>);</span>
+<span id="tests-02-worked-examples-loft-L227"></span>
+<span id="tests-02-worked-examples-loft-L228">  <span class="cm">// ⚠ How complete the inherited table is depends on WHICH tick door ran.</span></span>
+<span id="tests-02-worked-examples-loft-L229">  <span class="cm">// `input_tick_from_state` copies the whole snapshot, so even a key no</span></span>
+<span id="tests-02-worked-examples-loft-L230">  <span class="cm">// binding mentions is recorded and a rebind onto it reads pressed at</span></span>
+<span id="tests-02-worked-examples-loft-L231">  <span class="cm">// once.  `input_tick` polls only the keys the bindings name, so the</span></span>
+<span id="tests-02-worked-examples-loft-L232">  <span class="cm">// same rebind reads false there until the next tick refreshes it.</span></span>
+<span id="tests-02-worked-examples-loft-L233">  rb_u = <span class="fn-call">platformer_state</span>();</span>
+<span id="tests-02-worked-examples-loft-L234">  rb_u.<span class="fn-call">input_tick_from_state</span>(<span class="fn-call">keys_down</span>([<span class="en">KEY_B</span>]), <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0</span>, <span class="nm">0</span>);   <span class="cm">// B binds to nothing</span></span>
+<span id="tests-02-worked-examples-loft-L235">  rb_u.<span class="fn-call">input_set_bindings</span>(input::<span class="en">Bindings</span>{</span>
+<span id="tests-02-worked-examples-loft-L236">    bnd_actions: [input::<span class="en">ActionBinding</span>{ab_name: <span class="st">"crouch"</span>, ab_keys: [<span class="en">KEY_B</span>]}],</span>
+<span id="tests-02-worked-examples-loft-L237">    bnd_axes: []</span>
+<span id="tests-02-worked-examples-loft-L238">  });</span>
+<span id="tests-02-worked-examples-loft-L239">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(rb_u.<span class="fn-call">is_action_pressed</span>(<span class="st">"crouch"</span>), <span class="st">"the snapshot door recorded the unbound key"</span>);</span>
+<span id="tests-02-worked-examples-loft-L240">}</span>
+<span id="tests-02-worked-examples-loft-L241"></span>
+<span id="tests-02-worked-examples-loft-L242"><span class="kw">fn</span> <span class="fn-call">main</span>() {</span>
+<span id="tests-02-worked-examples-loft-L243">  <span class="fn-call">test_a_frame_loop_ticks_once</span>();</span>
+<span id="tests-02-worked-examples-loft-L244">  <span class="fn-call">test_a_misspelt_name_is_silent</span>();</span>
+<span id="tests-02-worked-examples-loft-L245">  <span class="fn-call">test_one_button_constant_per_call</span>();</span>
+<span id="tests-02-worked-examples-loft-L246">  <span class="fn-call">test_a_remap_inherits_the_held_keys</span>();</span>
+<span id="tests-02-worked-examples-loft-L247">  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"input worked examples passed"</span>);</span>
+<span id="tests-02-worked-examples-loft-L248">}</span>
+</code></pre>
 
   </article>
 <script src="search-index.js"></script>

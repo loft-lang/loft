@@ -100,6 +100,12 @@ Which half a question falls in is not visible from the snippet, so a cell whose 
 nullable ELEMENT belongs in `tests/scripts/`, and **a `code!` cell about nullability is run
 against the pre-fix build before it is trusted**.
 
+⚠ **A `code!` snippet skips the two-pass check (H5).**  `Parser::parse_str` runs both passes
+without `assert_pass2_def_attr_stable`, so a definition minted on pass 2 alone — which `loft
+<file>` stops on as an internal compiler error — passes a `code!` test.  A feature whose
+compiler path synthesises a definition (a wrapper, a dispatcher, an instance) is guarded from
+a `tests/scripts/` file, which goes through `Parser::parse` and so through the check.
+
 ### The `Test` struct
 
 ```rust

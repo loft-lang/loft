@@ -61,7 +61,7 @@ fn main() {
   assert(s[1..4] == "BCD", "Sub-string by byte range");
   assert(s[3..] == "DE", "Open-ended sub-string");
   // A negative end index counts backwards from the end of the text.
-  // '-1' means "stop one byte before the very last byte". Combined with a
+  // '-1' means "stop before the last byte". Combined with a
   // start offset this lets you trim a known suffix without knowing the exact length.
   txt = "12😊🙃45";
   assert(txt[2.. - 1] == "😊🙃4", "UTF-8 sub-string by byte range");
@@ -95,7 +95,7 @@ fn main() {
   // 'starts_with' and 'ends_with' check the boundaries.
   // 'find' returns the byte offset of the first match, or null if not found.
   // 'contains' is true if the needle appears anywhere in the text.
-  // All positions are byte offsets, consistent with 'len()' and slicing.
+  // All positions are byte offsets, consistent with 'size()' and slicing.
   assert("something".starts_with("some"), "starts_with");
   assert("something".ends_with("thing"), "ends_with");
   assert("something".find("th") == 4, "find returns byte offset");

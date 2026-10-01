@@ -1,0 +1,34 @@
+diff --git b/src/parser/definitions.rs a/src/parser/definitions.rs
+index 18c5c31a9..81177ef27 100644
+--- b/src/parser/definitions.rs
++++ a/src/parser/definitions.rs
+@@ -6592,13 +6592,7 @@ impl Parser {
+         // turns out to need a temporary is re-parsed from here into a
+         // function of its own (`default_value_fn`).
+         let value_start = self.lexer.link();
+-        let unresolved_before = (self.unresolved_names, self.unresolved_types);
+         let tp = self.expression(value);
+-        // A bare call to a function declared below moves neither counter: its name resolves
+-        // and only its type is missing.
+-        let forward_reference = self.first_pass
+-            && (tp.is_unknown()
+-                || (self.unresolved_names, self.unresolved_types) != unresolved_before);
+         self.expected = Type::Unknown(0);
+         self.init_field_tracking = false;
+         if a_type.is_unknown() {
+@@ -6655,14 +6649,7 @@ impl Parser {
+         let dflt_fn = format!("__dflt_{}_{a_name}", self.data.def(d_nr).name());
+         // The checked narrowing `convert` gives a nullable narrow field is pass 2's alone, so
+         // pass 1 asks the same TYPE question to mint the function it will be hoisted into.
+-        // A default reading a function declared further down has no type yet in pass 1
+-        // (`c: u8? = later(7)`), and pass 2 — where it reads `integer` — then hoisted it into
+-        // a function pass 1 never minted: the re-parse found nothing and the struct stopped
+-        // parsing at the call.  So a forward reference is asked as the integer it will be,
+-        // as the parameter default's forward reference is hoisted (loft#1086, loft#1170).
+-        let checked_narrow = self.first_pass
+-            && (Self::takes_checked_narrow(&tp, a_type)
+-                || (forward_reference && Self::takes_checked_narrow(&crate::data::I32, a_type)));
++        let checked_narrow = self.first_pass && Self::takes_checked_narrow(&tp, a_type);
+         if self.default_hoisted_in_pass_1(&dflt_fn)
+             || checked_narrow
+             || !default_replayable_in_place(value, site)

@@ -106,7 +106,7 @@ def is_section(t):
     return bool(re.match(r'^//\s*-+.*-+\s*$', t))
 
 
-def doc_block(lines, idx):
+def doc_block(lines, idx, stdlib=False):
     """The caller-facing doc block of the pub item at lines[idx].
 
     Walk backward over the contiguous preceding block, skipping blank lines and
@@ -124,6 +124,11 @@ def doc_block(lines, idx):
         if t.startswith("//"):
             if is_section(t):
                 break
+            # The stdlib publishes `///` only; a `//` line there is a maintainer note,
+            # passed over as gendoc passes over it (loft#1808).
+            if stdlib and not t.startswith("///"):
+                j -= 1
+                continue
             out.append(t.lstrip("/").strip())
             j -= 1
             continue
@@ -157,7 +162,7 @@ def enumerate_api(path):
                 buf += " " + lines[j].strip()
             sig = buf.split("{")[0].split(";")[0].strip()
             kind, name = m.group(1), m.group(2)
-            doc = doc_block(lines, i)
+            doc = doc_block(lines, i, path.replace(os.sep, '/').split('/')[-2:-1] == ['default'])
             items.append({
                 "kind": kind, "name": name, "sig": re.sub(r'\s+', ' ', sig),
                 "types": tuple(param_types(sig)) if kind == "fn" else (),

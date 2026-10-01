@@ -123,12 +123,12 @@ fn main() {
   // decide how the library above is LOADED:
   //
   //   [package]
-  //   loft = ">=1.0"        minimum interpreter version required
+  //   loft = ">=2026.10"    the oldest loft release that can load it
   //
   //   [library]
   //   entry = "src/mylib.loft"   override the default entry path
   //
-  // If the interpreter version is below the stated minimum, loading the
+  // If the running loft is older than the stated minimum, loading the
   // library produces a fatal compile error describing the version mismatch.
   // If no manifest is present, the default entry `src/<name>.loft` is used.
   // ## Wildcard and Selective Imports
@@ -159,5 +159,5 @@ fn main() {
   //
   // **Native extensions.** A library can be pure `.loft`, or ship a Rust crate
   // beside it: declare `[library] native = "..."` in `loft.toml` and loft builds
-  // and links it for you. See PACKAGES.md for the build + binding model.
+  // and links it for you. See doc/claude/PACKAGES.md in the loft repository for the build + binding model.
 }

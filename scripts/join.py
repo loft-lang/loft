@@ -35,6 +35,7 @@ import datetime
 import json
 import os
 import re
+import collections
 import subprocess
 import sys
 import tempfile
@@ -559,7 +560,9 @@ for path in a.rust_files():
                 print(f"{a.rel(path)}::{name}  {kind} {scrut.strip()[:50]}  [{vs}]")
 """
     r = subprocess.run([sys.executable, "-c", code], cwd=tree, capture_output=True, text=True)
-    return set(r.stdout.splitlines())
+    # A MULTISET: a second identical shape test in a function that already had one is growth
+    # too, and a set difference reported it as "none" while the ratchet counted it.
+    return collections.Counter(r.stdout.splitlines())
 
 
 def cmd_rederive(args):

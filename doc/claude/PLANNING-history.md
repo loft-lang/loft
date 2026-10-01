@@ -177,7 +177,7 @@ federated.
 **Explicitly excluded from the 0.8.5 → 0.9.0 window** to avoid scope creep:
 - LSP — stays in 1.0.0 per roadmap.  Months-long on its own.
 - HTTP stdlib / `server` / `game_client` libraries — 1.1+ (`WEB_SERVER_LIB.md`, `GAME_CLIENT_LIB.md`).
-- Moros hex RPG editor (web version) — [independent lifecycle](ROADMAP.md#demo-applications--independent-lifecycles); does not gate any language tag.
+- Moros hex RPG editor (web version) — [independent lifecycle](ROADMAP-history.md#demo-applications--independent-lifecycles); does not gate any language tag.
 
 **For 1.0.0 (after 0.9.0 is tagged):**
 7. **R1** — workspace split; small change, unblocks all Tier W

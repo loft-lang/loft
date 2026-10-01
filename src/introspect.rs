@@ -165,8 +165,7 @@ pub fn run(filename: &str, opts: &Options) -> std::io::Result<()> {
     } else {
         format!("{}default", opts.install_dir)
     };
-    p.parse_dir(&default_dir, true, false)
-        .expect("parse default/ stdlib");
+    p.parse_stdlib(&default_dir).expect("parse default/ stdlib");
     let start_def = p.data.definitions();
     p.parse(&abs_file, false);
     if !p.diagnostics.is_empty() {
@@ -734,7 +733,9 @@ fn emit_resolution<W: Write>(w: &mut W, data: &Data, opts: &Options) -> std::io:
         // its derived state looks like, so name it rather than printing nothing.
         writeln!(
             w,
-            "aliases: none — no name is reachable from a source other than its own              (a program with a `use` should have some; an empty list here is the              @PLN120 E.4 shape)"
+            "aliases: none — no name is reachable from a source other than its own (a program with a \
+             `use` should have some; an empty list here means the rebuild could not reproduce its \
+             derived state)"
         )?;
         return Ok(());
     }
@@ -831,7 +832,7 @@ fn emit_ownership(
         if let Some(kind) = crate::use_analysis::text_return_orphan_risk(data, d_nr) {
             writeln!(
                 w,
-                "  ⚠ loft#568: owned text returned by value ({kind}) — no &text retbuf; \
+                "  ⚠ owned text returned by value ({kind}) — no &text retbuf; \
                  interpreter orphans it"
             )?;
         }

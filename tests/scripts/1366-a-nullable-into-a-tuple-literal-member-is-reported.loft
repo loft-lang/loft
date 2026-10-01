@@ -8,6 +8,10 @@
 // arm names the member (`element 0 of …`).  A runtime index is the `τ?` source so no
 // in-bounds proof elides it; every member is read back so no lint rides along.
 //
+// The NARROW member (`(u8, integer)`) is not here: `(N-Store)` makes it a hard error, as for a
+// local, and `1815-a-nullable-into-a-narrow-tuple-member-is-refused.loft` holds it (loft#1815 —
+// this file pinned it as a warning, and the member then held null).
+//
 // @falsified-at: 806a8d84 → here (warnings 0 → 6): the six members were silent on the
 //   build this guard was written to catch, and the values were the same on both.
 //   CHANNEL: the WARNING COUNT — six silent tuple members on the control — and nothing else.
@@ -24,19 +28,16 @@ struct R { n: integer }
 fn main() {
   i = 0;
   vi: vector<integer> = [10];
-  vu: vector<u8> = [20 as u8];
   vf: vector<float> = [1.5];
   vt: vector<text> = ["a"];
   vr: vector<R> = [R { n: 7 }];
   vv: vector<vector<integer>> = [[1, 2]];
   ti: (integer, integer) = (vi[i], 1);
-  tu: (u8, integer) = (vu[i], 2);
   tf: (float, integer) = (vf[i], 3);
   tt: (text, integer) = (vt[i], 4);
   tr: (R, integer) = (vr[i], 5);
   tv: (vector<integer>, integer) = (vv[i], 6);
   assert(ti.0 == 10 && ti.1 == 1, "integer member {ti.0}");
-  assert(tu.0 == 20 && tu.1 == 2, "narrow member {tu.0}");
   assert(tf.0 == 1.5 && tf.1 == 3, "float member {tf.0}");
   assert(tt.0 == "a" && tt.1 == 4, "text member {tt.0}");
   assert(tr.0.n == 7 && tr.1 == 5, "reference member {tr.0.n}");

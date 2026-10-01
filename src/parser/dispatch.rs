@@ -1094,9 +1094,14 @@ impl Parser {
                 let code = self.specialisation_call(fb, declared.clone(), &visible, &hidden_vars);
                 ls.push(Value::Return(Box::new(code)));
             } else if !positions.is_empty() {
-                // Unreachable when every tuple has a leaf, which the refusals above
-                // guarantee; the typed-null return keeps both backends' bodies well-formed.
-                ls.push(Value::Return(Box::new(Value::Null)));
+                // Every tuple has a leaf (the refusals above guarantee it), so only an ABSENT
+                // argument reaches here — a dense enum parameter that received a null, whose
+                // discriminant 0 is no variant.  The match answers null (@FR-M-Variant,
+                // the nullable-subject paragraph), and it must be the TYPED null: a bare
+                // `Value::Null` pushes nothing, which the interpreter returned as stale stack
+                // bytes and native as `0` (loft#1778).
+                let null = self.null_value(&ret);
+                ls.push(Value::Return(Box::new(null)));
             }
             self.data.definitions[fn_nr as usize].code = v_block(ls, ret, "dynamic_fn");
             self.data.definitions[fn_nr as usize].variables = self.vars.clone();

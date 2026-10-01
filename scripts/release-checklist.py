@@ -1436,14 +1436,34 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             "may pick another than the worklist's first",
             cadence="mid",
         ),
+        # Required TWICE per release (owner, RELEASE.md § Documentation validation): a full pass
+        # at the cycle's halfway point, and a pass over what moved since then before the tag.
+        # The three parts are READ, not merely reported — blockers, never report rows.
         Item(
-            "M-monthly-docs",
-            "Monthly by-hand documentation review",
-            "make libraries-review && make features-review",
-            "which libraries owe a review or moved since their watermark — the "
-            "monthly cadence makes this a per-release step",
-            cadence="mid pre",
-            report=True,
+            "M-doc-validation-mid",
+            "HALFWAY: documentation validated in full — libraries, user docs, feature catalogue",
+            "make libcatalogue && make libraries-review; cargo run --bin gendoc (no diff) && "
+            "scripts/doc_review.py; make features-review SINCE=<previous tag> && "
+            "make features-fetch (no diff)",
+            "all three parts done over the whole corpus: every library owing a review read and "
+            "its watermark bumped; every user-doc section cleared with its sign-off committed in "
+            ".doc_review_ledger and the generated pages matching their sources; every @F entry "
+            "moved since the previous release re-read with its claims probed on both backends, "
+            "every feature example running, and index/features.json matching the tracker.  Tick "
+            "with the commit the pass read (the pre-tag pass starts from it) and the evidence of "
+            "each part",
+            cadence="mid",
+        ),
+        Item(
+            "M-doc-validation",
+            "BEFORE THE TAG: documentation re-validated over what moved since the halfway pass",
+            "make libraries-review; cargo run --bin gendoc (no diff) && scripts/doc_review.py; "
+            "make features-review SINCE=<the halfway pass's commit> && make features-fetch (no diff)",
+            "the same three parts, bounded by the halfway pass: each library, user-doc section "
+            "and @F entry whose source moved since M-doc-validation-mid's commit re-read and "
+            "signed off; nothing uncleared; the generated pages matching their sources.  Tick "
+            "with the evidence of each part",
+            cadence="pre",
         ),
         Item(
             "M-monthly-bugs",

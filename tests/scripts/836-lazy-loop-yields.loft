@@ -17,11 +17,12 @@
 // A `reference<T>` parameter is how a generator reaches shared state (COROUTINE.md CL-6:
 // a `&`-parameter is not visible to the frame copy).
 //
-// The shapes this file does NOT make lazy are here too, because their VALUES must keep
-// working through the eager fallback: more than one yield per iteration, a yield inside an
-// `if`, a nested loop and a `continue`.  Each is an axis in COROUTINE.md § Design: lazy loop
-// yields.  A statement after the yield is lazy since loft#1586 (the loop is rotated); its
-// cell below still checks the values, and `1586-a-while-loop-generator-…` checks its order.
+// The shapes this file did NOT make lazy are here too, checking their VALUES: more than one
+// yield per iteration, a yield inside an `if`, a nested loop and a `continue`.  Each is an
+// axis in COROUTINE.md § Design: lazy loop yields, and each is lazy since loft#1798 (the loop
+// is re-descended); `a-generator-resumes-at-the-yield-it-suspended-at` checks their ORDER.  A
+// statement after the yield is lazy since loft#1586 (the loop is rotated); its cell below
+// still checks the values, and `1586-a-while-loop-generator-…` checks its order.
 
 struct Log { n: integer }
 
@@ -55,7 +56,7 @@ fn effectively_endless(lg: reference<Log>) -> iterator<integer> {
   }
 }
 
-// --- shapes that stay eager: values must still be right ---
+// --- shapes lazy since loft#1798: the values, here ---
 
 fn two_yields_per_iteration() -> iterator<integer> {
   for i in 0..3 { yield i; yield i + 100; }

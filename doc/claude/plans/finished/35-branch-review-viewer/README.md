@@ -34,7 +34,7 @@ like this" cannot do that by `grep`-ing 20+ files manually.
 The viewer becomes their **navigation surface**: open the
 dashboard, click into the relevant docs, follow cross-doc
 links naturally.  See [ROADMAP § Near-term focus —
-friend-readiness](../../../ROADMAP.md#near-term-focus--friend-readiness-added-2026-05-13).
+friend-readiness](../../../ROADMAP-history.md#near-term-focus--friend-readiness-added-2026-05-13).
 
 Three concrete needs surfaced from the personal-review angle:
 

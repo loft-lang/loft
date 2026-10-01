@@ -38,7 +38,7 @@ canonical; these pages are its generated shadow. Regenerate with
 | [@F22](F22.md) | Closures & lambdas (value capture, cross-scope) |
 | [@F23](F23.md) | Function references as first-class values |
 | [@F24](F24.md) | Higher-order functions (map / filter / reduce) |
-| [@F25](F25.md) | Generics — single type variable `<T>`, inferred |
+| [@F25](F25.md) | Generics — type variables `<T>`, `<K, V>`, inferred; generic structs |
 | [@F26](F26.md) | Interfaces & bounded generics (`<T: A + B>`, operator interfaces) |
 | [@F27](F27.md) | `if` / `else` as an expression |
 | [@F28](F28.md) | `for`-in loops — ranges, loop attributes, filtered, `rev()` |
@@ -51,7 +51,7 @@ canonical; these pages are its generated shadow. Regenerate with
 | [@F35](F35.md) | String literals — `{expr}` interpolation + backtick multiline |
 | [@F36](F36.md) | String formatting / format specifiers (+ for-expressions) |
 | [@F37](F37.md) | Operator set — arithmetic/comparison/logical/bitwise/unary, `**` |
-| [@F38](F38.md) | Arithmetic safety — overflow/÷0 → null, nullable peers |
+| [@F38](F38.md) | Arithmetic safety — integer overflow/÷0 → null; null propagates through arithmetic |
 | [@F39](F39.md) | Math & trigonometry library |
 | [@F40](F40.md) | File & directory I/O (+ durable-store binding) |
 | [@F41](F41.md) | Environment & arguments (env vars, arguments(), program dirs, path resolution) |

@@ -17,8 +17,8 @@ struct Product {
 // You can restrict what values a field may hold.
 // 'limit(min, max)' gives the field a smaller range. A value the compiler cannot prove
 // fits is refused where you write it, and the error names the cures: a fallback
-// ('over ?? 0'), the checked cast 'as integer(0, 255)?' (the value or null), or a value
-// that provably fits. It never stops a running program: a step the compiler cannot ask
+// ('?? <value>'), a 'u8?' destination so a value that does not fit reads null, or a
+// mask ('& 255') that makes the value provably fit. It never stops a running program: a step the compiler cannot ask
 // about, 'c.r += 100', takes the type's default when it leaves the range — 0 for a
 // range that includes zero — and loft advises you ('narrow-fallback'). A nullable
 // field takes null instead.
@@ -27,7 +27,7 @@ struct Product {
 // Fields you omit in a constructor receive zero (or null for nullable fields) by default.
 //
 // You may meet 'not null' on a field in older code. It has no effect — a type is
-// non-null by default now — and the compiler advises removing it.
+// non-null by default — and the compiler advises removing it.
 
 struct Colour {
   r: integer limit(0, 255),

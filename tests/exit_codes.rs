@@ -1832,3 +1832,75 @@ fn a_subcommand_answers_help_with_its_usage() {
         );
     }
 }
+
+/// loft#1801 — a binary with no `default/` beside it runs on the stdlib it embeds.
+///
+/// Copied onto the PATH, or installed by `cargo install`, the binary used to stop with
+/// "cannot load standard library from `…/default`" although it carries that library: the
+/// same `include_str!` sources the browser build and `loft search` read.  A program that
+/// uses the text, vector and JSON parts of the stdlib runs from a bare copy, `symbols`
+/// answers there too, and an explicit `--path` to a directory that is not there is still
+/// the reader's mistake to hear about.
+#[test]
+fn a_copied_binary_runs_on_its_embedded_stdlib() {
+    let tmp = std::env::temp_dir().join(format!("loft_1801_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    let bin_dir = tmp.join("bin");
+    std::fs::create_dir_all(&bin_dir).expect("bin dir");
+    let bin = bin_dir.join("loft");
+    std::fs::copy(loft_bin(), &bin).expect("copy the binary");
+    assert!(
+        !bin_dir.join("default").exists(),
+        "the copy has no stdlib beside it"
+    );
+    let prog = tmp.join("p.loft");
+    std::fs::write(
+        &prog,
+        "struct P { x: integer }\nfn main() {\n  v = [P { x: 3 }, P { x: 4 }];\n  s = 0;\n  \
+         for p in v { s += p.x; }\n  j = json_parse(\"[1, 2]\");\n  \
+         println(\"{s} {\"abc\".to_uppercase()} {j}\");\n}\n",
+    )
+    .expect("program");
+    let run = |args: &[&str]| {
+        let out = Command::new(&bin)
+            .args(args)
+            .current_dir(&tmp)
+            .env("LOFT_NO_CACHE", "1")
+            .env("LOFT_TIMEOUT", "120")
+            .output()
+            .expect("run the copied loft");
+        (
+            out.status.success(),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+    let (ok, out, err) = run(&["--interpret", "p.loft"]);
+    assert!(
+        ok && out.starts_with("7 ABC JArray"),
+        "a bare copy runs the program on its embedded stdlib: {out:?}\n{err}"
+    );
+    let (ok, out, err) = run(&["symbols", "p.loft"]);
+    assert!(
+        ok && out.contains("main"),
+        "symbols answers from a bare copy: {out:?}\n{err}"
+    );
+    // The test runner has its own stdlib load, and needs the same answer.
+    std::fs::create_dir_all(tmp.join("t")).expect("test dir");
+    std::fs::write(
+        tmp.join("t").join("a.loft"),
+        "fn test_sum() { assert(\"ab\".len() + 1 == 3, \"sum\"); }\n",
+    )
+    .expect("test file");
+    let (ok, out, err) = run(&["--tests", "t"]);
+    assert!(
+        ok && out.contains("1 passed"),
+        "--tests runs from a bare copy: {out:?}\n{err}"
+    );
+    let (ok, _, err) = run(&["--path", "nowhere", "--interpret", "p.loft"]);
+    assert!(
+        !ok && err.contains("cannot load standard library"),
+        "an explicit --path that is not there is still reported: {err}"
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
+}

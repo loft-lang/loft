@@ -1,0 +1,33 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A COMPOUND RESULT THE PLACE CANNOT HOLD IS REFUSED (loft#1819, @FR-E-Asgn-Compound).
+// `place op= e` writes `v₁ op v₂` back through the place, and the place keeps its type: a
+// composed value of another type is refused naming the place's type, the right side's and the
+// composed one.  Before, the local seam named the RIGHT side's type as a change the place would
+// make ("cannot change type from integer to float"), and a user operator was resolved as if the
+// right side had the place's type ("No matching operator 'Min' on 'V' and 'V'").  A right side
+// no operator takes is refused naming the operator as written — `tests/parse_errors.rs::
+// a_compound_operator_no_overload_takes_is_refused`, since that refusal comes a pass earlier and
+// would hide these two.  The accepting half is
+// `1819-a-compound-assignment-computes-its-operator-on-both-operand-types.loft`.
+//
+// @falsified-at: d53ec702c — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 1/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 1/2 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/1819b-a-compound-result-the-place-cannot-hold-is-refused.patch — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 1/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 1/2 (the suite's verdict, not a count of matches)
+//   CHANNEL: expect — the control refuses both lines with other messages.
+//   WITNESS: on the control `i += 1.5` reads "Variable 'i' cannot change type from integer to
+//   float" and `a -= 1` reads "Variable 'a' cannot change type from V to integer".
+//   HOLDS: leak and panic are equal on both trees.
+
+struct V { x: integer }
+fn OpMin(self: V, o: integer) -> integer { self.x - o }
+
+// @EXPECT_ERROR: `+=` on integer with float computes float, which the integer place cannot hold
+// @EXPECT_ERROR: `-=` on V with integer computes integer, which the V place cannot hold
+fn refused() {
+  i = 1;
+  i += 1.5;
+  a = V { x: 5 };
+  a -= 1;
+  assert(i == 1 && a.x == 5, "unreachable");
+}

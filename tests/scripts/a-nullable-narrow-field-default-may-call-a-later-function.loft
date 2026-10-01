@@ -1,0 +1,65 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A field default is any expression of the field's type — including a call to a function
+// declared further down.  A NULLABLE NARROW field (`u8?`, `i32?`) takes the checked narrowing,
+// which only pass 2 applies, so its default is hoisted into a function of its own; pass 1
+// decided whether to mint that function from the default's type, and a call to a function
+// declared below has none yet in pass 1.  Pass 2 then wanted a function nobody minted, the
+// re-parse found nothing, and the struct stopped parsing at the call: `struct D { c: u8? =
+// late(7) }` answered "Expect token )".  A parameter default already asked the same question
+// about a forward reference (loft#1086, loft#1170); a field default now does too.
+//
+// Axes this file MOVES:  the field type (`u8?`, `i32?`, `integer?`, a non-null `u8` through its
+//                        `as u8? ?? 0` cure), where the called function is declared (before /
+//                        after the struct), the default's shape (a bare call / arithmetic over
+//                        a call), a field default versus a parameter default, and a value that
+//                        fits against one that does not (null by `@FR-I-Narrow-Opt`).
+// Axes it HOLDS FIXED:   integer values only; one struct per declaration order.
+//
+// @falsified-at: b81b06b86 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-nullable-narrow-field-default-may-call-a-later-function.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit — the control does not compile this file (`After`'s defaults stop the parse).
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.
+
+fn early(n: integer) -> integer { n }
+
+struct Before {
+  a: u8? = early(7),
+  b: u8? = early(300),
+  c: i32? = early(-9),
+  d: integer? = early(11),
+  e: u8 = (early(12) as u8?) ?? 0,
+  f: u8? = 0 + early(13),
+}
+
+struct After {
+  a: u8? = late(7),
+  b: u8? = late(300),
+  c: i32? = late(-9),
+  d: integer? = late(11),
+  e: u8 = (late(12) as u8?) ?? 0,
+  f: u8? = 0 + late(13),
+}
+
+fn pb(a: u8? = early(7), b: u8? = early(300), f: u8? = 0 + early(13)) -> text { "{a} {b} {f}" }
+fn pa(a: u8? = late(7), b: u8? = late(300), f: u8? = 0 + late(13)) -> text { "{a} {b} {f}" }
+
+fn test_a_field_default_calls_a_function_declared_before() {
+  s = Before {};
+  got = "{s.a} {s.b} {s.c} {s.d} {s.e} {s.f}";
+  assert(got == "7 null -9 11 12 13", "declared before: {got}");
+}
+
+fn test_a_field_default_calls_a_function_declared_after() {
+  s = After {};
+  got = "{s.a} {s.b} {s.c} {s.d} {s.e} {s.f}";
+  assert(got == "7 null -9 11 12 13", "declared after: {got}");
+}
+
+fn test_a_parameter_default_agrees() {
+  got = "{pb()} | {pa()} | {pa(5)}";
+  assert(got == "7 null 13 | 7 null 13 | 5 null 13", "parameter defaults: {got}");
+}
+
+fn late(n: integer) -> integer { n }

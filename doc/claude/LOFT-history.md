@@ -141,3 +141,15 @@ links.  LOFT.md carried this as a "known exception" with a workaround for three 
 after the fix, which is the case that started @PLN176.  Guards:
 `tests/scripts/1433-a-keyed-alias-is-a-link-not-a-copy.loft`,
 `tests/scripts/1445-a-keyed-parameter-appends-through-its-link.loft`.
+
+## 2026-09-30 — moved from LOFT.md's type sections
+
+- **Overflow and division by zero.**  0.9.0's C54.G-hybrid made overflow / div0 **trap** (a
+  halt, with a `??`-only discharge).  C80 (the spreadsheet model) reversed that to
+  null-and-continue everywhere, so `??` is a plain fallback, not a trap mode.
+- **Binary writes.**  Before the 64-bit `integer` (step 2c), `f += <integer>` on a binary
+  file wrote 4 bytes; it writes 8 since, and the stdlib's GLB / PNG writers were given
+  explicit width casts then.
+- **`long`.**  The `long` type keyword and the `l` literal suffix (`42l`) were removed in
+  0.9.0.  There were no external users of pre-0.9.0 loft, so no migration path was needed;
+  `loft --migrate-long <path>` exists as an internal utility.

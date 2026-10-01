@@ -25,12 +25,9 @@
 
 fn take1380b(x: i16) -> integer { x }
 
-// @EXPECT_ERROR: expected integer, got float on if
-fn test_a_float_arm_behind_an_integer_then_arm() {
-  k = 2;
-  x: integer = if k == 1 { 1 } else if k == 2 { 2.5 } else { 3 };
-  assert(x == 0, "unreached");
-}
+// The float-arm cell (`x: integer = if … { 1 } else if … { 2.5 } …`) is a PASS-1 refusal since
+// loft#1793 — the chain joins to `float` and the declared `integer` refuses that store — so it
+// lives in `102b-pass1-expected-errors.loft`; the counts in the receipt above include it.
 
 // @EXPECT_ERROR: cannot implicitly narrow integer to u8
 fn test_an_overflowing_chain_arm_into_a_u8_local() {

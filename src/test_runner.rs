@@ -266,7 +266,7 @@ fn build_test_base_inner(
     p.lib_dirs = lib_dirs.to_vec();
     let stdlib_dir = stdlib_dir_of(default_dir);
     if !loft::startup_cache::warm_load_stdlib(&mut p, &stdlib_dir)
-        && p.parse_dir(&stdlib_dir, true, false).is_err()
+        && p.parse_stdlib(&stdlib_dir).is_err()
     {
         return None;
     }
@@ -1030,13 +1030,18 @@ pub(crate) fn run_tests(
             } else {
                 let stdlib_dir = stdlib_dir_of(default_dir);
                 if !loft::startup_cache::warm_load_stdlib(&mut p, &stdlib_dir) {
-                    if p.parse_dir(&stdlib_dir, true, false).is_err() {
+                    // loft#1801 — with no `default/` beside the binary, the embedded
+                    // stdlib; the cache is keyed on the directory, so only a real one is
+                    // saved.
+                    if p.parse_stdlib(&stdlib_dir).is_err() {
                         println!("  FAIL  {display_name}  (cannot load default library)");
                         dir_fail += 1;
                         total_files += 1;
                         continue;
                     }
-                    loft::startup_cache::save_stdlib_cache(&p, &stdlib_dir);
+                    if std::path::Path::new(&stdlib_dir).is_dir() {
+                        loft::startup_cache::save_stdlib_cache(&p, &stdlib_dir);
+                    }
                 }
                 // The stdlib boundary.  Everything past it belongs to the program
                 // under test: the native codegen range below emits it, and the

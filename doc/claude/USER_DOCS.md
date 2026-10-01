@@ -694,7 +694,7 @@ because 42 packages of idiomatic loft currently have no reader.
 - [DOC.md](DOC.md) — how `gendoc` renders a topic, and § *Library documentation*: which
   library pages it writes and what each is generated from
 - [DOC_QUALITY.md](DOC_QUALITY.md) — how the prose itself should read
-- [LIBRARY_DOC_REVIEW.md](LIBRARY_DOC_REVIEW.md) — the monthly by-hand pass and its watermarks
+- [LIBRARY_DOC_REVIEW.md](LIBRARY_DOC_REVIEW.md) — the per-release by-hand pass and its watermarks
 - [LIBRARY_AUTHORING.md](LIBRARY_AUTHORING.md) / [LIBRARY_CHECKLIST.md](LIBRARY_CHECKLIST.md) — where the guide contract lands
 - [WEB_STACK.md](WEB_STACK.md) — the design whose two libraries (`html`, `markdown`) are the worst-documented in the distribution
 - [BUS_FACTOR.md](BUS_FACTOR.md) — why documentation outranks code here

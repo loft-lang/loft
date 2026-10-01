@@ -232,12 +232,14 @@ Every deviation this doc has carried is closed; the record is in the companion
   consumer's, one value per advance. STRAIGHT-LINE yields obey this on both backends
   (`print("a"); yield 1; print("b"); yield 2` → `a g1 b g2`). A LOOP with one yield on its body's
   straight line — `for` or `while`, statements after the yield included — does too (`y0 g0 y1 g1`),
-  so an endless one hands out each value as it is asked for.  The loop shapes CL-9 has not reached
-  (more than one yield per iteration, a yield under an `if`/`match`, a nested loop, a `continue`,
-  a tuple or record yield) still run EAGERLY on native (`y0 y1 g0 g1`):
-  the values agree and the side effects do not, an interleaving difference COROUTINE.md § CL-9
-  records rather than a divergence of values — and an ENDLESS loop of one of those shapes never
-  hands out a value on native, so write it with the yield on the straight line.
+  so an endless one hands out each value as it is asked for — and so does every other loop whose
+  yields are STATEMENTS: several per path, one under an `if`/`match` arm with statements after it,
+  one in a nested loop, one beside a `continue`, for every yield type (`p0 g0 g10 p1 g1 g11`,
+  loft#1798).  One shape still runs EAGERLY on native (`y0 y1 g0 g1`): a `yield` inside an
+  expression, behind an operand the suspend could change (`s = s + { yield x; "b" }`).  The values
+  agree and the side effects do not — an interleaving difference COROUTINE.md § CL-9 records as a
+  named limitation — and an ENDLESS loop of that shape never hands out a value on native, so make
+  the yield a statement of its own.
 - **Stackful (`G-YieldDepth`)** — a nested non-yielding CALL active across a suspension is
   preserved with the frame and resumes correctly past it, on both backends.  A `yield` inside a
   helper that is not itself a generator is REFUSED, identically on both backends — *"yield is

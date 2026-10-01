@@ -24,8 +24,7 @@
 // A value parameter gets its own copy — changes inside the function do not
 // affect the caller.
 // A reference parameter ('&') gives the function a direct link to the caller's
-// tuple so it can modify individual elements in place.
-// A '&' tuple holds scalar elements only.
+// tuple so it can modify individual elements in place, text elements included.
 // ## Returning tuples
 // A function can return a tuple to give back more than one value at once.
 // ## Destructuring
@@ -101,9 +100,7 @@ fn main() {
   assert(p.0 == 10, "and the caller's tuple is untouched: {p.0}");
 
   // ## Tuples as reference parameters (swap in place)
-  // A '&' tuple holds scalar elements only.  '&(text, …)' is refused when you
-  // compile, naming the element type — text lives on the heap, and a reference
-  // tuple has nowhere to put it.
+  // 'swap_ints' exchanges the caller's two elements through its '&' parameter.
   pair = (3, 7);
   swap_ints(pair);
   assert(pair.0 == 7 && pair.1 == 3, "after swap: ({pair.0},{pair.1})");

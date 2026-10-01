@@ -87,10 +87,10 @@ fn main() {
   // When a 'log.conf' is present with 'level = info', the four calls above
   // produce entries like this in 'log.txt':
   //
-  //   2026-09-01T08:35:38.971Z INFO   /home/you/app/app.loft:3  starting up
-  //   2026-09-01T08:35:38.971Z WARN   /home/you/app/app.loft:4  this is a warning
-  //   2026-09-01T08:35:38.971Z ERROR  /home/you/app/app.loft:5  something went wrong
-  //   2026-09-01T08:35:38.971Z FATAL  /home/you/app/app.loft:6  critical failure
+  //   2026-09-01T08:35:38.971Z INFO   app.loft:3  starting up
+  //   2026-09-01T08:35:38.971Z WARN   app.loft:4  this is a warning
+  //   2026-09-01T08:35:38.971Z ERROR  app.loft:5  something went wrong
+  //   2026-09-01T08:35:38.971Z FATAL  app.loft:6  critical failure
   //
   // Each line contains: a UTC timestamp to the millisecond, the severity level,
   // the source file and line number, then the message. This makes it easy to

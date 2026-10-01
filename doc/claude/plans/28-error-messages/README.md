@@ -8,7 +8,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 **Friend-readiness gate (added 2026-05-13):** phases 5
 (suggestions polish) + 6 (per-site type-mismatch wording) + 7
 (closeout doc) are flagged as Priority-1 in
-[ROADMAP § Near-term focus](../../ROADMAP.md#near-term-focus--friend-readiness-added-2026-05-13).
+[ROADMAP § Near-term focus](../../ROADMAP-history.md#near-term-focus--friend-readiness-added-2026-05-13).
 Friends' first WTF moment is a type error; tighter messages
 compound into trust.  Phase 6.1 (exhaustive `Type::name`)
 shipped 2026-05-13 in commit `406cd9e3`; phase 5 partial (1-char

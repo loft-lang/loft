@@ -48,8 +48,8 @@ fn test_as_text_mismatch_is_not_the_empty_text() {
   // `== \"\"` is the test the doc used to advertise, and it cannot see the mismatch.
   assert(!(bad == ""), "the mismatch does not compare equal to the empty text");
   assert(good == "", "…while a genuine empty text does");
-  // Nor can a length: the in-band sentinel measures 1, not 0.
-  assert(len(bad) == 1, "a mismatch text measures 1: {len(bad)}");
+  // Nor can a length: the absent text has no characters, as the empty text has none.
+  assert(len(bad) == 0, "a mismatch text measures 0: {len(bad)}");
   assert(len(good) == 0, "a genuine empty text measures 0: {len(good)}");
 }
 

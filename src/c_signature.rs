@@ -427,7 +427,7 @@ fn position_mismatches(data: &Data, sig: &CSignature, params: &[Type]) -> Vec<St
                         "parameter {} is `{}` in loft but `{}` in C — a scalar needs a C integer \
                          type, or a pointer if it is a handle",
                         i + 1,
-                        data.type_name_str(p),
+                        data.display_type_name(p),
                         spelling(c)
                     ));
                 }
@@ -439,7 +439,7 @@ fn position_mismatches(data: &Data, sig: &CSignature, params: &[Type]) -> Vec<St
                         "parameter {} is `{}` in loft but `{}` in C — a text crosses as a \
                          NUL-terminated `const char*`",
                         i + 1,
-                        data.type_name_str(p),
+                        data.display_type_name(p),
                         spelling(c)
                     ));
                 }
@@ -451,7 +451,7 @@ fn position_mismatches(data: &Data, sig: &CSignature, params: &[Type]) -> Vec<St
                         "parameter {} is `{}` in loft, so C parameter {} must be the element \
                          pointer, not `{}`",
                         i + 1,
-                        data.type_name_str(p),
+                        data.display_type_name(p),
                         c + 1,
                         spelling(c)
                     ));
@@ -491,7 +491,7 @@ fn position_mismatches(data: &Data, sig: &CSignature, params: &[Type]) -> Vec<St
                          `{}`, {consequence}. Declare the loft element the way the C header \
                          spells it, or `void*` in C if the bytes really are opaque",
                         i + 1,
-                        data.type_name_str(p),
+                        data.display_type_name(p),
                         img.bytes,
                         if img.float { "float" } else { "integer" },
                         c + 1,
@@ -1005,7 +1005,7 @@ pub fn check(
         match (&sig.ret, ret_shape) {
             (CType::Void, _) => errs.push(format!(
                 "the loft declaration returns `{}` but the C signature returns `void`",
-                data.type_name_str(ret)
+                data.display_type_name(ret)
             )),
             // @PLN128 arc E — the float pair, ahead of every shape-based arm,
             // because `shape_of` answers for the ARGUMENT direction (where a
@@ -1019,12 +1019,12 @@ pub fn check(
                 "the C signature returns a {bits}-bit float, so the loft declaration must return \
                  `{}`, not `{}`",
                 if *bits == 32 { "single" } else { "float" },
-                data.type_name_str(ret)
+                data.display_type_name(ret)
             )),
             (c, _) if matches!(ret.base(), Type::Float | Type::Single) => errs.push(format!(
                 "the loft declaration returns `{}` but the C signature returns `{}` — a float \
                  comes back only from a C `float` or `double`",
-                data.type_name_str(ret),
+                data.display_type_name(ret),
                 c.spelling()
             )),
             (_, LoftCShape::Refused(why)) => {
@@ -1059,7 +1059,7 @@ pub fn check(
             (CType::Pointer { .. }, LoftCShape::Scalar) => {}
             (c, _) => errs.push(format!(
                 "the loft declaration returns `{}` but the C signature returns `{}`",
-                data.type_name_str(ret),
+                data.display_type_name(ret),
                 c.spelling()
             )),
         }

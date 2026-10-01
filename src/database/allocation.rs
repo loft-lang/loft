@@ -5688,8 +5688,8 @@ impl Stores {
         } else {
             format!(
                 "its bound store roots `{name}`, not {want} — a collection declared \
-                 as a struct FIELD records the WRAPPER STRUCT as the store's type \
-                 (#632), so declare it as an annotated local (`h: hash<T[k]> = []`) \
+                 as a struct FIELD records the WRAPPER STRUCT as the store's type, \
+                 so declare it as an annotated local (`h: hash<T[k]> = []`) \
                  for paged loads, or read it whole with `store_load`"
             )
         }

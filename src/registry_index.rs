@@ -726,6 +726,20 @@ pub fn registry_url() -> String {
 /// bare call could actually have meant is offered.
 #[must_use]
 pub fn packages_exporting_fn(name: &str) -> Vec<String> {
+    packages_exporting(name, exports_free_fn)
+}
+
+/// The published packages whose newest version declares a TYPE called `name` — a
+/// `struct`, `enum`, `type`/`typedef` or `interface` — sorted, deduplicated.  The type
+/// half of [`packages_exporting_fn`]: an un-imported `Rect` or `Canvas` said "did you
+/// mean 'text'?" or a bare "Undefined type" while the same file's un-imported `canvas(…)`
+/// call named its package.
+#[must_use]
+pub fn packages_exporting_type(name: &str) -> Vec<String> {
+    packages_exporting(name, exports_type)
+}
+
+fn packages_exporting(name: &str, declares: fn(&str, &str) -> bool) -> Vec<String> {
     if name.is_empty() {
         return Vec::new();
     }
@@ -746,19 +760,38 @@ pub fn packages_exporting_fn(name: &str) -> Vec<String> {
                     .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
         })
         .filter(|(_, p)| {
-            // Newest version wins: an old pin may still list a function the
-            // package has since dropped, and suggesting that would send the
-            // reader to an API they cannot install today.
-            p.versions
-                .values()
-                .next_back()
-                .is_some_and(|v| v.api.iter().any(|item| exports_free_fn(&item.sig, name)))
+            // Newest version wins: an old pin may still list a name the package has
+            // since dropped, and suggesting that would send the reader to an API they
+            // cannot install today.  Newest by version, not by the map's string order,
+            // which puts `0.10.0` before `0.9.4`.
+            find_best_version(p, "*", false)
+                .is_some_and(|v| v.api.iter().any(|item| declares(&item.sig, name)))
         })
         .map(|(pkg, _)| pkg.clone())
         .collect();
     hits.sort();
     hits.dedup();
     hits
+}
+
+/// Does the API signature `sig` declare a type called `name`?  The name must end there:
+/// `Rect` is not `RectSet`.
+fn exports_type(sig: &str, name: &str) -> bool {
+    let sig = sig.trim_start();
+    [
+        "pub struct ",
+        "pub value struct ",
+        "pub enum ",
+        "pub type ",
+        "pub typedef ",
+        "pub interface ",
+    ]
+    .iter()
+    .filter_map(|kw| sig.strip_prefix(kw))
+    .any(|rest| {
+        rest.strip_prefix(name)
+            .is_some_and(|after| !after.starts_with(|c: char| c.is_alphanumeric() || c == '_'))
+    })
 }
 
 /// Does the API signature `sig` declare a free function called `name`?
@@ -771,6 +804,11 @@ fn exports_free_fn(sig: &str, name: &str) -> bool {
     };
     let Some(args) = rest.strip_prefix(name) else {
         return false;
+    };
+    // A generic function names its type variables first: `pub fn first<T>(v: …)`.
+    let args = match args.strip_prefix('<') {
+        Some(generic) => generic.split_once('>').map_or("", |(_, rest)| rest),
+        None => args,
     };
     let Some(args) = args.strip_prefix('(') else {
         return false;
@@ -1594,45 +1632,167 @@ pub struct SearchResult {
     pub description: Option<String>,
     pub categories: Vec<String>,
     pub auto_use: bool,
+    /// The matching items, best match first (see [`item_score`]).
     pub fns: Vec<ApiItem>,
     pub tier: u8,
+    /// How well the package answers the query, within its tier (see [`search_results`]).
+    pub score: u32,
 }
 
-/// Google-like match: EVERY whitespace-separated term of the (already lowercased)
-/// query `q` must appear somewhere in the item's signature or its full doc
-/// paragraph.  So `hash hex` narrows to items mentioning both; an all-whitespace
-/// query matches nothing.
-fn item_matches(item: &ApiItem, q: &str) -> bool {
-    let hay = format!("{}\n{}", item.sig, item.doc).to_ascii_lowercase();
-    let mut saw_term = false;
+/// Does `term` (lowercase) begin a WORD of `text`?  A word starts at the beginning, after
+/// any non-alphanumeric character (so `_` splits `rects_overlap`), at a lower→upper case
+/// change (`WsMessage`) and between letters and digits (`sha256`).  Substring matching
+/// made `date` hit `update` and `candidate`, which buried the date library under every
+/// package that mentions an update.
+fn word_start_hit(text: &str, term: &str) -> bool {
+    if term.is_empty() {
+        return false;
+    }
+    // ASCII lowercasing keeps every byte offset, so a boundary found on `text` indexes
+    // `lower` directly.
+    let lower = text.to_ascii_lowercase();
+    let mut prev: Option<char> = None;
+    for (i, c) in text.char_indices() {
+        let start = match prev {
+            None => true,
+            Some(p) => {
+                !p.is_alphanumeric()
+                    || (p.is_lowercase() && c.is_uppercase())
+                    || (p.is_alphabetic() && c.is_ascii_digit())
+                    || (p.is_ascii_digit() && c.is_alphabetic())
+            }
+        };
+        if start && c.is_alphanumeric() && lower[i..].starts_with(term) {
+            return true;
+        }
+        prev = Some(c);
+    }
+    false
+}
+
+/// A query word as it is matched: a plural `s` dropped (`arguments` → `argument`), since a
+/// word is matched by its START and the singular is a prefix of both spellings.  Short
+/// words and `ss` endings (`css`, `class`) are left alone.
+fn stem(term: &str) -> &str {
+    if term.len() > 3 && term.ends_with('s') && !term.ends_with("ss") {
+        &term[..term.len() - 1]
+    } else {
+        term
+    }
+}
+
+/// The name an item declares: `area` for `pub fn area(self: Shape) -> float`, `Rect` for
+/// `pub struct Rect { … }`.
+fn item_name(sig: &str) -> &str {
+    let rest = sig.strip_prefix("pub ").unwrap_or(sig);
+    let rest = rest.split_once(' ').map_or(rest, |(_, r)| r);
+    let end = rest
+        .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .unwrap_or(rest.len());
+    &rest[..end]
+}
+
+/// How well one item answers every term of the (lowercase) query, or `None` when a term
+/// is missing from it (AND semantics, as before).  Per term: the item's NAME counts most
+/// (8 exact, 6 a word of it), then its signature (3), then its doc (1).
+fn item_score(item: &ApiItem, q: &str) -> Option<u32> {
+    let (score, matched, terms) = item_terms(item, q);
+    (terms > 0 && matched == terms).then_some(score)
+}
+
+/// Per-term scoring of one item: `(score over the words it has, how many it has, how
+/// many the query has)`.
+fn item_terms(item: &ApiItem, q: &str) -> (u32, usize, usize) {
+    let name = item_name(&item.sig);
+    let (mut score, mut matched, mut terms) = (0, 0, 0);
     for term in q.split_whitespace() {
-        saw_term = true;
-        if !hay.contains(term) {
-            return false;
+        terms += 1;
+        let t = stem(term);
+        let s = if name.eq_ignore_ascii_case(term) || name.eq_ignore_ascii_case(t) {
+            8
+        } else if word_start_hit(name, t) {
+            6
+        } else if word_start_hit(&item.sig, t) {
+            3
+        } else {
+            u32::from(word_start_hit(&item.doc, t))
+        };
+        if s > 0 {
+            matched += 1;
+            score += s;
         }
     }
-    saw_term
+    (score, matched, terms)
+}
+
+/// The items of `api` that answer the query, best first, and the best item's score.
+/// `need` is how many query words an item must have: all of them, or — for the closest
+/// matches when nothing has all — fewer.
+fn matching_items(api: &[ApiItem], q: &str, need: usize) -> (Vec<ApiItem>, u32) {
+    let mut scored: Vec<(u32, &ApiItem)> = api
+        .iter()
+        .filter_map(|a| {
+            let (s, matched, terms) = item_terms(a, q);
+            (terms > 0 && matched >= need).then_some((s, a))
+        })
+        .collect();
+    // Stable: equal scores keep source order.
+    scored.sort_by_key(|s| std::cmp::Reverse(s.0));
+    let best = scored.first().map_or(0, |s| s.0);
+    (scored.into_iter().map(|(_, a)| a.clone()).collect(), best)
 }
 
 /// Function-aware search (S6–S9): rank packages by metadata AND surface the
 /// individual functions matching `query`, across the registry `index` and the
-/// embedded `stdlib` API.  `query` must be lowercased by the caller.  Ordering:
-/// exact-name → name-prefix → **has-matching-function** → description/category
-/// substring; within a tier the stdlib sorts first (built in, no install), then
-/// alphabetical by name.  An empty query lists every package (no functions),
-/// matching the S0–S5 full listing.
+/// embedded `stdlib` API.  `query` must be lowercased by the caller.
+///
+/// An exact package name ranks first, then a name prefix; every other hit — a matching
+/// function or a matching description — is ordered by relevance: each query word found
+/// in the package's name, description or categories is worth 10, then the best matching
+/// item's [`item_score`], then one point per matching item up to five, so a package that
+/// DESCRIBES itself with the query words (`imaging` for "load png", `time` for "format
+/// date") outranks one whose docs merely mention them.  The stdlib competes on its items
+/// alone; ties go alphabetical.  An empty query lists every package (no functions).
 #[must_use]
 pub fn search_results(index: &RegistryIndex, stdlib: &[ApiItem], query: &str) -> Vec<SearchResult> {
+    let words = query.split_whitespace().count();
+    ranked_results(index, stdlib, query, words)
+}
+
+/// The closest matches when [`search_results`] finds nothing: the hits that have the
+/// most query words, fewer than all, ranked the same way.  `loft search command line
+/// arguments` has no item with all three words; a reader is better served by the
+/// argument parser than by an empty answer.  Empty for a one-word query.
+#[must_use]
+pub fn closest_results(
+    index: &RegistryIndex,
+    stdlib: &[ApiItem],
+    query: &str,
+) -> Vec<SearchResult> {
+    let words = query.split_whitespace().count();
+    for need in (1..words).rev() {
+        let r = ranked_results(index, stdlib, query, need);
+        if !r.is_empty() {
+            return r;
+        }
+    }
+    Vec::new()
+}
+
+fn ranked_results(
+    index: &RegistryIndex,
+    stdlib: &[ApiItem],
+    query: &str,
+    need: usize,
+) -> Vec<SearchResult> {
     let mut out: Vec<SearchResult> = Vec::new();
+    let terms: Vec<&str> = query.split_whitespace().collect();
     // The stdlib is surfaced ONLY by a function match: it has no package name or
     // description to query, and an empty query lists registry packages.
     if !query.is_empty() {
-        let fns: Vec<ApiItem> = stdlib
-            .iter()
-            .filter(|a| item_matches(a, query))
-            .cloned()
-            .collect();
+        let (fns, best) = matching_items(stdlib, query, need);
         if !fns.is_empty() {
+            let breadth = fns.len().min(5) as u32;
             out.push(SearchResult {
                 name: "stdlib".to_string(),
                 version: String::new(),
@@ -1642,35 +1802,27 @@ pub fn search_results(index: &RegistryIndex, stdlib: &[ApiItem], query: &str) ->
                 auto_use: false,
                 fns,
                 tier: 2,
+                score: best + breadth,
             });
         }
     }
     for pkg in index.packages.values() {
         let name = pkg.name.to_ascii_lowercase();
         let latest = find_best_version(pkg, "*", false);
-        let fns: Vec<ApiItem> = if query.is_empty() {
-            Vec::new()
+        let (fns, best) = if query.is_empty() {
+            (Vec::new(), 0)
         } else {
-            latest.map_or_else(Vec::new, |v| {
-                v.api
-                    .iter()
-                    .filter(|a| item_matches(a, query))
-                    .cloned()
-                    .collect()
-            })
+            latest.map_or_else(|| (Vec::new(), 0), |v| matching_items(&v.api, query, need))
         };
-        let meta = !query.is_empty()
-            && (name.contains(query)
-                || pkg
-                    .description
-                    .as_deref()
-                    .unwrap_or("")
-                    .to_ascii_lowercase()
-                    .contains(query)
-                || pkg
-                    .categories
-                    .iter()
-                    .any(|c| c.to_ascii_lowercase().contains(query)));
+        let description = pkg.description.as_deref().unwrap_or("");
+        let meta_hit = |term: &str| {
+            let term = stem(term);
+            word_start_hit(&pkg.name, term)
+                || word_start_hit(description, term)
+                || pkg.categories.iter().any(|c| word_start_hit(c, term))
+        };
+        let meta_terms = terms.iter().filter(|t| meta_hit(t)).count() as u32;
+        let meta = !terms.is_empty() && meta_terms as usize >= need;
         let tier = if query.is_empty() {
             3
         } else if name == query {
@@ -1684,6 +1836,7 @@ pub fn search_results(index: &RegistryIndex, stdlib: &[ApiItem], query: &str) ->
         } else {
             continue;
         };
+        let breadth = fns.len().min(5) as u32;
         out.push(SearchResult {
             name: pkg.name.clone(),
             version: latest.map_or_else(|| "(no stable version)".to_string(), |v| v.semver.clone()),
@@ -1693,12 +1846,15 @@ pub fn search_results(index: &RegistryIndex, stdlib: &[ApiItem], query: &str) ->
             auto_use: latest.is_some_and(|v| !v.triggers.is_empty()),
             fns,
             tier,
+            score: meta_terms * 10 + best + breadth,
         });
     }
+    // A function hit (tier 2) and a description-only hit (tier 3) compete on score.
     out.sort_by(|a, b| {
         a.tier
-            .cmp(&b.tier)
-            .then_with(|| b.is_stdlib.cmp(&a.is_stdlib))
+            .min(2)
+            .cmp(&b.tier.min(2))
+            .then_with(|| b.score.cmp(&a.score))
             .then_with(|| a.name.cmp(&b.name))
     });
     out
@@ -2341,6 +2497,105 @@ mod tests {
 
         // A miss returns nothing.
         assert!(search_results(&index, &stdlib, "nonexistent_xyz").is_empty());
+    }
+
+    /// Search ranks by how well a package answers, not by its name: a package that
+    /// DESCRIBES itself with the query words outranks one whose docs merely mention them,
+    /// a word must START a word (`date` is not in `update`), a plural finds the singular,
+    /// and a query no item fully answers falls back to the closest matches.
+    #[test]
+    fn search_ranks_by_relevance_not_alphabet() {
+        use std::collections::BTreeMap;
+        let item = |sig: &str, doc: &str| ApiItem {
+            sig: sig.to_string(),
+            doc: doc.to_string(),
+        };
+        let pkg = |name: &str, desc: &str, api: Vec<ApiItem>| {
+            let mut versions = BTreeMap::new();
+            versions.insert("0.1.0".to_string(), ver_api("0.1.0", api));
+            Package {
+                name: name.to_string(),
+                description: Some(desc.to_string()),
+                homepage: None,
+                categories: vec![],
+                yanked: vec![],
+                versions,
+            }
+        };
+        let mut packages = BTreeMap::new();
+        // Alphabetically first, and its doc says "update" and "format" in passing.
+        packages.insert(
+            "assets".to_string(),
+            pkg(
+                "assets",
+                "content packs",
+                vec![item(
+                    "pub fn refresh(p: text)",
+                    "Formats the pack; updates it.",
+                )],
+            ),
+        );
+        packages.insert(
+            "time".to_string(),
+            pkg(
+                "time",
+                "Date/time arithmetic",
+                vec![
+                    item("pub fn day(t: integer) -> integer", "The day of the month."),
+                    item(
+                        "pub fn format_date(t: integer) -> text",
+                        "The date as YYYY-MM-DD.",
+                    ),
+                ],
+            ),
+        );
+        packages.insert(
+            "arguments".to_string(),
+            pkg(
+                "arguments",
+                "CLI argument parsing",
+                vec![item("pub fn flag(a: Args, name: text)", "A boolean flag.")],
+            ),
+        );
+        let index = RegistryIndex {
+            schema_version: 1,
+            updated: String::new(),
+            packages,
+            skipped: Vec::new(),
+        };
+        let names = |r: &[SearchResult]| r.iter().map(|x| x.name.clone()).collect::<Vec<_>>();
+
+        // `date` starts no word of "updates", so only `time` answers.
+        assert_eq!(names(&search_results(&index, &[], "date")), ["time"]);
+        // Both words in one item's NAME, and the package describes itself with one.
+        let r = search_results(&index, &[], "format date");
+        assert_eq!(names(&r), ["time"]);
+        // The best item is listed first within its package.
+        assert_eq!(r[0].fns[0].sig, "pub fn format_date(t: integer) -> text");
+        // A plural query word finds the singular (`arguments` → "argument").
+        assert_eq!(
+            names(&search_results(&index, &[], "arguments parsing"))[0],
+            "arguments"
+        );
+        // No item has all three words: strict search is empty, the closest matches are not.
+        assert!(search_results(&index, &[], "command line arguments").is_empty());
+        assert_eq!(
+            names(&closest_results(&index, &[], "command line arguments"))[0],
+            "arguments"
+        );
+    }
+
+    #[test]
+    fn a_word_starts_after_punctuation_a_case_change_or_a_digit_run() {
+        assert!(word_start_hit("rects_overlap", "overlap"));
+        assert!(word_start_hit("WsMessage", "message"));
+        assert!(word_start_hit("sha256", "256"));
+        assert!(word_start_hit("PNG load/save", "load"));
+        assert!(!word_start_hit("updates", "date"));
+        assert!(!word_start_hit("candidate", "date"));
+        assert_eq!(stem("arguments"), "argument");
+        assert_eq!(stem("class"), "class");
+        assert_eq!(stem("gls"), "gls");
     }
 
     #[test]

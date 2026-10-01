@@ -2222,8 +2222,8 @@ impl Stores {
             let msg = format!(
                 "generated schema diverges from the compiler's: {want:?} is type \
                  id {at} here but {i} in the compiler, so ids baked at or past {} \
-                 can name the wrong type — that one currently reads as {held:?} \
-                 (loft#739). This is a codegen bug in the `init()` emission order.",
+                 can name the wrong type — that one currently reads as {held:?}. \
+                 This is a codegen bug in the `init()` emission order.",
                 i.min(usize::from(at)),
             );
             assert!(

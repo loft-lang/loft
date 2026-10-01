@@ -193,9 +193,15 @@ rule `C-Ref` in [types.md](types.md): a `&τ` is accepted wherever a `τ` is.)
                   axis: off an OWNED base a COLLECTION projection copies (B-Copy, `af = bx.v`,
                   and `af = bx.v ?? d` the same — D-own-35)
                   while a STRUCT projection views (B-View); off a BORROWED base everything
-                  views.  `classify_vec_bind`'s `depend().is_empty()` is where the parser asks
-                  it, and @PLN25 p379 depends on the write-through (`cells = sc.v;
-                  cells[i] = h`).
+                  views.  A BORROWED base is a binding that names another's place — a loop
+                  variable over a collection, a view, a `&` binding.  A plain PARAMETER is
+                  not one for this rule: `xs = b.items` off a plain parameter `b` is a
+                  SEMANTIC COPY (B-Copy; the compiler may elide it where nothing observes the
+                  difference), exactly as off an owned local, and `xs = &b.items` is the
+                  spelling that asks for the view.  The lost-write lint names the first when
+                  its write is dropped (loft#1792).  `classify_vec_bind`'s
+                  `depend().is_empty()` is where the parser asks it, and @PLN25 p379 depends
+                  on the write-through (`cells = sc.v; cells[i] = h`).
   (B-View-Depth)  a vector INDEX read (`a = vv[0]`) and a NESTED field read
                   (`c = o.inner.v`) are VIEWS whatever the element type and whatever the
                   collection kind — `c = o.inner.h` views as the vector does (loft#1759) —

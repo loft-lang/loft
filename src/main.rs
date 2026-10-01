@@ -313,9 +313,7 @@ fn print_help() {
     println!("  tag <@TAG> [--json]           what the tracker index knows about a tag");
     println!("                                (@F/@I feature, @P problem, @PLN/@GH issue)");
     println!("  refs <name> [root] [--json]   every occurrence of an identifier in the .loft tree");
-    println!(
-        "  sandbox-check <file>          report the @PLN86 sandbox admission verdict and STOP"
-    );
+    println!("  sandbox-check <file>          report the sandbox admission verdict and STOP");
     println!("                                (Admitted / Rejected + diagnostics; never executes)");
     println!("  build [target...]             build the project's declared / default targets");
     println!("                                build            — build [build] default-targets");
@@ -424,9 +422,7 @@ fn print_help() {
     println!("                                (PKG.REG R1 — see doc/claude/PKG_REGISTRY.md)");
     println!("  build-native [pkg-dir]        build the package's native cdylib for this host");
     println!("                                + print its path, triple, and loft-ffi fp, so CI");
-    println!(
-        "                                can publish it as a prebuilt/<triple>/ binary (@PLN21)"
-    );
+    println!("                                can publish it as a prebuilt/<triple>/ binary");
     println!("  search [query]                client-side search of the package registry");
     println!(
         "                                matches name / description / categories (case-insensitive);"
@@ -1070,7 +1066,12 @@ fn search_registry(query: &str, json: bool) {
         .collect();
 
     let q = query.to_ascii_lowercase();
-    let results = registry_index::search_results(&index, &stdlib, &q);
+    let mut results = registry_index::search_results(&index, &stdlib, &q);
+    // Nothing has every word: offer the closest matches, and say that is what they are.
+    let closest = results.is_empty() && {
+        results = registry_index::closest_results(&index, &stdlib, &q);
+        !results.is_empty()
+    };
 
     if json {
         println!(
@@ -1083,6 +1084,9 @@ fn search_registry(query: &str, json: bool) {
     if results.is_empty() {
         println!("No packages or functions match `{query}`.");
         return;
+    }
+    if closest {
+        println!("Nothing matches every word of `{query}`; the closest matches:");
     }
     let querying = !q.is_empty();
     for r in &results {
@@ -1101,13 +1105,24 @@ fn search_registry(query: &str, json: bool) {
             }
             println!("{line}");
         }
-        // The matching functions: what it does (doc) + how to call it (sig).
-        for item in &r.fns {
+        // The matching functions, best first: what it does (doc) + how to call it (sig).
+        // Five say which package answers; the rest are one `loft api` away (and all of
+        // them travel in `--json`).
+        const SHOWN: usize = 5;
+        for item in r.fns.iter().take(SHOWN) {
             println!("    {}", item.sig);
             // Display only the first line of the (now full) doc paragraph; the
             // whole paragraph stays searchable and travels in `--json`.
             if let Some(summary) = item.doc.lines().next().filter(|l| !l.is_empty()) {
                 println!("        {summary}");
+            }
+        }
+        if r.fns.len() > SHOWN {
+            let more = r.fns.len() - SHOWN;
+            if r.is_stdlib {
+                println!("    … {more} more");
+            } else {
+                println!("    … {more} more — `loft api {}` lists them all", r.name);
             }
         }
         // How to get it.
@@ -1677,7 +1692,7 @@ fn install_staged_bundle(a: &StagedInstall) -> i32 {
         eprintln!(
             "So the binary would be replaced and the stdlib would not, leaving a new loft\n\
              reading an old standard library — which crashes rather than reporting a version\n\
-             skew (loft#1497).  Nothing was changed.\n"
+             skew.  Nothing was changed.\n"
         );
         eprintln!(
             "{} is what a source install (`make install`) creates, and a release\n\
@@ -1708,7 +1723,7 @@ fn install_staged_bundle(a: &StagedInstall) -> i32 {
                 println!(
                     "\nInstalled with --force over a SHADOWED stdlib.  The binary is new and\n\
                      {} is unchanged, so loft still reads the old\n\
-                     standard library — the loft#1497 state.  `loft verify-self` now reports it.",
+                     standard library.  `loft verify-self` reports it.",
                     loaded.display()
                 );
             } else if force {
@@ -3948,7 +3963,7 @@ fn generate_native_stubs(pkg_path: &std::path::Path) {
         p.lib_dirs.push(src_dir.to_string_lossy().to_string());
     }
     // Load default definitions so types are known.
-    let _ = p.parse_dir(&default_str, true, false);
+    let _ = p.parse_stdlib(&default_str);
     p.parse(&abs.to_string_lossy(), false);
 
     // Collect #native declarations.
@@ -4013,12 +4028,12 @@ fn generate_native_stubs(pkg_path: &std::path::Path) {
                 | Type::Hash(_, _, _)
                 | Type::Radix(_, _, _)
                 | Type::Trie(_, _, _) => {
-                    let type_name = p.data.type_name_str(&attr.typedef);
+                    let type_name = p.data.display_type_name(&attr.typedef);
                     c_params.push(format!("{name}: loft_ffi::LoftRef /* {type_name} */"));
                     param_names.push(name.clone());
                 }
                 other => {
-                    let type_name = p.data.type_name_str(other);
+                    let type_name = p.data.display_type_name(other);
                     c_params.push(format!(
                         "{name}: () /* {type_name} — not supported in native */"
                     ));
@@ -4034,7 +4049,7 @@ fn generate_native_stubs(pkg_path: &std::path::Path) {
             Text,
             Ref(String),
         }
-        let ret_type_name = p.data.type_name_str(&def.returned);
+        let ret_type_name = p.data.display_type_name(&def.returned);
         let ret_kind = match &def.returned {
             Type::Void | Type::Null => RetKind::None,
             // Post-2c round 10c: wide Type::Integer (former Type::Long) → i64.
@@ -5444,7 +5459,7 @@ fn api_surface_of(
     if let Some(src_dir) = entry.parent() {
         p.lib_dirs.push(src_dir.to_string_lossy().to_string());
     }
-    let _ = p.parse_dir(&default_str, true, false);
+    let _ = p.parse_stdlib(&default_str);
     let abs_str = abs.to_string_lossy().to_string();
     p.parse(&abs_str, false);
     if p.diagnostics.level() >= loft::diagnostics::Level::Error {
@@ -6583,7 +6598,7 @@ fn run_layout_command(sub: &str, file: &str) -> i32 {
     if let Some(src_dir) = entry.parent() {
         p.lib_dirs.push(src_dir.to_string_lossy().to_string());
     }
-    let _ = p.parse_dir(&default_str, true, false);
+    let _ = p.parse_stdlib(&default_str);
     p.parse(&abs.to_string_lossy(), false);
 
     let roots = ss::program_roots(&p.data);
@@ -7244,6 +7259,9 @@ fn main() {
     let mut i = 0;
     let mut file_name = String::new();
     let mut dir = project_dir();
+    // Whether `--path` named the stdlib's directory: then a missing `default/` is the
+    // reader's typo to hear about, not a cue to use the embedded stdlib (loft#1801).
+    let mut path_given = false;
     let mut project: Option<String> = None;
     let mut lib_dirs: Vec<String> = Vec::new();
     let mut log_conf: Option<String> = None;
@@ -7403,6 +7421,7 @@ fn main() {
             return;
         } else if a == "--path" {
             dir.clone_from(&argv[i]);
+            path_given = true;
             i += 1;
         } else if a == "--project" {
             project = Some(argv[i].clone());
@@ -8051,11 +8070,15 @@ fn main() {
             #[cfg(feature = "registry")]
             {
                 let json = argv[i..].iter().any(|s| s == "--json");
+                // Every word is the query: `loft search load png` means both words, as
+                // the quoted `loft search "load png"` does.  Taking only the first made
+                // the unquoted form search for `load` alone.
                 let query = argv[i..]
                     .iter()
-                    .find(|s| !s.starts_with('-'))
+                    .filter(|s| !s.starts_with('-'))
                     .cloned()
-                    .unwrap_or_default();
+                    .collect::<Vec<_>>()
+                    .join(" ");
                 search_registry(&query, json);
                 return;
             }
@@ -9251,7 +9274,19 @@ fn main() {
         // file lands in the program's drift manifest; otherwise use the D2b
         // stdlib cache.
         let stdlib_warm = loft::startup_cache::warm_load_stdlib(&mut p, &default_str);
-        if !stdlib_warm {
+        // loft#1801 — a binary with no `default/` beside it (copied onto the PATH, or
+        // installed by `cargo install`) still carries the stdlib it was built from: the
+        // same `include_str!` sources the browser build and `loft search` read.  Parsed
+        // from there it cannot mismatch this binary's dispatch table, so a MISSING
+        // directory is not an error.  A directory that is there but refused (a parse
+        // error, a `default/` from another build) still is, below.
+        let default_missing = !stdlib_warm && !path_given && !default_dir.is_dir();
+        if default_missing {
+            if let Err(e) = p.parse_stdlib(&default_str) {
+                eprintln!("loft: {e}");
+                std::process::exit(1);
+            }
+        } else if !stdlib_warm {
             if let Err(e) = p.parse_dir(&default_str, true, false) {
                 if e.kind() == std::io::ErrorKind::InvalidData {
                     // The library was found and read, and refused: a parse error in it,
@@ -9814,7 +9849,8 @@ fn main() {
     all_native_libs.extend(auto_native_libs);
     extensions::load_all(&mut state, all_native_libs.clone());
     // PKG.5: wire auto-marshalled native functions from loaded cdylibs.
-    extensions::wire_native_fns(&mut state, &p.data);
+    // A browser build reports no unloaded host library: the page provides its own imports.
+    extensions::wire_native_fns_for(&mut state, &p.data, html_out.is_none());
     // @PLN11 Arc N / N3 — wire the shared-store bridge dispatchers for the
     // auto-native libraries (the `loft_shared_*` symbols), a disjoint set from the
     // hand-written `#native` symbols `wire_native_fns` handles.
@@ -11096,6 +11132,14 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
       // unthrottled MessageChannel while the page is hidden, and via rAF while
       // visible so a GL render loop stays vsync-aligned.  schedule() re-checks
       // visibility each tick, so a tab going hidden/visible adapts live.
+      // A VISIBLE page can be denied frames too — a throttled or occluded
+      // renderer that never sets document.hidden — and an rAF-only resume then
+      // crawls or stops (loft#1830: a visible page stuck at `tick 0`).  So each
+      // visible resume also arms a fallback: whichever comes first, the frame or
+      // RAF_FALLBACK_MS, resumes the program.  A fallback that fires marks rAF
+      // STALLED, and the loop then pumps as a hidden page does — the timer may
+      // be throttled with the frames, so it is waited on once, not per tick —
+      // until a probe frame arrives and hands the loop back to rAF.
       const mc=new MessageChannel();
       // A trap inside a RESUME lands here rather than on the boot promise, and
       // an uncaught one stops the pump silently — a frame loop that dies with a
@@ -11104,9 +11148,19 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
         try{{ if(ac.resume('loft_start'))schedule(); }}catch(e){{ loftReportTrap(e); }}
       }};
       mc.port1.onmessage=pump;
+      const RAF_FALLBACK_MS=100;
+      let rafStalled=false;
       const schedule=()=>{{
-        if(document.hidden)mc.port2.postMessage(0);
-        else requestAnimationFrame(pump);
+        if(document.hidden||rafStalled){{
+          if(rafStalled)requestAnimationFrame(()=>{{ rafStalled=false; }});
+          mc.port2.postMessage(0);
+          return;
+        }}
+        let due=true;
+        requestAnimationFrame(()=>{{ if(due){{ due=false; pump(); }} }});
+        setTimeout(()=>{{
+          if(due){{ due=false; rafStalled=true; mc.port2.postMessage(0); }}
+        }},RAF_FALLBACK_MS);
       }};
       schedule();
     }}

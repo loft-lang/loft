@@ -6,7 +6,8 @@ fn turn_around(d: Direction) -> Direction {
     match d { North => South, South => North, East => West, West => East }
 }
 fn main() {
-    d: Direction = East;
-    println("{turn_around(d)}");
-    // West
+    d: Direction = East;              // the declared type says which enum
+    println("{turn_around(d)}");      // West
+    e = Direction.South;              // no context: qualify the name
+    println("{turn_around(e)}");      // North
 }

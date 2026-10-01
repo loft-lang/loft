@@ -1,0 +1,8 @@
+// `?? break` is refused the same way as `?? continue`.
+fn main() {
+  v = [1, 2];
+  for i in 0..3 {
+    x = v[i] ?? break;
+    println("{x}");
+  }
+}

@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Binary file I/O — Loft, a programming language for small browser games</title>
+  <meta name="description" content="">
+<link rel="canonical" href="https://loft-lang.org/loft/stdlib-binary-file-i-o.html">
+<meta property="og:title" content="Binary file I/O — Loft, a programming language for small browser games">
+<meta property="og:description" content="">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://loft-lang.org/loft/stdlib-binary-file-i-o.html">
+<meta property="og:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<meta property="og:site_name" content="Loft">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Binary file I/O — Loft, a programming language for small browser games">
+<meta name="twitter:description" content="">
+<meta name="twitter:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<link rel="stylesheet" href="style.css">
+<style>.playground-link{display:inline-block;margin:0.3em 0 0.8em;padding:4px 12px;background:#2563eb;color:#fff;border-radius:4px;text-decoration:none;font-size:0.85em}.playground-link:hover{filter:brightness(1.15)}@media print{.playground-link{display:none}}</style>
+</head>
+<body>
+<nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <a href="libraries.html">Libraries</a> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <span class="cur">Binary file I/O</span> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
+<h1>Binary file I/O</h1>
+<article>
+<div class="item">
+<pre><code>pub fn read_bytes(path: text) -&gt; vector&lt;u8&gt; ?fs#read</code></pre>
+<p>Reads the whole file `path` as raw bytes.  A MISSING / unreadable file reads as NULL (distinct from an EMPTY file, `[]`); discharge with `?? []` to keep the old shape.  Binary-exact (round-trips with write_bytes); use for non-UTF-8 data — for text prefer `file(path).content()`.</p>
+</div>
+<div class="item">
+<pre><code>pub fn file_map(path: text) -&gt; vector&lt;u8&gt; ?fs#read</code></pre>
+<p>Maps the whole file `path` READ-ONLY, without copying it: the vector's bytes ARE the file's, kept mapped for as long as the vector lives.  A MISSING / unreadable file maps as NULL, like read_bytes.  Every read works as on any vector&lt;u8&gt;; a slice is a view. A WRITE, to it or a slice, is refused at run time: copy first (`w = v`, a bind copies) to change bytes.  For a file read once and whole, read_bytes gives the same bytes at the cost of the copy.</p>
+</div>
+<div class="item">
+<pre><code>pub fn write_bytes(path: text, bytes: const vector&lt;u8&gt;) -&gt; boolean fs#update</code></pre>
+<p>Writes `bytes` to file `path`, truncating any existing content.  Returns true on success.  The inverse of read_bytes; the pair round-trips a non-UTF-8 blob byte-for-byte.</p>
+</div>
+<div class="item">
+<pre><code>pub fn mtime(path: text) -&gt; integer fs#read</code></pre>
+<p>Modification time of `path` as Unix epoch SECONDS (integer — same i64 representation as file.size).  Returns 0 on missing file / IO error / pre-epoch dates — treat 0 as &quot;unknown&quot;. Use for date-window filters: convert the returned seconds to YYYY-MM-DD and compare lexicographically against `ymd_days_ago(N)`.</p>
+</div>
+<div class="item">
+<pre><code>pub fn set_file_size(self: File, size: integer) -&gt; FileResult fs#update</code></pre>
+<p>Truncates or extends the file to `size` bytes; extending fills with zero bytes. Returns FileResult.Ok, FileResult.NotFound when the file does not exist, FileResult.IsDirectory for a directory, and FileResult.Other for a negative `size` or a failed OS call.</p>
+</div>
+<div class="item">
+<pre><code>pub fn seek(self: File, pos: integer) -&gt; boolean fs#update</code></pre>
+<p>Moves the read/write position to `pos` bytes from the start, for random access into a binary file: read an index, jump to the record it names, read that.</p>
+<p>Equivalent to `self#next = pos`, the operator form.</p>
+<p>Returns false — a no-op — when there is nothing to seek in: a directory, an absent file, or a negative `pos`.  A seek before the first read or write is remembered and applies to it.  Seeking PAST the end is allowed: the position is remembered and a following write extends the file, which is how a free-list or an update-in-place walk lands.</p>
+</div>
+<div class="item">
+<pre><code>pub fn position(self: const File) -&gt; integer</code></pre>
+<p>The current read/write position in bytes, i.e. where the next read or write will land.  The read side of [seek]; `self#next` is the operator form.</p>
+<p>Distinct from `self#index`, which is where the LAST read STARTED — after `x = f#read as i32` on a fresh file, `position` is 4 and `f#index` is 0.</p>
+<p>A file this process has not read from or written to yet has no position, and reports null rather than 0 — 0 is a legitimate position, so returning it would make &quot;not opened&quot; indistinguishable from &quot;at the start&quot;.  Discharge with `?? 0` when the distinction does not matter.</p>
+</div>
+<div class="item">
+<pre><code>pub fn sync(self: File) -&gt; boolean fs#update</code></pre>
+<p>Flushes buffered bytes for self to the underlying storage so that the preceding writes are durable. Use between log records or block boundaries to guarantee that earlier appends have landed on disk before later ones are issued.</p>
+</div>
+
+  </article>
+<script src="search-index.js"></script>
+<script src="search.js"></script>
+<script>
+(function(){
+var m={"Keywords":"keywords","Texts":"texts","Integers":"integers","Boolean":"boolean","Float":"float","Functions":"functions","Vector":"vector","Structs":"structs","Enums":"enums","Sorted":"sorted","Index":"index","Hash":"hash","File":"file","Lexer":"lexer","Parser":"parser","Libraries":"libraries","Store Locks":"store_locks","Parallel execution":"parallel_execution","Logging":"logging","Time":"time","Safety":"safety","JSON":"json","Generics":"generics","Closures":"closures","Coroutines":"coroutines","Tuples":"tuples","Match":"match","Formatting":"formatting"};
+var h=document.querySelector('h1');
+if(!h)return;
+var key=m[h.textContent];
+if(!key)return;
+var a=document.createElement('a');
+a.className='playground-link';
+a.href='playground.html?example='+key;
+a.textContent='\u25B6 Try in Playground';
+h.parentNode.insertBefore(a,h.nextSibling);
+})();
+</script>
+</body>
+</html>

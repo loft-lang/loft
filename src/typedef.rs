@@ -321,6 +321,12 @@ pub fn actual_types_deferred(
                     data.import_cure("Undefined type", name, data.def(d).source)
                 {
                     msg
+                } else if let Some(msg) = crate::parser::registry_type_hint(
+                    "Undefined type",
+                    name,
+                    &data.resolved_libraries(),
+                ) {
+                    msg
                 } else if let Some(s) = data.suggest_type_name(name) {
                     format!("Undefined type {name} — did you mean '{s}'?")
                 } else {

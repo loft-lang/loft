@@ -1,0 +1,136 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-G-Next` for a loop that yields a RECORD, a vector, a struct-enum, a tuple or a fn-ref
+// (loft#1798) — the kinds `--native` hands over through something other than a plain value:
+// the `next_into` transport buffer for a tuple or a fn-ref, and a record the generator forgets
+// once the consumer owns it (`@FR-G-Own`, loft#1589).  The rotated lazy loop could carry
+// neither, so every such loop ran to its end into a buffer before the consumer saw a value:
+// `p1 r1 p2 r2 p3 r3 g1 g2 g3` where the interpreter traces `p1 g1 r1 p2 g2 r2 p3 g3 r3`.
+//
+// They are re-descended now, as `a-generator-resumes-at-the-yield-it-suspended-at.loft`'s
+// shapes are, and each yield hands over through the code a straight-line yield uses — every
+// channel, and the same forgetting of the temps a record leaves the generator with.
+//
+// Each generator stamps its steps into a shared trace and the consumer stamps `g…`, so a trace
+// reads the interleaving; every expected value is derived by hand from `(G-Next)` and
+// `(G-Own)` — a yielded local is COPIED, so the generator's later write does not reach it.
+//
+// Axes this file MOVES: the yielded kind (a record built in place, by a call, a local; a
+//                       vector local and literal; a struct-enum of both variants; a tuple of
+//                       scalars, of a scalar and a record; a capturing fn-ref), a statement
+//                       after the yield, a conditional yield, and abandonment.
+// Axes it HOLDS FIXED:  a `for` over a range, one loop per generator.
+//
+// @falsified-at: 9986ae132 — native exit 1 -> 0; the interpreter INERT (expected for a
+//   backend-divergence guard — only one side can move).
+//   CHANNEL: exit, native — on the control the tuple-with-a-record loop is REFUSED at compile
+//     time ("a generator yielding `(integer, P1798c)` cannot…", the eager buffer's refusal), so
+//     the file fails before it runs.  The ORDER channel was scored separately on the same
+//     control with that one cell removed: native 4 of 5 functions fail, every trace in the eager
+//     order and the abandoned generator at 100000 steps; the copy-at-the-yield cell holds on
+//     both, as a value check it should.
+//   ARMED: nothing.
+//   WITNESS: on 9986ae132 `built1798c` traces `p1 r1 p2 r2 p3 r3 g1 g2 g3 ` where this file
+//     wants `p1 g1 r1 p2 g2 r2 p3 g3 r3 `.
+//   HOLDS: every VALUE agrees on both trees and both backends; no leak or panic.
+
+struct P1798c { id: integer }
+struct Tr1798c { s: text }
+struct Steps1798c { n: integer }
+enum E1798c { A { n: integer }, B }
+
+fn mkp1798c(i: integer) -> P1798c { P1798c { id: i } }
+
+fn built1798c(t: reference<Tr1798c>) -> iterator<P1798c> {
+  for i in 1..4 { t.s += "p{i} "; yield P1798c { id: i }; t.s += "r{i} "; }
+}
+
+fn called1798c(t: reference<Tr1798c>) -> iterator<P1798c> {
+  for i in 1..4 { t.s += "p{i} "; if i != 2 { yield mkp1798c(i); } }
+}
+
+fn local1798c(t: reference<Tr1798c>) -> iterator<P1798c> {
+  x = P1798c { id: 0 };
+  for i in 1..3 { x.id = i; t.s += "p{i} "; yield x; x.id = 50; yield x; }
+}
+
+fn vectors1798c(t: reference<Tr1798c>) -> iterator<vector<integer>> {
+  v = [0];
+  for i in 1..3 { v += [i]; t.s += "p{i} "; yield v; yield [i, i]; }
+}
+
+fn variants1798c(t: reference<Tr1798c>) -> iterator<E1798c> {
+  for i in 1..4 { t.s += "p{i} "; if i == 2 { yield E1798c.B; } else { yield A { n: i }; } }
+}
+
+fn pairs1798c(t: reference<Tr1798c>) -> iterator<(integer, integer)> {
+  for i in 1..4 { t.s += "p{i} "; if i != 2 { yield (i, i * i); } }
+}
+
+fn with_record1798c(t: reference<Tr1798c>) -> iterator<(integer, P1798c)> {
+  for i in 1..3 { t.s += "p{i} "; yield (i, P1798c { id: i * 10 }); t.s += "r{i} "; }
+}
+
+fn lambdas1798c(t: reference<Tr1798c>) -> iterator<fn(integer) -> integer> {
+  for i in 1..3 { t.s += "p{i} "; k = i * 100; yield fn(x: integer) -> integer { x + k }; }
+}
+
+fn long1798c(st: reference<Steps1798c>) -> iterator<P1798c> {
+  for i in 0..100000 { st.n += 1; yield P1798c { id: i }; }
+}
+
+fn test_a_record_is_handed_over_before_the_next_iteration() {
+  t = Tr1798c { s: "" };
+  keep: vector<P1798c> = [];
+  for p in built1798c(t) { t.s += "g{p.id} "; keep += [p]; }
+  assert(t.s == "p1 g1 r1 p2 g2 r2 p3 g3 r3 ", "built in place: {t.s}");
+  assert(len(keep) == 3 && keep[0].id == 1 && keep[2].id == 3, "each record the consumer's own");
+  u = Tr1798c { s: "" };
+  ids = "";
+  for p in called1798c(u) { u.s += "g{p.id} "; ids += "{p.id}"; }
+  assert(u.s == "p1 g1 p2 p3 g3 " && ids == "13", "built by a call: {u.s} / {ids}");
+}
+
+fn test_a_yielded_local_is_copied_at_the_yield() {
+  t = Tr1798c { s: "" };
+  g = local1798c(t);
+  a = next(g) ?? P1798c { id: -1 };
+  b = next(g) ?? P1798c { id: -1 };
+  c = next(g) ?? P1798c { id: -1 };
+  assert("{a.id} {b.id} {c.id}" == "1 50 2", "copies at each yield: {a.id} {b.id} {c.id}");
+  assert(t.s == "p1 p2 ", "three advances, two iterations begun: {t.s}");
+}
+
+fn test_a_vector_and_a_struct_enum() {
+  t = Tr1798c { s: "" };
+  out = "";
+  for v in vectors1798c(t) { t.s += "g{len(v)} "; out += "{v} "; }
+  assert(t.s == "p1 g2 g2 p2 g3 g2 ", "vectors: {t.s}");
+  assert(out == "[0,1] [1,1] [0,1,2] [2,2] ", "a local copied, a literal handed over: {out}");
+  e = Tr1798c { s: "" };
+  for x in variants1798c(e) {
+    match x { A { n } => { e.s += "gA{n} "; }, B => { e.s += "gB "; } }
+  }
+  assert(e.s == "p1 gA1 p2 gB p3 gA3 ", "struct-enum variants: {e.s}");
+}
+
+fn test_a_tuple_and_a_fn_ref_ride_the_transport_buffer() {
+  t = Tr1798c { s: "" };
+  for x in pairs1798c(t) { t.s += "g{x.0}/{x.1} "; }
+  assert(t.s == "p1 g1/1 p2 p3 g3/9 ", "a scalar tuple: {t.s}");
+  u = Tr1798c { s: "" };
+  for x in with_record1798c(u) { u.s += "g{x.0}:{x.1.id} "; }
+  assert(u.s == "p1 g1:10 r1 p2 g2:20 r2 ", "a tuple with a record member: {u.s}");
+  f = Tr1798c { s: "" };
+  for l in lambdas1798c(f) { f.s += "g{l(1)} "; }
+  assert(f.s == "p1 g101 p2 g201 ", "capturing fn-refs: {f.s}");
+}
+
+// Finite on purpose: an eager regression fails the STEP count instead of filling memory.
+fn test_an_abandoned_record_generator_does_no_work_past_its_consumer() {
+  st = Steps1798c { n: 0 };
+  got = "";
+  for p in long1798c(st) { got += "{p.id} "; if p.id == 1 { break; } }
+  assert(got == "0 1 " && st.n == 2, "abandoned after two records: {got} / {st.n} steps");
+}

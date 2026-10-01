@@ -18,23 +18,56 @@ enum Shape {
 fn area(self: Circle) -> float { PI * pow(self.radius, 2.0) }
 fn area(self: Rect) -> float { self.width * self.height }
 
-c = Circle { radius: 2.0 };
-c.area()   // dispatches to the Circle overload
+shapes: vector<Shape> = [Shape::Circle { radius: 2.0 }, Shape::Rect { width: 3.0, height: 4.0 }];
+for s in shapes { println("{s.area()}"); }   // each element runs its own variant's `area`
 ```
 
-If a variant has no implementation, the compiler emits a `Warning` at the variant's
-definition site. To silence the warning deliberately, provide an **empty-body stub**:
+A call on a value typed as the ENUM must reach a body for every variant. When one has
+none, the call is a compile error: *"call of `area` on `Shape` is not exhaustive — missing:
+Tri"*. Two cures: write the missing `fn area(self: Tri)`, or write one fallback on the enum
+itself, `fn area(self: Shape)`, which every variant without its own body reaches. A call on
+a value the compiler knows to be one variant (`c = Circle { radius: 2.0 }; c.area()`) needs
+only that variant's body.
+
+An **empty-body stub** also covers a variant:
 
 ```
-fn area(self: Rect) -> float { }   // explicit skip — no warning emitted
+fn area(self: Rect) -> float { }   // covers Rect; answers the return type's default
 ```
 
 A stub with an empty body `{ }` and a `self` parameter is treated as an intentional
 no-op: it emits no warnings, is callable at runtime (it answers its return type's default —
 `""` for `text`, `0` for `integer`), and suppresses the unused-`self` warning.
 
-Note: ordinary (non-enum) function overloading by argument type is **not** supported —
-two functions with the same name and different non-variant parameter types are a compile error.
+### Multiple dispatch — one name, a definition per parameter types
+
+The same name may have several ordinary functions that differ in their parameter types.
+The call picks the definition whose parameters fit its arguments:
+
+```
+fn width(x: integer) -> integer { x }
+fn width(s: text) -> integer { len(s) }
+width(7)        // 7
+width("abcd")   // 4
+```
+
+The rules:
+
+- Every parameter counts, not only the first, so `hit(f: Fireball, w: IceWall)` and
+  `hit(f: Fireball, c: Crate)` are two definitions.
+- The most specific definition wins: a variant beats its enum, so `hit(a: Entity, b: Entity)`
+  answers every pair that nothing more specific takes.
+- A value held as the enum is dispatched on the variant it holds at run time.  Such a call
+  needs every candidate definition to return the same type; otherwise it is refused
+  (*"`val(Entity)` is decided by the runtime variant, but its definitions return different
+  types"*).
+- Ambiguity is checked over every combination of variants a call can meet.  Two definitions
+  that fit one combination equally well are a compile error that names the combination and
+  both definitions.
+- Two definitions with the same parameter types are refused (*"Cannot redefine"*).
+- A short lambda with untyped parameters (`|v| { v + 1 }`) cannot be passed where the name
+  has several definitions: nothing tells it which parameter type to take.  Write the typed
+  form, `fn(v: integer) -> integer { v + 1 }`.
 
 Catalogue: @F20 (variant-based dispatch), @F122 (one name, a definition per parameter combination).
 
@@ -42,7 +75,7 @@ Catalogue: @F20 (variant-based dispatch), @F122 (one name, a definition per para
 
 ## Generic functions
 
-A single type variable `<T>` lets you write a function body once for any type:
+A type variable `<T>` lets you write a function body once for any type:
 
 ```
 fn identity<T>(x: T) -> T { x }

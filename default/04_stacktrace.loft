@@ -32,7 +32,7 @@ pub struct ArgInfo {
   value: ArgValue,
 }
 
-/// One local variable in a stack frame (populated only by stack_trace_full).
+/// One local variable or parameter in a stack frame (see `stack_trace`).
 pub struct VarInfo {
   name: text,
   type_name: text,
@@ -49,10 +49,11 @@ pub struct StackFrame {
 }
 
 /// Return the current call stack as a vector of frames, outermost first.
-/// TR1.4: Each frame's `variables` field is populated with the live local
-/// variables at that frame's call site (typed via `ArgValue`).  Use this to
-/// inspect not only the current function's variables but also the variables
-/// of any function further up the call stack:
+/// Each frame's `variables` holds its parameters and live locals, `arguments` the
+/// parameters alone (typed via `ArgValue`).  Use this to inspect not only the current
+/// function's variables but also the variables of any function further up the
+/// call stack.  Under `--native` both lists are empty: a compiled
+/// frame has no reader for its locals (STACKTRACE.md § Known Limitations, ST-6).
 ///
 /// ```loft
 /// fn debug_dump() {

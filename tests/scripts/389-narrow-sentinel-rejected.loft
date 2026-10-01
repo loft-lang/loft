@@ -12,6 +12,12 @@
 // reached the check at all.
 //
 // So the rule is pinned from the value side instead, which cannot go quiet.
+//
+// The KNOWN GAP below closed with loft#1796: a CONSTANT that lands on a nullable narrow slot's
+// null (`U8Q { x: 255 }`) is now REFUSED at compile time — it could only ever be stored as
+// null — and that refusal is its expectation now, pinned for the struct literal field by
+// tests/parse_errors.rs `a_constant_a_nullable_narrow_slot_cannot_hold_is_refused_in_every_position`.
+// The cell here keeps the value side: a 255 that reaches the field at RUN TIME reads null.
 
 struct U8N {
   x: u8,
@@ -21,16 +27,16 @@ struct U8Q {
   x: u8?,
 }
 
+// A value the compiler cannot fold, so it reaches the field at run time.
+fn rt(n: integer) -> integer { n }
+
 fn main() {
   // Non-null narrow: the full range is usable, 255 included.
   b = U8N { x: 255 };
   assert(b.x == 255, "a non-null u8 field holds 255: {b.x}");
 
-  // KNOWN GAP — the nullable narrow still spends its top value on the null sentinel, and
-  // a literal that lands on it becomes null with no diagnostic.  Reserving (and
-  // rejecting) it for an `Optional` narrow is the @PLN25 F2 Part-2 slice named in
-  // `nullable_sentinel_hint`.  Asserted as it BEHAVES so that closing the gap fails here
-  // loudly instead of leaving another silent expectation behind.
-  q = U8Q { x: 255 };
-  assert(q.x == null, "a nullable u8? field still reads 255 back as null (@PLN25 F2 Part 2)");
+  // Nullable narrow: 255 is the null (`@FR-N-Reserve`).  The constant spelling is refused
+  // (loft#1796, see the header); a run-time 255 is stored as that null.
+  q = U8Q { x: rt(255) };
+  assert(q.x == null, "a nullable u8? field reads a run-time 255 back as null");
 }

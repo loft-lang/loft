@@ -89,7 +89,8 @@ tables.
     on the character VALUE, so it stopped at the NUL and silently dropped the rest
     while every other accessor read past it.
   * `chr(0)` answers `""` for the same reason, and `text_from_bytes([0])` — a lone NUL —
-    is the null text, for which `size` still says 1 but iteration correctly yields nothing.
+    is the null text, which has no characters: `len`, `size` and iteration all say so
+    (guard `tests/scripts/1795-an-absent-text-has-no-characters.loft`).
 
   So a NUL survives a round trip through **bytes** (`byte_at` / `text_from_bytes`) but not
   through **characters**.  A decoder that must preserve NULs should walk

@@ -26,8 +26,7 @@
 <div class="section-desc"><p>Reordering a vector in place: `reverse(v)` turns it end for end and `sort(v)` puts it in ascending order.</p></div>
 <div class="item">
 <pre><code>pub fn starts_with(self: text, value: text) -&gt; boolean</code></pre>
-<p>── Path helpers (moved from 03_text.loft so they're available before file-I/O code that wants to compose them) ─────────</p>
-<p>loft treats paths as plain text; this group adds the most-needed path operations (dir_of / basename / resolve_relative) as methods on text. Pure-loft, slash-separated; Windows backslash normalisation is out of scope. `starts_with` / `ends_with` are dependencies of `join` / `resolve` so they also live here (was 03_text.loft). Returns true if self begins with value. Use for prefix matching (e.g., protocol detection).</p>
+<p>Returns true if self begins with value. Use for prefix matching (e.g., protocol detection).</p>
 </div>
 <div class="item">
 <pre><code>pub fn ends_with(self: text, value: text) -&gt; boolean</code></pre>
@@ -35,7 +34,7 @@
 </div>
 <div class="item">
 <pre><code>pub fn dir(self: text) -&gt; text</code></pre>
-<p>Directory part of a path — strips the trailing `/&lt;segment&gt;`. &quot;doc/claude/PROBLEMS.md&quot;.dir() → &quot;doc/claude&quot; &quot;CLAUDE.md&quot;.dir()              → &quot;&quot;   (no `/`) &quot;/etc/passwd&quot;.dir()            → &quot;/etc&quot; &quot;&quot;.dir()                        → &quot;&quot;</p>
+<p>Directory part of a path — strips the trailing `/&lt;segment&gt;`. Paths are plain slash-separated text: a `\` is not a separator here, on any platform. &quot;doc/claude/PROBLEMS.md&quot;.dir() → &quot;doc/claude&quot; &quot;CLAUDE.md&quot;.dir()              → &quot;&quot;   (no `/`) &quot;/etc/passwd&quot;.dir()            → &quot;/etc&quot; &quot;&quot;.dir()                        → &quot;&quot;</p>
 </div>
 <div class="item">
 <pre><code>pub fn basename(self: text) -&gt; text</code></pre>

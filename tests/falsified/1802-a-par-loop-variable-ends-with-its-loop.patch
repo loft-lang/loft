@@ -1,0 +1,266 @@
+diff --git b/src/host.rs a/src/host.rs
+index 8be4809de..de2b106f1 100644
+--- b/src/host.rs
++++ a/src/host.rs
+@@ -184,7 +184,7 @@ impl Program {
+     /// parse / compile.
+     pub fn from_source_with_stdlib(source: &str, stdlib_dir: &str) -> Result<Program, LoftError> {
+         let mut p = parser::Parser::new();
+-        p.parse_stdlib(stdlib_dir)
++        p.parse_dir(stdlib_dir, true, false)
+             .map_err(|e| LoftError::Parse(format!("cannot read stdlib at {stdlib_dir}: {e}")))?;
+         p.parse_str(source, "<host>", false);
+         scopes::check(&mut p.data, &mut p.database);
+@@ -210,7 +210,7 @@ impl Program {
+         stdlib_dir: &std::path::Path,
+     ) -> Result<Program, LoftError> {
+         let mut p = parser::Parser::new();
+-        p.parse_stdlib(&stdlib_dir.to_string_lossy())
++        p.parse_dir(&stdlib_dir.to_string_lossy(), true, false)
+             .map_err(|e| {
+                 LoftError::Parse(format!(
+                     "cannot read stdlib at {}: {e}",
+diff --git b/src/introspect.rs a/src/introspect.rs
+index 9adc258ed..9885685ec 100644
+--- b/src/introspect.rs
++++ a/src/introspect.rs
+@@ -165,7 +165,7 @@ pub fn run(filename: &str, opts: &Options) -> std::io::Result<()> {
+     } else {
+         format!("{}default", opts.install_dir)
+     };
+-    p.parse_stdlib(&default_dir)
++    p.parse_dir(&default_dir, true, false)
+         .expect("parse default/ stdlib");
+     let start_def = p.data.definitions();
+     p.parse(&abs_file, false);
+diff --git b/src/live_dispatch.rs a/src/live_dispatch.rs
+index 51c0d6120..7e39d9a7e 100644
+--- b/src/live_dispatch.rs
++++ a/src/live_dispatch.rs
+@@ -129,7 +129,7 @@ fn bootstrap(fn_names: &'static [&'static str]) -> Result<Stores, String> {
+         .map_err(|_| "LOFT_LIVE_SRC not set (run through the loft driver)".to_string())?;
+     let stdlib = std::env::var("LOFT_LIVE_STDLIB").unwrap_or_else(|_| "default".to_string());
+     let mut p = Box::new(crate::parser::Parser::new());
+-    p.parse_stdlib(&stdlib)
++    p.parse_dir(&stdlib, true, false)
+         .map_err(|e| format!("stdlib `{stdlib}`: {e}"))?;
+     if let Ok(libs) = std::env::var("LOFT_LIVE_LIBS") {
+         p.lib_dirs = libs
+diff --git b/src/lsp.rs a/src/lsp.rs
+index f22a6eb60..d8dec1ed3 100644
+--- b/src/lsp.rs
++++ a/src/lsp.rs
+@@ -31,7 +31,7 @@ fn load_stdlib(p: &mut Parser, stdlib_dir: &str) {
+     // The stdlib prelude (STD_SOURCE) must be registered before the user buffer,
+     // or every stdlib symbol reads as undefined — both paths do that first.
+     if !crate::startup_cache::warm_load_stdlib(p, stdlib_dir) {
+-        let _ = p.parse_stdlib(stdlib_dir);
++        let _ = p.parse_dir(stdlib_dir, true, false);
+         crate::startup_cache::save_stdlib_cache(p, stdlib_dir);
+     }
+ }
+diff --git b/src/main.rs a/src/main.rs
+index 72f393809..67ab058a6 100644
+--- b/src/main.rs
++++ a/src/main.rs
+@@ -3966,7 +3966,7 @@ fn generate_native_stubs(pkg_path: &std::path::Path) {
+         p.lib_dirs.push(src_dir.to_string_lossy().to_string());
+     }
+     // Load default definitions so types are known.
+-    let _ = p.parse_stdlib(&default_str);
++    let _ = p.parse_dir(&default_str, true, false);
+     p.parse(&abs.to_string_lossy(), false);
+ 
+     // Collect #native declarations.
+@@ -5462,7 +5462,7 @@ fn api_surface_of(
+     if let Some(src_dir) = entry.parent() {
+         p.lib_dirs.push(src_dir.to_string_lossy().to_string());
+     }
+-    let _ = p.parse_stdlib(&default_str);
++    let _ = p.parse_dir(&default_str, true, false);
+     let abs_str = abs.to_string_lossy().to_string();
+     p.parse(&abs_str, false);
+     if p.diagnostics.level() >= loft::diagnostics::Level::Error {
+@@ -6601,7 +6601,7 @@ fn run_layout_command(sub: &str, file: &str) -> i32 {
+     if let Some(src_dir) = entry.parent() {
+         p.lib_dirs.push(src_dir.to_string_lossy().to_string());
+     }
+-    let _ = p.parse_stdlib(&default_str);
++    let _ = p.parse_dir(&default_str, true, false);
+     p.parse(&abs.to_string_lossy(), false);
+ 
+     let roots = ss::program_roots(&p.data);
+@@ -7262,9 +7262,6 @@ fn main() {
+     let mut i = 0;
+     let mut file_name = String::new();
+     let mut dir = project_dir();
+-    // Whether `--path` named the stdlib's directory: then a missing `default/` is the
+-    // reader's typo to hear about, not a cue to use the embedded stdlib (loft#1801).
+-    let mut path_given = false;
+     let mut project: Option<String> = None;
+     let mut lib_dirs: Vec<String> = Vec::new();
+     let mut log_conf: Option<String> = None;
+@@ -7424,7 +7421,6 @@ fn main() {
+             return;
+         } else if a == "--path" {
+             dir.clone_from(&argv[i]);
+-            path_given = true;
+             i += 1;
+         } else if a == "--project" {
+             project = Some(argv[i].clone());
+@@ -9277,19 +9273,7 @@ fn main() {
+         // file lands in the program's drift manifest; otherwise use the D2b
+         // stdlib cache.
+         let stdlib_warm = loft::startup_cache::warm_load_stdlib(&mut p, &default_str);
+-        // loft#1801 — a binary with no `default/` beside it (copied onto the PATH, or
+-        // installed by `cargo install`) still carries the stdlib it was built from: the
+-        // same `include_str!` sources the browser build and `loft search` read.  Parsed
+-        // from there it cannot mismatch this binary's dispatch table, so a MISSING
+-        // directory is not an error.  A directory that is there but refused (a parse
+-        // error, a `default/` from another build) still is, below.
+-        let default_missing = !stdlib_warm && !path_given && !default_dir.is_dir();
+-        if default_missing {
+-            if let Err(e) = p.parse_stdlib(&default_str) {
+-                eprintln!("loft: {e}");
+-                std::process::exit(1);
+-            }
+-        } else if !stdlib_warm {
++        if !stdlib_warm {
+             if let Err(e) = p.parse_dir(&default_str, true, false) {
+                 if e.kind() == std::io::ErrorKind::InvalidData {
+                     // The library was found and read, and refused: a parse error in it,
+diff --git b/src/parser/collections.rs a/src/parser/collections.rs
+index 47c51d49d..8916981be 100644
+--- b/src/parser/collections.rs
++++ a/src/parser/collections.rs
+@@ -3355,8 +3355,8 @@ use #count instead"
+                 Level::Error,
+                 "loop variable '{src_id}' shadows a local named '{src_id}' — \
+                  rename the loop variable (e.g. loop_{src_id}) or drop the \
+-                 outer `{src_id}` if it was a dead placeholder; a loop \
+-                 variable cannot reuse the name of a local still in scope"
++                 outer `{src_id}` if it was a dead placeholder; loft does \
++                 not block-scope loop variables"
+             );
+         }
+         if id != "_"
+@@ -4873,18 +4873,7 @@ use #count instead"
+         // `b` → `OpGetVector(results, idx)`.  build_parallel_for_ir
+         // performs the actual Var→accessor rewrite after body parse,
+         // once `idx_var` exists.
+-        // loft#1802 — the element is this loop's variable, created the way a sequential
+-        // loop's is: keyed by the LOOP (`<name>#bind`, loft#915), not by the name.  Reused
+-        // by name, pass 2's first `par` loop over `e` was handed whichever slot pass 1 left
+-        // `e` pointing at — the LAST loop's — so two `par` loops in a row shared one binding.
+-        let elem_var_nr = self.create_loop_var(elem_var, &elem_tp);
+-        // It ends with its body as a sequential loop's does (@FR-B-Scope).  Unrecorded, a
+-        // later `for e` read the par loop's `e` as "a local named 'e'" and refused as a
+-        // shadow; loft#1717 is the same mark for the unrolled `#fields` walk.
+-        self.vars.served_as_loop_var(elem_var_nr);
+-        // …and it is BOUND in the loop's body block, so the name is free again after the
+-        // loop's `}` — `e = 7` after the loop is a new binding, as after a plain `for`.
+-        self.pending_loop_binders.push(elem_var_nr);
++        let elem_var_nr = self.create_var(elem_var, &elem_tp);
+         // The body reads the name the program wrote; point it at this loop's binding
+         // and leave it there, the same as the sequential form (loft#915).
+         if elem_var != src_elem_var {
+@@ -4933,8 +4922,6 @@ use #count instead"
+                             .enumerate()
+                             .map(|(i, name)| {
+                                 let var = self.create_var(name, &elem_types[i]);
+-                                self.vars.served_as_loop_var(var);
+-                                self.pending_loop_binders.push(var);
+                                 self.vars.defined(var);
+                                 self.vars.in_use(var, true);
+                                 var
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index b1d709d75..fe2b7caa8 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -3322,15 +3322,6 @@ impl Parser {
+             // derived from it) and has its append shape: name-keyed, idempotent, at the end.
+             let lazy_struct_instance =
+                 matches!(dt, DefType::Struct) && self.data.def(d as u32).instance_of != u32::MAX;
+-            // The eighth: a DESTRUCTURING `par` loop's worker wrapper,
+-            // `__par_destructure_w_<line>_<col>_<worker>` — pass-2-only by design (pass 1
+-            // answers with the user's worker; `parse_destructure_par_worker` mints the wrapper
+-            // once the tuple's element types and offsets are final), minted once per loop site
+-            // and appended at the end.  Unrecognised, every `for (a, b) in v par(…)` stopped
+-            // the compiler with this assertion on both backends, while the `code!` harness,
+-            // which does not run H5, kept its tests green (loft#1802's matrix).
+-            let lazy_par_wrapper =
+-                matches!(dt, DefType::Function) && name.starts_with("__par_destructure_w_");
+             assert!(
+                 lazy_wrapper
+                     || lazy_instantiation
+@@ -3338,8 +3329,7 @@ impl Parser {
+                     || lazy_tuple
+                     || lazy_dispatcher
+                     || lazy_lambda_instance
+-                    || lazy_struct_instance
+-                    || lazy_par_wrapper,
++                    || lazy_struct_instance,
+                 "H5: pass-2-only definition `{name}` (#{d}, {dt:?}) is not a lazy vector \
+                  wrapper or generic instantiation — a real cross-pass divergence \
+                  (pass1={}, pass2={})\n{}",
+@@ -3946,29 +3936,6 @@ impl Parser {
+         Ok(())
+     }
+ 
+-    /// Load the standard library from `dir`, or — when there is no such directory — from
+-    /// the sources this binary embeds (loft#1801).  A binary copied onto the PATH or
+-    /// installed by `cargo install` has no `default/` beside it, but it carries the stdlib
+-    /// it was built from (`stdlib_sources`, the same text the browser build and `loft
+-    /// search` read), and that text cannot mismatch its dispatch table.  A directory that
+-    /// exists is read and checked exactly as [`Self::parse_dir`] does.
+-    /// # Errors
+-    /// As [`Self::parse_dir`]; and `InvalidData` if the embedded stdlib does not parse.
+-    pub fn parse_stdlib(&mut self, dir: &str) -> std::io::Result<()> {
+-        if std::path::Path::new(dir).is_dir() {
+-            return self.parse_dir(dir, true, false);
+-        }
+-        for (name, content) in crate::stdlib_sources::STDLIB_SOURCES {
+-            if !self.parse_source(content, name, true) {
+-                return Err(std::io::Error::new(
+-                    std::io::ErrorKind::InvalidData,
+-                    format!("the embedded standard library `{name}` does not parse"),
+-                ));
+-            }
+-        }
+-        Ok(())
+-    }
+-
+     /// [`Self::parse_dir`] WITHOUT the stdlib check, for the one caller that must read a
+     /// `default/` the dispatch table does not match yet: the `src/fill.rs` generator, whose
+     /// job is to repair exactly that mismatch.  Checked, it refused the parse and the cure
+diff --git b/src/repl.rs a/src/repl.rs
+index b42725211..7ef32c14f 100644
+--- b/src/repl.rs
++++ a/src/repl.rs
+@@ -1795,7 +1795,7 @@ impl ReplSession {
+     /// Returns the I/O error if the stdlib directory cannot be read.
+     pub fn new(stdlib_dir: &str) -> std::io::Result<Self> {
+         let mut parser = Parser::new();
+-        parser.parse_stdlib(stdlib_dir)?;
++        parser.parse_dir(stdlib_dir, true, false)?;
+         Ok(Self {
+             parser,
+             stdlib_dir: stdlib_dir.to_string(),
+@@ -2101,7 +2101,7 @@ impl ReplSession {
+         let lib_dirs = std::mem::take(&mut self.parser.lib_dirs);
+         let mut parser = Parser::new();
+         parser.lib_dirs = lib_dirs;
+-        parser.parse_stdlib(&self.stdlib_dir)?;
++        parser.parse_dir(&self.stdlib_dir, true, false)?;
+         self.parser = parser;
+         Ok(self.load_program_str(&src, path))
+     }
+@@ -2164,7 +2164,7 @@ impl ReplSession {
+                 parser.lib_dirs.push(d.clone());
+             }
+         }
+-        parser.parse_stdlib(&self.stdlib_dir)?;
++        parser.parse_dir(&self.stdlib_dir, true, false)?;
+         let pre_diag = parser.diagnostics.entries().len();
+         let parse_outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+             parser.parse(&abs, false);

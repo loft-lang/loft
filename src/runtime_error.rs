@@ -428,20 +428,7 @@ impl RuntimeError {
         // …except that the CONSTANT store's origin picks the advice (never printed): a
         // constant cannot be unlocked, and the cure is a bind, which copies (loft#1686).
         let kind = RuntimeErrorKind::WriteToLockedStore { rec, fld };
-        let detail = if origin == crate::store::Store::CONST_STORE_ORIGIN {
-            "write to a constant — a constant is read-only; bind it to a local first \
-             (`v = NAMES`), which copies, and write through the local"
-                .to_string()
-        } else if origin == crate::store::Store::FOREIGN_ORIGIN {
-            // @PLN174 — bytes the runtime does not own (a mapped file, a library's buffer):
-            // read-only by contract, and the cure is a copy, never an unlock.
-            "write to bytes the program does not own (a mapped file, a library's buffer, or \
-             a slice of either) — they are read-only; copy them first (`w = v`, a bind \
-             copies) and write the copy"
-                .to_string()
-        } else {
-            kind.describe()
-        };
+        let detail = locked_write_advice(origin);
         Self {
             kind,
             position: None,
@@ -534,13 +521,35 @@ pub fn register_run_logger(logger: &std::sync::Arc<std::sync::Mutex<crate::logge
     }
 }
 
+/// What a refused write to a read-only store tells its author, chosen by what locked the
+/// store — the ONE home for it, so the halting report and the production log line cannot
+/// give different advice for the same write.  A constant cannot be unlocked and bytes the
+/// runtime does not own (a mapped file, a library's buffer) are read-only by contract: for
+/// both the cure is a copy, never `#lock = false`, which is the cure only for the author's
+/// own lock.
+#[must_use]
+pub fn locked_write_advice(origin: &str) -> String {
+    if origin == crate::store::Store::CONST_STORE_ORIGIN {
+        "write to a constant — a constant is read-only; bind it to a local first \
+         (`v = NAMES`), which copies, and write through the local"
+            .to_string()
+    } else if origin == crate::store::Store::FOREIGN_ORIGIN {
+        "write to bytes the program does not own (a mapped file, a library's buffer, or \
+         a slice of either) — they are read-only; copy them first (`w = v`, a bind \
+         copies) and write the copy"
+            .to_string()
+    } else {
+        RuntimeErrorKind::WriteToLockedStore { rec: 0, fld: 0 }.describe()
+    }
+}
+
 /// `@FR-H-WriteLocked` in a PRODUCTION run: the write is discarded and logged, and the
 /// program continues on the store's old bytes (C80 — nothing stops a production program).
 /// Answers `false` outside production, where the caller halts with the report instead.
 ///
 /// Logged at the first discard and then at every doubling of the count, so a loop that
 /// writes a locked vector a million times leaves twenty lines, not a million.
-pub fn discard_locked_write_in_production(rec: u32, fld: u32) -> bool {
+pub fn discard_locked_write_in_production(rec: u32, fld: u32, origin: &str) -> bool {
     let logger = PRODUCTION_LOGGER.read().ok().and_then(|slot| slot.clone());
     let Some(logger) = logger else {
         return false;
@@ -549,7 +558,11 @@ pub fn discard_locked_write_in_production(rec: u32, fld: u32) -> bool {
     if n.is_power_of_two()
         && let Ok(mut lg) = logger.lock()
     {
-        lg.log_runtime_kind(&RuntimeErrorKind::WriteToLockedStore { rec, fld }, None);
+        // The kind's severity and label, with the advice the store's origin calls for: a
+        // mapped file told to `#lock = false` would be told a cure that does not exist.
+        let kind = RuntimeErrorKind::WriteToLockedStore { rec, fld };
+        let msg = format!("[{}] {}", kind.label(), locked_write_advice(origin));
+        lg.log(crate::logger::Severity::Error, "", 0, &msg);
     }
     true
 }

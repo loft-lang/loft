@@ -93,6 +93,9 @@ fn main() -> std::io::Result<()> {
     }
 
     generate_stdlib_toc(&sections, &stdlib_info, &topic_info)?;
+    for page in HAND_WRITTEN_PAGES {
+        write_hand_page_nav(page, &build_nav(&topic_info, &stdlib_info, page))?;
+    }
     let registry = load_registry_index()?;
     generate_search_index(&sections, &stdlib_info, &registry)?;
 
@@ -106,6 +109,34 @@ fn main() -> std::io::Result<()> {
     println!("Generated doc/sitemap.xml ({sitemap_pages} pages) + doc/robots.txt");
     println!("Generated {} stdlib section pages", sections.len());
     println!("Generated doc/libraries.html ({libraries} registry packages)");
+    Ok(())
+}
+
+/// The site pages written by hand rather than from a `.loft` source.  Their body is theirs,
+/// but their navigation is gendoc's: a hand-kept copy went stale with every new section
+/// (loft#1810), so gendoc rewrites the `<nav>` of each on every run, and the check that the
+/// committed pages match what gendoc writes covers them like any other page.
+const HAND_WRITTEN_PAGES: [&str; 3] = ["install", "roadmap", "report"];
+
+/// Replace the contents of `doc/<page>.html`'s one `<nav>` element with `nav`.
+fn write_hand_page_nav(page: &str, nav: &str) -> std::io::Result<()> {
+    let path = format!("doc/{page}.html");
+    let html = fs::read_to_string(&path)?;
+    let (Some(open), Some(close)) = (html.find("<nav>"), html.find("</nav>")) else {
+        return Err(std::io::Error::other(format!(
+            "{path} has no <nav>…</nav> for gendoc to write its navigation into"
+        )));
+    };
+    let start = open + "<nav>".len();
+    if close < start {
+        return Err(std::io::Error::other(format!(
+            "{path}: </nav> before <nav>"
+        )));
+    }
+    let out = format!("{}{nav}{}", &html[..start], &html[close..]);
+    if out != html {
+        fs::write(&path, out)?;
+    }
     Ok(())
 }
 
@@ -174,9 +205,19 @@ fn parse_loft(content: &str, entries: &mut Vec<Entry>, fallback_section: &str) {
             continue;
         }
 
-        if trimmed.starts_with("//") {
+        // `///` is the user's documentation and `//` is the maintainer's (loft#1808): only a
+        // `///` line joins the block the next `pub` item publishes.  A `//` line neither joins
+        // it nor ends it, so a maintainer note may sit anywhere — above a `pub` item, between
+        // a doc block and its item — and never reaches the reference.  A forgotten `///`
+        // leaves the item bare, which `every_published_stdlib_entry_carries_its_documentation`
+        // reports; the reverse rule would leak the note silently.
+        if trimmed.starts_with("///") {
             let text = trimmed.trim_start_matches('/').trim().to_string();
             doc.push(text);
+            i += 1;
+            continue;
+        }
+        if trimmed.starts_with("//") {
             i += 1;
             continue;
         }
@@ -2302,7 +2343,34 @@ fn generate_typst(
 
 #[cfg(test)]
 mod tests {
-    use super::{collect_sig, sig_kind, sig_name};
+    use super::{Entry, collect_sig, parse_loft, sig_kind, sig_name};
+
+    /// loft#1808 — `///` is published and `//` is not, wherever the `//` note sits: above the
+    /// doc block, between the block and its item, or alone above an item.
+    #[test]
+    fn a_maintainer_note_is_not_published() {
+        let src = "// --- S ---\n\
+                   // A note on the section's layout.\n\
+                   /// Adds one.\n\
+                   // A note between the doc and its item.\n\
+                   #pure\n\
+                   pub fn inc(x: integer) -> integer { x + 1 }\n\
+                   // A note alone above an item, a blank line away.\n\
+                   \n\
+                   pub fn dec(x: integer) -> integer { x - 1 }\n";
+        let mut entries = Vec::new();
+        parse_loft(src, &mut entries, "S");
+        let docs: Vec<(String, Vec<String>)> = entries
+            .into_iter()
+            .filter_map(|e| match e {
+                Entry::Item { sig, doc } => Some((sig, doc)),
+                Entry::Section(_) => None,
+            })
+            .collect();
+        assert_eq!(docs.len(), 2, "{docs:?}");
+        assert_eq!(docs[0].1, vec!["Adds one.".to_string()], "{docs:?}");
+        assert!(docs[1].1.is_empty(), "{docs:?}");
+    }
 
     /// An interface is its own kind in the search index, never mislabelled `"const"`.
     #[test]

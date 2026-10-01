@@ -408,6 +408,17 @@ or per nesting level). Contrast `E-Asgn`: a plain `x = v` already writes its pla
 there is no double-eval to close. [DESIGN_DECISIONS.md C92](../DESIGN_DECISIONS.md); verified
 both backends — `tests/scripts/pln102-f2-place-once.loft`.
 
+**Step 4 is `(E-Op)` on BOTH operand types, and step 5 writes the result.** The operator is
+resolved on the place's type and the right side's OWN type, exactly as the plain `place op e`
+is: `f += 1` on a `float` adds an integer to a float, and `a -= 1` reaches
+`OpMin(self: V, o: integer)`. The place keeps its type, so a composed value it cannot hold is
+refused naming all three (*"`+=` on integer with float computes float, which the integer place
+cannot hold"*). A right-side struct literal is a value of its own, never built into the place.
+At a RECORD place (a field, an element, a `&` link to one) step 5 copies the composed record
+into the place, as `=` does there. Oracles:
+`tests/scripts/1819-a-compound-assignment-computes-its-operator-on-both-operand-types.loft`,
+`tests/scripts/1819b-a-compound-result-the-place-cannot-hold-is-refused.loft`.
+
 ### Compound assignment through a discharge — the `?` is on the READ
 
 ```

@@ -64,7 +64,7 @@ u.age = <span class="kw">None</span>  <span class="cm"># allowed at runtime; myp
 </div>
 <div class="verdict">
 <p class="up"><strong>Upside</strong> Nullability is part of the type and readable at a glance, and the default is the safe one: a field is non-null unless it says <code>?</code>, so absence is something you opt INTO. No <code>Optional[T]</code> wrapping is needed; the comparison <code>v == null</code> is natural, and <code>??</code> supplies a fallback at the point of use.</p>
-<p class="down"><strong>Downside</strong> The default is the safe one — a field is non-null unless its type says <code>?</code> — but nothing forces you to discharge a nullable at the point of use, and writing <code>null</code> into a non-null slot is a warning rather than a refusal. Python with mypy and <code>Optional[T]</code> annotation gives static guarantees that loft's runtime checks do not.</p>
+<p class="down"><strong>Downside</strong> The default is the safe one — a field is non-null unless its type says <code>?</code> — but nothing forces you to discharge a nullable at the point of use, and writing <code>null</code> into a non-null slot is a warning rather than a refusal. Python with mypy and an <code>Optional[T]</code> annotation reports that write as an error, where loft only warns.</p>
 </div>
 
 <h2 id="structs">3. Structs vs classes and dicts</h2>
@@ -210,7 +210,7 @@ pad  = <span class="st">f"{count:08}"</span></code></pre>
 lookup: <span class="ty"><a href="12-hash.html">hash</a></span>&lt;<span class="en">Entry</span>[key]&gt; = [];
 lookup += [<span class="en">Entry</span> { key: <span class="st">"key"</span>, <span class="kw">value</span>: <span class="st">"value"</span> }];
 scores: <span class="ty"><a href="10-sorted.html">sorted</a></span>&lt;<span class="en">Score</span>[user]&gt; = [];
-scores += [<span class="en">Score</span> { user: <span class="st">"ann"</span>, points: <span class="nm">95</span> }];  <span class="cm">// O(log n) keyed insert</span>
+scores += [<span class="en">Score</span> { user: <span class="st">"ann"</span>, points: <span class="nm">95</span> }];  <span class="cm">// keyed insert: binary search, kept in key order</span>
 
 <span class="cm">// Element type is enforced at compile time:</span>
 <span class="cm">// nums += ["x"];  // compile error: expected integer</span></code></pre>
@@ -231,7 +231,7 @@ nums.<span class="fn-call">append</span>(<span class="st">"x"</span>)           
 </div>
 <div class="verdict">
 <p class="up"><strong>Upside</strong> All collection types — vector, hash, and sorted map — are built in; no extra import or install needed. Element types are checked at compile time. The same <code>[]</code> indexing syntax works on all three. <code>for x in v if pred(x) { v#remove; }</code> safely removes the current element while iterating — something Python requires careful index management for.</p>
-<p class="down"><strong>Downside</strong> Python's built-in <code>dict</code> and <code>list</code> are among the most heavily optimised data structures in any scripting runtime. Python also has <code>set</code> and <code>frozenset</code> (no loft equivalent), ordered insertion semantics on <code>dict</code> (Python 3.7+), and an enormously expressive comprehension syntax (<code>[x*2 for x in v if x &gt; 0]</code>). Loft's <code>map()</code> / <code>filter()</code> / <code>reduce()</code> higher-order functions allocate a new vector at each stage, while Python's generators are lazy and allocation-free until consumed.</p>
+<p class="down"><strong>Downside</strong> Python's built-in <code>dict</code> and <code>list</code> are among the most heavily optimised data structures in any scripting runtime. Python also has <code>set</code> and <code>frozenset</code> (no loft equivalent), and ordered insertion semantics on <code>dict</code> (Python 3.7+), where a loft <code>hash</code> iterates in key order. Loft has comprehensions too (<code>[for x in v if x &gt; 0 { x * 2 }]</code>), but they and the <code>map()</code> / <code>filter()</code> / <code>reduce()</code> higher-order functions build a whole vector at each stage, while Python's generators are lazy and allocation-free until consumed.</p>
 </div>
 
 <h2 id="closures">8. Closures — same-scope capture works</h2>
@@ -266,8 +266,8 @@ shifted = [x + offset <span class="kw">for</span> x <span class="kw">in</span> n
 </div>
 </div>
 <div class="verdict">
-<p class="up"><strong>Upside</strong> Capture works for every type — scalars, text, structs and every collection kind — with no capture modes and no scope surprises. The compiler picks the mode from the type, so an accumulator needs no declaration the way Python's <code>nonlocal</code> does. Both long-form (<code>fn(x: integer) -&gt; integer { x * 2 }</code>) and short-form (<code>|x| { x * 2 }</code>) lambdas are supported. Named function references (<code>fn name</code>) are compile-checked. Higher-order functions (<code>map</code>, <code>filter</code>, <code>reduce</code>) accept both lambdas and fn-refs.</p>
-<p class="down"><strong>Downside</strong> You do not choose the capture mode, and it is not the same for every type. A scalar or text the lambda only READS is copied at definition time, so a later mutation of the original does not reach it — where Python closes over the name and would see the new value. Structs and collections share the way Python does, and so does a scalar the lambda writes to. Three limits have no Python counterpart: a capturing closure cannot be stored in a collection (a struct field holds one fine), a lambda cannot write a captured <code>&amp;integer</code> or <code>&amp;text</code> parameter (it holds a copy), and a scalar the lambda writes to may be captured by only one lambda. Python's list comprehensions (<code>[x + offset for x in v]</code>) are shorter than <code>map(v, fn(x) { x + offset })</code>.</p>
+<p class="up"><strong>Upside</strong> Capture works for every type — scalars, text, structs and every collection kind — with no capture modes and no scope surprises. The compiler picks the mode from the type, so an accumulator needs no declaration the way Python's <code>nonlocal</code> does. Both long-form (<code>fn(x: integer) -&gt; integer { x * 2 }</code>) and short-form (<code>|x| { x * 2 }</code>) lambdas are supported. Named function references (a bare name: <code>map(v, double)</code>) are compile-checked. Higher-order functions (<code>map</code>, <code>filter</code>, <code>reduce</code>) accept both lambdas and fn-refs.</p>
+<p class="down"><strong>Downside</strong> You do not choose the capture mode, and it is not the same for every type. A scalar or text the lambda only READS is copied at definition time, so a later mutation of the original does not reach it — where Python closes over the name and would see the new value. Structs and collections share the way Python does, and so does a scalar the lambda writes to. Three limits have no Python counterpart: a capturing closure cannot be stored in a collection (a struct field holds one fine), a lambda cannot write a captured <code>&amp;integer</code> or <code>&amp;text</code> parameter (it holds a copy), and a scalar the lambda writes to may be captured by only one lambda. A comprehension is the short form in both languages: <code>[for x in v { x + offset }]</code> in loft, <code>[x + offset for x in v]</code> in Python.</p>
 </div>
 
 <h2 id="exceptions">9. No exception handling — file errors use <code>FileResult</code></h2>
@@ -332,8 +332,8 @@ result = <span class="bi"><a href="13-file.html">delete</a></span>(<span class="
 </div>
 </div>
 <div class="verdict">
-<p class="up"><strong>Upside</strong> File errors are represented as a typed <code>FileResult</code> enum — <code>Ok</code>, <code>NotFound</code>, <code>PermissionDenied</code>, <code>IsDirectory</code>, <code>Other</code> — so every failure case is named and exhaustively matchable. No accidental exception swallowing, no hidden exit paths, no stack-unwinding overhead. The control flow of every loft function is straightforward to read.</p>
-<p class="down"><strong>Downside</strong> Logic errors (<code>assert</code>, <code>panic</code>) abort the entire program — there is no <code>try</code>/<code>except</code> to catch them. Python's exception hierarchy supports retry logic, cleanup via <code>finally</code>, and graceful degradation from arbitrary errors anywhere in the call stack — patterns that are not expressible in loft today.</p>
+<p class="up"><strong>Upside</strong> File errors are represented as a typed <code>FileResult</code> enum — <code>Ok</code>, <code>NotFound</code>, <code>PermissionDenied</code>, <code>IsDirectory</code>, <code>NotEmpty</code>, <code>Other</code> — so every failure case is named and exhaustively matchable. No accidental exception swallowing, no hidden exit paths, no stack-unwinding overhead. The control flow of every loft function is straightforward to read.</p>
+<p class="down"><strong>Downside</strong> Logic errors (<code>assert</code>, <code>panic</code>) abort the entire program — there is no <code>try</code>/<code>except</code> to catch them. Python's exception hierarchy supports retry logic, cleanup via <code>finally</code>, and graceful degradation from arbitrary errors anywhere in the call stack — patterns that are not expressible in loft.</p>
 </div>
 
 <h2 id="parallel">10. Built-in parallel for-loops — <code>par(...)</code></h2>
@@ -455,7 +455,7 @@ T = <span class="fn-call">TypeVar</span>(<span class="st">"T"</span>)
 </div>
 <div class="verdict">
 <p class="up"><strong>Upside</strong> The interpreter is a single self-contained binary with the standard library inside, so a program that needs nothing else deploys by copying one file, with no virtual environment. What it does need, <code>loft.toml</code> declares and <code>loft install</code> fetches from a signed registry. The built-in library covers text manipulation, math, file I/O, typed collections, parallel execution, and a full lexer/parser framework; image handling is the registry's <code>imaging</code> package.</p>
-<p class="down"><strong>Downside</strong> Python's ecosystem is its defining advantage. NumPy, pandas, scikit-learn, TensorFlow, requests, Flask, SQLAlchemy, pytest, and hundreds of thousands of other packages are not available to loft programs, whose registry holds a few dozen — games and graphics first, with web, crypto, regex and markdown beside them. Data science, and most integration and protocol work, still means writing what Python gets from a single <code>pip install</code>. For these domains, loft is the wrong tool today.</p>
+<p class="down"><strong>Downside</strong> Python's ecosystem is its defining advantage. NumPy, pandas, scikit-learn, TensorFlow, requests, Flask, SQLAlchemy, pytest, and hundreds of thousands of other packages are not available to loft programs, whose registry holds a few dozen — games and graphics first, with web, crypto, regex and markdown beside them. Data science, and most integration and protocol work, still means writing what Python gets from a single <code>pip install</code>. For these domains, loft is the wrong tool.</p>
 </div>
 
 <h2 id="exponentiation">14. Exponentiation with <code>**</code> or <code>pow()</code>; <code>^</code> is XOR</h2>

@@ -1,0 +1,56 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @ARGS: --lib lib
+//
+// `parser::parse` reads `while`, `match` and lambdas, and every construct it reads as a
+// VALUE, the way the compiler does (loft#1800).
+//
+// It refused `while n < 3 { … }`, `y = match x { … }` and `g = |x| { x }` — and with them
+// `if` used as a value, an `if` statement followed by another statement, a typed local and
+// a vector on the right of `+=`, because the right of an operator read only a plain
+// operand.  Worse for a validator, it answered 0 for an invalid program: `x = ;` read the
+// missing operand as nothing, and a file it could not read further simply stopped being
+// read.  Both directions are cells here.
+//
+// The oracle is LOFT ITSELF, as in 1259: each `good` snippet is a whole program that loft
+// runs, and each `bad` one a program loft refuses — the lambda cells follow the compiler's
+// two forms exactly (`|x|` bare and untyped, `fn(x: T)` typed).  `x = ;` only became a
+// refusal on loft's side with the same change: the compiler accepted it too.
+//
+// @falsified-at: 95e9fabd0 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1800-the-parser-library-reads-while-match-and-lambdas.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// CHANNEL: assertions — the control tree's library counts 3 errors for the first cell.
+// HOLDS: leak, panic and refusals are equal on both trees; the program itself compiles on both.
+
+use parser;
+
+fn good(name: text, src: text) {
+  n = parser::parse(name, src);
+  assert(n == 0, "{name}: loft runs this program, but the parser counted {n} errors — {src}");
+}
+
+fn bad(name: text, src: text) {
+  n = parser::parse(name, src);
+  assert(n > 0, "{name}: loft refuses this program, but it parsed cleanly — {src}");
+  assert(n < 10, "{name}: refused {n} times; the parser is repeating one fault — {src}");
+}
+
+fn main() {
+  good("while", "fn f() -> integer {{ n = 0; while n < 3 {{ n += 1; }} n }}\nfn main() {{ println(\"{{f()}}\"); }}");
+  good("match-value", "fn f(x: integer) -> integer {{ y = match x {{ 0 => 1, n if n > 9 => 2, 2 | 3 => 3, 4..=8 => 4, _ => 0 }}; y }}\nfn main() {{ println(\"{{f(3)}}\"); }}");
+  good("match-statement", "fn f(x: integer) -> integer {{ r = 0; match x {{ 1 => {{ r = 2; }}, _ => {{ r = 5; }} }} r + 1 }}\nfn main() {{ println(\"{{f(1)}}\"); }}");
+  good("match-variant", "enum Shape {{ Circle {{ r: float }}, Rect {{ w: float, h: float }} }}\nfn area(s: Shape) -> float {{ match s {{ Circle {{ r }} => r * r, Rect {{ w, h }} => w * h }} }}\nfn main() {{ println(\"{{area(Rect {{ w: 2.0, h: 3.0 }})}}\"); }}");
+  good("lambdas", "fn main() {{ h = fn(x: integer) -> integer {{ x + 1 }}; v = [1, 2, 3]; w = map(v, |x| {{ x * 2 }}); println(\"{{h(2)}} {{w}}\"); }}");
+  good("if-value", "fn f(x: integer) -> integer {{ y = if x > 0 {{ 1 }} else if x < 0 {{ 2 }} else {{ 3 }}; y }}\nfn main() {{ println(\"{{f(1)}}\"); }}");
+  good("if-statement", "fn f(x: integer) -> integer {{ r = x; if x > 0 {{ r = 2; }} r + 1 }}\nfn main() {{ println(\"{{f(1)}}\"); }}");
+  good("typed-tuple", "fn mk() -> (text?, integer) {{ (\"c0\", 3) }}\nfn main() {{ c: (text?, integer) = mk(); println(\"{{c.1}}\"); }}");
+  good("vector-append", "fn main() {{ v: vector<integer> = []; v += [4]; println(\"{{v}}\"); }}");
+  bad("missing-value", "fn f() {{ x = ; }}");
+  bad("stray-brace", "fn f() {{ }} }}");
+  bad("match-arm-without-arrow", "fn f(x: integer) -> integer {{ match x {{ 1 2, _ => 3 }} }}");
+  bad("while-without-body", "fn f() {{ n = 0; while n < 3 ; }}");
+  bad("typed-pipe-lambda", "fn main() {{ g = |x: integer| {{ x * 2 }}; }}");
+  bad("untyped-fn-lambda", "fn main() {{ h = fn(x) {{ x + 1 }}; }}");
+  println("1800 ok");
+}

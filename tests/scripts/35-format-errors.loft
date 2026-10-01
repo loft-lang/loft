@@ -8,41 +8,41 @@
 // only (`{n:z}` and use-before-assign, both reported as `Unknown variable`) live in
 // 35b-format-errors-unknown-var.loft for exactly that reason — loft#929.
 
-// @EXPECT_ERROR: Unexpected formatting type: z
+// @EXPECT_ERROR: `z` is not a format spec
 fn test_width_then_unknown_z() {
   n = 42;
   s = "{n:5z}";
 }
 
-// @EXPECT_ERROR: Unexpected formatting type: z
+// @EXPECT_ERROR: `z` is not a format spec
 fn test_zero_pad_then_unknown() {
   n = 42;
   s = "{n:05z}";
 }
 
-// @EXPECT_ERROR: Unexpected formatting type: B
+// @EXPECT_ERROR: `B` is not a format spec
 fn test_uppercase_b() {
   n = 42;
   s = "{n:5B}";
 }
 
-// @EXPECT_ERROR: Unexpected formatting type: O
+// @EXPECT_ERROR: `O` is not a format spec
 fn test_uppercase_o() {
   n = 42;
   s = "{n:5O}";
 }
 
-// @EXPECT_ERROR: Unexpected formatting type: z
+// @EXPECT_ERROR: `z` is not a format spec
 fn test_int_literal_bad_specifier() {
   s = "{42:5z}";
 }
 
-// @EXPECT_ERROR: Unexpected formatting type: z
+// @EXPECT_ERROR: `z` is not a format spec
 fn test_float_literal_bad_specifier() {
   s = "{3.14:5z}";
 }
 
-// @EXPECT_ERROR: Unexpected formatting type: z
+// @EXPECT_ERROR: `z` is not a format spec
 fn test_float_var_bad_specifier() {
   f = 3.14;
   s = "{f:5z}";

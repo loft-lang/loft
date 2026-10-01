@@ -13,8 +13,9 @@
 #                   (doc/brick-buster.html). Double-click to play.
 #                   Works even from a half-broken checkout.
 #
-#   make gallery    Build the Graphics Gallery (24 demos) for the browser
-#                   and verify every asset loads. Run `make serve` after.
+#   make gallery    Build the Graphics Gallery (the Brick Buster showpiece)
+#                   for the browser and verify every asset loads. Run
+#                   `make serve` after.
 #
 #   make serve      Start a local web server on http://localhost:8000/
 #                   so you can open the Playground and Gallery.
@@ -23,8 +24,9 @@
 #
 # If you are working on loft itself:
 #
-#   make all        Format source + build the native binary.
-#   make test       Full test suite (fmt + clippy + tests). ~1-2 minutes.
+#   make all        Format source + build the release binary.
+#   make test       Full test suite (fmt check + clippy + release tests),
+#                   logged to result.txt.
 #   make quick      Same tests without the clippy/fmt gate. Faster iteration.
 #   make iter TEST=<filter> [TFILE=<binary>] [PROFILE=release]
 #                   Run only tests matching <filter>.  Defaults to the
@@ -36,17 +38,19 @@
 #                   release behaviour or want to share cache with
 #                   `make test` / `make ci`.
 #   make ci         Mirror of .github/workflows/ci.yml — fmt, clippy
-#                   (deny warnings), build --all-targets, build
-#                   --no-default-features, nextest run --profile ci.
-#                   Runs the SAME gates the remote runner uses, in the
-#                   same order, so a green `make ci` predicts a green
-#                   PR.  Logs to result.txt.  Does NOT run the
+#                   (deny warnings), doc drift, build --all-targets and
+#                   the wasm targets, build --no-default-features,
+#                   nextest run --profile ci.  Runs the SAME gates the
+#                   remote runner uses, in the same order, so a green
+#                   `make ci` predicts a green PR.  One gate at a time
+#                   per box (a second one queues); a 20-minute budget
+#                   cancels it.  Logs to result.txt.  Does NOT run the
 #                   GL / packages suites — those live in their own
 #                   targets (test-packages, test-gl-smoke, test-gl-golden)
 #                   and are NOT gated by the remote.
 #   make profile ARGS="--interpret p.loft"
 #                   Where a run spends its time, down to the source LINE, and
-#                   with --mem where its HEAP went.  It picks the instrument:
+#                   with --mem where its HEAP went.  It picks the instrument —
 #                   an interpreted program is measured by loft's own sampler
 #                   over its own call stack (perf's stack is the interpreter's,
 #                   the same for every program ever run), a --native run and a
@@ -64,10 +68,9 @@
 #                   failing row is a regression in the PROFILER — that half is
 #                   a gate.  The share drift it prints beside it never is.
 #   make ci-full    `ci` + the development-only suites (test-packages,
-#                   test-gl-smoke, test-gl-golden).  What we used to
-#                   call `make ci` before the slim-down.
+#                   test-gl-smoke, test-gl-golden).
 #   make ship       Fast local pre-push gate: fmt + both clippy variants
-#                   + release tests, streamed to the terminal, chained
+#                   + doc drift + release tests, streamed to the terminal, chained
 #                   with && so `make ship && git push` stops on first
 #                   failure.
 #   make clean      Nuke build artifacts.
@@ -320,7 +323,7 @@ install:
 	rm -rf "$$sdir"; mkdir -p "$$sdir/libs/smokelib/src"; \
 	printf '[package]\nname = "smokelib"\nversion = "0.1.0"\nloft = ">=0.8"\n[library]\nentry = "src/smokelib.loft"\n' > "$$sdir/libs/smokelib/loft.toml"; \
 	printf 'pub fn smoke_sum(v: vector<integer>) -> integer {\n  t = 0;\n  for e in v { t += e; }\n  t\n}\n' > "$$sdir/libs/smokelib/src/smokelib.loft"; \
-	printf 'use smokelib;\nstruct SmIn { items: vector<integer> }\nstruct SmOut { inner: SmIn }\nfn smk() -> SmOut { SmOut { inner: SmIn { items: [1, 2, 3] } } }\nfn app(f: fn(float) -> float, x: float) -> float { f(x) }\nfn main() {\n  o = smk();\n  w = o.inner;\n  g = fn(a: float) -> float { a + (len(w.items) as float) };\n  println("smoke {app(g, 1.0)} {smoke_sum([1, 2, 3])}");\n}\n' > "$$sdir/main.loft"; \
+	printf 'use smokelib::(smoke_sum);\nstruct SmIn { items: vector<integer> }\nstruct SmOut { inner: SmIn }\nfn smk() -> SmOut { SmOut { inner: SmIn { items: [1, 2, 3] } } }\nfn app(f: fn(float) -> float, x: float) -> float { f(x) }\nfn main() {\n  o = smk();\n  w = o.inner;\n  g = fn(a: float) -> float { a + (len(w.items) as float) };\n  println("smoke {app(g, 1.0)} {smoke_sum([1, 2, 3])}");\n}\n' > "$$sdir/main.loft"; \
 	if ! $(PREFIX)/bin/loft --interpret --lib "$$sdir/libs" "$$sdir/main.loft" >/dev/null 2>"$$sdir/err"; then \
 		echo "ERROR: 'make install' left a broken binary<->rlib pair —"; \
 		echo "the installed loft cannot build a library cdylib against the installed libloft.rlib:"; \

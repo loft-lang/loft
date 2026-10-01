@@ -34,7 +34,9 @@ fn connect(host: text, port: integer = 8080, tls: boolean = true) -> text {
 // A function with no '-> type' is called for its side effects, not its result.
 // Adding '&' before a parameter type makes it a reference: the function receives a
 // direct link to the caller's variable and can read or write it.
-// Without '&', Loft copies the value in, so changes inside the function stay local.
+// Without '&', a number, boolean or text is copied in, so reassigning it inside the
+// function stays local. A struct or vector parameter still shares its contents with
+// the caller: a field or element write inside the function reaches the caller too.
 // Default values (written '= value' after the type) are substituted when the caller
 // omits that argument.
 

@@ -1404,7 +1404,7 @@ fn native_pkg_cabi_link_args(crate_name: &str, pkg_dir: &str) -> Vec<String> {
             eprintln!(
                 "loft: native package `{crate_name}` cdylib at {} has no import \
                  library (`{libname}.dll.lib` / `{libname}.lib`) — Windows links a \
-                 DLL through its import lib (@PLN26 phase 4); rebuild the package's \
+                 DLL through its import lib; rebuild the package's \
                  cdylib with a toolchain that emits one.",
                 so_dir.display()
             );
@@ -2114,8 +2114,18 @@ pub fn cached_or_build_shared_cdylib(
     // `native-auto/` is shared by every consumer on the box).  `contributing` is the set
     // `source_newer_than` already reads as this artifact's sources, so one set answers both
     // "is it current" and "is it this build"; a version is a different directory.
+    // …and WHICH loft executable: the artifact is this binary's generated code, called through
+    // this binary's store layout, so a different binary must rebuild rather than adopt it —
+    // the rlib's hash alone stays the same when an installed `loft` is upgraded without it
+    // (loft#1776).
     let fp = mix_fp(
-        mix_fp(crate::cache::loft_build_fingerprint(), layout_fp),
+        mix_fp(
+            mix_fp(
+                crate::cache::loft_build_fingerprint(),
+                crate::cache::loft_exe_identity(),
+            ),
+            layout_fp,
+        ),
         contributing_fingerprint(contributing),
     );
     // loft#715 — and put that key in the artifact's NAME, so two contexts can

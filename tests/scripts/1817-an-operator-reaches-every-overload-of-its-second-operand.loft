@@ -1,0 +1,128 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// AN OPERATOR REACHES EVERY OVERLOAD OF ITS SECOND OPERAND (loft#1817, @FR-F-Recv).
+// `OpMin(self: V, o: V)` beside `OpMin(self: V, o: integer)` is one overload set, and `a - b`
+// is a third spelling of the call `OpMin(a, b)`: the spellings of one call resolve
+// identically.  The operator took the receiver slot's INCUMBENT — the member declared first —
+// so whichever overload came second was refused at the use site ("No matching operator '-' on
+// 'V' and 'integer'"), or, where a conversion let the first one take the operand, silently
+// ran it: `u - 1` over `OpMin(U, float)` declared before `OpMin(U, integer)` ran the float
+// body.  A bounded generic bound the incumbent in its monomorph the same way, and handed an
+// `integer` parameter a record.
+//
+// Axes this file MOVES:  the operator (`-` `+` `*` `==` `!=` `<`), the second operand (a
+//                        struct · `integer` · `float` · `text`), the declaration order (the
+//                        struct member first · last), the arity (a unary member in the set),
+//                        the receiver (a reference struct · a `value struct` · a `V?`), the
+//                        site (concrete · compound `-=` · `<T: Subtractable>` · `<T: Addable>`
+//                        over a vector), and an exact member against a converting one.
+// Axes it HOLDS FIXED:   every set is declared in one source (the program's).
+// A genuine mismatch is still refused, naming both operand types —
+// `tests/parse_errors.rs::an_operator_no_overload_takes_is_refused`.
+//
+// @falsified-at: 1d5577aa4 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/1817-an-operator-reaches-every-overload-of-its-second-operand.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the control refuses this file at compile time.
+//   WITNESS: on the control `V`'s `a - 1` is "No matching operator '-' on 'V' and 'integer'";
+//   measured cell by cell there, `u - 1` answers 400 where this file asserts 490, and
+//   `diff(c, d)` answers -30 where it asserts 5 (interpreter; native does not compile it),
+//   both with no diagnostic.
+//   HOLDS: leak and panic are equal on both trees; the call spellings `OpMin(a, 1)` and
+//   `a.OpMin(1)` answer the same on both.
+
+struct V { x: integer }
+fn OpMin(self: V, o: V) -> V { V { x: self.x - o.x } }
+fn OpMin(self: V, o: integer) -> V { V { x: self.x - o * 10 } }
+fn OpAdd(self: V, o: float) -> V { V { x: self.x + (o * 2.0) as integer } }
+fn OpAdd(self: V, o: V) -> V { V { x: self.x + o.x } }
+fn OpMul(self: V, o: V) -> V { V { x: self.x * o.x } }
+fn OpMul(self: V, o: text) -> V { V { x: self.x * len(o) + 100 } }
+fn OpEq(self: V, o: integer) -> boolean { self.x == o }
+fn OpEq(self: V, o: V) -> boolean { self.x == o.x }
+fn OpLt(self: V, o: V) -> boolean { self.x < o.x }
+fn OpLt(self: V, o: integer) -> boolean { self.x < o }
+
+// The struct member LAST, with a unary member between (loft#1794 / #1811 stay fixed).
+struct W { y: integer }
+fn OpMin(self: W, o: integer) -> W { W { y: self.y - o * 10 } }
+fn OpMin(self: W) -> W { W { y: 0 - self.y } }
+fn OpMin(self: W, o: W) -> W { W { y: self.y - o.y } }
+fn OpAdd(self: W, o: integer) -> W { W { y: self.y + o * 10 } }
+fn OpAdd(self: W, o: W) -> W { W { y: self.y + o.y } }
+
+// An exact member declared AFTER one the operand converts to.
+struct U { x: integer }
+fn OpMin(self: U, o: float) -> U { U { x: self.x - (o * 100.0) as integer } }
+fn OpMin(self: U, o: integer) -> U { U { x: self.x - o * 10 } }
+
+value struct P { x: integer, y: integer }
+fn OpAdd(self: P, o: integer) -> P { P { x: self.x + o, y: self.y + o } }
+fn OpAdd(self: P, o: P) -> P { P { x: self.x + o.x, y: self.y + o.y } }
+fn OpEq(self: P, o: integer) -> boolean { self.x == o && self.y == o }
+fn OpEq(self: P, o: P) -> boolean { self.x == o.x && self.y == o.y }
+
+fn diff<T: Subtractable>(p: T, q: T) -> T { p - q }
+fn total<T: Addable>(v: vector<T>, z: T) -> T {
+  r = z;
+  for e in v { r = r + e; }
+  r
+}
+fn maybe(n: integer) -> V? { if n > 0 { V { x: n } } else { null } }
+
+fn main() {
+  a = V { x: 5 };
+  b = V { x: 3 };
+  c = W { y: 7 };
+  d = W { y: 2 };
+  // 5 - 3 = 2; 5 - 1*10 = -5, in either declaration order.
+  assert((a - b).x == 2, "V - V: {(a - b).x}");
+  assert((a - 1).x == -5, "V - integer: {(a - 1).x}");
+  assert((c - d).y == 5, "W - W, the struct member declared last: {(c - d).y}");
+  assert((c - 1).y == -3, "W - integer, declared first: {(c - 1).y}");
+  assert((-c).y == -7, "unary -W beside both binary members: {(-c).y}");
+  // The three spellings of one call agree.
+  assert(OpMin(a, 1).x == (a - 1).x && a.OpMin(1).x == (a - 1).x, "spellings of OpMin(a, 1)");
+  // + over a float member first: 5 + 1.5*2 = 8; 5 + 3 = 8; W: 7 + 2 = 9, 7 + 4*10 = 47.
+  assert((a + 1.5).x == 8, "V + float: {(a + 1.5).x}");
+  assert((a + b).x == 8, "V + V: {(a + b).x}");
+  assert((c + d).y == 9 && (c + 4).y == 47, "W + W / W + integer: {(c + d).y} {(c + 4).y}");
+  // * over a text member: 5*3 = 15; 5*len("abc") + 100 = 115.
+  assert((a * b).x == 15, "V * V: {(a * b).x}");
+  assert((a * "abc").x == 115, "V * text: {(a * "abc").x}");
+  // == / != (derived from == ) / < over integer and struct members.
+  e = V { x: 5 };
+  assert(a == e && !(a == b), "V == V");
+  assert(a == 5 && !(a == 4), "V == integer");
+  assert(!(a != 5) && a != 4 && a != b, "V != derives from both OpEq members");
+  assert(b < a && !(a < b), "V < V");
+  assert(a < 6 && !(a < 5), "V < integer");
+  // The exact member wins over the one the operand converts to: 500 - 1*10 = 490;
+  // 500 - 1.5*100 = 350.
+  u = U { x: 500 };
+  assert((u - 1).x == 490, "U - integer reaches the integer member: {(u - 1).x}");
+  assert((u - 1.5).x == 350, "U - float: {(u - 1.5).x}");
+  // A value struct: (1,2) + (10,20) = (11,22); (1,2) + 100 = (101,102).
+  p = P { x: 1, y: 2 };
+  q = P { x: 10, y: 20 };
+  r = p + q;
+  s = p + 100;
+  assert(r.x == 11 && r.y == 22, "P + P: {r.x},{r.y}");
+  assert(s.x == 101 && s.y == 102, "P + integer: {s.x},{s.y}");
+  assert(P { x: 7, y: 7 } == 7 && p + 1 == P { x: 2, y: 3 } && p != 7, "P == over both members");
+  // A nullable receiver: 5 - 3 = 2, 5 - 10 = -5.
+  m = maybe(5);
+  assert((m - b).x == 2 && (m - 1).x == -5, "V? - V / V? - integer");
+  // Compound assignment reaches the struct member declared last: 12 - 2 = 10.
+  g = W { y: 12 };
+  g -= d;
+  assert(g.y == 10, "W -= W: {g.y}");
+  // Bounded generics bind the member of the bound's signature: 7 - 2 = 5; 100+1+2+4 = 107;
+  // 1 + 2 + 3 = 6 over the builtin.
+  assert(diff(c, d).y == 5, "diff<W>: {diff(c, d).y}");
+  assert(diff(a, b).x == 2, "diff<V>: {diff(a, b).x}");
+  assert(diff(9, 4) == 5, "diff<integer>: {diff(9, 4)}");
+  vs = [W { y: 1 }, W { y: 2 }, W { y: 4 }];
+  assert(total(vs, W { y: 100 }).y == 107, "total<W>: {total(vs, W { y: 100 }).y}");
+  assert(total([1, 2, 3], 0) == 6, "total<integer>: {total([1, 2, 3], 0)}");
+}

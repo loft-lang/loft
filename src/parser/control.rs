@@ -836,6 +836,9 @@ impl Parser {
         let mut t = Type::Void;
         let mut l = Vec::new();
         let mut terminated: Option<&str> = None;
+        // Whether a statement of THIS block left it unconditionally — `terminated` is cleared
+        // once its warning is out, and this is the fact that outlives the warning.
+        let mut diverged = false;
         // @PLN25/#585 guard-clause flow-narrowing: a `narrowed_non_null` push made INSIDE this
         // block (by a fall-through guard, below) holds only for the rest of THIS block, so record
         // the entry depth and restore it before returning. Without the restore the proof leaks to
@@ -1130,6 +1133,7 @@ impl Parser {
                 Value::Continue(_) => terminated = Some("continue"),
                 _ => {}
             }
+            diverged |= terminated.is_some();
             // A PROJECTION proof holds for the first statement of the block and no further.
             // Unlike a name's, its lifetime cannot be tracked — anything reaching any part of
             // the path invalidates it, including a call the parser cannot see through — so it
@@ -1333,6 +1337,26 @@ impl Parser {
         self.lexer.token("}");
         if matches!(l.last(), Some(Value::Line(_))) {
             l.pop();
+        }
+        // A function body that RETURNED before its last statement cannot fall off its end:
+        // the statements after the `return` are the `unreachable-code` warning's, and the
+        // body's value is the returned one.  Typed by its last statement instead, `fn f() ->
+        // integer { return 3; println("after"); }` drew a second, false error — *"expected
+        // integer, got void on return from block"* — about a fall-off no path reaches.  The
+        // unreachable statements are dropped with it, so the body is exactly the one that
+        // ends at its `return`: kept, `--native` emitted the last of them as the function's
+        // `return` value and rustc refused the file.  Only the function body: a loop body or
+        // a branch arm is typed for its enclosing construct, and `Never` there changes which
+        // arm decides a join.
+        if diverged
+            && context == "return from block"
+            && matches!(t.base(), Type::Void)
+            && let Some(at) = l
+                .iter()
+                .position(|s| matches!(s, Value::Return(_) | Value::Break(_) | Value::Continue(_)))
+        {
+            l.truncate(at + 1);
+            t = Type::Never;
         }
         // A block that YIELDS a value must not have dropped its own tail.
         //
@@ -2394,6 +2418,12 @@ impl Parser {
             // *"expected A, got B on else"* for a join `match` accepts (loft#1117).  The
             // arm keeps its own type and `parse_if` joins the two to their enum.
             let sibling_variant = arm_of_sibling && self.arm_joins_to_enum(t, result);
+            // @FR-I-Widen — an arm WIDER than its sibling (`if c { 1 } else { 2.5 }`) is not a
+            // conversion question either: `float ⤳ integer` is licensed by nothing, and the join
+            // is the float (`numeric_join`).  The arm keeps its own type, and the site that owns
+            // the join converts the narrower siblings to it — `parse_if` its then arm, a `match`
+            // the arms it already assembled (`join_open_arm`) — loft#1793.
+            let numeric_widen = arm_of_sibling && Self::numeric_join(result, t).is_some();
             // @FR-F-Block — the arms of a construct in STATEMENT position yield nothing
             // anybody reads, so their types need not agree.  Only one ORDER used to compile:
             // a void THEN arm makes the expected type `void`, which accepts any else arm,
@@ -2417,7 +2447,8 @@ impl Parser {
                 && !if_unified
                 && !vec_match_candidate
                 && !vec_arm_handled
-                && !sibling_variant;
+                && !sibling_variant
+                && !numeric_widen;
             // @FR-N-Store — the tail is a STORE into the return slot.  The store face asks
             // where the tail converts; a tail that does not convert (a rewritten tuple, a
             // unified `if`, a vector match, a sibling variant) is asked here.  Anchored to
@@ -2527,7 +2558,7 @@ impl Parser {
                     // E0308.  The `if`'s own join is decided in `parse_if` from the THEN
                     // arm and is unaffected.
                     t.clone()
-                } else if sibling_variant {
+                } else if sibling_variant || numeric_widen {
                     t.clone()
                 } else if let Some(w) = boxed_arm_w {
                     // The arm was boxed into `w` (loft#1350): its value is that work-ref,
@@ -5159,7 +5190,7 @@ impl Parser {
     /// `@FR-E-Truthy-1` — a truthiness position whose subject cannot be absent is CONSTANT.
     ///
     /// `LOFT.md` § Conversions states the language's rule — *"`false` and null are falsy;
-    /// integer `i32::MIN` is falsy; every other value is truthy"* — and the formal `(E-Truthy)`
+    /// an `integer` holding its null, `i64::MIN`, is falsy; every other value is truthy"* — and the formal `(E-Truthy)`
     /// records only the `null` half.  The behaviour is documented and is NOT changing here: the
     /// silence at the call site was the defect, because the shape reads to a programmer as a
     /// test.  What is constant is a HEAP value that cannot be absent: `if v` on a non-optional
@@ -5195,7 +5226,7 @@ impl Parser {
         // variable is a `Reference` to its def, so there is no variant to exclude by name.
         // HEAP kinds only, and the exclusion is measured rather than cautious.  A SCALAR's
         // absent value is IN-BAND and reachable from a non-optional declaration — `LOFT.md`
-        // § Conversions: *"integer `i32::MIN` is falsy"* — so `if d` on a plain `integer` is a
+        // § Conversions: *"an `integer` holding its null, `i64::MIN`, is falsy"* — so `if d` on a plain `integer` is a
         // genuine two-state test, not a constant: measured on both backends, an `integer`
         // holding `i64::MIN` takes the ELSE branch.  A heap value has no such in-band value;
         // it is falsy exactly when it is null (`heap-value-as-a-condition.loft`), and a
@@ -5564,6 +5595,13 @@ impl Parser {
                     {
                         true_type = enum_tp.clone();
                     }
+                    // @FR-I-Widen — a chain that joined WIDER than the then arm widens the then
+                    // arm to it (loft#1793): `if a { 1 } else if b { 2.5 } else { 3 }` is float.
+                    if let Some(joined) = Self::numeric_join(&true_type, &chain_type) {
+                        let from = true_type.clone();
+                        self.convert_arm_tail(&mut true_code, &from, &joined);
+                        true_type = joined;
+                    }
                     // loft#978 — the chain's TYPE deliberately stays out of `false_type`
                     // (above), but what it BORROWS is still a value this if-expression can
                     // deliver, so it has to reach the join below.  Without it an
@@ -5622,6 +5660,14 @@ impl Parser {
                     && self.joins_to_enum(enum_tp, &true_type, &false_type)
                 {
                     true_type = enum_tp.clone();
+                }
+                // @FR-I-Widen — an else arm WIDER than the then arm (`block_result` kept its
+                // own type) makes the join that wider type, and the then arm converts to it
+                // exactly as an else arm converts to a wider then arm (loft#1793).
+                if let Some(joined) = Self::numeric_join(&true_type, &false_type) {
+                    let from = true_type.clone();
+                    self.convert_arm_tail(&mut true_code, &from, &joined);
+                    true_type = joined;
                 }
             }
             if true_type == Type::Unknown(0) {
@@ -6181,12 +6227,15 @@ impl Parser {
             };
 
             if pattern_name == "_" {
-                let before = self
-                    .tuple_join_open(&result_type)
-                    .then(|| result_type.clone());
+                // loft#1682 / loft#1793 — a result the wildcard can still widen: an open tuple
+                // member, or a numeric type a wider arm joins past.
+                let before = (self.tuple_join_open(&result_type)
+                    || matches!(result_type.base(), Type::Integer(_) | Type::Single))
+                .then(|| result_type.clone());
                 let (arm, is_exhaustive) = self.parse_match_wildcard_arm(&mut result_type);
                 if before.is_some_and(|b| !b.is_equal(&result_type)) {
-                    // loft#1682 — the wildcard arm named the member; the earlier arms follow.
+                    // The wildcard arm named the member or widened the join; the earlier arms
+                    // follow.
                     let joined = result_type.clone();
                     self.reconvert_null_tuple_arms(&mut arms, &joined);
                 }
@@ -7028,6 +7077,11 @@ impl Parser {
         if self.arm_joins_to_enum(&t, expected) {
             return t;
         }
+        // @FR-I-Widen — an arm wider than its siblings widens the join, and the match site
+        // converts the siblings (`join_open_arm`); `block_result` carves out the same case.
+        if Self::numeric_join(expected, &t).is_some() {
+            return t;
+        }
         // A struct-enum pattern binding yields a BORROW — `Ship { carrier } => carrier` is
         // `&text` — while a sibling arm commonly yields the owned twin (`_ => "none"`).  That
         // is one type modulo ownership: the caller reads the value either way, which is why
@@ -7642,6 +7696,35 @@ impl Parser {
     /// rather than a body opening with a declaration?  Only when `field` is a field of the
     /// variant and `name` is not a type — `{ radius: integer }` stays a body.  Called inside a
     /// lookahead the caller reverts, after `field` has been read.
+    /// Pass 1 over `is V { a, b: c }` whose subject's enum is not declared yet: consume the
+    /// braces when they have a capture list's SHAPE — names, each optionally renamed, separated
+    /// by `,` — and leave anything else (a body) where it is.  The same lookahead the known-enum
+    /// path uses, minus the field names it cannot see yet.
+    fn skip_forward_capture_list(&mut self) {
+        if !self.lexer.peek_token("{") {
+            return;
+        }
+        let link = self.lexer.link();
+        self.lexer.token("{");
+        loop {
+            if self.lexer.has_identifier().is_none() {
+                self.lexer.revert(link);
+                return;
+            }
+            if self.lexer.has_token(":") && self.lexer.has_identifier().is_none() {
+                self.lexer.revert(link);
+                return;
+            }
+            if self.lexer.has_token("}") {
+                return;
+            }
+            if !self.lexer.has_token(",") {
+                self.lexer.revert(link);
+                return;
+            }
+        }
+    }
+
     fn is_capture_rename_attempt(&mut self, variant_def_nr: u32, field: Option<&str>) -> bool {
         let Some(field) = field else {
             return false;
@@ -10366,7 +10449,7 @@ impl Parser {
             {
                 // loft#1682 — the scalar arms hold `(pattern, code, type, guard)`.
                 for prev in &mut arms {
-                    if self.tuple_join_open(&prev.2) {
+                    if self.arm_takes_join(&prev.2, &joined) {
                         let prev_orig = prev.2.clone();
                         self.convert_arm_tail(&mut prev.1, &prev_orig, &joined);
                         prev.2 = joined.clone();
@@ -11577,7 +11660,7 @@ impl Parser {
                 self.join_null_tuple_arm(&result_type, &mut arm_code, &mut arm_type)
             {
                 for (prev, prev_tp) in arms.iter_mut().zip(arm_types.iter_mut()) {
-                    if self.tuple_join_open(prev_tp) {
+                    if self.arm_takes_join(prev_tp, &joined) {
                         let prev_orig = prev_tp.clone();
                         self.convert_arm_tail(&mut prev.code, &prev_orig, &joined);
                         *prev_tp = joined.clone();
@@ -11980,7 +12063,7 @@ impl Parser {
                 self.join_null_tuple_arm(&result_type, &mut arm_body, &mut arm_type)
             {
                 for (prev, prev_tp) in arms.iter_mut().zip(arm_types.iter_mut()) {
-                    if self.tuple_join_open(prev_tp) {
+                    if self.arm_takes_join(prev_tp, &joined) {
                         let prev_orig = prev_tp.clone();
                         self.convert_arm_tail(&mut prev.code, &prev_orig, &joined);
                         *prev_tp = joined.clone();
@@ -12229,6 +12312,13 @@ impl Parser {
                         "'is' requires an enum type, got {}",
                         subject_type.source_name(&self.data)
                     );
+                } else if matches!(subject_type, Type::Unknown(_)) {
+                    // A subject whose enum is declared further down is a forward stub on
+                    // pass 1, so nothing here can say which fields the variant has — but the
+                    // capture list is still in the stream, and left there it was read as the
+                    // body and reported as `Expect token ;` (loft#1790).  Step over it by its
+                    // shape; pass 2 knows the enum and binds it for real.
+                    self.skip_forward_capture_list();
                 }
                 return Type::Boolean;
             }
@@ -12463,7 +12553,36 @@ impl Parser {
             // generic `Expect token {` the caller raises on pass 1 is the error the run stops
             // on and pass 2 never sees the file (slice 7's fallback-parser lesson, from the
             // other side).
-            if !self.lexer.peek_token("{") {
+            // A capture followed by `and` / `or` is a different mistake with a different cure:
+            // the author wanted the captured name in a CONDITION, and the block-has-to-follow
+            // sentence above would only send them to write the same thing again.  The capture
+            // binds for the body alone, so the condition has to move inside it — or into a
+            // `match` guard, which is the construct built for exactly this.
+            if ["and", "or", "&&", "||"]
+                .iter()
+                .any(|op| self.lexer.peek_token(op))
+            {
+                let variant = self.data.def(variant_def_nr).name().to_string();
+                // The subject as the author wrote it when it is a plain name; a call or a
+                // projection was stabilised into a compiler temp, whose name means nothing.
+                let subject = match stable_subject.unspan() {
+                    Value::Var(v) if !self.vars.name(*v).starts_with('_') => {
+                        self.vars.name(*v).to_string()
+                    }
+                    _ => "…".to_string(),
+                };
+                let names: Vec<&str> = seen_fields.iter().map(String::as_str).collect();
+                let captured = names.join(", ");
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "a field capture cannot be combined with a condition — `is {variant} \
+                     {{ {captured} }}` binds its fields for the body that follows it, and \
+                     nowhere else.  Nest the test, `if {subject} is {variant} {{ {captured} }} \
+                     {{ if … {{ … }} }}`, or use a `match` guard, `match {subject} {{ \
+                     {variant} {{ {captured} }} if … => …, _ => … }}`"
+                );
+            } else if !self.lexer.peek_token("{") {
                 let names: Vec<&str> = seen_fields.iter().map(String::as_str).collect();
                 let captured = names.join(", ");
                 diagnostic!(
@@ -14484,6 +14603,35 @@ impl Parser {
             .is_some_and(|e| self.joins_to_enum(&e, expected, arm))
     }
 
+    /// `@FR-I-Widen` / `(C-Num)` — the numeric JOIN of two arms when `narrow` widens to
+    /// `wide`: `integer ⊔ float = float`, `integer ⊔ single = single`, `single ⊔ float =
+    /// float`, optional when either arm is (`@FR-N-Join`).  `None` when nothing widens — the
+    /// same type, a pair `(C-Num)` does not relate, or `wide` the narrower of the two.
+    ///
+    /// The join is the least type containing both arms, so it cannot depend on which arm was
+    /// written first: `if c { 2.5 } else { 1 }` was `float` while `if c { 1 } else { 2.5 }`
+    /// was refused *"expected integer, got float on else"*, because only the else arm was
+    /// converted to its sibling and `float ⤳ integer` is no conversion (loft#1793).  The
+    /// sites that decide a join — `parse_if`, `join_arm_into` — ask this, and the arm tail
+    /// that meets a sibling keeps its own type where this answers (`block_result`).
+    pub(super) fn numeric_join(narrow: &Type, wide: &Type) -> Option<Type> {
+        let widens = matches!(
+            (narrow.base(), wide.base()),
+            (Type::Integer(_), Type::Float | Type::Single) | (Type::Single, Type::Float)
+        );
+        if !widens {
+            return None;
+        }
+        let joined = wide.base().clone();
+        Some(
+            if matches!(narrow, Type::Optional(_)) || matches!(wide, Type::Optional(_)) {
+                Type::optional(joined)
+            } else {
+                joined
+            },
+        )
+    }
+
     /// Do a then-arm and an else-arm join to `enum_tp` rather than to the then-arm's own
     /// variant?
     ///
@@ -14722,6 +14870,17 @@ impl Parser {
         arm_body: &mut Value,
         arm_type: &mut Type,
     ) -> Option<Type> {
+        // loft#1793 — the other OPEN join: an arm wider than the result so far (`match k { 1 =>
+        // 1, _ => 2.5 }`) makes the join its own type, and the arms already assembled convert
+        // to it exactly as they do for a tuple member (`arm_takes_join`).
+        if let Some(joined) = Self::numeric_join(result_type, arm_type) {
+            if !arm_type.is_equal(&joined) {
+                let orig = arm_type.clone();
+                self.convert_arm_tail(arm_body, &orig, &joined);
+            }
+            *arm_type = joined.clone();
+            return Some(joined);
+        }
         if !self.tuple_join_open(result_type) {
             return None;
         }
@@ -14758,12 +14917,19 @@ impl Parser {
     /// loft#1682 — the `EnumArm` half of the reconversion `join_null_tuple_arm` documents.
     fn reconvert_null_tuple_arms(&mut self, arms: &mut [EnumArm], joined: &Type) {
         for prev in arms.iter_mut() {
-            if self.tuple_join_open(&prev.tp) {
+            if self.arm_takes_join(&prev.tp, joined) {
                 let prev_orig = prev.tp.clone();
                 self.convert_arm_tail(&mut prev.code, &prev_orig, joined);
                 prev.tp = joined.clone();
             }
         }
+    }
+
+    /// Does an arm assembled before the join was known still have to convert to it?  An arm
+    /// that left a tuple member open (loft#1682), or one narrower than a numeric join a later
+    /// arm widened to (loft#1793, `numeric_join`).
+    fn arm_takes_join(&self, arm_tp: &Type, joined: &Type) -> bool {
+        self.tuple_join_open(arm_tp) || Self::numeric_join(arm_tp, joined).is_some()
     }
 
     fn join_arm_into(&self, so_far: &Type, arm: &Value, tp: &Type) -> Type {
@@ -19481,7 +19647,7 @@ impl Parser {
             // does when nothing is declared.  The argument is not evaluated — `type_of`'s rule.
             "type_name" if types.len() == 1 => {
                 if !self.first_pass {
-                    *val = Value::Text(self.data.type_name_str(&types[0]));
+                    *val = Value::Text(self.data.display_type_name(&types[0]));
                 }
                 return Type::Text(Deps::none());
             }
@@ -20134,10 +20300,23 @@ impl Parser {
     }
 
     // <size> ::= ( <type> | <var> ) ')'
+    /// `sizeof(TYPE)` and `sizeof(expr)` — @F45, `LOFT_DATA.md` § Sizeof: the packed size a
+    /// type takes as a struct field or vector element, and for an expression the size of ITS
+    /// type.  Both spellings ask [`Self::packed_size`], so they cannot answer apart; only a
+    /// struct-enum VALUE is sized at runtime, by the variant it holds.
     pub(crate) fn parse_size(&mut self, val: &mut Value) -> Type {
         let mut found = false;
         let lnk = self.lexer.link();
-        if let Some(id) = self.lexer.has_identifier() {
+        if self.paren_type_ahead() {
+            // `sizeof((integer, text))` — a tuple TYPE, which the expression parser would read
+            // as a tuple of null values (loft#1781).
+            found = true;
+            if let Some(tp) = self.parse_type_full(u32::MAX, false)
+                && !self.first_pass
+            {
+                *val = Value::Int(self.packed_size(&tp, u32::MAX));
+            }
+        } else if let Some(id) = self.lexer.has_identifier() {
             let d_nr = self.data.def_nr(&id);
             if d_nr != u32::MAX && self.data.def_type(d_nr) != DefType::EnumValue {
                 if !self.first_pass && self.data.def_type(d_nr) == DefType::Unknown {
@@ -20156,23 +20335,9 @@ impl Parser {
                 } else if let Some(tp) = self.parse_type(u32::MAX, &id, false) {
                     found = true;
                     if !self.first_pass {
-                        // Post-2c: prefer the alias's forced size(N) annotation.
-                        // `d_nr` (local above) is the def_nr of the alias the user
-                        // typed — e.g. i32 — not the base integer it collapses to
-                        // via type_elm.  Only forced_size on the alias applies.
-                        let forced = self.data.forced_size(d_nr);
-                        let packed = tp.size(false);
-                        *val = if let Some(n) = forced {
-                            Value::Int(i32::from(n))
-                        } else if packed > 0 {
-                            // Range-constrained integer: use packed field size
-                            Value::Int(i32::from(packed))
-                        } else {
-                            Value::Int(i32::from(
-                                self.database
-                                    .size(self.data.def(self.data.type_elm(&tp)).known_type()),
-                            ))
-                        };
+                        // `d_nr` is the def of the name the user typed — the alias `i32`, not
+                        // the `integer` it collapses to — so its forced `size(N)` applies.
+                        *val = Value::Int(self.packed_size(&tp, d_nr));
                     }
                 }
             }
@@ -20181,17 +20346,24 @@ impl Parser {
             let mut drop = Value::Null;
             self.lexer.revert(lnk);
             let tp = self.expression(&mut drop);
-            let e_tp = self.data.type_elm(&tp);
-            if e_tp != u32::MAX {
+            if let Type::Enum(enum_nr, true, _) = *tp.base() {
                 found = true;
-                if matches!(tp, Type::Enum(_, true, _) | Type::Reference(_, _)) && !self.first_pass
-                {
-                    // Polymorphic enum or reference: size depends on runtime variant.
-                    *val = self.cl("OpSizeofRef", &[drop]);
-                } else {
-                    *val = Value::Int(i32::from(
-                        self.database.size(self.data.def(e_tp).known_type()),
-                    ));
+                if !self.first_pass {
+                    // A struct-enum value: its size is its VARIANT's, known at runtime — a
+                    // nullable one's too, when a value is there (`hm[k].s`).  An ABSENT one
+                    // holds no variant, so F45's general rule answers: the size of its TYPE,
+                    // as `sizeof(Shape)` does, in every position (owner ruling, loft#1822).
+                    let absent = self.packed_size(&tp, u32::MAX);
+                    *val = self.variant_size(drop, enum_nr, absent);
+                }
+            } else if matches!(tp.base(), Type::Tuple(_)) || self.data.type_elm(&tp) != u32::MAX {
+                found = true;
+                if !self.first_pass {
+                    // The expression's TYPE, sized exactly as its spelling would be — a narrow
+                    // integer is its packed width, a collection its 4-byte field, a tuple its
+                    // stored `__tuple<…>` record.  Sized by `type_elm` instead, a `u8` read 8,
+                    // a `vector<Point>` its element's size and a keyed collection 0 (loft#1779).
+                    *val = Value::Int(self.packed_size(&tp, u32::MAX));
                 }
             }
         }
@@ -20206,6 +20378,139 @@ impl Parser {
         I32.clone()
     }
 
+    /// `sizeof` of a struct-enum value: the size of the variant it holds (@F45).
+    ///
+    /// The variant is read from the value's DISCRIMINANT — the byte `is` and `match` test,
+    /// `OpGetEnum(v, 0)` — so the answer is right wherever the value sits.  Reading the record
+    /// header instead answered for a standalone record only: an element of a vector, a field
+    /// of a struct, of a hash entry or of a vector element sized its CONTAINER (4, 56, 40, 8)
+    /// (loft#1822).  The value is evaluated once, into the discriminant; each variant's size
+    /// is known here, so the answer is a chain over it; an absent value (discriminant 0, no
+    /// variant) answers `absent`, its type's size.
+    fn variant_size(&mut self, value: Value, enum_nr: u32, absent: i32) -> Value {
+        let d = self.create_unique("sizeof_disc", &I32);
+        self.vars.defined(d);
+        let get_enum = self.cl("OpGetEnum", &[value, Value::Int(0)]);
+        let disc = self.cl("OpConvIntFromEnum", &[get_enum]);
+        let variants: Vec<u32> = self
+            .data
+            .children_of(enum_nr)
+            .filter(|&c| self.data.def_type(c) == DefType::EnumValue)
+            .collect();
+        let mut chain = Value::Int(absent);
+        for c in variants.into_iter().rev() {
+            let nr = match self.data.def(c).attributes().first().map(|a| &a.value) {
+                Some(Value::Enum(nr, _)) => i32::from(*nr),
+                _ => continue,
+            };
+            let size = i32::from(self.database.size(self.data.def(c).known_type()));
+            let test = self.cl("OpEqInt", &[Value::Var(d), Value::Int(nr)]);
+            chain = v_if(test, Value::Int(size), chain);
+        }
+        v_block(vec![v_set(d, disc), chain], I32.clone(), "sizeof variant")
+    }
+
+    /// The packed size `tp` takes as a struct field or vector element — THE size `sizeof`
+    /// answers, for a type spelled and for an expression's type alike (@F45).  `alias` is the
+    /// def of a spelled type name (`i32`, `vector`), whose declared `size(N)` wins; an
+    /// expression passes `u32::MAX` and a collection then asks its kind's def the same way.
+    fn packed_size(&mut self, tp: &Type, alias: u32) -> i32 {
+        if let Some(n) = self.data.forced_size(alias) {
+            return i32::from(n);
+        }
+        match tp.base() {
+            Type::Integer(spec) => {
+                if let Some(n) = spec.forced_size {
+                    return i32::from(n.get());
+                }
+                let packed = tp.size(false);
+                if packed > 0 {
+                    return i32::from(packed);
+                }
+            }
+            Type::Vector(..)
+            | Type::Sorted(..)
+            | Type::Index(..)
+            | Type::Hash(..)
+            | Type::Radix(..)
+            | Type::Trie(..) => {
+                // Every collection field is one 4-byte record pointer.  `vector`, `sorted`,
+                // `index` and `hash` declare it (`type vector size(4)`); `spatial` and `trie`
+                // are bare forward declarations, so they take the `vector` declaration's.
+                let own = self.data.forced_size(self.data.type_def_nr(tp));
+                if let Some(n) = own.or_else(|| self.data.forced_size(self.data.def_nr("vector"))) {
+                    return i32::from(n);
+                }
+            }
+            Type::Tuple(elems) => {
+                // `(L-Tuple)`: a stored tuple is the synthetic `__tuple<…>` struct, packed as a
+                // struct is.  Registered on both passes (idempotent), as a tuple type in any
+                // declaration registers it, so the first pass's layout covers it.
+                let elems = elems.clone();
+                let d = self.data.tuple_def(&mut self.lexer, &elems);
+                if d == u32::MAX {
+                    return 0;
+                }
+                crate::typedef::lay_out_late(&mut self.data, &mut self.database, d);
+                return i32::from(self.database.size(self.data.def(d).known_type()));
+            }
+            _ => {}
+        }
+        i32::from(
+            self.database
+                .size(self.data.def(self.data.type_elm(tp)).known_type()),
+        )
+    }
+
+    /// Does a parenthesised tuple TYPE follow — `(integer, text)` — rather than an expression?
+    /// True when the first element is a declared type and no variable in scope (the question
+    /// the bare-name branch of `sizeof` / `type_name` answers for an unparenthesised name), or
+    /// itself such a tuple, AND a `,` follows it inside the parentheses: `(Point)` and `(a)`
+    /// stay expressions.  The lexer is left where it was.
+    fn paren_type_ahead(&mut self) -> bool {
+        if !self.lexer.peek_token("(") {
+            return false;
+        }
+        let lnk = self.lexer.link();
+        self.lexer.has_token("(");
+        let first_is_type = if self.lexer.peek_token("(") {
+            self.paren_type_ahead()
+        } else {
+            self.lexer.has_identifier().is_some_and(|id| {
+                let d_nr = self.data.def_nr(&id);
+                self.vars.var(&id) == u16::MAX
+                    && d_nr != u32::MAX
+                    && matches!(
+                        self.data.def_type(d_nr),
+                        DefType::Type | DefType::Struct | DefType::Enum | DefType::Vector
+                    )
+            })
+        };
+        let mut comma = false;
+        if first_is_type {
+            let mut depth = 1;
+            loop {
+                if self.lexer.has_token("(") {
+                    depth += 1;
+                } else if self.lexer.has_token(")") {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                } else if depth == 1 && self.lexer.has_token(",") {
+                    comma = true;
+                    break;
+                } else if self.lexer.peek().has == LexItem::None {
+                    break;
+                } else {
+                    self.lexer.cont();
+                }
+            }
+        }
+        self.lexer.revert(lnk);
+        first_is_type && comma
+    }
+
     /// `type_name(expr)` — compile-time intrinsic that returns the static type
     /// of `expr` as a text constant.  Works on both type names and expressions:
     /// `type_name(integer)`, `type_name(my_var)`, `type_name(1 + 2)`.
@@ -20213,7 +20518,16 @@ impl Parser {
         // Try parsing as a type name first (like sizeof does).
         let mut found = false;
         let lnk = self.lexer.link();
-        if let Some(id) = self.lexer.has_identifier() {
+        if self.paren_type_ahead() {
+            // `type_name((integer, text))` — a tuple TYPE; read as an expression it was a tuple
+            // of null values and rendered `(null, null)` (loft#1781).
+            found = true;
+            if let Some(tp) = self.parse_type_full(u32::MAX, false)
+                && !self.first_pass
+            {
+                *val = Value::Text(self.data.display_type_name(&tp));
+            }
+        } else if let Some(id) = self.lexer.has_identifier() {
             let d_nr = self.data.def_nr(&id);
             if d_nr != u32::MAX && self.data.def_type(d_nr) != DefType::EnumValue {
                 if !self.first_pass && self.data.def_type(d_nr) == DefType::Unknown {
@@ -20230,7 +20544,7 @@ impl Parser {
                 } else if let Some(tp) = self.parse_type(u32::MAX, &id, false) {
                     found = true;
                     if !self.first_pass {
-                        *val = Value::Text(self.data.type_name_str(&tp));
+                        *val = Value::Text(self.data.display_type_name(&tp));
                     }
                 }
             }
@@ -20240,7 +20554,7 @@ impl Parser {
             self.lexer.revert(lnk);
             let tp = self.expression(&mut drop);
             if !self.first_pass {
-                *val = Value::Text(self.data.type_name_str(&tp));
+                *val = Value::Text(self.data.display_type_name(&tp));
             }
         }
         self.lexer.token(")");
@@ -20407,7 +20721,33 @@ impl Parser {
                         }
                         return *fallback;
                     }
-                    _ => {}
+                    // `Disp-Exhaustive`, as the bare spelling asks it (`Parser::call`): no
+                    // definition takes the static types, but the set may cover every variant
+                    // tuple of the enum-held positions, and then its dispatcher IS the call.
+                    // Skipped here, `a.hits(b)` over a covering set fell to the slot's one
+                    // routine and was refused on argument 2 while `hits(a, b)` dispatched —
+                    // @FR-F-Recv's two spellings resolving apart (loft#1780).  A tuple the set
+                    // does not cover is reported by the dispatcher itself, and its flag is left
+                    // for `parse_method_selecting`, which ends the call there as the bare
+                    // spelling does rather than refusing the slot's routine on top of it.
+                    sel @ crate::parser::dispatch::Selection::NoneApplicable => {
+                        if let Some(dd) = self.dynamic_dispatcher(u16::MAX, name, &routed, None) {
+                            return dd;
+                        }
+                        // The slot holds the SET itself (a `self` set that dispatches past its
+                        // receiver, with no enum-level definition): there is no routine to
+                        // fall back to, and the answer is the bare spelling's refusal.
+                        if !self.reported_dynamic_refusal
+                            && self.data.def(*fallback).def_type == DefType::Dynamic
+                        {
+                            if !self.first_pass {
+                                self.report_selection(name, &routed, &sel, None);
+                            }
+                            self.reported_dynamic_refusal = true;
+                        }
+                        return *fallback;
+                    }
+                    crate::parser::dispatch::Selection::NotDecidable => {}
                 }
                 let found = self.data.select_method(u16::MAX, name, dispatch, types);
                 if found != u32::MAX && self.data.def(found).name.starts_with("t_") {
@@ -20499,6 +20839,10 @@ impl Parser {
     /// attribute slot's routine — an expected collection or interpolation type, a named
     /// argument's parameter.  `select` names the definition the call REACHES, asked once the
     /// argument types exist ([`Self::select_method_def`]).
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the empty and the filled argument list share one selection tail"
+    )]
     pub(crate) fn parse_method_selecting(
         &mut self,
         val: &mut Value,
@@ -20526,6 +20870,13 @@ impl Parser {
         let mut in_named = false;
         if self.lexer.has_token(")") {
             let selected = self.select_method_def(select, &types);
+            if std::mem::take(&mut self.reported_dynamic_refusal) {
+                return if self.first_pass {
+                    Type::Unknown(0)
+                } else {
+                    Type::Never
+                };
+            }
             if let Some(tp) =
                 self.builtin_method_call(val, selected, &list, &types, &named_args, &arg_pos)
             {
@@ -20618,6 +20969,15 @@ impl Parser {
         }
         self.lexer.token(")");
         let selected = self.select_method_def(select, &types);
+        // `Disp-Exhaustive` refused the call inside the selection (loft#1780): the refusal is
+        // the whole answer, as `Parser::call` makes it for the bare spelling.
+        if std::mem::take(&mut self.reported_dynamic_refusal) {
+            return if self.first_pass {
+                Type::Unknown(0)
+            } else {
+                Type::Never
+            };
+        }
         if let Some(tp) =
             self.builtin_method_call(val, selected, &list, &types, &named_args, &arg_pos)
         {

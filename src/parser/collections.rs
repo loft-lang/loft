@@ -1724,6 +1724,61 @@ impl Parser {
                 };
             }
         }
+        // `(E-Asgn-Compound)` at a RECORD place — a field or an element holding a struct or a
+        // struct-enum — composes `v₁ op v₂` and writes it through the place exactly as `=`
+        // writes a record there: a copy INTO the place.  The generic seam below answers a
+        // field's `OpGetField` read with the composed value itself, which writes nothing, so
+        // `h.v -= 1` left `h.v` unchanged and `h.v -= V { x: 3 }` stored the operand's bytes
+        // (`3` for `50 - 3`), and an element was refused "Cannot assign to attribute on type
+        // 'OpGetVector'" (loft#1819).  A `&`-linked local names a place too (loft#1376), so
+        // `q = &vs[1]; q -= 2` writes the element rather than re-pointing `q`.
+        //
+        // The place is read once and written once, so its addressing must run ONCE (C92): a
+        // place whose address calls a function (`vs[next(c)] -= 1`) is bound to a `_place`
+        // view first — the element's own record, which both the read and the copy reach.
+        if op != "="
+            && matches!(
+                f_type.base(),
+                Type::Enum(_, true, _) | Type::Reference(_, _)
+            )
+            && match to.unspan() {
+                Value::Var(v) => self.vars.is_amp_link(*v),
+                _ => true,
+            }
+        {
+            let mut setup = Vec::new();
+            let place = if !self.first_pass
+                && !matches!(to.unspan(), Value::Var(_))
+                && self.ir_has_user_call(to)
+            {
+                let held = self.create_unique("_place", &f_type.base().clone());
+                setup.push(v_set(held, to.clone()));
+                Value::Var(held)
+            } else {
+                to.clone()
+            };
+            let (composed, tp) = self.compute_op_code(op, &place, val, f_type, src_tp);
+            if self.first_pass || !matches!(tp.base(), Type::Reference(_, _) | Type::Enum(..)) {
+                if !self.first_pass {
+                    self.check_compound_result(op, f_type, src_tp, &tp);
+                }
+                return composed;
+            }
+            self.check_compound_result(op, f_type, src_tp, &tp);
+            if setup.is_empty()
+                && let Some(ops) = self.group_elem_write(to, f_type.base(), true, |p, t, _| {
+                    p.copy_ref(&t, &composed, f_type.base())
+                })
+            {
+                return Value::Insert(ops);
+            }
+            let write = self.copy_ref(&place, &composed, f_type.base());
+            if setup.is_empty() {
+                return write;
+            }
+            setup.push(write);
+            return Value::Insert(setup);
+        }
         // @PLN25 index flip — an element WRITE `v[i] = h` is an lvalue slot, not a nullable
         // read: under the flip `v[i]` types `Optional(Reference/Enum)`, but the slot itself
         // holds the base record, so a whole-element assign is still a `copy_ref` (OpCopyRecord).
@@ -2034,7 +2089,10 @@ impl Parser {
         // inner OpGetVector) — identical to how plain enums are handled.  The old
         // special-case here destructured the two-level OpEqInt(OpGetByte(…)) read
         // shape and is obsolete (it mis-read the single-level OpGetBoolean shape).
-        let mut code = self.compute_op_code(op, to, val, f_type);
+        let (mut code, composed) = self.compute_op_code(op, to, val, f_type, src_tp);
+        if op != "=" && !self.first_pass {
+            self.check_compound_result(op, f_type, src_tp, &composed);
+        }
         // loft#1009 — a COMPOUND assignment into a bounded integer slot had no range check
         // of any kind, so `l: u8 = 250; l += 10;` answered 260 and `b: u8 = 5; b -= 10;`
         // answered -5.  The written-out form (`l = l + 10`) is refused at compile time, so
@@ -3355,8 +3413,8 @@ use #count instead"
                 Level::Error,
                 "loop variable '{src_id}' shadows a local named '{src_id}' — \
                  rename the loop variable (e.g. loop_{src_id}) or drop the \
-                 outer `{src_id}` if it was a dead placeholder; loft does \
-                 not block-scope loop variables"
+                 outer `{src_id}` if it was a dead placeholder; a loop \
+                 variable cannot reuse the name of a local still in scope"
             );
         }
         if id != "_"
@@ -4970,7 +5028,18 @@ use #count instead"
         // `b` → `OpGetVector(results, idx)`.  build_parallel_for_ir
         // performs the actual Var→accessor rewrite after body parse,
         // once `idx_var` exists.
-        let elem_var_nr = self.create_var(elem_var, &elem_tp);
+        // loft#1802 — the element is this loop's variable, created the way a sequential
+        // loop's is: keyed by the LOOP (`<name>#bind`, loft#915), not by the name.  Reused
+        // by name, pass 2's first `par` loop over `e` was handed whichever slot pass 1 left
+        // `e` pointing at — the LAST loop's — so two `par` loops in a row shared one binding.
+        let elem_var_nr = self.create_loop_var(elem_var, &elem_tp);
+        // It ends with its body as a sequential loop's does (@FR-B-Scope).  Unrecorded, a
+        // later `for e` read the par loop's `e` as "a local named 'e'" and refused as a
+        // shadow; loft#1717 is the same mark for the unrolled `#fields` walk.
+        self.vars.served_as_loop_var(elem_var_nr);
+        // …and it is BOUND in the loop's body block, so the name is free again after the
+        // loop's `}` — `e = 7` after the loop is a new binding, as after a plain `for`.
+        self.pending_loop_binders.push(elem_var_nr);
         // The body reads the name the program wrote; point it at this loop's binding
         // and leave it there, the same as the sequential form (loft#915).
         if elem_var != src_elem_var {
@@ -5019,6 +5088,8 @@ use #count instead"
                             .enumerate()
                             .map(|(i, name)| {
                                 let var = self.create_var(name, &elem_types[i]);
+                                self.vars.served_as_loop_var(var);
+                                self.pending_loop_binders.push(var);
                                 self.vars.defined(var);
                                 self.vars.in_use(var, true);
                                 var
@@ -5084,7 +5155,7 @@ use #count instead"
             diagnostic!(
                 self.lexer,
                 Level::Error,
-                "par() worker {} — a par worker's captured state is READ-ONLY (@PLN102 C93): a \
+                "par() worker {} — a par worker's captured state is READ-ONLY: a \
                      write to shared parent state is a data race, which loft disallows rather \
                      than run.  Return the value from the worker and accumulate it in the fold \
                      body instead.",

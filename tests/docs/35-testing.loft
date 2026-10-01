@@ -37,7 +37,7 @@
 // There is one exception, and it is what makes a plain script runnable. If a
 // file names NO 'test_' function at all, loft treats every function in it that
 // takes no parameters as something to run. That is how the pages of this
-// reference are checked: they have a 'main' and no tests. As soon as one
+// reference are checked: they have a 'main' and no tests. Once one
 // 'test_' appears in a file, it and its siblings are the whole set, and the
 // helpers beside them go back to being helpers.
 //

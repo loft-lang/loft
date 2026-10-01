@@ -1493,6 +1493,13 @@ impl Value {
     /// fn-ref forms.
     #[must_use]
     pub fn names_var_here(&self, v: u16) -> bool {
+        self.var_named_here() == Some(v)
+    }
+
+    /// The variable THIS node names, if any — the same arm list, answered as the variable
+    /// rather than asked about one, for a walk that collects every variable a subtree names.
+    #[must_use]
+    pub fn var_named_here(&self) -> Option<u16> {
         match self {
             Value::Var(x)
             | Value::Set(x, _)
@@ -1500,9 +1507,9 @@ impl Value {
             | Value::TuplePut(x, _, _)
             | Value::FnRefDnr(x)
             | Value::CallRef(x, _)
-            | Value::Iter(x, _, _, _) => *x == v,
-            Value::FnRef(_, w, _) => *w == v,
-            _ => false,
+            | Value::Iter(x, _, _, _)
+            | Value::FnRef(_, x, _) => Some(*x),
+            _ => None,
         }
     }
 
@@ -5376,6 +5383,13 @@ impl Definition {
             Value::Null => true,
             Value::Call(nr, args) if *nr == null_ref && args.is_empty() => true,
             Value::Var(n) => Self::local_owns(*n, vars, buf),
+            // A `return x` hands back `x`.  The scope pass writes one INSIDE a value block
+            // whose epilogue frees a local — an operator body that built a `??` or `if`
+            // default ends `Object { …; free(default); return __retbuf }` — and read as an
+            // unknown shape it refused a body that returns its fresh buffer, so a bounded
+            // generic reaching that operator (`fn diff<T: Subtractable>(a, b) -> T { a - b }`)
+            // left its result unlifted and leaked one record per inline call (loft#1820).
+            Value::Return(inner) => Self::site_is_fresh(inner, vars, buf, null_ref),
             // loft#1070 — a value-yielding `if` / `match` tail: fresh iff EVERY arm is.
             // Held back while an arm-local of a monomorph was built against the type
             // variable's row and answered a wrong number; with that fixed the arms are
@@ -7488,17 +7502,82 @@ impl Data {
     /// exist for an operator. `call_op` picks among them by TRYING each (`call_nr` answers
     /// `Type::Null` on a mismatch); this is that question asked statically, which is all a
     /// `&Data` resolver can do.
+    ///
+    /// A USER operator is not in that map: it is a method, and one type defining a name at
+    /// two arities (`OpMin(self: V)` beside `OpMin(self: V, o: V)`) is an overload set whose
+    /// second member is keyed by its full spelling, where `find_fn` / `find_op_method` never
+    /// look — they answer the slot's incumbent whatever the arity.  So the set is asked too,
+    /// on the VISIBLE count (a struct return carries a hidden buffer).  Without it `a - b`
+    /// called the unary member with one operand too many, `(G-Sat)` reported the binary one
+    /// missing, and a monomorph bound the unary one for `a - b` (loft#1794).
     #[must_use]
     pub fn possible_with_signature(&self, start: &str, arity: usize, first: &Type) -> Option<u32> {
         let want = self.type_def_nr(first);
-        self.possible.get(start)?.iter().copied().find(|&d| {
-            let def = &self.definitions[d as usize];
-            def.attributes().len() == arity
-                && def
-                    .attributes()
-                    .first()
-                    .is_some_and(|a| self.type_def_nr(&a.typedef) == want)
+        let builtin = self.possible.get(start).and_then(|list| {
+            list.iter().copied().find(|&d| {
+                let def = &self.definitions[d as usize];
+                def.attributes().len() == arity
+                    && def
+                        .attributes()
+                        .first()
+                        .is_some_and(|a| self.type_def_nr(&a.typedef) == want)
+            })
+        });
+        builtin.or_else(|| {
+            self.overload_routines(start).into_iter().find(|&d| {
+                let params = self.visible_params(d);
+                params.len() == arity && params.first().is_some_and(|t| self.type_def_nr(t) == want)
+            })
         })
+    }
+
+    /// Does `name` carry an overload set — a `Dynamic` definition listing its members?  Asked
+    /// before any work that only a set needs, so a name without one allocates nothing.
+    #[must_use]
+    pub fn has_overload_set(&self, name: &str) -> bool {
+        let main = self.def_nr(name);
+        main != u32::MAX && self.def(main).def_type == DefType::Dynamic
+    }
+
+    /// Does `d_nr` declare the visible parameters `params` — compared by type definition, at
+    /// every position whose wanted type is concrete (a type variable or an unknown there asks
+    /// nothing)?
+    ///
+    /// A parameter that is itself a type variable (a template member) asks nothing either; and
+    /// a variant and its enum fit each other, the one widening the enum lattice has
+    /// (`@FR-C-Var`), in whichever direction the receiver's lookup crossed it.
+    #[must_use]
+    pub fn params_fit(&self, d_nr: u32, params: &[Type]) -> bool {
+        let have = self.visible_params(d_nr);
+        have.len() == params.len() && have.iter().zip(params).all(|(h, w)| self.param_fits(h, w))
+    }
+
+    /// One position of [`Self::params_fit`]: does the declared parameter `have` take the
+    /// wanted type `want`?
+    #[must_use]
+    pub fn param_fits(&self, have: &Type, want: &Type) -> bool {
+        if want.is_unknown() || self.mentions_type_var(want) || self.mentions_type_var(have) {
+            return true;
+        }
+        let (h, w) = (self.type_def_nr(have), self.type_def_nr(want));
+        let variant_of = |v: u32, e: u32| {
+            v != u32::MAX && self.def(v).def_type == DefType::EnumValue && self.def(v).parent == e
+        };
+        h == w || variant_of(h, w) || variant_of(w, h)
+    }
+
+    /// The member of `start`'s overload set whose visible parameters are `params`
+    /// ([`Self::params_fit`]) — `None` when the name has no set or no member fits.  What
+    /// [`Self::possible_with_signature`] asks by arity and receiver, asked of the whole
+    /// parameter list, so a set overloaded on a LATER operand is not answered by whichever
+    /// member was declared first (`@FR-F-Recv`, loft#1817).
+    #[must_use]
+    pub fn overload_with_params(&self, start: &str, params: &[Type]) -> Option<u32> {
+        // A CONCRETE member only (`@FR-G-Sat`): a template takes any list at its variables,
+        // and the monomorph that binds the answer has no step that would instantiate it.
+        self.overload_routines(start)
+            .into_iter()
+            .find(|&d| self.def(d).def_type != DefType::Generic && self.params_fit(d, params))
     }
 
     /// @PLN99 Arc C — register `d_nr` into the `possible[prefix]` operator map.
@@ -8213,30 +8292,75 @@ impl Data {
     /// `Disp-Fallback`'s most general type, the author's to write — or a FREE definition
     /// (keyed `f_…`), which is no method and gets no `x.f(…)` spelling; a dispatcher
     /// synthesised beside either would be the same signature twice, or a method spelling for
-    /// a name that has none.  A `self`/`both` set with neither keeps @F20's runtime dispatch.
+    /// a name that has none.  And it does when the set dispatches PAST its receiver
+    /// ([`Self::dispatches_past_receiver`]).  A `self`/`both` set with none of these keeps
+    /// @F20's runtime dispatch.
     #[must_use]
     pub fn overload_set_owns_dispatch(&self, name: &str, e_nr: u32) -> bool {
+        let routines = self.overload_routines(name);
+        routines.iter().any(|&r| {
+            self.def(r).name.starts_with("f_")
+                || self
+                    .visible_params(r)
+                    .first()
+                    .is_some_and(|t| matches!(t.base(), Type::Enum(e, _, _) if *e == e_nr))
+        }) || self.dispatches_past_receiver(name, e_nr)
+    }
+
+    /// Does the overload set of `name` hold two definitions on ONE variant of `e_nr` that
+    /// differ in a later parameter (`hits(self: Circle, b: Circle)` beside `hits(self: Circle,
+    /// b: Rect)`)?  Such a set dispatches past its receiver, which @F20's one-arm-per-variant
+    /// dispatcher cannot say: it kept one definition per variant, took the later parameters
+    /// from those, and bound the method spelling to the result — so `a.hits(b)` was refused
+    /// on argument 2 while `hits(a, b)` dispatched, and a declaration order that kept arms
+    /// with different later parameters refused the whole set (loft#1780, @FR-F-Recv).  The
+    /// `self: V` / `self: V?` pair is ONE definition per variant for this question, and so is
+    /// a pair differing only in a later parameter's nullability, so neither is compared.
+    #[must_use]
+    pub fn dispatches_past_receiver(&self, name: &str, e_nr: u32) -> bool {
+        let mut seen: Vec<(u32, Option<String>)> = Vec::new();
+        for r in self.overload_routines(name) {
+            let params = self.visible_params(r);
+            let Some(Type::Reference(v, _)) = params.first().map(|t| t.base()) else {
+                continue;
+            };
+            if self.def(*v).def_type != DefType::EnumValue || self.def(*v).parent != e_nr {
+                continue;
+            }
+            let rest = self.full_spelling(params[1..].iter().map(|t| t.base()));
+            if seen.iter().any(|(sv, sr)| sv == v && *sr != rest) {
+                return true;
+            }
+            seen.push((*v, rest));
+        }
+        false
+    }
+
+    /// The definitions of `name`'s overload set — the routines its bare `Dynamic` dispatcher
+    /// carries — or none when the name is no set.
+    pub(crate) fn overload_routines(&self, name: &str) -> Vec<u32> {
         let main = self.def_nr(name);
         if main == u32::MAX || self.def(main).def_type != DefType::Dynamic {
-            return false;
+            return Vec::new();
         }
         self.def(main)
             .attributes
             .iter()
-            .any(|a| match a.typedef.base() {
-                Type::Routine(r) => {
-                    self.def(*r).name.starts_with("f_")
-                        || self
-                            .def(*r)
-                            .attributes
-                            .iter()
-                            .find(|p| !p.hidden)
-                            .is_some_and(
-                                |p| matches!(p.typedef.base(), Type::Enum(e, _, _) if *e == e_nr),
-                            )
-                }
-                _ => false,
+            .filter_map(|a| match a.typedef.base() {
+                Type::Routine(r) => Some(*r),
+                _ => None,
             })
+            .collect()
+    }
+
+    /// The parameter types a caller writes for `d_nr` — its hidden buffers left out.
+    pub(crate) fn visible_params(&self, d_nr: u32) -> Vec<&Type> {
+        self.def(d_nr)
+            .attributes
+            .iter()
+            .filter(|p| !p.hidden)
+            .map(|p| &p.typedef)
+            .collect()
     }
 
     /// The full spelling of a registered definition's declared parameters.
@@ -8289,12 +8413,20 @@ impl Data {
             return;
         }
         let label = if self.def(incumbent).name.starts_with("t_") {
-            // A method keeps its `t_<sig0>_<name>` key; its label is that receiver spelling.
-            self.def(incumbent)
+            // A method keeps its `t_<sig0>_<name>` key; its label is that receiver spelling —
+            // unless it was moved to its FULL spelling to make room for a receiver-only
+            // overload (loft#1811), whose label the receiver spelling then is.
+            let receiver = self
+                .def(incumbent)
                 .attributes
                 .first()
                 .and_then(|a| self.type_spelling(&a.typedef))
-                .unwrap_or_default()
+                .unwrap_or_default();
+            if self.def(incumbent).name == Self::mangle_method(&receiver, fn_name) {
+                receiver
+            } else {
+                self.def_full_spelling(incumbent).unwrap_or(receiver)
+            }
         } else {
             let Some(full) = self.def_full_spelling(incumbent) else {
                 return;
@@ -8310,6 +8442,28 @@ impl Data {
         let a_nr = self.add_attribute(lexer, main, &label, Type::Routine(incumbent));
         self.definitions[main as usize].attributes[a_nr].mutable = false;
         self.definitions[main as usize].attributes[a_nr].constant = true;
+    }
+
+    /// Rename the label `member` carries in `fn_name`'s overload set to `label` — nothing when
+    /// it is no member yet (loft#1811).
+    fn relabel_overload(&mut self, fn_name: &str, member: u32, label: &str) {
+        let main = self.def_nr(fn_name);
+        if main == u32::MAX || self.def(main).def_type != DefType::Dynamic {
+            return;
+        }
+        let Some(a_nr) = self
+            .def(main)
+            .attributes
+            .iter()
+            .position(|a| matches!(a.typedef.base(), Type::Routine(r) if *r == member))
+        else {
+            return;
+        };
+        let old = self.def(main).attributes[a_nr].name.clone();
+        let def = &mut self.definitions[main as usize];
+        def.attr_names.remove(&old);
+        def.attr_names.insert(label.to_string(), a_nr);
+        def.attributes[a_nr].name = label.to_string();
     }
 
     /// The refusal of a definition whose name `winner` already holds.  A program's function
@@ -9016,6 +9170,28 @@ impl Data {
             } else {
                 Self::mangle_free_overload(&full, fn_name)
             };
+            // A newcomer whose parameters are the receiver ALONE spells its full key as the
+            // receiver key the incumbent method holds — `OpMin(self: V)` after
+            // `OpMin(self: V, o: V)`.  The incumbent then moves to ITS full spelling, where
+            // `get_fn` looks for a longer method first on pass 2, and the newcomer takes the
+            // receiver key it would have held declared first: both orders make one set
+            // (loft#1811).  The receiver slot keeps the incumbent — membership, not choice.
+            if (is_self || is_both)
+                && own(self, &key) == d_nr
+                && key == self.def(d_nr).name
+                && let Some(inc_full) = self.def_full_spelling(d_nr)
+            {
+                let moved = Self::mangle_method(&inc_full, fn_name);
+                if own(self, &moved) == u32::MAX {
+                    let src = self.def(d_nr).source;
+                    self.def_names.remove(&key, src);
+                    self.def_names.insert(&moved, src, d_nr);
+                    self.definitions[d_nr as usize].name = moved;
+                    // Already a member (a third definition): its label in the set was the
+                    // receiver spelling the newcomer is about to take, so it moves too.
+                    self.relabel_overload(fn_name, d_nr, &inc_full);
+                }
+            }
             if own(self, &key) == u32::MAX {
                 self.admit_overload_set(lexer, fn_name, d_nr);
                 name = key;
@@ -12785,16 +12961,81 @@ impl Data {
         }
     }
 
-    /// Return a user-facing type name string for use by `type_name()`.
+    /// A type's name with every integer spelled `integer`, whatever its width or range.
+    ///
+    /// This is the spelling the API surface RECORDS (`api_surface::signature_of`): its
+    /// signature strings are compared across library versions, so it is a contract, not a
+    /// label, and renaming a width there would read as an API change.  Text shown to a
+    /// reader wants [`Self::display_type_name`], which names the width.
     #[must_use]
     pub fn type_name_str(&self, tp: &Type) -> String {
+        self.type_name_with(tp, false)
+    }
+
+    /// A type's name as a reader should see it — `type_name()`, advice, hover text: an
+    /// integer is named by its alias (`u8`, `i16`, a user's `type Lim = …`) or its range
+    /// (`integer limit(0, 10)`), inside a collection or a function type too (loft#1824).
+    #[must_use]
+    pub fn display_type_name(&self, tp: &Type) -> String {
+        self.type_name_with(tp, true)
+    }
+
+    /// An integer type's name as its author can write it back — the one home for the
+    /// narrowing diagnostics and [`Self::display_type_name`] alike.  A full-width `integer`
+    /// keeps its own name: an alias of it (`type Count = integer`) must not rename every
+    /// integer.  A standard alias is named by its RANGE, never by width and sign alone —
+    /// `u32` and `i32` share a width, and a declared `integer limit(1000, 1100) size(1)` is
+    /// not a `u8` (loft#1641, loft#1247).  Otherwise the alias the author declared, and with
+    /// none, the range spelled as the author wrote it — `integer(0, 10)`, the type's own key,
+    /// is no syntax the parser reads, so a cure built from it could not be typed back in.
+    #[must_use]
+    pub fn integer_name(&self, t: &Type) -> String {
+        // A nullable integer keeps its source spelling (the `?` is part of the name); only a
+        // plain integer is named by its range here (@FR-N-Shape: the nullability is asked, not
+        // left to a missing arm).
+        let (inner, nullable) = t.peel_optional();
+        let Type::Integer(s) = inner else {
+            return t.source_name(self);
+        };
+        if nullable {
+            return t.source_name(self);
+        }
+        if s.forced_size.is_none() {
+            if s.is_wide_template() || s.is_signed32_template() {
+                return t.source_name(self);
+            }
+            return self.integer_alias_any_source(s, false).map_or_else(
+                || format!("integer limit({}, {})", s.min, s.max),
+                str::to_string,
+            );
+        }
+        let named = match (s.min, s.max) {
+            (0, 255) => Some("u8"),
+            (-128, 127) => Some("i8"),
+            (0, 65535) => Some("u16"),
+            (-32768, 32767) => Some("i16"),
+            (0, 4_294_967_294) => Some("u32"),
+            _ if s.is_signed32_template() => Some("i32"),
+            _ => None,
+        };
+        if let Some(n) = named {
+            return n.to_string();
+        }
+        if let Some(name) = self.integer_alias_any_source(s, false) {
+            return name.to_string();
+        }
+        t.source_name(self)
+    }
+
+    fn type_name_with(&self, tp: &Type, named: bool) -> String {
+        let name = |t: &Type| self.type_name_with(t, named);
         match tp {
-            Type::Optional(inner) => format!("{}?", self.type_name_str(inner)),
+            Type::Optional(inner) => format!("{}?", name(inner)),
             Type::Unknown(_) => "unknown".to_string(),
             Type::Null => "null".to_string(),
             Type::Void => "void".to_string(),
             Type::Never => "never".to_string(),
-            Type::Integer(s) if s.is_signed32_template() => "integer".to_string(),
+            Type::Integer(_) if named => self.integer_name(tp),
             Type::Integer(_) => "integer".to_string(),
             Type::Boolean => "boolean".to_string(),
             Type::Float => "float".to_string(),
@@ -12803,22 +13044,22 @@ impl Data {
             Type::Text(_) => "text".to_string(),
             Type::Keys => "keys".to_string(),
             Type::Enum(d_nr, _, _) | Type::Reference(d_nr, _) => self.def(*d_nr).name.clone(),
-            Type::RefVar(inner) => format!("&{}", self.type_name_str(inner)),
-            Type::Vector(inner, _) => format!("vector<{}>", self.type_name_str(inner)),
+            Type::RefVar(inner) => format!("&{}", name(inner)),
+            Type::Vector(inner, _) => format!("vector<{}>", name(inner)),
             Type::Sorted(d_nr, _, _) => format!("sorted<{}>", self.def(*d_nr).name),
             Type::Index(d_nr, _, _) => format!("index<{}>", self.def(*d_nr).name),
             Type::Hash(d_nr, _, _) => format!("hash<{}>", self.def(*d_nr).name),
             Type::Routine(_) => "fn".to_string(),
             Type::Function(args, ret, ..) => {
-                let args_s: Vec<String> = args.iter().map(|a| self.type_name_str(a)).collect();
-                format!("fn({}) -> {}", args_s.join(", "), self.type_name_str(ret))
+                let args_s: Vec<String> = args.iter().map(&name).collect();
+                format!("fn({}) -> {}", args_s.join(", "), name(ret))
             }
-            Type::Iterator(inner, _) => format!("iterator<{}>", self.type_name_str(inner)),
-            Type::Rewritten(inner) => self.type_name_str(inner),
+            Type::Iterator(inner, _) => format!("iterator<{}>", name(inner)),
+            Type::Rewritten(inner) => name(inner),
             Type::Radix(d_nr, _, _) => format!("spatial<{}>", self.def(*d_nr).name),
             Type::Trie(d_nr, key, _) => format!("trie<{}[{key}]>", self.def(*d_nr).name),
             Type::Tuple(elems) => {
-                let es: Vec<String> = elems.iter().map(|e| self.type_name_str(e)).collect();
+                let es: Vec<String> = elems.iter().map(&name).collect();
                 format!("({})", es.join(", "))
             }
         }

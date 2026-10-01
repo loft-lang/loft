@@ -1238,6 +1238,36 @@ parses; ordinary runs keep the cache.
 - A name two plain imports deep (your file uses `render`, which uses `graphics`, which
   uses `mesh3d` for itself) names the library that has it and the `use` that imports it.
   It used to be a bare *"Undefined type Mesh — did you mean 'hash'?"*.
+- `loft api <lib>` and `loft doc <lib>` show every field of a struct and every variant of an
+  enum, with their comments, and a signature that spans several lines in full — its return
+  type was cut off at the first line break.  A constant documented by a comment at the end
+  of its line shows that comment.  `loft search` gets the same, library by library, as each
+  one is next published.
+- `loft search` puts the package that answers first: `load png` finds `imaging`, `format
+  date` finds `time`, `overlap` finds `shapes`.  It used to list every package with a
+  passing mention alphabetically, matched `date` inside `update`, and read only the first
+  word of an unquoted query.  Five functions print per package, best first; when nothing
+  has every word, the closest matches are shown and labelled as such.
+- An un-imported type names the package that has it, the way an un-imported function already
+  did: *"Undefined type Canvas — the `graphics` package provides it"*.  `Rect` used to
+  suggest *"did you mean 'text'?"*.
+- `x = ;` and `x += ;` are refused with *"Expected a value after `=`"*.  They compiled: the
+  first bound null, the second lost the program's later output.  `3 + ;` names the `+` too,
+  instead of an internal operator's missing argument.
+- The `parser` library reads `while`, `match`, both lambda forms, `if` and blocks as values,
+  typed locals, tuples and qualified names, as the compiler does, and it now counts an
+  invalid program (`x = ;`, a stray `}`) as invalid.  Its guide page lists what its grammar
+  does not cover yet.
+- A `loft` binary copied onto the PATH, or installed with `cargo install`, runs without a
+  `default/` directory beside it: it uses the standard library built into it.
+- A `par` loop's variable ends with the loop, as a `for` loop's does: `for e in v par(…)`
+  followed by `for e in v` compiles, and so do two `par` loops over the same name.  A
+  destructuring `par` loop, `for (a, b) in v par(r = add(a, b), 2)`, no longer stops the
+  compiler with an internal error.
+- Inside `par(…)`, a `self` function is also called by its free-function spelling:
+  `par(b = get_value(a), 2)`.
+- `for i in 0.. { … }` counts up until the body breaks out or returns, as in Rust.  It used to
+  read the body as the range's end and fail with *"Cannot break outside a loop"*.
 
 ---
 

@@ -20,13 +20,22 @@
 //   this file; what changed is which answer counts as correct, so no earlier build can fail it.
 //   Its control is the non-nullable cell below, which fails on any build that reserves an edge
 //   it should not.
+//
+// Since loft#1796 the literal's CONSTANT `255` into the `u8?` field is refused at compile time
+// (a constant the slot cannot hold could only be stored as null; tests/parse_errors.rs
+// `a_constant_a_nullable_narrow_slot_cannot_hold_is_refused_in_every_position` pins the struct
+// literal field).  The shape this file pins — the sentinel arriving through a struct LITERAL —
+// is kept by a value the compiler cannot fold (`rt`), which is where it reads null by design.
 struct Holder {
   x: u8?,
   y: u8,
 }
 
+// A value the compiler cannot fold, so it reaches the field at run time.
+fn rt(n: integer) -> integer { n }
+
 fn main() {
-  h = Holder { x: 255, y: 255 };
+  h = Holder { x: rt(255), y: 255 };
   assert(h.x == null, "255 is the null of a u8? field, got {h.x}");
   assert((h.x ?? 7) == 7, "and `??` recovers from it, got {h.x ?? 7}");
   assert(h.y == 255, "…while a NON-null u8 field holds 255, which reserves nothing");

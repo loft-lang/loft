@@ -69,6 +69,10 @@ record removed by key before the walk reaches it is not visited.  The SOURCE is 
                                         The stop is decided on the value just YIELDED, so the
                                         sequence is exact when b is the type's MAXIMUM and the
                                         loop never has to represent b + 1.
+  (I-RangeFrom) for x in a.. { body }   iterates a, a+1, … with NO end: only the body leaves it
+                                        (`break`, `return`).  It stops after yielding the type's
+                                        MAXIMUM, as `a..=MAX` does, so the counter never
+                                        overflows.  The `{` after `..` is the body, never a bound.
   (I-Text)     for c in t { body }      binds c : character to each Unicode CODEPOINT of t, left
                                         to right — one iteration PER CODEPOINT, NOT per grapheme
                                         cluster.  The cursor is a BYTE position advanced by the
@@ -79,7 +83,8 @@ record removed by key before the walk reaches it is not visited.  The SOURCE is 
 
 **In words.** A range `a..b` yields the half-open integer sequence (never includes `b`); an
 empty range (`a ≥ b`) runs the body zero times. `a..=b` is the same sequence with `b` included,
-and empty when `a > b`.
+and empty when `a > b`.  `a..` counts up until the body breaks out, as Rust's `for i in 0..`
+does.
 
 > **Why the inclusive form states WHERE it stops, and not only what it yields.** Until
 > 2026-09-13 it had no rule at all, and its implementation ended the loop with the same
