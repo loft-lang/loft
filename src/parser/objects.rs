@@ -780,6 +780,11 @@ impl Parser {
             t = Type::Unknown(0);
         } else if self.vars.name_exists(name) {
             let index_var = self.vars.var(name);
+            // Only when the variable IS the name written: a user's `s` can resolve to the
+            // compiler's own `_mv_s_1` (a match binding), which stays the compiler's.
+            if self.vars.name(index_var) == name {
+                self.vars.mark_user_named(index_var);
+            }
             // Noted before `check_block_scope` moves the binding here: the assignment decides,
             // once it knows the new value's type, whether this bind needs a variable of its own
             // (loft#1700).
@@ -995,6 +1000,7 @@ impl Parser {
             if fnr == usize::MAX {
                 // First pass, no closure param, or field not found — placeholder variable.
                 let v_nr = self.create_var(name, &ctype);
+                self.vars.mark_user_named(v_nr);
                 if v_nr != u16::MAX && self.capture_const.contains(name) {
                     self.vars.set_value_const(v_nr);
                 }
@@ -1551,6 +1557,7 @@ impl Parser {
                         // `Parser::unresolved_names`.
                         self.unresolved_names = self.unresolved_names.saturating_add(1);
                         let v = self.create_var(name, &Type::Unknown(0));
+                        self.vars.mark_user_named(v);
                         // The binding's block, recorded where pass 1 creates it: pass 2 finds
                         // the name and records it in `check_block_scope`, and the two passes
                         // must agree on where every binding lives (loft#1700).

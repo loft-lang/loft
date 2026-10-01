@@ -197,6 +197,9 @@ struct Variable {
   // @PLN167 decision 2 — a `&text` link to a text FIELD or ELEMENT (the store kind): it holds
   // the slot's DbRef and is read and written through the field ops; read by both emitters
   store_text_link: boolean,
+  // loft#1834 — a user identifier names it (a signature or a mention), so a user's `_`-prefixed
+  // name is not read as a compiler temporary; `is_compiler_generated` reads it
+  user_named: boolean,
   // @FR-O-Witness — the owner witness `__own_<name>` of a mixed-ownership local (u16::MAX = none);
   // read by both emitters, so it must survive the snapshot exactly as `skip_free` does
   owner_witness: integer,

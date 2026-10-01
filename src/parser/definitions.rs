@@ -2978,6 +2978,7 @@ impl Parser {
                     );
                 }
             }
+            self.vars.mark_declared_parameters(&self.data, self.context);
             if !self.first_pass {
                 self.vars.seed_incoming_writes(&self.data, self.context);
             }

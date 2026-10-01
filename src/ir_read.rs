@@ -808,6 +808,7 @@ fn read_function(stores: &Stores, parent: Record, base: u32) -> Function {
             deferred_first_bind: vr.field_bool(stores, ds::VAR_DEFERRED_FIRST_BIND),
             linked_narrow: vr.field_bool(stores, ds::VAR_LINKED_NARROW),
             store_text_link: vr.field_bool(stores, ds::VAR_STORE_TEXT_LINK),
+            user_named: vr.field_bool(stores, ds::VAR_USER_NAMED),
             owner_witness: vr.field_int(stores, ds::VAR_OWNER_WITNESS) as u16,
         });
     }

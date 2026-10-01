@@ -154,6 +154,8 @@ pub(crate) struct VarSnapshot<'a> {
     pub linked_narrow: bool,
     /// A `&text` link to a text field or element — the store kind (@PLN167 decision 2).
     pub store_text_link: bool,
+    /// A user identifier names it (loft#1834); `is_compiler_generated` reads it.
+    pub user_named: bool,
     /// The owner witness of a mixed-ownership local (`@FR-O-Witness`), `u16::MAX` for none.
     pub owner_witness: u16,
 }
@@ -176,6 +178,7 @@ pub(crate) struct RestoredVar {
     pub deferred_first_bind: bool,
     pub linked_narrow: bool,
     pub store_text_link: bool,
+    pub user_named: bool,
     pub owner_witness: u16,
 }
 
@@ -207,6 +210,11 @@ pub struct Variable {
     target_mentions: u16,
     /// That was reported, so the end-of-function `never-read` does not say it again.
     incoming_reported: bool,
+    /// A user identifier names this variable (loft#1834): written in a signature or mentioned
+    /// in a body.  The compiler's own temporaries are `_`-prefixed, and so may a user's name
+    /// be (`_b` is the spelling the lints suggest for an unused one), so the prefix alone
+    /// cannot tell them apart; see [`Function::is_compiler_generated`].
+    user_named: bool,
     argument: bool,
     defined: bool,
     /// Binding-const (`const` PREFIX): `const x` local, `const p: T` param, and the
@@ -828,6 +836,7 @@ impl Function {
             deferred_first_bind: v.deferred_first_bind,
             linked_narrow: v.linked_narrow,
             store_text_link: v.store_text_link,
+            user_named: v.user_named,
             owner_witness: self.owner_witness(i as u16).unwrap_or(u16::MAX),
         }
     }
@@ -891,6 +900,7 @@ impl Function {
                 deferred_first_bind: r.deferred_first_bind,
                 linked_narrow: r.linked_narrow,
                 store_text_link: r.store_text_link,
+                user_named: r.user_named,
                 // codegen-irrelevant post-parse defaults (not stored):
                 source: (0, 0),
                 scope: u16::MAX,
@@ -2777,6 +2787,7 @@ impl Function {
             incoming_seed: false,
             target_mentions: 0,
             incoming_reported: false,
+            user_named: false,
             write_source: (0, 0),
             argument: false,
             defined: false,
@@ -2830,6 +2841,7 @@ impl Function {
             incoming_seed: false,
             target_mentions: 0,
             incoming_reported: false,
+            user_named: self.variables[var as usize].user_named,
             // A SPLIT of a linked local is a second place, and the `&` names the original;
             // the copy is not the place the link holds, so it inherits no link.
             amp_linked_by: u16::MAX,
@@ -2878,6 +2890,7 @@ impl Function {
             incoming_seed: false,
             target_mentions: 0,
             incoming_reported: false,
+            user_named: false,
             write_source: (0, 0),
             argument: false,
             defined: false,
@@ -2921,6 +2934,7 @@ impl Function {
             incoming_seed: false,
             target_mentions: 0,
             incoming_reported: false,
+            user_named: false,
             write_source: (0, 0),
             argument: false,
             defined: true,
@@ -5332,8 +5346,30 @@ impl Function {
     /// and internal scratch slots that borrow storage from an
     /// enclosing container.
     #[must_use]
+    /// Is `v` one of the compiler's own temporaries?  They are all `_`-prefixed, but a user's
+    /// name may be too, so a variable a user identifier names is never one (loft#1834) — read
+    /// as one, `fn f(_b: Box)` lost F-ParamRebind and a `_x` literal reading `_x` read the
+    /// record its re-init had cleared.
     pub fn is_compiler_generated(&self, v: u16) -> bool {
-        self.variables[v as usize].name.starts_with('_')
+        let var = &self.variables[v as usize];
+        var.name.starts_with('_') && !var.user_named
+    }
+
+    /// The parameters the signature of `d_nr` declares are named by the user (loft#1834) —
+    /// including one the body never mentions.
+    pub fn mark_declared_parameters(&mut self, data: &Data, d_nr: u32) {
+        for var in &mut self.variables {
+            if var.argument && Self::declared_parameter(data, d_nr, &var.name) {
+                var.user_named = true;
+            }
+        }
+    }
+
+    /// A user identifier names `v` (loft#1834).
+    pub fn mark_user_named(&mut self, v: u16) {
+        if let Some(var) = self.variables.get_mut(v as usize) {
+            var.user_named = true;
+        }
     }
 
     /// Does `v` own the store it points at — i.e. may a site allocate into its
