@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I86 — Startup cache & embedded stdlib: the standard library's compiled bodies inside the binary
 
 //! @PLN181 — the standard library compiled like any other library.
 //!

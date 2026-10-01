@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I64 — Bytecode compiler (IR to bytecode): the value-record pass at its top
 
 //! `@FR-R-ValueRecord` and `@FR-R-ValueLocal` decided in the IR phase, for both backends
 //! (@PLN180 slices 1 and 3).
