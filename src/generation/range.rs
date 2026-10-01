@@ -26,7 +26,7 @@
 //! - `a & lit` with a non-negative literal, when `a` is NON-SENTINEL (the mask of a null
 //!   is null — `op_logical_and_int` propagates it — so the operand must be proven first;
 //!   the corpus cell that pins this holds a null read from past a vector's end);
-//! - `a & b`, `a | b` over two non-negative ranges; `a >> k` over a ranged `a`;
+//! - `a & b`, `a | b`, `a ^ b` over two non-negative ranges; `a >> k` over a ranged `a`;
 //! - `+`, `-`, `*`, negation over ranged operands whose result fits `(i64::MIN, i64::MAX]`;
 //! - `/` and `%` by a ranged divisor that excludes zero (the sentinel is minted by a zero
 //!   divisor and by `MIN / -1`, and a ranged dividend is never `MIN`);
@@ -42,7 +42,8 @@
 //!
 //! NOT trusted: parameters and record/element reads (the C80 escape means a non-null
 //! type can hold the sentinel), anything a callee with more than one statement answers,
-//! and `<<`, `^`, a shift by a variable, a remainder by a signed range.
+//! and `<<`, a shift by a variable, a remainder by a signed range.  (`^` over two
+//! non-negative ranges is bounded like `|` — `@FR-R-MaskRange`.)
 //!
 //! `LOFT_HOIST_VERIFY=1` emits the checking form of every plain operator — the plain
 //! answer beside the checked template's, compared at the operator (`ops::range_verify`).
@@ -241,7 +242,10 @@ pub fn op_range(
                     let (x, y) = (a(0)?, a(1)?);
                     (x.0 >= 0 && y.0 >= 0).then(|| (0, x.1.min(y.1)))
                 }
-                ("OpLorInt", 2) => {
+                // `@FR-R-MaskRange` adds `^` beside `|`: over two non-negative ranges no bit
+                // is set above the higher end's top bit, and no result is negative, so none
+                // is the sentinel.
+                ("OpLorInt" | "OpEorInt", 2) => {
                     let (x, y) = (a(0)?, a(1)?);
                     if x.0 < 0 || y.0 < 0 {
                         return None;

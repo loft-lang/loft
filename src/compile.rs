@@ -74,6 +74,9 @@ pub fn byte_code_from(
     // the cached store instead of `data`, so it keeps the record form.
     if start_d_nr == 0 && warm_store.is_none() {
         crate::value_record::rewrite_program(data, &state.database);
+        // `@FR-R-InlineLeaf` (with `R-MaskRange`, `R-SingleUse`, `R-ScaleFold` inside the
+        // inlined bodies) — after the value records, so a leaf it inlines is final.
+        crate::leaf_inline::rewrite_program(data);
     }
     // @PLN165 D10 — an instance's literal names its template (`Stores::shown`).
     for d in 0..data.definitions() {
