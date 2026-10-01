@@ -469,6 +469,12 @@ build temp dir (`$LOFT_TMPDIR`, default the system temp; the path is printed in 
 compiles to bytecode, but as named-variable Rust — so a type mismatch, a wrong
 sentinel, or a doomed loop condition is visible directly.
 
+The gate and `find_problems.sh` set `LOFT_TMPDIR` to `/var/tmp/loft-test-scratch-<checkout>.<id>`,
+so the native test harness's cache (`loft_native_cache_<hash>`) from a gate is NOT the one a
+plain `cargo nextest run` reads, which falls back to `$TMPDIR`.  Before editing a cache to
+reproduce a gate failure, confirm the run reads it: its `.build` marker changes, or the run
+prints `swept … MB`.
+
 Reach for this especially when a process **hangs**: `gdb` attach (`ptrace_scope`) is
 blocked in this sandbox, and `perf` needs `perf_event_paranoid <= 2` (the default is 4;
 `make profile` names the sysctl) — without it you cannot backtrace or sample a live hang. The generated Rust — or env-gated counter-panics
