@@ -1,0 +1,36 @@
+// `lib/parser.loft` has no types, so it cannot know that `North` in `if e == North { }` is a
+// variant: it read `North { }` as an empty record literal, swallowed the `if`'s body, and
+// counted the valid program as one error ("Expected {").  In the HEAD of an `if` / `while` /
+// `for` / `match` an empty `Name { }` is now a record only when the body's `{` still follows,
+// and the rule is lifted inside `( )`, a call's arguments and `[ ]`, where no body can follow.
+// The compiler accepts every program below.
+//
+// @falsified-at: 365e89977 — interpret exit 1 -> 0, native exit 1 -> 0 (the first assertion,
+//   variant-if, fails on the control).  Found by the 2026.10 reference review.
+// @falsified-by: tests/falsified/a-variant-compared-in-a-condition-keeps-its-body.patch
+//   CHANNEL: the asserted error counts.
+//   WITNESS: the control's `lib/parser.loft` counted 1 error for `if e == North {{ }}` and for
+//   `while e == North {{ }}`.
+//   HOLDS: every other cell answered 0 on both trees — records as statements, in a head before
+//   their body, inside a call or a list in a head, a comprehension, a `match` head.
+use parser;
+
+fn ok(name: text, src: text) {
+  got = parser::parse(name, src);
+  assert(got == 0, "{name}: {got} error(s)");
+}
+
+fn main() {
+  ok("variant-if", "enum Dir {{ North, South }} fn f(e: Dir) {{ if e == North {{ }} }}");
+  ok("variant-while", "enum Dir {{ North, South }} fn f(e: Dir) {{ while e == North {{ }} }}");
+  ok("variant-if-else", "enum Dir {{ North, South }} fn f(e: Dir) -> integer {{ if e == North {{ 1 }} else {{ 0 }} }}");
+  ok("record-stmt", "struct S {{ }} fn f() {{ x = S {{ }}; }}");
+  ok("record-in-head-then-body", "struct S {{ }} fn f(a: S) {{ if a == S {{ }} {{ }} }}");
+  ok("record-in-call-in-head", "struct S {{ }} fn g(s: S) -> boolean {{ true }} fn f() {{ if g(S {{ }}) {{ }} }}");
+  ok("record-in-list-in-head", "struct S {{ }} fn f() {{ for s in [S {{ }}] {{ }} }}");
+  ok("comprehension", "fn f(v: vector<integer>) -> vector<integer> {{ [for x in v {{ x }}] }}");
+  ok("match-head", "enum Dir {{ North, South }} fn f(e: Dir) -> integer {{ match e {{ North => 1, South => 2 }} }}");
+  ok("fields-record-in-head", "struct P {{ x: integer }} fn f(p: P) {{ if p == P {{ x: 1 }} {{ }} }}");
+  assert(parser::parse("broken", "fn f( {{ ") > 0, "a broken program still reports");
+  println("ok");
+}
