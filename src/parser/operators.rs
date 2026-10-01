@@ -3075,6 +3075,23 @@ impl Parser {
         // `false ?? x` stays `false` (false is not null); `null ?? x` → x.
         if self.lexer.has_token("return") {
             self.build_null_coalesce_return(code, ctp, &lhs_type);
+        } else if let Some(kw) = ["continue", "break"]
+            .into_iter()
+            .find(|kw| self.lexer.peek_token(kw))
+        {
+            // `return` is the one control word `??` takes (@F2): a `continue` or `break` here
+            // was read as a missing default and reported only as "Expect token ;", which
+            // names neither the rule nor the spelling that works.  The keyword is consumed so
+            // the statement ends where the author ended it, and the operand stands as written.
+            self.lexer.has_token(kw);
+            if !self.first_pass {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "`?? {kw}` is not supported — after `??` comes a value or `return`.  To \
+                     {kw} on a null, test it first: `if v == null {{ {kw}; }}`"
+                );
+            }
         } else {
             self.build_null_coalesce_default(var_tp, code, parent_tp, precedence, ctp, &lhs_type);
         }

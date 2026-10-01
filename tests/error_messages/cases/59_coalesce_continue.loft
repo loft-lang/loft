@@ -1,0 +1,9 @@
+// `?? continue` is refused, and the refusal names the rule (`??` takes a value or `return`)
+// and the spelling that skips a null.
+fn main() {
+  v = [1, 2];
+  for i in 0..3 {
+    x = v[i] ?? continue;
+    println("{x}");
+  }
+}

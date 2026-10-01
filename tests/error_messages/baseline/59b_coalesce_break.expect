@@ -1,0 +1,10 @@
+==== exit: 1 ====
+==== stdout ====
+==== stderr ====
+error: `?? break` is not supported — after `??` comes a value or `return`.  To break on a null, test it first: `if v == null { break; }`
+  --> <cases>/59b_coalesce_break.loft:5:23
+  |
+5 |     x = v[i] ?? break;
+  |                       ^
+
+error: aborting due to 1 previous error

@@ -1,0 +1,10 @@
+==== exit: 1 ====
+==== stdout ====
+==== stderr ====
+error: `?? continue` is not supported — after `??` comes a value or `return`.  To continue on a null, test it first: `if v == null { continue; }`
+  --> <cases>/59_coalesce_continue.loft:6:26
+  |
+6 |     x = v[i] ?? continue;
+  |                          ^
+
+error: aborting due to 1 previous error
