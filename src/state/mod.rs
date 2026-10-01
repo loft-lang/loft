@@ -298,6 +298,13 @@ pub struct State {
     /// `grow_stack`, by a checkpoint restore — the only places the buffer can move, which the
     /// store's own buffer moves enforce by refusing the stack store (`Store::stack_buffer`).
     pub(crate) stack_base: *mut u8,
+    /// `@FR-R-CodeBase` — `bytecode`'s buffer and length, cached so that reading an operand is
+    /// one add to a pointer `State` holds instead of a walk through the `Arc` and the `Vec`
+    /// (three dependent loads on every op's critical path).  Set at construction and by
+    /// [`State::edit_code`], the one writer of the bytecode, since a write that grows the buffer
+    /// or unshares it from a worker's `Arc` moves it.
+    pub(crate) code_base: *const u8,
+    pub(crate) code_len: u32,
     pub code_pos: u32,
     pub(crate) def_pos: u32,
     pub(crate) source: u16,
@@ -712,6 +719,8 @@ impl State {
         );
         State {
             bytecode: Arc::new(Vec::new()),
+            code_base: std::ptr::null(),
+            code_len: 0,
             stack_cur,
             stack_pos: 4,
             stack_high: 4,
@@ -2819,18 +2828,25 @@ impl State {
     When that was problematic
     */
     pub fn code_put<T>(&mut self, on: u32, value: T) {
-        unsafe {
-            let off = Arc::make_mut(&mut self.bytecode)
-                .as_mut_ptr()
-                .offset(on as isize)
-                .cast::<T>();
+        self.edit_code(|bc| unsafe {
+            let off = bc.as_mut_ptr().offset(on as isize).cast::<T>();
             // The bytecode buffer is byte-granular (`Vec<u8>`); a `T` wider than
             // 1 byte usually lands at an unaligned offset.  Constructing `&mut T`
             // there is UB even where the hardware tolerates the access (the
             // @PLAN53 cluster-1 Miri finding) — write through the unaligned
             // intrinsic instead, which is defined at any alignment.
             off.write_unaligned(value);
-        }
+        });
+    }
+
+    /// `@FR-R-CodeBase` — the one writer of the bytecode: runs `f` on the buffer, then
+    /// re-derives the cached base and length every operand read goes through.  A write may
+    /// grow the buffer or, while a `par` worker shares it, copy it — either moves it.
+    fn edit_code<R>(&mut self, f: impl FnOnce(&mut Vec<u8>) -> R) -> R {
+        let r = f(Arc::make_mut(&mut self.bytecode));
+        self.code_base = self.bytecode.as_ptr();
+        self.code_len = self.bytecode.len() as u32;
+        r
     }
 
     /** Remember the stack position for the current code. */
@@ -2844,28 +2860,30 @@ impl State {
     When that was problematic
     */
     pub fn code_add<T: std::fmt::Display>(&mut self, value: T) {
-        let bc = Arc::make_mut(&mut self.bytecode);
-        if self.code_pos as usize + size_of::<T>() > bc.len() {
-            bc.resize(self.code_pos as usize + size_of::<T>(), 0);
-        }
-        unsafe {
-            let off = bc.as_mut_ptr().offset(self.code_pos as isize).cast::<T>();
-            self.code_pos += u32::try_from(size_of::<T>()).expect("Problem");
+        let pos = self.code_pos as usize;
+        self.edit_code(|bc| {
+            if pos + size_of::<T>() > bc.len() {
+                bc.resize(pos + size_of::<T>(), 0);
+            }
             // Unaligned by construction — see code_put (@PLAN53 cluster 1).
-            off.write_unaligned(value);
-        }
+            unsafe { bc.as_mut_ptr().add(pos).cast::<T>().write_unaligned(value) };
+        });
+        self.code_pos += u32::try_from(size_of::<T>()).expect("Problem");
     }
 
     pub fn code_add_str(&mut self, value: &str) {
         self.code_add(value.len() as u8);
-        let bc = Arc::make_mut(&mut self.bytecode);
-        if self.code_pos as usize + value.len() > bc.len() {
-            bc.resize(self.code_pos as usize + value.len(), 0);
-        }
-        unsafe {
-            let off = bc.as_mut_ptr().offset(self.code_pos as isize);
-            value.as_ptr().copy_to(off, value.len());
-        }
+        let pos = self.code_pos as usize;
+        self.edit_code(|bc| {
+            if pos + value.len() > bc.len() {
+                bc.resize(pos + value.len(), 0);
+            }
+            unsafe {
+                value
+                    .as_ptr()
+                    .copy_to(bc.as_mut_ptr().add(pos), value.len())
+            };
+        });
         self.code_pos += value.len() as u32;
     }
 
@@ -2878,15 +2896,12 @@ impl State {
         // `assert!` inside this generic, inlined into every operator, cost 13 % of the cycles of
         // an interpreted vector loop (measured 2026-10-01): the panic's argument setup sat in
         // the hot path of each operand read.
-        if self.code_pos + (size_of::<T>() as u32) > self.bytecode.len() as u32 {
-            code_out_of_range(self.code_pos, size_of::<T>(), self.bytecode.len());
+        // `@FR-R-CodeBase` — through the cached base and length, not the `Arc`.
+        if self.code_pos + (size_of::<T>() as u32) > self.code_len {
+            code_out_of_range(self.code_pos, size_of::<T>(), self.code_len as usize);
         }
         unsafe {
-            let off = self
-                .bytecode
-                .as_ptr()
-                .offset(self.code_pos as isize)
-                .cast::<T>();
+            let off = self.code_base.add(self.code_pos as usize).cast::<T>();
             self.code_pos += size_of::<T>() as u32;
             // Returns the operand BY VALUE via the unaligned read intrinsic.
             // The buffer is byte-granular, so a `&T` into it would be an
@@ -2899,7 +2914,7 @@ impl State {
     pub fn code_str(&mut self) -> &str {
         let len = self.code::<u8>();
         unsafe {
-            let off = self.bytecode.as_ptr().offset(self.code_pos as isize);
+            let off = self.code_base.add(self.code_pos as usize);
             self.code_pos += u32::from(len);
             std::str::from_utf8_unchecked(std::slice::from_raw_parts(off, len as usize))
         }
@@ -6645,7 +6660,8 @@ impl State {
             // written per op.
             let _published = crate::crash_report::LeanSource::register(
                 std::ptr::addr_of!(self.database.alloc_pc),
-                std::ptr::addr_of!(self.bytecode),
+                std::ptr::addr_of!(self.code_base),
+                std::ptr::addr_of!(self.code_len),
             );
             while self.code_pos < bytecode_len {
                 let op_pos_rt = self.code_pos;
@@ -7732,6 +7748,8 @@ impl State {
             stack_high: 4,
             stack_cap_bytes,
             stack_base,
+            code_base: bytecode.as_ptr(),
+            code_len: bytecode.len() as u32,
             verify_on: crate::stack_verify::enabled(),
             fast_stack: fast_stack_allowed(),
             walk_steps: None,
