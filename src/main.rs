@@ -4028,12 +4028,12 @@ fn generate_native_stubs(pkg_path: &std::path::Path) {
                 | Type::Hash(_, _, _)
                 | Type::Radix(_, _, _)
                 | Type::Trie(_, _, _) => {
-                    let type_name = p.data.type_name_str(&attr.typedef);
+                    let type_name = p.data.display_type_name(&attr.typedef);
                     c_params.push(format!("{name}: loft_ffi::LoftRef /* {type_name} */"));
                     param_names.push(name.clone());
                 }
                 other => {
-                    let type_name = p.data.type_name_str(other);
+                    let type_name = p.data.display_type_name(other);
                     c_params.push(format!(
                         "{name}: () /* {type_name} — not supported in native */"
                     ));
@@ -4049,7 +4049,7 @@ fn generate_native_stubs(pkg_path: &std::path::Path) {
             Text,
             Ref(String),
         }
-        let ret_type_name = p.data.type_name_str(&def.returned);
+        let ret_type_name = p.data.display_type_name(&def.returned);
         let ret_kind = match &def.returned {
             Type::Void | Type::Null => RetKind::None,
             // Post-2c round 10c: wide Type::Integer (former Type::Long) → i64.

@@ -291,7 +291,7 @@ pub fn resolve_at(text: &str, stdlib_dir: &str, line: u32, col: u32) -> Option<H
             }
             let vars = p.data.def(fn_def).variables();
             let vname = vars.name(var_nr).to_string();
-            let sig = format!("{vname}: {}", p.data.type_name_str(vars.tp(var_nr)));
+            let sig = format!("{vname}: {}", p.data.display_type_name(vars.tp(var_nr)));
             // The declaration is the binding's earliest occurrence in the buffer.
             let decl = p
                 .resolutions()
@@ -319,7 +319,7 @@ pub fn resolve_at(text: &str, stdlib_dir: &str, line: u32, col: u32) -> Option<H
             let tname = p.data.def(type_def).name().to_string();
             let sig = format!(
                 "{tname}.{fname}: {}",
-                p.data.type_name_str(&p.data.attr_type(type_def, attr))
+                p.data.display_type_name(&p.data.attr_type(type_def, attr))
             );
             let pos = p.data.def(type_def).position.clone();
             Some(Hover {
@@ -1425,7 +1425,7 @@ pub fn inlay_hints(text: &str, name: &str, stdlib_dir: &str) -> Vec<InlayHint> {
         if matches!(tp, Type::Unknown(_) | Type::Never | Type::Null | Type::Void) {
             continue;
         }
-        let label = p.data.type_name_str(tp);
+        let label = p.data.display_type_name(tp);
         if label.is_empty() {
             continue;
         }
@@ -1564,7 +1564,7 @@ fn identifier_completions(data: &Data, prefix: &str, cursor_line: u32) -> Vec<Co
                 Completion {
                     label: vname.to_string(),
                     kind: 6, // Variable
-                    detail: data.type_name_str(vars.tp(v)),
+                    detail: data.display_type_name(vars.tp(v)),
                 },
             ));
         }
@@ -1680,7 +1680,7 @@ fn member_completions(data: &Data, receiver: &str, cursor_line: u32) -> Vec<Comp
             out.push(Completion {
                 label: a.name.clone(),
                 kind: 5, // Field
-                detail: data.type_name_str(&a.typedef),
+                detail: data.display_type_name(&a.typedef),
             });
         }
     }
@@ -2121,7 +2121,7 @@ pub fn extract_function(
     {
         return None;
     }
-    let ty = |v: u16| data.type_name_str(vars.tp(v));
+    let ty = |v: u16| data.display_type_name(vars.tp(v));
     let params: Vec<String> = inputs
         .iter()
         .map(|&v| format!("{}: {}", vars.written_name(v), ty(v)))

@@ -5000,53 +5000,7 @@ impl Parser {
     /// (`i32`/`u8`/`u16`/`i8`/`i16`) so a narrowing diagnostic doesn't print
     /// the bare `integer` for both sides (they share bounds).
     fn int_type_name(&self, t: &Type) -> String {
-        let Type::Integer(s) = t else {
-            return t.source_name(&self.data);
-        };
-        if s.forced_size.is_none() {
-            // A `limit(lo, hi)` range has no forced width and is still the author's alias —
-            // `integer(0, 10)` is true and no spelling the parser reads, so the cure built from
-            // it (`as integer(0, 10)?`) could not be typed back in.  The full integer keeps its
-            // own name: an alias of it (`type Count = integer`) must not rename every integer.
-            if s.is_wide_template() || s.is_signed32_template() {
-                return t.source_name(&self.data);
-            }
-            // With no alias to name it — an inline `integer limit(0, 1000000)` field — the
-            // range is spelled the way the author wrote it.  `t.source_name` answers
-            // `integer(0, 1000000)`, the type's own key, and the cure built from it
-            // (`as integer(0, 1000000)?`) did not parse.
-            return self.data.integer_alias_any_source(s, false).map_or_else(
-                || format!("integer limit({}, {})", s.min, s.max),
-                str::to_string,
-            );
-        }
-        // A stdlib alias is named by its own RANGE, never by its width and sign.  This spelled
-        // a type from `forced_size` plus `min < 0` alone, which is right for the six aliases
-        // and wrong for every other declared range: `type Lim = integer limit(1000, 1100)
-        // size(1)` was reported as `u8`, so the refusal told an author to fit 1050 into
-        // `0..=255` and its own cure (`as u8?`) could never succeed (loft#1641).  Matching the
-        // whole range keeps loft#1247's fix — `u32` and `i32` share a width and differ in
-        // range, so neither can be named as the other — and makes it impossible to name a type
-        // whose values are not the named one's.
-        let named = match (s.min, s.max) {
-            (0, 255) => Some("u8"),
-            (-128, 127) => Some("i8"),
-            (0, 65535) => Some("u16"),
-            (-32768, 32767) => Some("i16"),
-            (0, 4_294_967_294) => Some("u32"),
-            _ if s.is_signed32_template() => Some("i32"),
-            _ => None,
-        };
-        if let Some(n) = named {
-            return n.to_string();
-        }
-        // Otherwise the alias the AUTHOR declared, which is the only spelling they can act on:
-        // `integer(1000, 1100)` is true and is no syntax the parser reads, so a cure built from
-        // it (`as integer(1000, 1100)?`) cannot be typed back in.
-        if let Some(name) = self.data.integer_alias_any_source(s, false) {
-            return name.to_string();
-        }
-        t.source_name(&self.data)
+        self.data.integer_name(t)
     }
 
     /// @PLAN48 P2: literal exemption — true when `code` is a constant integer that
@@ -15851,7 +15805,7 @@ impl Parser {
             _ => "other",
         };
         let pos = self.lexer.pos();
-        let name = |t: Option<&Type>| t.map_or(String::new(), |t| self.data.type_name_str(t));
+        let name = |t: Option<&Type>| t.map_or(String::new(), |t| self.data.display_type_name(t));
         eprintln!(
             "[eq-identity] {}:{}  {kind}  {} {op} {}",
             pos.file,

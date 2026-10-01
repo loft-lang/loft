@@ -5126,7 +5126,7 @@ pub fn drop_copy_census(
                 op_append: data.def_nr("OpAppendVector"),
                 returned: data
                     .type_owns_droppable_anywhere(def.returned.base())
-                    .then(|| data.type_name_str(&def.returned)),
+                    .then(|| data.display_type_name(&def.returned)),
                 whole_tuple: None,
                 rhs_of: None,
                 placement: crate::lease::Placement::Structure,
@@ -5153,7 +5153,7 @@ pub fn drop_copy_census(
                 let lease = cx
                     .frame
                     .written_var_verdict(var, crate::lease::Placement::Structure);
-                let tp = data.type_name_str(func.tp(var));
+                let tp = data.display_type_name(func.tp(var));
                 cx.emit(
                     "bind",
                     &tp,
@@ -5180,7 +5180,7 @@ pub fn drop_copy_census(
                 let lease = cx
                     .frame
                     .written_var_verdict(src, crate::lease::Placement::Structure);
-                let tp = data.type_name_str(func.tp(var));
+                let tp = data.display_type_name(func.tp(var));
                 cx.emit(
                     "bind",
                     &tp,
@@ -5509,7 +5509,7 @@ impl Census<'_> {
                                 ),
                             )
                         };
-                        let tp = self.data.type_name_str(self.func.tp(hold));
+                        let tp = self.data.display_type_name(self.func.tp(hold));
                         self.emit("tuple", &tp, &[root], "-", (Some(&lease), &liveness), false);
                         crate::copy_manifest::note_lease_return(self.d_nr);
                         whole = Some(root);
@@ -5605,7 +5605,7 @@ impl Census<'_> {
                 };
                 let mut from = Vec::new();
                 copy_source_roots(&args[1], self.data, self.func, &mut from);
-                let tp = self.data.type_name_str(self.func.tp(*dest));
+                let tp = self.data.display_type_name(self.func.tp(*dest));
                 let into = self.func.name(*dest).to_string();
                 let lease = self.frame.written_verdict(&args[1], self.placement);
                 let liveness = lease_column(self.func, self.frame.liveness_verdict(node, &args[1]));
@@ -5648,7 +5648,7 @@ impl Census<'_> {
                 } else {
                     "bind-view"
                 };
-                let tp = self.data.type_name_str(self.func.tp(*v));
+                let tp = self.data.display_type_name(self.func.tp(*v));
                 let into = self.func.name(*v).to_string();
                 let lease = self.frame.written_var_verdict(*src, self.placement);
                 let liveness = lease_column(self.func, self.frame.liveness_var_verdict(node, *src));
@@ -5675,7 +5675,7 @@ impl Census<'_> {
                 let mut arms = Vec::new();
                 join_var_arms(rhs, &mut arms);
                 let into = self.func.name(*v).to_string();
-                let tp = self.data.type_name_str(self.func.tp(*v));
+                let tp = self.data.display_type_name(self.func.tp(*v));
                 let dest_deps = self.func.tp(*v).depend();
                 let placement = if into.starts_with("__ret_") {
                     Placement::Return
@@ -5724,7 +5724,7 @@ impl Census<'_> {
                                 ),
                             )
                         };
-                        let tp = self.data.type_name_str(self.func.tp(base));
+                        let tp = self.data.display_type_name(self.func.tp(base));
                         self.emit("tuple", &tp, &[root], "-", (Some(&lease), &liveness), false);
                     }
                     if let Some((rhs, v)) = self.rhs_of
@@ -5752,7 +5752,7 @@ impl Census<'_> {
                             let lease = self.frame.written_verdict(item, self.placement);
                             let mut from = Vec::new();
                             copy_source_roots(item, self.data, func, &mut from);
-                            let tp = self.data.type_name_str(elm);
+                            let tp = self.data.display_type_name(elm);
                             self.emit("item", &tp, &from, func.name(v), (Some(&lease), "-"), false);
                         }
                     }
@@ -7111,7 +7111,7 @@ pub fn warn_double_move(
         cx.report_all_projections();
         for (src, first, at) in std::mem::take(&mut cx.found) {
             let name = def.variables.name(src);
-            let ty = data.type_name_str(def.variables.tp(src));
+            let ty = data.display_type_name(def.variables.tp(src));
             let file = if at.file.is_empty() {
                 def_file
             } else {
@@ -7876,7 +7876,7 @@ pub fn warn_copies(data: &Data, diags: &mut crate::diagnostics::Diagnostics, fal
             let ty = if r.source == u16::MAX {
                 "a structure".to_string()
             } else {
-                data.type_name_str(def.variables.tp(r.source))
+                data.display_type_name(def.variables.tp(r.source))
             };
             // The copy op carries no span; it borrows the nearest span or (S5.2) the enclosing
             // line marker. A line-only fallback has an empty `file`, and the file that line
@@ -8050,7 +8050,7 @@ pub fn report_copies(data: &Data) {
             let ty = if r.source == u16::MAX {
                 "a structure".to_string()
             } else {
-                data.type_name_str(def.variables.tp(r.source))
+                data.display_type_name(def.variables.tp(r.source))
             };
             rows.push(Row {
                 fname: def.name.clone(),
@@ -8941,7 +8941,7 @@ pub fn lease_calls(data: &mut Data) {
                 op_append: data.def_nr("OpAppendVector"),
                 returned: data
                     .type_owns_droppable_anywhere(def.returned.base())
-                    .then(|| data.type_name_str(&def.returned)),
+                    .then(|| data.display_type_name(&def.returned)),
                 whole_tuple: None,
                 rhs_of: None,
                 placement: crate::lease::Placement::Structure,

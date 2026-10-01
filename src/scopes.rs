@@ -2978,7 +2978,7 @@ fn def_reshape_refusals(
             format!(
                 "`{view_name}` would be given its own copy of `{tp}`, and a copy of a value that \
                  owns a resource is a second structure releasing that resource a second time",
-                tp = data.type_name_str(function.tp(view))
+                tp = data.display_type_name(function.tp(view))
             )
         };
         // The way out differs too, and the `&` one is WRONG here: "bind without `&` to work on a
@@ -2989,7 +2989,7 @@ fn def_reshape_refusals(
         } else {
             format!(
                 "or read `{tp}` where it lives",
-                tp = data.type_name_str(function.tp(view))
+                tp = data.display_type_name(function.tp(view))
             )
         };
         // The CALLEE form names the callee's act before the reason, and the JOINER between them

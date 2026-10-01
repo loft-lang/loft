@@ -19647,7 +19647,7 @@ impl Parser {
             // does when nothing is declared.  The argument is not evaluated — `type_of`'s rule.
             "type_name" if types.len() == 1 => {
                 if !self.first_pass {
-                    *val = Value::Text(self.data.type_name_str(&types[0]));
+                    *val = Value::Text(self.data.display_type_name(&types[0]));
                 }
                 return Type::Text(Deps::none());
             }
@@ -20525,7 +20525,7 @@ impl Parser {
             if let Some(tp) = self.parse_type_full(u32::MAX, false)
                 && !self.first_pass
             {
-                *val = Value::Text(self.data.type_name_str(&tp));
+                *val = Value::Text(self.data.display_type_name(&tp));
             }
         } else if let Some(id) = self.lexer.has_identifier() {
             let d_nr = self.data.def_nr(&id);
@@ -20544,7 +20544,7 @@ impl Parser {
                 } else if let Some(tp) = self.parse_type(u32::MAX, &id, false) {
                     found = true;
                     if !self.first_pass {
-                        *val = Value::Text(self.data.type_name_str(&tp));
+                        *val = Value::Text(self.data.display_type_name(&tp));
                     }
                 }
             }
@@ -20554,7 +20554,7 @@ impl Parser {
             self.lexer.revert(lnk);
             let tp = self.expression(&mut drop);
             if !self.first_pass {
-                *val = Value::Text(self.data.type_name_str(&tp));
+                *val = Value::Text(self.data.display_type_name(&tp));
             }
         }
         self.lexer.token(")");

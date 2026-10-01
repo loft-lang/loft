@@ -1,0 +1,535 @@
+diff --git b/src/c_signature.rs a/src/c_signature.rs
+index 395acbdcc..f53c251f7 100644
+--- b/src/c_signature.rs
++++ a/src/c_signature.rs
+@@ -427,7 +427,7 @@ fn position_mismatches(data: &Data, sig: &CSignature, params: &[Type]) -> Vec<St
+                         "parameter {} is `{}` in loft but `{}` in C — a scalar needs a C integer \
+                          type, or a pointer if it is a handle",
+                         i + 1,
+-                        data.display_type_name(p),
++                        data.type_name_str(p),
+                         spelling(c)
+                     ));
+                 }
+@@ -439,7 +439,7 @@ fn position_mismatches(data: &Data, sig: &CSignature, params: &[Type]) -> Vec<St
+                         "parameter {} is `{}` in loft but `{}` in C — a text crosses as a \
+                          NUL-terminated `const char*`",
+                         i + 1,
+-                        data.display_type_name(p),
++                        data.type_name_str(p),
+                         spelling(c)
+                     ));
+                 }
+@@ -451,7 +451,7 @@ fn position_mismatches(data: &Data, sig: &CSignature, params: &[Type]) -> Vec<St
+                         "parameter {} is `{}` in loft, so C parameter {} must be the element \
+                          pointer, not `{}`",
+                         i + 1,
+-                        data.display_type_name(p),
++                        data.type_name_str(p),
+                         c + 1,
+                         spelling(c)
+                     ));
+@@ -491,7 +491,7 @@ fn position_mismatches(data: &Data, sig: &CSignature, params: &[Type]) -> Vec<St
+                          `{}`, {consequence}. Declare the loft element the way the C header \
+                          spells it, or `void*` in C if the bytes really are opaque",
+                         i + 1,
+-                        data.display_type_name(p),
++                        data.type_name_str(p),
+                         img.bytes,
+                         if img.float { "float" } else { "integer" },
+                         c + 1,
+@@ -1005,7 +1005,7 @@ pub fn check(
+         match (&sig.ret, ret_shape) {
+             (CType::Void, _) => errs.push(format!(
+                 "the loft declaration returns `{}` but the C signature returns `void`",
+-                data.display_type_name(ret)
++                data.type_name_str(ret)
+             )),
+             // @PLN128 arc E — the float pair, ahead of every shape-based arm,
+             // because `shape_of` answers for the ARGUMENT direction (where a
+@@ -1019,12 +1019,12 @@ pub fn check(
+                 "the C signature returns a {bits}-bit float, so the loft declaration must return \
+                  `{}`, not `{}`",
+                 if *bits == 32 { "single" } else { "float" },
+-                data.display_type_name(ret)
++                data.type_name_str(ret)
+             )),
+             (c, _) if matches!(ret.base(), Type::Float | Type::Single) => errs.push(format!(
+                 "the loft declaration returns `{}` but the C signature returns `{}` — a float \
+                  comes back only from a C `float` or `double`",
+-                data.display_type_name(ret),
++                data.type_name_str(ret),
+                 c.spelling()
+             )),
+             (_, LoftCShape::Refused(why)) => {
+@@ -1059,7 +1059,7 @@ pub fn check(
+             (CType::Pointer { .. }, LoftCShape::Scalar) => {}
+             (c, _) => errs.push(format!(
+                 "the loft declaration returns `{}` but the C signature returns `{}`",
+-                data.display_type_name(ret),
++                data.type_name_str(ret),
+                 c.spelling()
+             )),
+         }
+diff --git b/src/copy_manifest.rs a/src/copy_manifest.rs
+index e8298e186..afa64ea2f 100644
+--- b/src/copy_manifest.rs
++++ a/src/copy_manifest.rs
+@@ -558,7 +558,7 @@ pub fn report(data: &crate::data::Data) -> usize {
+             def.name,
+             var_name,
+             origin_note,
+-            data.display_type_name(def.variables.tp(s.var)),
++            data.type_name_str(def.variables.tp(s.var)),
+             who,
+         );
+     }
+diff --git b/src/data.rs a/src/data.rs
+index 97eebb1f9..eee337c83 100644
+--- b/src/data.rs
++++ a/src/data.rs
+@@ -12952,74 +12952,16 @@ impl Data {
+         }
+     }
+ 
+-    /// A type's name with every integer spelled `integer`, whatever its width or range.
+-    ///
+-    /// This is the spelling the API surface RECORDS (`api_surface::signature_of`): its
+-    /// signature strings are compared across library versions, so it is a contract, not a
+-    /// label, and renaming a width there would read as an API change.  Text shown to a
+-    /// reader wants [`Self::display_type_name`], which names the width.
++    /// Return a user-facing type name string for use by `type_name()`.
+     #[must_use]
+     pub fn type_name_str(&self, tp: &Type) -> String {
+-        self.type_name_with(tp, false)
+-    }
+-
+-    /// A type's name as a reader should see it — `type_name()`, advice, hover text: an
+-    /// integer is named by its alias (`u8`, `i16`, a user's `type Lim = …`) or its range
+-    /// (`integer limit(0, 10)`), inside a collection or a function type too (loft#1824).
+-    #[must_use]
+-    pub fn display_type_name(&self, tp: &Type) -> String {
+-        self.type_name_with(tp, true)
+-    }
+-
+-    /// An integer type's name as its author can write it back — the one home for the
+-    /// narrowing diagnostics and [`Self::display_type_name`] alike.  A full-width `integer`
+-    /// keeps its own name: an alias of it (`type Count = integer`) must not rename every
+-    /// integer.  A standard alias is named by its RANGE, never by width and sign alone —
+-    /// `u32` and `i32` share a width, and a declared `integer limit(1000, 1100) size(1)` is
+-    /// not a `u8` (loft#1641, loft#1247).  Otherwise the alias the author declared, and with
+-    /// none, the range spelled as the author wrote it — `integer(0, 10)`, the type's own key,
+-    /// is no syntax the parser reads, so a cure built from it could not be typed back in.
+-    #[must_use]
+-    pub fn integer_name(&self, t: &Type) -> String {
+-        let Type::Integer(s) = t else {
+-            return t.source_name(self);
+-        };
+-        if s.forced_size.is_none() {
+-            if s.is_wide_template() || s.is_signed32_template() {
+-                return t.source_name(self);
+-            }
+-            return self.integer_alias_any_source(s, false).map_or_else(
+-                || format!("integer limit({}, {})", s.min, s.max),
+-                str::to_string,
+-            );
+-        }
+-        let named = match (s.min, s.max) {
+-            (0, 255) => Some("u8"),
+-            (-128, 127) => Some("i8"),
+-            (0, 65535) => Some("u16"),
+-            (-32768, 32767) => Some("i16"),
+-            (0, 4_294_967_294) => Some("u32"),
+-            _ if s.is_signed32_template() => Some("i32"),
+-            _ => None,
+-        };
+-        if let Some(n) = named {
+-            return n.to_string();
+-        }
+-        if let Some(name) = self.integer_alias_any_source(s, false) {
+-            return name.to_string();
+-        }
+-        t.source_name(self)
+-    }
+-
+-    fn type_name_with(&self, tp: &Type, named: bool) -> String {
+-        let name = |t: &Type| self.type_name_with(t, named);
+         match tp {
+-            Type::Optional(inner) => format!("{}?", name(inner)),
++            Type::Optional(inner) => format!("{}?", self.type_name_str(inner)),
+             Type::Unknown(_) => "unknown".to_string(),
+             Type::Null => "null".to_string(),
+             Type::Void => "void".to_string(),
+             Type::Never => "never".to_string(),
+-            Type::Integer(_) if named => self.integer_name(tp),
++            Type::Integer(s) if s.is_signed32_template() => "integer".to_string(),
+             Type::Integer(_) => "integer".to_string(),
+             Type::Boolean => "boolean".to_string(),
+             Type::Float => "float".to_string(),
+@@ -13028,22 +12970,22 @@ impl Data {
+             Type::Text(_) => "text".to_string(),
+             Type::Keys => "keys".to_string(),
+             Type::Enum(d_nr, _, _) | Type::Reference(d_nr, _) => self.def(*d_nr).name.clone(),
+-            Type::RefVar(inner) => format!("&{}", name(inner)),
+-            Type::Vector(inner, _) => format!("vector<{}>", name(inner)),
++            Type::RefVar(inner) => format!("&{}", self.type_name_str(inner)),
++            Type::Vector(inner, _) => format!("vector<{}>", self.type_name_str(inner)),
+             Type::Sorted(d_nr, _, _) => format!("sorted<{}>", self.def(*d_nr).name),
+             Type::Index(d_nr, _, _) => format!("index<{}>", self.def(*d_nr).name),
+             Type::Hash(d_nr, _, _) => format!("hash<{}>", self.def(*d_nr).name),
+             Type::Routine(_) => "fn".to_string(),
+             Type::Function(args, ret, ..) => {
+-                let args_s: Vec<String> = args.iter().map(&name).collect();
+-                format!("fn({}) -> {}", args_s.join(", "), name(ret))
++                let args_s: Vec<String> = args.iter().map(|a| self.type_name_str(a)).collect();
++                format!("fn({}) -> {}", args_s.join(", "), self.type_name_str(ret))
+             }
+-            Type::Iterator(inner, _) => format!("iterator<{}>", name(inner)),
+-            Type::Rewritten(inner) => name(inner),
++            Type::Iterator(inner, _) => format!("iterator<{}>", self.type_name_str(inner)),
++            Type::Rewritten(inner) => self.type_name_str(inner),
+             Type::Radix(d_nr, _, _) => format!("spatial<{}>", self.def(*d_nr).name),
+             Type::Trie(d_nr, key, _) => format!("trie<{}[{key}]>", self.def(*d_nr).name),
+             Type::Tuple(elems) => {
+-                let es: Vec<String> = elems.iter().map(&name).collect();
++                let es: Vec<String> = elems.iter().map(|e| self.type_name_str(e)).collect();
+                 format!("({})", es.join(", "))
+             }
+         }
+diff --git b/src/lsp.rs a/src/lsp.rs
+index a592b59b9..d4c9d39bf 100644
+--- b/src/lsp.rs
++++ a/src/lsp.rs
+@@ -291,7 +291,7 @@ pub fn resolve_at(text: &str, stdlib_dir: &str, line: u32, col: u32) -> Option<H
+             }
+             let vars = p.data.def(fn_def).variables();
+             let vname = vars.name(var_nr).to_string();
+-            let sig = format!("{vname}: {}", p.data.display_type_name(vars.tp(var_nr)));
++            let sig = format!("{vname}: {}", p.data.type_name_str(vars.tp(var_nr)));
+             // The declaration is the binding's earliest occurrence in the buffer.
+             let decl = p
+                 .resolutions()
+@@ -319,7 +319,7 @@ pub fn resolve_at(text: &str, stdlib_dir: &str, line: u32, col: u32) -> Option<H
+             let tname = p.data.def(type_def).name().to_string();
+             let sig = format!(
+                 "{tname}.{fname}: {}",
+-                p.data.display_type_name(&p.data.attr_type(type_def, attr))
++                p.data.type_name_str(&p.data.attr_type(type_def, attr))
+             );
+             let pos = p.data.def(type_def).position.clone();
+             Some(Hover {
+@@ -1425,7 +1425,7 @@ pub fn inlay_hints(text: &str, name: &str, stdlib_dir: &str) -> Vec<InlayHint> {
+         if matches!(tp, Type::Unknown(_) | Type::Never | Type::Null | Type::Void) {
+             continue;
+         }
+-        let label = p.data.display_type_name(tp);
++        let label = p.data.type_name_str(tp);
+         if label.is_empty() {
+             continue;
+         }
+@@ -1564,7 +1564,7 @@ fn identifier_completions(data: &Data, prefix: &str, cursor_line: u32) -> Vec<Co
+                 Completion {
+                     label: vname.to_string(),
+                     kind: 6, // Variable
+-                    detail: data.display_type_name(vars.tp(v)),
++                    detail: data.type_name_str(vars.tp(v)),
+                 },
+             ));
+         }
+@@ -1680,7 +1680,7 @@ fn member_completions(data: &Data, receiver: &str, cursor_line: u32) -> Vec<Comp
+             out.push(Completion {
+                 label: a.name.clone(),
+                 kind: 5, // Field
+-                detail: data.display_type_name(&a.typedef),
++                detail: data.type_name_str(&a.typedef),
+             });
+         }
+     }
+@@ -2121,7 +2121,7 @@ pub fn extract_function(
+     {
+         return None;
+     }
+-    let ty = |v: u16| data.display_type_name(vars.tp(v));
++    let ty = |v: u16| data.type_name_str(vars.tp(v));
+     let params: Vec<String> = inputs
+         .iter()
+         .map(|&v| format!("{}: {}", vars.written_name(v), ty(v)))
+diff --git b/src/main.rs a/src/main.rs
+index 7c6c4b957..13a5e0393 100644
+--- b/src/main.rs
++++ a/src/main.rs
+@@ -4028,12 +4028,12 @@ fn generate_native_stubs(pkg_path: &std::path::Path) {
+                 | Type::Hash(_, _, _)
+                 | Type::Radix(_, _, _)
+                 | Type::Trie(_, _, _) => {
+-                    let type_name = p.data.display_type_name(&attr.typedef);
++                    let type_name = p.data.type_name_str(&attr.typedef);
+                     c_params.push(format!("{name}: loft_ffi::LoftRef /* {type_name} */"));
+                     param_names.push(name.clone());
+                 }
+                 other => {
+-                    let type_name = p.data.display_type_name(other);
++                    let type_name = p.data.type_name_str(other);
+                     c_params.push(format!(
+                         "{name}: () /* {type_name} — not supported in native */"
+                     ));
+@@ -4049,7 +4049,7 @@ fn generate_native_stubs(pkg_path: &std::path::Path) {
+             Text,
+             Ref(String),
+         }
+-        let ret_type_name = p.data.display_type_name(&def.returned);
++        let ret_type_name = p.data.type_name_str(&def.returned);
+         let ret_kind = match &def.returned {
+             Type::Void | Type::Null => RetKind::None,
+             // Post-2c round 10c: wide Type::Integer (former Type::Long) → i64.
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index 6a7db70f3..b8b6d98ef 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -19647,7 +19647,7 @@ impl Parser {
+             // does when nothing is declared.  The argument is not evaluated — `type_of`'s rule.
+             "type_name" if types.len() == 1 => {
+                 if !self.first_pass {
+-                    *val = Value::Text(self.data.display_type_name(&types[0]));
++                    *val = Value::Text(self.data.type_name_str(&types[0]));
+                 }
+                 return Type::Text(Deps::none());
+             }
+@@ -20525,7 +20525,7 @@ impl Parser {
+             if let Some(tp) = self.parse_type_full(u32::MAX, false)
+                 && !self.first_pass
+             {
+-                *val = Value::Text(self.data.display_type_name(&tp));
++                *val = Value::Text(self.data.type_name_str(&tp));
+             }
+         } else if let Some(id) = self.lexer.has_identifier() {
+             let d_nr = self.data.def_nr(&id);
+@@ -20544,7 +20544,7 @@ impl Parser {
+                 } else if let Some(tp) = self.parse_type(u32::MAX, &id, false) {
+                     found = true;
+                     if !self.first_pass {
+-                        *val = Value::Text(self.data.display_type_name(&tp));
++                        *val = Value::Text(self.data.type_name_str(&tp));
+                     }
+                 }
+             }
+@@ -20554,7 +20554,7 @@ impl Parser {
+             self.lexer.revert(lnk);
+             let tp = self.expression(&mut drop);
+             if !self.first_pass {
+-                *val = Value::Text(self.data.display_type_name(&tp));
++                *val = Value::Text(self.data.type_name_str(&tp));
+             }
+         }
+         self.lexer.token(")");
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index 41564b3b0..f5bb2ff67 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -5000,7 +5000,53 @@ impl Parser {
+     /// (`i32`/`u8`/`u16`/`i8`/`i16`) so a narrowing diagnostic doesn't print
+     /// the bare `integer` for both sides (they share bounds).
+     fn int_type_name(&self, t: &Type) -> String {
+-        self.data.integer_name(t)
++        let Type::Integer(s) = t else {
++            return t.source_name(&self.data);
++        };
++        if s.forced_size.is_none() {
++            // A `limit(lo, hi)` range has no forced width and is still the author's alias —
++            // `integer(0, 10)` is true and no spelling the parser reads, so the cure built from
++            // it (`as integer(0, 10)?`) could not be typed back in.  The full integer keeps its
++            // own name: an alias of it (`type Count = integer`) must not rename every integer.
++            if s.is_wide_template() || s.is_signed32_template() {
++                return t.source_name(&self.data);
++            }
++            // With no alias to name it — an inline `integer limit(0, 1000000)` field — the
++            // range is spelled the way the author wrote it.  `t.source_name` answers
++            // `integer(0, 1000000)`, the type's own key, and the cure built from it
++            // (`as integer(0, 1000000)?`) did not parse.
++            return self.data.integer_alias_any_source(s, false).map_or_else(
++                || format!("integer limit({}, {})", s.min, s.max),
++                str::to_string,
++            );
++        }
++        // A stdlib alias is named by its own RANGE, never by its width and sign.  This spelled
++        // a type from `forced_size` plus `min < 0` alone, which is right for the six aliases
++        // and wrong for every other declared range: `type Lim = integer limit(1000, 1100)
++        // size(1)` was reported as `u8`, so the refusal told an author to fit 1050 into
++        // `0..=255` and its own cure (`as u8?`) could never succeed (loft#1641).  Matching the
++        // whole range keeps loft#1247's fix — `u32` and `i32` share a width and differ in
++        // range, so neither can be named as the other — and makes it impossible to name a type
++        // whose values are not the named one's.
++        let named = match (s.min, s.max) {
++            (0, 255) => Some("u8"),
++            (-128, 127) => Some("i8"),
++            (0, 65535) => Some("u16"),
++            (-32768, 32767) => Some("i16"),
++            (0, 4_294_967_294) => Some("u32"),
++            _ if s.is_signed32_template() => Some("i32"),
++            _ => None,
++        };
++        if let Some(n) = named {
++            return n.to_string();
++        }
++        // Otherwise the alias the AUTHOR declared, which is the only spelling they can act on:
++        // `integer(1000, 1100)` is true and is no syntax the parser reads, so a cure built from
++        // it (`as integer(1000, 1100)?`) cannot be typed back in.
++        if let Some(name) = self.data.integer_alias_any_source(s, false) {
++            return name.to_string();
++        }
++        t.source_name(&self.data)
+     }
+ 
+     /// @PLAN48 P2: literal exemption — true when `code` is a constant integer that
+@@ -15805,7 +15851,7 @@ impl Parser {
+             _ => "other",
+         };
+         let pos = self.lexer.pos();
+-        let name = |t: Option<&Type>| t.map_or(String::new(), |t| self.data.display_type_name(t));
++        let name = |t: Option<&Type>| t.map_or(String::new(), |t| self.data.type_name_str(t));
+         eprintln!(
+             "[eq-identity] {}:{}  {kind}  {} {op} {}",
+             pos.file,
+diff --git b/src/scopes.rs a/src/scopes.rs
+index 374ca253b..901a97c5b 100644
+--- b/src/scopes.rs
++++ a/src/scopes.rs
+@@ -2978,7 +2978,7 @@ fn def_reshape_refusals(
+             format!(
+                 "`{view_name}` would be given its own copy of `{tp}`, and a copy of a value that \
+                  owns a resource is a second structure releasing that resource a second time",
+-                tp = data.display_type_name(function.tp(view))
++                tp = data.type_name_str(function.tp(view))
+             )
+         };
+         // The way out differs too, and the `&` one is WRONG here: "bind without `&` to work on a
+@@ -2989,7 +2989,7 @@ fn def_reshape_refusals(
+         } else {
+             format!(
+                 "or read `{tp}` where it lives",
+-                tp = data.display_type_name(function.tp(view))
++                tp = data.type_name_str(function.tp(view))
+             )
+         };
+         // The CALLEE form names the callee's act before the reason, and the JOINER between them
+diff --git b/src/use_analysis.rs a/src/use_analysis.rs
+index 58f821258..3e89ac776 100644
+--- b/src/use_analysis.rs
++++ a/src/use_analysis.rs
+@@ -5126,7 +5126,7 @@ pub fn drop_copy_census(
+                 op_append: data.def_nr("OpAppendVector"),
+                 returned: data
+                     .type_owns_droppable_anywhere(def.returned.base())
+-                    .then(|| data.display_type_name(&def.returned)),
++                    .then(|| data.type_name_str(&def.returned)),
+                 whole_tuple: None,
+                 rhs_of: None,
+                 placement: crate::lease::Placement::Structure,
+@@ -5153,7 +5153,7 @@ pub fn drop_copy_census(
+                 let lease = cx
+                     .frame
+                     .written_var_verdict(var, crate::lease::Placement::Structure);
+-                let tp = data.display_type_name(func.tp(var));
++                let tp = data.type_name_str(func.tp(var));
+                 cx.emit(
+                     "bind",
+                     &tp,
+@@ -5180,7 +5180,7 @@ pub fn drop_copy_census(
+                 let lease = cx
+                     .frame
+                     .written_var_verdict(src, crate::lease::Placement::Structure);
+-                let tp = data.display_type_name(func.tp(var));
++                let tp = data.type_name_str(func.tp(var));
+                 cx.emit(
+                     "bind",
+                     &tp,
+@@ -5509,7 +5509,7 @@ impl Census<'_> {
+                                 ),
+                             )
+                         };
+-                        let tp = self.data.display_type_name(self.func.tp(hold));
++                        let tp = self.data.type_name_str(self.func.tp(hold));
+                         self.emit("tuple", &tp, &[root], "-", (Some(&lease), &liveness), false);
+                         crate::copy_manifest::note_lease_return(self.d_nr);
+                         whole = Some(root);
+@@ -5605,7 +5605,7 @@ impl Census<'_> {
+                 };
+                 let mut from = Vec::new();
+                 copy_source_roots(&args[1], self.data, self.func, &mut from);
+-                let tp = self.data.display_type_name(self.func.tp(*dest));
++                let tp = self.data.type_name_str(self.func.tp(*dest));
+                 let into = self.func.name(*dest).to_string();
+                 let lease = self.frame.written_verdict(&args[1], self.placement);
+                 let liveness = lease_column(self.func, self.frame.liveness_verdict(node, &args[1]));
+@@ -5648,7 +5648,7 @@ impl Census<'_> {
+                 } else {
+                     "bind-view"
+                 };
+-                let tp = self.data.display_type_name(self.func.tp(*v));
++                let tp = self.data.type_name_str(self.func.tp(*v));
+                 let into = self.func.name(*v).to_string();
+                 let lease = self.frame.written_var_verdict(*src, self.placement);
+                 let liveness = lease_column(self.func, self.frame.liveness_var_verdict(node, *src));
+@@ -5675,7 +5675,7 @@ impl Census<'_> {
+                 let mut arms = Vec::new();
+                 join_var_arms(rhs, &mut arms);
+                 let into = self.func.name(*v).to_string();
+-                let tp = self.data.display_type_name(self.func.tp(*v));
++                let tp = self.data.type_name_str(self.func.tp(*v));
+                 let dest_deps = self.func.tp(*v).depend();
+                 let placement = if into.starts_with("__ret_") {
+                     Placement::Return
+@@ -5724,7 +5724,7 @@ impl Census<'_> {
+                                 ),
+                             )
+                         };
+-                        let tp = self.data.display_type_name(self.func.tp(base));
++                        let tp = self.data.type_name_str(self.func.tp(base));
+                         self.emit("tuple", &tp, &[root], "-", (Some(&lease), &liveness), false);
+                     }
+                     if let Some((rhs, v)) = self.rhs_of
+@@ -5752,7 +5752,7 @@ impl Census<'_> {
+                             let lease = self.frame.written_verdict(item, self.placement);
+                             let mut from = Vec::new();
+                             copy_source_roots(item, self.data, func, &mut from);
+-                            let tp = self.data.display_type_name(elm);
++                            let tp = self.data.type_name_str(elm);
+                             self.emit("item", &tp, &from, func.name(v), (Some(&lease), "-"), false);
+                         }
+                     }
+@@ -7111,7 +7111,7 @@ pub fn warn_double_move(
+         cx.report_all_projections();
+         for (src, first, at) in std::mem::take(&mut cx.found) {
+             let name = def.variables.name(src);
+-            let ty = data.display_type_name(def.variables.tp(src));
++            let ty = data.type_name_str(def.variables.tp(src));
+             let file = if at.file.is_empty() {
+                 def_file
+             } else {
+@@ -7876,7 +7876,7 @@ pub fn warn_copies(data: &Data, diags: &mut crate::diagnostics::Diagnostics, fal
+             let ty = if r.source == u16::MAX {
+                 "a structure".to_string()
+             } else {
+-                data.display_type_name(def.variables.tp(r.source))
++                data.type_name_str(def.variables.tp(r.source))
+             };
+             // The copy op carries no span; it borrows the nearest span or (S5.2) the enclosing
+             // line marker. A line-only fallback has an empty `file`, and the file that line
+@@ -8050,7 +8050,7 @@ pub fn report_copies(data: &Data) {
+             let ty = if r.source == u16::MAX {
+                 "a structure".to_string()
+             } else {
+-                data.display_type_name(def.variables.tp(r.source))
++                data.type_name_str(def.variables.tp(r.source))
+             };
+             rows.push(Row {
+                 fname: def.name.clone(),
+@@ -8941,7 +8941,7 @@ pub fn lease_calls(data: &mut Data) {
+                 op_append: data.def_nr("OpAppendVector"),
+                 returned: data
+                     .type_owns_droppable_anywhere(def.returned.base())
+-                    .then(|| data.display_type_name(&def.returned)),
++                    .then(|| data.type_name_str(&def.returned)),
+                 whole_tuple: None,
+                 rhs_of: None,
+                 placement: crate::lease::Placement::Structure,

@@ -12952,16 +12952,74 @@ impl Data {
         }
     }
 
-    /// Return a user-facing type name string for use by `type_name()`.
+    /// A type's name with every integer spelled `integer`, whatever its width or range.
+    ///
+    /// This is the spelling the API surface RECORDS (`api_surface::signature_of`): its
+    /// signature strings are compared across library versions, so it is a contract, not a
+    /// label, and renaming a width there would read as an API change.  Text shown to a
+    /// reader wants [`Self::display_type_name`], which names the width.
     #[must_use]
     pub fn type_name_str(&self, tp: &Type) -> String {
+        self.type_name_with(tp, false)
+    }
+
+    /// A type's name as a reader should see it — `type_name()`, advice, hover text: an
+    /// integer is named by its alias (`u8`, `i16`, a user's `type Lim = …`) or its range
+    /// (`integer limit(0, 10)`), inside a collection or a function type too (loft#1824).
+    #[must_use]
+    pub fn display_type_name(&self, tp: &Type) -> String {
+        self.type_name_with(tp, true)
+    }
+
+    /// An integer type's name as its author can write it back — the one home for the
+    /// narrowing diagnostics and [`Self::display_type_name`] alike.  A full-width `integer`
+    /// keeps its own name: an alias of it (`type Count = integer`) must not rename every
+    /// integer.  A standard alias is named by its RANGE, never by width and sign alone —
+    /// `u32` and `i32` share a width, and a declared `integer limit(1000, 1100) size(1)` is
+    /// not a `u8` (loft#1641, loft#1247).  Otherwise the alias the author declared, and with
+    /// none, the range spelled as the author wrote it — `integer(0, 10)`, the type's own key,
+    /// is no syntax the parser reads, so a cure built from it could not be typed back in.
+    #[must_use]
+    pub fn integer_name(&self, t: &Type) -> String {
+        let Type::Integer(s) = t else {
+            return t.source_name(self);
+        };
+        if s.forced_size.is_none() {
+            if s.is_wide_template() || s.is_signed32_template() {
+                return t.source_name(self);
+            }
+            return self.integer_alias_any_source(s, false).map_or_else(
+                || format!("integer limit({}, {})", s.min, s.max),
+                str::to_string,
+            );
+        }
+        let named = match (s.min, s.max) {
+            (0, 255) => Some("u8"),
+            (-128, 127) => Some("i8"),
+            (0, 65535) => Some("u16"),
+            (-32768, 32767) => Some("i16"),
+            (0, 4_294_967_294) => Some("u32"),
+            _ if s.is_signed32_template() => Some("i32"),
+            _ => None,
+        };
+        if let Some(n) = named {
+            return n.to_string();
+        }
+        if let Some(name) = self.integer_alias_any_source(s, false) {
+            return name.to_string();
+        }
+        t.source_name(self)
+    }
+
+    fn type_name_with(&self, tp: &Type, named: bool) -> String {
+        let name = |t: &Type| self.type_name_with(t, named);
         match tp {
-            Type::Optional(inner) => format!("{}?", self.type_name_str(inner)),
+            Type::Optional(inner) => format!("{}?", name(inner)),
             Type::Unknown(_) => "unknown".to_string(),
             Type::Null => "null".to_string(),
             Type::Void => "void".to_string(),
             Type::Never => "never".to_string(),
-            Type::Integer(s) if s.is_signed32_template() => "integer".to_string(),
+            Type::Integer(_) if named => self.integer_name(tp),
             Type::Integer(_) => "integer".to_string(),
             Type::Boolean => "boolean".to_string(),
             Type::Float => "float".to_string(),
@@ -12970,22 +13028,22 @@ impl Data {
             Type::Text(_) => "text".to_string(),
             Type::Keys => "keys".to_string(),
             Type::Enum(d_nr, _, _) | Type::Reference(d_nr, _) => self.def(*d_nr).name.clone(),
-            Type::RefVar(inner) => format!("&{}", self.type_name_str(inner)),
-            Type::Vector(inner, _) => format!("vector<{}>", self.type_name_str(inner)),
+            Type::RefVar(inner) => format!("&{}", name(inner)),
+            Type::Vector(inner, _) => format!("vector<{}>", name(inner)),
             Type::Sorted(d_nr, _, _) => format!("sorted<{}>", self.def(*d_nr).name),
             Type::Index(d_nr, _, _) => format!("index<{}>", self.def(*d_nr).name),
             Type::Hash(d_nr, _, _) => format!("hash<{}>", self.def(*d_nr).name),
             Type::Routine(_) => "fn".to_string(),
             Type::Function(args, ret, ..) => {
-                let args_s: Vec<String> = args.iter().map(|a| self.type_name_str(a)).collect();
-                format!("fn({}) -> {}", args_s.join(", "), self.type_name_str(ret))
+                let args_s: Vec<String> = args.iter().map(&name).collect();
+                format!("fn({}) -> {}", args_s.join(", "), name(ret))
             }
-            Type::Iterator(inner, _) => format!("iterator<{}>", self.type_name_str(inner)),
-            Type::Rewritten(inner) => self.type_name_str(inner),
+            Type::Iterator(inner, _) => format!("iterator<{}>", name(inner)),
+            Type::Rewritten(inner) => name(inner),
             Type::Radix(d_nr, _, _) => format!("spatial<{}>", self.def(*d_nr).name),
             Type::Trie(d_nr, key, _) => format!("trie<{}[{key}]>", self.def(*d_nr).name),
             Type::Tuple(elems) => {
-                let es: Vec<String> = elems.iter().map(|e| self.type_name_str(e)).collect();
+                let es: Vec<String> = elems.iter().map(&name).collect();
                 format!("({})", es.join(", "))
             }
         }

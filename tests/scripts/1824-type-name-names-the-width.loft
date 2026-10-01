@@ -1,0 +1,49 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1824 — `type_name` names an integer by its width or range, as the program wrote it.
+// It answered `integer` for every one: a `u8`, a `u16`, a `limit(lo, hi)` range, alone or
+// in a collection — silently, on both backends, while `sizeof` still saw the one-byte
+// element.  The narrowing diagnostics already named the width through the parser's own
+// renderer; both now read `Data::integer_name`.
+//
+// Axes this file MOVES:  the width (u8, i16, u16, i32, u32, plain integer), a declared
+//                        alias (`type Lim`), an inline `limit` range, nullable, and the
+//                        position (a local, a field, a vector's element, a tuple member, a
+//                        type spelled directly).
+// Axes it HOLDS FIXED:   the API surface keeps `type_name_str` (every integer `integer`):
+//                        its signatures are compared across versions, a contract and not a
+//                        label — `tests/api_surface.rs` pins it.
+//
+// @falsified-at: f33b85ab8 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
+//   native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1824-type-name-names-the-width.patch — the same channels
+// HOLDS: leak, panic and refusals are clean on both trees and both backends; the plain
+//   `integer` cells and `sizeof(v[0])` answer the same on both trees.
+
+type Lim = integer limit(1000, 1100);
+struct P { b: vector<u8>, c: u16, r: integer limit(0, 10), l: Lim }
+
+fn main() {
+  v: vector<u8> = [1, 2, 3];
+  w: vector<i16> = [1];
+  x: u8 = 5;
+  i: i32 = 7;
+  n = 3;
+  p = P { b: [7], c: 9, r: 2, l: 1050 };
+  q: u8? = null;
+  t = (x, n);
+  assert(type_name(v) == "vector<u8>" && type_name(w) == "vector<i16>", "vector element: {type_name(v)} {type_name(w)}");
+  assert(type_name(x) == "u8" && type_name(i) == "i32", "local: {type_name(x)} {type_name(i)}");
+  assert(type_name(n) == "integer", "a plain integer keeps its name: {type_name(n)}");
+  assert(type_name(p.b) == "vector<u8>" && type_name(p.c) == "u16", "field: {type_name(p.b)} {type_name(p.c)}");
+  assert(type_name(p.r) == "integer limit(0, 10)", "an inline range: {type_name(p.r)}");
+  assert(type_name(p.l) == "Lim", "a declared alias: {type_name(p.l)}");
+  assert(type_name(q) == "u8?", "nullable: {type_name(q)}");
+  assert(type_name(t) == "(u8, integer)", "tuple member: {type_name(t)}");
+  assert(type_name(vector<u8>) == "vector<u8>" && type_name(u32) == "u32", "spelled types: {type_name(vector<u8>)} {type_name(u32)}");
+  assert(type_name(integer) == "integer", "the integer type: {type_name(integer)}");
+  // The width is not only a name: `sizeof` sees the one-byte element.
+  assert(sizeof(v[0]) == 1, "sizeof of a u8 element: {sizeof(v[0])}");
+  println("ok");
+}
