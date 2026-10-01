@@ -27,7 +27,9 @@ exactly where a hand publish goes wrong. Use the routines:
 - **Publish + sign** (the hard half, runs on the machine that holds the key):
   - own libs, named: `scripts/registry_maintain.sh --only <pkg>[,<pkg>]` — publishes
     exactly those, then signs **through** `registry-sign.sh` with an `--expect <pkg>@<ver>`
-    per published version, so a diff carrying anything else is refused, not signed.  This is
+    per published version — plus `--expect-meta <pkg>` when the publish also refreshes that
+    package's manifest description or categories — so a diff carrying anything else is
+    refused, not signed.  This is
     the agent-safe form: no prompt, no `--yes` (PKG_REGISTRY_TRUST.md § The third route).
     Without `--only` it publishes every lib that is missing/newer than the index.
   - one registry PR: `scripts/registry-sign.sh --pr N` — shows the diff, re-checks every
