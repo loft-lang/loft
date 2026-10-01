@@ -4607,7 +4607,7 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 </div>
 <div class="item">
 <pre><code>pub fn lines(self: const File) -&gt; vector&lt;text&gt; fs#read</code></pre>
-<p>Par-safe: reads the file into a worker-local store; the host bridge serialises filesystem access. Reads the file and splits it into lines. Strips trailing '\r' so CRLF files (Windows) and LF files (Unix) produce identical results. Use when processing line-by-line (logs, CSV, etc.).</p>
+<p>Reads the file and splits it into lines. Strips trailing '\r' so CRLF files (Windows) and LF files (Unix) produce identical results. Use when processing line-by-line (logs, CSV, etc.).</p>
 </div>
 <h2 id="stdlib-files-and-directories">Files and directories</h2>
 <div class="item">
