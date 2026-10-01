@@ -164,13 +164,15 @@ pub fn last_op_name() -> &'static str {
 #[derive(Clone, Copy)]
 struct LeanSrc {
     pc: *const u32,
-    code: *const std::sync::Arc<Vec<u8>>,
+    code: *const *const u8,
+    len: *const u32,
 }
 
 impl LeanSrc {
     const NONE: LeanSrc = LeanSrc {
         pc: std::ptr::null(),
         code: std::ptr::null(),
+        len: std::ptr::null(),
     };
 }
 
@@ -183,12 +185,13 @@ pub struct LeanSource {
 }
 
 impl LeanSource {
-    /// Register the loop's op position and bytecode.  Both are fields of the running `State`,
-    /// which does not move while its loop runs; the bytecode is read through its `Arc` field,
-    /// so a replacement of the code during the loop is read as the new code.
+    /// Register the loop's op position and its bytecode's cached base and length
+    /// (`@FR-R-CodeBase`).  All three are fields of the running `State`, which does not move
+    /// while its loop runs; they are read at report time, so code written during the loop is
+    /// read as written.
     #[must_use]
-    pub fn register(pc: *const u32, code: *const std::sync::Arc<Vec<u8>>) -> LeanSource {
-        let prev = LEAN_SRC.with(|c| c.replace(LeanSrc { pc, code }));
+    pub fn register(pc: *const u32, code: *const *const u8, len: *const u32) -> LeanSource {
+        let prev = LEAN_SRC.with(|c| c.replace(LeanSrc { pc, code, len }));
         LeanSource { prev }
     }
 }
@@ -210,8 +213,15 @@ fn current_ctx() -> Ctx {
     }
     // SAFETY: registered by the running loop on this thread, which keeps both alive and in
     // place until its `LeanSource` drops (see `LeanSource::register`).
-    let (pc, code) = unsafe { (src.pc.read_volatile(), &**src.code) };
-    let byte = |at: u32| code.get(at as usize).copied();
+    let (pc, base, len) = unsafe {
+        (
+            src.pc.read_volatile(),
+            src.code.read_volatile(),
+            src.len.read_volatile(),
+        )
+    };
+    // SAFETY: `base` holds `len` bytes — the cache `State::edit_code` keeps.
+    let byte = |at: u32| (at < len).then(|| unsafe { *base.add(at as usize) });
     let op_code = match byte(pc) {
         Some(255) => 255 + u16::from(byte(pc + 1).unwrap_or(0)),
         Some(b) => u16::from(b),

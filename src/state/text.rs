@@ -186,10 +186,7 @@ impl State {
     pub fn string_from_code(&mut self) {
         let size = self.code::<u8>();
         unsafe {
-            self.set_string(
-                i32::from(size),
-                self.bytecode.as_ptr().offset(self.code_pos as isize),
-            );
+            self.set_string(i32::from(size), self.code_base.add(self.code_pos as usize));
         }
         self.code_pos += u32::from(size);
     }
