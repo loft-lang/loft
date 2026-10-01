@@ -36,6 +36,10 @@ struct SectionFull {
 
 fn main() -> std::io::Result<()> {
     let version = env!("CARGO_PKG_VERSION");
+    // Before a single page is written: a box without the packages would degrade the pages
+    // rendered from them (the search index first, then every library page).
+    let registry = load_registry_index()?;
+    refuse_degrading_uncached(&registry)?;
     // Every `default/*.loft`, in the order the interpreter loads them — which is the
     // numeric prefix, so sorting the directory gives it. A hard-coded list of three
     // names read as a decision and was a sample: `04_stacktrace`, `05_coroutine`,
@@ -96,7 +100,6 @@ fn main() -> std::io::Result<()> {
     for page in HAND_WRITTEN_PAGES {
         write_hand_page_nav(page, &build_nav(&topic_info, &stdlib_info, page))?;
     }
-    let registry = load_registry_index()?;
     generate_search_index(&sections, &stdlib_info, &registry)?;
 
     let topic_sources = get_topic_sources();
@@ -1203,25 +1206,13 @@ fn generate_library_source_pages<S: std::hash::BuildHasher>(
 ) -> std::io::Result<(usize, usize)> {
     let mut rendered = 0usize;
     let mut uncached = 0usize;
-    let mut refused: Vec<String> = Vec::new();
     for (name, pkg) in &index.packages {
         let Some(v) = loft::registry_index::find_best_version(pkg, "*", false) else {
             continue;
         };
         let dir = loft::registry_index::extract_dir(name, &v.semver);
         let files = collect_sources(&dir);
-        // A cache miss must not overwrite a page that was rendered from the source: the
-        // stub reads like a finished page, so a doc build on a box without the packages
-        // replaced 37 committed source browsers with it in one commit, and nothing failed.
-        // Such a page is left as it is and the build fails below, naming the cure.  A page
-        // that is already a stub (a package the registry cannot serve) is rewritten as one.
         let out = format!("doc/lib-{name}-src.html");
-        if files.is_empty()
-            && fs::read_to_string(&out).is_ok_and(|old| !old.contains(STUB_SOURCE_MARK))
-        {
-            refused.push(format!("{name} {}", v.semver));
-            continue;
-        }
 
         let mut body = String::new();
         let _ = writeln!(
@@ -1283,16 +1274,46 @@ fn generate_library_source_pages<S: std::hash::BuildHasher>(
         let html = page_html(&title, &nav, &title, &body, &meta);
         fs::write(&out, html)?;
     }
-    if !refused.is_empty() {
-        return Err(std::io::Error::other(format!(
-            "{} library source page(s) would be replaced by a 'not on this build box' stub, \
-             because this box's registry cache lacks the package: {}.  Fetch them first — \
-             `make doc` does (`scripts/fetch-doc-packages.sh`, then gendoc).",
-            refused.len(),
-            refused.join(", ")
-        )));
-    }
     Ok((rendered, uncached))
+}
+
+/// Refuse a library doc build that would degrade pages rendered from the packages.
+///
+/// The cards, guides and source browsers read the package itself from this box's registry
+/// cache; a miss renders "not in this build's registry cache" in its place, and that reads
+/// like a finished page.  A doc build on a box without the packages replaced 37 committed
+/// source browsers and every card's guide link that way in one commit, and nothing failed
+/// (`doc_hygiene` skips `doc/lib-*.html`, which a box without the packages cannot
+/// re-render).  So before any page is written (`main`): a package missing from the cache
+/// whose committed source page was rendered from it fails the build, naming the packages
+/// and the cure.  A package whose page is already a stub — one the registry cannot serve —
+/// passes, and is rendered as a stub again.
+fn refuse_degrading_uncached(index: &loft::registry_index::RegistryIndex) -> std::io::Result<()> {
+    let mut refused: Vec<String> = Vec::new();
+    for (name, pkg) in &index.packages {
+        let Some(v) = loft::registry_index::find_best_version(pkg, "*", false) else {
+            continue;
+        };
+        if !collect_sources(&loft::registry_index::extract_dir(name, &v.semver)).is_empty() {
+            continue;
+        }
+        if fs::read_to_string(format!("doc/lib-{name}-src.html"))
+            .is_ok_and(|page| !page.contains(STUB_SOURCE_MARK))
+        {
+            refused.push(format!("{name} {}", v.semver));
+        }
+    }
+    if refused.is_empty() {
+        return Ok(());
+    }
+    Err(std::io::Error::other(format!(
+        "{} library package(s) are not in this box's registry cache, and their pages were \
+         rendered from them — this build would replace those pages with 'not on this build \
+         box' stubs: {}.  Fetch them first: `make doc` does (`scripts/fetch-doc-packages.sh`, \
+         then gendoc).",
+        refused.len(),
+        refused.join(", ")
+    )))
 }
 
 /// The words a library source page carries when the package was not in the registry cache;
