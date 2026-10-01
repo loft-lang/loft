@@ -151,7 +151,7 @@ fn test_compare() {
   assert(compare(4, 3) == "false true false false false true false false", "larger first");
 }
 
-// A comparison with its literal on the LEFT reads the local first and mirrors the test
+// `@FR-R-Fuse`'s mirror clause: a comparison with its literal on the LEFT reads the local first and mirrors the test
 // (`3 < a` is `a > 3`, `3 <= a` is `a >= 3`) — the end test of every counted range over a
 // literal end.  A mirror the wrong way round (`<` for `>`, or `>` for `>=`) answers wrongly at
 // one of the three positions each cell takes: below, at and above the literal.

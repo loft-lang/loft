@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // A counted loop's variable lives in its range index's slot on the interpreter.
+// `@FR-R-LoopSlot`.
 //
 // `for i in a..b` steps a hidden index and copied it into `i` at the top of every round.  Where
 // nothing but that copy writes `i` and nothing in the body writes the index, the slot allocator

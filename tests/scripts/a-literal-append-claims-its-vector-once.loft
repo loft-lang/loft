@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // A literal append of at most 11 elements runs no separate reservation on the interpreter.
+// `@FR-R-FirstClaim`.
 //
 // The parser emits `OpPreAllocVector(v, n, size)` before every literal append to a local
 // vector.  It claims a record for an ABSENT vector, `max(n, 11)` elements wide, and does

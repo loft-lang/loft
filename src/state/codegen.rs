@@ -1171,7 +1171,7 @@ impl State {
         Type::Void
     }
 
-    /// A loop laid out with its exit test at the BOTTOM ([`rotation`] read its first
+    /// `@FR-R-Rotate` — a loop laid out with its exit test at the BOTTOM ([`rotation`] read its first
     /// statement): one jump enters at the test, and the test jumps back to the body while the
     /// loop goes on, so a round runs one jump where the top-tested form ran two.
     ///
@@ -2285,7 +2285,7 @@ impl State {
         if matches!(value.unspan(), Value::Block(_)) && self.emit_walk_step(stack, v) {
             return;
         }
-        // A counted loop's variable placed in its range index's own slot (`slot_alias`): the
+        // `@FR-R-LoopSlot` — a counted loop's variable placed in its range index's own slot (`slot_alias`): the
         // iterator's yield and the store of it would copy the slot onto itself, so the
         // iterator runs without them.  Read off the two positions, so a variable table that
         // carries no alias decision keeps the copy.
@@ -4387,7 +4387,7 @@ impl State {
             parameters.len(),
             stack.data.def(op).attributes().len(),
         );
-        // The parser's reservation before a literal append of at most 11 elements claims
+        // `@FR-R-FirstClaim` — the parser's reservation before a literal append of at most 11 elements claims
         // exactly what the append's own first claim would (`vector_append` and
         // `pre_alloc_vector` share the 11-element floor) and nothing once the vector has a
         // record, so it is not emitted.  Over a plain variable only: reading one has no
@@ -6512,7 +6512,7 @@ fn fusable_int(stack: &Stack, op: u32, params: &[Value]) -> Option<FusedInt> {
         Value::Long(c) => Some(*c),
         _ => None,
     };
-    // A comparison with its literal on the LEFT (`100000 <= i`, the end test of a counted
+    // `@FR-R-Fuse`'s mirror clause — a comparison with its literal on the LEFT (`100000 <= i`, the end test of a counted
     // range over a literal) is mirrored so the local reads first.  Only comparisons: an
     // arithmetic op reports an overflow with its operands in the order written.
     if compare

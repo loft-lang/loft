@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // A loop whose first statement carries its exit test runs that test at its bottom on the
-// interpreter.
+// interpreter.  `@FR-R-Rotate`.
 //
 // A counted `for` and a `while` test at the top and jump back at the end: two jumps a round.
 // The bytecode generator lays such a loop out with the test after the body instead — one jump

@@ -739,7 +739,7 @@ pub mod fused {
     pub const NE: u8 = 1;
     pub const LT: u8 = 2;
     pub const LE: u8 = 3;
-    /// A comparison whose literal stood on the LEFT, mirrored so the local reads first:
+    /// `@FR-R-Fuse`'s mirror clause — a comparison whose literal stood on the LEFT, mirrored so the local reads first:
     /// `c < v` is `v > c`, `c <= v` is `v >= c` — exact on `i64`, the null sentinel included.
     pub const GT: u8 = 4;
     pub const GE: u8 = 5;

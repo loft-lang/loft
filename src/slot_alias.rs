@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @I60 — Scope & dependency/lifetime tracker (deps)
-//! A counted loop's variable lives in its range index's own slot on the interpreter.
+//! `@FR-R-LoopSlot` — a counted loop's variable lives in its range index's own slot on the interpreter.
 //!
 //! `for i in a..b { … }` steps a hidden index (`i#index`) and copies it into `i` at the top of
 //! every round — `i = {#Iter range: i#index += 1; if … break; i#index}`.  The copy is a

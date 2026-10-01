@@ -4,14 +4,17 @@ Copyright (c) 2026 Jurjen Stellingwerff
 SPDX-License-Identifier: LGPL-3.0-or-later
 -->
 
-# Native rewrites — the emitter's cheaper forms, and what each one assumes
+# Rewrites — the cheaper forms, which phase applies each, and what each one assumes
 
-**Scope.** The forms the NATIVE emitter (`src/generation/`) substitutes for the
-template emission when a side condition holds: a vector header derived once for a
-loop, a record scalar read once, a view's header taken at its binding, a stdlib
-wrapper emitted as its op, a callee handed the values its caller already holds.
-Each is a REWRITE — the program's observable behaviour is unchanged — and the
-interpreter applies none of them, which is what makes it the oracle for every cell.
+**Scope.** The forms a compiler phase substitutes for the plain one when a side condition
+holds: a vector header derived once for a loop, a record scalar read once, a view's header
+taken at its binding, a stdlib wrapper emitted as its op, a callee handed the values its caller
+already holds, a loop tested at its bottom.  Each is a REWRITE — the program's observable
+behaviour is unchanged.  ONE rule states one fact, whichever phase applies it: the IR phase
+(parser and scope pass — both backends run the result), the NATIVE generator
+(`src/generation/`), or the INTERPRETER's bytecode generator and runtime (`src/state/`).
+`(R-Phase)` names the three and the oracle each has; a rule says which phase applies it when
+it is not the native generator, the default for the rules written before 2026-10-01.
 The runtime-side units of the same arc (the per-allocation and per-record
 bookkeeping, the append path) are not rewrites and are not here; the IR lowerings
 both backends share (the fused scalar append, append in place) belong to the
@@ -66,6 +69,24 @@ assumption.  A site enforcing a rule cites its `@FR-R-…` tag
                  counts at its admission (the standard library's own admissions
                  included, one constant per program); a generator rewrite counts
                  where it emits.
+                 INTERPRETER CLAUSE: a rewrite the interpreter's bytecode generator or
+                 runtime applies — native never sees it — has NATIVE as its oracle, the
+                 mirror of the generator rewrites: the guard's cells run on both
+                 backends and agree, the switch off and on, and an emission pin on the
+                 bytecode (`loft introspect`) is the census, since the generator's
+                 admissions are not counted.  A TIMING of such a rewrite is read on
+                 two builds that differ only in it with the layout pinned
+                 (PERFORMANCE.md § Measuring an interpreter change): two ordinary
+                 builds differ by 15 % at identical instruction counts.
+  (R-Phase)      every rule is APPLIED BY one phase, and the phase decides its oracle:
+                 the IR phase (both backends run the rewritten IR — the switch A/B is
+                 the oracle, BOTH-BACKEND CLAUSE), the native generator (the interpreter
+                 is the oracle), or the interpreter's generator / runtime (native is
+                 the oracle, INTERPRETER CLAUSE).  One FACT may be applied by two
+                 phases — native's generator and the interpreter's generator each
+                 dropping a reservation the append repeats — and is then one rule with
+                 a clause per phase, never two rules.  A rule moved from a generator
+                 into the IR phase keeps its name and changes its applied-by line.
   (R-Escape)     the contract is SEMANTICS — what a program computes and can observe —
                  never a representation: how many stores or copies a value takes, or
                  where it lives, is the compiler's to change wherever the rule's
@@ -1045,6 +1066,8 @@ holds, the enum null 255 included, so their element is the value itself, spelled
 because a boolean's native value is a `bool` (`hoist::push_value_cast`); being unbiased, their
 one-value slice fill IS admitted, and a `true`, `false` or enum literal is a simple invariant
 for it.  Cells: `tests/scripts/a-boolean-and-enum-push-hold-a-header.loft`.
+Applied by: native generator.  Its clause on the parser's `OpPreAllocVector` is one fact with
+`(R-FirstClaim)`, which the interpreter's generator applies where no header is held.
 
 ### A minted element is a record no holder can name
 
@@ -1310,6 +1333,8 @@ range at all — the pixel is any integer, the accessor's `?? 0` makes it non-nu
 makes it a byte.  Operators with record-scalar or parameter operands (`j * lw + i`, `x0 + i`, `y0 + j`, the accessors' `by * width + bx`) have no static proof, and that is what `(R-GuardedChain)` is for.  Switch `LOFT_NO_RANGE_ARITH`; falsifier `LOFT_HOIST_VERIFY=1`
 (`ops::range_verify` compares the plain answer with the checked one at every admitted
 operator).  Cells `tests/scripts/157-range-arith.loft` a1–a9, pins `tests/range_arith.rs`.
+Applied by: native generator; using the same facts in the IR to REMOVE a no-op mask or a
+dead `??` is `(R-MaskRange)` (proposed).
 
 **The counted-counter clause** (loft#1558).  The parser emits `index = <start>` as the statement BEFORE the loop, so the seed is looked for in the whole FUNCTION, which is what makes
 it sound rather than merely wider — `v_seed` counts every non-step `Set` to that counter
@@ -2214,7 +2239,8 @@ reads such a `main` as a possible leak, and it is a working set.
 **In words.** @PLN157 N4.  A runtime fault inside a leaf keeps its exact position
 and loses only the innermost frame NAME from the chain.  Switch
 `LOFT_NO_LEAF_PRELUDE`.  Site: `Output::is_elidable_leaf` and its use in
-`Output::output_function`.
+`Output::output_function`.  Applied by: native generator; its IR form, inlining the leaf for
+both backends, is `(R-InlineLeaf)` (proposed).
 
 ```
   (R-LeafChain)  in the LEAN tier, a function whose whole call tree is FRAMELESS is
@@ -3107,6 +3133,182 @@ handed as the buffer and the `buf` copy struck, `truncate_to` as a length set pl
 per-element release, `write_text` with the two tables hoisted to statics,
 `mat4_transform` with `p` carried as three floats — the price the twin sets is the
 ceiling each is measured against.
+
+## The interpreter's emission — fewer ops for the same program
+
+Applied by the interpreter's bytecode generator or runtime (`(R-Phase)`); native never sees
+them and is the oracle of every cell (`(R-Switch)`'s interpreter clause).  Each REMOVES ops
+or work; none merges ops into a new one (PERFORMANCE.md § Why the interpreter is optimised at
+all): an op merged per shape is fast for that shape only and grows the instruction set.
+
+### An integer operator over locals and literals is one op
+
+```
+  (R-Fuse)       an integer operator whose operands are frame locals or a literal —
+                 `a op b`, `a op 7`, a store `x = a op 7`, an `if`/loop test and its
+                 jump, a text walk's step and end tests, an integer element of a local
+                 vector at a local index, `for x in v`'s end test — is emitted as ONE op
+                 that reads its operands in place and calls the unfused operator's own
+                 function: what is computed is unchanged, only where the operands come
+                 from.  Every position is taken at the stack height the op STARTS at.
+                 THE MIRROR CLAUSE: a COMPARISON whose literal stands on the LEFT is
+                 mirrored so the local reads first — `c < v` is `v > c`, `c <= v` is
+                 `v >= c`, `==`/`!=` swap — exact on `i64`, the null sentinel included,
+                 because the unfused comparisons are plain `i64` compares.  An
+                 ARITHMETIC operator is never mirrored: its overflow report names its
+                 operands in the order written.
+```
+
+**In words.** Applied by: interpreter generator (`fusable_int`, `gen_if_test`,
+`emit_fused_vec`, `hoist::char_walks`).  The mirror clause is what makes the end test of a
+counted range over a literal end (`if 100000 <= i break`) one compare-and-jump: it was four
+ops a round in every `for … in 0..LITERAL`.  It extends the fused compare's KINDS (`GT`,
+`GE`), not the op set.  Effect: 3 ops a round on a literal-ended loop; the `12_drawing` hash
+loop −5 to −8 % (pinned layout).  Switch `LOFT_NO_FUSE`.  Guard
+`tests/scripts/an-integer-operator-over-locals-runs-as-one-op.loft` (`test_literal_on_the_left`).
+
+### A reservation the append repeats is not emitted
+
+```
+  (R-FirstClaim) an `OpPreAllocVector(v, n, size)` before a literal append of n <= 11
+                 elements to a plain local `v` is emitted as nothing: it claims a record
+                 only for an ABSENT vector, `max(n, 11)` elements wide, and does nothing
+                 to a vector that has one; the append's own first claim (`vector_append`,
+                 reached by `record_new` for every vector element kind) is the same 11
+                 elements.  Capacity is not observable — `len` reads the length, `size`
+                 multiplies it by the stride.  n > 11 keeps the op (it widens the
+                 first claim), and the IR keeps it in every case: it is the head and the
+                 stride native's append-group recognisers read.
+```
+
+**In words.** Applied by: interpreter generator (`generate_call`).  The same FACT native's
+generator applies under a held push header (`(R-Push)`: "emitted as nothing under a held
+push header") — one rule per fact, a clause per phase (`(R-Phase)`).  Effect: two ops per
+push, every iteration of a push loop; `push` −16 %, a record append −7 %.  Switch
+`LOFT_NO_PREALLOC_ELIDE`.  Guard `tests/scripts/a-literal-append-claims-its-vector-once.loft`,
+pin `tests/prealloc_elide.rs`.  What it would break: an append path that does NOT claim for
+itself on an absent vector — the planted defect the guard catches.
+
+### A counted loop's variable lives in its index's slot
+
+```
+  (R-LoopSlot)   `for i in a..b` steps a hidden index and copies it into `i` every
+                 round.  Where nothing but that copy writes `i` — exactly one `Set`, its
+                 iterator's, and no `OpCreateStack(i)` (a `&integer` argument or a `&`
+                 link) — and nothing in the body writes the index or takes its
+                 address, `i` and the index are ONE value under two names: `i` takes
+                 the index's slot and the copy is not emitted.  The index is bound
+                 before the loop and read by every round's test, so it straddles the
+                 loop and I6 keeps every other local off its slot.  Every reader of the
+                 layout reads the pair as one value: the slot validator (I1, I6), the
+                 debugger's frame view (neither is `<reused by>` the other), an undo
+                 entry across a step.
+```
+
+**In words.** Applied by: interpreter slot allocator and generator
+(`slot_alias::range_slot_aliases`, the one home, read by `assign_slots_v2`,
+`validate_slots`, `frame_view`; the copy is dropped where the two POSITIONS agree, so a
+table without the decision keeps it).  The one visible difference is in the live debugger:
+editing `i` edits the loop's counter, as a C `for` would.  Effect: two ops a round; a tight
+`for` −20 %, `push` −17 %.  Switch `LOFT_NO_LOOP_VAR_ALIAS`, trace
+`LOFT_TRACE_LOOP_VAR_ALIAS`.  Guard
+`tests/scripts/a-counted-loop-variable-shares-its-index-slot.loft`, pin
+`tests/loop_layout.rs`.
+
+### A loop whose first statement is its exit runs it at its bottom
+
+```
+  (R-Rotate)     a loop whose FIRST statement carries its exit test — a counted range's
+                 iterator `v = {step; if c break; …; index}`, or a `while`'s
+                 `if !c { break }` — is laid out with the test after the body: one jump
+                 enters at the test, the test jumps back to the body while the loop goes
+                 on, and falls through where the `break` would have jumped.  Earlier
+                 `if … break`s of the iterator (an inclusive range's stop) are emitted as
+                 they were, at the test; the statements after the test (a two-counter
+                 iterator's steps, the loop variable's store unless `(R-LoopSlot)`
+                 holds) open the body.  A `continue` jumps FORWARD to the test, patched
+                 when it is emitted.  The test keeps the line the loop started on.
+```
+
+**In words.** Applied by: interpreter generator (`gen_rotated_loop`, `rotation`).  The round
+count is what it could get wrong, and every guard cell counts rounds: a loop that must not
+run at all, a `continue` that would skip the step, a `while` condition evaluated n + 1
+times.  Effect: one jump a round; −5 to −7.5 % on tight loops.  Switch `LOFT_NO_LOOP_ROTATE`.
+Guard `tests/scripts/a-loop-tests-at-its-bottom.loft`, pin `tests/loop_layout.rs`.
+
+### A frame records where it was called from, not the line
+
+```
+  (R-CallLine)   an interpreted call records its call POSITION; the source line of a
+                 frame is derived from it when a stack is rendered (`stack_trace()`, a
+                 fault's frame chain, the debugger), by the same lookup the call made:
+                 the nearest line entry strictly before the position (loft#1753).  A
+                 frame with no call site (`call_pos` 0) answers line 0, as before.
+```
+
+**In words.** Applied by: interpreter runtime (`State::call_line`).  The line is a
+representation of the position (`(R-Escape)`), so deriving it late changes nothing a
+program or a report can observe.  Effect: one BTreeMap search per call; recursive
+fibonacci −24 % (pinned layout).  No switch: there is no second form to keep.  Guards: the
+stack-trace cells (`1753-…`, `55-stack-trace`, `117-deep-stack`, `1806-…`) and
+`runtime_errors`, `frame_readers`.
+
+## Proposed — rules written before they are built
+
+A proposal states its conditions and effect now, so the analysis that found it is not lost and
+the build has its spec; it carries **PROPOSED** until a site implements it.  Each was found in
+the `12_drawing` hash loop (2026-10-01): 47 ops an element against ~1 ns of native work, 28 once
+all three hold (hand-written variants, identical answers).
+
+### A leaf call with known arguments is its body
+
+```
+  (R-InlineLeaf) PROPOSED.  A call of a LEAF (`(R-Leaf)`: calls no user function and no
+                 fn-ref) whose body is one block of assignments and a result, in a
+                 position where evaluating the arguments first and the body after is
+                 the call's own order, is replaced in the IR by its body over fresh
+                 locals bound to the arguments; a literal argument is substituted, and
+                 the operations it makes constant fold (`1 * k` is `k`, an `^` of two
+                 literals is one literal — exact on `i64` with the null sentinel,
+                 because a literal is never null).
+```
+
+**In words.** Applies in: the IR phase (both backends; native already inlines through LLVM).
+`(R-Leaf)` already settled the observable consequence — a fault inside a leaf keeps its exact
+position and loses only the leaf's frame name — so stack traces do not change from what native
+shows.  What does change: the debugger's `:step` no longer enters the inlined function, so a
+debug session (`open_world`) keeps the call.  Effect in the hash loop: −11 of 47 ops (the call,
+its frame, two argument pushes, two folded multiplications).
+
+### A value's range removes the operations it makes redundant
+
+```
+  (R-MaskRange)  PROPOSED.  Over `(R-Range)`'s facts, applied in the IR: `e & lit` (a
+                 non-negative literal) whose operand already lies in `0 ..= lit` is `e`;
+                 and `x ?? d` whose left side cannot be null is `x` — for a float
+                 division, when the dividend is an integer conversion of a ranged
+                 (hence non-sentinel) integer and the divisor a finite non-zero literal.
+                 A parameter is never ranged by shape (C80), so the rule reaches a
+                 callee's body through `(R-InlineLeaf)` or through a caller's facts.
+```
+
+**In words.** Applies in: the IR phase.  Native gains too: its NaN check on the division goes.
+Effect in the hash loop: −8 ops (one mask, the six-op coalesce, once the call is inlined with
+`seed = 1`, `salt = 7` and `i` bounded by the loop).  The guard owes cells where the range
+does NOT hold — an unbounded parameter, an overflowing product — and must stay red there.
+
+### A value read once, right after it is written, is not stored
+
+```
+  (R-SingleUse)  PROPOSED.  `x = e; s` where `s` is the next statement, reads `x`
+                 exactly once, reads it BEFORE anything in `s` with an effect, and `x`
+                 is read nowhere after `s` and never by reference: `s` reads `e` in place
+                 of `x`, and the store and the load go.
+```
+
+**In words.** Applies in: the IR phase.  Effect in the hash loop: −2 ops (`hx = …; return
+f(hx)`).  It must not move an evaluation across another effect, which is why the read has to
+come first in `s`.
 
 ## Validating the emitted routines against their assumptions
 
