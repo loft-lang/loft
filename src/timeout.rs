@@ -142,15 +142,82 @@ pub fn arm(timeout_secs: u64, grace_secs: u64) {
     std::thread::Builder::new()
         .name("loft-watchdog".to_string())
         .spawn(move || {
-            // Single sleep, not a polling loop, so the watchdog itself
-            // never wakes up unnecessarily before it has work to do.
-            let now = Instant::now();
-            if let Some(remaining) = hard.checked_duration_since(now) {
+            // Two sleeps, not a polling loop.  At the deadline the running interpreter is
+            // asked to stop: its dispatch loop tests one flag after every op, so a loop
+            // stops gracefully whether or not it calls anything.  At the hard deadline the
+            // process is aborted, for code that never returns to the dispatch loop.
+            if let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
+                std::thread::sleep(remaining);
+            }
+            request_stop();
+            if let Some(remaining) = hard.checked_duration_since(Instant::now()) {
                 std::thread::sleep(remaining);
             }
             print_breadcrumb_and_abort(timeout_secs, grace_secs);
         })
         .expect("loft: failed to spawn watchdog thread");
+}
+
+/// The dispatch-stop flag of the interpreter running on the main thread, while it runs
+/// (`StopFlag`); the watchdog sets it at the deadline.  Behind a mutex so the flag cannot be
+/// unpublished — and its `Stores` dropped — between the watchdog reading the pointer and
+/// writing through it.
+static STOP_FLAG: Mutex<usize> = Mutex::new(0);
+
+/// Published while a dispatch loop of an armed run executes; unpublished on drop.
+pub struct StopFlag {
+    published: bool,
+}
+
+/// Publish `flag` for the watchdog (`@FR-R-DispatchStop`), if a deadline is armed and no
+/// other loop has published one — a nested or worker loop leaves the outermost's in place.
+#[must_use]
+pub fn publish_stop_flag(flag: &std::sync::atomic::AtomicBool) -> StopFlag {
+    if !ARMED.load(Ordering::Relaxed) {
+        return StopFlag { published: false };
+    }
+    let mut slot = STOP_FLAG
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if *slot != 0 {
+        return StopFlag { published: false };
+    }
+    *slot = std::ptr::from_ref(flag) as usize;
+    // A deadline that passed before this loop started is a request already.
+    if deadline_reached() {
+        flag.store(true, Ordering::Relaxed);
+    }
+    StopFlag { published: true }
+}
+
+impl Drop for StopFlag {
+    fn drop(&mut self) {
+        if self.published {
+            *STOP_FLAG
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = 0;
+        }
+    }
+}
+
+fn request_stop() {
+    let slot = STOP_FLAG
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if *slot != 0 {
+        // SAFETY: published by a live `StopFlag` and unpublished, under this lock, before the
+        // flag's `Stores` can go away.
+        let flag = unsafe { &*(*slot as *const std::sync::atomic::AtomicBool) };
+        flag.store(true, Ordering::Relaxed);
+    }
+}
+
+/// The dispatch loop's graceful stop at the deadline, naming the function whose frame runs.
+pub fn stop_at_deadline(d_nr: u32) -> ! {
+    if d_nr != u32::MAX {
+        INTERP_FN.store(d_nr, Ordering::Relaxed);
+    }
+    graceful_exit();
 }
 
 /// True iff a deadline was armed and has been reached.  Cheap (one

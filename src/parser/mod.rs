@@ -4296,6 +4296,10 @@ impl Parser {
     /// local-persistence path is the remaining increment, paired with phase 03's
     /// runtime that keeps the session instance alive.
     pub fn parse_statement(&mut self, input: &str) -> ParseResult {
+        // A `Data` that takes statements is parsed against again after it compiles, which is
+        // what `open_world` names: whole-program rewrites (`@FR-R-ValueRecord`,
+        // `@FR-R-InlineLeaf`) leave its signatures and calls as written.
+        self.data.open_world = true;
         if Self::statement_incomplete(input) {
             return ParseResult::NeedMore;
         }
