@@ -1,9 +1,9 @@
 # A library cdylib built against a stale `libloft.rlib` loads into a newer binary and corrupts the store
 axis: behaviour
 met-by: the `script` library (strand 8), the first time `tests/dump_ignored_tests` loaded it
-status: open
+status: fixed
 fix: loft#1776 — a build identity the generated cdylib carries and the loader compares with the running binary (mismatch rebuilds or refuses, never loads); until then, rebuild the rlib and reinstall as one unit after every join (`make check-rlib` is the by-hand pre-flight)
-ref: loft#1776
+ref: loft#1776 — fixed in 0c1e2c840 (#1831), guarded by tests/n3_use_native.rs (the loft#1776 test: two copies of one build adopt no artifact of each other's); a `.loft` probe cannot rebuild a stale rlib, so the Rust test is the evidence
 probe: 
 expect: 
 checked: 

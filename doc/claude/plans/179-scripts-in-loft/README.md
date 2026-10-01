@@ -18,11 +18,24 @@ honest.  A workaround inside a port would teach every reader the wrong shape.
 
 ## Status (REQUIRED)
 
-Open — design ready; strand 1's census ships with the plan (`scripts/script_census`,
-the plan's first loft script, and `WORKLIST.md` it generates), nothing ported.  Two loft scripts already exist under `scripts/`
-(`build-gallery-examples.loft`, `build-playground-examples.loft`); nothing in the Makefile,
-CI or the hooks runs either, so they are the first two subjects for the twin harness rather
-than a head start.  Long-term and low urgency by the owner's own framing (2026-09-29): the
+Open — strand 1's census ships with the plan (`scripts/script_census`, the plan's first
+loft script, and `WORKLIST.md` it generates); six ports are twinned green on both backends
+([SCOREBOARD.md](SCOREBOARD.md)), each beside its original, which every caller still calls.
+Two loft scripts already exist under `scripts/` (`build-gallery-examples.loft`,
+`build-playground-examples.loft`); nothing in the Makefile, CI or the hooks runs either, so
+they are subjects for the twin harness rather than a head start.
+
+**Next, from the 2026-10-01 evaluation** (`releases/2026-10/RECOMMENDATIONS.md` § @PLN179,
+checked against the tree): **strand 4 before any T3–T5 port.**  Those three tiers (135 files)
+need the `process` library — `Command`, `run`, the `lines()` cursor — which is a design in
+[PROCESS.md](PROCESS.md) and not built; its five gate probes come first, then `lib/git` over
+`run`, twinned, as the first T3 port.  That is also the surface no port has touched yet
+(natives, pipes, back-pressure, a child's cleanup).  T2 is not "more text scanners": it waits
+on regex capture groups (finding 011), TOML, JSON and argparse, so closing 011 is library work
+that can run beside strand 4.  The six ports so far are not all `report` originals —
+`opl_points.py` and `rule_predicate_audit.py` are `gate`s and `gen_probes.py` `writes`.
+**Sequencing (owner, 2026-10-01):** strand 4 starts once the interpreter work is cleanly below
+100× native on every measured routine.  Long-term and low urgency by the owner's own framing (2026-09-29): the
 plan exists so the ports accumulate as a measured body of examples, not so the population
 is cleared fast.
 
@@ -336,6 +349,11 @@ it, and `#!/usr/bin/env -S loft --interpret` carries a flag.  So a ported script
 executable invoked as the bash one was, and **a port is a swap under the same name**: the
 Makefile line, the workflow step and the hook that call `scripts/idx` do not change when
 `idx` stops being bash, and the twin compares two files that differ in their first line.
+That holds for an original with no extension.  **Callers move when the plan closes, not
+when a port lands** (owner ruling, 2026-10-01): until then every port sits beside its
+original and every caller keeps calling the original, so a gate stays judged by a program
+that is not the loft under test — and for an original WITH an extension (`x.sh`, `x.py`)
+the move does change the caller's line, which drops the extension.
 Six bare executables exist already, which the census classifies by their `#!` line.  To
 carry: a gate that finds loft sources by `*.loft` (the formatter, the fence checks) must
 learn the `#!` line, and Windows has no shebang — a caller there spells `loft scripts/idx`.
