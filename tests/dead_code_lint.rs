@@ -1034,7 +1034,8 @@ fn assert_append_to_a_copy(backend: &str) {
     assert_eq!(
         warned,
         [
-            "br_xs", "fl_xs", "fv_xs", "kc_h", "lc_b", "lp_xs", "pc_w", "vs_m"
+            "br_xs", "fl_xs", "fv_xs", "kc_h", "lc_b", "lp_xs", "pc_w", "tx_f", "tx_m", "tx_p",
+            "vs_m"
         ],
         "[{backend}] the appends into an unread copy, and nothing else\n{diag}"
     );

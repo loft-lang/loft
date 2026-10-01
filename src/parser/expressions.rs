@@ -1937,8 +1937,15 @@ use a separate collection or add after the loop"
     /// the local unmarked, which costs a `lost-write` that might have fired and never one
     /// that names a copy that did not happen.
     fn is_copied_place(&self, src: &Value) -> bool {
-        matches!(src.unspan(), Value::Var(_))
-            || crate::use_analysis::projection_container_var(&self.data, src).is_some()
+        match src.unspan() {
+            Value::Var(_) => true,
+            // A text field read is a VALUE read to the projection walk, and a place all the
+            // same: `t = s.name` copies the field's text.
+            Value::Call(d, args) if self.data.def(*d).name() == "OpGetText" => {
+                args.first().is_some_and(|base| self.is_copied_place(base))
+            }
+            _ => crate::use_analysis::projection_container_var(&self.data, src).is_some(),
+        }
     }
 
     /// The lowering a whole-value vector bind's verdict asks for, applied in place to
@@ -4070,6 +4077,18 @@ use a separate collection or add after the loop"
         let link_tuple = self.ref_tuple_expected(op, to);
         let expect = link_tuple.as_ref().unwrap_or(f_type);
         let mut s_type = self.parse_operators(expect, code, &mut parent_tp, 0);
+        // loft#1840 — `(B-Copy)` for a text: `t = s.name` copies the text into `t`, so a `+=`
+        // into it that nothing reads is a lost write.  A text has no copy lowering of its own
+        // (the bind is the `Set`), so the verdict is recorded here, from the same place test
+        // the collection binds use.
+        if op == "="
+            && matches!(s_type.base(), Type::Text(_))
+            && let Value::Var(v) = to.unspan()
+            && *v < self.vars.count()
+            && self.is_copied_place(code)
+        {
+            self.vars.mark_copy_bound(*v);
+        }
         // `@FR-L-Null-Which` — a LOCAL spells `S?` as the POINTER (`Optional(Reference(S))`,
         // `nullref` for absence); the tagged `__nullable<S>` is a SLOT's spelling — an embedded
         // field, a vector element, a tuple member.  A projection of such a slot bound to a
@@ -8249,11 +8268,11 @@ use a separate collection or add after the loop"
                     *code = Value::Var(link);
                     f_type = self.vars.tp(link).clone();
                 }
-                // loft#1840 — the program's own append into a collection, recorded on the
-                // local it lands in: every lowering below emits ops a copy's own fill emits too,
+                // loft#1840 — the program's own append into a collection or a text, recorded
+                // on the local it lands in (a scalar's `+=` rewrites the whole value instead): every lowering below emits ops a copy's own fill emits too,
                 // so the `lost-write` lint reads this mark rather than the ops.
                 if op == "+="
-                    && Self::is_collection_type(&f_type)
+                    && (Self::is_collection_type(&f_type) || matches!(f_type.base(), Type::Text(_)))
                     && let Some(root) = lhs_root_var(&to)
                     && root < self.vars.count()
                 {

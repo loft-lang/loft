@@ -29,7 +29,7 @@
 //     the fix as after it; only the report moved.
 
 struct K1840 { k: integer, v: integer }
-struct S1840 { items: vector<integer>, more: vector<integer>, keyed: hash<K1840[k]> }
+struct S1840 { items: vector<integer>, more: vector<integer>, keyed: hash<K1840[k]>, name: text }
 value struct V1840 { n: integer, items: vector<integer> }
 struct W1840 { v: V1840 }
 
@@ -51,6 +51,13 @@ fn in_a_loop(s: S1840) { lp_xs = s.items; for i in 0..3 { lp_xs += [i]; } }
 fn in_a_branch(s: S1840, c: boolean) { br_xs = s.items; if c { br_xs += [4]; } }
 // @EXPECT_WARNING: 'vs_m' is mutated but its value is never read
 fn value_struct_copy(w: W1840) { vs_m = w.v; vs_m.items += [1]; }
+// A text is a value: its bind copies, and an append into the copy is lost the same way.
+// @EXPECT_WARNING: 'tx_f' is mutated but its value is never read
+fn text_field_copy(s: S1840) { tx_f = s.name; tx_f += "x"; }
+// @EXPECT_WARNING: 'tx_p' is mutated but its value is never read
+fn text_param_copy(v: text) { tx_p = v; tx_p += "y"; }
+// @EXPECT_WARNING: 'tx_m' is mutated but its value is never read
+fn text_formatted(s: S1840, n: integer) { tx_m = s.name; tx_m += "{n}"; }
 
 // ------------------------------------------------------------------ the append is observed
 
@@ -59,6 +66,9 @@ fn len_after(s: S1840) -> integer { ln_xs = s.items; ln_xs += [7]; len(ln_xs) }
 fn keyed_read_after(s: S1840) -> integer { kr_h = s.keyed; kr_h += [K1840 { k: 5, v: 6 }]; len(kr_h) }
 fn returned(s: S1840) -> vector<integer> { rt_xs = s.items; rt_xs += [7]; rt_xs }
 fn linked(s: S1840) { lk_xs = &s.items; lk_xs += [7]; }
+fn text_written_back(s: S1840) { tb_t = s.name; tb_t += "x"; s.name = tb_t; }
+fn text_len_after(s: S1840) -> integer { tl_t = s.name; tl_t += "x"; len(tl_t) }
+fn text_returned(s: S1840) -> text { tr_t = s.name; tr_t += "x"; tr_t }
 
 // ------------------------------------------------------------------ built, not copied
 
@@ -67,9 +77,10 @@ fn fresh_empty() { fe_xs: vector<integer> = []; fe_xs += [7]; }
 fn fresh_literal() { fn_xs = [1, 2]; fn_xs += [3]; }
 fn fresh_keyed() { fk_h: hash<K1840[k]> = []; fk_h += [K1840 { k: 1, v: 1 }]; }
 fn from_a_call() { fc_xs = mk1840(); fc_xs += [7]; }
+fn text_fresh(n: integer) { tz_a = "ab"; tz_a += "c"; tz_b = "{n}"; tz_b += "d"; }
 
 fn main() {
-  s = S1840 { items: [1], more: [2], keyed: [K1840 { k: 1, v: 2 }] };
+  s = S1840 { items: [1], more: [2], keyed: [K1840 { k: 1, v: 2 }], name: "n" };
   field_copy_literal(s);
   field_copy_vector(s);
   keyed_copy(s);
@@ -78,6 +89,12 @@ fn main() {
   in_a_branch(s, true);
   w = W1840 { v: V1840 { n: 1, items: [5] } };
   value_struct_copy(w);
+  text_field_copy(s);
+  text_param_copy(s.name);
+  text_formatted(s, 3);
+  assert(s.name == "n", "the text copies did not reach s.name");
+  assert(text_len_after(s) == 2, "the text copy's length counts the append");
+  assert(text_returned(s) == "nx", "the returned text copy holds the append");
   // Every lost write is lost: the sources are as they were built.
   assert(len(s.items) == 1 && s.items[0] == 1, "the field copies did not reach s.items");
   assert(len(s.keyed) == 1, "the keyed copy did not reach s.keyed");
@@ -95,5 +112,8 @@ fn main() {
   fresh_literal();
   fresh_keyed();
   from_a_call();
+  text_fresh(4);
+  text_written_back(s);
+  assert(s.name == "nx", "the text written back reached s.name");
   println("1840 ok");
 }

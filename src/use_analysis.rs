@@ -360,6 +360,8 @@ pub(crate) fn dead_store_accesses(body: &Value, func: &Function, data: &Data) ->
         fill_dests: [
             data.def_nr("OpPreAllocVector"),
             data.def_nr("OpFinishRecord"),
+            data.def_nr("OpAppendText"),
+            data.def_nr("OpAppendCharacter"),
         ],
         copy_fills: [
             (data.def_nr("OpReplaceVector"), 0),
@@ -393,12 +395,14 @@ struct AccessCx<'a> {
     /// The locals' marks — which the program's own `+=` wrote into and which a bind copied
     /// ([`Self::appended_copy`]).
     func: &'a Function,
-    /// `OpPreAllocVector` (a capacity hint) and `OpFinishRecord` (installs a built record into
-    /// its collection): both lower a `+=` into their first argument and observe nothing of
-    /// its content, so for a copy the program appended to that argument is a write
-    /// destination, not a read (loft#1840).  Any other local keeps them as reads, which is
-    /// what keeps a fresh literal (`v = [1, 2]`, filled the same way) out of the lint.
-    fill_dests: [u32; 2],
+    /// The ops a `+=` lowers to that write into their first argument and observe nothing of
+    /// its content: `OpPreAllocVector` (a capacity hint), `OpFinishRecord` (installs a built
+    /// record into its collection), a text's `OpAppendText` / `OpAppendCharacter`, and every
+    /// `OpFormat*` ([`Self::is_fill_dest`]).  For a copy the program appended to, that
+    /// argument is a write destination, not a read (loft#1840).  Any other local keeps them as
+    /// reads, which is what keeps a fresh literal (`v = [1, 2]`, `t = "{x}"`, filled the same
+    /// way) out of the lint.
+    fill_dests: [u32; 4],
     /// The whole-value COPY fills that name their destination by position — a nullable
     /// vector's `OpReplaceVector(dest, src)` and a keyed collection's `OpReplaceKeyed(src,
     /// dest)` — the twins of the `OpAppendVector` fill the write family above already treats
@@ -434,6 +438,12 @@ impl AccessCx<'_> {
     /// (`copy_bound`) or a value-struct copy the scope pass made.  Only there is an append
     /// the mutation the lint reports and its fill ops are no reads — a collection built
     /// fresh keeps both as they were, so a fresh one nothing reads stays silent.
+    /// One of [`Self::fill_dests`] — or an `OpFormat*`, which renders into its first
+    /// argument; asked by name only once the target is known to be an appended copy.
+    fn is_fill_dest(&self, op: u32) -> bool {
+        self.fill_dests.contains(&op) || self.data.def(op).name().starts_with("OpFormat")
+    }
+
     fn appended_copy(&self, v: u16) -> bool {
         self.func.user_appended(v)
             && (self.func.copy_bound(v) || self.value_struct_copies.contains(&v))
@@ -508,8 +518,9 @@ fn classify_access(node: &Value, cx: &AccessCx, acc: &mut [(u16, u16)]) {
             }
         }
         Value::Call(op, args)
-            if cx.fill_dests.contains(op)
-                && matches!(place_root(&args[0], cx.data), Some(v) if cx.appended_copy(v)) =>
+            if !args.is_empty()
+                && matches!(place_root(&args[0], cx.data), Some(v) if cx.appended_copy(v))
+                && cx.is_fill_dest(*op) =>
         {
             classify_write_base(&args[0], cx, acc, false);
             for a in &args[1..] {
@@ -6573,7 +6584,11 @@ pub fn warn_dead_stores(
             // value-struct test it is a false NEGATIVE. A plain reference `struct` ALIASES (the
             // write propagates) and correctly stays `Borrowed` → silent; `&value struct` is a
             // `RefVar`, already excluded above.
-            let owns = is_value_struct_local(func.tp(v), data)
+            // The parser's own `(B-Copy)` verdict comes first: a bind it lowered as a COPY of a
+            // place owns that copy, whatever dep the local's type keeps for its lifetime — a
+            // text local bound from a field (`t = s.name`) carries the field's base (loft#1840).
+            let owns = func.copy_bound(v)
+                || is_value_struct_local(func.tp(v), data)
                 || match ownership_of(data, d_nr, &Value::Var(v)) {
                     // A LINT screen, not an emitter: `owns` decides whether to look at `v`
                     // at all, so keeping `Owned`'s answer costs at most a diagnostic that is
