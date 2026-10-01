@@ -87,16 +87,15 @@
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(whole) == <span class="nm">1</span> <span class="kw">and</span> whole[<span class="nm">0</span>] == <span class="st">"nothing here"</span>, <span class="st">"no match: one piece, the whole text"</span>);</code></pre>
 <pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"split   : 'a,b;;c' on [,;] gives a, b, '' and c"</span>);
 }</code></pre>
-<h2 id="the-older-spellings-still-work-and-say-so">The older spellings still work, and say so</h2>
-<p>An earlier release shipped a pattern-first free function (<code>regex::find</code> / <code>regex::split</code>) and a prefixed method (<code>line.regex_find</code> / <code>line.regex_split</code>). Both still work exactly as they did — nothing was removed — and the compiler steers new calls to <code>search</code> / <code>split_on</code> so the surface converges on one spelling per operation.</p>
-<p>⚠ <code>regex::find</code> is reachable only when QUALIFIED. A bare <code>find(pattern, input)</code> resolves the stdlib's <code>text</code> method first and answers a literal search — with the arguments in the other order, which is why it type-checks.</p>
-<p>Running this section PRINTS two <code>advice[superseded-call]</code> lines, and that is the steering channel working rather than a defect in the guide: the two calls below are deliberately the old spellings, so the compiler names the new one. Your own code sees the same line wherever you write them, which is how the surface converges without anything breaking.</p>
+<h2 id="the-older-spelling-still-works-and-says-so">The older spelling still works, and says so</h2>
+<p>An earlier release shipped a prefixed method (<code>line.regex_find</code> / <code>line.regex_split</code>). It still works exactly as it did, and the compiler steers new calls to <code>search</code> / <code>split_on</code> so the surface converges on one spelling per operation.</p>
+<p>⚠ There is no free <code>find</code> / <code>split</code> in this library. A bare <code>find(pattern, input)</code> resolves the stdlib's <code>text</code> method and answers a literal search — with the arguments in the other order, which is why it type-checks.</p>
+<p>Running this section PRINTS an <code>advice[superseded-call]</code> line, and that is the steering channel working rather than a defect in the guide: the call below is deliberately the old spelling, so the compiler names the new one. Your own code sees the same line wherever you write it, which is how the surface converges without anything breaking.</p>
 <pre><code><span class="kw">fn</span> <span class="fn-call">the_older_spellings_still_work</span>() {
   line = <span class="st">"order 1234"</span>;
-  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(regex::<span class="fn-call"><a href="stdlib-text.html">find</a></span>(<span class="st">"[0-9]+"</span>, line) == <span class="nm">6</span>, <span class="st">"the qualified free function still answers"</span>);
-  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(line.<span class="fn-call">regex_find</span>(<span class="st">"[0-9]+"</span>) == <span class="nm">6</span>, <span class="st">"…and so does the prefixed method"</span>);
-  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(line.<span class="fn-call">search</span>(<span class="st">"[0-9]+"</span>) == <span class="nm">6</span>, <span class="st">"all three are the same operation"</span>);</code></pre>
-<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"steering: find / regex_find still work, search is the one to write"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(line.<span class="fn-call">regex_find</span>(<span class="st">"[0-9]+"</span>) == <span class="nm">6</span>, <span class="st">"the prefixed method still answers"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(line.<span class="fn-call">search</span>(<span class="st">"[0-9]+"</span>) == <span class="nm">6</span>, <span class="st">"and is the same operation as search"</span>);</code></pre>
+<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"steering: regex_find still works, search is the one to write"</span>);
 }</code></pre>
 <h2 id="where-to-go-next">Where to go next</h2>
 <ul>

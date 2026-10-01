@@ -1326,8 +1326,6 @@ const SEARCH_INDEX=[
 {name:"regex::search",kind:"fn",url:"lib-regex-api.html"},
 {name:"regex::matches",kind:"fn",url:"lib-regex-api.html"},
 {name:"regex::split_on",kind:"fn",url:"lib-regex-api.html"},
-{name:"regex::find",kind:"fn",url:"lib-regex-api.html"},
-{name:"regex::split",kind:"fn",url:"lib-regex-api.html"},
 {name:"regex::regex_find",kind:"fn",url:"lib-regex-api.html"},
 {name:"regex::regex_split",kind:"fn",url:"lib-regex-api.html"},
 {name:"server",kind:"library",url:"lib-server.html"},
