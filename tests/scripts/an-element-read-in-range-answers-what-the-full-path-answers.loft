@@ -13,6 +13,13 @@
 // through `v[i] = x`, which are addressed by the same read.  Every expected value is computed
 // by hand.
 //
+// The append half has the same shape: `v += [x]` writes in place when the element fits (the
+// slot built inline, the length derived from it) and takes the full path for a vector with no
+// record yet and for one that is full.  So each typed append — integer, i32, float, single,
+// boolean, character, enum, u8 and i8 — runs 25 times from empty, which crosses the first
+// claim's capacity (11 elements) and then a growth step, and its length, sum and two elements
+// on either side of the boundary are checked.
+//
 // @falsified-at: none — it guards a path no earlier build has.  Falsified by planted defects,
 //   2026-10-01: the length compare taking `<=` (an index equal to the length read past the
 //   end), and the address built with a fixed element size of 8 (the struct and text cells).
@@ -26,6 +33,12 @@ struct P {
 struct H {
   name: text,
   xs: vector<integer>
+}
+
+enum Hue {
+  Red,
+  Green,
+  Blue
 }
 
 fn test_integers_in_and_out_of_range() {
@@ -103,7 +116,83 @@ fn test_a_long_walk() {
   assert(b == 499500, "sum from the end {b}");
 }
 
+fn test_appends_from_empty_across_growth() {
+  v: vector<integer> = [];
+  w: vector<i32> = [];
+  f: vector<float> = [];
+  g: vector<single> = [];
+  b: vector<boolean> = [];
+  e: vector<Hue> = [];
+  u: vector<u8> = [];
+  i: vector<i8> = [];
+  for k in 0..25 {
+    v += [k * 3];
+    w += [k * 3 ?? 0];
+    f += [k as float * 0.5];
+    g += [k as single * 0.25f];
+    b += [k % 3 == 0];
+    hue = Hue.Blue;
+    if k % 3 == 0 { hue = Hue.Red; }
+    if k % 3 == 1 { hue = Hue.Green; }
+    e += [hue];
+    u += [k * 10 ?? 0];
+    i += [k - 12 ?? 0];
+  }
+  vs = 0;
+  ws = 0;
+  fs = 0.0;
+  gs = 0.0;
+  bs = 0;
+  es = 0;
+  us = 0;
+  isum = 0;
+  for k in 0..25 {
+    vs += v[k];
+    ws += w[k];
+    fs += f[k];
+    gs += g[k] as float;
+    if b[k] { bs += 1; }
+    if e[k] == Hue.Blue { es += 1; }
+    us += u[k];
+    isum += i[k];
+  }
+  assert(len(v) == 25 && vs == 900 && v[10] == 30 && v[11] == 33 && v[24] == 72, "integer {len(v)} {vs} {v[10]} {v[11]} {v[24]}");
+  assert(len(w) == 25 && ws == 900 && w[11] == 33 && w[12] == 36, "i32 {len(w)} {ws} {w[11]} {w[12]}");
+  assert(len(f) == 25 && fs == 150.0 && f[24] == 12.0, "float {len(f)} {fs} {f[24]}");
+  assert(len(g) == 25 && gs == 75.0 && g[12] == 3.0f, "single {len(g)} {gs} {g[12]}");
+  assert(len(b) == 25 && bs == 9 && b[24] && !b[23], "boolean {len(b)} {bs}");
+  assert(len(e) == 25 && es == 8 && e[23] == Hue.Blue && e[24] == Hue.Red, "enum {len(e)} {es}");
+  assert(len(u) == 25 && us == 3000 && u[24] == 240 && u[11] == 110, "u8 {len(u)} {us} {u[24]} {u[11]}");
+  assert(len(i) == 25 && isum == 0 && i[0] == -12 && i[24] == 12, "i8 {len(i)} {isum} {i[0]} {i[24]}");
+}
+
+fn test_character_appends() {
+  c: vector<character> = [];
+  for ch in "abcdefghijklmnopqrstuvwxy" {
+    c += [ch];
+  }
+  assert(len(c) == 25 && c[0] == 'a' && c[11] == 'l' && c[24] == 'y', "characters {len(c)} {c[11]} {c[24]}");
+}
+
+fn test_appends_to_a_field_vector() {
+  h = H { name: "h" };
+  for k in 0..25 {
+    h.xs += [k];
+  }
+  t = 0;
+  for x in h.xs {
+    t += x;
+  }
+  assert(len(h.xs) == 25 && t == 300 && h.xs[24] == 24, "field appends {len(h.xs)} {t}");
+  one: vector<integer> = [];
+  one += [7];
+  assert(len(one) == 1 && one[0] == 7, "one append {len(one)} {one[0]}");
+}
+
 fn main() {
+  test_appends_from_empty_across_growth();
+  test_character_appends();
+  test_appends_to_a_field_vector();
   test_integers_in_and_out_of_range();
   test_floats();
   test_structs_are_addressed_by_their_size();
