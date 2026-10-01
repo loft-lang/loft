@@ -3496,6 +3496,108 @@ both backends, the cells where each rule must NOT fire beside those where it doe
 hash loop calls no leaf); `leaf_inline::tests` (the fold never answers an overflow or the
 sentinel; the scale fold's conditions).
 
+## Proposed — the next eliminations, by reach
+
+Found 2026-10-01 measuring what still keeps six routines near 100× native; ordered by how
+many programs they reach, not by those six (owner, 2026-10-01: *improve all loft scripts as
+much as possible*).  Each carries **PROPOSED** until a site implements it; the two runtime
+rules are priced before they are built.
+
+### The fast-or-checked choice is made once per run
+
+```
+  (R-FastTable)  PROPOSED.  The stack access mode (`State::fast_stack`: the direct path,
+                 or the checked path every debug instrument needs) is fixed for a run, yet
+                 every push, pop and local read tests it.  Each operator body is compiled for
+                 both modes (generic over a `const bool`) into two operator tables, and the
+                 dispatch loop takes the one matching the run's mode.  The same operators,
+                 never a new one; the mode never changes while a table is in use.
+```
+
+**In words.** Applies to: the interpreter runtime, every op.  The test was 23 % of the samples
+inside `get_float` (2026-10-01).  The risk to price first: the operator code doubles, which
+costs instruction cache.  Guard: every value cell run under a checked instrument
+(`LOFT_STRICT_STORES=1`, the stack verifier) and without one.
+
+### A frame reserves its stack once
+
+```
+  (R-FrameHeadroom) PROPOSED.  Codegen knows each function's highest stack position.  A
+                 call ensures that much room at entry (one capacity test, growing the stack
+                 store if needed, `(R-StackBase)` re-deriving the base); the fast path's
+                 per-push capacity test goes.  Growth outside the computed height keeps its
+                 own test: a `par` worker's text buffers (`claim_in_stack`) and any native
+                 that pushes a variable amount.
+```
+
+**In words.** Applies to: the interpreter generator and runtime, every push.  The capacity
+compare was 18 % of the samples inside `get_float`.  The guard owes a recursion that grows the
+stack many times over (`(R-StackBase)`'s cell), a frame whose height is reached only on one
+branch, and a native call that pushes its result.
+
+### A forward walk over a vector the body cannot resize is a counted loop
+
+```
+  (R-ForwardWalk) PROPOSED.  `for p in v`, walking forward, over a vector the body cannot
+                 resize — a `const` parameter, or a local no `#remove`, append, `clear` or
+                 user call reaching `v` touches inside the body — lowers as `for i in
+                 0..len(v) { p = v[i]; … }` with the length read once.  The `index < 0`
+                 test, which only the reverse step can make true, and the per-round length
+                 read go, and `(R-Rotate)` and `(R-LoopSlot)` then apply.
+```
+
+**In words.** Applies in: the IR phase, both backends; every vector walk.  The length is re-read
+today because `x#remove` shrinks the vector and steps the index back
+(`Parser::vector_iterator`); the condition is exactly that no such write can happen.  Measured
+on `record_walk` by the hand-written form: −14 %.  The guard owes a `#remove` in the walk, an
+append to `v` in the walk, a reverse walk, and a walk over a field's vector while a callee
+writes the record.
+
+### A computed range start is one counter, stepped at the bottom
+
+```
+  (R-StartStep)  PROPOSED.  A range `s..e` whose start is not a literal (bound once to
+                 `_range_start`, `@FR-I-Range`) lowers to one counter, `i#index =
+                 _range_start; loop { if e <= i#index break; body; i#index += 1 }`, a
+                 `continue` jumping to the step.  Today's form keeps two counters (`_next`
+                 and `i#index`) that hold the same value wherever `i#index` is read, plus a
+                 copy into the loop variable each round, because the literal form's
+                 `start - 1` folds only for a literal.
+```
+
+**In words.** Applies in: the IR phase, both backends; every range with a computed start.  It
+merges two locals that are equal wherever one is read, so every comparison sees the values it
+sees today, a null start included.  Measured on `dot_product` by the hand-written form: −11 %.
+The guard owes a `continue`, a body writing the loop variable, a null start, a start past the
+end, and a start at `i64::MIN + 1`.
+
+### Two equal reads in one statement are one read
+
+```
+  (R-SameRead)   PROPOSED.  Within one statement, two reads `v[i]` (also `v[i]?`,
+                 `v[i] ?? d`) of the same vector local at the same index local, with the same
+                 element size and field, and nothing between them that writes `v`, writes
+                 `i` or calls user code, are bound once: `t = v[i]` before the statement,
+                 both reads become `t`, and a discharge both carry is applied once.  Only for
+                 reads that are discharged or provably in range, so the faults reported are
+                 the faults reported today.
+```
+
+**In words.** Applies in: the IR phase, both backends.  Each `v[i]?` is the read plus a five-op
+discharge.  Measured on `index_read` by the hand-written form: −31 %.  The guard owes a call
+between the reads that appends to `v`, two different indexes, a write to `i` inside the
+statement, and a nested read `m[i][j]`.
+
+### `(R-InlineLeaf)` takes a tuple result
+
+```
+  (R-InlineLeaf) + PROPOSED.  A leaf whose result type is a tuple of scalars, built by tuple
+                 literals (an `if` chain choosing among them included), is admitted.
+```
+
+**In words.** Measured on `bfs_flow` by the hand-written form (the call of `nbr` gone): −12 %.
+The guard owes a tuple read only in part, one handed on whole, and a non-scalar element.
+
 ## Validating the emitted routines against their assumptions
 
 Every rule above is an ASSUMPTION the emitted Rust makes about the loop it sits in, and the
