@@ -1255,7 +1255,6 @@ impl State {
             call_pos: 0,
             args_base: entry_base,
             args_size: 0,
-            line: 0,
         });
         // Write the return address of the main function but do not override the record size.
         self.stack_pos = entry_base;
