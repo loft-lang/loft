@@ -263,6 +263,14 @@ The record, and every closed deviation, are in the companion
   that does not take `(Self, Self)` is not the type's own `==`, so `(G-Sat-Eq)` admits the type
   by content, as the concrete `a == b` compares it.  Oracle:
   `tests/scripts/1818-a-bound-is-satisfied-only-by-a-member-that-takes-its-parameters.loft`.
+- **A template member is not a concrete function (`G-Sat`)** — `fn OpAdd<U>(self: W, o: U)` alone
+  leaves `W` short of `Addable`, refused as *"'OpAdd' is a template, and a bound takes a
+  concrete 'OpAdd' of its signature"*, `==` included (the type HAS an `OpEq`, so content would
+  answer differently from the concrete site).  A concrete member of the set beside the template
+  satisfies and is what the monomorph binds, in either declaration order.  At a CONCRETE site
+  the operator reaches the template as its call spelling does, instantiated at the operand
+  types (`F-Recv`).  Oracles: `tests/scripts/1826-an-operator-reaches-a-template-member-as-its-call-does.loft`,
+  `tests/scripts/1826b-a-template-member-alone-does-not-satisfy-a-bound.loft`.
 - **No dynamic dispatch (`G-Scope`)** — `x: Sizable = Box{…}` is rejected; an interface names a
   generic bound, never a variable's type.
 - **A header binds its OWN variable (`G-Gen`)** — `fn one<T: HasSize1>(x: T)` beside

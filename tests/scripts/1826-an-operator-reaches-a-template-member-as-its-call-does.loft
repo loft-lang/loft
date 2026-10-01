@@ -1,0 +1,58 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// AN OPERATOR REACHES A TEMPLATE MEMBER AS ITS CALL DOES (loft#1826, @FR-F-Recv, @FR-G-Sat).
+// `a + b` is a spelling of the call `OpAdd(a, b)`, and the call reaches a template member
+// `fn OpAdd<U>(self: W, o: U)` by instantiating it at the argument types.  The operator handed
+// the template itself to the call and matched nothing, so `a + b` and `a + 5` were refused
+// while `OpAdd(a, 5)` and `a.OpAdd(b)` answered.  A BOUND takes only a concrete member of its
+// signature (G-Sat): with a concrete `OpAdd(self: W, o: W)` beside the template, the bound's
+// monomorph binds the concrete one in either declaration order; it used to keep the template
+// and crash the compiler.  A template alone does not satisfy a bound; that refusal is
+// `1826b-a-template-member-alone-does-not-satisfy-a-bound.loft`.
+//
+// Axes this file MOVES:  the declaration order (template first · last), the second operand (a
+// `W` · an integer · a text), the site (a concrete operator · a compound `+=` · a bounded
+// generic), and the spellings (operator · call · method).
+// Axes it HOLDS FIXED:   one operator, `+`, with a template over its second operand.
+//
+// @falsified-at: f143377a8 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/1826-an-operator-reaches-a-template-member-as-its-call-does.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the control refuses `a + 5` at compile time.
+//   WITNESS: on the control `a + 5` over the template is "No matching operator '+' on 'W' and
+//   'integer'", and `plus(a, b)` with the template declared first is an internal compiler
+//   error ("a call to the template t_1W_OpAdd reached the bytecode").
+//   HOLDS: leak and panic are equal on both trees.
+
+struct W { x: integer }
+fn OpAdd<U>(self: W, _o: U) -> W { W { x: self.x + 1 } }
+fn OpAdd(self: W, o: W) -> W { W { x: self.x + o.x } }
+
+struct Z { x: integer }
+fn OpAdd(self: Z, o: Z) -> Z { Z { x: self.x + o.x } }
+fn OpAdd<U>(self: Z, _o: U) -> Z { Z { x: self.x + 1 } }
+
+struct T1 { x: integer }
+fn OpAdd<U>(self: T1, _o: U) -> T1 { T1 { x: self.x + 1 } }
+
+fn plus<T: Addable>(a: T, b: T) -> T { a + b }
+
+fn main() {
+  a = W { x: 7 };
+  b = W { x: 3 };
+  // The concrete member takes W + W (7 + 3); the template takes the rest (7 + 1).
+  assert((a + b).x == 10 && (a + 5).x == 8 && (a + "s").x == 8, "W, template first");
+  assert(plus(a, b).x == 10, "bound binds the concrete member, template first");
+  c = Z { x: 7 };
+  d = Z { x: 3 };
+  assert((c + d).x == 10 && (c + 5).x == 8, "Z, template last");
+  assert(plus(c, d).x == 10, "bound binds the concrete member, template last");
+  // A template alone: every spelling reaches its instance (7 + 1).
+  e = T1 { x: 7 };
+  f = T1 { x: 3 };
+  assert((e + f).x == 8 && (e + 5).x == 8, "operator: {(e + f).x}");
+  assert(OpAdd(e, 5).x == 8 && e.OpAdd(f).x == 8, "call and method spellings");
+  e += 5;
+  e += f;
+  assert(e.x == 9, "compound: {e.x}");
+}

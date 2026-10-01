@@ -7573,9 +7573,11 @@ impl Data {
     /// member was declared first (`@FR-F-Recv`, loft#1817).
     #[must_use]
     pub fn overload_with_params(&self, start: &str, params: &[Type]) -> Option<u32> {
+        // A CONCRETE member only (`@FR-G-Sat`): a template takes any list at its variables,
+        // and the monomorph that binds the answer has no step that would instantiate it.
         self.overload_routines(start)
             .into_iter()
-            .find(|&d| self.params_fit(d, params))
+            .find(|&d| self.def(d).def_type != DefType::Generic && self.params_fit(d, params))
     }
 
     /// @PLN99 Arc C — register `d_nr` into the `possible[prefix]` operator map.

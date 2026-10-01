@@ -10155,7 +10155,28 @@ impl Parser {
             let mut misfit = None;
             if found != u32::MAX {
                 let params = self.bound_params_at(child_nr, &concrete_type);
-                if !self.data.params_fit(found, &params) {
+                // `@FR-G-Sat` asks for a CONCRETE function of the signature.  A template member
+                // (`fn OpAdd<U>(self: W, o: U)`) is not one: the monomorph resolves the bound's
+                // call to a definition and has no instantiation step, so the template itself
+                // reached the bytecode — an internal compiler error on both backends
+                // (loft#1826).  A concrete member of the set that takes the list still
+                // satisfies; otherwise the refusal names the template.
+                if self.data.def_type(found) == DefType::Generic {
+                    if let Some(member) = self.data.overload_with_params(&method_suffix, &params) {
+                        found = member;
+                    } else {
+                        misfit = Some(format!(
+                            "'{method_suffix}' is a template, and a bound takes a concrete \
+                             '{method_suffix}' of its signature; declare one for '{}'",
+                            concrete_type.source_name(&self.data)
+                        ));
+                        // Refused outright, `==` included: the type HAS an `OpEq`, which the
+                        // concrete `a == b` instantiates, so a content comparison in the
+                        // generic would answer differently from the concrete site.
+                        out.extend(misfit.take());
+                        continue;
+                    }
+                } else if !self.data.params_fit(found, &params) {
                     if let Some(member) = self.data.overload_with_params(&method_suffix, &params) {
                         found = member;
                     } else {
@@ -10752,7 +10773,11 @@ impl Parser {
                             .clone()
                     })
                     .collect();
-                if !data.params_fit(resolved, &params) {
+                // A template member fits any list at its variables, and nothing here can
+                // instantiate it: the concrete member of the set is the one to bind (loft#1826).
+                if data.def(resolved).def_type == DefType::Generic
+                    || !data.params_fit(resolved, &params)
+                {
                     if let Some(by_params) = data.overload_with_params(fn_name, &params) {
                         resolved = by_params;
                     } else if eq_stub {
@@ -16055,6 +16080,24 @@ impl Parser {
                     } else {
                         Type::Never
                     };
+                };
+                // `@FR-F-Recv` — a TEMPLATE member (`fn OpAdd<U>(self: W, o: U)`) is reached the
+                // way the call spelling `OpAdd(a, b)` reaches it: instantiated at the operand
+                // types.  Handed to `call_nr` as the template, it matched nothing and `a + b`
+                // was refused while `OpAdd(a, b)` beside it answered (loft#1826).
+                let m = if m != u32::MAX && self.data.def_type(m) == DefType::Generic {
+                    if self.first_pass {
+                        let predicted = self.predict_template_return(m, &op_name, types);
+                        if !predicted.is_unknown() {
+                            *code = Value::Null;
+                            return predicted;
+                        }
+                        u32::MAX
+                    } else {
+                        self.instantiate_template(m, &op_name, types)
+                    }
+                } else {
+                    m
                 };
                 if m != u32::MAX {
                     let tp = self.call_nr(code, m, list, types, false, &[], None);
