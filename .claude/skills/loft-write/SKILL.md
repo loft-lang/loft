@@ -138,8 +138,9 @@ or spelled `as Circle?` (null on a miss).  A miss the compiler can prove is an e
 
 **Nullability defaults (@PLN25 DN1) — every scalar and vector is NON-NULL by default.** A plain
 `integer` / `float` / `single` / `boolean` / `character` / `text` (and `vector<T>`) field, local, or
-return REJECTS `null`: storing `null` — or an undischarged `τ?` from a fit-failing op (parse, `/`,
-`v[i]`) — into it is a compile error. To ALLOW null, append `?` to the type (`integer?`, `text?`,
+return does not intend `null`: storing `null` or an undischarged `τ?` into it is a WARNING
+(`(N-Store)` — the slot then holds null, and a library's deny-warnings CI fails on it), and a bare
+text parse into it is refused (`text-parse-may-fail`, above). To ALLOW null, append `?` to the type (`integer?`, `text?`,
 `vector<T>?`). A `vector<T>` field defaults to `[]` (empty, non-null). **The old `not null` modifier
 is a RETIRED accepted no-op** — it now means what the default already is, so don't write it; write
 `?` when (and only when) you want the slot to hold null.
