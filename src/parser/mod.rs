@@ -9167,8 +9167,13 @@ impl Parser {
                 if self.convert_admitting(&mut trial, &types[i], &expected) {
                     continue;
                 }
-                let spelled = Data::type_var_spelling(self.data.def(*v).name()).to_string();
                 let other = Self::resolve_type_var(&self.data, &params[i].1, *v, &types[i]);
+                // The SAME type through both: what failed is not the variable but the rest of
+                // the parameter (`fn(D)` for `fn(const T)`), and the argument check names it.
+                if other == *bound {
+                    continue;
+                }
+                let spelled = Data::type_var_spelling(self.data.def(*v).name()).to_string();
                 diagnostic!(
                     self.lexer,
                     Level::Error,
