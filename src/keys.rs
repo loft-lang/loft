@@ -1249,6 +1249,17 @@ pub fn retbuf_hoist_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_RETBUF_HOIST"))
 }
 
+/// A counted loop's variable shares its range index's slot on the interpreter, so the copy
+/// from the index at the top of every round is not emitted — **DEFAULT ON**
+/// (`slot_alias::range_slot_aliases`).  Opt OUT with `LOFT_NO_LOOP_VAR_ALIAS` (read at slot
+/// assignment): every loop variable gets its own slot and its copy again, the before-half of
+/// the A/B and the first bisect step for a wrong loop variable on the interpreter.
+#[must_use]
+pub fn loop_var_alias_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_LOOP_VAR_ALIAS"))
+}
+
 /// The interpreter emits no `OpPreAllocVector` that only repeats the append after it —
 /// **DEFAULT ON**.  The op claims a record for an ABSENT vector, `max(count, 11)` elements wide,
 /// and does nothing to a vector that has one; `vector_append` claims the same 11 elements on

@@ -106,7 +106,11 @@ pub fn slot_kind(tp: &Type) -> SlotKind {
 /// Does not mutate `function`.  The caller applies
 /// `AllocatorResult` via `apply_v2_result`.
 #[expect(clippy::too_many_lines, reason = "inherited")]
-pub fn assign_slots_v2(function: &Function, local_start: u16) -> AllocatorResult {
+pub fn assign_slots_v2(
+    function: &Function,
+    local_start: u16,
+    aliases: &[(u16, u16)],
+) -> AllocatorResult {
     // @PLAN53 cluster 2 — see the fn doc for the algorithm.  This replaced an
     // earlier TOS-reset IR-walk that reused slots across sibling scopes WITHOUT
     // a kind check and so violated I5 (an int and a ref sharing a slot have
@@ -120,9 +124,21 @@ pub fn assign_slots_v2(function: &Function, local_start: u16) -> AllocatorResult
         kind: SlotKind,
         slot: u16,
     }
+    // Only an index that gets an interval of its own can lend its slot.
+    let aliases: Vec<(u16, u16)> = aliases
+        .iter()
+        .copied()
+        .filter(|&(_, ix)| {
+            !function.is_argument(ix)
+                && function.first_def(ix) != u32::MAX
+                && size(function.tp(ix), &Context::Variable) != 0
+        })
+        .collect();
     let mut ivs: Vec<Iv> = Vec::new();
     for v in 0..function.next_var() {
-        if function.is_argument(v) {
+        // A loop variable sharing its range index's slot gets no interval of its own: it
+        // takes the index's slot below (`slot_alias`).
+        if function.is_argument(v) || aliases.iter().any(|&(lv, _)| lv == v) {
             continue;
         }
         let fd = function.first_def(v);
@@ -233,6 +249,16 @@ pub fn assign_slots_v2(function: &Function, local_start: u16) -> AllocatorResult
             slot: i.slot,
         })
         .collect();
+    // The index's slot straddles its loop, so the I6 rule above already kept every other
+    // local off it for the loop's whole extent, where all of the loop variable's uses lie.
+    for &(lv, ix) in &aliases {
+        if let Some(i) = ivs.iter().find(|i| i.var_nr == ix) {
+            slots.push(SlotAssignment {
+                var_nr: lv,
+                slot: i.slot,
+            });
+        }
+    }
     slots.sort_by_key(|s| s.var_nr);
     // Scope-blind: one function-entry reserve (frame_hwm) covers every slot;
     // no per-block reserves.
