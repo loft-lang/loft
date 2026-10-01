@@ -1398,7 +1398,6 @@ const SEARCH_INDEX=[
 {name:"random::get",kind:"fn",url:"lib-random-api.html"},
 {name:"random::indices",kind:"fn",url:"lib-random-api.html"},
 {name:"regex",kind:"library",url:"lib-regex.html"},
-{name:"regex guide",kind:"guide",url:"lib-regex-guide.html"},
 {name:"regex::search",kind:"fn",url:"lib-regex-api.html"},
 {name:"regex::matches",kind:"fn",url:"lib-regex-api.html"},
 {name:"regex::split_on",kind:"fn",url:"lib-regex-api.html"},
