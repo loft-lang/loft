@@ -3357,6 +3357,34 @@ indirect call is predicted and the core runs ahead of it.  Kept for the shorter 
 `tests/code_base.rs`: a REPL session defines 48 long functions after earlier runs (the buffer
 has to grow) and reads old and new results back.
 
+### An element in range is addressed in one straight path
+
+```
+  (R-ElementPath)  the interpreter's element read `v[i]` on a live vector with
+                   `0 <= i < len` reads the collection record and the length ONCE each,
+                   compares once (unsigned, so a negative index fails it too) and builds the
+                   element's reference itself; an append whose element FITS reads the record,
+                   the length and the capacity once each, writes the element in place and
+                   derives the new length from the slot (`8 + len * size`) instead of reading
+                   it again.  Everything else — null, absent, empty, counted from the end, out
+                   of range, a new or full vector — takes the unchanged full path, so each
+                   refusal keeps one home (`append_capacity`, `vec_get_or_raise_slow`).  And a
+                   raw store read reads the record's size header only in a build that asserts
+                   on it: the field read's own bound catches every failure that read did.
+```
+
+**In words.** Applied by: interpreter runtime (`State::vec_get_or_raise`,
+`vector::append_slot_in_capacity`, `Stores::append_with`, `Store::valid`).  Allowed because
+the fast paths answer exactly what the full paths answer on the cases they take, and decline
+the rest.  The short path is inlined whole: a helper that returns a `DbRef` (or an
+`Option<DbRef>`) through memory writes it as narrow fields, and the caller reads `rec` and
+`pos` back as one 8-byte load, which the store buffer cannot forward — a stall of a dozen
+cycles on every element (measured 2026-10-01: 22 M blocked loads in a 20 M-push loop, +8 %
+cycles, until both helpers were `#[inline(always)]` and the two append branches stopped
+meeting in one `Option`).  Effect (pinned layout, against R-CodeBase): matrix_mul −16 %,
+sort −16 %, index_write −13 %, a single-precision append loop −18 %.  Guard
+`tests/scripts/an-element-read-in-range-answers-what-the-full-path-answers.loft`.
+
 ## Proposed — rules written before they are built
 
 A proposal states its conditions and effect now, so the analysis that found it is not lost and

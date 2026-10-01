@@ -1317,6 +1317,7 @@ impl Stores {
     /// `LOFT_STRICT_STORES` report behind a cold call so this inlines into every append op
     /// (`@FR-R-Cold`): `store_mut` whole, with the report's argument setup inline, fell out of
     /// line in them and cost a push op a call per element (2026-10-01).
+    #[allow(clippy::inline_always)]
     #[inline(always)]
     fn append_store(&mut self, slot: &DbRef) -> &mut Store {
         let i = slot.store_nr as usize;
