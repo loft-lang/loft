@@ -183,7 +183,7 @@ use crate::state::State;
 use crate::tree;
 use crate::vector;
 
-pub const OPERATORS: &[fn(&mut State)] = &["
+pub static OPERATORS: &[fn(&mut State)] = &["
     )?;
     for d_nr in 0..data.definitions() {
         let n = &data.def(d_nr).name;
@@ -198,7 +198,7 @@ pub const OPERATORS: &[fn(&mut State)] = &["
         into,
         "\n/// [`OPERATORS`] with the direct stack path compiled in (`@FR-R-FastTable`): valid\n\
          /// only while `State::fast_stack` holds, which is fixed for a run.\n\
-         pub const OPERATORS_FAST: &[fn(&mut State)] = &["
+         pub static OPERATORS_FAST: &[fn(&mut State)] = &["
     )?;
     for d_nr in 0..data.definitions() {
         let n = &data.def(d_nr).name;

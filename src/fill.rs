@@ -26,7 +26,7 @@ use crate::state::State;
 use crate::tree;
 use crate::vector;
 
-pub const OPERATORS: &[fn(&mut State)] = &[
+pub static OPERATORS: &[fn(&mut State)] = &[
     goto::<false>,
     goto_word::<false>,
     goto_false::<false>,
@@ -372,7 +372,7 @@ pub const OPERATORS: &[fn(&mut State)] = &[
 
 /// [`OPERATORS`] with the direct stack path compiled in (`@FR-R-FastTable`): valid
 /// only while `State::fast_stack` holds, which is fixed for a run.
-pub const OPERATORS_FAST: &[fn(&mut State)] = &[
+pub static OPERATORS_FAST: &[fn(&mut State)] = &[
     goto::<true>,
     goto_word::<true>,
     goto_false::<true>,

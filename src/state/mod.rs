@@ -6165,6 +6165,18 @@ impl State {
     /// returns to, and an attached debugger keeps it while it is attached.
     #[cold]
     #[inline(never)]
+    /// `@FR-R-FastTable` — the operator table for this run: the stack access mode is fixed
+    /// when the `State` is built (`fast_stack`), so the table is chosen once, the direct path
+    /// compiled into every op or the checked one.  The fast table is never handed to a run
+    /// that needs the checked path, whose instruments would then see nothing.
+    pub(crate) fn op_table(&self) -> &'static [fn(&mut State)] {
+        if self.fast_stack {
+            crate::fill::OPERATORS_FAST
+        } else {
+            OPERATORS
+        }
+    }
+
     fn lean_stop(&mut self) -> LeanStop {
         // The watchdog's request at the deadline: a graceful stop from any op, a loop that
         // calls nothing included, naming the frame that was running.
@@ -6773,13 +6785,7 @@ impl State {
             // loop stores for the allocator and the bytecode, registered once, instead of being
             // written per op.
             let _stop = crate::timeout::publish_stop_flag(&self.database.dispatch_stop);
-            // `@FR-R-FastTable` — the access mode is fixed for the run, so the table is chosen
-            // once: the direct path compiled into every op, or the checked one.
-            let ops: &[fn(&mut State)] = if self.fast_stack {
-                crate::fill::OPERATORS_FAST
-            } else {
-                OPERATORS
-            };
+            let ops = self.op_table();
             let _published = crate::crash_report::LeanSource::register(
                 std::ptr::addr_of!(self.database.alloc_pc),
                 std::ptr::addr_of!(self.code_base),
@@ -8871,4 +8877,20 @@ fn stack_base_of(db: &Stores, stack_cur: &DbRef) -> *mut u8 {
     let store = &db.allocations[stack_cur.store_nr as usize];
     // SAFETY: the stack record lies inside its store's buffer.
     unsafe { store.ptr.add((stack_cur.rec * 8 + stack_cur.pos) as usize) }
+}
+
+#[cfg(test)]
+mod fast_table_tests {
+    use super::State;
+
+    /// `@FR-R-FastTable` — a run that takes the checked stack path is never given the fast
+    /// table; one that takes the direct path is.
+    #[test]
+    fn the_operator_table_follows_the_stack_mode() {
+        let mut s = State::new(crate::database::Stores::new());
+        s.fast_stack = false;
+        assert!(std::ptr::eq(s.op_table(), crate::fill::OPERATORS));
+        s.fast_stack = true;
+        assert!(std::ptr::eq(s.op_table(), crate::fill::OPERATORS_FAST));
+    }
 }
