@@ -280,6 +280,48 @@ jobs:
           done
           exit $rc
 
+      # ── Every program the package ships compiles warning-clean ────────────
+      #
+      # `examples/*.loft` were compiled by nothing: the test steps scan `tests/`, the
+      # guide step runs `docs/`, and fifteen of game_protocol's seventeen examples had
+      # stopped compiling (loft#1835).  And the guide step's LOFT_DENY_WARNINGS denied
+      # nothing, because only `--tests` read it, so a guide could carry warnings and
+      # still pass.  So this step runs `loft --check` over both directories, which now
+      # fails on any warning when warnings are denied.  It compiles but does not run:
+      # most examples are servers, clients or windows that need a peer.  A package's
+      # `.allow_warnings` opts out here as it does in the steps above.
+      - name: Examples and guides compile — ${{ matrix.package }}
+        working-directory: ${{ matrix.package }}
+        env:
+          LOFT_DENY_WARNINGS: ${{ hashFiles(format('{0}/.allow_warnings', matrix.package)) != '' && '0' || '1' }}
+        run: |
+          set -u
+          shopt -s nullglob
+          programs=(examples/*.loft docs/*.loft)
+          if [ ${#programs[@]} -eq 0 ]; then
+            echo "no examples/*.loft or docs/*.loft — nothing to compile"
+            exit 0
+          fi
+          rc=0
+          for f in "${programs[@]}"; do
+            if LOFT_TIMEOUT=240 LOFT_ERRORS=compact loft --check "$f" > "$RUNNER_TEMP/check.out" 2>&1; then
+              echo "ok   $f"
+            else
+              rc=1
+              echo "FAIL $f"
+              cat "$RUNNER_TEMP/check.out"
+              {
+                echo "### ❌ \`${{ matrix.package }}\` — \`$f\` does not compile warning-clean"
+                echo
+                echo '```'
+                grep -E '^(Error|Warning|error|loft:)' "$RUNNER_TEMP/check.out" | head -20 \
+                  || tail -20 "$RUNNER_TEMP/check.out"
+                echo '```'
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
+          exit $rc
+
       # ── The wasm target, which nothing measured ────────────────────────────
       #
       # A `[native] crate` is cross-built AS A WHOLE for `wasm32-wasip2`, so ONE

@@ -257,7 +257,8 @@ fn print_help() {
     );
     println!(
         "  --deny-warnings               under --tests/`loft test`, fail any file with an
-                                unexpected warning.  LOFT_DENY_WARNINGS=1 as env equivalent.
+                                unexpected warning; under --check, fail on any warning.
+                                LOFT_DENY_WARNINGS=1 as env equivalent.
                                 Used by extracted library chunks' CI to lock in cleanliness."
     );
     println!(
@@ -9402,6 +9403,24 @@ fn main() {
     loft::use_analysis::dump_link_safety(&p.data);
     loft::use_analysis::dump_link_observability(&p.data);
     report_parse_diagnostics(&p.diagnostics, no_warnings, error_mode_arg.as_deref());
+    // `--check` with warnings denied fails on a warning, as `--tests` does: a library's CI
+    // checks its examples and guides this way, and a deny that only the test runner honoured
+    // let every one of them pass with warnings standing (loft#1835).
+    if check_only
+        && (deny_warnings
+            || std::env::var("LOFT_DENY_WARNINGS").is_ok_and(|v| !v.is_empty() && v != "0"))
+    {
+        let warnings = p
+            .diagnostics
+            .entries()
+            .iter()
+            .filter(|e| e.level == Level::Warning)
+            .count();
+        if warnings > 0 {
+            eprintln!("loft: --check failed: {warnings} warning(s) with warnings denied");
+            std::process::exit(1);
+        }
+    }
     // @PLN86 F12 — `sandbox-check`: report the admission verdict and STOP, never
     // executing.  The whole point is a no-run "will this be allowed?" surface, so this
     // returns before any codegen/run path below.

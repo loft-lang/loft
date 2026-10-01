@@ -748,6 +748,10 @@ Two tiers, and the difference is contractual rather than cosmetic:
 | `Level::Warning` | `warning:` | **yes** | Warning (2) |
 | `Level::Advice` | `advice:` | **never** | Hint (4) |
 
+`--deny-warnings` (or `LOFT_DENY_WARNINGS=1`) is read by `--tests` / `loft test`, where a
+warning no `@EXPECT_WARNING` claims fails the file, and by `--check`, where any warning fails
+the check.  A plain run prints its warnings and runs.
+
 **The rule for choosing: a diagnostic gates if and only if ignoring it can produce a
 wrong result.** A lost write, `len(text)` indexed as bytes, a nullable reaching a
 non-null slot — those gate. A deprecation, a perf note, a preferred spelling — those
