@@ -12214,6 +12214,66 @@ impl Data {
         })
     }
 
+    /// @FR-F-Surface (loft#1848) — the error for a qualified `lib::name` that reaches what `lib`
+    /// does not pass on, or `None` when `lib` passes it on (or does not have it: absence keeps its own
+    /// "no such" message).
+    ///
+    /// The SAME rule as the glob import — [`Self::exported`]: an item `lib` declares without
+    /// `pub`, or a name `lib` holds only through its own plain `use` (@C98), is not part of
+    /// `lib`'s surface, so `lib::name` must not reach what `use lib::*` refuses.  The message
+    /// carries the one-edit cure: the owner's own qualifier for a name `lib` merely imported,
+    /// or `pub` on `lib`'s side for an item it keeps private.
+    #[must_use]
+    pub fn qualified_refusal(&self, lib_source: u16, lib: &str, name: &str) -> Option<String> {
+        if lib_source == u16::MAX || lib_source == STD_SOURCE {
+            return None;
+        }
+        let fn_key = format!("n_{name}");
+        for key in [name, fn_key.as_str()] {
+            let Some(d) = self.def_names.get(key, lib_source) else {
+                continue;
+            };
+            // A pass-1 forward stub (a library parsed after its user, as in a mutual-use
+            // pair) is not the item yet and carries no `pub`: judging it would refuse a
+            // `pub struct` the second pass finds published.
+            if self.exported(key, lib_source).is_some()
+                || matches!(self.definitions[d as usize].def_type, DefType::Unknown)
+            {
+                return None;
+            }
+            if self.is_private_import(lib_source, key, d) {
+                let owner = self
+                    .private_imports
+                    .get(&lib_source)
+                    .and_then(|keys| keys.get(key))
+                    .and_then(|&(_, from)| {
+                        self.qualifier_of(from)
+                            .and_then(|q| self.writable_qualifier(&q, from))
+                    });
+                return Some(match owner {
+                    Some(m) => format!(
+                        "`{lib}::{name}` reaches a name `{lib}` only imports for its own use — \
+                         it is `{m}`'s, and `{lib}` does not pass it on.\n  fix: write \
+                         `{m}::{name}` after `use {m};` (or `{lib}` passes it on with \
+                         `pub use {m}::({name});`)"
+                    ),
+                    None => format!(
+                        "`{lib}::{name}` reaches a name `{lib}` only imports for its own use, \
+                         and does not pass on.\n  fix: `{lib}` passes it on with `pub use`"
+                    ),
+                });
+            }
+            if !self.definitions[d as usize].pub_visible {
+                return Some(format!(
+                    "`{name}` is not `pub` in `{lib}`, so `{lib}::{name}` cannot reach it: a \
+                     library's surface is its `pub` items.\n  fix: `{lib}` declares it `pub`, \
+                     or the program uses something `{lib}` does publish"
+                ));
+            }
+        }
+        None
+    }
+
     fn is_private_import(&self, source: u16, key: &str, def_nr: u32) -> bool {
         self.private_imports
             .get(&source)

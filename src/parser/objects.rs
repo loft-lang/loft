@@ -505,6 +505,13 @@ impl Parser {
                 source = self.data.source;
             }
             if let Some(id) = self.lexer.has_identifier() {
+                // loft#1848 — `lib::name` reaches only what `use lib::*` would.
+                if source != u16::MAX
+                    && source != self.data.source
+                    && let Some(msg) = self.data.qualified_refusal(source, name, &id)
+                {
+                    diagnostic!(self.lexer, Level::Error, "{msg}");
+                }
                 id
             } else {
                 diagnostic!(self.lexer, Level::Error, "Expecting identifier after ::");

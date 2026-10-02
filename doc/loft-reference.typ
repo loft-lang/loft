@@ -3843,11 +3843,10 @@ Free functions: a `pub` one answers to either spelling.
   assert(add(0, -5) == -5, "the same free function, written bare");
 ```
 
-A definition the library did NOT mark `pub` is reachable only through the prefix — `internal\_add(3, 4)` on its own is an unknown function here.
+A definition the library did NOT mark `pub` is not reachable from outside at all — neither `internal\_add(3, 4)` nor `testlib::internal\_add(3, 4)` compiles here; the second answers "`internal\_add` is not `pub` in `testlib`".  A library's surface is its `pub` items, by either spelling.  The library's own `pub` functions still use them:
 
 ```rust
-  assert(testlib::internal_add(3, 4) == 7, "non-pub free function via the prefix");
-  assert(testlib::INTERNAL_LIMIT == 42, "non-pub constant via the prefix");
+  assert(testlib::add(3, 4) == 7, "the pub surface answers");
 ```
 
 Library types work as function parameter types when written with their full namespace prefix in the function signature. A struct with a vector field can be initialised via a struct literal, including elements that are themselves library structs.

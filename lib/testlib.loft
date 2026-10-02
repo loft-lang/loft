@@ -50,8 +50,8 @@ pub fn bump(self: Bag) {
 }
 
 // --- Internal (non-pub) definitions ---
-// These are NOT importable via `use testlib::*` but ARE accessible
-// via `testlib::internal_add` prefix.
+// These are this library's own: reachable from no other file, by either
+// `use testlib::*` or the `testlib::` prefix (@FR-F-Surface).
 INTERNAL_LIMIT = 42;
 
 fn internal_add(a: i32, b: i32) -> i32 {

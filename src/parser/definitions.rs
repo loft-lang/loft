@@ -4095,6 +4095,13 @@ impl Parser {
             if let Some(name) = self.lexer.has_identifier() {
                 let source = self.data.get_source(type_name);
                 let nr = self.data.source_nr(source, &name);
+                // loft#1848 — `lib::Type` reaches only what `use lib::*` would.
+                if source != u16::MAX
+                    && source != self.data.source
+                    && let Some(msg) = self.data.qualified_refusal(source, type_name, &name)
+                {
+                    diagnostic!(self.lexer, Level::Error, "{msg}");
+                }
                 if source != u16::MAX {
                     qualified = Some((source, name));
                 }

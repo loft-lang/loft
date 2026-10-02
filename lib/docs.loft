@@ -12,7 +12,7 @@ use lexer;
 // reported nothing (loft#1339).  The `- 5` below is part of that same fix, not a separate
 // tidy: the slice drops the extension by LENGTH, and `.loft` is one character longer than
 // `.lav`, so a filter fixed on its own would have written `parser..html`.
-fn convert(dir: text, into: text) {
+pub fn convert(dir: text, into: text) {
   l = lexer::Lexer { };
   l.set_tokens(["+=", "*=", "-=", "<=", ">=", "!=", "==", ">>", "<<", "->", "=>", ">>>", "..", "..=", "&&", "||"]);
   l.set_keywords(["for", "in", "if", "else", "fn", "pub", "use", "struct", "enum", "match", "and", "or"]);

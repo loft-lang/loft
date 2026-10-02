@@ -14,7 +14,12 @@ fn function_name(param: type, other: type = default_value) -> return_type {
 }
 ```
 
-- `pub` prefix makes a definition publicly visible (applies to functions, structs, and enums).
+- `pub` prefix makes a definition publicly visible (applies to functions, structs, enums and
+  constants).  A library's surface is its `pub` items and nothing else, by either spelling:
+  `use lib::*` brings in only those, and a qualified `lib::name` reaches only those — not an
+  item `lib` declares without `pub`, and not a name `lib` only imports for its own use (C98),
+  which the error then names with its owner's qualifier
+  (`tests/scripts/a-qualified-name-reaches-only-what-a-library-publishes.loft`).
 - Some names are **reserved** and cannot name a program's function: the words `assert`, `panic`,
   `sizeof` and `debug_assert`, which the language keeps for meanings of its own, and the name of a
   standard-library function that is not a method (`log_info`, `parallel_for`, …).  Names the

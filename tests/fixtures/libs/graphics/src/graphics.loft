@@ -633,9 +633,9 @@ pub fn gl_set_uniform_vec3(program: integer, name: text, x: float, y: float, z: 
 // --- GL state ---
 
 // Capability constants for gl_enable/gl_disable:
-GL_DEPTH_TEST = 1;
-GL_BLEND = 2;
-GL_CULL_FACE = 3;
+pub const GL_DEPTH_TEST = 1;
+pub const GL_BLEND = 2;
+pub const GL_CULL_FACE = 3;
 
 // Enable a GL capability (use GL_DEPTH_TEST, GL_BLEND, GL_CULL_FACE constants).
 pub fn gl_enable(cap: integer);
@@ -646,12 +646,12 @@ pub fn gl_disable(cap: integer);
 #native "loft_gl_disable"
 
 // Blend factor constants for gl_blend_func:
-BLEND_ZERO = 0;
-BLEND_ONE = 1;
-BLEND_SRC_ALPHA = 2;
-BLEND_ONE_MINUS_SRC_ALPHA = 3;
-BLEND_DST_ALPHA = 4;
-BLEND_ONE_MINUS_DST_ALPHA = 5;
+pub const BLEND_ZERO = 0;
+pub const BLEND_ONE = 1;
+pub const BLEND_SRC_ALPHA = 2;
+pub const BLEND_ONE_MINUS_SRC_ALPHA = 3;
+pub const BLEND_DST_ALPHA = 4;
+pub const BLEND_ONE_MINUS_DST_ALPHA = 5;
 
 // Set blend function (e.g. gl_blend_func(BLEND_SRC_ALPHA, BLEND_ONE_MINUS_SRC_ALPHA)).
 pub fn gl_blend_func(src: integer, dst: integer);
@@ -699,9 +699,9 @@ pub fn gl_draw_fullscreen_quad();
 // --- Draw modes ---
 
 // Draw mode constants for gl_draw_mode and gl_draw_elements:
-DRAW_TRIANGLES = 0;
-DRAW_LINES = 1;
-DRAW_POINTS = 2;
+pub const DRAW_TRIANGLES = 0;
+pub const DRAW_LINES = 1;
+pub const DRAW_POINTS = 2;
 
 // Draw a VAO with explicit mode (DRAW_TRIANGLES, DRAW_LINES, DRAW_POINTS).
 pub fn gl_draw_mode(vao: integer, vertex_count: integer, mode: integer);
@@ -722,64 +722,64 @@ pub fn gl_point_size(size: float);
 // --- Input ---
 
 // Key code constants for gl_key_pressed:
-KEY_W = 119;
-KEY_A = 97;
-KEY_S = 115;
-KEY_D = 100;
-KEY_Q = 113;
-KEY_E = 101;
-KEY_SPACE = 32;
-KEY_ESCAPE = 27;
-KEY_UP = 128;
-KEY_DOWN = 129;
-KEY_LEFT = 130;
-KEY_RIGHT = 131;
-KEY_SHIFT = 132;
-KEY_CTRL = 133;
+pub const KEY_W = 119;
+pub const KEY_A = 97;
+pub const KEY_S = 115;
+pub const KEY_D = 100;
+pub const KEY_Q = 113;
+pub const KEY_E = 101;
+pub const KEY_SPACE = 32;
+pub const KEY_ESCAPE = 27;
+pub const KEY_UP = 128;
+pub const KEY_DOWN = 129;
+pub const KEY_LEFT = 130;
+pub const KEY_RIGHT = 131;
+pub const KEY_SHIFT = 132;
+pub const KEY_CTRL = 133;
 
 // Initiative 03 Phase 1: extra keys for the editor hotkey set.
 // Digits route through ASCII (`gl_key_pressed(KEY_1)` etc).
-KEY_0 = 48;
-KEY_1 = 49;
-KEY_2 = 50;
-KEY_3 = 51;
-KEY_4 = 52;
-KEY_5 = 53;
-KEY_6 = 54;
-KEY_7 = 55;
-KEY_8 = 56;
-KEY_9 = 57;
+pub const KEY_0 = 48;
+pub const KEY_1 = 49;
+pub const KEY_2 = 50;
+pub const KEY_3 = 51;
+pub const KEY_4 = 52;
+pub const KEY_5 = 53;
+pub const KEY_6 = 54;
+pub const KEY_7 = 55;
+pub const KEY_8 = 56;
+pub const KEY_9 = 57;
 
 // Common editor hotkey letters (lowercase ASCII; `gl_key_pressed` is
 // case-insensitive — the native key_index lowercases).
-KEY_O = 111;  // occlusion toggle
-KEY_R = 114;  // raise-layer
-KEY_F = 102;  // lower-layer
-KEY_Z = 122;  // undo (with Ctrl)
-KEY_Y = 121;  // redo (with Ctrl)
+pub const KEY_O = 111;  // occlusion toggle
+pub const KEY_R = 114;  // raise-layer
+pub const KEY_F = 102;  // lower-layer
+pub const KEY_Z = 122;  // undo (with Ctrl)
+pub const KEY_Y = 121;  // redo (with Ctrl)
 
 // Bracket keys for wall-direction cycling.
-KEY_LBRACKET = 91;   // [
-KEY_RBRACKET = 93;   // ]
+pub const KEY_LBRACKET = 91;   // [
+pub const KEY_RBRACKET = 93;   // ]
 
 // Tab for camera-mode toggle.
-KEY_TAB = 9;
+pub const KEY_TAB = 9;
 
 // F-key range for save / load / fullscreen-toggle.  Values match
 // `lib/graphics/native/src/lib.rs::key_index` mapping of
 // `NamedKey::F1..F12` → 135..146.
-KEY_F1  = 135;
-KEY_F2  = 136;
-KEY_F3  = 137;
-KEY_F4  = 138;
-KEY_F5  = 139;
-KEY_F6  = 140;
-KEY_F7  = 141;
-KEY_F8  = 142;
-KEY_F9  = 143;
-KEY_F10 = 144;
-KEY_F11 = 145;
-KEY_F12 = 146;
+pub const KEY_F1  = 135;
+pub const KEY_F2  = 136;
+pub const KEY_F3  = 137;
+pub const KEY_F4  = 138;
+pub const KEY_F5  = 139;
+pub const KEY_F6  = 140;
+pub const KEY_F7  = 141;
+pub const KEY_F8  = 142;
+pub const KEY_F9  = 143;
+pub const KEY_F10 = 144;
+pub const KEY_F11 = 145;
+pub const KEY_F12 = 146;
 
 // Returns true if the key is currently pressed (use KEY_* constants).
 pub fn gl_key_pressed(key_code: integer) -> boolean;

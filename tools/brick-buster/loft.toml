@@ -16,7 +16,7 @@ loft    = ">=0.8"
 entry   = "25-brick-buster.loft"
 
 [dependencies]
-graphics = ">=0.1"
+graphics = ">=0.9.6"
 shapes   = ">=0.3"
 assets   = ">=0.1"
 
