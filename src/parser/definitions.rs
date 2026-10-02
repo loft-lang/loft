@@ -2642,8 +2642,13 @@ impl Parser {
 
     /// Bind one header variable to the placeholder that stands for it (`(G-Gen)`: a header
     /// INTRODUCES its variables).  `Some(u32::MAX)` when there is nothing to bind (a header
-    /// the first pass refused); `None` on a collision with a definition of another kind,
-    /// which is reported here.
+    /// the first pass refused).
+    ///
+    /// @FR-G-Gen-Scope — the placeholder is minted under a name the source cannot write
+    /// (`K#1`), so the variable occupies no spelling: a declaration of the same name — in
+    /// this file, another, the stdlib or a REPL session — is neither blocked by it nor
+    /// mistaken for it, and inside the header's own definition `def_nr_in_scope` resolves
+    /// the spelling to the variable first.
     fn bind_header_var(&mut self, var: &HeaderVar) -> Option<u32> {
         let type_var_name = &var.name;
         let bounds_key = Self::type_var_bounds_key(&var.bounds);
@@ -2653,33 +2658,15 @@ impl Parser {
             .copied()
             // … and where this parser did not mint it, the Data it continues knows.
             .or_else(|| self.data.holder_for_spelling(type_var_name, &bounds_key));
+        // A placeholder an older Data minted under the bare spelling is still reused when its
+        // bounds match; any other definition under the spelling is the program's own and
+        // is no concern of the header's (@FR-G-Gen-Scope).
         let existing = self.data.def_nr(type_var_name);
-        // A prior generic's type-var placeholder is an attribute-less `Struct`, safe to
-        // reuse (that is how `<T>` is shared across functions). Any OTHER existing def
-        // — a constant (e.g. `E`), a function, an enum, or a real struct/type — is a
-        // COLLISION: loft has one flat namespace, so a generic parameter cannot share a
-        // name. Report it (mirroring the `type X conflicts with …` diagnostic) instead
-        // of silently binding the parameter to that def and panicking later in
-        // `predict_generic_return_type`.
-        let collision = claimed.is_none()
-            && existing != u32::MAX
-            && !(self.data.def(existing).def_type() == DefType::Struct
-                && self.data.def(existing).attributes().is_empty());
-        if collision {
-            if self.first_pass {
-                let ed = self.data.def(existing);
-                let prev_pos = ed.position().clone();
-                let prev_kind = format!("{:?}", ed.def_type()).to_lowercase();
-                diagnostic!(
-                    self.lexer,
-                    Level::Error,
-                    "generic type parameter '{type_var_name}' conflicts with a \
-                     {prev_kind} of the same name already defined at {prev_pos} — \
-                     pick a different name"
-                );
-            }
-            return None;
-        }
+        let existing = if existing != u32::MAX && self.data.is_type_var_placeholder(existing) {
+            existing
+        } else {
+            u32::MAX
+        };
         if let Some(holder) = claimed {
             // This exact `(spelling, bounds)` header has been seen — on the other
             // pass, or in another function declaring the same variable the same way.
@@ -2714,15 +2701,15 @@ impl Parser {
             // resolves it to Reference(d, []).  The definition is never
             // compiled — it only exists for the template's type resolution.
             //
-            // Under its own spelling while that is free; otherwise under a name
-            // the source cannot write, since `#` is not an identifier character,
-            // so `T#2` is reachable only through this header.
+            // Always under a name the source cannot write, since `#` is not an
+            // identifier character, so `T#1` is reachable only through this header
+            // (@FR-G-Gen-Scope).
             //
             // Uniqueness is asked PROGRAM-WIDE, not of this source: the
             // placeholder is registered as a store structure under
             // `__typevar_<name>`, and that registry is not keyed by source.
-            let mut name = type_var_name.clone();
             let mut n = 1;
+            let mut name = format!("{type_var_name}#{n}");
             while self.data.name_taken_anywhere(&name) {
                 n += 1;
                 name = format!("{type_var_name}#{n}");

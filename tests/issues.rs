@@ -14059,6 +14059,33 @@ fn run() -> integer {
     .result(Value::Int(10));
 }
 
+/// @FR-G-Gen-Scope — a declaration spelled like a STDLIB type variable compiles where the
+/// parse shares the stdlib's source id (this harness, the REPL, a `<host>` string).
+///
+/// `sort_by<T, K: Ordered>` names `K` and `min_of<T>` names `T`; neither reserves the
+/// letter, so an `enum K`, an `enum T` and a `type V` alias are the program's own, and the
+/// stdlib generics that name those letters still instantiate beside them.
+#[test]
+fn a_declaration_spelled_like_a_stdlib_type_variable_compiles_in_source_0() {
+    code!(
+        "enum K { Ka, Kb }
+enum T { Ta, Tb }
+type U = integer;
+struct P { n: integer }
+fn run() -> integer {
+    ps: vector<P> = [P { n: 3 }, P { n: 1 }, P { n: 2 }];
+    ps.sort_by(|p| { p.n });
+    u: U = 40;
+    k = match K.Kb { Ka => 1, Kb => 2 };
+    t = match T.Ta { Ta => 10, Tb => 20 };
+    u + k + t + ps[0].n * 100 + (min_of([7, 5, 9]) ?? 0)
+}"
+    )
+    .expr("run()")
+    // 40 + 2 + 10 + 1 * 100 + 5
+    .result(Value::Int(157));
+}
+
 /// Q3.b — `to_json_pretty()` produces multi-line indented output.
 /// Every non-empty struct opens with newline + 2-space indent per
 /// nesting level and dedents the closing brace to the parent's
