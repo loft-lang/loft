@@ -914,7 +914,7 @@ hex_edge	46120aa09	R-Base	96
 hex_edge	46120aa09	R-Callee	5
 hex_edge	46120aa09	R-CharWalk	10
 hex_edge	46120aa09	R-CompleteWrite	7
-hex_edge	46120aa09	R-Counter	189
+hex_edge	46120aa09	R-Counter	191
 hex_edge	46120aa09	R-DischargeInto	2
 hex_edge	46120aa09	R-ExitVector	34
 hex_edge	46120aa09	R-FormatAppend	1
@@ -1274,7 +1274,7 @@ hex_way	46120aa09	R-Base	103
 hex_way	46120aa09	R-Callee	5
 hex_way	46120aa09	R-CharWalk	10
 hex_way	46120aa09	R-CompleteWrite	6
-hex_way	46120aa09	R-Counter	222
+hex_way	46120aa09	R-Counter	220
 hex_way	46120aa09	R-DischargeInto	2
 hex_way	46120aa09	R-ExitVector	36
 hex_way	46120aa09	R-FormatAppend	1
