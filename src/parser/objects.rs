@@ -4177,7 +4177,11 @@ impl Parser {
         if *data == Value::Null {
             // `@FR-I-RangeNull` — a bound that is `null` where it is WRITTEN can never yield a
             // round, so it is refused here rather than lowered: the loop it spells never runs.
-            if matches!(expr.unspan(), Value::Null) || matches!(till.unspan(), Value::Null) {
+            // Judged on the second pass only: on the first, a call to a function declared
+            // further down the file (`0..layer_count(ly)`) parses as a `Null` placeholder.
+            if !self.first_pass
+                && (matches!(expr.unspan(), Value::Null) || matches!(till.unspan(), Value::Null))
+            {
                 diagnostic!(
                     self.lexer,
                     Level::Error,

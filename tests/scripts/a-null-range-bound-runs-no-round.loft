@@ -53,7 +53,13 @@ fn main() {
   for x in rev(n..5) { t += "{x}"; }
   c = 0;
   for x in n.. { t += "{x}"; c += 1; if c >= 3 { break } }
-  assert(t == "234" + "2345" + "432" + "234", "controls gave {t}");
+  // A bound that CALLS a function declared further down is no `null`: on the parser's first
+  // pass the call is a placeholder, and the refusal must not judge it there (hex_field's
+  // `0..layer_count(ly)` was refused before the refusal moved to the second pass).
+  for x in 0..declared_below(2) { t += "{x}"; }
+  assert(t == "234" + "2345" + "432" + "234" + "01", "controls gave {t}");
   assert(rounds(s) == 0, "a null-bound loop yielded {s}");
   println("ok");
 }
+
+fn declared_below(n: integer) -> integer { n }
