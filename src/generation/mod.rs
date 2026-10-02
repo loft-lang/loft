@@ -789,6 +789,9 @@ pub struct Output<'a> {
     /// `LOFT_NO_RECORD_PTR=1` — no record view carries its address; every field read and
     /// write resolves the store again.
     pub record_ptr_disabled: bool,
+    /// `LOFT_NO_PARAM_RECORD_PTR=1` — `@FR-R-RecPtr`'s parameter clause off: a record
+    /// parameter's field accesses resolve the store each, as before the clause.
+    pub param_record_ptr_disabled: bool,
     /// `LOFT_NO_BASE_RECPTR=1` — a record view bound from an element of a vector whose BASE
     /// the loop holds resolves the store for its address again (`@FR-R-RecPtr`'s base
     /// clause off).
@@ -2230,6 +2233,8 @@ impl<'a> Output<'a> {
             record_ptr_disabled: std::env::var("LOFT_NO_RECORD_PTR").is_ok_and(|v| v != "0")
                 || !crate::keys::vector_base_enabled(),
             base_rec_ptr_disabled: std::env::var("LOFT_NO_BASE_RECPTR").is_ok_and(|v| v != "0"),
+            param_record_ptr_disabled: std::env::var("LOFT_NO_PARAM_RECORD_PTR")
+                .is_ok_and(|v| v != "0"),
             recptr_trace: std::env::var("LOFT_TRACE_RECPTR").is_ok(),
             scalar_hoists: Vec::new(),
             scalar_write_cache: HashMap::new(),
@@ -4662,38 +4667,7 @@ impl Output<'_> {
         {
             return Ok(false);
         }
-        // The `(callee, parameter)` pairs of the remainder's calls that hand `r` to a twin
-        // taking that parameter's scalar fields as inputs — a use of the address at the call.
-        let mut candidates: Vec<(u32, u16)> = Vec::new();
-        for op in &stmts[at + 1..] {
-            op.any_node(&mut |n| {
-                if let Value::Call(g, args) = n
-                    && (*g as usize) < self.data.definitions.len()
-                {
-                    for (i, a) in args.iter().enumerate() {
-                        if matches!(a.unspan(), Value::Var(v) if *v == *r)
-                            && let Ok(p) = u16::try_from(i)
-                        {
-                            candidates.push((*g, p));
-                        }
-                    }
-                }
-                false
-            });
-        }
-        let mut twin_params: HashSet<(u32, u16)> = HashSet::new();
-        for (g, p) in candidates {
-            // `(R-ValueLocal)` — a TUPLE PARAMETER is the same use of the address at the
-            // call: the site reads the view's fields into the tuple where the twin read its
-            // inputs, so the view keeps its address for them.
-            if self.value_records.param_type(g, usize::from(p)).is_some()
-                || self
-                    .callee_inputs_of(g)
-                    .is_some_and(|ci| ci.scalars.iter().any(|(q, _, _)| *q == p))
-            {
-                twin_params.insert((g, p));
-            }
-        }
+        let twin_params = self.twin_params_of(&stmts[at + 1..], *r);
         let verdict = hoist::record_view_ptr(
             stmts,
             at,
@@ -4742,8 +4716,8 @@ impl Output<'_> {
         let r = match verdict {
             Ok(r) => r,
             Err(why) => {
-                // Scalar locals and non-bindings are not candidates worth a line.
-                if self.recptr_trace && why != "not a plain record" && why != "not a binding" {
+                // Scalar locals are not candidates worth a line.
+                if self.recptr_trace && why != "not a plain record" {
                     eprintln!(
                         "recptr: {} declines `{}`: {why}",
                         self.data.def(self.def_nr).name(),
@@ -4753,6 +4727,130 @@ impl Output<'_> {
                 return Ok(false);
             }
         };
+        self.emit_record_ptr(w, r, Some(&stmts[at]))?;
+        if let (Some(finish), Some(block)) = (window, block) {
+            // A window's frame is closed at its finish, not with the block: the caller
+            // must not count it among the frames it pops.
+            self.ptr_windows.push((block, finish, r));
+            return Ok(false);
+        }
+        Ok(true)
+    }
+
+    /// The `(callee, parameter)` pairs of `rest`'s calls that hand `r` to a twin taking that
+    /// parameter's scalar fields as inputs — a use of the address at the call.
+    fn twin_params_of(&mut self, rest: &[Value], r: u16) -> HashSet<(u32, u16)> {
+        let mut candidates: Vec<(u32, u16)> = Vec::new();
+        for op in rest {
+            op.any_node(&mut |n| {
+                if let Value::Call(g, args) = n
+                    && (*g as usize) < self.data.definitions.len()
+                {
+                    for (i, a) in args.iter().enumerate() {
+                        if matches!(a.unspan(), Value::Var(v) if *v == r)
+                            && let Ok(p) = u16::try_from(i)
+                        {
+                            candidates.push((*g, p));
+                        }
+                    }
+                }
+                false
+            });
+        }
+        let mut twin_params: HashSet<(u32, u16)> = HashSet::new();
+        for (g, p) in candidates {
+            // `(R-ValueLocal)` — a TUPLE PARAMETER is the same use of the address at the
+            // call: the site reads the view's fields into the tuple where the twin read its
+            // inputs, so the view keeps its address for them.
+            if self.value_records.param_type(g, usize::from(p)).is_some()
+                || self
+                    .callee_inputs_of(g)
+                    .is_some_and(|ci| ci.scalars.iter().any(|(q, _, _)| *q == p))
+            {
+                twin_params.insert((g, p));
+            }
+        }
+        twin_params
+    }
+
+    /// `@FR-R-RecPtr`'s parameter clause — at the head of a function body, bind the address
+    /// of every record PARAMETER the whole body may read and write through
+    /// ([`hoist::param_view_ptr`]), one frame each.  Answers how many frames it pushed, which
+    /// `output_block` pops with the body's own.
+    pub(super) fn bind_param_record_ptrs(
+        &mut self,
+        w: &mut dyn Write,
+        stmts: &[Value],
+    ) -> std::io::Result<usize> {
+        if self.hoist_disabled || self.record_ptr_disabled || self.param_record_ptr_disabled {
+            return Ok(0);
+        }
+        // A generator's parameters persist across its yields, where the caller runs and
+        // may grow any store: no address outlives a resumption.
+        if !self.coroutine_persistent_fields.is_empty() {
+            return Ok(0);
+        }
+        let vars = self.data.def(self.def_nr).variables();
+        let params: Vec<u16> = (0..vars.count())
+            .filter(|v| vars.is_argument(*v))
+            .collect();
+        let mut frames = 0;
+        for (i, p) in params.into_iter().enumerate() {
+            // A tuple parameter (`(R-ValueLocal)`) arrives as values, not as a place.
+            if self.value_records.param_type(self.def_nr, i).is_some()
+                || self.value_record_locals.contains_key(&p)
+                || self.rec_ptrs.iter().any(|f| f.contains_key(&p))
+            {
+                continue;
+            }
+            let twin_params = self.twin_params_of(stmts, p);
+            let verdict = hoist::param_view_ptr(
+                stmts,
+                p,
+                self.data,
+                self.stores,
+                self.def_nr,
+                &mut self.hoist_cache,
+                !self.write_hoist_disabled,
+                &twin_params,
+                (!self.distinct_growth_disabled)
+                    .then_some(hoist::StoreFacts {
+                        vars: self.data.def(self.def_nr).variables(),
+                        placed: &self.placed_locals,
+                        adopted: self.ret_adopt.as_ref().map(|a| (a.v, a.vdb)),
+                        owned: Some(&self.hoist_owned),
+                    })
+                    .as_ref(),
+                Some(&self.hoist_owned),
+            );
+            match verdict {
+                Ok(p) => {
+                    self.emit_record_ptr(w, p, None)?;
+                    frames += 1;
+                }
+                Err(why) => {
+                    if self.recptr_trace && why != "not a plain record" {
+                        eprintln!(
+                            "recptr: {} declines parameter `{}`: {why}",
+                            self.data.def(self.def_nr).name(),
+                            self.data.def(self.def_nr).variables().name(p)
+                        );
+                    }
+                }
+            }
+        }
+        Ok(frames)
+    }
+
+    /// `@FR-R-RecPtr` — emit `let __pa_N = …` for view `r` and push its frame.  `stmt` is the
+    /// binding when there is one: the head of a held iteration or a windowed mint takes its
+    /// address from the base it already holds instead of resolving the store.
+    fn emit_record_ptr(
+        &mut self,
+        w: &mut dyn Write,
+        r: u16,
+        stmt: Option<&Value>,
+    ) -> std::io::Result<()> {
         self.hoist_counter += 1;
         let name = format!("__pa_{}", self.hoist_counter);
         let lock = rec_ptr_lock(&name);
@@ -4764,7 +4862,9 @@ impl Output<'_> {
         // vector whose header and element BASE this loop holds: the element is at the base
         // plus index times size, with no `DbRef` consulted and no store resolved; past the
         // end the element is the null record, whose address is null.
-        if let Some((header, base, index, size, offset)) = self.held_iteration_base(&stmts[at]) {
+        if let Some((header, base, index, size, offset)) =
+            stmt.and_then(|s| self.held_iteration_base(s))
+        {
             let plus = if offset == 0 {
                 String::new()
             } else {
@@ -4776,7 +4876,7 @@ impl Output<'_> {
             )?;
             self.indent(w)?;
             writeln!(w, "let {lock}: bool = {header}.locked;")?;
-        } else if let Some((win, size)) = self.windowed_mint_of(&stmts[at]) {
+        } else if let Some((win, size)) = stmt.and_then(|s| self.windowed_mint_of(s)) {
             // `@FR-R-PushFill`'s record clause — an element minted through an open window
             // sits at the window's next slot: its address is the base plus the length
             // times the element's width, no store resolved.
@@ -4806,13 +4906,7 @@ impl Output<'_> {
         }
         self.rec_ptrs.push(HashMap::from([(r, name)]));
         crate::rewrite_census::fired("R-RecPtr", 1);
-        if let (Some(finish), Some(block)) = (window, block) {
-            // A window's frame is closed at its finish, not with the block: the caller
-            // must not count it among the frames it pops.
-            self.ptr_windows.push((block, finish, r));
-            return Ok(false);
-        }
-        Ok(true)
+        Ok(())
     }
 
     /// `@FR-R-RecPtr`'s mint clause — drop the address of every mint window of `block`

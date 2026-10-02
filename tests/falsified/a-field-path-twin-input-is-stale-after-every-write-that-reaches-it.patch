@@ -1,0 +1,13 @@
+diff --git a/src/generation/hoist.rs b/src/generation/hoist.rs
+index 4ae916915..22b80083c 100644
+--- a/src/generation/hoist.rs
++++ b/src/generation/hoist.rs
+@@ -1413,7 +1413,7 @@ pub fn hoistable(
+     }
+     out.scalars = found
+         .into_iter()
+-        .filter(|(_, evict, _)| !evict.iter().any(|(tp, off)| written.evicts(*tp, *off)))
++        .filter(|(_, evict, _)| evict.len() > 1 || !evict.iter().any(|(tp, off)| written.evicts(*tp, *off)))
+         .map(|(key, _, call)| (key, call))
+         .collect();
+     out
