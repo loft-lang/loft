@@ -12,6 +12,7 @@
 // @falsified-at: 4fe642f3c — interpret exit 1 -> 0, interpret expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches)
 //   CHANNEL: expect — on the control a user `fn OpIndex` still subscripted, so none of the four
 //   refusals fired.
+//   HOLDS: asserts, leak and panic are equal on both trees and both backends.
 //
 // @EXPECT_ERROR: `M996` cannot be indexed: `[…]` belongs to the built-in collections
 // @EXPECT_ERROR: `R996` cannot be indexed: `[…]` belongs to the built-in collections

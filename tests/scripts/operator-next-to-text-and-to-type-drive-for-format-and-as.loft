@@ -13,6 +13,7 @@
 // @falsified-at: 87eed3737 — interpret exit 1 -> 0, native exit 1 -> 0
 //   CHANNEL: exit on both backends — the control refuses `operator to_integer` by name (the
 //   conversion form was not built), so the file does not compile there.
+//   HOLDS: asserts, leak and panic are equal on both trees and both backends.
 //
 struct Cnt { n: integer, max: integer }
 pub operator next(self: Cnt) -> integer? { if self.n >= self.max { return null; } self.n += 1; self.n }
