@@ -268,6 +268,20 @@ as a STALE ROW rather than ignored.
 | `game_protocol` | 2026-10 | `c3d22a8` | Guide written (JSON on the wire with `:j` and `GameEnvelope.parse`); the README promised framing and ack/retransmit the package does not have — it is message types and constructors (0.1.5) |
 | `ssh` | 2026-10 | `c3d22a8` | Guide written, runs with no sshd; the README's loop bounded `recv` bytes by `len` — the mistake @SSH-002 warns against (0.1.3) |
 | `web` | 2026-10 | `c3d22a8` | `byte_at`'s argument order was reversed in the README; the browser `fetch()` backend described as shipped, with what the browser does differently; `pack_u32_le` keeps the low 32 bits of a 64-bit `integer` (0.4.3) |
+| `hex_body` | 2026-10 | `c9ddda6` | Guide written; history in README and source restated (0.3.3) |
+| `hex_draw` | 2026-10 | `c9ddda6` | Guide written; `place_opening` replaces the wall's material — its comment said the material was kept (0.1.2) |
+| `hex_edge` | 2026-10 | `c9ddda6` | Guide written; a material does not open a gate — `passable` reads only the surface mark; `SURF_NONE` slot is i32, not u16 (0.2.2) |
+| `hex_field` | 2026-10 | `c9ddda6` | Status said stencils, the document format and the edge layer were "landing next"; all ship. `tests/08-hex-grid-parity.loft` keeps the restated lattice equal to `hex_grid` (0.1.4) |
+| `hex_fit` | 2026-10 | `c9ddda6` | Guide written; comments cited a `tests/fit.loft` the package lacks (0.1.3) |
+| `hex_form` | 2026-10 | `c9ddda6` | README and USAGE cited hexbody's SPEC / ROUNDTRIP.md, unreachable from the package (0.1.6) |
+| `hex_grid` | 2026-10 | `c9ddda6` | Five packages build on it, not "four"; `hex_field` and `hex_world` do not (0.1.3) |
+| `hex_place` | 2026-10 | `c9ddda6` | Guide written; USAGE omitted the seat_* family and five more functions (0.1.2) |
+| `hex_recover` | 2026-10 | `c9ddda6` | Guide written; comments cited a `tests/trip.loft` the package lacks (0.1.4) |
+| `hex_roof` | 2026-10 | `c9ddda6` | Guide written; `roof_match` answering `ROOF_UNKNOWN` dropped the closest ridge's far end — fixed in code and guarded (0.1.6) |
+| `hex_shape` | 2026-10 | `c9ddda6` | Guide written; the wall-direction error is 1.1021°, the header said 4.11° (0.1.4) |
+| `hex_terrain` | 2026-10 | `c9ddda6` | Guide written; the README example was refused under C98 (0.1.5) |
+| `hex_way` | 2026-10 | `c9ddda6` | Guide written; the README listed six of seven examples and half the surface (0.1.3) |
+| `hex_world` | 2026-10 | `c9ddda6` | Guide written; the README named two consumers that do not use it. Ships `src/overland.loft` and `src/wall.loft`, which fail `--check` and nothing reaches — left for the owner to remove (0.2.2) |
 
 Each pass's notes, row by row, are in [LIBRARY_DOC_REVIEW-history.md](LIBRARY_DOC_REVIEW-history.md).
 
