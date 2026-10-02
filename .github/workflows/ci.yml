@@ -1564,6 +1564,10 @@ jobs:
         env:
           RUSTFLAGS: '-Zsanitizer=address'
           ASAN_OPTIONS: 'detect_leaks=0'
+          # ASan's redzones make every frame several times larger, so the corpus's
+          # 100-deep nested expression overflows the CLI-sized 8 MiB script thread
+          # (tests/wrap.rs reads this floor); release builds keep 8 MiB.
+          RUST_MIN_STACK: '33554432'
         run: >
           cargo +nightly-2026-05-28 nextest run --profile sanitizer --release
           --target x86_64-unknown-linux-gnu
