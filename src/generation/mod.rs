@@ -3566,6 +3566,10 @@ impl Output<'_> {
             return Ok(None);
         }
         let Some(p) = hoist::push_loop(lp, self.data) else {
+            if let Some(ps) = hoist::push_loop_paths(lp, self.data) {
+                self.push_reserve_paths(w, &ps)?;
+                return Ok(None);
+            }
             // `@FR-R-PushFill`'s record clause — a counted loop appending RECORDS through
             // mint groups, possibly under `if` arms, reserves and opens a window the same
             // way, over the record-push header the loop holds.
@@ -3619,6 +3623,44 @@ impl Output<'_> {
         self.push_windows.push((p.path.clone(), win.clone()));
         crate::rewrite_census::fired("R-PushFill", 1);
         Ok(Some((win, hdr, vec)))
+    }
+
+    /// `@FR-R-PushFill`'s several-paths clause — reserve every path a counted loop pushes to
+    /// ([`hoist::push_loop_paths`]), each its own pushes times the trip count, and only then
+    /// re-derive each held push header: two vectors in one store would otherwise see the
+    /// second reserve move the record the first header was just derived from.  A path whose
+    /// header the loop does not hold is not reserved (its pushes go through the runtime,
+    /// which grows as it needs).
+    fn push_reserve_paths(
+        &mut self,
+        w: &mut dyn Write,
+        ps: &[hoist::PushLoop<'_>],
+    ) -> std::io::Result<()> {
+        let mut held: Vec<(String, String, u32, u32)> = Vec::new();
+        for p in ps {
+            if let Some(hdr) = self.active_push_header(&p.path).map(str::to_owned) {
+                let vec = self.expr_string(p.vector)?;
+                held.push((hdr, vec, p.pushes, p.size));
+            }
+        }
+        if held.is_empty() {
+            return Ok(());
+        }
+        let count = self.push_trip_count(&ps[0])?;
+        let mut line = format!("{{ let _pn = {count}; if _pn > 0 {{ ");
+        for (_, vec, pushes, size) in &held {
+            line.push_str(&format!(
+                "vector::reserve_more(&({vec}), _pn.saturating_mul({pushes}_i64), {size}_u32, &mut stores.allocations); "
+            ));
+        }
+        for (hdr, vec, _, _) in &held {
+            line.push_str(&format!("{hdr} = vector::push_header(&({vec}), &stores.allocations); "));
+        }
+        line.push_str("} } //@FR-R-PushFill push reserve, several paths");
+        self.indent(w)?;
+        writeln!(w, "{line}")?;
+        crate::rewrite_census::fired("R-PushFill", 1);
+        Ok(())
     }
 
     /// `@FR-R-PushFill`'s record clause — [`Self::push_reserve`] for a record-append loop
