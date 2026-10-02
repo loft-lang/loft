@@ -1,0 +1,145 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN179 strand 4 — a program to run, written as a format string whose holes can never
+// become syntax: `c: Command = "git log -n {n} --format={fmt}"`.
+//
+// The literal the author wrote is split into words on whitespace; a quoted span ('…' or "…")
+// stays one word.  A hole appends its value to the word it sits in — never split, never
+// quoted — so `--format={fmt}` is one word however many spaces `fmt` holds.  A null hole
+// drops the whole word it sits in, so an optional option composes without an `if`.  And an
+// option is syntax too: a hole value that would START a word with `-` is refused, unless it
+// came through `flag(…)`.  A refused command records why and never runs.
+
+/// An option the author vouches for: the one way a `-`-led value may start a word.
+pub struct Flag {
+  word: text
+}
+
+/// A list of values spliced as words, one word each.
+pub struct Args {
+  words: vector<text>
+}
+
+/// Vouch for `word` as an option: `{flag("--verbose")}`.
+pub fn flag(word: text) -> Flag {
+  Flag { word: word }
+}
+
+/// Splice `words` as one argv word each: `git add -- {args(paths)}`.
+pub fn args(words: vector<text>) -> Args {
+  Args { words: words }
+}
+
+/// A program and its arguments, built from a format string.
+pub struct Command {
+  /// The words handed to the program: `argv[0]` is the program itself.
+  argv: vector<text>,
+  /// The last word may still grow: the literal or hole before touched no whitespace.
+  open: boolean,
+  /// The word being built held a null hole: what still touches it is dropped with it.
+  skip: boolean,
+  /// The quote a literal opened and has not yet closed: "" outside a quoted span.
+  quote: text,
+  /// Why this command must not run; "" when it may.
+  refused: text
+}
+
+fn refuse(self: Command, why: text) {
+  if self.refused == "" { self.refused = why; }
+}
+
+// Append `part` to the word in progress, opening a new word when none is.
+fn grow(self: Command, part: text) {
+  if self.skip { return; }
+  if self.open {
+    self.argv[len(self.argv) - 1] += part;
+  } else {
+    self.argv += [part];
+    self.open = true;
+  }
+}
+
+// The word in progress is empty: a value appended now STARTS the word.
+fn at_word_start(self: Command) -> boolean {
+  !self.open || self.argv[len(self.argv) - 1] == ""
+}
+
+// Drop the word in progress and everything that still touches it.
+fn drop_word(self: Command) {
+  if self.open && !self.skip { self.argv.remove(len(self.argv) - 1); }
+  self.open = true;
+  self.skip = true;
+}
+
+// A hole's value, refused when it would start a word with `-`.
+fn value(self: Command, v: text) {
+  if self.skip { return; }
+  if v.starts_with("-") && self.at_word_start() {
+    self.refuse("the value '{v}' would start an argument with '-', which makes it an option; pass it through flag(…) if it is one");
+    self.drop_word();
+    return;
+  }
+  self.grow(v);
+}
+
+/// The author's own bytes: split into words on whitespace, a quoted span kept whole.
+pub fn lit(self: Command, s: text) {
+  for c in s {
+    if self.quote != "" {
+      if "{c}" == self.quote { self.quote = ""; } else { self.grow("{c}"); }
+    } else if c == '\'' || c == '"' {
+      self.quote = "{c}";
+      // An empty quoted span is still a word: `''` is the empty argument.
+      self.grow("");
+    } else if c == ' ' || c == '\t' || c == '\n' {
+      self.open = false;
+      self.skip = false;
+    } else {
+      self.grow("{c}");
+    }
+  }
+}
+
+/// A text hole: one word or part of one; `null` drops the word it sits in.
+pub fn hole_text(self: Command, v: text?) {
+  if v == null { self.drop_word(); } else { self.value(v); }
+}
+
+/// An integer hole: its decimal digits, one word or part of one.
+pub fn hole_int(self: Command, v: integer) {
+  self.value("{v}");
+}
+
+/// A float hole: its shortest decimal form.
+pub fn hole_float(self: Command, v: float) {
+  self.value("{v}");
+}
+
+/// A boolean hole: `true` or `false`.
+pub fn hole_boolean(self: Command, v: boolean) {
+  self.value("{v}");
+}
+
+/// An option the author vouched for, `{flag("--x")}`: the one way a `-` may start a word.
+pub fn hole_flag(self: Command, v: Flag) {
+  self.grow(v.word);
+}
+
+/// A list spliced as words: the first joins the word in progress, the rest are words of
+/// their own.  An empty list drops the word it sits in, as a null hole does.
+pub fn hole_args(self: Command, v: Args) {
+  if len(v.words) == 0 {
+    self.drop_word();
+    return;
+  }
+  first = true;
+  for w in v.words {
+    if !first {
+      self.open = false;
+      self.skip = false;
+    }
+    first = false;
+    self.value(w);
+  }
+}

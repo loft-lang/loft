@@ -1,0 +1,79 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The Command composition matrix (@PLN179 strand 4a): every literal/hole composition against
+// the argv it must produce, computed by hand.  A value is one word or part of one and never
+// split; a null hole drops its word; a value that would start a word with `-` is refused
+// unless it came through flag(…); a quoted span in the literal is one word.
+use process::*;
+
+fn argv(c: Command) -> text {
+  "{c.argv}"
+}
+
+fn ok(c: Command, want: text, what: text) {
+  assert(c.refused == "", "{what}: refused: {c.refused}");
+  assert(argv(c) == want, "{what}: {argv(c)} for {want}");
+}
+
+fn refused(c: Command, want: text, what: text) {
+  assert(c.refused != "", "{what}: not refused, {argv(c)}");
+  assert(argv(c) == want, "{what}: {argv(c)} for {want}");
+}
+
+fn test_words_and_holes() {
+  n = 3;
+  fmt = "%H %s";
+  ok("git log -n {n} --format={fmt}", "[\"git\",\"log\",\"-n\",\"3\",\"--format=%H %s\"]", "a hole joins its word");
+  src = "a b";
+  dst = "c";
+  ok("cp {src} {dst}.bak", "[\"cp\",\"a b\",\"c.bak\"]", "a literal touching a hole joins it");
+  ok("a   b\tc", "[\"a\",\"b\",\"c\"]", "runs of whitespace separate once");
+  ok("sleep {0.5} {true}", "[\"sleep\",\"0.5\",\"true\"]", "float and boolean holes");
+}
+
+fn test_quoted_spans() {
+  ok("git commit -m 'two words'", "[\"git\",\"commit\",\"-m\",\"two words\"]", "single quotes");
+  ok("echo \"a b\"", "[\"echo\",\"a b\"]", "double quotes");
+  ok("printf '' x", "[\"printf\",\"\",\"x\"]", "an empty quoted span is a word");
+  v = "x y";
+  ok("echo 'a {v} b'", "[\"echo\",\"a x y b\"]", "a hole inside a quoted span");
+}
+
+fn test_null_holes() {
+  author: text? = null;
+  ok("git log {author} -n 1", "[\"git\",\"log\",\"-n\",\"1\"]", "a null hole drops its word");
+  ok("git log --author={author} -n 1", "[\"git\",\"log\",\"-n\",\"1\"]", "the literal joined before a null hole goes with it");
+  ok("x pre{author}post y", "[\"x\",\"y\"]", "and the literal joined after it");
+  named: text? = "ada";
+  ok("git log --author={named}", "[\"git\",\"log\",\"--author=ada\"]", "a non-null optional is a value");
+}
+
+fn test_options_are_syntax() {
+  f = "-rf";
+  refused("rm {f}", "[\"rm\"]", "a value starting a word with '-'");
+  refused("echo '{f}'", "[\"echo\"]", "quotes do not make it a value");
+  k = -5;
+  refused("head -n {k}", "[\"head\",\"-n\"]", "a negative number starts a word with '-'");
+  ok("x --format={f}", "[\"x\",\"--format=-rf\"]", "a '-' inside a word is a value");
+  ok("git {flag("--no-pager")} log", "[\"git\",\"--no-pager\",\"log\"]", "flag vouches for an option");
+}
+
+fn test_lists() {
+  ps = ["a", "b c"];
+  ok("git add -- {args(ps)}", "[\"git\",\"add\",\"--\",\"a\",\"b c\"]", "args splices words");
+  e: vector<text> = [];
+  ok("git add {args(e)} x", "[\"git\",\"add\",\"x\"]", "an empty list drops its word");
+  ok("x --files={args(ps)}", "[\"x\",\"--files=a\",\"b c\"]", "the first joins the word in progress");
+  d = ["ok", "-x"];
+  refused("rm {args(d)}", "[\"rm\",\"ok\"]", "a listed value starting with '-'");
+}
+
+fn main() {
+  test_words_and_holes();
+  test_quoted_spans();
+  test_null_holes();
+  test_options_are_syntax();
+  test_lists();
+  println("ok");
+}
