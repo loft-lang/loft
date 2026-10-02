@@ -1,0 +1,57 @@
+diff --git b/src/data.rs a/src/data.rs
+index ceba616a7..6e5bfc743 100644
+--- b/src/data.rs
++++ a/src/data.rs
+@@ -10106,19 +10106,6 @@ impl Data {
+         }
+     }
+ 
+-    /// How many stubs have been adopted this pass: taken before a declaration, it lets
+-    /// [`Data::adopted_since`] name the stubs that one declaration adopted.
+-    #[must_use]
+-    pub fn adopted_stub_count(&self) -> usize {
+-        self.adopted_stubs.len()
+-    }
+-
+-    /// The stubs adopted since `adopted_stub_count` answered `from`.
+-    #[must_use]
+-    pub fn adopted_since(&self, from: usize) -> &[u32] {
+-        self.adopted_stubs.get(from..).unwrap_or(&[])
+-    }
+-
+     pub fn resolve_adopted_stubs(&mut self, lexer: &mut Lexer) -> Vec<(u32, Type)> {
+         // Not a stub a GENERIC struct adopted: its target would be the bare template, where
+         // each use names an instance whose arguments the paths that read them resolve
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index c21c2036a..ec282691f 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -18376,7 +18376,6 @@ impl Parser {
+         loop {
+             let is_pub = std::mem::take(&mut self.pub_taken) || self.lexer.has_token("pub");
+             let before = self.data.definitions();
+-            let adopted_before = self.data.adopted_stub_count();
+             if self.lexer.diagnostics().level() == Level::Fatal
+                 || (!self.parse_capability()
+                     && !self.parse_enum()
+@@ -18388,19 +18387,9 @@ impl Parser {
+             {
+                 break;
+             }
+-            // @FR-F-Surface: what is `pub` is what a `pub` declaration DECLARES — never decided
+-            // by where an item is first named.  A type named above its declaration is a
+-            // forward-reference stub created by the declaration that NAMED it, so the range of
+-            // defs new to this declaration holds the stubs it only used (still `Unknown` here,
+-            // and not its to publish) and misses the stub it ADOPTED (created earlier, by a
+-            // user).  Both made the user's `pub`-ness the type's (loft#1856).
++            // mark newly created definitions as pub-visible.
+             if is_pub {
+                 for d_nr in before..self.data.definitions() {
+-                    if self.data.def_type(d_nr) != DefType::Unknown {
+-                        self.data.def_mut(d_nr).pub_visible = true;
+-                    }
+-                }
+-                for d_nr in self.data.adopted_since(adopted_before).to_vec() {
+                     self.data.def_mut(d_nr).pub_visible = true;
+                 }
+             }

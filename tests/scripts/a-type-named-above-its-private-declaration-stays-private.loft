@@ -7,6 +7,15 @@
 // even when a `pub` function names it first: the forward reference that `pub` function
 // creates is the type's, not the function's.  The reaches that must keep working are in
 // a-type-named-above-its-pub-declaration-is-published.loft.
+//
+// @falsified-at: be004e56c — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 1/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 1/2 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/a-type-named-above-its-private-declaration-stays-private.patch — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 1/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 1/2 (the suite's verdict, not a count of matches)
+//   CHANNEL: the expectations — on the control a `pub fn` naming the type first publishes
+//   it, so both qualified reaches compile and no pin meets its refusal.
+//   WITNESS: `fwdlib::FwdHidS { v: 2 }.v` answers 2 there.
+//   ARMED: nothing.
+//   HOLDS: every cell is a refusal on this tree, so leak, panic and value cannot move; only
+//   which message each pin meets does.
 use fwdlib;
 
 // @EXPECT_ERROR: `FwdHidS` is not `pub` in `fwdlib`, so `fwdlib::FwdHidS` cannot reach it
