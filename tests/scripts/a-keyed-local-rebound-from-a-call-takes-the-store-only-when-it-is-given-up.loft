@@ -13,6 +13,11 @@
 // leaves v = 3, 6, 9, 12 (30) in four entries; mks(4) holds k 4,3,2,1 with v 0..3, so k = 1
 // has v 3; mki(5) holds k 0,2,4,6,8 with v 0..4, so k = 8 has v 4; the reference cells sum
 // es[0..4].v = 0+11+22+33 = 66.
+//
+// @falsified-by: tests/falsified/a-keyed-local-rebound-from-a-call-takes-the-store-only-when-it-is-given-up.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// CHANNEL: assertions on both backends — with the free protection ignored, `c1 = id(keep)`
+// takes keep's store and keep reads empty.
+// HOLDS: every other cell (the exchange's other conditions are untouched by the patch).
 
 struct E { k: integer, v: integer }
 struct N { k: integer, other: reference<E> }
