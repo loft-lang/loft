@@ -245,6 +245,9 @@ as a STALE ROW rather than ignored.
 | `random` | 2026-10 | `06aa45e` | `RandStream` described; `rand_indices`' negative case named (0.3.4) |
 | `regex` | 2026-10 | `06aa45e` | `regex_find`'s supersession named the wrong `search`; roadmap's FFI-gap cause was stale (0.4.2) |
 | `zttext` | 2026-10 | `06aa45e` | Guide written and falsified; `zttext_version()` answers the manifest; design pointers name where the notation lives (0.1.3) |
+| `assets` | 2026-10 | `efd8ed7` | Guide and @PAK-001..003 written; README example did not compile under C98 and the v2026.8.0 hang note was obsolete; `blob_put`'s `+=` claim was stale (0.2.4). Found loft's text-key replace duplicating (fixed in loft) |
+| `glb` | 2026-10 | `efd8ed7` | Guide written; README claimed camera nodes that are never written (0.1.4). A spot light is written with no `spot` object — unchecked against KHR_lights_punctual |
+| `mesh3d` | 2026-10 | `efd8ed7` | Guide written; `mat4_scale` is per-axis, not uniform; the bare-import claim predated C98 (0.1.3) |
 
 Each pass's notes, row by row, are in [LIBRARY_DOC_REVIEW-history.md](LIBRARY_DOC_REVIEW-history.md).
 
