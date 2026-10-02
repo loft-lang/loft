@@ -13,10 +13,11 @@
 // (`tests/store_swap.rs`).  Values hand-computed.
 //
 // @falsified-at: none — the rule has no earlier build to catch, so the receipt is a SABOTAGE
-//   (2026-10-02): with `Store::swap_contents` leaving `claims` unswapped, s1 fails on both
-//   backends — the destination keeps the reset root's claim map over the moved records and
-//   the next claim lands on a live element.
-//   CHANNEL: the VALUE channel (an assertion) on both backends.
+//   (2026-10-02): with `Stores::try_swap_in` skipping the release of the slot that ends up
+//   holding the destination's empty root, s12 fails on both backends — "store table exhausted:
+//   65535 stores live at once" after its 100 000 rebinds.  A first sabotage, leaving the claim
+//   map unswapped, moved nothing: in a release build the map only answers liveness checks.
+//   CHANNEL: the store-table / leak channel on both backends.
 //   HOLDS: leak, panic and free-refusal are equal on both trees and clean here.
 
 struct M { m: vector<float> }

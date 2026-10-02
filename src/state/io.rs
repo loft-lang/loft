@@ -1680,6 +1680,12 @@ impl State {
         if to.store_nr == u16::MAX {
             return;
         }
+        // `@FR-H-SwapIn` — a given-up source copied into a reset root is the stores exchanged:
+        // no copy runs, so none is reported below.
+        if free_source && self.database.try_swap_in(&data, &to, tp) {
+            self.database.allocations[to.store_nr as usize].last_op_at = self.code_pos;
+            return;
+        }
         // @PLN90 phase 1 — make the copy visible. A real record deep-copy is about to
         // run (the no-op-alias and null cases returned above). LOFT_COPY_DUMP prints one
         // line per executed structure copy so we can inventory every copy + map it to its
@@ -1811,11 +1817,6 @@ impl State {
             }
         }
         let code_pos = self.code_pos;
-        // `@FR-H-SwapIn` — a given-up source copied into a reset root is the stores exchanged.
-        if free_source && self.database.try_swap_in(&data, &to, tp) {
-            self.database.allocations[to.store_nr as usize].last_op_at = code_pos;
-            return;
-        }
         let size = u32::from(self.database.size(tp));
         // free any nested vectors/strings already owned by the destination
         // before overwriting it, to prevent double-free and leaks when a struct
