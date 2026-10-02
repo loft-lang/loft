@@ -3502,6 +3502,30 @@ Guard `tests/scripts/a-hot-operator-answers-the-same-inline-as-through-the-table
 planted defects named in its header; the fused hot operators' own guard is
 `tests/scripts/an-integer-operator-over-locals-runs-as-one-op.loft`.
 
+### A `par` worker runs on the lean loop
+
+```
+  (R-WorkerLean)  a `par` worker's frame (`State::run_to_return`) runs on the lean register
+                  loop whenever the main run's would (`State::worker_lean_ok`: no debugger,
+                  no per-op instrument armed), with `#hot` operators inline as there.  A
+                  worker's stop flag ends ITS loop only; a fault a worker raised is reported
+                  by the main loop, not taken over by another worker.  The definition a
+                  worker enters is found once per function position (`State::worker_d_nr`),
+                  not by scanning every definition for each element.
+```
+
+**In words.** Applied by the interpreter's worker entry.  Allowed because a worker frame
+executes the same bytecode as the main run, and the lean loop differs from the checked one only
+in the per-op instruments it leaves out — which `worker_lean_ok` requires to be off.  The stop
+path is the one place they differ: the main loop also takes over a fault some worker set, so the
+worker instantiation leaves that test out (`lean_stop(true)`).  The remembered definition is
+reset wherever `fn_positions` is rebuilt.  Effect on a one-thread `par` over a 1000-element
+vector: 306 → 175 ms, the same as the loop without `par`; four threads 92 → 49 ms.
+`LOFT_NO_WORKER_LEAN=1` runs a worker on the checked loop.  Guard
+`tests/scripts/a-par-worker-runs-on-the-lean-loop.loft`; the stop path is falsified by
+`runtime_errors::i1056_a_par_worker_fault_names_the_workers_own_frames` and the placement-parity
+library-fault cells (the receipt is in the guard's header).
+
 ### An operator's priority decides its opcode's width
 
 ```

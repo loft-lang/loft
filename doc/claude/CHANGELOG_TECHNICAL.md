@@ -24,6 +24,21 @@ run removes `LOFT_NO_CACHE` so an exported switch cannot silence it.  The off sw
 `loft --help` (under `cache`), DEBUG.md and RUNNING_TESTS.md.  Guard:
 `arc_e_program_cache::a_development_build_caches_unless_told_not_to`.
 ### `(H-LazyFree)`: a store's deletes go untracked until one sweep at the growth bound, and a struct-enum field answers `holds_no_heap` by its variant (2026-09-30)
+### `(R-WorkerLean)` — a `par` worker runs on the lean loop (2026-10-02)
+
+A `par` worker's frame (`State::run_to_return`) ran the checked loop and found the function it
+entered by scanning every definition, for each element: `par(…, 1)` cost 1.9× the same loop
+without `par`.  It now runs the lean register loop whenever the main run would, with `#hot`
+operators inline, and remembers the definition per function position (reset wherever
+`fn_positions` is rebuilt).  The worker's stop path leaves out the main loop's takeover of
+another worker's fault.  `LOFT_NO_WORKER_LEAN=1` keeps the checked loop.
+
+Measured on a 1000-element `par` (`--interpret`, release): one thread 306 → 175 ms (the loop
+without `par`), four threads 92 → 49 ms.  Guard w1–w5 identical under both switch arms;
+sabotage: the worker ignoring its stop flag fails `runtime_errors::i1056…` and placement_parity's
+two library-fault cells.  A sabotage of the remembered lookup is inert: each `par` loop builds
+fresh worker States.  The runtime subject passes 1432/1432 under both arms.
+
 ### `(H-SwapIn)` and `(R-RepeatRun)` — a rebind exchanges stores instead of copying, and a spelled-out run of one constant is one fill (2026-10-02)
 
 **`(H-SwapIn)`** (`Stores::try_swap_in`, called by both backends' `OpCopyRecord`): the rebind

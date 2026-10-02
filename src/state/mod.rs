@@ -6524,7 +6524,8 @@ impl State {
     /// take it (`execute_argv_shared`): a release build, no debugger, no op-watching
     /// instrument, the fast stack and the register table — and `LOFT_NO_WORKER_LEAN` unset.
     fn worker_lean_ok(&self) -> bool {
-        !(cfg!(debug_assertions) || cfg!(feature = "stack_align_guard"))
+        !cfg!(debug_assertions)
+            && !cfg!(feature = "stack_align_guard")
             && self.debug.is_none()
             && self.fast_stack
             && !self.verify_on
