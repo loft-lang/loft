@@ -12380,7 +12380,7 @@ impl Data {
             .iter()
             .filter(|&(name, src, def_nr)| {
                 src == lib_source
-                    && self.definitions[def_nr as usize].pub_visible
+                    && self.passes_on(def_nr)
                     && !self.is_private_import(lib_source, name, def_nr)
             })
             .map(|(name, _, def_nr)| (name.to_string(), def_nr))
@@ -12389,9 +12389,19 @@ impl Data {
 
     /// The definition `lib_source` passes on under `key`, if any (see [`Self::exported_names`]).
     fn exported(&self, key: &str, lib_source: u16) -> Option<u32> {
-        self.def_names.get(key, lib_source).filter(|&d| {
-            self.definitions[d as usize].pub_visible && !self.is_private_import(lib_source, key, d)
-        })
+        self.def_names
+            .get(key, lib_source)
+            .filter(|&d| self.passes_on(d) && !self.is_private_import(lib_source, key, d))
+    }
+
+    /// @FR-F-Surface — a `pub` item, or a forward-reference stub.  A stub is not an item and
+    /// has no `pub` of its own: it travels with the import so the importer's declaration can
+    /// adopt it (loft#801), and that declaration decides whether it is `pub`.  Its USER's
+    /// `pub` decided the trip before, so a private function naming the importer's type
+    /// above its declaration was refused where a `pub` one compiled (loft#1856).
+    fn passes_on(&self, d_nr: u32) -> bool {
+        let d = &self.definitions[d_nr as usize];
+        d.pub_visible || matches!(d.def_type, DefType::Unknown)
     }
 
     /// @FR-F-Surface (loft#1848) — the error for a qualified `lib::name` that reaches what `lib`

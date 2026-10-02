@@ -18388,21 +18388,21 @@ impl Parser {
             {
                 break;
             }
-            // @FR-F-Surface: what is `pub` is what a `pub` declaration DECLARES — never decided
-            // by where an item is first named.  A type named above its declaration is a
-            // forward-reference stub created by the declaration that NAMED it, so the range of
-            // defs new to this declaration holds the stubs it only used (still `Unknown` here,
-            // and not its to publish) and misses the stub it ADOPTED (created earlier, by a
-            // user).  Both made the user's `pub`-ness the type's (loft#1856).
+            // @FR-F-Surface: what is `pub` is what a declaration DECLARES, never where the
+            // item was first named.  A type named above its declaration is a stub created
+            // inside the declaration that NAMED it, so the range below holds stubs this
+            // declaration only USED (still `Unknown`, not its to publish) and misses the one
+            // it ADOPTED (created earlier, by a user; `note_stub_adopted` records each).  The
+            // adopting declaration decides, either way (loft#1856).
             if is_pub {
                 for d_nr in before..self.data.definitions() {
                     if self.data.def_type(d_nr) != DefType::Unknown {
                         self.data.def_mut(d_nr).pub_visible = true;
                     }
                 }
-                for d_nr in self.data.adopted_since(adopted_before).to_vec() {
-                    self.data.def_mut(d_nr).pub_visible = true;
-                }
+            }
+            for d_nr in self.data.adopted_since(adopted_before).to_vec() {
+                self.data.def_mut(d_nr).pub_visible = is_pub;
             }
         }
         let res = self.lexer.peek().clone();

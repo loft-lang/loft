@@ -1,0 +1,12 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @ARGS: --lib tests/fixtures/libs
+//
+// @FR-F-Surface (loft#1856) — the refusal half of
+// a-module-names-its-importers-type-from-a-private-function.loft: a `pub` function in
+// `fwd1856_inner` names the entry's PRIVATE type first, and the type stays private.
+use fwd1856;
+
+// @EXPECT_ERROR: `F1856Hid` is not `pub` in `fwd1856`, so `fwd1856::F1856Hid` cannot reach it
+fn hidden_struct() -> integer { fwd1856::F1856Hid { h_n: 1 }.h_n }
