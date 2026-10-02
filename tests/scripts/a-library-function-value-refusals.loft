@@ -1,0 +1,22 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @ARGS: --lib tests/lib
+//
+// What a qualified name in value position answers when it is no function value: a generic is
+// refused as its bare spelling is, a method names its receivers, and a name the library does
+// not have says so — none of them calls the LIBRARY an unknown variable.
+// `a-library-function-is-a-value-under-its-qualified-name.loft` holds the cells that work.
+use fnvaluelib;
+
+fn apply(f: fn(integer) -> integer, x: integer) -> integer { f(x) }
+
+// @EXPECT_ERROR: `fnvaluelib::ident` is a generic function, and a generic is not a function VALUE
+fn generic() -> integer { apply(fnvaluelib::ident, 3) }
+
+// @EXPECT_ERROR: library `fnvaluelib` has no `nope`
+fn unknown() -> integer { apply(fnvaluelib::nope, 3) }
+
+// @EXPECT_ERROR: `std::abs` is a method on `float`, `integer`, `single`, and a method is not a function VALUE
+fn method() -> integer { apply(std::abs, -3) }
+
+fn main() {}
