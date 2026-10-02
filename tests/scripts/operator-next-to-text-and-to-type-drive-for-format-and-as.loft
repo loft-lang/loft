@@ -1,0 +1,50 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN182 P5 — the forms a single value reaches, each through an `operator` definition
+// (`@FR-Op-Fold`, `@FR-Op-Conv`): `for e in x` calls `operator next`, `"{x}"` and `"{x:spec}"`
+// call `operator to_text`, and `x as T` calls `operator to_<t>` — the conversion's name is T's
+// in snake case, and a conversion INTO a type of this program may take a foreign `self`
+// (`text`, `integer`).  `Printable` is met by `operator to_text`, a user type's and the
+// built-ins' alike (`@FR-Op-Iface`).  `x as text` is `to_text` with an empty spec where the
+// type defines only the spec form.  These are `time`'s three conversions and its spec-taking
+// `to_text`, written the new way.
+//
+struct Cnt { n: integer, max: integer }
+pub operator next(self: Cnt) -> integer? { if self.n >= self.max { return null; } self.n += 1; self.n }
+
+struct Money { cents: integer }
+pub operator to_text(self: Money) -> text { "${self.cents / 100}.{self.cents % 100:02}" }
+
+value struct DateTime { ms: integer }
+pub operator to_integer(self: DateTime) -> integer { self.ms }
+pub operator to_date_time(self: integer) -> DateTime { DateTime { ms: self } }
+pub operator to_date_time(self: text) -> DateTime { DateTime { ms: len(self) * 1000 } }
+pub operator to_text(self: DateTime, spec: text) -> text { if spec == "" { "dt{self.ms}" } else { "{spec}:{self.ms}" } }
+
+struct HTTPRequest { n: integer }
+struct Vec2 { x: integer }
+pub operator to_http_request(self: integer) -> HTTPRequest { HTTPRequest { n: self } }
+pub operator to_vec2(self: integer) -> Vec2 { Vec2 { x: self } }
+
+fn show < T: Printable > (v: T) -> text { "<{v}>" }
+
+fn main() {
+  s = 0;
+  for x in Cnt { n: 0, max: 4 } { s += x; }
+  assert(s == 10, "operator next drives for: {s}");
+  e = 0;
+  for _x in Cnt { n: 5, max: 5 } { e += 1; }
+  assert(e == 0, "an empty walk");
+  m = Money { cents: 1234 };
+  assert("{m}" == "$12.34", "operator to_text: {m}");
+  assert(show(m) == "<$12.34>" && show(7) == "<7>" && show("q") == "<q>", "Printable, user and built-in");
+  d = DateTime { ms: 1700 };
+  assert("{d}" == "dt1700" && "{d:iso}" == "iso:1700", "the spec form");
+  assert(d as text == "dt1700", "as text through the spec form");
+  assert(d as integer == 1700, "as integer");
+  assert((42 as DateTime).ms == 42, "integer as DateTime: a foreign self");
+  assert(("abcd" as DateTime).ms == 4000, "text as DateTime");
+  assert((7 as HTTPRequest).n == 7 && (3 as Vec2).x == 3, "snake-case conversion names");
+  println("ok");
+}

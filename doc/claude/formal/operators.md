@@ -23,6 +23,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
                a + b                         a.plus(b)             operator plus(self: τ, other: U) -> V
                a - b                         a.minus(b)            operator minus(self: τ, other: U) -> V
                a * b                         a.times(b)            operator times(self: τ, other: U) -> V
+               x as T                        x.to_t()              operator to_t(self: S) -> T   (Op-Conv)
                for e in x                    x.next()              operator next(self: τ) -> E?
                "{x}", "{x:spec}"             x.to_text(), x.to_text(spec)
                                                                    operator to_text(self: τ) -> text,
@@ -73,6 +74,17 @@ SPDX-License-Identifier: LGPL-3.0-or-later
                to_text`; a plain `fn next` / `fn to_text` is an ordinary method, and the form on
                a type with only such a method is refused naming it.
 
+  (Op-Conv)    `x as T` calls `x.to_t()` where `t` is T's name in snake case (`DateTime` →
+               `date_time`; an all-capital run is one word, `HTTPRequest` → `http_request`; a
+               digit stays with the word before it, `Vec2` → `vec2`), and the definition answers
+               exactly T.  T is one of the six base types or a non-generic struct or enum; a
+               generic instance and a narrowed integer have no `to_` name.  The one exception to
+               (Op-Home): a conversion INTO a type of this source may take a foreign `self`
+               (`operator to_date_time(self: text) -> DateTime`), so no two packages claim one
+               conversion.  `x as text` calls `to_text`, with an empty spec where the type
+               defines only the spec form.  A plain `fn to_<t>` is an ordinary method; an `as` it
+               would have answered is refused naming it.
+
   (Op-Iface)   an interface member written `operator` (`Printable`'s `operator to_text`) is met
                only by an `operator` definition; a member written `fn` by a plain method.
 
@@ -103,6 +115,7 @@ saying so.
 | Op-Bound | `Data::operator_member_for`, `Parser::satisfaction_failures`, `substitute_type_in_value` | both scripts (`sort`, `min_of`, `max_of`, `sum`, user generics) |
 | Op-Name | the definition is an ordinary method | the same script |
 | Op-Fold | the `next` lookups (`parser/collections.rs`, `parser/control.rs`) and the format route (`try_bound_to_text_call`, the spec reader in `parser/objects.rs`) | `tests/scripts/a-programs-own-iterator-works-like-a-built-in-one.loft` and the format guards, migrated; refusals in `tests/parse_errors.rs` |
+| Op-Conv | `Data::conversion_name`, `Parser::check_conversion_definition`, `Parser::operator_conversion` (the `as` site) | `tests/scripts/operator-next-to-text-and-to-type-drive-for-format-and-as.loft`, `tests/parse_errors.rs` (`operator_conversion_*`, `a_plain_to_integer_does_not_drive_as`) |
 | Op-Iface | the interface body (`parser/definitions.rs`), `Parser::satisfaction_failures` | `tests/scripts/845-generic-format.loft` (Printable through a user type) |
 | Op-Std | `Parser::operator_member` (no lookup while `default/` is parsed) | `tests/frontend_counts.rs` (the cold stdlib parse holds its pin) |
 
