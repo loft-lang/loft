@@ -4,6 +4,7 @@
 """portal.py — ONE page that says where loft-native stands against Rust, by CLASS.
 
     python3 bench/portal/portal.py measure [stats.py options]      # e.g. --only 13,15
+    python3 bench/portal/portal.py measure --routine check_request,cbor/decode
     python3 bench/portal/portal.py render
 
 `measure` runs `bench/stats.py` over the suite and over every library bench `libs.tsv`
@@ -90,7 +91,9 @@ def measure(argv):
     import tempfile
     os.makedirs(RESULTS, exist_ok=True)
     out = os.path.join(RESULTS, f"{platform.node() or 'unknown'}.tsv")
-    packages = [] if "--package" in argv or "--no-packages" in argv else library_packages()
+    # `--routine` picks its own programs (stats.py reads routines.tsv), so it takes no default list.
+    explicit = any(x in argv for x in ("--package", "--no-packages", "--routine"))
+    packages = [] if explicit else library_packages()
     argv = [x for x in argv if x != "--no-packages"]
     with tempfile.NamedTemporaryFile(suffix=".tsv", delete=False) as tmp:
         fresh = tmp.name
