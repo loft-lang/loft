@@ -55,8 +55,12 @@ import tomllib
 # so the gate reflects NEW breaks and future reds are real signals.  Every entry MUST cite a
 # tracking issue and be removed the moment the lib republishes migrated.
 KNOWN_BROKEN: dict[str, str] = {
-    # (empty) — hex_terrain 0.1.1 republished migrated (loft-lang/loft#579).
     # Add an entry ONLY with a tracking issue + a remove-on-republish note.
+    "time": (
+        "operator definitions (@PLN182): a format hook is `operator to_text`, a keyword no "
+        "released loft has, so the migrated 0.4.0 (loft-libs-game "
+        "pln182-operator-definitions) needs loft >= 2026.11.0 — remove when it publishes"
+    ),
 }
 
 # The compiler is not a library revalidated against itself; see the module docstring.
