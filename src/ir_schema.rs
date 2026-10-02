@@ -1378,6 +1378,7 @@ fn definition_from_parsed(p: &Parsed) -> Result<Definition, TypeDecodeError> {
         known_type: as_u16(field(p, "known_type")?)?,
         pub_visible: as_bool(field(p, "pub_visible")?)?,
         null_safe: as_bool(field(p, "null_safe")?)?, // @PLN46 W2
+        op_priority: crate::data::OP_NORMAL,
         closure_record: as_u32(field(p, "closure_record")?)?,
         mutated_captures: str_list(field(p, "mutated_captures")?)?,
         scalars_to_box: str_list(field(p, "scalars_to_box")?)?,
@@ -2345,6 +2346,7 @@ mod tests {
             variables: crate::variables::Function::new("Point", "geo.loft"),
             pub_visible: true,
             null_safe: false,
+            op_priority: crate::data::OP_NORMAL,
             closure_record: u32::MAX,
             mutated_captures: Vec::new(),
             scalars_to_box: Vec::new(),
@@ -2428,6 +2430,7 @@ mod tests {
             variables: crate::variables::Function::new("T", ""),
             pub_visible: false,
             null_safe: false,
+            op_priority: crate::data::OP_NORMAL,
             closure_record: u32::MAX,
             mutated_captures: Vec::new(),
             scalars_to_box: Vec::new(),
