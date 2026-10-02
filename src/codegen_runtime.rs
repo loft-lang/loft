@@ -1719,7 +1719,11 @@ pub fn OpGetFileText(cell: &std::cell::UnsafeCell<Stores>, file: DbRef, content:
     };
     // #255 / @PLN9: re-home against the program anchor (native parity with
     // the interpreter's `State::get_file_text`).
-    let file_path = stores.resolve_path(&file_path);
+    // `@FR-Path-Refuse` — a refused path reads as no text (logged by `resolve_path`).
+    let Some(file_path) = stores.resolve_path(&file_path) else {
+        content.clear();
+        return;
+    };
     read_file_text_into(&file_path, content);
 }
 
@@ -1788,7 +1792,9 @@ pub fn OpSizeFile(cell: &std::cell::UnsafeCell<Stores>, file: DbRef) -> i64 {
             .to_owned()
     };
     // #255 / @PLN9: re-home against the program anchor.
-    let file_path = stores.resolve_path(&file_path);
+    let Some(file_path) = stores.resolve_path(&file_path) else {
+        return i64::MIN;
+    };
     if let Ok(meta) = std::fs::metadata(&file_path) {
         meta.len().cast_signed()
     } else {
@@ -1827,7 +1833,9 @@ pub fn OpTruncateFile(cell: &std::cell::UnsafeCell<Stores>, file: DbRef, size: i
             .to_owned()
     };
     // #255 / @PLN9: re-home against the program anchor.
-    let file_path = stores.resolve_path(&file_path);
+    let Some(file_path) = stores.resolve_path(&file_path) else {
+        return false;
+    };
     // Close any open handle so resize starts from a clean state.
     let file_ref = stores.store(&file).get_i32_raw(file.rec, file.pos + 28);
     if file_ref != i32::MIN && (file_ref as usize) < stores.files.len() {
@@ -1923,7 +1931,9 @@ fn file_handle_write(stores: &mut Stores, file: &DbRef) -> i32 {
         )
     };
     // #255 / @PLN9: re-home against the program anchor.
-    let file_name = stores.resolve_path(&file_name);
+    let Some(file_name) = stores.resolve_path(&file_name) else {
+        return i32::MIN;
+    };
     match OpenOptions::new()
         .read(true)
         .write(true)
@@ -1969,7 +1979,9 @@ fn file_handle_read(stores: &mut Stores, file: &DbRef, initial_pos: i64) -> i32 
             .to_owned()
     };
     // #255 / @PLN9: re-home against the program anchor.
-    let file_name = stores.resolve_path(&file_name);
+    let Some(file_name) = stores.resolve_path(&file_name) else {
+        return i32::MIN;
+    };
     match OpenOptions::new().read(true).open(&file_name) {
         Ok(mut f) => {
             if initial_pos > 0 {
@@ -2935,13 +2947,10 @@ pub fn n_ticks(_cell: &std::cell::UnsafeCell<Stores>) -> i64 {
     crate::loft_host_time_ticks_us() as i64
 }
 
-/// Return the platform path separator as a loft character (`i32`).
-/// Returns `'/'` (47) on Unix and `'\\'` (92) on Windows.
-/// Bytecode equivalent: `n_path_sep` in `src/native.rs`.
-/// Plan 09 phase 01 step 1.5: migrated to the no-stores ABI — body
-/// returns a compile-time platform constant, never touches `Stores`.
+/// The separator of a loft path, as a loft character (`i32`): `'/'` on every platform
+/// (`@FR-Path-Sep`).  Bytecode equivalent: `n_path_sep` in `src/native.rs`.
 pub fn n_path_sep() -> i32 {
-    crate::platform::sep() as i32
+    '/' as i32
 }
 
 /// C60 piece 3: build a scratch u32-rec-nr vector from a hash,
@@ -5488,6 +5497,69 @@ pub fn fs_is_file(path: &str) -> bool {
     #[cfg(not(host_fs))]
     {
         std::path::Path::new(path).is_file()
+    }
+}
+
+/// `@FR-Path-Refuse` — the error a refused path opens with, so an open site's existing error
+/// branch answers for it; the refusal itself was logged by `Stores::resolve_path`.
+#[must_use]
+pub fn path_refused() -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::InvalidInput,
+        "the path is refused (formal/paths.md)",
+    )
+}
+
+// The path-taking operations as a PROGRAM reaches them, in both backends: the program's
+// path goes through `Stores::resolve_path` (formal/paths.md), and a refused path answers the
+// operation's own failure — `FS_OTHER` for a change, `false` for a question
+// (`@FR-Path-Refuse`).  The stdlib's `#rust` templates and the interpreter's handlers call
+// these — written `s.database.fs_*_at(…)`, which the native rewriter turns into
+// `stores.fs_*_at(…)` — never `resolve_path` and an `fs_*` in two steps.
+
+impl Stores {
+    #[must_use]
+    pub fn fs_delete_at(&self, raw: &str) -> i64 {
+        self.resolve_path(raw).map_or(FS_OTHER, |p| fs_delete(&p))
+    }
+
+    #[must_use]
+    pub fn fs_move_at(&self, from: &str, to: &str) -> i64 {
+        match (self.resolve_path(from), self.resolve_path(to)) {
+            (Some(f), Some(t)) => fs_move(&f, &t),
+            _ => FS_OTHER,
+        }
+    }
+
+    #[must_use]
+    pub fn fs_mkdir_at(&self, raw: &str) -> i64 {
+        self.resolve_path(raw).map_or(FS_OTHER, |p| fs_mkdir(&p))
+    }
+
+    #[must_use]
+    pub fn fs_mkdir_all_at(&self, raw: &str) -> i64 {
+        self.resolve_path(raw)
+            .map_or(FS_OTHER, |p| fs_mkdir_all(&p))
+    }
+
+    #[must_use]
+    pub fn fs_rmdir_at(&self, raw: &str) -> i64 {
+        self.resolve_path(raw).map_or(FS_OTHER, |p| fs_rmdir(&p))
+    }
+
+    #[must_use]
+    pub fn fs_is_dir_at(&self, raw: &str) -> bool {
+        self.resolve_path(raw).is_some_and(|p| fs_is_dir(&p))
+    }
+
+    #[must_use]
+    pub fn fs_is_file_at(&self, raw: &str) -> bool {
+        self.resolve_path(raw).is_some_and(|p| fs_is_file(&p))
+    }
+
+    #[must_use]
+    pub fn fs_is_symlink_at(&self, raw: &str) -> bool {
+        self.resolve_path(raw).is_some_and(|p| fs_is_symlink(&p))
     }
 }
 

@@ -2,15 +2,15 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // @PLN184 — a loft program must not be able to tell which platform it runs on.  Every
-// assertion below states the PLATFORM-NEUTRAL answer, which is what Linux answers today;
-// on Windows each one is a place loft could leak the host into a program, so the Windows
-// corpus leg is where this file goes red.  Each test names the leak it watches.
+// assertion states the answer `formal/paths.md` gives, the same on every platform; the
+// Windows corpus leg is where a leak shows.  Each test names the rule it holds.
 //
-// The contract the assertions spell (proposed by @PLN184, owner to confirm per row):
-//   - a path a program is GIVEN by loft uses `/` only, and `/` is the only separator a
-//     program WRITES — a `\` is a file-name character, as on Unix;
-//   - a path names a file by its exact spelling: `A.TXT` is not `a.txt`;
-//   - the same program writes, deletes and moves the same files on every platform.
+//   - @FR-Path-Sep: a program may separate with `/` or `\`; loft hands back `/` only,
+//     with no trailing separator, and `path_sep()` is '/';
+//   - @FR-Path-Name: a name illegal on any platform is refused on every platform;
+//   - @FR-Path-Case: a name means exactly its spelling — a second spelling of an entry
+//     that differs only in case is refused;
+//   - @FR-Path-Refuse: a refused path answers the operation's own failure.
 //
 // @falsified-at: 08b0ad037 on windows-latest (windows-probe run 37060992821) — interpret 6 of 8 tests fail, native 6 of 8 tests fail; on Linux 8 of 8 pass on both backends
 //   CHANNEL: the expectations — the platform IS the control: the same commit, Windows instead
@@ -32,20 +32,20 @@ fn clean(d: text) {
   rmdir(d);
 }
 
-// Leak 1: the separator a program would build paths with.
+// @FR-Path-Sep — the separator a program would build paths with.
 fn test_the_separator_is_a_slash() {
   assert(path_sep() == '/', "path_sep() answers {path_sep()}");
 }
 
-// Leak 3: a directory loft hands the program.
+// @FR-Path-Sep — a directory loft hands the program: `/` only, no trailing separator.
 fn test_given_directories_carry_no_backslash() {
-  t = temp_dir() ?? "";
-  assert(!t.contains("\\"), "temp_dir() is {t}");
-  c = cache_dir() ?? "";
-  assert(!c.contains("\\"), "cache_dir() is {c}");
+  for g in [temp_dir() ?? "", cache_dir() ?? "", directory(), source_dir()] {
+    assert(!g.contains("\\"), "{g} holds a backslash");
+    assert(!g.ends_with("/") || g == "/", "{g} ends in a separator");
+  }
 }
 
-// Leak 2: the paths a directory listing hands back.
+// @FR-Path-Sep — the paths a directory listing hands back.
 fn test_a_listing_hands_back_slash_paths() {
   d = scratch("list");
   file("{d}/b.txt").write("b");
@@ -57,30 +57,31 @@ fn test_a_listing_hands_back_slash_paths() {
   clean(d);
 }
 
-// Leak 4: names that differ only in case are two files.
+// @FR-Path-Case — a name means exactly its spelling; a second spelling is refused.
 fn test_case_is_part_of_the_name() {
   d = scratch("case");
   file("{d}/b.txt").write("lower");
   assert(!exists("{d}/B.TXT"), "B.TXT is not b.txt");
-  file("{d}/B.txt").write("upper");
-  assert("{list_dir(d) ?? []}" == "[\"B.txt\",\"b.txt\"]", "two files: {list_dir(d) ?? []}");
+  assert(!file("{d}/B.txt").write("upper").ok(), "B.txt beside b.txt is refused");
+  assert("{list_dir(d) ?? []}" == "[\"b.txt\"]", "one file: {list_dir(d) ?? []}");
   assert((file("{d}/b.txt").content() ?? "") == "lower", "b.txt kept its own content");
   clean(d);
 }
 
-// Leak 5: names one platform refuses.  The answer today is Linux's (written); whether
-// loft should instead refuse them everywhere is @PLN184's open question — either way the
-// answer must be the same on every platform.
+// @FR-Path-Name / @FR-Path-Refuse — a name some platform cannot hold is refused on every
+// platform, with the operation's own failure answer.
 fn test_a_name_is_written_the_same_everywhere() {
   d = scratch("names");
-  for n in ["aux.txt", "a:b.txt", "q?.txt", "trail."] {
-    assert(file("{d}/{n}").write("x").ok(), "{n} is written");
+  for n in ["aux.txt", "a:b.txt", "q?.txt", "trail.", "LPT1", "x*y", "a|b"] {
+    assert(!file("{d}/{n}").write("x").ok(), "{n} is refused");
+    assert(!exists("{d}/{n}"), "{n} does not exist");
   }
-  assert(len(list_dir(d) ?? []) == 4, "four files: {list_dir(d) ?? []}");
+  assert(len(list_dir(d) ?? []) == 0, "nothing written: {list_dir(d) ?? []}");
+  assert(file("{d}/console.txt").write("x").ok(), "a name that only starts like a device is fine");
   clean(d);
 }
 
-// Leak 6: a file the program has read from can still be moved and deleted (Windows
+// A file the program has read from can still be moved and deleted (Windows
 // refuses both while a handle is open), and `move` refuses an existing target on every
 // platform (its contract: FileResult.Other).
 fn test_a_read_file_can_be_moved_and_deleted() {
@@ -98,18 +99,31 @@ fn test_a_read_file_can_be_moved_and_deleted() {
   clean(d);
 }
 
-// Leak 9: a backslash is not a separator in a loft path.
-fn test_a_backslash_is_not_a_separator() {
+// @FR-Path-Sep — a backslash separates, on every platform.
+fn test_a_backslash_separates() {
   d = scratch("sep");
   file("{d}/x.txt").write("x");
   assert(exists("{d}/x.txt"), "the slash path");
-  assert(!exists("{d}\\x.txt"), "the backslash spelling names another file");
+  assert(exists("{d}\\x.txt"), "the backslash spelling names the same file");
   clean(d);
 }
 
-// Leak 7: the environment's names as a program reads them.
+// The environment's names as a program reads them.
 fn test_the_path_variable_is_spelled_path() {
   n = 0;
   for e in env_variables() { if e.name == "PATH" { n += 1; } }
   assert(n == 1, "env_variables() spells it PATH once: {n}");
+}
+
+// UTF-8 everywhere: a name and a content outside ASCII round-trip on every platform.  loft
+// text is UTF-8; Windows names are UTF-16 on disk, and the conversion is the runtime's.
+fn test_a_unicode_name_and_content_round_trip() {
+  d = scratch("utf8");
+  name = "ünï_ß_日本_😀.txt";
+  body = "naïve ☕ — 日本語";
+  assert(file("{d}/{name}").write(body).ok(), "written");
+  assert("{list_dir(d) ?? []}" == "[\"{name}\"]", "listed by its own spelling: {list_dir(d) ?? []}");
+  assert((file("{d}/{name}").content() ?? "") == body, "read back unchanged");
+  assert(len(read_bytes("{d}/{name}") ?? []) == size(body), "the bytes are the UTF-8 bytes");
+  clean(d);
 }

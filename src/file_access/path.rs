@@ -79,6 +79,30 @@ impl PathText {
     /// Parse `text` under `flavor`'s rules (see the module docs).
     #[must_use]
     pub fn parse(text: &str, flavor: Flavor) -> PathText {
+        PathText::parse_with(text, flavor, false)
+    }
+
+    /// A path a loft PROGRAM wrote, judged by the portable contract of `formal/paths.md` and
+    /// parsed by the same code as every other path: `\` separates on every host
+    /// (`@FR-Path-Sep`), and each name must be one every platform can hold
+    /// (`@FR-Path-Name`).  The answer is a HOST path, so it reaches the OS.  A drive prefix is
+    /// a Windows host's; on Unix `C:` is a name, and `:` refuses it — an absolute path names
+    /// a place on this host and was never portable.
+    ///
+    /// # Errors
+    /// The refused name and why.
+    pub fn program(raw: &str) -> Result<PathText, String> {
+        let p = PathText::parse_with(raw, Flavor::HOST, true);
+        for name in &p.parts {
+            if let Some(why) = name_refusal(name) {
+                return Err(why);
+            }
+        }
+        Ok(p)
+    }
+
+    fn parse_with(text: &str, flavor: Flavor, backslash: bool) -> PathText {
+        let is_sep = |c: char| flavor.is_separator(c) || (backslash && c == '\\');
         let mut rest = text;
         let mut prefix = String::new();
         if flavor == Flavor::Windows {
@@ -97,21 +121,19 @@ impl PathText {
             } else {
                 let mut cs = rest.chars();
                 match (cs.next(), cs.next()) {
-                    (Some(a), Some(b)) if flavor.is_separator(a) && flavor.is_separator(b) => {
-                        Some(&rest[2..])
-                    }
+                    (Some(a), Some(b)) if is_sep(a) && is_sep(b) => Some(&rest[2..]),
                     _ => None,
                 }
             };
             if let Some(body) = unc_body {
                 // `\\srv\share\…`: the server and share are the prefix, and the path is
                 // rooted under them.
-                let mut it = body.splitn(3, |c| flavor.is_separator(c));
+                let mut it = body.splitn(3, is_sep);
                 let server = it.next().unwrap_or("");
                 let share = it.next().unwrap_or("");
                 prefix = format!("//{server}/{share}");
                 let tail = it.next().unwrap_or("");
-                return PathText::from_parts(flavor, prefix, true, tail);
+                return PathText::from_parts(flavor, prefix, true, tail, &is_sep);
             }
             let b = rest.as_bytes();
             if b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':' {
@@ -119,8 +141,8 @@ impl PathText {
                 rest = &rest[2..];
             }
         }
-        let rooted = rest.chars().next().is_some_and(|c| flavor.is_separator(c));
-        PathText::from_parts(flavor, prefix, rooted, rest)
+        let rooted = rest.chars().next().is_some_and(is_sep);
+        PathText::from_parts(flavor, prefix, rooted, rest, &is_sep)
     }
 
     /// [`PathText::parse`] under the host's rules.
@@ -129,9 +151,15 @@ impl PathText {
         PathText::parse(text, Flavor::HOST)
     }
 
-    fn from_parts(flavor: Flavor, prefix: String, rooted: bool, rest: &str) -> PathText {
+    fn from_parts(
+        flavor: Flavor,
+        prefix: String,
+        rooted: bool,
+        rest: &str,
+        is_sep: &dyn Fn(char) -> bool,
+    ) -> PathText {
         let mut parts: Vec<String> = Vec::new();
-        for part in rest.split(|c| flavor.is_separator(c)) {
+        for part in rest.split(is_sep) {
             match part {
                 "" | "." => {}
                 ".." => {
@@ -285,6 +313,40 @@ impl PartialEq for PathText {
     fn eq(&self, other: &PathText) -> bool {
         self.parts.len() == other.parts.len() && self.starts_with(other)
     }
+}
+
+/// `@FR-Path-Name` — why `name` is a name some platform cannot hold, or `None`.  The union of
+/// what Windows refuses: a control character or one of `< > : " \\ | ? *`, a device name
+/// (`CON PRN AUX NUL COM1–9 LPT1–9`, any case, with or without an extension), a name ending
+/// in `.` or a space.  `.` and `..` are steps of the walk, not names.
+#[must_use]
+pub fn name_refusal(name: &str) -> Option<String> {
+    if name.is_empty() || name == "." || name == ".." {
+        return None;
+    }
+    if let Some(c) = name
+        .chars()
+        .find(|c| c.is_control() || "<>:\"\\|?*".contains(*c))
+    {
+        return Some(format!(
+            "the name `{name}` holds {c:?}, which a file name cannot hold on every platform"
+        ));
+    }
+    let stem = name.split('.').next().unwrap_or(name).to_ascii_uppercase();
+    let numbered = stem.len() == 4
+        && (stem.starts_with("COM") || stem.starts_with("LPT"))
+        && matches!(stem.as_bytes()[3], b'1'..=b'9');
+    if matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL") || numbered {
+        return Some(format!(
+            "the name `{name}` is a device name on Windows, so no platform takes it"
+        ));
+    }
+    if name.ends_with('.') || name.ends_with(' ') {
+        return Some(format!(
+            "the name `{name}` ends in a dot or a space, which Windows drops"
+        ));
+    }
+    None
 }
 
 /// Is `file` inside a directory named `default` — the shipped standard library?

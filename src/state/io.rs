@@ -65,8 +65,12 @@ impl State {
             let buf = self.database.store_mut(&r).addr_mut::<String>(r.rec, r.pos);
             // One home for the read and its warning, shared with native codegen's
             // `OpGetFileText` — the warning used to live here only, so `--native`
-            // read a binary file in complete silence (loft#829).
-            crate::codegen_runtime::read_file_text_into(&path_string, buf);
+            // read a binary file in complete silence (loft#829).  A refused path reads as
+            // no text (`@FR-Path-Refuse`, logged by `resolve_path`).
+            match path_string {
+                Some(p) => crate::codegen_runtime::read_file_text_into(&p, buf),
+                None => buf.clear(),
+            }
         }
     }
 
@@ -211,7 +215,7 @@ impl State {
                 };
                 // #255 / @PLN9: re-home against the program anchor.
                 let path = self.database.resolve_path(&path);
-                std::fs::metadata(&path).map_or(0, |m| m.len() as i64)
+                path.map_or(0, |p| std::fs::metadata(&p).map_or(0, |m| m.len() as i64))
             }
         } else {
             raw_next
@@ -249,17 +253,22 @@ impl State {
                 };
                 // #255 / @PLN9: re-home against the program anchor.
                 let file_name = self.database.resolve_path(&file_name);
+                let shown = file_name.clone().unwrap_or_default();
                 // Open for read+write without truncating so that earlier
                 // bytes are preserved.  Create the file if it does not
                 // exist yet.  Explicit truncation happens via
                 // `f.set_file_size(0)` (or `f#size = 0`).
-                match OpenOptions::new()
-                    .read(true)
-                    .write(true)
-                    .create(true)
-                    .truncate(false)
-                    .open(&file_name)
-                {
+                match file_name
+                    .as_deref()
+                    .ok_or_else(crate::codegen_runtime::path_refused)
+                    .and_then(|n| {
+                        OpenOptions::new()
+                            .read(true)
+                            .write(true)
+                            .create(true)
+                            .truncate(false)
+                            .open(n)
+                    }) {
                     Ok(mut f) => {
                         // Seek to the stored write position (end of file
                         // for default appends, explicit offset for
@@ -279,7 +288,7 @@ impl State {
                         f_nr
                     }
                     Err(e) => {
-                        eprintln!("file open error for {file_name:?}: {e}");
+                        eprintln!("file open error for {shown}: {e}");
                         return;
                     }
                 }
@@ -460,11 +469,16 @@ impl State {
                 let raw = s.get_str(s.get_u32_raw(file.rec, file.pos + 24)).to_owned();
                 self.database.resolve_path(&raw)
             };
+            let shown = resolved.clone().unwrap_or_default();
             let resolved_name = resolved;
             let store = self.database.store_mut(&file);
             let mut file_ref = store.get_i32_raw(file.rec, file.pos + 28);
             if file_ref == i32::MIN {
-                match File::open(&resolved_name) {
+                match resolved_name
+                    .as_deref()
+                    .ok_or_else(crate::codegen_runtime::path_refused)
+                    .and_then(File::open)
+                {
                     Ok(mut f) => {
                         // apply stored seek position on first open.
                         if next_pos != 0 {
@@ -482,7 +496,7 @@ impl State {
                         // recoverable-fault posture), mirroring both the write
                         // path's create fix and the native runtime
                         // (`file_handle_read` → i32::MIN → return).
-                        eprintln!("file open error for {resolved_name:?}: {e}");
+                        eprintln!("file open error for {shown}: {e}");
                         return;
                     }
                 }
@@ -585,7 +599,9 @@ impl State {
                 .to_owned();
             // #255 / @PLN9: re-home against the program anchor.
             let file_path = self.database.resolve_path(&file_path);
-            let size = std::fs::metadata(&file_path).map_or(i64::MIN, |meta| meta.len() as i64);
+            let size = file_path.map_or(i64::MIN, |p| {
+                std::fs::metadata(&p).map_or(i64::MIN, |meta| meta.len() as i64)
+            });
             self.put_stack(size);
         }
     }
@@ -673,9 +689,10 @@ impl State {
                     .store_mut(&file)
                     .set_long(file.rec, file.pos + 16, i64::MIN);
             }
-            let ok = OpenOptions::new()
-                .write(true)
-                .open(&path)
+            let ok = path
+                .as_deref()
+                .ok_or_else(crate::codegen_runtime::path_refused)
+                .and_then(|p| OpenOptions::new().write(true).open(p))
                 .and_then(|f| f.set_len(size as u64))
                 .is_ok();
             self.put_stack(ok);

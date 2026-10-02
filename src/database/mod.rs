@@ -1611,19 +1611,37 @@ impl Stores {
     /// sandbox — admission is decided at load time and carries no runtime
     /// checks (`SANDBOX.md`) — so the resolved path is the whole answer and the
     /// filesystem gives it.
+    ///
+    /// It is also where a loft path MEANS the same on every platform (`formal/paths.md`):
+    /// `\` separates as `/` does (`@FR-Path-Sep`), a name no platform could hold is refused
+    /// (`@FR-Path-Name`), and a name that is another entry's spelling with a different case is
+    /// refused (`@FR-Path-Case`).  `None` is the refusal: the caller answers its operation's
+    /// own failure, and the one log line is written here (`@FR-Path-Refuse`).
     #[must_use]
-    pub fn resolve_path(&self, raw: &str) -> String {
-        if !self.program_relative || self.source_dir.is_empty() {
-            return raw.to_string();
+    pub fn resolve_path(&self, raw: &str) -> Option<String> {
+        let norm = match crate::file_access::program_path(raw) {
+            Ok(norm) => norm,
+            Err(why) => {
+                crate::loft_eprintln!("loft: the path `{raw}` is refused: {why}");
+                return None;
+            }
+        };
+        let full = if !self.program_relative
+            || self.source_dir.is_empty()
+            || std::path::Path::new(&norm).is_absolute()
+        {
+            norm
+        } else {
+            std::path::Path::new(&self.source_dir)
+                .join(&norm)
+                .to_string_lossy()
+                .into_owned()
+        };
+        if let Err(why) = crate::file_access::case_clash(&full) {
+            crate::loft_eprintln!("loft: the path `{raw}` is refused: {why}");
+            return None;
         }
-        let p = std::path::Path::new(raw);
-        if p.is_absolute() {
-            return raw.to_string();
-        }
-        std::path::Path::new(&self.source_dir)
-            .join(p)
-            .to_string_lossy()
-            .into_owned()
+        Some(full)
     }
 
     /// Plan-07 phase 4c — Stores-side counterpart of `State::raise`.
