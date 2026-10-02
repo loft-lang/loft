@@ -1,0 +1,49 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1852 — a value-struct `==` / `!=` whose operands are literals binds each operand to a
+// `__veq` temp.  In an `if` ARM (the right of `&&`, either side of `||`, an explicit `if` used
+// as a value) the scope pass frees those temps at the function's end and null-inits them where
+// the statement starts — which, for a call ARGUMENT, is inside the argument.  `--native` lifts
+// such an argument into `let _pre_N = { … }`, so the temps' `let` ended with that block and the
+// function-end frees named nothing: E0425, while `--interpret` ran.  Native's prologue now binds
+// a local a call argument null-inits, as it already did for one an `if` test assigns.
+//
+// Axes this file MOVES: the connective (`&&` right · `&&` left with an arm on the right · `||`
+// · an explicit `if` arm), the operator (`==` · `!=`), the operand (a literal · a call), and
+// the position (a call argument · a nested call's argument · an interpolation · bound to a
+// local · an `if` statement's test), and the struct (one integer · a `text` beside one).  Each cell runs
+// fifty times, so a temp freed twice or never would show in the leak check.
+//
+// Every expected value is worked out by hand.
+
+value struct D { n: integer }
+value struct W { s: text, k: integer }
+fn mk(n: integer) -> D { D { n: n } }
+fn yes(b: boolean) -> boolean { b }
+
+fn main() {
+  t = 0;
+  for i in 0..50 {
+    // i == i, and i != i + 1: every cell holds on every pass.
+    if yes(D { n: 1 } != D { n: 11 } && D { n: i } == D { n: i }) { t += 1; }
+    if yes(D { n: i } == D { n: i } && D { n: 1 } != D { n: 11 }) { t += 2; }
+    if yes(i >= 0 && D { n: i } != D { n: i + 1 }) { t += 4; }
+    if yes(i > 100 || D { n: i } == D { n: i }) { t += 8; }
+    if yes(if i >= 0 { D { n: i } == D { n: i } } else { false }) { t += 16; }
+    if yes(i >= 0 && mk(i) == mk(i)) { t += 32; }
+    r = D { n: 1 } != D { n: 11 } && D { n: i } == D { n: i };
+    if r { t += 64; }
+    if i >= 0 && D { n: i } == D { n: i } { t += 128; }
+    if yes(i >= 0 && W { s: "ab{i}", k: i } == W { s: "ab{i}", k: i }) { t += 256; }
+    if yes(yes(i >= 0 && D { n: i } == D { n: i })) { t += 512; }
+    m = "{i >= 0 && D { n: i } != D { n: i + 1 }}";
+    if m == "true" { t += 1024; }
+    // And the ones that must be false: 7 == 8, and "x" == "y", are false.
+    if yes(i >= 0 && D { n: 7 } == D { n: 8 }) { t += 100000; }
+    if yes(i >= 0 && W { s: "x", k: i } == W { s: "y", k: i }) { t += 100000; }
+  }
+  // 50 passes of 1 + 2 + 4 + 8 + 16 + 32 + 64 + 128 + 256 + 512 + 1024 = 2047.
+  assert(t == 50 * 2047, "total {t}");
+  println("ok");
+}
