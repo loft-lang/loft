@@ -50,8 +50,10 @@ const EXPECTED: &[(&str, usize, usize, usize, usize)] = &[
     // A vector of scalars is another iterator: its step stays checked.
     ("n_w13", 0, 0, 0, 0),
     ("n_w14", 1, 0, 0, 0),
-    // `e = v[i]?` binds by explicit index: `rec_ptr`, as before.
-    ("n_w15", 0, 1, 0, 0),
+    // `e = v[i]?` binds by explicit index.  In `for i in 0..len(v)` the `?` is dropped
+    // (`@FR-R-InRange`), so the binding is the plain element read and takes its address from
+    // the held base (`hoist::element_binding`); `LOFT_NO_IN_RANGE=1` gives `rec_ptr` again.
+    ("n_w15", 1, 0, 0, 0),
 ];
 
 const SWITCHES: [&str; 5] = [
