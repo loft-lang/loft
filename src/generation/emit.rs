@@ -3144,8 +3144,13 @@ impl Output<'_> {
         // @PLN157 § V-n — the header frames this block's view bindings pushed, popped
         // before the block closes.
         let mut view_frames = 0usize;
-        // `@FR-R-RecPtr` — the record-address frames this block's view bindings pushed.
-        let mut ptr_frames = 0usize;
+        // `@FR-R-RecPtr` — the record-address frames this block's view bindings pushed, and
+        // at a function body's head the ones its record PARAMETERS take for the whole body.
+        let mut ptr_frames = if is_fn_body {
+            self.bind_param_record_ptrs(w, operators)?
+        } else {
+            0usize
+        };
         // @PLN157 § V-x — the open FLAT literal group, if any: `(local, witness)`.
         let mut flat_lit_open: Option<(u16, u16)> = None;
         // `@FR-R-GroupPush` — the groups this block opens are closed by index; a nested

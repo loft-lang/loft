@@ -2379,6 +2379,58 @@ pub fn record_view_ptr(
     Ok(*r)
 }
 
+/// `@FR-R-RecPtr`'s PARAMETER clause — may record parameter `p` hold its address for the
+/// whole function body `stmts`?
+///
+/// A parameter is a view the caller fixed before the first statement: its `DbRef` names
+/// one place for the call, exactly as a binding's does from its bind, so the body is the
+/// binding's remainder and is judged by the same verdict ([`view_extent_verdict`]) — no
+/// growth of the parameter's store, no free before a use, no rebind, a fusable use.  What
+/// the caller holds is the caller's business: a store grows only through a write in THIS
+/// activation (a callee's growth is one the verdict sees through `blocks_header_hoist`),
+/// so nothing outside the body can move the record while the body runs.
+///
+/// # Errors
+///
+/// The reason it declines, in the words `LOFT_TRACE_RECPTR=1` prints.
+// The parameters are `record_view_ptr`'s, with the parameter in place of the statement.
+#[allow(clippy::too_many_arguments)]
+pub fn param_view_ptr(
+    stmts: &[Value],
+    p: u16,
+    data: &Data,
+    stores: &Stores,
+    def_nr: u32,
+    cache: &mut HashMap<u32, bool>,
+    allow_in_place: bool,
+    twin_params: &HashSet<(u32, u16)>,
+    facts: Option<&StoreFacts>,
+    owned: Option<&HoistOwned>,
+) -> Result<u16, &'static str> {
+    let vars = data.def(def_nr).variables();
+    if !vars.is_argument(p) {
+        return Err("not a parameter");
+    }
+    let tp = vars.tp(p);
+    if matches!(tp, Type::Optional(_)) || plain_record_type(data, tp).is_none() {
+        return Err("not a plain record");
+    }
+    view_extent_verdict(
+        stmts,
+        p,
+        data,
+        stores,
+        def_nr,
+        cache,
+        allow_in_place,
+        twin_params,
+        facts,
+        owned,
+        None,
+    )?;
+    Ok(p)
+}
+
 /// `@FR-R-RecPtr`'s MINT clause — does statement `at` of `stmts` mint a plain-record
 /// element (`e = OpNewRecord(…)`) whose ADDRESS may serve the group's writes, from the mint
 /// up to its own `OpFinishRecord(…, e, …)`?

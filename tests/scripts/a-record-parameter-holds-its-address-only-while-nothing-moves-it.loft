@@ -1,0 +1,66 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A RECORD PARAMETER HOLDS ITS ADDRESS ONLY WHILE NOTHING MOVES IT (`@FR-R-RecPtr`'s parameter
+// clause).  A function body may read and write a record parameter's fields through one address
+// taken at its head instead of resolving the store per access — unless the body can move the
+// record: a growth of its store (its own vector field, or a SIBLING field's vector handed in
+// beside it, through a loop or a recursive callee), or a rebind.  A callee that writes the
+// fields in place keeps the address: the bytes stay where they are.
+//
+// Expected values by hand: grow_own 4*1000 + (4+1) = 4005; rebind 2*100 + 8 + 9 = 217;
+// alias_grow 6*1000 + (6+7) = 6013 and the holder sees b = 13; via_callee 3*100 + (3+5) = 308;
+// rec_grow 9*1000 + (9+3) = 9012 and the holder sees 12; the grown vectors hold 100 and 60.
+//
+struct T { a: integer, b: integer }
+struct P { pt: T, pv: vector<T> }
+struct H { x: integer, items: vector<T>, y: integer }
+fn grow_own(h: H) -> integer {
+  r = h.x;
+  for i in 0..40 { h.items += [T { a: i, b: i }]; }
+  h.y = r + 1;
+  h.x * 1000 + h.y
+}
+fn rebind(t: T, o: T) -> integer {
+  s = t.a;
+  t = o;
+  s * 100 + t.a + t.b
+}
+fn alias_grow(t: T, v: vector<T>) -> integer {
+  s = t.a;
+  for i in 0..100 { v += [T { a: i, b: 1 }]; }
+  t.b = s + 7;
+  t.a * 1000 + t.b
+}
+fn poke(t: T) { t.a = t.a + 5; }
+fn via_callee(t: T) -> integer {
+  s = t.a;
+  poke(t);
+  s * 100 + t.a
+}
+fn deep(v: vector<T>, n: integer) { if n > 0 { v += [T { a: n, b: n }]; deep(v, n - 1); } }
+fn rec_grow(t: T, v: vector<T>) -> integer {
+  s = t.a;
+  deep(v, 60);
+  t.b = s + 3;
+  t.a * 1000 + t.b
+}
+fn main() {
+  h = H { x: 4, items: [], y: 0 };
+  r1 = grow_own(h);
+  o = T { a: 8, b: 9 };
+  r2 = rebind(T { a: 2, b: 3 }, o);
+  pp = P { pt: T { a: 6, b: 0 }, pv: [] };
+  r3 = alias_grow(pp.pt, pp.pv);
+  r3b = pp.pt.b;
+  r4 = via_callee(T { a: 3, b: 0 });
+  pw = P { pt: T { a: 9, b: 0 }, pv: [] };
+  r5 = rec_grow(pw.pt, pw.pv);
+  r5b = pw.pt.b;
+  assert(r1 == 4005, "the body grows the parameter's own vector field");
+  assert(r2 == 217, "the parameter rebound");
+  assert(r3 == 6013 && r3b == 13, "a sibling field's vector grows beside it");
+  assert(r4 == 308, "a callee writes it in place");
+  assert(r5 == 9012 && r5b == 12, "a recursive callee grows the sibling vector");
+  assert(len(pp.pv) == 100 && len(pw.pv) == 60, "the growths happened");
+}
