@@ -15,6 +15,7 @@
 // @falsified-at: d18e860a9 — interpret exit 1 -> 0, native exit 1 -> 0 (the control refuses every
 //   binding here with "missing OpEq", so the program does not compile there).
 // @falsified-by: tests/falsified/c91-every-type-is-equatable.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   (patch re-derived at 6b8fc663c — reintroduces: a type with no `==` of its own fails `Equatable`)
 // @falsified-at: f4d43fa0d — interpret exit 1 -> 0, native exit 1 -> 0 (the tuple cells: the
 //   control refuses `same((1, 2), (1, 2))` with "missing OpEq", loft#1738).
 // HOLDS: leak, panic and free-refusals are unmoved on both trees and both backends.

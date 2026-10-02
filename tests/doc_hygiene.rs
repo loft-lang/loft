@@ -157,6 +157,83 @@ fn every_guard_says_how_to_score_it_again() {
 /// Setext-style Markdown heading underline is exactly that, and this file's own docs use them.
 /// The two chevron forms cannot occur in prose, which is what makes the check total without
 /// being a false-positive machine.
+/// A patch receipt (`// @falsified-by: tests/falsified/<guard>.patch`) is the durable form
+/// precisely because it re-applies to the CURRENT tree: `scripts/falsify.sh --patch` scores it
+/// there.  One that no longer applies scores nothing, silently (GUARDS.md § The patch
+/// receipt).  Each must still `git apply --check`; a stale one is re-derived at the current
+/// tree and re-scored.  `tests/falsified_patches.baseline` lists the ones already stale when
+/// this landed, and only shrinks.
+#[test]
+fn every_patch_receipt_still_applies() {
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let mut patches: Vec<std::path::PathBuf> = fs::read_dir(root.join("tests/falsified"))
+        .expect("tests/falsified is readable")
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "patch"))
+        .collect();
+    patches.sort();
+    assert!(
+        !patches.is_empty(),
+        "no patch receipts found — the path is wrong, not the tree"
+    );
+    let stale: std::collections::BTreeSet<String> = patches
+        .iter()
+        .filter(|p| {
+            !std::process::Command::new("git")
+                .args(["apply", "--check"])
+                .arg(p)
+                .current_dir(&root)
+                .output()
+                .expect("git apply runs")
+                .status
+                .success()
+        })
+        .map(|p| p.strip_prefix(&root).unwrap_or(p).display().to_string())
+        .collect();
+    // Shrink-only: the receipts that had already stopped applying when this check landed.
+    let baseline_src = fs::read_to_string(root.join("tests/falsified_patches.baseline"))
+        .expect("cannot read tests/falsified_patches.baseline");
+    let baseline: std::collections::BTreeSet<String> = baseline_src
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(String::from)
+        .collect();
+    let new_stale: Vec<&String> = stale.difference(&baseline).collect();
+    let healed: Vec<&String> = baseline.difference(&stale).collect();
+    assert!(
+        new_stale.is_empty() && healed.is_empty(),
+        "the patch-receipt ratchet slipped:\n{}{}",
+        if new_stale.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "these no longer apply to this tree, so they score nothing — re-derive each at \
+                 the current tree (`scripts/falsify.sh <guard> --patch <file>` must still \
+                 falsify) and replace the file:\n  {}\n",
+                new_stale
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n  ")
+            )
+        },
+        if healed.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "these apply again — delete their lines from tests/falsified_patches.baseline:\n  {}",
+                healed
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n  ")
+            )
+        }
+    );
+}
+
 #[test]
 fn no_tracked_file_carries_conflict_markers() {
     let out = std::process::Command::new("git")

@@ -17,6 +17,7 @@
 // each, left to right.
 //
 // @falsified-by: tests/falsified/an-operator-plus-minus-or-times-is-one-call-of-the-left-operand.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   (patch re-derived at 6b8fc663c — reintroduces: `+` sent to `operator minus`)
 //   CHANNEL: exit on both backends — on the control `operator plus` is not built yet, so the
 //   definitions are refused.
 //   ARMED: nothing.
