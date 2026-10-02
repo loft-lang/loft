@@ -12,6 +12,11 @@
 // compare`), ties, the length (empty · one · several), and the element layout (inline · linked
 // — `Tk` has a keyed collection, so a `vector<Tk>` holds record ids).
 //
+// @falsified-at: b1dbab1c4 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-key-function-sorts-and-picks-by-any-ordered-key.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the control has no `sort_by`, so the file does not compile.
+//   HOLDS: asserts, leak and panic are equal on both trees and both backends.
+//
 // Every expected value is worked out by hand.
 
 struct Ev { day: integer, name: text, w: float }
