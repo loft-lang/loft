@@ -10,7 +10,8 @@
 // counted range's loop.  So the cells put both kinds side by side: walks that become counted
 // (scalars, records, the `#index` read in the body, `continue` and `break`, an empty vector,
 // appends to ANOTHER vector, a nested walk) and walks that must keep re-reading — an
-// `#remove` in the body, and a `const` parameter walked while the body appends to a `&`
+// `#remove` in the body, the vector handed to a function (declined by shape: the rewrite does
+// not look into callees), and a `const` parameter walked while the body appends to a `&`
 // parameter that the caller passed the same vector as.  `tests/forward_walk.rs` pins which
 // is which.  Every expected value is computed by hand.
 //
@@ -74,6 +75,18 @@ fn nested_walk(a: const vector<integer>, b: const vector<integer>) -> integer {
   t
 }
 
+fn count_of(v: const vector<integer>) -> integer {
+  len(v)
+}
+
+fn handed_on(v: const vector<integer>) -> integer {
+  t = 0;
+  for x in v {
+    t += x * count_of(v);
+  }
+  t
+}
+
 fn remove_walk() -> integer {
   v = [1, 2, 3, 4, 5, 6];
   for x in v {
@@ -107,6 +120,7 @@ fn test_walks_that_count() {
 
 fn test_walks_that_must_keep_reading_the_length() {
   assert(remove_walk() == 93, "remove {remove_walk()}");
+  assert(handed_on([1, 2, 3]) == 18, "handed on {handed_on([1, 2, 3])}");
   w = [1, 2];
   n = both(w, w);
   assert(n == 5 && len(w) == 5, "one vector as both parameters {n} {len(w)}");
