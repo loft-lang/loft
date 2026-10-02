@@ -19,7 +19,8 @@
 // Axes it HOLDS FIXED:   the bound is on a free generic's own `T`.
 //
 // @falsified-at: bb9a31dea — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0
-// @falsified-by: tests/falsified/1818-a-bound-is-satisfied-only-by-a-member-that-takes-its-parameters.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/1818-a-bound-is-satisfied-only-by-a-member-that-takes-its-parameters.patch — interpret exit 101 -> 0, interpret panicked -> clean, native exit 1 -> 0
+//   (patch re-derived at 6b8fc663c — reintroduces: a bound member met by ARITY alone)
 //   CHANNEL: asserts on the interpreter, exit on native (rustc refuses the control's source).
 //   WITNESS: on the control `same(w7, w7b)` over `OpEq(self: W, o: integer)` answers false
 //   where the concrete `w7 == w7b` answers true (the monomorph called the integer member with

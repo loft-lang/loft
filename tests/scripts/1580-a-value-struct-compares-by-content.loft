@@ -14,8 +14,8 @@
 //
 // @falsified-at: 3cc05bd5e — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0,
 //   native 1 assertion failures -> 0
-// @falsified-by: tests/falsified/1580-a-value-struct-compares-by-content.patch — interpret exit 1 -> 0,
-//   interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1580-a-value-struct-compares-by-content.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   (patch re-derived at 6b8fc663c — reintroduces: a value struct `==` falls to identity)
 // CHANNEL: the assertion count and the exit code, identically on both backends — a wrong value,
 //   with no diagnostic.
 // WITNESS: on the control all eight fault cells answer identity and the two controls hold, on

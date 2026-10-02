@@ -17,7 +17,8 @@
 // function is ordinary, the operator answers at the concrete site and in the generic alike —
 // and evaluation order.
 //
-// @falsified-by: tests/falsified/an-operator-compare-gives-a-type-every-order-form.patch — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/an-operator-compare-gives-a-type-every-order-form.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   (patch re-derived at 6b8fc663c — reintroduces: `a > b` read as `compare == Less`)
 //   CHANNEL: exit on both backends — the control has no `operator` keyword, so it refuses.
 //   ARMED: nothing.
 //   WITNESS: scored by hand as well against a mutation reading `>` as `Less`: the parallel run

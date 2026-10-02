@@ -12,6 +12,12 @@
 // the place (a local · a struct field), and the operation (`+=` a literal · a by-value read).
 // A read `c = b[0]` is a VIEW by (B-View-Depth), so `c += [9]` grows `b[0]` too.
 //
+// @falsified-at: 844b2516f — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-vector-of-vectors-element-is-read-as-its-own-handle.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the assertion count and the exit code on both backends — a wrong value, with no
+//   diagnostic: the three-deep cell reads two entries per row.
+//   HOLDS: leak and panic are equal on both trees.
+//
 // Every expected value is worked out by hand.
 
 struct P { x: integer }

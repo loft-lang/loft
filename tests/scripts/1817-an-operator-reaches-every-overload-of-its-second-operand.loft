@@ -23,6 +23,7 @@
 //
 // @falsified-at: 1d5577aa4 — interpret exit 1 -> 0, native exit 1 -> 0
 // @falsified-by: tests/falsified/1817-an-operator-reaches-every-overload-of-its-second-operand.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   (patch re-derived at 6b8fc663c — reintroduces: the operator takes the incumbent member, ignoring the overload set)
 //   CHANNEL: exit on both backends — the control refuses this file at compile time.
 //   WITNESS: on the control `V`'s `a - 1` is "No matching operator '-' on 'V' and 'integer'";
 //   measured cell by cell there, `u - 1` answers 400 where this file asserts 490, and
