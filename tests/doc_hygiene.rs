@@ -3580,10 +3580,12 @@ fn every_markdown_link_resolves() {
 ///
 /// Not compared: what depends on the registry rather than on the tree — the `doc/lib-*.html`
 /// pages, `doc/libraries.html` (the catalogue, whose version column is the index's latest
-/// release), and the library entries of `doc/search-index.js`.  A box with an empty cache
-/// renders those differently from the same tree (measured: 84 pages plus the index), and a
-/// publish changes them on every branch at once, so they are regenerated with a full cache at
-/// release, under `M-doc-validation`, not on every change.
+/// release), and the library entries of `doc/search-index.js` and `doc/sitemap.xml`.  A box
+/// whose cache lacks a package renders those differently from the same tree (loft#1850:
+/// with the same index, an empty cache moved 127 library pages, 41 sitemap lines and the
+/// index's library entries, and nothing else), and a publish changes them on every branch at
+/// once.  They are rendered from the registry by `make doc`, which fetches every indexed
+/// version first; `gendoc` alone keeps a committed library page it cannot render.
 #[test]
 fn the_generated_pages_match_their_sources() {
     use std::path::Path;
@@ -3592,7 +3594,8 @@ fn the_generated_pages_match_their_sources() {
         |p: &str| (p.starts_with("doc/lib-") && p.ends_with(".html")) || p == "doc/libraries.html";
     let without_lib_entries = |s: &str| {
         s.lines()
-            .filter(|l| !l.contains("url:\"lib-"))
+            // a search-index entry names its page `url:"lib-…`, a sitemap entry `/lib-…`
+            .filter(|l| !l.contains("url:\"lib-") && !l.contains("/lib-"))
             .collect::<Vec<_>>()
             .join("\n")
     };
@@ -3639,7 +3642,7 @@ fn the_generated_pages_match_their_sources() {
         let (Ok(made), Ok(committed)) = (fs::read(copy.join(f)), fs::read(f)) else {
             continue;
         };
-        let same = if f == "doc/search-index.js" {
+        let same = if f == "doc/search-index.js" || f == "doc/sitemap.xml" {
             without_lib_entries(&String::from_utf8_lossy(&made))
                 == without_lib_entries(&String::from_utf8_lossy(&committed))
         } else {
