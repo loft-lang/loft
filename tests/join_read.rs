@@ -17,9 +17,11 @@ const CELLS: &str = "tests/scripts/158-join-read.loft";
 
 /// Per function: `(join reads, joins lifted into a `let _pre_N`)`.
 const EXPECTED: &[(&str, usize, usize)] = &[
-    // One load in the loop; the two lifted joins are `v[99]?.x` AFTER it, where no header
-    // is held.
-    ("n_j1", 1, 2),
+    // No join in the loop: `for i in 0..len(v)` over records with a body that cannot resize
+    // `v` drops the `?`'s discharge in the IR (`@FR-R-InRange`), so the read is a plain load.
+    // The two lifted joins are `v[99]?.x` AFTER the loop, where no header is held.
+    // `LOFT_NO_IN_RANGE=1` gives (1, 2).
+    ("n_j1", 0, 2),
     ("n_j2", 3, 0),
     ("n_j3", 3, 0),
     // A negative index: the load is emitted, its range test refuses, the join answers.
