@@ -239,6 +239,12 @@ as a STALE ROW rather than ignored.
 | `lib/testlib.loft` | 2026-10 | `892ff4743` | `exempt` in `examples-exempt.tsv` — a fixture for `tests/docs/17-libraries.loft` and `tests/diagnostic_reach.rs`, deliberately trivial, so a call site teaches nothing its signature does not. `Point` and `Bag` documented as the fixtures they are |
 | `lib/audience_crystal` | 2026-10 | `f29effbf3` | @ACR-001..003 tagged to the `01-editor-helpers` test (picking inverse, incr editor loop, erase) |
 | `lib/engine_host` | 2026-08 | `7786d28c` | @EHK-001..004 tagged to CI-spawned audience-demo kernels (run loop, broadcast, sync lanes, run_client drain); 37 pub fns read while tagging |
+| `arguments` | 2026-10 | `06aa45e` | Every doc probed on both backends; three untrue promises fixed in code (0.2.4): a value option takes the next word whatever it looks like, `-h`/`-V` go to the program's own option, a short-only option is queried by its short name |
+| `cbor` | 2026-10 | `06aa45e` | "Never crashes" was false on deep nesting; `decode` refuses past `MAX_DEPTH` (0.1.9). Header no longer promises phases that shipped or a `to_cbor` that does not exist |
+| `crypto` | 2026-10 | `06aa45e` | Malformed base64 decoded to other bytes at every door; strict decode, each door refuses (0.3.11). The `+=` CAUTION on `base64_to_bytes` was stale and is gone. Two `pub` TEST-ONLY HPKE fns remain a surface question |
+| `random` | 2026-10 | `06aa45e` | `RandStream` described; `rand_indices`' negative case named (0.3.4) |
+| `regex` | 2026-10 | `06aa45e` | `regex_find`'s supersession named the wrong `search`; roadmap's FFI-gap cause was stale (0.4.2) |
+| `zttext` | 2026-10 | `06aa45e` | Guide written and falsified; `zttext_version()` answers the manifest; design pointers name where the notation lives (0.1.3) |
 
 Each pass's notes, row by row, are in [LIBRARY_DOC_REVIEW-history.md](LIBRARY_DOC_REVIEW-history.md).
 
