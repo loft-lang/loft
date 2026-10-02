@@ -441,6 +441,11 @@ parameter (via `&`) is host, a genuinely-copied one is script-owned.
                  slot — a file, foreign bytes, a recording, a lock, a borrow, a constant,
                  a lazy binding, the interpreter's stack — keeps the copy; a free
                  protection refuses only the side the exchange releases.
+  (H-SwapRebind) on `--native`, the rebind `x = f(…)` whose copy would follow a reset of
+                 `x`'s store is the exchange of `(H-SwapIn)` WITHOUT the reset: `x`'s
+                 previous tree moves to the released slot with the rest of `x`'s store
+                 and is freed with it, which is what the reset releases.  Every other
+                 condition is the exchange's; where one fails, the reset and the copy run.
 ```
 
 **`H-SwapIn` is the copy's own answer, delivered without the copy.** The copy it replaces
@@ -453,6 +458,18 @@ is the type walk.  `LOFT_NO_STORE_SWAP=1` keeps the copy; `LOFT_TRACE_STORE_SWAP
 each exchange.  Site: `Stores::try_swap_in`, called by both backends' `OpCopyRecord`.  Guard
 `tests/scripts/a-rebind-from-a-fresh-result-exchanges-the-stores.loft`, pin
 `tests/store_swap.rs`.
+
+**`H-SwapRebind` is the same exchange, one statement earlier.** A reset clears the destination
+store and claims a fresh root, and the exchange that follows moves that root out again: the
+only thing the reset changed is what the released slot holds when it is freed — an empty root
+instead of `x`'s previous tree.  Both are freed, so skipping the reset changes no reachable
+value.  The source must still be given up and must not be a store the last fn-ref call
+borrowed; a witnessed destination is reset as before, since its old store has to survive.
+`LOFT_NO_SWAP_REBIND=1` keeps the reset.  Site: `codegen_runtime::OpRebindRecord` over
+`Stores::try_swap_rebind`, emitted for a call-return rebind's copy arm
+(`generation/dispatch.rs`).  Guard
+`tests/scripts/a-rebind-exchanges-into-a-destination-it-does-not-reset.loft`, pin
+`tests/swap_rebind.rs`.
 
 **`H-RootExtent` is what makes `H-ClearRelease`'s release affordable.** The release has to
 reach everything the cleared elements own, and it can do that two ways: walk the elements and
