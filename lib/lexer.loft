@@ -91,7 +91,7 @@ pub fn set_tokens(self: Lexer, tokens: vector<text>) {
 pub fn parse_file(self: Lexer, filename: text) {
   v = filename.rfind("/");
   self.file = if v { filename[v + 1..] } else { filename };
-  self.data = file(filename).content();
+  self.data = file(filename).content() ?? "";   // a missing file lexes as empty
   self.index = 0;
   self.start = 0;
   self.line = 1;
@@ -211,7 +211,7 @@ fn scan(self: Lexer) {
     // Constant character
     self.index += 1;
     self.scanned = Character;
-    for t in 0..20 {
+    for _ in 0..20 {
       l = self.data[self.index];
       if l == '\'' {
         // The end of the character

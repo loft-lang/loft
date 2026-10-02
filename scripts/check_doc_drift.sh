@@ -1444,8 +1444,12 @@ check_libraries_progress() {
     printf '%s\tin-tree\tin-tree\t%s\t%s\t%s\t-\t-\n' "$k" "$k" "${sha:--}" "$n"
   done < <(_libraries_in_tree) >> "$pop"
   if [ $have_pub -eq 1 ]; then
+    # `loft` is in the registry but is the toolchain, not a library: its documentation is the
+    # whole site, reviewed through `make features-review` and the release checklist.  The
+    # guide count below excludes it by name for the same reason; counted here it read as a
+    # library in repo `?` that was "not checked out", on every run.
     jq -r --slurpfile r "$reg" '
-      to_entries[] | . as $p |
+      to_entries[] | select(.key != "loft") | . as $p |
       (($r[0].packages[$p.key].homepage // "")
         | capture("github\\.com/[^/]+/(?<repo>[^/]+)/tree/[^/]+/(?<dir>.+)$")
         // {repo: "?", dir: $p.key}) as $loc |
