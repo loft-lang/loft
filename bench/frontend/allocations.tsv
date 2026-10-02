@@ -3,8 +3,8 @@
 # Pinned by `LOFT_FRONTEND_REPIN=1 cargo test [--release] --test frontend_counts`;
 # read by tests/frontend_counts.rs, which fails when a pinned count GROWS.
 linux-debug	medium	731571
-linux-debug	stdlib	314355
+linux-debug	stdlib	314466
 linux-debug	tiny	19250
 linux-release	medium	731571
-linux-release	stdlib	313827
+linux-release	stdlib	313938
 linux-release	tiny	19250

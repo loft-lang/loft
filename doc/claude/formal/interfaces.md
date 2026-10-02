@@ -75,6 +75,13 @@ the functions visible *where the generic is used*, not where the interface was d
                                               receiver's former; `self: T` itself is REFUSED at the
                                               declaration — a method is found on its receiver's
                                               type, and T is not one.
+
+  (G-Gen-Scope)  a header's type variable is a NAME only inside the definition it heads:
+            there the spelling means the variable before anything else the program declares;
+            outside it the spelling means whatever the program declares.  The variable
+            reserves no name, so a declaration spelled like it — of any kind, in any file,
+            the stdlib's own `<K>` beside a REPL session's `enum K` — is neither refused nor
+            mistaken for it.
 ```
 
 **In words.** `fn total<T: Sizable>(xs: vector<T>) -> integer` is generic over any element type
