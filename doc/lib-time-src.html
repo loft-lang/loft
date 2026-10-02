@@ -642,7 +642,7 @@
 <span id="src-time-loft-L530"><span class="cm">// ── custom formatting (the per-type to_text hook) ──</span></span>
 <span id="src-time-loft-L531"><span class="cm">// "" / "datetime" -&gt; YYYY-MM-DD HH:MM · "date" -&gt; YYYY-MM-DD · "time" -&gt; HH:MM</span></span>
 <span id="src-time-loft-L532"><span class="cm">// "seconds" -&gt; HH:MM:SS · "iso" -&gt; …THH:MM:SSZ · "wday" -&gt; Mon · "month" -&gt; May</span></span>
-<span id="src-time-loft-L533"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-field-iteration-support-types.html">to_text</a></span>(self: <span class="en">DateTime</span>, spec: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-time-loft-L533"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">to_text</span>(self: <span class="en">DateTime</span>, spec: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
 <span id="src-time-loft-L534">    <span class="cm">// The if-chain is bound to `r` and returned, NOT left as the tail expression:</span></span>
 <span id="src-time-loft-L535">    <span class="cm">// a tail `if` inside a format-hook `to_text(self, spec)` mis-selects its branch</span></span>
 <span id="src-time-loft-L536">    <span class="cm">// on both backends (a loft format-hook bug — repro filed upstream). Binding the</span></span>
@@ -661,7 +661,7 @@
 <span id="src-time-loft-L549">    r</span>
 <span id="src-time-loft-L550">}</span>
 <span id="src-time-loft-L551"><span class="cm">// A Duration renders as [-]H:MM:SS (hours may exceed 24).</span></span>
-<span id="src-time-loft-L552"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-field-iteration-support-types.html">to_text</a></span>(self: <span class="en">Duration</span>, _spec: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-time-loft-L552"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">to_text</span>(self: <span class="en">Duration</span>, _spec: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
 <span id="src-time-loft-L553">    neg = self.ms &lt; <span class="nm">0</span>;</span>
 <span id="src-time-loft-L554">    tot = <span class="kw">if</span> neg { <span class="nm">0</span> - self.ms } <span class="kw">else</span> { self.ms };</span>
 <span id="src-time-loft-L555">    ss = (tot / <span class="en">MS_PER_SECOND</span>) % <span class="nm">60</span>;</span>
