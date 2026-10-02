@@ -24,7 +24,7 @@
 <h1>Libraries</h1>
 <article>
 <p>Every library in the loft registry. Each one is written in loft itself, so its source reads like your own code. Install one with <code>loft install &lt;name&gt;</code>, then <code>use &lt;name&gt;;</code> in your program.</p>
-<p class="lib-count">43 packages in 16 categories</p>
+<p class="lib-count">44 packages in 17 categories</p>
 <p>The same catalogue on the command line: <code>loft api --registry</code>. One library's public surface: <code>loft api &lt;name&gt;</code>.</p>
 <h2 id="animation">Animation</h2>
 <table class="lib-table">
@@ -34,9 +34,14 @@
 <h2 id="asset-format">Asset formats</h2>
 <table class="lib-table">
 <tr><th>Library</th><th>Version</th><th>What it gives you</th></tr>
-<tr><td><a href="lib-assets.html"><code>assets</code></a></td><td>0.2.4</td><td>A game's content pack that IS a loft store — art, audio and the scenes that place them, range-read off a static file server.  No codec, no parse step, no server-side code.</td></tr>
-<tr><td><a href="lib-drawing.html"><code>drawing</code></a></td><td>0.3.2</td><td>Render a .draw scene — a sprite authored as lines of text — pixel-identically to the Python renderer it replaces</td></tr>
+<tr><td><a href="lib-assets.html"><code>assets</code></a></td><td>0.3.0</td><td>A game's content pack that IS a loft store — art, audio and the scenes that place them, range-read off a static file server.  No codec, no parse step, no server-side code.</td></tr>
+<tr><td><a href="lib-drawing.html"><code>drawing</code></a></td><td>0.4.0</td><td>Render a .draw scene — a sprite authored as lines of text — pixel-identically to the Python renderer it replaces</td></tr>
 <tr><td><a href="lib-glb.html"><code>glb</code></a></td><td>0.1.5</td><td>glTF 2.0 binary (.glb) writer — exports Mesh / Scene as a glb file readable by Blender, three.js, gltf-validator.  Standalone (pure-loft, no GPU).</td></tr>
+</table>
+<h2 id="audio">audio</h2>
+<table class="lib-table">
+<tr><th>Library</th><th>Version</th><th>What it gives you</th></tr>
+<tr><td><a href="lib-audio_bus.html"><code>audio_bus</code></a></td><td>0.1.0</td><td>A mixer for game audio — buses that multiply, and a duck that restores exactly</td></tr>
 </table>
 <h2 id="cli">Command line</h2>
 <table class="lib-table">
@@ -56,10 +61,11 @@
 <h2 id="game">Games</h2>
 <table class="lib-table">
 <tr><th>Library</th><th>Version</th><th>What it gives you</th></tr>
-<tr><td><a href="lib-assets.html"><code>assets</code></a></td><td>0.2.4</td><td>A game's content pack that IS a loft store — art, audio and the scenes that place them, range-read off a static file server.  No codec, no parse step, no server-side code.</td></tr>
-<tr><td><a href="lib-fixstep.html"><code>fixstep</code></a></td><td>0.1.2</td><td>A fixed simulation step in exact integer time — clock, bank, one-shot timer</td></tr>
-<tr><td><a href="lib-game_protocol.html"><code>game_protocol</code></a></td><td>0.1.4</td><td>Per-tick state-update and event framing for loft multiplayer games — pure loft, over web + server</td></tr>
-<tr><td><a href="lib-input.html"><code>input</code></a></td><td>0.2.3</td><td>Game input for loft — action/axis bindings resolved to per-tick input state.</td></tr>
+<tr><td><a href="lib-assets.html"><code>assets</code></a></td><td>0.3.0</td><td>A game's content pack that IS a loft store — art, audio and the scenes that place them, range-read off a static file server.  No codec, no parse step, no server-side code.</td></tr>
+<tr><td><a href="lib-audio_bus.html"><code>audio_bus</code></a></td><td>0.1.0</td><td>A mixer for game audio — buses that multiply, and a duck that restores exactly</td></tr>
+<tr><td><a href="lib-fixstep.html"><code>fixstep</code></a></td><td>0.1.3</td><td>A fixed simulation step in exact integer time — clock, bank, one-shot timer</td></tr>
+<tr><td><a href="lib-game_protocol.html"><code>game_protocol</code></a></td><td>0.1.5</td><td>The message types a multiplayer game's client and server share — envelopes, kinds and constructors; pure loft, transport-agnostic</td></tr>
+<tr><td><a href="lib-input.html"><code>input</code></a></td><td>0.2.4</td><td>Game input for loft — action/axis bindings resolved to per-tick input state.</td></tr>
 <tr><td><a href="lib-stage.html"><code>stage</code></a></td><td>0.18.7</td><td>A retained 2-D scene for loft: a node tree you mutate, with transforms, clipping, batching, pointer routing and widget states</td></tr>
 <tr><td><a href="lib-time.html"><code>time</code></a></td><td>0.3.2</td><td>Date/time arithmetic on millisecond-since-epoch integers — proleptic Gregorian, same model as JavaScript Date.  Pure-loft; identical results on interp, --native, WASM.</td></tr>
 <tr><td><a href="lib-tween.html"><code>tween</code></a></td><td>0.1.2</td><td>Property tweens in exact integer time — eleven easing curves, chains and groups</td></tr>
@@ -67,25 +73,25 @@
 <h2 id="geometry">Geometry</h2>
 <table class="lib-table">
 <tr><th>Library</th><th>Version</th><th>What it gives you</th></tr>
-<tr><td><a href="lib-hex_body.html"><code>hex_body</code></a></td><td>0.3.2</td><td>The moving body — rigs, revolute joints with computed limits, pure poses, and collision proxies. hexbody's own body model, part of the hex_* family.</td></tr>
-<tr><td><a href="lib-hex_draw.html"><code>hex_draw</code></a></td><td>0.1.1</td><td>Draw a model into the field, and read its wall surface back.</td></tr>
-<tr><td><a href="lib-hex_edge.html"><code>hex_edge</code></a></td><td>0.2.1</td><td>Collision as an edge set, and the analytic surfaces behind it.</td></tr>
-<tr><td><a href="lib-hex_field.html"><code>hex_field</code></a></td><td>0.1.3</td><td>Exact-integer hex cell sets and their outlines — the base of the hex_* family.</td></tr>
-<tr><td><a href="lib-hex_fit.html"><code>hex_fit</code></a></td><td>0.1.2</td><td>The doorstep — refuse at authoring time what would not round-trip.</td></tr>
-<tr><td><a href="lib-hex_form.html"><code>hex_form</code></a></td><td>0.1.5</td><td>The exact turtle form on the hex lattice, and its canonical text.</td></tr>
-<tr><td><a href="lib-hex_grid.html"><code>hex_grid</code></a></td><td>0.1.2</td><td>Hex-grid geometry — pointy-top, ODD-R OFFSET coordinates: coordinate/pixel conversion, neighbours, distance, corners and canonical edges, plus a square local basis for right-angled structures placed on the hex world.</td></tr>
-<tr><td><a href="lib-hex_place.html"><code>hex_place</code></a></td><td>0.1.1</td><td>Place, seat and combine — the operations a model survives.</td></tr>
-<tr><td><a href="lib-hex_recover.html"><code>hex_recover</code></a></td><td>0.1.3</td><td>Rebuild a model from the field — exactly, or with a reported residual.</td></tr>
-<tr><td><a href="lib-hex_roof.html"><code>hex_roof</code></a></td><td>0.1.5</td><td>Roof profiles as a height field, and the fit that recovers them.</td></tr>
-<tr><td><a href="lib-hex_shape.html"><code>hex_shape</code></a></td><td>0.1.3</td><td>The line primitive, the box and the arc — the shape vocabulary of the hex_* family.</td></tr>
-<tr><td><a href="lib-hex_way.html"><code>hex_way</code></a></td><td>0.1.2</td><td>A way is an exact centreline plus offsets, never a rasterised band.</td></tr>
+<tr><td><a href="lib-hex_body.html"><code>hex_body</code></a></td><td>0.3.3</td><td>The moving body — rigs, revolute joints with computed limits, pure poses, and collision proxies. hexbody's own body model, part of the hex_* family.</td></tr>
+<tr><td><a href="lib-hex_draw.html"><code>hex_draw</code></a></td><td>0.1.2</td><td>Draw a model into the field, and read its wall surface back.</td></tr>
+<tr><td><a href="lib-hex_edge.html"><code>hex_edge</code></a></td><td>0.2.2</td><td>Collision as an edge set, and the analytic surfaces behind it.</td></tr>
+<tr><td><a href="lib-hex_field.html"><code>hex_field</code></a></td><td>0.1.4</td><td>Exact-integer hex cell sets and their outlines — the base of the hex_* family.</td></tr>
+<tr><td><a href="lib-hex_fit.html"><code>hex_fit</code></a></td><td>0.1.3</td><td>The doorstep — refuse at authoring time what would not round-trip.</td></tr>
+<tr><td><a href="lib-hex_form.html"><code>hex_form</code></a></td><td>0.1.6</td><td>The exact turtle form on the hex lattice, and its canonical text.</td></tr>
+<tr><td><a href="lib-hex_grid.html"><code>hex_grid</code></a></td><td>0.1.3</td><td>Hex-grid geometry — pointy-top, ODD-R OFFSET coordinates: coordinate/pixel conversion, neighbours, distance, corners and canonical edges, plus a square local basis for right-angled structures placed on the hex world.</td></tr>
+<tr><td><a href="lib-hex_place.html"><code>hex_place</code></a></td><td>0.1.2</td><td>Place, seat and combine — the operations a model survives.</td></tr>
+<tr><td><a href="lib-hex_recover.html"><code>hex_recover</code></a></td><td>0.1.4</td><td>Rebuild a model from the field — exactly, or with a reported residual.</td></tr>
+<tr><td><a href="lib-hex_roof.html"><code>hex_roof</code></a></td><td>0.1.6</td><td>Roof profiles as a height field, and the fit that recovers them.</td></tr>
+<tr><td><a href="lib-hex_shape.html"><code>hex_shape</code></a></td><td>0.1.4</td><td>The line primitive, the box and the arc — the shape vocabulary of the hex_* family.</td></tr>
+<tr><td><a href="lib-hex_way.html"><code>hex_way</code></a></td><td>0.1.3</td><td>A way is an exact centreline plus offsets, never a rasterised band.</td></tr>
 <tr><td><a href="lib-mesh3d.html"><code>mesh3d</code></a></td><td>0.1.3</td><td>3D geometry primitives — Vec/Mat, Mesh, Scene, Camera, Light.  Standalone (pure-loft, no GPU).</td></tr>
 <tr><td><a href="lib-shapes.html"><code>shapes</code></a></td><td>0.5.2</td><td>2D geometry primitives — Rect, Circle, overlap tests, clamp.  Pure-loft, no other deps.</td></tr>
 </table>
 <h2 id="graphics">Graphics and 3D</h2>
 <table class="lib-table">
 <tr><th>Library</th><th>Version</th><th>What it gives you</th></tr>
-<tr><td><a href="lib-drawing.html"><code>drawing</code></a></td><td>0.3.2</td><td>Render a .draw scene — a sprite authored as lines of text — pixel-identically to the Python renderer it replaces</td></tr>
+<tr><td><a href="lib-drawing.html"><code>drawing</code></a></td><td>0.4.0</td><td>Render a .draw scene — a sprite authored as lines of text — pixel-identically to the Python renderer it replaces</td></tr>
 <tr><td><a href="lib-glb.html"><code>glb</code></a></td><td>0.1.5</td><td>glTF 2.0 binary (.glb) writer — exports Mesh / Scene as a glb file readable by Blender, three.js, gltf-validator.  Standalone (pure-loft, no GPU).</td></tr>
 <tr><td><a href="lib-graphics.html"><code>graphics</code></a></td><td>0.9.6</td><td>2D canvas + 3D rendering for loft (Canvas pixel surface, Mesh / Scene / glTF, OpenGL bindings).</td></tr>
 <tr><td><a href="lib-gridmesh.html"><code>gridmesh</code></a></td><td>0.2.4</td><td>Chunk-local mesh-generation primitives for world-building algorithms.</td></tr>
@@ -103,15 +109,15 @@
 <h2 id="net">Networking</h2>
 <table class="lib-table">
 <tr><th>Library</th><th>Version</th><th>What it gives you</th></tr>
-<tr><td><a href="lib-game_protocol.html"><code>game_protocol</code></a></td><td>0.1.4</td><td>Per-tick state-update and event framing for loft multiplayer games — pure loft, over web + server</td></tr>
+<tr><td><a href="lib-game_protocol.html"><code>game_protocol</code></a></td><td>0.1.5</td><td>The message types a multiplayer game's client and server share — envelopes, kinds and constructors; pure loft, transport-agnostic</td></tr>
 <tr><td><a href="lib-server.html"><code>server</code></a></td><td>0.7.1</td><td>HTTP + WebSocket server for loft — TCP sockets + tungstenite via cdylib.</td></tr>
-<tr><td><a href="lib-ssh.html"><code>ssh</code></a></td><td>0.1.2</td><td>SSH client for loft — drive an interactive remote shell (e.g. attach tmux) over password auth, never stored. Native-only.</td></tr>
-<tr><td><a href="lib-web.html"><code>web</code></a></td><td>0.4.2</td><td>HTTP client + WebSocket client for loft — ureq + tungstenite via cdylib.</td></tr>
+<tr><td><a href="lib-ssh.html"><code>ssh</code></a></td><td>0.1.3</td><td>SSH client for loft — drive an interactive remote shell (e.g. attach tmux) over password auth, never stored. Native-only.</td></tr>
+<tr><td><a href="lib-web.html"><code>web</code></a></td><td>0.4.3</td><td>HTTP client + WebSocket client for loft — ureq + tungstenite via cdylib.</td></tr>
 </table>
 <h2 id="plugins">Plugins</h2>
 <table class="lib-table">
 <tr><th>Library</th><th>Version</th><th>What it gives you</th></tr>
-<tr><td><a href="lib-pluginabi.html"><code>pluginabi</code></a></td><td>0.1.4</td><td>Plugin call protocol — the six-operation contract (initial_state / apply_op / make_op / render / snapshot / load_snapshot) as canonical-CBOR frames over a byte channel. Not a runtime, ABI or sandbox: loft already provides those.</td></tr>
+<tr><td><a href="lib-pluginabi.html"><code>pluginabi</code></a></td><td>0.1.5</td><td>Plugin call protocol — the six-operation contract (initial_state / apply_op / make_op / render / snapshot / load_snapshot) as canonical-CBOR frames over a byte channel. Not a runtime, ABI or sandbox: loft already provides those.</td></tr>
 </table>
 <h2 id="random">Randomness</h2>
 <table class="lib-table">
@@ -121,8 +127,8 @@
 <h2 id="text">Text</h2>
 <table class="lib-table">
 <tr><th>Library</th><th>Version</th><th>What it gives you</th></tr>
-<tr><td><a href="lib-html.html"><code>html</code></a></td><td>0.1.1</td><td>HTML escaping helpers for loft.</td></tr>
-<tr><td><a href="lib-markdown.html"><code>markdown</code></a></td><td>0.2.3</td><td>Markdown-to-HTML rendering for loft — headings, inline spans, slugify, link rewriting.</td></tr>
+<tr><td><a href="lib-html.html"><code>html</code></a></td><td>0.1.2</td><td>HTML escaping helpers for loft.</td></tr>
+<tr><td><a href="lib-markdown.html"><code>markdown</code></a></td><td>0.2.4</td><td>Markdown-to-HTML rendering for loft — headings, inline spans, slugify, link rewriting.</td></tr>
 <tr><td><a href="lib-regex.html"><code>regex</code></a></td><td>0.4.2</td><td>Small-script regex: `search`, `matches` and a lazy `split_on`, with a thread-local pattern cache.</td></tr>
 <tr><td><a href="lib-text2d.html"><code>text2d</code></a></td><td>0.4.4</td><td>Text that always draws — a built-in face, a glyph atlas, measured metrics, wrapping and alignment, with no font file and no GL context</td></tr>
 <tr><td><a href="lib-zttext.html"><code>zttext</code></a></td><td>0.1.3</td><td>A text engine for loft: piece-table content core, transactional undo, and portable layout with measurement injected</td></tr>
@@ -130,7 +136,7 @@
 <h2 id="time">Time</h2>
 <table class="lib-table">
 <tr><th>Library</th><th>Version</th><th>What it gives you</th></tr>
-<tr><td><a href="lib-fixstep.html"><code>fixstep</code></a></td><td>0.1.2</td><td>A fixed simulation step in exact integer time — clock, bank, one-shot timer</td></tr>
+<tr><td><a href="lib-fixstep.html"><code>fixstep</code></a></td><td>0.1.3</td><td>A fixed simulation step in exact integer time — clock, bank, one-shot timer</td></tr>
 <tr><td><a href="lib-time.html"><code>time</code></a></td><td>0.3.2</td><td>Date/time arithmetic on millisecond-since-epoch integers — proleptic Gregorian, same model as JavaScript Date.  Pure-loft; identical results on interp, --native, WASM.</td></tr>
 </table>
 <h2 id="toolchain">toolchain</h2>
@@ -142,8 +148,8 @@
 <table class="lib-table">
 <tr><th>Library</th><th>Version</th><th>What it gives you</th></tr>
 <tr><td><a href="lib-gridmesh.html"><code>gridmesh</code></a></td><td>0.2.4</td><td>Chunk-local mesh-generation primitives for world-building algorithms.</td></tr>
-<tr><td><a href="lib-hex_terrain.html"><code>hex_terrain</code></a></td><td>0.1.4</td><td>The OVERLAND terrain layer of the `hex_*` family: a coarse overland hex lattice</td></tr>
-<tr><td><a href="lib-hex_world.html"><code>hex_world</code></a></td><td>0.2.1</td><td>Sparse 32x32-chunk hex-grid world data model — Cell / Chunk / World with binary save/load.</td></tr>
+<tr><td><a href="lib-hex_terrain.html"><code>hex_terrain</code></a></td><td>0.1.5</td><td>The OVERLAND terrain layer of the `hex_*` family: a coarse overland hex lattice</td></tr>
+<tr><td><a href="lib-hex_world.html"><code>hex_world</code></a></td><td>0.2.2</td><td>Sparse 32x32-chunk hex-grid world data model — Cell / Chunk / World with binary save/load.</td></tr>
 </table>
 
   </article>

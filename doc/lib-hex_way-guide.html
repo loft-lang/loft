@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>hex_way guide — Loft, a programming language for small browser games</title>
+  <meta name="description" content="Getting started with the loft library hex_way — a runnable guide that is itself a loft program, so every example in it compiles.">
+<link rel="canonical" href="https://loft-lang.org/loft/lib-hex_way-guide.html">
+<meta property="og:title" content="hex_way guide — Loft, a programming language for small browser games">
+<meta property="og:description" content="Getting started with the loft library hex_way — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://loft-lang.org/loft/lib-hex_way-guide.html">
+<meta property="og:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<meta property="og:site_name" content="Loft">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="hex_way guide — Loft, a programming language for small browser games">
+<meta name="twitter:description" content="Getting started with the loft library hex_way — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta name="twitter:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<link rel="stylesheet" href="style.css">
+<style>.playground-link{display:inline-block;margin:0.3em 0 0.8em;padding:4px 12px;background:#2563eb;color:#fff;border-radius:4px;text-decoration:none;font-size:0.85em}.playground-link:hover{filter:brightness(1.15)}@media print{.playground-link{display:none}}</style>
+</head>
+<body>
+<nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
+<h1>hex_way guide</h1>
+<article>
+<p><a href="lib-hex_way.html">← hex_way</a> · <a href="lib-hex_way-api.html">API reference</a> · <a href="lib-hex_way-src.html">source</a></p>
+<p><code>hex_way</code> is the linework of the hex world: roads, rails and paths.  A way is a <code>Track</code> — a sequence of straight and arc segments in world space — and that centreline is the truth.  Everything parallel to it (a rail, a kerb, a lane marking) is an exact OFFSET of the centreline, and the cells a way covers are a RASTERISATION of its band, computed last and never offset again.</p>
+<p>It is not collision — <code>hex_edge</code> owns walls and surfaces, and <code>way_stamp</code> writes into them.  It is not the cell set either: that is <code>hex_field</code>.  Reach for <code>hex_way</code> when the shape is a line with a width rather than a region.</p>
+<p>World units: a hex has circumradius 1, so neighbouring centres are √3 apart along a row and rows are 1.5 apart.</p>
+<pre><code><span class="kw">use</span> hex_way::*;
+<span class="kw">use</span> hex_field::*;
+<span class="kw">use</span> hex_edge::*;</code></pre>
+<pre><code>const <span class="en">HALF_PI</span> = <span class="nm">1.5707963267948966</span>;</code></pre>
+<p>Ten units east, then a quarter turn to the left around (10, 5).</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">l_track</span>() -&gt; <span class="en">Track</span> {
+  t = <span class="fn-call">track_new</span>();
+  <span class="fn-call">track_straight</span>(t, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">10.0</span>, <span class="nm">0.0</span>);
+  <span class="fn-call">track_arc</span>(t, <span class="nm">10.0</span>, <span class="nm">5.0</span>, <span class="nm">5.0</span>, <span class="nm">0.0</span> - <span class="en">HALF_PI</span>, <span class="nm">0.0</span>);
+  t
+}</code></pre>
+<pre><code><span class="kw">fn</span> <span class="fn-call">near</span>(a: <span class="ty"><a href="stdlib-types.html">float</a></span>, b: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> { <span class="bi"><a href="stdlib-math.html">abs</a></span>(a - b) &lt; <span class="nm">0.000000001</span> }</code></pre>
+<pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {
+  t = <span class="fn-call">l_track</span>();
+  (ex, ey) = <span class="fn-call">seg_point</span>(t, <span class="nm">1</span>, <span class="fn-call">seg_len</span>(t, <span class="nm">1</span>));
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"length {track_len(t):.4}, turn curvature {seg_curvature(t, 1)}, ends at ({ex:.1}, {ey:.1})"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">near</span>(<span class="fn-call">track_len</span>(t), <span class="nm">10.0</span> + <span class="nm">5.0</span> * <span class="en">HALF_PI</span>), <span class="st">"10 straight plus a quarter of a radius-5 circle"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">seg_curvature</span>(t, <span class="nm">0</span>) == <span class="nm">0.0</span> &amp;&amp; <span class="fn-call">seg_curvature</span>(t, <span class="nm">1</span>) == <span class="nm">0.2</span>, <span class="st">"straight, then 1/R turning left"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">near</span>(ex, <span class="nm">15.0</span>) &amp;&amp; <span class="fn-call">near</span>(ey, <span class="nm">5.0</span>), <span class="st">"a quarter turn from (10, 0) around (10, 5)"</span>);</code></pre>
+<p>Every section below is a function, and <code>main</code> calls each one: a section nothing calls still compiles, but its assertions never run.</p>
+<pre><code>  <span class="fn-call">rails_are_offsets</span>();
+  <span class="fn-call">cells_are_a_rasterisation</span>();
+  <span class="fn-call">stamping_walls</span>();
+  <span class="fn-call">the_milepost</span>();
+}</code></pre>
+<p>That prints:</p>
+<pre><code>  length 17.8540, turn curvature 0.2, ends at (15.0, 5.0)
+</code></pre>
+<h2 id="rails-are-offsets">Rails are offsets</h2>
+<p><code>track_offset(t, d)</code> is the parallel track at distance <code>d</code>, positive to the LEFT of travel. An offset straight is a straight, an offset arc is a concentric arc, so the offset is exact. On a left turn the left rail is the INSIDE one: its radius shrinks by <code>d</code>.  And it must still JOIN where the centreline joins — the gap at the joint is the check that matters.</p>
+<p><code>offset_legal(t, d)</code> asks whether a way may be that wide: on the tightest turn the inner rail collapses once |d| reaches the radius.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">rails_are_offsets</span>() {
+  t = <span class="fn-call">l_track</span>();
+  left = <span class="fn-call">track_offset</span>(t, <span class="nm">1.0</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">near</span>(<span class="fn-call">track_len</span>(left), <span class="nm">10.0</span> + <span class="nm">4.0</span> * <span class="en">HALF_PI</span>), <span class="st">"the inner rail turns on radius 4"</span>);
+  (sx, sy) = <span class="fn-call">seg_point</span>(left, <span class="nm">0</span>, <span class="fn-call">seg_len</span>(left, <span class="nm">0</span>));
+  (ax, ay) = <span class="fn-call">seg_point</span>(left, <span class="nm">1</span>, <span class="nm">0.0</span>);
+  gap = <span class="bi"><a href="stdlib-math.html">sqrt</a></span>((sx - ax) * (sx - ax) + (sy - ay) * (sy - ay)) ?? <span class="nm">1.0</span>;
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">near</span>(sx, <span class="nm">10.0</span>) &amp;&amp; <span class="fn-call">near</span>(sy, <span class="nm">1.0</span>) &amp;&amp; gap &lt; <span class="nm">0.000000001</span>, <span class="st">"straight and arc meet at (10, 1)"</span>);
+  (mx, my) = <span class="fn-call">seg_point</span>(left, <span class="nm">1</span>, <span class="nm">2.0</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">near</span>(<span class="fn-call">track_distance</span>(t, mx, my), <span class="nm">1.0</span>), <span class="st">"every point of the rail is 1 from the centreline"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">offset_legal</span>(t, <span class="nm">4.9</span>) &amp;&amp; !<span class="fn-call">offset_legal</span>(t, <span class="nm">5.0</span>) &amp;&amp; !<span class="fn-call">offset_legal</span>(t, -<span class="nm">5.0</span>), <span class="st">"|d| &lt; R = 5"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"offset  : inner rail {track_len(left):.4} long, joint gap {gap}, widest legal |d| &lt; 5"</span>);
+}</code></pre>
+<h2 id="cells-are-a-rasterisation">Cells are a rasterisation</h2>
+<p><code>way_mark(t, halfwidth, s)</code> fills every cell whose CENTRE lies within <code>halfwidth</code> of the centreline.  Centres come in rings, so the footprint quantises: along a row the next rows of centres are 1.5 away, and every half-width below that gives the same cells.  An offset has no such floor — keep the centreline, and rasterise last.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">cells_are_a_rasterisation</span>() {
+  road = <span class="fn-call">track_new</span>();
+  <span class="fn-call">track_straight</span>(road, -<span class="nm">5.0</span>, <span class="nm">0.0</span>, <span class="nm">5.0</span>, <span class="nm">0.0</span>);
+  narrow = <span class="fn-call">hexset_new</span>(<span class="nm">8</span>);
+  <span class="fn-call">way_mark</span>(road, <span class="nm">0.5</span>, narrow);
+  wider = <span class="fn-call">hexset_new</span>(<span class="nm">8</span>);
+  <span class="fn-call">way_mark</span>(road, <span class="nm">1.4</span>, wider);
+  wide = <span class="fn-call">hexset_new</span>(<span class="nm">8</span>);
+  <span class="fn-call">way_mark</span>(road, <span class="nm">1.6</span>, wide);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">hexset_count</span>(narrow) == <span class="nm">7</span> &amp;&amp; <span class="fn-call">hexset_count</span>(wider) == <span class="nm">7</span>, <span class="st">"q = -3..3 on row 0, nothing else"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">hexset_count</span>(wide) == <span class="nm">19</span>, <span class="st">"plus six cells on each of rows -1 and 1"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"cells   : half-width 0.5 and 1.4 -&gt; {hexset_count(narrow)} cells, 1.6 -&gt; {hexset_count(wide)}"</span>);
+}</code></pre>
+<h2 id="stamping-walls">Stamping walls</h2>
+<p><code>way_surfaces(t, sf)</code> registers each segment as a <code>hex_edge</code> surface and answers the first id; segment <code>i</code> is <code>first + i</code>.  <code>way_stamp</code> then marks the cells AND blocks every boundary edge with the surface of its nearest segment, in one pass — so a body that hits the side of the road learns which segment it hit with no lookup.  Stamp a way that is built from several parts with <code>way_mark</code> for each part and one <code>cut_arb</code> at the end instead: cutting part by part leaves walls inside the finished footprint.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">stamping_walls</span>() {
+  road = <span class="fn-call">track_new</span>();
+  <span class="fn-call">track_straight</span>(road, -<span class="nm">5.0</span>, <span class="nm">0.0</span>, <span class="nm">5.0</span>, <span class="nm">0.0</span>);
+  sf = <span class="fn-call">surfaces_new</span>();
+  first = <span class="fn-call">way_surfaces</span>(road, sf);
+  cells = <span class="fn-call">hexset_new</span>(<span class="nm">8</span>);
+  e = <span class="fn-call">edgeset_new</span>(-<span class="nm">8</span>, -<span class="nm">8</span>, <span class="nm">17</span>, <span class="nm">17</span>);
+  <span class="fn-call">way_stamp</span>(road, <span class="nm">0.5</span>, cells, e, first, <span class="nm">1</span>);</code></pre>
+<p>7 cells in a row: 42 edges, of which 6 pairs are shared inside the road</p>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(first == <span class="nm">1</span> &amp;&amp; <span class="fn-call">edgeset_surf_count</span>(e) == <span class="nm">30</span>, <span class="st">"the outline of a 7-cell row"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">edge_surf</span>(e, <span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">1</span>) == first &amp;&amp; <span class="fn-call">passable</span>(e, <span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">1</span>, <span class="nm">0</span>), <span class="st">"a side wall, an open lane"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"stamp   : {edgeset_surf_count(e)} boundary edges, each on surface {first}"</span>);
+}</code></pre>
+<h2 id="the-milepost">The milepost</h2>
+<p><code>way_param(t, x, y)</code> is the arc length from the start of the way to the point on it nearest (x, y) — the parameter stations, signals and steps are stated in.  A point before the start reads 0, and a point at the end reads the whole length.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">the_milepost</span>() {
+  t = <span class="fn-call">l_track</span>();
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">near</span>(<span class="fn-call">way_param</span>(t, <span class="nm">4.0</span>, <span class="nm">0.3</span>), <span class="nm">4.0</span>), <span class="st">"4 units along the straight"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">way_param</span>(t, -<span class="nm">2.0</span>, <span class="nm">0.0</span>) == <span class="nm">0.0</span>, <span class="st">"before the start"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">near</span>(<span class="fn-call">way_param</span>(t, <span class="nm">15.0</span>, <span class="nm">5.0</span>), <span class="fn-call">track_len</span>(t)), <span class="st">"the end of the turn"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"param   : (4, 0.3) is at {way_param(t, 4.0, 0.3)}, the end at {way_param(t, 15.0, 5.0):.4}"</span>);
+}</code></pre>
+<h2 id="where-to-go-next">Where to go next</h2>
+<ul>
+<li><code>tests/02-worked-examples.loft</code> — <code>@HXY-001</code> … <code>@HXY-007</code>: an offset that must join, the band's floor, <code>offset_legal</code> as a width test, mark-then-cut for a multi-part way, a milepost near the start of a turn, the shortest safe stair tread per heading (<code>way_steps</code>), and an arc authored a full turn lower.</li>
+<li><code>hex_edge</code> — what the stamped walls do: <code>collide</code>, <code>sweep_path</code>, materials.</li>
+</ul>
+
+  </article>
+<script src="search-index.js"></script>
+<script src="search.js"></script>
+<script>
+(function(){
+var m={"Keywords":"keywords","Texts":"texts","Integers":"integers","Boolean":"boolean","Float":"float","Functions":"functions","Vector":"vector","Structs":"structs","Enums":"enums","Sorted":"sorted","Index":"index","Hash":"hash","File":"file","Lexer":"lexer","Parser":"parser","Libraries":"libraries","Store Locks":"store_locks","Parallel execution":"parallel_execution","Logging":"logging","Time":"time","Safety":"safety","JSON":"json","Generics":"generics","Closures":"closures","Coroutines":"coroutines","Tuples":"tuples","Match":"match","Formatting":"formatting"};
+var h=document.querySelector('h1');
+if(!h)return;
+var key=m[h.textContent];
+if(!key)return;
+var a=document.createElement('a');
+a.className='playground-link';
+a.href='playground.html?example='+key;
+a.textContent='\u25B6 Try in Playground';
+h.parentNode.insertBefore(a,h.nextSibling);
+})();
+</script>
+</body>
+</html>

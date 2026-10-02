@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>hex_place guide — Loft, a programming language for small browser games</title>
+  <meta name="description" content="Getting started with the loft library hex_place — a runnable guide that is itself a loft program, so every example in it compiles.">
+<link rel="canonical" href="https://loft-lang.org/loft/lib-hex_place-guide.html">
+<meta property="og:title" content="hex_place guide — Loft, a programming language for small browser games">
+<meta property="og:description" content="Getting started with the loft library hex_place — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://loft-lang.org/loft/lib-hex_place-guide.html">
+<meta property="og:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<meta property="og:site_name" content="Loft">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="hex_place guide — Loft, a programming language for small browser games">
+<meta name="twitter:description" content="Getting started with the loft library hex_place — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta name="twitter:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<link rel="stylesheet" href="style.css">
+<style>.playground-link{display:inline-block;margin:0.3em 0 0.8em;padding:4px 12px;background:#2563eb;color:#fff;border-radius:4px;text-decoration:none;font-size:0.85em}.playground-link:hover{filter:brightness(1.15)}@media print{.playground-link{display:none}}</style>
+</head>
+<body>
+<nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
+<h1>hex_place guide</h1>
+<article>
+<p><a href="lib-hex_place.html">← hex_place</a> · <a href="lib-hex_place-api.html">API reference</a> · <a href="lib-hex_place-src.html">source</a></p>
+<p><code>hex_place</code> answers what happens where two things MEET on the hex lattice.  Two stencils (footprints) placed side by side should become one building, not two with a wall down the middle.  A stencil placed on sloping ground should keep its footprint and report how badly it fits.  A body that moves (a rotated, translated "pose") must be tested in its own frame, so float error lives in one place only.</p>
+<p>It is not the cell set and not the shape.  <code>hex_field</code> holds which cells are filled and which edges are walls (<code>HexSet</code>, <code>EdgeSet</code>, <code>Heights</code>); <code>hex_form</code> describes a shape by its sides. Reach for <code>hex_place</code> when you combine stencils, seat them on terrain, or test a posed body.</p>
+<p>Coordinates are <code>hex_field</code>'s: odd-r offset <code>(q, r)</code>, every cell with six edges.</p>
+<pre><code><span class="kw">use</span> hex_place::*;
+<span class="kw">use</span> hex_field::*;</code></pre>
+<p>A 2x2 block of cells with its left column at <code>q0</code>, in a chunk with room around it.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">block</span>(q0: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">HexSet</span> {
+  s = <span class="fn-call">hexset_chunk</span>(-<span class="nm">10</span>, -<span class="nm">10</span>, <span class="nm">21</span>, <span class="nm">21</span>);
+  <span class="kw">for</span> r <span class="kw">in</span> <span class="nm">0..2</span> { <span class="kw">for</span> q <span class="kw">in</span> q0..q0 + <span class="nm">2</span> { <span class="fn-call">hexset_set</span>(s, q, r, <span class="kw">true</span>); } }
+  s
+}</code></pre>
+<pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {
+  a = <span class="fn-call">block</span>(<span class="nm">0</span>);                         <span class="cm">// cells q 0..1</span>
+  b = <span class="fn-call">block</span>(<span class="nm">2</span>);                         <span class="cm">// cells q 2..3 — touching a, not overlapping</span>
+  walls = <span class="fn-call">edgeset_new</span>(-<span class="nm">10</span>, -<span class="nm">10</span>, <span class="nm">21</span>, <span class="nm">21</span>);
+  cut = <span class="fn-call">combine_cut</span>(a, <span class="nm">1</span>, b, <span class="nm">2</span>, walls); <span class="cm">// material 1 for a's walls, 2 for b's</span>
+  seam = <span class="fn-call">shared_marked</span>(a, b, walls);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"walls cut: {cut}, walls between the two: {seam}"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(cut == <span class="nm">22</span> &amp;&amp; seam == <span class="nm">0</span>, <span class="st">"the outline of one 4x2 building, and no wall inside it"</span>);</code></pre>
+<p>Every section below is a function, and <code>main</code> calls each one: a section nothing calls still compiles, but its assertions never run.</p>
+<pre><code>  <span class="fn-call">why_cut_once</span>();
+  <span class="fn-call">a_level_is_a_sheet</span>();
+  <span class="fn-call">seating_on_a_slope</span>();
+  <span class="fn-call">a_posed_body</span>();
+}</code></pre>
+<p>That prints:</p>
+<pre><code>  walls cut: 22, walls between the two: 0
+</code></pre>
+<h2 id="why-cut-once">Why cut once</h2>
+<p><code>combine_cut</code> takes the UNION of the two footprints and cuts the union's outline once, tagging each wall with the material of the stencil whose cell it borders.  The edge the two share is inside the union, so nobody cuts it.  Cutting each stencil's own outline instead gives each 2x2 block its 14 walls, and the 3 edges between them are cut twice — a wall down the middle of what was drawn as one building.  The arithmetic shows where they went: 14 + 14 - 2 * 3 = 22.  The result does not depend on which stencil you pass first.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">why_cut_once</span>() {
+  a = <span class="fn-call">block</span>(<span class="nm">0</span>);
+  b = <span class="fn-call">block</span>(<span class="nm">2</span>);
+  overlay = <span class="fn-call">edgeset_new</span>(-<span class="nm">10</span>, -<span class="nm">10</span>, <span class="nm">21</span>, <span class="nm">21</span>);
+  na = <span class="fn-call">combine_cut</span>(a, <span class="nm">1</span>, a, <span class="nm">1</span>, overlay);   <span class="cm">// a's own outline</span>
+  nb = <span class="fn-call">combine_cut</span>(b, <span class="nm">2</span>, b, <span class="nm">2</span>, overlay);   <span class="cm">// b's own outline, into the same set</span>
+  seam = <span class="fn-call">shared_marked</span>(a, b, overlay);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(na == <span class="nm">14</span> &amp;&amp; nb == <span class="nm">14</span> &amp;&amp; seam == <span class="nm">3</span>, <span class="st">"each block alone has 14 walls, and 3 now separate them"</span>);</code></pre>
+<pre><code>  swapped = <span class="fn-call">edgeset_new</span>(-<span class="nm">10</span>, -<span class="nm">10</span>, <span class="nm">21</span>, <span class="nm">21</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">combine_cut</span>(b, <span class="nm">2</span>, a, <span class="nm">1</span>, swapped) == <span class="nm">22</span>, <span class="st">"the other order cuts the same 22"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"overlay : 14 + 14 walls, 3 of them inside the building"</span>);
+}</code></pre>
+<h2 id="a-level-is-a-sheet">A level is a sheet</h2>
+<p>A LEVEL is which sheet a thing sits on — a bridge is on level 1 over a road on level 0.  It is not a height.  <code>combine_cut_level</code> keeps only the stencils on the level you ask for, then cuts as <code>combine_cut</code> does, so two stencils on different levels never fuse and never contend.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">a_level_is_a_sheet</span>() {
+  road = <span class="fn-call">block</span>(<span class="nm">0</span>);
+  bridge = <span class="fn-call">block</span>(<span class="nm">2</span>);
+  e0 = <span class="fn-call">edgeset_new</span>(-<span class="nm">10</span>, -<span class="nm">10</span>, <span class="nm">21</span>, <span class="nm">21</span>);
+  e1 = <span class="fn-call">edgeset_new</span>(-<span class="nm">10</span>, -<span class="nm">10</span>, <span class="nm">21</span>, <span class="nm">21</span>);
+  at0 = <span class="fn-call">combine_cut_level</span>(road, <span class="nm">0</span>, <span class="nm">1</span>, bridge, <span class="nm">1</span>, <span class="nm">2</span>, <span class="nm">0</span>, e0);
+  at1 = <span class="fn-call">combine_cut_level</span>(road, <span class="nm">0</span>, <span class="nm">1</span>, bridge, <span class="nm">1</span>, <span class="nm">2</span>, <span class="nm">1</span>, e1);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(at0 == <span class="nm">14</span> &amp;&amp; at1 == <span class="nm">14</span>, <span class="st">"at each level only one block is there, with its own 14 walls"</span>);
+  same = <span class="fn-call">edgeset_new</span>(-<span class="nm">10</span>, -<span class="nm">10</span>, <span class="nm">21</span>, <span class="nm">21</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">combine_cut_level</span>(road, <span class="nm">0</span>, <span class="nm">1</span>, bridge, <span class="nm">0</span>, <span class="nm">2</span>, <span class="nm">0</span>, same) == <span class="nm">22</span>, <span class="st">"on one level they fuse again"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"levels  : 14 walls on each sheet; 22 when both share one"</span>);
+}</code></pre>
+<h2 id="seating-on-a-slope">Seating on a slope</h2>
+<p>A stencil is drawn flat; the ground is not.  Seating picks one height for the whole footprint — the lowest ground (<code>SEAT_LOW</code>), the mean (<code>SEAT_MEAN</code>) or the highest (<code>SEAT_HIGH</code>) — and <code>seat_residual</code> hands back the worst gap between that height and the ground, which is the cut and fill the placement owes.  <code>seat_write</code> writes the height into the <code>Heights</code> and touches no cell, so the footprint is the same on any ground.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">seating_on_a_slope</span>() {
+  a = <span class="fn-call">block</span>(<span class="nm">0</span>);
+  ground = <span class="fn-call">heights_new</span>(-<span class="nm">10</span>, -<span class="nm">10</span>, <span class="nm">21</span>, <span class="nm">21</span>);
+  <span class="kw">for</span> r <span class="kw">in</span> <span class="nm">0..2</span> { <span class="kw">for</span> q <span class="kw">in</span> <span class="nm">0..2</span> { <span class="fn-call">height_set</span>(ground, q, r, (q + <span class="nm">2</span> * r) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>); } }   <span class="cm">// 0, 1, 2, 3</span></code></pre>
+<pre><code>  low = <span class="fn-call">seat_height</span>(a, ground, <span class="en">SEAT_LOW</span>);
+  mean = <span class="fn-call">seat_height</span>(a, ground, <span class="en">SEAT_MEAN</span>);
+  high = <span class="fn-call">seat_height</span>(a, ground, <span class="en">SEAT_HIGH</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(low == <span class="nm">0.0</span> &amp;&amp; mean == <span class="nm">1.5</span> &amp;&amp; high == <span class="nm">3.0</span>, <span class="st">"the lowest, the mean and the highest ground"</span>);
+  gap = <span class="fn-call">seat_residual</span>(a, ground, mean);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(gap == <span class="nm">1.5</span>, <span class="st">"seated at the mean, the worst gap is 1.5"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">seat_residual</span>(a, ground, low) == <span class="nm">3.0</span>, <span class="st">"perched on the lowest ground, it is 3.0"</span>);</code></pre>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">seat_write</span>(a, ground, mean) == <span class="nm">4</span>, <span class="st">"four cells get the seat height"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">hexset_count</span>(a) == <span class="nm">4</span> &amp;&amp; <span class="fn-call">height_get</span>(ground, <span class="nm">1</span>, <span class="nm">1</span>) == <span class="nm">1.5</span>, <span class="st">"same footprint; the ground is levelled"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"seat    : low {low}, mean {mean}, high {high}; worst gap at the mean {gap}"</span>);
+}</code></pre>
+<h2 id="a-posed-body">A posed body</h2>
+<p>A body that moves carries a <code>Pose</code>: a rotation given as its cosine and sine, then a translation.  To ask whether a world point touches the body, transform the point into the body's frame once and test there — <code>disk_hit</code> does that for a disk.  This transform is the only floating-point step, so compare its results with a tolerance, never with <code>==</code>.</p>
+<p>Where two frames disagree about a point, <code>arb_solid</code> says solid if either does, so a crack between them gives a spurious contact rather than a fall through the world.  <code>arb_owner</code> names the solid frame with the LOWEST id, or -1 when neither is solid — and -1 is not an id.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">a_posed_body</span>() {
+  p = <span class="fn-call">pose_new</span>(<span class="nm">0.6</span>, <span class="nm">0.8</span>, <span class="nm">10.0</span>, <span class="nm">0.0</span>);      <span class="cm">// turned by the angle with cos 0.6, sin 0.8; moved 10 in x</span>
+  wx = <span class="fn-call">pose_fwd_x</span>(p, <span class="nm">5.0</span>, <span class="nm">0.0</span>);           <span class="cm">// the body's local point (5, 0), in the world</span>
+  wy = <span class="fn-call">pose_fwd_y</span>(p, <span class="nm">5.0</span>, <span class="nm">0.0</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-math.html">abs</a></span>(wx - <span class="nm">13.0</span>) &lt; <span class="nm">0.000001</span> &amp;&amp; <span class="bi"><a href="stdlib-math.html">abs</a></span>(wy - <span class="nm">4.0</span>) &lt; <span class="nm">0.000001</span>, <span class="st">"lands at (13, 4)"</span>);</code></pre>
+<p>A disk of radius 2 (squared radius 4) at the body's origin.</p>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">disk_hit</span>(p, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">4.0</span>, <span class="nm">11.0</span>, <span class="nm">1.0</span>), <span class="st">"(11, 1) is (1.4, -0.2) locally: inside"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="fn-call">disk_hit</span>(p, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">4.0</span>, <span class="nm">13.0</span>, <span class="nm">0.0</span>), <span class="st">"(13, 0) is (1.8, -2.4) locally: 3 away, outside"</span>);</code></pre>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">arb_solid</span>(<span class="kw">false</span>, <span class="kw">true</span>) &amp;&amp; <span class="fn-call">arb_owner</span>(<span class="kw">true</span>, <span class="nm">7</span>, <span class="kw">true</span>, <span class="nm">3</span>) == <span class="nm">3</span>, <span class="st">"solid wins; the lower id owns it"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">arb_owner</span>(<span class="kw">false</span>, <span class="nm">7</span>, <span class="kw">false</span>, <span class="nm">3</span>) == -<span class="nm">1</span>, <span class="st">"no solid frame: -1"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"pose    : local (5, 0) is world ({wx:.1}, {wy:.1})"</span>);
+}</code></pre>
+<h2 id="where-to-go-next">Where to go next</h2>
+<ul>
+<li><code>tests/02-worked-examples.loft</code> — <code>@HXP-001</code> … <code>@HXP-006</code>: the shared edge, order and overlap, levels, seating, why one sample of the pose error is not a bound, and arbitration.</li>
+<li><code>USAGE.md</code> — the map of the package, and the rules that bite.</li>
+</ul>
+
+  </article>
+<script src="search-index.js"></script>
+<script src="search.js"></script>
+<script>
+(function(){
+var m={"Keywords":"keywords","Texts":"texts","Integers":"integers","Boolean":"boolean","Float":"float","Functions":"functions","Vector":"vector","Structs":"structs","Enums":"enums","Sorted":"sorted","Index":"index","Hash":"hash","File":"file","Lexer":"lexer","Parser":"parser","Libraries":"libraries","Store Locks":"store_locks","Parallel execution":"parallel_execution","Logging":"logging","Time":"time","Safety":"safety","JSON":"json","Generics":"generics","Closures":"closures","Coroutines":"coroutines","Tuples":"tuples","Match":"match","Formatting":"formatting"};
+var h=document.querySelector('h1');
+if(!h)return;
+var key=m[h.textContent];
+if(!key)return;
+var a=document.createElement('a');
+a.className='playground-link';
+a.href='playground.html?example='+key;
+a.textContent='\u25B6 Try in Playground';
+h.parentNode.insertBefore(a,h.nextSibling);
+})();
+</script>
+</body>
+</html>
