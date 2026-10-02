@@ -3613,19 +3613,29 @@ pair ran equal).  Taken up after the rules of wider reach.
 ### Two equal reads in one statement are one read
 
 ```
-  (R-SameRead)   PROPOSED.  Within one statement, two reads `v[i]` (also `v[i]?`,
-                 `v[i] ?? d`) of the same vector local at the same index local, with the same
-                 element size and field, and nothing between them that writes `v`, writes
-                 `i` or calls user code, are bound once: `t = v[i]` before the statement,
-                 both reads become `t`, and a discharge both carry is applied once.  Only for
-                 reads that are discharged or provably in range, so the faults reported are
+  (R-SameRead)   Within one statement — an assignment's value, a `return`'s, or a block's
+                 value — two discharge blocks (`v[i]?`, `v[i] ?? d`: `{t = <read>; if t
+                 is not null then t else d}`) with the same read, the same conversion test
+                 and the same default are bound once: the first block to a fresh local
+                 before the statement, every equal one reads that local.  The read is built
+                 only from read operators, locals and literals (compared with source
+                 positions ignored); every call in the statement is a pure operator
+                 (arithmetic, comparison, conversion, a read), so nothing assigns a local or
+                 writes a store between the reads; a read inside an `if` arm is not
+                 collected.  A discharged read raises no fault, so the faults reported are
                  the faults reported today.
 ```
 
-**In words.** Applies in: the IR phase, both backends.  Each `v[i]?` is the read plus a five-op
-discharge.  Measured on `index_read` by the hand-written form: −31 %.  The guard owes a call
-between the reads that appends to `v`, two different indexes, a write to `i` inside the
-statement, and a nested read `m[i][j]`.
+**In words.** Applied by: `same_read::rewrite_program`, in the IR phase (both backends; native
+gains nothing measurable, LLVM already merged the reads).  Each `v[i]?` is the read plus a
+five-op discharge.  Both clauses are load-bearing, each falsified with a silent wrong answer:
+the default ignored made `(v[i] ?? 1) * 10 + (v[i] ?? 2)` read 11 for 12, and a user call
+taken as pure made `v[0]? + set_first(v) + v[0]?` read 198 for 103 (2026-10-02).  The first
+version compared reads exactly and bound nothing: the two spellings carry different source
+positions.  Measured on `index_read` by the hand-written form: −31 % interpreted.
+`LOFT_NO_SAME_READ=1`, `LOFT_TRACE_SAME_READ=1`.  Guards
+`tests/scripts/a-read-a-statement-spells-twice-is-read-once.loft` and `tests/same_read.rs`
+(which statements bind; the cells with the rewrite off).
 
 ### `(R-InlineLeaf)` takes a tuple result
 

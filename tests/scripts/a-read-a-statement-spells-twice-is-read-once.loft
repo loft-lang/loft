@@ -12,8 +12,9 @@
 // between the reads that writes the element.  `tests/same_read.rs` pins which statement binds.
 // Every expected value is computed by hand.
 //
-// @falsified-at: none — it guards a rewrite no earlier build has; planted defects, see
-//   tests/same_read.rs.
+// @falsified-at: none — it guards a rewrite no earlier build has.  Falsified by planted defects,
+//   2026-10-02: the default ignored (`two_defaults` reads 11 for 12) and any call taken as pure
+//   (`written_between` reads 198 for 103) — both silent wrong answers.
 
 fn twice(v: const vector<integer>, i: integer) -> integer {
   (v[i]? + 1) * (v[i]? + 2)
