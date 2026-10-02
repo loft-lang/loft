@@ -128,9 +128,12 @@ be kept in step with the library.
 | `doc/lib-<name>-src.html` | package | `src/` + `tests/` in the extracted tarball | *how is it built?* |
 
 Two of those need the package EXTRACTED in `~/.loft/registry/`, not just listed in the index
-— the guide and the source browser. A build box without that cache says so on the page
-rather than reporting an empty library as a library with nothing in it, and
-`scripts/fetch-doc-packages.sh` (`make doc`) is what fills it before a release build.
+— the guide and the source browser. A package that is not in the cache at all gets a page that
+says so, and `scripts/fetch-doc-packages.sh` (`make doc`) is what fills the cache before a
+build.  `gendoc` refuses, before writing a page, a build that would turn a page rendered from a
+package into that stub, naming the packages (a bare `cargo run --bin gendoc` once stubbed 37 of
+them).  **`LOFT_DOC_ALLOW_UNCACHED=1`** lifts the refusal for a render that does not read the
+library pages — `doc_hygiene`'s drift test, which runs on boxes without the cache, CI included.
 
 **A guide reaches a reader only through a RELEASE.** `gendoc` reads it out of the extracted
 tarball, so writing `docs/01-getting-started.loft` is half of shipping one and bumping the

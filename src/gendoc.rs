@@ -1289,6 +1289,11 @@ fn generate_library_source_pages<S: std::hash::BuildHasher>(
 /// and the cure.  A package whose page is already a stub — one the registry cannot serve —
 /// passes, and is rendered as a stub again.
 fn refuse_degrading_uncached(index: &loft::registry_index::RegistryIndex) -> std::io::Result<()> {
+    // A comparison that does not read the library pages (`doc_hygiene`'s drift test renders
+    // into a scratch copy on boxes, CI included, that have no registry cache) opts out.
+    if std::env::var_os("LOFT_DOC_ALLOW_UNCACHED").is_some() {
+        return Ok(());
+    }
     let mut refused: Vec<String> = Vec::new();
     for (name, pkg) in &index.packages {
         let Some(v) = loft::registry_index::find_best_version(pkg, "*", false) else {
