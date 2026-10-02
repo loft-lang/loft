@@ -9,9 +9,9 @@
 // half — every index of a subscript is read, so the program sees one refusal naming the type
 // and the cure, at one, two and three indices, with an index expression inside.
 //
-// @falsified-at: none — re-spelled for C132; the defect it was written for (the comma
-//   cascade) is the one the refusal path below must not bring back, and `make falsify` of
-//   the rewrite is recorded with the C132 commit.
+// @falsified-at: 4fe642f3c — interpret exit 1 -> 0, interpret expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches)
+//   CHANNEL: expect — on the control a user `fn OpIndex` still subscripted, so none of the four
+//   refusals fired.
 //
 // @EXPECT_ERROR: `M996` cannot be indexed: `[…]` belongs to the built-in collections
 // @EXPECT_ERROR: `R996` cannot be indexed: `[…]` belongs to the built-in collections

@@ -13,6 +13,14 @@
 //
 // @EXPECT_WARNING: `fn OpEq` is an ordinary function and is not called by `==` or `!=`
 //
+// @falsified-at: 4fe642f3c — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the control refuses the struct-LITERAL cells at compile
+//   time ("No matching operator '<' on 'D' and 'D'"), which hides the rest of the file.
+//   WITNESS: hand-measured with the literal cells removed, on the control's own binary: the
+//   retirement cells fail on VALUE on both backends — "`==` compares the fields, not the last
+//   digit `OpEq` compares" (the control's `==` called `fn OpEq`); this tree passes them.
+//   HOLDS: the struct conversion in a loop is leak-clean on both trees.
+//
 // Every expected value is worked out by hand.
 
 value struct D { ms: integer }
