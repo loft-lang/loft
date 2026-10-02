@@ -664,6 +664,21 @@ impl Output<'_> {
         {
             res = "{{let db = @v1; if db.rec != 0 {{ stores.store_mut(&db).set_u32_raw(db.rec, db.pos + u32::from(@fld), 0u32); }}}}".to_string();
         }
+        // `OpSetText` copies its value into a fresh `String` before `set_str` because the value
+        // may BORROW store memory (a field read, a slice of a text parameter) that the claim
+        // can move.  A literal and an owned `String` local borrow no store: their bytes are
+        // read where they are, one allocation and one copy fewer per write.
+        if def_fn.name() == "OpSetText"
+            && !self.text_set_copy_kept
+            && let Some(vi) = def_fn.attributes().iter().position(|a| a.name == "val")
+            && match vals.get(vi).map(Value::unspan) {
+                Some(Value::Text(_)) => true,
+                Some(Value::Var(v)) => self.text_owned(*v),
+                _ => false,
+            }
+        {
+            res = "{{let db = @v1; let s_val: &str = &*@val; if db.rec != 0 {{ let store = stores.store_mut(&db); let s_pos = store.set_str(s_val); store.set_u32_raw(db.rec, db.pos + u32::from(@fld), s_pos); }}}}".to_string();
+        }
         // Bytecode templates wrap text values in Str::new(...) for put_stack compatibility.
         // Native code uses &str directly — strip the wrapper by extracting its argument.
         // Must be done before @param substitution so argument expressions are not affected.
