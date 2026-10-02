@@ -996,8 +996,8 @@ impl Stores {
         if self.is_stack_store(data.store_nr) || self.is_stack_store(to.store_nr) {
             return false;
         }
-        if !self.allocations[ds].content_swappable()
-            || !self.allocations[ts].content_swappable()
+        if !self.allocations[ds].content_swappable(true)
+            || !self.allocations[ts].content_swappable(false)
             || !self.allocations[ts].holds_only_root()
         {
             return false;
@@ -1051,8 +1051,10 @@ impl Stores {
             // A struct-enum names its variants' types here; a plain enum's entries name no
             // `EnumValue` type and are values.
             Parts::Enum(values) => values.iter().all(|(v, _)| {
-                !matches!(self.types.get(*v as usize).map(|t| &t.parts), Some(Parts::EnumValue(..)))
-                    || self.tree_holds_no_stored_refs(*v, walking)
+                !matches!(
+                    self.types.get(*v as usize).map(|t| &t.parts),
+                    Some(Parts::EnumValue(..))
+                ) || self.tree_holds_no_stored_refs(*v, walking)
             }),
             Parts::Base
             | Parts::Byte(..)

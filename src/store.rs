@@ -2552,15 +2552,17 @@ impl Store {
 
     /// `@FR-H-SwapIn` — may this store's CONTENT be exchanged with another's: an ordinary
     /// in-memory store nothing pins to its slot (no file, no foreign bytes, no recording,
-    /// no lock, no borrow, no free protection, not the interpreter's stack).
-    pub(crate) fn content_swappable(&self) -> bool {
+    /// no lock, no borrow, not the interpreter's stack).  A free protection (a call's
+    /// deep-copy bracket) guards the slot against a FREE, so it refuses only the side the
+    /// exchange then frees: `released` is that side.
+    pub(crate) fn content_swappable(&self, released: bool) -> bool {
         !self.free
             && !self.read_only
             && !self.user_locked
             && !self.borrowed
             && !self.stack_buffer
             && !self.pinned
-            && self.free_protect_depth == 0
+            && (!released || self.free_protect_depth == 0)
             && self.file.is_none()
             && self.foreign.is_none()
             && self.recording.is_none()
