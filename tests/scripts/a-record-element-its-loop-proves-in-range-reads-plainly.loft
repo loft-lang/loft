@@ -1,0 +1,72 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A record element its loop proves in range is read without a null discharge, and answers what
+// the discharged read answers.  `@FR-R-InRange`.
+//
+// `v[i]?` over records is the nullable read and a fallback record minted when it answers null.
+// Inside `for i in 0..len(v)` whose body cannot resize `v` or assign `i`, the read is never
+// null, so the discharge goes.  The cells: the in-range update (dropped); a loop that clears the
+// vector part-way, whose later reads must still fall back; a loop over one vector's length
+// reading ANOTHER, shorter one; and a scalar `v[i]?`, which keeps its discharge because a scalar
+// element's VALUE can be null.  `tests/in_range.rs` pins which loop is rewritten.  Expected
+// values by hand.
+//
+// @falsified-at: none — it guards a rewrite no earlier build has; planted defects, see
+//   tests/in_range.rs.
+
+struct P {
+  x: float,
+  y: float,
+  id: integer
+}
+
+fn points(n: integer, first_id: integer) -> vector<P> {
+  out: vector<P> = [];
+  for i in 0..n { out += [P { x: i as float * 0.5, y: (i % 13) as float, id: first_id + i }]; }
+  out
+}
+
+fn update(v: vector<P>, salt: integer) -> float {
+  for i in 0..len(v) { v[i].x = v[i]?.y + (i + salt) as float; }
+  t = 0.0;
+  for p in v { t += p.x; }
+  t
+}
+
+fn cleared_part_way(v: vector<P>) -> integer {
+  t = 0;
+  for i in 0..len(v) {
+    if i == 1 { v.clear(); }
+    t += v[i]?.id;
+  }
+  t
+}
+
+fn another_vector(a: const vector<P>, b: const vector<P>) -> integer {
+  t = 0;
+  for i in 0..len(a) { t += b[i]?.id; }
+  t
+}
+
+fn scalars(v: const vector<integer>) -> integer {
+  t = 0;
+  for i in 0..len(v) { t += v[i]? * 2; }
+  t
+}
+
+fn test_in_range_records() {
+  assert(update(points(20, 0), 3) == 349.0, "update {update(points(20, 0), 3)}");
+}
+
+fn test_reads_that_keep_their_discharge() {
+  assert(cleared_part_way(points(3, 10)) == 10, "cleared {cleared_part_way(points(3, 10))}");
+  assert(another_vector(points(4, 0), points(2, 7)) == 15, "another {another_vector(points(4, 0), points(2, 7))}");
+  assert(scalars([1, 2, 3]) == 12, "scalars {scalars([1, 2, 3])}");
+}
+
+fn main() {
+  test_in_range_records();
+  test_reads_that_keep_their_discharge();
+  println("ok");
+}
