@@ -17889,6 +17889,14 @@ impl Parser {
                     // has none, so the import binds whichever package's did load.
                     if self.data.use_exists(&id) {
                         self.module_name_clash(&id);
+                        // loft#1849 — this file's package is bound by its own range for
+                        // `id` too, whichever `use` loaded the copy.
+                        let cur_script = self.lexer.pos().file.to_string();
+                        if let Some(loaded) = self.use_paths.get(&id).cloned()
+                            && let Some(pkg_root) = crate::resolution_scope::project_root(&loaded)
+                        {
+                            self.loaded_copy_meets_declaring_range(&id, &cur_script, &pkg_root);
+                        }
                     }
                     if self.data.use_exists(&id) {
                         let lib_source = self.data.get_source(&id);
@@ -18485,6 +18493,7 @@ impl Parser {
             f = format!("{id}.loft");
         }
         self.probe_manifest_path_dep(id, cur_dir, &mut f);
+        self.probe_root_path_dep(id, &cur_script, &mut f);
         self.probe_sibling_package(id, cur_dir, &mut f);
         Self::probe_script_sibling_dir(id, &cur_script, &mut f);
         if blocked(&f) {
@@ -19523,6 +19532,84 @@ impl Parser {
         }
     }
 
+    /// loft#1849 — the ROOT project's `{ path = … }` declaration of `id` answers a `use id`
+    /// anywhere in the program, not only in the root's own files.
+    ///
+    /// PACKAGES.md: "The root project's declared constraints pin the whole tree, including
+    /// packages pulled in transitively by a `use` inside a dependency", and a package loads
+    /// once.  Every other project-side probe looks from the IMPORTING file's directory, so a
+    /// `use graphics` inside a path dependency `input` never saw the root's declaration: it
+    /// fell to the registry, and that copy — being loaded first — became the program's,
+    /// whatever the root said.  Which copy a program compiled against depended on the order
+    /// of its `use` lines.
+    ///
+    /// The importing package's own range must still hold for the copy the root names; when
+    /// it does not, the two declarations disagree and the program is refused, naming both
+    /// ([`Self::loaded_copy_meets_declaring_range`]).
+    fn probe_root_path_dep(&mut self, id: &str, cur_script: &str, f: &mut String) {
+        if std::path::Path::new(f).exists() {
+            return;
+        }
+        let Some(root) = crate::resolution_scope::project_root(&self.database.source_dir) else {
+            return;
+        };
+        let root_dir = root.to_string_lossy().to_string();
+        self.probe_manifest_path_dep(id, &root_dir, f);
+        if std::path::Path::new(f).exists()
+            && let Some(pkg_root) = Self::declared_path_dep_root(id, &root_dir)
+        {
+            self.loaded_copy_meets_declaring_range(id, cur_script, &pkg_root);
+        }
+    }
+
+    /// The version of the copy of `id` this program loads (the package at `pkg_root`) against
+    /// the range the package whose file says `use id` names for it — refused when it falls
+    /// outside, because a copy the importer excludes is the silent mismatch loft#1849 is.
+    /// Asked where the copy is chosen ([`Self::probe_root_path_dep`]) AND where a later
+    /// `use` finds it already loaded, so the verdict cannot depend on which `use` came first.
+    #[cfg(feature = "registry")]
+    fn loaded_copy_meets_declaring_range(
+        &mut self,
+        id: &str,
+        cur_script: &str,
+        pkg_root: &std::path::Path,
+    ) {
+        let Some(range) = Self::declaring_range(cur_script, id) else {
+            return;
+        };
+        let Some(version) =
+            crate::manifest::read_manifest(&pkg_root.join("loft.toml").to_string_lossy())
+                .and_then(|m| m.version)
+        else {
+            return;
+        };
+        if crate::registry_index::satisfies(&version, &range) {
+            return;
+        }
+        let importer = crate::resolution_scope::project_root(cur_script)
+            .and_then(|r| crate::manifest::read_manifest(&r.join("loft.toml").to_string_lossy()))
+            .and_then(|m| m.name)
+            .unwrap_or_else(|| cur_script.to_string());
+        diagnostic!(
+            self.lexer,
+            Level::Error,
+            "`{importer}` needs `{id} {range}`, and the copy of `{id}` this program loads ({}) \
+             is {version} — the two declarations disagree, so neither copy can stand in for \
+             the other",
+            pkg_root.display()
+        );
+    }
+
+    #[cfg(not(feature = "registry"))]
+    #[allow(clippy::unused_self)]
+    fn loaded_copy_meets_declaring_range(
+        &mut self,
+        _id: &str,
+        _cur_script: &str,
+        _pkg_root: &std::path::Path,
+    ) {
+    }
+
     /// Walk up from `cur_dir` looking for a `loft.toml`; on hit, the package's
     /// parent directory may contain sibling packages.  When the sibling is
     /// found directly (not via `lib_path_manifest`), the sibling's own
@@ -20000,10 +20087,13 @@ impl Parser {
         // decide only which file LOADED, so a pinned version that was not extracted yet
         // was installed as "newest", and a fresh box ran a different program than the
         // machine that pinned it.
+        // And the range the package whose file says `use id` names for it — the same third
+        // declaration `probe_cache_newest` honours (loft#1849).
         let pinned = self.lock_pin_in_force(id, scope, cur_script);
-        let pin = crate::install::constraint_for(
+        let pin = crate::install::use_constraint(
             pinned.as_deref(),
             self.root_dep_constraint(id).as_deref(),
+            Self::declaring_range(cur_script, id).as_deref(),
         );
         match crate::install::auto_install_if_in_catalog(id, pin.as_deref(), &opts) {
             Ok(Some(report)) => {

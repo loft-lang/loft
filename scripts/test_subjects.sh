@@ -86,7 +86,7 @@ subject_patterns() {
     (runtime)   echo '~wrap ~issues ~thread ~par_ ~parallel ~parity ~coroutine ~runtime ~dispatch ~panic ~exit_codes ~crash ~error_path ~soft_halt ~log ~math ~format_width ~profiling ~sandbox ~script_mode ~self_append ~timeout ~json_corpus ~test ~env_ ~fs_ ~frame_readers' ;;
     (store)     echo '~store ~database ~data_ ~paged ~lazy ~field_without ~layout ~watermark ~binary_io ~heap_free ~clear_release ~reset_capacity ~poison_claim ~value_record ~foreign_store ~foreign_bridge ~locked_writes ~prefill_image ~pooled_buffer ~keyed_fast ~siphash ~data_structures' ;;
     (wasm)      echo '~wasm ~html ~deliver ~browser ~gl_ ~android' ;;
-    (packages)  echo '~registry ~package =imports ~api_ ~compat ~manifest ~extract ~resolution ~cache ~self_update ~install ~lib_ ~library ~module_name ~path_flag ~placement ~stdlib_target ~undeclared ~dep_' ;;
+    (packages)  echo '~registry ~package =imports ~api_ ~compat ~manifest ~extract ~resolution ~cache ~self_update ~install ~lib_ ~library ~module_name ~path_flag ~placement ~stdlib_target ~undeclared ~dep_ ~transitive' ;;
     (lsp)       echo '~lsp ~dap ~debugger ~repl' ;;
     (sql)       echo '~lazy_sql ~sql' ;;
     (docs)      echo '~doc ~features ~index_hygiene ~comment ~viewer ~check_line ~expectation ~function_coverage ~typst' ;;
