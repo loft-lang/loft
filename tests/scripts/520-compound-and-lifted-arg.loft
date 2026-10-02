@@ -18,14 +18,8 @@
 value struct D {
   ms: integer,
 }
-fn OpEq(self: D, other: D) -> boolean {
-  self.ms == other.ms
-}
-fn OpLt(self: D, other: D) -> boolean {
-  self.ms < other.ms
-}
-fn OpGt(self: D, other: D) -> boolean {
-  self.ms > other.ms
+operator compare(self: D, other: D) -> Ordering {
+  self.ms.compare(other.ms)
 }
 fn mk(n: integer) -> D {
   D { ms: n }

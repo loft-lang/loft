@@ -4360,6 +4360,7 @@ impl Parser {
             "struct"
                 | "enum"
                 | "fn"
+                | "operator"
                 | "type"
                 | "pub"
                 | "use"
@@ -10114,6 +10115,83 @@ impl Parser {
         }
     }
 
+    /// The source symbol of an interface's operator member, for a message: `OpMin` at arity 1
+    /// is the unary `-`.
+    fn member_symbol(member: &str, arity: usize) -> String {
+        let sym = match (member, arity) {
+            ("OpMin", 1) => "unary -",
+            ("OpMin", _) => "-",
+            ("OpMul", _) => "*",
+            ("OpDiv", _) => "/",
+            ("OpRem", _) => "%",
+            ("OpAdd", _) => "+",
+            ("OpLt", _) => "<",
+            _ => return format!("`{member}`"),
+        };
+        format!("`{sym}`")
+    }
+
+    /// Why `concrete` does not meet the interface member `child_nr` (`method_suffix`) when it
+    /// has no method of the name.  An operator member is met by an `operator` method (C132):
+    /// the reason names the one to write, the type's own `operator` at other parameter types
+    /// or as a template, or that no program type can meet the member yet.
+    fn missing_member(&self, method_suffix: &str, child_nr: u32, concrete: &Type) -> String {
+        let arity = Self::visible_arity(&self.data, child_nr);
+        let t = concrete.source_name(&self.data);
+        let form = Data::operator_form_of_member(method_suffix, arity);
+        let present = form
+            .map(|f| self.data.find_op_method(u16::MAX, f, concrete))
+            .filter(|d| *d != u32::MAX && self.data.def(*d).operator_form());
+        if let (Some(f), Some(d)) = (form, present) {
+            if self.data.def_type(d) == DefType::Generic {
+                return format!(
+                    "'{f}' is a template, and a bound takes a concrete '{f}' of its \
+                     signature; declare one for '{t}'"
+                );
+            }
+            if let Some(other) = self.data.visible_params(d).get(1) {
+                return format!(
+                    "'{f}' takes '{}' where the interface declares '{t}'",
+                    other.source_name(&self.data)
+                );
+            }
+        }
+        match form {
+            Some("compare") => {
+                format!("missing `operator compare(self: {t}, other: {t}) -> Ordering`")
+            }
+            Some(form) => format!("missing `operator {form}(self: {t}, other: {t}) -> {t}`"),
+            None if method_suffix.starts_with("Op") => format!(
+                "it needs {}, which only the built-in types define",
+                Self::member_symbol(method_suffix, arity)
+            ),
+            None => format!("missing {method_suffix}"),
+        }
+    }
+
+    /// `@FR-Op-Bound` — does `concrete` meet the operator member `child_nr` with an `operator`
+    /// method?  Asked at the member's own signature, `Self` replaced: `op <` is met by
+    /// `operator compare`, `op +` by `plus`, a two-operand `op -` by `minus`, and `op * (self:
+    /// Self, k: float)` by `operator times(self: C, k: float)`; the monomorph's operator then
+    /// calls it (`substitute_type_in_value`).
+    fn operator_meets_member(&self, method_suffix: &str, child_nr: u32, concrete: &Type) -> bool {
+        let Some(form) =
+            Data::operator_form_of_member(method_suffix, Self::visible_arity(&self.data, child_nr))
+        else {
+            return false;
+        };
+        let params = self.bound_params_at(child_nr, concrete);
+        let self_nr = self.data.def_nr("Self");
+        let result = Self::substitute_type(
+            self.data.def(child_nr).returned().clone(),
+            self_nr,
+            concrete,
+        );
+        self.data
+            .operator_member_with(form, &params, Some(&result))
+            .is_some()
+    }
+
     fn satisfaction_failures(&self, iface_nr: u32, concrete_nr: u32) -> Vec<String> {
         let concrete_name = self.data.def(concrete_nr).name().to_string();
         let concrete_type = self.data.def(concrete_nr).returned().clone();
@@ -10133,17 +10211,8 @@ impl Parser {
             let Some(method_suffix) = Self::interface_method_name(&self.data, child_nr) else {
                 continue;
             };
-            // `@FR-Op-Bound` — `op <` is met by the type's `operator compare`, `op +` by its
-            // `operator plus`, a two-operand `op -` by `operator minus`, `op *` by `operator
-            // times`; the monomorph's operator then calls it (`substitute_type_in_value`).
-            if let Some(form) = Data::operator_form_of_member(
-                &method_suffix,
-                Self::visible_arity(&self.data, child_nr),
-            ) && self
-                .data
-                .operator_member_for(form, &concrete_type)
-                .is_some()
-            {
+            // `@FR-Op-Bound` — an operator member met by the type's `operator` method.
+            if self.operator_meets_member(&method_suffix, child_nr, &concrete_type) {
                 continue;
             }
             // I9-prim: use find_fn which checks both the method-style convention
@@ -10183,6 +10252,14 @@ impl Parser {
             // disagree by design.  The re-ask goes through `possible_with_signature` — the same
             // resolver `re_resolve_call` uses for the same question — so satisfaction and
             // monomorphisation cannot disagree about which definition a signature names.
+            // `@FR-Op-Std`, C132 — a program's `fn Op…` meets no operator member: only the
+            // stdlib's definitions, or the type's `operator` method (`@FR-Op-Bound`, above).
+            if found != u32::MAX
+                && method_suffix.starts_with("Op")
+                && !self.data.backs_operator(found)
+            {
+                found = u32::MAX;
+            }
             let want = Self::visible_arity(&self.data, child_nr);
             if found != u32::MAX && Self::visible_arity(&self.data, found) != want {
                 found = self
@@ -10245,7 +10322,7 @@ impl Parser {
             if let Some(msg) = misfit {
                 out.push(msg);
             } else if found == u32::MAX {
-                out.push(format!("missing {method_suffix}"));
+                out.push(self.missing_member(&method_suffix, child_nr, &concrete_type));
             } else if self.data.def(child_nr).operator_form()
                 && !self.data.def(found).operator_form()
             {
@@ -10784,6 +10861,11 @@ impl Parser {
             name
         };
         let mut resolved = data.find_fn(u16::MAX, fn_name, &concrete_arg);
+        // `@FR-Op-Std`, C132 — a bound's operator is never a program's `fn Op…`: `==` falls to
+        // the content comparison (`G-Sat-Eq`), and satisfaction refused the rest already.
+        if resolved != u32::MAX && fn_name.starts_with("Op") && !data.backs_operator(resolved) {
+            return d_nr;
+        }
         // `formal/interfaces.md` `(G-Sat)` judges a bound against the SIGNATURE
         // `[Self ↦ C](p̄ -> R)` — the parameter list included — and `find_fn` takes a name and
         // a receiver and no arity.  `-` desugars to `OpMin` at BOTH arities, so an interface
@@ -11644,7 +11726,19 @@ impl Parser {
                     .into_iter()
                     .find(|op| Data::is_bound_stub_for(data.def(d).name(), op, 2))
                     .and_then(|op| Data::operator_form_of_member(op, 2))
-                    && let Some(m) = data.operator_member_for(form, concrete)
+                    && let Some(m) = data.operator_member_with(
+                        form,
+                        &data
+                            .visible_params(d)
+                            .into_iter()
+                            .map(|t| Self::substitute_type(t.clone(), tv_nr, concrete))
+                            .collect::<Vec<_>>(),
+                        Some(&Self::substitute_type(
+                            data.def(d).returned().clone(),
+                            tv_nr,
+                            concrete,
+                        )),
+                    )
                     && data.def(m).attributes().len() == new_args.len()
                 {
                     return Value::Call(m, new_args);
@@ -15953,6 +16047,18 @@ impl Parser {
     /// answers only a name with no set, or a set that no member of takes the operands — the
     /// mismatch the caller then reports as "No matching operator".
     fn user_op_method(&mut self, op_name: &str, types: &[Type]) -> Option<u32> {
+        // `@FR-Op-Std`, C132 — only the stdlib's `Op…` definitions back an operator; a
+        // program's is an ordinary function, so the lookup answers "none" for it.
+        let found = self.user_op_method_any(op_name, types);
+        Some(match found {
+            Some(d) if d != u32::MAX && !self.data.backs_operator(d) => u32::MAX,
+            Some(d) => d,
+            None => return None,
+        })
+    }
+
+    /// [`Self::user_op_method`] without the stdlib filter.
+    fn user_op_method_any(&mut self, op_name: &str, types: &[Type]) -> Option<u32> {
         let first = types.first()?;
         let mut m = self.data.find_op_method(u16::MAX, op_name, first);
         if m == u32::MAX {
@@ -16305,7 +16411,10 @@ impl Parser {
                 // answered the other spelling with it — `a - b` over a unary-only `OpMin`
                 // computed `-a` and dropped `b`, silently.  Refused below instead, as the
                 // operator that it is not.
-                if user_op != u32::MAX && Self::visible_arity(&self.data, user_op) == list.len() {
+                if user_op != u32::MAX
+                    && self.data.backs_operator(user_op)
+                    && Self::visible_arity(&self.data, user_op) == list.len()
+                {
                     let tp = self.call_nr(code, user_op, list, types, false, &[], None);
                     if tp != Type::Null {
                         return tp;
@@ -16358,24 +16467,59 @@ impl Parser {
                 "generic type {tv_name}: operator '{spelled}' requires a concrete type",
             );
         } else if types.len() > 1 {
+            let cure = self.operator_cure(spelled, types);
             specific!(
                 self.lexer,
                 &self.lexer.peek().clone(),
                 Level::Error,
-                "No matching operator '{spelled}' on '{}' and '{}'",
+                "No matching operator '{spelled}' on '{}' and '{}'{cure}",
                 types[0].source_name(&self.data),
                 types[1].source_name(&self.data)
             );
         } else {
+            let cure = self.operator_cure(spelled, types);
             specific!(
                 self.lexer,
                 &self.lexer.peek().clone(),
                 Level::Error,
-                "No matching operator '{spelled}' on '{}'",
+                "No matching operator '{spelled}' on '{}'{cure}",
                 types[0].source_name(&self.data)
             );
         }
         Type::Unknown(0)
+    }
+
+    /// C132 (@PLN182) — what a program writes to give its own type the operator `spelled`:
+    /// the `operator` method of a built form, or a named method for a form a type cannot
+    /// define yet.  Empty when the left operand is not a program's type.
+    fn operator_cure(&self, spelled: &str, types: &[Type]) -> String {
+        let Some(left) = types.first() else {
+            return String::new();
+        };
+        let (Type::Reference(d, _) | Type::Enum(d, _, _)) = left.base() else {
+            return String::new();
+        };
+        if self.data.def(*d).is_stdlib() {
+            return String::new();
+        }
+        let t = types[0].base().source_name(&self.data);
+        let u = types
+            .get(1)
+            .map_or_else(|| t.clone(), |r| r.base().source_name(&self.data));
+        match (spelled, types.len()) {
+            ("<" | "<=" | ">" | ">=", 2) => {
+                format!("; declare `operator compare(self: {t}, other: {u}) -> Ordering`")
+            }
+            ("+" | "+=", 2) => format!("; declare `operator plus(self: {t}, other: {u}) -> …`"),
+            ("-" | "-=", 2) => format!("; declare `operator minus(self: {t}, other: {u}) -> …`"),
+            ("*" | "*=", 2) => format!("; declare `operator times(self: {t}, other: {u}) -> …`"),
+            // The reserved forms (@PLN182 Q10): a type will define these, and cannot yet.
+            ("/" | "/=" | "%" | "%=" | "**" | "&" | "|" | "^" | "<<" | ">>", 2)
+            | ("-" | "~", 1) => {
+                format!("; `{t}` cannot define '{spelled}' yet — call a named method")
+            }
+            _ => String::new(),
+        }
     }
 
     /// Call a specific definition

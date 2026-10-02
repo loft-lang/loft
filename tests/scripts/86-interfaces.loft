@@ -134,13 +134,13 @@ interface IfBendy {
 struct IfVec {
   if_x: float,
 }
-fn OpMul(self: IfVec, if_factor: float) -> IfVec {
+operator times(self: IfVec, if_factor: float) -> IfVec {
   IfVec { if_x: self.if_x * if_factor }
 }
 struct IfSum {
   if_v: integer,
 }
-fn OpAdd(self: IfSum, if_other: IfSum) -> IfSum {
+operator plus(self: IfSum, if_other: IfSum) -> IfSum {
   IfSum { if_v: self.if_v + if_other.if_v }
 }
 struct IfRod {

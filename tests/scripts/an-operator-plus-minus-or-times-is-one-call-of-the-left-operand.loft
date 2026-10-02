@@ -7,13 +7,14 @@
 // (`@FR-Op-Result`).  `a ⊕= b` is `a = a.m(b)` on any place (`@FR-Op-Compound`).  `Addable` and
 // `Subtractable` are met by them (`@FR-Op-Bound`), so `sum` and a user generic call them too.
 //
-// The parallel run: `time`'s arithmetic as it is today — `DateTime - DateTime -> Duration`,
-// `DateTime + Duration`, `Duration ± Duration`, `Duration * integer`, as `fn Op…` — on
-// `DtO`/`DuO`, beside the same as `operator` definitions on `DtN`/`DuN`, over a matrix of
-// instants; plus the mixed `DateTime - Duration` that `time` today can only call by name.
-// Further cells: a field place and an element place, a type with BOTH a (deliberately wrong)
-// `fn OpAdd` and an `operator plus` — the operator wins at the concrete site and in the generic
-// alike — and one call each, left to right.
+// The parallel run: `time`'s arithmetic — `DateTime - DateTime -> Duration`, `DateTime +
+// Duration`, `Duration ± Duration`, `Duration * integer` — as `operator` definitions on
+// `DtN`/`DuN`, against the integer arithmetic their bodies compute (the reference was the same
+// arithmetic as `fn Op…` until C132 retired that spelling), over a matrix of instants; plus the
+// mixed `DateTime - Duration`.  Further cells: a field place and an element place, a type with
+// BOTH a (deliberately wrong) plain `fn OpAdd` and an `operator plus` — the function is
+// ordinary, the operator answers at the concrete site and in the generic alike — and one call
+// each, left to right.
 //
 // @falsified-by: tests/falsified/an-operator-plus-minus-or-times-is-one-call-of-the-left-operand.patch — interpret exit 1 -> 0, native exit 1 -> 0
 //   CHANNEL: exit on both backends — on the control `operator plus` is not built yet, so the
@@ -22,14 +23,6 @@
 //   WITNESS: scored by hand as well against a mutation sending `+` to `operator minus`: the
 //   parallel run fails on both backends, listing every pair whose sums differ.
 //   HOLDS: every asserted value on this tree, both backends.
-value struct DtO { ms: integer }
-value struct DuO { ms: integer }
-pub fn OpMin(self: DtO, other: DtO) -> DuO { DuO { ms: self.ms - other.ms } }
-pub fn OpAdd(self: DtO, span: DuO) -> DtO { DtO { ms: self.ms + span.ms } }
-pub fn OpAdd(self: DuO, other: DuO) -> DuO { DuO { ms: self.ms + other.ms } }
-pub fn OpMin(self: DuO, other: DuO) -> DuO { DuO { ms: self.ms - other.ms } }
-pub fn OpMul(self: DuO, factor: integer) -> DuO { DuO { ms: self.ms * factor } }
-
 value struct DtN { ms: integer }
 value struct DuN { ms: integer }
 pub operator minus(self: DtN, other: DtN) -> DuN { DuN { ms: self.ms - other.ms } }
@@ -50,9 +43,8 @@ fn diff < T: Subtractable > (a: T, b: T) -> T { a - b }
 fn add2 < T: Addable > (a: T, b: T) -> T { a + b }
 
 fn row(a: integer, b: integer) -> text {
-  oa = DtO { ms: a }; ob = DtO { ms: b }; ua = DuO { ms: a }; ub = DuO { ms: b };
   na = DtN { ms: a }; nb = DtN { ms: b }; va = DuN { ms: a }; vb = DuN { ms: b };
-  old = "{(oa - ob).ms} {(oa + ub).ms} {(ua + ub).ms} {(ua - ub).ms} {(ua * 3).ms}";
+  old = "{a - b} {a + b} {a + b} {a - b} {a * 3}";
   new = "{(na - nb).ms} {(na + vb).ms} {(va + vb).ms} {(va - vb).ms} {(va * 3).ms}";
   if old == new { "" } else { "[{a} {b}: {old} / {new}]" }
 }

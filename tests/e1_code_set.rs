@@ -405,6 +405,13 @@ const CODES: &[(&str, &str)] = &[
         "shadowed-by-method",
         "fn main() { print(\"needs the same fn in a LIBRARY — in main this is the C95 error\"); }",
     ),
+    // C132 (@PLN182) — a program's `fn OpLt` is an ordinary function: said where it is
+    // written, naming the `operator` to write.
+    (
+        "retired-operator-function",
+        "value struct D { ms: integer }\nfn OpLt(self: D, other: D) -> boolean { self.ms < other.ms }\n\
+         fn main() { a = D { ms: 1 }; print(\"{OpLt(a, a)}\"); }",
+    ),
 ];
 
 /// @PLN131 — codes with no MINIMAL trigger, each with why.

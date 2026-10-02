@@ -72,8 +72,7 @@ fn churn1304(n: integer) -> integer {
 fn sub1304(self: Money1304, other: Money1304) -> Money1304 {
   Money1304 { cents: self.cents - other.cents }
 }
-fn OpMin(self: Money1304) -> Money1304 { Money1304 { cents: -self.cents } }
-fn OpAdd(self: Money1304, other: Money1304) -> Money1304 {
+operator plus(self: Money1304, other: Money1304) -> Money1304 {
   Money1304 { cents: self.cents + other.cents }
 }
 fn bump1304(self: Money1304) -> Money1304 { Money1304 { cents: self.cents + 1 } }
@@ -116,13 +115,9 @@ fn a_struct_enum_receiver_is_covered() {
   assert(d.r == 8, "method on a struct-enum literal: {d.r}");
 }
 
-fn a_unary_prefix_operand_is_not_the_destination_either() {
-  // The half a lookahead cannot see: the literal ENDS the statement, so what follows says
-  // "take the hint", and it is still a sub-expression because of what PRECEDES it.
-  m = -Money1304 { cents: 10 };
-  _ = churn1304(40);
-  assert(m.cents == -10, "unary prefix on a literal: {m.cents}");
-}
+// The unary-prefix cell (`m = -Money1304 { … }`, a literal that ENDS the statement and is a
+// sub-expression only because of what PRECEDES it) waits for `operator negate`: no prefix
+// operator gives a program's type a value of that type until then (C132, @PLN182 Q10).
 
 
 
@@ -171,7 +166,6 @@ pub fn main() {
   an_operator_on_literals_is_the_same_shape();
   chaining_keeps_every_receiver_off_the_destination();
   a_struct_enum_receiver_is_covered();
-  a_unary_prefix_operand_is_not_the_destination_either();
   the_in_place_construction_is_still_taken();
   the_shapes_that_were_always_right();
   a_literal_inside_a_format_hole_is_read_correctly();

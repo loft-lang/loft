@@ -1704,47 +1704,30 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             {
                 elm_type = Type::optional(elm_type);
             }
-        } else if self.user_index_op(&t) != u32::MAX {
-            // @PLN125 arc C — `x[i]` on a library type is the call the type declared.
-            // `OpIndex` takes the receiver and the indices, so the lowering is the
-            // ordinary method call `t_<LEN><Type>_OpIndex(x, i, …)`, and every rule that
-            // governs a method call — argument conversion, the heap-return buffer, the
-            // ownership deps, the arity and type checks — governs this one because it IS
-            // one.
-            //
-            // loft#996 — COMMA-separated indices, so `m[r, c]` reaches the two-index
-            // method the feature's own motivating case (a matrix) wants. That
-            // declaration was always accepted and callable as `OpIndex(m, r, c)`; only
-            // its own syntax could not reach it, and the parser said `Expect token ]` at
-            // the comma. Passing the indices through as ARGUMENTS is what the accepted
-            // declaration already means, and it leaves the arity check where it belongs:
-            // `call_nr` reports a mismatch against the signature the author wrote.
-            //
-            // The index expressions are parsed here rather than by `parse_method`, which
-            // reads a parenthesised argument list; the brackets are the caller's
-            // (`operators.rs` consumes the `]`).
-            let md_nr = self.user_index_op(&t);
-            let recv = code.clone();
-            let mut args = vec![recv];
-            let mut types = vec![t.clone()];
-            let mut arg_pos = vec![self.lexer.peek_pos().clone()];
-            loop {
-                arg_pos.push(self.lexer.peek_pos().clone());
-                if self.user_index_slice_refused(&t) {
-                    return Type::Never;
-                }
-                let mut idx = Value::Null;
-                let idx_t = self.expression(&mut idx);
-                args.push(idx);
-                types.push(idx_t);
-                if self.user_index_slice_refused(&t) {
-                    return Type::Never;
-                }
-                if !self.lexer.has_token(",") {
-                    break;
-                }
+        } else if let Type::Reference(d, _) | Type::Enum(d, _, _) = t.base()
+            && !self.data.is_type_var_placeholder(*d)
+            && !self.data.def(*d).is_stdlib()
+            && matches!(
+                self.data.def_type(*d),
+                DefType::Struct | DefType::Enum | DefType::EnumValue
+            )
+        {
+            // C132 (@PLN182 Q10) — `[…]` belongs to the built-in collections; a program's type
+            // has no subscript.  Every index is read, so `m[r, c]` is one refusal and not a
+            // syntax-error cascade at the comma.
+            let name = self.data.def(*d).name().to_string();
+            self.skip_bracket_content();
+            // Not the receiver either: `b[0] = 9` must not read as `b = 9`.
+            *code = Value::Null;
+            if !self.first_pass {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "`{name}` cannot be indexed: `[…]` belongs to the built-in collections — \
+                     give `{name}` a method that reads an element, and call it"
+                );
             }
-            elm_type = self.call_nr(code, md_nr, &args, &types, true, &arg_pos, None);
+            return Type::Never;
         } else if t.is_unknown() {
             // @P278/P281 — pass-1 Unknown receiver: consume the
             // entire bracket content including range syntax
@@ -1761,22 +1744,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             // is the same ordering dependency a named argument had at
             // `skip_remaining_args`.  Whatever this pass cannot resolve, it still
             // has to be able to read.
-            if !self.lexer.peek_token("]") {
-                if !self.lexer.peek_token("..") && !self.lexer.peek_token("..=") {
-                    let mut p = Value::Null;
-                    self.expression(&mut p);
-                }
-                if (self.lexer.has_token("..") || self.lexer.has_token("..="))
-                    && !self.lexer.peek_token("]")
-                {
-                    let mut p2 = Value::Null;
-                    self.expression(&mut p2);
-                }
-                while self.lexer.has_token(",") && !self.lexer.peek_token("]") {
-                    let mut pn = Value::Null;
-                    self.expression(&mut pn);
-                }
-            }
+            self.skip_bracket_content();
             // The element is not the receiver.  Left as the receiver's `Var`, a store
             // `v[0] = 2.5` read as `v = 2.5` and typed the variable `float` in this pass,
             // so pass 2 refused every later `v[i]` of a vector a forward-declared function
@@ -1790,6 +1758,29 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             self.expression(&mut p);
         }
         elm_type
+    }
+
+    /// Read whatever stands between `[` and `]` — indices, a compound key `[a, b]`, and every
+    /// range spelling (`a..b`, `a..=b`, `a..`, `..b`, `..`) — for a subscript that is refused or
+    /// not resolvable yet, so the caller's `]` matches and no "Expect token ]" cascade follows.
+    fn skip_bracket_content(&mut self) {
+        if self.lexer.peek_token("]") {
+            return;
+        }
+        if !self.lexer.peek_token("..") && !self.lexer.peek_token("..=") {
+            let mut p = Value::Null;
+            self.expression(&mut p);
+        }
+        if (self.lexer.has_token("..") || self.lexer.has_token("..="))
+            && !self.lexer.peek_token("]")
+        {
+            let mut p2 = Value::Null;
+            self.expression(&mut p2);
+        }
+        while self.lexer.has_token(",") && !self.lexer.peek_token("]") {
+            let mut pn = Value::Null;
+            self.expression(&mut pn);
+        }
     }
 
     /// @PLN25 DN3 (index) — is a vector index provably in-bounds, so `v[i]` cannot be OOB-null?
@@ -1962,102 +1953,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         )
     }
 
-    /// @PLN125 arc C — the `OpIndex` a library type defines for `x[i]`, or `u32::MAX`.
-    ///
-    /// The last place a library type was visibly not a built-in one: `OpIndex` was the one
-    /// operator the parser never dispatched, so a matrix, a bitset, a row or a ring buffer
-    /// had to read as `x.at(i)` while every other operator already had its
-    /// `OpCamelCase` method (@PLN99). This follows that precedent exactly — the method is
-    /// found the same way, by the same `t_<LEN><Type>_Op…` name — so nothing about the
-    /// shape is new.
-    ///
-    /// Looked up as a METHOD, not through `find_fn`, whose fallback to a global
-    /// `n_OpIndex` would let an unrelated free function of that name capture every
-    /// subscript in the program.
-    ///
-    /// One home for the answer: [`Self::index_type`] uses it for the TYPE of `x[i]` and
-    /// [`Self::parse_index`] for the CODE, and a type that answers one must answer the
-    /// other or the two disagree about what indexing means.
-    pub(crate) fn user_index_op(&self, t: &Type) -> u32 {
-        let d = match t.base() {
-            Type::Reference(d, _) | Type::Enum(d, _, _) => *d,
-            _ => return u32::MAX,
-        };
-        if d as usize >= self.data.definitions.len() {
-            return u32::MAX;
-        }
-        // loft#1153 — a HOLDER's stub and a concrete type's method are spelled differently,
-        // and this site looks up BOTH: `x[0]` reaches here for a bounded type variable and for a
-        // struct defining `OpIndex` alike.  `method_key` is the one home that knows which.
-        // `x[i]` is arity 2 — receiver plus index — which is what keys a HOLDER's stub
-        // (loft#1275); for a concrete type the arity is not part of the spelling.
-        let md = self.data.def_nr(&self.data.method_key(d, "OpIndex", 2));
-        if md == u32::MAX || !matches!(self.data.def_type(md), DefType::Function | DefType::Generic)
-        {
-            return u32::MAX;
-        }
-        // A stub is named for the HOLDER — a type variable or an associated type — and
-        // holder names are shared: `fn a<I: Indexable>` mints `t_1I_OpIndex`, and an
-        // unrelated `fn b<I>(x: I) { x[0] }` in the same program would then find it and
-        // subscript a type it was never promised anything about. So for a holder the
-        // lookup is not enough; the BOUNDS have to declare it. (The same guard the
-        // binary-operator path carries, for the same reason.)
-        if self.data.is_type_var_placeholder(d) && !self.has_bound_for_method("OpIndex", d, None) {
-            return u32::MAX;
-        }
-        md
-    }
-
-    /// Refuse `x[a..b]` on a library type, and say what to write — loft#996.
-    ///
-    /// A slice is not a subscript with a different argument: every built-in kind lowers
-    /// its own (`parse_vector_index`, `parse_text_index`, `parse_spatial_slice`,
-    /// `parse_trie_slice`), each to a dedicated runtime call, and there is no range VALUE
-    /// in the language for a user method to take. So this cannot be sugar for `OpIndex`
-    /// the way the comma form is — it needs a range type or an `OpSlice` of its own, which
-    /// is a language addition and not a parse.
-    ///
-    /// What it must not do is stay `Expect token ]` pointing at the `..`, beside the two
-    /// messages this feature already gets right. Answers `true` when the subscript is a
-    /// slice, having consumed the rest of the bracket so the caller's `]` still matches —
-    /// the same recovery the pass-1 `Unknown` receiver takes above, and for the same
-    /// reason: returning with `..2` unread cascades into `Expect token ]` on pass 1, which
-    /// aborts before pass 2 can report anything at all.
-    fn user_index_slice_refused(&mut self, t: &Type) -> bool {
-        if !self.lexer.peek_token("..") && !self.lexer.peek_token("..=") {
-            return false;
-        }
-        if !self.first_pass {
-            let name = match t.base() {
-                Type::Reference(d, _) | Type::Enum(d, _, _) => self.data.def(*d).name().to_string(),
-                _ => String::from("this type"),
-            };
-            diagnostic!(
-                self.lexer,
-                Level::Error,
-                "`{name}` defines `OpIndex`, which takes INDEX arguments — there is no \
-                 range value to hand it, so `x[a..b]` has nothing to dispatch to; write \
-                 the bounds as indices (`x[a, b]`, if `OpIndex` declares two) or give the \
-                 type a method that slices (`x.slice(a, b)`)"
-            );
-        }
-        // Consume `..` / `..=` and any till-expression, leaving the `]` for the caller.
-        let _ = self.lexer.has_token("..") || self.lexer.has_token("..=");
-        if !self.lexer.peek_token("]") {
-            let mut till = Value::Null;
-            self.expression(&mut till);
-        }
-        true
-    }
-
     pub(crate) fn index_type(&mut self, t: &Type) -> Type {
-        // @PLN125 arc C — a library type that defines `OpIndex` indexes like a built-in
-        // one, and the element type is what that method returns.  Answered BEFORE the
-        // refusal below, which is what used to be the only answer for a struct.
-        let user_op = self.user_index_op(t);
-        if user_op != u32::MAX {
-            return self.data.def(user_op).returned().clone();
-        }
         if let Type::Vector(v_t, _) = t {
             *v_t.clone()
         } else if let Type::Sorted(d_nr, _, _)
@@ -2119,9 +2015,9 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                     diagnostic!(
                         self.lexer,
                         Level::Error,
-                        "generic type {name}: `[…]` needs a bound that declares it — add \
-                         `op [] (self: Self, i: integer) -> τ` to an interface and bound \
-                         `{name}` by it"
+                        "generic type {name}: `[…]` belongs to the built-in collections — bound \
+                         `{name}` by an interface with a method that reads an element, and \
+                         call it"
                     );
                 }
                 Type::Reference(d, _) | Type::Enum(d, _, _) => {
@@ -2129,8 +2025,8 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                     diagnostic!(
                         self.lexer,
                         Level::Error,
-                        "`{name}` cannot be indexed — define \
-                         `fn OpIndex(self: {name}, i: integer) -> τ` to give it `x[i]`"
+                        "`{name}` cannot be indexed: `[…]` belongs to the built-in collections — \
+                         give `{name}` a method that reads an element, and call it"
                     );
                 }
                 // QUALITY-history.md 6d: the "Indexing a non vector" message fires for two

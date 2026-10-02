@@ -1190,6 +1190,19 @@ impl Parser {
         if self.default || types.len() != 2 || types.iter().any(Type::is_unknown) {
             return None;
         }
+        // Only a program's struct or enum on the left has operator methods: asked first,
+        // without allocating, since every `<` and `+` in a program comes through here.
+        // A struct literal's type carries the `Rewritten` marker (built in place); the operand
+        // is the type under it, or `M { c: 5 } < b` misses `M`'s method.
+        let mut left = &types[0];
+        while let Type::Rewritten(inner) = left {
+            left = inner;
+        }
+        if !matches!(left.base(), Type::Reference(_, _) | Type::Enum(_, _, _)) {
+            return None;
+        }
+        let peeled: Vec<Type> = types.iter().map(Type::unrewritten).collect();
+        let types = &peeled[..];
         let (Type::Reference(left, _) | Type::Enum(left, _, _)) = types[0].base() else {
             return None;
         };
@@ -1201,12 +1214,15 @@ impl Parser {
         if key == u32::MAX {
             return None;
         }
+        let routed = self.data.routed_types(types);
         let chosen = if self.data.has_overload_set(form) {
-            let routed = self.data.routed_types(types);
             match self.select_overload(u16::MAX, form, &routed) {
                 crate::parser::dispatch::Selection::One(d) => d,
                 crate::parser::dispatch::Selection::Ambiguous(_) => return None,
-                _ => key,
+                // The set is the NAME's, across receivers: none of its members applying says
+                // nothing about this receiver's own definition, which is asked below.
+                crate::parser::dispatch::Selection::NoneApplicable
+                | crate::parser::dispatch::Selection::NotDecidable => key,
             }
         } else {
             key
@@ -1219,6 +1235,14 @@ impl Parser {
             return None;
         }
         if self.data.def(chosen).operator_form() {
+            // A member that cannot take the operands is no match: the operator is refused
+            // naming both types, as with no member at all, never as a bad argument of the call.
+            // A template is judged by its instance (`operator_instance`).
+            if self.data.def_type(chosen) != crate::data::DefType::Generic
+                && self.definition_ranks(chosen, &routed).is_none()
+            {
+                return None;
+            }
             return Some(chosen);
         }
         let (_, symbol, old) = Self::OPERATOR_FORMS.iter().find(|(f, _, _)| *f == form)?;
@@ -1253,9 +1277,10 @@ impl Parser {
         from: &Type,
         to: &Type,
     ) -> Option<bool> {
-        if self.default {
+        if self.default || !self.data.user_operator_conversions {
             return None;
         }
+        let from = &from.unrewritten();
         let name = self.data.conversion_name(to.base())?;
         let form = format!("to_{name}");
         let m = self.data.find_op_method(u16::MAX, &form, from.base());
@@ -1278,7 +1303,14 @@ impl Parser {
             (vec![src], vec![from.clone()])
         };
         let tp = self.call_nr(code, m, &args, &types, true, &[], None);
-        Some(tp != Type::Null)
+        if tp == Type::Null {
+            return Some(false);
+        }
+        // The form is the call (`@FR-Op-Result`): its result owns what `x.to_t()` would own,
+        // so the `as` site takes the call's type instead of grafting the source's deps — a
+        // struct the conversion built is the destination's, not a view of `x`.
+        self.conv_owned_result = Some(tp);
+        Some(true)
     }
 
     /// The `operator` form an arithmetic symbol backs, for the forms built so far.
@@ -1296,6 +1328,7 @@ impl Parser {
     pub(crate) fn arith_through_operator(
         &mut self,
         code: &mut Value,
+        form: &str,
         member: u32,
         right: Value,
         right_tp: Type,
@@ -1304,6 +1337,14 @@ impl Parser {
         if member == u32::MAX {
             return Type::Unknown(0); // refused, named by `operator_member`
         }
+        let member =
+            match self.operator_instance(member, form, &[left_tp.clone(), right_tp.clone()]) {
+                Ok(m) => m,
+                Err(predicted) => {
+                    *code = Value::Null;
+                    return predicted;
+                }
+            };
         let mut call = Value::Null;
         let left = code.clone();
         let tp = self.call_nr(
@@ -1317,6 +1358,24 @@ impl Parser {
         );
         *code = call;
         tp
+    }
+
+    /// `@FR-F-Recv` — a TEMPLATE `operator` member (`operator plus<U>(self: W, o: U)`) is reached
+    /// the way the call `a.plus(b)` reaches it: instantiated at the operand types (loft#1826).
+    /// `Err(predicted)` on the first pass, where the prediction is the whole answer.
+    fn operator_instance(&mut self, m: u32, form: &str, types: &[Type]) -> Result<u32, Type> {
+        if m == u32::MAX || self.data.def_type(m) != crate::data::DefType::Generic {
+            return Ok(m);
+        }
+        if self.first_pass {
+            let predicted = self.predict_template_return(m, form, types);
+            return if predicted.is_unknown() {
+                Ok(u32::MAX)
+            } else {
+                Err(predicted)
+            };
+        }
+        Ok(self.instantiate_template(m, form, types))
     }
 
     /// `@FR-Op-Order` — `a ⊕ b` for an order form ⊕ is ONE call of `a.compare(b)`, read against
@@ -1334,6 +1393,11 @@ impl Parser {
         if cmp == u32::MAX {
             return Type::Boolean; // refused, named by `operator_compare`
         }
+        let Ok(cmp) = self.operator_instance(cmp, "compare", &[left_tp.clone(), right_tp.clone()])
+        else {
+            *code = Value::Null;
+            return Type::Boolean;
+        };
         let mut call = Value::Null;
         let left = code.clone();
         // Reported, as the call spelling is (`@FR-Op-Result`): a nullable operand into a dense
@@ -1395,6 +1459,7 @@ impl Parser {
             let mut code = to.clone();
             let tp = self.arith_through_operator(
                 &mut code,
+                form,
                 m,
                 val.clone(),
                 src_tp.clone(),
@@ -1540,32 +1605,11 @@ impl Parser {
             }
             _ => {
                 if !self.first_pass {
-                    // @PLN125 arc C — `x[i]` on a library type lowers to that type's
-                    // `OpIndex`, so a WRITE lands here with the read's method name and no
-                    // way to reach a setter.  Reading it back as an attribute assignment
-                    // names an internal symbol the author never wrote; say what actually
-                    // happened and what to write instead.  A writing counterpart is a
-                    // separate decision (it needs its own method, and a decision about
-                    // whether `x[i] += 1` may then read-modify-write), so this is a
-                    // refusal, not a gap left silent.
-                    if let Some(tp) = crate::data::Data::split_key(name)
-                        .filter(|k| k.kind == crate::data::KeyKind::Method && k.rest == "OpIndex")
-                        .map(|k| k.spelling)
-                    {
-                        diagnostic!(
-                            self.lexer,
-                            Level::Error,
-                            "`{tp}` defines `OpIndex`, which READS — `x[i] = …` has nothing \
-                             to write through; give the type a method that sets \
-                             (`x.set(i, …)`)"
-                        );
-                    } else {
-                        diagnostic!(
-                            self.lexer,
-                            Level::Error,
-                            "Cannot assign to attribute on type '{name}'"
-                        );
-                    }
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "Cannot assign to attribute on type '{name}'"
+                    );
                 }
                 Value::Null
             }
@@ -5877,7 +5921,8 @@ impl Parser {
                 && crate::keys::nprop_enabled()
                 && (matches!(*ctp, Type::Optional(_)) || matches!(second_type, Type::Optional(_)));
             *ctp = if let Some(m) = user_member {
-                self.arith_through_operator(code, m, second_code, second_type, ctp.clone())
+                let form = Self::arith_form(operator).unwrap_or_default();
+                self.arith_through_operator(code, form, m, second_code, second_type, ctp.clone())
             } else {
                 self.call_op(
                     code,

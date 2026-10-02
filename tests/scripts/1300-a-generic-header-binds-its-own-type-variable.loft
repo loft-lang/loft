@@ -32,6 +32,7 @@
 // `x.sizer()` means is a policy question, not a scoping one: loft#1275.  Its message is
 // pinned in `tests/parse_errors.rs`, where a file containing the refusal can still parse.
 //
+// (Measured on the `fn Op…` spelling: @C132 re-spelled the cells to `operator` methods, same values.)
 // @falsified-at: ebdc8801 — interpret exit 1 -> 0, native exit 1 -> 0.  (The pre-fix build
 //   REFUSES the file at parse time, so no assertion runs at all and the channel that moves is
 //   the exit status.)
@@ -77,7 +78,7 @@ fn both_arities_of_minus_coexist() {
 // loft#1300's second trigger: a bound requiring binary `-` beside the STDLIB's `Numeric`,
 // whose `-` is unary.  No second interface is written; the collision was with a shipped one.
 struct M1300 { v: integer }
-fn OpMin(self: M1300, other: M1300) -> M1300 { M1300 { v: self.v - other.v } }
+operator minus(self: M1300, other: M1300) -> M1300 { M1300 { v: self.v - other.v } }
 fn diff1300<T: Sub1300>(a: T, b: T) -> T { a - b }
 fn negate1300<T: Numeric>(a: T) -> T { -a }
 

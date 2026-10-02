@@ -2151,6 +2151,112 @@ impl Parser {
         }
     }
 
+    /// C132 (@PLN182 P5) — a program's `fn Op…` of an operator's name is an ordinary function
+    /// now (`@FR-Op-Std`).  Said where it is written, naming what to write instead.  A WARNING
+    /// for `OpEq` / `OpNe` / `OpNot`, whose forms keep answering — structurally, or as the
+    /// presence test — so a program relying on the function changes meaning without a word
+    /// (`warning` gates exactly what can answer wrong); ADVICE for the rest, whose every use
+    /// is now a compile-time refusal anyway.  `OpDrop`, `OpCopy` and `OpIterate` stay hooks.
+    fn report_retired_operator_function(
+        &mut self,
+        fn_name: &str,
+        arguments: &[crate::data::Argument],
+    ) {
+        let arity = arguments
+            .iter()
+            .filter(|a| !a.name.starts_with("__"))
+            .count();
+        let (level, now, cure): (Level, &str, String) = match fn_name {
+            "OpLt" | "OpLe" | "OpGt" | "OpGe" => (
+                Level::Advice,
+                "does not define `<`, `<=`, `>` or `>=`",
+                "write `operator compare(self: T, other: T) -> Ordering`".to_string(),
+            ),
+            "OpAdd" => (
+                Level::Advice,
+                "does not define `+`",
+                "write `operator plus(self: T, other: U) -> V`".to_string(),
+            ),
+            "OpMin" if arity == 2 => (
+                Level::Advice,
+                "does not define `-`",
+                "write `operator minus(self: T, other: U) -> V`".to_string(),
+            ),
+            "OpMul" => (
+                Level::Advice,
+                "does not define `*`",
+                "write `operator times(self: T, other: U) -> V`".to_string(),
+            ),
+            "OpEq" | "OpNe" => (
+                Level::Warning,
+                "is not called by `==` or `!=`, which compare the type field by field",
+                "call it by name where you meant it".to_string(),
+            ),
+            "OpNot" => (
+                Level::Warning,
+                "is not called by `!x`, which asks whether the value is present",
+                "call it by name where you meant it".to_string(),
+            ),
+            "OpIndex" => (
+                Level::Advice,
+                "does not define `x[i]`",
+                "call it by name, or give the type a named method".to_string(),
+            ),
+            "OpMin" | "OpDiv" | "OpRem" | "OpPow" | "OpLand" | "OpLor" | "OpEor" | "OpSLeft"
+            | "OpSRight" | "OpBitNot" | "OpAppend" => (
+                Level::Advice,
+                "does not define its operator, which a type cannot define yet",
+                "call it by name".to_string(),
+            ),
+            _ => {
+                let conversion = fn_name
+                    .strip_prefix("OpConv")
+                    .or_else(|| fn_name.strip_prefix("OpCast"))
+                    .and_then(|rest| rest.split_once("From"))
+                    .filter(|(to, from)| !to.is_empty() && !from.is_empty());
+                let Some((to, _)) = conversion else {
+                    return;
+                };
+                // The stdlib's conversion names abbreviate the base types (`OpConvIntFromX`).
+                let (target, shown) = match to {
+                    "Int" | "Long" => ("integer".to_string(), "integer".to_string()),
+                    "Bool" => ("boolean".to_string(), "boolean".to_string()),
+                    "Text" | "Float" | "Single" | "Character" => {
+                        (to.to_lowercase(), to.to_lowercase())
+                    }
+                    other => (crate::data::Data::snake_case_name(other), other.to_string()),
+                };
+                (
+                    Level::Advice,
+                    "does not define an `as` conversion",
+                    format!("write `operator to_{target}(self: S) -> {shown}`"),
+                )
+            }
+        };
+        diagnostic!(
+            self.lexer,
+            level,
+            code = "retired-operator-function",
+            "`fn {fn_name}` is an ordinary function and {now}: {cure}"
+        );
+        let conversion = fn_name.starts_with("OpConv") || fn_name.starts_with("OpCast");
+        self.lexer.fix_last(crate::diagnostics::Fix {
+            kind: crate::diagnostics::FixKind::Conditional,
+            title: cure,
+            condition: Some(format!(
+                "`{fn_name}` was written to give the type its operator — a function of that \
+                 name is called only by name now"
+            )),
+            edit: None,
+            concept: if conversion {
+                "type conversions"
+            } else {
+                "operators"
+            },
+            concept_ref: if conversion { "@F5" } else { "@F37" },
+        });
+    }
+
     /// `@FR-Op-Conv` (@PLN182) — `operator to_<name>(self: S) -> T` drives `x as T`: the
     /// suffix is `T`'s conversion name (`Data::conversion_name`), `self` is the only parameter,
     /// and S or T is a type of this source — a conversion INTO the source's own type may take a
@@ -2228,7 +2334,7 @@ impl Parser {
         result: &Type,
     ) {
         let ok = if fn_name == "next" {
-            visible.len() == 1 && !matches!(result, Type::Void)
+            visible.len() == 1 && !matches!(result.base(), Type::Void)
         } else {
             matches!(result.base(), Type::Text(_))
                 && (visible.len() == 1
@@ -2597,6 +2703,10 @@ impl Parser {
         let Some(fn_name) = self.parse_fn_name() else {
             return false;
         };
+        // Marked or not: an unmarked `fn to_<t>` is what `as` names in its refusal (`@FR-Op-Mark`).
+        if !self.default && fn_name.starts_with("to_") && fn_name != "to_text" {
+            self.data.user_operator_conversions = true;
+        }
         self.vars = Function::new(&fn_name, &self.lexer.pos().file);
         // @PLN110 3a — var numbers are per-function, so a stale `len(X)` binding from
         // the previous body would attach to an unrelated local here.
@@ -2750,7 +2860,9 @@ impl Parser {
             // `possible` map that `convert`/`cast` search.  Register it (by type-matched
             // prefix) so `value as T` and implicit conversions dispatch a user `S → T`,
             // exactly like a built-in — the loop in `convert` still matches on arg/return type.
-            if d != u32::MAX {
+            // `@FR-Op-Std`, C132 — only the stdlib's `OpConv…` / `OpCast…` convert; a program
+            // converts with `operator to_<t>` (`@FR-Op-Conv`).
+            if d != u32::MAX && self.default {
                 if fn_name.starts_with("OpConv") {
                     self.data.register_possible("OpConv", d);
                 } else if fn_name.starts_with("OpCast") {
@@ -2882,6 +2994,9 @@ impl Parser {
         };
         if is_operator && !self.first_pass {
             self.check_operator_definition(&fn_name, &arguments, &result);
+        }
+        if !is_operator && !self.first_pass && !self.default {
+            self.report_retired_operator_function(&fn_name, &arguments);
         }
         // `@FR-G-NoRefParam` — a generator takes no `&` parameter (loft#1680).  `(G-Call)` binds
         // the arguments into a frame that runs LATER, and `(F-ParamRef)` makes a `&` parameter
@@ -6010,6 +6125,10 @@ impl Parser {
                 // between the passes — leaving nothing for the conflict check to compare.
                 self.stub_origin.insert(t_stub_nr, child_nr);
                 self.set_bound_stub_signature(t_stub_nr, child_nr, holder_nr);
+                // `@FR-Op-Iface` — the holder's stub stands for the member, mark included, so
+                // a generic handing its own `U: Printable` to another meets `operator to_text`.
+                self.data.definitions[t_stub_nr as usize].operator_form =
+                    self.data.def(child_nr).operator_form();
             }
         }
     }
@@ -6340,6 +6459,17 @@ impl Parser {
                     // has just been read and a `[` can be nothing else.
                     if tok == "[" {
                         self.lexer.token("]");
+                        // C132 (@PLN182 Q10) — `[…]` belongs to the built-in collections and no
+                        // type defines it, so no type could meet the member.
+                        if !self.first_pass {
+                            diagnostic!(
+                                self.lexer,
+                                Level::Error,
+                                "an interface cannot require `[…]`: it belongs to the built-in \
+                                 collections, and no type defines it — require a method that \
+                                 reads an element (`fn at(self: Self, i: integer) -> τ`)"
+                            );
+                        }
                         "OpIndex".to_string()
                     } else {
                         format!("Op{}", rename(&tok))

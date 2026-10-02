@@ -1,35 +1,19 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// @PLN125 arc C — `x[i]` dispatched to a library type.
+// @PLN125 arc C, retired by C132 (@PLN182 Q10) — what `x[i]` on a library type gave, written
+// as the named method that replaces it.
 //
-// `OpIndex` was the one operator the parser never dispatched: every other one
-// already had its `OpCamelCase` method (@PLN99), but a user struct met
-// *"Indexing a non vector"*, so a matrix, a bitset, a row or a ring buffer had
-// to read as `x.at(i)`. That was the last place a library type was VISIBLY not
-// a built-in one.
-//
-// It follows the `OpAdd` / `OpEq` precedent exactly — same method name shape,
-// same lookup, and an interface may REQUIRE it with the `op` sugar. So `x[i]`
-// on a library type lowers to the ordinary two-argument method call
-// `t_<LEN><Type>_OpIndex(x, i)`, and every rule that governs a method call
-// governs this one because it IS one.
-//
-// The index type is whatever the method declares — loft does not insist it be
-// an integer, and a row addressed by column NAME is the case that shows why.
-//
-// The refusals (a type with no `OpIndex`, an unbounded type variable, and
-// `x[i] = …`) are in tests/errors.
-//
-// The sugar covers ONE index. A built-in takes two more spellings a library type
-// does not get: the composite `x[a, b]` (which a `hash<Cell[r, c]>` answers) and
-// the slice `x[a..b]` (which a vector answers). Both stop in the parser with
-// `Expect token ]`, before any `OpIndex` lookup — even though a two-index
-// `fn OpIndex(self: Mat, r: integer, c: integer)` is accepted and answers
-// correctly when called by its name. loft#996.
+// Arc C let a type define `fn OpIndex` and be subscripted like a built-in collection.  C132
+// gave `[…]` back to the built-in collections: a program's type has no subscript, and `x[i]`
+// on one is refused naming this cure (`996-opindex-composite-subscript.loft`).  Every case the
+// subscript served stays expressible as a method call — the ring that decides its own offset,
+// a miss past the end that is the TYPE's answer, a text index, a struct-returning read, reads
+// that nest, and a bound that carries the read to each implementor — and this file keeps each
+// one running in that spelling.
 
 interface Indexable {
-  op [] (self: Self, i: integer) -> integer
+  fn at(self: Self, i: integer) -> integer
   fn count(self: Self) -> integer
 }
 
@@ -49,7 +33,7 @@ struct Row {
   values: vector<integer>,
 }
 
-// An `OpIndex` that answers a STRUCT takes the heap-return path.
+// A read that answers a STRUCT takes the heap-return path.
 struct Cell {
   n: integer,
 }
@@ -58,71 +42,66 @@ struct Grid {
   cells: vector<Cell>,
 }
 
-fn OpIndex(self: Bits, i: integer) -> integer { return self.words[i] ?? 0; }
+fn at(self: Bits, i: integer) -> integer { return self.words[i] ?? 0; }
 fn count(self: Bits) -> integer { return len(self.words); }
 
-fn OpIndex(self: Ring, i: integer) -> integer {
+fn at(self: Ring, i: integer) -> integer {
   n = len(self.data);
   if n == 0 { return 0; }
   return self.data[(self.start + i) % n] ?? 0;
 }
 fn count(self: Ring) -> integer { return len(self.data); }
 
-fn OpIndex(self: Row, name: text) -> integer {
+fn at(self: Row, name: text) -> integer {
   for i in 0..len(self.names) {
     if (self.names[i] ?? "") == name { return self.values[i] ?? -1; }
   }
   return -1;
 }
 
-fn OpIndex(self: Grid, i: integer) -> Cell { return self.cells[i] ?? Cell { n: -1 }; }
+fn at(self: Grid, i: integer) -> Cell { return self.cells[i] ?? Cell { n: -1 }; }
 
-// A generic that SUBSCRIPTS through its bound — the same dispatch a bounded
-// `+` gets, so the stub is built and re-pointed by the same machinery.
+// A generic that reads through its bound.
 fn total<I: Indexable>(x: I) -> integer {
   s = 0;
-  for i in 0..x.count() { s += x[i]; }
+  for i in 0..x.count() { s += x.at(i); }
   return s;
 }
 
-// @FTR-023 — `x[i]` on a library type: what the method decides, and what it must be
-// reached through
+// @FTR-023 — a library type's element read, through a named method: what the method decides
 //
-// Every rule here follows from `x[i]` lowering to an ordinary method call: the ring's
-// subscript is not its vector's, a miss past the end is the TYPE's answer rather than
-// the language's, the index need not be an integer, a struct-returning subscript reads
-// inline, subscripts nest (`b[b[0]]`), and a bound carries the operator to each
-// implementor. What the sugar does NOT reach is in the header note above.
+// The ring's read is not its vector's, a miss past the end is the TYPE's answer rather than
+// the language's, the index need not be an integer, a struct-returning read is read inline,
+// reads nest (`b.at(b.at(0))`), and a bound carries the read to each implementor.
 fn main() {
   b = Bits { words: [1, 2, 3] };
-  assert(b[0] == 1, "a library type indexes: {b[0]}");
-  assert(b[2] == 3, "and at the far end: {b[2]}");
-  // Out of range is the TYPE's answer, not the language's — `OpIndex` is an
-  // ordinary method, so it decides.
-  assert(b[9] == 0, "past the end is the type's own answer: {b[9]}");
+  assert(b.at(0) == 1, "a library type indexes: {b.at(0)}");
+  assert(b.at(2) == 3, "and at the far end: {b.at(2)}");
+  // Out of range is the TYPE's answer, not the language's — the method decides.
+  assert(b.at(9) == 0, "past the end is the type's own answer: {b.at(9)}");
 
   r = Ring { data: [10, 20, 30], start: 1 };
-  assert(r[0] == 20, "the ring's own offset: {r[0]}");
-  assert(r[2] == 10, "and it wraps: {r[2]}");
+  assert(r.at(0) == 20, "the ring's own offset: {r.at(0)}");
+  assert(r.at(2) == 10, "and it wraps: {r.at(2)}");
 
   // The index need not be an integer.
   w = Row { names: ["id", "score"], values: [7, 91] };
-  assert(w["id"] == 7, "a text index: {w["id"]}");
-  assert(w["score"] == 91, "the second column: {w["score"]}");
-  assert(w["absent"] == -1, "and a miss: {w["absent"]}");
+  assert(w.at("id") == 7, "a text index: {w.at("id")}");
+  assert(w.at("score") == 91, "the second column: {w.at("score")}");
+  assert(w.at("absent") == -1, "and a miss: {w.at("absent")}");
 
   // A struct-returning subscript, read inline and bound to a local.
   g = Grid { cells: [Cell { n: 5 }, Cell { n: 6 }] };
-  assert(g[1].n == 6, "a struct-returning OpIndex read inline: {g[1].n}");
-  c = g[0];
+  assert(g.at(1).n == 6, "a struct-returning read inline: {g.at(1).n}");
+  c = g.at(0);
   assert(c.n == 5, "and bound to a local: {c.n}");
 
   // Subscripts compose like any other expression.
-  assert(b[0] + b[1] == 3, "two subscripts in one expression: {b[0] + b[1]}");
-  assert(b[b[0]] == 2, "a subscript as the index: {b[b[0]]}");
+  assert(b.at(0) + b.at(1) == 3, "two subscripts in one expression: {b.at(0) + b.at(1)}");
+  assert(b.at(b.at(0)) == 2, "a subscript as the index: {b.at(b.at(0))}");
 
   // Through a bound, per implementor.
-  assert(total(b) == 6, "subscript through a bound: {total(b)}");
+  assert(total(b) == 6, "a read through a bound: {total(b)}");
   assert(total(r) == 60, "and for the second implementor: {total(r)}");
 
   println("pln125 c index ok");

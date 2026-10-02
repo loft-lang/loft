@@ -8,9 +8,8 @@
 // SIGSEGV for `<` over a `text` parameter, a panic for `scale` over one, rustc refusing the
 // native source.  Those are refused now, naming the parameter
 // (`1818b-a-bound-member-that-does-not-take-its-parameters-is-refused.loft`).
-// This file holds the other half: every satisfaction that was correct stays accepted, and an
-// `OpEq` that does not take `(Self, Self)` leaves the type to `(G-Sat-Eq)`'s content `==`,
-// as the concrete `a == b` does.
+// This file holds the other half: every satisfaction that was correct stays accepted, and a
+// type with no operator keeps `(G-Sat-Eq)`'s content `==`, as the concrete `a == b` does.
 //
 // Axes this file MOVES:  the bound (Ordered · Equatable · Addable · Numeric · Subtractable ·
 //                        Scalable · Printable), the implementor (a builtin number · `text` ·
@@ -27,36 +26,37 @@
 //   a record); every other cell answers the same on both trees.
 //   HOLDS: leak and panic are equal on both trees.
 
+// C132 — the members are `operator` methods.  A program's type cannot define the unary `-`,
+// so `Numeric` is met by the builtins only here; and `==` compares the fields of every type, so
+// the `OpEq`-that-takes-an-integer cell is the content `==` it always fell back to.
 struct V { x: integer }
-fn OpAdd(self: V, o: V) -> V { V { x: self.x + o.x } }
-fn OpMin(self: V, o: V) -> V { V { x: self.x - o.x } }
-fn OpMin(self: V) -> V { V { x: 0 - self.x } }
-fn OpMul(self: V, o: V) -> V { V { x: self.x * o.x } }
-fn OpLt(self: V, o: V) -> boolean { self.x < o.x }
+operator plus(self: V, o: V) -> V { V { x: self.x + o.x } }
+operator minus(self: V, o: V) -> V { V { x: self.x - o.x } }
+operator times(self: V, o: V) -> V { V { x: self.x * o.x } }
+operator compare(self: V, o: V) -> Ordering { self.x.compare(o.x) }
 fn scale(self: V, factor: integer) -> integer { self.x * factor }
 operator to_text(self: V) -> text { "V{self.x}" }
 
 // A nullable parameter takes a dense argument (`(N-Intro)`).
 value struct P { x: integer }
-fn OpMin(self: P, o: P?) -> P { P { x: self.x - (o.x ?? 0) } }
-fn OpLt(self: P, o: P?) -> boolean { self.x < (o.x ?? 0) }
+operator minus(self: P, o: P?) -> P { P { x: self.x - (o.x ?? 0) } }
+operator compare(self: P, o: P?) -> Ordering { self.x.compare(o.x ?? 0) }
 
 // One member of the set takes `(Self, Self)`; the other is declared first.
 struct S { x: integer }
-fn OpAdd(self: S, o: integer) -> S { S { x: self.x + o * 10 } }
-fn OpAdd(self: S, o: S) -> S { S { x: self.x + o.x } }
+operator plus(self: S, o: integer) -> S { S { x: self.x + o * 10 } }
+operator plus(self: S, o: S) -> S { S { x: self.x + o.x } }
 
-// An `OpEq` that takes an integer only: `==` on two `W` compares content.
+// No operator at all: `==` on two `W` compares content.
 struct W { x: integer }
-fn OpEq(self: W, o: integer) -> boolean { self.x == o }
 
 enum Sh { Ci { r: integer }, Sq { s: integer } }
-fn OpLt(self: Sh, _o: Sh) -> boolean { match self { Ci { r } => r < 5, _ => false } }
+operator compare(self: Sh, _o: Sh) -> Ordering { match self { Ci { r } => r.compare(5), _ => Greater } }
 fn mk(n: integer) -> Sh { if n == 1 { Ci { r: 1 } } else { Sq { s: 2 } } }
 
 fn less<T: Ordered>(a: T, b: T) -> boolean { a < b }
 fn same<T: Equatable>(a: T, b: T) -> boolean { a == b }
-fn plus<T: Addable>(a: T, b: T) -> T { a + b }
+fn added<T: Addable>(a: T, b: T) -> T { a + b }
 fn diff<T: Subtractable>(a: T, b: T) -> T { a - b }
 fn mul_neg<T: Numeric>(a: T, b: T) -> T { -(a * b) }
 fn scaled<T: Scalable>(a: T) -> integer { a.scale(3) }
@@ -64,13 +64,13 @@ fn shown<T: Printable>(a: T) -> text { a.to_text() }
 
 fn main() {
   // Builtins, through their own operators.
-  assert(plus(7, 3) == 10 && diff(7, 3) == 4 && mul_neg(7, 3) == -21, "integer");
-  assert(plus(7.5, 3.25) == 10.75 && less(3.25, 7.5), "float");
+  assert(added(7, 3) == 10 && diff(7, 3) == 4 && mul_neg(7, 3) == -21, "integer");
+  assert(added(7.5, 3.25) == 10.75 && less(3.25, 7.5), "float");
   assert(less("ab", "cd") && same("ab", "ab") && !same(true, false), "text / boolean");
   // A struct whose members take `(Self, Self)`, and a non-Self parameter the interface declares.
   a = V { x: 7 };
   b = V { x: 3 };
-  assert(plus(a, b).x == 10 && diff(a, b).x == 4 && mul_neg(a, b).x == -21, "V arithmetic");
+  assert(added(a, b).x == 10 && diff(a, b).x == 4, "V arithmetic");
   assert(less(b, a) && !less(a, b), "V <");
   assert(scaled(a) == 21 && shown(a) == "V7", "V scale / to_text");
   // `Self?` parameters: 7 - 3 = 4, 3 < 7.
@@ -78,7 +78,7 @@ fn main() {
   q = P { x: 3 };
   assert(diff(p, q).x == 4 && less(q, p), "P over Self? parameters");
   // The member of the set that takes `(S, S)`: 7 + 3 = 10, not 7 + 3*10.
-  assert(plus(S { x: 7 }, S { x: 3 }).x == 10, "S set: {plus(S { x: 7 }, S { x: 3 }).x}");
+  assert(added(S { x: 7 }, S { x: 3 }).x == 10, "S set: {added(S { x: 7 }, S { x: 3 }).x}");
   // Content `==` for W, in the generic and at the concrete site alike.
   w7 = W { x: 7 };
   w7b = W { x: 7 };

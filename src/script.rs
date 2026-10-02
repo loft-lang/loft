@@ -550,6 +550,19 @@ mod tests {
         assert!(!is_script("struct P { x: integer }\nenum E { A, B }\n"));
     }
     #[test]
+    fn operator_definitions_are_not_a_script() {
+        // C132 (@PLN182) — `operator` begins a definition as `fn` does.  A file of definitions
+        // with no `main` (a library, a `pub fn test()` corpus case) read as a script and was
+        // desugared around its operators once `operator` became a keyword.
+        assert!(!is_script(
+            "struct M { v: integer }\noperator plus(self: M, o: M) -> M { M { v: self.v + o.v } }\n\
+             pub fn test() { }\n"
+        ));
+        assert!(!is_script(
+            "pub operator to_text(self: integer, spec: text) -> text { \"\" }\n"
+        ));
+    }
+    #[test]
     fn explicit_main_is_not_a_script() {
         // even mixed with a loose-looking line, an explicit main opts out.
         assert!(!is_script("fn main() { print(\"hi\") }\n"));

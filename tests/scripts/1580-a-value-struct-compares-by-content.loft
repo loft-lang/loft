@@ -7,8 +7,10 @@
 // with its own type's `==`, a nested value struct by its own content, never following a
 // reference.
 //
-// Every expected value is worked out by hand.  The last two cells are controls that were right
-// before: a value struct with its own `OpEq`, and a plain `struct`, which stays identity.
+// Every expected value is worked out by hand.  The last two cells are controls: a value struct
+// with a function named `OpEq`, which C132 made an ordinary function — `==` compares the
+// content anyway, and the definition draws the warning that says so — and a plain `struct`.
+// @EXPECT_WARNING: `fn OpEq` is an ordinary function and is not called by `==` or `!=`
 //
 // @falsified-at: 3cc05bd5e — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0,
 //   native 1 assertion failures -> 0
@@ -92,7 +94,7 @@ fn g8() -> text {
   d = U { a: 200, b: -3, ch: 'q', f: false };
   "{a == b} {a == d}"
 }
-/// c1 — control: a value struct's own `OpEq` replaces the content comparison.
+/// c1 — control: a function named `OpEq` does not replace the content comparison (C132).
 fn c1() -> text {
   a = W { x: 1, y: 2 };
   b = W { x: 1, y: 9 };
@@ -115,7 +117,7 @@ fn main() {
   ok("g6 vector elements    ", g6(), "true false");
   ok("g7 operands run once  ", g7(), "true 2");
   ok("g8 narrow and bool    ", g8(), "true false");
-  ok("c1 own OpEq wins      ", c1(), "true");
+  ok("c1 OpEq is a function ", c1(), "false");
   ok("c2 plain struct       ", c2(), "true true false true");
   println("a value struct compares by content: every cell holds");
 }

@@ -3,14 +3,14 @@
 //
 // @C91, `@FR-G-Sat-Eq` — EVERY TYPE IS `Equatable`.  A type with no `OpEq` of its own satisfies
 // an `==` bound and is compared by content in the monomorph, exactly as a concrete `a == b` on
-// it is; a type that declares `OpEq` keeps its own.  A struct, a `value struct`, a vector and
+// it is (C132: a function named `OpEq` changes nothing — `1580` / `1581` guard that).  A struct, a `value struct`, a vector and
 // a struct-enum were refused (*"does not satisfy interface 'Equatable': missing OpEq"*,
 // deviation D-gen-5), so `same<T: Equatable>` could compare an integer but not a record.
 // A tuple was refused the same way (D-gen-6, loft#1738); it compares element by element,
 // nested tuples included, exactly as the concrete tuple `==` does.
 //
 // Every expected value is worked out by hand: equal content is `true`, one differing field or
-// element is `false`, and `U`'s own `OpEq` compares `x` alone.
+// element is `false`.
 //
 // @falsified-at: d18e860a9 — interpret exit 1 -> 0, native exit 1 -> 0 (the control refuses every
 //   binding here with "missing OpEq", so the program does not compile there).
@@ -22,7 +22,6 @@
 struct P { x: integer, t: text }
 value struct V { x: integer }
 struct U { x: integer, y: integer }
-fn OpEq(self: U, other: U) -> boolean { self.x == other.x }
 enum Shape { Circle { r: integer }, Dot }
 struct E { k: integer, v: text }
 
@@ -69,7 +68,7 @@ fn test_a_tuple() {
 }
 
 fn test_an_own_op_eq_wins() {
-  assert(same(U { x: 1, y: 2 }, U { x: 1, y: 9 }), "U's OpEq compares x alone");
-  assert(!differs(U { x: 1, y: 2 }, U { x: 1, y: 9 }), "and != derives from it");
+  assert(!same(U { x: 1, y: 2 }, U { x: 1, y: 9 }), "U by content: y differs");
+  assert(differs(U { x: 1, y: 2 }, U { x: 1, y: 9 }), "and != is the complement");
   assert(same(3, 3) && !same("a", "b"), "the scalars keep their operators");
 }

@@ -8,12 +8,14 @@
 // `Ordered` is met by it (`@FR-Op-Bound`), so `sort`, `min_of`, `max_of` and a user generic's
 // `<` and derived `<=` read the same method.
 //
-// The parallel run: `DtOld` keeps `time`'s order today (four `fn Op…`), `DtNew` declares one
-// `operator compare`, and every pair of a matrix of instants — the integer extremes, zero,
-// negatives, a tie — must answer all four forms alike.  Further cells: a two-field order
+// The parallel run: `DtNew` declares one `operator compare`, and every pair of a matrix of
+// instants — the integer extremes, zero, negatives, a tie — must answer all four forms as the
+// integers themselves do (the reference was `time`'s four `fn Op…`, whose bodies were exactly
+// those comparisons, until C132 retired that spelling).  Further cells: a two-field order
 // through `then` on a plain struct, a mixed-type `compare` (`A` against `B`), an enum's order,
-// a type with BOTH a (deliberately reversed) `fn OpLt` and an `operator compare` — the
-// operator wins at the concrete site and in the generic alike — and evaluation order.
+// a type with BOTH a (deliberately reversed) plain `fn OpLt` and an `operator compare` — the
+// function is ordinary, the operator answers at the concrete site and in the generic alike —
+// and evaluation order.
 //
 // @falsified-by: tests/falsified/an-operator-compare-gives-a-type-every-order-form.patch — interpret exit 1 -> 0, native exit 1 -> 0
 //   CHANNEL: exit on both backends — the control has no `operator` keyword, so it refuses.
@@ -21,12 +23,6 @@
 //   WITNESS: scored by hand as well against a mutation reading `>` as `Less`: the parallel run
 //   fails on both backends, listing every pair whose four forms differ.
 //   HOLDS: every asserted value on this tree, both backends.
-value struct DtOld { ms: integer }
-pub fn OpLt(self: DtOld, other: DtOld) -> boolean { self.ms < other.ms }
-pub fn OpLe(self: DtOld, other: DtOld) -> boolean { self.ms <= other.ms }
-pub fn OpGt(self: DtOld, other: DtOld) -> boolean { self.ms > other.ms }
-pub fn OpGe(self: DtOld, other: DtOld) -> boolean { self.ms >= other.ms }
-
 value struct DtNew { ms: integer }
 pub operator compare(self: DtNew, other: DtNew) -> Ordering { self.ms.compare(other.ms) }
 
@@ -54,9 +50,8 @@ fn smallest < T: Ordered > (a: T, b: T) -> T { if a < b { a } else { b } }
 fn at_most < T: Ordered > (a: T, b: T) -> boolean { a <= b }
 
 fn forms(a: integer, b: integer) -> text {
-  oa = DtOld { ms: a }; ob = DtOld { ms: b };
   na = DtNew { ms: a }; nb = DtNew { ms: b };
-  old = "{oa < ob}{oa <= ob}{oa > ob}{oa >= ob}";
+  old = "{a < b}{a <= b}{a > b}{a >= b}";
   new = "{na < nb}{na <= nb}{na > nb}{na >= nb}";
   if old == new { "" } else { "[{a} {b}: {old} / {new}]" }
 }

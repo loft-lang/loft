@@ -68,7 +68,15 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
   (Op-Std)     a type declared in `default/` keeps the stdlib's operator definitions, and the
                stdlib's own bodies reach no user `operator` definition.  The stdlib marks its own
-               `operator to_text` on the built-in types; (Op-Home) binds the programs.
+               `operator to_text` on the built-in types; (Op-Home) binds the programs.  The
+               internal names (`OpLt`, `OpAdd`, `OpIndex`, `OpConv…`) back an operator only as
+               the stdlib's own definitions: a program's `fn OpAdd` is an ordinary function,
+               callable by its name and reached by no operator, `[…]`, `as` or bound (@C132).  A
+               definition spelled so is said where it is written — a WARNING for `OpEq`, `OpNe`
+               and `OpNot`, whose forms keep answering (by the fields, and as the presence
+               test), an advice for the rest, whose every use is refused.  `[…]` belongs to the
+               built-in collections: a program's type is not subscripted, and an interface
+               cannot require `op []`.
 
   (Op-Fold)    `for e in x` reaches only an `operator next`, and `"{x}"` only an `operator
                to_text`; a plain `fn next` / `fn to_text` is an ordinary method, and the form on
@@ -117,7 +125,7 @@ saying so.
 | Op-Fold | the `next` lookups (`parser/collections.rs`, `parser/control.rs`) and the format route (`try_bound_to_text_call`, the spec reader in `parser/objects.rs`) | `tests/scripts/a-programs-own-iterator-works-like-a-built-in-one.loft` and the format guards, migrated; refusals in `tests/parse_errors.rs` |
 | Op-Conv | `Data::conversion_name`, `Parser::check_conversion_definition`, `Parser::operator_conversion` (the `as` site) | `tests/scripts/operator-next-to-text-and-to-type-drive-for-format-and-as.loft`, `tests/parse_errors.rs` (`operator_conversion_*`, `a_plain_to_integer_does_not_drive_as`) |
 | Op-Iface | the interface body (`parser/definitions.rs`), `Parser::satisfaction_failures` | `tests/scripts/845-generic-format.loft` (Printable through a user type) |
-| Op-Std | `Parser::operator_member` (no lookup while `default/` is parsed) | `tests/frontend_counts.rs` (the cold stdlib parse holds its pin) |
+| Op-Std | `Parser::operator_member` (no lookup while `default/` is parsed), `Data::backs_operator` (the stdlib's `Op…` only: `user_op_method`, `call_op`, `re_resolve_call`, satisfaction, the conversion registry), `Parser::report_retired_operator_function`, the subscript refusal (`parser/fields.rs`) | `tests/frontend_counts.rs` (the cold stdlib parse holds its pin), `tests/scripts/a-fn-named-for-an-operator-is-an-ordinary-function.loft`, `1580` / `1581` (the warning tier), `996-opindex-composite-subscript.loft` and `tests/parse_errors.rs` (`assigning_through_op_index_is_refused`, `an_interface_cannot_require_a_subscript`) |
 
 ## Deviations
 

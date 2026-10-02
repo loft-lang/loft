@@ -1,13 +1,13 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// @PLN99 Arc C — user-defined conversions make `value as T` dispatch a library
-// `fn OpConv<T>From<S>`, so a struct behaves like a built-in cast target:
+// @PLN99 Arc C — user-defined conversions make `value as T` dispatch an `operator to_<t>` on the
+// source type (`@FR-Op-Conv`), so a struct behaves like a built-in cast target:
 //   * `"literal" as T`   — parse-on-cast (text source, literal)
 //   * `var as T`         — text source from a variable
 //   * `structA as B`     — struct → struct (the concrete-source path: `convert`
 //                          flattens a Reference source to the generic `reference`,
-//                          which used to hide a specific `fn OpConvBFromA(a: A)`)
+//                          which used to hide a specific conversion from `A`)
 // A conversion returning a struct carries a hidden destination parameter, so it is
 // dispatched through the full call machinery — and its result is a FRESH owned store,
 // NOT a view of the source (guarded here + by tests/ownership_oracle for leaks).
@@ -24,16 +24,16 @@ struct Money {
 }
 
 // text -> struct (parse-on-cast), actually consuming the source value
-fn OpConvCelsiusFromText(v: text) -> Celsius {
-  Celsius { deg: v.len() }
+operator to_celsius(self: text) -> Celsius {
+  Celsius { deg: self.len() }
 }
-fn OpConvMoneyFromText(v: text) -> Money {
-  Money { cents: v.len()*100 }
+operator to_money(self: text) -> Money {
+  Money { cents: self.len()*100 }
 }
 
 // struct -> struct conversion
-fn OpConvFahrenheitFromCelsius(c: Celsius) -> Fahrenheit {
-  Fahrenheit { deg: c.deg * 9 / 5 + 32 }
+operator to_fahrenheit(self: Celsius) -> Fahrenheit {
+  Fahrenheit { deg: self.deg * 9 / 5 + 32 }
 }
 
 fn main() {
