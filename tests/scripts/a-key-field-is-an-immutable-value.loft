@@ -4,6 +4,15 @@
 // @FR-Col-Key (loft#1845) — the admitted half: a key field of hash / sorted / index may be a
 // scalar, a plain enum, a tuple of those, or `?` of one, and every such key inserts and looks
 // up under all three kinds.  The refused half is a-struct-key-field-is-refused.loft.
+//
+// @falsified-by: tests/falsified/a-key-field-is-an-immutable-value.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   The patch is the OVER-WIDE rule — every key type refused — so this guard holds the half of
+//   loft#1845 that must not move.
+//   CHANNEL: the exit — on the control every declaration here is refused, so nothing compiles.
+//   WITNESS: "the key field `k` of `hash<EI[…]>` is `integer`" for an integer key.
+//   ARMED: nothing.
+//   HOLDS: on this tree all 33 lookups and lengths answer on both backends, with no leak and
+//   no panic.
 
 enum Col { Red, Green }
 
