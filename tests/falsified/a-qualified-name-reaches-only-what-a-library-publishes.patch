@@ -1,13 +1,12 @@
-diff --git b/src/data.rs a/src/data.rs
-index 5cd41708e..e1e3e4a0c 100644
---- b/src/data.rs
-+++ a/src/data.rs
-@@ -12134,61 +12134,6 @@ impl Data {
+diff --git a/src/data.rs b/src/data.rs
+--- a/src/data.rs
++++ b/src/data.rs
+@@ -12327,66 +12327,6 @@
          })
      }
  
--    /// loft#1848 — the error for a qualified `lib::name` that reaches what `lib` does not pass
--    /// on, or `None` when `lib` passes it on (or does not have it: absence keeps its own
+-    /// @FR-F-Surface (loft#1848) — the error for a qualified `lib::name` that reaches what `lib`
+-    /// does not pass on, or `None` when `lib` passes it on (or does not have it: absence keeps its own
 -    /// "no such" message).
 -    ///
 -    /// The SAME rule as the glob import — [`Self::exported`]: an item `lib` declares without
@@ -25,7 +24,12 @@ index 5cd41708e..e1e3e4a0c 100644
 -            let Some(d) = self.def_names.get(key, lib_source) else {
 -                continue;
 -            };
--            if self.exported(key, lib_source).is_some() {
+-            // A pass-1 forward stub (a library parsed after its user, as in a mutual-use
+-            // pair) is not the item yet and carries no `pub`: judging it would refuse a
+-            // `pub struct` the second pass finds published.
+-            if self.exported(key, lib_source).is_some()
+-                || matches!(self.definitions[d as usize].def_type, DefType::Unknown)
+-            {
 -                return None;
 -            }
 -            if self.is_private_import(lib_source, key, d) {
@@ -64,11 +68,10 @@ index 5cd41708e..e1e3e4a0c 100644
      fn is_private_import(&self, source: u16, key: &str, def_nr: u32) -> bool {
          self.private_imports
              .get(&source)
-diff --git b/src/parser/definitions.rs a/src/parser/definitions.rs
-index 9783f8975..0ecc72325 100644
---- b/src/parser/definitions.rs
-+++ a/src/parser/definitions.rs
-@@ -3932,13 +3932,6 @@ impl Parser {
+diff --git a/src/parser/definitions.rs b/src/parser/definitions.rs
+--- a/src/parser/definitions.rs
++++ b/src/parser/definitions.rs
+@@ -4353,13 +4353,6 @@
              if let Some(name) = self.lexer.has_identifier() {
                  let source = self.data.get_source(type_name);
                  let nr = self.data.source_nr(source, &name);
@@ -82,11 +85,10 @@ index 9783f8975..0ecc72325 100644
                  if source != u16::MAX {
                      qualified = Some((source, name));
                  }
-diff --git b/src/parser/objects.rs a/src/parser/objects.rs
-index ff1921296..d44622699 100644
---- b/src/parser/objects.rs
-+++ a/src/parser/objects.rs
-@@ -505,13 +505,6 @@ impl Parser {
+diff --git a/src/parser/objects.rs b/src/parser/objects.rs
+--- a/src/parser/objects.rs
++++ b/src/parser/objects.rs
+@@ -505,13 +505,6 @@
                  source = self.data.source;
              }
              if let Some(id) = self.lexer.has_identifier() {
