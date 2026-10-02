@@ -112,7 +112,7 @@ jobs:
     # UI_WORK/UI_WINDOW — the dev-box sizing produced 4 frames against 3, too
     # small to be a ratio, so CI samples lighter work over a longer window.
     # SCALING_WORK and UI_WORK are sized in INTERPRETER time, so they follow its speed: a
-    # leg must stay seconds (scaling) or a ~100 ms frame (UI) of compute, or the
+    # leg must stay seconds (scaling) or a ~300 ms frame (UI, on the runner) of compute, or the
     # runner's fixed worker cost decides the ratio instead of `par` — a faster
     # interpreter is a reason to raise them, never to lower a floor.
     # WAIT_SCALE stretches every wait for the page's report line (gates exit as
@@ -126,7 +126,7 @@ jobs:
       THREADS: "4"
       MIN_BLOCK_RATIO_X10: "13"
       SCALING_WORK: "2000000"
-      UI_WORK: "75000"
+      UI_WORK: "120000"
       UI_WINDOW: "9000"
 
     steps:
