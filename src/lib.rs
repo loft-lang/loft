@@ -399,6 +399,7 @@ pub mod compile;
 pub mod engine_host;
 pub mod extensions;
 pub mod git_query;
+pub mod process_run;
 pub mod live_dispatch;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod live_reload;

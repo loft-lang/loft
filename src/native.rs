@@ -284,6 +284,10 @@ pub const FUNCTIONS: &[(&str, Call)] = &[
     // it runs `git`, and no browser page has a subprocess to run it in.
     #[cfg(not(target_arch = "wasm32"))]
     ("n_git_query", crate::git_query::n_git_query),
+    // @PLN179 strand 4b — `lib/process`'s run.  Native targets only: no browser page has a
+    // subprocess to run.
+    #[cfg(not(target_arch = "wasm32"))]
+    ("n_process_run", crate::process_run::n_process_run),
     // @PLN18 — engine-host kernel natives (mechanics only; lib/engine_host
     // declares them; native targets only — the kernel has no wasm story).
     #[cfg(not(target_arch = "wasm32"))]

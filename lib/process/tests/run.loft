@@ -1,0 +1,62 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `run` (@PLN179 strand 4b): a stream is never left without a reader.  The first two cells
+// are children that deadlock a reader draining one pipe at a time — 8 MiB on stderr before
+// stdout answers, and 8 MiB fed through `cat`, whose output fills while its input is still
+// being written.  Python's `Popen(...).stdout.read()` hangs on the first from 4 MiB on this
+// box's 64 KiB pipes (checked with `timeout 5`); here both finish.  The rest pin the contract
+// of a finished run, every value by hand.
+use process::*;
+
+fn eight_mib() -> text {
+  s = "x";
+  for _ in 0..23 { s += s; }
+  s
+}
+
+fn test_no_stream_is_left_without_a_reader() {
+  talk: Command = "sh -c 'head -c 8388608 /dev/zero >&2; echo done'";
+  r = talk.run();
+  assert(r.ok && r.stdout == "done\n" && size(r.stderr) == 8388608, "stderr first: {r.code} {r.stdout} {size(r.stderr)}");
+  big = eight_mib();
+  echo: Command = "cat";
+  e = echo.run(big);
+  assert(e.ok && size(e.stdout) == 8388608 && e.stdout == big, "fed through cat: {e.code} {size(e.stdout)}");
+}
+
+fn test_a_finished_run() {
+  both: Command = "sh -c 'echo out; echo err >&2; exit 3'";
+  b = both.run();
+  assert(!b.ok && b.code == 3 && b.stdout == "out\n" && b.stderr == "err\n", "exit 3: {b.code} [{b.stdout}] [{b.stderr}]");
+  killed: Command = "sh -c 'kill -TERM $$'";
+  k = killed.run();
+  assert(!k.ok && k.code == 143, "a signal is 128 + n: {k.code}");
+  missing: Command = "no-such-program-for-loft";
+  m = missing.run();
+  assert(!m.ok && m.code == -1 && m.stderr.starts_with("no-such-program-for-loft: "), "not started: {m.code} {m.stderr}");
+}
+
+fn test_words_arrive_exactly() {
+  odd = "12:ab";
+  o: Command = "printf %s {odd}";
+  assert(o.run().stdout == "12:ab", "a word holding the length separator");
+  wide = "héllo wörld";
+  w: Command = "printf %s|%s {wide} {""}";
+  assert(w.run().stdout == "héllo wörld|", "non-ASCII and an empty word: {w.run().stdout}");
+}
+
+fn test_a_refused_command_never_runs() {
+  f = "-rf";
+  c: Command = "touch {f}";
+  r = c.run();
+  assert(!r.ok && r.code == -1 && r.stdout == "" && r.stderr == c.refused, "refused: {r.code} {r.stderr}");
+}
+
+fn main() {
+  test_no_stream_is_left_without_a_reader();
+  test_a_finished_run();
+  test_words_arrive_exactly();
+  test_a_refused_command_never_runs();
+  println("ok");
+}
