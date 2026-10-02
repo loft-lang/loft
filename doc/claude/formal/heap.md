@@ -424,6 +424,11 @@ parameter (via `&`) is host, a genuinely-copied one is script-owned.
                  within its first rungs, so the working set never doubles.  Below the
                  bound a claim the wilderness cannot hold grows the store, or takes an
                  untracked block the chain walk meets on its way to growing.
+  (H-ReadSurface) a store opened from a file only to be READ — a cached stdlib or program
+                 image — writes nothing into the file: its free-block tree and footers
+                 (`H-FreeFooter`, `H-Wilderness`) are left unbuilt, since a read surface
+                 claims and frees nothing.  The file's mapping is shared by every process
+                 that opens it, so a rebuild in place is a write another start reads.
   (H-SwapIn)     the deep copy of a store's ROOT record into the root of another store
                  that holds nothing else, the source store given up after it (the copy's
                  free-source form — the rebind `x = f(…, x, …)` from a callee that minted
@@ -458,6 +463,15 @@ is the type walk.  `LOFT_NO_STORE_SWAP=1` keeps the copy; `LOFT_TRACE_STORE_SWAP
 each exchange.  Site: `Stores::try_swap_in`, called by both backends' `OpCopyRecord`.  Guard
 `tests/scripts/a-rebind-from-a-fresh-result-exchanges-the-stores.loft`, pin
 `tests/store_swap.rs`.
+
+**`H-ReadSurface` is why a cache can be shared.** The tree's links live in the free blocks'
+own bodies, so building it is a write to the store's bytes, and for a mapped file those bytes
+are the file's.  One start alone rewrites the same links each time, which is why the image
+reads byte-identical after a run; two starts at once each read a link the other is halfway
+through writing, as a record number.  The rule is a property of the OPEN, not of the caller:
+`Store::open_read_surface` builds the in-memory claims set from the headers and nothing else,
+and every cache loader goes through it (`ir_read::adopt_read_surface`).  A writable file store
+opens with `Store::open` and rebuilds as before.  Guard `tests/concurrent_warm_start.rs`.
 
 **`H-SwapRebind` is the same exchange, one statement earlier.** A reset clears the destination
 store and claims a fresh root, and the exchange that follows moves that root out again: the
