@@ -207,7 +207,12 @@ fn admit(data: &Data, d: u32) -> Result<Leaf, &'static str> {
     };
     // `@FR-R-InlineLeaf`'s tuple clause: a result that is a tuple of scalars, built by
     // tuple literals, travels as the inlined block's value like a scalar does.
-    let tuple_of_scalars = matches!(&def.returned, Type::Tuple(es) if es.iter().all(scalar));
+    let tuple_of_scalars = match &def.returned {
+        Type::Tuple(es) => es.iter().all(scalar),
+        // Not peeled: a `τ?` result admits the null the reductions would have to prove away.
+        Type::Optional(_) => false,
+        _ => false,
+    };
     if !scalar(&def.returned) && !tuple_of_scalars {
         return Err("a non-scalar result");
     }

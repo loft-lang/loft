@@ -3640,12 +3640,19 @@ positions.  Measured on `index_read` by the hand-written form: −31 % interpret
 ### `(R-InlineLeaf)` takes a tuple result
 
 ```
-  (R-InlineLeaf) + PROPOSED.  A leaf whose result type is a tuple of scalars, built by tuple
-                 literals (an `if` chain choosing among them included), is admitted.
+  (R-InlineLeaf) + A leaf whose result type is a tuple of scalars, built by tuple literals (an
+                 `if` chain choosing among them included), is admitted; its call is replaced
+                 by its body as a scalar leaf's is.
 ```
 
-**In words.** Measured on `bfs_flow` by the hand-written form (the call of `nbr` gone): −12 %.
-The guard owes a tuple read only in part, one handed on whole, and a non-scalar element.
+**In words.** Applied by: `leaf_inline::admit` (the result clause) and `pure`/`remap` (a tuple
+literal).  A tuple holding text or a record is not a tuple type to this check: the language
+makes it a record with a result buffer (`__tuple<integer,text>`), which the scalar-result check
+declines — so the all-scalars condition on a `Type::Tuple` is defensive, and the plant that
+admits any tuple passes (2026-10-02).  Built 2026-10-02: `bfs_flow`'s `nbr` inlined, −12.8 %
+instructions and −10.6 % cycles interpreted.  Guard cells in the leaf-inline file: an `if`-chain
+tuple read in both elements and in a loop, and a text-holding tuple that stays a call; the pin
+counts four inlined calls and the decline.
 
 ## Validating the emitted routines against their assumptions
 
