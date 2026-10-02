@@ -1693,6 +1693,15 @@ fn survival_class(
             "a field of a record is copied — the record keeps its own, so no move can take it",
         );
     }
+    // A PARAMETER's store is the caller's, so its fate here cannot decide the copy either: the
+    // copy is the same op whether the parameter is read again or not (the move planner below
+    // refuses a parameter for the same reason).  Forced as written.
+    if function.is_argument(s) {
+        return (
+            CopyClass::Forced,
+            "a parameter is copied — its store is the caller's, so no move can take it",
+        );
+    }
     // The copy's OWN read of the source is at a position <= copy_end, so a use strictly after
     // loft#1190 — a source that allocates NOTHING when duplicated is `Implicit` whatever its
     // fate.  The `Avoidable` class is the borrow worklist, and there is no borrow to reach for

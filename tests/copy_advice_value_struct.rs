@@ -211,8 +211,10 @@ fn a_second_loops_variable_is_advised_by_its_written_name_native() {
 /// nothing about the record it was read from: ending `o`'s life moves nothing out of it, and the
 /// emitted copy is the same op whether `o` is used again or not.  The advice read the copy as one
 /// of the whole record — "copy of M — `src` is still used after this point, so it could not be
-/// moved" — which names a type nobody copied and a cure that changes nothing.  A copy of a whole
-/// variable that survives (`H { v: ks }` with `ks` read after) is the control: it still advises.
+/// moved" — which names a type nobody copied and a cure that changes nothing.  A PARAMETER copied
+/// into a field (`H { v: xs }`, `xs` read after) is the same case one step over: its store is the
+/// caller's, and the copy is the same op whether `xs` is read again or not.  A copy of a whole
+/// LOCAL that survives (`H { v: ks }` with `ks` read after) is the control: it still advises.
 const PROJECTIONS: &str = r#"
 struct M { ks: vector<integer>, vs: vector<integer> }
 struct H { v: vector<integer> }
@@ -221,6 +223,10 @@ struct O { inner: In, n: integer }
 fn app(dst: M, src: const M) {
   dst.ks += src.ks;
   dst.vs += src.vs;
+}
+fn hold(xs: vector<integer>) -> integer {
+  h = H { v: xs };
+  len(h.v) + len(xs)
 }
 fn main() {
   a = M { ks: [1], vs: [2] };
@@ -233,7 +239,7 @@ fn main() {
   xs[0] = r.inner;
   ks = [10, 11];
   k = H { v: ks };
-  print("{len(a.ks)} {len(a.vs)} {len(h.v)} {len(o.ks)} {len(xs[0].a)} {r.n} {len(k.v)} {len(ks)}\n");
+  print("{len(a.ks)} {len(a.vs)} {len(h.v)} {len(o.ks)} {len(xs[0].a)} {r.n} {len(k.v)} {len(ks)} {hold([12, 13, 14])}\n");
 }
 "#;
 
@@ -251,12 +257,13 @@ fn assert_projection_copies(backend: &str) {
         Some(0),
         "[{backend}] the program must run\n{stdout}\n---\n{diag}"
     );
-    // a.ks = [1, 3, 4], a.vs = [2, 5], h.v = o.ks = 3 long, xs[0].a = [9], r.n = 2, k.v = ks = 2.
+    // a.ks = [1, 3, 4], a.vs = [2, 5], h.v = o.ks = 3 long, xs[0].a = [9], r.n = 2, k.v = ks = 2,
+    // and `hold` answers its field and its parameter, 3 + 3.
     assert!(
-        stdout.contains("3 2 3 3 1 2 2 2"),
+        stdout.contains("3 2 3 3 1 2 2 2 6"),
         "[{backend}] the program must answer its values\n{stdout}"
     );
-    for unwanted in ["copy of M", "copy of O"] {
+    for unwanted in ["copy of M", "copy of O", "`xs` is still used"] {
         assert!(
             !diag.contains(unwanted),
             "[{backend}] `{unwanted}`: a field was copied, and no move of its record avoids that\n{diag}"
