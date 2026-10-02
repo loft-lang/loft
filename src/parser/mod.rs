@@ -18376,6 +18376,7 @@ impl Parser {
         loop {
             let is_pub = std::mem::take(&mut self.pub_taken) || self.lexer.has_token("pub");
             let before = self.data.definitions();
+            let adopted_before = self.data.adopted_stub_count();
             if self.lexer.diagnostics().level() == Level::Fatal
                 || (!self.parse_capability()
                     && !self.parse_enum()
@@ -18387,9 +18388,19 @@ impl Parser {
             {
                 break;
             }
-            // mark newly created definitions as pub-visible.
+            // @FR-F-Surface: what is `pub` is what a `pub` declaration DECLARES — never decided
+            // by where an item is first named.  A type named above its declaration is a
+            // forward-reference stub created by the declaration that NAMED it, so the range of
+            // defs new to this declaration holds the stubs it only used (still `Unknown` here,
+            // and not its to publish) and misses the stub it ADOPTED (created earlier, by a
+            // user).  Both made the user's `pub`-ness the type's (loft#1856).
             if is_pub {
                 for d_nr in before..self.data.definitions() {
+                    if self.data.def_type(d_nr) != DefType::Unknown {
+                        self.data.def_mut(d_nr).pub_visible = true;
+                    }
+                }
+                for d_nr in self.data.adopted_since(adopted_before).to_vec() {
                     self.data.def_mut(d_nr).pub_visible = true;
                 }
             }

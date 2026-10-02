@@ -10106,6 +10106,19 @@ impl Data {
         }
     }
 
+    /// How many stubs have been adopted this pass: taken before a declaration, it lets
+    /// [`Data::adopted_since`] name the stubs that one declaration adopted.
+    #[must_use]
+    pub fn adopted_stub_count(&self) -> usize {
+        self.adopted_stubs.len()
+    }
+
+    /// The stubs adopted since `adopted_stub_count` answered `from`.
+    #[must_use]
+    pub fn adopted_since(&self, from: usize) -> &[u32] {
+        self.adopted_stubs.get(from..).unwrap_or(&[])
+    }
+
     pub fn resolve_adopted_stubs(&mut self, lexer: &mut Lexer) -> Vec<(u32, Type)> {
         // Not a stub a GENERIC struct adopted: its target would be the bare template, where
         // each use names an instance whose arguments the paths that read them resolve
