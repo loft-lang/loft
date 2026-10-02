@@ -1,0 +1,81 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-WorkerLean` — a `par` worker's frame runs on the lean register loop, and the
+// definition it enters is looked up once per run, not once per element.
+//
+// A worker frame ran the plain checked loop (`run_to_return`) and scanned every definition to
+// name the function it entered, for each element: `par(…, 1)` cost 1.9× the same loop without
+// `par`.  Both are the main run's own machinery now.  Every cell answers the same with
+// `LOFT_NO_WORKER_LEAN=1`, and that A/B is the falsifier together with the pin
+// (`tests/worker_lean.rs`, which also asks that a failing worker names its own function).
+// Values hand-computed.
+//
+// @falsified-at: none — the rule has no earlier build to catch, so the receipt is a SABOTAGE
+//   (2026-10-02): with `State::worker_d_nr` answering its remembered definition for any
+//   position, w2 fails under `LOFT_HEADROOM_VERIFY=1` — the second loop's worker enters with
+//   the first worker's frame room — and the pin's failing worker is named as the first one.
+//   CHANNEL: the frame-room verifier and the fault report.
+
+struct Item { value: integer }
+
+fn double(s: const Item) -> integer { s.value * 2 }
+
+fn square(s: const Item) -> integer { s.value * s.value }
+
+fn label(s: const Item) -> text { "n{s.value}" }
+
+fn scaled(s: const Item, k: integer) -> integer { s.value * k }
+
+fn items(n: integer) -> vector<Item> {
+  v: vector<Item> = [];
+  for i in 0..n { v += [Item { value: i }]; }
+  v
+}
+
+// one worker over many elements: 2 * (0 + 1 + … + 999) = 999000
+fn w1() {
+  t = 0;
+  for s in items(1000) par(r = double(s), 4) { t += r; }
+  assert(t == 999000, "w1 got {t}");
+}
+
+// two loops with DIFFERENT workers in one run: the second must not enter as the first
+// sum of squares 0..99 = 99 * 100 * 199 / 6 = 328350
+fn w2() {
+  a = 0;
+  for s in items(100) par(r = double(s), 4) { a += r; }
+  b = 0;
+  for s in items(100) par(r = square(s), 4) { b += r; }
+  assert(a == 9900 && b == 328350, "w2 got {a} {b}");
+}
+
+// a text result: "n0".."n9" are 2 characters, "n10".."n99" are 3: 10 * 2 + 90 * 3 = 290
+fn w3() {
+  total = 0;
+  for s in items(100) par(r = label(s), 4) { total += len(r); }
+  assert(total == 290, "w3 got {total}");
+}
+
+// a worker with a context argument: 3 * (0 + … + 49) = 3675
+fn w4() {
+  k = 3;
+  t = 0;
+  for s in items(50) par(r = scaled(s, k), 2) { t += r; }
+  assert(t == 3675, "w4 got {t}");
+}
+
+// one worker thread, many passes: nothing accumulates
+fn w5() {
+  t = 0;
+  v = items(200);
+  for _ in 0..50 {
+    for s in v par(r = double(s), 1) { t += r; }
+  }
+  assert(t == 50 * 39800, "w5 got {t}");   // 2 * (0 + … + 199) = 39800 a pass
+}
+
+fn main() {
+  w1(); w2(); w3(); w4(); w5();
+  println("done");
+}

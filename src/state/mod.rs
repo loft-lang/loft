@@ -548,6 +548,9 @@ pub struct State {
     /// indistinguishable from coverage — the same shape as the backend-scope note.
     pub entered_fns: Option<Vec<bool>>,
     pub(crate) fn_positions: Vec<u32>,
+    /// The last `(code position, definition)` pair [`State::worker_d_nr`] answered: a `par`
+    /// worker enters the same function for every element.
+    worker_fn_memo: (u32, u32),
     /// `@FR-R-FrameHeadroom` — per definition, the bytes above its frame base its operators
     /// can reach (the highest stack position codegen recorded in it, plus a margin).
     /// `push_frame` ensures that much room once per frame, so the direct-path push
@@ -917,6 +920,7 @@ impl State {
             published_spans: None,
             entered_fns: None,
             fn_positions: Vec::new(),
+            worker_fn_memo: (u32::MAX, u32::MAX),
             frame_headroom: Arc::new(Vec::new()),
             gen_max_position: 0,
             debug: None,
@@ -6351,8 +6355,20 @@ impl State {
     /// `op_ceiling` of `0` switches off the runaway-worker `debug_assert`; see
     /// [`Self::WORKER_OP_CEILING`].
     fn run_to_return(&mut self, op_ceiling: u64) {
-        let mut step: u64 = 0;
         let bytecode_len = self.bytecode.len() as u32;
+        // `@FR-R-WorkerLean` — a worker runs the main run's lean register loop where the main
+        // run would: nothing watches individual ops.  The fault test after each op is the
+        // loop's stop flag, which `raise_runtime_error` sets, and the end is the same
+        // `code_pos == u32::MAX` the loop condition reads.
+        if self.worker_lean_ok() {
+            if Self::no_hot() {
+                self.lean_register_loop::<false, true>(bytecode_len);
+            } else {
+                self.lean_register_loop::<true, true>(bytecode_len);
+            }
+            return;
+        }
+        let mut step: u64 = 0;
         while self.code_pos < bytecode_len {
             let op = self.code::<u8>();
             if op == 255 {
@@ -6435,8 +6451,15 @@ impl State {
     /// `State` is brought up to the registers before anything else reads it — the stop path,
     /// and the loop's end.  Every other operator writes them into `State` itself on entry
     /// (`State::regs_in`).  Answers whether a frame yield hands control back to the host.
+    ///
+    /// `WORKER` is a `par` worker's frame (`run_to_return`): its stop path leaves the
+    /// published fault of a SIBLING worker to the parent that collects it, where the main
+    /// loop raises it.
     #[inline(never)]
-    fn lean_register_loop<const HOT: bool>(&mut self, bytecode_len: u32) -> bool {
+    fn lean_register_loop<const HOT: bool, const WORKER: bool>(
+        &mut self,
+        bytecode_len: u32,
+    ) -> bool {
         let reg_ops = crate::fill::OPERATORS_REG;
         let mut r = self.regs_out();
         while r.pc < bytecode_len {
@@ -6469,7 +6492,7 @@ impl State {
                 .load(std::sync::atomic::Ordering::Relaxed)
             {
                 self.regs_in(r);
-                match self.lean_stop() {
+                match self.lean_stop(WORKER) {
                     LeanStop::Continue => r = self.regs_out(),
                     LeanStop::Return => return true,
                     LeanStop::Leave => return false,
@@ -6478,6 +6501,47 @@ impl State {
         }
         self.regs_in(r);
         false
+    }
+
+    /// The definition whose code starts at `fn_pos` (`u32::MAX` for none), for a worker
+    /// frame's call stack.  A worker enters one function per element, so the last answer is
+    /// kept: the scan over every definition ran once per ELEMENT, a tenth of a one-worker
+    /// `par` pass.
+    fn worker_d_nr(&mut self, fn_pos: u32) -> u32 {
+        if self.worker_fn_memo.0 == fn_pos {
+            return self.worker_fn_memo.1;
+        }
+        let d_nr = self
+            .fn_positions
+            .iter()
+            .position(|&p| p == fn_pos)
+            .map_or(u32::MAX, |i| i as u32);
+        self.worker_fn_memo = (fn_pos, d_nr);
+        d_nr
+    }
+
+    /// May a worker frame run on the lean register loop?  Exactly when the main run would
+    /// take it (`execute_argv_shared`): a release build, no debugger, no op-watching
+    /// instrument, the fast stack and the register table — and `LOFT_NO_WORKER_LEAN` unset.
+    fn worker_lean_ok(&self) -> bool {
+        !(cfg!(debug_assertions) || cfg!(feature = "stack_align_guard"))
+            && self.debug.is_none()
+            && self.fast_stack
+            && !self.verify_on
+            && !Self::no_register_table()
+            && !Self::headroom_verify()
+            && !Self::no_worker_lean()
+            && !crate::stack_census::enabled()
+            && !crate::keys::uaf_check_enabled()
+            && !crate::keys::uaf_src_enabled()
+            && !crate::keys::uaf_gen_enabled()
+    }
+
+    /// `LOFT_NO_WORKER_LEAN=1` — every worker frame runs the plain checked loop
+    /// (`@FR-R-WorkerLean`'s A/B switch, and the first bisect step for a wrong answer that
+    /// appears only under `par`).
+    fn no_worker_lean() -> bool {
+        crate::env_once!(std::env::var("LOFT_NO_WORKER_LEAN").is_ok_and(|v| v != "0"))
     }
 
     /// `LOFT_NO_HOT=1` — the lean loop dispatches every operator through the register table,
@@ -6528,7 +6592,7 @@ impl State {
     /// returns to, and an attached debugger keeps it while it is attached.
     #[cold]
     #[inline(never)]
-    fn lean_stop(&mut self) -> LeanStop {
+    fn lean_stop(&mut self, worker: bool) -> LeanStop {
         if Self::headroom_verify() {
             self.verify_frame_room();
         }
@@ -6542,7 +6606,10 @@ impl State {
             // The host's resume clears `frame_yield`; the next op re-derives the flag.
             return LeanStop::Return;
         }
-        if crate::parallel::worker_fatal_pending()
+        // A worker's own halt reaches `runtime_error` directly; the published one is a
+        // sibling's, for the parent's loop to raise once the workers have joined.
+        if !worker
+            && crate::parallel::worker_fatal_pending()
             && let Some(err) = crate::parallel::take_worker_fatal()
         {
             self.database.raise_runtime_error(err);
@@ -6955,6 +7022,7 @@ impl State {
         }));
 
         self.fn_positions = data.definitions.iter().map(|d| d.code_position).collect();
+        self.worker_fn_memo = (u32::MAX, u32::MAX);
         self.code_pos = pos;
         // @PLAN53 cluster 2 / S4: the entry frame base must be 8-aligned in
         // aligned mode (step(4)=8) so the entry function's locals — and every
@@ -7160,9 +7228,9 @@ impl State {
             );
             if self.fast_stack && !Self::no_register_table() {
                 let yielded = if Self::no_hot() {
-                    self.lean_register_loop::<false>(bytecode_len)
+                    self.lean_register_loop::<false, false>(bytecode_len)
                 } else {
-                    self.lean_register_loop::<true>(bytecode_len)
+                    self.lean_register_loop::<true, false>(bytecode_len)
                 };
                 if yielded {
                     return;
@@ -7183,7 +7251,7 @@ impl State {
                         .dispatch_stop
                         .load(std::sync::atomic::Ordering::Relaxed)
                     {
-                        match self.lean_stop() {
+                        match self.lean_stop(false) {
                             LeanStop::Continue => {}
                             LeanStop::Return => return,
                             LeanStop::Leave => break,
@@ -8292,6 +8360,7 @@ impl State {
             published_spans: None,
             entered_fns: None,
             fn_positions: Vec::new(),
+            worker_fn_memo: (u32::MAX, u32::MAX),
             frame_headroom: Arc::new(Vec::new()),
             gen_max_position: 0,
             debug: None,
@@ -8447,13 +8516,10 @@ impl State {
                 && let Some(data) = ctx.data.get()
             {
                 self.fn_positions = data.definitions.iter().map(|d| d.code_position).collect();
+                self.worker_fn_memo = (u32::MAX, u32::MAX);
             }
         }
-        let d_nr = self
-            .fn_positions
-            .iter()
-            .position(|&p| p == fn_pos)
-            .map_or(u32::MAX, |i| i as u32);
+        let d_nr = self.worker_d_nr(fn_pos);
         self.push_frame(CallFrame {
             d_nr,
             call_pos: 0,
@@ -8483,13 +8549,10 @@ impl State {
                 && let Some(data) = ctx.data.get()
             {
                 self.fn_positions = data.definitions.iter().map(|d| d.code_position).collect();
+                self.worker_fn_memo = (u32::MAX, u32::MAX);
             }
         }
-        let d_nr = self
-            .fn_positions
-            .iter()
-            .position(|&p| p == fn_pos)
-            .map_or(u32::MAX, |i| i as u32);
+        let d_nr = self.worker_d_nr(fn_pos);
         self.push_frame(CallFrame {
             d_nr,
             call_pos: 0,
@@ -8539,13 +8602,10 @@ impl State {
                 && let Some(data) = ctx.data.get()
             {
                 self.fn_positions = data.definitions.iter().map(|d| d.code_position).collect();
+                self.worker_fn_memo = (u32::MAX, u32::MAX);
             }
         }
-        let d_nr = self
-            .fn_positions
-            .iter()
-            .position(|&p| p == fn_pos)
-            .map_or(u32::MAX, |i| i as u32);
+        let d_nr = self.worker_d_nr(fn_pos);
         self.push_frame(CallFrame {
             d_nr,
             call_pos: 0,
@@ -8638,13 +8698,10 @@ impl State {
                 && let Some(data) = ctx.data.get()
             {
                 self.fn_positions = data.definitions.iter().map(|d| d.code_position).collect();
+                self.worker_fn_memo = (u32::MAX, u32::MAX);
             }
         }
-        let d_nr = self
-            .fn_positions
-            .iter()
-            .position(|&p| p == fn_pos)
-            .map_or(u32::MAX, |i| i as u32);
+        let d_nr = self.worker_d_nr(fn_pos);
         // @PLAN53 cluster 2 / 2i: the worker body's frame reserves the tuple arg
         // at a STEPPED span (codegen advances each arg by stack_step(size)), so a
         // tuple whose raw total is not a multiple of 8 (e.g. (integer, character) =
@@ -8726,13 +8783,10 @@ impl State {
                 && let Some(data) = ctx.data.get()
             {
                 self.fn_positions = data.definitions.iter().map(|d| d.code_position).collect();
+                self.worker_fn_memo = (u32::MAX, u32::MAX);
             }
         }
-        let d_nr = self
-            .fn_positions
-            .iter()
-            .position(|&p| p == fn_pos)
-            .map_or(u32::MAX, |i| i as u32);
+        let d_nr = self.worker_d_nr(fn_pos);
         self.push_frame(CallFrame {
             d_nr,
             call_pos: 0,
@@ -8792,13 +8846,10 @@ impl State {
                 && let Some(data) = ctx.data.get()
             {
                 self.fn_positions = data.definitions.iter().map(|d| d.code_position).collect();
+                self.worker_fn_memo = (u32::MAX, u32::MAX);
             }
         }
-        let d_nr = self
-            .fn_positions
-            .iter()
-            .position(|&p| p == fn_pos)
-            .map_or(u32::MAX, |i| i as u32);
+        let d_nr = self.worker_d_nr(fn_pos);
         self.push_frame(CallFrame {
             d_nr,
             call_pos: 0,
@@ -8904,13 +8955,10 @@ impl State {
                 && let Some(data) = ctx.data.get()
             {
                 self.fn_positions = data.definitions.iter().map(|d| d.code_position).collect();
+                self.worker_fn_memo = (u32::MAX, u32::MAX);
             }
         }
-        let d_nr = self
-            .fn_positions
-            .iter()
-            .position(|&p| p == fn_pos)
-            .map_or(u32::MAX, |i| i as u32);
+        let d_nr = self.worker_d_nr(fn_pos);
         let args_size = self.worker_arg_size(&arg);
         self.push_frame(CallFrame {
             d_nr,
@@ -8954,13 +9002,10 @@ impl State {
                 && let Some(data) = ctx.data.get()
             {
                 self.fn_positions = data.definitions.iter().map(|d| d.code_position).collect();
+                self.worker_fn_memo = (u32::MAX, u32::MAX);
             }
         }
-        let d_nr = self
-            .fn_positions
-            .iter()
-            .position(|&p| p == fn_pos)
-            .map_or(u32::MAX, |i| i as u32);
+        let d_nr = self.worker_d_nr(fn_pos);
         let args_size = self.worker_arg_size(&arg);
         self.push_frame(CallFrame {
             d_nr,
@@ -9054,14 +9099,11 @@ impl State {
         }));
         if self.fn_positions.is_empty() {
             self.fn_positions = data.definitions.iter().map(|d| d.code_position).collect();
+            self.worker_fn_memo = (u32::MAX, u32::MAX);
         }
         self.publish_source_spans();
 
-        let d_nr = self
-            .fn_positions
-            .iter()
-            .position(|&p| p == fn_pos)
-            .map_or(u32::MAX, |i| i as u32);
+        let d_nr = self.worker_d_nr(fn_pos);
         let args_size: u16 = args.iter().map(|a| self.worker_arg_size(a)).sum();
         self.push_frame(CallFrame {
             d_nr,
