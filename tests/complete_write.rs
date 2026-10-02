@@ -30,8 +30,11 @@ const EXPECTED: &[(&str, usize, usize)] = &[
     ("n_c5", 1, 0), // the FALLBACK literal skips; the cast path is not an emitter site
     ("n_c6", 1, 1), // the inner N literal skips; O (nested by OpCopyRecord) declines
     ("n_c7", 1, 0), // a conditional part still writes its field
-    ("n_c8", 2, 3), // the vector store and the discharge fallback skip; the __nullable
-    // mints keep the prefill (the discriminant is not in the group's write set)
+    ("n_c8", 3, 3), // the vector store and the discharge fallback skip; the __nullable
+    // mints keep the prefill (the discriminant is not in the group's write set).  THREE
+    // no-prefill sites: the walk over `outn` is a counted loop (`@FR-R-ForwardWalk`), which
+    // admits the guarded chain, so its body — the fallback's mint — is emitted twice, as in
+    // c1.  `LOFT_NO_GUARDED_CHAIN=1` or `LOFT_NO_FORWARD_WALK=1` gives (2, 3).
     // c9 / c10 — a value of the element type appended WHOLE (`b.ps += [p]`): the one
     // `OpCopyRecord` into the element covers every field, so the heap-free P3 mint skips
     // (n_add_p — its one prefilled site is the live-dispatch prelude's `OpDatabase` that

@@ -186,7 +186,12 @@ fn match_walk(ops: &Ops, block: &Block) -> Option<(Walk, usize)> {
 /// result buffer the scope pass promoted, which the caller always fills from its own fresh
 /// work buffer, never from a vector the program named.
 fn by_reference(tp: &Type) -> bool {
-    matches!(tp, Type::RefVar(_))
+    match tp {
+        Type::RefVar(_) => true,
+        // Not peeled: a `&` parameter is never typed `τ?`; a `τ?` value is a copy.
+        Type::Optional(_) => false,
+        _ => false,
+    }
 }
 
 /// Can `body` resize the walked vector?  `Err` names why a shape is declined.
@@ -199,6 +204,8 @@ fn check_body(
     let alias = |n: u16| n == w.vec_t || n == w.src;
     let src_is_param = vars.is_argument(w.src);
     match node {
+        // A source position is transparent: the wrapped node is checked.
+        Value::Span(s) => check_body(data, vars, w, &s.1),
         Value::Var(n) if alias(*n) => Err("the vector is used other than by an element read"),
         Value::Set(n, e) => {
             if alias(*n) || *n == w.idx {
@@ -252,8 +259,11 @@ fn rewrite_in(
 ) -> usize {
     let mut n = 0;
     v.for_each_child_mut(&mut |c| n += rewrite_in(data, ops, vars, c, fname));
-    let Value::Block(block) = v else {
-        return n;
+    let block = match v {
+        Value::Block(block) => block,
+        // A wrapped block was reached as this node's child, just above.
+        Value::Span(_) => return n,
+        _ => return n,
     };
     let Some((w, first_body)) = match_walk(ops, block) else {
         return n;
