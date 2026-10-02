@@ -7739,7 +7739,8 @@ impl Data {
     }
 
     /// The `operator` form a bound's operator member names: `OpLt` → `compare`, `OpAdd` →
-    /// `plus`, a two-operand `OpMin` → `minus`, `OpMul` → `times`.
+    /// `plus`, a two-operand `OpMin` → `minus`, `OpMul` → `times`, `OpDiv` → `divided_by`,
+    /// `OpRem` → `remainder`, a one-operand `OpMin` → `negate`.
     #[must_use]
     pub fn operator_form_of_member(member: &str, arity: usize) -> Option<&'static str> {
         match (member, arity) {
@@ -7747,6 +7748,9 @@ impl Data {
             ("OpAdd", 2) => Some("plus"),
             ("OpMin", 2) => Some("minus"),
             ("OpMul", 2) => Some("times"),
+            ("OpDiv", 2) => Some("divided_by"),
+            ("OpRem", 2) => Some("remainder"),
+            ("OpMin", 1) => Some("negate"),
             _ => None,
         }
     }

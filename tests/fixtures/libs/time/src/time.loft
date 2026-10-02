@@ -476,7 +476,7 @@ pub operator minus(self: DateTime, span: Duration) -> DateTime { DateTime { ms: 
 // DateTime + Duration moves forward by the span.
 pub operator plus(self: DateTime, span: Duration) -> DateTime { DateTime { ms: self.ms + span.ms } }
 // The same span, backwards.
-pub fn negate(self: Duration) -> Duration { Duration { ms: 0 - self.ms } }
+pub operator negate(self: Duration) -> Duration { Duration { ms: 0 - self.ms } }
 
 // ── Duration operators ──
 // `==` and `!=` compare the length.

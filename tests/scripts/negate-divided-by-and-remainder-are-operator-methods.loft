@@ -1,0 +1,73 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN182 P5b — `-x`, `a / b` and `a % b` on a program's type are its `operator negate`,
+// `divided_by` and `remainder` (`@FR-Op-Back`), and the stdlib's interfaces are spelled as the
+// definitions that meet them (Q13): a program's type meets `Numeric` with `operator times` and
+// `operator negate`, and a user interface written with `operator` members drives the symbols in
+// a generic body.  `==` is structural on every type at every depth (@C134) — `Equatable` declares
+// nothing and every type meets it — and `!x` stays the presence test.
+//
+// Every expected value is worked out by hand.
+//
+// @falsified-at: 23bca8ae1 — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit — before P5b `-m`, `/`, `%` found no operator method at a program's type and
+//   `Numeric` was not met by `operator times`; the file failed to compile on both backends.
+//   HOLDS: every asserted value; leak and panic equal on both trees.
+
+value struct M { c: integer }
+operator negate(self: M) -> M { M { c: 0 - self.c } }
+operator times(self: M, other: M) -> M { M { c: self.c * other.c } }
+operator divided_by(self: M, other: M) -> M { M { c: self.c / other.c ?? 0 } }
+operator divided_by(self: M, k: integer) -> M { M { c: self.c / k ?? 0 } }
+operator remainder(self: M, k: integer) -> M { M { c: self.c % k ?? 0 } }
+
+value struct D { n: integer }
+value struct Holds { d: D, k: integer }
+
+interface Scaled {
+  operator times(self: Self, other: Self) -> Self
+  operator negate(self: Self) -> Self
+}
+interface Ranked { operator compare(self: Self, other: Self) -> Ordering }
+struct R { v: integer }
+operator compare(self: R, other: R) -> Ordering { self.v.compare(other.v) }
+
+fn neg_of<T: Numeric>(a: T) -> T { -a }
+fn mul_of<T: Numeric>(a: T, b: T) -> T { a * b }
+fn same<T: Equatable>(a: T, b: T) -> boolean { a == b }
+fn differ<T: Equatable>(a: T, b: T) -> boolean { a != b }
+fn scaled<T: Scaled>(a: T, b: T) -> T { -(a * b) }
+fn smaller<T: Ranked>(a: T, b: T) -> T { if a < b { a } else { b } }
+
+fn main() {
+  a = M { c: 17 };
+  b = M { c: 5 };
+  // -17; 17 / 5 = 3; 17 / 2 = 8; 17 % 5 = 2; a method call spells the same.
+  assert((-a).c == -17 && (a / b).c == 3 && (a / 2).c == 8 && (a % 5).c == 2, "the forms");
+  assert(a.negate().c == -17 && a.divided_by(b).c == 3, "the method spellings");
+  // Compound: 17 / 2 = 8, 8 % 3 = 2.
+  x = M { c: 17 };
+  x /= 2;
+  x %= 3;
+  assert(x.c == 2, "compound /= and %=: {x.c}");
+  // `==` is structural, at every depth: 1 != 11; a held D compares by its field.
+  // Two asserts, not one `&&`: loft#1852 (native names an undeclared temporary there).
+  assert(D { n: 1 } != D { n: 11 }, "structural !=");
+  assert(D { n: 7 } == D { n: 7 }, "structural ==");
+  assert(Holds { d: D { n: 3 }, k: 1 } == Holds { d: D { n: 3 }, k: 1 }, "a held field structurally");
+  assert(Holds { d: D { n: 3 }, k: 1 } != Holds { d: D { n: 13 }, k: 1 }, "and unequal by that field");
+  // Through bounds: Numeric at M — -(4) = -4, 3 * 4 = 12; Equatable is structural.
+  assert(neg_of(M { c: 4 }).c == -4 && mul_of(M { c: 3 }, M { c: 4 }).c == 12, "Numeric at a program's type");
+  assert(neg_of(4) == -4 && mul_of(3, 4) == 12, "Numeric at integer, unchanged");
+  assert(!same(D { n: 2 }, D { n: 42 }) && differ(D { n: 2 }, D { n: 43 }) && same(D { n: 5 }, D { n: 5 }), "Equatable at a program's type");
+  assert(same(5, 5) && !same("a", "b"), "Equatable at the built-ins, unchanged");
+  // A user interface spelled with `operator` members drives `*`, unary `-` and `<`:
+  // -(2 * 3) = -6; smaller of 9 and 4 is 4.
+  assert(scaled(M { c: 2 }, M { c: 3 }).c == -6, "operator members drive * and -");
+  assert(smaller(R { v: 9 }, R { v: 4 }).v == 4, "an operator compare member drives <");
+  // `!x` stays the presence test.
+  maybe: M? = null;
+  assert(!maybe, "! is presence, not an operator");
+  println("ok");
+}

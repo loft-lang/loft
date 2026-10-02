@@ -13,7 +13,7 @@ fn add(acc: integer, x: integer) -> integer {
   acc + x
 }
 
-fn negate(x: integer) -> integer {
+fn flip_sign(x: integer) -> integer {
   -x
 }
 
@@ -43,10 +43,10 @@ fn main() {
   assert(doubled[2] == 6, "map[2]={doubled[2]}");
   assert(doubled[3] == 8, "map[3]={doubled[3]}");
   assert(doubled[4] == 10, "map[4]={doubled[4]}");
-  // --- map: negate ---
-  negated = map(nums, negate);
-  assert(negated[0] == -1, "negate[0]={negated[0]}");
-  assert(negated[4] == -5, "negate[4]={negated[4]}");
+  // --- map: negate by a named function ---
+  negated = map(nums, flip_sign);
+  assert(negated[0] == -1, "flip_sign[0]={negated[0]}");
+  assert(negated[4] == -5, "flip_sign[4]={negated[4]}");
   // --- map on empty vector (produced by filtering all elements out) ---
   all_neg = [-1, -2, -3];
   mapped_empty = map(filter(all_neg, is_positive), double);

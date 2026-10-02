@@ -7,8 +7,11 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 **Status: P0, P1 (`compare`), P2 (`plus` / `minus` / `times`) and P5 (loft#1833: `next`,
 `to_text` and `to_<type>` as `operator` forms, a user `fn Op…` retired, `[…]` given back to the
-built-in collections, `time` and `server` migrated) are built; the rules are
-[formal/operators.md](../../formal/operators.md).  Open: the items under § Next.**  The plan
+built-in collections, `time` and `server` migrated) and P5b (Q13: the stdlib interfaces spelled
+with `operator` members, `op ⊕` refused naming the member, the built-in types declaring their
+operators; `negate`, `divided_by` and `remainder` built; `==` structural for good, @C134) are
+built; the rules are [formal/operators.md](../../formal/operators.md).  Open: the items under §
+Next.**  The plan
 itself — goal, constraints, scope, phases — is the tracker issue,
 [loft-lang/plans#182](https://github.com/loft-lang/plans/issues/182); this directory holds P0's
 deliverables:
@@ -59,9 +62,12 @@ built-in complement of the built-in `==`.  A type defines any subset of the arit
 overflows to null and orders silently wrong (E-Uncomp); the stdlib gives every built-in ordered
 type a `compare` (`self.ms.compare(other.ms)`), and `Ordering.then(next)` chains fields.
 
-**Q3 — equality.  DECIDED (owner): structural by default, `operator equals` opts in**
-(Op-Eq): `a == b` is `a.equals(b)`, `a != b` its negation; `compare` and `equals` independent;
-`!x` stays the presence test.  What remained for P0 is **Q14 — the key field**: see below.
+**Q3 — equality.  DECIDED (owner, 2026-10-02, superseding "`operator equals` opts in"): `==` is
+ALWAYS structural, for every type at every depth, and nothing is user-defined** (@C134, Op-Eq):
+`operator equals` is refused at the definition naming a named method as the cure; `Equatable`
+declares nothing; `!x` stays the presence test.  The reason: a user `==` is an unchecked
+contract — nothing makes it an equivalence, keeps it agreeing with a key's hash and order, or
+bounds what it runs — while structural `==` stays readable from the line.  Q14 closes with it.
 
 **Q4 — mixed types and direction.**  `a ⊕ b` calls the left operand's method, chosen by the right
 operand's type among its overloads (`DateTime.minus(DateTime) -> Duration` beside
@@ -127,8 +133,10 @@ naming the cure — 6 uses in the stdlib, 8 outside it.  A member whose form is 
 (`Numeric`'s unary `-`, `Equatable`'s `==`, the tests' `op /` and `op %`) is with the
 orchestrator before a choice is made.  Built as P5b.
 
-**Q14 — a key field whose type has `operator equals`.  Recommended: (a), refuse it at the
-declaration** (Op-Key), for the owner.  Measured on today's tree with a user `fn OpEq` standing in
+**Q14 — a key field whose type has `operator equals`.  CLOSED by Q3's decision (@C134): no type
+redefines `==`, so every key compares structurally and Op-Key has nothing to refuse.  The matrix
+below is the record of the question as it stood.**  Recommended then: (a), refuse it at the
+declaration (Op-Key).  Measured on today's tree with a user `fn OpEq` standing in
 for `operator equals` (`Dt` with `==` meaning "same last digit", so `Dt{1} == Dt{11}`):
 
 | cell | (a) refuse the key | (b) keys compare structurally |
@@ -178,14 +186,12 @@ is decided.
 
 ## Next
 
-Two items stay open, each with its home (Q11's `_by` functions shipped with
-`tests/scripts/a-key-function-sorts-and-picks-by-any-ordered-key.loft`):
+Nothing stays open from the questions: Q11's `_by` functions shipped with
+`tests/scripts/a-key-function-sorts-and-picks-by-any-ordered-key.loft`; Q13 shipped as P5b with
+`tests/scripts/negate-divided-by-and-remainder-are-operator-methods.loft` (an `operator times`
+member drives `a * b` in a generic body: each `operator` member mints the symbolic member it
+stands for, which the monomorph lowers); Q14 (Op-Key) is dropped with `operator equals` (@C134).
 
-- **Q13 — P5b, the operator interfaces' re-spelling** (decided above).  Its first step is the
-  one a measurement found missing: an interface member written `operator times` does not yet
-  drive `a * b` inside a generic body.
-- **Q14 — (Op-Key)** lands WITH `operator equals` (RULES.md), never before it: until a type can
-  redefine `==`, every key compares structurally and the rule has nothing to refuse.
-
-The reserved forms (`negate`, `divided_by`, `remainder`, `equals`, `at` / `set_at`, the slices,
-`power`, the bit operators) wait for a program that needs them (Q10).
+The reserved forms (`at` / `set_at`, the slices, `power`, the bit operators) wait for a program
+that needs them (Q10); `negate`, `divided_by` and `remainder` are built (P5b), and `equals` is
+refused for good (@C134).

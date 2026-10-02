@@ -5380,12 +5380,14 @@ The built-in bounds are not only for built-in types, and this is what they are f
 Ordered      operator compare(self: T, other: T) -> Ordering   (`<` `<=` `>` `>=`)
 Addable      operator plus(self: T, other: T) -> T            (`+`)
 Subtractable operator minus(self: T, other: T) -> T           (binary `-`)
+Numeric      operator times(self: T, other: T) -> T           (`*`)
+             operator negate(self: T) -> T                    (unary `-`)
 Scalable     fn scale(self: T, factor: integer) -> integer
 Printable    operator to_text(self: T) -> text
 Walkable     fn children(self: T) -> vector<T>
 ```
 
-`compare` answers `Less`, `Equal` or `Greater`; every built-in ordered type has one, so `self.cents.compare(other.cents)` is the whole body for one field. `Equatable` is met by every type, because `==` compares what two values hold — a struct field by field.  `Numeric` (`\*` and the unary `-`) is met by the built-in numbers only: a type cannot define the unary `-` yet.
+`compare` answers `Less`, `Equal` or `Greater`; every built-in ordered type has one, so `self.cents.compare(other.cents)` is the whole body for one field. `Equatable` is met by every type, because `==` compares what two values hold — a struct field by field — unless the type defines `operator equals`.
 
 The same definition serves the bare operator: once `Money` has `compare`, both `a \< b` and `\<T: Ordered\>` work on it.  Miss one and the error names it — "'Money' does not satisfy interface 'Ordered': missing `operator compare(self: Money, other: Money) -\> Ordering`" — at the CALL site, because that is where the concrete type is known.
 
@@ -5394,6 +5396,8 @@ struct Money { cents: integer }
 operator compare(self: Money, other: Money) -> Ordering { self.cents.compare(other.cents) }
 operator plus(self: Money, other: Money) -> Money { Money { cents: self.cents + other.cents } }
 operator minus(self: Money, other: Money) -> Money { Money { cents: self.cents - other.cents } }
+operator negate(self: Money) -> Money { Money { cents: 0 - self.cents } }
+operator times(self: Money, other: Money) -> Money { Money { cents: self.cents * other.cents } }
 operator to_text(self: Money) -> text { "{self.cents}c" }
 fn test_user_type_bounds() {
   cheap = Money { cents: 300 };
@@ -5408,6 +5412,7 @@ fn test_user_type_bounds() {
   assert(total.cents == 600, "Addable on a user type: {total.cents}");
   assert(described(dear) == "700c", "Printable on a user type: {described(dear)}");
   assert(gen_diff(dear, cheap).cents == 400, "Subtractable on a user type");
+  assert(gen_negdiff(dear, cheap).cents == -400, "Numeric + Subtractable on a user type");
 }
 struct Crate { label: text, kids: vector<Crate> }
 fn children(self: Crate) -> vector<Crate> { self.kids }
@@ -7838,30 +7843,39 @@ pub type u32 = integer limit(0, 4294967294) size(4)
 
 4-byte unsigned: 0 – 4\_294\_967\_294.  The top code is reserved to buy the same refusal `i32` gets at the bottom (`u32 = 4294967295` does not compile) — and, unlike `i32`, it is NOT a null: an overflow here reads `0`, the type's default (C127, and the note on `i32` above says why the two differ).  size(4) forces 4-byte storage and serialisation symmetric with `i32`, and a value in the upper half (2^31..2^32-2) reads back as the same positive integer.  `u32` is for file / wire-format fields (magic numbers, counts, tick fields) where the byte width is the load-bearing property; plain `integer` holds the whole 0..2^32-1 range and more.
 
+```rust
+pub enum Ordering {
+  Less,
+  Equal,
+  Greater
+}
+```
+
+Where one value stands against another: what `compare` answers.  An enum rather than a signed number, so a comparison cannot be written as a subtraction that overflows.
+
 == Interfaces
 
 ```rust
 pub interface Ordered {
-  op < (self: Self, other: Self) -> boolean
+  operator compare(self: Self, other: Self) -> Ordering
 }
 ```
 
-Standard interfaces for bounded generic functions. A type satisfies an interface by defining the required operator or method. Types that support the `\<` comparison operator. Satisfied by integer, single, float, text, and any type defining `operator compare`.
+Standard interfaces for bounded generic functions. A type satisfies an interface by defining the `operator` method or the method it names — a built-in type by the stdlib's own, a program's type by its own (`formal/operators.md`). Types that support the `\<` comparison operator. Satisfied by integer, single, float, text, and any type defining `operator compare`.
 `boolean` is NOT among them, deliberately: it satisfies Equatable below and has no ordering, so `false \< true` is a refusal rather than a convention the language picks for you.  A program that wants it says so — `(a as integer) \< (b as integer)`.  The same line bounds how null is ordered: that applies to the ordered types only, and a boolean null still compares with `==` like every other scalar.
-ONE method is all a type has to define: inside a generic bounded by this, `\>`, `\<=` and `\>=` all derive from `\<` — `a \> b` is `b \< a`, `a \<= b` is `!(b \< a)`, `a \>= b` is `!(a \< b)`.  Each evaluates its operands exactly once.
+ONE method is all a type has to define: inside a generic bounded by this, `\<`, `\<=`, `\>` and `\>=` all read it, each evaluating its operands exactly once.
 
 ```rust
 pub interface Equatable {
-  op == (self: Self, other: Self) -> boolean
 }
 ```
 
-Types that support the `==` equality operator: every type (\@C91), compared by content. A tuple compares element by element, as its concrete `==` does.
+Types that support the `==` equality operator: every type, compared by content at every depth (\@C91).  `==` is always structural and no type redefines it, so this declares nothing; a deep comparison of a type's own is a named method.  A tuple compares element by element, as its concrete `==` does.
 `!=` derives from it (`a != b` is `!(a == b)`).
 
 ```rust
 pub interface Addable {
-  op + (self: Self, other: Self) -> Self
+  operator plus(self: Self, other: Self) -> Self
 }
 ```
 
@@ -7869,22 +7883,22 @@ Types that support the `+` addition operator, returning the same type. Satisfied
 
 ```rust
 pub interface Numeric {
-  op * (self: Self, other: Self) -> Self
-  op - (self: Self) -> Self
+  operator times(self: Self, other: Self) -> Self
+  operator negate(self: Self) -> Self
 }
 ```
 
-Types that support `\*` and `-` (unary negation). Separate from `Addable` so a generic can ask for the fewest operators it needs. Satisfied by integer, single and float: a program's type has no unary `-` to define yet.
+Types that support `\*` and `-` (unary negation). Separate from `Addable` so a generic can ask for the fewest operators it needs. Satisfied by integer, single, float, and any type defining `operator times` and `operator negate`.
 Binary subtraction is `Subtractable` below and deliberately NOT here.  One interface CAN declare both arities of `-`, but adding a requirement to `Numeric` would take satisfaction away from every type that meets it, which a compatible release may not do.
 
 ```rust
 pub interface Subtractable {
-  op - (self: Self, other: Self) -> Self
+  operator minus(self: Self, other: Self) -> Self
 }
 ```
 
 Types that support binary `-` (subtraction), returning the same type. Satisfied by integer, single, float, and any type defining `operator minus`.
-A bound of its own rather than a third requirement on `Numeric`: a bound set may declare one name at two arities (`-` means `OpMin` either way, told apart by its operand count), so `\<T: Numeric + Subtractable\>` gets negation and subtraction together from two interfaces that each name `OpMin`.  The built-in number types satisfy both.
+A bound of its own rather than a third requirement on `Numeric`, so `\<T: Numeric + Subtractable\>` gets negation and subtraction together from two interfaces.  The built-in number types satisfy both.
 
 ```rust
 pub interface Scalable {
@@ -7892,7 +7906,7 @@ pub interface Scalable {
 }
 ```
 
-Types that support integer scaling via a `scale` method. Uses a method (not `op \*`): inside a `\<T: Numeric + …\>` body, `\*` already means Numeric's `Self \* Self`, so `x \* 2` there is refused ("operator '\*' requires a concrete type") even when another bound declares `op \* (self: Self, f: integer)`. Two SEPARATE generics may each bound their own `T` by an interface declaring the same method differently — a header binds its own type variable. User types satisfy Scalable by defining `fn scale(self: T, factor: integer) -\> integer`.
+Types that support integer scaling via a `scale` method. Uses a method (not `operator times`): inside a `\<T: Numeric + …\>` body, `\*` already means Numeric's `Self \* Self`, so `x \* 2` there is refused ("operator '\*' requires a concrete type") even when another bound declares `operator times(self: Self, f: integer)`. Two SEPARATE generics may each bound their own `T` by an interface declaring the same method differently — a header binds its own type variable. User types satisfy Scalable by defining `fn scale(self: T, factor: integer) -\> integer`.
 
 ```rust
 pub interface Printable {
@@ -8205,38 +8219,136 @@ pub fn clamp(self: float, lo: float, hi: float) -> float
 Clamps v into the inclusive range \[lo, hi\]. Returns null if any argument is null.
 
 ```rust
-pub enum Ordering {
-  Less,
-  Equal,
-  Greater
-}
-```
-
-Where one value stands against another: what `compare` answers.  An enum rather than a signed number, so a comparison cannot be written as a subtraction that overflows.
-
-```rust
 pub fn then(self: Ordering, next: Ordering) -> Ordering
 ```
 
 This answer, or `next` when this one is `Equal`: compares by several fields in turn, `a.year.compare(b.year).then(a.month.compare(b.month))`.
 
 ```rust
-pub fn compare(self: integer, other: integer) -> Ordering
+pub operator compare(self: integer, other: integer) -> Ordering
 ```
 
 Where `self` stands against `other` — `Less`, `Equal` or `Greater` — in the order `\<` uses.
 
 ```rust
-pub fn compare(self: single, other: single) -> Ordering
+pub operator compare(self: single, other: single) -> Ordering
 ```
 
 Where `self` stands against `other`, in the order `\<` uses.
 
 ```rust
-pub fn compare(self: float, other: float) -> Ordering
+pub operator compare(self: float, other: float) -> Ordering
 ```
 
 Where `self` stands against `other`, in the order `\<` uses.
+
+```rust
+pub operator plus(self: integer, other: integer) -> integer
+```
+
+`+` as the method `Addable` names: `a.plus(b)` is `a + b`.
+
+```rust
+pub operator minus(self: integer, other: integer) -> integer
+```
+
+`-` as the method `Subtractable` names: `a.minus(b)` is `a - b`.
+
+```rust
+pub operator times(self: integer, other: integer) -> integer
+```
+
+`\*` as the method `Numeric` names: `a.times(b)` is `a \* b`.
+
+```rust
+pub operator negate(self: integer) -> integer
+```
+
+The unary `-` as the method `Numeric` names: `a.negate()` is `-a`.
+
+```rust
+pub operator divided_by(self: integer, other: integer) -> integer?
+```
+
+`/` as a method: `a.divided\_by(b)` is `a / b`, null on a zero divisor.
+
+```rust
+pub operator remainder(self: integer, other: integer) -> integer?
+```
+
+`%` as a method: `a.remainder(b)` is `a % b`, null on a zero divisor.
+
+```rust
+pub operator plus(self: single, other: single) -> single
+```
+
+`+` as the method `Addable` names: `a.plus(b)` is `a + b`.
+
+```rust
+pub operator minus(self: single, other: single) -> single
+```
+
+`-` as the method `Subtractable` names: `a.minus(b)` is `a - b`.
+
+```rust
+pub operator times(self: single, other: single) -> single
+```
+
+`\*` as the method `Numeric` names: `a.times(b)` is `a \* b`.
+
+```rust
+pub operator negate(self: single) -> single
+```
+
+The unary `-` as the method `Numeric` names: `a.negate()` is `-a`.
+
+```rust
+pub operator divided_by(self: single, other: single) -> single?
+```
+
+`/` as a method: `a.divided\_by(b)` is `a / b`, null on a zero divisor.
+
+```rust
+pub operator remainder(self: single, other: single) -> single?
+```
+
+`%` as a method: `a.remainder(b)` is `a % b`, null on a zero divisor.
+
+```rust
+pub operator plus(self: float, other: float) -> float
+```
+
+`+` as the method `Addable` names: `a.plus(b)` is `a + b`.
+
+```rust
+pub operator minus(self: float, other: float) -> float
+```
+
+`-` as the method `Subtractable` names: `a.minus(b)` is `a - b`.
+
+```rust
+pub operator times(self: float, other: float) -> float
+```
+
+`\*` as the method `Numeric` names: `a.times(b)` is `a \* b`.
+
+```rust
+pub operator negate(self: float) -> float
+```
+
+The unary `-` as the method `Numeric` names: `a.negate()` is `-a`.
+
+```rust
+pub operator divided_by(self: float, other: float) -> float?
+```
+
+`/` as a method: `a.divided\_by(b)` is `a / b`, null on a zero divisor.
+
+```rust
+pub operator remainder(self: float, other: float) -> float?
+```
+
+`%` as a method: `a.remainder(b)` is `a % b`, null on a zero divisor.
 
 ```rust
 pub fn approx(self: float, b: float, eps: float) -> boolean
@@ -8273,13 +8385,13 @@ pub fn len(self: character) -> integer
 Byte length of the character's UTF-8 encoding (1–4).
 
 ```rust
-pub fn compare(self: text, other: text) -> Ordering
+pub operator compare(self: text, other: text) -> Ordering
 ```
 
 Where `self` stands against `other`, in the order `\<` uses: by bytes, as `\<` compares text.
 
 ```rust
-pub fn compare(self: character, other: character) -> Ordering
+pub operator compare(self: character, other: character) -> Ordering
 ```
 
 Where `self` stands against `other`, by code point, in the order `\<` uses.

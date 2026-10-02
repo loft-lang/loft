@@ -23,6 +23,9 @@ SPDX-License-Identifier: LGPL-3.0-or-later
                a + b                         a.plus(b)             operator plus(self: τ, other: U) -> V
                a - b                         a.minus(b)            operator minus(self: τ, other: U) -> V
                a * b                         a.times(b)            operator times(self: τ, other: U) -> V
+               a / b                         a.divided_by(b)       operator divided_by(self: τ, other: U) -> V
+               a % b                         a.remainder(b)        operator remainder(self: τ, other: U) -> V
+               -a                            a.negate()            operator negate(self: τ) -> V
                x as T                        x.to_t()              operator to_t(self: S) -> T   (Op-Conv)
                for e in x                    x.next()              operator next(self: τ) -> E?
                "{x}", "{x:spec}"             x.to_text(), x.to_text(spec)
@@ -39,7 +42,8 @@ SPDX-License-Identifier: LGPL-3.0-or-later
                the definition; on a built-in type it is refused.
 
   (Op-Shape)   `compare` takes `self` and one more parameter and answers `Ordering`; `plus`,
-               `minus` and `times` take `self` and one more parameter and answer a value; `next` takes
+               `minus`, `times`, `divided_by` and `remainder` take `self` and one more parameter
+               and answer a value; `negate` takes `self` alone and answers a value; `next` takes
                `self` alone and answers the item, null when the walk is done; `to_text` takes
                `self`, or `self` and `spec: text`, and answers `text`.
 
@@ -63,8 +67,14 @@ SPDX-License-Identifier: LGPL-3.0-or-later
                a nullable operand — and an operand of nullable type is discharged, and warned
                about, exactly as the same argument of `a.m(b)` is.
 
-  (Op-Compound) `a ⊕= b` for ⊕ in `+ - *` is `a = a.m(b)` for ⊕'s method m, on any place — a
+  (Op-Compound) `a ⊕= b` for ⊕ in `+ - * / %` is `a = a.m(b)` for ⊕'s method m, on any place — a
                variable, a field, an element — with the place read once.
+
+  (Op-Eq)      `==` and `!=` are (E-Eq), structural, on every type at every depth, and no type
+               defines them: `operator equals` is refused at the definition, naming the cure — a
+               named method (`same_second(self, other)`) for a comparison of the type's own.  A
+               plain `fn equals` is an ordinary method.  `!a` is the presence test on every type.
+               `Equatable` declares nothing; every type meets it.  @C134.
 
   (Op-Std)     a type declared in `default/` keeps the stdlib's operator definitions, and the
                stdlib's own bodies reach no user `operator` definition.  The stdlib marks its own

@@ -12,7 +12,7 @@ interface Validatable {
 }
 
 interface Summable {
-  op + (self: Self, other: Self) -> Self
+  operator plus(self: Self, other: Self) -> Self
 }
 
 // ── Test types ────────────────────────────────────────────────────────
@@ -122,10 +122,10 @@ fn test_bounded_for_loop_struct() {
 // claims to borrow its argument and the fresh `__retbuf` store leaks.
 
 interface IfStretchy {
-  op * (self: Self, if_factor: float) -> Self
+  operator times(self: Self, if_factor: float) -> Self
 }
 interface IfJoinable {
-  op + (self: Self, if_other: Self) -> Self
+  operator plus(self: Self, if_other: Self) -> Self
 }
 interface IfBendy {
   fn if_bend(self: Self, if_factor: float) -> Self

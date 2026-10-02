@@ -65,12 +65,12 @@ cheap = total < Money { cents: 500 };                  // calls compare
 
 ## Not available yet
 
-These have their names reserved and are refused with a pointer to this page: `operator equals`
-(`==` of your own), `negate` (unary `-`), `divided_by` (`/`), `remainder` (`%`), `at` and
-`set_at` (`x[i]`), `slice` (`x[a..b]`), `key_range` (a keyed slice), `power` (`**`), and
-`bit_and`, `bit_or`, `bit_xor`, `bit_not`, `shift_left`, `shift_right`.  When `operator equals`
-arrives, a type that defines it cannot be a key field of a `hash`, `sorted` or `index`: the
-collection would find keys one way and `==` would compare them another.
+These have their names reserved and are refused with a pointer to this page: `at` and `set_at`
+(`x[i]`), `slice` (`x[a..b]`), `key_range` (a keyed slice), `power` (`**`), and `bit_and`,
+`bit_or`, `bit_xor`, `bit_not`, `shift_left`, `shift_right`.
+
+`operator equals` is refused for good: `==` compares the fields of every type, always.  A
+comparison of your type's own is a named method — `same_second(self, other)` — called by name.
 
 ## When the compiler refuses an operator
 

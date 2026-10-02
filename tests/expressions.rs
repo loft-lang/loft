@@ -1184,12 +1184,12 @@ fn bounded_operator_self_return_type() {
 /// I8.3: an operator with a concrete second parameter (`T / integer`) must
 /// compile inside a bounded generic body and produce the correct result.
 /// The interface declares a mixed-type signature: `self: Self, divisor: integer -> integer`.
-/// `/` is a form a program's type cannot define yet (@PLN182 Q10), so the bound is met by
-/// `integer`'s own (`tests/parse_errors.rs::a_reserved_operator_bound_is_met_by_builtins_only`).
+/// Here the bound is met by `integer`'s own `operator divided_by`; a program's type meets it
+/// with its own (`tests/parse_errors.rs::a_divided_by_member_is_met_by_an_operator_method_only`).
 #[test]
 fn bounded_mixed_type_operator() {
     code!(
-        "interface Divisible { op / (self: Self, divisor: integer) -> integer }
+        "interface Divisible { operator divided_by(self: Self, divisor: integer) -> integer }
          fn halve<T: Divisible>(v: T, n: integer) -> integer { v / n ?? 0 }"
     )
     .expr("halve(42, 6)")
@@ -1204,8 +1204,8 @@ fn bounded_mixed_type_operator() {
 #[test]
 fn bounded_unary_operator() {
     code!(
-        // `%` is a form a program's type cannot define yet (@PLN182 Q10): `integer` meets it.
-        "interface Modular { op % (self: Self, modulus: integer) -> integer }
+        // `integer` meets the `operator remainder` member with the stdlib's own.
+        "interface Modular { operator remainder(self: Self, modulus: integer) -> integer }
          fn mod_measure<T: Modular>(v: T, m: integer) -> integer { v % m ?? 0 }"
     )
     .expr("mod_measure(42, 10)")
@@ -1424,7 +1424,7 @@ fn stdlib_scalable_interface() {
 #[test]
 fn two_interfaces_same_operator_no_conflict() {
     code!(
-        "interface Summable { op + (self: Self, other: Self) -> Self }
+        "interface Summable { operator plus(self: Self, other: Self) -> Self }
          fn total<T: Summable>(a: T, b: T) -> T { a + b }"
     )
     .expr("total(10, 32)")

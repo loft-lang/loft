@@ -138,6 +138,8 @@ fn test_combined_bounds() {
 //   Ordered      operator compare(self: T, other: T) -> Ordering   (`<` `<=` `>` `>=`)
 //   Addable      operator plus(self: T, other: T) -> T            (`+`)
 //   Subtractable operator minus(self: T, other: T) -> T           (binary `-`)
+//   Numeric      operator times(self: T, other: T) -> T           (`*`)
+//                operator negate(self: T) -> T                    (unary `-`)
 //   Scalable     fn scale(self: T, factor: integer) -> integer
 //   Printable    operator to_text(self: T) -> text
 //   Walkable     fn children(self: T) -> vector<T>
@@ -145,8 +147,7 @@ fn test_combined_bounds() {
 // `compare` answers `Less`, `Equal` or `Greater`; every built-in ordered type has
 // one, so `self.cents.compare(other.cents)` is the whole body for one field.
 // `Equatable` is met by every type, because `==` compares what two values hold —
-// a struct field by field.  `Numeric` (`*` and the unary `-`) is met by the
-// built-in numbers only: a type cannot define the unary `-` yet.
+// a struct field by field — unless the type defines `operator equals`.
 //
 // The same definition serves the bare operator: once `Money` has `compare`, both
 // `a < b` and `<T: Ordered>` work on it.  Miss one and the error names it —
@@ -157,6 +158,8 @@ struct Money { cents: integer }
 operator compare(self: Money, other: Money) -> Ordering { self.cents.compare(other.cents) }
 operator plus(self: Money, other: Money) -> Money { Money { cents: self.cents + other.cents } }
 operator minus(self: Money, other: Money) -> Money { Money { cents: self.cents - other.cents } }
+operator negate(self: Money) -> Money { Money { cents: 0 - self.cents } }
+operator times(self: Money, other: Money) -> Money { Money { cents: self.cents * other.cents } }
 operator to_text(self: Money) -> text { "{self.cents}c" }
 fn test_user_type_bounds() {
   cheap = Money { cents: 300 };
@@ -171,6 +174,7 @@ fn test_user_type_bounds() {
   assert(total.cents == 600, "Addable on a user type: {total.cents}");
   assert(described(dear) == "700c", "Printable on a user type: {described(dear)}");
   assert(gen_diff(dear, cheap).cents == 400, "Subtractable on a user type");
+  assert(gen_negdiff(dear, cheap).cents == -400, "Numeric + Subtractable on a user type");
 }
 struct Crate { label: text, kids: vector<Crate> }
 fn children(self: Crate) -> vector<Crate> { self.kids }

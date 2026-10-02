@@ -62,8 +62,8 @@ fn two_headers_writing_t_are_two_variables() {
 
 // The operator instance (loft#1300): two interfaces in one file, one requiring binary `-`
 // and one unary, both bounding a variable spelled `T`.
-interface Sub1300 { op - (self: Self, other: Self) -> Self }
-interface Neg1300 { op - (self: Self) -> Self }
+interface Sub1300 { operator minus(self: Self, other: Self) -> Self }
+interface Neg1300 { operator negate(self: Self) -> Self }
 fn sub1300<T: Sub1300>(a: T, b: T) -> T { a - b }
 fn neg1300<T: Neg1300>(a: T) -> T { -a }
 

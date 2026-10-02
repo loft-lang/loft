@@ -19,7 +19,7 @@
 // Axes it HOLDS FIXED:   the bound is on a free generic's own `T`.
 //
 // @falsified-at: bb9a31dea — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0
-// @falsified-by: tests/falsified/1818-a-bound-is-satisfied-only-by-a-member-that-takes-its-parameters.patch — interpret exit 101 -> 0, interpret panicked -> clean, native exit 1 -> 0
+// @falsified-by: tests/falsified/1818-a-bound-is-satisfied-only-by-a-member-that-takes-its-parameters.patch — interpret exit 1 -> 0, native exit 1 -> 0
 //   (patch re-derived at 6b8fc663c — reintroduces: a bound member met by ARITY alone)
 //   CHANNEL: asserts on the interpreter, exit on native (rustc refuses the control's source).
 //   WITNESS: on the control `same(w7, w7b)` over `OpEq(self: W, o: integer)` answers false
@@ -27,13 +27,14 @@
 //   a record); every other cell answers the same on both trees.
 //   HOLDS: leak and panic are equal on both trees.
 
-// C132 — the members are `operator` methods.  A program's type cannot define the unary `-`,
-// so `Numeric` is met by the builtins only here; and `==` compares the fields of every type, so
-// the `OpEq`-that-takes-an-integer cell is the content `==` it always fell back to.
+// C132 — the members are `operator` methods, the unary `-` `operator negate`; and `==`
+// compares the fields of a type with no `equals`, so the `OpEq`-that-takes-an-integer cell is
+// the content `==` it always fell back to.
 struct V { x: integer }
 operator plus(self: V, o: V) -> V { V { x: self.x + o.x } }
 operator minus(self: V, o: V) -> V { V { x: self.x - o.x } }
 operator times(self: V, o: V) -> V { V { x: self.x * o.x } }
+operator negate(self: V) -> V { V { x: 0 - self.x } }
 operator compare(self: V, o: V) -> Ordering { self.x.compare(o.x) }
 fn scale(self: V, factor: integer) -> integer { self.x * factor }
 operator to_text(self: V) -> text { "V{self.x}" }
@@ -71,7 +72,7 @@ fn main() {
   // A struct whose members take `(Self, Self)`, and a non-Self parameter the interface declares.
   a = V { x: 7 };
   b = V { x: 3 };
-  assert(added(a, b).x == 10 && diff(a, b).x == 4, "V arithmetic");
+  assert(added(a, b).x == 10 && diff(a, b).x == 4 && mul_neg(a, b).x == -21, "V arithmetic");
   assert(less(b, a) && !less(a, b), "V <");
   assert(scaled(a) == 21 && shown(a) == "V7", "V scale / to_text");
   // `Self?` parameters: 7 - 3 = 4, 3 < 7.

@@ -45,13 +45,14 @@
 //   read or a fault rather than as a leak.
 
 struct M { v: integer }
-// The operators are `operator` methods (C132).  A `Numeric` row (`*` returning `Self`) went
-// with them: `Numeric` also asks for the unary `-`, which a program's type cannot define yet,
-// and the `Addable` rows exercise the same delegation gate.
+// The operators are `operator` methods (C132); `Numeric` is `times` with `negate`.
 operator plus(self: M, other: M) -> M { M{ v: self.v + other.v } }
+operator times(self: M, other: M) -> M { M{ v: self.v * other.v } }
+operator negate(self: M) -> M { M{ v: -self.v } }
 operator compare(self: M, other: M) -> Ordering { self.v.compare(other.v) }
 
 fn add<T: Addable>(a: T, b: T) -> T { a + b }
+fn mul<T: Numeric>(a: T, b: T) -> T { a * b }
 fn addc(a: M, b: M) -> M { a + b }
 fn idg<T>(a: T) -> T { a }
 fn lt<T: Ordered>(a: T, b: T) -> boolean { a < b }
@@ -61,6 +62,10 @@ fn test_1273_a_delegating_generic_consumed_inline() {
   s = 0;
   for i in 0..20 { s += add(M{v:i}, M{v:1}).v; }
   assert(s == 210, "Addable inline: expected 210 got {s}");
+
+  w = 0;
+  for i in 0..20 { w += mul(M{v:i}, M{v:2}).v; }
+  assert(w == 380, "Numeric inline: expected 380 got {w}");
 }
 
 // The spellings that were clean before and must stay clean — a fix that lifted too eagerly

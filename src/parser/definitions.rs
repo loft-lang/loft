@@ -2064,6 +2064,9 @@ impl Parser {
             "compare" => ("<", "T", "Ordering"),
             "plus" => ("+", "U", "V"),
             "minus" => ("-", "U", "V"),
+            "divided_by" => ("/", "U", "V"),
+            "remainder" => ("%", "U", "V"),
+            "negate" => ("-", "U", "V"),
             "next" => ("for", "U", "E?"),
             "to_text" => ("\"{x}\"", "text", "text"),
             _ => ("*", "U", "V"),
@@ -2124,11 +2127,36 @@ impl Parser {
         if matches!(fn_name, "next" | "to_text") {
             return; // shape checked above
         }
+        self.check_operator_shape(fn_name, symbol, visible.len(), result, own);
+    }
+
+    /// `@FR-Op-Shape` — the parameter count and result an arithmetic, unary or `compare`
+    /// definition must have, on `own`, the type it is defined for.
+    fn check_operator_shape(
+        &mut self,
+        fn_name: &str,
+        symbol: &str,
+        params: usize,
+        result: &Type,
+        own: u32,
+    ) {
+        let t = self.data.def(own).name().to_string();
+        if fn_name == "negate" {
+            // `@FR-Op-Shape` — the unary form takes `self` alone and answers a value.
+            if params != 1 || matches!(result.base(), Type::Void) {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "`operator negate` takes `self` alone and answers the result of `-x`: \
+                     `operator negate(self: {t}) -> V`"
+                );
+            }
+            return;
+        }
         if fn_name != "compare" {
             // `@FR-Op-Shape` — an arithmetic form takes `self` and the right operand, and
             // answers a value.
-            if visible.len() != 2 || matches!(result.base(), Type::Void) {
-                let t = self.data.def(own).name().to_string();
+            if params != 2 || matches!(result.base(), Type::Void) {
                 diagnostic!(
                     self.lexer,
                     Level::Error,
@@ -2142,8 +2170,7 @@ impl Parser {
         // A nullable `Ordering?` is refused: `a < b` needs an answer for every pair.
         let answers_ordering = !matches!(result, Type::Optional(_))
             && matches!(result.base(), Type::Enum(d, false, _) if *d == ordering);
-        if visible.len() != 2 || !answers_ordering {
-            let t = self.data.def(own).name().to_string();
+        if params != 2 || !answers_ordering {
             diagnostic!(
                 self.lexer,
                 Level::Error,
@@ -2153,22 +2180,10 @@ impl Parser {
         }
     }
 
-    /// C132 (@PLN182 P5) — a program's `fn Op…` of an operator's name is an ordinary function
-    /// now (`@FR-Op-Std`).  Said where it is written, naming what to write instead.  A WARNING
-    /// for `OpEq` / `OpNe` / `OpNot`, whose forms keep answering — structurally, or as the
-    /// presence test — so a program relying on the function changes meaning without a word
-    /// (`warning` gates exactly what can answer wrong); ADVICE for the rest, whose every use
-    /// is now a compile-time refusal anyway.  `OpDrop`, `OpCopy` and `OpIterate` stay hooks.
-    fn report_retired_operator_function(
-        &mut self,
-        fn_name: &str,
-        arguments: &[crate::data::Argument],
-    ) {
-        let arity = arguments
-            .iter()
-            .filter(|a| !a.name.starts_with("__"))
-            .count();
-        let (level, now, cure): (Level, &str, String) = match fn_name {
+    /// What a retired `fn Op…` of `arity` parameters does now, and what to write instead: the
+    /// diagnostic's level, its effect, and its cure; `None` for a name that backs no operator.
+    fn retired_operator_cure(fn_name: &str, arity: usize) -> Option<(Level, &'static str, String)> {
+        Some(match fn_name {
             "OpLt" | "OpLe" | "OpGt" | "OpGe" => (
                 Level::Advice,
                 "does not define `<`, `<=`, `>` or `>=`",
@@ -2192,7 +2207,9 @@ impl Parser {
             "OpEq" | "OpNe" => (
                 Level::Warning,
                 "is not called by `==` or `!=`, which compare the type field by field",
-                "call it by name where you meant it".to_string(),
+                // @C134 — no type redefines `==`: the cure is the name, never an operator.
+                "keep it as a named method (`same_second(self, other)`) and call it by name"
+                    .to_string(),
             ),
             "OpNot" => (
                 Level::Warning,
@@ -2204,8 +2221,23 @@ impl Parser {
                 "does not define `x[i]`",
                 "call it by name, or give the type a named method".to_string(),
             ),
-            "OpMin" | "OpDiv" | "OpRem" | "OpPow" | "OpLand" | "OpLor" | "OpEor" | "OpSLeft"
-            | "OpSRight" | "OpBitNot" | "OpAppend" => (
+            "OpMin" => (
+                Level::Advice,
+                "does not define the unary `-`",
+                "write `operator negate(self: T) -> V`".to_string(),
+            ),
+            "OpDiv" => (
+                Level::Advice,
+                "does not define `/`",
+                "write `operator divided_by(self: T, other: U) -> V`".to_string(),
+            ),
+            "OpRem" => (
+                Level::Advice,
+                "does not define `%`",
+                "write `operator remainder(self: T, other: U) -> V`".to_string(),
+            ),
+            "OpPow" | "OpLand" | "OpLor" | "OpEor" | "OpSLeft" | "OpSRight" | "OpBitNot"
+            | "OpAppend" => (
                 Level::Advice,
                 "does not define its operator, which a type cannot define yet",
                 "call it by name".to_string(),
@@ -2216,9 +2248,7 @@ impl Parser {
                     .or_else(|| fn_name.strip_prefix("OpCast"))
                     .and_then(|rest| rest.split_once("From"))
                     .filter(|(to, from)| !to.is_empty() && !from.is_empty());
-                let Some((to, _)) = conversion else {
-                    return;
-                };
+                let (to, _) = conversion?;
                 // The stdlib's conversion names abbreviate the base types (`OpConvIntFromX`).
                 let (target, shown) = match to {
                     "Int" | "Long" => ("integer".to_string(), "integer".to_string()),
@@ -2234,6 +2264,26 @@ impl Parser {
                     format!("write `operator to_{target}(self: S) -> {shown}`"),
                 )
             }
+        })
+    }
+
+    /// C132 (@PLN182 P5) — a program's `fn Op…` of an operator's name is an ordinary function
+    /// now (`@FR-Op-Std`).  Said where it is written, naming what to write instead.  A WARNING
+    /// for `OpEq` / `OpNe` / `OpNot`, whose forms keep answering — structurally, or as the
+    /// presence test — so a program relying on the function changes meaning without a word
+    /// (`warning` gates exactly what can answer wrong); ADVICE for the rest, whose every use
+    /// is now a compile-time refusal anyway.  `OpDrop`, `OpCopy` and `OpIterate` stay hooks.
+    fn report_retired_operator_function(
+        &mut self,
+        fn_name: &str,
+        arguments: &[crate::data::Argument],
+    ) {
+        let arity = arguments
+            .iter()
+            .filter(|a| !a.name.starts_with("__"))
+            .count();
+        let Some((level, now, cure)) = Self::retired_operator_cure(fn_name, arity) else {
+            return;
         };
         diagnostic!(
             self.lexer,
@@ -2363,10 +2413,6 @@ impl Parser {
     fn refuse_operator_name(&mut self, fn_name: &str) -> bool {
         // The table's names not built yet: the form each will back.
         const PLACED: &[(&str, &str)] = &[
-            ("divided_by", "`/`"),
-            ("remainder", "`%`"),
-            ("negate", "unary `-`"),
-            ("equals", "`==` and `!=`"),
             ("at", "`x[i]`"),
             ("set_at", "`x[i] = v`"),
             ("slice", "`x[a..b]`"),
@@ -2379,6 +2425,17 @@ impl Parser {
             ("shift_left", "`<<`"),
             ("shift_right", "`>>`"),
         ];
+        // @C134 (owner) — `==` is always structural, for every type at every depth; no
+        // type defines it, so a deep comparison of its own is a named method.
+        if fn_name == "equals" {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`==` is always structural, for every type: there is no `operator equals` — write \
+                 a named method (`same_second(self, other)`) and call it"
+            );
+            return true;
+        }
         if let Some((_, form)) = PLACED.iter().find(|(n, _)| *n == fn_name) {
             diagnostic!(
                 self.lexer,
@@ -2390,7 +2447,15 @@ impl Parser {
         }
         if !matches!(
             fn_name,
-            "compare" | "plus" | "minus" | "times" | "next" | "to_text"
+            "compare"
+                | "plus"
+                | "minus"
+                | "times"
+                | "divided_by"
+                | "remainder"
+                | "negate"
+                | "next"
+                | "to_text"
         ) && !fn_name.starts_with("to_")
         {
             diagnostic!(
@@ -2398,8 +2463,9 @@ impl Parser {
                 Level::Error,
                 "`{fn_name}` is not an operator: `operator` takes the name of the form it backs \
                  — `compare` for `<`, `<=`, `>` and `>=`, `plus` for `+`, `minus` for `-`, \
-                 `times` for `*`, `next` for `for e in x`, `to_text` for `\"{{x}}\"`; declare \
-                 an ordinary method with `fn`"
+                 `times` for `*`, `divided_by` for `/`, `remainder` for `%`, `negate` for a \
+                 unary `-`, `next` for `for e in x`, `to_text` for \
+                 `\"{{x}}\"`; declare an ordinary method with `fn`"
             );
             return true;
         }
@@ -6474,6 +6540,34 @@ impl Parser {
                         }
                         "OpIndex".to_string()
                     } else {
+                        // C132, Q13 (@PLN182) — a member is spelled as the definition that
+                        // meets it: `op ⊕` is refused, naming the `operator` member to write.
+                        if !self.first_pass && !self.default {
+                            let cure = match tok.as_str() {
+                                "<" | "<=" | ">" | ">=" => {
+                                    "`operator compare(self: Self, other: Self) -> Ordering`"
+                                }
+                                "+" => "`operator plus(self: Self, other: Self) -> Self`",
+                                "-" => {
+                                    "`operator minus(self: Self, other: Self) -> Self`, or \
+                                     `operator negate(self: Self) -> Self` for the unary `-`"
+                                }
+                                "*" => "`operator times(self: Self, other: Self) -> Self`",
+                                "/" => "`operator divided_by(self: Self, other: Self) -> Self`",
+                                "%" => "`operator remainder(self: Self, other: Self) -> Self`",
+                                "==" | "!=" => {
+                                    "nothing: `==` is structural for every type, and every type \
+                                     meets `Equatable`"
+                                }
+                                _ => "a method a type can define; this operator is reserved",
+                            };
+                            diagnostic!(
+                                self.lexer,
+                                Level::Error,
+                                "an interface names the definition that meets it: `op {tok}` \
+                                 is spelled {cure}"
+                            );
+                        }
                         format!("Op{}", rename(&tok))
                     }
                 } else {
@@ -6560,6 +6654,38 @@ impl Parser {
                     self.data
                         .set_returned(stub_nr, return_tp.clone().unwrap_or(Type::Void));
                 }
+                // `@FR-Op-Bound` — an `operator` member stands for its SYMBOL too: `operator
+                // compare` brings `OpLt(self: Self, other: Self) -> boolean`, `operator plus`
+                // brings `OpAdd`, and so on.  A generic body's `a < b` reaches the symbolic stub
+                // exactly as it did before, so the four order forms keep deriving from it, a
+                // built-in type keeps its native operator in the monomorph, and a program's type
+                // reaches its `operator` method there (`substitute_type_in_value`).
+                if member_is_operator
+                    && let Some((symbolic, boolean)) =
+                        Self::symbolic_member(&method_name, args.len())
+                {
+                    let alias = format!("__iface_{d_nr}#{}_{symbolic}", args.len());
+                    if self.data.def_nr(&alias) == u32::MAX {
+                        let alias_nr =
+                            self.data
+                                .add_def(&alias, self.lexer.pos(), DefType::Function);
+                        for a in &args {
+                            self.data.add_attribute(
+                                &mut self.lexer,
+                                alias_nr,
+                                &a.name,
+                                a.typedef.clone(),
+                            );
+                        }
+                        self.data.set_parent(alias_nr, d_nr);
+                        let answers = if boolean {
+                            Type::Boolean
+                        } else {
+                            return_tp.clone().unwrap_or(Type::Void)
+                        };
+                        self.data.set_returned(alias_nr, answers);
+                    }
+                }
             }
             // I5 (phase 1): factory methods (Self in return without self: Self first param)
             // are not yet supported.  Emit a clear diagnostic rather than silently producing
@@ -6588,8 +6714,43 @@ impl Parser {
         }
         self.lexer.token("}");
         self.lexer.has_token(";");
+        // @C134 (owner) — `Equatable` declares nothing: `==` is structural for every type, so
+        // every type meets it.  A generic body's `a == b` still reaches the `OpEq` member the
+        // monomorph lowers to that structural comparison, so the stdlib's `Equatable` carries
+        // it as the compiler's own, never written.
+        if self.default && self.first_pass && id == "Equatable" && d_nr != u32::MAX {
+            let self_nr = self.data.def_nr("Self");
+            let stub = format!("__iface_{d_nr}#2_OpEq");
+            if self_nr != u32::MAX && self.data.def_nr(&stub) == u32::MAX {
+                let stub_nr = self
+                    .data
+                    .add_def(&stub, self.lexer.pos(), DefType::Function);
+                let me = Type::Reference(self_nr, crate::data::Deps::none());
+                self.data
+                    .add_attribute(&mut self.lexer, stub_nr, "self", me.clone());
+                self.data
+                    .add_attribute(&mut self.lexer, stub_nr, "other", me);
+                self.data.set_parent(stub_nr, d_nr);
+                self.data.set_returned(stub_nr, Type::Boolean);
+            }
+        }
         self.context = context;
         true
+    }
+
+    /// The symbolic member an `operator` interface member stands for, and whether that member
+    /// answers `boolean` (the order and equality forms) rather than the form's own result.
+    fn symbolic_member(form: &str, arity: usize) -> Option<(&'static str, bool)> {
+        match (form, arity) {
+            ("compare", 2) => Some(("OpLt", true)),
+            ("plus", 2) => Some(("OpAdd", false)),
+            ("minus", 2) => Some(("OpMin", false)),
+            ("times", 2) => Some(("OpMul", false)),
+            ("divided_by", 2) => Some(("OpDiv", false)),
+            ("remainder", 2) => Some(("OpRem", false)),
+            ("negate", 1) => Some(("OpMin", false)),
+            _ => None,
+        }
     }
 
     /// #91: DFS cycle detection on init field dependencies.

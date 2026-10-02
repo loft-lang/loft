@@ -125,17 +125,21 @@ Walkable   — the method `children() -&gt; vector&lt;Self&gt;`.  The standard l
 <pre><code>Ordered      operator compare(self: T, other: T) -&gt; Ordering   (`&lt;` `&lt;=` `&gt;` `&gt;=`)
 Addable      operator plus(self: T, other: T) -&gt; T            (`+`)
 Subtractable operator minus(self: T, other: T) -&gt; T           (binary `-`)
+Numeric      operator times(self: T, other: T) -&gt; T           (`*`)
+             operator negate(self: T) -&gt; T                    (unary `-`)
 Scalable     fn scale(self: T, factor: integer) -&gt; integer
 Printable    operator to_text(self: T) -&gt; text
 Walkable     fn children(self: T) -&gt; vector&lt;T&gt;
 </code></pre>
-<p><code>compare</code> answers <code>Less</code>, <code>Equal</code> or <code>Greater</code>; every built-in ordered type has one, so <code>self.cents.compare(other.cents)</code> is the whole body for one field. <code>Equatable</code> is met by every type, because <code>==</code> compares what two values hold — a struct field by field.  <code>Numeric</code> (<code>*</code> and the unary <code>-</code>) is met by the built-in numbers only: a type cannot define the unary <code>-</code> yet.</p>
+<p><code>compare</code> answers <code>Less</code>, <code>Equal</code> or <code>Greater</code>; every built-in ordered type has one, so <code>self.cents.compare(other.cents)</code> is the whole body for one field. <code>Equatable</code> is met by every type, because <code>==</code> compares what two values hold — a struct field by field — unless the type defines <code>operator equals</code>.</p>
 <p>The same definition serves the bare operator: once <code>Money</code> has <code>compare</code>, both <code>a &lt; b</code> and <code>&lt;T: Ordered&gt;</code> work on it.  Miss one and the error names it — "<code>Money</code> does not satisfy interface <code>Ordered</code>: missing <code>operator compare(self: Money, other: Money) -&gt; Ordering</code>" — at the CALL site, because that is where the concrete type is known.</p>
 <pre><code><span class="kw">struct</span> <span class="en">Money</span> { cents: <span class="ty"><a href="stdlib-types.html">integer</a></span> }
-<span class="kw"><a href="stdlib-field-iteration-support-types.html">operator</a></span> <span class="fn-call"><a href="stdlib-min-max-clamp.html">compare</a></span>(self: <span class="en">Money</span>, other: <span class="en">Money</span>) -&gt; <span class="en"><a href="stdlib-min-max-clamp.html">Ordering</a></span> { self.cents.<span class="fn-call"><a href="stdlib-min-max-clamp.html">compare</a></span>(other.cents) }
-<span class="kw"><a href="stdlib-field-iteration-support-types.html">operator</a></span> <span class="fn-call">plus</span>(self: <span class="en">Money</span>, other: <span class="en">Money</span>) -&gt; <span class="en">Money</span> { <span class="en">Money</span> { cents: self.cents + other.cents } }
-<span class="kw"><a href="stdlib-field-iteration-support-types.html">operator</a></span> <span class="fn-call">minus</span>(self: <span class="en">Money</span>, other: <span class="en">Money</span>) -&gt; <span class="en">Money</span> { <span class="en">Money</span> { cents: self.cents - other.cents } }
-<span class="kw"><a href="stdlib-field-iteration-support-types.html">operator</a></span> <span class="fn-call">to_text</span>(self: <span class="en">Money</span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> { <span class="st">"{self.cents}c"</span> }
+<span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">compare</span>(self: <span class="en">Money</span>, other: <span class="en">Money</span>) -&gt; <span class="en"><a href="stdlib-types.html">Ordering</a></span> { self.cents.<span class="fn-call">compare</span>(other.cents) }
+<span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">plus</span>(self: <span class="en">Money</span>, other: <span class="en">Money</span>) -&gt; <span class="en">Money</span> { <span class="en">Money</span> { cents: self.cents + other.cents } }
+<span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">minus</span>(self: <span class="en">Money</span>, other: <span class="en">Money</span>) -&gt; <span class="en">Money</span> { <span class="en">Money</span> { cents: self.cents - other.cents } }
+<span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">negate</span>(self: <span class="en">Money</span>) -&gt; <span class="en">Money</span> { <span class="en">Money</span> { cents: <span class="nm">0</span> - self.cents } }
+<span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">times</span>(self: <span class="en">Money</span>, other: <span class="en">Money</span>) -&gt; <span class="en">Money</span> { <span class="en">Money</span> { cents: self.cents * other.cents } }
+<span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">to_text</span>(self: <span class="en">Money</span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> { <span class="st">"{self.cents}c"</span> }
 <span class="kw">fn</span> <span class="fn-call">test_user_type_bounds</span>() {
   cheap = <span class="en">Money</span> { cents: <span class="nm">300</span> };
   dear = <span class="en">Money</span> { cents: <span class="nm">700</span> };
@@ -149,6 +153,7 @@ Walkable     fn children(self: T) -&gt; vector&lt;T&gt;
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(total.cents == <span class="nm">600</span>, <span class="st">"Addable on a user type: {total.cents}"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">described</span>(dear) == <span class="st">"700c"</span>, <span class="st">"Printable on a user type: {described(dear)}"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">gen_diff</span>(dear, cheap).cents == <span class="nm">400</span>, <span class="st">"Subtractable on a user type"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">gen_negdiff</span>(dear, cheap).cents == -<span class="nm">400</span>, <span class="st">"Numeric + Subtractable on a user type"</span>);
 }
 <span class="kw">struct</span> <span class="en">Crate</span> { label: <span class="ty"><a href="stdlib-types.html">text</a></span>, kids: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Crate</span>&gt; }
 <span class="kw">fn</span> <span class="fn-call">children</span>(self: <span class="en">Crate</span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Crate</span>&gt; { self.kids }
@@ -178,7 +183,7 @@ Walkable     fn children(self: T) -&gt; vector&lt;T&gt;
 <h2 id="two-type-variables-and-a-callback">Two type variables and a callback</h2>
 <p>A generic may declare several variables, and one no argument binds may be bound by a callback's RESULT: <code>map_grid</code> below turns a <code>Grid&lt;T&gt;</code> into a <code>Grid&lt;U&gt;</code>, and the short lambda's body decides what <code>U</code> is — <code>|t| { t.height }</code> makes it an <code>integer</code>.  A generic beside a concrete function of the same name is one overload set: the concrete <code>show</code> takes a <code>Grid&lt;Tile&gt;</code>, the bounded generic every other <code>Grid</code> it can print.</p>
 <pre><code><span class="kw">struct</span> <span class="en">Tile</span> { height: <span class="ty"><a href="stdlib-types.html">integer</a></span>, name: <span class="ty"><a href="stdlib-types.html">text</a></span> }
-<span class="kw"><a href="stdlib-field-iteration-support-types.html">operator</a></span> <span class="fn-call">to_text</span>(self: <span class="en">Tile</span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> { self.name }
+<span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">to_text</span>(self: <span class="en">Tile</span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> { self.name }
 <span class="kw">struct</span> <span class="en">Grid</span>&lt;<span class="en">T</span>&gt; { w: <span class="ty"><a href="stdlib-types.html">integer</a></span>, cells: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">T</span>&gt; }
 <span class="kw">fn</span> map_grid&lt;<span class="en">T</span>, <span class="en">U</span>&gt;(g: <span class="en">Grid</span>&lt;<span class="en">T</span>&gt;, f: <span class="kw">fn</span>(<span class="en">T</span>) -&gt; <span class="en">U</span>) -&gt; <span class="en">Grid</span>&lt;<span class="en">U</span>&gt; {
   out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">U</span>&gt; = [];
@@ -356,6 +361,8 @@ fn test_combined_bounds() {
 //   Ordered      operator compare(self: T, other: T) -&gt; Ordering   (`&lt;` `&lt;=` `&gt;` `&gt;=`)
 //   Addable      operator plus(self: T, other: T) -&gt; T            (`+`)
 //   Subtractable operator minus(self: T, other: T) -&gt; T           (binary `-`)
+//   Numeric      operator times(self: T, other: T) -&gt; T           (`*`)
+//                operator negate(self: T) -&gt; T                    (unary `-`)
 //   Scalable     fn scale(self: T, factor: integer) -&gt; integer
 //   Printable    operator to_text(self: T) -&gt; text
 //   Walkable     fn children(self: T) -&gt; vector&lt;T&gt;
@@ -363,8 +370,7 @@ fn test_combined_bounds() {
 // `compare` answers `Less`, `Equal` or `Greater`; every built-in ordered type has
 // one, so `self.cents.compare(other.cents)` is the whole body for one field.
 // `Equatable` is met by every type, because `==` compares what two values hold —
-// a struct field by field.  `Numeric` (`*` and the unary `-`) is met by the
-// built-in numbers only: a type cannot define the unary `-` yet.
+// a struct field by field — unless the type defines `operator equals`.
 //
 // The same definition serves the bare operator: once `Money` has `compare`, both
 // `a &lt; b` and `&lt;T: Ordered&gt;` work on it.  Miss one and the error names it —
@@ -375,6 +381,8 @@ struct Money { cents: integer }
 operator compare(self: Money, other: Money) -&gt; Ordering { self.cents.compare(other.cents) }
 operator plus(self: Money, other: Money) -&gt; Money { Money { cents: self.cents + other.cents } }
 operator minus(self: Money, other: Money) -&gt; Money { Money { cents: self.cents - other.cents } }
+operator negate(self: Money) -&gt; Money { Money { cents: 0 - self.cents } }
+operator times(self: Money, other: Money) -&gt; Money { Money { cents: self.cents * other.cents } }
 operator to_text(self: Money) -&gt; text { "{self.cents}c" }
 fn test_user_type_bounds() {
   cheap = Money { cents: 300 };
@@ -389,6 +397,7 @@ fn test_user_type_bounds() {
   assert(total.cents == 600, "Addable on a user type: {total.cents}");
   assert(described(dear) == "700c", "Printable on a user type: {described(dear)}");
   assert(gen_diff(dear, cheap).cents == 400, "Subtractable on a user type");
+  assert(gen_negdiff(dear, cheap).cents == -400, "Numeric + Subtractable on a user type");
 }
 struct Crate { label: text, kids: vector&lt;Crate&gt; }
 fn children(self: Crate) -&gt; vector&lt;Crate&gt; { self.kids }

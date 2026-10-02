@@ -22,9 +22,7 @@
 // The other half the chapter never showed is a USER type under a bound, which is what the
 // interfaces exist for.  What satisfies one is the type's `operator` method — `compare` for
 // `Ordered`, `plus` for `Addable` — and `Equatable` is met by every type, `==` comparing the
-// fields (C132).  `Numeric` asks for a unary `-`, and `negate` is a reserved operator name no
-// type can define yet, so `Numeric` is met by the built-in numbers only: its user-type cells
-// are absent until `operator negate` lands (@PLN182 Q10).
+// fields (C132), and `Numeric` by `operator times` with `operator negate`.
 //
 // @falsified-at: none — a LOCK.  Every cell passes on the build this was written against;
 //   what was wrong is the page.  The value is directional: a bound quietly GAINING an
@@ -35,6 +33,8 @@
 struct Cash { cents: integer }
 operator compare(self: Cash, other: Cash) -> Ordering { self.cents.compare(other.cents) }
 operator plus(self: Cash, other: Cash) -> Cash { Cash { cents: self.cents + other.cents } }
+operator times(self: Cash, other: Cash) -> Cash { Cash { cents: self.cents * other.cents } }
+operator negate(self: Cash) -> Cash { Cash { cents: 0 - self.cents } }
 fn scale(self: Cash, factor: integer) -> integer { self.cents * factor }
 operator to_text(self: Cash) -> text { "{self.cents}c" }
 
@@ -100,6 +100,10 @@ fn a_user_type_satisfies_a_bound_by_defining_the_operator_method() {
   // Bound rather than read inline: loft#1273 retains one record per call otherwise.
   sum = gb_add(small, small);
   assert(sum.cents == 600, "Addable on a user type: {sum.cents}");
+  prod = gb_mul(Cash { cents: 3 }, Cash { cents: 4 });
+  assert(prod.cents == 12, "Numeric `*` on a user type: {prod.cents}");
+  neg = gb_neg(small);
+  assert(neg.cents == -300, "Numeric unary `-` on a user type: {neg.cents}");
   assert(gb_scale(Cash { cents: 5 }) == 15, "Scalable on a user type");
   assert(gb_text(big) == "700c", "Printable on a user type: {gb_text(big)}");
 }

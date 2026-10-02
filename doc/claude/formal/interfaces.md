@@ -38,10 +38,10 @@ generic header; a **bound** `T: I₁ + … + Iₖ` constrains it. `C ⊨ I` read
 ```
 
 **In words.** An interface is a named list of method shapes a type must provide — for example
-`interface Ordered { op < (self: Self, other: Self) -> boolean }`. It states *what*, never *how*
-(no method has a body). `Self` is a placeholder standing for whatever concrete type ends up
-satisfying it. Operator requirements are written with `op <` and desugar to the canonical operator
-method name.
+`interface Ordered { operator compare(self: Self, other: Self) -> Ordering }`. It states *what*,
+never *how* (no method has a body). `Self` is a placeholder standing for whatever concrete type
+ends up satisfying it. An operator requirement is written as the `operator` member that meets it,
+and brings the symbolic member a generic body's `<` reaches (formal/operators.md (Op-Bound)).
 
 ### Satisfaction — structural, at the use site
 

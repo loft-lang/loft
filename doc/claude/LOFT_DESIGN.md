@@ -297,7 +297,7 @@ Operator interfaces use `op` syntax:
 <!-- from tests/reference/interfaces.loft -->
 ```loft
 interface Summable {
-  op + (self: Self, other: Self) -> Self
+  operator plus(self: Self, other: Self) -> Self
 }
 fn total<T: Summable>(a: T, b: T) -> T { a + b }
 ```

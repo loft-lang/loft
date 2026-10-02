@@ -1170,6 +1170,8 @@ impl Parser {
         ("plus", "+", "OpAdd"),
         ("minus", "-", "OpMin"),
         ("times", "*", "OpMul"),
+        ("divided_by", "/", "OpDiv"),
+        ("remainder", "%", "OpRem"),
     ];
 
     /// The `operator compare` an order form on these operand types reaches
@@ -1271,6 +1273,78 @@ impl Parser {
         None
     }
 
+    /// `@FR-Op-Back` for a UNARY form (`-x` is `x.negate()`): the operand's own `operator` method
+    /// of that name taking `self` alone, `Some(u32::MAX)` when only a plain method of the name
+    /// exists (`@FR-Op-Mark`, said here), `None` when the type has neither.
+    pub(crate) fn operator_unary(&mut self, form: &str, symbol: &str, tp: &Type) -> Option<u32> {
+        if self.default || tp.is_unknown() {
+            return None;
+        }
+        let operand = tp.peel_rewritten();
+        let (Type::Reference(own, _) | Type::Enum(own, _, _)) = operand.base() else {
+            return None;
+        };
+        let own = *own;
+        let operand = operand.unrewritten();
+        let m = self.data.find_op_method(u16::MAX, form, &operand);
+        if m == u32::MAX {
+            return None;
+        }
+        let takes = self.data.visible_params(m);
+        let mine = takes.first().is_some_and(
+            |t| matches!(t.base(), Type::Reference(d, _) | Type::Enum(d, _, _) if *d == own),
+        );
+        if !mine || takes.len() != 1 {
+            return None;
+        }
+        if self.data.def(m).operator_form() {
+            return Some(m);
+        }
+        let t = operand.base().source_name(&self.data);
+        let answers = self.data.def(m).returned().source_name(&self.data);
+        diagnostic!(
+            self.lexer,
+            Level::Error,
+            "`{t}` has a method `{form}`, but `{symbol}x` reaches only one written with \
+             `operator`: declare it `operator {form}(self: {t}) -> {answers}`"
+        );
+        Some(u32::MAX)
+    }
+
+    /// The call a unary `operator` form lowers to, `x.negate()`; the form's type is the
+    /// method's (`@FR-Op-Result`).
+    pub(crate) fn unary_through_operator(
+        &mut self,
+        code: &mut Value,
+        form: &str,
+        member: u32,
+        operand_tp: Type,
+    ) -> Type {
+        if member == u32::MAX {
+            return Type::Unknown(0); // refused, named by `operator_unary`
+        }
+        let member = match self.operator_instance(member, form, std::slice::from_ref(&operand_tp)) {
+            Ok(m) => m,
+            Err(predicted) => {
+                *code = Value::Null;
+                return predicted;
+            }
+        };
+        let mut call = Value::Null;
+        let operand = code.clone();
+        let tp = self.call_nr(
+            &mut call,
+            member,
+            &[operand],
+            &[operand_tp],
+            true,
+            &[],
+            None,
+        );
+        *code = call;
+        tp
+    }
+
     /// `@FR-Op-Conv` (@PLN182) — `x as T` is ONE call of `x.to_<t>()` when the source type has
     /// an `operator to_<t>` answering exactly `T`; `x as text` calls `operator to_text`, with an
     /// empty spec when the type defines only the spec form.  Answers `Some(true)` when it
@@ -1324,6 +1398,8 @@ impl Parser {
             "+" => Some("plus"),
             "-" => Some("minus"),
             "*" => Some("times"),
+            "/" => Some("divided_by"),
+            "%" => Some("remainder"),
             _ => None,
         }
     }
@@ -1368,7 +1444,12 @@ impl Parser {
     /// `@FR-F-Recv` — a TEMPLATE `operator` member (`operator plus<U>(self: W, o: U)`) is reached
     /// the way the call `a.plus(b)` reaches it: instantiated at the operand types (loft#1826).
     /// `Err(predicted)` on the first pass, where the prediction is the whole answer.
-    fn operator_instance(&mut self, m: u32, form: &str, types: &[Type]) -> Result<u32, Type> {
+    pub(crate) fn operator_instance(
+        &mut self,
+        m: u32,
+        form: &str,
+        types: &[Type],
+    ) -> Result<u32, Type> {
         if m == u32::MAX || self.data.def_type(m) != crate::data::DefType::Generic {
             return Ok(m);
         }
