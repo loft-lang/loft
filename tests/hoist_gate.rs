@@ -157,6 +157,24 @@ const READ: &str = "fn f(v: vector<integer>, n: integer) -> integer {
 }
 fn main() { }";
 
+/// The two-argument libm dispatchers are store-free like their one-argument siblings: a
+/// callee with `atan2` on a cold branch (hex_way's `seg_distance`) must not decline the
+/// hoist of the loop that calls it.  Its twin differs only in an append and must decline.
+#[test]
+fn a_two_argument_libm_call_does_not_decline_the_hoist() {
+    let script = "\
+fn dist(x: float, y: float) -> float { if x < 0.0 { atan2(y, x) } else { x + y } }
+fn dist_log(x: float, y: float) -> float { if x < 0.0 { log(x, 2.0) ?? 0.0 } else { x + y } }
+fn dist_grow(w: vector<integer>, x: float, y: float) -> float { if x < 0.0 { w += [1]; atan2(y, x) } else { x + y } }
+fn f(v: vector<integer>) -> float { t = 0.0; for i in 0..len(v) { t += dist(v[i]? as float, 1.0); } t }
+fn f_log(v: vector<integer>) -> float { t = 0.0; for i in 0..len(v) { t += dist_log(v[i]? as float, 1.0); } t }
+fn f_grow(v: vector<integer>, w: vector<integer>) -> float { t = 0.0; for i in 0..len(v) { t += dist_grow(w, v[i]? as float, 1.0); } t }
+fn main() { }";
+    assert_eq!(hoistable(script, "n_f"), 1, "atan2 must read as store-free");
+    assert_eq!(hoistable(script, "n_f_log"), 1, "log(x, base) must read as store-free");
+    assert_eq!(hoistable(script, "n_f_grow"), 0, "the twin that appends still declines");
+}
+
 /// @PLN157 § V-c — a callee whose only store writes are scalars into its own return
 /// buffer (a struct-literal return over an all-scalar record) does not decline the
 /// caller's header hoist; every neighbouring shape still does.

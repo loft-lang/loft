@@ -43,7 +43,7 @@ pub const ELEMENT_ADDRESS_OPS: [&str; 2] = ["OpGetVector", "OpGetVectorNullable"
 /// reaches state through the frame (`OpParallelJoin`), and the signature cannot tell them
 /// apart. `OpConvIntFromNull` is the one that matters in practice — it initialises the
 /// index of a `for` loop, so a nested loop carries it inside its parent's body.
-const PURE_NULLARY_OPS: [&str; 15] = [
+const PURE_NULLARY_OPS: [&str; 18] = [
     "OpConvIntFromNull",
     "OpConvBoolFromNull",
     "OpConvCharacterFromNull",
@@ -64,6 +64,13 @@ const PURE_NULLARY_OPS: [&str; 15] = [
     // through `seed_wave`-style helpers never hoisted at all.
     "OpMathFuncFloat",
     "OpMathFuncSingle",
+    // Their two-argument siblings (`atan2`, `log(x, base)`): the same selector shape.
+    // Missing here, one `atan2` on a cold branch of a callee declined the hoist of
+    // every loop that reached it, transitively (hex_roof's `roof_match`).
+    "OpMathFunc2Float",
+    "OpMathFunc2Single",
+    // `sizeof` of a scalar expression: consumes the value, answers the `const` size.
+    "OpSizeScalar",
 ];
 
 /// Ops that take a collection or a reference and only READ it.
@@ -13967,4 +13974,60 @@ fn collect_chains(v: &Value, data: &Data, banned: &HashSet<u16>, out: &mut Vec<I
         return;
     }
     v.for_each_child(&mut |c| collect_chains(c, data, banned, out));
+}
+
+#[cfg(test)]
+mod store_free_sentinel {
+    use super::*;
+
+    /// Every native op whose operands and result are all scalars — `const` ones included —
+    /// that the store-free gate still reads as a writer.  Such an op reaches state only
+    /// through a `const` slot, type id or jump, or it is a selector the list above forgot
+    /// (`OpMathFunc2Float` was one, and declined every caller's hoist).  A new entry here is
+    /// a question to answer: name it in `PURE_NULLARY_OPS`, or add it below with the reason.
+    #[test]
+    fn every_scalar_only_native_op_is_classified() {
+        let mut p = crate::parser::Parser::new();
+        p.parse_dir("default", true, false).unwrap();
+        let scalar = |tp: &Type| is_scalar(tp) || matches!(tp, Type::Void);
+        let mut unclassified: Vec<String> = Vec::new();
+        for def in &p.data.definitions {
+            if !def.name().starts_with("Op") || !matches!(def.code(), Value::Null) {
+                continue;
+            }
+            if def.attributes().iter().all(|a| is_scalar(&a.typedef))
+                && scalar(def.returned())
+                && !native_op_is_store_free(def)
+                && !REVIEWED_WRITERS.contains(&def.name())
+            {
+                unclassified.push(def.name().to_string());
+            }
+        }
+        assert!(
+            unclassified.is_empty(),
+            "scalar-only native ops the store-free gate reads as writers, unreviewed: {unclassified:?}"
+        );
+    }
+
+    /// Scalar-signature ops that are writers, or never reach the native emitter, by group.
+    const REVIEWED_WRITERS: &[&str] = &[
+        // Control flow and frames — bytecode only; the native emitter never sees them as calls.
+        "OpGoto", "OpGotoWord", "OpGotoFalse", "OpGotoFalseWord", "OpCall", "OpReturn",
+        "OpFreeStack", "OpReserveFrame", "OpStaticCall", "OpInitCreateStack",
+        // Literals: `Value::Int` and friends in the IR, an op only in bytecode.
+        "OpConstInt", "OpConstShort", "OpConstTiny", "OpConstSingle", "OpConstFloat",
+        "OpConstEnum",
+        // Frame-slot reads and writes through a `const` position.
+        "OpVarBool", "OpPutBool", "OpVarInt", "OpVarCharacter", "OpPutInt", "OpVarNarrow",
+        "OpPutNarrow", "OpPutCharacter", "OpVarSingle", "OpPutSingle", "OpVarFloat",
+        "OpPutFloat", "OpInitText", "OpVarEnum", "OpPutEnum", "OpInitRef", "OpInitRefSentinel",
+        // The interpreter's fused superinstructions, emitted after the IR the walk reads.
+        "OpIntVV", "OpIntVC", "OpCmpIntVV", "OpCmpIntVC", "OpIntVVPut", "OpIntVCPut",
+        "OpCmpIntVVJump", "OpCmpIntVCJump", "OpTextWalkStep", "OpTextNullJump",
+        "OpTextEndJump", "OpVecGetInt", "OpVecGetIntNullable", "OpVecSetInt", "OpVecEndJump",
+        // Reach a store, a fault slot or another frame through the `const` channel.
+        "OpDatabase", "OpTagFault", "OpRangeDefault", "OpDropFnRef", "OpFnRefDetachShared",
+        "OpParallelBegin", "OpParallelArm", "OpParallelJoin", "OpCallRef", "OpCallRefStore",
+        "OpCoroutineCreate", "OpCoroutineNext", "OpCoroutineReturn", "OpCoroutineYield",
+    ];
 }
