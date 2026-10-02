@@ -34,8 +34,8 @@ source = "registry"
 
 [[package]]
 name = "assets"
-version = "0.2.4"
-url = "https://github.com/loft-lang/loft-libs-assets/releases/download/assets-v0.2.4/assets-0.2.4.tar.gz"
-sha256 = "fd44ebd683ae277265ac1a5417043680909d97daecaf26c91f1fc584d3cda358"
+version = "0.3.0"
+url = "https://github.com/loft-lang/loft-libs-assets/releases/download/assets-v0.3.0/assets-0.3.0.tar.gz"
+sha256 = "deaaf7021f7d7975221914a3f747762ee54588ced0219d29dda77985a2eebcaa"
 source = "registry"
 deps = ["shapes"]
