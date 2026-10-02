@@ -22,7 +22,9 @@ const EXPECTED: &[(&str, usize, usize)] = &[
     // The two lifted joins are `v[99]?.x` AFTER the loop, where no header is held.
     // `LOFT_NO_IN_RANGE=1` gives (1, 2).
     ("n_j1", 0, 2),
-    ("n_j2", 3, 0),
+    // All three in range of their own loops: `@FR-R-InRange` drops each join in the IR
+    // (`LOFT_NO_IN_RANGE=1` gives (3, 0)).
+    ("n_j2", 0, 0),
     ("n_j3", 3, 0),
     // A negative index: the load is emitted, its range test refuses, the join answers.
     ("n_j4", 1, 0),
