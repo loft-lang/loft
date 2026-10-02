@@ -91,6 +91,25 @@ def census(loft, prog):
         return name, commit, counts, None
 
 
+def warm_dependencies(loft, progs):
+    """Build every library row's dependency cdylibs once, one program at a time, before the
+    parallel census.  A program whose dependency's cdylib exists calls into it; one that finds it
+    absent, or still being built by another census worker, emits those functions inline — and
+    counts their rewrites.  Run four at a time from a cold cache, WHICH program counted them was
+    a race: two admissions moved between `hex_recover` and `hex_edge` from run to run, the total
+    unchanged, and the gate failed on whichever lost them.  Warmed serially, every program sees
+    every dependency present, so the count is the program's own."""
+    with tempfile.TemporaryDirectory() as tmp:
+        for name, commit, cwd, argv in progs:
+            if commit == "-":
+                continue
+            subprocess.run(
+                [loft, "--native-emit", str(Path(tmp) / "warm.rs"), "--lean", *argv],
+                cwd=cwd, capture_output=True, timeout=600,
+                env={**os.environ, "LOFT_REWRITE_CENSUS": ""},
+            )
+
+
 def read_baseline():
     rows = {}
     if BASELINE.is_file():
@@ -122,6 +141,7 @@ def main() -> int:
         only = set(args[args.index("--only") + 1].split(","))
     loft = str(ROOT / "target" / "release" / "loft")
     progs = [p for p in programs() if only is None or p[0] in only]
+    warm_dependencies(loft, progs)
     with ThreadPoolExecutor(max_workers=4) as pool:
         done = list(pool.map(lambda p: census(loft, p), progs))
     results, failed = [], []
