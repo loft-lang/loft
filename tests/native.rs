@@ -247,6 +247,36 @@ fn sweep_older_build(rlib_info: &Option<(PathBuf, PathBuf)>) {
     });
 }
 
+/// Programs this process skipped because the temp filesystem stayed short after every
+/// reclaim — reported apart from compile failures, which they are not (loft#1859).
+static LOW_SPACE_SKIPS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Evict this checkout's least-recently-used cached binaries until `want` bytes are free;
+/// true when they are.  Says what it freed, once per call that freed anything.
+fn evict_for_room(scratch: &Path, want: u64) -> bool {
+    let freed = loft::platform::evict_own_native_cache(scratch, want);
+    if freed > 0 {
+        println!(
+            "  evicted {} MB of least-recently-used native caches for room",
+            freed >> 20
+        );
+    }
+    loft::platform::fs_avail_bytes(scratch).is_none_or(|a| a >= want)
+}
+
+/// Each in-flight compile peaks at ~1.2 GB of temp (rustc intermediates dominate).
+const PER_WORKER_TMP: u64 = 1280 * 1024 * 1024;
+
+/// Whether a binary that just ran may stay as a cache for the next run: only while the temp
+/// filesystem still holds room for a whole chunk of `workers` compiles above the floor.
+/// On a roomy disk this is always true; on a tight tmpfs (a 16 GB `/tmp` holds about 1 100 of
+/// the corpus's ~1 800 binaries) the run frees each binary once it has run, so the corpus
+/// finishes instead of filling the filesystem and skipping the rest (loft#1859).
+fn keep_after_run(scratch: &Path, workers: usize) -> bool {
+    let need = loft::platform::tmpfs_min_free_bytes() + PER_WORKER_TMP * workers as u64;
+    loft::platform::fs_avail_bytes(scratch).is_none_or(|a| a >= need)
+}
+
 /// Paths for one native compilation job.
 struct NativeJob {
     stem: String,
@@ -583,9 +613,14 @@ fn compile_native_job(
     }
     // Preflight (Layer 2): never start a compile that could overflow a
     // RAM-backed tmpfs and exhaust memory.  Reclaims loft's own stale
-    // artefacts first; skips (not fails) the test if space is still low.
+    // artefacts first, then this checkout's least-recently-used cached
+    // binaries (a cache is worth less than the compile it would block);
+    // skips the program if space is still low.
     let scratch = native_scratch();
-    if !loft::platform::native_compile_space_ok(&scratch) {
+    if !loft::platform::native_compile_space_ok(&scratch)
+        && !evict_for_room(&scratch, loft::platform::tmpfs_min_free_bytes())
+    {
+        LOW_SPACE_SKIPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         println!(
             "  SKIP {} — low temp space in {} (set LOFT_TMPFS_MIN_FREE_MB to tune)",
             job.stem,
@@ -739,83 +774,61 @@ fn run_native_job(job: &NativeJob) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Compile in parallel, then run in parallel.
+/// Compile and run in parallel, one chunk of `concurrency` programs at a time: a chunk's
+/// binaries run before the next chunk compiles, so a run never holds more fresh binaries than
+/// the cache has room for.  Compiling EVERY program first put the whole corpus (~1 800
+/// binaries, ~22 GB) on the temp filesystem at once; a 16 GB tmpfs filled about 1 100 in and
+/// the rest were skipped as `compile failed` (loft#1859).
 fn run_native_jobs(
     jobs: Vec<NativeJob>,
     rlib_info: Option<(PathBuf, PathBuf)>,
 ) -> std::io::Result<()> {
     // Layer 3: scale worker count to temp-fs headroom.  On a roomy disk this is
     // just min(cpus, jobs); on a tight RAM-backed tmpfs it clamps down so N
-    // concurrent compiles can't exhaust memory and hang the machine.  Each
-    // in-flight compile peaks at ~1.2GB of temp (rustc intermediates dominate;
-    // the stripped output binary is ~1MB), so reserve that per worker.
+    // concurrent compiles can't exhaust memory and hang the machine.
     let cpu_max = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(4);
-    const PER_WORKER_TMP: u64 = 1280 * 1024 * 1024;
+    let scratch = native_scratch();
     let concurrency =
-        loft::platform::native_worker_count(cpu_max, jobs.len(), &native_scratch(), PER_WORKER_TMP);
+        loft::platform::native_worker_count(cpu_max, jobs.len(), &scratch, PER_WORKER_TMP);
     let rlib_ref = &rlib_info;
     sweep_older_build(rlib_ref);
+    let skips_before = LOW_SPACE_SKIPS.load(std::sync::atomic::Ordering::Relaxed);
 
-    // Phase 2: compile all jobs in parallel chunks.
-    let mut compiled: Vec<bool> = Vec::with_capacity(jobs.len());
-    let mut first_err: Option<std::io::Error> = None;
+    let mut compile_fail = 0usize;
+    let mut compile_ok = 0usize;
+    let mut freed_after_run = 0u64;
+    let mut run_errors: Vec<String> = Vec::new();
     for chunk in jobs.chunks(concurrency) {
-        let chunk_results: Vec<std::io::Result<bool>> = std::thread::scope(|s| {
+        let compiled: Vec<bool> = std::thread::scope(|s| {
             chunk
                 .iter()
                 .map(|job| s.spawn(|| compile_native_job(job, rlib_ref)))
                 .collect::<Vec<_>>()
                 .into_iter()
-                .map(|h| {
-                    h.join()
-                        .unwrap_or_else(|_| Err(Error::from(std::io::ErrorKind::Other)))
-                })
+                .map(|h| matches!(h.join(), Ok(Ok(true))))
                 .collect()
         });
-        for r in chunk_results {
-            match r {
-                Ok(b) => compiled.push(b),
-                Err(e) => {
-                    if first_err.is_none() {
-                        first_err = Some(e);
-                    }
-                    compiled.push(false);
-                }
-            }
-        }
-    }
-    let compile_fail = compiled.iter().filter(|ok| !**ok).count();
-
-    // Phase 3: run all compiled binaries in parallel.
-    let ready: Vec<&NativeJob> = jobs
-        .iter()
-        .zip(compiled.iter())
-        .filter(|(_, ok)| **ok)
-        .map(|(job, _)| job)
-        .collect();
-    let compile_ok = ready.len();
-    // IN CHUNKS, exactly as phase 2 compiles.  This spawned one thread per ready job — ~1300
-    // at once, each running a subprocess — which a 24-core Linux box absorbs and a macOS
-    // runner does not: the gate reported `0 compile failed, 19 run failed` with every one of
-    // the 19 among the LAST scripts alphabetically, i.e. the last threads spawned, and the
-    // same commit passed one day and failed the next as runner load varied.  Phase 2 never
-    // failed that way because it was already bounded, which is what made the asymmetry
-    // readable: two pools in one function, one of them unbounded.
-    //
-    // `concurrency` is the same worker count, so the run phase inherits the memory clamp the
-    // compile phase derives; a run peaks far below a rustc invocation, so this is a ceiling
-    // rather than a throttle.
-    let mut run_errors: Vec<String> = Vec::new();
-    for chunk in ready.chunks(concurrency) {
+        let ready: Vec<&NativeJob> = chunk
+            .iter()
+            .zip(&compiled)
+            .filter(|(_, ok)| **ok)
+            .map(|(job, _)| job)
+            .collect();
+        compile_fail += chunk.len() - ready.len();
+        compile_ok += ready.len();
+        // The run pool is bounded by the same worker count: one thread per ready job at once
+        // (~1300) is what a macOS runner did not absorb — the LAST scripts alphabetically
+        // failed to run, varying with load.  A run peaks far below a rustc invocation, so
+        // this is a ceiling rather than a throttle.
         let chunk_errors: Vec<String> = std::thread::scope(|s| {
-            chunk
+            ready
                 .iter()
                 .map(|job| s.spawn(|| run_native_job(job)))
                 .collect::<Vec<_>>()
                 .into_iter()
-                .zip(chunk.iter())
+                .zip(ready.iter())
                 .filter_map(|(h, job)| {
                     h.join()
                         .unwrap_or_else(|_| Err(Error::from(std::io::ErrorKind::Other)))
@@ -825,19 +838,41 @@ fn run_native_jobs(
                 .collect()
         });
         run_errors.extend(chunk_errors);
+        // Free the temp filesystem DURING the run: a binary that has run stays as next run's
+        // cache only while a whole chunk's compiles still fit.  The generated `.rs` stays.
+        if !keep_after_run(&scratch, concurrency) {
+            for job in &ready {
+                if let Ok(meta) = std::fs::metadata(&job.binary)
+                    && std::fs::remove_file(&job.binary).is_ok()
+                {
+                    freed_after_run += meta.len();
+                    let _ = std::fs::remove_file(&job.key_file);
+                }
+            }
+        }
     }
+    let low_space = LOW_SPACE_SKIPS.load(std::sync::atomic::Ordering::Relaxed) - skips_before;
+    let compile_fail = compile_fail - low_space;
     let run_ok = compile_ok - run_errors.len();
     println!(
-        "\nnative result: {run_ok} passed, {} compile failed, {} run failed; {} total",
-        compile_fail,
+        "\nnative result: {run_ok} passed, {compile_fail} compile failed, {} run failed, \
+         {low_space} skipped for temp space; {} total",
         run_errors.len(),
         jobs.len()
     );
+    if freed_after_run > 0 {
+        println!(
+            "  temp space is short in {}: freed {} MB of binaries once they had run (not cached)",
+            scratch.display(),
+            freed_after_run >> 20
+        );
+    }
     if !run_errors.is_empty() {
         println!("  run failures: {}", run_errors.join(", "));
     }
-    // Fail if any test failed to compile or run.
-    if compile_fail > 0 || !run_errors.is_empty() {
+    // Fail if any program failed to compile or run, or was never built: a skipped program
+    // was not verified, so a corpus with skips is not green.
+    if compile_fail > 0 || low_space > 0 || !run_errors.is_empty() {
         return Err(Error::from(std::io::ErrorKind::Other));
     }
     Ok(())

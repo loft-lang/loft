@@ -378,6 +378,48 @@ pub fn sweep_own_native_cache(dir: &std::path::Path, stamp: &str) -> u64 {
     freed
 }
 
+/// Make room in this checkout's own native test cache by evicting its least-recently-USED
+/// binaries (the harness bumps an entry's mtime on every cache hit) until the filesystem has
+/// `want_avail` bytes free or nothing evictable is left.  A binary and its `.key` sidecar go
+/// together; the generated `.rs` stays (it is small, and a later compile rewrites it).
+/// Entries used in the last ten minutes are kept: a concurrent shard of the same run compiles
+/// a chunk and runs it right after, so its pending binaries are that young.  Like
+/// [`sweep_own_native_cache`], only `dir` is read — the caller passes its own
+/// [`native_cache_dir`].  Answers the bytes freed.
+pub fn evict_own_native_cache(dir: &std::path::Path, want_avail: u64) -> u64 {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    let mut bins: Vec<(std::time::SystemTime, std::path::PathBuf, u64)> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if !(name.starts_with("loft_native_") && name.ends_with("_bin")) {
+                return None;
+            }
+            let meta = entry.metadata().ok()?;
+            let used = meta.modified().ok()?;
+            let idle = used.elapsed().ok()?.as_secs() >= 600;
+            (meta.is_file() && idle).then(|| (used, entry.path(), meta.len()))
+        })
+        .collect();
+    bins.sort();
+    let mut freed = 0u64;
+    for (_, bin, len) in bins {
+        if fs_avail_bytes(dir).is_none_or(|a| a >= want_avail) {
+            break;
+        }
+        if std::fs::remove_file(&bin).is_ok() {
+            freed += len;
+            let mut key = bin.into_os_string();
+            key.push(".key");
+            let _ = std::fs::remove_file(key);
+        }
+    }
+    freed
+}
+
 /// Bytes currently available on the filesystem backing `path`.
 ///
 /// Uses `df -P -k` (POSIX output → guaranteed single, unwrapped data row) and
@@ -789,6 +831,58 @@ mod reclaim_tests {
             "the same build sweeps nothing"
         );
         assert!(again.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `evict_own_native_cache`: under pressure it takes the idle binaries with their keys,
+    /// and leaves a recently used binary (a concurrent shard's pending one), the generated
+    /// `.rs` and every foreign name; with room enough it takes nothing.
+    #[test]
+    fn eviction_takes_idle_binaries_and_their_keys_only() {
+        let dir =
+            std::env::temp_dir().join(format!("loft_native_evict_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let old = |name: &str| {
+            let p = dir.join(name);
+            std::fs::write(&p, b"x").unwrap();
+            let t = std::time::SystemTime::now() - std::time::Duration::from_hours(1);
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(&p)
+                .unwrap()
+                .set_modified(t)
+                .unwrap();
+            p
+        };
+        let idle_bin = old("loft_native_a_bin");
+        let idle_key = old("loft_native_a_bin.key");
+        let source = old("loft_native_a.rs");
+        let foreign = old("other_tool_output");
+        let recent = dir.join("loft_native_b_bin");
+        std::fs::write(&recent, b"y").unwrap();
+
+        assert_eq!(
+            evict_own_native_cache(&dir, 0),
+            0,
+            "room enough: nothing goes"
+        );
+        assert!(idle_bin.exists());
+
+        assert_eq!(
+            evict_own_native_cache(&dir, u64::MAX),
+            1,
+            "the one idle binary"
+        );
+        assert!(
+            !idle_bin.exists() && !idle_key.exists(),
+            "an idle binary goes with its key"
+        );
+        assert!(recent.exists(), "a recently used binary stays");
+        assert!(
+            source.exists() && foreign.exists(),
+            "sources and foreign names stay"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
