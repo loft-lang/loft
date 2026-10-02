@@ -830,6 +830,29 @@ fn rebuild_status() -> i64 {
             }
         };
         let src = std::env::var("LOFT_LIVE_SRC").unwrap_or_default();
+        // Drift first, whatever the build's outcome: a build of a source that has changed
+        // since is stale whether it succeeded or failed — and a failure is often BECAUSE of
+        // the edit (the build read the file while it was being rewritten, half written).
+        // Reporting it as FAILED would leave the settled source unbuilt.
+        let now = std::fs::read(&src).unwrap_or_default();
+        if now != *snapshot {
+            // Stale: the source changed while the build ran.  Requeue with the
+            // current content — the cache makes an already-built version
+            // instant, so this converges as soon as the source settles.
+            eprintln!("loft-live: rebuild stale (source changed during build) — requeued");
+            let driver = std::env::var("LOFT_LIVE_DRIVER").unwrap_or_default();
+            *r = match spawn_build(&driver, &src) {
+                Ok(b) => b,
+                Err(msg) => {
+                    eprintln!("loft-live: requeue failed — {msg}");
+                    Rebuild::Failed
+                }
+            };
+            return match &*r {
+                Rebuild::Building { .. } => REBUILD_BUILDING,
+                _ => REBUILD_FAILED,
+            };
+        }
         if !status.success() {
             let tail: String = std::fs::read_to_string(err_path)
                 .unwrap_or_default()
@@ -853,25 +876,6 @@ fn rebuild_status() -> i64 {
             .unwrap_or("")
             .trim()
             .to_string();
-        let now = std::fs::read(&src).unwrap_or_default();
-        if now != *snapshot {
-            // Stale: the source changed while rustc ran.  Requeue with the
-            // current content — the cache makes an already-built version
-            // instant, so this converges as soon as the source settles.
-            eprintln!("loft-live: rebuild stale (source changed during build) — requeued");
-            let driver = std::env::var("LOFT_LIVE_DRIVER").unwrap_or_default();
-            *r = match spawn_build(&driver, &src) {
-                Ok(b) => b,
-                Err(msg) => {
-                    eprintln!("loft-live: requeue failed — {msg}");
-                    Rebuild::Failed
-                }
-            };
-            return match &*r {
-                Rebuild::Building { .. } => REBUILD_BUILDING,
-                _ => REBUILD_FAILED,
-            };
-        }
         if artifact.is_empty() || !std::path::Path::new(&artifact).exists() {
             eprintln!("loft-live: rebuild succeeded but no artifact on the ok line ({out:?})");
             *r = Rebuild::Failed;

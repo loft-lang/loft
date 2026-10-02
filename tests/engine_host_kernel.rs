@@ -1544,6 +1544,28 @@ fn main() {{
         stderr.contains("rebuild stale (source changed during build) — requeued"),
         "the mid-build edit must requeue:\n{stderr}"
     );
+    // ── Phase 2 (c'): a build that FAILED on a source edited since must requeue too, not
+    // report failure.  The source is a broken one when the build is requested and the
+    // settled one before the first poll (completion is judged at the poll), so the build
+    // fails for certain and the drift is certain — the shape of a build that read a file
+    // halfway through being rewritten.  Before drift was checked ahead of the exit status
+    // this read `status:3` and left the settled source unbuilt.
+    std::fs::write(&prog, "fn main( {").unwrap();
+    assert_eq!(ask("rebuild"), "rebuild:true");
+    std::fs::write(&prog, fixture(1)).unwrap();
+    let deadline = vm_deadline(300);
+    loop {
+        let st = ask("status");
+        if st == "status:2" {
+            break;
+        }
+        assert!(
+            st == "status:1",
+            "a failed build of a source edited since must requeue, got {st}"
+        );
+        assert!(Instant::now() < deadline, "requeued rebuild never ready");
+        std::thread::sleep(Duration::from_millis(300));
+    }
     // (a) the artifact exists and is the settled source's build.
     let artifact = ask("artifact");
     let path = artifact.strip_prefix("artifact:").unwrap().to_string();
