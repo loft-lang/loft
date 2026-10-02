@@ -11108,18 +11108,6 @@ impl Data {
         pairs
     }
 
-    /// Give up the flat NAME of a type-variable placeholder, so a declaration in another
-    /// file may take it (`Parser::placeholder_from_another_file`).
-    ///
-    /// The definition stays — every template that declared it holds it by NUMBER, and its
-    /// instances were bound to that number — only the `(name, source)` key it occupied is
-    /// released.  It exists because a REPL input, a `<host>` string and the test harness
-    /// parse at the stdlib's own source id on purpose, so a stdlib type variable and the
-    /// reader's own struct compete for one key there where a FILE gives them two.
-    ///
-    /// ⚠ `rebuild_indices` reconstructs `def_names` from the definitions, so a rollback
-    /// after this restores the placeholder's key; the declaration that took it is rolled
-    /// back with it, which is the state they were both in before.
     /// @C98 — can `into` name what `lib` declares as `name` UNQUALIFIED?  Only through a
     /// glob or a by-name import of `lib`, directly or through a chain of `pub use`s; a bare
     /// `use lib;` binds the qualifier alone.  Asked of the imports applied so far.
@@ -11148,6 +11136,13 @@ impl Data {
         false
     }
 
+    /// Give up a definition's flat NAME in `source`, so a declaration may take it
+    /// (`Parser::release_unseen_stub`).  The definition stays — whatever refers to it does
+    /// so by NUMBER — and only the `(name, source)` key is released.
+    ///
+    /// ⚠ `rebuild_indices` reconstructs `def_names` from the definitions, so a rollback
+    /// after this restores the key; the declaration that took it is rolled back with it,
+    /// which is the state they were both in before.
     pub(crate) fn release_def_name(&mut self, name: &str, source: u16) {
         let _ = self.def_names.remove(name, source);
     }
@@ -11155,8 +11150,8 @@ impl Data {
     /// A generic type-variable placeholder: the attribute-less, self-referential
     /// `Struct` the parser registers for a `<T>` type parameter (e.g. stdlib
     /// `min_of<T>`) so the template body's types resolve.  It has store size 0 and
-    /// is an INTERNAL construct — it must never resolve as a real type outside the
-    /// default files that declare it.
+    /// is an INTERNAL construct, minted under a name no source can write (`T#1`), so a
+    /// spelling never resolves to it outside its header (@FR-G-Gen-Scope).
     #[must_use]
     pub fn is_type_var_placeholder(&self, d_nr: u32) -> bool {
         let d = &self.definitions[d_nr as usize];

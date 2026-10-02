@@ -1121,9 +1121,6 @@ impl Parser {
             }
         } else if self.data.def_nr(name) != u32::MAX
             && !self.at_binding_name()
-            // A default-file `<T>` placeholder is invisible here (loft#1049): it is an
-            // internal construct, and letting it resolve is what blocked a user `enum T`.
-            && !self.stdlib_type_var_placeholder(self.data.def_nr(name))
             && !matches!(
                 self.data.def_type(self.data.def_nr(name)),
                 // @PLN22 Phase 1 — exclude EnumValue: a bare variant used as a
@@ -1619,11 +1616,7 @@ impl Parser {
                         && !name.contains('_'))
                         || (name.starts_with(char::is_uppercase) && self.lexer.peek_token("."));
                     if looks_like_a_type {
-                        // A hidden default-file `<T>` placeholder does not count as "the
-                        // name is taken" — without this the forward-reference stub is never
-                        // registered and pass 2 has nothing to adopt (loft#1049).
-                        let taken = self.data.def_nr(name);
-                        if taken == u32::MAX || self.stdlib_type_var_placeholder(taken) {
+                        if self.data.def_nr(name) == u32::MAX {
                             self.speculative_type_refs.insert(self.data.add_def(
                                 name,
                                 name_pos,
@@ -2435,14 +2428,6 @@ impl Parser {
         } else {
             self.data.source_nr(source, name)
         };
-        // loft#1049 — a default-file `<T>` placeholder is invisible from a user file, so it
-        // is not "the name is taken" here either.  Without this the qualified form `T.N`
-        // resolved against the stdlib placeholder, consumed the `.` on its way to a variant
-        // that does not exist, and left the fallback looking at `N` with the qualifier
-        // already gone — which is why the user saw `Expect token ;` at the `;`.
-        if self.stdlib_type_var_placeholder(d_nr) {
-            d_nr = u32::MAX;
-        }
         // @PLN22 Phase 1 — a qualified `Enum::Variant` resolves WITHIN the
         // qualifier enum via the variant_of chokepoint, NOT the first-wins flat
         // key (which may point at a different enum's same-named variant).
