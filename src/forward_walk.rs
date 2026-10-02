@@ -51,16 +51,16 @@ struct Ops {
 }
 
 /// One matched walk: the parts the rewrite keeps.
-struct Walk {
-    vec_t: u16,
-    src: u16,
-    idx: u16,
-    lv: u16,
+pub(crate) struct Walk {
+    pub(crate) vec_t: u16,
+    pub(crate) src: u16,
+    pub(crate) idx: u16,
+    pub(crate) lv: u16,
     /// The element read as the walk spells it — the element reference
     /// `OpGetVectorNullable(v, size, idx)`, or a scalar element's value read over it
     /// (`OpGetInt(…, 0)`) — rebuilt over the counter.
-    read: Value,
-    iter_scope: u16,
+    pub(crate) read: Value,
+    pub(crate) iter_scope: u16,
 }
 
 fn int(v: &Value) -> Option<i32> {
@@ -195,7 +195,7 @@ fn by_reference(tp: &Type) -> bool {
 }
 
 /// Can `body` resize the walked vector?  `Err` names why a shape is declined.
-fn check_body(
+pub(crate) fn check_body(
     data: &Data,
     vars: &crate::variables::Function,
     w: &Walk,
