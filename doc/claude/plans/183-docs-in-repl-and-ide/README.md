@@ -1,6 +1,7 @@
 # @PLN183 — documentation in the REPL and the IDE: P0 design + probes
 
-**Status: P0 — design and probes, for review before any code.**  The plan itself (goal, surfaces,
+**Status: P0 done — design reviewed, the catalogue carries the groups and keys, the six gaps
+closed (2026-10-02).  Next: P1.**  The plan itself (goal, surfaces,
 phases) is the tracker issue, [loft-lang/plans#183](https://github.com/loft-lang/plans/issues/183);
 this directory holds P0's deliverables:
 
@@ -159,10 +160,16 @@ feature (`@F2`, `??`), a stdlib or library function, or a library.  `:api <libra
 and `:ops <Type>` are the two drill-downs named directly.  `:features` and `:libs` are the two
 halves of `:doc` on their own.  Every page ends with its web page's address.
 
-## What P0 asks of the owner
+## What the owner decided
 
-1. **The six catalogue gaps** (probe 2): an entry for operators on a program's own type, written
-   with @PLN182; an entry or a section for text slicing; and four body fixes (F22, F23, F6, F37).
-2. **The `group:` labels and `Keys:` lines** on the catalogue issues — the grouping in
-   `grouping.tsv` is the proposal.
-3. **F120 / F121** — keep them as features, or move them to the library side.
+1. **The six gaps are closed** in the catalogue: F124 (operators on a program's own type) and F125
+   (text slicing) are new entries, and F22, F23, F6 and F37 show `|x|`, a function type, a slice
+   and `x += 1` in their examples — each example run on both backends.  Probe 2's rows are all
+   `ok` now.
+2. **Every issue carries its `group:` label, and every feature its keys** — an HTML comment
+   `<!-- keys: … -->` at the end of the body, invisible on the rendered issue.  `make
+   features-fetch` copies both into `index/features.json`; `make features-check` fails an entry
+   with no group or two, and a key with two owners.  `keys.tsv` holds the 160 keys.
+3. **F120 / F121 stay in the catalogue, in the maintainers' group**: they are the start of the
+   loft-in-loft front end, in loft's own tree, not in the registry and not a supported user
+   library yet — their titles and bodies say so.

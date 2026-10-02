@@ -25,6 +25,9 @@ bad = []
 bad += [f'{e}: in no group' for e in sorted(ids - placed.keys())]
 bad += [f'{e}: in {len(g)} groups ({", ".join(g)})' for e, g in sorted(placed.items()) if len(g) > 1]
 bad += [f'{e}: not in the catalogue' for e in sorted(placed.keys() - ids)]
+carried = {('F' if e['kind'] == 'feature' else 'I') + str(e['number']): e.get('group', '') for e in cat}
+bad += [f'{e}: the issue carries group "{carried.get(e, "")}", the table "{g[0]}"'
+        for e, g in sorted(placed.items()) if carried.get(e, '') != g[0]]
 counts = defaultdict(int)
 for e, g in placed.items():
     counts[g[0]] += 1

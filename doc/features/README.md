@@ -98,10 +98,12 @@ canonical; these pages are its generated shadow. Regenerate with
 | [@F115](F115.md) | `OpDrop` — a type runs code when its scope lets it die |
 | [@F118](F118.md) | Time (now / ticks) |
 | [@F119](F119.md) | Store locks (#lock) |
-| [@F120](F120.md) | Lexer library (lib/lexer) |
-| [@F121](F121.md) | Parser library (lib/parser) |
+| [@F120](F120.md) | Lexer in loft (lib/lexer.loft) — part of the loft-in-loft front end, not a user library yet |
+| [@F121](F121.md) | Parser in loft (lib/parser.loft) — part of the loft-in-loft front end, not a user library yet |
 | [@F122](F122.md) | Multiple dispatch — one name, a definition per combination of parameter types |
 | [@F123](F123.md) | Foreign stores — a mapped file or a library's buffer read in place, a slice of it a view |
+| [@F124](F124.md) | Operators on a program's own type — `operator compare`, `plus`, `minus`, `times`, `negate`, `divided_by`, `remainder`, `to_<type>` |
+| [@F125](F125.md) | Text slicing — `s[a..b]`, `s[a..]`, `s[..b]`, `s[i]` (byte offsets; `char_slice` for characters) |
 
 ## Infrastructure (`@I`)
 
