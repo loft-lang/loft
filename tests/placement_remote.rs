@@ -363,7 +363,7 @@ fn a_server_that_stops_answering_is_an_error_not_a_hang() {
     // Listening, then killed with a call outstanding.
     let mut server = Server::start(&root);
     let address = server.address.clone();
-    let consumer = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let mut consumer = Command::new(env!("CARGO_BIN_EXE_loft"))
         .arg("--interpret")
         .arg("--lib")
         .arg(root.join("libs"))
@@ -375,15 +375,31 @@ fn a_server_that_stops_answering_is_an_error_not_a_hang() {
         .stderr(Stdio::piped())
         .spawn()
         .expect("start the consumer");
-    std::thread::sleep(std::time::Duration::from_millis(700));
+    // Kill the server once the consumer has made a call THROUGH it, never after a
+    // sleep: `before 2` is printed when `ping` has been answered over the link, so the
+    // link exists and the next call, `slow`, is the one the kill interrupts.  A fixed
+    // sleep raced the consumer's own start-up — under load the server died before the
+    // consumer connected, which reads "could not be reached", not "stopped answering".
+    let mut reader = std::io::BufReader::new(consumer.stdout.take().expect("consumer stdout"));
+    let mut stdout = String::new();
+    loop {
+        let mut line = String::new();
+        if std::io::BufRead::read_line(&mut reader, &mut line).unwrap_or(0) == 0 {
+            break;
+        }
+        stdout.push_str(&line);
+        if line.contains("before 2") {
+            break;
+        }
+    }
     let _ = server.child.kill();
     let _ = server.child.wait();
+    let _ = reader.read_to_string(&mut stdout);
 
     let out = consumer
         .wait_with_output()
         .expect("consumer did not finish");
     let stderr = String::from_utf8_lossy(&out.stderr);
-    let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
         stdout.contains("before 2"),
         "the consumer never reached the call: {stdout:?} / {stderr}"
