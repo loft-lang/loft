@@ -5746,12 +5746,6 @@ fn operator_of_a_form_not_built_yet() {
 }
 
 #[test]
-fn operator_conversion_not_built_yet() {
-    code!("struct P { v: integer }\noperator to_integer(self: P) -> integer { self.v }\nfn test() { }")
-        .error("`operator to_integer` will back an `as` conversion, which a type cannot define yet; declare it with `fn` as an ordinary method for now at operator_conversion_not_built_yet:2:42");
-}
-
-#[test]
 fn operator_compare_without_self() {
     code!("struct P { v: integer }\noperator compare(a: P, b: P) -> Ordering { a.v.compare(b.v) }\nfn test() { }")
         .error("`operator compare` is a method: its first parameter is `self`, the type `<` is written on — `operator compare(self: T, other: T) -> Ordering` at operator_compare_without_self:2:43");
@@ -5809,4 +5803,28 @@ fn a_plain_to_text_does_not_drive_formatting() {
 fn operator_next_of_the_wrong_shape() {
     code!("struct C { n: integer }\noperator next(self: C, k: integer) -> integer? { if self.n > k { null } else { 1 } }\nfn test() { }")
         .error("`operator next` has the wrong shape: `operator next(self: T) -> E?`, answering null when the walk is done at operator_next_of_the_wrong_shape:2:49");
+}
+
+#[test]
+fn a_plain_to_integer_does_not_drive_as() {
+    code!("value struct D { ms: integer }\nfn to_integer(self: D) -> integer { self.ms }\nfn test() { d = D { ms: 1 }; i = d as integer; assert(i == 1, \"i\"); }")
+        .error("`D` has a method `to_integer`, but `as integer` reaches only one written with `operator`: declare it `operator to_integer(self: D) -> integer` at a_plain_to_integer_does_not_drive_as:3:47");
+}
+
+#[test]
+fn operator_conversion_named_for_another_type() {
+    code!("value struct D { ms: integer }\noperator to_float(self: D) -> integer { self.ms }\nfn test() { }")
+        .error("`operator to_float` answers `integer`, whose conversion is `to_integer`: the name after `to_` is the type the conversion answers, in snake case (`to_date_time` answers `DateTime`) at operator_conversion_named_for_another_type:2:40");
+}
+
+#[test]
+fn operator_conversion_with_a_second_parameter() {
+    code!("value struct D { ms: integer }\noperator to_integer(self: D, k: integer) -> integer { self.ms + k }\nfn test() { }")
+        .error("`operator to_integer` converts `self` and nothing else: `operator to_integer(self: S) -> integer` at operator_conversion_with_a_second_parameter:2:54");
+}
+
+#[test]
+fn operator_conversion_between_two_foreign_types() {
+    code!("operator to_integer(self: text) -> integer { len(self) }\nfn test() { }")
+        .error("`operator to_integer` converts `text` to `integer`, and neither is a type of this package: a conversion is defined with the type it converts from or into at operator_conversion_between_two_foreign_types:1:45");
 }

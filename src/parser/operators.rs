@@ -1242,6 +1242,45 @@ impl Parser {
         None
     }
 
+    /// `@FR-Op-Conv` (@PLN182) — `x as T` is ONE call of `x.to_<t>()` when the source type has
+    /// an `operator to_<t>` answering exactly `T`; `x as text` calls `operator to_text`, with an
+    /// empty spec when the type defines only the spec form.  Answers `Some(true)` when it
+    /// built the call, `Some(false)` when an unmarked `fn to_<t>` exists (`@FR-Op-Mark`: the
+    /// caller names it if nothing else converts), `None` otherwise.
+    pub(crate) fn operator_conversion(
+        &mut self,
+        code: &mut Value,
+        from: &Type,
+        to: &Type,
+    ) -> Option<bool> {
+        if self.default {
+            return None;
+        }
+        let name = self.data.conversion_name(to.base())?;
+        let form = format!("to_{name}");
+        let m = self.data.find_op_method(u16::MAX, &form, from.base());
+        if m == u32::MAX {
+            return None;
+        }
+        if !self.data.def(m).operator_form() {
+            return Some(false);
+        }
+        if !self.data.def(m).returned().base().is_same(to.base()) {
+            return None;
+        }
+        let src = code.clone();
+        let (args, types) = if self.data.visible_params(m).len() == 2 {
+            (
+                vec![src, Value::Text(String::new())],
+                vec![from.clone(), Type::Text(crate::data::Deps::none())],
+            )
+        } else {
+            (vec![src], vec![from.clone()])
+        };
+        let tp = self.call_nr(code, m, &args, &types, true, &[], None);
+        Some(tp != Type::Null)
+    }
+
     /// The `operator` form an arithmetic symbol backs, for the forms built so far.
     fn arith_form(op: &str) -> Option<&'static str> {
         match op {
@@ -5044,8 +5083,21 @@ impl Parser {
                         Value::Text(s) => Some(s.clone()),
                         _ => None,
                     };
-                    let converted =
-                        self.convert(code, cast_src, &tp) || self.cast(code, cast_src, &tp);
+                    let by_operator = self.operator_conversion(code, cast_src, &tp);
+                    let converted = by_operator == Some(true)
+                        || self.convert(code, cast_src, &tp)
+                        || self.cast(code, cast_src, &tp);
+                    if !converted && by_operator == Some(false) && !self.first_pass {
+                        let t = tp.base().source_name(&self.data);
+                        let f = cast_src.base().source_name(&self.data);
+                        let name = self.data.conversion_name(tp.base()).unwrap_or_default();
+                        diagnostic!(
+                            self.lexer,
+                            Level::Error,
+                            "`{f}` has a method `to_{name}`, but `as {t}` reaches only one written \
+                             with `operator`: declare it `operator to_{name}(self: {f}) -> {t}`"
+                        );
+                    }
                     self.in_explicit_cast = outer_cast;
                     if !converted {
                         // `@C131` — two variants of one enum: the value is known to be the first,
@@ -5068,7 +5120,9 @@ impl Parser {
                                  variant, so the cast cannot succeed",
                                 &ctp.source_name(&self.data),
                             );
-                        } else {
+                        } else if by_operator != Some(false) {
+                            // An unmarked `to_<t>` was named above (`@FR-Op-Mark`); this is the
+                            // refusal for a type with nothing to convert by.
                             diagnostic!(
                                 self.lexer,
                                 Level::Error,

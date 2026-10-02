@@ -7640,6 +7640,58 @@ impl Data {
         })
     }
 
+    /// `@FR-Op-Conv` (@PLN182) — the name `to_<name>` an `operator` conversion INTO `tp` has:
+    /// the six base types by their own names, a non-generic struct or enum by its name in snake
+    /// case (`DateTime` → `date_time`; an all-capital run is one word, `HTTPRequest` →
+    /// `http_request`; a digit stays with the word before it, `Vec2` → `vec2`).  A generic
+    /// instance, a narrowed integer and any other type have none.
+    #[must_use]
+    pub fn conversion_name(&self, tp: &Type) -> Option<String> {
+        match tp {
+            // `IntegerSpec::source_name` is the one home for "this spells `integer`": both
+            // templates do, and a narrow alias (`u8`, `i32`) carries a forced size of its own.
+            Type::Integer(spec)
+                if spec.source_name() == Some("integer") && spec.forced_size.is_none() =>
+            {
+                Some("integer".to_string())
+            }
+            Type::Float => Some("float".to_string()),
+            Type::Single => Some("single".to_string()),
+            Type::Text(_) => Some("text".to_string()),
+            Type::Boolean => Some("boolean".to_string()),
+            Type::Character => Some("character".to_string()),
+            Type::Reference(d, _) | Type::Enum(d, false, _)
+                if matches!(self.def(*d).def_type, DefType::Struct | DefType::Enum)
+                    && self.def(*d).instance_of == u32::MAX
+                    && !self.is_type_var_placeholder(*d) =>
+            {
+                Some(Self::snake_case(self.def(*d).name()))
+            }
+            _ => None,
+        }
+    }
+
+    /// `DateTime` → `date_time`, `HTTPRequest` → `http_request`, `Vec2` → `vec2`.
+    fn snake_case(name: &str) -> String {
+        let chars: Vec<char> = name.chars().collect();
+        let mut out = String::new();
+        for (i, &c) in chars.iter().enumerate() {
+            if c.is_ascii_uppercase() {
+                let prev = if i > 0 { Some(chars[i - 1]) } else { None };
+                let next_lower = chars.get(i + 1).is_some_and(char::is_ascii_lowercase);
+                let after_word = prev.is_some_and(|p| p.is_ascii_lowercase() || p.is_ascii_digit());
+                let run_ends = prev.is_some_and(|p| p.is_ascii_uppercase()) && next_lower;
+                if after_word || run_ends {
+                    out.push('_');
+                }
+                out.push(c.to_ascii_lowercase());
+            } else {
+                out.push(c);
+            }
+        }
+        out
+    }
+
     /// The `operator` form a bound's operator member names: `OpLt` → `compare`, `OpAdd` →
     /// `plus`, a two-operand `OpMin` → `minus`, `OpMul` → `times`.
     #[must_use]

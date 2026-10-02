@@ -2051,6 +2051,10 @@ impl Parser {
         if self.refuse_operator_name(fn_name) {
             return;
         }
+        if fn_name.starts_with("to_") && fn_name != "to_text" {
+            self.check_conversion_definition(fn_name, arguments, result);
+            return;
+        }
         let visible: Vec<&crate::data::Argument> = arguments
             .iter()
             .filter(|a| !a.name.starts_with("__"))
@@ -2147,6 +2151,73 @@ impl Parser {
         }
     }
 
+    /// `@FR-Op-Conv` (@PLN182) — `operator to_<name>(self: S) -> T` drives `x as T`: the
+    /// suffix is `T`'s conversion name (`Data::conversion_name`), `self` is the only parameter,
+    /// and S or T is a type of this source — a conversion INTO the source's own type may take a
+    /// foreign `self` (`operator to_date_time(self: text) -> DateTime`), so only `DateTime`'s
+    /// package defines it.
+    fn check_conversion_definition(
+        &mut self,
+        fn_name: &str,
+        arguments: &[crate::data::Argument],
+        result: &Type,
+    ) {
+        let visible: Vec<&crate::data::Argument> = arguments
+            .iter()
+            .filter(|a| !a.name.starts_with("__"))
+            .collect();
+        let named = self.data.conversion_name(result.base());
+        if named.as_deref() != Some(&fn_name["to_".len()..]) {
+            let answers = named.map_or_else(
+                || "a type it names".to_string(),
+                |n| {
+                    format!(
+                        "`{}`, whose conversion is `to_{n}`",
+                        result.source_name(&self.data)
+                    )
+                },
+            );
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`operator {fn_name}` answers {answers}: the name after `to_` is the type the \
+                 conversion answers, in snake case (`to_date_time` answers `DateTime`)"
+            );
+            return;
+        }
+        let Some(first) = visible
+            .first()
+            .filter(|a| a.name == "self" && visible.len() == 1)
+        else {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`operator {fn_name}` converts `self` and nothing else: `operator {fn_name}(self: \
+                 S) -> {}`",
+                result.source_name(&self.data)
+            );
+            return;
+        };
+        if self.default {
+            return;
+        }
+        let here = self.data.def(self.context).source;
+        let own = |t: &Type| match t.base() {
+            Type::Reference(d, _) | Type::Enum(d, _, _) => self.data.def(*d).source == here,
+            _ => false,
+        };
+        if !own(&first.typedef) && !own(result) {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`operator {fn_name}` converts `{}` to `{}`, and neither is a type of this \
+                 package: a conversion is defined with the type it converts from or into",
+                first.typedef.source_name(&self.data),
+                result.source_name(&self.data)
+            );
+        }
+    }
+
     /// `@FR-Op-Shape` for the forms a single value reaches: `next(self) -> E?` drives `for e
     /// in x`, and `to_text(self) -> text` or `to_text(self, spec: text) -> text` drives
     /// `"{x}"` and `"{x:spec}"`.
@@ -2209,19 +2280,11 @@ impl Parser {
             );
             return true;
         }
-        if fn_name.starts_with("to_") && fn_name != "to_text" {
-            diagnostic!(
-                self.lexer,
-                Level::Error,
-                "`operator {fn_name}` will back an `as` conversion, which a type cannot define \
-                 yet; declare it with `fn` as an ordinary method for now"
-            );
-            return true;
-        }
         if !matches!(
             fn_name,
             "compare" | "plus" | "minus" | "times" | "next" | "to_text"
-        ) {
+        ) && !fn_name.starts_with("to_")
+        {
             diagnostic!(
                 self.lexer,
                 Level::Error,
