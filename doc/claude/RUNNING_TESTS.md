@@ -38,7 +38,7 @@ one does nothing for the other two:
 | rlib | linked by | cure |
 |---|---|---|
 | `target/release/libloft.rlib` | `--native`, the cdylib tests | `cargo build --release --lib` |
-| `target/wasm32-unknown-unknown/release/libloft.rlib` | `--html` | `cargo build --release --target wasm32-unknown-unknown --lib --no-default-features --features random` |
+| `target/loft/html/wasm32-unknown-unknown/release/libloft.rlib` | `--html` | `loft cache warm`, or `cargo build --release --target wasm32-unknown-unknown --lib --no-default-features --features random --target-dir target/loft/html` |
 | `target/wasm32-wasip2/release/libloft.rlib` | the wasm library suite | `cargo build --release --target wasm32-wasip2 --lib --no-default-features --features random` |
 
 A stale rlib does not fail like a compile error.  It surfaces minutes into a run as a handful of

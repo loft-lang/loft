@@ -909,13 +909,11 @@ hooks:
 # that CI runs cross-backend.  See doc/claude/plans/92-feature-catalogue/.
 FEATURES_REPO ?= loft-lang/features
 
-# CAVEAT: the probe reads target/wasm32-unknown-unknown/release/libloft.rlib, and it
-# must be the `--html` shape (`--no-default-features --features random`).  `make wasm`
-# overwrites that rlib with the wasm-bindgen variant, against which the probe records
-# store_load_url and store_load_url_trusted as unavailable in the BROWSER and commits
-# that as derived truth.  So after a bundle rebuild the order is: `make wasm`, then
-# `cargo build --release --target wasm32-unknown-unknown --lib --no-default-features
-# --features random`, then this.
+# The probe reads the `--html` shape's OWN rlib, target/loft/html/wasm32-unknown-unknown/
+# release — the one `loft --html` links, in the directory `make wasm`'s wasm-bindgen build
+# cannot overwrite.  Build it first: `loft cache warm`, or `cargo build --release --target
+# wasm32-unknown-unknown --lib --no-default-features --features random --target-dir
+# target/loft/html`.
 surface-gen:  ## Regenerate index/target_surface.json (which builtins exist per target)
 	@python3 scripts/gen_target_surface.py
 
@@ -2035,7 +2033,7 @@ check-rlib:  ## One-second pre-flight: is target/release/libloft.rlib present an
 	@fail=0; \
 	for spec in \
 	    "target/release/libloft.rlib|cargo build --release --lib|native (--native, cdylib tests)" \
-	    "target/wasm32-unknown-unknown/release/libloft.rlib|cargo build --release --target wasm32-unknown-unknown --lib --no-default-features --features random|browser (--html)" \
+	    "target/loft/html/wasm32-unknown-unknown/release/libloft.rlib|cargo build --release --target wasm32-unknown-unknown --lib --no-default-features --features random --target-dir target/loft/html|browser (--html)" \
 	    "target/wasm32-wasip2/release/libloft.rlib|cargo build --release --target wasm32-wasip2 --lib --no-default-features --features random|wasip2 (wasm library suite)"; do \
 	    rlib=$${spec%%|*}; rest=$${spec#*|}; cure=$${rest%%|*}; what=$${rest#*|}; \
 	    dir=$$(dirname "$$(dirname "$$rlib")"); \
@@ -2361,7 +2359,7 @@ ci: ci-guard
 	cargo build --release --lib >> result.txt 2>&1 && \
 	cargo build --no-default-features --target-dir target/nodefault >> result.txt 2>&1 && \
 	cargo build --release --target wasm32-wasip2 --lib --no-default-features --features random >> result.txt 2>&1 && \
-	cargo build --release --target wasm32-unknown-unknown --lib --no-default-features --features random >> result.txt 2>&1 && \
+	cargo build --release --target wasm32-unknown-unknown --lib --no-default-features --features random --target-dir target/loft/html >> result.txt 2>&1 && \
 	python3 scripts/gen_target_surface.py --check >> result.txt 2>&1 && \
 	(cargo nextest --version >/dev/null 2>&1 || cargo install cargo-nextest --locked) >> result.txt 2>&1 && \
 	./target/release/loft cache warm --from tests >> result.txt 2>&1 && \

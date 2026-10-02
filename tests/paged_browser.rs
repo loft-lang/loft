@@ -41,7 +41,7 @@ fn wasm32_installed() -> bool {
         .output()
         .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).contains("wasm32-unknown-unknown"))
         && repo_root()
-            .join("target/wasm32-unknown-unknown/release/libloft.rlib")
+            .join("target/loft/html/wasm32-unknown-unknown/release/libloft.rlib")
             .exists()
 }
 

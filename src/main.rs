@@ -10369,9 +10369,9 @@ fn main() {
         //
         // Build via rustc directly, not `cargo build`: cargo would
         // produce a SECOND copy of `loft` (with a different
-        // StableCrateId than the top-level
-        // `target/wasm32-unknown-unknown/release/libloft.rlib` the
-        // standalone-binary `--extern loft=…` references), and rustc
+        // StableCrateId than the `--html` runtime rlib in
+        // `html_runtime_dir` that the standalone-binary `--extern
+        // loft=…` references), and rustc
         // would refuse with "expected DbRef, found DbRef" (two distinct
         // types from two builds of the same source).  By invoking
         // rustc with the SAME `--extern loft=…` + deps search path
