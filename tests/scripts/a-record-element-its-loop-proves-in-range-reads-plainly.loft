@@ -12,8 +12,9 @@
 // element's VALUE can be null.  `tests/in_range.rs` pins which loop is rewritten.  Expected
 // values by hand.
 //
-// @falsified-at: none — it guards a rewrite no earlier build has; planted defects, see
-//   tests/in_range.rs.
+// @falsified-at: none — it guards a rewrite no earlier build has.  Falsified by planted defects,
+//   2026-10-02: another vector's read accepted (`another_vector` reads null for 15) and the body
+//   check dropped (the cleared vector reads null for 10) — both silent.
 
 struct P {
   x: float,

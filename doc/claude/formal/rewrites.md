@@ -3588,6 +3588,28 @@ up hold no rewritten walk — emitted code placement).  `LOFT_NO_FORWARD_WALK=1`
 walks that must keep re-reading, both backends) and `tests/forward_walk.rs` (which walk is
 rewritten, read off the trace; the cells with the rewrite off).
 
+### A record element its loop proves in range is read plainly
+
+```
+  (R-InRange)    Inside `for i in 0..len(v)` whose body can neither resize `v` nor assign
+                 `i` or `i#index` (`(R-ForwardWalk)`'s body check), a discharge block over
+                 a RECORD element of `v` at `i` — `v[i]?`, `v[i] ?? d` — is its element read
+                 alone: an in-range element of a vector of records is a record, so the read
+                 never answers null and the fallback is never minted.  Not for a scalar
+                 element: a scalar's `?` also discharges an element whose VALUE is null
+                 (C80), which no loop bound rules out.
+```
+
+**In words.** Applied by: `in_range::rewrite_program`, in the IR phase (both backends).  Both
+conditions are load-bearing, each falsified with a silent `null`: reading another vector at the
+same index (`another_vector` read null for 15), and dropping the body check (`v.clear()` part-way
+read null for 10, 2026-10-02).  The record-only clause is enforced twice: by the read's shape (a
+scalar's read is a value read over the element, never the bare element read) and by the
+conversion test — the second is defensive, its plant passes.  Measured on `record_update` by
+the hand-written form: −20 % cycles.  `LOFT_NO_IN_RANGE=1`, `LOFT_TRACE_IN_RANGE=1`.  Guards
+`tests/scripts/a-record-element-its-loop-proves-in-range-reads-plainly.loft` and
+`tests/in_range.rs`.
+
 ### A computed range start is one counter, stepped at the bottom
 
 ```
