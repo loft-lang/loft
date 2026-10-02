@@ -3897,8 +3897,8 @@ impl ReplSession {
     }
 
     /// Store `var`'s snapshot `lit` as the binding `var = lit`: appended to `body`, filed in the
-    /// session store as `materialized` (the record it replaces is released — @PLN14 arc G, so a
-    /// long session does not grow per re-bind), and persisted as the snapshot, not the source
+    /// session store as `materialized` (the record it replaces is released, so a long session
+    /// does not grow per re-bind), and persisted as the snapshot, not the source
     /// that produced it.  `false` when the literal does not recompile; the caller falls back.
     fn commit_snapshot(
         &mut self,
@@ -3950,8 +3950,8 @@ impl ReplSession {
     /// Keep `input` in the session as SOURCE: appended to `body`, replayed by every later
     /// generation, persisted.  `execute` runs it now as well (it has not run yet); a side
     /// effect in it then repeats on a later replay, which is the trade the binding path makes
-    /// for a value it cannot snapshot.  The session store no longer holds the current value
-    /// of the variables it `names`, so their records go and a read of them replays.
+    /// for a value it cannot snapshot.  The session store then holds no current value for the
+    /// variables it `names`, so their records go and a read of them replays.
     fn keep_as_source(
         &mut self,
         input: &str,

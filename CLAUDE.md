@@ -336,7 +336,7 @@ src/main.rs            CLI; loads default/ then user file
 3. **Never create a branch or open a loft PR without an explicit user ask** ("create PR",
    "switch branch"). "fix X" / "push" / "retry" are NOT such asks; a prior ask doesn't carry
    over. If a protected branch blocks a commit, surface it and ask — don't invent a branch.
-   ⚠ **A MERGE never waits for the owner** (owner, 2026-10-02): once a PR is open, arm
+   ⚠ **A MERGE never waits for the owner:** once a PR is open, arm
    `gh pr merge --auto --squash` — the required checks ARE the merge rule.  **A library PR
    does not wait either:** every `loft-libs-*` `main` requires a PR (admins included), so a
    library change is a branch + a PR + auto-merge, opened without asking; publish only from

@@ -220,10 +220,10 @@ pub fn diagnostics_armed() -> bool {
 /// The cache-enable policy (@C133): on, unless `LOFT_NO_CACHE` turns it off.
 ///
 /// A development build (`cargo run`, `cargo test`, a binary under `target/`) is cached like
-/// an installed one.  What used to hold it back is answered on the facts: both cache keys
-/// fold in [`binary_signature_tag`], so a rebuilt compiler never reads a bundle an earlier
-/// build wrote, and a warm load reproduces the cold run's behaviour — the placed-library
-/// workers ride the manifest's `plib` list, and each diagnostic's fixes ride its line
+/// an installed one, which is safe on the facts: both cache keys fold in
+/// [`binary_signature_tag`], so a rebuilt compiler never reads a bundle an earlier build
+/// wrote, and a warm load reproduces the cold run's behaviour — the placed-library workers
+/// ride the manifest's `plib` list, and each diagnostic's fixes ride its line
 /// (loft#1129).  What stays is the case no key can see: a compiler instrumented WITHOUT a
 /// rebuild (an armed `LOFT_LOG` / `LOFT_IR`), where a warm run says so and names
 /// `LOFT_NO_CACHE=1` (`main.rs`), and a test that runs the binary to measure a cold compile,
@@ -1362,7 +1362,7 @@ mod tests {
     #[test]
     fn cache_decision_precedence() {
         // The kill switch is the one setting: on without it, off with it — a development
-        // build included, which the policy no longer tells apart.
+        // build included, which the policy treats like any other.
         assert!(cache_decision(false));
         assert!(!cache_decision(true));
     }
