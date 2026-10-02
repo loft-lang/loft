@@ -12,6 +12,10 @@
 // alias_grow 6*1000 + (6+7) = 6013 and the holder sees b = 13; via_callee 3*100 + (3+5) = 308;
 // rec_grow 9*1000 + (9+3) = 9012 and the holder sees 12; the grown vectors hold 100 and 60.
 //
+// @falsified-by: tests/falsified/a-record-parameter-holds-its-address-only-while-nothing-moves-it.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+// CHANNEL: native assertions — with the verdict skipped, rebind answers 205 and the two
+// sibling-growth cells read and write a moved record (13 / 0, 12 / 0).
+// HOLDS: the interpreter takes no address and answers the same on both trees.
 struct T { a: integer, b: integer }
 struct P { pt: T, pv: vector<T> }
 struct H { x: integer, items: vector<T>, y: integer }
