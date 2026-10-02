@@ -33,6 +33,8 @@ that removes it — scratch nobody removes grows into hundreds of GB.
 | `~/.cache/tmp/claude-<uid>/<project>/<session>`, or `/tmp/claude-<uid>/…` where `TMPDIR` is unset | the agent harness's per-session scratch | `make sweep-scratch` (nothing in it changed for two weeks — two days on a RAM tmpfs); within those two days, the agent that wrote it — see below |
 | `target/debug/deps` | cargo: every test binary of every dependency hash ever built (tens of GB per checkout) | `scripts/disk_janitor.sh`, beside every build (`cargo sweep --time 3`, `--time 1` under 50 GB free), on every checkout, under cargo's own build lock; `make sweep-target` by hand |
 | `target/*/incremental` | cargo: the incremental compilation cache (9 GB measured) | `scripts/disk_janitor.sh` (sessions older than a day, under the build lock); `scripts/disk_headroom.sh`, whole, when the disk is short — it costs a rebuild's time, nothing else |
+| `<package>/native-auto/libloft_auto_<pkg>_<fp>.so` | the native package loader (`native_lib::cached_or_build_shared_cdylib`): one cdylib per loft build and consumer type layout — about 110 MB each for the fixture packages under `tests/fixtures/` | `native_lib::prune_artifacts`, after a build in the same directory: the newest 8 stay (`KEEP_ARTIFACTS`).  Bounded, but at that size 8 per fixture is about 0.9 GB each and about 10 GB over the fixtures, and nothing takes the tail of a fixture no test rebuilds |
+| `~/.cache/loft/stdlib-<key>.store` | the startup cache (`cache::stdlib_cache_path`): one image, about 7 MB, per distinct stdlib source set | **nothing** — `cache_gc` surveys `~/.loft/build-cache` and `~/.loft/registry` only, and `sweep_scratch.sh` does not look in `~/.cache/loft`.  One day of test runs left 1 465 images (10.5 GB); which tests mint a new key per run is not yet measured (loft#1859) |
 | `/var/tmp/loft-test-scratch-<checkout>.<cksum>` as a whole | ONE gate run's fixtures and native test cache (23 GB measured in a single run — today's entries, which the day-old rule keeps) | `scripts/disk_headroom.sh`, when the disk is still short after the steps above and NO gate of this checkout is alive (its pid file and `.ci-running`, liveness-tested): a finished run's fixtures are garbage, the next run writes fresh ones, and the native cache is rebuilt |
 
 **A session scratch on a RAM-backed `/tmp` is memory, not disk.**  A control worktree's
@@ -65,6 +67,17 @@ younger than a day, and the harness only ever overwrote the entries a run reache
 now lives in a per-checkout directory and forgets an older build at the next run's start; the
 boundary is the directory, not the file name, which is what keeps a sibling checkout's live
 run and every other program's files out of reach.
+
+**One native corpus run does not fit a 16 GB tmpfs.**  A test binary is stripped
+(`platform::native_strip_symbols`) and still 12–14 MB — loft's own runtime at `opt-level=0` is
+most of it — so the roughly 1 800 programs of `native_scripts_*` need about 22 GB, and the
+harness keeps every one for the next run.  Its preflight (`tests/native.rs`,
+`platform::native_compile_space_ok`) reclaims only artefacts of OLDER builds, and when that is not
+enough it SKIPS the test; the shard summary counts each skip as `compile failed`, so a run that
+filled the tmpfs reads as hundreds of compile errors.  Read `SKIP … low temp space` in the output
+before reading the count (loft#1859).  Until the harness evicts its own least-recently-used entries before it
+skips, run the corpus with `TMPDIR` on the disk (`find_problems.sh` does) — a test binary run by
+hand without it lands on the tmpfs.
 
 **Every gate makes room before it starts.**  `make ci`, `make test`, `make quick` and
 `find_problems.sh` (both entry points) run `scripts/disk_headroom.sh` (`make disk-headroom` by

@@ -944,3 +944,48 @@ heap `String` made and freed for every decoded text (`malloc`/`free`, `from_utf8
 largest first: the first decode builds a whole tree only to read `.ok` (about half the work,
 a demand-driven specialisation, not priced); the per-text `String` round trip (write the text
 into the store from the byte range directly, runtime, both backends); then the per-record claims.
+
+## `check_request` after `(R-PureReuse)` and `(M-Match)` (2026-10-02) — where data moves, objects are made and freed
+
+`pa_decode_ok` and `pa_decode` decoded the same frame twice; `(R-PureReuse)` computes it once,
+and `(M-Match)` stops `match pa_get(m, k) { … }` from calling its subject once per arm.  Per
+check, native: 4 stores / 30 claims / 10 deletes → 2 / 16 / 5; `check_request` 22.7× → 12.4×
+Rust (`make worst`, one quiet run).  The other worst rows did not move with this step beyond
+noise — the census agrees: `(R-PureReuse)` fires only in pluginabi's bench, the match fix only
+where a subject is a call.  Ratios swing ±30–40 % run to run where the Rust lane moves
+(`build_vis` 12.7× → 19.3× with its native time flat), so read under 15 % as no change.
+
+**One decode, by frame** (`LOFT_STORE_CENSUS`, `op-census` build, native):
+
+| frame | stores | claims | deletes | grows | bytes moved |
+|---|--:|--:|--:|--:|--:|
+| empty map | 1 | 2 | 1 | 0 | 0 |
+| one text → text entry | 1 | 7 | 3 | 0 | 32 |
+| one text → bytes(64) entry | 1 | 8 | 4 | 1 | 32 |
+| the request (3 entries) | 1 | 13 | 5 | 1 | 96 |
+
+Attributed to `read_value`'s IR: the base is the result `Decoded` and the entries vector; the
+first entry adds the two `Decoded` temporaries of the key and value sub-calls (placed once,
+reused after), the key text, the value payload and the entry; every 32 bytes moved is a
+`CborValue` moved out of a temporary into the entry.  `pa_get` adds a store and 3 claims: a
+copy of the matched value that `pa_text` reads once.
+
+| per check | count | needed? |
+|---|---|---|
+| the decoded tree's store, root, entries vector, three entries | 1 store, 5 claims | yes |
+| six payloads copied out of the frame | 6 claims, ~100 bytes | yes, unless a text shares the frame's bytes |
+| `kd` / `vd` temporaries | 2 claims, 5 deletes, 96 bytes moved | no — the value can be built in the entry's slot |
+| `pa_get`'s copy of the found value | 1 store, 3 claims | no if the caller only reads it while the map lives (an ownership question, the owner's call) |
+
+**Next, in order:** (1) destination-passing — `read_value` writes a sub-value straight into the
+place its caller names (the entry's `key` / `value` field), no temporary and no move; it is in
+cbor, so `decode` (13.4×) and `encode_bytes` (22.1×, now the worst row) are in its reach;
+(2) `pa_get` read in place; (3) the per-claim cost (`set_default_value_nullable`,
+`holds_no_heap` ~5–6 % each) where a literal writes every field.  Estimated 1+2 → ~0.7 µs a
+check (~7×); under 3× (~300 ns) also needs the payload copies gone.  Price each by hand on
+the emitted Rust before building it.
+
+**Side-finding:** `make rewrite-census` is red on `main` on the aarch64 box — `R-ExitVector`
+and `R-Header` read 1–3 lower than `bench/portal/rewrite_census.tsv` in cbor and every hex_*
+program, with the library commits equal to the baseline's.  Same on this branch, so not its
+change; not yet explained.
