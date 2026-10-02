@@ -15828,6 +15828,11 @@ impl Parser {
         let mut acc: Option<Value> = None;
         for f in 0..self.data.def(d).attributes().len() {
             let ftp = self.data.attr_type(d, f);
+            // A method is a member of its type, not a field (`api_surface` reads it the same
+            // way): comparing it as one refused `==` on every value struct that has a method.
+            if matches!(ftp.base(), Type::Routine(_)) {
+                continue;
+            }
             let fa = self.get_field(d, f, sides[0].clone());
             let fb = self.get_field(d, f, sides[1].clone());
             let mut cmp = Value::Null;
