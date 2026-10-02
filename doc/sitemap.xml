@@ -53,6 +53,7 @@
   <url><loc>https://loft-lang.org/loft/lib-arguments-src.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-arguments.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-assets-api.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/lib-assets-guide.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-assets-src.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-assets.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-cbor-api.html</loc></url>
@@ -64,6 +65,7 @@
   <url><loc>https://loft-lang.org/loft/lib-crypto-src.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-crypto.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-drawing-api.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/lib-drawing-guide.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-drawing-src.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-drawing.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-fixstep-api.html</loc></url>
@@ -81,6 +83,7 @@
   <url><loc>https://loft-lang.org/loft/lib-graphics-src.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-graphics.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-gridmesh-api.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/lib-gridmesh-guide.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-gridmesh-src.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-gridmesh.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-hex_body-api.html</loc></url>
@@ -169,6 +172,7 @@
   <url><loc>https://loft-lang.org/loft/lib-server-src.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-server.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-shapes-api.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/lib-shapes-guide.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-shapes-src.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-shapes.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-ssh-api.html</loc></url>
@@ -179,6 +183,7 @@
   <url><loc>https://loft-lang.org/loft/lib-stage-src.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-stage.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-text2d-api.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/lib-text2d-guide.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-text2d-src.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-text2d.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-time-api.html</loc></url>
@@ -186,6 +191,7 @@
   <url><loc>https://loft-lang.org/loft/lib-time-src.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-time.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-tween-api.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/lib-tween-guide.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-tween-src.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-tween.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-web-api.html</loc></url>
@@ -193,6 +199,7 @@
   <url><loc>https://loft-lang.org/loft/lib-web-src.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-web.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-zttext-api.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/lib-zttext-guide.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-zttext-src.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-zttext.html</loc></url>
   <url><loc>https://loft-lang.org/loft/libraries.html</loc></url>

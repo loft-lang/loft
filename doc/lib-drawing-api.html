@@ -23,36 +23,36 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>drawing API</h1>
 <article>
-<p><a href="lib-drawing.html">← drawing</a> · version 0.3.1</p>
+<p><a href="lib-drawing.html">← drawing</a> · version 0.3.2</p>
 <p class="lib-legend">49 public items, in source order. Generated from the registry index, which re-derives them from the package source at publish time — so a signature here is the one that version actually ships.</p>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">enum</span> <span class="en">PaintKind</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">enum</span> <span class="en">PaintKind</span> { <span class="en">Stroked</span>, <span class="en">Solid</span>, <span class="en">Linear</span>, <span class="en">Radial</span> }</code></pre>
 <p>How a mark is filled, if it is filled at all.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Paint</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Paint</span> { pk: <span class="en">PaintKind</span> = <span class="en">Stroked</span>, c1: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>, c2: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>, spec: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt; }</code></pre>
 <p>A mark's fill descriptor.</p>
 <p><code>Stroked</code> is the absence of a fill, not a fill of nothing: it is what sends a <code>Poly</code> down the pen path instead of the polygon path, and the two produce completely different pictures from the same points.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">enum</span> <span class="en">OpKind</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">enum</span> <span class="en">OpKind</span> { <span class="en">Sky</span>, <span class="en">Fill</span>, <span class="en">Stroke</span> }</code></pre>
 <p>What an op does.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Op</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Op</span> { kind: <span class="en">OpKind</span> = <span class="en">Sky</span>, pts: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;raster::<span class="en">Pt</span>&gt;, paint: <span class="en">Paint</span>, widths: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;, w: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">3</span>, color: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>, color2: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span> }</code></pre>
 <p>One entry in the ordered draw program.</p>
 <p>⚠ <code>pts</code> are FRACTIONS of the paper (0..1, origin top-left, y down), never pixels.  The scale to pixels happens once, at the raster call, because the paper size is a property of the scene and the supersample factor is a property of the renderer — neither belongs in a parsed mark.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Elem</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Elem</span> { ename: <span class="ty"><a href="stdlib-types.html">text</a></span> = <span class="st">""</span>, seen: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>, bx0: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>, by0: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>, bx1: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>, by1: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>, first_at: <span class="ty"><a href="stdlib-types.html">integer</a></span> = -<span class="nm">1</span> }</code></pre>
 <p>A named group of marks and the box they cover, in paper fractions.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Landmark</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Landmark</span> { lname: <span class="ty"><a href="stdlib-types.html">text</a></span> = <span class="st">""</span>, lvalue: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span> }</code></pre>
 <p>A <code>landmark &lt;name&gt; = &lt;value&gt;</code> line.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Sketch</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Sketch</span> { sw: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">800</span>, sh: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">800</span>, transparent: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>, ops: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Op</span>&gt;, elems: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Elem</span>&gt;, landmarks: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Landmark</span>&gt;, checks: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt;, unparsed: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt;, deferred: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt; }</code></pre>
 <p>A parsed scene: the paper, the ordered draw program, and everything the parser could measure or could not accept.</p>
 <p>⚠ NOT called <code>Scene</code>: <code>mesh3d::Scene</code> owns that name and <code>graphics</code> depends on mesh3d, so the collision is a hard error — the same trap <code>graphics::Coord</code> hit with <code>Point</code>.  Reach for <code>Sketch</code> in <code>.draw</code> code and the 3-D names stay where they belong.</p>
 </div>
@@ -62,7 +62,7 @@
 <p>Python's <code>round</code> is half-to-even and <code>draw.py</code> uses it here, so <code>fill=0.5</code> is 128 and not 127 — a difference of one level that no eye would find and a byte diff would.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">PointList</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">PointList</span> { pts: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;raster::<span class="en">Pt</span>&gt;, smooth: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">boolean</a></span>&gt;, widths: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;, has_width: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">boolean</a></span>&gt;, any_width: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span> }</code></pre>
 <p>Every <code>(x,y)</code> on a line, with the two suffixes a point may carry.</p>
 </div>
 <div class="item">
@@ -71,7 +71,7 @@
 <p>Scanning for points rather than splitting the line is what lets the same grammar carry options: <code>rgb=140,104,62</code> has no parentheses, so it is not a point, and no separator has to be agreed between the two.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">circle_pts</span>(cx: <span class="ty"><a href="stdlib-types.html">float</a></span>, cy: <span class="ty"><a href="stdlib-types.html">float</a></span>, r: <span class="ty"><a href="stdlib-types.html">float</a></span>, n: <span class="ty"><a href="stdlib-types.html">integer</a></span>, flat: <span class="ty"><a href="stdlib-types.html">float</a></span>,</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">circle_pts</span>(cx: <span class="ty"><a href="stdlib-types.html">float</a></span>, cy: <span class="ty"><a href="stdlib-types.html">float</a></span>, r: <span class="ty"><a href="stdlib-types.html">float</a></span>, n: <span class="ty"><a href="stdlib-types.html">integer</a></span>, flat: <span class="ty"><a href="stdlib-types.html">float</a></span>, pw: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ph: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;raster::<span class="en">Pt</span>&gt;</code></pre>
 <p>The outline of a <code>Circle</code>, as <code>draw.py</code> builds it: <code>n</code> segments round the centre with the FIRST point repeated at the end, so the polygon closes itself and Pillow adds no edge of its own.</p>
 <p><code>flat</code> squashes the vertical radius; the <code>W/H</code> factor keeps the circle round on non-square paper, since the coordinates are fractions of each axis.</p>
 </div>
@@ -80,7 +80,7 @@
 <p>Does this outline curve at all?  Fewer than three points, or no <code>~</code>, and the control points ARE the polyline — which is what keeps a plain <code>Poly</code> unchanged.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">smooth_pts</span>(pts: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;raster::<span class="en">Pt</span>&gt;, flags: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">boolean</a></span>&gt;,</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">smooth_pts</span>(pts: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;raster::<span class="en">Pt</span>&gt;, flags: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">boolean</a></span>&gt;, closed: <span class="ty"><a href="stdlib-types.html">boolean</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;raster::<span class="en">Pt</span>&gt;</code></pre>
 <p>Expand control points to a dense polyline.</p>
 <p>A point flagged <code>~</code> curves (its tangent is half the neighbour chord); a corner uses the segment chord, which makes that segment exactly straight.  So one outline mixes straight runs and curves, and a segment between two corners is a line however many <code>~</code> the rest of the outline has.</p>
 </div>
@@ -94,7 +94,7 @@
 <p>The command order below is <code>draw.py</code>'s, and it is not alphabetical or tidy — <code>Circle</code> is tried before <code>Poly</code>, <code>Line</code> last of all.  Keep it: a grammar this loose is defined by the order its alternatives are tried in, and re-sorting it silently re-reads lines that sit in two alternatives.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Check</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Check</span> { claim: <span class="ty"><a href="stdlib-types.html">text</a></span> = <span class="st">""</span>, ok: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>, lhs: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>, rhs: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>, tol: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.02</span>, err: <span class="ty"><a href="stdlib-types.html">text</a></span> = <span class="st">""</span>, report: <span class="ty"><a href="stdlib-types.html">text</a></span> = <span class="st">""</span> }</code></pre>
 <p>One evaluated <code>check</code> line.</p>
 </div>
 <div class="item">
@@ -136,23 +136,23 @@
 <p>Smooth in <code>u</code> is the point: neighbouring fronds see nearby values, so they CLUMP and leave gaps. White noise would scatter them evenly, which reads as man-made — the opposite of what this is for.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Frond</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Frond</span> { fpts: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;raster::<span class="en">Pt</span>&gt;, fwid: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt; }</code></pre>
 <p>One frond: a centreline in paper fractions and a width per point.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">FrondSpec</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">FrondSpec</span> { count: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">8</span>, len1: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.1</span>, len2: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.1</span>, wid1: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">3.0</span>, wid2: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">3.0</span>, ang1: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">30.0</span>, ang2: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">30.0</span>, mirror: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>, jitter: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.5</span>, clump: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.6</span>, fray: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.4</span>, bow: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>, seed: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">1</span>, depth: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">1</span>, sub: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.32</span> }</code></pre>
 <p>Everything a <code>Fronds</code> line says about the array, past its two endpoints.</p>
 <p>A struct rather than twenty parameters, because the fractal recursion builds a MODIFIED copy of it — a parameter list that long is one a caller gets wrong in order, and the recursion is the caller.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">fronds</span>(x1: <span class="ty"><a href="stdlib-types.html">float</a></span>, y1: <span class="ty"><a href="stdlib-types.html">float</a></span>, x2: <span class="ty"><a href="stdlib-types.html">float</a></span>, y2: <span class="ty"><a href="stdlib-types.html">float</a></span>, sp: const <span class="en">FrondSpec</span>,</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">fronds</span>(x1: <span class="ty"><a href="stdlib-types.html">float</a></span>, y1: <span class="ty"><a href="stdlib-types.html">float</a></span>, x2: <span class="ty"><a href="stdlib-types.html">float</a></span>, y2: <span class="ty"><a href="stdlib-types.html">float</a></span>, sp: const <span class="en">FrondSpec</span>, pw: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ph: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Frond</span>&gt;</code></pre>
 <p>A linear array of tapered strokes rooted along the spine <code>(x1,y1)-(x2,y2)</code>.</p>
 <p>Every frond is the same template placed at <code>u</code> along the spine and tilted off the normal, then made NON-UNIFORM three ways at once: placement clumps on the seeded low-frequency field, length / width / angle ramp along the run and are then jittered per frond, and the ends FRAY. Zero all three and it is a comb.</p>
 <p>⚠ <code>mirror</code> reuses the SAME sample on both sides — length, angle and width are drawn once, outside the side loop, and reflected. Drawing them per side would consume the hash twice as fast and desynchronise every frond after the first.</p>
 <p>Built in PIXEL space and handed back in fractions, so the array stays correct on non-square paper.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Pt</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Pt</span> { ptx: <span class="ty"><a href="stdlib-types.html">float</a></span>, pty: <span class="ty"><a href="stdlib-types.html">float</a></span> }</code></pre>
 <p>A point in canvas pixels, before Pillow truncates it to a whole pixel.</p>
 <p>The truncation is <code>(int)</code> on a C double — toward ZERO, so <code>-0.4</code> lands on 0 and not on -1.  Keep coordinates fractional right up to the rasteriser and the port and the oracle round the same way.</p>
 </div>
@@ -176,7 +176,7 @@
 <p>The outline closes itself only when the last point is not already the first — a circle handed in with its start repeated gets no extra edge, which is how <code>draw.py</code> passes one.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">wide_line</span>(cv: graphics::<span class="en">Canvas</span>, wx0: <span class="ty"><a href="stdlib-types.html">float</a></span>, wy0: <span class="ty"><a href="stdlib-types.html">float</a></span>, wx1: <span class="ty"><a href="stdlib-types.html">float</a></span>, wy1: <span class="ty"><a href="stdlib-types.html">float</a></span>,</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">wide_line</span>(cv: graphics::<span class="en">Canvas</span>, wx0: <span class="ty"><a href="stdlib-types.html">float</a></span>, wy0: <span class="ty"><a href="stdlib-types.html">float</a></span>, wx1: <span class="ty"><a href="stdlib-types.html">float</a></span>, wy1: <span class="ty"><a href="stdlib-types.html">float</a></span>, ink: <span class="ty"><a href="stdlib-types.html">integer</a></span>, wwidth: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
 <p>One thick segment, the way <code>ImageDraw.line(…, width=w)</code> draws it for <code>w &gt; 1</code>.</p>
 <p>Pillow does not stroke — it builds a four-cornered quad around the segment and fills that, with the two half-widths rounded APART (<code>ROUND_UP</code> one side, <code>ROUND_DOWN</code> the other) so an even width still lands on whole pixels.  A polyline is therefore a series of independent quads with no joins, and the overlap at a bend is what rounds the corner.</p>
 </div>
@@ -186,7 +186,7 @@
 <p><code>draw_lines</code> puts that missing pixel back after the last segment, which is why this is a polyline call rather than a segment one: split it into segments and each one grows a pixel Pillow never drew.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Scan</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Scan</span> { ok: <span class="ty"><a href="stdlib-types.html">boolean</a></span>, at: <span class="ty"><a href="stdlib-types.html">integer</a></span>, value: <span class="ty"><a href="stdlib-types.html">float</a></span> }</code></pre>
 <p>A parse position and what was read there.</p>
 <p>A scan either lands (<code>ok</code>) or does not, and the caller needs BOTH the value and where to carry on from, so every reader answers all three at once.</p>
 </div>

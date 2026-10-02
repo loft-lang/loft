@@ -23,18 +23,18 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>shapes source</h1>
 <article>
-<p><a href="lib-shapes.html">← shapes</a> · <a href="lib-shapes-api.html">API reference</a> · version 0.5.1</p>
+<p><a href="lib-shapes.html">← shapes</a> · <a href="lib-shapes-api.html">API reference</a> · version 0.5.2</p>
 <p class="lib-legend">3 file(s), 471 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
 <table class="lib-table">
 <tr><th>Item</th><th>Defined</th><th>Worked example</th><th>Call sites</th></tr>
-<tr><td><code>Rect</code> <span class="search-kind">struct</span></td><td><a href="#src-shapes-loft-L11">11</a></td><td>—</td><td><a href="#src-shapes-loft-L30">30</a> <a href="#src-shapes-loft-L50">50</a> <a href="#src-shapes-loft-L75">75</a> <a href="#src-shapes-loft-L135">135</a> <a href="#src-shapes-loft-L145">145</a> <a href="#src-shapes-loft-L169">169</a> … (40 total)</td></tr>
-<tr><td><code>Circle</code> <span class="search-kind">struct</span></td><td><a href="#src-shapes-loft-L19">19</a></td><td>—</td><td><a href="#src-shapes-loft-L37">37</a> <a href="#src-shapes-loft-L50">50</a> <a href="#tests-shapes-loft-L26">26</a> <a href="#tests-shapes-loft-L27">27</a> <a href="#tests-shapes-loft-L28">28</a> <a href="#tests-shapes-loft-L35">35</a> … (15 total)</td></tr>
-<tr><td><code>rects_overlap</code> <span class="search-kind">fn</span></td><td><a href="#src-shapes-loft-L30">30</a></td><td><a href="#tests-worked-examples-loft-L17">SHP-001</a></td><td><a href="#src-shapes-loft-L76">76</a> <a href="#src-shapes-loft-L147">147</a> <a href="#tests-shapes-loft-L14">14</a> <a href="#tests-shapes-loft-L15">15</a> <a href="#tests-shapes-loft-L22">22</a> <a href="#tests-shapes-loft-L82">82</a> … (14 total)</td></tr>
-<tr><td><code>circles_overlap</code> <span class="search-kind">fn</span></td><td><a href="#src-shapes-loft-L37">37</a></td><td><a href="#tests-worked-examples-loft-L17">SHP-001</a></td><td><a href="#tests-shapes-loft-L29">29</a> <a href="#tests-shapes-loft-L30">30</a> <a href="#tests-worked-examples-loft-L39">39</a> <a href="#tests-worked-examples-loft-L41">41</a></td></tr>
-<tr><td><code>rect_circle_overlap</code> <span class="search-kind">fn</span></td><td><a href="#src-shapes-loft-L50">50</a></td><td><a href="#tests-worked-examples-loft-L102">SHP-003</a></td><td><a href="#tests-shapes-loft-L38">38</a> <a href="#tests-shapes-loft-L39">39</a> <a href="#tests-shapes-loft-L40">40</a> <a href="#tests-worked-examples-loft-L47">47</a> <a href="#tests-worked-examples-loft-L121">121</a> <a href="#tests-worked-examples-loft-L125">125</a> … (7 total)</td></tr>
-<tr><td><code>Overlap</code> <span class="search-kind">struct</span></td><td><a href="#src-shapes-loft-L64">64</a></td><td>—</td><td><a href="#src-shapes-loft-L75">75</a> <a href="#src-shapes-loft-L76">76</a> <a href="#src-shapes-loft-L79">79</a> <a href="#tests-worked-examples-loft-L93">93</a> <a href="#tests-worked-examples-loft-L95">95</a></td></tr>
+<tr><td><code>Rect</code> <span class="search-kind">struct</span></td><td><a href="#src-shapes-loft-L9">9</a></td><td>—</td><td><a href="#src-shapes-loft-L28">28</a> <a href="#src-shapes-loft-L48">48</a> <a href="#src-shapes-loft-L75">75</a> <a href="#src-shapes-loft-L135">135</a> <a href="#src-shapes-loft-L145">145</a> <a href="#src-shapes-loft-L169">169</a> … (40 total)</td></tr>
+<tr><td><code>Circle</code> <span class="search-kind">struct</span></td><td><a href="#src-shapes-loft-L17">17</a></td><td>—</td><td><a href="#src-shapes-loft-L35">35</a> <a href="#src-shapes-loft-L48">48</a> <a href="#tests-shapes-loft-L26">26</a> <a href="#tests-shapes-loft-L27">27</a> <a href="#tests-shapes-loft-L28">28</a> <a href="#tests-shapes-loft-L35">35</a> … (15 total)</td></tr>
+<tr><td><code>rects_overlap</code> <span class="search-kind">fn</span></td><td><a href="#src-shapes-loft-L28">28</a></td><td><a href="#tests-worked-examples-loft-L17">SHP-001</a></td><td><a href="#src-shapes-loft-L76">76</a> <a href="#src-shapes-loft-L147">147</a> <a href="#tests-shapes-loft-L14">14</a> <a href="#tests-shapes-loft-L15">15</a> <a href="#tests-shapes-loft-L22">22</a> <a href="#tests-shapes-loft-L82">82</a> … (14 total)</td></tr>
+<tr><td><code>circles_overlap</code> <span class="search-kind">fn</span></td><td><a href="#src-shapes-loft-L35">35</a></td><td><a href="#tests-worked-examples-loft-L17">SHP-001</a></td><td><a href="#tests-shapes-loft-L29">29</a> <a href="#tests-shapes-loft-L30">30</a> <a href="#tests-worked-examples-loft-L39">39</a> <a href="#tests-worked-examples-loft-L41">41</a></td></tr>
+<tr><td><code>rect_circle_overlap</code> <span class="search-kind">fn</span></td><td><a href="#src-shapes-loft-L48">48</a></td><td><a href="#tests-worked-examples-loft-L102">SHP-003</a></td><td><a href="#tests-shapes-loft-L38">38</a> <a href="#tests-shapes-loft-L39">39</a> <a href="#tests-shapes-loft-L40">40</a> <a href="#tests-worked-examples-loft-L47">47</a> <a href="#tests-worked-examples-loft-L121">121</a> <a href="#tests-worked-examples-loft-L125">125</a> … (7 total)</td></tr>
+<tr><td><code>Overlap</code> <span class="search-kind">struct</span></td><td><a href="#src-shapes-loft-L62">62</a></td><td>—</td><td><a href="#src-shapes-loft-L75">75</a> <a href="#src-shapes-loft-L76">76</a> <a href="#src-shapes-loft-L79">79</a> <a href="#tests-worked-examples-loft-L93">93</a> <a href="#tests-worked-examples-loft-L95">95</a></td></tr>
 <tr><td><code>rect_overlap_depth</code> <span class="search-kind">fn</span></td><td><a href="#src-shapes-loft-L75">75</a></td><td><a href="#tests-worked-examples-loft-L57">SHP-002</a></td><td><a href="#tests-shapes-loft-L46">46</a> <a href="#tests-shapes-loft-L51">51</a> <a href="#tests-worked-examples-loft-L76">76</a></td></tr>
 <tr><td><code>aabb_overlap</code> <span class="search-kind">fn</span></td><td><a href="#src-shapes-loft-L85">85</a></td><td><a href="#tests-worked-examples-loft-L17">SHP-001</a></td><td><a href="#tests-shapes-loft-L56">56</a> <a href="#tests-shapes-loft-L58">58</a> <a href="#tests-worked-examples-loft-L33">33</a> <a href="#tests-worked-examples-loft-L117">117</a></td></tr>
 <tr><td><code>aabb_depth_x</code> <span class="search-kind">fn</span></td><td><a href="#src-shapes-loft-L98">98</a></td><td><a href="#tests-worked-examples-loft-L57">SHP-002</a></td><td><a href="#tests-worked-examples-loft-L92">92</a> <a href="#tests-worked-examples-loft-L93">93</a> <a href="#tests-worked-examples-loft-L96">96</a></td></tr>
@@ -49,73 +49,73 @@
 <h2 id="src-shapes-loft">src/shapes.loft</h2>
 <pre class="src"><code><span id="src-shapes-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
 <span id="src-shapes-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
-<span id="src-shapes-loft-L3"><span class="cm">// 2D collision detection primitives.  Pure-geometry — no drawing</span></span>
-<span id="src-shapes-loft-L4"><span class="cm">// or rendering dependencies.  Drawing wrappers that previously</span></span>
-<span id="src-shapes-loft-L5"><span class="cm">// lived here (bordered_rect / bordered_circle / diamond) move to</span></span>
-<span id="src-shapes-loft-L6"><span class="cm">// the `graphics` library, where `Canvas` lives.</span></span>
+<span id="src-shapes-loft-L3"><span class="cm">// 2D collision detection primitives.  Pure geometry — no drawing or</span></span>
+<span id="src-shapes-loft-L4"><span class="cm">// rendering dependencies; drawing is the `graphics` library's.</span></span>
+<span id="src-shapes-loft-L5"></span>
+<span id="src-shapes-loft-L6"><span class="cm">// ── G4: 2D Collision Detection ──────────────────────────────────────</span></span>
 <span id="src-shapes-loft-L7"></span>
-<span id="src-shapes-loft-L8"><span class="cm">// ── G4: 2D Collision Detection ──────────────────────────────────────</span></span>
-<span id="src-shapes-loft-L9"></span>
-<span id="src-shapes-loft-L10"><span class="cm">/// Axis-aligned bounding box for 2D collision.</span></span>
-<span id="src-shapes-loft-L11"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Rect</span> {</span>
-<span id="src-shapes-loft-L12">  rx: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
-<span id="src-shapes-loft-L13">  ry: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
-<span id="src-shapes-loft-L14">  rw: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
-<span id="src-shapes-loft-L15">  rh: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
-<span id="src-shapes-loft-L16">}</span>
-<span id="src-shapes-loft-L17"></span>
-<span id="src-shapes-loft-L18"><span class="cm">/// Circle shape for 2D collision.</span></span>
-<span id="src-shapes-loft-L19"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Circle</span> {</span>
-<span id="src-shapes-loft-L20">  cx: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
-<span id="src-shapes-loft-L21">  cy: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
-<span id="src-shapes-loft-L22">  cr: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
-<span id="src-shapes-loft-L23">}</span>
-<span id="src-shapes-loft-L24"></span>
-<span id="src-shapes-loft-L25"><span class="cm">/// Test whether two axis-aligned rectangles overlap.</span></span>
-<span id="src-shapes-loft-L26"><span class="cm">/// The comparison is STRICT, so rectangles sharing an edge do NOT overlap.</span></span>
-<span id="src-shapes-loft-L27"><span class="cm">// Example: @SHP-001 — touching is not overlapping, and what that buys: a row of</span></span>
-<span id="src-shapes-loft-L28"><span class="cm">// abutting tiles is quiet, and a mover pushed out by exactly its penetration</span></span>
-<span id="src-shapes-loft-L29"><span class="cm">// depth is done.</span></span>
-<span id="src-shapes-loft-L30"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">rects_overlap</span>(a: const <span class="en">Rect</span>, b: const <span class="en">Rect</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
-<span id="src-shapes-loft-L31">  a.rx &lt; b.rx + b.rw &amp;&amp; a.rx + a.rw &gt; b.rx &amp;&amp; a.ry &lt; b.ry + b.rh &amp;&amp; a.ry + a.rh &gt; b.ry</span>
-<span id="src-shapes-loft-L32">}</span>
-<span id="src-shapes-loft-L33"></span>
-<span id="src-shapes-loft-L34"><span class="cm">/// Test whether two circles overlap.</span></span>
-<span id="src-shapes-loft-L35"><span class="cm">/// Strict, like `rects_overlap`: tangent circles do NOT overlap.</span></span>
-<span id="src-shapes-loft-L36"><span class="cm">// Example: @SHP-001 — the shared strict boundary across all three predicates.</span></span>
-<span id="src-shapes-loft-L37"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">circles_overlap</span>(a: const <span class="en">Circle</span>, b: const <span class="en">Circle</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
-<span id="src-shapes-loft-L38">  co_dx = a.cx - b.cx;</span>
-<span id="src-shapes-loft-L39">  co_dy = a.cy - b.cy;</span>
-<span id="src-shapes-loft-L40">  co_dist_sq = co_dx * co_dx + co_dy * co_dy;</span>
-<span id="src-shapes-loft-L41">  co_r_sum = a.cr + b.cr;</span>
-<span id="src-shapes-loft-L42">  co_dist_sq &lt; co_r_sum * co_r_sum</span>
-<span id="src-shapes-loft-L43">}</span>
-<span id="src-shapes-loft-L44"></span>
-<span id="src-shapes-loft-L45"><span class="cm">/// Test whether a rectangle and a circle overlap.</span></span>
-<span id="src-shapes-loft-L46"><span class="cm">/// A true circle test — the circle's bounding box is NOT a substitute for it, and</span></span>
-<span id="src-shapes-loft-L47"><span class="cm">/// a circle wholly inside the rectangle counts as overlapping.</span></span>
-<span id="src-shapes-loft-L48"><span class="cm">// Example: @SHP-003 — where the box approximation disagrees (every corner), and</span></span>
-<span id="src-shapes-loft-L49"><span class="cm">// why containment answers true.</span></span>
-<span id="src-shapes-loft-L50"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">rect_circle_overlap</span>(r: const <span class="en">Rect</span>, c: const <span class="en">Circle</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
-<span id="src-shapes-loft-L51">  <span class="cm">// Find the closest point on the rectangle to the circle center</span></span>
-<span id="src-shapes-loft-L52">  rc_closest_x = c.cx;</span>
-<span id="src-shapes-loft-L53">  <span class="kw">if</span> rc_closest_x &lt; r.rx { rc_closest_x = r.rx; }</span>
-<span id="src-shapes-loft-L54">  <span class="kw">if</span> rc_closest_x &gt; r.rx + r.rw { rc_closest_x = r.rx + r.rw; }</span>
-<span id="src-shapes-loft-L55">  rc_closest_y = c.cy;</span>
-<span id="src-shapes-loft-L56">  <span class="kw">if</span> rc_closest_y &lt; r.ry { rc_closest_y = r.ry; }</span>
-<span id="src-shapes-loft-L57">  <span class="kw">if</span> rc_closest_y &gt; r.ry + r.rh { rc_closest_y = r.ry + r.rh; }</span>
-<span id="src-shapes-loft-L58">  rc_dx = c.cx - rc_closest_x;</span>
-<span id="src-shapes-loft-L59">  rc_dy = c.cy - rc_closest_y;</span>
-<span id="src-shapes-loft-L60">  rc_dx * rc_dx + rc_dy * rc_dy &lt; c.cr * c.cr</span>
-<span id="src-shapes-loft-L61">}</span>
-<span id="src-shapes-loft-L62"></span>
-<span id="src-shapes-loft-L63"><span class="cm">/// Overlap depth between two rectangles on each axis.</span></span>
-<span id="src-shapes-loft-L64"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Overlap</span> {</span>
-<span id="src-shapes-loft-L65">  ox: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
-<span id="src-shapes-loft-L66">  oy: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
-<span id="src-shapes-loft-L67">}</span>
-<span id="src-shapes-loft-L68"></span>
-<span id="src-shapes-loft-L69"><span class="cm">/// Compute the overlap depth between two rectangles on each axis.</span></span>
+<span id="src-shapes-loft-L8"><span class="cm">/// Axis-aligned bounding box for 2D collision.</span></span>
+<span id="src-shapes-loft-L9"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Rect</span> {</span>
+<span id="src-shapes-loft-L10">  rx: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-shapes-loft-L11">  ry: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-shapes-loft-L12">  rw: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-shapes-loft-L13">  rh: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-shapes-loft-L14">}</span>
+<span id="src-shapes-loft-L15"></span>
+<span id="src-shapes-loft-L16"><span class="cm">/// Circle shape for 2D collision.</span></span>
+<span id="src-shapes-loft-L17"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Circle</span> {</span>
+<span id="src-shapes-loft-L18">  cx: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-shapes-loft-L19">  cy: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-shapes-loft-L20">  cr: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-shapes-loft-L21">}</span>
+<span id="src-shapes-loft-L22"></span>
+<span id="src-shapes-loft-L23"><span class="cm">/// Test whether two axis-aligned rectangles overlap.</span></span>
+<span id="src-shapes-loft-L24"><span class="cm">/// The comparison is STRICT, so rectangles sharing an edge do NOT overlap.</span></span>
+<span id="src-shapes-loft-L25"><span class="cm">// Example: @SHP-001 — touching is not overlapping, and what that buys: a row of</span></span>
+<span id="src-shapes-loft-L26"><span class="cm">// abutting tiles is quiet, and a mover pushed out by exactly its penetration</span></span>
+<span id="src-shapes-loft-L27"><span class="cm">// depth is done.</span></span>
+<span id="src-shapes-loft-L28"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">rects_overlap</span>(a: const <span class="en">Rect</span>, b: const <span class="en">Rect</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-shapes-loft-L29">  a.rx &lt; b.rx + b.rw &amp;&amp; a.rx + a.rw &gt; b.rx &amp;&amp; a.ry &lt; b.ry + b.rh &amp;&amp; a.ry + a.rh &gt; b.ry</span>
+<span id="src-shapes-loft-L30">}</span>
+<span id="src-shapes-loft-L31"></span>
+<span id="src-shapes-loft-L32"><span class="cm">/// Test whether two circles overlap.</span></span>
+<span id="src-shapes-loft-L33"><span class="cm">/// Strict, like `rects_overlap`: tangent circles do NOT overlap.</span></span>
+<span id="src-shapes-loft-L34"><span class="cm">// Example: @SHP-001 — the shared strict boundary across all three predicates.</span></span>
+<span id="src-shapes-loft-L35"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">circles_overlap</span>(a: const <span class="en">Circle</span>, b: const <span class="en">Circle</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-shapes-loft-L36">  co_dx = a.cx - b.cx;</span>
+<span id="src-shapes-loft-L37">  co_dy = a.cy - b.cy;</span>
+<span id="src-shapes-loft-L38">  co_dist_sq = co_dx * co_dx + co_dy * co_dy;</span>
+<span id="src-shapes-loft-L39">  co_r_sum = a.cr + b.cr;</span>
+<span id="src-shapes-loft-L40">  co_dist_sq &lt; co_r_sum * co_r_sum</span>
+<span id="src-shapes-loft-L41">}</span>
+<span id="src-shapes-loft-L42"></span>
+<span id="src-shapes-loft-L43"><span class="cm">/// Test whether a rectangle and a circle overlap.</span></span>
+<span id="src-shapes-loft-L44"><span class="cm">/// A true circle test — the circle's bounding box is NOT a substitute for it, and</span></span>
+<span id="src-shapes-loft-L45"><span class="cm">/// a circle wholly inside the rectangle counts as overlapping.</span></span>
+<span id="src-shapes-loft-L46"><span class="cm">// Example: @SHP-003 — where the box approximation disagrees (every corner), and</span></span>
+<span id="src-shapes-loft-L47"><span class="cm">// why containment answers true.</span></span>
+<span id="src-shapes-loft-L48"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">rect_circle_overlap</span>(r: const <span class="en">Rect</span>, c: const <span class="en">Circle</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-shapes-loft-L49">  <span class="cm">// Find the closest point on the rectangle to the circle center</span></span>
+<span id="src-shapes-loft-L50">  rc_closest_x = c.cx;</span>
+<span id="src-shapes-loft-L51">  <span class="kw">if</span> rc_closest_x &lt; r.rx { rc_closest_x = r.rx; }</span>
+<span id="src-shapes-loft-L52">  <span class="kw">if</span> rc_closest_x &gt; r.rx + r.rw { rc_closest_x = r.rx + r.rw; }</span>
+<span id="src-shapes-loft-L53">  rc_closest_y = c.cy;</span>
+<span id="src-shapes-loft-L54">  <span class="kw">if</span> rc_closest_y &lt; r.ry { rc_closest_y = r.ry; }</span>
+<span id="src-shapes-loft-L55">  <span class="kw">if</span> rc_closest_y &gt; r.ry + r.rh { rc_closest_y = r.ry + r.rh; }</span>
+<span id="src-shapes-loft-L56">  rc_dx = c.cx - rc_closest_x;</span>
+<span id="src-shapes-loft-L57">  rc_dy = c.cy - rc_closest_y;</span>
+<span id="src-shapes-loft-L58">  rc_dx * rc_dx + rc_dy * rc_dy &lt; c.cr * c.cr</span>
+<span id="src-shapes-loft-L59">}</span>
+<span id="src-shapes-loft-L60"></span>
+<span id="src-shapes-loft-L61"><span class="cm">/// Overlap depth between two rectangles on each axis.</span></span>
+<span id="src-shapes-loft-L62"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Overlap</span> {</span>
+<span id="src-shapes-loft-L63">  ox: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-shapes-loft-L64">  oy: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-shapes-loft-L65">}</span>
+<span id="src-shapes-loft-L66"></span>
+<span id="src-shapes-loft-L67"><span class="cm">/// Compute the overlap depth between two rectangles on each axis: how far one must</span></span>
+<span id="src-shapes-loft-L68"><span class="cm">/// move along that axis to stop overlapping, the smaller of the two ways out — not</span></span>
+<span id="src-shapes-loft-L69"><span class="cm">/// how much of it lies inside the other.</span></span>
 <span id="src-shapes-loft-L70"><span class="cm">/// Both depths are UNSIGNED distances — the caller derives the direction from the</span></span>
 <span id="src-shapes-loft-L71"><span class="cm">/// relative positions.  Returns (0.0, 0.0) when they don't overlap.</span></span>
 <span id="src-shapes-loft-L72"><span class="cm">/// Useful for bounce direction: if ox &lt; oy → horizontal bounce.</span></span>

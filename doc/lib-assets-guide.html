@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>assets guide — Loft, a programming language for small browser games</title>
+  <meta name="description" content="Getting started with the loft library assets — a runnable guide that is itself a loft program, so every example in it compiles.">
+<link rel="canonical" href="https://loft-lang.org/loft/lib-assets-guide.html">
+<meta property="og:title" content="assets guide — Loft, a programming language for small browser games">
+<meta property="og:description" content="Getting started with the loft library assets — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://loft-lang.org/loft/lib-assets-guide.html">
+<meta property="og:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<meta property="og:site_name" content="Loft">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="assets guide — Loft, a programming language for small browser games">
+<meta name="twitter:description" content="Getting started with the loft library assets — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta name="twitter:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<link rel="stylesheet" href="style.css">
+<style>.playground-link{display:inline-block;margin:0.3em 0 0.8em;padding:4px 12px;background:#2563eb;color:#fff;border-radius:4px;text-decoration:none;font-size:0.85em}.playground-link:hover{filter:brightness(1.15)}@media print{.playground-link{display:none}}</style>
+</head>
+<body>
+<nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
+<h1>assets guide</h1>
+<article>
+<p><a href="lib-assets.html">← assets</a> · <a href="lib-assets-api.html">API reference</a> · <a href="lib-assets-src.html">source</a></p>
+<p><code>assets</code> is a game's content pack — texture pages, sprites, animations, audio and the scenes that place them — stored as a loft store. There is no codec: the struct definitions in <code>src/assets.loft</code> ARE the file layout, so a pack can sit on a dumb file server and a browser reads it by HTTP range, fetching only the pages a lookup touches.</p>
+<p>It does not decode images or draw: a texture page arrives already as premultiplied RGBA bytes, decoded by whatever built the pack (<code>imaging</code> reads PNGs), and drawing it is <code>graphics</code>' job. It is not a general file format either — a pack holds what the struct definitions say, and nothing else.</p>
+<pre><code><span class="kw">use</span> assets::*;</code></pre>
+<p>A path nothing else writes to, and the files a pack and its schema leave beside it.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">base_for</span>(name: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> { <span class="st">"{temp_dir() ?? "</span>.<span class="st">"}/loft_assets_guide_{name}"</span> }</code></pre>
+<pre><code><span class="kw">fn</span> <span class="fn-call">clean</span>(base: <span class="ty"><a href="stdlib-types.html">text</a></span>) {
+  <span class="kw">for</span> f <span class="kw">in</span> [<span class="fn-call">meta_path</span>(base), <span class="fn-call">blobs_path</span>(base), <span class="st">"{meta_path(base)}.dschema"</span>, <span class="st">"{blobs_path(base)}.dschema"</span>] {
+    <span class="kw">if</span> <span class="bi"><a href="stdlib-files-and-directories.html">file</a></span>(f).<span class="fn-call"><a href="stdlib-files-and-directories.html">exists</a></span>() { _ = <span class="fn-call"><a href="stdlib-files-and-directories.html">delete</a></span>(f); }
+  }
+}</code></pre>
+<p>A small pack: one 4x2 texture page, a sprite cut out of it, and a scene placing it twice.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">small_pack</span>(p: <span class="en">Pack</span>, blobs: &amp;<span class="ty">hash</span>&lt;<span class="en">Blob</span>[bl_key]&gt;) {
+  p.pages += [<span class="en">PageInfo</span> { pi_name: <span class="st">"mobs"</span>, pi_w: <span class="nm">4</span>, pi_h: <span class="nm">2</span>, pi_blob: <span class="st">"page/mobs"</span> }];
+  p.cells += [<span class="en">Cell</span> { ce_key: <span class="st">"goblin"</span>, ce_page: <span class="st">"mobs"</span>, ce_x: <span class="nm">0</span>, ce_y: <span class="nm">0</span>, ce_w: <span class="nm">2</span>, ce_h: <span class="nm">2</span> }];
+  p.defs += [<span class="en">Def</span> { df_name: <span class="st">"goblin"</span>, df_cell: <span class="st">"goblin"</span> }];
+  p.scenes += [<span class="en">Scene</span> { sc_name: <span class="st">"hall"</span>, sc_w: <span class="nm">320</span>, sc_h: <span class="nm">200</span> }];
+  p.placed += [<span class="en">Placed</span> { pd_scene: <span class="st">"hall"</span>, pd_order: <span class="nm">0</span>, pd_def: <span class="st">"goblin"</span>, pd_x: <span class="nm">10.0</span>, pd_y: <span class="nm">10.0</span> }];
+  p.placed += [<span class="en">Placed</span> { pd_scene: <span class="st">"hall"</span>, pd_order: <span class="nm">1</span>, pd_def: <span class="st">"goblin"</span>, pd_x: <span class="nm">300.0</span>, pd_y: <span class="nm">150.0</span> }];
+  pixels: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt; = [];
+  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..4</span> * <span class="nm">2</span> * <span class="nm">4</span> { pixels += [(i * <span class="nm">7</span> % <span class="nm">251</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span> ?? <span class="nm">0</span>]; }
+  <span class="fn-call">blob_put</span>(blobs, <span class="st">"page/mobs"</span>, <span class="en">Rgba</span>, pixels);
+}</code></pre>
+<pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {
+  base = <span class="fn-call">base_for</span>(<span class="st">"main"</span>);
+  <span class="fn-call">clean</span>(base);
+  p = <span class="fn-call">new_pack</span>();
+  blobs: <span class="ty">hash</span>&lt;<span class="en">Blob</span>[bl_key]&gt; = [];
+  <span class="fn-call">small_pack</span>(p, blobs);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">pack_write</span>(p, blobs, base), <span class="st">"both halves written"</span>);</code></pre>
+<pre><code>  q = <span class="fn-call">new_pack</span>();
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">pack_read</span>(q, base), <span class="st">"the metadata half, read whole"</span>);
+  page = q.pages[<span class="st">"mobs"</span>];
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"page    : {page.pi_w}x{page.pi_h}, held in '{page.pi_blob}'"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(page.pi_w == <span class="nm">4</span> &amp;&amp; page.pi_h == <span class="nm">2</span>, <span class="st">"the page's shape came back without its pixels"</span>);
+  <span class="fn-call">clean</span>(base);</code></pre>
+<p>Every section below is a function, and <code>main</code> calls each one: a section nothing calls still compiles, but its assertions never run.</p>
+<pre><code>  <span class="fn-call">two_files_read_two_ways</span>();
+  <span class="fn-call">fetch_at_a_boundary</span>();
+  <span class="fn-call">animations_are_data</span>();
+  <span class="fn-call">check_the_layout_at_boot</span>();
+}</code></pre>
+<p>That prints:</p>
+<pre><code>  page    : 4x2, held in 'page/mobs'
+</code></pre>
+<p>The page's dimensions came back, and not one of its texels did: they live in the other file.</p>
+<h2 id="the-one-that-bites-a-pack-is-two-files-read-two-different-ways">The one that bites: a pack is TWO files, read two different ways</h2>
+<p><code>pack_write(pack, blobs, base)</code> writes <code>base.meta.store</code> — every page, cell, definition, animation and placed instance — and <code>base.blobs.store</code>, the bytes. The metadata is small and read WHOLE at boot with <code>pack_read</code>. The bytes are never read whole: <code>prefetch</code> pulls one key's record out of the blobs file and nothing else. A loader that reads the metadata and then looks for pixels in it finds names, not bytes.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">two_files_read_two_ways</span>() {
+  base = <span class="fn-call">base_for</span>(<span class="st">"halves"</span>);
+  <span class="fn-call">clean</span>(base);
+  p = <span class="fn-call">new_pack</span>();
+  blobs: <span class="ty">hash</span>&lt;<span class="en">Blob</span>[bl_key]&gt; = [];
+  <span class="fn-call">small_pack</span>(p, blobs);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">pack_write</span>(p, blobs, base), <span class="st">"written"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-files-and-directories.html">file</a></span>(<span class="fn-call">meta_path</span>(base)).<span class="fn-call"><a href="stdlib-files-and-directories.html">exists</a></span>() &amp;&amp; <span class="bi"><a href="stdlib-files-and-directories.html">file</a></span>(<span class="fn-call">blobs_path</span>(base)).<span class="fn-call"><a href="stdlib-files-and-directories.html">exists</a></span>(), <span class="st">"two files"</span>);</code></pre>
+<pre><code>  q = <span class="fn-call">new_pack</span>();
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">pack_read</span>(q, base), <span class="st">"read"</span>);
+  res: <span class="ty">hash</span>&lt;<span class="en">Blob</span>[bl_key]&gt; = [];
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(res) == <span class="nm">0</span>, <span class="st">"no bytes are resident after the metadata read"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">prefetch</span>(res, <span class="fn-call">blobs_path</span>(base), [<span class="st">"page/mobs"</span>]) == <span class="nm">1</span>, <span class="st">"one key, one fetch"</span>);
+  bytes = res[<span class="st">"page/mobs"</span>].bl_bytes ?? [];
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(bytes) == <span class="nm">32</span>, <span class="st">"4 x 2 texels x 4 bytes"</span>);
+  <span class="fn-call">clean</span>(base);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"halves  : metadata read whole, bytes fetched by key"</span>);
+}</code></pre>
+<h2 id="fetch-at-a-boundary-never-in-a-frame">Fetch at a boundary, never in a frame</h2>
+<p>A fetch is a round trip — over HTTP it is a range read — and a frame is 16 ms. So ask what a scene needs at a load or a level boundary: <code>keys_near(pack, scene, x, y, radius)</code> answers the blob keys of the pages the instances near a point draw from, with each page once however many instances share it, and <code>prefetch</code> fetches them. <code>prefetch</code> answers how many round trips it paid for, and skips what is already resident, so a second call answers 0 — which is what a frame can assert. A negative radius means the whole scene.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">fetch_at_a_boundary</span>() {
+  base = <span class="fn-call">base_for</span>(<span class="st">"boundary"</span>);
+  <span class="fn-call">clean</span>(base);
+  p = <span class="fn-call">new_pack</span>();
+  blobs: <span class="ty">hash</span>&lt;<span class="en">Blob</span>[bl_key]&gt; = [];
+  <span class="fn-call">small_pack</span>(p, blobs);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">pack_write</span>(p, blobs, base), <span class="st">"written"</span>);
+  q = <span class="fn-call">new_pack</span>();
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">pack_read</span>(q, base), <span class="st">"read"</span>);</code></pre>
+<pre><code>  near = <span class="fn-call">keys_near</span>(q, <span class="st">"hall"</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">50.0</span>);
+  whole = <span class="fn-call">keys_near</span>(q, <span class="st">"hall"</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>, -<span class="nm">1.0</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"{near}"</span> == <span class="st">"[\"</span>page/mobs\<span class="st">"]"</span>, <span class="st">"the instance at (10,10) is near the corner"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(whole) == <span class="nm">1</span>, <span class="st">"two instances share one page, so one key"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(<span class="fn-call">keys_near</span>(q, <span class="st">"hall"</span>, <span class="nm">160.0</span>, <span class="nm">100.0</span>, <span class="nm">10.0</span>)) == <span class="nm">0</span>, <span class="st">"nothing is placed in the middle"</span>);</code></pre>
+<pre><code>  res: <span class="ty">hash</span>&lt;<span class="en">Blob</span>[bl_key]&gt; = [];
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">prefetch</span>(res, <span class="fn-call">blobs_path</span>(base), whole) == <span class="nm">1</span>, <span class="st">"the level boundary pays one fetch"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">prefetch</span>(res, <span class="fn-call">blobs_path</span>(base), whole) == <span class="nm">0</span>, <span class="st">"and a frame afterwards pays none"</span>);
+  <span class="fn-call">clean</span>(base);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"fetch   : keys_near at a boundary, prefetch answers the round trips"</span>);
+}</code></pre>
+<h2 id="animations-are-data-not-code">Animations are data, not code</h2>
+<p>A definition's animation table maps <code>(action, facing)</code> to a sequence, keyed <code>"{def}/{action}/{facing}"</code>. <code>anim_of(pack, def, action, facing)</code> answers the sequence name, and an action the definition does not have answers "" rather than a plausible wrong one — so a walk cycle can change without a line of game code changing.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">animations_are_data</span>() {
+  p = <span class="fn-call">new_pack</span>();
+  p.anims += [<span class="en">Anim</span> { an_key: <span class="st">"goblin/walk/2"</span>, an_def: <span class="st">"goblin"</span>, an_action: <span class="st">"walk"</span>, an_facing: <span class="nm">2</span>, an_seq: <span class="st">"goblin_walk_n"</span> }];
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">anim_of</span>(p, <span class="st">"goblin"</span>, <span class="st">"walk"</span>, <span class="nm">2</span>) == <span class="st">"goblin_walk_n"</span>, <span class="st">"the table answers the sequence"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">anim_of</span>(p, <span class="st">"goblin"</span>, <span class="st">"jump"</span>, <span class="nm">2</span>) == <span class="st">""</span>, <span class="st">"an action it does not have answers empty"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"anims   : (action, facing) -&gt; sequence, from the pack"</span>);
+}</code></pre>
+<h2 id="check-the-layout-at-boot">Check the layout at boot</h2>
+<p>Because the structs ARE the layout, a pack built by a different version of this library can read as plausible garbage instead of failing. <code>layout_fingerprint()</code> is one number over every pack type's fields; compare it with the one the packer recorded and refuse on a mismatch. <code>layout_descriptor()</code> is the readable version, field by field, for finding what moved.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">check_the_layout_at_boot</span>() {
+  f = <span class="fn-call">layout_fingerprint</span>();
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(f == <span class="fn-call">layout_fingerprint</span>(), <span class="st">"the same build answers the same number"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">layout_descriptor</span>().<span class="fn-call"><a href="stdlib-text.html">contains</a></span>(<span class="st">"Placed"</span>), <span class="st">"the descriptor names every pack type"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"layout  : one number to compare, a descriptor to read when it differs"</span>);
+}</code></pre>
+<h2 id="where-to-go-next">Where to go next</h2>
+<ul>
+<li><code>README.md</code> — the two files, the paging unit (size a blob like an atlas page), and the collision proxies a packer derives from a cell's alpha (<code>cell_proxy</code>).</li>
+<li><code>tests/pack.loft</code> and <code>tests/scene.loft</code> — the round trip and the scene queries, as tests.</li>
+</ul>
+
+  </article>
+<script src="search-index.js"></script>
+<script src="search.js"></script>
+<script>
+(function(){
+var m={"Keywords":"keywords","Texts":"texts","Integers":"integers","Boolean":"boolean","Float":"float","Functions":"functions","Vector":"vector","Structs":"structs","Enums":"enums","Sorted":"sorted","Index":"index","Hash":"hash","File":"file","Lexer":"lexer","Parser":"parser","Libraries":"libraries","Store Locks":"store_locks","Parallel execution":"parallel_execution","Logging":"logging","Time":"time","Safety":"safety","JSON":"json","Generics":"generics","Closures":"closures","Coroutines":"coroutines","Tuples":"tuples","Match":"match","Formatting":"formatting"};
+var h=document.querySelector('h1');
+if(!h)return;
+var key=m[h.textContent];
+if(!key)return;
+var a=document.createElement('a');
+a.className='playground-link';
+a.href='playground.html?example='+key;
+a.textContent='\u25B6 Try in Playground';
+h.parentNode.insertBefore(a,h.nextSibling);
+})();
+</script>
+</body>
+</html>
