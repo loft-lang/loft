@@ -107,7 +107,7 @@ fn pure_target(v: &Value, cx: &Cx) -> bool {
 
 /// The same literal, compared by its bits so a float's sign and NaN payload count.
 fn same_literal(a: &Value, b: &Value) -> bool {
-    match (a, b) {
+    match (a.unspan(), b.unspan()) {
         (Value::Int(x), Value::Int(y)) => x == y,
         (Value::Long(x), Value::Long(y)) => x == y,
         (Value::Float(x), Value::Float(y)) => x.to_bits() == y.to_bits(),
@@ -157,7 +157,7 @@ fn runs(ops: &[Value], cx: &Cx) -> Vec<(usize, usize, usize)> {
 /// The vector type `OpAppendCopy` names for a target: a field's own type, or a local's
 /// vector type from the registry.
 fn vector_type(target: &Value, cx: &Cx, database: &mut crate::database::Stores) -> Option<i32> {
-    match target {
+    match target.unspan() {
         Value::Call(d, a) if *d == cx.get_field => int(&a[2]),
         Value::Var(v) => {
             let Type::Vector(elem, _) = cx.data.def(cx.d_nr).variables().tp(*v).base() else {

@@ -1164,7 +1164,7 @@ impl State {
         {
             let r = match start_step(&r).filter(|_| crate::keys::start_step_enabled()) {
                 Some(s) => {
-                    let holds = self.start_step_holds(&lp, &s, stack);
+                    let holds = Self::start_step_holds(&lp, &s, stack);
                     if crate::keys::trace_start_step()
                         && let Some((lv, _)) = s.store
                     {
@@ -1268,7 +1268,7 @@ impl State {
     /// [`start_step`]'s conditions on the rest of the loop: nothing after the iterator names
     /// `next`, and the index is the loop variable's own slot (`(R-LoopSlot)`, which already
     /// proved the body neither writes it nor takes its address) or is not named at all.
-    fn start_step_holds(&self, lp: &IrBlock, s: &Rotation, stack: &Stack) -> bool {
+    fn start_step_holds(lp: &IrBlock, s: &Rotation, stack: &Stack) -> bool {
         let (Some((ix, nxt)), Some((lv, _))) = (s.seed, s.store) else {
             return false;
         };
