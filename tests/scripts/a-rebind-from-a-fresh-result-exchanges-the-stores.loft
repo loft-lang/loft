@@ -17,7 +17,10 @@
 //   holding the destination's empty root, s12 fails on both backends — "store table exhausted:
 //   65535 stores live at once" after its 100 000 rebinds.  A first sabotage, leaving the claim
 //   map unswapped, moved nothing: in a release build the map only answers liveness checks.
-//   CHANNEL: the store-table / leak channel on both backends.
+//   CHANNEL: the store-table / leak channel on both backends.  And with the root-type test
+//   struck from `try_swap_in`, s13 fails on --interpret — "s13 got 8,3 9.00000762939436,0": the
+//   first field `h.p` shares its root's address and the exchange replaced the whole `Pair`
+//   (--native lowers that field rebind in place and never reaches the exchange).
 //   HOLDS: leak, panic and free-refusal are equal on both trees and clean here.
 
 struct M { m: vector<float> }
@@ -155,14 +158,16 @@ fn s12() {
 }
 
 // a record's FIRST field shares its root's address: a fresh result copied into it is no whole
-// store, and the second field survives
-struct Pair { p: M, q: M }
+// store, and the second field survives.  The fields are inline scalars, so the host's store
+// holds its root alone — the shape where only the root's own type tells the field apart.
+struct P2 { x: float, y: float }
+struct Pair { p: P2, q: P2 }
+fn twice(a: const P2) -> P2 { P2 { x: a.x * 2.0, y: a.y + 1.0 } }
 fn s13() {
-  a = M { m: [2.0, 0.0, 0.0, 2.0] };
-  h = Pair { p: M { m: [1.0, 0.0, 0.0, 1.0] }, q: M { m: [5.0, 6.0, 7.0, 8.0] } };
-  for _ in 0..3 { h.p = mul(a, h.p); }
-  assert((h.p.m[0] ?? 0.0) == 8.0 && len(h.q.m) == 4 && (h.q.m[0] ?? 0.0) == 5.0 && (h.q.m[3] ?? 0.0) == 8.0,
-         "s13 got {h.p.m} {h.q.m}");
+  h = Pair { p: P2 { x: 1.0, y: 0.0 }, q: P2 { x: 5.0, y: 6.0 } };
+  for _ in 0..3 { h.p = twice(h.p); }
+  assert(h.p.x == 8.0 && h.p.y == 3.0 && h.q.x == 5.0 && h.q.y == 6.0,
+         "s13 got {h.p.x},{h.p.y} {h.q.x},{h.q.y}");
 }
 
 fn main() {
