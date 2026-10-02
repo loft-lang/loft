@@ -2233,11 +2233,16 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         // `unbox_tuple_from_dbref`).  Without this the assignment `p = pairs[0]`
         // wrote DbRef bytes into the tuple slot and `p.0` / `p.1` decoded them
         // as garbage integers.
-        if self.database.is_linked(known) {
+        // A VECTOR element is its own 4-byte handle, read through its record by `get_val`.  Its
+        // `known` cannot say so: `type_elm` answers the generic `vector` definition, whose
+        // known type is whichever slot the database registered first, not a property of this
+        // element — so it is not asked here.
+        let vector_element = matches!(etp.base(), Type::Vector(_, _));
+        if !vector_element && self.database.is_linked(known) {
             *code = self.cl("OpVectorRef", &[code.clone(), p]);
         } else {
             *code = self.cl("OpGetVector", &[code.clone(), Value::Int(elm_size), p]);
-            if self.database.is_base(known) {
+            if vector_element || self.database.is_base(known) {
                 // Element's DECLARED nullability drives the sentinel decode (see
                 // the Nullable-iterator branch above); the OOB-nullable read
                 // result is orthogonal (the caller null-checks `v[i]` regardless).
