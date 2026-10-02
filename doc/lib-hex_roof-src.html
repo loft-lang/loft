@@ -23,8 +23,8 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>hex_roof source</h1>
 <article>
-<p><a href="lib-hex_roof.html">← hex_roof</a> · <a href="lib-hex_roof-api.html">API reference</a> · version 0.1.7</p>
-<p class="lib-legend">3 file(s), 1266 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<p><a href="lib-hex_roof.html">← hex_roof</a> · <a href="lib-hex_roof-api.html">API reference</a> · version 0.1.6</p>
+<p class="lib-legend">3 file(s), 1263 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
 <table class="lib-table">
@@ -39,18 +39,18 @@
 <tr><td><code>clear_height</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-roof-loft-L235">235</a></td><td>—</td><td>none in this package</td></tr>
 <tr><td><code>roof_ponds</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-roof-loft-L247">247</a></td><td><a href="#tests-02-worked-examples-loft-L212">HXR-005</a></td><td><a href="#tests-01-hex-roof-loft-L66">66</a> <a href="#tests-01-hex-roof-loft-L74">74</a> <a href="#tests-01-hex-roof-loft-L75">75</a> <a href="#tests-02-worked-examples-loft-L86">86</a> <a href="#tests-02-worked-examples-loft-L125">125</a> <a href="#tests-02-worked-examples-loft-L133">133</a> … (12 total)</td></tr>
 <tr><td><code>eave_spread</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-roof-loft-L276">276</a></td><td><a href="#tests-02-worked-examples-loft-L148">HXR-003</a></td><td><a href="#tests-02-worked-examples-loft-L127">127</a> <a href="#tests-02-worked-examples-loft-L132">132</a> <a href="#tests-02-worked-examples-loft-L138">138</a> <a href="#tests-02-worked-examples-loft-L144">144</a> <a href="#tests-02-worked-examples-loft-L175">175</a></td></tr>
-<tr><td><code>ROOF_UNKNOWN</code> <span class="search-kind">const</span></td><td><a href="#src-hex-roof-loft-L308">308</a></td><td>—</td><td><a href="#src-hex-roof-loft-L348">348</a> <a href="#src-hex-roof-loft-L734">734</a> <a href="#tests-01-hex-roof-loft-L119">119</a> <a href="#tests-01-hex-roof-loft-L137">137</a></td></tr>
-<tr><td><code>ROOF_PLANE</code> <span class="search-kind">const</span></td><td><a href="#src-hex-roof-loft-L309">309</a></td><td>—</td><td><a href="#src-hex-roof-loft-L370">370</a> <a href="#src-hex-roof-loft-L743">743</a> <a href="#tests-01-hex-roof-loft-L167">167</a> <a href="#tests-02-worked-examples-loft-L259">259</a></td></tr>
-<tr><td><code>ROOF_CONE</code> <span class="search-kind">const</span></td><td><a href="#src-hex-roof-loft-L310">310</a></td><td>—</td><td><a href="#src-hex-roof-loft-L622">622</a> <a href="#src-hex-roof-loft-L744">744</a> <a href="#tests-01-hex-roof-loft-L150">150</a> <a href="#tests-02-worked-examples-loft-L266">266</a></td></tr>
-<tr><td><code>ROOF_DOME</code> <span class="search-kind">const</span></td><td><a href="#src-hex-roof-loft-L311">311</a></td><td>—</td><td><a href="#src-hex-roof-loft-L705">705</a> <a href="#src-hex-roof-loft-L753">753</a></td></tr>
-<tr><td><code>ROOF_RIDGE</code> <span class="search-kind">const</span></td><td><a href="#src-hex-roof-loft-L312">312</a></td><td>—</td><td><a href="#src-hex-roof-loft-L578">578</a> <a href="#src-hex-roof-loft-L748">748</a> <a href="#tests-01-hex-roof-loft-L97">97</a> <a href="#tests-01-hex-roof-loft-L171">171</a> <a href="#tests-01-hex-roof-loft-L214">214</a></td></tr>
-<tr><td><code>RoofFit</code> <span class="search-kind">struct</span></td><td><a href="#src-hex-roof-loft-L317">317</a></td><td>—</td><td><a href="#src-hex-roof-loft-L331">331</a> <a href="#src-hex-roof-loft-L348">348</a> <a href="#src-hex-roof-loft-L370">370</a> <a href="#src-hex-roof-loft-L460">460</a> <a href="#src-hex-roof-loft-L546">546</a> <a href="#src-hex-roof-loft-L578">578</a> … (13 total)</td></tr>
-<tr><td><code>roof_plane_fit</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-roof-loft-L331">331</a></td><td>—</td><td><a href="#src-hex-roof-loft-L722">722</a></td></tr>
-<tr><td><code>roof_ridge_fit</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-roof-loft-L460">460</a></td><td>—</td><td><a href="#src-hex-roof-loft-L728">728</a> <a href="#tests-01-hex-roof-loft-L135">135</a> <a href="#tests-01-hex-roof-loft-L201">201</a> <a href="#tests-01-hex-roof-loft-L229">229</a></td></tr>
-<tr><td><code>roof_cone_fit</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-roof-loft-L586">586</a></td><td>—</td><td><a href="#src-hex-roof-loft-L531">531</a> <a href="#src-hex-roof-loft-L724">724</a></td></tr>
-<tr><td><code>roof_dome_fit</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-roof-loft-L669">669</a></td><td>—</td><td><a href="#src-hex-roof-loft-L726">726</a></td></tr>
-<tr><td><code>roof_match</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-roof-loft-L721">721</a></td><td><a href="#tests-02-worked-examples-loft-L239">HXR-006</a></td><td><a href="#tests-01-hex-roof-loft-L96">96</a> <a href="#tests-01-hex-roof-loft-L118">118</a> <a href="#tests-01-hex-roof-loft-L136">136</a> <a href="#tests-01-hex-roof-loft-L149">149</a> <a href="#tests-01-hex-roof-loft-L166">166</a> <a href="#tests-01-hex-roof-loft-L213">213</a> … (9 total)</td></tr>
-<tr><td><code>roof_eval</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-roof-loft-L742">742</a></td><td><a href="#tests-02-worked-examples-loft-L239">HXR-006</a></td><td><a href="#tests-01-hex-roof-loft-L106">106</a> <a href="#tests-01-hex-roof-loft-L107">107</a> <a href="#tests-01-hex-roof-loft-L120">120</a> <a href="#tests-02-worked-examples-loft-L270">270</a></td></tr>
+<tr><td><code>ROOF_UNKNOWN</code> <span class="search-kind">const</span></td><td><a href="#src-hex-roof-loft-L308">308</a></td><td>—</td><td><a href="#src-hex-roof-loft-L345">345</a> <a href="#src-hex-roof-loft-L731">731</a> <a href="#tests-01-hex-roof-loft-L119">119</a> <a href="#tests-01-hex-roof-loft-L137">137</a></td></tr>
+<tr><td><code>ROOF_PLANE</code> <span class="search-kind">const</span></td><td><a href="#src-hex-roof-loft-L309">309</a></td><td>—</td><td><a href="#src-hex-roof-loft-L367">367</a> <a href="#src-hex-roof-loft-L740">740</a> <a href="#tests-01-hex-roof-loft-L167">167</a> <a href="#tests-02-worked-examples-loft-L259">259</a></td></tr>
+<tr><td><code>ROOF_CONE</code> <span class="search-kind">const</span></td><td><a href="#src-hex-roof-loft-L310">310</a></td><td>—</td><td><a href="#src-hex-roof-loft-L619">619</a> <a href="#src-hex-roof-loft-L741">741</a> <a href="#tests-01-hex-roof-loft-L150">150</a> <a href="#tests-02-worked-examples-loft-L266">266</a></td></tr>
+<tr><td><code>ROOF_DOME</code> <span class="search-kind">const</span></td><td><a href="#src-hex-roof-loft-L311">311</a></td><td>—</td><td><a href="#src-hex-roof-loft-L702">702</a> <a href="#src-hex-roof-loft-L750">750</a></td></tr>
+<tr><td><code>ROOF_RIDGE</code> <span class="search-kind">const</span></td><td><a href="#src-hex-roof-loft-L312">312</a></td><td>—</td><td><a href="#src-hex-roof-loft-L575">575</a> <a href="#src-hex-roof-loft-L745">745</a> <a href="#tests-01-hex-roof-loft-L97">97</a> <a href="#tests-01-hex-roof-loft-L171">171</a> <a href="#tests-01-hex-roof-loft-L214">214</a></td></tr>
+<tr><td><code>RoofFit</code> <span class="search-kind">struct</span></td><td><a href="#src-hex-roof-loft-L314">314</a></td><td>—</td><td><a href="#src-hex-roof-loft-L328">328</a> <a href="#src-hex-roof-loft-L345">345</a> <a href="#src-hex-roof-loft-L367">367</a> <a href="#src-hex-roof-loft-L457">457</a> <a href="#src-hex-roof-loft-L543">543</a> <a href="#src-hex-roof-loft-L575">575</a> … (13 total)</td></tr>
+<tr><td><code>roof_plane_fit</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-roof-loft-L328">328</a></td><td>—</td><td><a href="#src-hex-roof-loft-L719">719</a></td></tr>
+<tr><td><code>roof_ridge_fit</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-roof-loft-L457">457</a></td><td>—</td><td><a href="#src-hex-roof-loft-L725">725</a> <a href="#tests-01-hex-roof-loft-L135">135</a> <a href="#tests-01-hex-roof-loft-L201">201</a> <a href="#tests-01-hex-roof-loft-L229">229</a></td></tr>
+<tr><td><code>roof_cone_fit</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-roof-loft-L583">583</a></td><td>—</td><td><a href="#src-hex-roof-loft-L528">528</a> <a href="#src-hex-roof-loft-L721">721</a></td></tr>
+<tr><td><code>roof_dome_fit</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-roof-loft-L666">666</a></td><td>—</td><td><a href="#src-hex-roof-loft-L723">723</a></td></tr>
+<tr><td><code>roof_match</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-roof-loft-L718">718</a></td><td><a href="#tests-02-worked-examples-loft-L239">HXR-006</a></td><td><a href="#tests-01-hex-roof-loft-L96">96</a> <a href="#tests-01-hex-roof-loft-L118">118</a> <a href="#tests-01-hex-roof-loft-L136">136</a> <a href="#tests-01-hex-roof-loft-L149">149</a> <a href="#tests-01-hex-roof-loft-L166">166</a> <a href="#tests-01-hex-roof-loft-L213">213</a> … (9 total)</td></tr>
+<tr><td><code>roof_eval</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-roof-loft-L739">739</a></td><td><a href="#tests-02-worked-examples-loft-L239">HXR-006</a></td><td><a href="#tests-01-hex-roof-loft-L106">106</a> <a href="#tests-01-hex-roof-loft-L107">107</a> <a href="#tests-01-hex-roof-loft-L120">120</a> <a href="#tests-02-worked-examples-loft-L270">270</a></td></tr>
 </table>
 <h2 id="src-hex-roof-loft">src/hex_roof.loft</h2>
 <pre class="src"><code><span id="src-hex-roof-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -366,453 +366,450 @@
 <span id="src-hex-roof-loft-L311"><span class="kw">pub</span> const <span class="en">ROOF_DOME</span>    = <span class="nm">3</span>;   <span class="cm">// rf_z = base, rf_slope = sphere radius</span></span>
 <span id="src-hex-roof-loft-L312"><span class="kw">pub</span> const <span class="en">ROOF_RIDGE</span>   = <span class="nm">4</span>;   <span class="cm">// rf_x,rf_y = one end; rf_x2,rf_y2 = the other</span></span>
 <span id="src-hex-roof-loft-L313"></span>
-<span id="src-hex-roof-loft-L314"><span class="cm">// A roof surface fitted to a footprint: its kind (`ROOF_*`), that kind's parameters and the</span></span>
-<span id="src-hex-roof-loft-L315"><span class="cm">// worst residual over the footprint.  `roof_plane_fit`, `roof_cone_fit`, `roof_dome_fit`</span></span>
-<span id="src-hex-roof-loft-L316"><span class="cm">// and `roof_ridge_fit` answer one.</span></span>
-<span id="src-hex-roof-loft-L317"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">RoofFit</span> {</span>
-<span id="src-hex-roof-loft-L318">  rf_kind:  <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-hex-roof-loft-L319">  rf_x:     <span class="ty"><a href="stdlib-types.html">float</a></span>,     <span class="cm">// plane: a       cone: centre x</span></span>
-<span id="src-hex-roof-loft-L320">  rf_y:     <span class="ty"><a href="stdlib-types.html">float</a></span>,     <span class="cm">// plane: b       cone: centre y</span></span>
-<span id="src-hex-roof-loft-L321">  rf_z:     <span class="ty"><a href="stdlib-types.html">float</a></span>,     <span class="cm">// plane: c       cone: apex z</span></span>
-<span id="src-hex-roof-loft-L322">  rf_slope: <span class="ty"><a href="stdlib-types.html">float</a></span>,     <span class="cm">// cone and ridge: dz per unit of distance</span></span>
-<span id="src-hex-roof-loft-L323">  rf_res:   <span class="ty"><a href="stdlib-types.html">float</a></span>,     <span class="cm">// worst residual over the footprint</span></span>
-<span id="src-hex-roof-loft-L324">  <span class="cm">// ⚠ **THE RIDGE'S SECOND END — a segment needs four numbers where a point needs two.**</span></span>
-<span id="src-hex-roof-loft-L325">  <span class="cm">// Zero for every other kind, which is what the existing literals give them.</span></span>
-<span id="src-hex-roof-loft-L326">  rf_x2:    <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
-<span id="src-hex-roof-loft-L327">  rf_y2:    <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
-<span id="src-hex-roof-loft-L328">}</span>
-<span id="src-hex-roof-loft-L329"></span>
-<span id="src-hex-roof-loft-L330"><span class="cm">// Least squares z = a*x + b*y + c.  Covers flat and every shed/mono-pitch.</span></span>
-<span id="src-hex-roof-loft-L331"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">roof_plane_fit</span>(s: <span class="en">HexSet</span>, f: <span class="en">Heights</span>) -&gt; <span class="en">RoofFit</span> {</span>
-<span id="src-hex-roof-loft-L332">  sxx = <span class="nm">0.0</span>; sxy = <span class="nm">0.0</span>; sx = <span class="nm">0.0</span>; syy = <span class="nm">0.0</span>; sy = <span class="nm">0.0</span>; sn = <span class="nm">0.0</span>;</span>
-<span id="src-hex-roof-loft-L333">  sxz = <span class="nm">0.0</span>; syz = <span class="nm">0.0</span>; sz = <span class="nm">0.0</span>;</span>
-<span id="src-hex-roof-loft-L334">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
-<span id="src-hex-roof-loft-L335">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
-<span id="src-hex-roof-loft-L336">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
-<span id="src-hex-roof-loft-L337">        x = <span class="fn-call">cellx</span>(q, r); y = <span class="fn-call">celly</span>(q, r); z = <span class="fn-call">height_get</span>(f, q, r);</span>
-<span id="src-hex-roof-loft-L338">        sxx = sxx + x * x; sxy = sxy + x * y; sx = sx + x;</span>
-<span id="src-hex-roof-loft-L339">        syy = syy + y * y; sy = sy + y; sn = sn + <span class="nm">1.0</span>;</span>
-<span id="src-hex-roof-loft-L340">        sxz = sxz + x * z; syz = syz + y * z; sz = sz + z;</span>
-<span id="src-hex-roof-loft-L341">      }</span>
-<span id="src-hex-roof-loft-L342">    }</span>
-<span id="src-hex-roof-loft-L343">  }</span>
-<span id="src-hex-roof-loft-L344">  det = sxx * (syy * sn - sy * sy) - sxy * (sxy * sn - sy * sx)</span>
-<span id="src-hex-roof-loft-L345">      + sx * (sxy * sy - syy * sx);</span>
-<span id="src-hex-roof-loft-L346">  ad = det; <span class="kw">if</span> ad &lt; <span class="nm">0.0</span> { ad = <span class="nm">0.0</span> - ad; }</span>
-<span id="src-hex-roof-loft-L347">  <span class="kw">if</span> ad &lt; <span class="nm">0.000000001</span> {</span>
-<span id="src-hex-roof-loft-L348">    <span class="kw">return</span> <span class="en">RoofFit</span> { rf_kind: <span class="en">ROOF_UNKNOWN</span>, rf_x: <span class="nm">0.0</span>, rf_y: <span class="nm">0.0</span>, rf_z: <span class="nm">0.0</span>,</span>
-<span id="src-hex-roof-loft-L349">                     rf_slope: <span class="nm">0.0</span>, rf_res: <span class="nm">1000000.0</span> };</span>
-<span id="src-hex-roof-loft-L350">  }</span>
-<span id="src-hex-roof-loft-L351">  da = sxz * (syy * sn - sy * sy) - sxy * (syz * sn - sy * sz)</span>
-<span id="src-hex-roof-loft-L352">     + sx * (syz * sy - syy * sz);</span>
-<span id="src-hex-roof-loft-L353">  db = sxx * (syz * sn - sy * sz) - sxz * (sxy * sn - sy * sx)</span>
-<span id="src-hex-roof-loft-L354">     + sx * (sxy * sz - syz * sx);</span>
-<span id="src-hex-roof-loft-L355">  dc = sxx * (syy * sz - syz * sy) - sxy * (sxy * sz - syz * sx)</span>
-<span id="src-hex-roof-loft-L356">     + sxz * (sxy * sy - syy * sx);</span>
-<span id="src-hex-roof-loft-L357">  a = da / det ?? <span class="nm">0.0</span>;</span>
-<span id="src-hex-roof-loft-L358">  b = db / det ?? <span class="nm">0.0</span>;</span>
-<span id="src-hex-roof-loft-L359">  c = dc / det ?? <span class="nm">0.0</span>;</span>
-<span id="src-hex-roof-loft-L360">  res = <span class="nm">0.0</span>;</span>
-<span id="src-hex-roof-loft-L361">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
-<span id="src-hex-roof-loft-L362">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
-<span id="src-hex-roof-loft-L363">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
-<span id="src-hex-roof-loft-L364">        e = a * <span class="fn-call">cellx</span>(q, r) + b * <span class="fn-call">celly</span>(q, r) + c - <span class="fn-call">height_get</span>(f, q, r);</span>
-<span id="src-hex-roof-loft-L365">        <span class="kw">if</span> e &lt; <span class="nm">0.0</span> { e = <span class="nm">0.0</span> - e; }</span>
-<span id="src-hex-roof-loft-L366">        <span class="kw">if</span> e &gt; res { res = e; }</span>
-<span id="src-hex-roof-loft-L367">      }</span>
-<span id="src-hex-roof-loft-L368">    }</span>
-<span id="src-hex-roof-loft-L369">  }</span>
-<span id="src-hex-roof-loft-L370">  <span class="en">RoofFit</span> { rf_kind: <span class="en">ROOF_PLANE</span>, rf_x: a, rf_y: b, rf_z: c, rf_slope: <span class="nm">0.0</span>, rf_res: res }</span>
-<span id="src-hex-roof-loft-L371">}</span>
-<span id="src-hex-roof-loft-L372"></span>
-<span id="src-hex-roof-loft-L373"><span class="cm">// Worst |z - (apex - slope*r)| for one candidate centre, with apex and slope regressed.</span></span>
-<span id="src-hex-roof-loft-L374"><span class="kw">fn</span> <span class="fn-call">cone_at</span>(s: <span class="en">HexSet</span>, f: <span class="en">Heights</span>, cx: <span class="ty"><a href="stdlib-types.html">float</a></span>, cy: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
-<span id="src-hex-roof-loft-L375">  sr = <span class="nm">0.0</span>; szz = <span class="nm">0.0</span>; srr = <span class="nm">0.0</span>; srz = <span class="nm">0.0</span>; sn = <span class="nm">0.0</span>;</span>
-<span id="src-hex-roof-loft-L376">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
-<span id="src-hex-roof-loft-L377">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
-<span id="src-hex-roof-loft-L378">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
-<span id="src-hex-roof-loft-L379">        dx = <span class="fn-call">cellx</span>(q, r) - cx; dy = <span class="fn-call">celly</span>(q, r) - cy;</span>
-<span id="src-hex-roof-loft-L380">        rad = <span class="bi"><a href="stdlib-math.html">sqrt</a></span>(dx * dx + dy * dy) ?? <span class="nm">0.0</span>;</span>
-<span id="src-hex-roof-loft-L381">        z = <span class="fn-call">height_get</span>(f, q, r);</span>
-<span id="src-hex-roof-loft-L382">        sr = sr + rad; szz = szz + z; srr = srr + rad * rad; srz = srz + rad * z;</span>
-<span id="src-hex-roof-loft-L383">        sn = sn + <span class="nm">1.0</span>;</span>
-<span id="src-hex-roof-loft-L384">      }</span>
-<span id="src-hex-roof-loft-L385">    }</span>
-<span id="src-hex-roof-loft-L386">  }</span>
-<span id="src-hex-roof-loft-L387">  den = sn * srr - sr * sr;</span>
-<span id="src-hex-roof-loft-L388">  ad = den; <span class="kw">if</span> ad &lt; <span class="nm">0.0</span> { ad = <span class="nm">0.0</span> - ad; }</span>
-<span id="src-hex-roof-loft-L389">  <span class="kw">if</span> ad &lt; <span class="nm">0.000000001</span> { <span class="kw">return</span> (<span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">1000000.0</span>); }</span>
-<span id="src-hex-roof-loft-L390">  grad = (sn * srz - sr * szz) / den ?? <span class="nm">0.0</span>;     <span class="cm">// dz/dr, negative for a cone</span></span>
-<span id="src-hex-roof-loft-L391">  apex = (szz - grad * sr) / sn ?? <span class="nm">0.0</span>;</span>
-<span id="src-hex-roof-loft-L392">  res = <span class="nm">0.0</span>;</span>
-<span id="src-hex-roof-loft-L393">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
-<span id="src-hex-roof-loft-L394">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
-<span id="src-hex-roof-loft-L395">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
-<span id="src-hex-roof-loft-L396">        dx = <span class="fn-call">cellx</span>(q, r) - cx; dy = <span class="fn-call">celly</span>(q, r) - cy;</span>
-<span id="src-hex-roof-loft-L397">        rad = <span class="bi"><a href="stdlib-math.html">sqrt</a></span>(dx * dx + dy * dy) ?? <span class="nm">0.0</span>;</span>
-<span id="src-hex-roof-loft-L398">        e = apex + grad * rad - <span class="fn-call">height_get</span>(f, q, r);</span>
-<span id="src-hex-roof-loft-L399">        <span class="kw">if</span> e &lt; <span class="nm">0.0</span> { e = <span class="nm">0.0</span> - e; }</span>
-<span id="src-hex-roof-loft-L400">        <span class="kw">if</span> e &gt; res { res = e; }</span>
-<span id="src-hex-roof-loft-L401">      }</span>
-<span id="src-hex-roof-loft-L402">    }</span>
-<span id="src-hex-roof-loft-L403">  }</span>
-<span id="src-hex-roof-loft-L404">  (apex, <span class="nm">0.0</span> - grad, res)</span>
-<span id="src-hex-roof-loft-L405">}</span>
-<span id="src-hex-roof-loft-L406"></span>
-<span id="src-hex-roof-loft-L407"><span class="cm">// ── A RIDGE — the cone's own profile about a SEGMENT ────────────────────</span></span>
-<span id="src-hex-roof-loft-L408"><span class="cm">//</span></span>
-<span id="src-hex-roof-loft-L409"><span class="cm">// `roof_ridge` draws `peak - slope * d` where `d` is the distance to a LINE SEGMENT, exactly</span></span>
-<span id="src-hex-roof-loft-L410"><span class="cm">// as `roof_cone` draws it about a point.  So the fit is `cone_at` with the radius replaced by</span></span>
-<span id="src-hex-roof-loft-L411"><span class="cm">// `track_distance` — the same primitive the generator uses, rather than a second opinion about</span></span>
-<span id="src-hex-roof-loft-L412"><span class="cm">// what distance-to-a-segment means.</span></span>
-<span id="src-hex-roof-loft-L413"><span class="kw">fn</span> <span class="fn-call">ridge_at</span>(s: <span class="en">HexSet</span>, f: <span class="en">Heights</span>, ax: <span class="ty"><a href="stdlib-types.html">float</a></span>, ay: <span class="ty"><a href="stdlib-types.html">float</a></span>, bx: <span class="ty"><a href="stdlib-types.html">float</a></span>, by: <span class="ty"><a href="stdlib-types.html">float</a></span>)</span>
-<span id="src-hex-roof-loft-L414">    -&gt; (<span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
-<span id="src-hex-roof-loft-L415">  t = <span class="fn-call">track_new</span>();</span>
-<span id="src-hex-roof-loft-L416">  <span class="fn-call">track_straight</span>(t, ax, ay, bx, by);</span>
-<span id="src-hex-roof-loft-L417">  sd = <span class="nm">0.0</span>; szz = <span class="nm">0.0</span>; sdd = <span class="nm">0.0</span>; sdz = <span class="nm">0.0</span>; sn = <span class="nm">0.0</span>;</span>
-<span id="src-hex-roof-loft-L418">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
-<span id="src-hex-roof-loft-L419">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
-<span id="src-hex-roof-loft-L420">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
-<span id="src-hex-roof-loft-L421">        d = <span class="fn-call">track_distance</span>(t, <span class="fn-call">cellx</span>(q, r), <span class="fn-call">celly</span>(q, r));</span>
-<span id="src-hex-roof-loft-L422">        z = <span class="fn-call">height_get</span>(f, q, r);</span>
-<span id="src-hex-roof-loft-L423">        sd = sd + d; szz = szz + z; sdd = sdd + d * d; sdz = sdz + d * z;</span>
-<span id="src-hex-roof-loft-L424">        sn = sn + <span class="nm">1.0</span>;</span>
-<span id="src-hex-roof-loft-L425">      }</span>
-<span id="src-hex-roof-loft-L426">    }</span>
-<span id="src-hex-roof-loft-L427">  }</span>
-<span id="src-hex-roof-loft-L428">  den = sn * sdd - sd * sd;</span>
-<span id="src-hex-roof-loft-L429">  ad = den; <span class="kw">if</span> ad &lt; <span class="nm">0.0</span> { ad = <span class="nm">0.0</span> - ad; }</span>
-<span id="src-hex-roof-loft-L430">  <span class="kw">if</span> ad &lt; <span class="nm">0.000000001</span> { <span class="kw">return</span> (<span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">1000000.0</span>); }</span>
-<span id="src-hex-roof-loft-L431">  grad = (sn * sdz - sd * szz) / den ?? <span class="nm">0.0</span>;</span>
-<span id="src-hex-roof-loft-L432">  apex = (szz - grad * sd) / sn ?? <span class="nm">0.0</span>;</span>
-<span id="src-hex-roof-loft-L433">  res = <span class="nm">0.0</span>;</span>
-<span id="src-hex-roof-loft-L434">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
-<span id="src-hex-roof-loft-L435">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
-<span id="src-hex-roof-loft-L436">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
-<span id="src-hex-roof-loft-L437">        d = <span class="fn-call">track_distance</span>(t, <span class="fn-call">cellx</span>(q, r), <span class="fn-call">celly</span>(q, r));</span>
-<span id="src-hex-roof-loft-L438">        e = apex + grad * d - <span class="fn-call">height_get</span>(f, q, r);</span>
-<span id="src-hex-roof-loft-L439">        <span class="kw">if</span> e &lt; <span class="nm">0.0</span> { e = <span class="nm">0.0</span> - e; }</span>
-<span id="src-hex-roof-loft-L440">        <span class="kw">if</span> e &gt; res { res = e; }</span>
-<span id="src-hex-roof-loft-L441">      }</span>
-<span id="src-hex-roof-loft-L442">    }</span>
-<span id="src-hex-roof-loft-L443">  }</span>
-<span id="src-hex-roof-loft-L444">  (apex, <span class="nm">0.0</span> - grad, res)</span>
-<span id="src-hex-roof-loft-L445">}</span>
-<span id="src-hex-roof-loft-L446"></span>
-<span id="src-hex-roof-loft-L447"><span class="cm">// Fit a ridge — the gable / hip profile `roof_ridge` draws — to the heights over these cells.</span></span>
-<span id="src-hex-roof-loft-L448"><span class="cm">//</span></span>
-<span id="src-hex-roof-loft-L449"><span class="cm">// FOUR SEEDS, AND THE BEST RESIDUAL WINS.  The one that works on a gable comes from the data:</span></span>
-<span id="src-hex-roof-loft-L450"><span class="cm">// the ridge is the LOCUS OF THE MAXIMUM, so the two highest cells furthest apart give its</span></span>
-<span id="src-hex-roof-loft-L451"><span class="cm">// direction, and the seed is that line extended across the whole footprint.  The climb then</span></span>
-<span id="src-hex-roof-loft-L452"><span class="cm">// SHORTENS it for a hipped roof, which is the direction it handles well.  The other three —</span></span>
-<span id="src-hex-roof-loft-L453"><span class="cm">// both ends at the highest cell, both at `roof_cone_fit`'s centre, one at each — are cheap</span></span>
-<span id="src-hex-roof-loft-L454"><span class="cm">// insurance: a climb grown out of a POINT can lower its residual by running the segment</span></span>
-<span id="src-hex-roof-loft-L455"><span class="cm">// ACROSS the ridge until the fit is "flat at the mean", and a cone fitted to a gable puts its</span></span>
-<span id="src-hex-roof-loft-L456"><span class="cm">// apex far outside the footprint.  Taking the better of several starts is not a threshold;</span></span>
-<span id="src-hex-roof-loft-L457"><span class="cm">// when they converge it is the same answer.</span></span>
-<span id="src-hex-roof-loft-L458"><span class="cm">//</span></span>
-<span id="src-hex-roof-loft-L459"><span class="cm">// Each end is climbed in the eight directions `roof_cone_fit` uses, on the same step schedule.</span></span>
-<span id="src-hex-roof-loft-L460"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">roof_ridge_fit</span>(s: <span class="en">HexSet</span>, f: <span class="en">Heights</span>) -&gt; <span class="en">RoofFit</span> {</span>
-<span id="src-hex-roof-loft-L461">  <span class="cm">// the two candidate anchors: the highest cell, which lies ON the ridge, and the cone fit's</span></span>
-<span id="src-hex-roof-loft-L462">  <span class="cm">// centre, which is where a cone lands when asked to be a ridge</span></span>
-<span id="src-hex-roof-loft-L463">  hi = <span class="nm">0.0</span> - <span class="nm">1000000.0</span>;</span>
-<span id="src-hex-roof-loft-L464">  lo = <span class="nm">1000000.0</span>;</span>
-<span id="src-hex-roof-loft-L465">  hx = <span class="nm">0.0</span>; hy = <span class="nm">0.0</span>;</span>
-<span id="src-hex-roof-loft-L466">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
-<span id="src-hex-roof-loft-L467">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
-<span id="src-hex-roof-loft-L468">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
-<span id="src-hex-roof-loft-L469">        z = <span class="fn-call">height_get</span>(f, q, r);</span>
-<span id="src-hex-roof-loft-L470">        <span class="kw">if</span> z &gt; hi { hi = z; hx = <span class="fn-call">cellx</span>(q, r); hy = <span class="fn-call">celly</span>(q, r); }</span>
-<span id="src-hex-roof-loft-L471">        <span class="kw">if</span> z &lt; lo { lo = z; }</span>
-<span id="src-hex-roof-loft-L472">      }</span>
-<span id="src-hex-roof-loft-L473">    }</span>
-<span id="src-hex-roof-loft-L474">  }</span>
-<span id="src-hex-roof-loft-L475">  <span class="cm">// ⚠ **THE MAXIMUM IS ATTAINED TO WITHIN ROUNDING, NOT EXACTLY.** On a field `roof_ridge`</span></span>
-<span id="src-hex-roof-loft-L476">  <span class="cm">// drew, `track_distance` is zero on the segment only up to rounding, so `z == hi` would let</span></span>
-<span id="src-hex-roof-loft-L477">  <span class="cm">// one cell win, collapse the pair to a point and degenerate the fit.</span></span>
-<span id="src-hex-roof-loft-L478">  <span class="cm">//</span></span>
-<span id="src-hex-roof-loft-L479">  <span class="cm">// ⚠ **THE BAND IS THE FIELD'S OWN SPAN, NOT A TUNED EPSILON**: a millionth of `hi - lo` is</span></span>
-<span id="src-hex-roof-loft-L480">  <span class="cm">// float equality made scale-aware, and it carries no units of its own.</span></span>
-<span id="src-hex-roof-loft-L481">  band = (hi - lo) * <span class="nm">0.000001</span>;</span>
-<span id="src-hex-roof-loft-L482">  <span class="kw">if</span> band &lt; <span class="nm">0.0</span> { band = <span class="nm">0.0</span> - band; }</span>
-<span id="src-hex-roof-loft-L483">  <span class="cm">// THE RIDGE IS THE LOCUS OF THE MAXIMUM, so the cells attaining it ARE the ridge, and the</span></span>
-<span id="src-hex-roof-loft-L484">  <span class="cm">// two furthest apart give its direction.</span></span>
-<span id="src-hex-roof-loft-L485">  ex1 = hx; ey1 = hy; ex2 = hx; ey2 = hy;</span>
-<span id="src-hex-roof-loft-L486">  far = <span class="nm">0.0</span> - <span class="nm">1.0</span>;</span>
-<span id="src-hex-roof-loft-L487">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
-<span id="src-hex-roof-loft-L488">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
-<span id="src-hex-roof-loft-L489">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) &amp;&amp; <span class="fn-call">height_get</span>(f, q, r) &gt;= hi - band {</span>
-<span id="src-hex-roof-loft-L490">        <span class="kw">for</span> r2 <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
-<span id="src-hex-roof-loft-L491">          <span class="kw">for</span> q2 <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
-<span id="src-hex-roof-loft-L492">            <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q2, r2) &amp;&amp; <span class="fn-call">height_get</span>(f, q2, r2) &gt;= hi - band {</span>
-<span id="src-hex-roof-loft-L493">              ddx = <span class="fn-call">cellx</span>(q2, r2) - <span class="fn-call">cellx</span>(q, r);</span>
-<span id="src-hex-roof-loft-L494">              ddy = <span class="fn-call">celly</span>(q2, r2) - <span class="fn-call">celly</span>(q, r);</span>
-<span id="src-hex-roof-loft-L495">              dd = ddx * ddx + ddy * ddy;</span>
-<span id="src-hex-roof-loft-L496">              <span class="kw">if</span> dd &gt; far {</span>
-<span id="src-hex-roof-loft-L497">                far = dd;</span>
-<span id="src-hex-roof-loft-L498">                ex1 = <span class="fn-call">cellx</span>(q, r); ey1 = <span class="fn-call">celly</span>(q, r);</span>
-<span id="src-hex-roof-loft-L499">                ex2 = <span class="fn-call">cellx</span>(q2, r2); ey2 = <span class="fn-call">celly</span>(q2, r2);</span>
-<span id="src-hex-roof-loft-L500">              }</span>
-<span id="src-hex-roof-loft-L501">            }</span>
-<span id="src-hex-roof-loft-L502">          }</span>
-<span id="src-hex-roof-loft-L503">        }</span>
-<span id="src-hex-roof-loft-L504">      }</span>
-<span id="src-hex-roof-loft-L505">    }</span>
-<span id="src-hex-roof-loft-L506">  }</span>
-<span id="src-hex-roof-loft-L507">  <span class="cm">// THE SEED IS EXTENDED TO SPAN THE FOOTPRINT, because growing is what the climb does badly:</span></span>
-<span id="src-hex-roof-loft-L508">  <span class="cm">// the locus gives the right direction and too short a segment, and every cell past an end</span></span>
-<span id="src-hex-roof-loft-L509">  <span class="cm">// would get a clamped distance.  A gable's ridge runs the length of its roof; a hipped roof</span></span>
-<span id="src-hex-roof-loft-L510">  <span class="cm">// is the case the climb then SHORTENS.</span></span>
-<span id="src-hex-roof-loft-L511">  pdx = ex2 - ex1;</span>
-<span id="src-hex-roof-loft-L512">  pdy = ey2 - ey1;</span>
-<span id="src-hex-roof-loft-L513">  plen = <span class="bi"><a href="stdlib-math.html">sqrt</a></span>(pdx * pdx + pdy * pdy) ?? <span class="nm">0.0</span>;</span>
-<span id="src-hex-roof-loft-L514">  <span class="kw">if</span> plen &gt; <span class="nm">0.000001</span> {</span>
-<span id="src-hex-roof-loft-L515">    ux = pdx / plen ?? <span class="nm">0.0</span>;</span>
-<span id="src-hex-roof-loft-L516">    uy = pdy / plen ?? <span class="nm">0.0</span>;</span>
-<span id="src-hex-roof-loft-L517">    tmin = <span class="nm">1000000.0</span>;</span>
-<span id="src-hex-roof-loft-L518">    tmax = <span class="nm">0.0</span> - <span class="nm">1000000.0</span>;</span>
-<span id="src-hex-roof-loft-L519">    <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
-<span id="src-hex-roof-loft-L520">      <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
-<span id="src-hex-roof-loft-L521">        <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
-<span id="src-hex-roof-loft-L522">          tp = (<span class="fn-call">cellx</span>(q, r) - ex1) * ux + (<span class="fn-call">celly</span>(q, r) - ey1) * uy;</span>
-<span id="src-hex-roof-loft-L523">          <span class="kw">if</span> tp &lt; tmin { tmin = tp; }</span>
-<span id="src-hex-roof-loft-L524">          <span class="kw">if</span> tp &gt; tmax { tmax = tp; }</span>
-<span id="src-hex-roof-loft-L525">        }</span>
-<span id="src-hex-roof-loft-L526">      }</span>
-<span id="src-hex-roof-loft-L527">    }</span>
-<span id="src-hex-roof-loft-L528">    ex2 = ex1 + ux * tmax; ey2 = ey1 + uy * tmax;</span>
-<span id="src-hex-roof-loft-L529">    ex1 = ex1 + ux * tmin; ey1 = ey1 + uy * tmin;</span>
-<span id="src-hex-roof-loft-L530">  }</span>
-<span id="src-hex-roof-loft-L531">  c = <span class="fn-call">roof_cone_fit</span>(s, f);</span>
-<span id="src-hex-roof-loft-L532">  best = <span class="fn-call">ridge_climb</span>(s, f, ex1, ey1, ex2, ey2);</span>
-<span id="src-hex-roof-loft-L533">  t1 = <span class="fn-call">ridge_climb</span>(s, f, hx, hy, hx, hy);</span>
-<span id="src-hex-roof-loft-L534">  <span class="kw">if</span> t1.rf_res &lt; best.rf_res { best = t1; }</span>
-<span id="src-hex-roof-loft-L535">  t2 = <span class="fn-call">ridge_climb</span>(s, f, c.rf_x, c.rf_y, c.rf_x, c.rf_y);</span>
-<span id="src-hex-roof-loft-L536">  <span class="kw">if</span> t2.rf_res &lt; best.rf_res { best = t2; }</span>
-<span id="src-hex-roof-loft-L537">  t3 = <span class="fn-call">ridge_climb</span>(s, f, hx, hy, c.rf_x, c.rf_y);</span>
-<span id="src-hex-roof-loft-L538">  <span class="kw">if</span> t3.rf_res &lt; best.rf_res { best = t3; }</span>
-<span id="src-hex-roof-loft-L539">  best</span>
-<span id="src-hex-roof-loft-L540">}</span>
-<span id="src-hex-roof-loft-L541"></span>
-<span id="src-hex-roof-loft-L542"><span class="cm">// The climb itself, from a given pair of ends.  Each end moves in the eight directions</span></span>
-<span id="src-hex-roof-loft-L543"><span class="cm">// `roof_cone_fit` uses, on the same step schedule — a second search rule here would be a second</span></span>
-<span id="src-hex-roof-loft-L544"><span class="cm">// opinion about how this family searches.</span></span>
-<span id="src-hex-roof-loft-L545"><span class="kw">fn</span> <span class="fn-call">ridge_climb</span>(s: <span class="en">HexSet</span>, f: <span class="en">Heights</span>, sax: <span class="ty"><a href="stdlib-types.html">float</a></span>, say: <span class="ty"><a href="stdlib-types.html">float</a></span>, sbx: <span class="ty"><a href="stdlib-types.html">float</a></span>, sby: <span class="ty"><a href="stdlib-types.html">float</a></span>)</span>
-<span id="src-hex-roof-loft-L546">    -&gt; <span class="en">RoofFit</span> {</span>
-<span id="src-hex-roof-loft-L547">  ax = sax; ay = say; bx = sbx; by = sby;</span>
-<span id="src-hex-roof-loft-L548">  (ba, bs, br) = <span class="fn-call">ridge_at</span>(s, f, ax, ay, bx, by);</span>
-<span id="src-hex-roof-loft-L549">  step = <span class="nm">0.4</span>;</span>
-<span id="src-hex-roof-loft-L550">  <span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..5</span> {</span>
-<span id="src-hex-roof-loft-L551">    moved = <span class="kw">true</span>;</span>
-<span id="src-hex-roof-loft-L552">    while moved {</span>
-<span id="src-hex-roof-loft-L553">      moved = <span class="kw">false</span>;</span>
-<span id="src-hex-roof-loft-L554">      <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..16</span> {</span>
-<span id="src-hex-roof-loft-L555">        ox = <span class="nm">0.0</span>; oy = <span class="nm">0.0</span>;</span>
-<span id="src-hex-roof-loft-L556">        k = i % <span class="nm">8</span> ?? <span class="nm">0</span>;</span>
-<span id="src-hex-roof-loft-L557">        <span class="kw">if</span> k == <span class="nm">0</span> { ox = step; }</span>
-<span id="src-hex-roof-loft-L558">        <span class="kw">if</span> k == <span class="nm">1</span> { ox = <span class="nm">0.0</span> - step; }</span>
-<span id="src-hex-roof-loft-L559">        <span class="kw">if</span> k == <span class="nm">2</span> { oy = step; }</span>
-<span id="src-hex-roof-loft-L560">        <span class="kw">if</span> k == <span class="nm">3</span> { oy = <span class="nm">0.0</span> - step; }</span>
-<span id="src-hex-roof-loft-L561">        <span class="kw">if</span> k == <span class="nm">4</span> { ox = step; oy = step; }</span>
-<span id="src-hex-roof-loft-L562">        <span class="kw">if</span> k == <span class="nm">5</span> { ox = step; oy = <span class="nm">0.0</span> - step; }</span>
-<span id="src-hex-roof-loft-L563">        <span class="kw">if</span> k == <span class="nm">6</span> { ox = <span class="nm">0.0</span> - step; oy = step; }</span>
-<span id="src-hex-roof-loft-L564">        <span class="kw">if</span> k == <span class="nm">7</span> { ox = <span class="nm">0.0</span> - step; oy = <span class="nm">0.0</span> - step; }</span>
-<span id="src-hex-roof-loft-L565">        nax = ax; nay = ay; nbx = bx; nby = by;</span>
-<span id="src-hex-roof-loft-L566">        <span class="kw">if</span> i &lt; <span class="nm">8</span> { nax = ax + ox; nay = ay + oy; }</span>
-<span id="src-hex-roof-loft-L567">        <span class="kw">else</span> { nbx = bx + ox; nby = by + oy; }</span>
-<span id="src-hex-roof-loft-L568">        (ca, cs, cr) = <span class="fn-call">ridge_at</span>(s, f, nax, nay, nbx, nby);</span>
-<span id="src-hex-roof-loft-L569">        <span class="kw">if</span> cr &lt; br - <span class="nm">0.0000000001</span> {</span>
-<span id="src-hex-roof-loft-L570">          br = cr; ba = ca; bs = cs;</span>
-<span id="src-hex-roof-loft-L571">          ax = nax; ay = nay; bx = nbx; by = nby;</span>
-<span id="src-hex-roof-loft-L572">          moved = <span class="kw">true</span>;</span>
-<span id="src-hex-roof-loft-L573">        }</span>
-<span id="src-hex-roof-loft-L574">      }</span>
-<span id="src-hex-roof-loft-L575">    }</span>
-<span id="src-hex-roof-loft-L576">    step = step * <span class="nm">0.25</span>;</span>
-<span id="src-hex-roof-loft-L577">  }</span>
-<span id="src-hex-roof-loft-L578">  <span class="en">RoofFit</span> { rf_kind: <span class="en">ROOF_RIDGE</span>, rf_x: ax, rf_y: ay, rf_z: ba, rf_slope: bs, rf_res: br,</span>
-<span id="src-hex-roof-loft-L579">            rf_x2: bx, rf_y2: by }</span>
-<span id="src-hex-roof-loft-L580">}</span>
-<span id="src-hex-roof-loft-L581"></span>
-<span id="src-hex-roof-loft-L582"><span class="cm">// Fit a cone to the heights over these cells: apex, slope and how well it fits.  The centre</span></span>
-<span id="src-hex-roof-loft-L583"><span class="cm">// is seeded at the highest cell and then refined — the apex cell is only within one</span></span>
-<span id="src-hex-roof-loft-L584"><span class="cm">// circumradius of the true apex, so the refinement is what makes the recovery exact.</span></span>
-<span id="src-hex-roof-loft-L585"><span class="cm">// `roof_match` asks this, the plane, the dome and the ridge, and keeps what fits.</span></span>
-<span id="src-hex-roof-loft-L586"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">roof_cone_fit</span>(s: <span class="en">HexSet</span>, f: <span class="en">Heights</span>) -&gt; <span class="en">RoofFit</span> {</span>
-<span id="src-hex-roof-loft-L587">  hi = -<span class="nm">1000000.0</span>;</span>
-<span id="src-hex-roof-loft-L588">  bx = <span class="nm">0.0</span>; by = <span class="nm">0.0</span>;</span>
-<span id="src-hex-roof-loft-L589">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
-<span id="src-hex-roof-loft-L590">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
-<span id="src-hex-roof-loft-L591">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
-<span id="src-hex-roof-loft-L592">        z = <span class="fn-call">height_get</span>(f, q, r);</span>
-<span id="src-hex-roof-loft-L593">        <span class="kw">if</span> z &gt; hi { hi = z; bx = <span class="fn-call">cellx</span>(q, r); by = <span class="fn-call">celly</span>(q, r); }</span>
-<span id="src-hex-roof-loft-L594">      }</span>
-<span id="src-hex-roof-loft-L595">    }</span>
-<span id="src-hex-roof-loft-L596">  }</span>
-<span id="src-hex-roof-loft-L597">  (ba, bs, br) = <span class="fn-call">cone_at</span>(s, f, bx, by);</span>
-<span id="src-hex-roof-loft-L598">  step = <span class="nm">0.4</span>;</span>
-<span id="src-hex-roof-loft-L599">  <span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..4</span> {</span>
-<span id="src-hex-roof-loft-L600">    moved = <span class="kw">true</span>;</span>
-<span id="src-hex-roof-loft-L601">    while moved {</span>
-<span id="src-hex-roof-loft-L602">      moved = <span class="kw">false</span>;</span>
-<span id="src-hex-roof-loft-L603">      <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..8</span> {</span>
-<span id="src-hex-roof-loft-L604">        ox = <span class="nm">0.0</span>; oy = <span class="nm">0.0</span>;</span>
-<span id="src-hex-roof-loft-L605">        <span class="kw">if</span> i == <span class="nm">0</span> { ox = step; }</span>
-<span id="src-hex-roof-loft-L606">        <span class="kw">if</span> i == <span class="nm">1</span> { ox = <span class="nm">0.0</span> - step; }</span>
-<span id="src-hex-roof-loft-L607">        <span class="kw">if</span> i == <span class="nm">2</span> { oy = step; }</span>
-<span id="src-hex-roof-loft-L608">        <span class="kw">if</span> i == <span class="nm">3</span> { oy = <span class="nm">0.0</span> - step; }</span>
-<span id="src-hex-roof-loft-L609">        <span class="kw">if</span> i == <span class="nm">4</span> { ox = step; oy = step; }</span>
-<span id="src-hex-roof-loft-L610">        <span class="kw">if</span> i == <span class="nm">5</span> { ox = step; oy = <span class="nm">0.0</span> - step; }</span>
-<span id="src-hex-roof-loft-L611">        <span class="kw">if</span> i == <span class="nm">6</span> { ox = <span class="nm">0.0</span> - step; oy = step; }</span>
-<span id="src-hex-roof-loft-L612">        <span class="kw">if</span> i == <span class="nm">7</span> { ox = <span class="nm">0.0</span> - step; oy = <span class="nm">0.0</span> - step; }</span>
-<span id="src-hex-roof-loft-L613">        (ca, cs, cr) = <span class="fn-call">cone_at</span>(s, f, bx + ox, by + oy);</span>
-<span id="src-hex-roof-loft-L614">        <span class="kw">if</span> cr &lt; br - <span class="nm">0.0000000001</span> {</span>
-<span id="src-hex-roof-loft-L615">          br = cr; ba = ca; bs = cs; bx = bx + ox; by = by + oy;</span>
-<span id="src-hex-roof-loft-L616">          moved = <span class="kw">true</span>;</span>
-<span id="src-hex-roof-loft-L617">        }</span>
-<span id="src-hex-roof-loft-L618">      }</span>
-<span id="src-hex-roof-loft-L619">    }</span>
-<span id="src-hex-roof-loft-L620">    step = step * <span class="nm">0.25</span>;</span>
-<span id="src-hex-roof-loft-L621">  }</span>
-<span id="src-hex-roof-loft-L622">  <span class="en">RoofFit</span> { rf_kind: <span class="en">ROOF_CONE</span>, rf_x: bx, rf_y: by, rf_z: ba, rf_slope: bs, rf_res: br }</span>
-<span id="src-hex-roof-loft-L623">}</span>
-<span id="src-hex-roof-loft-L624"></span>
-<span id="src-hex-roof-loft-L625"><span class="cm">// A DOME.  Given a centre, the fit is LINEAR after one substitution: from</span></span>
-<span id="src-hex-roof-loft-L626"><span class="cm">// z = base + sqrt(R^2 - r^2) we get (z^2 + r^2) = 2*base*z + (R^2 - base^2), so regressing</span></span>
-<span id="src-hex-roof-loft-L627"><span class="cm">// (z^2 + r^2) on z hands back base as half the gradient and R from the intercept.  The</span></span>
-<span id="src-hex-roof-loft-L628"><span class="cm">// centre is then refined by the same local search the cone uses.</span></span>
-<span id="src-hex-roof-loft-L629"><span class="kw">fn</span> <span class="fn-call">dome_at</span>(s: <span class="en">HexSet</span>, f: <span class="en">Heights</span>, cx: <span class="ty"><a href="stdlib-types.html">float</a></span>, cy: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
-<span id="src-hex-roof-loft-L630">  sv = <span class="nm">0.0</span>; su = <span class="nm">0.0</span>; svv = <span class="nm">0.0</span>; suv = <span class="nm">0.0</span>; sn = <span class="nm">0.0</span>;</span>
-<span id="src-hex-roof-loft-L631">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
-<span id="src-hex-roof-loft-L632">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
-<span id="src-hex-roof-loft-L633">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
-<span id="src-hex-roof-loft-L634">        dx = <span class="fn-call">cellx</span>(q, r) - cx; dy = <span class="fn-call">celly</span>(q, r) - cy;</span>
-<span id="src-hex-roof-loft-L635">        z = <span class="fn-call">height_get</span>(f, q, r);</span>
-<span id="src-hex-roof-loft-L636">        v = z;</span>
-<span id="src-hex-roof-loft-L637">        u = z * z + dx * dx + dy * dy;</span>
-<span id="src-hex-roof-loft-L638">        sv = sv + v; su = su + u; svv = svv + v * v; suv = suv + u * v; sn = sn + <span class="nm">1.0</span>;</span>
-<span id="src-hex-roof-loft-L639">      }</span>
-<span id="src-hex-roof-loft-L640">    }</span>
-<span id="src-hex-roof-loft-L641">  }</span>
-<span id="src-hex-roof-loft-L642">  den = sn * svv - sv * sv;</span>
-<span id="src-hex-roof-loft-L643">  ad = den; <span class="kw">if</span> ad &lt; <span class="nm">0.0</span> { ad = <span class="nm">0.0</span> - ad; }</span>
-<span id="src-hex-roof-loft-L644">  <span class="kw">if</span> ad &lt; <span class="nm">0.000000001</span> { <span class="kw">return</span> (<span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">1000000.0</span>); }</span>
-<span id="src-hex-roof-loft-L645">  grad = (sn * suv - sv * su) / den ?? <span class="nm">0.0</span>;</span>
-<span id="src-hex-roof-loft-L646">  icept = (su - grad * sv) / sn ?? <span class="nm">0.0</span>;</span>
-<span id="src-hex-roof-loft-L647">  base = grad * <span class="nm">0.5</span>;</span>
-<span id="src-hex-roof-loft-L648">  rr2 = icept + base * base;</span>
-<span id="src-hex-roof-loft-L649">  <span class="kw">if</span> rr2 &lt;= <span class="nm">0.0</span> { <span class="kw">return</span> (<span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">1000000.0</span>); }</span>
-<span id="src-hex-roof-loft-L650">  rad = <span class="bi"><a href="stdlib-math.html">sqrt</a></span>(rr2) ?? <span class="nm">0.0</span>;</span>
-<span id="src-hex-roof-loft-L651">  res = <span class="nm">0.0</span>;</span>
-<span id="src-hex-roof-loft-L652">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
-<span id="src-hex-roof-loft-L653">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
-<span id="src-hex-roof-loft-L654">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
-<span id="src-hex-roof-loft-L655">        dx = <span class="fn-call">cellx</span>(q, r) - cx; dy = <span class="fn-call">celly</span>(q, r) - cy;</span>
-<span id="src-hex-roof-loft-L656">        d2 = dx * dx + dy * dy;</span>
-<span id="src-hex-roof-loft-L657">        pred = base;</span>
-<span id="src-hex-roof-loft-L658">        <span class="kw">if</span> d2 &lt; rad * rad { pred = base + (<span class="bi"><a href="stdlib-math.html">sqrt</a></span>(rad * rad - d2) ?? <span class="nm">0.0</span>); }</span>
-<span id="src-hex-roof-loft-L659">        e = pred - <span class="fn-call">height_get</span>(f, q, r);</span>
-<span id="src-hex-roof-loft-L660">        <span class="kw">if</span> e &lt; <span class="nm">0.0</span> { e = <span class="nm">0.0</span> - e; }</span>
-<span id="src-hex-roof-loft-L661">        <span class="kw">if</span> e &gt; res { res = e; }</span>
-<span id="src-hex-roof-loft-L662">      }</span>
-<span id="src-hex-roof-loft-L663">    }</span>
-<span id="src-hex-roof-loft-L664">  }</span>
-<span id="src-hex-roof-loft-L665">  (base, rad, res)</span>
-<span id="src-hex-roof-loft-L666">}</span>
-<span id="src-hex-roof-loft-L667"></span>
-<span id="src-hex-roof-loft-L668"><span class="cm">// Fit a dome to the same heights, reported the same way, so the two are comparable.</span></span>
-<span id="src-hex-roof-loft-L669"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">roof_dome_fit</span>(s: <span class="en">HexSet</span>, f: <span class="en">Heights</span>) -&gt; <span class="en">RoofFit</span> {</span>
-<span id="src-hex-roof-loft-L670">  hi = -<span class="nm">1000000.0</span>;</span>
-<span id="src-hex-roof-loft-L671">  bx = <span class="nm">0.0</span>; by = <span class="nm">0.0</span>;</span>
-<span id="src-hex-roof-loft-L672">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
-<span id="src-hex-roof-loft-L673">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
-<span id="src-hex-roof-loft-L674">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
-<span id="src-hex-roof-loft-L675">        z = <span class="fn-call">height_get</span>(f, q, r);</span>
-<span id="src-hex-roof-loft-L676">        <span class="kw">if</span> z &gt; hi { hi = z; bx = <span class="fn-call">cellx</span>(q, r); by = <span class="fn-call">celly</span>(q, r); }</span>
-<span id="src-hex-roof-loft-L677">      }</span>
-<span id="src-hex-roof-loft-L678">    }</span>
-<span id="src-hex-roof-loft-L679">  }</span>
-<span id="src-hex-roof-loft-L680">  (bb, brad, bres) = <span class="fn-call">dome_at</span>(s, f, bx, by);</span>
-<span id="src-hex-roof-loft-L681">  step = <span class="nm">0.4</span>;</span>
-<span id="src-hex-roof-loft-L682">  <span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..4</span> {</span>
-<span id="src-hex-roof-loft-L683">    moved = <span class="kw">true</span>;</span>
-<span id="src-hex-roof-loft-L684">    while moved {</span>
-<span id="src-hex-roof-loft-L685">      moved = <span class="kw">false</span>;</span>
-<span id="src-hex-roof-loft-L686">      <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..8</span> {</span>
-<span id="src-hex-roof-loft-L687">        ox = <span class="nm">0.0</span>; oy = <span class="nm">0.0</span>;</span>
-<span id="src-hex-roof-loft-L688">        <span class="kw">if</span> i == <span class="nm">0</span> { ox = step; }</span>
-<span id="src-hex-roof-loft-L689">        <span class="kw">if</span> i == <span class="nm">1</span> { ox = <span class="nm">0.0</span> - step; }</span>
-<span id="src-hex-roof-loft-L690">        <span class="kw">if</span> i == <span class="nm">2</span> { oy = step; }</span>
-<span id="src-hex-roof-loft-L691">        <span class="kw">if</span> i == <span class="nm">3</span> { oy = <span class="nm">0.0</span> - step; }</span>
-<span id="src-hex-roof-loft-L692">        <span class="kw">if</span> i == <span class="nm">4</span> { ox = step; oy = step; }</span>
-<span id="src-hex-roof-loft-L693">        <span class="kw">if</span> i == <span class="nm">5</span> { ox = step; oy = <span class="nm">0.0</span> - step; }</span>
-<span id="src-hex-roof-loft-L694">        <span class="kw">if</span> i == <span class="nm">6</span> { ox = <span class="nm">0.0</span> - step; oy = step; }</span>
-<span id="src-hex-roof-loft-L695">        <span class="kw">if</span> i == <span class="nm">7</span> { ox = <span class="nm">0.0</span> - step; oy = <span class="nm">0.0</span> - step; }</span>
-<span id="src-hex-roof-loft-L696">        (cb, crad, cres) = <span class="fn-call">dome_at</span>(s, f, bx + ox, by + oy);</span>
-<span id="src-hex-roof-loft-L697">        <span class="kw">if</span> cres &lt; bres - <span class="nm">0.0000000001</span> {</span>
-<span id="src-hex-roof-loft-L698">          bres = cres; bb = cb; brad = crad; bx = bx + ox; by = by + oy;</span>
-<span id="src-hex-roof-loft-L699">          moved = <span class="kw">true</span>;</span>
-<span id="src-hex-roof-loft-L700">        }</span>
-<span id="src-hex-roof-loft-L701">      }</span>
-<span id="src-hex-roof-loft-L702">    }</span>
-<span id="src-hex-roof-loft-L703">    step = step * <span class="nm">0.25</span>;</span>
-<span id="src-hex-roof-loft-L704">  }</span>
-<span id="src-hex-roof-loft-L705">  <span class="en">RoofFit</span> { rf_kind: <span class="en">ROOF_DOME</span>, rf_x: bx, rf_y: by, rf_z: bb, rf_slope: brad, rf_res: bres }</span>
-<span id="src-hex-roof-loft-L706">}</span>
-<span id="src-hex-roof-loft-L707"></span>
-<span id="src-hex-roof-loft-L708"><span class="cm">// Decide what the field IS.  A plane wins ties: it is the simpler statement, and a cone</span></span>
-<span id="src-hex-roof-loft-L709"><span class="cm">// fitted to a flat roof would put its apex somewhere arbitrary.</span></span>
-<span id="src-hex-roof-loft-L710"><span class="cm">//</span></span>
-<span id="src-hex-roof-loft-L711"><span class="cm">// Example: @HXR-006</span></span>
-<span id="src-hex-roof-loft-L712"><span class="cm">//</span></span>
-<span id="src-hex-roof-loft-L713"><span class="cm">// It tries plane, cone, dome, then ridge, and answers the first whose worst residual is</span></span>
-<span id="src-hex-roof-loft-L714"><span class="cm">// within `tol`.  The ridge is LAST because a cone is a ridge whose segment has zero length:</span></span>
-<span id="src-hex-roof-loft-L715"><span class="cm">// trying it first would answer `ROOF_RIDGE` for a true cone, the less specific statement.</span></span>
-<span id="src-hex-roof-loft-L716"><span class="cm">//</span></span>
-<span id="src-hex-roof-loft-L717"><span class="cm">// ⛔ **WHEN NOTHING FITS, IT SAYS SO — `ROOF_UNKNOWN`**, never the least-bad shape under a</span></span>
-<span id="src-hex-roof-loft-L718"><span class="cm">// kind it is not; `roof_eval` draws nothing for it.  Every other field is the closest</span></span>
-<span id="src-hex-roof-loft-L719"><span class="cm">// candidate's — a ridge's both ends included — because which shape came closest and by how</span></span>
-<span id="src-hex-roof-loft-L720"><span class="cm">// much is what a caller diagnoses with.</span></span>
-<span id="src-hex-roof-loft-L721"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">roof_match</span>(s: <span class="en">HexSet</span>, f: <span class="en">Heights</span>, tol: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="en">RoofFit</span> {</span>
-<span id="src-hex-roof-loft-L722">  p = <span class="fn-call">roof_plane_fit</span>(s, f);</span>
-<span id="src-hex-roof-loft-L723">  <span class="kw">if</span> p.rf_res &lt;= tol { <span class="kw">return</span> p; }</span>
-<span id="src-hex-roof-loft-L724">  c = <span class="fn-call">roof_cone_fit</span>(s, f);</span>
-<span id="src-hex-roof-loft-L725">  <span class="kw">if</span> c.rf_res &lt;= tol { <span class="kw">return</span> c; }</span>
-<span id="src-hex-roof-loft-L726">  d = <span class="fn-call">roof_dome_fit</span>(s, f);</span>
-<span id="src-hex-roof-loft-L727">  <span class="kw">if</span> d.rf_res &lt;= tol { <span class="kw">return</span> d; }</span>
-<span id="src-hex-roof-loft-L728">  g = <span class="fn-call">roof_ridge_fit</span>(s, f);</span>
-<span id="src-hex-roof-loft-L729">  <span class="kw">if</span> g.rf_res &lt;= tol { <span class="kw">return</span> g; }</span>
-<span id="src-hex-roof-loft-L730">  best = p;</span>
-<span id="src-hex-roof-loft-L731">  <span class="kw">if</span> c.rf_res &lt; best.rf_res { best = c; }</span>
-<span id="src-hex-roof-loft-L732">  <span class="kw">if</span> d.rf_res &lt; best.rf_res { best = d; }</span>
-<span id="src-hex-roof-loft-L733">  <span class="kw">if</span> g.rf_res &lt; best.rf_res { best = g; }</span>
-<span id="src-hex-roof-loft-L734">  <span class="en">RoofFit</span> { rf_kind: <span class="en">ROOF_UNKNOWN</span>, rf_x: best.rf_x, rf_y: best.rf_y, rf_z: best.rf_z,</span>
-<span id="src-hex-roof-loft-L735">            rf_slope: best.rf_slope, rf_res: best.rf_res, rf_x2: best.rf_x2, rf_y2: best.rf_y2 }</span>
-<span id="src-hex-roof-loft-L736">}</span>
-<span id="src-hex-roof-loft-L737"></span>
-<span id="src-hex-roof-loft-L738"><span class="cm">// The recovered ANALYTIC surface — what a renderer should draw, at any resolution, instead</span></span>
-<span id="src-hex-roof-loft-L739"><span class="cm">// of the cells it came from.</span></span>
-<span id="src-hex-roof-loft-L740"><span class="cm">//</span></span>
-<span id="src-hex-roof-loft-L741"><span class="cm">// Example: @HXR-006</span></span>
-<span id="src-hex-roof-loft-L742"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">roof_eval</span>(fit: <span class="en">RoofFit</span>, x: <span class="ty"><a href="stdlib-types.html">float</a></span>, y: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
-<span id="src-hex-roof-loft-L743">  <span class="kw">if</span> fit.rf_kind == <span class="en">ROOF_PLANE</span> { <span class="kw">return</span> fit.rf_x * x + fit.rf_y * y + fit.rf_z; }</span>
-<span id="src-hex-roof-loft-L744">  <span class="kw">if</span> fit.rf_kind == <span class="en">ROOF_CONE</span> {</span>
-<span id="src-hex-roof-loft-L745">    dx = x - fit.rf_x; dy = y - fit.rf_y;</span>
-<span id="src-hex-roof-loft-L746">    <span class="kw">return</span> fit.rf_z - fit.rf_slope * (<span class="bi"><a href="stdlib-math.html">sqrt</a></span>(dx * dx + dy * dy) ?? <span class="nm">0.0</span>);</span>
-<span id="src-hex-roof-loft-L747">  }</span>
-<span id="src-hex-roof-loft-L748">  <span class="kw">if</span> fit.rf_kind == <span class="en">ROOF_RIDGE</span> {</span>
-<span id="src-hex-roof-loft-L749">    rt = <span class="fn-call">track_new</span>();</span>
-<span id="src-hex-roof-loft-L750">    <span class="fn-call">track_straight</span>(rt, fit.rf_x, fit.rf_y, fit.rf_x2, fit.rf_y2);</span>
-<span id="src-hex-roof-loft-L751">    <span class="kw">return</span> fit.rf_z - fit.rf_slope * <span class="fn-call">track_distance</span>(rt, x, y);</span>
-<span id="src-hex-roof-loft-L752">  }</span>
-<span id="src-hex-roof-loft-L753">  <span class="kw">if</span> fit.rf_kind == <span class="en">ROOF_DOME</span> {</span>
-<span id="src-hex-roof-loft-L754">    dx = x - fit.rf_x; dy = y - fit.rf_y;</span>
-<span id="src-hex-roof-loft-L755">    d2 = dx * dx + dy * dy;</span>
-<span id="src-hex-roof-loft-L756">    <span class="kw">if</span> d2 &gt;= fit.rf_slope * fit.rf_slope { <span class="kw">return</span> fit.rf_z; }</span>
-<span id="src-hex-roof-loft-L757">    <span class="kw">return</span> fit.rf_z + (<span class="bi"><a href="stdlib-math.html">sqrt</a></span>(fit.rf_slope * fit.rf_slope - d2) ?? <span class="nm">0.0</span>);</span>
-<span id="src-hex-roof-loft-L758">  }</span>
-<span id="src-hex-roof-loft-L759">  <span class="nm">0.0</span></span>
-<span id="src-hex-roof-loft-L760">}</span>
+<span id="src-hex-roof-loft-L314"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">RoofFit</span> {</span>
+<span id="src-hex-roof-loft-L315">  rf_kind:  <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-hex-roof-loft-L316">  rf_x:     <span class="ty"><a href="stdlib-types.html">float</a></span>,     <span class="cm">// plane: a       cone: centre x</span></span>
+<span id="src-hex-roof-loft-L317">  rf_y:     <span class="ty"><a href="stdlib-types.html">float</a></span>,     <span class="cm">// plane: b       cone: centre y</span></span>
+<span id="src-hex-roof-loft-L318">  rf_z:     <span class="ty"><a href="stdlib-types.html">float</a></span>,     <span class="cm">// plane: c       cone: apex z</span></span>
+<span id="src-hex-roof-loft-L319">  rf_slope: <span class="ty"><a href="stdlib-types.html">float</a></span>,     <span class="cm">// cone and ridge: dz per unit of distance</span></span>
+<span id="src-hex-roof-loft-L320">  rf_res:   <span class="ty"><a href="stdlib-types.html">float</a></span>,     <span class="cm">// worst residual over the footprint</span></span>
+<span id="src-hex-roof-loft-L321">  <span class="cm">// ⚠ **THE RIDGE'S SECOND END — a segment needs four numbers where a point needs two.**</span></span>
+<span id="src-hex-roof-loft-L322">  <span class="cm">// Zero for every other kind, which is what the existing literals give them.</span></span>
+<span id="src-hex-roof-loft-L323">  rf_x2:    <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
+<span id="src-hex-roof-loft-L324">  rf_y2:    <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
+<span id="src-hex-roof-loft-L325">}</span>
+<span id="src-hex-roof-loft-L326"></span>
+<span id="src-hex-roof-loft-L327"><span class="cm">// Least squares z = a*x + b*y + c.  Covers flat and every shed/mono-pitch.</span></span>
+<span id="src-hex-roof-loft-L328"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">roof_plane_fit</span>(s: <span class="en">HexSet</span>, f: <span class="en">Heights</span>) -&gt; <span class="en">RoofFit</span> {</span>
+<span id="src-hex-roof-loft-L329">  sxx = <span class="nm">0.0</span>; sxy = <span class="nm">0.0</span>; sx = <span class="nm">0.0</span>; syy = <span class="nm">0.0</span>; sy = <span class="nm">0.0</span>; sn = <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L330">  sxz = <span class="nm">0.0</span>; syz = <span class="nm">0.0</span>; sz = <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L331">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
+<span id="src-hex-roof-loft-L332">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
+<span id="src-hex-roof-loft-L333">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="src-hex-roof-loft-L334">        x = <span class="fn-call">cellx</span>(q, r); y = <span class="fn-call">celly</span>(q, r); z = <span class="fn-call">height_get</span>(f, q, r);</span>
+<span id="src-hex-roof-loft-L335">        sxx = sxx + x * x; sxy = sxy + x * y; sx = sx + x;</span>
+<span id="src-hex-roof-loft-L336">        syy = syy + y * y; sy = sy + y; sn = sn + <span class="nm">1.0</span>;</span>
+<span id="src-hex-roof-loft-L337">        sxz = sxz + x * z; syz = syz + y * z; sz = sz + z;</span>
+<span id="src-hex-roof-loft-L338">      }</span>
+<span id="src-hex-roof-loft-L339">    }</span>
+<span id="src-hex-roof-loft-L340">  }</span>
+<span id="src-hex-roof-loft-L341">  det = sxx * (syy * sn - sy * sy) - sxy * (sxy * sn - sy * sx)</span>
+<span id="src-hex-roof-loft-L342">      + sx * (sxy * sy - syy * sx);</span>
+<span id="src-hex-roof-loft-L343">  ad = det; <span class="kw">if</span> ad &lt; <span class="nm">0.0</span> { ad = <span class="nm">0.0</span> - ad; }</span>
+<span id="src-hex-roof-loft-L344">  <span class="kw">if</span> ad &lt; <span class="nm">0.000000001</span> {</span>
+<span id="src-hex-roof-loft-L345">    <span class="kw">return</span> <span class="en">RoofFit</span> { rf_kind: <span class="en">ROOF_UNKNOWN</span>, rf_x: <span class="nm">0.0</span>, rf_y: <span class="nm">0.0</span>, rf_z: <span class="nm">0.0</span>,</span>
+<span id="src-hex-roof-loft-L346">                     rf_slope: <span class="nm">0.0</span>, rf_res: <span class="nm">1000000.0</span> };</span>
+<span id="src-hex-roof-loft-L347">  }</span>
+<span id="src-hex-roof-loft-L348">  da = sxz * (syy * sn - sy * sy) - sxy * (syz * sn - sy * sz)</span>
+<span id="src-hex-roof-loft-L349">     + sx * (syz * sy - syy * sz);</span>
+<span id="src-hex-roof-loft-L350">  db = sxx * (syz * sn - sy * sz) - sxz * (sxy * sn - sy * sx)</span>
+<span id="src-hex-roof-loft-L351">     + sx * (sxy * sz - syz * sx);</span>
+<span id="src-hex-roof-loft-L352">  dc = sxx * (syy * sz - syz * sy) - sxy * (sxy * sz - syz * sx)</span>
+<span id="src-hex-roof-loft-L353">     + sxz * (sxy * sy - syy * sx);</span>
+<span id="src-hex-roof-loft-L354">  a = da / det ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L355">  b = db / det ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L356">  c = dc / det ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L357">  res = <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L358">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
+<span id="src-hex-roof-loft-L359">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
+<span id="src-hex-roof-loft-L360">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="src-hex-roof-loft-L361">        e = a * <span class="fn-call">cellx</span>(q, r) + b * <span class="fn-call">celly</span>(q, r) + c - <span class="fn-call">height_get</span>(f, q, r);</span>
+<span id="src-hex-roof-loft-L362">        <span class="kw">if</span> e &lt; <span class="nm">0.0</span> { e = <span class="nm">0.0</span> - e; }</span>
+<span id="src-hex-roof-loft-L363">        <span class="kw">if</span> e &gt; res { res = e; }</span>
+<span id="src-hex-roof-loft-L364">      }</span>
+<span id="src-hex-roof-loft-L365">    }</span>
+<span id="src-hex-roof-loft-L366">  }</span>
+<span id="src-hex-roof-loft-L367">  <span class="en">RoofFit</span> { rf_kind: <span class="en">ROOF_PLANE</span>, rf_x: a, rf_y: b, rf_z: c, rf_slope: <span class="nm">0.0</span>, rf_res: res }</span>
+<span id="src-hex-roof-loft-L368">}</span>
+<span id="src-hex-roof-loft-L369"></span>
+<span id="src-hex-roof-loft-L370"><span class="cm">// Worst |z - (apex - slope*r)| for one candidate centre, with apex and slope regressed.</span></span>
+<span id="src-hex-roof-loft-L371"><span class="kw">fn</span> <span class="fn-call">cone_at</span>(s: <span class="en">HexSet</span>, f: <span class="en">Heights</span>, cx: <span class="ty"><a href="stdlib-types.html">float</a></span>, cy: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
+<span id="src-hex-roof-loft-L372">  sr = <span class="nm">0.0</span>; szz = <span class="nm">0.0</span>; srr = <span class="nm">0.0</span>; srz = <span class="nm">0.0</span>; sn = <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L373">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
+<span id="src-hex-roof-loft-L374">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
+<span id="src-hex-roof-loft-L375">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="src-hex-roof-loft-L376">        dx = <span class="fn-call">cellx</span>(q, r) - cx; dy = <span class="fn-call">celly</span>(q, r) - cy;</span>
+<span id="src-hex-roof-loft-L377">        rad = <span class="bi"><a href="stdlib-math.html">sqrt</a></span>(dx * dx + dy * dy) ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L378">        z = <span class="fn-call">height_get</span>(f, q, r);</span>
+<span id="src-hex-roof-loft-L379">        sr = sr + rad; szz = szz + z; srr = srr + rad * rad; srz = srz + rad * z;</span>
+<span id="src-hex-roof-loft-L380">        sn = sn + <span class="nm">1.0</span>;</span>
+<span id="src-hex-roof-loft-L381">      }</span>
+<span id="src-hex-roof-loft-L382">    }</span>
+<span id="src-hex-roof-loft-L383">  }</span>
+<span id="src-hex-roof-loft-L384">  den = sn * srr - sr * sr;</span>
+<span id="src-hex-roof-loft-L385">  ad = den; <span class="kw">if</span> ad &lt; <span class="nm">0.0</span> { ad = <span class="nm">0.0</span> - ad; }</span>
+<span id="src-hex-roof-loft-L386">  <span class="kw">if</span> ad &lt; <span class="nm">0.000000001</span> { <span class="kw">return</span> (<span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">1000000.0</span>); }</span>
+<span id="src-hex-roof-loft-L387">  grad = (sn * srz - sr * szz) / den ?? <span class="nm">0.0</span>;     <span class="cm">// dz/dr, negative for a cone</span></span>
+<span id="src-hex-roof-loft-L388">  apex = (szz - grad * sr) / sn ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L389">  res = <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L390">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
+<span id="src-hex-roof-loft-L391">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
+<span id="src-hex-roof-loft-L392">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="src-hex-roof-loft-L393">        dx = <span class="fn-call">cellx</span>(q, r) - cx; dy = <span class="fn-call">celly</span>(q, r) - cy;</span>
+<span id="src-hex-roof-loft-L394">        rad = <span class="bi"><a href="stdlib-math.html">sqrt</a></span>(dx * dx + dy * dy) ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L395">        e = apex + grad * rad - <span class="fn-call">height_get</span>(f, q, r);</span>
+<span id="src-hex-roof-loft-L396">        <span class="kw">if</span> e &lt; <span class="nm">0.0</span> { e = <span class="nm">0.0</span> - e; }</span>
+<span id="src-hex-roof-loft-L397">        <span class="kw">if</span> e &gt; res { res = e; }</span>
+<span id="src-hex-roof-loft-L398">      }</span>
+<span id="src-hex-roof-loft-L399">    }</span>
+<span id="src-hex-roof-loft-L400">  }</span>
+<span id="src-hex-roof-loft-L401">  (apex, <span class="nm">0.0</span> - grad, res)</span>
+<span id="src-hex-roof-loft-L402">}</span>
+<span id="src-hex-roof-loft-L403"></span>
+<span id="src-hex-roof-loft-L404"><span class="cm">// ── A RIDGE — the cone's own profile about a SEGMENT ────────────────────</span></span>
+<span id="src-hex-roof-loft-L405"><span class="cm">//</span></span>
+<span id="src-hex-roof-loft-L406"><span class="cm">// `roof_ridge` draws `peak - slope * d` where `d` is the distance to a LINE SEGMENT, exactly</span></span>
+<span id="src-hex-roof-loft-L407"><span class="cm">// as `roof_cone` draws it about a point.  So the fit is `cone_at` with the radius replaced by</span></span>
+<span id="src-hex-roof-loft-L408"><span class="cm">// `track_distance` — the same primitive the generator uses, rather than a second opinion about</span></span>
+<span id="src-hex-roof-loft-L409"><span class="cm">// what distance-to-a-segment means.</span></span>
+<span id="src-hex-roof-loft-L410"><span class="kw">fn</span> <span class="fn-call">ridge_at</span>(s: <span class="en">HexSet</span>, f: <span class="en">Heights</span>, ax: <span class="ty"><a href="stdlib-types.html">float</a></span>, ay: <span class="ty"><a href="stdlib-types.html">float</a></span>, bx: <span class="ty"><a href="stdlib-types.html">float</a></span>, by: <span class="ty"><a href="stdlib-types.html">float</a></span>)</span>
+<span id="src-hex-roof-loft-L411">    -&gt; (<span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
+<span id="src-hex-roof-loft-L412">  t = <span class="fn-call">track_new</span>();</span>
+<span id="src-hex-roof-loft-L413">  <span class="fn-call">track_straight</span>(t, ax, ay, bx, by);</span>
+<span id="src-hex-roof-loft-L414">  sd = <span class="nm">0.0</span>; szz = <span class="nm">0.0</span>; sdd = <span class="nm">0.0</span>; sdz = <span class="nm">0.0</span>; sn = <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L415">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
+<span id="src-hex-roof-loft-L416">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
+<span id="src-hex-roof-loft-L417">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="src-hex-roof-loft-L418">        d = <span class="fn-call">track_distance</span>(t, <span class="fn-call">cellx</span>(q, r), <span class="fn-call">celly</span>(q, r));</span>
+<span id="src-hex-roof-loft-L419">        z = <span class="fn-call">height_get</span>(f, q, r);</span>
+<span id="src-hex-roof-loft-L420">        sd = sd + d; szz = szz + z; sdd = sdd + d * d; sdz = sdz + d * z;</span>
+<span id="src-hex-roof-loft-L421">        sn = sn + <span class="nm">1.0</span>;</span>
+<span id="src-hex-roof-loft-L422">      }</span>
+<span id="src-hex-roof-loft-L423">    }</span>
+<span id="src-hex-roof-loft-L424">  }</span>
+<span id="src-hex-roof-loft-L425">  den = sn * sdd - sd * sd;</span>
+<span id="src-hex-roof-loft-L426">  ad = den; <span class="kw">if</span> ad &lt; <span class="nm">0.0</span> { ad = <span class="nm">0.0</span> - ad; }</span>
+<span id="src-hex-roof-loft-L427">  <span class="kw">if</span> ad &lt; <span class="nm">0.000000001</span> { <span class="kw">return</span> (<span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">1000000.0</span>); }</span>
+<span id="src-hex-roof-loft-L428">  grad = (sn * sdz - sd * szz) / den ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L429">  apex = (szz - grad * sd) / sn ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L430">  res = <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L431">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
+<span id="src-hex-roof-loft-L432">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
+<span id="src-hex-roof-loft-L433">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="src-hex-roof-loft-L434">        d = <span class="fn-call">track_distance</span>(t, <span class="fn-call">cellx</span>(q, r), <span class="fn-call">celly</span>(q, r));</span>
+<span id="src-hex-roof-loft-L435">        e = apex + grad * d - <span class="fn-call">height_get</span>(f, q, r);</span>
+<span id="src-hex-roof-loft-L436">        <span class="kw">if</span> e &lt; <span class="nm">0.0</span> { e = <span class="nm">0.0</span> - e; }</span>
+<span id="src-hex-roof-loft-L437">        <span class="kw">if</span> e &gt; res { res = e; }</span>
+<span id="src-hex-roof-loft-L438">      }</span>
+<span id="src-hex-roof-loft-L439">    }</span>
+<span id="src-hex-roof-loft-L440">  }</span>
+<span id="src-hex-roof-loft-L441">  (apex, <span class="nm">0.0</span> - grad, res)</span>
+<span id="src-hex-roof-loft-L442">}</span>
+<span id="src-hex-roof-loft-L443"></span>
+<span id="src-hex-roof-loft-L444"><span class="cm">// Fit a ridge — the gable / hip profile `roof_ridge` draws — to the heights over these cells.</span></span>
+<span id="src-hex-roof-loft-L445"><span class="cm">//</span></span>
+<span id="src-hex-roof-loft-L446"><span class="cm">// FOUR SEEDS, AND THE BEST RESIDUAL WINS.  The one that works on a gable comes from the data:</span></span>
+<span id="src-hex-roof-loft-L447"><span class="cm">// the ridge is the LOCUS OF THE MAXIMUM, so the two highest cells furthest apart give its</span></span>
+<span id="src-hex-roof-loft-L448"><span class="cm">// direction, and the seed is that line extended across the whole footprint.  The climb then</span></span>
+<span id="src-hex-roof-loft-L449"><span class="cm">// SHORTENS it for a hipped roof, which is the direction it handles well.  The other three —</span></span>
+<span id="src-hex-roof-loft-L450"><span class="cm">// both ends at the highest cell, both at `roof_cone_fit`'s centre, one at each — are cheap</span></span>
+<span id="src-hex-roof-loft-L451"><span class="cm">// insurance: a climb grown out of a POINT can lower its residual by running the segment</span></span>
+<span id="src-hex-roof-loft-L452"><span class="cm">// ACROSS the ridge until the fit is "flat at the mean", and a cone fitted to a gable puts its</span></span>
+<span id="src-hex-roof-loft-L453"><span class="cm">// apex far outside the footprint.  Taking the better of several starts is not a threshold;</span></span>
+<span id="src-hex-roof-loft-L454"><span class="cm">// when they converge it is the same answer.</span></span>
+<span id="src-hex-roof-loft-L455"><span class="cm">//</span></span>
+<span id="src-hex-roof-loft-L456"><span class="cm">// Each end is climbed in the eight directions `roof_cone_fit` uses, on the same step schedule.</span></span>
+<span id="src-hex-roof-loft-L457"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">roof_ridge_fit</span>(s: <span class="en">HexSet</span>, f: <span class="en">Heights</span>) -&gt; <span class="en">RoofFit</span> {</span>
+<span id="src-hex-roof-loft-L458">  <span class="cm">// the two candidate anchors: the highest cell, which lies ON the ridge, and the cone fit's</span></span>
+<span id="src-hex-roof-loft-L459">  <span class="cm">// centre, which is where a cone lands when asked to be a ridge</span></span>
+<span id="src-hex-roof-loft-L460">  hi = <span class="nm">0.0</span> - <span class="nm">1000000.0</span>;</span>
+<span id="src-hex-roof-loft-L461">  lo = <span class="nm">1000000.0</span>;</span>
+<span id="src-hex-roof-loft-L462">  hx = <span class="nm">0.0</span>; hy = <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L463">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
+<span id="src-hex-roof-loft-L464">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
+<span id="src-hex-roof-loft-L465">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="src-hex-roof-loft-L466">        z = <span class="fn-call">height_get</span>(f, q, r);</span>
+<span id="src-hex-roof-loft-L467">        <span class="kw">if</span> z &gt; hi { hi = z; hx = <span class="fn-call">cellx</span>(q, r); hy = <span class="fn-call">celly</span>(q, r); }</span>
+<span id="src-hex-roof-loft-L468">        <span class="kw">if</span> z &lt; lo { lo = z; }</span>
+<span id="src-hex-roof-loft-L469">      }</span>
+<span id="src-hex-roof-loft-L470">    }</span>
+<span id="src-hex-roof-loft-L471">  }</span>
+<span id="src-hex-roof-loft-L472">  <span class="cm">// ⚠ **THE MAXIMUM IS ATTAINED TO WITHIN ROUNDING, NOT EXACTLY.** On a field `roof_ridge`</span></span>
+<span id="src-hex-roof-loft-L473">  <span class="cm">// drew, `track_distance` is zero on the segment only up to rounding, so `z == hi` would let</span></span>
+<span id="src-hex-roof-loft-L474">  <span class="cm">// one cell win, collapse the pair to a point and degenerate the fit.</span></span>
+<span id="src-hex-roof-loft-L475">  <span class="cm">//</span></span>
+<span id="src-hex-roof-loft-L476">  <span class="cm">// ⚠ **THE BAND IS THE FIELD'S OWN SPAN, NOT A TUNED EPSILON**: a millionth of `hi - lo` is</span></span>
+<span id="src-hex-roof-loft-L477">  <span class="cm">// float equality made scale-aware, and it carries no units of its own.</span></span>
+<span id="src-hex-roof-loft-L478">  band = (hi - lo) * <span class="nm">0.000001</span>;</span>
+<span id="src-hex-roof-loft-L479">  <span class="kw">if</span> band &lt; <span class="nm">0.0</span> { band = <span class="nm">0.0</span> - band; }</span>
+<span id="src-hex-roof-loft-L480">  <span class="cm">// THE RIDGE IS THE LOCUS OF THE MAXIMUM, so the cells attaining it ARE the ridge, and the</span></span>
+<span id="src-hex-roof-loft-L481">  <span class="cm">// two furthest apart give its direction.</span></span>
+<span id="src-hex-roof-loft-L482">  ex1 = hx; ey1 = hy; ex2 = hx; ey2 = hy;</span>
+<span id="src-hex-roof-loft-L483">  far = <span class="nm">0.0</span> - <span class="nm">1.0</span>;</span>
+<span id="src-hex-roof-loft-L484">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
+<span id="src-hex-roof-loft-L485">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
+<span id="src-hex-roof-loft-L486">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) &amp;&amp; <span class="fn-call">height_get</span>(f, q, r) &gt;= hi - band {</span>
+<span id="src-hex-roof-loft-L487">        <span class="kw">for</span> r2 <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
+<span id="src-hex-roof-loft-L488">          <span class="kw">for</span> q2 <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
+<span id="src-hex-roof-loft-L489">            <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q2, r2) &amp;&amp; <span class="fn-call">height_get</span>(f, q2, r2) &gt;= hi - band {</span>
+<span id="src-hex-roof-loft-L490">              ddx = <span class="fn-call">cellx</span>(q2, r2) - <span class="fn-call">cellx</span>(q, r);</span>
+<span id="src-hex-roof-loft-L491">              ddy = <span class="fn-call">celly</span>(q2, r2) - <span class="fn-call">celly</span>(q, r);</span>
+<span id="src-hex-roof-loft-L492">              dd = ddx * ddx + ddy * ddy;</span>
+<span id="src-hex-roof-loft-L493">              <span class="kw">if</span> dd &gt; far {</span>
+<span id="src-hex-roof-loft-L494">                far = dd;</span>
+<span id="src-hex-roof-loft-L495">                ex1 = <span class="fn-call">cellx</span>(q, r); ey1 = <span class="fn-call">celly</span>(q, r);</span>
+<span id="src-hex-roof-loft-L496">                ex2 = <span class="fn-call">cellx</span>(q2, r2); ey2 = <span class="fn-call">celly</span>(q2, r2);</span>
+<span id="src-hex-roof-loft-L497">              }</span>
+<span id="src-hex-roof-loft-L498">            }</span>
+<span id="src-hex-roof-loft-L499">          }</span>
+<span id="src-hex-roof-loft-L500">        }</span>
+<span id="src-hex-roof-loft-L501">      }</span>
+<span id="src-hex-roof-loft-L502">    }</span>
+<span id="src-hex-roof-loft-L503">  }</span>
+<span id="src-hex-roof-loft-L504">  <span class="cm">// THE SEED IS EXTENDED TO SPAN THE FOOTPRINT, because growing is what the climb does badly:</span></span>
+<span id="src-hex-roof-loft-L505">  <span class="cm">// the locus gives the right direction and too short a segment, and every cell past an end</span></span>
+<span id="src-hex-roof-loft-L506">  <span class="cm">// would get a clamped distance.  A gable's ridge runs the length of its roof; a hipped roof</span></span>
+<span id="src-hex-roof-loft-L507">  <span class="cm">// is the case the climb then SHORTENS.</span></span>
+<span id="src-hex-roof-loft-L508">  pdx = ex2 - ex1;</span>
+<span id="src-hex-roof-loft-L509">  pdy = ey2 - ey1;</span>
+<span id="src-hex-roof-loft-L510">  plen = <span class="bi"><a href="stdlib-math.html">sqrt</a></span>(pdx * pdx + pdy * pdy) ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L511">  <span class="kw">if</span> plen &gt; <span class="nm">0.000001</span> {</span>
+<span id="src-hex-roof-loft-L512">    ux = pdx / plen ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L513">    uy = pdy / plen ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L514">    tmin = <span class="nm">1000000.0</span>;</span>
+<span id="src-hex-roof-loft-L515">    tmax = <span class="nm">0.0</span> - <span class="nm">1000000.0</span>;</span>
+<span id="src-hex-roof-loft-L516">    <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
+<span id="src-hex-roof-loft-L517">      <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
+<span id="src-hex-roof-loft-L518">        <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="src-hex-roof-loft-L519">          tp = (<span class="fn-call">cellx</span>(q, r) - ex1) * ux + (<span class="fn-call">celly</span>(q, r) - ey1) * uy;</span>
+<span id="src-hex-roof-loft-L520">          <span class="kw">if</span> tp &lt; tmin { tmin = tp; }</span>
+<span id="src-hex-roof-loft-L521">          <span class="kw">if</span> tp &gt; tmax { tmax = tp; }</span>
+<span id="src-hex-roof-loft-L522">        }</span>
+<span id="src-hex-roof-loft-L523">      }</span>
+<span id="src-hex-roof-loft-L524">    }</span>
+<span id="src-hex-roof-loft-L525">    ex2 = ex1 + ux * tmax; ey2 = ey1 + uy * tmax;</span>
+<span id="src-hex-roof-loft-L526">    ex1 = ex1 + ux * tmin; ey1 = ey1 + uy * tmin;</span>
+<span id="src-hex-roof-loft-L527">  }</span>
+<span id="src-hex-roof-loft-L528">  c = <span class="fn-call">roof_cone_fit</span>(s, f);</span>
+<span id="src-hex-roof-loft-L529">  best = <span class="fn-call">ridge_climb</span>(s, f, ex1, ey1, ex2, ey2);</span>
+<span id="src-hex-roof-loft-L530">  t1 = <span class="fn-call">ridge_climb</span>(s, f, hx, hy, hx, hy);</span>
+<span id="src-hex-roof-loft-L531">  <span class="kw">if</span> t1.rf_res &lt; best.rf_res { best = t1; }</span>
+<span id="src-hex-roof-loft-L532">  t2 = <span class="fn-call">ridge_climb</span>(s, f, c.rf_x, c.rf_y, c.rf_x, c.rf_y);</span>
+<span id="src-hex-roof-loft-L533">  <span class="kw">if</span> t2.rf_res &lt; best.rf_res { best = t2; }</span>
+<span id="src-hex-roof-loft-L534">  t3 = <span class="fn-call">ridge_climb</span>(s, f, hx, hy, c.rf_x, c.rf_y);</span>
+<span id="src-hex-roof-loft-L535">  <span class="kw">if</span> t3.rf_res &lt; best.rf_res { best = t3; }</span>
+<span id="src-hex-roof-loft-L536">  best</span>
+<span id="src-hex-roof-loft-L537">}</span>
+<span id="src-hex-roof-loft-L538"></span>
+<span id="src-hex-roof-loft-L539"><span class="cm">// The climb itself, from a given pair of ends.  Each end moves in the eight directions</span></span>
+<span id="src-hex-roof-loft-L540"><span class="cm">// `roof_cone_fit` uses, on the same step schedule — a second search rule here would be a second</span></span>
+<span id="src-hex-roof-loft-L541"><span class="cm">// opinion about how this family searches.</span></span>
+<span id="src-hex-roof-loft-L542"><span class="kw">fn</span> <span class="fn-call">ridge_climb</span>(s: <span class="en">HexSet</span>, f: <span class="en">Heights</span>, sax: <span class="ty"><a href="stdlib-types.html">float</a></span>, say: <span class="ty"><a href="stdlib-types.html">float</a></span>, sbx: <span class="ty"><a href="stdlib-types.html">float</a></span>, sby: <span class="ty"><a href="stdlib-types.html">float</a></span>)</span>
+<span id="src-hex-roof-loft-L543">    -&gt; <span class="en">RoofFit</span> {</span>
+<span id="src-hex-roof-loft-L544">  ax = sax; ay = say; bx = sbx; by = sby;</span>
+<span id="src-hex-roof-loft-L545">  (ba, bs, br) = <span class="fn-call">ridge_at</span>(s, f, ax, ay, bx, by);</span>
+<span id="src-hex-roof-loft-L546">  step = <span class="nm">0.4</span>;</span>
+<span id="src-hex-roof-loft-L547">  <span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..5</span> {</span>
+<span id="src-hex-roof-loft-L548">    moved = <span class="kw">true</span>;</span>
+<span id="src-hex-roof-loft-L549">    while moved {</span>
+<span id="src-hex-roof-loft-L550">      moved = <span class="kw">false</span>;</span>
+<span id="src-hex-roof-loft-L551">      <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..16</span> {</span>
+<span id="src-hex-roof-loft-L552">        ox = <span class="nm">0.0</span>; oy = <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L553">        k = i % <span class="nm">8</span> ?? <span class="nm">0</span>;</span>
+<span id="src-hex-roof-loft-L554">        <span class="kw">if</span> k == <span class="nm">0</span> { ox = step; }</span>
+<span id="src-hex-roof-loft-L555">        <span class="kw">if</span> k == <span class="nm">1</span> { ox = <span class="nm">0.0</span> - step; }</span>
+<span id="src-hex-roof-loft-L556">        <span class="kw">if</span> k == <span class="nm">2</span> { oy = step; }</span>
+<span id="src-hex-roof-loft-L557">        <span class="kw">if</span> k == <span class="nm">3</span> { oy = <span class="nm">0.0</span> - step; }</span>
+<span id="src-hex-roof-loft-L558">        <span class="kw">if</span> k == <span class="nm">4</span> { ox = step; oy = step; }</span>
+<span id="src-hex-roof-loft-L559">        <span class="kw">if</span> k == <span class="nm">5</span> { ox = step; oy = <span class="nm">0.0</span> - step; }</span>
+<span id="src-hex-roof-loft-L560">        <span class="kw">if</span> k == <span class="nm">6</span> { ox = <span class="nm">0.0</span> - step; oy = step; }</span>
+<span id="src-hex-roof-loft-L561">        <span class="kw">if</span> k == <span class="nm">7</span> { ox = <span class="nm">0.0</span> - step; oy = <span class="nm">0.0</span> - step; }</span>
+<span id="src-hex-roof-loft-L562">        nax = ax; nay = ay; nbx = bx; nby = by;</span>
+<span id="src-hex-roof-loft-L563">        <span class="kw">if</span> i &lt; <span class="nm">8</span> { nax = ax + ox; nay = ay + oy; }</span>
+<span id="src-hex-roof-loft-L564">        <span class="kw">else</span> { nbx = bx + ox; nby = by + oy; }</span>
+<span id="src-hex-roof-loft-L565">        (ca, cs, cr) = <span class="fn-call">ridge_at</span>(s, f, nax, nay, nbx, nby);</span>
+<span id="src-hex-roof-loft-L566">        <span class="kw">if</span> cr &lt; br - <span class="nm">0.0000000001</span> {</span>
+<span id="src-hex-roof-loft-L567">          br = cr; ba = ca; bs = cs;</span>
+<span id="src-hex-roof-loft-L568">          ax = nax; ay = nay; bx = nbx; by = nby;</span>
+<span id="src-hex-roof-loft-L569">          moved = <span class="kw">true</span>;</span>
+<span id="src-hex-roof-loft-L570">        }</span>
+<span id="src-hex-roof-loft-L571">      }</span>
+<span id="src-hex-roof-loft-L572">    }</span>
+<span id="src-hex-roof-loft-L573">    step = step * <span class="nm">0.25</span>;</span>
+<span id="src-hex-roof-loft-L574">  }</span>
+<span id="src-hex-roof-loft-L575">  <span class="en">RoofFit</span> { rf_kind: <span class="en">ROOF_RIDGE</span>, rf_x: ax, rf_y: ay, rf_z: ba, rf_slope: bs, rf_res: br,</span>
+<span id="src-hex-roof-loft-L576">            rf_x2: bx, rf_y2: by }</span>
+<span id="src-hex-roof-loft-L577">}</span>
+<span id="src-hex-roof-loft-L578"></span>
+<span id="src-hex-roof-loft-L579"><span class="cm">// Fit a cone to the heights over these cells: apex, slope and how well it fits.  The centre</span></span>
+<span id="src-hex-roof-loft-L580"><span class="cm">// is seeded at the highest cell and then refined — the apex cell is only within one</span></span>
+<span id="src-hex-roof-loft-L581"><span class="cm">// circumradius of the true apex, so the refinement is what makes the recovery exact.</span></span>
+<span id="src-hex-roof-loft-L582"><span class="cm">// `roof_match` asks this, the plane, the dome and the ridge, and keeps what fits.</span></span>
+<span id="src-hex-roof-loft-L583"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">roof_cone_fit</span>(s: <span class="en">HexSet</span>, f: <span class="en">Heights</span>) -&gt; <span class="en">RoofFit</span> {</span>
+<span id="src-hex-roof-loft-L584">  hi = -<span class="nm">1000000.0</span>;</span>
+<span id="src-hex-roof-loft-L585">  bx = <span class="nm">0.0</span>; by = <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L586">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
+<span id="src-hex-roof-loft-L587">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
+<span id="src-hex-roof-loft-L588">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="src-hex-roof-loft-L589">        z = <span class="fn-call">height_get</span>(f, q, r);</span>
+<span id="src-hex-roof-loft-L590">        <span class="kw">if</span> z &gt; hi { hi = z; bx = <span class="fn-call">cellx</span>(q, r); by = <span class="fn-call">celly</span>(q, r); }</span>
+<span id="src-hex-roof-loft-L591">      }</span>
+<span id="src-hex-roof-loft-L592">    }</span>
+<span id="src-hex-roof-loft-L593">  }</span>
+<span id="src-hex-roof-loft-L594">  (ba, bs, br) = <span class="fn-call">cone_at</span>(s, f, bx, by);</span>
+<span id="src-hex-roof-loft-L595">  step = <span class="nm">0.4</span>;</span>
+<span id="src-hex-roof-loft-L596">  <span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..4</span> {</span>
+<span id="src-hex-roof-loft-L597">    moved = <span class="kw">true</span>;</span>
+<span id="src-hex-roof-loft-L598">    while moved {</span>
+<span id="src-hex-roof-loft-L599">      moved = <span class="kw">false</span>;</span>
+<span id="src-hex-roof-loft-L600">      <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..8</span> {</span>
+<span id="src-hex-roof-loft-L601">        ox = <span class="nm">0.0</span>; oy = <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L602">        <span class="kw">if</span> i == <span class="nm">0</span> { ox = step; }</span>
+<span id="src-hex-roof-loft-L603">        <span class="kw">if</span> i == <span class="nm">1</span> { ox = <span class="nm">0.0</span> - step; }</span>
+<span id="src-hex-roof-loft-L604">        <span class="kw">if</span> i == <span class="nm">2</span> { oy = step; }</span>
+<span id="src-hex-roof-loft-L605">        <span class="kw">if</span> i == <span class="nm">3</span> { oy = <span class="nm">0.0</span> - step; }</span>
+<span id="src-hex-roof-loft-L606">        <span class="kw">if</span> i == <span class="nm">4</span> { ox = step; oy = step; }</span>
+<span id="src-hex-roof-loft-L607">        <span class="kw">if</span> i == <span class="nm">5</span> { ox = step; oy = <span class="nm">0.0</span> - step; }</span>
+<span id="src-hex-roof-loft-L608">        <span class="kw">if</span> i == <span class="nm">6</span> { ox = <span class="nm">0.0</span> - step; oy = step; }</span>
+<span id="src-hex-roof-loft-L609">        <span class="kw">if</span> i == <span class="nm">7</span> { ox = <span class="nm">0.0</span> - step; oy = <span class="nm">0.0</span> - step; }</span>
+<span id="src-hex-roof-loft-L610">        (ca, cs, cr) = <span class="fn-call">cone_at</span>(s, f, bx + ox, by + oy);</span>
+<span id="src-hex-roof-loft-L611">        <span class="kw">if</span> cr &lt; br - <span class="nm">0.0000000001</span> {</span>
+<span id="src-hex-roof-loft-L612">          br = cr; ba = ca; bs = cs; bx = bx + ox; by = by + oy;</span>
+<span id="src-hex-roof-loft-L613">          moved = <span class="kw">true</span>;</span>
+<span id="src-hex-roof-loft-L614">        }</span>
+<span id="src-hex-roof-loft-L615">      }</span>
+<span id="src-hex-roof-loft-L616">    }</span>
+<span id="src-hex-roof-loft-L617">    step = step * <span class="nm">0.25</span>;</span>
+<span id="src-hex-roof-loft-L618">  }</span>
+<span id="src-hex-roof-loft-L619">  <span class="en">RoofFit</span> { rf_kind: <span class="en">ROOF_CONE</span>, rf_x: bx, rf_y: by, rf_z: ba, rf_slope: bs, rf_res: br }</span>
+<span id="src-hex-roof-loft-L620">}</span>
+<span id="src-hex-roof-loft-L621"></span>
+<span id="src-hex-roof-loft-L622"><span class="cm">// A DOME.  Given a centre, the fit is LINEAR after one substitution: from</span></span>
+<span id="src-hex-roof-loft-L623"><span class="cm">// z = base + sqrt(R^2 - r^2) we get (z^2 + r^2) = 2*base*z + (R^2 - base^2), so regressing</span></span>
+<span id="src-hex-roof-loft-L624"><span class="cm">// (z^2 + r^2) on z hands back base as half the gradient and R from the intercept.  The</span></span>
+<span id="src-hex-roof-loft-L625"><span class="cm">// centre is then refined by the same local search the cone uses.</span></span>
+<span id="src-hex-roof-loft-L626"><span class="kw">fn</span> <span class="fn-call">dome_at</span>(s: <span class="en">HexSet</span>, f: <span class="en">Heights</span>, cx: <span class="ty"><a href="stdlib-types.html">float</a></span>, cy: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
+<span id="src-hex-roof-loft-L627">  sv = <span class="nm">0.0</span>; su = <span class="nm">0.0</span>; svv = <span class="nm">0.0</span>; suv = <span class="nm">0.0</span>; sn = <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L628">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
+<span id="src-hex-roof-loft-L629">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
+<span id="src-hex-roof-loft-L630">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="src-hex-roof-loft-L631">        dx = <span class="fn-call">cellx</span>(q, r) - cx; dy = <span class="fn-call">celly</span>(q, r) - cy;</span>
+<span id="src-hex-roof-loft-L632">        z = <span class="fn-call">height_get</span>(f, q, r);</span>
+<span id="src-hex-roof-loft-L633">        v = z;</span>
+<span id="src-hex-roof-loft-L634">        u = z * z + dx * dx + dy * dy;</span>
+<span id="src-hex-roof-loft-L635">        sv = sv + v; su = su + u; svv = svv + v * v; suv = suv + u * v; sn = sn + <span class="nm">1.0</span>;</span>
+<span id="src-hex-roof-loft-L636">      }</span>
+<span id="src-hex-roof-loft-L637">    }</span>
+<span id="src-hex-roof-loft-L638">  }</span>
+<span id="src-hex-roof-loft-L639">  den = sn * svv - sv * sv;</span>
+<span id="src-hex-roof-loft-L640">  ad = den; <span class="kw">if</span> ad &lt; <span class="nm">0.0</span> { ad = <span class="nm">0.0</span> - ad; }</span>
+<span id="src-hex-roof-loft-L641">  <span class="kw">if</span> ad &lt; <span class="nm">0.000000001</span> { <span class="kw">return</span> (<span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">1000000.0</span>); }</span>
+<span id="src-hex-roof-loft-L642">  grad = (sn * suv - sv * su) / den ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L643">  icept = (su - grad * sv) / sn ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L644">  base = grad * <span class="nm">0.5</span>;</span>
+<span id="src-hex-roof-loft-L645">  rr2 = icept + base * base;</span>
+<span id="src-hex-roof-loft-L646">  <span class="kw">if</span> rr2 &lt;= <span class="nm">0.0</span> { <span class="kw">return</span> (<span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">1000000.0</span>); }</span>
+<span id="src-hex-roof-loft-L647">  rad = <span class="bi"><a href="stdlib-math.html">sqrt</a></span>(rr2) ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L648">  res = <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L649">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
+<span id="src-hex-roof-loft-L650">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
+<span id="src-hex-roof-loft-L651">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="src-hex-roof-loft-L652">        dx = <span class="fn-call">cellx</span>(q, r) - cx; dy = <span class="fn-call">celly</span>(q, r) - cy;</span>
+<span id="src-hex-roof-loft-L653">        d2 = dx * dx + dy * dy;</span>
+<span id="src-hex-roof-loft-L654">        pred = base;</span>
+<span id="src-hex-roof-loft-L655">        <span class="kw">if</span> d2 &lt; rad * rad { pred = base + (<span class="bi"><a href="stdlib-math.html">sqrt</a></span>(rad * rad - d2) ?? <span class="nm">0.0</span>); }</span>
+<span id="src-hex-roof-loft-L656">        e = pred - <span class="fn-call">height_get</span>(f, q, r);</span>
+<span id="src-hex-roof-loft-L657">        <span class="kw">if</span> e &lt; <span class="nm">0.0</span> { e = <span class="nm">0.0</span> - e; }</span>
+<span id="src-hex-roof-loft-L658">        <span class="kw">if</span> e &gt; res { res = e; }</span>
+<span id="src-hex-roof-loft-L659">      }</span>
+<span id="src-hex-roof-loft-L660">    }</span>
+<span id="src-hex-roof-loft-L661">  }</span>
+<span id="src-hex-roof-loft-L662">  (base, rad, res)</span>
+<span id="src-hex-roof-loft-L663">}</span>
+<span id="src-hex-roof-loft-L664"></span>
+<span id="src-hex-roof-loft-L665"><span class="cm">// Fit a dome to the same heights, reported the same way, so the two are comparable.</span></span>
+<span id="src-hex-roof-loft-L666"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">roof_dome_fit</span>(s: <span class="en">HexSet</span>, f: <span class="en">Heights</span>) -&gt; <span class="en">RoofFit</span> {</span>
+<span id="src-hex-roof-loft-L667">  hi = -<span class="nm">1000000.0</span>;</span>
+<span id="src-hex-roof-loft-L668">  bx = <span class="nm">0.0</span>; by = <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L669">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
+<span id="src-hex-roof-loft-L670">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
+<span id="src-hex-roof-loft-L671">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="src-hex-roof-loft-L672">        z = <span class="fn-call">height_get</span>(f, q, r);</span>
+<span id="src-hex-roof-loft-L673">        <span class="kw">if</span> z &gt; hi { hi = z; bx = <span class="fn-call">cellx</span>(q, r); by = <span class="fn-call">celly</span>(q, r); }</span>
+<span id="src-hex-roof-loft-L674">      }</span>
+<span id="src-hex-roof-loft-L675">    }</span>
+<span id="src-hex-roof-loft-L676">  }</span>
+<span id="src-hex-roof-loft-L677">  (bb, brad, bres) = <span class="fn-call">dome_at</span>(s, f, bx, by);</span>
+<span id="src-hex-roof-loft-L678">  step = <span class="nm">0.4</span>;</span>
+<span id="src-hex-roof-loft-L679">  <span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..4</span> {</span>
+<span id="src-hex-roof-loft-L680">    moved = <span class="kw">true</span>;</span>
+<span id="src-hex-roof-loft-L681">    while moved {</span>
+<span id="src-hex-roof-loft-L682">      moved = <span class="kw">false</span>;</span>
+<span id="src-hex-roof-loft-L683">      <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..8</span> {</span>
+<span id="src-hex-roof-loft-L684">        ox = <span class="nm">0.0</span>; oy = <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L685">        <span class="kw">if</span> i == <span class="nm">0</span> { ox = step; }</span>
+<span id="src-hex-roof-loft-L686">        <span class="kw">if</span> i == <span class="nm">1</span> { ox = <span class="nm">0.0</span> - step; }</span>
+<span id="src-hex-roof-loft-L687">        <span class="kw">if</span> i == <span class="nm">2</span> { oy = step; }</span>
+<span id="src-hex-roof-loft-L688">        <span class="kw">if</span> i == <span class="nm">3</span> { oy = <span class="nm">0.0</span> - step; }</span>
+<span id="src-hex-roof-loft-L689">        <span class="kw">if</span> i == <span class="nm">4</span> { ox = step; oy = step; }</span>
+<span id="src-hex-roof-loft-L690">        <span class="kw">if</span> i == <span class="nm">5</span> { ox = step; oy = <span class="nm">0.0</span> - step; }</span>
+<span id="src-hex-roof-loft-L691">        <span class="kw">if</span> i == <span class="nm">6</span> { ox = <span class="nm">0.0</span> - step; oy = step; }</span>
+<span id="src-hex-roof-loft-L692">        <span class="kw">if</span> i == <span class="nm">7</span> { ox = <span class="nm">0.0</span> - step; oy = <span class="nm">0.0</span> - step; }</span>
+<span id="src-hex-roof-loft-L693">        (cb, crad, cres) = <span class="fn-call">dome_at</span>(s, f, bx + ox, by + oy);</span>
+<span id="src-hex-roof-loft-L694">        <span class="kw">if</span> cres &lt; bres - <span class="nm">0.0000000001</span> {</span>
+<span id="src-hex-roof-loft-L695">          bres = cres; bb = cb; brad = crad; bx = bx + ox; by = by + oy;</span>
+<span id="src-hex-roof-loft-L696">          moved = <span class="kw">true</span>;</span>
+<span id="src-hex-roof-loft-L697">        }</span>
+<span id="src-hex-roof-loft-L698">      }</span>
+<span id="src-hex-roof-loft-L699">    }</span>
+<span id="src-hex-roof-loft-L700">    step = step * <span class="nm">0.25</span>;</span>
+<span id="src-hex-roof-loft-L701">  }</span>
+<span id="src-hex-roof-loft-L702">  <span class="en">RoofFit</span> { rf_kind: <span class="en">ROOF_DOME</span>, rf_x: bx, rf_y: by, rf_z: bb, rf_slope: brad, rf_res: bres }</span>
+<span id="src-hex-roof-loft-L703">}</span>
+<span id="src-hex-roof-loft-L704"></span>
+<span id="src-hex-roof-loft-L705"><span class="cm">// Decide what the field IS.  A plane wins ties: it is the simpler statement, and a cone</span></span>
+<span id="src-hex-roof-loft-L706"><span class="cm">// fitted to a flat roof would put its apex somewhere arbitrary.</span></span>
+<span id="src-hex-roof-loft-L707"><span class="cm">//</span></span>
+<span id="src-hex-roof-loft-L708"><span class="cm">// Example: @HXR-006</span></span>
+<span id="src-hex-roof-loft-L709"><span class="cm">//</span></span>
+<span id="src-hex-roof-loft-L710"><span class="cm">// It tries plane, cone, dome, then ridge, and answers the first whose worst residual is</span></span>
+<span id="src-hex-roof-loft-L711"><span class="cm">// within `tol`.  The ridge is LAST because a cone is a ridge whose segment has zero length:</span></span>
+<span id="src-hex-roof-loft-L712"><span class="cm">// trying it first would answer `ROOF_RIDGE` for a true cone, the less specific statement.</span></span>
+<span id="src-hex-roof-loft-L713"><span class="cm">//</span></span>
+<span id="src-hex-roof-loft-L714"><span class="cm">// ⛔ **WHEN NOTHING FITS, IT SAYS SO — `ROOF_UNKNOWN`**, never the least-bad shape under a</span></span>
+<span id="src-hex-roof-loft-L715"><span class="cm">// kind it is not; `roof_eval` draws nothing for it.  Every other field is the closest</span></span>
+<span id="src-hex-roof-loft-L716"><span class="cm">// candidate's — a ridge's both ends included — because which shape came closest and by how</span></span>
+<span id="src-hex-roof-loft-L717"><span class="cm">// much is what a caller diagnoses with.</span></span>
+<span id="src-hex-roof-loft-L718"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">roof_match</span>(s: <span class="en">HexSet</span>, f: <span class="en">Heights</span>, tol: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="en">RoofFit</span> {</span>
+<span id="src-hex-roof-loft-L719">  p = <span class="fn-call">roof_plane_fit</span>(s, f);</span>
+<span id="src-hex-roof-loft-L720">  <span class="kw">if</span> p.rf_res &lt;= tol { <span class="kw">return</span> p; }</span>
+<span id="src-hex-roof-loft-L721">  c = <span class="fn-call">roof_cone_fit</span>(s, f);</span>
+<span id="src-hex-roof-loft-L722">  <span class="kw">if</span> c.rf_res &lt;= tol { <span class="kw">return</span> c; }</span>
+<span id="src-hex-roof-loft-L723">  d = <span class="fn-call">roof_dome_fit</span>(s, f);</span>
+<span id="src-hex-roof-loft-L724">  <span class="kw">if</span> d.rf_res &lt;= tol { <span class="kw">return</span> d; }</span>
+<span id="src-hex-roof-loft-L725">  g = <span class="fn-call">roof_ridge_fit</span>(s, f);</span>
+<span id="src-hex-roof-loft-L726">  <span class="kw">if</span> g.rf_res &lt;= tol { <span class="kw">return</span> g; }</span>
+<span id="src-hex-roof-loft-L727">  best = p;</span>
+<span id="src-hex-roof-loft-L728">  <span class="kw">if</span> c.rf_res &lt; best.rf_res { best = c; }</span>
+<span id="src-hex-roof-loft-L729">  <span class="kw">if</span> d.rf_res &lt; best.rf_res { best = d; }</span>
+<span id="src-hex-roof-loft-L730">  <span class="kw">if</span> g.rf_res &lt; best.rf_res { best = g; }</span>
+<span id="src-hex-roof-loft-L731">  <span class="en">RoofFit</span> { rf_kind: <span class="en">ROOF_UNKNOWN</span>, rf_x: best.rf_x, rf_y: best.rf_y, rf_z: best.rf_z,</span>
+<span id="src-hex-roof-loft-L732">            rf_slope: best.rf_slope, rf_res: best.rf_res, rf_x2: best.rf_x2, rf_y2: best.rf_y2 }</span>
+<span id="src-hex-roof-loft-L733">}</span>
+<span id="src-hex-roof-loft-L734"></span>
+<span id="src-hex-roof-loft-L735"><span class="cm">// The recovered ANALYTIC surface — what a renderer should draw, at any resolution, instead</span></span>
+<span id="src-hex-roof-loft-L736"><span class="cm">// of the cells it came from.</span></span>
+<span id="src-hex-roof-loft-L737"><span class="cm">//</span></span>
+<span id="src-hex-roof-loft-L738"><span class="cm">// Example: @HXR-006</span></span>
+<span id="src-hex-roof-loft-L739"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">roof_eval</span>(fit: <span class="en">RoofFit</span>, x: <span class="ty"><a href="stdlib-types.html">float</a></span>, y: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="src-hex-roof-loft-L740">  <span class="kw">if</span> fit.rf_kind == <span class="en">ROOF_PLANE</span> { <span class="kw">return</span> fit.rf_x * x + fit.rf_y * y + fit.rf_z; }</span>
+<span id="src-hex-roof-loft-L741">  <span class="kw">if</span> fit.rf_kind == <span class="en">ROOF_CONE</span> {</span>
+<span id="src-hex-roof-loft-L742">    dx = x - fit.rf_x; dy = y - fit.rf_y;</span>
+<span id="src-hex-roof-loft-L743">    <span class="kw">return</span> fit.rf_z - fit.rf_slope * (<span class="bi"><a href="stdlib-math.html">sqrt</a></span>(dx * dx + dy * dy) ?? <span class="nm">0.0</span>);</span>
+<span id="src-hex-roof-loft-L744">  }</span>
+<span id="src-hex-roof-loft-L745">  <span class="kw">if</span> fit.rf_kind == <span class="en">ROOF_RIDGE</span> {</span>
+<span id="src-hex-roof-loft-L746">    rt = <span class="fn-call">track_new</span>();</span>
+<span id="src-hex-roof-loft-L747">    <span class="fn-call">track_straight</span>(rt, fit.rf_x, fit.rf_y, fit.rf_x2, fit.rf_y2);</span>
+<span id="src-hex-roof-loft-L748">    <span class="kw">return</span> fit.rf_z - fit.rf_slope * <span class="fn-call">track_distance</span>(rt, x, y);</span>
+<span id="src-hex-roof-loft-L749">  }</span>
+<span id="src-hex-roof-loft-L750">  <span class="kw">if</span> fit.rf_kind == <span class="en">ROOF_DOME</span> {</span>
+<span id="src-hex-roof-loft-L751">    dx = x - fit.rf_x; dy = y - fit.rf_y;</span>
+<span id="src-hex-roof-loft-L752">    d2 = dx * dx + dy * dy;</span>
+<span id="src-hex-roof-loft-L753">    <span class="kw">if</span> d2 &gt;= fit.rf_slope * fit.rf_slope { <span class="kw">return</span> fit.rf_z; }</span>
+<span id="src-hex-roof-loft-L754">    <span class="kw">return</span> fit.rf_z + (<span class="bi"><a href="stdlib-math.html">sqrt</a></span>(fit.rf_slope * fit.rf_slope - d2) ?? <span class="nm">0.0</span>);</span>
+<span id="src-hex-roof-loft-L755">  }</span>
+<span id="src-hex-roof-loft-L756">  <span class="nm">0.0</span></span>
+<span id="src-hex-roof-loft-L757">}</span>
 </code></pre>
 <h2 id="tests-01-hex-roof-loft">tests/01-hex-roof.loft</h2>
 <pre class="src"><code><span id="tests-01-hex-roof-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
