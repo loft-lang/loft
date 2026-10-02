@@ -29,7 +29,7 @@
 
 struct Aq1147P { aq_px: integer }
 fn OpEq(self: Aq1147P, other: Aq1147P) -> boolean { self.aq_px == other.aq_px }
-fn to_text(self: Aq1147P) -> text { "P({self.aq_px})" }
+operator to_text(self: Aq1147P) -> text { "P({self.aq_px})" }
 
 fn main() {
   // ---- every type the `Equatable` bound names ----

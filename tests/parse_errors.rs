@@ -732,7 +732,7 @@ fn index_on_a_programs_iterator_is_refused() {
     // without one.  The loop's `#index` companion exists for every loop, so reading it compiled
     // to an unset slot and the code generator panicked (*"Incorrect var x#index"*).
     code!(
-        "struct Ct { at: integer }\nfn next(self: Ct) -> integer? { if self.at > 2 { return null; } self.at += 1; self.at }\nfn test() { c = Ct { at: 0 }; for x in c { assert(x#index > 0, \"i\"); } }"
+        "struct Ct { at: integer }\noperator next(self: Ct) -> integer? { if self.at > 2 { return null; } self.at += 1; self.at }\nfn test() { c = Ct { at: 0 }; for x in c { assert(x#index > 0, \"i\"); } }"
     )
     .error("'x#index' is the position to use with v[i], and this loop walks values without positions (a generator, or a type's next()); use 'x#count' to number them at index_on_a_programs_iterator_is_refused:3:60");
 }
@@ -2196,7 +2196,7 @@ fn formatting_an_unbounded_type_variable_is_refused() {
     .error(
         "generic type T cannot be formatted — `\"{\u{2026}}\"` needs a bound that renders \
          it; write `<T: Printable>` (every built-in satisfies it, and a user type does by \
-         defining `fn to_text(self: T) -> text`) at \
+         defining `operator to_text(self: T) -> text`) at \
          formatting_an_unbounded_type_variable_is_refused:1:33",
     );
 }
@@ -2240,7 +2240,7 @@ fn a_bounded_generic_does_not_lend_its_bound_to_an_unbounded_sibling() {
     .error(
         "generic type T cannot be formatted \u{2014} `\"{\u{2026}}\"` needs a bound that renders \
             it; write `<T: Printable>` (every built-in satisfies it, and a user type does by \
-            defining `fn to_text(self: T) -> text`) at \
+            defining `operator to_text(self: T) -> text`) at \
             a_bounded_generic_does_not_lend_its_bound_to_an_unbounded_sibling:2:32",
     );
 }
@@ -5736,7 +5736,7 @@ fn test() {
 #[test]
 fn operator_with_a_name_that_backs_nothing() {
     code!("struct P { v: integer }\npub operator frob(self: P, other: P) -> Ordering { self.v.compare(other.v) }\nfn test() { }")
-        .error("`frob` is not an operator: `operator` takes the name of the form it backs — `compare` for `<`, `<=`, `>` and `>=`, `plus` for `+`, `minus` for `-`, `times` for `*`; declare an ordinary method with `fn` at operator_with_a_name_that_backs_nothing:2:51");
+        .error("`frob` is not an operator: `operator` takes the name of the form it backs — `compare` for `<`, `<=`, `>` and `>=`, `plus` for `+`, `minus` for `-`, `times` for `*`, `next` for `for e in x`, `to_text` for `\"{x}\"`; declare an ordinary method with `fn` at operator_with_a_name_that_backs_nothing:2:51");
 }
 
 #[test]
@@ -5791,4 +5791,22 @@ fn operator_plus_of_the_wrong_shape() {
 fn operator_times_on_a_built_in_type() {
     code!("operator times(self: integer, k: text) -> integer { self + len(k) }\nfn test() { }")
         .error("`operator times` defines `*` for a type of its own package, and `integer` is not one; a built-in type already has its arithmetic at operator_times_on_a_built_in_type:1:52");
+}
+
+#[test]
+fn a_plain_next_does_not_drive_for() {
+    code!("struct C { n: integer }\nfn next(self: C) -> integer? { if self.n > 0 { null } else { 1 } }\nfn test() { for x in C { n: 0 } { assert(x > 0, \"x\"); } }")
+        .error("`C` has a method `next`, but `for` reaches only one written with `operator`: declare it `operator next(self: C) -> …` at a_plain_next_does_not_drive_for:3:34");
+}
+
+#[test]
+fn a_plain_to_text_does_not_drive_formatting() {
+    code!("struct M { c: integer }\nfn to_text(self: M) -> text { \"m{self.c}\" }\nfn test() { m = M { c: 1 }; assert(\"{m}\" == \"m1\", \"m\"); }")
+        .error("`M` has a method `to_text`, but `\"{…}\"` reaches only one written with `operator`: declare it `operator to_text(self: M) -> text` at a_plain_to_text_does_not_drive_formatting:3:41");
+}
+
+#[test]
+fn operator_next_of_the_wrong_shape() {
+    code!("struct C { n: integer }\noperator next(self: C, k: integer) -> integer? { if self.n > k { null } else { 1 } }\nfn test() { }")
+        .error("`operator next` has the wrong shape: `operator next(self: T) -> E?`, answering null when the walk is done at operator_next_of_the_wrong_shape:2:49");
 }

@@ -44,7 +44,7 @@
 //   question, which is why the original probes did.
 //
 // Every non-null cell declares a return and hands it `null`, which is off-protocol — `LOFT.md`
-// states `fn next(self: T) -> Item?` — so each is expected to say so.  The scalar half always
+// states `operator next(self: T) -> Item?` — so each is expected to say so.  The scalar half always
 // did; the heap half does since loft#1313 closed the same `(N-Store)` rule for reference,
 // collection and struct-enum targets.  The notices are declared below rather than silenced,
 // because a cell whose signature was "corrected" to `τ?` would stop exercising the non-null
@@ -93,89 +93,89 @@ struct CFlt1310 { n: integer }
 struct CZero1310 { n: integer }
 struct CEmpty1310 { n: integer }
 
-fn next(self: CInt1310) -> integer {
+operator next(self: CInt1310) -> integer {
   if self.n >= 3 { return null; }
   self.n += 1;
   self.n
 }
 
-fn next(self: CIntN1310) -> integer? {
+operator next(self: CIntN1310) -> integer? {
   if self.n >= 3 { return null; }
   self.n += 1;
   self.n
 }
 
-fn next(self: CStr1310) -> It1310 {
+operator next(self: CStr1310) -> It1310 {
   if self.n >= 3 { return null; }
   self.n += 1;
   It1310 { v: self.n }
 }
 
-fn next(self: CStrN1310) -> It1310? {
+operator next(self: CStrN1310) -> It1310? {
   if self.n >= 3 { return null; }
   self.n += 1;
   It1310 { v: self.n }
 }
 
-fn next(self: CTxt1310) -> text {
+operator next(self: CTxt1310) -> text {
   if self.n >= 3 { return null; }
   self.n += 1;
   "s{self.n}"
 }
 
-fn next(self: CTxtN1310) -> text? {
+operator next(self: CTxtN1310) -> text? {
   if self.n >= 3 { return null; }
   self.n += 1;
   "s{self.n}"
 }
 
-fn next(self: CVec1310) -> vector<integer> {
+operator next(self: CVec1310) -> vector<integer> {
   if self.n >= 3 { return null; }
   self.n += 1;
   [self.n, self.n * 10]
 }
 
-fn next(self: CVecN1310) -> vector<integer>? {
+operator next(self: CVecN1310) -> vector<integer>? {
   if self.n >= 3 { return null; }
   self.n += 1;
   [self.n, self.n * 10]
 }
 
-fn next(self: CEnu1310) -> Sh1310 {
+operator next(self: CEnu1310) -> Sh1310 {
   if self.n >= 3 { return null; }
   self.n += 1;
   Sh1310::A { k: self.n }
 }
 
-fn next(self: CEnuN1310) -> Sh1310? {
+operator next(self: CEnuN1310) -> Sh1310? {
   if self.n >= 3 { return null; }
   self.n += 1;
   Sh1310::A { k: self.n }
 }
 
 // `false` is a VALUE of this item type, and it was read as the terminator.
-fn next(self: CBool1310) -> boolean? {
+operator next(self: CBool1310) -> boolean? {
   if self.n >= 3 { return null; }
   self.n += 1;
   self.n == 2
 }
 
 // `float`'s null is the NaN sentinel, which is a third encoding again.
-fn next(self: CFlt1310) -> float? {
+operator next(self: CFlt1310) -> float? {
   if self.n >= 3 { return null; }
   self.n += 1;
   self.n * 1.5
 }
 
 // A `0` mid-stream: falsy for the conversion, not null.
-fn next(self: CZero1310) -> integer? {
+operator next(self: CZero1310) -> integer? {
   if self.n >= 3 { return null; }
   self.n += 1;
   if self.n == 2 { 0 } else { self.n }
 }
 
 // An empty text mid-stream, same question for the out-of-band encoding.
-fn next(self: CEmpty1310) -> text? {
+operator next(self: CEmpty1310) -> text? {
   if self.n >= 3 { return null; }
   self.n += 1;
   if self.n == 2 { "" } else { "s{self.n}" }

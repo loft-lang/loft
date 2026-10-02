@@ -53,7 +53,7 @@
 // - **@F29** — Pattern matching — enum/scalar/tuple, guards, or-patterns, exhaustiveness
 // - **@F30** — `is` variant check (+ field capture)
 // - **@F31** — `break` / `continue` + labelled forms
-// - **@F32** — Custom iterators via `fn next(self) -> T?`
+// - **@F32** — Custom iterators via `operator next(self) -> T?`
 // - **@F33** — `par(...)` parallel for-loop
 // - **@F34** — Coroutines / generators — `yield`, `yield from`
 // - **@F35** — String literals — `{expr}` interpolation + backtick multiline

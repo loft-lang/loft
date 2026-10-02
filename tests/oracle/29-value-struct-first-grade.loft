@@ -14,7 +14,7 @@ fn OpEq(self: D, other: D) -> boolean { self.ms == other.ms }
 fn OpLt(self: D, other: D) -> boolean { self.ms < other.ms }
 fn OpGt(self: D, other: D) -> boolean { self.ms > other.ms }
 fn mk(n: integer) -> D { D { ms: n } }
-fn to_text(self: D, spec: text) -> text {
+operator to_text(self: D, spec: text) -> text {
   if spec == "hex" { "{self.ms:#x}" }
   else if spec == "pad" { "{self.ms:03}" }
   else { "{self.ms}" }

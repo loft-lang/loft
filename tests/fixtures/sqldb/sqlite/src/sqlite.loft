@@ -65,7 +65,7 @@ pub struct SqliteRows { st: integer, w: integer, good: boolean }
 // reads nothing.
 pub fn ok(self: SqliteRows) -> boolean { return self.good; }
 
-pub fn next(self: SqliteRows) -> boolean {
+pub operator next(self: SqliteRows) -> boolean {
   if self.st == 0 { return false }
   if s3_step(self.st) == 100 { return true }   // 100 = SQLITE_ROW
   // Running out releases, so a walk to the end needs no close.

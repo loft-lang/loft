@@ -1481,7 +1481,7 @@ fn stdlib_max_of_float() {
 fn generic_text_returning_method() {
     code!(
         "struct Tag { label: text }
-         fn to_text(self: Tag) -> text { self.label }
+         operator to_text(self: Tag) -> text { self.label }
          fn show<T: Printable>(v: T) -> text { v.to_text() }"
     )
     .expr("show(Tag{label: \"hello\"})")
@@ -1495,7 +1495,7 @@ fn generic_text_returning_method() {
 fn stdlib_printable_interface() {
     code!(
         "struct Tag { label: text }
-         fn to_text(self: Tag) -> text { self.label }
+         operator to_text(self: Tag) -> text { self.label }
          fn show<T: Printable>(v: T) -> text { v.to_text() }"
     )
     .expr("show(Tag{label: \"world\"})")

@@ -26,7 +26,7 @@ value struct Money {
 }
 
 // TWO formatted returns → two promoted work buffers. The crashing shape.
-fn to_text(self: Money, spec: text) -> text {
+operator to_text(self: Money, spec: text) -> text {
   if spec == "dollars" { return "D{self.cents}" }
   return "c{self.cents}";
 }
@@ -37,7 +37,7 @@ value struct Three {
 
 // THREE formatted returns → three buffers, so the fix is not an off-by-one that
 // happens to work at two.
-fn to_text(self: Three, spec: text) -> text {
+operator to_text(self: Three, spec: text) -> text {
   if spec == "a" { return "A{self.n}" }
   if spec == "b" { return "B{self.n}" }
   return "z{self.n}";
@@ -49,7 +49,7 @@ value struct Bare {
 
 // No spec parameter, early return, formatted arms — the `(self, __work…)` path
 // must survive the same treatment.
-fn to_text(self: Bare) -> text {
+operator to_text(self: Bare) -> text {
   if self.n == 1 { return "one{self.n}" }
   return "many{self.n}";
 }
@@ -60,7 +60,7 @@ value struct Mixed {
 
 // One formatted return and one BARE literal return: only the formatted one
 // promotes a buffer, so the attribute list is asymmetric.
-fn to_text(self: Mixed, spec: text) -> text {
+operator to_text(self: Mixed, spec: text) -> text {
   if spec == "fmt" { return "F{self.n}" }
   return "plain";
 }
