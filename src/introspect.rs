@@ -157,7 +157,7 @@ impl Default for Options {
 /// `loft <file>`'s `unwrap()` on `parse_dir(default/)`).
 #[allow(dead_code)]
 pub fn run(filename: &str, opts: &Options) -> std::io::Result<()> {
-    let abs_file = crate::portable_path::plain_canonical_str(filename);
+    let abs_file = crate::file_access::plain_canonical_str(filename);
     let mut p = Parser::new();
     p.lib_dirs.clone_from(&opts.lib_dirs);
     let default_dir = if opts.install_dir.is_empty() {
@@ -386,7 +386,7 @@ fn emit_roundtrip(
         {
             continue;
         }
-        let from_default = crate::portable_path::is_stdlib_source(&def.position.file);
+        let from_default = crate::file_access::is_stdlib_source(&def.position.file);
         let pass_filter =
             opts.fn_filter.is_empty() || opts.fn_filter.iter().any(|f| def.name.contains(f));
         if (from_default && !opts.all_fns) || !pass_filter {

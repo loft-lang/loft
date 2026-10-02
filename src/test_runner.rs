@@ -88,24 +88,24 @@ fn package_root_for(file: &str) -> Option<std::path::PathBuf> {
 /// Returns the path relative to the package root, so the report reads
 /// `src/regex.loft:30` rather than an absolute path nobody can scan.
 fn coverage_path(src: &str, test_file: &str, root: Option<&std::path::Path>) -> Option<String> {
-    if src.is_empty() || crate::portable_path::is_stdlib_source(src) {
+    if src.is_empty() || crate::file_access::is_stdlib_source(src) {
         return None;
     }
-    let abs = crate::portable_path::try_plain_canonical(std::path::Path::new(src))?;
-    if let Some(t) = crate::portable_path::try_plain_canonical(std::path::Path::new(test_file))
+    let abs = crate::file_access::try_plain_canonical(std::path::Path::new(src))?;
+    if let Some(t) = crate::file_access::try_plain_canonical(std::path::Path::new(test_file))
         && abs == t
     {
         return None;
     }
     let root = root?;
-    let root = crate::portable_path::try_plain_canonical(root)?;
+    let root = crate::file_access::try_plain_canonical(root)?;
     let rel = abs.strip_prefix(&root).ok()?;
     // This string is a REPORT — something a reader copies into an editor, and something
     // a test asserts on — not a path anything opens, so it must read the same on every
     // platform.  `to_string_lossy()` alone hands back the native separator, which made
     // the Windows leg print `src\pos.loft` against a contract (and a `loft.toml`
     // `entry = "src/<name>.loft"`) that says `src/pos.loft`.
-    Some(crate::portable_path::portable(rel))
+    Some(crate::file_access::portable(rel))
 }
 
 /// loft#925 — what is known about one group of test files: those that open with
@@ -249,11 +249,12 @@ fn build_test_base(
 /// `<dir>default` — a directory that does not exist, reported as *"cannot load
 /// default library"* against a file that passes without the flag.  `main.rs` joins
 /// the same way for an ordinary run (@P363); this is the test runner's half.
+/// `<dir>/default`, in ONE separator: `--path D:\\loft/` joined by hand spelled the stdlib
+/// `D:\\loft/default`, and its files were then not recognised as the stdlib (loft#1860).
 fn stdlib_dir_of(default_dir: &str) -> String {
-    std::path::Path::new(default_dir)
+    loft::file_access::PathText::host(default_dir)
         .join("default")
-        .to_string_lossy()
-        .into_owned()
+        .native()
 }
 
 fn build_test_base_inner(
@@ -911,7 +912,7 @@ pub(crate) fn run_tests(
         let mut bases: BTreeMap<(Vec<String>, String), BaseSlot> = BTreeMap::new();
 
         for file_path in files {
-            let abs_file = crate::portable_path::plain_canonical(file_path)
+            let abs_file = crate::file_access::plain_canonical(file_path)
                 .to_str()
                 .unwrap_or("")
                 .to_string();
@@ -921,7 +922,7 @@ pub(crate) fn run_tests(
             // checks literally.  On Windows the host separator made the runner print
             // `greeter\tests\greet.loft` where the page shows `greeter/tests/greet.loft`, and the
             // documented output did not match the real one.
-            let display_name = crate::portable_path::portable(file_path);
+            let display_name = crate::file_access::portable(file_path);
 
             // Read the raw source to extract annotations before parsing.
             let source = match std::fs::read_to_string(file_path) {
@@ -1443,7 +1444,7 @@ pub(crate) fn run_tests(
                     continue;
                 }
                 // Skip standard library / operators.
-                if crate::portable_path::is_stdlib_source(&def.position.file) {
+                if crate::file_access::is_stdlib_source(&def.position.file) {
                     continue;
                 }
                 // skip library functions loaded via `use`. Only run

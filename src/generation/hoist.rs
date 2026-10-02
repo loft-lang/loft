@@ -7162,7 +7162,7 @@ fn split_call(
     let Value::Call(d, _) = call.unspan() else {
         return Err("");
     };
-    if !crate::portable_path::is_stdlib_source(&data.def(*d).position.file) {
+    if !crate::file_access::is_stdlib_source(&data.def(*d).position.file) {
         return Err("`split` is not the standard library's");
     }
     let Some(code) = call_named(sep, data, "OpConvCharacterFromInt")

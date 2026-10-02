@@ -183,13 +183,13 @@ fn cdylib_ext() -> &'static str {
 /// gets the same guard as a mismatch.
 #[must_use]
 pub fn running_is_the_installed_loft() -> Option<bool> {
-    let running = crate::portable_path::try_plain_canonical(&std::env::current_exe().ok()?)?;
+    let running = crate::file_access::try_plain_canonical(&std::env::current_exe().ok()?)?;
     let on_path = std::env::var_os("PATH").map(|p| {
         std::env::split_paths(&p)
             .map(|d| d.join(if cfg!(windows) { "loft.exe" } else { "loft" }))
             .find(|c| c.is_file())
     })??;
-    Some(crate::portable_path::try_plain_canonical(&on_path)? == running)
+    Some(crate::file_access::try_plain_canonical(&on_path)? == running)
 }
 
 /// `~/.loft/build-cache` — one cargo target tree per installed package version.

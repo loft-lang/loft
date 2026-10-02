@@ -13109,7 +13109,7 @@ impl Parser {
             // running program promoted (@PLN162 step 14).  A session's eval is never promoted.
             let owned = def.source == crate::data::MAIN_SOURCE
                 || (def.source == crate::data::STD_SOURCE
-                    && !crate::portable_path::is_stdlib_source(&def.position.file));
+                    && !crate::file_access::is_stdlib_source(&def.position.file));
             if def.def_type != DefType::Function || !owned || def.is_reentered_eval() {
                 continue;
             }

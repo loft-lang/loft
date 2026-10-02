@@ -38,9 +38,9 @@ use loft::logger;
 use loft::manifest;
 mod android;
 mod native_utils;
+use loft::file_access;
 use loft::parser;
 use loft::platform;
-use loft::portable_path;
 use loft::scopes;
 use loft::state;
 mod test_runner;
@@ -607,13 +607,13 @@ fn run_dep_tests(
         if let Some(p) = loft::manifest::extract_path_dep(value) {
             let candidate = from_pkg.join(p);
             if candidate.join("loft.toml").exists() {
-                return Some(portable_path::plain_canonical(&candidate));
+                return Some(file_access::plain_canonical(&candidate));
             }
         }
         let usable = |d: &Option<PathBuf>| -> Option<PathBuf> {
             d.as_ref()
                 .filter(|c| c.join("loft.toml").exists())
-                .map(|c| portable_path::plain_canonical(c))
+                .map(|c| file_access::plain_canonical(c))
         };
         // 2 — an asked-for lock outranks the working copy.
         if lock_first && let Some(d) = usable(&locked) {
@@ -622,7 +622,7 @@ fn run_dep_tests(
         // 3 — the sibling working copy.
         let sibling = from_pkg.join("..").join(name);
         if sibling.join("loft.toml").exists() {
-            return Some(portable_path::plain_canonical(&sibling));
+            return Some(file_access::plain_canonical(&sibling));
         }
         // 4 — the project's own lock, filling what nothing above reached.
         usable(&locked)
@@ -3962,7 +3962,7 @@ fn generate_native_stubs(pkg_path: &std::path::Path) {
     }
 
     // Parse just enough to read definitions.
-    let abs = portable_path::plain_canonical(&entry);
+    let abs = file_access::plain_canonical(&entry);
     let default_str = stdlib_default_dir().to_string_lossy().to_string();
 
     let mut p = parser::Parser::new();
@@ -5280,7 +5280,7 @@ fn collect_lib_dirs(args: &[String]) -> Vec<String> {
     while i + 1 < args.len() {
         if args[i] == "--lib" {
             let raw = &args[i + 1];
-            let abs = portable_path::plain_canonical_str(raw);
+            let abs = file_access::plain_canonical_str(raw);
             if !dirs.contains(&abs) {
                 dirs.push(abs);
             }
@@ -5460,7 +5460,7 @@ fn api_surface_of(
     if !entry.exists() {
         return Err(format!("file {file} not found"));
     }
-    let abs = portable_path::plain_canonical(&entry);
+    let abs = file_access::plain_canonical(&entry);
     let default_str = stdlib_default_dir().to_string_lossy().to_string();
     let mut p = parser::Parser::new();
     if let Some(src_dir) = entry.parent() {
@@ -6599,7 +6599,7 @@ fn run_layout_command(sub: &str, file: &str) -> i32 {
         eprintln!("loft layout: file {file} not found");
         return 1;
     }
-    let abs = portable_path::plain_canonical(&entry);
+    let abs = file_access::plain_canonical(&entry);
     let default_str = stdlib_default_dir().to_string_lossy().to_string();
     let mut p = parser::Parser::new();
     if let Some(src_dir) = entry.parent() {
@@ -6895,7 +6895,7 @@ fn lsp_default_dir() -> String {
     let dir = stdlib_default_dir();
     // Canonicalize so recorded def paths are clean (no `..`, no `//`) — those
     // paths are shown to the user and pasted into `file:line` references.
-    portable_path::plain_canonical(&dir)
+    file_access::plain_canonical(&dir)
         .to_string_lossy()
         .to_string()
 }
@@ -7920,7 +7920,7 @@ fn main() {
                 lib_dirs.push(abs_src);
                 // Add parent directory so sibling packages (dependencies) are found.
                 if !manifest.dependencies.is_empty() {
-                    let parent = portable_path::plain_canonical(
+                    let parent = file_access::plain_canonical(
                         &std::env::current_dir().unwrap_or_default().join(".."),
                     )
                     .to_string_lossy()
@@ -8611,7 +8611,7 @@ fn main() {
                 // Canonicalize: the auto-native branch resolves the library via
                 // `use <name>` and filters its defs by `pkg_str` prefix, so the
                 // path the parser opens and `pkg_str` must be one form.
-                let pkg_path = portable_path::plain_canonical(&pkg_path);
+                let pkg_path = file_access::plain_canonical(&pkg_path);
                 let manifest =
                     loft::manifest::read_manifest(&pkg_path.join("loft.toml").to_string_lossy());
                 let pkg_str = pkg_path.to_string_lossy().to_string();
@@ -8664,7 +8664,9 @@ fn main() {
                     if let Some(parent) = pkg_path.parent() {
                         p.lib_dirs.push(parent.to_string_lossy().to_string());
                     }
-                    let default_dir = format!("{}/default", project_dir());
+                    let default_dir = file_access::PathText::host(&project_dir())
+                        .join("default")
+                        .native();
                     let _ = p.parse_dir(&default_dir, true, false);
                     let tmp = std::env::temp_dir()
                         .join(format!("loft_build_native_{}.loft", std::process::id()));
@@ -8999,7 +9001,7 @@ fn main() {
         start_repl();
     }
     // Resolve the script path to absolute before potentially changing directory.
-    let abs_file = portable_path::plain_canonical(std::path::Path::new(&file_name));
+    let abs_file = file_access::plain_canonical(std::path::Path::new(&file_name));
     let abs_file = abs_file.to_str().unwrap().to_string();
     // @P296-sibling (Windows-only): `canonicalize()` returns an
     // extended-length `\\?\D:\…` verbatim path, but library `use`
@@ -9009,7 +9011,7 @@ fn main() {
     // path while the same module loaded via `use` uses the plain form —
     // the two sources don't dedup → "Dual definition of <lib>" on
     // Windows (crystal_gold CI).  Strip the verbatim-disk prefix so every
-    // path shares one representation (`portable_path::plain_canonical`, which already
+    // path shares one representation (`file_access::plain_canonical`, which already
     // shed the prefix above; this line is the documented reason it does).
     // --project: change working directory so file I/O is sandboxed to the project root.
     if let Some(ref proj) = project {
@@ -9051,7 +9053,7 @@ fn main() {
                         // Add parent directory so sibling packages (deps) are found.
                         if !manifest.dependencies.is_empty() {
                             if let Some(parent) =
-                                portable_path::try_plain_canonical(&search.join(".."))
+                                file_access::try_plain_canonical(&search.join(".."))
                             {
                                 let ps = parent.to_string_lossy().to_string();
                                 if !lib_dirs.contains(&ps) {
@@ -9095,7 +9097,7 @@ fn main() {
     // prefix-match, so the entry package auto-native-compiled after all.
     let lib_dirs: Vec<String> = lib_dirs
         .into_iter()
-        .map(|d| portable_path::plain_canonical_str(&d))
+        .map(|d| file_access::plain_canonical_str(&d))
         .collect();
     let mut p = parser::Parser::new();
     p.lib_dirs = lib_dirs;
@@ -11382,7 +11384,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                     if !def.name.starts_with("n_") || def.name.starts_with("n___lambda_") {
                         continue;
                     }
-                    if portable_path::is_stdlib_source(&def.position.file) {
+                    if file_access::is_stdlib_source(&def.position.file) {
                         continue;
                     }
                     let has_user_params = def
@@ -12216,7 +12218,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                 && def.native.is_empty()
                 && def.attributes.is_empty()
                 && matches!(def.returned, data::Type::Void)
-                && !portable_path::is_stdlib_source(&def.position.file)
+                && !file_access::is_stdlib_source(&def.position.file)
             {
                 let name = def.name.strip_prefix("n_").unwrap_or(&def.name);
                 test_names.push(name.to_string());
@@ -12406,7 +12408,7 @@ fn resolve_test_target(arg: &str) -> String {
     // Read the leading COMPONENT rather than the leading text: `components()`
     // drops a `./` prefix and splits on the platform's separator, so this is
     // right on Windows without a backslash rewrite (which would corrupt a Unix
-    // filename that legitimately contains one — `portable_path`'s gate).
+    // filename that legitimately contains one — `file_access`'s guard).
     let as_path = std::path::Path::new(path);
     // `components()` keeps a leading `.` (it only drops interior ones), so skip
     // CurDir to see what the path really starts with.

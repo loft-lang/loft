@@ -139,7 +139,11 @@ impl Output<'_> {
             ValueType::Line => {
                 // P198 / DX-source-map: a `// loft:<file>:<line>` comment so
                 // rustc errors trace back to the loft source line.
-                let file = self.data.def(self.def_nr).position().file.replace('\n', "");
+                // One spelling on every host: the comment is part of generated source that is
+                // compared (`compiled_stdlib_up_to_date`) and read back by the source map.
+                let file = crate::file_access::portable_str(
+                    &self.data.def(self.def_nr).position().file.replace('\n', ""),
+                );
                 // @PLN157 — remember where we are, so an operator checkpoint can name the
                 // loft line it came from.  This stream is the emitter's only notion of
                 // position.
@@ -3156,7 +3160,11 @@ impl Output<'_> {
             // source.  Without this, only Value::Line nodes inside an
             // expression context get rendered (rare in practice).
             if let Value::Line(line) = v {
-                let file = self.data.def(self.def_nr).position().file.replace('\n', "");
+                // One spelling on every host: the comment is part of generated source that is
+                // compared (`compiled_stdlib_up_to_date`) and read back by the source map.
+                let file = crate::file_access::portable_str(
+                    &self.data.def(self.def_nr).position().file.replace('\n', ""),
+                );
                 // @PLN157 — see the sibling in `output_code_node`: the statement-level
                 // half of the same position stream.
                 self.ckpt_cur_line = *line;

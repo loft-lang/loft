@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I90 — Shared utilities & data structures
 
 //! The rule's guard: compiler code reaches the file system only through `file_access`.
 //!
@@ -12,6 +13,7 @@
 //! Bless refuses while any count is above its baseline.
 
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 
 /// What counts as reaching the file system directly.  `fs::` alone catches the calls a
 /// `use std::fs;` leaves unqualified.
@@ -84,13 +86,13 @@ fn measure(root: &std::path::Path) -> BTreeMap<String, usize> {
             let p = entry.path();
             let rel = p
                 .strip_prefix(root)
-                .map(|r| super::portable(r))
+                .map(super::portable)
                 .unwrap_or_default();
             if p.is_dir() {
                 if rel != "src/file_access" {
                     stack.push(p);
                 }
-            } else if rel.ends_with(".rs")
+            } else if p.extension().is_some_and(|x| x == "rs")
                 && let Ok(text) = std::fs::read_to_string(&p)
             {
                 let n = text.lines().filter(|l| line_accesses(l)).count();
@@ -121,7 +123,7 @@ fn write_baseline(path: &std::path::Path, now: &BTreeMap<String, usize>) {
          # Only shrinks: see src/file_access/guard.rs.  Format: <lines> <file>\n",
     );
     for (f, n) in now {
-        out.push_str(&format!("{n} {f}\n"));
+        let _ = writeln!(out, "{n} {f}");
     }
     std::fs::write(path, out).expect("write baseline");
 }
@@ -172,7 +174,9 @@ fn the_guard_sees_what_it_must_and_nothing_else() {
     assert!(line_accesses("    if p.exists() {"));
     assert!(line_accesses(r#"    s.replace('\\', "/")"#));
     assert!(!line_accesses("    // std::fs::write is not called here"));
-    assert!(!line_accesses(r#"    out.push_str("std::fs::write(&p, b)?;");"#));
+    assert!(!line_accesses(
+        r#"    out.push_str("std::fs::write(&p, b)?;");"#
+    ));
     assert!(!line_accesses("    my_fs::write(x);"));
     assert!(!line_accesses("    let q = path_text.portable();"));
 }

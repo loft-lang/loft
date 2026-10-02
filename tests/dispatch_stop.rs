@@ -83,7 +83,7 @@ fn a_runtime_error_is_stored_only_by_its_setter() {
                     if line.contains("runtime_error = Some(")
                         && !line.trim_start().starts_with("//")
                     {
-                        sites.push(format!("{}:{}", path.display(), n + 1));
+                        sites.push(format!("{}:{}", loft::file_access::portable(&path), n + 1));
                     }
                 }
             }

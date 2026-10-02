@@ -1020,7 +1020,7 @@ fn scan_identifiers(text: &str, file: &str) -> Vec<(String, Reference)> {
 
 /// Canonical absolute path string (falls back to the lossy path on error).
 fn canonical(p: &Path) -> String {
-    crate::portable_path::plain_canonical(p)
+    crate::file_access::plain_canonical(p)
         .to_string_lossy()
         .into_owned()
 }
@@ -1035,7 +1035,7 @@ fn canonical(p: &Path) -> String {
 /// accept it.  Strip it so a path means the same thing to a consumer on every platform.
 /// Non-Windows paths pass through untouched.
 pub fn plain_path(p: &Path) -> String {
-    crate::portable_path::strip_verbatim(&p.to_string_lossy())
+    crate::file_access::strip_verbatim(&p.to_string_lossy())
 }
 
 /// `true` when `s` begins with a Windows drive-letter prefix (`C:`).
@@ -1059,7 +1059,7 @@ fn drive_prefixed(s: &str) -> bool {
 /// Every path→URI in the LSP surface MUST go through here.
 #[must_use]
 pub fn path_to_uri(p: &Path) -> String {
-    let plain = crate::portable_path::for_uri(std::path::Path::new(&plain_path(p)));
+    let plain = crate::file_access::for_uri(std::path::Path::new(&plain_path(p)));
     if plain.starts_with('/') {
         format!("file://{plain}")
     } else {
@@ -1142,7 +1142,8 @@ pub fn is_valid_identifier(name: &str) -> bool {
 
 /// A stdlib source path (under a `default/` dir) — files a rename must never edit.
 fn is_stdlib_path(file: &str) -> bool {
-    file.contains("/default/") || file.ends_with("/default")
+    let p = crate::file_access::PathText::host(file);
+    crate::file_access::is_stdlib_source(file) || p.file_name() == Some("default")
 }
 
 /// For `prepareRename`: the identifier's span at the cursor IF it is renamable —

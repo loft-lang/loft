@@ -233,7 +233,7 @@ impl SandboxConfig {
 /// to prevent.
 #[must_use]
 pub fn path_selector_matches(pat: &str, file: &str) -> bool {
-    let file = crate::portable_path::portable_str(file);
+    let file = crate::file_access::portable_str(file);
     if glob_matches(pat.as_bytes(), file.as_bytes()) {
         return true;
     }
@@ -247,7 +247,7 @@ pub fn path_selector_matches(pat: &str, file: &str) -> bool {
 /// machine-specific policy nobody can commit.
 #[must_use]
 pub fn suggested_path_selector(file: &str) -> String {
-    let file = crate::portable_path::portable_str(file);
+    let file = crate::file_access::portable_str(file);
     let mut segs = file.rsplit('/');
     match (segs.next(), segs.next()) {
         (Some(base), Some(dir)) if !dir.is_empty() => format!("{dir}/{base}"),

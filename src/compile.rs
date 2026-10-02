@@ -804,7 +804,7 @@ pub fn show_captures_summary(writer: &mut dyn Write, data: &Data) -> Result<(), 
 /// so the default-skip filter holds in both.  Mirrors
 /// `introspect::is_default_lib_path`.
 pub(crate) fn is_default_file(file: &str) -> bool {
-    crate::portable_path::is_stdlib_source(file)
+    crate::file_access::is_stdlib_source(file)
 }
 
 /// Write the static dump (IR and/or bytecode) for the functions selected by

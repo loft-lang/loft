@@ -2250,7 +2250,7 @@ pub fn generate_pkg_docs(
     let api_count = all_api_sections.len();
     // The ABSOLUTE path: a relative `graphics/doc` reads like part of the project you
     // are standing in, which is how stray doc trees ended up committed (loft#911).
-    let shown = crate::portable_path::plain_canonical(&out_dir)
+    let shown = crate::file_access::plain_canonical(&out_dir)
         .display()
         .to_string();
     println!(

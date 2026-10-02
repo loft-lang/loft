@@ -98,10 +98,10 @@ fn a_package_directory_documents_its_own_api() {
         "a documented `pub fn` must produce an API section; got:\n{stdout}"
     );
     // The reported path is absolute, so it cannot be mistaken for a project subdir.  It is
-    // compared in the ONE spelling the CLI prints (`portable_path::plain_canonical`): on a
+    // compared in the ONE spelling the CLI prints (`file_access::plain_canonical`): on a
     // Windows runner `temp_dir()` is the 8.3 short name (`RUNNER~1`) and `canonicalize()` the
     // verbatim `\\?\C:\…`, and the printed plain long form matched neither.
-    let printed_dir = loft::portable_path::plain_canonical(&pkg.join("doc"))
+    let printed_dir = loft::file_access::plain_canonical(&pkg.join("doc"))
         .to_string_lossy()
         .to_string();
     assert!(
