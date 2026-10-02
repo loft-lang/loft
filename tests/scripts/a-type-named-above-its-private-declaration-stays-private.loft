@@ -1,0 +1,16 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @ARGS: --lib tests/lib
+//
+// @FR-F-Surface (loft#1856) — a type a library declares without `pub` stays off its surface
+// even when a `pub` function names it first: the forward reference that `pub` function
+// creates is the type's, not the function's.  The reaches that must keep working are in
+// a-type-named-above-its-pub-declaration-is-published.loft.
+use fwdlib;
+
+// @EXPECT_ERROR: `FwdHidS` is not `pub` in `fwdlib`, so `fwdlib::FwdHidS` cannot reach it
+fn hidden_struct() -> integer { fwdlib::FwdHidS { v: 2 }.v }
+
+// @EXPECT_ERROR: `FwdHidE` is not `pub` in `fwdlib`, so `fwdlib::FwdHidE` cannot reach it
+fn hidden_enum() -> text { "{fwdlib::FwdHidE.FhBlue}" }
