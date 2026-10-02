@@ -2150,6 +2150,10 @@ ci-guard:
 # enough to see whether a red is one defect or several, which is the question the count is
 # actually being asked.
 CI_MAX_FAIL ?= 5
+# The starvation victims (.config/nextest.toml `[profile.ci-victims]`): the gate's main pass runs
+# without them, the storm-makers wide, and a second pass runs them alone once every storm has
+# ended.  Read from the profile, so the passes, nextest and ci.yml select one set.
+CI_VICTIMS := $(shell python3 scripts/ci_test_filter.py victims)
 
 # THE LOCAL GATE IS CANCELLED WHEN IT RUNS LONG, and that is the point.  A gate that grows is
 # a gate that stops being run: measured 2026-09-12, a local `make ci` on macOS passed 45
@@ -2371,8 +2375,11 @@ ci: ci-guard
 	  case "$$sel" in \
 	    NONE) rc=0 ;; \
 	    FILTER) cargo nextest run --profile ci --max-fail $(CI_MAX_FAIL) $$first --no-tests=pass \
-	              -E "$$(cat target/gate-ledger/filter)" >> result.txt 2>&1; rc=$$? ;; \
-	    *) cargo nextest run --profile ci --max-fail $(CI_MAX_FAIL) $$first >> result.txt 2>&1; rc=$$? ;; \
+	              -E "($$(cat target/gate-ledger/filter)) - ($(CI_VICTIMS))" >> result.txt 2>&1; rc=$$?; \
+	            cargo nextest run --profile ci-victims --max-fail $(CI_MAX_FAIL) --no-tests=pass \
+	              -E "($$(cat target/gate-ledger/filter)) & ($(CI_VICTIMS))" >> result.txt 2>&1; rc=$$(( rc + $$? )) ;; \
+	    *) cargo nextest run --profile ci --max-fail $(CI_MAX_FAIL) $$first -E "not ($(CI_VICTIMS))" >> result.txt 2>&1; rc=$$?; \
+	       cargo nextest run --profile ci-victims --max-fail $(CI_MAX_FAIL) -E "$(CI_VICTIMS)" >> result.txt 2>&1; rc=$$(( rc + $$? )) ;; \
 	  esac; \
 	  python3 scripts/gate_ledger.py record >> result.txt 2>&1; \
 	  [ $$rc -eq 0 ]; } && \

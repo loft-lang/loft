@@ -7,6 +7,7 @@ duplicated across workflow steps drifts silently — a test excluded on one leg
 and not the other reads as a flake — so it is built here, once.
 
 Usage:  ci_test_filter.py <event_name> [heavy|corpus|rest|rest-a|rest-b|rest-c]
+        ci_test_filter.py victims   # the starvation victims, run alone after the main pass
 
 The optional shard restricts the leg to the `heavy-serial` test group, or to
 its complement.  The group's membership is NOT repeated here: it is read out of
@@ -185,7 +186,21 @@ def group_filter(group: str) -> str:
     raise SystemExit(f"no override defines test-group '{group}' in {NEXTEST_TOML}")
 
 
+def victims_filter() -> str:
+    """The starvation victims: the filterset `[profile.ci-victims]` runs, alone, after the main
+    pass.  Read from the profile so the gate's two passes and ci.yml select ONE set."""
+    with NEXTEST_TOML.open("rb") as fh:
+        config = tomllib.load(fh)
+    overrides = config["profile"].get("ci-victims", {}).get("overrides", [])
+    if not overrides:
+        raise SystemExit(f"no [profile.ci-victims] override in {NEXTEST_TOML}")
+    return overrides[0]["filter"]
+
+
 def main() -> None:
+    if len(sys.argv) == 2 and sys.argv[1] == "victims":
+        print(victims_filter())
+        return
     if not 2 <= len(sys.argv) <= 3:
         raise SystemExit(__doc__)
     event, shard = sys.argv[1], (sys.argv[2] if len(sys.argv) == 3 else None)

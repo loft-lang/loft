@@ -92,6 +92,12 @@ html-wasm-serial = { max-threads = 1 }
 # pipe is a ~45s fail-and-retry, not a 600s hang — keeping v5 parallel without
 # paying the serial cost.
 #
+# ⚠ The `ci` profile (the gate) no longer puts the storm-makers here: they run in `heavy-wide`
+# and the victims run ALONE in a second pass (`[profile.ci-victims]`), which keeps the
+# guarantee below without the serial chain — on two gates that chain WAS the test phase.  The
+# group still serves the `default` profile and that second pass.  The measurements below are
+# the record of why it was kept serial while the pool, not the chain, was the critical path.
+#
 # MEASURED 2026-07-26 — do NOT widen this group expecting a speedup.  Widening it
 # to 4 locally took the `native` binary 32.8s → 9.6s (3.4×), which looks compelling
 # and is irrelevant: this box has many cores, `macos-latest` has 3.  What decides
@@ -139,25 +145,32 @@ test-group = 'heavy-serial'
 filter = 'binary(ownership_drop_gate) & test(/^every_cell_releases_each_resource_once_on_native_[0-9]+$/)'
 test-group = 'heavy-serial'
 
+# The gate's two passes (`make ci`, ci.yml's test step): the MAIN pass runs everything but the
+# starvation victims, with the rustc-storm makers WIDE — the serial chain used to be the whole
+# test phase (measured on two gates: `heavy-serial` summed to 601 s of a 602 s phase and 649 s
+# of 649 s, while the general pool finished at ~270-300 s).  The victims — the networked tests
+# a storm starves — then run ALONE in `ci-victims` (below), after every storm has ended, which
+# is the guarantee the single serial group gave them, at a fraction of its cost.
+# `html_wasm` no longer needs one slot: each `--html` build writes its own per-process
+# scratch (`platform::build_scratch_dir`), the shared-path race that serialised it is gone.
 [[profile.ci.overrides]]
 filter = 'binary(html_wasm)'
-test-group = 'html-wasm-serial'
+test-group = 'html-wasm-wide'
 
 [[profile.ci.overrides]]
-filter = 'binary(native) + binary(n2_cdylib) + binary(n3_parity) + binary(n3_use_native) + binary(multiplayer_v2) + binary(multiplayer_v3) + binary(wasm_debug_relay)'
-test-group = 'heavy-serial'
+filter = 'binary(native) + binary(n2_cdylib) + binary(n3_parity) + binary(n3_use_native)'
+test-group = 'heavy-wide'
 
 # No per-test raise for the corpus runners: `loft_suite` and `native_scripts` are CHUNKED
 # (`loft_suite_00..07`, `native_scripts_00..11`), each a fixed slice of `tests/scripts`, because a
 # test that grows with the corpus meets any ceiling eventually.  `scripts/test_duration_gate.py`
 # holds every test to HALF its limit; the owner rules out raising limits (2026-09-24).
 
-# The drop gate's native leg compiles one binary per cell, so it runs in `heavy-serial`: its rustc
-# pool contended with `native_scripts`' own when it ran outside the group.  It is CHUNKED
-# (`…_on_native_0..3`) and needs no raised ceiling.
+# The drop gate's native leg compiles one binary per cell, so it is a storm-maker too and runs in
+# `heavy-wide` with the others.  It is CHUNKED (`…_on_native_0..3`) and needs no raised ceiling.
 [[profile.ci.overrides]]
 filter = 'binary(ownership_drop_gate) & test(/^every_cell_releases_each_resource_once_on_native_[0-9]+$/)'
-test-group = 'heavy-serial'
+test-group = 'heavy-wide'
 
 # The serial critical path starts FIRST.  nextest otherwise runs binaries in listing order, and on
 # the Windows `ci` host (4 cores) the long tests queued behind ~5000 short ones: measured on run
@@ -175,6 +188,28 @@ test-group = 'heavy-serial'
 [[profile.ci.overrides]]
 filter = '(binary(native) & test(/^native_scripts_[0-9]+$/)) | (binary(ownership_drop_gate) & test(/^every_cell_releases_each_resource_once_on_native_[0-9]+$/)) | (binary(wrap) & test(/^loft_suite_[0-9]+$/))'
 priority = 100
+
+
+# The gate's SECOND pass: the starvation victims, one at a time, after the main pass has ended —
+# so no rustc storm runs beside them.  `multiplayer_v2` / `v3` and `wasm_debug_relay` pass alone
+# and starve beside a storm (the notes on `heavy-serial` above say how).  The gate selects them
+# by filter (`binary(multiplayer_v2) + binary(multiplayer_v3) + binary(wasm_debug_relay)`) and
+# runs the main pass without them.  Its junit lands in `target/nextest/ci-victims/`, so the main
+# pass's report, which the duration and speed gates read, is not overwritten.
+[profile.ci-victims]
+retries          = 1
+failure-output   = "immediate-final"
+success-output   = "never"
+status-level     = "pass"
+final-status-level = "slow"
+slow-timeout     = { period = "600s", terminate-after = 1 }
+
+[profile.ci-victims.junit]
+path = "junit.xml"
+
+[[profile.ci-victims.overrides]]
+filter = 'binary(multiplayer_v2) + binary(multiplayer_v3) + binary(wasm_debug_relay)'
+test-group = 'heavy-serial'
 
 
 # The profile every sanitizer leg runs under: `miri.yml`'s nightly ASan sweep and leak gate,
