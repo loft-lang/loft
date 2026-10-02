@@ -5703,6 +5703,14 @@ fn operator_of_a_form_not_built_yet() {
         .error("`operator negate` will back unary `-`, which a type cannot define yet; declare it with `fn` as an ordinary method for now at operator_of_a_form_not_built_yet:2:32");
 }
 
+/// `@FR-Op-Shape` — `operator compare` answers an `Ordering`, never a nullable one: the shape
+/// check peels `.base()` and states the nullability question itself (`@FR-N-Shape`).
+#[test]
+fn operator_compare_answering_a_nullable_ordering_is_refused() {
+    code!("struct P { v: integer }\noperator compare(self: P, o: P) -> Ordering? { self.v.compare(o.v) }\nfn test() { }")
+        .error("`operator compare` takes `self` and the value it is compared with, and answers an `Ordering`: `operator compare(self: P, other: P) -> Ordering` at operator_compare_answering_a_nullable_ordering_is_refused:2:47");
+}
+
 #[test]
 fn operator_compare_without_self() {
     code!("struct P { v: integer }\noperator compare(a: P, b: P) -> Ordering { a.v.compare(b.v) }\nfn test() { }")

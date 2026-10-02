@@ -1194,11 +1194,10 @@ impl Parser {
         // without allocating, since every `<` and `+` in a program comes through here.
         // A struct literal's type carries the `Rewritten` marker (built in place); the operand
         // is the type under it, or `M { c: 5 } < b` misses `M`'s method.
-        let mut left = &types[0];
-        while let Type::Rewritten(inner) = left {
-            left = inner;
-        }
-        if !matches!(left.base(), Type::Reference(_, _) | Type::Enum(_, _, _)) {
+        if !matches!(
+            types[0].peel_rewritten().base(),
+            Type::Reference(_, _) | Type::Enum(_, _, _)
+        ) {
             return None;
         }
         let peeled: Vec<Type> = types.iter().map(Type::unrewritten).collect();

@@ -2192,7 +2192,7 @@ impl Parser {
         if fn_name != "compare" {
             // `@FR-Op-Shape` — an arithmetic form takes `self` and the right operand, and
             // answers a value.
-            if visible.len() != 2 || matches!(result, Type::Void) {
+            if visible.len() != 2 || matches!(result.base(), Type::Void) {
                 let t = self.data.def(own).name().to_string();
                 diagnostic!(
                     self.lexer,
@@ -2204,7 +2204,9 @@ impl Parser {
             return;
         }
         let ordering = self.data.def_nr("Ordering");
-        let answers_ordering = matches!(result, Type::Enum(d, false, _) if *d == ordering);
+        // A nullable `Ordering?` is refused: `a < b` needs an answer for every pair.
+        let answers_ordering = !matches!(result, Type::Optional(_))
+            && matches!(result.base(), Type::Enum(d, false, _) if *d == ordering);
         if visible.len() != 2 || !answers_ordering {
             let t = self.data.def(own).name().to_string();
             diagnostic!(
