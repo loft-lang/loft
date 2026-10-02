@@ -9,7 +9,7 @@
 // repository, where `@F2` is `F2.md`.
 //
 // The two halves read differently.  An `@F` page says what the feature is and
-// how it aids you, and 74 of the 90 carry a runnable example; the rest
+// how it aids you, and 76 of the 90 carry a runnable example; the rest
 // name what demonstrates them instead, because a loft program cannot run the
 // compiler that runs it.  An `@I` page says what the part does and where it lives
 // in the source — it describes how loft is built, not something you write.
