@@ -10,6 +10,19 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A cached image opens without writing its shared mapping (2026-10-02)
+
+Concurrent `loft` processes crashed each other on a warm cache: eight starts of a program that
+only prints died eight times out of eight (`fl_rebuild` out of bounds, or a segfault), one
+start alone never did, and `LOFT_NO_CACHE=1` hid it.  Opening an image rebuilds its free-block
+tree, and the tree's links live INSIDE the free blocks, in a mapping every process opening the
+file shares: one start's rebuild was read by another mid-way as a record number.  The cached
+stdlib and program images are read surfaces, which claim and free nothing, so they now open
+through `Store::open_read_surface`, which leaves the tree and the footers unbuilt and writes
+nothing; a writable file store rebuilds them as before.  Guard
+`tests/concurrent_warm_start.rs` (three rounds of eight starts); with the rebuild planted back
+it fails in round 0.
+
 ### `(H-SwapRebind)` — a native record rebind exchanges the result's store without resetting the destination (2026-10-02)
 
 The rebind `x = f(…)` from a fresh call result reset `x`'s store (`OpDatabase`) and then
