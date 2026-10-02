@@ -8507,6 +8507,30 @@ pub fn sort < T: Ordered > (self: vector<T>)
 Sort a vector in place, ascending: `sort(v)` or `v.sort()`.  Takes any element with a `\<` (`Ordered`) — a struct defining `op \<` sorts by it — and is stable: elements that compare equal keep their order.  A null element sorts first.
 
 ```rust
+pub fn sort_by < T, K: Ordered > (self: vector<T>, key: fn(T) -> K)
+```
+
+Sort a vector in place by a key, ascending: `v.sort\_by(fn(d: Date) -\> integer { d.ms })`. The key is any `Ordered` value — a number or a `text` — so this is how a struct sorts (C132).  Stable, like `sort`: elements with equal keys keep their order.  `key` is called once per element.
+
+```rust
+pub fn min_by < T, K: Ordered > (self: vector<T>, key: fn(T) -> K) -> T?
+```
+
+The element with the smallest key, or null when the vector is empty: `v.min\_by(fn(d: Date) -\> integer { d.ms })`.  Of several with that key, the FIRST.
+
+```rust
+pub fn max_by < T, K: Ordered > (self: vector<T>, key: fn(T) -> K) -> T?
+```
+
+The element with the largest key, or null when the vector is empty: `v.max\_by(fn(d: Date) -\> integer { d.ms })`.  Of several with that key, the FIRST.
+
+```rust
+pub fn sum_by < T, K: Addable > (self: vector<T>, key: fn(T) -> K, init: K? = null) -> K
+```
+
+The sum of a key over the elements: `v.sum\_by(fn(o: Order) -\> float { o.price })`.  The key is any `Addable` value; `init` is the identity to start from, and left out it is the key type's own zero (0, 0.0), so an empty vector sums to it.
+
+```rust
 pub fn filter < T > (self: vector<T>, f: fn(T) -> boolean) -> vector<T>
 ```
 

@@ -222,8 +222,8 @@ binds no operator, is no operator template, and satisfies no operator interface 
 the designed spelling this entry asked for — an `operator` method (`operator compare`, `plus`,
 `minus`, `times`, `to_<type>`, `next`, `to_text`; @PLN182, formal/operators.md) — and `[…]`
 stays the built-in collections'.  A user type keeps structural `==` (C91), its keyed
-collections and named methods; the key-based stdlib functions (`sort_by`, `min_by`, `max_by`,
-`sum_by`, @PLN182 Q11) are not shipped yet.  **Why.** `fn Op<Name>` is the compiler's
+collections and named methods, and the key-based stdlib functions `sort_by`, `min_by`,
+`max_by` and `sum_by` (@PLN182 Q11) order and total it by any key one call names.  **Why.** `fn Op<Name>` is the compiler's
 operator table, designed for the stdlib: its names do not say the symbol (`OpMin` is `-`), three
 comparisons derive from `OpLt` unseen, and an operator that calls user code is a place the reader
 does not see what runs (CONTROL.md).  The user path produced six defects in one cycle.
