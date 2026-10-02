@@ -2284,10 +2284,13 @@ impl Stores {
         }
         self.types.truncate(keep as usize);
         // A surviving row's facts were derived over rows that may now be gone
-        // (a forward reference into the batch being rolled back).
+        // (a forward reference into the batch being rolled back), and its `parents`
+        // may name one: a rolled-back struct is registered as the parent of each
+        // field type it holds, and a stale entry indexes past the table (loft#1853).
         for t in &mut self.types {
             t.facts.forget();
             t.prefill.forget();
+            t.parents.retain(|&p| p < keep);
         }
         self.names.retain(|_, &mut nr| nr < keep);
     }

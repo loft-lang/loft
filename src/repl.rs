@@ -400,6 +400,23 @@ fn expr_idents(expr: &str) -> std::collections::HashSet<&str> {
     out
 }
 
+/// Can `input` change a variable it names?  An assignment operator (`=`, `+=`, `<<=`, … but
+/// not `==`, `!=`, `<=` or `>=`) or a call — a `&` parameter and a method's `self` write
+/// through.  Over-inclusive is harmless: an input that changed nothing re-binds nothing
+/// (loft#1853).
+fn may_write(input: &str) -> bool {
+    let b = input.as_bytes();
+    (0..b.len()).any(|i| match b[i] {
+        b'(' => true,
+        b'=' => {
+            let prev = if i > 0 { b[i - 1] } else { b' ' };
+            let shift = i > 1 && matches!((b[i - 2], prev), (b'<', b'<') | (b'>', b'>'));
+            b.get(i + 1) != Some(&b'=') && (shift || !matches!(prev, b'=' | b'!' | b'<' | b'>'))
+        }
+        _ => false,
+    })
+}
+
 /// True when `method` is a member a user can call as `recv.method(...)`: a plain
 /// identifier that is neither a compiler-internal (`__…`) nor an operator
 /// overload — operator methods register as `Op<Name>` (`Op` + an uppercase
@@ -3621,23 +3638,8 @@ impl ReplSession {
             if !rhs.is_empty() {
                 match self.capture_binding(rhs, false) {
                     Capture::Done(lit) => {
-                        let snap = format!("{var} = {lit}");
-                        let bound = format!("{}{snap};\n", self.body);
-                        if self.compile_generation(&bound, false, false).is_ok() {
-                            self.body = bound;
-                            // @PLN14 arc A — file the shadow env entry under the
-                            // bound name.  A re-bind (`n = n + 1`) replaces it; the
-                            // old record is orphaned in the session store until
-                            // arc G collects it.
-                            if let Some(v) = self.pending_materialized.take() {
-                                // arc G — a re-bind orphans the old record; release
-                                // it so a long session does not grow per re-bind.
-                                if let Some(old) = self.env.remove(&var) {
-                                    self.free_session_value(&old);
-                                }
-                                self.env.insert(var.clone(), v);
-                            }
-                            self.record_input(&snap); // persist the snapshot, not the RHS
+                        let materialized = self.pending_materialized.take();
+                        if self.commit_snapshot(&var, &lit, materialized) {
                             return Eval::Ran;
                         }
                         // (rare) the rendered literal didn't recompile — fall through.
@@ -3685,6 +3687,23 @@ impl ReplSession {
         {
             println!("{shown}");
             return Eval::Ran;
+        }
+        // loft#1853 — an input that may change a session variable in place.
+        if let Some(done) = self.eval_mutation(input) {
+            return match done {
+                Err(diags) => Eval::Error(diags),
+                Ok(Some(lit)) => {
+                    // The input's value, shown as the observing path shows one: a pure
+                    // run, since the body now holds every variable as a literal.
+                    let show = format!(
+                        "{}__replval = {lit};\nprintln(\"{{__replval}}\");\n",
+                        self.body
+                    );
+                    let _ = self.compile_generation(&show, true, false);
+                    Eval::Ran
+                }
+                Ok(None) => Eval::Ran,
+            };
         }
         let shown = format!(
             "{}__replval = {input};\nprintln(\"{{__replval}}\");\n",
@@ -3825,6 +3844,154 @@ impl ReplSession {
             self.rewind(sp);
         }
         Ok(())
+    }
+
+    /// Store `var`'s snapshot `lit` as the binding `var = lit`: appended to `body`, filed in the
+    /// session store as `materialized` (the record it replaces is released — @PLN14 arc G, so a
+    /// long session does not grow per re-bind), and persisted as the snapshot, not the source
+    /// that produced it.  `false` when the literal does not recompile; the caller falls back.
+    fn commit_snapshot(
+        &mut self,
+        var: &str,
+        lit: &str,
+        materialized: Option<SessionValue>,
+    ) -> bool {
+        let snap = format!("{var} = {lit}");
+        let bound = format!("{}{snap};\n", self.body);
+        if self.compile_generation(&bound, false, false).is_err() {
+            if let Some(v) = materialized {
+                self.free_session_value(&v);
+            }
+            return false;
+        }
+        self.body = bound;
+        if let Some(v) = materialized {
+            if let Some(old) = self.env.remove(var) {
+                self.free_session_value(&old);
+            }
+            self.env.insert(var.to_string(), v);
+        }
+        self.record_input(&snap);
+        true
+    }
+
+    /// The literal `var` was last bound to in `body`, when its latest binding is a snapshot.
+    fn current_snapshot(&self, var: &str) -> Option<&str> {
+        let prefix = format!("{var} = ");
+        self.body
+            .lines()
+            .rev()
+            .find(|l| Self::binding_name(l).as_deref() == Some(var))
+            .and_then(|l| l.strip_prefix(&prefix))
+            .map(|r| r.strip_suffix(';').unwrap_or(r))
+    }
+
+    /// loft#1853 — an input that may change session variables IN PLACE (`x += 1`, `s.a = 9`,
+    /// `w.sort()`, `bump(x)` through a `&` parameter).  Only definitions and `name = …`
+    /// bindings reach `body`, so any other input ran once and its effect on a variable was
+    /// gone by the next input.  Here the input runs ONCE, inside a capture that hands back
+    /// every bound variable it names — and its own value, when it has one — as one record of
+    /// a throwaway struct; each variable whose literal moved is then re-bound to its new
+    /// value exactly as a binding is (a snapshot, so no later replay repeats a side effect).
+    ///
+    /// `None` leaves the input to the observing path: it cannot write ([`may_write`]), names
+    /// no bound variable, a variable's type does not resolve, or a breakpoint is armed — a
+    /// capture run does not stop at one, and the observing run must.
+    fn eval_mutation(&mut self, input: &str) -> Option<Result<Option<String>, Vec<DiagEntry>>> {
+        if self.paused.is_some() || !self.breakpoints.is_empty() || !may_write(input) {
+            return None;
+        }
+        let idents = expr_idents(input);
+        let names: Vec<String> = self
+            .bound_var_names()
+            .into_iter()
+            .filter(|n| idents.contains(n.as_str()))
+            .collect();
+        if names.is_empty() {
+            return None;
+        }
+        let mut fields = Vec::with_capacity(names.len() + 1);
+        for (i, n) in names.iter().enumerate() {
+            let tp = base_type_name(&self.infer_type(n)?);
+            fields.push(format!("f{i}: {tp}"));
+        }
+        let value_tp = self
+            .infer_type(input)
+            .map(|t| base_type_name(&t))
+            .filter(|t| !t.is_empty() && t != "void");
+        if let Some(t) = &value_tp {
+            fields.push(format!("v: {t}"));
+        }
+        let sp = self.savepoint();
+        let pre_diag = self.parser.diagnostics.entries().len();
+        let def = format!("struct __ReplCap {{ {} }}\n", fields.join(", "));
+        self.parser.parse_str(&def, "<repl>", false);
+        if self.parser.diagnostics.entries()[pre_diag..]
+            .iter()
+            .any(|e| e.level >= Level::Error)
+        {
+            self.rewind(sp);
+            return None;
+        }
+        let build: Vec<String> = names
+            .iter()
+            .enumerate()
+            .map(|(i, n)| format!("f{i}: {n}"))
+            .collect();
+        let run = if value_tp.is_some() {
+            format!(
+                "{{\n__replval = {input};\n__ReplCap {{ {}, v: __replval }}\n}}",
+                build.join(", ")
+            )
+        } else {
+            format!("{{\n{input};\n__ReplCap {{ {} }}\n}}", build.join(", "))
+        };
+        let record = match self.capture_typed(&run, "__ReplCap", false) {
+            Capture::Done(lit) => lit,
+            Capture::Failed(diags) => {
+                self.rewind(sp);
+                return Some(Err(self.map_input_lines(diags)));
+            }
+            Capture::Skip => {
+                self.rewind(sp);
+                return None;
+            }
+        };
+        if let Some(v) = self.pending_materialized.take() {
+            self.free_session_value(&v);
+        }
+        // Each field is captured against a body holding the record as a literal, so these
+        // runs repeat no part of the input.
+        let saved = std::mem::take(&mut self.body);
+        self.body = format!("{saved}__repl_cap = {record};\n");
+        let mut snaps = Vec::with_capacity(names.len());
+        for (i, n) in names.iter().enumerate() {
+            if let Capture::Done(lit) = self.capture_binding(&format!("__repl_cap.f{i}"), false) {
+                snaps.push((n.clone(), lit, self.pending_materialized.take()));
+            }
+        }
+        let value = if value_tp.is_some()
+            && let Capture::Done(lit) = self.capture_binding("__repl_cap.v", false)
+        {
+            if let Some(v) = self.pending_materialized.take() {
+                self.free_session_value(&v);
+            }
+            Some(lit)
+        } else {
+            None
+        };
+        self.body = saved;
+        self.rewind(sp);
+        for (n, lit, materialized) in snaps {
+            if self.current_snapshot(&n) == Some(lit.as_str()) {
+                if let Some(v) = materialized {
+                    self.free_session_value(&v);
+                }
+                continue;
+            }
+            self.commit_snapshot(&n, &lit, materialized);
+        }
+        Some(Ok(value))
     }
 
     /// REPL.X value-snapshot — run a binding's RHS **once**, capture its value,
@@ -4757,6 +4924,10 @@ impl ReplSession {
                 Eval::Error(diags) => Err(diags),
                 _ => Ok(None),
             };
+        }
+        // loft#1853 — an input that may change a session variable in place.
+        if let Some(done) = self.eval_mutation(input) {
+            return done;
         }
         // Otherwise it is an expression: render it.
         Ok(self.value_of(input))

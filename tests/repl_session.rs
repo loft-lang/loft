@@ -2179,3 +2179,111 @@ fn a_library_used_twice_in_a_session_loads_once() {
         Eval::Ran
     ));
 }
+
+/// loft#1853 — an input that changes a session variable IN PLACE (`x += 1`, `s.a = 9`,
+/// `w.sort()`, a `&` argument) changes what the next input reads.  The session kept only
+/// definitions and `name = …` bindings, so every other input ran once and was dropped with
+/// its effect: the next read answered the old value, and nothing said so.
+///
+/// Each cell: the setup inputs, the mutating input, then the value `read` renders.
+fn mutation_cell(setup: &[&str], mutate: &str, read: &str, want: &str, observe: bool) {
+    let mut s = session();
+    s.set_store_observe(observe);
+    for line in setup {
+        assert!(matches!(s.eval(line), Eval::Ran), "setup `{line}`");
+    }
+    assert!(matches!(s.eval(mutate), Eval::Ran), "mutation `{mutate}`");
+    let got = s.eval_value(read).expect("read evaluates");
+    assert_eq!(
+        got.as_deref(),
+        Some(want),
+        "after `{mutate}`, `{read}` (store observe {observe})"
+    );
+}
+
+#[test]
+fn an_in_place_mutation_changes_what_the_next_input_reads() {
+    let s_def = "struct S { a: integer }";
+    let e_def = "struct Ent { k: text, v: integer }";
+    let db_def = "struct Db { m: hash<Ent[k]> }";
+    let cells: &[(&[&str], &str, &str, &str)] = &[
+        (&["x = 1"], "x += 1", "x", "2"),
+        (&["x = 1"], "x -= 3", "x", "-2"),
+        (&["t = \"a\""], "t += \"b\"", "t", "\"ab\""),
+        (&[s_def, "s = S { a: 1 }"], "s.a = 9", "s.a", "9"),
+        (&[s_def, "s = S { a: 1 }"], "s.a += 9", "s.a", "10"),
+        (&["w = [3]"], "w += [0]", "w", "[3,0]"),
+        (&["w = [3, 1]"], "w.sort()", "w", "[1,3]"),
+        (&["w = [3]"], "w[0] = 7", "w", "[7]"),
+        (
+            &["fn bump(v: &integer) { v += 1; }", "x = 1"],
+            "bump(x)",
+            "x",
+            "2",
+        ),
+        (
+            &["fn add(v: &vector<integer>) { v += [5]; }", "w = [1]"],
+            "add(w)",
+            "w",
+            "[1,5]",
+        ),
+        (
+            &[e_def, db_def, "d = Db {}"],
+            "d.m += [Ent { k: \"a\", v: 1 }]",
+            "len(d.m)",
+            "1",
+        ),
+        // Two variables in one input; the read sees both.
+        (&["a = 1", "b = 10"], "a += 1; b += 1", "a + b", "13"),
+        // A read in the same input as the mutation, and one beside it.
+        (&["x = 1"], "x += 1; y = 0", "x", "2"),
+    ];
+    for observe in [true, false] {
+        for (setup, mutate, read, want) in cells {
+            mutation_cell(setup, mutate, read, want, observe);
+        }
+    }
+}
+
+/// Two mutations in a row build on each other, and a whole rebind after them still wins.
+#[test]
+fn successive_mutations_accumulate() {
+    let mut s = session();
+    for line in ["x = 1", "x += 1", "x += 10", "x *= 2"] {
+        assert!(matches!(s.eval(line), Eval::Ran), "`{line}`");
+    }
+    assert_eq!(s.eval_value("x").expect("x").as_deref(), Some("24"));
+    assert!(matches!(s.eval("x = 5"), Eval::Ran));
+    assert_eq!(s.eval_value("x").expect("x").as_deref(), Some("5"));
+}
+
+/// A mutation reaches the session file, so a resumed session reads the mutated value; an input
+/// that only READS a variable adds nothing to the file.
+#[test]
+fn a_mutation_is_persisted_and_an_observe_is_not() {
+    let path = tmp_session("i1853");
+    let _ = std::fs::remove_file(&path);
+    {
+        let mut a = session();
+        a.enable_persistence(&path).expect("enable persistence");
+        for line in ["w = [3, 1]", "w.sort()", "w += [9]"] {
+            assert!(matches!(a.eval(line), Eval::Ran), "`{line}`");
+        }
+        let before = std::fs::read_to_string(&path).expect("session file");
+        // Observing — a read, and a call that reads — leave the file as it is.
+        assert_eq!(
+            a.eval_value("len(w) + 1").expect("len").as_deref(),
+            Some("4")
+        );
+        assert_eq!(a.eval_value("w").expect("w").as_deref(), Some("[1,3,9]"));
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("session file"),
+            before
+        );
+    }
+    let mut b = session();
+    let stats = b.resume_from(&path);
+    assert_eq!(stats.skipped, 0, "{stats:?}");
+    assert_eq!(b.eval_value("w").expect("w").as_deref(), Some("[1,3,9]"));
+    let _ = std::fs::remove_file(&path);
+}
