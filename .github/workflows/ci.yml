@@ -1660,6 +1660,14 @@ jobs:
       - name: Check formatting
         run: cargo fmt -- --check
 
+      # The compiled stdlib (src/compiled_stdlib_gen.rs, @PLN181) is DERIVED from default/*.loft.
+      # A stale one still builds, but every compiled stdlib routine is then interpreted (5-23x
+      # slower on text), and `main` would ship it to every source build.  Checked here, in a
+      # required job, so it cannot merge; the cure is one command, which the local gate's
+      # pre-flight and `join.py rederive` already run automatically.
+      - name: Compiled stdlib is current
+        run: python3 scripts/compiled_stdlib_fresh.py || { echo "::error::src/compiled_stdlib_gen.rs is stale — run \`make compiled-stdlib\` and commit it"; exit 1; }
+
   # Prevent browser-side "Failed to grow table" / "import mismatch"
   # errors from reaching the deployed site by rebuilding BOTH browser
   # artefacts — the wasm-pack-based gallery+playground bundle and the
