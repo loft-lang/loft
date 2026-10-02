@@ -1,0 +1,124 @@
+# group	title	entry — the proposed `group:` of every @F/@I entry (probe 1)
+values	Values and types	F3
+values	Values and types	F4
+values	Values and types	F5
+values	Values and types	F11
+values	Values and types	F12
+values	Values and types	F13
+values	Values and types	F14
+values	Values and types	F15
+values	Values and types	F45
+values	Values and types	F46
+values	Values and types	F95
+values	Values and types	F97
+values	Values and types	F106
+values	Values and types	F107
+absence	Absence and arithmetic safety	F1
+absence	Absence and arithmetic safety	F2
+absence	Absence and arithmetic safety	F38
+absence	Absence and arithmetic safety	F96
+operators	Operators	F37
+operators	Operators	F114
+collections	Collections	F6
+collections	Collections	F7
+collections	Collections	F8
+collections	Collections	F9
+collections	Collections	F10
+collections	Collections	F98
+control	Control flow and patterns	F27
+control	Control flow and patterns	F28
+control	Control flow and patterns	F29
+control	Control flow and patterns	F30
+control	Control flow and patterns	F31
+control	Control flow and patterns	F32
+control	Control flow and patterns	F99
+control	Control flow and patterns	F111
+functions	Functions, methods and generics	F16
+functions	Functions, methods and generics	F17
+functions	Functions, methods and generics	F18
+functions	Functions, methods and generics	F19
+functions	Functions, methods and generics	F20
+functions	Functions, methods and generics	F21
+functions	Functions, methods and generics	F22
+functions	Functions, methods and generics	F23
+functions	Functions, methods and generics	F24
+functions	Functions, methods and generics	F25
+functions	Functions, methods and generics	F26
+functions	Functions, methods and generics	F109
+functions	Functions, methods and generics	F113
+functions	Functions, methods and generics	F115
+functions	Functions, methods and generics	F122
+text	Text	F35
+text	Text	F36
+text	Text	F94
+text	Text	F105
+data	Files, stores and data	F40
+data	Files, stores and data	F42
+data	Files, stores and data	F93
+data	Files, stores and data	F104
+data	Files, stores and data	F108
+data	Files, stores and data	F112
+data	Files, stores and data	F119
+data	Files, stores and data	F123
+concurrency	Concurrency	F33
+concurrency	Concurrency	F34
+services	Standard services	F39
+services	Standard services	F41
+services	Standard services	F43
+services	Standard services	F44
+services	Standard services	F88
+services	Standard services	F118
+modules	Modules, libraries and packages	F47
+modules	Modules, libraries and packages	F55
+modules	Modules, libraries and packages	F92
+modules	Modules, libraries and packages	F101
+modules	Modules, libraries and packages	F120
+modules	Modules, libraries and packages	F121
+tools	Tools: run, test, debug, build	F48
+tools	Tools: run, test, debug, build	F49
+tools	Tools: run, test, debug, build	F50
+tools	Tools: run, test, debug, build	F51
+tools	Tools: run, test, debug, build	F52
+tools	Tools: run, test, debug, build	F53
+tools	Tools: run, test, debug, build	F54
+tools	Tools: run, test, debug, build	F56
+tools	Tools: run, test, debug, build	F89
+tools	Tools: run, test, debug, build	F100
+tools	Tools: run, test, debug, build	F102
+tools	Tools: run, test, debug, build	F103
+tools	Tools: run, test, debug, build	F110
+inside	Inside loft (maintainers)	I57
+inside	Inside loft (maintainers)	I58
+inside	Inside loft (maintainers)	I59
+inside	Inside loft (maintainers)	I60
+inside	Inside loft (maintainers)	I61
+inside	Inside loft (maintainers)	I62
+inside	Inside loft (maintainers)	I63
+inside	Inside loft (maintainers)	I64
+inside	Inside loft (maintainers)	I65
+inside	Inside loft (maintainers)	I66
+inside	Inside loft (maintainers)	I67
+inside	Inside loft (maintainers)	I68
+inside	Inside loft (maintainers)	I69
+inside	Inside loft (maintainers)	I70
+inside	Inside loft (maintainers)	I71
+inside	Inside loft (maintainers)	I72
+inside	Inside loft (maintainers)	I73
+inside	Inside loft (maintainers)	I74
+inside	Inside loft (maintainers)	I75
+inside	Inside loft (maintainers)	I76
+inside	Inside loft (maintainers)	I77
+inside	Inside loft (maintainers)	I78
+inside	Inside loft (maintainers)	I79
+inside	Inside loft (maintainers)	I80
+inside	Inside loft (maintainers)	I81
+inside	Inside loft (maintainers)	I82
+inside	Inside loft (maintainers)	I83
+inside	Inside loft (maintainers)	I84
+inside	Inside loft (maintainers)	I85
+inside	Inside loft (maintainers)	I86
+inside	Inside loft (maintainers)	I87
+inside	Inside loft (maintainers)	I90
+inside	Inside loft (maintainers)	I91
+inside	Inside loft (maintainers)	I116
+inside	Inside loft (maintainers)	I117
