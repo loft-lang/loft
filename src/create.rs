@@ -149,9 +149,23 @@ pub fn generate_code_to(data: &Data, path: &str) -> std::io::Result<String> {
     std::fs::read_to_string(path)
 }
 
+/// `@FR-R-FastTable` — an operator body with its stack accessors spelled for the access mode
+/// `F` of the generic it is generated into (`State::get_stack_m` and its siblings).
+fn respell_stack_accessors(body: &[u8]) -> String {
+    String::from_utf8_lossy(body)
+        .replace("s.get_stack::<", "s.get_stack_m::<F, ")
+        .replace("s.get_var::<", "s.get_var_m::<F, ")
+        .replace("s.put_stack(", "s.put_stack_m::<F, _>(")
+        .replace("s.put_var(", "s.put_var_m::<F, _>(")
+}
+
 /// Write fill.rs content directly to an arbitrary writer (no rustfmt).
 /// # Errors
 /// When the writer reports an error.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one pass over the operators: the table, the names, and each body"
+)]
 pub fn generate_code_into(data: &Data, into: &mut dyn Write) -> std::io::Result<()> {
     writeln!(
         into,
@@ -296,13 +310,7 @@ pub static OPERATORS: &[fn(&mut State)] = &["
             writeln!(into, "    s.put_stack(new_value);")?;
         }
         writeln!(into, "}}")?;
-        let text = String::from_utf8(body)
-            .expect("generated code is UTF-8")
-            .replace("s.get_stack::<", "s.get_stack_m::<F, ")
-            .replace("s.get_var::<", "s.get_var_m::<F, ")
-            .replace("s.put_stack(", "s.put_stack_m::<F, _>(")
-            .replace("s.put_var(", "s.put_var_m::<F, _>(");
-        outer.write_all(text.as_bytes())?;
+        outer.write_all(respell_stack_accessors(&body).as_bytes())?;
     }
     Ok(())
 }

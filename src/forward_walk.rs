@@ -77,7 +77,7 @@ fn var(v: &Value) -> Option<u16> {
     }
 }
 
-fn call<'a>(v: &'a Value, op: u32) -> Option<&'a [Value]> {
+fn call(v: &Value, op: u32) -> Option<&[Value]> {
     match v.unspan() {
         Value::Call(d, args) if *d == op => Some(args),
         _ => None,

@@ -3556,20 +3556,37 @@ falsifier).
 ### A forward walk over a vector the body cannot resize is a counted loop
 
 ```
-  (R-ForwardWalk) PROPOSED.  `for p in v`, walking forward, over a vector the body cannot
-                 resize — a `const` parameter, or a local no `#remove`, append, `clear` or
-                 user call reaching `v` touches inside the body — lowers as `for i in
-                 0..len(v) { p = v[i]; … }` with the length read once.  The `index < 0`
-                 test, which only the reverse step can make true, and the per-round length
-                 read go, and `(R-Rotate)` and `(R-LoopSlot)` then apply.
+  (R-ForwardWalk) `for p in v`, walking forward, over a vector the body cannot resize,
+                 runs as the counted range's loop: the length is read once before it, the
+                 iterator is an `Iter range` block over the same `p#index`, the element
+                 read — the reference, or a scalar's value read over it — opens the body,
+                 and the `index < 0` test, which only the reverse step can make true, goes.
+                 "Cannot resize", by shape: the walked vector (the source local and the
+                 walk's `_vector_N` handle) appears in the body only as a direct argument of
+                 an element read or of the length; neither they nor `p#index` is assigned;
+                 no closure captures the source and the body calls nothing through a
+                 reference; and when the source is a parameter, nothing in the body
+                 receives a `&` parameter, which the caller may have passed the same vector
+                 as.  Appending to the walked vector is refused by the compiler already.
 ```
 
-**In words.** Applies in: the IR phase, both backends; every vector walk.  The length is re-read
-today because `x#remove` shrinks the vector and steps the index back
-(`Parser::vector_iterator`); the condition is exactly that no such write can happen.  Measured
-on `record_walk` by the hand-written form: −14 %.  The guard owes a `#remove` in the walk, an
-append to `v` in the walk, a reverse walk, and a walk over a field's vector while a callee
-writes the record.
+**In words.** Applied by: `forward_walk::rewrite_program`, in the IR phase after the scope
+pass (both backends), re-laying out the frame of each function it changes.  The length is
+re-read today because `x#remove` shrinks the vector and steps the index back; the conditions
+are exactly that no such write can reach the vector.  The `&` clause is load-bearing: without
+it `both(w, w)` — a `const` parameter walked while the body appends to a `&` one — ran two
+rounds instead of five and answered wrong with no diagnostic.  A result buffer the scope pass
+promoted to a parameter is not a `&` parameter and does not decline (the caller fills it from
+its own work buffer).  Native's held-base record address (`@FR-R-RecPtr`'s base clause) read
+only the walk's own iterator, so it learned the counted form too (`hoist::element_binding`:
+the element binding at any index local — the clause checks the index against the held length
+itself); without it `entity_tick` ran +52 % and `record_walk` +28 % on native.  Built
+2026-10-02: the record walk −11 % instructions and −7.5 % cycles interpreted; on native
+`record_walk` −12.7 %, −2.0 % at the geomean over benches 14 and 16 (the routines that moved
+up hold no rewritten walk — emitted code placement).  `LOFT_NO_FORWARD_WALK=1`, `LOFT_TRACE_FORWARD_WALK=1`.  Guards
+`tests/scripts/a-walk-the-body-cannot-resize-is-a-counted-loop.loft` (counted walks and the
+walks that must keep re-reading, both backends) and `tests/forward_walk.rs` (which walk is
+rewritten, read off the trace; the cells with the rewrite off).
 
 ### A computed range start is one counter, stepped at the bottom
 

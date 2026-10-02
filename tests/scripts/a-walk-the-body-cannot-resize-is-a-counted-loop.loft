@@ -15,8 +15,9 @@
 // parameter that the caller passed the same vector as.  `tests/forward_walk.rs` pins which
 // is which.  Every expected value is computed by hand.
 //
-// @falsified-at: none — it guards a rewrite no earlier build has; planted defects, see
-//   tests/forward_walk.rs.
+// @falsified-at: none — it guards a rewrite no earlier build has.  Falsified by planted defects,
+//   2026-10-02: the `&`-parameter clause dropped (`both(w, w)` answers 2 rounds for 5, wrong and
+//   silent); the read-only clause dropped (`tests/forward_walk.rs` sees `handed_on` rewritten).
 
 struct P {
   x: float,

@@ -2973,6 +2973,9 @@ impl State {
     /// `OPERATORS_FAST` table is dispatched only then); `F = false` is the ordinary accessor,
     /// which decides at run time and is valid in every mode.  The generated operators call
     /// these, so the table chosen once per run removes the mode test from every op.
+    ///
+    /// # Panics
+    /// When the stack holds fewer bytes than a `T` — as [`Self::get_stack`] does.
     #[allow(clippy::inline_always)]
     #[inline(always)]
     pub fn get_stack_m<const F: bool, T: 'static + Copy>(&mut self) -> T {
