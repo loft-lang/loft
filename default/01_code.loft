@@ -49,7 +49,7 @@ pub type u32 = integer limit(0, 4294967294) size(4);
 /// A type satisfies an interface by defining the required operator or method.
 
 /// Types that support the `<` comparison operator.
-/// Satisfied by integer, single, float, text, and any user type defining OpLt.
+/// Satisfied by integer, single, float, text, and any type defining `operator compare`.
 ///
 /// `boolean` is NOT among them, deliberately: it satisfies Equatable below and has no
 /// ordering, so `false < true` is a refusal rather than a convention the language picks
@@ -64,42 +64,39 @@ pub interface Ordered {
   op < (self: Self, other: Self) -> boolean
 }
 
-/// Types that support the `==` equality operator: every type (@C91), by its own OpEq or by content.
+/// Types that support the `==` equality operator: every type (@C91), compared by content.
 /// A tuple compares element by element, as its concrete `==` does.
 ///
-/// `!=` derives from it (`a != b` is `!(a == b)`), so a type defining `op ==` gets both.
+/// `!=` derives from it (`a != b` is `!(a == b)`).
 pub interface Equatable {
   op == (self: Self, other: Self) -> boolean
 }
 
 /// Types that support the `+` addition operator, returning the same type.
-/// Satisfied by integer, single, float, and user types defining OpAdd.
+/// Satisfied by integer, single, float, and any type defining `operator plus`.
 pub interface Addable {
   op + (self: Self, other: Self) -> Self
 }
 
 /// Types that support `*` and `-` (unary negation).
 /// Separate from `Addable` so a generic can ask for the fewest operators it needs.
-/// Satisfied by integer, single, float, and user types defining OpMul and OpMin.
+/// Satisfied by integer, single and float: a program's type has no unary `-` to define yet.
 ///
 /// Binary subtraction is `Subtractable` below and deliberately NOT here.  One interface CAN
 /// declare both arities of `-`, but adding a requirement to `Numeric` would take satisfaction
-/// away from every user type that provides `OpMul` and unary `OpMin` today, which a compatible
-/// release may not do.
+/// away from every type that meets it, which a compatible release may not do.
 pub interface Numeric {
   op * (self: Self, other: Self) -> Self
   op - (self: Self) -> Self
 }
 
 /// Types that support binary `-` (subtraction), returning the same type.
-/// Satisfied by integer, single, float, and user types defining a two-operand OpMin.
+/// Satisfied by integer, single, float, and any type defining `operator minus`.
 ///
 /// A bound of its own rather than a third requirement on `Numeric`: a bound set may declare
 /// one name at two arities (`-` means `OpMin` either way, told apart by its operand count),
 /// so `<T: Numeric + Subtractable>` gets negation and subtraction together from two
-/// interfaces that each name `OpMin`.  The built-in number types satisfy both, and so does a
-/// user type that defines `OpMin` at both arities, in either order — as pinned by
-/// `tests/scripts/1811-a-method-overload-set-is-one-set-in-either-declaration-order.loft`.
+/// interfaces that each name `OpMin`.  The built-in number types satisfy both.
 pub interface Subtractable {
   op - (self: Self, other: Self) -> Self
 }

@@ -565,7 +565,7 @@ holds. When you want a remainder that wraps into `[0, n)` (the sign of the *divi
 circular indexing), use `floor_mod`: `(-1).floor_mod(3) == 2`. Division or `%` by zero is a
 **null**, never a fault (C80) — discharge it with `?? default`.
 
-### Operators on your own type — `operator compare`, `plus`, `minus`, `times`
+### Operators on your own type — `operator compare`, `plus`, `minus`, `times`, `to_<type>`
 
 A type gets `<`, `<=`, `>` and `>=` from one method written with `operator` in place of `fn`:
 
@@ -590,9 +590,16 @@ fn test_a_date_is_ordered_by_its_operator_compare() {
 type among its definitions: `d - span` and `d - other_date` may be two `minus`, and `3 * w` is
 refused where `w * 3` is not.
 
+`x as T` calls `operator to_t(self: S) -> T`, the target's name in snake case
+(`operator to_date_time(self: text) -> DateTime` parses a date text `as DateTime`); a conversion
+INTO your type may take a foreign `self`.  `operator to_text` and `operator next` give `"{x}"`
+and `for e in x` the same way.  `==` and `!=` compare the fields of every type, `[…]` belongs to
+the built-in collections (a type reads through a named method, `x.at(i)`), and the forms not
+listed here — `/`, `%`, the unary `-` — a type cannot define yet.
+
 Each form is one call of the LEFT operand's method, operands in the order they are written.
 A method declared with plain `fn` is an ordinary method, and the operator on that type is
-refused saying so.  `x.compare(y)` and `Ordering.then` are in the stdlib for every built-in ordered type,
+refused saying so; a function NAMED for an operator (`fn OpLt`, `fn OpAdd`) is ordinary too.  `x.compare(y)` and `Ordering.then` are in the stdlib for every built-in ordered type,
 so a field-by-field order is `self.a.compare(o.a).then(self.b.compare(o.b))`.  The rules:
 [formal/operators.md](formal/operators.md).
 

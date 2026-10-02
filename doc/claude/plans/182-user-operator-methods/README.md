@@ -5,10 +5,10 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 # @PLN182 — operator syntax for user types, through named methods
 
-**Status: P0 (design + falsification) written.  Decided by the owner: Q1 (names, the `operator`
-keyword), Q3 (`operator equals` allowed), Q10 (the subset is what is in use), the `to_<type>`
-conversions.  Recommended here, for the owner: Q12 (callable by name), Q13 (interface spelling),
-Q14 (the key-field rule), Q15 (conversion details).**  The plan
+**Status: P0, P1 (`compare`), P2 (`plus` / `minus` / `times`) and P5 (loft#1833: `next`,
+`to_text` and `to_<type>` as `operator` forms, a user `fn Op…` retired, `[…]` given back to the
+built-in collections, `time` and `server` migrated) are built; the rules are
+[formal/operators.md](../../formal/operators.md).  Open: the items under § Next.**  The plan
 itself — goal, constraints, scope, phases — is the tracker issue,
 [loft-lang/plans#182](https://github.com/loft-lang/plans/issues/182); this directory holds P0's
 deliverables:
@@ -175,6 +175,18 @@ is decided.
 
 ## Next
 
-Q12–Q15 are with the owner.  P1 starts after them, and begins with: the stdlib's `Ordering` / `compare`,
-the overload rule, then (Op-Order) / (Op-Bound) for `Ordered`, with `time`'s parallel run (both
-spellings, one matrix of dates).
+Three items stay open, each with its home:
+
+- **Q13 — the operator interfaces' re-spelling.**  `Printable` declares `operator to_text`;
+  `Ordered`, `Addable`, `Subtractable` and `Numeric` still declare `op ⊕` members, which a
+  program's type meets with its `operator` method (`(Op-Bound)`).  Re-spelling them as
+  `operator compare(self: Self, other: Self) -> Ordering` and so on is open, and so is the
+  consequence a measurement found: an interface member written `operator times` does not yet
+  drive `a * b` inside a generic body, so a user interface must spell `op *` for that.
+- **Q14 — (Op-Key)** lands WITH `operator equals` (RULES.md), never before it: until a type can
+  redefine `==`, every key compares structurally and the rule has nothing to refuse.
+- **Q11 — `sort_by` / `min_by` / `max_by` / `sum_by`.**  [by-functions.patch](by-functions.patch)
+  is verified and not applied; C132's entry names them as not shipped.
+
+The reserved forms (`negate`, `divided_by`, `remainder`, `equals`, `at` / `set_at`, the slices,
+`power`, the bit operators) wait for a program that needs them (Q10).

@@ -25,6 +25,31 @@ and `a.compare(b).then(c.compare(d))` orders by a second value when the first is
 program that defines its own `compare` or `then` for one of those types is refused with "Cannot
 redefine": rename yours, or use the stdlib's.
 
+**A function named for an operator no longer gives a type that operator.**  `fn OpLt`, `OpAdd`,
+`OpMin`, `OpMul`, `OpEq`, `OpNe`, `OpIndex`, `OpConvXFromY` and the rest are ordinary functions
+now, callable by their name and reached by no operator, `[…]`, `as` or bound.  Each definition
+says so where it is written, naming what to write instead — a warning for `OpEq` / `OpNe` /
+`OpNot`, whose operators keep answering on their own, an advice for the rest.  The cures, one
+line each:
+
+- `fn OpLt` / `OpLe` / `OpGt` / `OpGe` → one `operator compare(self: T, other: T) -> Ordering`
+  (`self.ms.compare(other.ms)`), which gives all four.
+- `fn OpAdd` / `OpMin` (two operands) / `OpMul` → `operator plus` / `minus` / `times`, same
+  parameters.
+- `fn OpEq` / `OpNe` → delete them: `==` and `!=` compare the fields of every type.  If yours
+  compared something else, call it by name.
+- `fn OpConvTFromS(v: S) -> T` → `operator to_t(self: S) -> T`, with `T`'s name in snake case
+  (`OpConvDateTimeFromText` → `operator to_date_time(self: text) -> DateTime`).
+- `fn to_text(self: T…)` and `fn next(self: T)` → the same with `operator` in place of `fn`;
+  `"{x}"` and `for e in x` reach only those.
+- `fn OpIndex` → a named method, called as `x.at(i)`: `[…]` belongs to the built-in
+  collections, and `x[i]` on your type is refused naming that.
+- the unary `-` (`fn OpMin(self: T)`), `/`, `%` and the bit operators → a named method; a type
+  cannot define them yet, so `Numeric` is met by the built-in numbers only.
+
+A library that defined any of these needs a new release; `time` 0.4.0 and `server` 0.7.2 are
+written this way.
+
 ### New
 
 **Your own type can use `<`, `<=`, `>` and `>=`.**  Write one method with `operator` in place
@@ -34,6 +59,10 @@ of `fn` — `pub operator compare(self: Date, other: Date) -> Ordering { self.ms
 **…and `+`, `-` and `*`.**  `operator plus`, `operator minus` and `operator times` give a type
 the three operators, `+=`, `-=` and `*=` with them, and `sum` over a vector of it.  A type may
 have several, one per right-hand type: a date minus a date, and a date minus a duration.
+
+**…and `as`.**  `operator to_date_time(self: text) -> DateTime` makes `"2026-07-08" as DateTime`
+work; the name after `to_` is the target type in snake case.  A conversion INTO your type may
+take a foreign `self` (`text`, `integer`), so only your package can define it.
 
 ---
 

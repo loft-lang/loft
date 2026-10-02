@@ -95,7 +95,7 @@ Walkable   — the method `children() -&gt; vector&lt;Self&gt;`.  The standard l
   gen_x == gen_y
 }
 <span class="kw">fn</span> described&lt;<span class="en">T</span>: <span class="en"><a href="stdlib-interfaces.html">Printable</a></span>&gt;(gen_x: <span class="en">T</span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {
-  gen_x.<span class="fn-call"><a href="stdlib-field-iteration-support-types.html">to_text</a></span>()
+  gen_x.<span class="fn-call">to_text</span>()
 }
 <span class="kw">fn</span> <span class="fn-call">test_bounded</span>() {
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">gen_max</span>(<span class="nm">3</span>, <span class="nm">7</span>) == <span class="nm">7</span>, <span class="st">"max int"</span>);
@@ -121,28 +121,21 @@ Walkable   — the method `children() -&gt; vector&lt;Self&gt;`.  The standard l
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">clamped_add</span>(<span class="nm">1.0</span>, <span class="nm">2.0</span>, <span class="nm">2.5</span>) == <span class="nm">2.5</span>, <span class="st">"float clamped"</span>);
 }</code></pre>
 <h2 id="your-own-types-under-a-bound">Your own types under a bound</h2>
-<p>The built-in bounds are not only for built-in types, and this is what they are for: a struct satisfies one by DEFINING the operation, with no declaration that it does. The names are the operators' own, not the symbols:</p>
-<pre><code>Ordered    fn OpLt(self: T, other: T) -&gt; boolean      (`&lt;`)
-Equatable  fn OpEq(self: T, other: T) -&gt; boolean      (`==`)
-Addable    fn OpAdd(self: T, other: T) -&gt; T           (`+`)
-Numeric    fn OpMul(self: T, other: T) -&gt; T           (`*`)
-           fn OpMin(self: T) -&gt; T                     (unary `-`)
-Subtractable fn OpMin(self: T, other: T) -&gt; T        (binary `-`)
-Scalable   fn scale(self: T, factor: integer) -&gt; integer
-Printable  fn to_text(self: T) -&gt; text
-Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
+<p>The built-in bounds are not only for built-in types, and this is what they are for: a struct satisfies one by DEFINING the operation, with no declaration that it does.  An operator is an <code>operator</code> method — written with the keyword <code>operator</code> where a function has <code>fn</code> — named for what it does:</p>
+<pre><code>Ordered      operator compare(self: T, other: T) -&gt; Ordering   (`&lt;` `&lt;=` `&gt;` `&gt;=`)
+Addable      operator plus(self: T, other: T) -&gt; T            (`+`)
+Subtractable operator minus(self: T, other: T) -&gt; T           (binary `-`)
+Scalable     fn scale(self: T, factor: integer) -&gt; integer
+Printable    operator to_text(self: T) -&gt; text
+Walkable     fn children(self: T) -&gt; vector&lt;T&gt;
 </code></pre>
-<p><code>Equatable</code> is the exception: every type satisfies it, because <code>==</code> compares what two values hold — a struct field by field.  Define <code>OpEq</code> only when equality should mean something else.</p>
-<p>The same definition serves the bare operator: once <code>Money</code> has <code>OpLt</code>, both <code>a &lt; b</code> and <code>&lt;T: Ordered&gt;</code> work on it. Miss one and the error names it — "<code>Money</code> does not satisfy interface <code>Ordered</code>: missing OpLt" — at the CALL site, because that is where the concrete type is known.</p>
+<p><code>compare</code> answers <code>Less</code>, <code>Equal</code> or <code>Greater</code>; every built-in ordered type has one, so <code>self.cents.compare(other.cents)</code> is the whole body for one field. <code>Equatable</code> is met by every type, because <code>==</code> compares what two values hold — a struct field by field.  <code>Numeric</code> (<code>*</code> and the unary <code>-</code>) is met by the built-in numbers only: a type cannot define the unary <code>-</code> yet.</p>
+<p>The same definition serves the bare operator: once <code>Money</code> has <code>compare</code>, both <code>a &lt; b</code> and <code>&lt;T: Ordered&gt;</code> work on it.  Miss one and the error names it — "<code>Money</code> does not satisfy interface <code>Ordered</code>: missing <code>operator compare(self: Money, other: Money) -&gt; Ordering</code>" — at the CALL site, because that is where the concrete type is known.</p>
 <pre><code><span class="kw">struct</span> <span class="en">Money</span> { cents: <span class="ty"><a href="stdlib-types.html">integer</a></span> }
-<span class="kw">fn</span> <span class="en">OpLt</span>(self: <span class="en">Money</span>, other: <span class="en">Money</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> { self.cents &lt; other.cents }
-<span class="kw">fn</span> <span class="en">OpEq</span>(self: <span class="en">Money</span>, other: <span class="en">Money</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> { self.cents == other.cents }
-<span class="kw">fn</span> <span class="en">OpAdd</span>(self: <span class="en">Money</span>, other: <span class="en">Money</span>) -&gt; <span class="en">Money</span> { <span class="en">Money</span> { cents: self.cents + other.cents } }
-<span class="kw">fn</span> <span class="fn-call"><a href="stdlib-field-iteration-support-types.html">to_text</a></span>(self: <span class="en">Money</span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> { <span class="st">"{self.cents}c"</span> }</code></pre>
-<p>Both arities of <code>-</code>, so <code>Money</code> satisfies <code>Subtractable</code> and, with <code>OpMul</code>, <code>Numeric</code>.</p>
-<pre><code><span class="kw">fn</span> <span class="en">OpMin</span>(self: <span class="en">Money</span>, other: <span class="en">Money</span>) -&gt; <span class="en">Money</span> { <span class="en">Money</span> { cents: self.cents - other.cents } }
-<span class="kw">fn</span> <span class="en">OpMin</span>(self: <span class="en">Money</span>) -&gt; <span class="en">Money</span> { <span class="en">Money</span> { cents: <span class="nm">0</span> - self.cents } }
-<span class="kw">fn</span> <span class="en">OpMul</span>(self: <span class="en">Money</span>, other: <span class="en">Money</span>) -&gt; <span class="en">Money</span> { <span class="en">Money</span> { cents: self.cents * other.cents } }
+<span class="kw"><a href="stdlib-field-iteration-support-types.html">operator</a></span> <span class="fn-call"><a href="stdlib-min-max-clamp.html">compare</a></span>(self: <span class="en">Money</span>, other: <span class="en">Money</span>) -&gt; <span class="en"><a href="stdlib-min-max-clamp.html">Ordering</a></span> { self.cents.<span class="fn-call"><a href="stdlib-min-max-clamp.html">compare</a></span>(other.cents) }
+<span class="kw"><a href="stdlib-field-iteration-support-types.html">operator</a></span> <span class="fn-call">plus</span>(self: <span class="en">Money</span>, other: <span class="en">Money</span>) -&gt; <span class="en">Money</span> { <span class="en">Money</span> { cents: self.cents + other.cents } }
+<span class="kw"><a href="stdlib-field-iteration-support-types.html">operator</a></span> <span class="fn-call">minus</span>(self: <span class="en">Money</span>, other: <span class="en">Money</span>) -&gt; <span class="en">Money</span> { <span class="en">Money</span> { cents: self.cents - other.cents } }
+<span class="kw"><a href="stdlib-field-iteration-support-types.html">operator</a></span> <span class="fn-call">to_text</span>(self: <span class="en">Money</span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> { <span class="st">"{self.cents}c"</span> }
 <span class="kw">fn</span> <span class="fn-call">test_user_type_bounds</span>() {
   cheap = <span class="en">Money</span> { cents: <span class="nm">300</span> };
   dear = <span class="en">Money</span> { cents: <span class="nm">700</span> };
@@ -150,13 +143,12 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(best.cents == <span class="nm">700</span>, <span class="st">"Ordered on a user type: {best.cents}"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(cheap &lt; dear, <span class="st">"…and the bare operator, from the same definition"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">same</span>(cheap, <span class="en">Money</span> { cents: <span class="nm">300</span> }), <span class="st">"Equatable on a user type"</span>);
-  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">same</span>(<span class="en">Tile</span> { height: <span class="nm">1</span>, name: <span class="st">"t"</span> }, <span class="en">Tile</span> { height: <span class="nm">1</span>, name: <span class="st">"t"</span> }), <span class="st">"…and on one that defines no OpEq"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">same</span>(<span class="en">Tile</span> { height: <span class="nm">1</span>, name: <span class="st">"t"</span> }, <span class="en">Tile</span> { height: <span class="nm">1</span>, name: <span class="st">"t"</span> }), <span class="st">"…and on one that defines no operator"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="fn-call">same</span>(<span class="en">Tile</span> { height: <span class="nm">1</span>, name: <span class="st">"t"</span> }, <span class="en">Tile</span> { height: <span class="nm">2</span>, name: <span class="st">"t"</span> }), <span class="st">"…comparing every field"</span>);
   total = <span class="fn-call">clamped_add</span>(cheap, cheap, <span class="en">Money</span> { cents: <span class="nm">1000</span> });
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(total.cents == <span class="nm">600</span>, <span class="st">"Addable on a user type: {total.cents}"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">described</span>(dear) == <span class="st">"700c"</span>, <span class="st">"Printable on a user type: {described(dear)}"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">gen_diff</span>(dear, cheap).cents == <span class="nm">400</span>, <span class="st">"Subtractable on a user type"</span>);
-  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">gen_negdiff</span>(dear, cheap).cents == -<span class="nm">400</span>, <span class="st">"Numeric + Subtractable on a user type"</span>);
 }
 <span class="kw">struct</span> <span class="en">Crate</span> { label: <span class="ty"><a href="stdlib-types.html">text</a></span>, kids: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Crate</span>&gt; }
 <span class="kw">fn</span> <span class="fn-call">children</span>(self: <span class="en">Crate</span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Crate</span>&gt; { self.kids }
@@ -186,7 +178,7 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <h2 id="two-type-variables-and-a-callback">Two type variables and a callback</h2>
 <p>A generic may declare several variables, and one no argument binds may be bound by a callback's RESULT: <code>map_grid</code> below turns a <code>Grid&lt;T&gt;</code> into a <code>Grid&lt;U&gt;</code>, and the short lambda's body decides what <code>U</code> is — <code>|t| { t.height }</code> makes it an <code>integer</code>.  A generic beside a concrete function of the same name is one overload set: the concrete <code>show</code> takes a <code>Grid&lt;Tile&gt;</code>, the bounded generic every other <code>Grid</code> it can print.</p>
 <pre><code><span class="kw">struct</span> <span class="en">Tile</span> { height: <span class="ty"><a href="stdlib-types.html">integer</a></span>, name: <span class="ty"><a href="stdlib-types.html">text</a></span> }
-<span class="kw">fn</span> <span class="fn-call"><a href="stdlib-field-iteration-support-types.html">to_text</a></span>(self: <span class="en">Tile</span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> { self.name }
+<span class="kw"><a href="stdlib-field-iteration-support-types.html">operator</a></span> <span class="fn-call">to_text</span>(self: <span class="en">Tile</span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> { self.name }
 <span class="kw">struct</span> <span class="en">Grid</span>&lt;<span class="en">T</span>&gt; { w: <span class="ty"><a href="stdlib-types.html">integer</a></span>, cells: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">T</span>&gt; }
 <span class="kw">fn</span> map_grid&lt;<span class="en">T</span>, <span class="en">U</span>&gt;(g: <span class="en">Grid</span>&lt;<span class="en">T</span>&gt;, f: <span class="kw">fn</span>(<span class="en">T</span>) -&gt; <span class="en">U</span>) -&gt; <span class="en">Grid</span>&lt;<span class="en">U</span>&gt; {
   out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">U</span>&gt; = [];
@@ -358,35 +350,32 @@ fn test_combined_bounds() {
 // ## Your own types under a bound
 // The built-in bounds are not only for built-in types, and this is what they are
 // for: a struct satisfies one by DEFINING the operation, with no declaration
-// that it does. The names are the operators' own, not the symbols:
+// that it does.  An operator is an `operator` method — written with the keyword
+// `operator` where a function has `fn` — named for what it does:
 //
-//   Ordered    fn OpLt(self: T, other: T) -&gt; boolean      (`&lt;`)
-//   Equatable  fn OpEq(self: T, other: T) -&gt; boolean      (`==`)
-//   Addable    fn OpAdd(self: T, other: T) -&gt; T           (`+`)
-//   Numeric    fn OpMul(self: T, other: T) -&gt; T           (`*`)
-//              fn OpMin(self: T) -&gt; T                     (unary `-`)
-//   Subtractable fn OpMin(self: T, other: T) -&gt; T        (binary `-`)
-//   Scalable   fn scale(self: T, factor: integer) -&gt; integer
-//   Printable  fn to_text(self: T) -&gt; text
-//   Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
+//   Ordered      operator compare(self: T, other: T) -&gt; Ordering   (`&lt;` `&lt;=` `&gt;` `&gt;=`)
+//   Addable      operator plus(self: T, other: T) -&gt; T            (`+`)
+//   Subtractable operator minus(self: T, other: T) -&gt; T           (binary `-`)
+//   Scalable     fn scale(self: T, factor: integer) -&gt; integer
+//   Printable    operator to_text(self: T) -&gt; text
+//   Walkable     fn children(self: T) -&gt; vector&lt;T&gt;
 //
-// `Equatable` is the exception: every type satisfies it, because `==` compares
-// what two values hold — a struct field by field.  Define `OpEq` only when
-// equality should mean something else.
+// `compare` answers `Less`, `Equal` or `Greater`; every built-in ordered type has
+// one, so `self.cents.compare(other.cents)` is the whole body for one field.
+// `Equatable` is met by every type, because `==` compares what two values hold —
+// a struct field by field.  `Numeric` (`*` and the unary `-`) is met by the
+// built-in numbers only: a type cannot define the unary `-` yet.
 //
-// The same definition serves the bare operator: once `Money` has `OpLt`, both
-// `a &lt; b` and `&lt;T: Ordered&gt;` work on it. Miss one and the error names it —
-// "'Money' does not satisfy interface 'Ordered': missing OpLt" — at the CALL
-// site, because that is where the concrete type is known.
+// The same definition serves the bare operator: once `Money` has `compare`, both
+// `a &lt; b` and `&lt;T: Ordered&gt;` work on it.  Miss one and the error names it —
+// "'Money' does not satisfy interface 'Ordered': missing `operator compare(self:
+// Money, other: Money) -&gt; Ordering`" — at the CALL site, because that is where
+// the concrete type is known.
 struct Money { cents: integer }
-fn OpLt(self: Money, other: Money) -&gt; boolean { self.cents &lt; other.cents }
-fn OpEq(self: Money, other: Money) -&gt; boolean { self.cents == other.cents }
-fn OpAdd(self: Money, other: Money) -&gt; Money { Money { cents: self.cents + other.cents } }
-fn to_text(self: Money) -&gt; text { "{self.cents}c" }
-// Both arities of `-`, so `Money` satisfies `Subtractable` and, with `OpMul`, `Numeric`.
-fn OpMin(self: Money, other: Money) -&gt; Money { Money { cents: self.cents - other.cents } }
-fn OpMin(self: Money) -&gt; Money { Money { cents: 0 - self.cents } }
-fn OpMul(self: Money, other: Money) -&gt; Money { Money { cents: self.cents * other.cents } }
+operator compare(self: Money, other: Money) -&gt; Ordering { self.cents.compare(other.cents) }
+operator plus(self: Money, other: Money) -&gt; Money { Money { cents: self.cents + other.cents } }
+operator minus(self: Money, other: Money) -&gt; Money { Money { cents: self.cents - other.cents } }
+operator to_text(self: Money) -&gt; text { "{self.cents}c" }
 fn test_user_type_bounds() {
   cheap = Money { cents: 300 };
   dear = Money { cents: 700 };
@@ -394,13 +383,12 @@ fn test_user_type_bounds() {
   assert(best.cents == 700, "Ordered on a user type: {best.cents}");
   assert(cheap &lt; dear, "…and the bare operator, from the same definition");
   assert(same(cheap, Money { cents: 300 }), "Equatable on a user type");
-  assert(same(Tile { height: 1, name: "t" }, Tile { height: 1, name: "t" }), "…and on one that defines no OpEq");
+  assert(same(Tile { height: 1, name: "t" }, Tile { height: 1, name: "t" }), "…and on one that defines no operator");
   assert(!same(Tile { height: 1, name: "t" }, Tile { height: 2, name: "t" }), "…comparing every field");
   total = clamped_add(cheap, cheap, Money { cents: 1000 });
   assert(total.cents == 600, "Addable on a user type: {total.cents}");
   assert(described(dear) == "700c", "Printable on a user type: {described(dear)}");
   assert(gen_diff(dear, cheap).cents == 400, "Subtractable on a user type");
-  assert(gen_negdiff(dear, cheap).cents == -400, "Numeric + Subtractable on a user type");
 }
 struct Crate { label: text, kids: vector&lt;Crate&gt; }
 fn children(self: Crate) -&gt; vector&lt;Crate&gt; { self.kids }
@@ -441,7 +429,7 @@ fn test_generic_struct() {
 // generic beside a concrete function of the same name is one overload set: the concrete
 // `show` takes a `Grid&lt;Tile&gt;`, the bounded generic every other `Grid` it can print.
 struct Tile { height: integer, name: text }
-fn to_text(self: Tile) -&gt; text { self.name }
+operator to_text(self: Tile) -&gt; text { self.name }
 struct Grid&lt;T&gt; { w: integer, cells: vector&lt;T&gt; }
 fn map_grid&lt;T, U&gt;(g: Grid&lt;T&gt;, f: fn(T) -&gt; U) -&gt; Grid&lt;U&gt; {
   out: vector&lt;U&gt; = [];

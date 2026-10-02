@@ -215,18 +215,23 @@ set of hole kinds.  Decided 2026-09-21 — [record](DESIGN_DECISIONS-history.md#
 
 ## C132 — operators are defined by the stdlib only; a user `fn Op…` is an ordinary function
 
-**Decision.** Outside `default/*.loft`, a function named `OpLt`, `OpAdd`, … binds no operator,
-is no operator template, and satisfies no operator interface (`Ordered`, `Addable`, …).  A user
-type keeps structural `==` (C91), its keyed collections, named methods, and the key-based stdlib
-functions this decision adds (`sort_by`, `min_by`, `max_by`, `sum_by` — loft#1833, not yet
-shipped).  **Why.** `fn Op<Name>` is the compiler's
+**Decision.** Outside `default/*.loft`, a function named `OpLt`, `OpAdd`, `OpIndex`, `OpConv…`, …
+binds no operator, is no operator template, and satisfies no operator interface (`Ordered`,
+`Addable`, …): it is an ordinary function, callable by its name, and its definition says so
+(a warning for `OpEq` / `OpNe` / `OpNot`, an advice otherwise).  An operator on a user type is
+the designed spelling this entry asked for — an `operator` method (`operator compare`, `plus`,
+`minus`, `times`, `to_<type>`, `next`, `to_text`; @PLN182, formal/operators.md) — and `[…]`
+stays the built-in collections'.  A user type keeps structural `==` (C91), its keyed
+collections and named methods; the key-based stdlib functions (`sort_by`, `min_by`, `max_by`,
+`sum_by`, @PLN182 Q11) are not shipped yet.  **Why.** `fn Op<Name>` is the compiler's
 operator table, designed for the stdlib: its names do not say the symbol (`OpMin` is `-`), three
 comparisons derive from `OpLt` unseen, and an operator that calls user code is a place the reader
 does not see what runs (CONTROL.md).  The user path produced six defects in one cycle.
 
-**Revisit when.** A user type needs operator syntax that a method and the `_by` functions cannot
-give it readably — and then with a designed spelling (`op <`), never `fn Op…`.  Decided
+**Revisit when.** A form a type cannot define yet (`/`, `%`, the unary `-`, `==`, `[…]`) is
+needed by a real program — through its reserved `operator` name, never `fn Op…`.  Decided
 2026-10-01 — [record](DESIGN_DECISIONS-history.md#c132--operators-are-defined-by-the-stdlib-only-a-user-fn-op-is-an-ordinary-function).
-**Guard:** `1826b-a-template-member-alone-does-not-satisfy-a-bound.loft` keeps the template half;
-the rest is guarded with its implementation (loft#1833).
-**Catalogue:** @F26 (bounded generics) · `formal/interfaces.md` (G-Sat) · loft#1833 (the work).
+**Guard:** `a-fn-named-for-an-operator-is-an-ordinary-function.loft` (no operator reaches a
+`fn Op…`), `1580` / `1581` (`==` / `!=` stay field-wise beside one), `996-opindex-composite-subscript.loft`
+(`[…]` refused), `1826b-a-template-member-alone-does-not-satisfy-a-bound.loft` (the template half).
+**Catalogue:** @F26 (bounded generics) · @F37 (operators) · `formal/operators.md` (Op-Std) · loft#1833 (the work).
