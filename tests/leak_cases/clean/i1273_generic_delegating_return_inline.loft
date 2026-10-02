@@ -1,5 +1,5 @@
-// loft#1273 — a bounded generic whose body DELEGATES (`{ a + b }` lowers to
-// `Call(n_OpAdd, …)`) retained one record per call when its result was consumed inline,
+// loft#1273 — a bounded generic whose body DELEGATES (`{ a + b }` lowers to a call of
+// the type's `operator plus`) retained one record per call when its result was consumed inline,
 // unbounded in a loop, while `r = add(…); r.v` was clean all along.
 //
 // `monomorph_return_is_fresh` reads the body's own return sites and cannot see a CALLEE's
@@ -9,9 +9,9 @@
 // The `idg` rows are the ones that must NOT be lifted: a generic handing back its ARGUMENT
 // gives the caller a record it already owns, and freeing a lift of that is a double free.
 struct M1273 { v: integer }
-fn OpAdd(self: M1273, other: M1273) -> M1273 { M1273 { v: self.v + other.v } }
-fn OpMul(self: M1273, other: M1273) -> M1273 { M1273 { v: self.v * other.v } }
-fn OpMin(self: M1273) -> M1273 { M1273 { v: -self.v } }
+operator plus(self: M1273, other: M1273) -> M1273 { M1273 { v: self.v + other.v } }
+operator times(self: M1273, other: M1273) -> M1273 { M1273 { v: self.v * other.v } }
+operator negate(self: M1273) -> M1273 { M1273 { v: -self.v } }
 
 fn g_add<T: Addable>(a: T, b: T) -> T { a + b }
 fn g_mul<T: Numeric>(a: T, b: T) -> T { a * b }

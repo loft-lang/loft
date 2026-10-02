@@ -4,7 +4,7 @@ enum Level {
   Fatal
 }
 
-struct Log {
+pub struct Log {
   messages: vector < text >,
   level: Level = Warning,
   errors: i32 = 0

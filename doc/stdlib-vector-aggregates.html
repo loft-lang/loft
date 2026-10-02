@@ -24,59 +24,75 @@
 <h1>Vector aggregates</h1>
 <article>
 <div class="item">
-<pre><code>pub fn min_of &lt; T: Ordered &gt; (v: const vector&lt;T&gt;) -&gt; T?</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> min_of &lt; <span class="en">T</span>: <span class="en"><a href="stdlib-interfaces.html">Ordered</a></span> &gt; (v: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">T</span>&gt;) -&gt; <span class="en">T</span>?</code></pre>
 <p>Smallest element in a vector, or null when the vector is empty (the type is honest about the empty case).  Works on any Ordered type (op &lt;).</p>
 </div>
 <div class="item">
-<pre><code>pub fn max_of &lt; T: Ordered &gt; (v: const vector&lt;T&gt;) -&gt; T?</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> max_of &lt; <span class="en">T</span>: <span class="en"><a href="stdlib-interfaces.html">Ordered</a></span> &gt; (v: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">T</span>&gt;) -&gt; <span class="en">T</span>?</code></pre>
 <p>Largest element in a vector, or null when the vector is empty (the type is honest about the empty case).  Works on any Ordered type (op &lt;).</p>
 </div>
 <div class="item">
-<pre><code>pub fn sum &lt; T: Addable &gt; (v: const vector&lt;T&gt;, init: T? = null) -&gt; T</code></pre>
-<p>Sum of vector elements.  Works on any Addable type.  `init` is the identity to start from; leave it out and the element type's own zero is used (0, 0.0). Example: sum([10, 20, 12], 0) == 42 Example: sum([10, 20, 12]) == 42</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> sum &lt; <span class="en">T</span>: <span class="en"><a href="stdlib-interfaces.html">Addable</a></span> &gt; (v: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">T</span>&gt;, init: <span class="en">T</span>? = <span class="kw">null</span>) -&gt; <span class="en">T</span></code></pre>
+<p>Sum of vector elements.  Works on any Addable type.  <code>init</code> is the identity to start from; leave it out and the element type's own zero is used (0, 0.0). Example: sum([10, 20, 12], 0) == 42 Example: sum([10, 20, 12]) == 42</p>
 </div>
 <div class="item">
-<pre><code>pub fn reverse &lt; T &gt; (self: vector&lt;T&gt;)</code></pre>
-<p>Reverse a vector's elements in place: `reverse(v)` or `v.reverse()`.  A method on `vector`, so a program may define its own `reverse` for its own types beside it.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> reverse &lt; <span class="en">T</span> &gt; (self: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">T</span>&gt;)</code></pre>
+<p>Reverse a vector's elements in place: <code>reverse(v)</code> or <code>v.reverse()</code>.  A method on <code>vector</code>, so a program may define its own <code>reverse</code> for its own types beside it.</p>
 </div>
 <div class="item">
-<pre><code>pub fn reserve &lt; T &gt; (self: vector&lt;T&gt;, n: integer)</code></pre>
-<p>Give a vector room for `n` elements, so filling it does not grow it step by step: `reserve(v, n)` or `v.reserve(n)`.  Changes neither `len(v)` nor what is in it, and a count the vector already covers does nothing.  A `hash` takes `reserve(h, n)` too.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> reserve &lt; <span class="en">T</span> &gt; (self: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">T</span>&gt;, n: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
+<p>Give a vector room for <code>n</code> elements, so filling it does not grow it step by step: <code>reserve(v, n)</code> or <code>v.reserve(n)</code>.  Changes neither <code>len(v)</code> nor what is in it, and a count the vector already covers does nothing.  A <code>hash</code> takes <code>reserve(h, n)</code> too.</p>
 </div>
 <div class="item">
-<pre><code>pub fn insert &lt; T &gt; (self: vector&lt;T&gt;, index: integer, elem: T)</code></pre>
-<p>Insert `elem` at `index`, moving the elements from there one place up: `insert(v, i, x)` or `v.insert(i, x)`.  Both arguments are values before the vector grows, so an element read from the vector itself (`v.insert(0, v[1])`) is the one it was.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> insert &lt; <span class="en">T</span> &gt; (self: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">T</span>&gt;, <span class="ty">index</span>: <span class="ty"><a href="stdlib-types.html">integer</a></span>, elem: <span class="en">T</span>)</code></pre>
+<p>Insert <code>elem</code> at <code>index</code>, moving the elements from there one place up: <code>insert(v, i, x)</code> or <code>v.insert(i, x)</code>.  Both arguments are values before the vector grows, so an element read from the vector itself (<code>v.insert(0, v[1])</code>) is the one it was.</p>
 </div>
 <div class="item">
-<pre><code>pub fn sort &lt; T: Ordered &gt; (self: vector&lt;T&gt;)</code></pre>
-<p>Sort a vector in place, ascending: `sort(v)` or `v.sort()`.  Takes any element with a `&lt;` (`Ordered`) — a struct defining `op &lt;` sorts by it — and is stable: elements that compare equal keep their order.  A null element sorts first.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> sort &lt; <span class="en">T</span>: <span class="en"><a href="stdlib-interfaces.html">Ordered</a></span> &gt; (self: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">T</span>&gt;)</code></pre>
+<p>Sort a vector in place, ascending: <code>sort(v)</code> or <code>v.sort()</code>.  Takes any element with a <code>&lt;</code> (<code>Ordered</code>) — a struct defining <code>op &lt;</code> sorts by it — and is stable: elements that compare equal keep their order.  A null element sorts first.</p>
 </div>
 <div class="item">
-<pre><code>pub fn filter &lt; T &gt; (self: vector&lt;T&gt;, f: fn(T) -&gt; boolean) -&gt; vector&lt;T&gt;</code></pre>
-<p>Keep the elements `f` answers true for, in order: `filter(v, f)` or `v.filter(f)`.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> sort_by &lt; <span class="en">T</span>, <span class="en">K</span>: <span class="en"><a href="stdlib-interfaces.html">Ordered</a></span> &gt; (self: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">T</span>&gt;, key: <span class="kw">fn</span>(<span class="en">T</span>) -&gt; <span class="en">K</span>)</code></pre>
+<p>Sort a vector in place by a key, ascending: <code>v.sort_by(fn(d: Date) -&gt; integer { d.ms })</code>. The key is any <code>Ordered</code> value — a number or a <code>text</code> — so this is how a struct sorts (C132).  Stable, like <code>sort</code>: elements with equal keys keep their order.  <code>key</code> is called once per element.</p>
 </div>
 <div class="item">
-<pre><code>pub fn map &lt; T, U &gt; (self: vector&lt;T&gt;, f: fn(T) -&gt; U) -&gt; vector&lt;U&gt;</code></pre>
-<p>What `f` answers for each element, in order: `map(v, f)` or `v.map(f)` — the result's element is what `f` returns, so a map can change the element type.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> min_by &lt; <span class="en">T</span>, <span class="en">K</span>: <span class="en"><a href="stdlib-interfaces.html">Ordered</a></span> &gt; (self: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">T</span>&gt;, key: <span class="kw">fn</span>(<span class="en">T</span>) -&gt; <span class="en">K</span>) -&gt; <span class="en">T</span>?</code></pre>
+<p>The element with the smallest key, or null when the vector is empty: <code>v.min_by(fn(d: Date) -&gt; integer { d.ms })</code>.  Of several with that key, the FIRST.</p>
 </div>
 <div class="item">
-<pre><code>pub fn reduce &lt; T, U &gt; (self: vector&lt;T&gt;, init: U, f: fn(U, T) -&gt; U) -&gt; U</code></pre>
-<p>Fold the elements into one value, left to right, from `init`: `reduce(v, init, f)` or `v.reduce(init, f)`.  Any accumulator: a number, a `text`, a struct, any collection.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> max_by &lt; <span class="en">T</span>, <span class="en">K</span>: <span class="en"><a href="stdlib-interfaces.html">Ordered</a></span> &gt; (self: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">T</span>&gt;, key: <span class="kw">fn</span>(<span class="en">T</span>) -&gt; <span class="en">K</span>) -&gt; <span class="en">T</span>?</code></pre>
+<p>The element with the largest key, or null when the vector is empty: <code>v.max_by(fn(d: Date) -&gt; integer { d.ms })</code>.  Of several with that key, the FIRST.</p>
 </div>
 <div class="item">
-<pre><code>pub fn sum_of(v: const vector&lt;integer&gt;) -&gt; integer</code></pre>
-<p>Sum of all integer elements. Returns 0 for an empty vector. Superseded by the general `sum(v, init)`; kept as a shim over it (the old form keeps working). `sum_of(v)` == `sum(v, 0)`.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> sum_by &lt; <span class="en">T</span>, <span class="en">K</span>: <span class="en"><a href="stdlib-interfaces.html">Addable</a></span> &gt; (self: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">T</span>&gt;, key: <span class="kw">fn</span>(<span class="en">T</span>) -&gt; <span class="en">K</span>, init: <span class="en">K</span>? = <span class="kw">null</span>) -&gt; <span class="en">K</span></code></pre>
+<p>The sum of a key over the elements: <code>v.sum_by(fn(o: Order) -&gt; float { o.price })</code>.  The key is any <code>Addable</code> value; <code>init</code> is the identity to start from, and left out it is the key type's own zero (0, 0.0), so an empty vector sums to it.</p>
 </div>
 <div class="item">
-<pre><code>pub interface Walkable {
-  fn children(self: Self) -&gt; vector&lt;Self&gt;
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> filter &lt; <span class="en">T</span> &gt; (self: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">T</span>&gt;, f: <span class="kw">fn</span>(<span class="en">T</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">T</span>&gt;</code></pre>
+<p>Keep the elements <code>f</code> answers true for, in order: <code>filter(v, f)</code> or <code>v.filter(f)</code>.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> map &lt; <span class="en">T</span>, <span class="en">U</span> &gt; (self: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">T</span>&gt;, f: <span class="kw">fn</span>(<span class="en">T</span>) -&gt; <span class="en">U</span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">U</span>&gt;</code></pre>
+<p>What <code>f</code> answers for each element, in order: <code>map(v, f)</code> or <code>v.map(f)</code> — the result's element is what <code>f</code> returns, so a map can change the element type.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> reduce &lt; <span class="en">T</span>, <span class="en">U</span> &gt; (self: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">T</span>&gt;, init: <span class="en">U</span>, f: <span class="kw">fn</span>(<span class="en">U</span>, <span class="en">T</span>) -&gt; <span class="en">U</span>) -&gt; <span class="en">U</span></code></pre>
+<p>Fold the elements into one value, left to right, from <code>init</code>: <code>reduce(v, init, f)</code> or <code>v.reduce(init, f)</code>.  Any accumulator: a number, a <code>text</code>, a struct, any collection.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-vector-aggregates.html">sum_of</a></span>(v: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<p>Sum of all integer elements. Returns 0 for an empty vector. Superseded by the general <code>sum(v, init)</code>; kept as a shim over it (the old form keeps working). <code>sum_of(v)</code> == <code>sum(v, 0)</code>.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> interface <span class="en"><a href="stdlib-vector-aggregates.html">Walkable</a></span> {
+  <span class="kw">fn</span> <span class="fn-call">children</span>(self: <span class="en">Self</span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Self</span>&gt;
 }</code></pre>
-<p>A type that can be walked as a tree.  Declaring `fn children(self: T) -&gt; vector&lt;T&gt;` is the whole contract — that bare function is what makes `T` walkable, with nothing to register and no base type to inherit from.  `tree_walk` is what consumes it.</p>
+<p>A type that can be walked as a tree.  Declaring <code>fn children(self: T) -&gt; vector&lt;T&gt;</code> is the whole contract — that bare function is what makes <code>T</code> walkable, with nothing to register and no base type to inherit from.  <code>tree_walk</code> is what consumes it.</p>
 </div>
 <div class="item">
-<pre><code>pub fn tree_walk &lt; T: Walkable &gt; (wk_root: T, cap: integer) -&gt; vector&lt;T&gt;</code></pre>
-<p>Every node reachable from `wk_root` in breadth-first order: the root, then its children, then theirs.  `T` is any type declaring `fn children(self: T) -&gt; vector&lt;T&gt;` — writing that bare function is what makes a type `Walkable`, with nothing to register.</p>
-<p>`cap` bounds the ANSWER, not just the effort: at most `cap` nodes come back (the root alone when `cap` is 0 or 1) and the walk stops there.  That bound is what makes this total on a structure that has a cycle or no end, so pass a count you would accept as an answer rather than a number picked to be large.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> tree_walk &lt; <span class="en">T</span>: <span class="en"><a href="stdlib-vector-aggregates.html">Walkable</a></span> &gt; (wk_root: <span class="en">T</span>, cap: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">T</span>&gt;</code></pre>
+<p>Every node reachable from <code>wk_root</code> in breadth-first order: the root, then its children, then theirs.  <code>T</code> is any type declaring <code>fn children(self: T) -&gt; vector&lt;T&gt;</code> — writing that bare function is what makes a type <code>Walkable</code>, with nothing to register.</p>
+<p><code>cap</code> bounds the ANSWER, not just the effort: at most <code>cap</code> nodes come back (the root alone when <code>cap</code> is 0 or 1) and the walk stops there.  That bound is what makes this total on a structure that has a cycle or no end, so pass a count you would accept as an answer rather than a number picked to be large.</p>
 <p>Nodes are not de-duplicated — the walk carries no visited set, so a node reached by two parents is returned twice.</p>
 </div>
 

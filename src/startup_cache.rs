@@ -137,6 +137,12 @@ struct ManifestState {
     /// replay the marks point at `compile.rs`'s "native function not loaded" stub, so a placed
     /// library works on its first run and panics on its second.
     placed_libs: Vec<(String, String, String)>,
+    /// The `[c] libs` / `[c] optional-libs` declarations (`Data::c_libraries`).  The bundle
+    /// does not serialize them, and both backends read them after the parse: the interpreter
+    /// opens each required library before `main`, and `--native` puts each on the link line.
+    /// Without the replay a C-binding program runs on its first launch and fails on its
+    /// second, with "symbol not found" or an undefined symbol at link time.
+    c_libraries: Vec<crate::data::CLibrary>,
     /// loft#1684 — the auto-native cdylib each `use`d library was built into (N3), by
     /// path.  The bundle already carries the functions' native MARKS (it is written after
     /// `probe_and_mark_exports`), so a warm load needs only the artifacts to dlopen; each
@@ -174,7 +180,8 @@ impl ManifestState {
     /// `[library] native`, placement or `[wasm.bridge]` entry.  What the source-keyed
     /// native fast path (@PLN166 B3) requires: each of those is something a warm load
     /// RE-RESOLVES (a cdylib's freshness, a worker to start), and a path that runs no
-    /// parse-time code cannot.
+    /// parse-time code cannot.  A `[c]` declaration is not among them: the binary the fast
+    /// path reuses was linked against it, and nothing about it is re-resolved.
     fn registers_only_loft_sources(&self) -> bool {
         self.native_lib_regs.is_empty()
             && self.auto_native_libs.is_empty()
@@ -261,6 +268,20 @@ fn manifest_state(manifest: &std::path::Path, stdlib_key: &str) -> Option<Manife
         placed_libs.push((name, spelling, pkg_dir));
         next = lines.next();
     }
+    // Optional `clib <0|1> <name>\t<pkg_dir>` headers: one per `[c]` library, the flag
+    // saying `optional-libs`.  A TAB separates the name from the package dir, because a dir
+    // may contain spaces and a library shipped beside its package is named by a path.
+    let mut c_libraries = Vec::new();
+    while let Some(rest) = next.and_then(|l| l.strip_prefix("clib ")) {
+        let (flag, rest) = rest.split_once(' ')?;
+        let (name, pkg_dir) = rest.split_once('\t')?;
+        c_libraries.push(crate::data::CLibrary {
+            name: name.to_string(),
+            pkg_dir: pkg_dir.to_string(),
+            optional: flag == "1",
+        });
+        next = lines.next();
+    }
     // `actx <context>`: required — a bundle that cannot say which native-library context
     // marked it cannot be matched against this run's.  Then optional `alib <path>` lines, one
     // per auto-native cdylib; a path may contain spaces, so the whole remainder is the path.
@@ -327,6 +348,7 @@ fn manifest_state(manifest: &std::path::Path, stdlib_key: &str) -> Option<Manife
         native_lib_regs,
         native_crate_regs,
         placed_libs,
+        c_libraries,
         auto_native_libs,
         native_ctx,
         diagnostics,
@@ -507,6 +529,8 @@ pub fn warm_load_program(
         p.pending_placed_libs
             .push((name.clone(), pkg_dir.clone(), placement));
     }
+    // The `[c]` declarations: both backends read them from `Data` after the parse.
+    p.data.c_libraries = state.c_libraries;
     // Replay what the cold parse said.  The parser did not run, so these are the only
     // diagnostics this run will have; `main` renders them through the same path a cold run
     // uses, so `LOFT_ERRORS`, colour and the warnings-off filter all still apply.
@@ -585,6 +609,16 @@ pub fn save_program(
     // install, so it is consumed before the bundle is written.
     for (name, pkg_dir, placement) in placed_libs {
         let _ = writeln!(lines, "plib {name} {} {pkg_dir}", placement.spelling());
+    }
+    // The `[c]` library declarations, read back into `Data::c_libraries` by a warm load.
+    for lib in &p.data.c_libraries {
+        let _ = writeln!(
+            lines,
+            "clib {} {}\t{}",
+            u8::from(lib.optional),
+            lib.name,
+            lib.pkg_dir
+        );
     }
     // loft#1684 — the native-library context, then each auto-native cdylib (see
     // `ManifestState::auto_native_libs`).
@@ -807,7 +841,7 @@ mod ncrate_manifest_tests {
         let hash = crate::cache::file_hash(&src_str).expect("hash source");
         let manifest = dir.join("m.manifest");
         let content = format!(
-            "sig {}\nstdk k\nnlib loft_foo /pkgs/foo\nncrate loft-foo /pkgs/foo\nactx c\nalib /pkgs/foo/native-auto/lib foo.so\n{} {}\n",
+            "sig {}\nstdk k\nnlib loft_foo /pkgs/foo\nncrate loft-foo /pkgs/foo\nclib 0 libpq.so.5\t/pkgs/my db\nclib 1 lib/own.so\t/pkgs/foo\nactx c\nalib /pkgs/foo/native-auto/lib foo.so\n{} {}\n",
             crate::cache::build_signature(),
             hex32(&hash),
             src_str,
@@ -824,6 +858,22 @@ mod ncrate_manifest_tests {
             state.native_lib_regs,
             vec![("loft_foo".to_string(), "/pkgs/foo".to_string())],
             "the sibling nlib header still parses beside ncrate"
+        );
+        assert_eq!(
+            state.c_libraries,
+            vec![
+                crate::data::CLibrary {
+                    name: "libpq.so.5".to_string(),
+                    pkg_dir: "/pkgs/my db".to_string(),
+                    optional: false,
+                },
+                crate::data::CLibrary {
+                    name: "lib/own.so".to_string(),
+                    pkg_dir: "/pkgs/foo".to_string(),
+                    optional: true,
+                },
+            ],
+            "each clib header round-trips, a package dir keeping its space"
         );
         assert_eq!(state.native_ctx, "c", "the actx header round-trips");
         assert_eq!(

@@ -1,0 +1,12 @@
+--- a/src/parser/definitions.rs	2026-10-02 08:13:31.615215156 +0200
++++ b/src/parser/definitions.rs	2026-10-02 08:13:31.625357616 +0200
+@@ -159,6 +159,9 @@
+     /// container whose content can change under a key, so the fallback answers it; a type
+     /// still `Unknown` in pass 2 has its own report and is not judged here.
+     fn mutable_key_part(&self, tp: &Type) -> Option<String> {
++        if !matches!(tp, Type::Unknown(_)) {
++            return Some(self.key_type_name(tp));
++        }
+         match tp {
+             Type::Optional(inner) => self.mutable_key_part(inner),
+             Type::Integer(_)

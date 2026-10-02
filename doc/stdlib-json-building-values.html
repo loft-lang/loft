@@ -24,36 +24,36 @@
 <h1>JSON: building values</h1>
 <article>
 <div class="item">
-<pre><code>pub fn to_json(self: const JsonValue) -&gt; text</code></pre>
-<p>Render a JsonValue to canonical RFC 8259 JSON text.  Every variant serialises; `JArray` / `JObject` recurse through their children (full tree serialisation, nested containers walk naturally).  Strings escape `&quot;`, `\\`, and ASCII control bytes; UTF-8 passes through verbatim. Non-finite numbers render as `null`.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-json-building-values.html">to_json</a></span>(self: const <span class="en"><a href="stdlib-json.html">JsonValue</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span></code></pre>
+<p>Render a JsonValue to canonical RFC 8259 JSON text.  Every variant serialises; <code>JArray</code> / <code>JObject</code> recurse through their children (full tree serialisation, nested containers walk naturally).  Strings escape <code>&quot;</code>, <code>\\</code>, and ASCII control bytes; UTF-8 passes through verbatim. Non-finite numbers render as <code>null</code>.</p>
 </div>
 <div class="item">
-<pre><code>pub fn to_json_pretty(self: const JsonValue) -&gt; text</code></pre>
-<p>`to_json_pretty` produces 2-space indented, one-element-per-line output for non-empty `JArray` / `JObject` containers.  Empty containers render `[]` / `{}` (no newline padding).  Primitives are byte-identical to `to_json` (no nested structure to indent).  After object keys the colon is followed by a single space (`&quot;k&quot;: v`). Useful for golden-file tests and log output.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-json-building-values.html">to_json_pretty</a></span>(self: const <span class="en"><a href="stdlib-json.html">JsonValue</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span></code></pre>
+<p><code>to_json_pretty</code> produces 2-space indented, one-element-per-line output for non-empty <code>JArray</code> / <code>JObject</code> containers.  Empty containers render <code>[]</code> / <code>{}</code> (no newline padding).  Primitives are byte-identical to <code>to_json</code> (no nested structure to indent).  After object keys the colon is followed by a single space (<code>&quot;k&quot;: v</code>). Useful for golden-file tests and log output.</p>
 </div>
 <div class="item">
-<pre><code>pub fn json_null() -&gt; JsonValue</code></pre>
-<p>Build a JsonValue set to the `JNull` variant. Useful in test fixtures and reply-construction code that needs a known-null JsonValue without going through `json_parse(&quot;null&quot;)`.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-json-building-values.html">json_null</a></span>() -&gt; <span class="en"><a href="stdlib-json.html">JsonValue</a></span></code></pre>
+<p>Build a JsonValue set to the <code>JNull</code> variant. Useful in test fixtures and reply-construction code that needs a known-null JsonValue without going through <code>json_parse(&quot;null&quot;)</code>.</p>
 </div>
 <div class="item">
-<pre><code>pub fn json_bool(v: boolean) -&gt; JsonValue</code></pre>
-<p>Build a JsonValue set to the `JBool` variant carrying the supplied boolean payload.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-json-building-values.html">json_bool</a></span>(v: <span class="ty"><a href="stdlib-types.html">boolean</a></span>) -&gt; <span class="en"><a href="stdlib-json.html">JsonValue</a></span></code></pre>
+<p>Build a JsonValue set to the <code>JBool</code> variant carrying the supplied boolean payload.</p>
 </div>
 <div class="item">
-<pre><code>pub fn json_number(v: float?) -&gt; JsonValue</code></pre>
-<p>Build a JsonValue set to the `JNumber` variant carrying the supplied float payload.  Non-finite inputs (float null = NaN, or ±Inf) produce `JNull` with a diagnostic in `json_errors()` — mirrors the RFC 8259 constraint that JSON numbers must be finite.  The parameter is `float?` because handling a null/NaN input IS its contract (→ `JNull`); a finite `float` passes as a non-null value into the nullable slot as usual.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-json-building-values.html">json_number</a></span>(v: <span class="ty"><a href="stdlib-types.html">float</a></span>?) -&gt; <span class="en"><a href="stdlib-json.html">JsonValue</a></span></code></pre>
+<p>Build a JsonValue set to the <code>JNumber</code> variant carrying the supplied float payload.  Non-finite inputs (float null = NaN, or ±Inf) produce <code>JNull</code> with a diagnostic in <code>json_errors()</code> — mirrors the RFC 8259 constraint that JSON numbers must be finite.  The parameter is <code>float?</code> because handling a null/NaN input IS its contract (→ <code>JNull</code>); a finite <code>float</code> passes as a non-null value into the nullable slot as usual.</p>
 </div>
 <div class="item">
-<pre><code>pub fn json_string(v: text) -&gt; JsonValue</code></pre>
-<p>Build a JsonValue set to the `JString` variant carrying the supplied text payload.  The text is copied into the JsonValue's own store, so the returned value owns the string independently of the argument's lifetime.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-json-building-values.html">json_string</a></span>(v: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="en"><a href="stdlib-json.html">JsonValue</a></span></code></pre>
+<p>Build a JsonValue set to the <code>JString</code> variant carrying the supplied text payload.  The text is copied into the JsonValue's own store, so the returned value owns the string independently of the argument's lifetime.</p>
 </div>
 <div class="item">
-<pre><code>pub fn json_array(items: const vector&lt;JsonValue&gt;) -&gt; JsonValue</code></pre>
-<p>Build a JsonValue set to the `JArray` variant carrying the supplied items.  Each element is deep-copied into the new tree's arena via the shared `dbref_to_parsed` walker, so nested containers and arena-origin subtrees (e.g. a captured `field()` result) embed correctly.  Empty input produces a real empty JArray.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-json-building-values.html">json_array</a></span>(items: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en"><a href="stdlib-json.html">JsonValue</a></span>&gt;) -&gt; <span class="en"><a href="stdlib-json.html">JsonValue</a></span></code></pre>
+<p>Build a JsonValue set to the <code>JArray</code> variant carrying the supplied items.  Each element is deep-copied into the new tree's arena via the shared <code>dbref_to_parsed</code> walker, so nested containers and arena-origin subtrees (e.g. a captured <code>field()</code> result) embed correctly.  Empty input produces a real empty JArray.</p>
 </div>
 <div class="item">
-<pre><code>pub fn json_object(fields: const vector&lt;JsonField&gt;) -&gt; JsonValue</code></pre>
-<p>Build a JsonValue set to the `JObject` variant carrying the supplied fields.  Each field's value deep-copies via the same `dbref_to_parsed` walker as `json_array`, so a JObject can carry captured-subtree JArray / JObject values.  Empty input produces a real empty JObject.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-json-building-values.html">json_object</a></span>(fields: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en"><a href="stdlib-json.html">JsonField</a></span>&gt;) -&gt; <span class="en"><a href="stdlib-json.html">JsonValue</a></span></code></pre>
+<p>Build a JsonValue set to the <code>JObject</code> variant carrying the supplied fields.  Each field's value deep-copies via the same <code>dbref_to_parsed</code> walker as <code>json_array</code>, so a JObject can carry captured-subtree JArray / JObject values.  Empty input produces a real empty JObject.</p>
 </div>
 
   </article>

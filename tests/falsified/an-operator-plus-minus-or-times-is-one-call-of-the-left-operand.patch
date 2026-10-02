@@ -1,0 +1,12 @@
+diff --git a/src/parser/operators.rs b/src/parser/operators.rs
+--- a/src/parser/operators.rs
++++ b/src/parser/operators.rs
+@@ -1387,7 +1387,7 @@
+     /// The `operator` form an arithmetic symbol backs, for the forms built so far.
+     fn arith_form(op: &str) -> Option<&'static str> {
+         match op {
+-            "+" => Some("plus"),
++            "+" => Some("minus"),
+             "-" => Some("minus"),
+             "*" => Some("times"),
+             "/" => Some("divided_by"),

@@ -347,7 +347,7 @@ pub fn ok(self: AnyRows) -> boolean {
   }
 }
 
-pub fn next(self: AnyRows) -> boolean {
+pub operator next(self: AnyRows) -> boolean {
   match self {
     RowsSqlite { rs } => rs.next(),
     RowsPostgres { rp } => rp.next(),

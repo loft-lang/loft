@@ -115,7 +115,15 @@ fn admitted(data: &Data, d_nr: u32, ops: &Ops) -> Option<(Vec<Plan>, u16, Value)
     let function = def.variables();
     let code = def.code();
     let mut cands = Vec::new();
-    find_mints(data, function, code, ops, &mut Vec::new(), &mut cands);
+    find_mints(
+        data,
+        function,
+        code,
+        ops,
+        false,
+        &mut Vec::new(),
+        &mut cands,
+    );
     if cands.is_empty() {
         return None;
     }
@@ -185,32 +193,40 @@ fn admitted(data: &Data, d_nr: u32, ops: &Ops) -> Option<(Vec<Plan>, u16, Value)
 /// Every `OpDatabase(__vdb_N, wtp)` statement immediately followed, in the same statement
 /// list, by `v = OpGetField(__vdb_N, 0, _)` for a local `v` whose type depends on the
 /// wrapper alone: `(vdb, v, wtp, path of the mint)`.
+///
+/// A mint inside a LOOP is no candidate: it runs once per iteration, and `(R-ExitVector)`
+/// asks for a wrapper minted ONCE.  A per-iteration local is released at each re-bind as
+/// the owner of a store — claimed in the return buffer's store instead, that release frees
+/// the caller's buffer while the result is being built in it (loft#1846).  Such a local is
+/// loop-scoped, so it can never reach the exit literal either: declining it costs nothing.
 fn find_mints(
     data: &Data,
     function: &Function,
     node: &Value,
     ops: &Ops,
+    in_loop: bool,
     path: &mut Path,
     out: &mut Vec<(u16, u16, u16, Path)>,
 ) {
+    let in_loop = in_loop || matches!(node, Value::Loop(_));
     let stmts: &[Value] = match node {
         Value::Block(bl) | Value::Loop(bl) => &bl.operators,
         Value::Insert(list) => list,
         Value::Span(b) => {
-            find_mints(data, function, &b.1, ops, path, out);
+            find_mints(data, function, &b.1, ops, in_loop, path, out);
             return;
         }
         Value::If(c, t, e) => {
             for (i, child) in [c, t, e].into_iter().enumerate() {
                 path.push(i);
-                find_mints(data, function, child, ops, path, out);
+                find_mints(data, function, child, ops, in_loop, path, out);
                 path.pop();
             }
             return;
         }
         Value::Set(_, x) | Value::Return(x) | Value::Drop(x) => {
             path.push(0);
-            find_mints(data, function, x, ops, path, out);
+            find_mints(data, function, x, ops, in_loop, path, out);
             path.pop();
             return;
         }
@@ -236,7 +252,14 @@ fn find_mints(
             // a `vector<T>` local (hex_shape's `wall_chain_walk`), and a release that walks
             // that wrapper by its type reads every integer as a vector handle.  A store of
             // its own never walks, so the mismatch was silent until now; here it declines.
-            if wrapper_holds(data, function, *vdb, *v) {
+            if in_loop {
+                if crate::keys::trace_place() {
+                    eprintln!(
+                        "[exit-vector] v={}: DECLINED — the wrapper is minted inside a loop, once per iteration",
+                        function.name(*v)
+                    );
+                }
+            } else if wrapper_holds(data, function, *vdb, *v) {
                 out.push((*vdb, *v, wtp, path.clone()));
             } else if crate::keys::trace_place() {
                 eprintln!(
@@ -246,7 +269,7 @@ fn find_mints(
                 );
             }
         }
-        find_mints(data, function, stmt, ops, path, out);
+        find_mints(data, function, stmt, ops, in_loop, path, out);
         path.pop();
     }
 }

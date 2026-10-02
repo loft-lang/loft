@@ -416,6 +416,8 @@ fn print_help() {
     println!(
         "                                                 — build what a run will need, first"
     );
+    println!("                                a rerun reuses its parse, a dev build included;");
+    println!("                                LOFT_NO_CACHE=1 parses fresh and caches nothing");
     println!("  generate [path]               generate Rust stubs for #native declarations");
     println!("                                writes native/src/generated.rs in the package");
     println!("  package [path]                build a publishable <pkg>-<version>.tar.gz");
@@ -10367,9 +10369,9 @@ fn main() {
         //
         // Build via rustc directly, not `cargo build`: cargo would
         // produce a SECOND copy of `loft` (with a different
-        // StableCrateId than the top-level
-        // `target/wasm32-unknown-unknown/release/libloft.rlib` the
-        // standalone-binary `--extern loft=…` references), and rustc
+        // StableCrateId than the `--html` runtime rlib in
+        // `html_runtime_dir` that the standalone-binary `--extern
+        // loft=…` references), and rustc
         // would refuse with "expected DbRef, found DbRef" (two distinct
         // types from two builds of the same source).  By invoking
         // rustc with the SAME `--extern loft=…` + deps search path

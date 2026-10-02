@@ -37,8 +37,9 @@ documentation and tooling above code.  Everything needed to work on loft is in t
 ## Branches
 
 The rules are [CLAUDE.md § Branch policy](../../CLAUDE.md): never commit on `main`; push to
-the feature branch once a change settles; never create a branch or open or merge a PR without
-an explicit ask; branch from the TIP of unmerged in-flight work, not from `main`; and verify
+the feature branch once a change settles; never create a branch or open a loft PR without
+an explicit ask, while a MERGE never waits for one (arm auto-merge: the required checks decide)
+and a `loft-libs-*` PR needs no ask at all; branch from the TIP of unmerged in-flight work, not from `main`; and verify
 the head is current on `origin/main` before opening a PR.  Branch names follow its rule 5: a
 general `<host>-work`, the monthly release branch `YYYY-MM`, and a specific name only for a
 substantial plan.

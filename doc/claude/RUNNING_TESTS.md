@@ -38,7 +38,7 @@ one does nothing for the other two:
 | rlib | linked by | cure |
 |---|---|---|
 | `target/release/libloft.rlib` | `--native`, the cdylib tests | `cargo build --release --lib` |
-| `target/wasm32-unknown-unknown/release/libloft.rlib` | `--html` | `cargo build --release --target wasm32-unknown-unknown --lib --no-default-features --features random` |
+| `target/loft/html/wasm32-unknown-unknown/release/libloft.rlib` | `--html` | `loft cache warm`, or `cargo build --release --target wasm32-unknown-unknown --lib --no-default-features --features random --target-dir target/loft/html` |
 | `target/wasm32-wasip2/release/libloft.rlib` | the wasm library suite | `cargo build --release --target wasm32-wasip2 --lib --no-default-features --features random` |
 
 A stale rlib does not fail like a compile error.  It surfaces minutes into a run as a handful of
@@ -494,6 +494,11 @@ make iter TEST=q3_to_json TFILE=issues                        # the same, on the
 ten times faster than release's; pass `PROFILE=release` for timing-sensitive tests.  It clears
 `tests/dumps/` and `tests/generated/` first, as `make test` does.  Running a whole test binary
 (`cargo test --release --test issues`, hundreds of tests) on every edit is the slow shape.
+
+A test that runs the `loft` binary reuses the program's cached parse on a rerun, a dev build
+included; a rebuild invalidates it.  A test that must see a cold parse — it times, counts or
+traces the parse — sets **`LOFT_NO_CACHE=1`** on its command
+([STARTUP_CACHE.md](STARTUP_CACHE.md#default-on-behaviour-and-the-off-switch)).
 
 ### Don't stack duplicate cargo invocations
 

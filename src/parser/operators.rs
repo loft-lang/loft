@@ -1163,6 +1163,358 @@ impl Parser {
         )
     }
 
+    /// `@FR-Op-Back` (@PLN182) — the form an `operator` definition backs, the symbol it is
+    /// written with, and the stdlib-operator name a type may still answer it through.
+    const OPERATOR_FORMS: &'static [(&'static str, &'static str, &'static str)] = &[
+        ("compare", "<", "OpLt"),
+        ("plus", "+", "OpAdd"),
+        ("minus", "-", "OpMin"),
+        ("times", "*", "OpMul"),
+        ("divided_by", "/", "OpDiv"),
+        ("remainder", "%", "OpRem"),
+    ];
+
+    /// The `operator compare` an order form on these operand types reaches
+    /// ([`Self::operator_member`]).
+    pub(crate) fn operator_compare(&mut self, types: &[Type]) -> Option<u32> {
+        self.operator_member("compare", types)
+    }
+
+    /// `@FR-Op-Back` (@PLN182) — the `operator <form>` a binary form on these operand types
+    /// reaches: the LEFT operand's member of that name, chosen among its overloads by the
+    /// right operand's type exactly as the method call `a.<form>(b)` would.  A plain `fn` of
+    /// the name is an ordinary method and reaches nothing here (`@FR-Op-Mark`): where the type
+    /// has one and no other way to answer the form, the refusal names it and the answer is
+    /// `Some(u32::MAX)`, so the caller does not add a second, vaguer one.
+    pub(crate) fn operator_member(&mut self, form: &str, types: &[Type]) -> Option<u32> {
+        // `@FR-Op-Std` — the stdlib's own bodies reach the stdlib's operator definitions, never
+        // a user's: nothing to look up while `default/` is parsed (each lookup builds a key).
+        if self.default || types.len() != 2 || types.iter().any(Type::is_unknown) {
+            return None;
+        }
+        // Only a program's struct or enum on the left has operator methods: asked first,
+        // without allocating, since every `<` and `+` in a program comes through here.
+        // A struct literal's type carries the `Rewritten` marker (built in place); the operand
+        // is the type under it, or `M { c: 5 } < b` misses `M`'s method.
+        if !matches!(
+            types[0].peel_rewritten().base(),
+            Type::Reference(_, _) | Type::Enum(_, _, _)
+        ) {
+            return None;
+        }
+        let peeled: Vec<Type> = types.iter().map(Type::unrewritten).collect();
+        let types = &peeled[..];
+        let (Type::Reference(left, _) | Type::Enum(left, _, _)) = types[0].base() else {
+            return None;
+        };
+        let left = *left;
+        // The left type's own key (`t_<len><T>_<form>`): its one definition, or — a type with
+        // several of the name — the overload set under the bare name, chosen among by
+        // `@FR-Disp-Select` as `a.<form>(b)` would choose.
+        let key = self.data.find_op_method(u16::MAX, form, &types[0]);
+        if key == u32::MAX {
+            return None;
+        }
+        let routed = self.data.routed_types(types);
+        let chosen = if self.data.has_overload_set(form) {
+            match self.select_overload(u16::MAX, form, &routed) {
+                crate::parser::dispatch::Selection::One(d) => d,
+                crate::parser::dispatch::Selection::Ambiguous(_) => return None,
+                // The set is the NAME's, across receivers: none of its members applying says
+                // nothing about this receiver's own definition, which is asked below.
+                crate::parser::dispatch::Selection::NoneApplicable
+                | crate::parser::dispatch::Selection::NotDecidable => key,
+            }
+        } else {
+            key
+        };
+        // The LEFT operand's own method (`@FR-Op-Left`), not a member some conversion reached.
+        let own = self.data.visible_params(chosen).first().is_some_and(
+            |t| matches!(t.base(), Type::Reference(d, _) | Type::Enum(d, _, _) if *d == left),
+        );
+        if !own || self.data.visible_params(chosen).len() != 2 {
+            return None;
+        }
+        if self.data.def(chosen).operator_form() {
+            // A member that cannot take the operands is no match: the operator is refused
+            // naming both types, as with no member at all, never as a bad argument of the call.
+            // A template is judged by its instance (`operator_instance`).
+            if self.data.def_type(chosen) != crate::data::DefType::Generic
+                && self.definition_ranks(chosen, &routed).is_none()
+            {
+                return None;
+            }
+            return Some(chosen);
+        }
+        let (_, symbol, old) = Self::OPERATOR_FORMS.iter().find(|(f, _, _)| *f == form)?;
+        if self
+            .user_op_method(old, types)
+            .is_none_or(|d| d == u32::MAX)
+        {
+            // Said on the pass that meets it: the operator search below refuses on pass 1 too.
+            let t = types[0].base().source_name(&self.data);
+            let r = types[1].base().source_name(&self.data);
+            // The unmarked method's own result when it takes these operands: the declaration
+            // to write is that one, marked.  One that takes other operands says nothing about
+            // what `a ⊕ b` should answer.
+            let answers = if self.data.params_fit(chosen, types) {
+                self.data.def(chosen).returned().source_name(&self.data)
+            } else {
+                "…".to_string()
+            };
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`{t}` has a method `{form}`, but `{symbol}` reaches only one written with \
+                 `operator`: declare it `operator {form}(self: {t}, other: {r}) -> {answers}`"
+            );
+            return Some(u32::MAX);
+        }
+        None
+    }
+
+    /// `@FR-Op-Back` for a UNARY form (`-x` is `x.negate()`): the operand's own `operator` method
+    /// of that name taking `self` alone, `Some(u32::MAX)` when only a plain method of the name
+    /// exists (`@FR-Op-Mark`, said here), `None` when the type has neither.
+    pub(crate) fn operator_unary(&mut self, form: &str, symbol: &str, tp: &Type) -> Option<u32> {
+        if self.default || tp.is_unknown() {
+            return None;
+        }
+        let operand = tp.peel_rewritten();
+        let (Type::Reference(own, _) | Type::Enum(own, _, _)) = operand.base() else {
+            return None;
+        };
+        let own = *own;
+        let operand = operand.unrewritten();
+        let m = self.data.find_op_method(u16::MAX, form, &operand);
+        if m == u32::MAX {
+            return None;
+        }
+        let takes = self.data.visible_params(m);
+        let mine = takes.first().is_some_and(
+            |t| matches!(t.base(), Type::Reference(d, _) | Type::Enum(d, _, _) if *d == own),
+        );
+        if !mine || takes.len() != 1 {
+            return None;
+        }
+        if self.data.def(m).operator_form() {
+            return Some(m);
+        }
+        let t = operand.base().source_name(&self.data);
+        let answers = self.data.def(m).returned().source_name(&self.data);
+        diagnostic!(
+            self.lexer,
+            Level::Error,
+            "`{t}` has a method `{form}`, but `{symbol}x` reaches only one written with \
+             `operator`: declare it `operator {form}(self: {t}) -> {answers}`"
+        );
+        Some(u32::MAX)
+    }
+
+    /// The call a unary `operator` form lowers to, `x.negate()`; the form's type is the
+    /// method's (`@FR-Op-Result`).
+    pub(crate) fn unary_through_operator(
+        &mut self,
+        code: &mut Value,
+        form: &str,
+        member: u32,
+        operand_tp: Type,
+    ) -> Type {
+        if member == u32::MAX {
+            return Type::Unknown(0); // refused, named by `operator_unary`
+        }
+        let member = match self.operator_instance(member, form, std::slice::from_ref(&operand_tp)) {
+            Ok(m) => m,
+            Err(predicted) => {
+                *code = Value::Null;
+                return predicted;
+            }
+        };
+        let mut call = Value::Null;
+        let operand = code.clone();
+        let tp = self.call_nr(
+            &mut call,
+            member,
+            &[operand],
+            &[operand_tp],
+            true,
+            &[],
+            None,
+        );
+        *code = call;
+        tp
+    }
+
+    /// `@FR-Op-Conv` (@PLN182) — `x as T` is ONE call of `x.to_<t>()` when the source type has
+    /// an `operator to_<t>` answering exactly `T`; `x as text` calls `operator to_text`, with an
+    /// empty spec when the type defines only the spec form.  Answers `Some(true)` when it
+    /// built the call, `Some(false)` when an unmarked `fn to_<t>` exists (`@FR-Op-Mark`: the
+    /// caller names it if nothing else converts), `None` otherwise.
+    pub(crate) fn operator_conversion(
+        &mut self,
+        code: &mut Value,
+        from: &Type,
+        to: &Type,
+    ) -> Option<bool> {
+        if self.default || !self.data.user_operator_conversions {
+            return None;
+        }
+        let from = &from.unrewritten();
+        let name = self.data.conversion_name(to.base())?;
+        let form = format!("to_{name}");
+        let m = self.data.find_op_method(u16::MAX, &form, from.base());
+        if m == u32::MAX {
+            return None;
+        }
+        if !self.data.def(m).operator_form() {
+            return Some(false);
+        }
+        if !self.data.def(m).returned().base().is_same(to.base()) {
+            return None;
+        }
+        let src = code.clone();
+        let (args, types) = if self.data.visible_params(m).len() == 2 {
+            (
+                vec![src, Value::Text(String::new())],
+                vec![from.clone(), Type::Text(crate::data::Deps::none())],
+            )
+        } else {
+            (vec![src], vec![from.clone()])
+        };
+        let tp = self.call_nr(code, m, &args, &types, true, &[], None);
+        if tp == Type::Null {
+            return Some(false);
+        }
+        // The form is the call (`@FR-Op-Result`): its result owns what `x.to_t()` would own,
+        // so the `as` site takes the call's type instead of grafting the source's deps — a
+        // struct the conversion built is the destination's, not a view of `x`.
+        self.conv_owned_result = Some(tp);
+        Some(true)
+    }
+
+    /// The `operator` form an arithmetic symbol backs, for the forms built so far.
+    fn arith_form(op: &str) -> Option<&'static str> {
+        match op {
+            "+" => Some("plus"),
+            "-" => Some("minus"),
+            "*" => Some("times"),
+            "/" => Some("divided_by"),
+            "%" => Some("remainder"),
+            _ => None,
+        }
+    }
+
+    /// `@FR-Op-Back` — `a + b`, `a - b`, `a * b` on a user type is ONE call of the left
+    /// operand's `plus` / `minus` / `times`, its type and value the method's (`@FR-Op-Result`).
+    pub(crate) fn arith_through_operator(
+        &mut self,
+        code: &mut Value,
+        form: &str,
+        member: u32,
+        right: Value,
+        right_tp: Type,
+        left_tp: Type,
+    ) -> Type {
+        if member == u32::MAX {
+            return Type::Unknown(0); // refused, named by `operator_member`
+        }
+        let member =
+            match self.operator_instance(member, form, &[left_tp.clone(), right_tp.clone()]) {
+                Ok(m) => m,
+                Err(predicted) => {
+                    *code = Value::Null;
+                    return predicted;
+                }
+            };
+        let mut call = Value::Null;
+        let left = code.clone();
+        let tp = self.call_nr(
+            &mut call,
+            member,
+            &[left, right],
+            &[left_tp, right_tp],
+            true,
+            &[],
+            None,
+        );
+        *code = call;
+        tp
+    }
+
+    /// `@FR-F-Recv` — a TEMPLATE `operator` member (`operator plus<U>(self: W, o: U)`) is reached
+    /// the way the call `a.plus(b)` reaches it: instantiated at the operand types (loft#1826).
+    /// `Err(predicted)` on the first pass, where the prediction is the whole answer.
+    pub(crate) fn operator_instance(
+        &mut self,
+        m: u32,
+        form: &str,
+        types: &[Type],
+    ) -> Result<u32, Type> {
+        if m == u32::MAX || self.data.def_type(m) != crate::data::DefType::Generic {
+            return Ok(m);
+        }
+        if self.first_pass {
+            let predicted = self.predict_template_return(m, form, types);
+            return if predicted.is_unknown() {
+                Ok(u32::MAX)
+            } else {
+                Err(predicted)
+            };
+        }
+        Ok(self.instantiate_template(m, form, types))
+    }
+
+    /// `@FR-Op-Order` — `a ⊕ b` for an order form ⊕ is ONE call of `a.compare(b)`, read against
+    /// the `Ordering` it answers: `<` is `Less`, `>` is `Greater`, `<=` is not `Greater`, `>=`
+    /// is not `Less`.
+    pub(crate) fn order_through_compare(
+        &mut self,
+        code: &mut Value,
+        operator: &str,
+        cmp: u32,
+        right: Value,
+        right_tp: Type,
+        left_tp: Type,
+    ) -> Type {
+        if cmp == u32::MAX {
+            return Type::Boolean; // refused, named by `operator_compare`
+        }
+        let Ok(cmp) = self.operator_instance(cmp, "compare", &[left_tp.clone(), right_tp.clone()])
+        else {
+            *code = Value::Null;
+            return Type::Boolean;
+        };
+        let mut call = Value::Null;
+        let left = code.clone();
+        // Reported, as the call spelling is (`@FR-Op-Result`): a nullable operand into a dense
+        // parameter warns here exactly as it does in `a.compare(b)`.
+        let tp = self.call_nr(
+            &mut call,
+            cmp,
+            &[left, right],
+            &[left_tp, right_tp],
+            true,
+            &[],
+            None,
+        );
+        if tp == Type::Null {
+            return Type::Null;
+        }
+        let (equal, variant) = match operator {
+            "<" => (true, "Less"),
+            ">" => (true, "Greater"),
+            "<=" => (false, "Greater"),
+            _ => (false, "Less"),
+        };
+        let disc = self.data.ordering_discriminant(variant);
+        let read = self.cl("OpConvIntFromEnum", &[call]);
+        *code = self.cl(
+            if equal { "OpEqInt" } else { "OpNeInt" },
+            &[read, Value::Int(disc)],
+        );
+        Type::Boolean
+    }
+
     /** Mutate current code when it reads a value into writing it. This is needed for assignments.
      */
     ///
@@ -1184,6 +1536,22 @@ impl Parser {
     ) -> (Value, Type) {
         if op == "=" {
             return (val.clone(), src_tp.clone());
+        }
+        // `@FR-Op-Compound` — `a ⊕= b` is `a = a.m(b)` for ⊕'s `operator` method m; the place
+        // is read once here and written by the caller.
+        if let Some(form) = Self::arith_form(op)
+            && let Some(m) = self.operator_member(form, &[f_type.clone(), src_tp.clone()])
+        {
+            let mut code = to.clone();
+            let tp = self.arith_through_operator(
+                &mut code,
+                form,
+                m,
+                val.clone(),
+                src_tp.clone(),
+                f_type.clone(),
+            );
+            return (code, tp);
         }
         let (name, operands, types) = if op == ">" {
             (
@@ -1323,32 +1691,11 @@ impl Parser {
             }
             _ => {
                 if !self.first_pass {
-                    // @PLN125 arc C — `x[i]` on a library type lowers to that type's
-                    // `OpIndex`, so a WRITE lands here with the read's method name and no
-                    // way to reach a setter.  Reading it back as an attribute assignment
-                    // names an internal symbol the author never wrote; say what actually
-                    // happened and what to write instead.  A writing counterpart is a
-                    // separate decision (it needs its own method, and a decision about
-                    // whether `x[i] += 1` may then read-modify-write), so this is a
-                    // refusal, not a gap left silent.
-                    if let Some(tp) = crate::data::Data::split_key(name)
-                        .filter(|k| k.kind == crate::data::KeyKind::Method && k.rest == "OpIndex")
-                        .map(|k| k.spelling)
-                    {
-                        diagnostic!(
-                            self.lexer,
-                            Level::Error,
-                            "`{tp}` defines `OpIndex`, which READS — `x[i] = …` has nothing \
-                             to write through; give the type a method that sets \
-                             (`x.set(i, …)`)"
-                        );
-                    } else {
-                        diagnostic!(
-                            self.lexer,
-                            Level::Error,
-                            "Cannot assign to attribute on type '{name}'"
-                        );
-                    }
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "Cannot assign to attribute on type '{name}'"
+                    );
                 }
                 Value::Null
             }
@@ -4866,8 +5213,21 @@ impl Parser {
                         Value::Text(s) => Some(s.clone()),
                         _ => None,
                     };
-                    let converted =
-                        self.convert(code, cast_src, &tp) || self.cast(code, cast_src, &tp);
+                    let by_operator = self.operator_conversion(code, cast_src, &tp);
+                    let converted = by_operator == Some(true)
+                        || self.convert(code, cast_src, &tp)
+                        || self.cast(code, cast_src, &tp);
+                    if !converted && by_operator == Some(false) && !self.first_pass {
+                        let t = tp.base().source_name(&self.data);
+                        let f = cast_src.base().source_name(&self.data);
+                        let name = self.data.conversion_name(tp.base()).unwrap_or_default();
+                        diagnostic!(
+                            self.lexer,
+                            Level::Error,
+                            "`{f}` has a method `to_{name}`, but `as {t}` reaches only one written \
+                             with `operator`: declare it `operator to_{name}(self: {f}) -> {t}`"
+                        );
+                    }
                     self.in_explicit_cast = outer_cast;
                     if !converted {
                         // `@C131` — two variants of one enum: the value is known to be the first,
@@ -4890,7 +5250,9 @@ impl Parser {
                                  variant, so the cast cannot succeed",
                                 &ctp.source_name(&self.data),
                             );
-                        } else {
+                        } else if by_operator != Some(false) {
+                            // An unmarked `to_<t>` was named above (`@FR-Op-Mark`); this is the
+                            // refusal for a type with nothing to convert by.
                             diagnostic!(
                                 self.lexer,
                                 Level::Error,
@@ -5505,6 +5867,20 @@ impl Parser {
                     }
                 }
                 *ctp = Type::Boolean;
+            } else if matches!(operator, "<" | "<=" | ">" | ">=")
+                && let Some(cmp) = self.operator_compare(&[ctp.clone(), second_type.clone()])
+            {
+                // `@FR-Op-Order` — before the swap below: `a > b` is `a.compare(b) == Greater`,
+                // the LEFT operand's method with both operands in source order (`@FR-Op-Left`),
+                // never `b.compare(a)`.
+                *ctp = self.order_through_compare(
+                    code,
+                    operator,
+                    cmp,
+                    second_code,
+                    second_type,
+                    ctp.clone(),
+                );
             } else if operator == ">" {
                 // loft#1151 — the SWAP is a resolution detail; the refusal must still name the
                 // operator the author wrote.
@@ -5622,14 +5998,25 @@ impl Parser {
             // untouched here, so overflow of two non-null values still types non-null.
             // @FR-N-Prop: a nullable operand makes the result nullable — null PROPAGATES
             // through a value-preserving scalar op rather than being laundered by it.
-            let operand_nullable = crate::keys::nprop_enabled()
+            // `@FR-Op-Back` — on a user type, `a ⊕ b` is the left operand's `operator` method
+            // (`@FR-Op-Left`), and the form's type is the method's own (`@FR-Op-Result`): no
+            // propagation wrap is added to it.
+            let user_member = Self::arith_form(operator)
+                .and_then(|form| self.operator_member(form, &[ctp.clone(), second_type.clone()]));
+            let operand_nullable = user_member.is_none()
+                && crate::keys::nprop_enabled()
                 && (matches!(*ctp, Type::Optional(_)) || matches!(second_type, Type::Optional(_)));
-            *ctp = self.call_op(
-                code,
-                operator,
-                &[code.clone(), second_code],
-                &[ctp.clone(), second_type],
-            );
+            *ctp = if let Some(m) = user_member {
+                let form = Self::arith_form(operator).unwrap_or_default();
+                self.arith_through_operator(code, form, m, second_code, second_type, ctp.clone())
+            } else {
+                self.call_op(
+                    code,
+                    operator,
+                    &[code.clone(), second_code],
+                    &[ctp.clone(), second_type],
+                )
+            };
             // Tighten the result range — sound + conservative (never narrower than
             // the operation guarantees), and only ever a tightening of call_op's
             // range. `a & c` (c ≥ 0) ∈ [0, c]; `a % c` ∈ [-(|c|-1), |c|-1], or

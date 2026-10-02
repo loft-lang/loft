@@ -720,6 +720,34 @@ pub fn constraint_for(pinned: Option<&str>, declared: Option<&str>) -> Option<St
     }
 }
 
+/// The constraint a source-level `use` resolves under: [`constraint_for`]'s governing
+/// constraint AND the range the package whose file says `use` names for the dependency.
+///
+/// PACKAGES.md: the declarations asked are "the project's `[dependencies]` and those of the
+/// package whose file says `use glb`".  Without the second, a `use` inside a dependency was
+/// bound by the root alone — and a root that declares the package as a PATH declares no
+/// range, so the dependency's own `>=0.9.6` was answered with whatever the catalogue
+/// offered, silently (loft#1849).  Both halves are joined into one comma-list, which
+/// [`registry_index::satisfies`] reads as every part at once; an exact lock pin that
+/// already satisfies the declaring range stands alone, being the resolved form of both.
+#[must_use]
+pub fn use_constraint(
+    pinned: Option<&str>,
+    root: Option<&str>,
+    declaring: Option<&str>,
+) -> Option<String> {
+    let base = constraint_for(pinned, root);
+    match (base, declaring) {
+        (Some(b), Some(d))
+            if b != d && !(pinned == Some(b.as_str()) && registry_index::satisfies(&b, d)) =>
+        {
+            Some(format!("{b}, {d}"))
+        }
+        (Some(b), _) => Some(b),
+        (None, d) => d.map(ToString::to_string),
+    }
+}
+
 /// What this project already holds, read from the lock that governs it — the input step 6
 /// needs to tell a first install from an upgrade.
 ///
@@ -1718,6 +1746,64 @@ mod tests {
             constraint_for(None, None),
             None,
             "nothing declared at all is the bare script: the newest release"
+        );
+    }
+
+    /// loft#1849 — a `use` inside a dependency is bound by the range that dependency names
+    /// as well as by the root's declaration and the lock.  Each cell answers a constraint
+    /// `registry_index::satisfies` reads; the checks after the table read it the way the
+    /// resolver does.
+    #[test]
+    fn a_nested_use_is_bound_by_the_declaring_packages_range_too() {
+        let cell = |p: Option<&str>, r: Option<&str>, d: Option<&str>| use_constraint(p, r, d);
+        assert_eq!(
+            cell(None, None, Some(">=0.9.6")).as_deref(),
+            Some(">=0.9.6"),
+            "root says nothing (a path dep): the dependency's range binds"
+        );
+        assert_eq!(
+            cell(None, Some(">=0.9.0"), Some(">=0.9.6")).as_deref(),
+            Some(">=0.9.0, >=0.9.6"),
+            "both ranges at once"
+        );
+        assert_eq!(
+            cell(None, Some(">=0.9.6"), Some(">=0.9.6")).as_deref(),
+            Some(">=0.9.6"),
+            "one range named twice is one range"
+        );
+        assert_eq!(
+            cell(Some("0.9.7"), None, Some(">=0.9.6")).as_deref(),
+            Some("0.9.7"),
+            "a pin that satisfies the range stands alone"
+        );
+        assert_eq!(
+            cell(None, None, None),
+            None,
+            "nothing declared anywhere: the newest release"
+        );
+        assert_eq!(
+            cell(Some("0.9.4"), None, None).as_deref(),
+            Some("0.9.4"),
+            "a pin with nothing to answer to"
+        );
+        // The joined form excludes exactly what each half excludes.
+        let both = cell(None, Some(">=0.9.0"), Some("<0.9.5")).unwrap();
+        assert!(
+            crate::registry_index::satisfies("0.9.4", &both),
+            "inside both"
+        );
+        assert!(
+            !crate::registry_index::satisfies("0.9.5", &both),
+            "outside the dependency's half"
+        );
+        assert!(
+            !crate::registry_index::satisfies("0.8.0", &both),
+            "outside the root's half"
+        );
+        let unmet = cell(None, None, Some(">=9.9.9")).unwrap();
+        assert!(
+            !crate::registry_index::satisfies("0.9.4", &unmet),
+            "an unsatisfiable floor admits no release"
         );
     }
 

@@ -137,7 +137,8 @@ fn locate_fresh_brick_buster(root: &Path) -> Option<PathBuf> {
         // fallback at 767 distinct colours and called it green.
         root.join("tools/brick-buster/pack_atlas.loft"),
         root.join("tools/brick-buster/assets/bb.blobs.store"),
-        root.join("target/wasm32-unknown-unknown/release/libloft.rlib"),
+        // The runtime `loft --html` linked the page against: the `--html` shape's own rlib.
+        root.join("target/loft/html/wasm32-unknown-unknown/release/libloft.rlib"),
     ];
     for dep in &stale_vs {
         if dep

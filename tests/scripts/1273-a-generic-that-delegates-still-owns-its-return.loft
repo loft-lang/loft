@@ -13,7 +13,7 @@
 // its return dep during specialisation, so the dep-based guards cannot tell a minted return
 // from one that hands back an argument, and lifting the latter would DOUBLE FREE.
 // `monomorph_return_is_fresh` reads the body's return sites for that proof and answered
-// `false` here, because the tail of `{ a + b }` is `Call(n_OpAdd, …)`: whether a CALLEE's
+// `false` here, because the tail of `{ a + b }` is a call of the type's `operator plus`: whether a CALLEE's
 // result is owned is not a fact this body carries.
 //
 // It is not unreachable, only unreachable from there. `Data` holds every definition, so the
@@ -45,11 +45,11 @@
 //   read or a fault rather than as a leak.
 
 struct M { v: integer }
-fn OpAdd(self: M, other: M) -> M { M{ v: self.v + other.v } }
-fn OpMul(self: M, other: M) -> M { M{ v: self.v * other.v } }
-// `Numeric` needs BOTH: `*` and the UNARY negation (loft#1274).
-fn OpMin(self: M) -> M { M{ v: -self.v } }
-fn OpLt(self: M, other: M) -> boolean { self.v < other.v }
+// The operators are `operator` methods (C132); `Numeric` is `times` with `negate`.
+operator plus(self: M, other: M) -> M { M{ v: self.v + other.v } }
+operator times(self: M, other: M) -> M { M{ v: self.v * other.v } }
+operator negate(self: M) -> M { M{ v: -self.v } }
+operator compare(self: M, other: M) -> Ordering { self.v.compare(other.v) }
 
 fn add<T: Addable>(a: T, b: T) -> T { a + b }
 fn mul<T: Numeric>(a: T, b: T) -> T { a * b }
@@ -80,7 +80,7 @@ fn test_1273_the_spellings_that_were_already_clean() {
   assert(u == 210, "a NON-generic function: expected 210 got {u}");
 
   p = 0;
-  for i in 0..20 { p += OpAdd(M{v:i}, M{v:1}).v; }
+  for i in 0..20 { p += plus(M{v:i}, M{v:1}).v; }
   assert(p == 210, "the operator called directly: expected 210 got {p}");
 
   q = 0;

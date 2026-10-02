@@ -1,0 +1,12 @@
+diff --git a/src/parser/definitions.rs b/src/parser/definitions.rs
+--- a/src/parser/definitions.rs
++++ b/src/parser/definitions.rs
+@@ -2697,7 +2697,7 @@
+             // placeholder is registered as a store structure under
+             // `__typevar_<name>`, and that registry is not keyed by source.
+             let mut n = 1;
+-            let mut name = format!("{type_var_name}#{n}");
++            let mut name = type_var_name.clone();
+             while self.data.name_taken_anywhere(&name) {
+                 n += 1;
+                 name = format!("{type_var_name}#{n}");

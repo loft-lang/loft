@@ -489,12 +489,13 @@ impl Drop for Test {
 
 impl Test {
     fn generate_code(&self, p: &Parser, start: u32) -> std::io::Result<()> {
-        std::fs::create_dir_all("tests/generated")?;
-        let w = &mut File::create("tests/generated/default.rs")?;
-        let mut o = Output::new(&p.data, &p.database);
-        o.output_native(w, 0, start)?;
+        // Only the test's own code is written, numbered from 0 as a program emitted alone
+        // would be.  The stdlib's native rendering is not: nothing reads it, and writing it
+        // on every test cost ~15 % of a test binary's instructions.
         // Write code output when the result is tested, not only for errors or warnings.
         if self.result != Value::Null || !self.tp.is_unknown() {
+            std::fs::create_dir_all("tests/generated")?;
+            let mut o = Output::new(&p.data, &p.database);
             let w = &mut File::create(format!("tests/generated/{}_{}.rs", self.file, self.name))?;
             let def_nr = p.data.definitions();
             // Find the entry function n_test and emit only reachable functions.

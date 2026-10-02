@@ -6,7 +6,7 @@ struct Countdown {
 }
 
 // Return the next value, or null when there is nothing left.
-fn next(self: Countdown) -> integer? {
+operator next(self: Countdown) -> integer? {
     if self.n <= 0 { return null; }
     v = self.n;
     self.n = v - 1;

@@ -3443,13 +3443,13 @@ fn p123_vector_in_loop() {
 #[test]
 fn p126_negative_tail_expression() {
     code!(
-        "fn negate(n: integer) -> integer {
+        "fn flip_sign(n: integer) -> integer {
     if n > 0 { return 0 - n; }
     n
 }
 fn test() {
-    assert(negate(5) == -5, \"negate positive\");
-    assert(negate(-3) == -3, \"negate negative\");
+    assert(flip_sign(5) == -5, \"negate positive\");
+    assert(flip_sign(-3) == -3, \"negate negative\");
 }"
     )
     .result(Value::Null);
@@ -14059,6 +14059,33 @@ fn run() -> integer {
     .result(Value::Int(10));
 }
 
+/// @FR-G-Gen-Scope — a declaration spelled like a STDLIB type variable compiles where the
+/// parse shares the stdlib's source id (this harness, the REPL, a `<host>` string).
+///
+/// `sort_by<T, K: Ordered>` names `K` and `min_of<T>` names `T`; neither reserves the
+/// letter, so an `enum K`, an `enum T` and a `type V` alias are the program's own, and the
+/// stdlib generics that name those letters still instantiate beside them.
+#[test]
+fn a_declaration_spelled_like_a_stdlib_type_variable_compiles_in_source_0() {
+    code!(
+        "enum K { Ka, Kb }
+enum T { Ta, Tb }
+type U = integer;
+struct P { n: integer }
+fn run() -> integer {
+    ps: vector<P> = [P { n: 3 }, P { n: 1 }, P { n: 2 }];
+    ps.sort_by(|p| { p.n });
+    u: U = 40;
+    k = match K.Kb { Ka => 1, Kb => 2 };
+    t = match T.Ta { Ta => 10, Tb => 20 };
+    u + k + t + ps[0].n * 100 + (min_of([7, 5, 9]) ?? 0)
+}"
+    )
+    .expr("run()")
+    // 40 + 2 + 10 + 1 * 100 + 5
+    .result(Value::Int(157));
+}
+
 /// Q3.b — `to_json_pretty()` produces multi-line indented output.
 /// Every non-empty struct opens with newline + 2-space indent per
 /// nesting level and dedents the closing brace to the parent's
@@ -14475,7 +14502,7 @@ fn p240_bounded_generic_two_operator_tuple_return() {
 fn p243_bounded_generic_tuple_with_text_method_call() {
     code!(
         "struct P243Item { p243_id: integer }
-fn to_text(self: P243Item) -> text { return \"item-{self.p243_id}\"; }
+operator to_text(self: P243Item) -> text { return \"item-{self.p243_id}\"; }
 fn p243_show_pair<T: Printable>(p243x: T) -> (text, text) {
     return (p243x.to_text(), \"x\");
 }"
@@ -14502,7 +14529,7 @@ fn p243_show_pair<T: Printable>(p243x: T) -> (text, text) {
 fn p329_bounded_generic_tuple_text_integer_chained() {
     code!(
         "struct P329Item { p329_id: integer }
-fn to_text(self: P329Item) -> text { return \"item-{self.p329_id}\"; }
+operator to_text(self: P329Item) -> text { return \"item-{self.p329_id}\"; }
 fn p329_show_pair<T: Printable>(p329x: T, n: integer) -> (text, integer) {
     return (p329x.to_text(), n);
 }"
@@ -14517,7 +14544,7 @@ fn p329_show_pair<T: Printable>(p329x: T, n: integer) -> (text, integer) {
 fn p329_bounded_generic_tuple_three_text_chained() {
     code!(
         "struct P329Tri { p329_tri_id: integer }
-fn to_text(self: P329Tri) -> text { return \"item-{self.p329_tri_id}\"; }
+operator to_text(self: P329Tri) -> text { return \"item-{self.p329_tri_id}\"; }
 fn p329_show_triple<T: Printable>(p329x: T) -> (text, text, text) {
     return (p329x.to_text(), \"middle\", p329x.to_text());
 }"
@@ -14556,7 +14583,7 @@ fn p329_show_triple<T: Printable>(p329x: T) -> (text, text, text) {
 fn p330_generic_tuple_return_assign_then_chain_first() {
     code!(
         "struct P330Item { p330_id: integer }
-fn to_text(self: P330Item) -> text { return \"item-{self.p330_id}\"; }
+operator to_text(self: P330Item) -> text { return \"item-{self.p330_id}\"; }
 fn p330_pair<T: Printable>(p330x: T) -> (text, text) {
     return (p330x.to_text(), \"sentinel\");
 }
@@ -14573,7 +14600,7 @@ fn p330_take_first(p330a: P330Item) -> text {
 fn p330_generic_tuple_return_assign_then_chain_second() {
     code!(
         "struct P330Item2 { p330_id2: integer }
-fn to_text(self: P330Item2) -> text { return \"item-{self.p330_id2}\"; }
+operator to_text(self: P330Item2) -> text { return \"item-{self.p330_id2}\"; }
 fn p330_pair2<T: Printable>(p330x2: T) -> (text, text) {
     return (\"prefix\", p330x2.to_text());
 }
@@ -14593,7 +14620,7 @@ fn p330_take_second(p330a2: P330Item2) -> text {
 fn p329_bounded_generic_tuple_text_text_chained_second_elem() {
     code!(
         "struct P329Second { p329_second_id: integer }
-fn to_text(self: P329Second) -> text { return \"item-{self.p329_second_id}\"; }
+operator to_text(self: P329Second) -> text { return \"item-{self.p329_second_id}\"; }
 fn p329_pair_second<T: Printable>(p329x: T) -> (text, text) {
     return (\"first\", p329x.to_text());
 }"
@@ -14617,7 +14644,7 @@ fn p329_pair_second<T: Printable>(p329x: T) -> (text, text) {
 fn p549_generic_struct_return_inline_no_leak() {
     code!(
         "struct P549Item { p549_id: integer }
-fn to_text(self: P549Item) -> text { return \"i{self.p549_id}\"; }
+operator to_text(self: P549Item) -> text { return \"i{self.p549_id}\"; }
 struct P549Pair { p549_a: integer, p549_b: integer }
 fn p549_mk<T: Printable>(_p549x: T) -> P549Pair { return P549Pair { p549_a: 1, p549_b: 2 }; }"
     )
@@ -14629,7 +14656,7 @@ fn p549_mk<T: Printable>(_p549x: T) -> P549Pair { return P549Pair { p549_a: 1, p
 fn p549_generic_struct_enum_return_inline_no_leak() {
     code!(
         "struct P549Item { p549_id: integer }
-fn to_text(self: P549Item) -> text { return \"i{self.p549_id}\"; }
+operator to_text(self: P549Item) -> text { return \"i{self.p549_id}\"; }
 enum P549Shape { P549Circle { r: integer }, P549Square { s: integer } }
 fn p549_shape<T: Printable>(_p549x: T) -> P549Shape { return P549Circle { r: 3 }; }
 fn p549_use(e: P549Shape) -> integer { match e { P549Circle { r } => r, P549Square { s } => s } }"
@@ -14642,7 +14669,7 @@ fn p549_use(e: P549Shape) -> integer { match e { P549Circle { r } => r, P549Squa
 fn p549_generic_aggregate_return_discarded_no_leak() {
     code!(
         "struct P549Item { p549_id: integer }
-fn to_text(self: P549Item) -> text { return \"i{self.p549_id}\"; }
+operator to_text(self: P549Item) -> text { return \"i{self.p549_id}\"; }
 struct P549Pair { p549_a: integer, p549_b: integer }
 fn p549_mk<T: Printable>(_p549x: T) -> P549Pair { return P549Pair { p549_a: 1, p549_b: 2 }; }
 fn p549_discard() -> integer {
@@ -14663,7 +14690,7 @@ fn p549_discard() -> integer {
 fn p549_generic_returns_arg_not_double_freed() {
     code!(
         "struct P549Item { p549_id: integer }
-fn to_text(self: P549Item) -> text { return \"i{self.p549_id}\"; }
+operator to_text(self: P549Item) -> text { return \"i{self.p549_id}\"; }
 fn p549_id<T: Printable>(p549x: T) -> T { return p549x; }"
     )
     .expr("p549_id(P549Item { p549_id: 5 }).p549_id")

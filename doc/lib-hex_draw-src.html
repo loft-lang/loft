@@ -23,45 +23,45 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>hex_draw source</h1>
 <article>
-<p><a href="lib-hex_draw.html">← hex_draw</a> · <a href="lib-hex_draw-api.html">API reference</a> · version 0.1.1</p>
-<p class="lib-legend">5 file(s), 1244 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<p><a href="lib-hex_draw.html">← hex_draw</a> · <a href="lib-hex_draw-api.html">API reference</a> · version 0.1.2</p>
+<p class="lib-legend">5 file(s), 1238 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
 <table class="lib-table">
 <tr><th>Item</th><th>Defined</th><th>Worked example</th><th>Call sites</th></tr>
-<tr><td><code>BAND_TOPS</code> <span class="search-kind">const</span></td><td><a href="#src-hexsurf-loft-L30">30</a></td><td>—</td><td><a href="#tests-01-hex-draw-loft-L44">44</a> <a href="#tests-01-hex-draw-loft-L45">45</a> <a href="#tests-02-worked-examples-loft-L146">146</a> <a href="#tests-02-worked-examples-loft-L180">180</a></td></tr>
-<tr><td><code>BAND_SIDES</code> <span class="search-kind">const</span></td><td><a href="#src-hexsurf-loft-L31">31</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L145">145</a> <a href="#tests-02-worked-examples-loft-L186">186</a></td></tr>
-<tr><td><code>BAND_RATIO</code> <span class="search-kind">const</span></td><td><a href="#src-hexsurf-loft-L32">32</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L147">147</a></td></tr>
-<tr><td><code>WIDEN_TOTAL</code> <span class="search-kind">const</span></td><td><a href="#src-hexsurf-loft-L36">36</a></td><td>—</td><td>none in this package</td></tr>
-<tr><td><code>WIDEN_FACE</code> <span class="search-kind">const</span></td><td><a href="#src-hexsurf-loft-L37">37</a></td><td>—</td><td>none in this package</td></tr>
-<tr><td><code>WallSurface</code> <span class="search-kind">struct</span></td><td><a href="#src-hexsurf-loft-L41">41</a></td><td>—</td><td><a href="#src-hexsurf-loft-L59">59</a> <a href="#src-hexsurf-loft-L75">75</a> <a href="#src-hexsurf-loft-L99">99</a> <a href="#src-hexsurf-loft-L111">111</a> <a href="#src-hexsurf-loft-L114">114</a> <a href="#src-hexsurf-loft-L120">120</a> … (8 total)</td></tr>
-<tr><td><code>surface_of</code> <span class="search-kind">fn</span></td><td><a href="#src-hexsurf-loft-L59">59</a></td><td><a href="#tests-02-worked-examples-loft-L127">HXD-001</a></td><td><a href="#src-hexsurf-loft-L142">142</a> <a href="#src-hexsurf-loft-L182">182</a> <a href="#src-hexsurf-loft-L223">223</a> <a href="#src-hexsurf-loft-L262">262</a> <a href="#src-hexsurf-loft-L263">263</a> <a href="#src-hexsurf-loft-L314">314</a> … (12 total)</td></tr>
-<tr><td><code>surface_heading</code> <span class="search-kind">fn</span></td><td><a href="#src-hexsurf-loft-L99">99</a></td><td><a href="#tests-02-worked-examples-loft-L197">HXD-002</a></td><td><a href="#src-hexsurf-loft-L111">111</a> <a href="#tests-02-worked-examples-loft-L217">217</a> <a href="#tests-02-worked-examples-loft-L235">235</a></td></tr>
-<tr><td><code>surface_is_exact</code> <span class="search-kind">fn</span></td><td><a href="#src-hexsurf-loft-L111">111</a></td><td>—</td><td><a href="#tests-01-hex-draw-loft-L38">38</a> <a href="#tests-02-worked-examples-loft-L121">121</a></td></tr>
-<tr><td><code>surface_mean_x</code> <span class="search-kind">fn</span></td><td><a href="#src-hexsurf-loft-L114">114</a></td><td>—</td><td><a href="#src-hexsurf-loft-L146">146</a> <a href="#src-hexsurf-loft-L189">189</a> <a href="#src-hexsurf-loft-L227">227</a> <a href="#src-hexsurf-loft-L264">264</a> <a href="#src-hexsurf-loft-L266">266</a> <a href="#src-hexsurf-loft-L321">321</a> … (8 total)</td></tr>
-<tr><td><code>surface_mean_y</code> <span class="search-kind">fn</span></td><td><a href="#src-hexsurf-loft-L120">120</a></td><td>—</td><td><a href="#src-hexsurf-loft-L147">147</a> <a href="#src-hexsurf-loft-L190">190</a> <a href="#src-hexsurf-loft-L228">228</a> <a href="#src-hexsurf-loft-L265">265</a> <a href="#src-hexsurf-loft-L267">267</a> <a href="#src-hexsurf-loft-L322">322</a> … (8 total)</td></tr>
-<tr><td><code>surface_band_corners</code> <span class="search-kind">fn</span></td><td><a href="#src-hexsurf-loft-L141">141</a></td><td><a href="#tests-02-worked-examples-loft-L127">HXD-001</a></td><td><a href="#tests-02-worked-examples-loft-L143">143</a> <a href="#tests-02-worked-examples-loft-L144">144</a></td></tr>
-<tr><td><code>surface_span</code> <span class="search-kind">fn</span></td><td><a href="#src-hexsurf-loft-L181">181</a></td><td><a href="#tests-02-worked-examples-loft-L250">HXD-003</a></td><td><a href="#src-hexsurf-loft-L224">224</a> <a href="#src-hexsurf-loft-L296">296</a> <a href="#src-hexsurf-loft-L301">301</a> <a href="#tests-02-worked-examples-loft-L90">90</a> <a href="#tests-02-worked-examples-loft-L91">91</a> <a href="#tests-02-worked-examples-loft-L420">420</a></td></tr>
-<tr><td><code>surface_fitted_spread</code> <span class="search-kind">fn</span></td><td><a href="#src-hexsurf-loft-L222">222</a></td><td><a href="#tests-02-worked-examples-loft-L127">HXD-001</a></td><td><a href="#tests-01-hex-draw-loft-L39">39</a> <a href="#tests-02-worked-examples-loft-L151">151</a> <a href="#tests-02-worked-examples-loft-L152">152</a> <a href="#tests-02-worked-examples-loft-L171">171</a></td></tr>
-<tr><td><code>surface_miter</code> <span class="search-kind">fn</span></td><td><a href="#src-hexsurf-loft-L260">260</a></td><td><a href="#tests-02-worked-examples-loft-L250">HXD-003</a></td><td><a href="#src-hexsurf-loft-L299">299</a> <a href="#src-hexsurf-loft-L300">300</a> <a href="#tests-02-worked-examples-loft-L286">286</a></td></tr>
-<tr><td><code>surface_quad</code> <span class="search-kind">fn</span></td><td><a href="#src-hexsurf-loft-L284">284</a></td><td><a href="#tests-02-worked-examples-loft-L250">HXD-003</a></td><td><a href="#tests-02-worked-examples-loft-L96">96</a> <a href="#tests-02-worked-examples-loft-L97">97</a> <a href="#tests-02-worked-examples-loft-L122">122</a></td></tr>
-<tr><td><code>surface_edge_span</code> <span class="search-kind">fn</span></td><td><a href="#src-hexsurf-loft-L312">312</a></td><td><a href="#tests-02-worked-examples-loft-L369">HXD-006</a></td><td><a href="#tests-02-worked-examples-loft-L415">415</a></td></tr>
-<tr><td><code>surface_edge_mat</code> <span class="search-kind">fn</span></td><td><a href="#src-hexsurf-loft-L342">342</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L407">407</a> <a href="#tests-02-worked-examples-loft-L408">408</a> <a href="#tests-02-worked-examples-loft-L409">409</a></td></tr>
-<tr><td><code>surface_band_mids</code> <span class="search-kind">fn</span></td><td><a href="#src-hexsurf-loft-L353">353</a></td><td><a href="#tests-02-worked-examples-loft-L127">HXD-001</a></td><td><a href="#tests-02-worked-examples-loft-L185">185</a> <a href="#tests-02-worked-examples-loft-L186">186</a></td></tr>
-<tr><td><code>surface_lsq_residual</code> <span class="search-kind">fn</span></td><td><a href="#src-hexsurf-loft-L383">383</a></td><td><a href="#tests-02-worked-examples-loft-L127">HXD-001</a></td><td><a href="#tests-02-worked-examples-loft-L192">192</a> <a href="#tests-02-worked-examples-loft-L193">193</a> <a href="#tests-02-worked-examples-loft-L194">194</a></td></tr>
-<tr><td><code>feature_t_num</code> <span class="search-kind">fn</span></td><td><a href="#src-hexsurf-loft-L431">431</a></td><td><a href="#tests-02-worked-examples-loft-L369">HXD-006</a></td><td><a href="#src-hexsurf-loft-L452">452</a> <a href="#tests-02-worked-examples-loft-L391">391</a></td></tr>
-<tr><td><code>feature_t_admissible</code> <span class="search-kind">fn</span></td><td><a href="#src-hexsurf-loft-L436">436</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L403">403</a></td></tr>
-<tr><td><code>feature_find</code> <span class="search-kind">fn</span></td><td><a href="#src-hexsurf-loft-L444">444</a></td><td><a href="#tests-02-worked-examples-loft-L369">HXD-006</a></td><td><a href="#tests-02-worked-examples-loft-L398">398</a> <a href="#tests-02-worked-examples-loft-L399">399</a></td></tr>
-<tr><td><code>wall_edge_count</code> <span class="search-kind">fn</span></td><td><a href="#src-hexsurf-loft-L472">472</a></td><td><a href="#tests-02-worked-examples-loft-L343">HXD-005</a></td><td><a href="#tests-02-worked-examples-loft-L331">331</a> <a href="#tests-02-worked-examples-loft-L364">364</a></td></tr>
-<tr><td><code>OPEN_NONE</code> <span class="search-kind">const</span></td><td><a href="#src-housedraw-loft-L70">70</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L324">324</a> <a href="#tests-02-worked-examples-loft-L333">333</a></td></tr>
-<tr><td><code>OPEN_DOOR</code> <span class="search-kind">const</span></td><td><a href="#src-housedraw-loft-L71">71</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L324">324</a> <a href="#tests-02-worked-examples-loft-L395">395</a> <a href="#tests-02-worked-examples-loft-L398">398</a></td></tr>
-<tr><td><code>OPEN_WINDOW</code> <span class="search-kind">const</span></td><td><a href="#src-housedraw-loft-L72">72</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L324">324</a> <a href="#tests-02-worked-examples-loft-L396">396</a> <a href="#tests-02-worked-examples-loft-L399">399</a> <a href="#tests-02-worked-examples-loft-L407">407</a> <a href="#tests-02-worked-examples-loft-L409">409</a></td></tr>
-<tr><td><code>OPEN_GAP</code> <span class="search-kind">const</span></td><td><a href="#src-housedraw-loft-L73">73</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L324">324</a></td></tr>
-<tr><td><code>draw_floor</code> <span class="search-kind">fn</span></td><td><a href="#src-housedraw-loft-L82">82</a></td><td>—</td><td><a href="#tests-01-hex-draw-loft-L16">16</a> <a href="#tests-01-hex-draw-loft-L25">25</a> <a href="#tests-01-hex-draw-loft-L36">36</a> <a href="#tests-02-worked-examples-loft-L48">48</a> <a href="#tests-02-worked-examples-loft-L169">169</a> <a href="#tests-02-worked-examples-loft-L232">232</a> … (7 total)</td></tr>
-<tr><td><code>draw_walls</code> <span class="search-kind">fn</span></td><td><a href="#src-housedraw-loft-L106">106</a></td><td><a href="#tests-02-worked-examples-loft-L343">HXD-005</a></td><td><a href="#tests-01-hex-draw-loft-L26">26</a> <a href="#tests-02-worked-examples-loft-L118">118</a> <a href="#tests-02-worked-examples-loft-L326">326</a> <a href="#tests-02-worked-examples-loft-L360">360</a> <a href="#tests-02-worked-examples-loft-L385">385</a></td></tr>
-<tr><td><code>place_opening</code> <span class="search-kind">fn</span></td><td><a href="#src-housedraw-loft-L137">137</a></td><td><a href="#tests-02-worked-examples-loft-L306">HXD-004</a></td><td><a href="#tests-02-worked-examples-loft-L329">329</a> <a href="#tests-02-worked-examples-loft-L395">395</a> <a href="#tests-02-worked-examples-loft-L396">396</a></td></tr>
-<tr><td><code>grow_ring</code> <span class="search-kind">fn</span></td><td><a href="#src-housedraw-loft-L170">170</a></td><td><a href="#tests-02-worked-examples-loft-L427">HXD-007</a></td><td><a href="#tests-02-worked-examples-loft-L464">464</a></td></tr>
-<tr><td><code>draw_roof</code> <span class="search-kind">fn</span></td><td><a href="#src-housedraw-loft-L187">187</a></td><td><a href="#tests-02-worked-examples-loft-L427">HXD-007</a></td><td><a href="#tests-02-worked-examples-loft-L467">467</a> <a href="#tests-02-worked-examples-loft-L489">489</a></td></tr>
+<tr><td><code>BAND_TOPS</code> <span class="search-kind">const</span></td><td><a href="#src-hexsurf-loft-L26">26</a></td><td>—</td><td><a href="#tests-01-hex-draw-loft-L44">44</a> <a href="#tests-01-hex-draw-loft-L45">45</a> <a href="#tests-02-worked-examples-loft-L146">146</a> <a href="#tests-02-worked-examples-loft-L180">180</a></td></tr>
+<tr><td><code>BAND_SIDES</code> <span class="search-kind">const</span></td><td><a href="#src-hexsurf-loft-L27">27</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L145">145</a> <a href="#tests-02-worked-examples-loft-L186">186</a></td></tr>
+<tr><td><code>BAND_RATIO</code> <span class="search-kind">const</span></td><td><a href="#src-hexsurf-loft-L28">28</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L147">147</a></td></tr>
+<tr><td><code>WIDEN_TOTAL</code> <span class="search-kind">const</span></td><td><a href="#src-hexsurf-loft-L32">32</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>WIDEN_FACE</code> <span class="search-kind">const</span></td><td><a href="#src-hexsurf-loft-L33">33</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>WallSurface</code> <span class="search-kind">struct</span></td><td><a href="#src-hexsurf-loft-L37">37</a></td><td>—</td><td><a href="#src-hexsurf-loft-L55">55</a> <a href="#src-hexsurf-loft-L71">71</a> <a href="#src-hexsurf-loft-L94">94</a> <a href="#src-hexsurf-loft-L106">106</a> <a href="#src-hexsurf-loft-L109">109</a> <a href="#src-hexsurf-loft-L115">115</a> … (8 total)</td></tr>
+<tr><td><code>surface_of</code> <span class="search-kind">fn</span></td><td><a href="#src-hexsurf-loft-L55">55</a></td><td><a href="#tests-02-worked-examples-loft-L127">HXD-001</a></td><td><a href="#src-hexsurf-loft-L137">137</a> <a href="#src-hexsurf-loft-L177">177</a> <a href="#src-hexsurf-loft-L218">218</a> <a href="#src-hexsurf-loft-L257">257</a> <a href="#src-hexsurf-loft-L258">258</a> <a href="#src-hexsurf-loft-L309">309</a> … (12 total)</td></tr>
+<tr><td><code>surface_heading</code> <span class="search-kind">fn</span></td><td><a href="#src-hexsurf-loft-L94">94</a></td><td><a href="#tests-02-worked-examples-loft-L197">HXD-002</a></td><td><a href="#src-hexsurf-loft-L106">106</a> <a href="#tests-02-worked-examples-loft-L217">217</a> <a href="#tests-02-worked-examples-loft-L235">235</a></td></tr>
+<tr><td><code>surface_is_exact</code> <span class="search-kind">fn</span></td><td><a href="#src-hexsurf-loft-L106">106</a></td><td>—</td><td><a href="#tests-01-hex-draw-loft-L38">38</a> <a href="#tests-02-worked-examples-loft-L121">121</a></td></tr>
+<tr><td><code>surface_mean_x</code> <span class="search-kind">fn</span></td><td><a href="#src-hexsurf-loft-L109">109</a></td><td>—</td><td><a href="#src-hexsurf-loft-L141">141</a> <a href="#src-hexsurf-loft-L184">184</a> <a href="#src-hexsurf-loft-L222">222</a> <a href="#src-hexsurf-loft-L259">259</a> <a href="#src-hexsurf-loft-L261">261</a> <a href="#src-hexsurf-loft-L316">316</a> … (8 total)</td></tr>
+<tr><td><code>surface_mean_y</code> <span class="search-kind">fn</span></td><td><a href="#src-hexsurf-loft-L115">115</a></td><td>—</td><td><a href="#src-hexsurf-loft-L142">142</a> <a href="#src-hexsurf-loft-L185">185</a> <a href="#src-hexsurf-loft-L223">223</a> <a href="#src-hexsurf-loft-L260">260</a> <a href="#src-hexsurf-loft-L262">262</a> <a href="#src-hexsurf-loft-L317">317</a> … (8 total)</td></tr>
+<tr><td><code>surface_band_corners</code> <span class="search-kind">fn</span></td><td><a href="#src-hexsurf-loft-L136">136</a></td><td><a href="#tests-02-worked-examples-loft-L127">HXD-001</a></td><td><a href="#tests-02-worked-examples-loft-L143">143</a> <a href="#tests-02-worked-examples-loft-L144">144</a></td></tr>
+<tr><td><code>surface_span</code> <span class="search-kind">fn</span></td><td><a href="#src-hexsurf-loft-L176">176</a></td><td><a href="#tests-02-worked-examples-loft-L250">HXD-003</a></td><td><a href="#src-hexsurf-loft-L219">219</a> <a href="#src-hexsurf-loft-L291">291</a> <a href="#src-hexsurf-loft-L296">296</a> <a href="#tests-02-worked-examples-loft-L90">90</a> <a href="#tests-02-worked-examples-loft-L91">91</a> <a href="#tests-02-worked-examples-loft-L420">420</a></td></tr>
+<tr><td><code>surface_fitted_spread</code> <span class="search-kind">fn</span></td><td><a href="#src-hexsurf-loft-L217">217</a></td><td><a href="#tests-02-worked-examples-loft-L127">HXD-001</a></td><td><a href="#tests-01-hex-draw-loft-L39">39</a> <a href="#tests-02-worked-examples-loft-L151">151</a> <a href="#tests-02-worked-examples-loft-L152">152</a> <a href="#tests-02-worked-examples-loft-L171">171</a></td></tr>
+<tr><td><code>surface_miter</code> <span class="search-kind">fn</span></td><td><a href="#src-hexsurf-loft-L255">255</a></td><td><a href="#tests-02-worked-examples-loft-L250">HXD-003</a></td><td><a href="#src-hexsurf-loft-L294">294</a> <a href="#src-hexsurf-loft-L295">295</a> <a href="#tests-02-worked-examples-loft-L286">286</a></td></tr>
+<tr><td><code>surface_quad</code> <span class="search-kind">fn</span></td><td><a href="#src-hexsurf-loft-L279">279</a></td><td><a href="#tests-02-worked-examples-loft-L250">HXD-003</a></td><td><a href="#tests-02-worked-examples-loft-L96">96</a> <a href="#tests-02-worked-examples-loft-L97">97</a> <a href="#tests-02-worked-examples-loft-L122">122</a></td></tr>
+<tr><td><code>surface_edge_span</code> <span class="search-kind">fn</span></td><td><a href="#src-hexsurf-loft-L307">307</a></td><td><a href="#tests-02-worked-examples-loft-L369">HXD-006</a></td><td><a href="#tests-02-worked-examples-loft-L415">415</a></td></tr>
+<tr><td><code>surface_edge_mat</code> <span class="search-kind">fn</span></td><td><a href="#src-hexsurf-loft-L337">337</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L407">407</a> <a href="#tests-02-worked-examples-loft-L408">408</a> <a href="#tests-02-worked-examples-loft-L409">409</a></td></tr>
+<tr><td><code>surface_band_mids</code> <span class="search-kind">fn</span></td><td><a href="#src-hexsurf-loft-L348">348</a></td><td><a href="#tests-02-worked-examples-loft-L127">HXD-001</a></td><td><a href="#tests-02-worked-examples-loft-L185">185</a> <a href="#tests-02-worked-examples-loft-L186">186</a></td></tr>
+<tr><td><code>surface_lsq_residual</code> <span class="search-kind">fn</span></td><td><a href="#src-hexsurf-loft-L378">378</a></td><td><a href="#tests-02-worked-examples-loft-L127">HXD-001</a></td><td><a href="#tests-02-worked-examples-loft-L192">192</a> <a href="#tests-02-worked-examples-loft-L193">193</a> <a href="#tests-02-worked-examples-loft-L194">194</a></td></tr>
+<tr><td><code>feature_t_num</code> <span class="search-kind">fn</span></td><td><a href="#src-hexsurf-loft-L426">426</a></td><td><a href="#tests-02-worked-examples-loft-L369">HXD-006</a></td><td><a href="#src-hexsurf-loft-L447">447</a> <a href="#tests-02-worked-examples-loft-L391">391</a></td></tr>
+<tr><td><code>feature_t_admissible</code> <span class="search-kind">fn</span></td><td><a href="#src-hexsurf-loft-L431">431</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L403">403</a></td></tr>
+<tr><td><code>feature_find</code> <span class="search-kind">fn</span></td><td><a href="#src-hexsurf-loft-L439">439</a></td><td><a href="#tests-02-worked-examples-loft-L369">HXD-006</a></td><td><a href="#tests-02-worked-examples-loft-L398">398</a> <a href="#tests-02-worked-examples-loft-L399">399</a></td></tr>
+<tr><td><code>wall_edge_count</code> <span class="search-kind">fn</span></td><td><a href="#src-hexsurf-loft-L467">467</a></td><td><a href="#tests-02-worked-examples-loft-L343">HXD-005</a></td><td><a href="#tests-02-worked-examples-loft-L331">331</a> <a href="#tests-02-worked-examples-loft-L364">364</a></td></tr>
+<tr><td><code>OPEN_NONE</code> <span class="search-kind">const</span></td><td><a href="#src-housedraw-loft-L68">68</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L324">324</a> <a href="#tests-02-worked-examples-loft-L333">333</a></td></tr>
+<tr><td><code>OPEN_DOOR</code> <span class="search-kind">const</span></td><td><a href="#src-housedraw-loft-L69">69</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L324">324</a> <a href="#tests-02-worked-examples-loft-L395">395</a> <a href="#tests-02-worked-examples-loft-L398">398</a></td></tr>
+<tr><td><code>OPEN_WINDOW</code> <span class="search-kind">const</span></td><td><a href="#src-housedraw-loft-L70">70</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L324">324</a> <a href="#tests-02-worked-examples-loft-L396">396</a> <a href="#tests-02-worked-examples-loft-L399">399</a> <a href="#tests-02-worked-examples-loft-L407">407</a> <a href="#tests-02-worked-examples-loft-L409">409</a></td></tr>
+<tr><td><code>OPEN_GAP</code> <span class="search-kind">const</span></td><td><a href="#src-housedraw-loft-L71">71</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L324">324</a></td></tr>
+<tr><td><code>draw_floor</code> <span class="search-kind">fn</span></td><td><a href="#src-housedraw-loft-L80">80</a></td><td>—</td><td><a href="#tests-01-hex-draw-loft-L16">16</a> <a href="#tests-01-hex-draw-loft-L25">25</a> <a href="#tests-01-hex-draw-loft-L36">36</a> <a href="#tests-02-worked-examples-loft-L48">48</a> <a href="#tests-02-worked-examples-loft-L169">169</a> <a href="#tests-02-worked-examples-loft-L232">232</a> … (7 total)</td></tr>
+<tr><td><code>draw_walls</code> <span class="search-kind">fn</span></td><td><a href="#src-housedraw-loft-L104">104</a></td><td><a href="#tests-02-worked-examples-loft-L343">HXD-005</a></td><td><a href="#tests-01-hex-draw-loft-L26">26</a> <a href="#tests-02-worked-examples-loft-L118">118</a> <a href="#tests-02-worked-examples-loft-L326">326</a> <a href="#tests-02-worked-examples-loft-L360">360</a> <a href="#tests-02-worked-examples-loft-L385">385</a></td></tr>
+<tr><td><code>place_opening</code> <span class="search-kind">fn</span></td><td><a href="#src-housedraw-loft-L136">136</a></td><td><a href="#tests-02-worked-examples-loft-L306">HXD-004</a></td><td><a href="#tests-02-worked-examples-loft-L329">329</a> <a href="#tests-02-worked-examples-loft-L395">395</a> <a href="#tests-02-worked-examples-loft-L396">396</a></td></tr>
+<tr><td><code>grow_ring</code> <span class="search-kind">fn</span></td><td><a href="#src-housedraw-loft-L169">169</a></td><td><a href="#tests-02-worked-examples-loft-L427">HXD-007</a></td><td><a href="#tests-02-worked-examples-loft-L464">464</a></td></tr>
+<tr><td><code>draw_roof</code> <span class="search-kind">fn</span></td><td><a href="#src-housedraw-loft-L186">186</a></td><td><a href="#tests-02-worked-examples-loft-L427">HXD-007</a></td><td><a href="#tests-02-worked-examples-loft-L467">467</a> <a href="#tests-02-worked-examples-loft-L489">489</a></td></tr>
 </table>
 <h2 id="src-hex-draw-loft">src/hex_draw.loft</h2>
 <pre class="src"><code><span id="src-hex-draw-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -94,489 +94,484 @@
 <span id="src-hexsurf-loft-L15"><span class="cm">// This is what makes domain-A straight-wall recovery **R1**.  Least squares would introduce a</span></span>
 <span id="src-hexsurf-loft-L16"><span class="cm">// residual to threshold; an average of exact rationals IS the answer.  `P4` therefore holds all</span></span>
 <span id="src-hexsurf-loft-L17"><span class="cm">// the way through the presentation layer — there is no `ε` anywhere between `𝕋` and the drawn wall.</span></span>
-<span id="src-hexsurf-loft-L18"><span class="cm">//</span></span>
-<span id="src-hexsurf-loft-L19"><span class="cm">// LIVES IN ITS OWN MODULE, not in `hexform` as `STEPS.md` proposed: the derivation needs</span></span>
-<span id="src-hexsurf-loft-L20"><span class="cm">// `housedraw`'s `Plan` and `SideRun`, and `hexform` sits below `housedraw`. Putting it there would</span></span>
-<span id="src-hexsurf-loft-L21"><span class="cm">// have inverted the dependency for no gain.</span></span>
-<span id="src-hexsurf-loft-L22"><span class="kw">use</span> hex_field::*;</span>
-<span id="src-hexsurf-loft-L23"><span class="kw">use</span> hex_grid::*;</span>
-<span id="src-hexsurf-loft-L24"><span class="kw">use</span> hex_form::*;</span>
-<span id="src-hexsurf-loft-L25"></span>
-<span id="src-hexsurf-loft-L26"><span class="cm">// ── the exact band constants (`ROUNDTRIP` §6.2), in world units ────────────</span></span>
-<span id="src-hexsurf-loft-L27"><span class="cm">//</span></span>
-<span id="src-hexsurf-loft-L28"><span class="cm">// 1 u = one hex edge = the circumradius; 1 hex step = sqrt(3) u = 1.5 m.  These are the CORNER</span></span>
-<span id="src-hexsurf-loft-L29"><span class="cm">// bands — the full extent of the strip — which is what §6.2's table names.</span></span>
-<span id="src-hexsurf-loft-L30"><span class="kw">pub</span> const <span class="en">BAND_TOPS</span>  = <span class="nm">0.5</span>;                    <span class="cm">// east family, dm = 0</span></span>
-<span id="src-hexsurf-loft-L31"><span class="kw">pub</span> const <span class="en">BAND_SIDES</span> = <span class="nm">0.8660254037844386</span>;     <span class="cm">// north family, dk = 0 — sqrt(3)/2</span></span>
-<span id="src-hexsurf-loft-L32"><span class="kw">pub</span> const <span class="en">BAND_RATIO</span> = <span class="nm">1.7320508075688772</span>;     <span class="cm">// sqrt(3), exactly</span></span>
-<span id="src-hexsurf-loft-L33"></span>
-<span id="src-hexsurf-loft-L34"><span class="cm">// The widening rule: both walls are presented straight and equally thick, at the LARGER band.</span></span>
-<span id="src-hexsurf-loft-L35"><span class="cm">// Only the tops widen, and the amount is a closed form in Q(sqrt3) — nothing measured or tuned.</span></span>
-<span id="src-hexsurf-loft-L36"><span class="kw">pub</span> const <span class="en">WIDEN_TOTAL</span> = <span class="nm">0.36602540378443865</span>;   <span class="cm">// (sqrt3 - 1)/2  u</span></span>
-<span id="src-hexsurf-loft-L37"><span class="kw">pub</span> const <span class="en">WIDEN_FACE</span>  = <span class="nm">0.18301270189221933</span>;   <span class="cm">// (sqrt3 - 1)/4  u, applied to each face</span></span>
-<span id="src-hexsurf-loft-L38"></span>
-<span id="src-hexsurf-loft-L39"><span class="cm">// The averaged surface of one wall run.  Direction is exact integer; position is an exact</span></span>
-<span id="src-hexsurf-loft-L40"><span class="cm">// rational held as `(num_k, num_m) / den`.</span></span>
-<span id="src-hexsurf-loft-L41"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">WallSurface</span> {</span>
-<span id="src-hexsurf-loft-L42">  ws_dk:    <span class="ty"><a href="stdlib-types.html">integer</a></span>,   <span class="cm">// summed edge vector, doubled coordinates — exact</span></span>
-<span id="src-hexsurf-loft-L43">  ws_dm:    <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-hexsurf-loft-L44">  ws_num_k: <span class="ty"><a href="stdlib-types.html">integer</a></span>,   <span class="cm">// mean midpoint = (num_k / den, num_m / den) in doubled coordinates</span></span>
-<span id="src-hexsurf-loft-L45">  ws_num_m: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-hexsurf-loft-L46">  ws_den:   <span class="ty"><a href="stdlib-types.html">integer</a></span>,   <span class="cm">// 2 * n</span></span>
-<span id="src-hexsurf-loft-L47">  ws_n:     <span class="ty"><a href="stdlib-types.html">integer</a></span>,   <span class="cm">// edges averaged</span></span>
-<span id="src-hexsurf-loft-L48">}</span>
-<span id="src-hexsurf-loft-L49"></span>
-<span id="src-hexsurf-loft-L50"><span class="cm">// The two corners bounding the boundary edge between cell (qa,ra) and its outside neighbour.</span></span>
-<span id="src-hexsurf-loft-L51"><span class="kw">fn</span> <span class="fn-call">edge_corners_of</span>(qa: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ra: <span class="ty"><a href="stdlib-types.html">integer</a></span>, qb: <span class="ty"><a href="stdlib-types.html">integer</a></span>, rb: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
-<span id="src-hexsurf-loft-L52">  <span class="fn-call">hex_edge_corners</span>(<span class="fn-call">hex_neighbor_dir</span>(qa, ra, qb, rb))</span>
-<span id="src-hexsurf-loft-L53">}</span>
-<span id="src-hexsurf-loft-L54"></span>
-<span id="src-hexsurf-loft-L55"><span class="cm">// THE DERIVATION.  Sum the edge vectors; sum the doubled midpoints.  Both are integer sums, so the</span></span>
-<span id="src-hexsurf-loft-L56"><span class="cm">// surface is exact before any float is involved.</span></span>
-<span id="src-hexsurf-loft-L57"><span class="cm">//</span></span>
-<span id="src-hexsurf-loft-L58"><span class="cm">// Example: @HXD-001</span></span>
-<span id="src-hexsurf-loft-L59"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">surface_of</span>(p: <span class="en">Plan</span>, cells: <span class="en">HexSet</span>, side: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">WallSurface</span> {</span>
-<span id="src-hexsurf-loft-L60">  sr = <span class="fn-call">side_edges</span>(p, cells, side);</span>
-<span id="src-hexsurf-loft-L61">  n = <span class="fn-call">side_run_len</span>(sr);</span>
-<span id="src-hexsurf-loft-L62">  sdk = <span class="nm">0</span>;</span>
-<span id="src-hexsurf-loft-L63">  sdm = <span class="nm">0</span>;</span>
-<span id="src-hexsurf-loft-L64">  smk = <span class="nm">0</span>;</span>
-<span id="src-hexsurf-loft-L65">  smm = <span class="nm">0</span>;</span>
-<span id="src-hexsurf-loft-L66">  <span class="kw">for</span> si <span class="kw">in</span> <span class="nm">0..</span>n {</span>
-<span id="src-hexsurf-loft-L67">    qa = sr.sr_qa[si] ?? <span class="nm">0</span>;</span>
-<span id="src-hexsurf-loft-L68">    ra = sr.sr_ra[si] ?? <span class="nm">0</span>;</span>
-<span id="src-hexsurf-loft-L69">    (c1, c2) = <span class="fn-call">edge_corners_of</span>(qa, ra, sr.sr_qb[si] ?? <span class="nm">0</span>, sr.sr_rb[si] ?? <span class="nm">0</span>);</span>
-<span id="src-hexsurf-loft-L70">    sdk = sdk + <span class="fn-call">corner_k</span>(c2) - <span class="fn-call">corner_k</span>(c1);</span>
-<span id="src-hexsurf-loft-L71">    sdm = sdm + <span class="fn-call">corner_m</span>(c2) - <span class="fn-call">corner_m</span>(c1);</span>
-<span id="src-hexsurf-loft-L72">    smk = smk + <span class="nm">2</span> * <span class="fn-call">lattice_k</span>(qa, ra) + <span class="fn-call">corner_k</span>(c1) + <span class="fn-call">corner_k</span>(c2);</span>
-<span id="src-hexsurf-loft-L73">    smm = smm + <span class="nm">2</span> * <span class="fn-call">lattice_m</span>(qa, ra) + <span class="fn-call">corner_m</span>(c1) + <span class="fn-call">corner_m</span>(c2);</span>
-<span id="src-hexsurf-loft-L74">  }</span>
-<span id="src-hexsurf-loft-L75">  <span class="en">WallSurface</span> { ws_dk: sdk, ws_dm: sdm, ws_num_k: smk, ws_num_m: smm,</span>
-<span id="src-hexsurf-loft-L76">                ws_den: <span class="nm">2</span> * n, ws_n: n }</span>
-<span id="src-hexsurf-loft-L77">}</span>
-<span id="src-hexsurf-loft-L78"></span>
-<span id="src-hexsurf-loft-L79"><span class="cm">// Which of the 12 HEADINGS is the mean direction an exact positive multiple of?  -1 if none.</span></span>
+<span id="src-hexsurf-loft-L18"><span class="kw">use</span> hex_field::*;</span>
+<span id="src-hexsurf-loft-L19"><span class="kw">use</span> hex_grid::*;</span>
+<span id="src-hexsurf-loft-L20"><span class="kw">use</span> hex_form::*;</span>
+<span id="src-hexsurf-loft-L21"></span>
+<span id="src-hexsurf-loft-L22"><span class="cm">// ── the exact band constants (`ROUNDTRIP` §6.2), in world units ────────────</span></span>
+<span id="src-hexsurf-loft-L23"><span class="cm">//</span></span>
+<span id="src-hexsurf-loft-L24"><span class="cm">// 1 u = one hex edge = the circumradius; 1 hex step = sqrt(3) u = 1.5 m.  These are the CORNER</span></span>
+<span id="src-hexsurf-loft-L25"><span class="cm">// bands — the full extent of the strip — which is what §6.2's table names.</span></span>
+<span id="src-hexsurf-loft-L26"><span class="kw">pub</span> const <span class="en">BAND_TOPS</span>  = <span class="nm">0.5</span>;                    <span class="cm">// east family, dm = 0</span></span>
+<span id="src-hexsurf-loft-L27"><span class="kw">pub</span> const <span class="en">BAND_SIDES</span> = <span class="nm">0.8660254037844386</span>;     <span class="cm">// north family, dk = 0 — sqrt(3)/2</span></span>
+<span id="src-hexsurf-loft-L28"><span class="kw">pub</span> const <span class="en">BAND_RATIO</span> = <span class="nm">1.7320508075688772</span>;     <span class="cm">// sqrt(3), exactly</span></span>
+<span id="src-hexsurf-loft-L29"></span>
+<span id="src-hexsurf-loft-L30"><span class="cm">// The widening rule: both walls are presented straight and equally thick, at the LARGER band.</span></span>
+<span id="src-hexsurf-loft-L31"><span class="cm">// Only the tops widen, and the amount is a closed form in Q(sqrt3) — nothing measured or tuned.</span></span>
+<span id="src-hexsurf-loft-L32"><span class="kw">pub</span> const <span class="en">WIDEN_TOTAL</span> = <span class="nm">0.36602540378443865</span>;   <span class="cm">// (sqrt3 - 1)/2  u</span></span>
+<span id="src-hexsurf-loft-L33"><span class="kw">pub</span> const <span class="en">WIDEN_FACE</span>  = <span class="nm">0.18301270189221933</span>;   <span class="cm">// (sqrt3 - 1)/4  u, applied to each face</span></span>
+<span id="src-hexsurf-loft-L34"></span>
+<span id="src-hexsurf-loft-L35"><span class="cm">// The averaged surface of one wall run.  Direction is exact integer; position is an exact</span></span>
+<span id="src-hexsurf-loft-L36"><span class="cm">// rational held as `(num_k, num_m) / den`.</span></span>
+<span id="src-hexsurf-loft-L37"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">WallSurface</span> {</span>
+<span id="src-hexsurf-loft-L38">  ws_dk:    <span class="ty"><a href="stdlib-types.html">integer</a></span>,   <span class="cm">// summed edge vector, doubled coordinates — exact</span></span>
+<span id="src-hexsurf-loft-L39">  ws_dm:    <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-hexsurf-loft-L40">  ws_num_k: <span class="ty"><a href="stdlib-types.html">integer</a></span>,   <span class="cm">// mean midpoint = (num_k / den, num_m / den) in doubled coordinates</span></span>
+<span id="src-hexsurf-loft-L41">  ws_num_m: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-hexsurf-loft-L42">  ws_den:   <span class="ty"><a href="stdlib-types.html">integer</a></span>,   <span class="cm">// 2 * n</span></span>
+<span id="src-hexsurf-loft-L43">  ws_n:     <span class="ty"><a href="stdlib-types.html">integer</a></span>,   <span class="cm">// edges averaged</span></span>
+<span id="src-hexsurf-loft-L44">}</span>
+<span id="src-hexsurf-loft-L45"></span>
+<span id="src-hexsurf-loft-L46"><span class="cm">// The two corners bounding the boundary edge between cell (qa,ra) and its outside neighbour.</span></span>
+<span id="src-hexsurf-loft-L47"><span class="kw">fn</span> <span class="fn-call">edge_corners_of</span>(qa: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ra: <span class="ty"><a href="stdlib-types.html">integer</a></span>, qb: <span class="ty"><a href="stdlib-types.html">integer</a></span>, rb: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-hexsurf-loft-L48">  <span class="fn-call">hex_edge_corners</span>(<span class="fn-call">hex_neighbor_dir</span>(qa, ra, qb, rb))</span>
+<span id="src-hexsurf-loft-L49">}</span>
+<span id="src-hexsurf-loft-L50"></span>
+<span id="src-hexsurf-loft-L51"><span class="cm">// THE DERIVATION.  Sum the edge vectors; sum the doubled midpoints.  Both are integer sums, so the</span></span>
+<span id="src-hexsurf-loft-L52"><span class="cm">// surface is exact before any float is involved.</span></span>
+<span id="src-hexsurf-loft-L53"><span class="cm">//</span></span>
+<span id="src-hexsurf-loft-L54"><span class="cm">// Example: @HXD-001</span></span>
+<span id="src-hexsurf-loft-L55"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">surface_of</span>(p: <span class="en">Plan</span>, cells: <span class="en">HexSet</span>, side: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">WallSurface</span> {</span>
+<span id="src-hexsurf-loft-L56">  sr = <span class="fn-call">side_edges</span>(p, cells, side);</span>
+<span id="src-hexsurf-loft-L57">  n = <span class="fn-call">side_run_len</span>(sr);</span>
+<span id="src-hexsurf-loft-L58">  sdk = <span class="nm">0</span>;</span>
+<span id="src-hexsurf-loft-L59">  sdm = <span class="nm">0</span>;</span>
+<span id="src-hexsurf-loft-L60">  smk = <span class="nm">0</span>;</span>
+<span id="src-hexsurf-loft-L61">  smm = <span class="nm">0</span>;</span>
+<span id="src-hexsurf-loft-L62">  <span class="kw">for</span> si <span class="kw">in</span> <span class="nm">0..</span>n {</span>
+<span id="src-hexsurf-loft-L63">    qa = sr.sr_qa[si] ?? <span class="nm">0</span>;</span>
+<span id="src-hexsurf-loft-L64">    ra = sr.sr_ra[si] ?? <span class="nm">0</span>;</span>
+<span id="src-hexsurf-loft-L65">    (c1, c2) = <span class="fn-call">edge_corners_of</span>(qa, ra, sr.sr_qb[si] ?? <span class="nm">0</span>, sr.sr_rb[si] ?? <span class="nm">0</span>);</span>
+<span id="src-hexsurf-loft-L66">    sdk = sdk + <span class="fn-call">corner_k</span>(c2) - <span class="fn-call">corner_k</span>(c1);</span>
+<span id="src-hexsurf-loft-L67">    sdm = sdm + <span class="fn-call">corner_m</span>(c2) - <span class="fn-call">corner_m</span>(c1);</span>
+<span id="src-hexsurf-loft-L68">    smk = smk + <span class="nm">2</span> * <span class="fn-call">lattice_k</span>(qa, ra) + <span class="fn-call">corner_k</span>(c1) + <span class="fn-call">corner_k</span>(c2);</span>
+<span id="src-hexsurf-loft-L69">    smm = smm + <span class="nm">2</span> * <span class="fn-call">lattice_m</span>(qa, ra) + <span class="fn-call">corner_m</span>(c1) + <span class="fn-call">corner_m</span>(c2);</span>
+<span id="src-hexsurf-loft-L70">  }</span>
+<span id="src-hexsurf-loft-L71">  <span class="en">WallSurface</span> { ws_dk: sdk, ws_dm: sdm, ws_num_k: smk, ws_num_m: smm,</span>
+<span id="src-hexsurf-loft-L72">                ws_den: <span class="nm">2</span> * n, ws_n: n }</span>
+<span id="src-hexsurf-loft-L73">}</span>
+<span id="src-hexsurf-loft-L74"></span>
+<span id="src-hexsurf-loft-L75"><span class="cm">// Which of the 12 HEADINGS is the mean direction an exact positive multiple of?  -1 if none.</span></span>
+<span id="src-hexsurf-loft-L76"><span class="cm">//</span></span>
+<span id="src-hexsurf-loft-L77"><span class="cm">// This is the exactness claim: the averaged direction equals the nominal side direction EXACTLY,</span></span>
+<span id="src-hexsurf-loft-L78"><span class="cm">// as an integer multiple of a heading step.  Any other value would mean the average had drifted</span></span>
+<span id="src-hexsurf-loft-L79"><span class="cm">// off the lattice, which is what a fit would do and an average must not.</span></span>
 <span id="src-hexsurf-loft-L80"><span class="cm">//</span></span>
-<span id="src-hexsurf-loft-L81"><span class="cm">// This is the exactness claim: the averaged direction equals the nominal side direction EXACTLY,</span></span>
-<span id="src-hexsurf-loft-L82"><span class="cm">// as an integer multiple of a heading step.  Any other value would mean the average had drifted</span></span>
-<span id="src-hexsurf-loft-L83"><span class="cm">// off the lattice, which is what a fit would do and an average must not.</span></span>
-<span id="src-hexsurf-loft-L84"><span class="cm">//</span></span>
-<span id="src-hexsurf-loft-L85"><span class="cm">// PARALLEL, not an integer multiple, and not "one component is zero".  This check was written</span></span>
-<span id="src-hexsurf-loft-L86"><span class="cm">// wrong twice before it was written right, and both wrong versions failed on geometry that was</span></span>
-<span id="src-hexsurf-loft-L87"><span class="cm">// never in doubt:</span></span>
+<span id="src-hexsurf-loft-L81"><span class="cm">// PARALLEL, not an integer multiple, and not "one component is zero".  Both of those tests</span></span>
+<span id="src-hexsurf-loft-L82"><span class="cm">// reject geometry that is exact:</span></span>
+<span id="src-hexsurf-loft-L83"><span class="cm">//</span></span>
+<span id="src-hexsurf-loft-L84"><span class="cm">//   "one component is zero"   only 4 of the 12 headings have one — a side running NE is `(1,3)`,</span></span>
+<span id="src-hexsurf-loft-L85"><span class="cm">//                             both components non-zero and perfectly exact.  Failed 16 of 24.</span></span>
+<span id="src-hexsurf-loft-L86"><span class="cm">//   "an integer multiple"     the summed vector is `(0,14)` where the heading step is `(0,6)`;</span></span>
+<span id="src-hexsurf-loft-L87"><span class="cm">//                             the SUM over a run is not a whole number of steps.  Failed 12 of 24.</span></span>
 <span id="src-hexsurf-loft-L88"><span class="cm">//</span></span>
-<span id="src-hexsurf-loft-L89"><span class="cm">//   "one component is zero"   only 4 of the 12 headings have one — a side running NE is `(1,3)`,</span></span>
-<span id="src-hexsurf-loft-L90"><span class="cm">//                             both components non-zero and perfectly exact.  Failed 16 of 24.</span></span>
-<span id="src-hexsurf-loft-L91"><span class="cm">//   "an integer multiple"     the summed vector is `(0,14)` where the heading step is `(0,6)`;</span></span>
-<span id="src-hexsurf-loft-L92"><span class="cm">//                             the SUM over a run is not a whole number of steps.  Failed 12 of 24.</span></span>
-<span id="src-hexsurf-loft-L93"><span class="cm">//</span></span>
-<span id="src-hexsurf-loft-L94"><span class="cm">// What §6.1 actually claims is that the DIRECTION is exact — no residual perpendicular component —</span></span>
-<span id="src-hexsurf-loft-L95"><span class="cm">// which is a zero CROSS PRODUCT against the heading step, in exact integers.  The magnitude is the</span></span>
-<span id="src-hexsurf-loft-L96"><span class="cm">// run's length and carries no claim.</span></span>
-<span id="src-hexsurf-loft-L97"><span class="cm">//</span></span>
-<span id="src-hexsurf-loft-L98"><span class="cm">// Example: @HXD-002</span></span>
-<span id="src-hexsurf-loft-L99"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">surface_heading</span>(w: <span class="en">WallSurface</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-hexsurf-loft-L100">  <span class="kw">for</span> sh <span class="kw">in</span> <span class="nm">0..</span><span class="en">HEAD_N</span> {</span>
-<span id="src-hexsurf-loft-L101">    st = <span class="fn-call">head_step</span>(sh);</span>
-<span id="src-hexsurf-loft-L102">    <span class="kw">if</span> w.ws_dk * st.<span class="nm">1</span> - w.ws_dm * st.<span class="nm">0</span> == <span class="nm">0</span> {</span>
-<span id="src-hexsurf-loft-L103">      <span class="kw">if</span> w.ws_dk * st.<span class="nm">0</span> + w.ws_dm * st.<span class="nm">1</span> &gt; <span class="nm">0</span> { <span class="kw">return</span> sh; }</span>
-<span id="src-hexsurf-loft-L104">    }</span>
-<span id="src-hexsurf-loft-L105">  }</span>
-<span id="src-hexsurf-loft-L106">  -<span class="nm">1</span></span>
-<span id="src-hexsurf-loft-L107">}</span>
-<span id="src-hexsurf-loft-L108"></span>
-<span id="src-hexsurf-loft-L109"><span class="cm">// Does this surface run along one of the exact headings?  An inexact one is still drawable</span></span>
-<span id="src-hexsurf-loft-L110"><span class="cm">// but cannot be reasoned about on the lattice, so ask before treating it as integer.</span></span>
-<span id="src-hexsurf-loft-L111"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">surface_is_exact</span>(w: <span class="en">WallSurface</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> { <span class="fn-call">surface_heading</span>(w) &gt;= <span class="nm">0</span> }</span>
+<span id="src-hexsurf-loft-L89"><span class="cm">// What §6.1 actually claims is that the DIRECTION is exact — no residual perpendicular component —</span></span>
+<span id="src-hexsurf-loft-L90"><span class="cm">// which is a zero CROSS PRODUCT against the heading step, in exact integers.  The magnitude is the</span></span>
+<span id="src-hexsurf-loft-L91"><span class="cm">// run's length and carries no claim.</span></span>
+<span id="src-hexsurf-loft-L92"><span class="cm">//</span></span>
+<span id="src-hexsurf-loft-L93"><span class="cm">// Example: @HXD-002</span></span>
+<span id="src-hexsurf-loft-L94"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">surface_heading</span>(w: <span class="en">WallSurface</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-hexsurf-loft-L95">  <span class="kw">for</span> sh <span class="kw">in</span> <span class="nm">0..</span><span class="en">HEAD_N</span> {</span>
+<span id="src-hexsurf-loft-L96">    st = <span class="fn-call">head_step</span>(sh);</span>
+<span id="src-hexsurf-loft-L97">    <span class="kw">if</span> w.ws_dk * st.<span class="nm">1</span> - w.ws_dm * st.<span class="nm">0</span> == <span class="nm">0</span> {</span>
+<span id="src-hexsurf-loft-L98">      <span class="kw">if</span> w.ws_dk * st.<span class="nm">0</span> + w.ws_dm * st.<span class="nm">1</span> &gt; <span class="nm">0</span> { <span class="kw">return</span> sh; }</span>
+<span id="src-hexsurf-loft-L99">    }</span>
+<span id="src-hexsurf-loft-L100">  }</span>
+<span id="src-hexsurf-loft-L101">  -<span class="nm">1</span></span>
+<span id="src-hexsurf-loft-L102">}</span>
+<span id="src-hexsurf-loft-L103"></span>
+<span id="src-hexsurf-loft-L104"><span class="cm">// Does this surface run along one of the exact headings?  An inexact one is still drawable</span></span>
+<span id="src-hexsurf-loft-L105"><span class="cm">// but cannot be reasoned about on the lattice, so ask before treating it as integer.</span></span>
+<span id="src-hexsurf-loft-L106"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">surface_is_exact</span>(w: <span class="en">WallSurface</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> { <span class="fn-call">surface_heading</span>(w) &gt;= <span class="nm">0</span> }</span>
+<span id="src-hexsurf-loft-L107"></span>
+<span id="src-hexsurf-loft-L108"><span class="cm">// World position of the mean, and the unit perpendicular to the mean direction.</span></span>
+<span id="src-hexsurf-loft-L109"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">surface_mean_x</span>(w: <span class="en">WallSurface</span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="src-hexsurf-loft-L110">  (((w.ws_num_k <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) / (w.ws_den <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>)) ?? <span class="nm">0.0</span>) * <span class="nm">0.8660254037844386</span></span>
+<span id="src-hexsurf-loft-L111">}</span>
 <span id="src-hexsurf-loft-L112"></span>
-<span id="src-hexsurf-loft-L113"><span class="cm">// World position of the mean, and the unit perpendicular to the mean direction.</span></span>
-<span id="src-hexsurf-loft-L114"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">surface_mean_x</span>(w: <span class="en">WallSurface</span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
-<span id="src-hexsurf-loft-L115">  (((w.ws_num_k <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) / (w.ws_den <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>)) ?? <span class="nm">0.0</span>) * <span class="nm">0.8660254037844386</span></span>
-<span id="src-hexsurf-loft-L116">}</span>
-<span id="src-hexsurf-loft-L117"></span>
-<span id="src-hexsurf-loft-L118"><span class="cm">// The surface's mean point in world y — the companion of `surface_mean_x`, and where a</span></span>
-<span id="src-hexsurf-loft-L119"><span class="cm">// label or a normal is anchored.</span></span>
-<span id="src-hexsurf-loft-L120"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">surface_mean_y</span>(w: <span class="en">WallSurface</span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
-<span id="src-hexsurf-loft-L121">  (((w.ws_num_m <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) / (w.ws_den <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>)) ?? <span class="nm">0.0</span>) * <span class="nm">0.5</span></span>
-<span id="src-hexsurf-loft-L122">}</span>
-<span id="src-hexsurf-loft-L123"></span>
-<span id="src-hexsurf-loft-L124"><span class="kw">fn</span> <span class="fn-call">perp_x</span>(w: <span class="en">WallSurface</span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
-<span id="src-hexsurf-loft-L125">  wx = (w.ws_dk <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.8660254037844386</span>;</span>
-<span id="src-hexsurf-loft-L126">  wy = (w.ws_dm <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.5</span>;</span>
-<span id="src-hexsurf-loft-L127">  ln = <span class="bi"><a href="stdlib-math.html">sqrt</a></span>(wx * wx + wy * wy) ?? <span class="nm">1.0</span>;</span>
-<span id="src-hexsurf-loft-L128">  (<span class="nm">0.0</span> - wy / ln) ?? <span class="nm">0.0</span></span>
-<span id="src-hexsurf-loft-L129">}</span>
-<span id="src-hexsurf-loft-L130"></span>
-<span id="src-hexsurf-loft-L131"><span class="kw">fn</span> <span class="fn-call">perp_y</span>(w: <span class="en">WallSurface</span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
-<span id="src-hexsurf-loft-L132">  wx = (w.ws_dk <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.8660254037844386</span>;</span>
-<span id="src-hexsurf-loft-L133">  wy = (w.ws_dm <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.5</span>;</span>
-<span id="src-hexsurf-loft-L134">  ln = <span class="bi"><a href="stdlib-math.html">sqrt</a></span>(wx * wx + wy * wy) ?? <span class="nm">1.0</span>;</span>
-<span id="src-hexsurf-loft-L135">  (wx / ln) ?? <span class="nm">0.0</span></span>
-<span id="src-hexsurf-loft-L136">}</span>
-<span id="src-hexsurf-loft-L137"></span>
-<span id="src-hexsurf-loft-L138"><span class="cm">// The perpendicular extent of the run's CORNERS about the mean line — the band of §6.2.</span></span>
-<span id="src-hexsurf-loft-L139"><span class="cm">//</span></span>
-<span id="src-hexsurf-loft-L140"><span class="cm">// Example: @HXD-001</span></span>
-<span id="src-hexsurf-loft-L141"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">surface_band_corners</span>(p: <span class="en">Plan</span>, cells: <span class="en">HexSet</span>, side: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
-<span id="src-hexsurf-loft-L142">  w = <span class="fn-call">surface_of</span>(p, cells, side);</span>
-<span id="src-hexsurf-loft-L143">  sr = <span class="fn-call">side_edges</span>(p, cells, side);</span>
-<span id="src-hexsurf-loft-L144">  px = <span class="fn-call">perp_x</span>(w);</span>
-<span id="src-hexsurf-loft-L145">  py = <span class="fn-call">perp_y</span>(w);</span>
-<span id="src-hexsurf-loft-L146">  cx = <span class="fn-call">surface_mean_x</span>(w);</span>
-<span id="src-hexsurf-loft-L147">  cy = <span class="fn-call">surface_mean_y</span>(w);</span>
-<span id="src-hexsurf-loft-L148">  lo = <span class="nm">1.0</span>e9;</span>
-<span id="src-hexsurf-loft-L149">  hi = -<span class="nm">1.0</span>e9;</span>
-<span id="src-hexsurf-loft-L150">  <span class="kw">for</span> bi <span class="kw">in</span> <span class="nm">0..</span><span class="fn-call">side_run_len</span>(sr) {</span>
-<span id="src-hexsurf-loft-L151">    qa = sr.sr_qa[bi] ?? <span class="nm">0</span>;</span>
-<span id="src-hexsurf-loft-L152">    ra = sr.sr_ra[bi] ?? <span class="nm">0</span>;</span>
-<span id="src-hexsurf-loft-L153">    (c1, c2) = <span class="fn-call">edge_corners_of</span>(qa, ra, sr.sr_qb[bi] ?? <span class="nm">0</span>, sr.sr_rb[bi] ?? <span class="nm">0</span>);</span>
-<span id="src-hexsurf-loft-L154">    <span class="kw">for</span> wi <span class="kw">in</span> <span class="nm">0..2</span> {</span>
-<span id="src-hexsurf-loft-L155">      cc = c1;</span>
-<span id="src-hexsurf-loft-L156">      <span class="kw">if</span> wi == <span class="nm">1</span> { cc = c2; }</span>
-<span id="src-hexsurf-loft-L157">      ex = ((<span class="fn-call">lattice_k</span>(qa, ra) + <span class="fn-call">corner_k</span>(cc)) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.8660254037844386</span>;</span>
-<span id="src-hexsurf-loft-L158">      ey = ((<span class="fn-call">lattice_m</span>(qa, ra) + <span class="fn-call">corner_m</span>(cc)) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.5</span>;</span>
-<span id="src-hexsurf-loft-L159">      ev = (ex - cx) * px + (ey - cy) * py;</span>
-<span id="src-hexsurf-loft-L160">      <span class="kw">if</span> ev &lt; lo { lo = ev; }</span>
-<span id="src-hexsurf-loft-L161">      <span class="kw">if</span> ev &gt; hi { hi = ev; }</span>
-<span id="src-hexsurf-loft-L162">    }</span>
-<span id="src-hexsurf-loft-L163">  }</span>
-<span id="src-hexsurf-loft-L164">  hi - lo</span>
-<span id="src-hexsurf-loft-L165">}</span>
-<span id="src-hexsurf-loft-L166"></span>
-<span id="src-hexsurf-loft-L167"><span class="cm">// ── G2: THE WALL AS *ONE* QUAD ─────────────────────────────────────────────</span></span>
-<span id="src-hexsurf-loft-L168"><span class="cm">//</span></span>
-<span id="src-hexsurf-loft-L169"><span class="cm">// `G2` asks that every wall render as **one flat quad — its analytic surface — not the strip**.</span></span>
-<span id="src-hexsurf-loft-L170"><span class="cm">// Today the shot draws the wall *as it is stored*: one strip per boundary edge, so a side that is</span></span>
-<span id="src-hexsurf-loft-L171"><span class="cm">// nine edges long is nine quads that zigzag by the band `X47` measured.  The surface is already</span></span>
-<span id="src-hexsurf-loft-L172"><span class="cm">// exact (direction exactly a heading, position an exact rational); what was missing is its EXTENT,</span></span>
-<span id="src-hexsurf-loft-L173"><span class="cm">// so a renderer can emit the segment instead of the strip.</span></span>
+<span id="src-hexsurf-loft-L113"><span class="cm">// The surface's mean point in world y — the companion of `surface_mean_x`, and where a</span></span>
+<span id="src-hexsurf-loft-L114"><span class="cm">// label or a normal is anchored.</span></span>
+<span id="src-hexsurf-loft-L115"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">surface_mean_y</span>(w: <span class="en">WallSurface</span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="src-hexsurf-loft-L116">  (((w.ws_num_m <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) / (w.ws_den <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>)) ?? <span class="nm">0.0</span>) * <span class="nm">0.5</span></span>
+<span id="src-hexsurf-loft-L117">}</span>
+<span id="src-hexsurf-loft-L118"></span>
+<span id="src-hexsurf-loft-L119"><span class="kw">fn</span> <span class="fn-call">perp_x</span>(w: <span class="en">WallSurface</span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="src-hexsurf-loft-L120">  wx = (w.ws_dk <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.8660254037844386</span>;</span>
+<span id="src-hexsurf-loft-L121">  wy = (w.ws_dm <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.5</span>;</span>
+<span id="src-hexsurf-loft-L122">  ln = <span class="bi"><a href="stdlib-math.html">sqrt</a></span>(wx * wx + wy * wy) ?? <span class="nm">1.0</span>;</span>
+<span id="src-hexsurf-loft-L123">  (<span class="nm">0.0</span> - wy / ln) ?? <span class="nm">0.0</span></span>
+<span id="src-hexsurf-loft-L124">}</span>
+<span id="src-hexsurf-loft-L125"></span>
+<span id="src-hexsurf-loft-L126"><span class="kw">fn</span> <span class="fn-call">perp_y</span>(w: <span class="en">WallSurface</span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="src-hexsurf-loft-L127">  wx = (w.ws_dk <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.8660254037844386</span>;</span>
+<span id="src-hexsurf-loft-L128">  wy = (w.ws_dm <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.5</span>;</span>
+<span id="src-hexsurf-loft-L129">  ln = <span class="bi"><a href="stdlib-math.html">sqrt</a></span>(wx * wx + wy * wy) ?? <span class="nm">1.0</span>;</span>
+<span id="src-hexsurf-loft-L130">  (wx / ln) ?? <span class="nm">0.0</span></span>
+<span id="src-hexsurf-loft-L131">}</span>
+<span id="src-hexsurf-loft-L132"></span>
+<span id="src-hexsurf-loft-L133"><span class="cm">// The perpendicular extent of the run's CORNERS about the mean line — the band of §6.2.</span></span>
+<span id="src-hexsurf-loft-L134"><span class="cm">//</span></span>
+<span id="src-hexsurf-loft-L135"><span class="cm">// Example: @HXD-001</span></span>
+<span id="src-hexsurf-loft-L136"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">surface_band_corners</span>(p: <span class="en">Plan</span>, cells: <span class="en">HexSet</span>, side: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="src-hexsurf-loft-L137">  w = <span class="fn-call">surface_of</span>(p, cells, side);</span>
+<span id="src-hexsurf-loft-L138">  sr = <span class="fn-call">side_edges</span>(p, cells, side);</span>
+<span id="src-hexsurf-loft-L139">  px = <span class="fn-call">perp_x</span>(w);</span>
+<span id="src-hexsurf-loft-L140">  py = <span class="fn-call">perp_y</span>(w);</span>
+<span id="src-hexsurf-loft-L141">  cx = <span class="fn-call">surface_mean_x</span>(w);</span>
+<span id="src-hexsurf-loft-L142">  cy = <span class="fn-call">surface_mean_y</span>(w);</span>
+<span id="src-hexsurf-loft-L143">  lo = <span class="nm">1.0</span>e9;</span>
+<span id="src-hexsurf-loft-L144">  hi = -<span class="nm">1.0</span>e9;</span>
+<span id="src-hexsurf-loft-L145">  <span class="kw">for</span> bi <span class="kw">in</span> <span class="nm">0..</span><span class="fn-call">side_run_len</span>(sr) {</span>
+<span id="src-hexsurf-loft-L146">    qa = sr.sr_qa[bi] ?? <span class="nm">0</span>;</span>
+<span id="src-hexsurf-loft-L147">    ra = sr.sr_ra[bi] ?? <span class="nm">0</span>;</span>
+<span id="src-hexsurf-loft-L148">    (c1, c2) = <span class="fn-call">edge_corners_of</span>(qa, ra, sr.sr_qb[bi] ?? <span class="nm">0</span>, sr.sr_rb[bi] ?? <span class="nm">0</span>);</span>
+<span id="src-hexsurf-loft-L149">    <span class="kw">for</span> wi <span class="kw">in</span> <span class="nm">0..2</span> {</span>
+<span id="src-hexsurf-loft-L150">      cc = c1;</span>
+<span id="src-hexsurf-loft-L151">      <span class="kw">if</span> wi == <span class="nm">1</span> { cc = c2; }</span>
+<span id="src-hexsurf-loft-L152">      ex = ((<span class="fn-call">lattice_k</span>(qa, ra) + <span class="fn-call">corner_k</span>(cc)) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.8660254037844386</span>;</span>
+<span id="src-hexsurf-loft-L153">      ey = ((<span class="fn-call">lattice_m</span>(qa, ra) + <span class="fn-call">corner_m</span>(cc)) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.5</span>;</span>
+<span id="src-hexsurf-loft-L154">      ev = (ex - cx) * px + (ey - cy) * py;</span>
+<span id="src-hexsurf-loft-L155">      <span class="kw">if</span> ev &lt; lo { lo = ev; }</span>
+<span id="src-hexsurf-loft-L156">      <span class="kw">if</span> ev &gt; hi { hi = ev; }</span>
+<span id="src-hexsurf-loft-L157">    }</span>
+<span id="src-hexsurf-loft-L158">  }</span>
+<span id="src-hexsurf-loft-L159">  hi - lo</span>
+<span id="src-hexsurf-loft-L160">}</span>
+<span id="src-hexsurf-loft-L161"></span>
+<span id="src-hexsurf-loft-L162"><span class="cm">// ── G2: THE WALL AS *ONE* QUAD ─────────────────────────────────────────────</span></span>
+<span id="src-hexsurf-loft-L163"><span class="cm">//</span></span>
+<span id="src-hexsurf-loft-L164"><span class="cm">// `G2` asks that every wall render as **one flat quad — its analytic surface — not the strip**.</span></span>
+<span id="src-hexsurf-loft-L165"><span class="cm">// Today the shot draws the wall *as it is stored*: one strip per boundary edge, so a side that is</span></span>
+<span id="src-hexsurf-loft-L166"><span class="cm">// nine edges long is nine quads that zigzag by the band `X47` measured.  The surface is already</span></span>
+<span id="src-hexsurf-loft-L167"><span class="cm">// exact (direction exactly a heading, position an exact rational); what was missing is its EXTENT,</span></span>
+<span id="src-hexsurf-loft-L168"><span class="cm">// so a renderer can emit the segment instead of the strip.</span></span>
+<span id="src-hexsurf-loft-L169"><span class="cm">//</span></span>
+<span id="src-hexsurf-loft-L170"><span class="cm">// The span is the run's corners **projected onto the mean line**, taking the extremes.  The two</span></span>
+<span id="src-hexsurf-loft-L171"><span class="cm">// points returned lie ON the line by construction, so the quad the renderer builds from them has</span></span>
+<span id="src-hexsurf-loft-L172"><span class="cm">// perpendicular spread exactly **0** — which is `G2`'s check — while the strip it replaces spreads</span></span>
+<span id="src-hexsurf-loft-L173"><span class="cm">// by `surface_band_corners`.</span></span>
 <span id="src-hexsurf-loft-L174"><span class="cm">//</span></span>
-<span id="src-hexsurf-loft-L175"><span class="cm">// The span is the run's corners **projected onto the mean line**, taking the extremes.  The two</span></span>
-<span id="src-hexsurf-loft-L176"><span class="cm">// points returned lie ON the line by construction, so the quad the renderer builds from them has</span></span>
-<span id="src-hexsurf-loft-L177"><span class="cm">// perpendicular spread exactly **0** — which is `G2`'s check — while the strip it replaces spreads</span></span>
-<span id="src-hexsurf-loft-L178"><span class="cm">// by `surface_band_corners`.</span></span>
-<span id="src-hexsurf-loft-L179"><span class="cm">//</span></span>
-<span id="src-hexsurf-loft-L180"><span class="cm">// Example: @HXD-003</span></span>
-<span id="src-hexsurf-loft-L181"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">surface_span</span>(p: <span class="en">Plan</span>, cells: <span class="en">HexSet</span>, side: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
-<span id="src-hexsurf-loft-L182">  w = <span class="fn-call">surface_of</span>(p, cells, side);</span>
-<span id="src-hexsurf-loft-L183">  sr = <span class="fn-call">side_edges</span>(p, cells, side);</span>
-<span id="src-hexsurf-loft-L184">  dx = (w.ws_dk <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.8660254037844386</span>;</span>
-<span id="src-hexsurf-loft-L185">  dy = (w.ws_dm <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.5</span>;</span>
-<span id="src-hexsurf-loft-L186">  dl = <span class="bi"><a href="stdlib-math.html">sqrt</a></span>(dx * dx + dy * dy) ?? <span class="nm">1.0</span>;</span>
-<span id="src-hexsurf-loft-L187">  ux = (dx / dl) ?? <span class="nm">1.0</span>;</span>
-<span id="src-hexsurf-loft-L188">  uy = (dy / dl) ?? <span class="nm">0.0</span>;</span>
-<span id="src-hexsurf-loft-L189">  cx = <span class="fn-call">surface_mean_x</span>(w);</span>
-<span id="src-hexsurf-loft-L190">  cy = <span class="fn-call">surface_mean_y</span>(w);</span>
-<span id="src-hexsurf-loft-L191">  lo = <span class="nm">1.0</span>e9;</span>
-<span id="src-hexsurf-loft-L192">  hi = -<span class="nm">1.0</span>e9;</span>
-<span id="src-hexsurf-loft-L193">  <span class="kw">for</span> si <span class="kw">in</span> <span class="nm">0..</span><span class="fn-call">side_run_len</span>(sr) {</span>
-<span id="src-hexsurf-loft-L194">    qa = sr.sr_qa[si] ?? <span class="nm">0</span>;</span>
-<span id="src-hexsurf-loft-L195">    ra = sr.sr_ra[si] ?? <span class="nm">0</span>;</span>
-<span id="src-hexsurf-loft-L196">    (c1, c2) = <span class="fn-call">edge_corners_of</span>(qa, ra, sr.sr_qb[si] ?? <span class="nm">0</span>, sr.sr_rb[si] ?? <span class="nm">0</span>);</span>
-<span id="src-hexsurf-loft-L197">    <span class="kw">for</span> sj <span class="kw">in</span> <span class="nm">0..2</span> {</span>
-<span id="src-hexsurf-loft-L198">      cc = c1;</span>
-<span id="src-hexsurf-loft-L199">      <span class="kw">if</span> sj == <span class="nm">1</span> { cc = c2; }</span>
-<span id="src-hexsurf-loft-L200">      ex = ((<span class="fn-call">lattice_k</span>(qa, ra) + <span class="fn-call">corner_k</span>(cc)) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.8660254037844386</span>;</span>
-<span id="src-hexsurf-loft-L201">      ey = ((<span class="fn-call">lattice_m</span>(qa, ra) + <span class="fn-call">corner_m</span>(cc)) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.5</span>;</span>
-<span id="src-hexsurf-loft-L202">      tv = (ex - cx) * ux + (ey - cy) * uy;</span>
-<span id="src-hexsurf-loft-L203">      <span class="kw">if</span> tv &lt; lo { lo = tv; }</span>
-<span id="src-hexsurf-loft-L204">      <span class="kw">if</span> tv &gt; hi { hi = tv; }</span>
-<span id="src-hexsurf-loft-L205">    }</span>
-<span id="src-hexsurf-loft-L206">  }</span>
-<span id="src-hexsurf-loft-L207">  (cx + lo * ux, cy + lo * uy, cx + hi * ux, cy + hi * uy)</span>
-<span id="src-hexsurf-loft-L208">}</span>
-<span id="src-hexsurf-loft-L209"></span>
-<span id="src-hexsurf-loft-L210"><span class="cm">// The perpendicular spread of the FITTED quad's own corners about its line — `G2`'s check.  Both</span></span>
-<span id="src-hexsurf-loft-L211"><span class="cm">// endpoints come off the line, so this is the number `eave_spread(fitted) = 0` names.  Measured</span></span>
-<span id="src-hexsurf-loft-L212"><span class="cm">// rather than asserted, so that if the span ever stops lying on the line the gate says so.</span></span>
-<span id="src-hexsurf-loft-L213"><span class="cm">//</span></span>
-<span id="src-hexsurf-loft-L214"><span class="cm">// ⚠ *EXACTLY* 0 IS A CLAIM ABOUT FLOATS, AND IT IS ORIENTATION-DEPENDENT.  The derivation above is</span></span>
-<span id="src-hexsurf-loft-L215"><span class="cm">// exact — integer sums and rationals — but the span is projected through world coordinates, and on</span></span>
-<span id="src-hexsurf-loft-L216"><span class="cm">// the orientations where that arithmetic does not cancel the round trip costs an ulp.  Measured</span></span>
-<span id="src-hexsurf-loft-L217"><span class="cm">// over 12 orientations x 4 sides: 32 read exactly 0 and 16 read 2.22e-16.  So `== 0.0` passes only</span></span>
-<span id="src-hexsurf-loft-L218"><span class="cm">// on the orientations it was tried on; what holds everywhere is the comparison that means</span></span>
-<span id="src-hexsurf-loft-L219"><span class="cm">// something — flat against the STRIP's band, which is fifteen orders of magnitude larger.</span></span>
-<span id="src-hexsurf-loft-L220"><span class="cm">//</span></span>
-<span id="src-hexsurf-loft-L221"><span class="cm">// Example: @HXD-001</span></span>
-<span id="src-hexsurf-loft-L222"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">surface_fitted_spread</span>(p: <span class="en">Plan</span>, cells: <span class="en">HexSet</span>, side: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
-<span id="src-hexsurf-loft-L223">  w = <span class="fn-call">surface_of</span>(p, cells, side);</span>
-<span id="src-hexsurf-loft-L224">  (sx0, sy0, sx1, sy1) = <span class="fn-call">surface_span</span>(p, cells, side);</span>
-<span id="src-hexsurf-loft-L225">  px = <span class="fn-call">perp_x</span>(w);</span>
-<span id="src-hexsurf-loft-L226">  py = <span class="fn-call">perp_y</span>(w);</span>
-<span id="src-hexsurf-loft-L227">  cx = <span class="fn-call">surface_mean_x</span>(w);</span>
-<span id="src-hexsurf-loft-L228">  cy = <span class="fn-call">surface_mean_y</span>(w);</span>
-<span id="src-hexsurf-loft-L229">  e0 = (sx0 - cx) * px + (sy0 - cy) * py;</span>
-<span id="src-hexsurf-loft-L230">  e1 = (sx1 - cx) * px + (sy1 - cy) * py;</span>
-<span id="src-hexsurf-loft-L231">  lo = e0;</span>
-<span id="src-hexsurf-loft-L232">  hi = e0;</span>
-<span id="src-hexsurf-loft-L233">  <span class="kw">if</span> e1 &lt; lo { lo = e1; }</span>
-<span id="src-hexsurf-loft-L234">  <span class="kw">if</span> e1 &gt; hi { hi = e1; }</span>
-<span id="src-hexsurf-loft-L235">  hi - lo</span>
-<span id="src-hexsurf-loft-L236">}</span>
-<span id="src-hexsurf-loft-L237"></span>
-<span id="src-hexsurf-loft-L238"><span class="cm">// THE MITER POINT (`I-CORNER` part 4): where two adjacent fitted surfaces intersect.  This is the</span></span>
-<span id="src-hexsurf-loft-L239"><span class="cm">// corner the RENDER should use — each quad running miter-to-miter, so consecutive sides share an</span></span>
-<span id="src-hexsurf-loft-L240"><span class="cm">// endpoint exactly and the outline closes with no gap.  That closure is the invariant, and it is</span></span>
-<span id="src-hexsurf-loft-L241"><span class="cm">// exact.</span></span>
-<span id="src-hexsurf-loft-L242"><span class="cm">//</span></span>
-<span id="src-hexsurf-loft-L243"><span class="cm">// ⚠ IT IS NOT THE `Plan`'S CORNER, and it never can be.  An earlier note here claimed the</span></span>
-<span id="src-hexsurf-loft-L244"><span class="cm">// intersection *"must land on the exact model corner, or the surfaces have drifted off the shape</span></span>
-<span id="src-hexsurf-loft-L245"><span class="cm">// they were fitted to"* — a check nobody ran.  Measured, it misses by 0.47 world units on the 5x4</span></span>
-<span id="src-hexsurf-loft-L246"><span class="cm">// cottage, and swept over plan sizes the miss is neither constant (0.465 .. 0.827) nor even</span></span>
-<span id="src-hexsurf-loft-L247"><span class="cm">// consistently outward.  The reason is structural rather than numerical: what these surfaces</span></span>
-<span id="src-hexsurf-loft-L248"><span class="cm">// recover is the face of the wall AS DRAWN, and the drawn footprint is the plan quantised to</span></span>
-<span id="src-hexsurf-loft-L249"><span class="cm">// cells, so the recovered corner is an exact rational of the lattice while the plan's half-depth</span></span>
-<span id="src-hexsurf-loft-L250"><span class="cm">// is an irrational multiple of `sqrt(3)/2`.  Two number systems that meet only at the origin.</span></span>
-<span id="src-hexsurf-loft-L251"><span class="cm">//</span></span>
-<span id="src-hexsurf-loft-L252"><span class="cm">// So a caller must never diff a recovered outline against plan geometry, and must not try to</span></span>
-<span id="src-hexsurf-loft-L253"><span class="cm">// correct for the offset either.  Use the recovered corner for anything that has to line up with</span></span>
-<span id="src-hexsurf-loft-L254"><span class="cm">// what was drawn.</span></span>
-<span id="src-hexsurf-loft-L255"><span class="cm">//</span></span>
-<span id="src-hexsurf-loft-L256"><span class="cm">// `ok` is false when the two lines are parallel, which for adjacent sides of a closed form cannot</span></span>
-<span id="src-hexsurf-loft-L257"><span class="cm">// happen — so a false here is a real defect, not a degenerate input to be shrugged at.</span></span>
-<span id="src-hexsurf-loft-L258"><span class="cm">//</span></span>
-<span id="src-hexsurf-loft-L259"><span class="cm">// Example: @HXD-003</span></span>
-<span id="src-hexsurf-loft-L260"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">surface_miter</span>(p: <span class="en">Plan</span>, cells: <span class="en">HexSet</span>, sa: <span class="ty"><a href="stdlib-types.html">integer</a></span>, sb: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</span>
-<span id="src-hexsurf-loft-L261">                     -&gt; (<span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">boolean</a></span>) {</span>
-<span id="src-hexsurf-loft-L262">  wa = <span class="fn-call">surface_of</span>(p, cells, sa);</span>
-<span id="src-hexsurf-loft-L263">  wb = <span class="fn-call">surface_of</span>(p, cells, sb);</span>
-<span id="src-hexsurf-loft-L264">  ax = <span class="fn-call">surface_mean_x</span>(wa);</span>
-<span id="src-hexsurf-loft-L265">  ay = <span class="fn-call">surface_mean_y</span>(wa);</span>
-<span id="src-hexsurf-loft-L266">  bx = <span class="fn-call">surface_mean_x</span>(wb);</span>
-<span id="src-hexsurf-loft-L267">  by = <span class="fn-call">surface_mean_y</span>(wb);</span>
-<span id="src-hexsurf-loft-L268">  aux = (wa.ws_dk <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.8660254037844386</span>;</span>
-<span id="src-hexsurf-loft-L269">  auy = (wa.ws_dm <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.5</span>;</span>
-<span id="src-hexsurf-loft-L270">  bux = (wb.ws_dk <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.8660254037844386</span>;</span>
-<span id="src-hexsurf-loft-L271">  buy = (wb.ws_dm <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.5</span>;</span>
-<span id="src-hexsurf-loft-L272">  den = aux * buy - auy * bux;</span>
-<span id="src-hexsurf-loft-L273">  <span class="kw">if</span> den &lt; <span class="nm">0.000000001</span> &amp;&amp; den &gt; <span class="nm">0.0</span> - <span class="nm">0.000000001</span> { <span class="kw">return</span> (<span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="kw">false</span>); }</span>
-<span id="src-hexsurf-loft-L274">  tt = (((bx - ax) * buy - (by - ay) * bux) / den) ?? <span class="nm">0.0</span>;</span>
-<span id="src-hexsurf-loft-L275">  (ax + tt * aux, ay + tt * auy, <span class="kw">true</span>)</span>
-<span id="src-hexsurf-loft-L276">}</span>
-<span id="src-hexsurf-loft-L277"></span>
-<span id="src-hexsurf-loft-L278"><span class="cm">// THE MITERED QUAD (`G2` + `I-CORNER` part 4): the side's segment running MITER TO MITER, so</span></span>
-<span id="src-hexsurf-loft-L279"><span class="cm">// consecutive sides share an endpoint exactly and the outline closes with no corner gap.  This is</span></span>
-<span id="src-hexsurf-loft-L280"><span class="cm">// what a renderer should draw; `surface_span` (the projected extent) leaves the gaps the fitted</span></span>
-<span id="src-hexsurf-loft-L281"><span class="cm">// render made visible.</span></span>
-<span id="src-hexsurf-loft-L282"><span class="cm">//</span></span>
-<span id="src-hexsurf-loft-L283"><span class="cm">// Example: @HXD-003</span></span>
-<span id="src-hexsurf-loft-L284"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">surface_quad</span>(p: <span class="en">Plan</span>, cells: <span class="en">HexSet</span>, side: <span class="ty"><a href="stdlib-types.html">integer</a></span>, nsides: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</span>
-<span id="src-hexsurf-loft-L285">                    -&gt; (<span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
-<span id="src-hexsurf-loft-L286">  <span class="cm">// `%` is FALLIBLE in loft, so `nsides = 0` types `prev`/`next` as `integer?` — and a null index</span></span>
-<span id="src-hexsurf-loft-L287">  <span class="cm">// arriving at `surface_miter` would read as a valid-looking side **0** rather than a refusal: a</span></span>
-<span id="src-hexsurf-loft-L288">  <span class="cm">// silently wrong corner instead of a caught one.  A miter needs `prev != side != next`, so it</span></span>
-<span id="src-hexsurf-loft-L289">  <span class="cm">// needs at least three sides; below that there is no corner to cut and the honest answer is the</span></span>
-<span id="src-hexsurf-loft-L290">  <span class="cm">// un-mitered span, which is already this function's defined escape when a miter fails.</span></span>
-<span id="src-hexsurf-loft-L291">  <span class="cm">//</span></span>
-<span id="src-hexsurf-loft-L292">  <span class="cm">// Every caller passes 4, so this cannot fire today — but *"this cannot fire"* is a claim like</span></span>
-<span id="src-hexsurf-loft-L293">  <span class="cm">// any other (`X57`: `wall_separates`' comment said exactly that, was wrong, and was</span></span>
-<span id="src-hexsurf-loft-L294">  <span class="cm">// load-bearing under a green suite).  The `?? 0` below is unreachable PAST this guard; the</span></span>
-<span id="src-hexsurf-loft-L295">  <span class="cm">// guard is what refuses, the `??` only discharges the type.</span></span>
-<span id="src-hexsurf-loft-L296">  <span class="kw">if</span> nsides &lt; <span class="nm">3</span> { <span class="kw">return</span> <span class="fn-call">surface_span</span>(p, cells, side); }</span>
-<span id="src-hexsurf-loft-L297">  prev = ((side - <span class="nm">1</span>) % nsides + nsides) % nsides ?? <span class="nm">0</span>;</span>
-<span id="src-hexsurf-loft-L298">  next = (side + <span class="nm">1</span>) % nsides ?? <span class="nm">0</span>;</span>
-<span id="src-hexsurf-loft-L299">  (ax, ay, aok) = <span class="fn-call">surface_miter</span>(p, cells, prev, side);</span>
-<span id="src-hexsurf-loft-L300">  (bx, by, bok) = <span class="fn-call">surface_miter</span>(p, cells, side, next);</span>
-<span id="src-hexsurf-loft-L301">  <span class="kw">if</span> !aok || !bok { <span class="kw">return</span> <span class="fn-call">surface_span</span>(p, cells, side); }</span>
-<span id="src-hexsurf-loft-L302">  (ax, ay, bx, by)</span>
-<span id="src-hexsurf-loft-L303">}</span>
-<span id="src-hexsurf-loft-L304"></span>
-<span id="src-hexsurf-loft-L305"><span class="cm">// One stored edge's INTERVAL along the fitted line — where edge `i` of the run projects onto the</span></span>
-<span id="src-hexsurf-loft-L306"><span class="cm">// surface.  This is what makes a feature renderable as `FEATURES` describes it: *"a door is</span></span>
-<span id="src-hexsurf-loft-L307"><span class="cm">// `[s0,s1]` along an exact straight or arc"*, an interval on the analytic surface rather than a</span></span>
-<span id="src-hexsurf-loft-L308"><span class="cm">// stored edge.  The renderer draws the wall as one quad (`surface_span`) and each feature as a</span></span>
-<span id="src-hexsurf-loft-L309"><span class="cm">// sub-interval of it, so the zigzag never reaches the picture.</span></span>
-<span id="src-hexsurf-loft-L310"><span class="cm">//</span></span>
-<span id="src-hexsurf-loft-L311"><span class="cm">// Example: @HXD-006</span></span>
-<span id="src-hexsurf-loft-L312"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">surface_edge_span</span>(p: <span class="en">Plan</span>, cells: <span class="en">HexSet</span>, side: <span class="ty"><a href="stdlib-types.html">integer</a></span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</span>
-<span id="src-hexsurf-loft-L313">                         -&gt; (<span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
-<span id="src-hexsurf-loft-L314">  w = <span class="fn-call">surface_of</span>(p, cells, side);</span>
-<span id="src-hexsurf-loft-L315">  sr = <span class="fn-call">side_edges</span>(p, cells, side);</span>
-<span id="src-hexsurf-loft-L316">  dx = (w.ws_dk <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.8660254037844386</span>;</span>
-<span id="src-hexsurf-loft-L317">  dy = (w.ws_dm <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.5</span>;</span>
-<span id="src-hexsurf-loft-L318">  dl = <span class="bi"><a href="stdlib-math.html">sqrt</a></span>(dx * dx + dy * dy) ?? <span class="nm">1.0</span>;</span>
-<span id="src-hexsurf-loft-L319">  ux = (dx / dl) ?? <span class="nm">1.0</span>;</span>
-<span id="src-hexsurf-loft-L320">  uy = (dy / dl) ?? <span class="nm">0.0</span>;</span>
-<span id="src-hexsurf-loft-L321">  cx = <span class="fn-call">surface_mean_x</span>(w);</span>
-<span id="src-hexsurf-loft-L322">  cy = <span class="fn-call">surface_mean_y</span>(w);</span>
-<span id="src-hexsurf-loft-L323">  qa = sr.sr_qa[i] ?? <span class="nm">0</span>;</span>
-<span id="src-hexsurf-loft-L324">  ra = sr.sr_ra[i] ?? <span class="nm">0</span>;</span>
-<span id="src-hexsurf-loft-L325">  (c1, c2) = <span class="fn-call">edge_corners_of</span>(qa, ra, sr.sr_qb[i] ?? <span class="nm">0</span>, sr.sr_rb[i] ?? <span class="nm">0</span>);</span>
-<span id="src-hexsurf-loft-L326">  lo = <span class="nm">1.0</span>e9;</span>
-<span id="src-hexsurf-loft-L327">  hi = -<span class="nm">1.0</span>e9;</span>
-<span id="src-hexsurf-loft-L328">  <span class="kw">for</span> ej <span class="kw">in</span> <span class="nm">0..2</span> {</span>
-<span id="src-hexsurf-loft-L329">    cc = c1;</span>
-<span id="src-hexsurf-loft-L330">    <span class="kw">if</span> ej == <span class="nm">1</span> { cc = c2; }</span>
-<span id="src-hexsurf-loft-L331">    ex = ((<span class="fn-call">lattice_k</span>(qa, ra) + <span class="fn-call">corner_k</span>(cc)) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.8660254037844386</span>;</span>
-<span id="src-hexsurf-loft-L332">    ey = ((<span class="fn-call">lattice_m</span>(qa, ra) + <span class="fn-call">corner_m</span>(cc)) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.5</span>;</span>
-<span id="src-hexsurf-loft-L333">    tv = (ex - cx) * ux + (ey - cy) * uy;</span>
-<span id="src-hexsurf-loft-L334">    <span class="kw">if</span> tv &lt; lo { lo = tv; }</span>
-<span id="src-hexsurf-loft-L335">    <span class="kw">if</span> tv &gt; hi { hi = tv; }</span>
-<span id="src-hexsurf-loft-L336">  }</span>
-<span id="src-hexsurf-loft-L337">  (cx + lo * ux, cy + lo * uy, cx + hi * ux, cy + hi * uy)</span>
-<span id="src-hexsurf-loft-L338">}</span>
-<span id="src-hexsurf-loft-L339"></span>
-<span id="src-hexsurf-loft-L340"><span class="cm">// The material on stored edge `i` of a side — so the renderer can find the features on a run</span></span>
-<span id="src-hexsurf-loft-L341"><span class="cm">// without re-deriving the run's order.</span></span>
-<span id="src-hexsurf-loft-L342"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">surface_edge_mat</span>(p: <span class="en">Plan</span>, cells: <span class="en">HexSet</span>, edges: <span class="en">EdgeSet</span>, side: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-hexsurf-loft-L343">                        i: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-hexsurf-loft-L344">  sr = <span class="fn-call">side_edges</span>(p, cells, side);</span>
-<span id="src-hexsurf-loft-L345">  <span class="fn-call">edge_mat</span>(edges, sr.sr_qa[i] ?? <span class="nm">0</span>, sr.sr_ra[i] ?? <span class="nm">0</span>, sr.sr_qb[i] ?? <span class="nm">0</span>, sr.sr_rb[i] ?? <span class="nm">0</span>)</span>
-<span id="src-hexsurf-loft-L346">}</span>
-<span id="src-hexsurf-loft-L347"></span>
-<span id="src-hexsurf-loft-L348"><span class="cm">// The perpendicular extent of the MIDPOINTS about the mean line.  Not in §6.2, and it is not the</span></span>
-<span id="src-hexsurf-loft-L349"><span class="cm">// same as the corner band: on the east family the midpoints are exactly COLINEAR (0), while on the</span></span>
-<span id="src-hexsurf-loft-L350"><span class="cm">// north family they span the full band — the row stagger, which the corners hide.</span></span>
-<span id="src-hexsurf-loft-L351"><span class="cm">//</span></span>
-<span id="src-hexsurf-loft-L352"><span class="cm">// Example: @HXD-001</span></span>
-<span id="src-hexsurf-loft-L353"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">surface_band_mids</span>(p: <span class="en">Plan</span>, cells: <span class="en">HexSet</span>, side: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
-<span id="src-hexsurf-loft-L354">  w = <span class="fn-call">surface_of</span>(p, cells, side);</span>
-<span id="src-hexsurf-loft-L355">  sr = <span class="fn-call">side_edges</span>(p, cells, side);</span>
-<span id="src-hexsurf-loft-L356">  px = <span class="fn-call">perp_x</span>(w);</span>
-<span id="src-hexsurf-loft-L357">  py = <span class="fn-call">perp_y</span>(w);</span>
-<span id="src-hexsurf-loft-L358">  cx = <span class="fn-call">surface_mean_x</span>(w);</span>
-<span id="src-hexsurf-loft-L359">  cy = <span class="fn-call">surface_mean_y</span>(w);</span>
-<span id="src-hexsurf-loft-L360">  lo = <span class="nm">1.0</span>e9;</span>
-<span id="src-hexsurf-loft-L361">  hi = -<span class="nm">1.0</span>e9;</span>
-<span id="src-hexsurf-loft-L362">  <span class="kw">for</span> mi <span class="kw">in</span> <span class="nm">0..</span><span class="fn-call">side_run_len</span>(sr) {</span>
-<span id="src-hexsurf-loft-L363">    qa = sr.sr_qa[mi] ?? <span class="nm">0</span>;</span>
-<span id="src-hexsurf-loft-L364">    ra = sr.sr_ra[mi] ?? <span class="nm">0</span>;</span>
-<span id="src-hexsurf-loft-L365">    (c1, c2) = <span class="fn-call">edge_corners_of</span>(qa, ra, sr.sr_qb[mi] ?? <span class="nm">0</span>, sr.sr_rb[mi] ?? <span class="nm">0</span>);</span>
-<span id="src-hexsurf-loft-L366">    mx = ((<span class="fn-call">lattice_k</span>(qa, ra) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>)</span>
-<span id="src-hexsurf-loft-L367">          + ((<span class="fn-call">corner_k</span>(c1) + <span class="fn-call">corner_k</span>(c2)) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) / <span class="nm">2.0</span>) * <span class="nm">0.8660254037844386</span>;</span>
-<span id="src-hexsurf-loft-L368">    my = ((<span class="fn-call">lattice_m</span>(qa, ra) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>)</span>
-<span id="src-hexsurf-loft-L369">          + ((<span class="fn-call">corner_m</span>(c1) + <span class="fn-call">corner_m</span>(c2)) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) / <span class="nm">2.0</span>) * <span class="nm">0.5</span>;</span>
-<span id="src-hexsurf-loft-L370">    mv = (mx - cx) * px + (my - cy) * py;</span>
-<span id="src-hexsurf-loft-L371">    <span class="kw">if</span> mv &lt; lo { lo = mv; }</span>
-<span id="src-hexsurf-loft-L372">    <span class="kw">if</span> mv &gt; hi { hi = mv; }</span>
-<span id="src-hexsurf-loft-L373">  }</span>
-<span id="src-hexsurf-loft-L374">  hi - lo</span>
-<span id="src-hexsurf-loft-L375">}</span>
-<span id="src-hexsurf-loft-L376"></span>
-<span id="src-hexsurf-loft-L377"><span class="cm">// The scatter a LEAST-SQUARES formulation would have to threshold: the sum of squared</span></span>
-<span id="src-hexsurf-loft-L378"><span class="cm">// perpendicular deviations of the midpoints from the derived mean line.  Averaging names the same</span></span>
-<span id="src-hexsurf-loft-L379"><span class="cm">// geometry as an exact band constant and has nothing to tune; this is the control that the</span></span>
-<span id="src-hexsurf-loft-L380"><span class="cm">// distinction is real rather than rhetorical.</span></span>
-<span id="src-hexsurf-loft-L381"><span class="cm">//</span></span>
-<span id="src-hexsurf-loft-L382"><span class="cm">// Example: @HXD-001</span></span>
-<span id="src-hexsurf-loft-L383"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">surface_lsq_residual</span>(p: <span class="en">Plan</span>, cells: <span class="en">HexSet</span>, side: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
-<span id="src-hexsurf-loft-L384">  w = <span class="fn-call">surface_of</span>(p, cells, side);</span>
-<span id="src-hexsurf-loft-L385">  sr = <span class="fn-call">side_edges</span>(p, cells, side);</span>
-<span id="src-hexsurf-loft-L386">  px = <span class="fn-call">perp_x</span>(w);</span>
-<span id="src-hexsurf-loft-L387">  py = <span class="fn-call">perp_y</span>(w);</span>
-<span id="src-hexsurf-loft-L388">  cx = <span class="fn-call">surface_mean_x</span>(w);</span>
-<span id="src-hexsurf-loft-L389">  cy = <span class="fn-call">surface_mean_y</span>(w);</span>
-<span id="src-hexsurf-loft-L390">  acc = <span class="nm">0.0</span>;</span>
-<span id="src-hexsurf-loft-L391">  <span class="kw">for</span> ri <span class="kw">in</span> <span class="nm">0..</span><span class="fn-call">side_run_len</span>(sr) {</span>
-<span id="src-hexsurf-loft-L392">    qa = sr.sr_qa[ri] ?? <span class="nm">0</span>;</span>
-<span id="src-hexsurf-loft-L393">    ra = sr.sr_ra[ri] ?? <span class="nm">0</span>;</span>
-<span id="src-hexsurf-loft-L394">    (c1, c2) = <span class="fn-call">edge_corners_of</span>(qa, ra, sr.sr_qb[ri] ?? <span class="nm">0</span>, sr.sr_rb[ri] ?? <span class="nm">0</span>);</span>
-<span id="src-hexsurf-loft-L395">    mx = ((<span class="fn-call">lattice_k</span>(qa, ra) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>)</span>
-<span id="src-hexsurf-loft-L396">          + ((<span class="fn-call">corner_k</span>(c1) + <span class="fn-call">corner_k</span>(c2)) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) / <span class="nm">2.0</span>) * <span class="nm">0.8660254037844386</span>;</span>
-<span id="src-hexsurf-loft-L397">    my = ((<span class="fn-call">lattice_m</span>(qa, ra) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>)</span>
-<span id="src-hexsurf-loft-L398">          + ((<span class="fn-call">corner_m</span>(c1) + <span class="fn-call">corner_m</span>(c2)) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) / <span class="nm">2.0</span>) * <span class="nm">0.5</span>;</span>
-<span id="src-hexsurf-loft-L399">    dv = (mx - cx) * px + (my - cy) * py;</span>
-<span id="src-hexsurf-loft-L400">    acc = acc + dv * dv;</span>
-<span id="src-hexsurf-loft-L401">  }</span>
-<span id="src-hexsurf-loft-L402">  acc</span>
-<span id="src-hexsurf-loft-L403">}</span>
-<span id="src-hexsurf-loft-L404"></span>
-<span id="src-hexsurf-loft-L405"><span class="cm">// ── A5 — FEATURES ON A STRAIGHT SIDE, AND WHAT OF THEM SURVIVES ────────────</span></span>
+<span id="src-hexsurf-loft-L175"><span class="cm">// Example: @HXD-003</span></span>
+<span id="src-hexsurf-loft-L176"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">surface_span</span>(p: <span class="en">Plan</span>, cells: <span class="en">HexSet</span>, side: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
+<span id="src-hexsurf-loft-L177">  w = <span class="fn-call">surface_of</span>(p, cells, side);</span>
+<span id="src-hexsurf-loft-L178">  sr = <span class="fn-call">side_edges</span>(p, cells, side);</span>
+<span id="src-hexsurf-loft-L179">  dx = (w.ws_dk <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.8660254037844386</span>;</span>
+<span id="src-hexsurf-loft-L180">  dy = (w.ws_dm <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.5</span>;</span>
+<span id="src-hexsurf-loft-L181">  dl = <span class="bi"><a href="stdlib-math.html">sqrt</a></span>(dx * dx + dy * dy) ?? <span class="nm">1.0</span>;</span>
+<span id="src-hexsurf-loft-L182">  ux = (dx / dl) ?? <span class="nm">1.0</span>;</span>
+<span id="src-hexsurf-loft-L183">  uy = (dy / dl) ?? <span class="nm">0.0</span>;</span>
+<span id="src-hexsurf-loft-L184">  cx = <span class="fn-call">surface_mean_x</span>(w);</span>
+<span id="src-hexsurf-loft-L185">  cy = <span class="fn-call">surface_mean_y</span>(w);</span>
+<span id="src-hexsurf-loft-L186">  lo = <span class="nm">1.0</span>e9;</span>
+<span id="src-hexsurf-loft-L187">  hi = -<span class="nm">1.0</span>e9;</span>
+<span id="src-hexsurf-loft-L188">  <span class="kw">for</span> si <span class="kw">in</span> <span class="nm">0..</span><span class="fn-call">side_run_len</span>(sr) {</span>
+<span id="src-hexsurf-loft-L189">    qa = sr.sr_qa[si] ?? <span class="nm">0</span>;</span>
+<span id="src-hexsurf-loft-L190">    ra = sr.sr_ra[si] ?? <span class="nm">0</span>;</span>
+<span id="src-hexsurf-loft-L191">    (c1, c2) = <span class="fn-call">edge_corners_of</span>(qa, ra, sr.sr_qb[si] ?? <span class="nm">0</span>, sr.sr_rb[si] ?? <span class="nm">0</span>);</span>
+<span id="src-hexsurf-loft-L192">    <span class="kw">for</span> sj <span class="kw">in</span> <span class="nm">0..2</span> {</span>
+<span id="src-hexsurf-loft-L193">      cc = c1;</span>
+<span id="src-hexsurf-loft-L194">      <span class="kw">if</span> sj == <span class="nm">1</span> { cc = c2; }</span>
+<span id="src-hexsurf-loft-L195">      ex = ((<span class="fn-call">lattice_k</span>(qa, ra) + <span class="fn-call">corner_k</span>(cc)) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.8660254037844386</span>;</span>
+<span id="src-hexsurf-loft-L196">      ey = ((<span class="fn-call">lattice_m</span>(qa, ra) + <span class="fn-call">corner_m</span>(cc)) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.5</span>;</span>
+<span id="src-hexsurf-loft-L197">      tv = (ex - cx) * ux + (ey - cy) * uy;</span>
+<span id="src-hexsurf-loft-L198">      <span class="kw">if</span> tv &lt; lo { lo = tv; }</span>
+<span id="src-hexsurf-loft-L199">      <span class="kw">if</span> tv &gt; hi { hi = tv; }</span>
+<span id="src-hexsurf-loft-L200">    }</span>
+<span id="src-hexsurf-loft-L201">  }</span>
+<span id="src-hexsurf-loft-L202">  (cx + lo * ux, cy + lo * uy, cx + hi * ux, cy + hi * uy)</span>
+<span id="src-hexsurf-loft-L203">}</span>
+<span id="src-hexsurf-loft-L204"></span>
+<span id="src-hexsurf-loft-L205"><span class="cm">// The perpendicular spread of the FITTED quad's own corners about its line — `G2`'s check.  Both</span></span>
+<span id="src-hexsurf-loft-L206"><span class="cm">// endpoints come off the line, so this is the number `eave_spread(fitted) = 0` names.  Measured</span></span>
+<span id="src-hexsurf-loft-L207"><span class="cm">// rather than asserted, so that if the span ever stops lying on the line the gate says so.</span></span>
+<span id="src-hexsurf-loft-L208"><span class="cm">//</span></span>
+<span id="src-hexsurf-loft-L209"><span class="cm">// ⚠ *EXACTLY* 0 IS A CLAIM ABOUT FLOATS, AND IT IS ORIENTATION-DEPENDENT.  The derivation above is</span></span>
+<span id="src-hexsurf-loft-L210"><span class="cm">// exact — integer sums and rationals — but the span is projected through world coordinates, and on</span></span>
+<span id="src-hexsurf-loft-L211"><span class="cm">// the orientations where that arithmetic does not cancel the round trip costs an ulp.  Measured</span></span>
+<span id="src-hexsurf-loft-L212"><span class="cm">// over 12 orientations x 4 sides: 32 read exactly 0 and 16 read 2.22e-16.  So `== 0.0` passes only</span></span>
+<span id="src-hexsurf-loft-L213"><span class="cm">// on the orientations it was tried on; what holds everywhere is the comparison that means</span></span>
+<span id="src-hexsurf-loft-L214"><span class="cm">// something — flat against the STRIP's band, which is fifteen orders of magnitude larger.</span></span>
+<span id="src-hexsurf-loft-L215"><span class="cm">//</span></span>
+<span id="src-hexsurf-loft-L216"><span class="cm">// Example: @HXD-001</span></span>
+<span id="src-hexsurf-loft-L217"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">surface_fitted_spread</span>(p: <span class="en">Plan</span>, cells: <span class="en">HexSet</span>, side: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="src-hexsurf-loft-L218">  w = <span class="fn-call">surface_of</span>(p, cells, side);</span>
+<span id="src-hexsurf-loft-L219">  (sx0, sy0, sx1, sy1) = <span class="fn-call">surface_span</span>(p, cells, side);</span>
+<span id="src-hexsurf-loft-L220">  px = <span class="fn-call">perp_x</span>(w);</span>
+<span id="src-hexsurf-loft-L221">  py = <span class="fn-call">perp_y</span>(w);</span>
+<span id="src-hexsurf-loft-L222">  cx = <span class="fn-call">surface_mean_x</span>(w);</span>
+<span id="src-hexsurf-loft-L223">  cy = <span class="fn-call">surface_mean_y</span>(w);</span>
+<span id="src-hexsurf-loft-L224">  e0 = (sx0 - cx) * px + (sy0 - cy) * py;</span>
+<span id="src-hexsurf-loft-L225">  e1 = (sx1 - cx) * px + (sy1 - cy) * py;</span>
+<span id="src-hexsurf-loft-L226">  lo = e0;</span>
+<span id="src-hexsurf-loft-L227">  hi = e0;</span>
+<span id="src-hexsurf-loft-L228">  <span class="kw">if</span> e1 &lt; lo { lo = e1; }</span>
+<span id="src-hexsurf-loft-L229">  <span class="kw">if</span> e1 &gt; hi { hi = e1; }</span>
+<span id="src-hexsurf-loft-L230">  hi - lo</span>
+<span id="src-hexsurf-loft-L231">}</span>
+<span id="src-hexsurf-loft-L232"></span>
+<span id="src-hexsurf-loft-L233"><span class="cm">// THE MITER POINT (`I-CORNER` part 4): where two adjacent fitted surfaces intersect.  This is the</span></span>
+<span id="src-hexsurf-loft-L234"><span class="cm">// corner the RENDER should use — each quad running miter-to-miter, so consecutive sides share an</span></span>
+<span id="src-hexsurf-loft-L235"><span class="cm">// endpoint exactly and the outline closes with no gap.  That closure is the invariant, and it is</span></span>
+<span id="src-hexsurf-loft-L236"><span class="cm">// exact.</span></span>
+<span id="src-hexsurf-loft-L237"><span class="cm">//</span></span>
+<span id="src-hexsurf-loft-L238"><span class="cm">// ⚠ IT IS NOT THE `Plan`'S CORNER, and it never can be.  An earlier note here claimed the</span></span>
+<span id="src-hexsurf-loft-L239"><span class="cm">// intersection *"must land on the exact model corner, or the surfaces have drifted off the shape</span></span>
+<span id="src-hexsurf-loft-L240"><span class="cm">// they were fitted to"* — a check nobody ran.  Measured, it misses by 0.47 world units on the 5x4</span></span>
+<span id="src-hexsurf-loft-L241"><span class="cm">// cottage, and swept over plan sizes the miss is neither constant (0.465 .. 0.827) nor even</span></span>
+<span id="src-hexsurf-loft-L242"><span class="cm">// consistently outward.  The reason is structural rather than numerical: what these surfaces</span></span>
+<span id="src-hexsurf-loft-L243"><span class="cm">// recover is the face of the wall AS DRAWN, and the drawn footprint is the plan quantised to</span></span>
+<span id="src-hexsurf-loft-L244"><span class="cm">// cells, so the recovered corner is an exact rational of the lattice while the plan's half-depth</span></span>
+<span id="src-hexsurf-loft-L245"><span class="cm">// is an irrational multiple of `sqrt(3)/2`.  Two number systems that meet only at the origin.</span></span>
+<span id="src-hexsurf-loft-L246"><span class="cm">//</span></span>
+<span id="src-hexsurf-loft-L247"><span class="cm">// So a caller must never diff a recovered outline against plan geometry, and must not try to</span></span>
+<span id="src-hexsurf-loft-L248"><span class="cm">// correct for the offset either.  Use the recovered corner for anything that has to line up with</span></span>
+<span id="src-hexsurf-loft-L249"><span class="cm">// what was drawn.</span></span>
+<span id="src-hexsurf-loft-L250"><span class="cm">//</span></span>
+<span id="src-hexsurf-loft-L251"><span class="cm">// `ok` is false when the two lines are parallel, which for adjacent sides of a closed form cannot</span></span>
+<span id="src-hexsurf-loft-L252"><span class="cm">// happen — so a false here is a real defect, not a degenerate input to be shrugged at.</span></span>
+<span id="src-hexsurf-loft-L253"><span class="cm">//</span></span>
+<span id="src-hexsurf-loft-L254"><span class="cm">// Example: @HXD-003</span></span>
+<span id="src-hexsurf-loft-L255"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">surface_miter</span>(p: <span class="en">Plan</span>, cells: <span class="en">HexSet</span>, sa: <span class="ty"><a href="stdlib-types.html">integer</a></span>, sb: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</span>
+<span id="src-hexsurf-loft-L256">                     -&gt; (<span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">boolean</a></span>) {</span>
+<span id="src-hexsurf-loft-L257">  wa = <span class="fn-call">surface_of</span>(p, cells, sa);</span>
+<span id="src-hexsurf-loft-L258">  wb = <span class="fn-call">surface_of</span>(p, cells, sb);</span>
+<span id="src-hexsurf-loft-L259">  ax = <span class="fn-call">surface_mean_x</span>(wa);</span>
+<span id="src-hexsurf-loft-L260">  ay = <span class="fn-call">surface_mean_y</span>(wa);</span>
+<span id="src-hexsurf-loft-L261">  bx = <span class="fn-call">surface_mean_x</span>(wb);</span>
+<span id="src-hexsurf-loft-L262">  by = <span class="fn-call">surface_mean_y</span>(wb);</span>
+<span id="src-hexsurf-loft-L263">  aux = (wa.ws_dk <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.8660254037844386</span>;</span>
+<span id="src-hexsurf-loft-L264">  auy = (wa.ws_dm <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.5</span>;</span>
+<span id="src-hexsurf-loft-L265">  bux = (wb.ws_dk <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.8660254037844386</span>;</span>
+<span id="src-hexsurf-loft-L266">  buy = (wb.ws_dm <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.5</span>;</span>
+<span id="src-hexsurf-loft-L267">  den = aux * buy - auy * bux;</span>
+<span id="src-hexsurf-loft-L268">  <span class="kw">if</span> den &lt; <span class="nm">0.000000001</span> &amp;&amp; den &gt; <span class="nm">0.0</span> - <span class="nm">0.000000001</span> { <span class="kw">return</span> (<span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="kw">false</span>); }</span>
+<span id="src-hexsurf-loft-L269">  tt = (((bx - ax) * buy - (by - ay) * bux) / den) ?? <span class="nm">0.0</span>;</span>
+<span id="src-hexsurf-loft-L270">  (ax + tt * aux, ay + tt * auy, <span class="kw">true</span>)</span>
+<span id="src-hexsurf-loft-L271">}</span>
+<span id="src-hexsurf-loft-L272"></span>
+<span id="src-hexsurf-loft-L273"><span class="cm">// THE MITERED QUAD (`G2` + `I-CORNER` part 4): the side's segment running MITER TO MITER, so</span></span>
+<span id="src-hexsurf-loft-L274"><span class="cm">// consecutive sides share an endpoint exactly and the outline closes with no corner gap.  This is</span></span>
+<span id="src-hexsurf-loft-L275"><span class="cm">// what a renderer should draw; `surface_span` (the projected extent) leaves the gaps the fitted</span></span>
+<span id="src-hexsurf-loft-L276"><span class="cm">// render made visible.</span></span>
+<span id="src-hexsurf-loft-L277"><span class="cm">//</span></span>
+<span id="src-hexsurf-loft-L278"><span class="cm">// Example: @HXD-003</span></span>
+<span id="src-hexsurf-loft-L279"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">surface_quad</span>(p: <span class="en">Plan</span>, cells: <span class="en">HexSet</span>, side: <span class="ty"><a href="stdlib-types.html">integer</a></span>, nsides: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</span>
+<span id="src-hexsurf-loft-L280">                    -&gt; (<span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
+<span id="src-hexsurf-loft-L281">  <span class="cm">// `%` is FALLIBLE in loft, so `nsides = 0` types `prev`/`next` as `integer?` — and a null index</span></span>
+<span id="src-hexsurf-loft-L282">  <span class="cm">// arriving at `surface_miter` would read as a valid-looking side **0** rather than a refusal: a</span></span>
+<span id="src-hexsurf-loft-L283">  <span class="cm">// silently wrong corner instead of a caught one.  A miter needs `prev != side != next`, so it</span></span>
+<span id="src-hexsurf-loft-L284">  <span class="cm">// needs at least three sides; below that there is no corner to cut and the honest answer is the</span></span>
+<span id="src-hexsurf-loft-L285">  <span class="cm">// un-mitered span, which is already this function's defined escape when a miter fails.</span></span>
+<span id="src-hexsurf-loft-L286">  <span class="cm">//</span></span>
+<span id="src-hexsurf-loft-L287">  <span class="cm">// Every caller passes 4, so this cannot fire today — but *"this cannot fire"* is a claim like</span></span>
+<span id="src-hexsurf-loft-L288">  <span class="cm">// any other (`X57`: `wall_separates`' comment said exactly that, was wrong, and was</span></span>
+<span id="src-hexsurf-loft-L289">  <span class="cm">// load-bearing under a green suite).  The `?? 0` below is unreachable PAST this guard; the</span></span>
+<span id="src-hexsurf-loft-L290">  <span class="cm">// guard is what refuses, the `??` only discharges the type.</span></span>
+<span id="src-hexsurf-loft-L291">  <span class="kw">if</span> nsides &lt; <span class="nm">3</span> { <span class="kw">return</span> <span class="fn-call">surface_span</span>(p, cells, side); }</span>
+<span id="src-hexsurf-loft-L292">  prev = ((side - <span class="nm">1</span>) % nsides + nsides) % nsides ?? <span class="nm">0</span>;</span>
+<span id="src-hexsurf-loft-L293">  next = (side + <span class="nm">1</span>) % nsides ?? <span class="nm">0</span>;</span>
+<span id="src-hexsurf-loft-L294">  (ax, ay, aok) = <span class="fn-call">surface_miter</span>(p, cells, prev, side);</span>
+<span id="src-hexsurf-loft-L295">  (bx, by, bok) = <span class="fn-call">surface_miter</span>(p, cells, side, next);</span>
+<span id="src-hexsurf-loft-L296">  <span class="kw">if</span> !aok || !bok { <span class="kw">return</span> <span class="fn-call">surface_span</span>(p, cells, side); }</span>
+<span id="src-hexsurf-loft-L297">  (ax, ay, bx, by)</span>
+<span id="src-hexsurf-loft-L298">}</span>
+<span id="src-hexsurf-loft-L299"></span>
+<span id="src-hexsurf-loft-L300"><span class="cm">// One stored edge's INTERVAL along the fitted line — where edge `i` of the run projects onto the</span></span>
+<span id="src-hexsurf-loft-L301"><span class="cm">// surface.  This is what makes a feature renderable as `FEATURES` describes it: *"a door is</span></span>
+<span id="src-hexsurf-loft-L302"><span class="cm">// `[s0,s1]` along an exact straight or arc"*, an interval on the analytic surface rather than a</span></span>
+<span id="src-hexsurf-loft-L303"><span class="cm">// stored edge.  The renderer draws the wall as one quad (`surface_span`) and each feature as a</span></span>
+<span id="src-hexsurf-loft-L304"><span class="cm">// sub-interval of it, so the zigzag never reaches the picture.</span></span>
+<span id="src-hexsurf-loft-L305"><span class="cm">//</span></span>
+<span id="src-hexsurf-loft-L306"><span class="cm">// Example: @HXD-006</span></span>
+<span id="src-hexsurf-loft-L307"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">surface_edge_span</span>(p: <span class="en">Plan</span>, cells: <span class="en">HexSet</span>, side: <span class="ty"><a href="stdlib-types.html">integer</a></span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</span>
+<span id="src-hexsurf-loft-L308">                         -&gt; (<span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
+<span id="src-hexsurf-loft-L309">  w = <span class="fn-call">surface_of</span>(p, cells, side);</span>
+<span id="src-hexsurf-loft-L310">  sr = <span class="fn-call">side_edges</span>(p, cells, side);</span>
+<span id="src-hexsurf-loft-L311">  dx = (w.ws_dk <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.8660254037844386</span>;</span>
+<span id="src-hexsurf-loft-L312">  dy = (w.ws_dm <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.5</span>;</span>
+<span id="src-hexsurf-loft-L313">  dl = <span class="bi"><a href="stdlib-math.html">sqrt</a></span>(dx * dx + dy * dy) ?? <span class="nm">1.0</span>;</span>
+<span id="src-hexsurf-loft-L314">  ux = (dx / dl) ?? <span class="nm">1.0</span>;</span>
+<span id="src-hexsurf-loft-L315">  uy = (dy / dl) ?? <span class="nm">0.0</span>;</span>
+<span id="src-hexsurf-loft-L316">  cx = <span class="fn-call">surface_mean_x</span>(w);</span>
+<span id="src-hexsurf-loft-L317">  cy = <span class="fn-call">surface_mean_y</span>(w);</span>
+<span id="src-hexsurf-loft-L318">  qa = sr.sr_qa[i] ?? <span class="nm">0</span>;</span>
+<span id="src-hexsurf-loft-L319">  ra = sr.sr_ra[i] ?? <span class="nm">0</span>;</span>
+<span id="src-hexsurf-loft-L320">  (c1, c2) = <span class="fn-call">edge_corners_of</span>(qa, ra, sr.sr_qb[i] ?? <span class="nm">0</span>, sr.sr_rb[i] ?? <span class="nm">0</span>);</span>
+<span id="src-hexsurf-loft-L321">  lo = <span class="nm">1.0</span>e9;</span>
+<span id="src-hexsurf-loft-L322">  hi = -<span class="nm">1.0</span>e9;</span>
+<span id="src-hexsurf-loft-L323">  <span class="kw">for</span> ej <span class="kw">in</span> <span class="nm">0..2</span> {</span>
+<span id="src-hexsurf-loft-L324">    cc = c1;</span>
+<span id="src-hexsurf-loft-L325">    <span class="kw">if</span> ej == <span class="nm">1</span> { cc = c2; }</span>
+<span id="src-hexsurf-loft-L326">    ex = ((<span class="fn-call">lattice_k</span>(qa, ra) + <span class="fn-call">corner_k</span>(cc)) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.8660254037844386</span>;</span>
+<span id="src-hexsurf-loft-L327">    ey = ((<span class="fn-call">lattice_m</span>(qa, ra) + <span class="fn-call">corner_m</span>(cc)) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.5</span>;</span>
+<span id="src-hexsurf-loft-L328">    tv = (ex - cx) * ux + (ey - cy) * uy;</span>
+<span id="src-hexsurf-loft-L329">    <span class="kw">if</span> tv &lt; lo { lo = tv; }</span>
+<span id="src-hexsurf-loft-L330">    <span class="kw">if</span> tv &gt; hi { hi = tv; }</span>
+<span id="src-hexsurf-loft-L331">  }</span>
+<span id="src-hexsurf-loft-L332">  (cx + lo * ux, cy + lo * uy, cx + hi * ux, cy + hi * uy)</span>
+<span id="src-hexsurf-loft-L333">}</span>
+<span id="src-hexsurf-loft-L334"></span>
+<span id="src-hexsurf-loft-L335"><span class="cm">// The material on stored edge `i` of a side — so the renderer can find the features on a run</span></span>
+<span id="src-hexsurf-loft-L336"><span class="cm">// without re-deriving the run's order.</span></span>
+<span id="src-hexsurf-loft-L337"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">surface_edge_mat</span>(p: <span class="en">Plan</span>, cells: <span class="en">HexSet</span>, edges: <span class="en">EdgeSet</span>, side: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-hexsurf-loft-L338">                        i: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-hexsurf-loft-L339">  sr = <span class="fn-call">side_edges</span>(p, cells, side);</span>
+<span id="src-hexsurf-loft-L340">  <span class="fn-call">edge_mat</span>(edges, sr.sr_qa[i] ?? <span class="nm">0</span>, sr.sr_ra[i] ?? <span class="nm">0</span>, sr.sr_qb[i] ?? <span class="nm">0</span>, sr.sr_rb[i] ?? <span class="nm">0</span>)</span>
+<span id="src-hexsurf-loft-L341">}</span>
+<span id="src-hexsurf-loft-L342"></span>
+<span id="src-hexsurf-loft-L343"><span class="cm">// The perpendicular extent of the MIDPOINTS about the mean line.  Not in §6.2, and it is not the</span></span>
+<span id="src-hexsurf-loft-L344"><span class="cm">// same as the corner band: on the east family the midpoints are exactly COLINEAR (0), while on the</span></span>
+<span id="src-hexsurf-loft-L345"><span class="cm">// north family they span the full band — the row stagger, which the corners hide.</span></span>
+<span id="src-hexsurf-loft-L346"><span class="cm">//</span></span>
+<span id="src-hexsurf-loft-L347"><span class="cm">// Example: @HXD-001</span></span>
+<span id="src-hexsurf-loft-L348"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">surface_band_mids</span>(p: <span class="en">Plan</span>, cells: <span class="en">HexSet</span>, side: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="src-hexsurf-loft-L349">  w = <span class="fn-call">surface_of</span>(p, cells, side);</span>
+<span id="src-hexsurf-loft-L350">  sr = <span class="fn-call">side_edges</span>(p, cells, side);</span>
+<span id="src-hexsurf-loft-L351">  px = <span class="fn-call">perp_x</span>(w);</span>
+<span id="src-hexsurf-loft-L352">  py = <span class="fn-call">perp_y</span>(w);</span>
+<span id="src-hexsurf-loft-L353">  cx = <span class="fn-call">surface_mean_x</span>(w);</span>
+<span id="src-hexsurf-loft-L354">  cy = <span class="fn-call">surface_mean_y</span>(w);</span>
+<span id="src-hexsurf-loft-L355">  lo = <span class="nm">1.0</span>e9;</span>
+<span id="src-hexsurf-loft-L356">  hi = -<span class="nm">1.0</span>e9;</span>
+<span id="src-hexsurf-loft-L357">  <span class="kw">for</span> mi <span class="kw">in</span> <span class="nm">0..</span><span class="fn-call">side_run_len</span>(sr) {</span>
+<span id="src-hexsurf-loft-L358">    qa = sr.sr_qa[mi] ?? <span class="nm">0</span>;</span>
+<span id="src-hexsurf-loft-L359">    ra = sr.sr_ra[mi] ?? <span class="nm">0</span>;</span>
+<span id="src-hexsurf-loft-L360">    (c1, c2) = <span class="fn-call">edge_corners_of</span>(qa, ra, sr.sr_qb[mi] ?? <span class="nm">0</span>, sr.sr_rb[mi] ?? <span class="nm">0</span>);</span>
+<span id="src-hexsurf-loft-L361">    mx = ((<span class="fn-call">lattice_k</span>(qa, ra) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>)</span>
+<span id="src-hexsurf-loft-L362">          + ((<span class="fn-call">corner_k</span>(c1) + <span class="fn-call">corner_k</span>(c2)) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) / <span class="nm">2.0</span>) * <span class="nm">0.8660254037844386</span>;</span>
+<span id="src-hexsurf-loft-L363">    my = ((<span class="fn-call">lattice_m</span>(qa, ra) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>)</span>
+<span id="src-hexsurf-loft-L364">          + ((<span class="fn-call">corner_m</span>(c1) + <span class="fn-call">corner_m</span>(c2)) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) / <span class="nm">2.0</span>) * <span class="nm">0.5</span>;</span>
+<span id="src-hexsurf-loft-L365">    mv = (mx - cx) * px + (my - cy) * py;</span>
+<span id="src-hexsurf-loft-L366">    <span class="kw">if</span> mv &lt; lo { lo = mv; }</span>
+<span id="src-hexsurf-loft-L367">    <span class="kw">if</span> mv &gt; hi { hi = mv; }</span>
+<span id="src-hexsurf-loft-L368">  }</span>
+<span id="src-hexsurf-loft-L369">  hi - lo</span>
+<span id="src-hexsurf-loft-L370">}</span>
+<span id="src-hexsurf-loft-L371"></span>
+<span id="src-hexsurf-loft-L372"><span class="cm">// The scatter a LEAST-SQUARES formulation would have to threshold: the sum of squared</span></span>
+<span id="src-hexsurf-loft-L373"><span class="cm">// perpendicular deviations of the midpoints from the derived mean line.  Averaging names the same</span></span>
+<span id="src-hexsurf-loft-L374"><span class="cm">// geometry as an exact band constant and has nothing to tune; this is the control that the</span></span>
+<span id="src-hexsurf-loft-L375"><span class="cm">// distinction is real rather than rhetorical.</span></span>
+<span id="src-hexsurf-loft-L376"><span class="cm">//</span></span>
+<span id="src-hexsurf-loft-L377"><span class="cm">// Example: @HXD-001</span></span>
+<span id="src-hexsurf-loft-L378"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">surface_lsq_residual</span>(p: <span class="en">Plan</span>, cells: <span class="en">HexSet</span>, side: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="src-hexsurf-loft-L379">  w = <span class="fn-call">surface_of</span>(p, cells, side);</span>
+<span id="src-hexsurf-loft-L380">  sr = <span class="fn-call">side_edges</span>(p, cells, side);</span>
+<span id="src-hexsurf-loft-L381">  px = <span class="fn-call">perp_x</span>(w);</span>
+<span id="src-hexsurf-loft-L382">  py = <span class="fn-call">perp_y</span>(w);</span>
+<span id="src-hexsurf-loft-L383">  cx = <span class="fn-call">surface_mean_x</span>(w);</span>
+<span id="src-hexsurf-loft-L384">  cy = <span class="fn-call">surface_mean_y</span>(w);</span>
+<span id="src-hexsurf-loft-L385">  acc = <span class="nm">0.0</span>;</span>
+<span id="src-hexsurf-loft-L386">  <span class="kw">for</span> ri <span class="kw">in</span> <span class="nm">0..</span><span class="fn-call">side_run_len</span>(sr) {</span>
+<span id="src-hexsurf-loft-L387">    qa = sr.sr_qa[ri] ?? <span class="nm">0</span>;</span>
+<span id="src-hexsurf-loft-L388">    ra = sr.sr_ra[ri] ?? <span class="nm">0</span>;</span>
+<span id="src-hexsurf-loft-L389">    (c1, c2) = <span class="fn-call">edge_corners_of</span>(qa, ra, sr.sr_qb[ri] ?? <span class="nm">0</span>, sr.sr_rb[ri] ?? <span class="nm">0</span>);</span>
+<span id="src-hexsurf-loft-L390">    mx = ((<span class="fn-call">lattice_k</span>(qa, ra) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>)</span>
+<span id="src-hexsurf-loft-L391">          + ((<span class="fn-call">corner_k</span>(c1) + <span class="fn-call">corner_k</span>(c2)) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) / <span class="nm">2.0</span>) * <span class="nm">0.8660254037844386</span>;</span>
+<span id="src-hexsurf-loft-L392">    my = ((<span class="fn-call">lattice_m</span>(qa, ra) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>)</span>
+<span id="src-hexsurf-loft-L393">          + ((<span class="fn-call">corner_m</span>(c1) + <span class="fn-call">corner_m</span>(c2)) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) / <span class="nm">2.0</span>) * <span class="nm">0.5</span>;</span>
+<span id="src-hexsurf-loft-L394">    dv = (mx - cx) * px + (my - cy) * py;</span>
+<span id="src-hexsurf-loft-L395">    acc = acc + dv * dv;</span>
+<span id="src-hexsurf-loft-L396">  }</span>
+<span id="src-hexsurf-loft-L397">  acc</span>
+<span id="src-hexsurf-loft-L398">}</span>
+<span id="src-hexsurf-loft-L399"></span>
+<span id="src-hexsurf-loft-L400"><span class="cm">// ── A5 — FEATURES ON A STRAIGHT SIDE, AND WHAT OF THEM SURVIVES ────────────</span></span>
+<span id="src-hexsurf-loft-L401"><span class="cm">//</span></span>
+<span id="src-hexsurf-loft-L402"><span class="cm">// `OD-9` is closed: a door or window IS the material on the wall slot, not an annotation beside</span></span>
+<span id="src-hexsurf-loft-L403"><span class="cm">// one (`ROUNDTRIP` §2.4.1).  The edge is never removed, so a run cannot fragment — the doored-tower</span></span>
+<span id="src-hexsurf-loft-L404"><span class="cm">// defect is structurally impossible rather than merely avoided.  A5 asks the next question: does</span></span>
+<span id="src-hexsurf-loft-L405"><span class="cm">// the feature survive the ROUND TRIP?</span></span>
 <span id="src-hexsurf-loft-L406"><span class="cm">//</span></span>
-<span id="src-hexsurf-loft-L407"><span class="cm">// `OD-9` is closed: a door or window IS the material on the wall slot, not an annotation beside</span></span>
-<span id="src-hexsurf-loft-L408"><span class="cm">// one (`ROUNDTRIP` §2.4.1).  The edge is never removed, so a run cannot fragment — the doored-tower</span></span>
-<span id="src-hexsurf-loft-L409"><span class="cm">// defect is structurally impossible rather than merely avoided.  A5 asks the next question: does</span></span>
-<span id="src-hexsurf-loft-L410"><span class="cm">// the feature survive the ROUND TRIP?</span></span>
-<span id="src-hexsurf-loft-L411"><span class="cm">//</span></span>
-<span id="src-hexsurf-loft-L412"><span class="cm">// THE MODEL STORES `(side, t)` (`I2`, affine-invariant).  THE FIELD STORES A MATERIAL ON EDGES.</span></span>
-<span id="src-hexsurf-loft-L413"><span class="cm">// So recovery has to get `t` back out of a set of marked edges — and it cannot get an arbitrary</span></span>
-<span id="src-hexsurf-loft-L414"><span class="cm">// `t` back, because every `t` in an interval of width `1/n` selects the same edge.  What IS exact:</span></span>
-<span id="src-hexsurf-loft-L415"><span class="cm">//</span></span>
-<span id="src-hexsurf-loft-L416"><span class="cm">//     the edge centres along a run of n edges sit at   t = (2i + 1) / 2n</span></span>
+<span id="src-hexsurf-loft-L407"><span class="cm">// THE MODEL STORES `(side, t)` (`I2`, affine-invariant).  THE FIELD STORES A MATERIAL ON EDGES.</span></span>
+<span id="src-hexsurf-loft-L408"><span class="cm">// So recovery has to get `t` back out of a set of marked edges — and it cannot get an arbitrary</span></span>
+<span id="src-hexsurf-loft-L409"><span class="cm">// `t` back, because every `t` in an interval of width `1/n` selects the same edge.  What IS exact:</span></span>
+<span id="src-hexsurf-loft-L410"><span class="cm">//</span></span>
+<span id="src-hexsurf-loft-L411"><span class="cm">//     the edge centres along a run of n edges sit at   t = (2i + 1) / 2n</span></span>
+<span id="src-hexsurf-loft-L412"><span class="cm">//</span></span>
+<span id="src-hexsurf-loft-L413"><span class="cm">// exact rationals, odd numerator over `2n`.  `place_opening` snaps to the nearest, so a feature</span></span>
+<span id="src-hexsurf-loft-L414"><span class="cm">// authored at one of those `t` values round-trips exactly and one authored between them does not.</span></span>
+<span id="src-hexsurf-loft-L415"><span class="cm">// That is the same shape as the line-endpoint rule (§10.10): the doorstep quantises the model to</span></span>
+<span id="src-hexsurf-loft-L416"><span class="cm">// what the storage can distinguish, rather than letting a value in that cannot come back.</span></span>
 <span id="src-hexsurf-loft-L417"><span class="cm">//</span></span>
-<span id="src-hexsurf-loft-L418"><span class="cm">// exact rationals, odd numerator over `2n`.  `place_opening` snaps to the nearest, so a feature</span></span>
-<span id="src-hexsurf-loft-L419"><span class="cm">// authored at one of those `t` values round-trips exactly and one authored between them does not.</span></span>
-<span id="src-hexsurf-loft-L420"><span class="cm">// That is the same shape as the line-endpoint rule (§10.10): the doorstep quantises the model to</span></span>
-<span id="src-hexsurf-loft-L421"><span class="cm">// what the storage can distinguish, rather than letting a value in that cannot come back.</span></span>
-<span id="src-hexsurf-loft-L422"><span class="cm">//</span></span>
-<span id="src-hexsurf-loft-L423"><span class="cm">// The run is NOT stored in `t` order — `side_edges` fills it in cell-scan order — so a feature is</span></span>
-<span id="src-hexsurf-loft-L424"><span class="cm">// indexed by its exact `t` numerator, never by its position in the run.</span></span>
-<span id="src-hexsurf-loft-L425"></span>
-<span id="src-hexsurf-loft-L426"><span class="cm">// The exact `t` of stored edge `i`, as the numerator over `2n`: an odd integer in `1 .. 2n-1`.</span></span>
-<span id="src-hexsurf-loft-L427"><span class="cm">// `sr_t` is a float only because `SideRun` holds it that way; the value is an exact rational and</span></span>
-<span id="src-hexsurf-loft-L428"><span class="cm">// this recovers the numerator without a tolerance being involved in the answer.</span></span>
-<span id="src-hexsurf-loft-L429"><span class="cm">//</span></span>
-<span id="src-hexsurf-loft-L430"><span class="cm">// Example: @HXD-006</span></span>
-<span id="src-hexsurf-loft-L431"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">feature_t_num</span>(sr: <span class="en">SideRun</span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>, n: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-hexsurf-loft-L432">  (<span class="bi"><a href="stdlib-math.html">round</a></span>((sr.sr_t[i] ?? <span class="nm">0.0</span>) * <span class="nm">2.0</span> * (n <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>)) ?? <span class="nm">0.0</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span></span>
+<span id="src-hexsurf-loft-L418"><span class="cm">// The run is NOT stored in `t` order — `side_edges` fills it in cell-scan order — so a feature is</span></span>
+<span id="src-hexsurf-loft-L419"><span class="cm">// indexed by its exact `t` numerator, never by its position in the run.</span></span>
+<span id="src-hexsurf-loft-L420"></span>
+<span id="src-hexsurf-loft-L421"><span class="cm">// The exact `t` of stored edge `i`, as the numerator over `2n`: an odd integer in `1 .. 2n-1`.</span></span>
+<span id="src-hexsurf-loft-L422"><span class="cm">// `sr_t` is a float only because `SideRun` holds it that way; the value is an exact rational and</span></span>
+<span id="src-hexsurf-loft-L423"><span class="cm">// this recovers the numerator without a tolerance being involved in the answer.</span></span>
+<span id="src-hexsurf-loft-L424"><span class="cm">//</span></span>
+<span id="src-hexsurf-loft-L425"><span class="cm">// Example: @HXD-006</span></span>
+<span id="src-hexsurf-loft-L426"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">feature_t_num</span>(sr: <span class="en">SideRun</span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>, n: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-hexsurf-loft-L427">  (<span class="bi"><a href="stdlib-math.html">round</a></span>((sr.sr_t[i] ?? <span class="nm">0.0</span>) * <span class="nm">2.0</span> * (n <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>)) ?? <span class="nm">0.0</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span></span>
+<span id="src-hexsurf-loft-L428">}</span>
+<span id="src-hexsurf-loft-L429"></span>
+<span id="src-hexsurf-loft-L430"><span class="cm">// Is `num/2n` a legal feature position — an edge centre, i.e. an ODD numerator in range?</span></span>
+<span id="src-hexsurf-loft-L431"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">feature_t_admissible</span>(num: <span class="ty"><a href="stdlib-types.html">integer</a></span>, n: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-hexsurf-loft-L432">  num &gt; <span class="nm">0</span> &amp;&amp; num &lt; <span class="nm">2</span> * n &amp;&amp; ((num % <span class="nm">2</span>) + <span class="nm">2</span>) % <span class="nm">2</span> == <span class="nm">1</span></span>
 <span id="src-hexsurf-loft-L433">}</span>
 <span id="src-hexsurf-loft-L434"></span>
-<span id="src-hexsurf-loft-L435"><span class="cm">// Is `num/2n` a legal feature position — an edge centre, i.e. an ODD numerator in range?</span></span>
-<span id="src-hexsurf-loft-L436"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">feature_t_admissible</span>(num: <span class="ty"><a href="stdlib-types.html">integer</a></span>, n: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
-<span id="src-hexsurf-loft-L437">  num &gt; <span class="nm">0</span> &amp;&amp; num &lt; <span class="nm">2</span> * n &amp;&amp; ((num % <span class="nm">2</span>) + <span class="nm">2</span>) % <span class="nm">2</span> == <span class="nm">1</span></span>
-<span id="src-hexsurf-loft-L438">}</span>
-<span id="src-hexsurf-loft-L439"></span>
-<span id="src-hexsurf-loft-L440"><span class="cm">// Recover a feature from the field: the `t` numerators of every edge on `side` carrying `kind`,</span></span>
-<span id="src-hexsurf-loft-L441"><span class="cm">// in ascending `t` order (C2's ordering, not the storage order).</span></span>
-<span id="src-hexsurf-loft-L442"><span class="cm">//</span></span>
-<span id="src-hexsurf-loft-L443"><span class="cm">// Example: @HXD-006</span></span>
-<span id="src-hexsurf-loft-L444"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">feature_find</span>(p: <span class="en">Plan</span>, cells: <span class="en">HexSet</span>, edges: <span class="en">EdgeSet</span>,</span>
-<span id="src-hexsurf-loft-L445">                    side: <span class="ty"><a href="stdlib-types.html">integer</a></span>, kind: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; {</span>
-<span id="src-hexsurf-loft-L446">  sr = <span class="fn-call">side_edges</span>(p, cells, side);</span>
-<span id="src-hexsurf-loft-L447">  n = <span class="fn-call">side_run_len</span>(sr);</span>
-<span id="src-hexsurf-loft-L448">  out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
-<span id="src-hexsurf-loft-L449">  <span class="kw">for</span> fi <span class="kw">in</span> <span class="nm">0..</span>n {</span>
-<span id="src-hexsurf-loft-L450">    <span class="kw">if</span> <span class="fn-call">edge_mat</span>(edges, sr.sr_qa[fi] ?? <span class="nm">0</span>, sr.sr_ra[fi] ?? <span class="nm">0</span>,</span>
-<span id="src-hexsurf-loft-L451">                       sr.sr_qb[fi] ?? <span class="nm">0</span>, sr.sr_rb[fi] ?? <span class="nm">0</span>) == kind {</span>
-<span id="src-hexsurf-loft-L452">      out += [<span class="fn-call">feature_t_num</span>(sr, fi, n)];</span>
-<span id="src-hexsurf-loft-L453">    }</span>
-<span id="src-hexsurf-loft-L454">  }</span>
-<span id="src-hexsurf-loft-L455">  <span class="cm">// ascending t — insertion sort, the run is tens of edges at most</span></span>
-<span id="src-hexsurf-loft-L456">  <span class="kw">for</span> si <span class="kw">in</span> <span class="nm">1..l</span><span class="fn-call">en</span>(out) {</span>
-<span id="src-hexsurf-loft-L457">    ps = si;</span>
-<span id="src-hexsurf-loft-L458">    while ps &gt; <span class="nm">0</span> &amp;&amp; (out[ps - <span class="nm">1</span>] ?? <span class="nm">0</span>) &gt; (out[ps] ?? <span class="nm">0</span>) {</span>
-<span id="src-hexsurf-loft-L459">      tmp = out[ps - <span class="nm">1</span>] ?? <span class="nm">0</span>;</span>
-<span id="src-hexsurf-loft-L460">      out[ps - <span class="nm">1</span>] = out[ps] ?? <span class="nm">0</span>;</span>
-<span id="src-hexsurf-loft-L461">      out[ps] = tmp;</span>
-<span id="src-hexsurf-loft-L462">      ps = ps - <span class="nm">1</span>;</span>
-<span id="src-hexsurf-loft-L463">    }</span>
-<span id="src-hexsurf-loft-L464">  }</span>
-<span id="src-hexsurf-loft-L465">  out</span>
-<span id="src-hexsurf-loft-L466">}</span>
-<span id="src-hexsurf-loft-L467"></span>
-<span id="src-hexsurf-loft-L468"><span class="cm">// How many boundary edges carry a wall material at all — the run's length, which a re-materialled</span></span>
-<span id="src-hexsurf-loft-L469"><span class="cm">// feature must leave UNCHANGED.  Deleting an edge instead is what fragments a run.</span></span>
-<span id="src-hexsurf-loft-L470"><span class="cm">//</span></span>
-<span id="src-hexsurf-loft-L471"><span class="cm">// Example: @HXD-005</span></span>
-<span id="src-hexsurf-loft-L472"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">wall_edge_count</span>(cells: <span class="en">HexSet</span>, edges: <span class="en">EdgeSet</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-hexsurf-loft-L473">  n = <span class="nm">0</span>;</span>
-<span id="src-hexsurf-loft-L474">  <span class="kw">for</span> wr <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(cells)..<span class="fn-call">hexset_r0</span>(cells) + <span class="fn-call">hexset_h</span>(cells) {</span>
-<span id="src-hexsurf-loft-L475">    <span class="kw">for</span> wq <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(cells)..<span class="fn-call">hexset_q0</span>(cells) + <span class="fn-call">hexset_w</span>(cells) {</span>
-<span id="src-hexsurf-loft-L476">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(cells, wq, wr) {</span>
-<span id="src-hexsurf-loft-L477">        <span class="cm">// ALL SIX directions, as `draw_walls` does.  A boundary edge is visited exactly once</span></span>
-<span id="src-hexsurf-loft-L478">        <span class="cm">// because only the inside cell is in the set — iterating just the three OWNED directions</span></span>
-<span id="src-hexsurf-loft-L479">        <span class="cm">// misses every edge the outside cell owns and undercounts by about half (38 read as 19).</span></span>
-<span id="src-hexsurf-loft-L480">        <span class="kw">for</span> wd <span class="kw">in</span> <span class="nm">0..6</span> {</span>
-<span id="src-hexsurf-loft-L481">          (nq, nr) = <span class="fn-call">hex_neighbor</span>(wq, wr, wd);</span>
-<span id="src-hexsurf-loft-L482">          <span class="kw">if</span> !<span class="fn-call">hexset_get</span>(cells, nq, nr) {</span>
-<span id="src-hexsurf-loft-L483">            <span class="kw">if</span> <span class="fn-call">edge_mat</span>(edges, wq, wr, nq, nr) != <span class="nm">0</span> { n = n + <span class="nm">1</span>; }</span>
-<span id="src-hexsurf-loft-L484">          }</span>
-<span id="src-hexsurf-loft-L485">        }</span>
-<span id="src-hexsurf-loft-L486">      }</span>
-<span id="src-hexsurf-loft-L487">    }</span>
-<span id="src-hexsurf-loft-L488">  }</span>
-<span id="src-hexsurf-loft-L489">  n</span>
-<span id="src-hexsurf-loft-L490">}</span>
+<span id="src-hexsurf-loft-L435"><span class="cm">// Recover a feature from the field: the `t` numerators of every edge on `side` carrying `kind`,</span></span>
+<span id="src-hexsurf-loft-L436"><span class="cm">// in ascending `t` order (C2's ordering, not the storage order).</span></span>
+<span id="src-hexsurf-loft-L437"><span class="cm">//</span></span>
+<span id="src-hexsurf-loft-L438"><span class="cm">// Example: @HXD-006</span></span>
+<span id="src-hexsurf-loft-L439"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">feature_find</span>(p: <span class="en">Plan</span>, cells: <span class="en">HexSet</span>, edges: <span class="en">EdgeSet</span>,</span>
+<span id="src-hexsurf-loft-L440">                    side: <span class="ty"><a href="stdlib-types.html">integer</a></span>, kind: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; {</span>
+<span id="src-hexsurf-loft-L441">  sr = <span class="fn-call">side_edges</span>(p, cells, side);</span>
+<span id="src-hexsurf-loft-L442">  n = <span class="fn-call">side_run_len</span>(sr);</span>
+<span id="src-hexsurf-loft-L443">  out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
+<span id="src-hexsurf-loft-L444">  <span class="kw">for</span> fi <span class="kw">in</span> <span class="nm">0..</span>n {</span>
+<span id="src-hexsurf-loft-L445">    <span class="kw">if</span> <span class="fn-call">edge_mat</span>(edges, sr.sr_qa[fi] ?? <span class="nm">0</span>, sr.sr_ra[fi] ?? <span class="nm">0</span>,</span>
+<span id="src-hexsurf-loft-L446">                       sr.sr_qb[fi] ?? <span class="nm">0</span>, sr.sr_rb[fi] ?? <span class="nm">0</span>) == kind {</span>
+<span id="src-hexsurf-loft-L447">      out += [<span class="fn-call">feature_t_num</span>(sr, fi, n)];</span>
+<span id="src-hexsurf-loft-L448">    }</span>
+<span id="src-hexsurf-loft-L449">  }</span>
+<span id="src-hexsurf-loft-L450">  <span class="cm">// ascending t — insertion sort, the run is tens of edges at most</span></span>
+<span id="src-hexsurf-loft-L451">  <span class="kw">for</span> si <span class="kw">in</span> <span class="nm">1..l</span><span class="fn-call">en</span>(out) {</span>
+<span id="src-hexsurf-loft-L452">    ps = si;</span>
+<span id="src-hexsurf-loft-L453">    while ps &gt; <span class="nm">0</span> &amp;&amp; (out[ps - <span class="nm">1</span>] ?? <span class="nm">0</span>) &gt; (out[ps] ?? <span class="nm">0</span>) {</span>
+<span id="src-hexsurf-loft-L454">      tmp = out[ps - <span class="nm">1</span>] ?? <span class="nm">0</span>;</span>
+<span id="src-hexsurf-loft-L455">      out[ps - <span class="nm">1</span>] = out[ps] ?? <span class="nm">0</span>;</span>
+<span id="src-hexsurf-loft-L456">      out[ps] = tmp;</span>
+<span id="src-hexsurf-loft-L457">      ps = ps - <span class="nm">1</span>;</span>
+<span id="src-hexsurf-loft-L458">    }</span>
+<span id="src-hexsurf-loft-L459">  }</span>
+<span id="src-hexsurf-loft-L460">  out</span>
+<span id="src-hexsurf-loft-L461">}</span>
+<span id="src-hexsurf-loft-L462"></span>
+<span id="src-hexsurf-loft-L463"><span class="cm">// How many boundary edges carry a wall material at all — the run's length, which a re-materialled</span></span>
+<span id="src-hexsurf-loft-L464"><span class="cm">// feature must leave UNCHANGED.  Deleting an edge instead is what fragments a run.</span></span>
+<span id="src-hexsurf-loft-L465"><span class="cm">//</span></span>
+<span id="src-hexsurf-loft-L466"><span class="cm">// Example: @HXD-005</span></span>
+<span id="src-hexsurf-loft-L467"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">wall_edge_count</span>(cells: <span class="en">HexSet</span>, edges: <span class="en">EdgeSet</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-hexsurf-loft-L468">  n = <span class="nm">0</span>;</span>
+<span id="src-hexsurf-loft-L469">  <span class="kw">for</span> wr <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(cells)..<span class="fn-call">hexset_r0</span>(cells) + <span class="fn-call">hexset_h</span>(cells) {</span>
+<span id="src-hexsurf-loft-L470">    <span class="kw">for</span> wq <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(cells)..<span class="fn-call">hexset_q0</span>(cells) + <span class="fn-call">hexset_w</span>(cells) {</span>
+<span id="src-hexsurf-loft-L471">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(cells, wq, wr) {</span>
+<span id="src-hexsurf-loft-L472">        <span class="cm">// ALL SIX directions, as `draw_walls` does.  A boundary edge is visited exactly once</span></span>
+<span id="src-hexsurf-loft-L473">        <span class="cm">// because only the inside cell is in the set — iterating just the three OWNED directions</span></span>
+<span id="src-hexsurf-loft-L474">        <span class="cm">// misses every edge the outside cell owns and undercounts by about half (38 read as 19).</span></span>
+<span id="src-hexsurf-loft-L475">        <span class="kw">for</span> wd <span class="kw">in</span> <span class="nm">0..6</span> {</span>
+<span id="src-hexsurf-loft-L476">          (nq, nr) = <span class="fn-call">hex_neighbor</span>(wq, wr, wd);</span>
+<span id="src-hexsurf-loft-L477">          <span class="kw">if</span> !<span class="fn-call">hexset_get</span>(cells, nq, nr) {</span>
+<span id="src-hexsurf-loft-L478">            <span class="kw">if</span> <span class="fn-call">edge_mat</span>(edges, wq, wr, nq, nr) != <span class="nm">0</span> { n = n + <span class="nm">1</span>; }</span>
+<span id="src-hexsurf-loft-L479">          }</span>
+<span id="src-hexsurf-loft-L480">        }</span>
+<span id="src-hexsurf-loft-L481">      }</span>
+<span id="src-hexsurf-loft-L482">    }</span>
+<span id="src-hexsurf-loft-L483">  }</span>
+<span id="src-hexsurf-loft-L484">  n</span>
+<span id="src-hexsurf-loft-L485">}</span>
 </code></pre>
 <h2 id="src-housedraw-loft">src/housedraw.loft</h2>
 <pre class="src"><code><span id="src-housedraw-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
 <span id="src-housedraw-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
 <span id="src-housedraw-loft-L3"><span class="cm">// housedraw — DRAW A BUILDING IN ANY OF THE 12 ORIENTATIONS.</span></span>
 <span id="src-housedraw-loft-L4"><span class="cm">//</span></span>
-<span id="src-housedraw-loft-L5"><span class="cm">// The field primitives all exist already (hex_field: HexSet/Labels/EdgeSet/Heights;</span></span>
-<span id="src-housedraw-loft-L6"><span class="cm">// hexroof: the roof profiles).  What was missing is the layer above them: a LOCAL FRAME</span></span>
-<span id="src-housedraw-loft-L7"><span class="cm">// so the same building can be drawn at 6 rotations x 2 chiralities, and openings placed</span></span>
-<span id="src-housedraw-loft-L8"><span class="cm">// on its walls by (side, t) rather than by cell coordinates.</span></span>
+<span id="src-housedraw-loft-L5"><span class="cm">// The field primitives are hex_field's (HexSet/Labels/EdgeSet/Heights) and the roof</span></span>
+<span id="src-housedraw-loft-L6"><span class="cm">// profiles hex_roof's.  This is the layer above them: a LOCAL FRAME (hex_form's `Plan`) so</span></span>
+<span id="src-housedraw-loft-L7"><span class="cm">// the same building can be drawn at 6 rotations x 2 chiralities, and openings placed on its</span></span>
+<span id="src-housedraw-loft-L8"><span class="cm">// walls by (side, t) rather than by cell coordinates.</span></span>
 <span id="src-housedraw-loft-L9"><span class="cm">//</span></span>
 <span id="src-housedraw-loft-L10"><span class="cm">// FOUR ROUTINES, and each writes exactly one layer:</span></span>
 <span id="src-housedraw-loft-L11"><span class="cm">//</span></span>
@@ -585,7 +580,7 @@
 <span id="src-housedraw-loft-L14"><span class="cm">//   place_opening n edges at t -&gt; EdgeSet material    (doors and windows)</span></span>
 <span id="src-housedraw-loft-L15"><span class="cm">//   draw_roof     a ridge      -&gt; Heights             (a thin caller of hexroof)</span></span>
 <span id="src-housedraw-loft-L16"><span class="cm">//</span></span>
-<span id="src-housedraw-loft-L17"><span class="cm">// THE TWO RULES THAT MAKE 12 ORIENTATIONS WORK, both measured by src/housetest.loft:</span></span>
+<span id="src-housedraw-loft-L17"><span class="cm">// THE TWO RULES THAT MAKE 12 ORIENTATIONS WORK:</span></span>
 <span id="src-housedraw-loft-L18"><span class="cm">//</span></span>
 <span id="src-housedraw-loft-L19"><span class="cm">//  1. THE MIRROR IS APPLIED ONCE, IN THE FRAME.  Local -&gt; world negates local u when</span></span>
 <span id="src-housedraw-loft-L20"><span class="cm">//     mirrored; a side's endpoints then only EXCHANGE.  Applying it in both places turns</span></span>
@@ -617,156 +612,155 @@
 <span id="src-housedraw-loft-L46"><span class="cm">// ⚠ `OPEN_NONE` IS NOT "no opening" — it is the wall-material value **0, which means NO WALL**.</span></span>
 <span id="src-housedraw-loft-L47"><span class="cm">// Writing it DELETES the edge and breaks the run in two (`X51`: 37 edges, 2 dangling ends, and on</span></span>
 <span id="src-housedraw-loft-L48"><span class="cm">// a tower 3 arcs instead of 1).  It is kept because 0 is the slot's empty value, but it is never</span></span>
-<span id="src-housedraw-loft-L49"><span class="cm">// what an author means by an opening.  moros makes exactly this mistake — `builtin_house_door`</span></span>
-<span id="src-housedraw-loft-L50"><span class="cm">// leaves the doorway edge at material 0 and calls it *"crawler's convention: a door is a gap"*.</span></span>
-<span id="src-housedraw-loft-L51"><span class="cm">//</span></span>
-<span id="src-housedraw-loft-L52"><span class="cm">// THE TAXONOMY (user, 2026-07-24: *"A door is not a gap in the wall, it is something that can be a</span></span>
-<span id="src-housedraw-loft-L53"><span class="cm">// collider or not. But we also allow real gaps — the door itself is missing completely, but the</span></span>
-<span id="src-housedraw-loft-L54"><span class="cm">// wall continues like normal"*).  Three distinct things live on a wall edge, and **all three keep</span></span>
-<span id="src-housedraw-loft-L55"><span class="cm">// the wall one continuous run**:</span></span>
-<span id="src-housedraw-loft-L56"><span class="cm">//</span></span>
-<span id="src-housedraw-loft-L57"><span class="cm">//   OPEN_DOOR    an opening fitted with a door leaf — a collider WHEN CLOSED, not when open</span></span>
-<span id="src-housedraw-loft-L58"><span class="cm">//   OPEN_WINDOW  an opening at elevation — never a floor-level collider, wall continues</span></span>
-<span id="src-housedraw-loft-L59"><span class="cm">//   OPEN_GAP     a real gap: the leaf is missing entirely, never a collider, wall continues</span></span>
-<span id="src-housedraw-loft-L60"><span class="cm">//</span></span>
-<span id="src-housedraw-loft-L61"><span class="cm">// The difference between `OPEN_GAP` and `OPEN_NONE` is the whole point: a gap is an **opening in a</span></span>
-<span id="src-housedraw-loft-L62"><span class="cm">// wall that is still there**; `OPEN_NONE` is the **absence of the wall**.</span></span>
-<span id="src-housedraw-loft-L63"><span class="cm">//</span></span>
-<span id="src-housedraw-loft-L64"><span class="cm">// THE RATIONALE, and it is what makes this not a matter of taste (user, 2026-07-24): *"a gap/door</span></span>
-<span id="src-housedraw-loft-L65"><span class="cm">// will never be rendered as a missing wall, there will be something like a door-frame or ragged</span></span>
-<span id="src-housedraw-loft-L66"><span class="cm">// stone opening there."*  An opening **has geometry of its own** — a frame, a lintel, a ragged</span></span>
-<span id="src-housedraw-loft-L67"><span class="cm">// jamb.  Absence has none.  So an opening must name a material that carries that geometry, which</span></span>
-<span id="src-housedraw-loft-L68"><span class="cm">// is precisely a wall id into the palette; writing 0 would ask the renderer to draw nothing and the</span></span>
-<span id="src-housedraw-loft-L69"><span class="cm">// collision layer to find no wall, both wrong.</span></span>
-<span id="src-housedraw-loft-L70"><span class="kw">pub</span> const <span class="en">OPEN_NONE</span>   = <span class="nm">0</span>;</span>
-<span id="src-housedraw-loft-L71"><span class="kw">pub</span> const <span class="en">OPEN_DOOR</span>   = <span class="nm">1</span>;</span>
-<span id="src-housedraw-loft-L72"><span class="kw">pub</span> const <span class="en">OPEN_WINDOW</span> = <span class="nm">2</span>;</span>
-<span id="src-housedraw-loft-L73"><span class="kw">pub</span> const <span class="en">OPEN_GAP</span>    = <span class="nm">3</span>;</span>
-<span id="src-housedraw-loft-L74"></span>
-<span id="src-housedraw-loft-L75"></span>
-<span id="src-housedraw-loft-L76"><span class="cm">// ── 1. THE FLOOR ────────────────────────────────────────────────────────────</span></span>
-<span id="src-housedraw-loft-L77"><span class="cm">//</span></span>
-<span id="src-housedraw-loft-L78"><span class="cm">// The massing is filled FIRST and walled second.  Comparisons are inclusive (&lt;= bound</span></span>
-<span id="src-housedraw-loft-L79"><span class="cm">// + eps) so the fill never loses a column of cells to the structural tie: along u every</span></span>
-<span id="src-housedraw-loft-L80"><span class="cm">// cell-to-side distance is an exact multiple of sqrt(3)/2, which is exactly the default</span></span>
-<span id="src-housedraw-loft-L81"><span class="cm">// halfwidth, so a strict comparison sits on the last bit of a float for a whole column.</span></span>
-<span id="src-housedraw-loft-L82"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">draw_floor</span>(p: <span class="en">Plan</span>, cells: <span class="en">HexSet</span>, types: <span class="en">Labels</span>, floor_type: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-housedraw-loft-L83">  hw = <span class="fn-call">plan_hw</span>(p);</span>
-<span id="src-housedraw-loft-L84">  hd = <span class="fn-call">plan_hd</span>(p);</span>
-<span id="src-housedraw-loft-L85">  n = <span class="nm">0</span>;</span>
-<span id="src-housedraw-loft-L86">  <span class="kw">for</span> fr <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(cells)..<span class="fn-call">hexset_r0</span>(cells) + <span class="fn-call">hexset_h</span>(cells) {</span>
-<span id="src-housedraw-loft-L87">    <span class="kw">for</span> fq <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(cells)..<span class="fn-call">hexset_q0</span>(cells) + <span class="fn-call">hexset_w</span>(cells) {</span>
-<span id="src-housedraw-loft-L88">      (lu, lv) = <span class="fn-call">plan_to_local</span>(p, <span class="fn-call">cell_x</span>(fq, fr), <span class="fn-call">cell_y</span>(fq, fr));</span>
-<span id="src-housedraw-loft-L89">      <span class="kw">if</span> <span class="fn-call">fabs</span>(lu) &lt;= hw + <span class="en">EPS</span> &amp;&amp; <span class="fn-call">fabs</span>(lv) &lt;= hd + <span class="en">EPS</span> {</span>
-<span id="src-housedraw-loft-L90">        <span class="fn-call">hexset_set</span>(cells, fq, fr, <span class="kw">true</span>);</span>
-<span id="src-housedraw-loft-L91">        <span class="fn-call">label_set</span>(types, fq, fr, floor_type);</span>
-<span id="src-housedraw-loft-L92">        n = n + <span class="nm">1</span>;</span>
-<span id="src-housedraw-loft-L93">      }</span>
-<span id="src-housedraw-loft-L94">    }</span>
-<span id="src-housedraw-loft-L95">  }</span>
-<span id="src-housedraw-loft-L96">  n</span>
-<span id="src-housedraw-loft-L97">}</span>
-<span id="src-housedraw-loft-L98"></span>
-<span id="src-housedraw-loft-L99"><span class="cm">// ── 2. THE WALLS ────────────────────────────────────────────────────────────</span></span>
-<span id="src-housedraw-loft-L100"><span class="cm">//</span></span>
-<span id="src-housedraw-loft-L101"><span class="cm">// Every edge between a cell of the region and one outside it.  Closed by construction,</span></span>
-<span id="src-housedraw-loft-L102"><span class="cm">// and it costs no floor at all: a 7.5 x 6.0 m cottage keeps all 27 of its cells, where</span></span>
-<span id="src-housedraw-loft-L103"><span class="cm">// a wall drawn as a band of cells would eat 16 of them — 59% of the house.</span></span>
-<span id="src-housedraw-loft-L104"><span class="cm">//</span></span>
-<span id="src-housedraw-loft-L105"><span class="cm">// Example: @HXD-005</span></span>
-<span id="src-housedraw-loft-L106"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">draw_walls</span>(cells: <span class="en">HexSet</span>, edges: <span class="en">EdgeSet</span>, wall_mat: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-housedraw-loft-L107">  n = <span class="nm">0</span>;</span>
-<span id="src-housedraw-loft-L108">  <span class="kw">for</span> wr <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(cells)..<span class="fn-call">hexset_r0</span>(cells) + <span class="fn-call">hexset_h</span>(cells) {</span>
-<span id="src-housedraw-loft-L109">    <span class="kw">for</span> wq <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(cells)..<span class="fn-call">hexset_q0</span>(cells) + <span class="fn-call">hexset_w</span>(cells) {</span>
-<span id="src-housedraw-loft-L110">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(cells, wq, wr) {</span>
-<span id="src-housedraw-loft-L111">        <span class="kw">for</span> d <span class="kw">in</span> <span class="nm">0..6</span> {</span>
-<span id="src-housedraw-loft-L112">          nq = <span class="fn-call">nb_q</span>(wq, wr, d);</span>
-<span id="src-housedraw-loft-L113">          nr = <span class="fn-call">nb_r</span>(wq, wr, d);</span>
-<span id="src-housedraw-loft-L114">          <span class="kw">if</span> !<span class="fn-call">hexset_get</span>(cells, nq, nr) {</span>
-<span id="src-housedraw-loft-L115">            <span class="fn-call">edge_set_mat</span>(edges, wq, wr, nq, nr, wall_mat);</span>
-<span id="src-housedraw-loft-L116">            n = n + <span class="nm">1</span>;</span>
-<span id="src-housedraw-loft-L117">          }</span>
-<span id="src-housedraw-loft-L118">        }</span>
-<span id="src-housedraw-loft-L119">      }</span>
-<span id="src-housedraw-loft-L120">    }</span>
-<span id="src-housedraw-loft-L121">  }</span>
-<span id="src-housedraw-loft-L122">  n</span>
-<span id="src-housedraw-loft-L123">}</span>
-<span id="src-housedraw-loft-L124"></span>
-<span id="src-housedraw-loft-L125"></span>
-<span id="src-housedraw-loft-L126"><span class="cm">// ── 3. OPENINGS ─────────────────────────────────────────────────────────────</span></span>
-<span id="src-housedraw-loft-L127"><span class="cm">//</span></span>
-<span id="src-housedraw-loft-L128"><span class="cm">// A door is N EDGES centred at t, not a t-interval erased with a segment: erasing</span></span>
-<span id="src-housedraw-loft-L129"><span class="cm">// over-erases by ~halfwidth at EACH end (a 3.00 m interval opens 4.50 m of wall) and</span></span>
-<span id="src-housedraw-loft-L130"><span class="cm">// shrinking the segment over-corrects.  One hex edge is 1.0 world unit = 0.87 m of</span></span>
-<span id="src-housedraw-loft-L131"><span class="cm">// clear width — a real domestic door, which a cell-thick wall could not express at all.</span></span>
-<span id="src-housedraw-loft-L132"><span class="cm">//</span></span>
-<span id="src-housedraw-loft-L133"><span class="cm">// The edge KEEPS its wall material; the opening goes in the surf slot.  Nothing is</span></span>
-<span id="src-housedraw-loft-L134"><span class="cm">// deleted, so the wall still fits as one run.</span></span>
-<span id="src-housedraw-loft-L135"><span class="cm">//</span></span>
-<span id="src-housedraw-loft-L136"><span class="cm">// Example: @HXD-004</span></span>
-<span id="src-housedraw-loft-L137"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">place_opening</span>(p: <span class="en">Plan</span>, cells: <span class="en">HexSet</span>, edges: <span class="en">EdgeSet</span>,</span>
-<span id="src-housedraw-loft-L138">                     side: <span class="ty"><a href="stdlib-types.html">integer</a></span>, t: <span class="ty"><a href="stdlib-types.html">float</a></span>, nedges: <span class="ty"><a href="stdlib-types.html">integer</a></span>, kind: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-housedraw-loft-L139">  sr = <span class="fn-call">side_edges</span>(p, cells, side);</span>
-<span id="src-housedraw-loft-L140">  total = <span class="bi"><a href="stdlib-text.html">len</a></span>(sr.sr_t);</span>
-<span id="src-housedraw-loft-L141">  <span class="kw">if</span> total == <span class="nm">0</span> { <span class="kw">return</span> <span class="nm">0</span>; }</span>
-<span id="src-housedraw-loft-L142">  taken: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">boolean</a></span>&gt; = [<span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..</span>total { <span class="kw">false</span> }];</span>
-<span id="src-housedraw-loft-L143">  placed = <span class="nm">0</span>;</span>
-<span id="src-housedraw-loft-L144">  <span class="kw">for</span> _pick <span class="kw">in</span> <span class="nm">0..</span>nedges {</span>
-<span id="src-housedraw-loft-L145">    best = -<span class="nm">1</span>;</span>
-<span id="src-housedraw-loft-L146">    bestd = <span class="nm">0.0</span>;</span>
-<span id="src-housedraw-loft-L147">    <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..</span>total {</span>
-<span id="src-housedraw-loft-L148">      <span class="kw">if</span> !(taken[i] ?? <span class="kw">true</span>) {</span>
-<span id="src-housedraw-loft-L149">        d = <span class="fn-call">fabs</span>((sr.sr_t[i] ?? <span class="nm">0.0</span>) - t);</span>
-<span id="src-housedraw-loft-L150">        <span class="kw">if</span> best &lt; <span class="nm">0</span> || d &lt; bestd { best = i; bestd = d; }</span>
-<span id="src-housedraw-loft-L151">      }</span>
-<span id="src-housedraw-loft-L152">    }</span>
-<span id="src-housedraw-loft-L153">    <span class="kw">if</span> best &gt;= <span class="nm">0</span> {</span>
-<span id="src-housedraw-loft-L154">      taken[best] = <span class="kw">true</span>;</span>
-<span id="src-housedraw-loft-L155">      <span class="fn-call">edge_set_mat</span>(edges, sr.sr_qa[best] ?? <span class="nm">0</span>, sr.sr_ra[best] ?? <span class="nm">0</span>,</span>
-<span id="src-housedraw-loft-L156">                          sr.sr_qb[best] ?? <span class="nm">0</span>, sr.sr_rb[best] ?? <span class="nm">0</span>, kind);</span>
-<span id="src-housedraw-loft-L157">      placed = placed + <span class="nm">1</span>;</span>
-<span id="src-housedraw-loft-L158">    }</span>
-<span id="src-housedraw-loft-L159">  }</span>
-<span id="src-housedraw-loft-L160">  placed</span>
-<span id="src-housedraw-loft-L161">}</span>
-<span id="src-housedraw-loft-L162"></span>
-<span id="src-housedraw-loft-L163"><span class="cm">// ── 4. THE ROOF ─────────────────────────────────────────────────────────────</span></span>
-<span id="src-housedraw-loft-L164"><span class="cm">//</span></span>
-<span id="src-housedraw-loft-L165"><span class="cm">// One ring of halo around the massing, because that ring is what makes the EAVE</span></span>
-<span id="src-housedraw-loft-L166"><span class="cm">// interpolable: without it 38 of the 76 wall-edge samples face a cell with no stored</span></span>
-<span id="src-housedraw-loft-L167"><span class="cm">// height, and the wall top has nothing to meet.</span></span>
-<span id="src-housedraw-loft-L168"><span class="cm">//</span></span>
-<span id="src-housedraw-loft-L169"><span class="cm">// Example: @HXD-007</span></span>
-<span id="src-housedraw-loft-L170"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">grow_ring</span>(src: <span class="en">HexSet</span>, dst: <span class="en">HexSet</span>) {</span>
-<span id="src-housedraw-loft-L171">  <span class="kw">for</span> gr <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(src)..<span class="fn-call">hexset_r0</span>(src) + <span class="fn-call">hexset_h</span>(src) {</span>
-<span id="src-housedraw-loft-L172">    <span class="kw">for</span> gq <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(src)..<span class="fn-call">hexset_q0</span>(src) + <span class="fn-call">hexset_w</span>(src) {</span>
-<span id="src-housedraw-loft-L173">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(src, gq, gr) {</span>
-<span id="src-housedraw-loft-L174">        <span class="fn-call">hexset_set</span>(dst, gq, gr, <span class="kw">true</span>);</span>
-<span id="src-housedraw-loft-L175">        <span class="kw">for</span> gd <span class="kw">in</span> <span class="nm">0..6</span> { <span class="fn-call">hexset_set</span>(dst, <span class="fn-call">nb_q</span>(gq, gr, gd), <span class="fn-call">nb_r</span>(gq, gr, gd), <span class="kw">true</span>); }</span>
-<span id="src-housedraw-loft-L176">      }</span>
-<span id="src-housedraw-loft-L177">    }</span>
-<span id="src-housedraw-loft-L178">  }</span>
-<span id="src-housedraw-loft-L179">}</span>
-<span id="src-housedraw-loft-L180"></span>
-<span id="src-housedraw-loft-L181"><span class="cm">// A gable: the ridge runs along local u THROUGH the anchor and PAST both gable ends.</span></span>
-<span id="src-housedraw-loft-L182"><span class="cm">// Stopping it at the wall makes the distance go radial past the tip, so the gable end</span></span>
-<span id="src-housedraw-loft-L183"><span class="cm">// rolls over like a cone quadrant — 0.43 units, 0.37 m of bulge.  A hip is the same</span></span>
-<span id="src-housedraw-loft-L184"><span class="cm">// call with the ridge shortened; then the conical ends are the feature, not a defect.</span></span>
-<span id="src-housedraw-loft-L185"><span class="cm">//</span></span>
-<span id="src-housedraw-loft-L186"><span class="cm">// Example: @HXD-007</span></span>
-<span id="src-housedraw-loft-L187"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">draw_roof</span>(p: <span class="en">Plan</span>, cells: <span class="en">HexSet</span>, hz: <span class="en">Heights</span>,</span>
-<span id="src-housedraw-loft-L188">                 eave: <span class="ty"><a href="stdlib-types.html">float</a></span>, pitch: <span class="ty"><a href="stdlib-types.html">float</a></span>, hip_steps: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
-<span id="src-housedraw-loft-L189">  hw = <span class="fn-call">plan_hw</span>(p);</span>
-<span id="src-housedraw-loft-L190">  hd = <span class="fn-call">plan_hd</span>(p);</span>
-<span id="src-housedraw-loft-L191">  half = hw + hd + <span class="en">HEX_LEN</span>;                       <span class="cm">// gable: run well past the ends</span></span>
-<span id="src-housedraw-loft-L192">  <span class="kw">if</span> hip_steps &gt; <span class="nm">0</span> { half = hw - (hip_steps <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="en">HEX_LEN</span> * <span class="nm">0.5</span>; }</span>
-<span id="src-housedraw-loft-L193">  (x0, y0) = <span class="fn-call">plan_to_world</span>(p, -half, <span class="nm">0.0</span>);</span>
-<span id="src-housedraw-loft-L194">  (x1, y1) = <span class="fn-call">plan_to_world</span>(p, half, <span class="nm">0.0</span>);</span>
-<span id="src-housedraw-loft-L195">  tr = <span class="fn-call">track_new</span>();</span>
-<span id="src-housedraw-loft-L196">  <span class="fn-call">track_straight</span>(tr, x0, y0, x1, y1);</span>
-<span id="src-housedraw-loft-L197">  <span class="fn-call">roof_ridge</span>(cells, hz, tr, eave + pitch * hd, pitch, <span class="nm">1000000.0</span>);</span>
-<span id="src-housedraw-loft-L198">}</span>
+<span id="src-housedraw-loft-L49"><span class="cm">// what an author means by an opening.</span></span>
+<span id="src-housedraw-loft-L50"><span class="cm">//</span></span>
+<span id="src-housedraw-loft-L51"><span class="cm">// THE TAXONOMY.  A door is not a gap in the wall; it is something that can be a collider or</span></span>
+<span id="src-housedraw-loft-L52"><span class="cm">// not.  A real gap is allowed too — the door itself is missing, but the wall continues as normal.</span></span>
+<span id="src-housedraw-loft-L53"><span class="cm">// Three distinct things live on a wall edge, and **all three keep the wall one continuous run**:</span></span>
+<span id="src-housedraw-loft-L54"><span class="cm">//</span></span>
+<span id="src-housedraw-loft-L55"><span class="cm">//   OPEN_DOOR    an opening fitted with a door leaf — a collider WHEN CLOSED, not when open</span></span>
+<span id="src-housedraw-loft-L56"><span class="cm">//   OPEN_WINDOW  an opening at elevation — never a floor-level collider, wall continues</span></span>
+<span id="src-housedraw-loft-L57"><span class="cm">//   OPEN_GAP     a real gap: the leaf is missing entirely, never a collider, wall continues</span></span>
+<span id="src-housedraw-loft-L58"><span class="cm">//</span></span>
+<span id="src-housedraw-loft-L59"><span class="cm">// The difference between `OPEN_GAP` and `OPEN_NONE` is the whole point: a gap is an **opening in a</span></span>
+<span id="src-housedraw-loft-L60"><span class="cm">// wall that is still there**; `OPEN_NONE` is the **absence of the wall**.</span></span>
+<span id="src-housedraw-loft-L61"><span class="cm">//</span></span>
+<span id="src-housedraw-loft-L62"><span class="cm">// THE RATIONALE, and it is what makes this not a matter of taste: a gap or a door is never</span></span>
+<span id="src-housedraw-loft-L63"><span class="cm">// rendered as a missing wall — there is a door frame or a ragged stone opening there.  An</span></span>
+<span id="src-housedraw-loft-L64"><span class="cm">// opening **has geometry of its own** — a frame, a lintel, a ragged</span></span>
+<span id="src-housedraw-loft-L65"><span class="cm">// jamb.  Absence has none.  So an opening must name a material that carries that geometry, which</span></span>
+<span id="src-housedraw-loft-L66"><span class="cm">// is precisely a wall id into the palette; writing 0 would ask the renderer to draw nothing and the</span></span>
+<span id="src-housedraw-loft-L67"><span class="cm">// collision layer to find no wall, both wrong.</span></span>
+<span id="src-housedraw-loft-L68"><span class="kw">pub</span> const <span class="en">OPEN_NONE</span>   = <span class="nm">0</span>;</span>
+<span id="src-housedraw-loft-L69"><span class="kw">pub</span> const <span class="en">OPEN_DOOR</span>   = <span class="nm">1</span>;</span>
+<span id="src-housedraw-loft-L70"><span class="kw">pub</span> const <span class="en">OPEN_WINDOW</span> = <span class="nm">2</span>;</span>
+<span id="src-housedraw-loft-L71"><span class="kw">pub</span> const <span class="en">OPEN_GAP</span>    = <span class="nm">3</span>;</span>
+<span id="src-housedraw-loft-L72"></span>
+<span id="src-housedraw-loft-L73"></span>
+<span id="src-housedraw-loft-L74"><span class="cm">// ── 1. THE FLOOR ────────────────────────────────────────────────────────────</span></span>
+<span id="src-housedraw-loft-L75"><span class="cm">//</span></span>
+<span id="src-housedraw-loft-L76"><span class="cm">// The massing is filled FIRST and walled second.  Comparisons are inclusive (&lt;= bound</span></span>
+<span id="src-housedraw-loft-L77"><span class="cm">// + eps) so the fill never loses a column of cells to the structural tie: along u every</span></span>
+<span id="src-housedraw-loft-L78"><span class="cm">// cell-to-side distance is an exact multiple of sqrt(3)/2, which is exactly the default</span></span>
+<span id="src-housedraw-loft-L79"><span class="cm">// halfwidth, so a strict comparison sits on the last bit of a float for a whole column.</span></span>
+<span id="src-housedraw-loft-L80"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">draw_floor</span>(p: <span class="en">Plan</span>, cells: <span class="en">HexSet</span>, types: <span class="en">Labels</span>, floor_type: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-housedraw-loft-L81">  hw = <span class="fn-call">plan_hw</span>(p);</span>
+<span id="src-housedraw-loft-L82">  hd = <span class="fn-call">plan_hd</span>(p);</span>
+<span id="src-housedraw-loft-L83">  n = <span class="nm">0</span>;</span>
+<span id="src-housedraw-loft-L84">  <span class="kw">for</span> fr <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(cells)..<span class="fn-call">hexset_r0</span>(cells) + <span class="fn-call">hexset_h</span>(cells) {</span>
+<span id="src-housedraw-loft-L85">    <span class="kw">for</span> fq <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(cells)..<span class="fn-call">hexset_q0</span>(cells) + <span class="fn-call">hexset_w</span>(cells) {</span>
+<span id="src-housedraw-loft-L86">      (lu, lv) = <span class="fn-call">plan_to_local</span>(p, <span class="fn-call">cell_x</span>(fq, fr), <span class="fn-call">cell_y</span>(fq, fr));</span>
+<span id="src-housedraw-loft-L87">      <span class="kw">if</span> <span class="fn-call">fabs</span>(lu) &lt;= hw + <span class="en">EPS</span> &amp;&amp; <span class="fn-call">fabs</span>(lv) &lt;= hd + <span class="en">EPS</span> {</span>
+<span id="src-housedraw-loft-L88">        <span class="fn-call">hexset_set</span>(cells, fq, fr, <span class="kw">true</span>);</span>
+<span id="src-housedraw-loft-L89">        <span class="fn-call">label_set</span>(types, fq, fr, floor_type);</span>
+<span id="src-housedraw-loft-L90">        n = n + <span class="nm">1</span>;</span>
+<span id="src-housedraw-loft-L91">      }</span>
+<span id="src-housedraw-loft-L92">    }</span>
+<span id="src-housedraw-loft-L93">  }</span>
+<span id="src-housedraw-loft-L94">  n</span>
+<span id="src-housedraw-loft-L95">}</span>
+<span id="src-housedraw-loft-L96"></span>
+<span id="src-housedraw-loft-L97"><span class="cm">// ── 2. THE WALLS ────────────────────────────────────────────────────────────</span></span>
+<span id="src-housedraw-loft-L98"><span class="cm">//</span></span>
+<span id="src-housedraw-loft-L99"><span class="cm">// Every edge between a cell of the region and one outside it.  Closed by construction,</span></span>
+<span id="src-housedraw-loft-L100"><span class="cm">// and it costs no floor at all: a 7.5 x 6.0 m cottage keeps all 27 of its cells, where</span></span>
+<span id="src-housedraw-loft-L101"><span class="cm">// a wall drawn as a band of cells would eat 16 of them — 59% of the house.</span></span>
+<span id="src-housedraw-loft-L102"><span class="cm">//</span></span>
+<span id="src-housedraw-loft-L103"><span class="cm">// Example: @HXD-005</span></span>
+<span id="src-housedraw-loft-L104"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">draw_walls</span>(cells: <span class="en">HexSet</span>, edges: <span class="en">EdgeSet</span>, wall_mat: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-housedraw-loft-L105">  n = <span class="nm">0</span>;</span>
+<span id="src-housedraw-loft-L106">  <span class="kw">for</span> wr <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(cells)..<span class="fn-call">hexset_r0</span>(cells) + <span class="fn-call">hexset_h</span>(cells) {</span>
+<span id="src-housedraw-loft-L107">    <span class="kw">for</span> wq <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(cells)..<span class="fn-call">hexset_q0</span>(cells) + <span class="fn-call">hexset_w</span>(cells) {</span>
+<span id="src-housedraw-loft-L108">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(cells, wq, wr) {</span>
+<span id="src-housedraw-loft-L109">        <span class="kw">for</span> d <span class="kw">in</span> <span class="nm">0..6</span> {</span>
+<span id="src-housedraw-loft-L110">          nq = <span class="fn-call">nb_q</span>(wq, wr, d);</span>
+<span id="src-housedraw-loft-L111">          nr = <span class="fn-call">nb_r</span>(wq, wr, d);</span>
+<span id="src-housedraw-loft-L112">          <span class="kw">if</span> !<span class="fn-call">hexset_get</span>(cells, nq, nr) {</span>
+<span id="src-housedraw-loft-L113">            <span class="fn-call">edge_set_mat</span>(edges, wq, wr, nq, nr, wall_mat);</span>
+<span id="src-housedraw-loft-L114">            n = n + <span class="nm">1</span>;</span>
+<span id="src-housedraw-loft-L115">          }</span>
+<span id="src-housedraw-loft-L116">        }</span>
+<span id="src-housedraw-loft-L117">      }</span>
+<span id="src-housedraw-loft-L118">    }</span>
+<span id="src-housedraw-loft-L119">  }</span>
+<span id="src-housedraw-loft-L120">  n</span>
+<span id="src-housedraw-loft-L121">}</span>
+<span id="src-housedraw-loft-L122"></span>
+<span id="src-housedraw-loft-L123"></span>
+<span id="src-housedraw-loft-L124"><span class="cm">// ── 3. OPENINGS ─────────────────────────────────────────────────────────────</span></span>
+<span id="src-housedraw-loft-L125"><span class="cm">//</span></span>
+<span id="src-housedraw-loft-L126"><span class="cm">// A door is N EDGES centred at t, not a t-interval erased with a segment: erasing</span></span>
+<span id="src-housedraw-loft-L127"><span class="cm">// over-erases by ~halfwidth at EACH end (a 3.00 m interval opens 4.50 m of wall) and</span></span>
+<span id="src-housedraw-loft-L128"><span class="cm">// shrinking the segment over-corrects.  One hex edge is 1.0 world unit = 0.87 m of</span></span>
+<span id="src-housedraw-loft-L129"><span class="cm">// clear width — a real domestic door, which a cell-thick wall could not express at all.</span></span>
+<span id="src-housedraw-loft-L130"><span class="cm">//</span></span>
+<span id="src-housedraw-loft-L131"><span class="cm">// The opening material REPLACES the wall material on those edges (the slot holds one).</span></span>
+<span id="src-housedraw-loft-L132"><span class="cm">// With any kind but `OPEN_NONE` nothing is deleted, so the wall still fits as one run.</span></span>
+<span id="src-housedraw-loft-L133"><span class="cm">// Returns how many edges it wrote: fewer than `nedges` when the side is shorter.</span></span>
+<span id="src-housedraw-loft-L134"><span class="cm">//</span></span>
+<span id="src-housedraw-loft-L135"><span class="cm">// Example: @HXD-004</span></span>
+<span id="src-housedraw-loft-L136"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">place_opening</span>(p: <span class="en">Plan</span>, cells: <span class="en">HexSet</span>, edges: <span class="en">EdgeSet</span>,</span>
+<span id="src-housedraw-loft-L137">                     side: <span class="ty"><a href="stdlib-types.html">integer</a></span>, t: <span class="ty"><a href="stdlib-types.html">float</a></span>, nedges: <span class="ty"><a href="stdlib-types.html">integer</a></span>, kind: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-housedraw-loft-L138">  sr = <span class="fn-call">side_edges</span>(p, cells, side);</span>
+<span id="src-housedraw-loft-L139">  total = <span class="bi"><a href="stdlib-text.html">len</a></span>(sr.sr_t);</span>
+<span id="src-housedraw-loft-L140">  <span class="kw">if</span> total == <span class="nm">0</span> { <span class="kw">return</span> <span class="nm">0</span>; }</span>
+<span id="src-housedraw-loft-L141">  taken: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">boolean</a></span>&gt; = [<span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..</span>total { <span class="kw">false</span> }];</span>
+<span id="src-housedraw-loft-L142">  placed = <span class="nm">0</span>;</span>
+<span id="src-housedraw-loft-L143">  <span class="kw">for</span> _pick <span class="kw">in</span> <span class="nm">0..</span>nedges {</span>
+<span id="src-housedraw-loft-L144">    best = -<span class="nm">1</span>;</span>
+<span id="src-housedraw-loft-L145">    bestd = <span class="nm">0.0</span>;</span>
+<span id="src-housedraw-loft-L146">    <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..</span>total {</span>
+<span id="src-housedraw-loft-L147">      <span class="kw">if</span> !(taken[i] ?? <span class="kw">true</span>) {</span>
+<span id="src-housedraw-loft-L148">        d = <span class="fn-call">fabs</span>((sr.sr_t[i] ?? <span class="nm">0.0</span>) - t);</span>
+<span id="src-housedraw-loft-L149">        <span class="kw">if</span> best &lt; <span class="nm">0</span> || d &lt; bestd { best = i; bestd = d; }</span>
+<span id="src-housedraw-loft-L150">      }</span>
+<span id="src-housedraw-loft-L151">    }</span>
+<span id="src-housedraw-loft-L152">    <span class="kw">if</span> best &gt;= <span class="nm">0</span> {</span>
+<span id="src-housedraw-loft-L153">      taken[best] = <span class="kw">true</span>;</span>
+<span id="src-housedraw-loft-L154">      <span class="fn-call">edge_set_mat</span>(edges, sr.sr_qa[best] ?? <span class="nm">0</span>, sr.sr_ra[best] ?? <span class="nm">0</span>,</span>
+<span id="src-housedraw-loft-L155">                          sr.sr_qb[best] ?? <span class="nm">0</span>, sr.sr_rb[best] ?? <span class="nm">0</span>, kind);</span>
+<span id="src-housedraw-loft-L156">      placed = placed + <span class="nm">1</span>;</span>
+<span id="src-housedraw-loft-L157">    }</span>
+<span id="src-housedraw-loft-L158">  }</span>
+<span id="src-housedraw-loft-L159">  placed</span>
+<span id="src-housedraw-loft-L160">}</span>
+<span id="src-housedraw-loft-L161"></span>
+<span id="src-housedraw-loft-L162"><span class="cm">// ── 4. THE ROOF ─────────────────────────────────────────────────────────────</span></span>
+<span id="src-housedraw-loft-L163"><span class="cm">//</span></span>
+<span id="src-housedraw-loft-L164"><span class="cm">// One ring of halo around the massing, because that ring is what makes the EAVE</span></span>
+<span id="src-housedraw-loft-L165"><span class="cm">// interpolable: without it 38 of the 76 wall-edge samples face a cell with no stored</span></span>
+<span id="src-housedraw-loft-L166"><span class="cm">// height, and the wall top has nothing to meet.</span></span>
+<span id="src-housedraw-loft-L167"><span class="cm">//</span></span>
+<span id="src-housedraw-loft-L168"><span class="cm">// Example: @HXD-007</span></span>
+<span id="src-housedraw-loft-L169"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">grow_ring</span>(src: <span class="en">HexSet</span>, dst: <span class="en">HexSet</span>) {</span>
+<span id="src-housedraw-loft-L170">  <span class="kw">for</span> gr <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(src)..<span class="fn-call">hexset_r0</span>(src) + <span class="fn-call">hexset_h</span>(src) {</span>
+<span id="src-housedraw-loft-L171">    <span class="kw">for</span> gq <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(src)..<span class="fn-call">hexset_q0</span>(src) + <span class="fn-call">hexset_w</span>(src) {</span>
+<span id="src-housedraw-loft-L172">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(src, gq, gr) {</span>
+<span id="src-housedraw-loft-L173">        <span class="fn-call">hexset_set</span>(dst, gq, gr, <span class="kw">true</span>);</span>
+<span id="src-housedraw-loft-L174">        <span class="kw">for</span> gd <span class="kw">in</span> <span class="nm">0..6</span> { <span class="fn-call">hexset_set</span>(dst, <span class="fn-call">nb_q</span>(gq, gr, gd), <span class="fn-call">nb_r</span>(gq, gr, gd), <span class="kw">true</span>); }</span>
+<span id="src-housedraw-loft-L175">      }</span>
+<span id="src-housedraw-loft-L176">    }</span>
+<span id="src-housedraw-loft-L177">  }</span>
+<span id="src-housedraw-loft-L178">}</span>
+<span id="src-housedraw-loft-L179"></span>
+<span id="src-housedraw-loft-L180"><span class="cm">// A gable: the ridge runs along local u THROUGH the anchor and PAST both gable ends.</span></span>
+<span id="src-housedraw-loft-L181"><span class="cm">// Stopping it at the wall makes the distance go radial past the tip, so the gable end</span></span>
+<span id="src-housedraw-loft-L182"><span class="cm">// rolls over like a cone quadrant — 0.43 units, 0.37 m of bulge.  A hip is the same</span></span>
+<span id="src-housedraw-loft-L183"><span class="cm">// call with the ridge shortened; then the conical ends are the feature, not a defect.</span></span>
+<span id="src-housedraw-loft-L184"><span class="cm">//</span></span>
+<span id="src-housedraw-loft-L185"><span class="cm">// Example: @HXD-007</span></span>
+<span id="src-housedraw-loft-L186"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">draw_roof</span>(p: <span class="en">Plan</span>, cells: <span class="en">HexSet</span>, hz: <span class="en">Heights</span>,</span>
+<span id="src-housedraw-loft-L187">                 eave: <span class="ty"><a href="stdlib-types.html">float</a></span>, pitch: <span class="ty"><a href="stdlib-types.html">float</a></span>, hip_steps: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-housedraw-loft-L188">  hw = <span class="fn-call">plan_hw</span>(p);</span>
+<span id="src-housedraw-loft-L189">  hd = <span class="fn-call">plan_hd</span>(p);</span>
+<span id="src-housedraw-loft-L190">  half = hw + hd + <span class="en">HEX_LEN</span>;                       <span class="cm">// gable: run well past the ends</span></span>
+<span id="src-housedraw-loft-L191">  <span class="kw">if</span> hip_steps &gt; <span class="nm">0</span> { half = hw - (hip_steps <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="en">HEX_LEN</span> * <span class="nm">0.5</span>; }</span>
+<span id="src-housedraw-loft-L192">  (x0, y0) = <span class="fn-call">plan_to_world</span>(p, -half, <span class="nm">0.0</span>);</span>
+<span id="src-housedraw-loft-L193">  (x1, y1) = <span class="fn-call">plan_to_world</span>(p, half, <span class="nm">0.0</span>);</span>
+<span id="src-housedraw-loft-L194">  tr = <span class="fn-call">track_new</span>();</span>
+<span id="src-housedraw-loft-L195">  <span class="fn-call">track_straight</span>(tr, x0, y0, x1, y1);</span>
+<span id="src-housedraw-loft-L196">  <span class="fn-call">roof_ridge</span>(cells, hz, tr, eave + pitch * hd, pitch, <span class="nm">1000000.0</span>);</span>
+<span id="src-housedraw-loft-L197">}</span>
 </code></pre>
 <h2 id="tests-01-hex-draw-loft">tests/01-hex-draw.loft</h2>
 <pre class="src"><code><span id="tests-01-hex-draw-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>

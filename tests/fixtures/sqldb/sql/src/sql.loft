@@ -532,7 +532,7 @@ pub interface SqlRows {
   fn ok(self: Self) -> boolean
   // Advance to the next row, or run out — and running out RELEASES, so a walk
   // to the end needs no close.
-  fn next(self: Self) -> boolean
+  operator next(self: Self) -> boolean
   // The current row's `i`th column, or `null` for SQL NULL — which is not the
   // empty string, and the type is what keeps the two apart.
   fn col(self: Self, i: integer) -> text?

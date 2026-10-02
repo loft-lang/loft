@@ -316,6 +316,7 @@ static KEYWORDS: &[&str] = &[
     "panic",
     "interface",
     "is",
+    "operator",
 ];
 
 /// True when `word` is one of loft's reserved keywords (the `KEYWORDS` table above).

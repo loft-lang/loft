@@ -45,7 +45,7 @@ canonical; these pages are its generated shadow. Regenerate with
 | [@F29](F29.md) | Pattern matching — enum/scalar/tuple, guards, or-patterns, exhaustiveness |
 | [@F30](F30.md) | `is` variant check (+ field capture) |
 | [@F31](F31.md) | `break` / `continue` + labelled forms |
-| [@F32](F32.md) | Custom iterators via `fn next(self) -> T?` |
+| [@F32](F32.md) | Custom iterators via `operator next(self) -> T?` |
 | [@F33](F33.md) | `par(...)` parallel for-loop |
 | [@F34](F34.md) | Coroutines / generators — `yield`, `yield from` |
 | [@F35](F35.md) | String literals — `{expr}` interpolation + backtick multiline |
@@ -94,14 +94,16 @@ canonical; these pages are its generated shadow. Regenerate with
 | [@F111](F111.md) | `for f in s#fields` — a compile-time loop over a struct's scalar fields |
 | [@F112](F112.md) | `store_release()` — say a record is finished, and stop holding it in memory |
 | [@F113](F113.md) | Associated types — an interface names a companion type |
-| [@F114](F114.md) | `x[i]` on a library type — `OpIndex` dispatch |
+| [@F114](F114.md) | A library type reads an element through a named method — `[…]` is the built-in collections' |
 | [@F115](F115.md) | `OpDrop` — a type runs code when its scope lets it die |
 | [@F118](F118.md) | Time (now / ticks) |
 | [@F119](F119.md) | Store locks (#lock) |
-| [@F120](F120.md) | Lexer library (lib/lexer) |
-| [@F121](F121.md) | Parser library (lib/parser) |
+| [@F120](F120.md) | Lexer in loft (lib/lexer.loft) — part of the loft-in-loft front end, not a user library yet |
+| [@F121](F121.md) | Parser in loft (lib/parser.loft) — part of the loft-in-loft front end, not a user library yet |
 | [@F122](F122.md) | Multiple dispatch — one name, a definition per combination of parameter types |
 | [@F123](F123.md) | Foreign stores — a mapped file or a library's buffer read in place, a slice of it a view |
+| [@F124](F124.md) | Operators on a program's own type — `operator compare`, `plus`, `minus`, `times`, `negate`, `divided_by`, `remainder`, `to_<type>` |
+| [@F125](F125.md) | Text slicing — `s[a..b]`, `s[a..]`, `s[..b]`, `s[i]` (byte offsets; `char_slice` for characters) |
 
 ## Infrastructure (`@I`)
 

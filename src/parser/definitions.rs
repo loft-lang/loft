@@ -118,6 +118,71 @@ impl Parser {
         }
     }
 
+    /// @FR-Col-Key (loft#1845) — a key field of a `hash` / `sorted` / `index` has an
+    /// immutable VALUE type, refused at the declaration otherwise: "structs are mutable and
+    /// keys are not" (owner).  Pass 2 only, for `check_key_is_text`'s reason.
+    fn check_key_is_value(&mut self, content: u32, field: &str, kind: &str) {
+        if self.first_pass {
+            return;
+        }
+        let el = crate::typedef::key_bearing_def(&self.data, content);
+        let a_nr = self.data.attr(el, field);
+        if a_nr == usize::MAX {
+            return; // an unknown field name is reported by the layout pass
+        }
+        let tp = self.data.attr_type(el, a_nr);
+        let Some(part) = self.mutable_key_part(&tp) else {
+            return;
+        };
+        let shown = self.key_type_name(&tp);
+        let whole = if part == shown {
+            String::new()
+        } else {
+            format!(" (its `{part}` part)")
+        };
+        diagnostic!(
+            self.lexer,
+            Level::Error,
+            "the key field `{field}` of `{kind}<{rec}[…]>` is `{shown}`{whole}, and a key must be \
+             an immutable value — structs are mutable and keys are not.\n  fix: key on a scalar \
+             field the record carries — `{kind}<{rec}[ms]>` looked up by `d.ms` rather than by \
+             `d`; a key may be a scalar, a plain enum, a tuple of those, or `?` of one — and \
+             `?` of a refused type is refused with it (`Dt?` is a struct)",
+            rec = self.data.def(content).name()
+        );
+    }
+
+    /// The part of a key type that is not an immutable value, or `None` when the whole of it
+    /// is one: a scalar, a plain enum (a discriminant with no fields), a tuple whose members
+    /// all are, or `?` of one.  Every other type — a struct or value struct, an enum variant
+    /// with fields, a vector or another collection, a reference, a function — is a record or a
+    /// container whose content can change under a key, so the fallback answers it; a type
+    /// still `Unknown` in pass 2 has its own report and is not judged here.
+    fn mutable_key_part(&self, tp: &Type) -> Option<String> {
+        match tp {
+            Type::Optional(inner) => self.mutable_key_part(inner),
+            Type::Integer(_)
+            | Type::Boolean
+            | Type::Float
+            | Type::Single
+            | Type::Character
+            | Type::Text(_)
+            | Type::Enum(_, false, _)
+            | Type::Unknown(_) => None,
+            Type::Tuple(members) => members.iter().find_map(|m| self.mutable_key_part(m)),
+            other => Some(self.key_type_name(other)),
+        }
+    }
+
+    /// A key type as the author wrote it: a nullable struct is `S?`, never the synthetic
+    /// `__nullable<S>` the field rewrite stores it as.
+    fn key_type_name(&self, tp: &Type) -> String {
+        self.data.nullable_struct_payload(tp).map_or_else(
+            || tp.source_name(&self.data),
+            |d| format!("{}?", self.data.def(d).name()),
+        )
+    }
+
     /// Consume an optional `not null` annotation, warning that it is deprecated.
     /// Returns `true` when it was present.
     ///
@@ -960,19 +1025,6 @@ impl Parser {
     /// stdlib's `DefType::Type` at source 0) are NEVER shadowable (shadowing them
     /// would re-point the language's own types).  Every other prelude/import kind
     /// (const, struct, enum, library typedef) is shadowable.
-    /// Is `d_nr` a type-variable placeholder some OTHER file declared?
-    ///
-    /// Then a declaration here shadows it, exactly as it shadows a stdlib `<T>` reached
-    /// through the prelude.  Asked by FILE rather than by source id, because a REPL input, a
-    /// `<host>` string and the test harness parse at the stdlib's own source id and would
-    /// otherwise read a stdlib type variable as their own same-source clash — which the
-    /// dedicated diagnostic exists to report and they have not made.
-    fn placeholder_from_another_file(&self, d_nr: u32) -> bool {
-        d_nr != u32::MAX
-            && self.data.is_type_var_placeholder(d_nr)
-            && self.data.def(d_nr).position.file != self.lexer.pos().file
-    }
-
     /// @C98 — `d_nr` is a forward-reference stub ANOTHER file left under `name`, bound here
     /// only because this file imports that one, while that file imports THIS one with a bare
     /// `use` — the qualifier alone — and no glob or by-name import that would carry `name`.
@@ -1082,7 +1134,8 @@ impl Parser {
         // `D-Template` — an enum with a header is a template: its instances are the enums
         // (`Shape<integer>`, variants and all); the template itself is laid out nowhere.
         self.context_type_template = d_nr;
-        if !header.is_empty() && !conflict && self.bind_type_header(&header) {
+        if !header.is_empty() && !conflict {
+            self.bind_type_header(&header);
             self.data.definitions[d_nr as usize].def_type = DefType::TypeTemplate;
         }
         if !self.lexer.token("{") {
@@ -2037,6 +2090,441 @@ impl Parser {
     /// Read the function name after `fn`.  In user code only identifiers are accepted.
     /// In the default library, `assert` and `panic` are also allowed even though they are
     /// keywords — they remain real functions with call-site file/line injection.
+    /// `@FR-Op-Def` (@PLN182) — an `operator` definition is checked where it is written, so
+    /// one that compiles backs its form: its name is a form the language offers today, its
+    /// first parameter is `self` of a type declared in the same source (`@FR-Op-Home`), and
+    /// its shape is the form's (`@FR-Op-Shape`).  The forms not built yet are refused here by
+    /// name, with what each will back.
+    fn check_operator_definition(
+        &mut self,
+        fn_name: &str,
+        arguments: &[crate::data::Argument],
+        result: &Type,
+    ) {
+        if self.refuse_operator_name(fn_name) {
+            return;
+        }
+        if fn_name.starts_with("to_") && fn_name != "to_text" {
+            self.check_conversion_definition(fn_name, arguments, result);
+            return;
+        }
+        let visible: Vec<&crate::data::Argument> = arguments
+            .iter()
+            .filter(|a| !a.name.starts_with("__"))
+            .collect();
+        // The symbol the form is written with, and how its signature is spelled in a message.
+        let (symbol, other, answers) = match fn_name {
+            "compare" => ("<", "T", "Ordering"),
+            "plus" => ("+", "U", "V"),
+            "minus" => ("-", "U", "V"),
+            "divided_by" => ("/", "U", "V"),
+            "remainder" => ("%", "U", "V"),
+            "negate" => ("-", "U", "V"),
+            "next" => ("for", "U", "E?"),
+            "to_text" => ("\"{x}\"", "text", "text"),
+            _ => ("*", "U", "V"),
+        };
+        let Some(first) = visible.first().filter(|a| a.name == "self") else {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`operator {fn_name}` is a method: its first parameter is `self`, the type \
+                 `{symbol}` is written on — `operator {fn_name}(self: T, other: {other}) -> \
+                 {answers}`"
+            );
+            return;
+        };
+        if matches!(fn_name, "next" | "to_text") {
+            self.check_unary_operator_shape(fn_name, &visible, result);
+            if self.default {
+                return; // `@FR-Op-Std` — the stdlib marks its own, on built-in types too
+            }
+        }
+        if self.default {
+            return;
+        }
+        let own = match first.typedef.base() {
+            Type::Reference(d, _) | Type::Enum(d, _, _) => Some(*d),
+            _ => None,
+        }
+        .filter(|d| {
+            self.default
+                || !crate::portable_path::is_stdlib_source(&self.data.def(*d).position().file)
+        });
+        let Some(own) = own else {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`operator {fn_name}` defines `{symbol}` for a type of its own package, and \
+                 `{}` is not one; a built-in type already has its {}",
+                first.typedef.source_name(&self.data),
+                if fn_name == "compare" {
+                    "order"
+                } else {
+                    "arithmetic"
+                }
+            );
+            return;
+        };
+        if self.data.def(own).source != self.data.def(self.context).source {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`operator {fn_name}` on `{}` can only be defined where `{}` is declared; call \
+                 an ordinary method by name instead",
+                self.data.def(own).name(),
+                self.data.def(own).name()
+            );
+            return;
+        }
+        if matches!(fn_name, "next" | "to_text") {
+            return; // shape checked above
+        }
+        self.check_operator_shape(fn_name, symbol, visible.len(), result, own);
+    }
+
+    /// `@FR-Op-Shape` — the parameter count and result an arithmetic, unary or `compare`
+    /// definition must have, on `own`, the type it is defined for.
+    fn check_operator_shape(
+        &mut self,
+        fn_name: &str,
+        symbol: &str,
+        params: usize,
+        result: &Type,
+        own: u32,
+    ) {
+        let t = self.data.def(own).name().to_string();
+        if fn_name == "negate" {
+            // `@FR-Op-Shape` — the unary form takes `self` alone and answers a value.
+            if params != 1 || matches!(result.base(), Type::Void) {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "`operator negate` takes `self` alone and answers the result of `-x`: \
+                     `operator negate(self: {t}) -> V`"
+                );
+            }
+            return;
+        }
+        if fn_name != "compare" {
+            // `@FR-Op-Shape` — an arithmetic form takes `self` and the right operand, and
+            // answers a value.
+            if params != 2 || matches!(result.base(), Type::Void) {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "`operator {fn_name}` takes `self` and the right operand of `{symbol}`, and \
+                     answers the result: `operator {fn_name}(self: {t}, other: U) -> V`"
+                );
+            }
+            return;
+        }
+        let ordering = self.data.def_nr("Ordering");
+        // A nullable `Ordering?` is refused: `a < b` needs an answer for every pair.
+        let answers_ordering = !matches!(result, Type::Optional(_))
+            && matches!(result.base(), Type::Enum(d, false, _) if *d == ordering);
+        if params != 2 || !answers_ordering {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`operator compare` takes `self` and the value it is compared with, and \
+                 answers an `Ordering`: `operator compare(self: {t}, other: {t}) -> Ordering`"
+            );
+        }
+    }
+
+    /// What a retired `fn Op…` of `arity` parameters does now, and what to write instead: the
+    /// diagnostic's level, its effect, and its cure; `None` for a name that backs no operator.
+    fn retired_operator_cure(fn_name: &str, arity: usize) -> Option<(Level, &'static str, String)> {
+        Some(match fn_name {
+            "OpLt" | "OpLe" | "OpGt" | "OpGe" => (
+                Level::Advice,
+                "does not define `<`, `<=`, `>` or `>=`",
+                "write `operator compare(self: T, other: T) -> Ordering`".to_string(),
+            ),
+            "OpAdd" => (
+                Level::Advice,
+                "does not define `+`",
+                "write `operator plus(self: T, other: U) -> V`".to_string(),
+            ),
+            "OpMin" if arity == 2 => (
+                Level::Advice,
+                "does not define `-`",
+                "write `operator minus(self: T, other: U) -> V`".to_string(),
+            ),
+            "OpMul" => (
+                Level::Advice,
+                "does not define `*`",
+                "write `operator times(self: T, other: U) -> V`".to_string(),
+            ),
+            "OpEq" | "OpNe" => (
+                Level::Warning,
+                "is not called by `==` or `!=`, which compare the type field by field",
+                // @C134 — no type redefines `==`: the cure is the name, never an operator.
+                "keep it as a named method (`same_second(self, other)`) and call it by name"
+                    .to_string(),
+            ),
+            "OpNot" => (
+                Level::Warning,
+                "is not called by `!x`, which asks whether the value is present",
+                "call it by name where you meant it".to_string(),
+            ),
+            "OpIndex" => (
+                Level::Advice,
+                "does not define `x[i]`",
+                "call it by name, or give the type a named method".to_string(),
+            ),
+            "OpMin" => (
+                Level::Advice,
+                "does not define the unary `-`",
+                "write `operator negate(self: T) -> V`".to_string(),
+            ),
+            "OpDiv" => (
+                Level::Advice,
+                "does not define `/`",
+                "write `operator divided_by(self: T, other: U) -> V`".to_string(),
+            ),
+            "OpRem" => (
+                Level::Advice,
+                "does not define `%`",
+                "write `operator remainder(self: T, other: U) -> V`".to_string(),
+            ),
+            "OpPow" | "OpLand" | "OpLor" | "OpEor" | "OpSLeft" | "OpSRight" | "OpBitNot"
+            | "OpAppend" => (
+                Level::Advice,
+                "does not define its operator, which a type cannot define yet",
+                "call it by name".to_string(),
+            ),
+            _ => {
+                let conversion = fn_name
+                    .strip_prefix("OpConv")
+                    .or_else(|| fn_name.strip_prefix("OpCast"))
+                    .and_then(|rest| rest.split_once("From"))
+                    .filter(|(to, from)| !to.is_empty() && !from.is_empty());
+                let (to, _) = conversion?;
+                // The stdlib's conversion names abbreviate the base types (`OpConvIntFromX`).
+                let (target, shown) = match to {
+                    "Int" | "Long" => ("integer".to_string(), "integer".to_string()),
+                    "Bool" => ("boolean".to_string(), "boolean".to_string()),
+                    "Text" | "Float" | "Single" | "Character" => {
+                        (to.to_lowercase(), to.to_lowercase())
+                    }
+                    other => (crate::data::Data::snake_case_name(other), other.to_string()),
+                };
+                (
+                    Level::Advice,
+                    "does not define an `as` conversion",
+                    format!("write `operator to_{target}(self: S) -> {shown}`"),
+                )
+            }
+        })
+    }
+
+    /// C132 (@PLN182 P5) — a program's `fn Op…` of an operator's name is an ordinary function
+    /// now (`@FR-Op-Std`).  Said where it is written, naming what to write instead.  A WARNING
+    /// for `OpEq` / `OpNe` / `OpNot`, whose forms keep answering — structurally, or as the
+    /// presence test — so a program relying on the function changes meaning without a word
+    /// (`warning` gates exactly what can answer wrong); ADVICE for the rest, whose every use
+    /// is now a compile-time refusal anyway.  `OpDrop`, `OpCopy` and `OpIterate` stay hooks.
+    fn report_retired_operator_function(
+        &mut self,
+        fn_name: &str,
+        arguments: &[crate::data::Argument],
+    ) {
+        let arity = arguments
+            .iter()
+            .filter(|a| !a.name.starts_with("__"))
+            .count();
+        let Some((level, now, cure)) = Self::retired_operator_cure(fn_name, arity) else {
+            return;
+        };
+        diagnostic!(
+            self.lexer,
+            level,
+            code = "retired-operator-function",
+            "`fn {fn_name}` is an ordinary function and {now}: {cure}"
+        );
+        let conversion = fn_name.starts_with("OpConv") || fn_name.starts_with("OpCast");
+        self.lexer.fix_last(crate::diagnostics::Fix {
+            kind: crate::diagnostics::FixKind::Conditional,
+            title: cure,
+            condition: Some(format!(
+                "`{fn_name}` was written to give the type its operator — a function of that \
+                 name is called only by name now"
+            )),
+            edit: None,
+            concept: if conversion {
+                "type conversions"
+            } else {
+                "operators"
+            },
+            concept_ref: if conversion { "@F5" } else { "@F37" },
+        });
+    }
+
+    /// `@FR-Op-Conv` (@PLN182) — `operator to_<name>(self: S) -> T` drives `x as T`: the
+    /// suffix is `T`'s conversion name (`Data::conversion_name`), `self` is the only parameter,
+    /// and S or T is a type of this source — a conversion INTO the source's own type may take a
+    /// foreign `self` (`operator to_date_time(self: text) -> DateTime`), so only `DateTime`'s
+    /// package defines it.
+    fn check_conversion_definition(
+        &mut self,
+        fn_name: &str,
+        arguments: &[crate::data::Argument],
+        result: &Type,
+    ) {
+        let visible: Vec<&crate::data::Argument> = arguments
+            .iter()
+            .filter(|a| !a.name.starts_with("__"))
+            .collect();
+        let named = self.data.conversion_name(result.base());
+        if named.as_deref() != Some(&fn_name["to_".len()..]) {
+            let answers = named.map_or_else(
+                || "a type it names".to_string(),
+                |n| {
+                    format!(
+                        "`{}`, whose conversion is `to_{n}`",
+                        result.source_name(&self.data)
+                    )
+                },
+            );
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`operator {fn_name}` answers {answers}: the name after `to_` is the type the \
+                 conversion answers, in snake case (`to_date_time` answers `DateTime`)"
+            );
+            return;
+        }
+        let Some(first) = visible
+            .first()
+            .filter(|a| a.name == "self" && visible.len() == 1)
+        else {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`operator {fn_name}` converts `self` and nothing else: `operator {fn_name}(self: \
+                 S) -> {}`",
+                result.source_name(&self.data)
+            );
+            return;
+        };
+        if self.default {
+            return;
+        }
+        let here = self.data.def(self.context).source;
+        let own = |t: &Type| match t.base() {
+            Type::Reference(d, _) | Type::Enum(d, _, _) => self.data.def(*d).source == here,
+            _ => false,
+        };
+        if !own(&first.typedef) && !own(result) {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`operator {fn_name}` converts `{}` to `{}`, and neither is a type of this \
+                 package: a conversion is defined with the type it converts from or into",
+                first.typedef.source_name(&self.data),
+                result.source_name(&self.data)
+            );
+        }
+    }
+
+    /// `@FR-Op-Shape` for the forms a single value reaches: `next(self) -> E?` drives `for e
+    /// in x`, and `to_text(self) -> text` or `to_text(self, spec: text) -> text` drives
+    /// `"{x}"` and `"{x:spec}"`.
+    fn check_unary_operator_shape(
+        &mut self,
+        fn_name: &str,
+        visible: &[&crate::data::Argument],
+        result: &Type,
+    ) {
+        let ok = if fn_name == "next" {
+            visible.len() == 1 && !matches!(result.base(), Type::Void)
+        } else {
+            matches!(result.base(), Type::Text(_))
+                && (visible.len() == 1
+                    || (visible.len() == 2 && matches!(visible[1].typedef.base(), Type::Text(_))))
+        };
+        if !ok {
+            let want = if fn_name == "next" {
+                "`operator next(self: T) -> E?`, answering null when the walk is done"
+            } else {
+                "`operator to_text(self: T) -> text`, or `operator to_text(self: T, spec: text) \
+                 -> text` for `\"{x:spec}\"`"
+            };
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`operator {fn_name}` has the wrong shape: {want}"
+            );
+        }
+    }
+
+    /// `@FR-Op-Def`'s name half: a form of the table not built yet is refused by name, saying
+    /// what it will back, and a name that is no form at all is refused as one.  Answers whether
+    /// it refused.
+    fn refuse_operator_name(&mut self, fn_name: &str) -> bool {
+        // The table's names not built yet: the form each will back.
+        const PLACED: &[(&str, &str)] = &[
+            ("at", "`x[i]`"),
+            ("set_at", "`x[i] = v`"),
+            ("slice", "`x[a..b]`"),
+            ("key_range", "a keyed slice"),
+            ("power", "`**`"),
+            ("bit_and", "`&`"),
+            ("bit_or", "`|`"),
+            ("bit_xor", "`^`"),
+            ("bit_not", "`~`"),
+            ("shift_left", "`<<`"),
+            ("shift_right", "`>>`"),
+        ];
+        // @C134 (owner) — `==` is always structural, for every type at every depth; no
+        // type defines it, so a deep comparison of its own is a named method.
+        if fn_name == "equals" {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`==` is always structural, for every type: there is no `operator equals` — write \
+                 a named method (`same_second(self, other)`) and call it"
+            );
+            return true;
+        }
+        if let Some((_, form)) = PLACED.iter().find(|(n, _)| *n == fn_name) {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`operator {fn_name}` will back {form}, which a type cannot define yet; \
+                 declare it with `fn` as an ordinary method for now"
+            );
+            return true;
+        }
+        if !matches!(
+            fn_name,
+            "compare"
+                | "plus"
+                | "minus"
+                | "times"
+                | "divided_by"
+                | "remainder"
+                | "negate"
+                | "next"
+                | "to_text"
+        ) && !fn_name.starts_with("to_")
+        {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`{fn_name}` is not an operator: `operator` takes the name of the form it backs \
+                 — `compare` for `<`, `<=`, `>` and `>=`, `plus` for `+`, `minus` for `-`, \
+                 `times` for `*`, `divided_by` for `/`, `remainder` for `%`, `negate` for a \
+                 unary `-`, `next` for `for e in x`, `to_text` for \
+                 `\"{{x}}\"`; declare an ordinary method with `fn`"
+            );
+            return true;
+        }
+        false
+    }
+
     fn parse_fn_name(&mut self) -> Option<String> {
         if let Some(name) = self.lexer.has_identifier() {
             return Some(name);
@@ -2207,10 +2695,15 @@ impl Parser {
     }
 
     /// Bind one header variable to the placeholder that stands for it (`(G-Gen)`: a header
-    /// INTRODUCES its variables).  `Some(u32::MAX)` when there is nothing to bind (a header
-    /// the first pass refused); `None` on a collision with a definition of another kind,
-    /// which is reported here.
-    fn bind_header_var(&mut self, var: &HeaderVar) -> Option<u32> {
+    /// INTRODUCES its variables).  `u32::MAX` when there is nothing to bind (a header the
+    /// first pass refused).
+    ///
+    /// @FR-G-Gen-Scope — the placeholder is minted under a name the source cannot write
+    /// (`K#1`), so the variable occupies no spelling: a declaration of the same name — in
+    /// this file, another, the stdlib or a REPL session — is neither blocked by it nor
+    /// mistaken for it, and inside the header's own definition `def_nr_in_scope` resolves
+    /// the spelling to the variable first.
+    fn bind_header_var(&mut self, var: &HeaderVar) -> u32 {
         let type_var_name = &var.name;
         let bounds_key = Self::type_var_bounds_key(&var.bounds);
         let claimed = self
@@ -2219,38 +2712,20 @@ impl Parser {
             .copied()
             // … and where this parser did not mint it, the Data it continues knows.
             .or_else(|| self.data.holder_for_spelling(type_var_name, &bounds_key));
+        // A placeholder an older Data minted under the bare spelling is still reused when its
+        // bounds match; any other definition under the spelling is the program's own and
+        // is no concern of the header's (@FR-G-Gen-Scope).
         let existing = self.data.def_nr(type_var_name);
-        // A prior generic's type-var placeholder is an attribute-less `Struct`, safe to
-        // reuse (that is how `<T>` is shared across functions). Any OTHER existing def
-        // — a constant (e.g. `E`), a function, an enum, or a real struct/type — is a
-        // COLLISION: loft has one flat namespace, so a generic parameter cannot share a
-        // name. Report it (mirroring the `type X conflicts with …` diagnostic) instead
-        // of silently binding the parameter to that def and panicking later in
-        // `predict_generic_return_type`.
-        let collision = claimed.is_none()
-            && existing != u32::MAX
-            && !(self.data.def(existing).def_type() == DefType::Struct
-                && self.data.def(existing).attributes().is_empty());
-        if collision {
-            if self.first_pass {
-                let ed = self.data.def(existing);
-                let prev_pos = ed.position().clone();
-                let prev_kind = format!("{:?}", ed.def_type()).to_lowercase();
-                diagnostic!(
-                    self.lexer,
-                    Level::Error,
-                    "generic type parameter '{type_var_name}' conflicts with a \
-                     {prev_kind} of the same name already defined at {prev_pos} — \
-                     pick a different name"
-                );
-            }
-            return None;
-        }
+        let existing = if existing != u32::MAX && self.data.is_type_var_placeholder(existing) {
+            existing
+        } else {
+            u32::MAX
+        };
         if let Some(holder) = claimed {
             // This exact `(spelling, bounds)` header has been seen — on the other
             // pass, or in another function declaring the same variable the same way.
             self.data.type_var_bound_keys.insert(holder, bounds_key);
-            return Some(holder);
+            return holder;
         }
         // `(G-Gen)`: this header INTRODUCES the variable.  It may reuse the
         // placeholder the spelling already names, but only while that placeholder
@@ -2280,15 +2755,15 @@ impl Parser {
             // resolves it to Reference(d, []).  The definition is never
             // compiled — it only exists for the template's type resolution.
             //
-            // Under its own spelling while that is free; otherwise under a name
-            // the source cannot write, since `#` is not an identifier character,
-            // so `T#2` is reachable only through this header.
+            // Always under a name the source cannot write, since `#` is not an
+            // identifier character, so `T#1` is reachable only through this header
+            // (@FR-G-Gen-Scope).
             //
             // Uniqueness is asked PROGRAM-WIDE, not of this source: the
             // placeholder is registered as a store structure under
             // `__typevar_<name>`, and that registry is not keyed by source.
-            let mut name = type_var_name.clone();
             let mut n = 1;
+            let mut name = format!("{type_var_name}#{n}");
             while self.data.name_taken_anywhere(&name) {
                 n += 1;
                 name = format!("{type_var_name}#{n}");
@@ -2306,7 +2781,7 @@ impl Parser {
                 .insert(holder, bounds_key.clone());
             self.type_var_bounds.insert(holder, bounds_key);
         }
-        Some(holder)
+        holder
     }
 
     /// The bound-set key (`Parser::type_var_bounds_key`'s spelling) of the bounds a type-variable
@@ -2324,12 +2799,22 @@ impl Parser {
     #[expect(clippy::too_many_lines, reason = "inherited")]
     // @F16 — functions & declarations (pub, parameters, return)
     pub(crate) fn parse_function(&mut self) -> bool {
-        if !self.lexer.has_token("fn") {
+        // @PLN182 — `operator` takes `fn`'s place: a function in its definition, an operator
+        // in its use.
+        let is_operator = if self.lexer.has_token("fn") {
+            false
+        } else if self.lexer.has_token("operator") {
+            true
+        } else {
             return false;
-        }
+        };
         let Some(fn_name) = self.parse_fn_name() else {
             return false;
         };
+        // Marked or not: an unmarked `fn to_<t>` is what `as` names in its refusal (`@FR-Op-Mark`).
+        if !self.default && fn_name.starts_with("to_") && fn_name != "to_text" {
+            self.data.user_operator_conversions = true;
+        }
         self.vars = Function::new(&fn_name, &self.lexer.pos().file);
         // @PLN110 3a — var numbers are per-function, so a stale `len(X)` binding from
         // the previous body would attach to an unrelated local here.
@@ -2347,7 +2832,7 @@ impl Parser {
         // detect `<T>` type parameter after function name.
         // @F25 — generics: type variables, inferred from the call's arguments.
         let header = self.parse_type_var_header();
-        let mut is_generic = !header.is_empty();
+        let is_generic = !header.is_empty();
         let type_var_name = header.first().map(|v| v.name.clone()).unwrap_or_default();
         // @PLN165 C2 — a header declares a LIST of variables (`<K, V>`); each is bound on its
         // own, carries its own bounds, and is inferred from the parameters that name it.
@@ -2373,24 +2858,15 @@ impl Parser {
             // compiled — it only exists for the template's type resolution.
             if is_generic {
                 for var in &header {
-                    match self.bind_header_var(var) {
-                        // @PLN25 E2 — the placeholder is recorded here (valid in both passes:
-                        // it is added on the first and found again on the second) so
-                        // `e2_nullable_elem` leaves a generic `vector<T>` dense.  It is also
-                        // what `parse_type` resolves the spelling to from here on, which is
-                        // what keeps two headers writing `T` apart.  A header the first pass
-                        // refused binds nothing.
-                        Some(holder) if holder != u32::MAX => {
-                            self.cur_type_vars.push((var.name.clone(), holder));
-                        }
-                        Some(_) => {}
-                        None => {
-                            // Stop treating the function as generic so the unresolved
-                            // parameter never reaches the generic type-resolution path.
-                            is_generic = false;
-                            self.cur_type_vars.clear();
-                            break;
-                        }
+                    // @PLN25 E2 — the placeholder is recorded here (valid in both passes:
+                    // it is added on the first and found again on the second) so
+                    // `e2_nullable_elem` leaves a generic `vector<T>` dense.  It is also
+                    // what `parse_type` resolves the spelling to from here on, which is
+                    // what keeps two headers writing `T` apart.  A header the first pass
+                    // refused binds nothing.
+                    let holder = self.bind_header_var(var);
+                    if holder != u32::MAX {
+                        self.cur_type_vars.push((var.name.clone(), holder));
                     }
                 }
             }
@@ -2483,7 +2959,9 @@ impl Parser {
             // `possible` map that `convert`/`cast` search.  Register it (by type-matched
             // prefix) so `value as T` and implicit conversions dispatch a user `S → T`,
             // exactly like a built-in — the loop in `convert` still matches on arg/return type.
-            if d != u32::MAX {
+            // `@FR-Op-Std`, C132 — only the stdlib's `OpConv…` / `OpCast…` convert; a program
+            // converts with `operator to_<t>` (`@FR-Op-Conv`).
+            if d != u32::MAX && self.default {
                 if fn_name.starts_with("OpConv") {
                     self.data.register_possible("OpConv", d);
                 } else if fn_name.starts_with("OpCast") {
@@ -2498,6 +2976,9 @@ impl Parser {
         };
         if self.context == u32::MAX {
             return false;
+        }
+        if is_operator {
+            self.data.definitions[self.context as usize].operator_form = true;
         }
         // loft#1538's shape: a template refused at its declaration answers its declared
         // return at a call, which the declaration's own refusal explains.
@@ -2610,6 +3091,12 @@ impl Parser {
         } else {
             Type::Void
         };
+        if is_operator && !self.first_pass {
+            self.check_operator_definition(&fn_name, &arguments, &result);
+        }
+        if !is_operator && !self.first_pass && !self.default {
+            self.report_retired_operator_function(&fn_name, &arguments);
+        }
         // `@FR-G-NoRefParam` — a generator takes no `&` parameter (loft#1680).  `(G-Call)` binds
         // the arguments into a frame that runs LATER, and `(F-ParamRef)` makes a `&` parameter
         // write through to the caller's place — so the generator would hold a reference into a
@@ -3932,6 +4419,13 @@ impl Parser {
             if let Some(name) = self.lexer.has_identifier() {
                 let source = self.data.get_source(type_name);
                 let nr = self.data.source_nr(source, &name);
+                // loft#1848 — `lib::Type` reaches only what `use lib::*` would.
+                if source != u16::MAX
+                    && source != self.data.source
+                    && let Some(msg) = self.data.qualified_refusal(source, type_name, &name)
+                {
+                    diagnostic!(self.lexer, Level::Error, "{msg}");
+                }
                 if source != u16::MAX {
                     qualified = Some((source, name));
                 }
@@ -4144,14 +4638,8 @@ impl Parser {
             && !self.is_header_type_var(tp_nr)
             && !self.refused_header_vars.iter().any(|n| n == type_name)
         {
-            let spelled = crate::data::Data::type_var_spelling(type_name);
-            diagnostic!(
-                self.lexer,
-                Level::Error,
-                "`{spelled}` is not a type here — a type variable is a type only inside the \
-                 definition whose header declares it; declare it on this one \
-                 (`fn f<{spelled}>(x: {spelled})`) or name a type"
-            );
+            let msg = Self::type_var_out_of_scope(crate::data::Data::type_var_spelling(type_name));
+            diagnostic!(self.lexer, Level::Error, "{msg}");
         }
         let dt = self.data.def_type(tp_nr);
         // `@FR-G-Scope` — an interface is a BOUND on a type variable, never a value type.  It
@@ -4527,11 +5015,11 @@ impl Parser {
                         // single-payload-refactor.md § "DESIGN DECISION (2026-06-20)".)
                         self.has_deprecated_not_null();
                         self.parse_fields(true, &mut fields);
-                        Type::Index(
-                            self.data.type_def_nr(&tp),
-                            fields,
-                            crate::data::Deps::none(),
-                        )
+                        let content = self.data.type_def_nr(&tp);
+                        for (k, _) in &fields {
+                            self.check_key_is_value(content, k, "index");
+                        }
+                        Type::Index(content, fields, crate::data::Deps::none())
                     }
                     "hash" => {
                         // Dense (implicitly `not null`) — see the `index` arm.
@@ -4540,6 +5028,7 @@ impl Parser {
                         self.data.set_referenced(sub_nr, on_d, Value::Null);
                         let mut f = Vec::new();
                         for (field, _) in fields {
+                            self.check_key_is_value(sub_nr, &field, "hash");
                             f.push(field);
                         }
                         Type::Hash(sub_nr, f, crate::data::Deps::none())
@@ -4602,6 +5091,9 @@ impl Parser {
                         // Dense (implicitly `not null`) — see the `index` arm.
                         self.has_deprecated_not_null();
                         self.parse_fields(true, &mut fields);
+                        for (k, _) in &fields {
+                            self.check_key_is_value(sub_nr, k, "sorted");
+                        }
                         Type::Sorted(sub_nr, fields, crate::data::Deps::none())
                     }
                     "trie" => {
@@ -5201,33 +5693,15 @@ impl Parser {
         // `Definition::position` is for ("only allow redefinitions within the same file").
         if self.prelude_shadowed(&id) || (self.first_pass && self.release_unseen_stub(d_nr, &id)) {
             d_nr = u32::MAX;
-        } else if self.placeholder_from_another_file(d_nr) {
-            // The same shadow where the parse SHARES the stdlib's source id.  There the two
-            // compete for ONE `(name, source)` key, so the placeholder gives its name up
-            // rather than a second definition being added beside it.
-            let source = self.data.source;
-            self.data.release_def_name(&id, source);
-            d_nr = u32::MAX;
         }
         if d_nr == u32::MAX {
             d_nr = self.data.add_def(&id, self.lexer.pos(), DefType::Struct);
             self.data.definitions[d_nr as usize].returned =
                 Type::Reference(d_nr, crate::data::Deps::none());
         } else if self.first_pass {
-            // fix-tvscope: a SAME-FILE type-var placeholder blocks the struct — a genuine
-            // clash worth the dedicated diagnostic rather than the confusing "Redefined
-            // struct".  (A stdlib `<T>` is shadowed above, by source where the reader has one
-            // of their own and by FILE where the parse shares the stdlib's source id.)  A
-            // header's own variables are scoped to it and are not keyed here, so what reaches
-            // this arm is a placeholder keyed in the reader's own file.
-            if self.data.is_type_var_placeholder(d_nr) {
-                diagnostic!(
-                    self.lexer,
-                    Level::Error,
-                    "'{}' is reserved as a generic type variable — choose a different struct name",
-                    id
-                );
-            } else if self.data.def_type(d_nr) == DefType::Unknown
+            // A type variable's placeholder holds no spelling (@FR-G-Gen-Scope), so `d_nr`
+            // here is a definition the program wrote.
+            if self.data.def_type(d_nr) == DefType::Unknown
                 && matches!(
                     self.data.definitions[d_nr as usize].returned,
                     Type::Unknown(_)
@@ -5259,7 +5733,8 @@ impl Parser {
         // `D-Template` — a struct with a header is a type template: its variables are types
         // in its fields, and the definition is its own kind, so no struct site lays it out.
         self.context_type_template = d_nr;
-        if !header.is_empty() && self.bind_type_header(&header) {
+        if !header.is_empty() {
+            self.bind_type_header(&header);
             self.data.definitions[d_nr as usize].def_type = DefType::TypeTemplate;
         }
         let context = self.context;
@@ -5341,18 +5816,12 @@ impl Parser {
 
     /// Bind a TYPE template's header (@PLN165 D2): each variable to its placeholder, as a
     /// function's header binds them, and each bound set to the stubs its fields' methods
-    /// will call.  `false` when a variable collides with another definition (reported).
-    fn bind_type_header(&mut self, header: &[HeaderVar]) -> bool {
+    /// will call.
+    fn bind_type_header(&mut self, header: &[HeaderVar]) {
         for var in header {
-            match self.bind_header_var(var) {
-                Some(holder) if holder != u32::MAX => {
-                    self.cur_type_vars.push((var.name.clone(), holder));
-                }
-                Some(_) => {}
-                None => {
-                    self.cur_type_vars.clear();
-                    return false;
-                }
+            let holder = self.bind_header_var(var);
+            if holder != u32::MAX {
+                self.cur_type_vars.push((var.name.clone(), holder));
             }
         }
         // The variables in HEADER order: `Box<integer, text>` binds its arguments by position.
@@ -5372,7 +5841,6 @@ impl Parser {
                 self.create_bound_method_stubs(holder, &bounds);
             }
         }
-        true
     }
 
     /// @PLN25 Scope B — a keyed field that shares its record set with a sibling NULLABLE
@@ -5737,6 +6205,10 @@ impl Parser {
                 // between the passes — leaving nothing for the conflict check to compare.
                 self.stub_origin.insert(t_stub_nr, child_nr);
                 self.set_bound_stub_signature(t_stub_nr, child_nr, holder_nr);
+                // `@FR-Op-Iface` — the holder's stub stands for the member, mark included, so
+                // a generic handing its own `U: Printable` to another meets `operator to_text`.
+                self.data.definitions[t_stub_nr as usize].operator_form =
+                    self.data.def(child_nr).operator_form();
             }
         }
     }
@@ -6054,6 +6526,9 @@ impl Parser {
                 self.lexer.has_token(";");
                 continue;
             }
+            // `@FR-Op-Iface` (@PLN182) — a member written `operator` is met only by an
+            // `operator` definition of the type.
+            let mut member_is_operator = false;
             // I3.1: `op <token> (params) -> type` desugars to an `OpCamelCase` method stub.
             let method_name = if self.lexer.has_keyword("op") {
                 if let crate::lexer::LexItem::Token(tok) = self.lexer.peek().has.clone() {
@@ -6064,8 +6539,47 @@ impl Parser {
                     // has just been read and a `[` can be nothing else.
                     if tok == "[" {
                         self.lexer.token("]");
+                        // C132 (@PLN182 Q10) — `[…]` belongs to the built-in collections and no
+                        // type defines it, so no type could meet the member.
+                        if !self.first_pass {
+                            diagnostic!(
+                                self.lexer,
+                                Level::Error,
+                                "an interface cannot require `[…]`: it belongs to the built-in \
+                                 collections, and no type defines it — require a method that \
+                                 reads an element (`fn at(self: Self, i: integer) -> τ`)"
+                            );
+                        }
                         "OpIndex".to_string()
                     } else {
+                        // C132, Q13 (@PLN182) — a member is spelled as the definition that
+                        // meets it: `op ⊕` is refused, naming the `operator` member to write.
+                        if !self.first_pass && !self.default {
+                            let cure = match tok.as_str() {
+                                "<" | "<=" | ">" | ">=" => {
+                                    "`operator compare(self: Self, other: Self) -> Ordering`"
+                                }
+                                "+" => "`operator plus(self: Self, other: Self) -> Self`",
+                                "-" => {
+                                    "`operator minus(self: Self, other: Self) -> Self`, or \
+                                     `operator negate(self: Self) -> Self` for the unary `-`"
+                                }
+                                "*" => "`operator times(self: Self, other: Self) -> Self`",
+                                "/" => "`operator divided_by(self: Self, other: Self) -> Self`",
+                                "%" => "`operator remainder(self: Self, other: Self) -> Self`",
+                                "==" | "!=" => {
+                                    "nothing: `==` is structural for every type, and every type \
+                                     meets `Equatable`"
+                                }
+                                _ => "a method a type can define; this operator is reserved",
+                            };
+                            diagnostic!(
+                                self.lexer,
+                                Level::Error,
+                                "an interface names the definition that meets it: `op {tok}` \
+                                 is spelled {cure}"
+                            );
+                        }
                         format!("Op{}", rename(&tok))
                     }
                 } else {
@@ -6080,7 +6594,9 @@ impl Parser {
                     continue;
                 }
             } else {
-                if !self.lexer.has_token("fn") {
+                if self.lexer.has_token("operator") {
+                    member_is_operator = true;
+                } else if !self.lexer.has_token("fn") {
                     if !self.first_pass {
                         diagnostic!(self.lexer, Level::Error, "Expected 'fn' in interface body");
                     }
@@ -6139,6 +6655,7 @@ impl Parser {
                             a.constant;
                     }
                     self.data.set_parent(stub_nr, d_nr);
+                    self.data.definitions[stub_nr as usize].operator_form = member_is_operator;
                     // loft#734 — a method with NO `->` returns Void, and the stub
                     // has to say so. Leaving it unset kept the definition's
                     // default `Unknown`, which the native generator renders as
@@ -6148,6 +6665,38 @@ impl Parser {
                     // ran correctly, which is what kept it hidden.
                     self.data
                         .set_returned(stub_nr, return_tp.clone().unwrap_or(Type::Void));
+                }
+                // `@FR-Op-Bound` — an `operator` member stands for its SYMBOL too: `operator
+                // compare` brings `OpLt(self: Self, other: Self) -> boolean`, `operator plus`
+                // brings `OpAdd`, and so on.  A generic body's `a < b` reaches the symbolic stub
+                // exactly as it did before, so the four order forms keep deriving from it, a
+                // built-in type keeps its native operator in the monomorph, and a program's type
+                // reaches its `operator` method there (`substitute_type_in_value`).
+                if member_is_operator
+                    && let Some((symbolic, boolean)) =
+                        Self::symbolic_member(&method_name, args.len())
+                {
+                    let alias = format!("__iface_{d_nr}#{}_{symbolic}", args.len());
+                    if self.data.def_nr(&alias) == u32::MAX {
+                        let alias_nr =
+                            self.data
+                                .add_def(&alias, self.lexer.pos(), DefType::Function);
+                        for a in &args {
+                            self.data.add_attribute(
+                                &mut self.lexer,
+                                alias_nr,
+                                &a.name,
+                                a.typedef.clone(),
+                            );
+                        }
+                        self.data.set_parent(alias_nr, d_nr);
+                        let answers = if boolean {
+                            Type::Boolean
+                        } else {
+                            return_tp.clone().unwrap_or(Type::Void)
+                        };
+                        self.data.set_returned(alias_nr, answers);
+                    }
                 }
             }
             // I5 (phase 1): factory methods (Self in return without self: Self first param)
@@ -6177,8 +6726,43 @@ impl Parser {
         }
         self.lexer.token("}");
         self.lexer.has_token(";");
+        // @C134 (owner) — `Equatable` declares nothing: `==` is structural for every type, so
+        // every type meets it.  A generic body's `a == b` still reaches the `OpEq` member the
+        // monomorph lowers to that structural comparison, so the stdlib's `Equatable` carries
+        // it as the compiler's own, never written.
+        if self.default && self.first_pass && id == "Equatable" && d_nr != u32::MAX {
+            let self_nr = self.data.def_nr("Self");
+            let stub = format!("__iface_{d_nr}#2_OpEq");
+            if self_nr != u32::MAX && self.data.def_nr(&stub) == u32::MAX {
+                let stub_nr = self
+                    .data
+                    .add_def(&stub, self.lexer.pos(), DefType::Function);
+                let me = Type::Reference(self_nr, crate::data::Deps::none());
+                self.data
+                    .add_attribute(&mut self.lexer, stub_nr, "self", me.clone());
+                self.data
+                    .add_attribute(&mut self.lexer, stub_nr, "other", me);
+                self.data.set_parent(stub_nr, d_nr);
+                self.data.set_returned(stub_nr, Type::Boolean);
+            }
+        }
         self.context = context;
         true
+    }
+
+    /// The symbolic member an `operator` interface member stands for, and whether that member
+    /// answers `boolean` (the order and equality forms) rather than the form's own result.
+    fn symbolic_member(form: &str, arity: usize) -> Option<(&'static str, bool)> {
+        match (form, arity) {
+            ("compare", 2) => Some(("OpLt", true)),
+            ("plus", 2) => Some(("OpAdd", false)),
+            ("minus", 2) => Some(("OpMin", false)),
+            ("times", 2) => Some(("OpMul", false)),
+            ("divided_by", 2) => Some(("OpDiv", false)),
+            ("remainder", 2) => Some(("OpRem", false)),
+            ("negate", 1) => Some(("OpMin", false)),
+            _ => None,
+        }
     }
 
     /// #91: DFS cycle detection on init field dependencies.

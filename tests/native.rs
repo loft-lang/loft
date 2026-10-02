@@ -63,6 +63,11 @@ const SCRIPTS_NATIVE_SKIP: &[&str] = &[
     // (`Stores::source_dir_native` via `current_exe()`) makes `source_dir()`
     // non-empty under `--native`, so it is no longer skipped here.
     //
+    // A `#native` function with no library loaded is REFUSED by the native generator for the
+    // whole file (`compile_error!` naming the symbol) — that refusal is this file's native
+    // answer, while the interpreter runs it and fails the one `@EXPECT_FAIL` function.  It was
+    // dropped as a `prepare error` skip until such a skip became a failure (loft#1841).
+    "75-native-stub.loft",
 ];
 
 /// Locate `libloft.rlib` and its sibling deps directory for standalone `rustc` compilation.
@@ -1133,6 +1138,7 @@ fn native_scripts_chunk(chunk: usize) -> std::io::Result<()> {
         .collect();
     let rlib_info = find_loft_rlib();
     let mut jobs = Vec::new();
+    let mut not_generated: Vec<String> = Vec::new();
     for entry in files {
         let name = entry.file_name().unwrap_or_default().to_string_lossy();
         if SCRIPTS_NATIVE_SKIP.iter().any(|s| *s == name.as_ref()) {
@@ -1163,14 +1169,28 @@ fn native_scripts_chunk(chunk: usize) -> std::io::Result<()> {
                 continue;
             }
         }
+        // A file that cannot be generated is a FAILURE, not a skip.  Printing `skip` here hid
+        // four committed guards whose native leg panicked in the generator (loft#1841): each
+        // recorded exit 0 when written, and the suite read green while none of them ran.
+        // A file that is not meant to build declares it — `@EXPECT_ERROR`, a file-level
+        // `@EXPECT_FAIL`, or a row in `SCRIPTS_NATIVE_SKIP` with its reason — above.
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| prepare_native_test(&entry)))
         {
             Ok(Ok(job)) => jobs.push(job),
-            Ok(Err(e)) => println!("skip {entry:?} (prepare error: {e})"),
-            Err(_) => println!("skip {entry:?} (codegen panic — native codegen bug)"),
+            Ok(Err(e)) => not_generated.push(format!("{entry:?} (prepare error: {e})")),
+            Err(_) => not_generated.push(format!("{entry:?} (codegen panic)")),
         }
     }
-    run_native_jobs(jobs, rlib_info)
+    let ran = run_native_jobs(jobs, rlib_info);
+    if !not_generated.is_empty() {
+        println!("  not generated: {}", not_generated.join(", "));
+        return Err(std::io::Error::other(format!(
+            "{} script(s) could not be generated for --native: {}",
+            not_generated.len(),
+            not_generated.join(", ")
+        )));
+    }
+    ran
 }
 
 /// How many tests the native script corpus is split across — see [`native_scripts_chunk`].

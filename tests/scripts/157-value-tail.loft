@@ -11,6 +11,7 @@
 // for the whole program, so a family that must DECLINE (t5, t10, t12) owns its builder and
 // cannot pull `pt` down with it.
 //
+// (Measured on the `fn Op…` spelling: @C132 re-spelled the cells to `operator` methods, same values.)
 // @falsified-at: hand-measured (two sabotages, 2026-09-14) — `OpDistinctStore` against a
 // value local answering `false` (the materialise into the push slot never runs):
 // `assertion failed: t1 0` on native; the view leaf judged by its dep list instead of the
@@ -213,7 +214,7 @@ fn t13() {
 // builder's result passed as an argument would decline the builder (t13).
 fn gpick<T>(a: T, b: T, c: boolean) -> T { if c { a } else { b } }
 struct Coin { cents: integer }
-fn OpLt(self: Coin, other: Coin) -> boolean { self.cents < other.cents }
+operator compare(self: Coin, other: Coin) -> Ordering { self.cents.compare(other.cents) }
 fn gmax<T: Ordered>(x: T, y: T) -> T { if x > y { x } else { y } }
 fn t14() {
   p = Pt { ptx: 1.5, pty: 2.5 };

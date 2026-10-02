@@ -1,0 +1,89 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN182 P1 — `operator compare(self: T, other: T) -> Ordering` gives a user type all four
+// order forms (`@FR-Op-Order`): `a < b` is `a.compare(b) == Less`, `a <= b` is `!= Greater`,
+// `a > b` is `== Greater`, `a >= b` is `!= Less` — ONE call, operands left to right, the LEFT
+// operand's method (`@FR-Op-Left`), never the swap `b.compare(a)` the built-in `>` reads.
+// `Ordered` is met by it (`@FR-Op-Bound`), so `sort`, `min_of`, `max_of` and a user generic's
+// `<` and derived `<=` read the same method.
+//
+// The parallel run: `DtNew` declares one `operator compare`, and every pair of a matrix of
+// instants — the integer extremes, zero, negatives, a tie — must answer all four forms as the
+// integers themselves do (the reference was `time`'s four `fn Op…`, whose bodies were exactly
+// those comparisons, until C132 retired that spelling).  Further cells: a two-field order
+// through `then` on a plain struct, a mixed-type `compare` (`A` against `B`), an enum's order,
+// a type with BOTH a (deliberately reversed) plain `fn OpLt` and an `operator compare` — the
+// function is ordinary, the operator answers at the concrete site and in the generic alike —
+// and evaluation order.
+//
+// @falsified-by: tests/falsified/an-operator-compare-gives-a-type-every-order-form.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   (patch re-derived at 6b8fc663c — reintroduces: `a > b` read as `compare == Less`)
+//   CHANNEL: exit on both backends — the control has no `operator` keyword, so it refuses.
+//   ARMED: nothing.
+//   WITNESS: scored by hand as well against a mutation reading `>` as `Less`: the parallel run
+//   fails on both backends, listing every pair whose four forms differ.
+//   HOLDS: every asserted value on this tree, both backends.
+value struct DtNew { ms: integer }
+pub operator compare(self: DtNew, other: DtNew) -> Ordering { self.ms.compare(other.ms) }
+
+struct SNew { ms: integer, tag: text }
+pub operator compare(self: SNew, other: SNew) -> Ordering {
+  self.ms.compare(other.ms).then(self.tag.compare(other.tag))
+}
+
+struct A { v: integer }
+struct B { w: integer }
+pub operator compare(self: A, other: B) -> Ordering { self.v.compare(other.w) }
+pub operator compare(self: A, other: A) -> Ordering { self.v.compare(other.v) }
+
+struct Both { v: integer }
+pub fn OpLt(self: Both, other: Both) -> boolean { self.v > other.v }
+pub operator compare(self: Both, other: Both) -> Ordering { self.v.compare(other.v) }
+
+enum Size { Small, Large }
+pub operator compare(self: Size, other: Size) -> Ordering { (self as integer).compare(other as integer) }
+
+struct Log { n: integer }
+fn mark(log: Log, v: integer) -> A { log.n = log.n * 10 + v; A { v: v } }
+
+fn smallest < T: Ordered > (a: T, b: T) -> T { if a < b { a } else { b } }
+fn at_most < T: Ordered > (a: T, b: T) -> boolean { a <= b }
+
+fn forms(a: integer, b: integer) -> text {
+  na = DtNew { ms: a }; nb = DtNew { ms: b };
+  old = "{a < b}{a <= b}{a > b}{a >= b}";
+  new = "{na < nb}{na <= nb}{na > nb}{na >= nb}";
+  if old == new { "" } else { "[{a} {b}: {old} / {new}]" }
+}
+
+fn main() {
+  vals = [0 - 9223372036854775807, 0 - 86400000, 0 - 1, 0, 1, 1700000000000, 1700000000001, 9223372036854775807];
+  diffs = "";
+  pairs = 0;
+  for a in vals { for b in vals { diffs += forms(a, b); pairs += 1; } }
+  assert(pairs == 64 && diffs == "", "the parallel run: {diffs}");
+  n1 = DtNew { ms: 1 }; n2 = DtNew { ms: 2 };
+  assert("{n1 < n2}{n1 <= n2}{n1 > n2}{n1 >= n2}{n2 > n1}{n1 >= n1}" == "truetruefalsefalsetruetrue", "DtNew forms");
+  vn = [DtNew { ms: 30 }, DtNew { ms: 10 }, DtNew { ms: 20 }, DtNew { ms: 10 }];
+  vn.sort();
+  sn = ""; for x in vn { sn += "{x.ms},"; }
+  assert(sn == "10,10,20,30,", "sort through Ordered: {sn}");
+  assert(min_of(vn).ms == 10 && max_of(vn).ms == 30, "min_of / max_of");
+  s = [SNew { ms: 2, tag: "b" }, SNew { ms: 1, tag: "z" }, SNew { ms: 2, tag: "a" }];
+  s.sort();
+  ss = ""; for x in s { ss += "{x.ms}{x.tag},"; }
+  assert(ss == "1z,2a,2b,", "two fields through then: {ss}");
+  a1 = A { v: 1 }; a2 = A { v: 2 }; b2 = B { w: 2 };
+  assert("{a1 < b2}{a2 <= b2}{a2 > b2}{a1 >= b2}" == "truetruefalsefalse", "A against B");
+  assert(a1 < a2 && !(a2 < a1), "A against A, the other member of the set");
+  log = Log { n: 0 };
+  r = mark(log, 1) > mark(log, 2);
+  assert(!r && log.n == 12, "one call each, left to right: {log.n}");
+  assert(smallest(a2, a1).v == 1 && at_most(a1, a2) && !at_most(a2, a1) && at_most(a1, a1), "a user generic");
+  x = Both { v: 1 }; y = Both { v: 2 };
+  assert(x < y && smallest(x, y).v == 1, "operator compare wins over a fn OpLt, concrete and generic");
+  sm = Size.Small; lg = Size.Large;
+  assert(sm < lg && !(lg <= sm) && sm >= sm, "an enum's order");
+  println("ok");
+}

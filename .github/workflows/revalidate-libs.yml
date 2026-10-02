@@ -68,6 +68,36 @@ jobs:
           python3 scripts/revalidate_matrix.py index.json --format github >> "$GITHUB_OUTPUT"
           echo "discovered $(grep -oP 'count=\K\d+' "$GITHUB_OUTPUT" | tail -1) published libraries"
 
+  # A library repo carrying work that never shipped — a stale PR, an orphan branch, a
+  # version the registry lacks — is red HERE too, not only on the library's own CI, which
+  # nobody watches between publishes (owner, 2026-10-02: "the library pass during PR
+  # should be red on those libraries").  Same checker as library-ci-reusable.yml's
+  # `unreleased work` job; one leg per library REPO, so each red names its repo.  The
+  # consumer applications in the registry are not ours to clean up and are left out.
+  unreleased:
+    needs: discover
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout loft (for the checker)
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/unreleased-work.py
+          sparse-checkout-cone-mode: false
+      - name: Branches, PRs and versions that never shipped, per library repo
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MATRIX: ${{ needs.discover.outputs.matrix }}
+        run: |
+          set -uo pipefail
+          # Branches and PRs only: the third shape, a loft.toml version the registry
+          # lacks, needs the library checked out and stays with the library's own CI.
+          repos=$(python3 -c 'import json,os; print("\n".join(sorted({m["repo"] for m in json.loads(os.environ["MATRIX"])["include"] if m["repo"].startswith("loft-lang/loft-libs-")})))')
+          red=0
+          for repo in $repos; do
+            python3 scripts/unreleased-work.py --repo "$repo" --summary "$GITHUB_STEP_SUMMARY" || red=1
+          done
+          exit $red
+
   revalidate:
     needs: discover
     if: needs.discover.outputs.count != '0'
@@ -296,7 +326,7 @@ jobs:
   # Fail the workflow if any published library broke — that is a language change
   # retro-breaking a shipped lib, which the freeze forbids.
   gate:
-    needs: revalidate
+    needs: [revalidate, unreleased]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -320,6 +350,11 @@ jobs:
 
       - name: Verdict
         run: |
+          u='${{ needs.unreleased.result }}'
+          if [ "$u" != "success" ]; then
+            echo "::error::a library repo carries work that never shipped (a stale PR or an orphan branch) — the \`unreleased\` job names each one and its cure: merge or close the PR, open a PR for the branch or delete it."
+            echo "unreleased work: $u" >> "$GITHUB_STEP_SUMMARY"
+          fi
           r='${{ needs.revalidate.result }}'
           echo "revalidation: $r" >> "$GITHUB_STEP_SUMMARY"
           if [ "$r" = "success" ] || [ "$r" = "skipped" ]; then
@@ -344,3 +379,4 @@ jobs:
             echo "::error::a published library leg is RED. \`Test against this loft\` = a language change retro-broke a shipped lib (fix the lib, or reconsider the change — the stdlib may only grow additively). \`Native\` = a native-only break in a library that declares no system build-deps (loft#1653). \`Release-ready\` = warning debt: the library cannot be released as it stands, which is the ecosystem's state and not this PR's fault. Open the red leg; the step name says which."
             exit 1
           fi
+          [ "$u" = "success" ] || exit 1

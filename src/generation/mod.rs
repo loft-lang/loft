@@ -5730,6 +5730,24 @@ impl Output<'_> {
             .for_each_child(&mut |child| Self::collect_if_test_sets(child, out));
     }
 
+    /// The locals a CALL ARGUMENT null-inits — a `Set(v, null)` the scope pass placed inside an
+    /// argument, at any depth.  It does that for a temp it frees at the function's end that is
+    /// first bound in an `if` arm the argument holds (`assert(c && D { n: 7 } == D { n: 7 })`
+    /// binds each literal operand to a `__veq` temp).  Native's pre-eval lifts such an argument
+    /// into `let _pre_N = { … }`, so a `let` there ends with that block (loft#1852).
+    fn collect_call_arg_null_inits(node: &Value, in_arg: bool, out: &mut Vec<u16>) {
+        if in_arg
+            && let Value::Set(v, init) = node.unspan()
+            && matches!(init.unspan(), Value::Null)
+            && !out.contains(v)
+        {
+            out.push(*v);
+        }
+        let in_arg = in_arg || matches!(node.unspan(), Value::Call(..));
+        node.unspan()
+            .for_each_child(&mut |child| Self::collect_call_arg_null_inits(child, in_arg, out));
+    }
+
     fn collect_returned_vars(node: &Value, out: &mut Vec<u16>) {
         if let Value::Return(inner) = node.unspan()
             && let Value::Var(v) = inner.unspan()
@@ -8426,7 +8444,10 @@ extern crate loft;"
             }
         }
         for dnr in from..till {
-            if !matches!(self.data.def(dnr).def_type(), DefType::Function) {
+            // A placeholder instance stands for its template and is never code (@FR-G-Mono).
+            if !matches!(self.data.def(dnr).def_type(), DefType::Function)
+                || self.data.is_placeholder_instance(dnr)
+            {
                 continue;
             }
             if let Some(r) = reachable
@@ -9286,8 +9307,11 @@ extern crate loft;"
             // marked DECLARED — never `predeclared`, which would make the test's assignment a
             // second, shadowing `let` and orphan the store it receives — so that assignment
             // lands in this binding.  Not the #354 hazard below: nothing is allocated here.
+            // The same for a local a CALL ARGUMENT null-inits (loft#1852): pre-eval lifts the
+            // argument into a block of its own, and the init's `let` would end with it.
             let mut if_test_sets: Vec<u16> = Vec::new();
             Self::collect_if_test_sets(def.code(), &mut if_test_sets);
+            Self::collect_call_arg_null_inits(def.code(), false, &mut if_test_sets);
             for &v in &if_test_sets {
                 if !vars.is_argument(v)
                     && !self.declared.contains(&v)

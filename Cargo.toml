@@ -84,10 +84,10 @@ native-extensions = ["dep:libloading"]
 # compiles NONE of the paged/remote machinery (the zero-cost-to-non-users
 # invariant). The HTTP `Range` page provider (Phase 5) pulls in `ureq`; the
 # local-file provider (Phases 2–4) is dependency-free.
-remote-store      = ["dep:ureq"]
+remote-store      = ["dep:ureq", "dep:rustls", "dep:webpki-roots", "dep:rustls-native-certs"]
 # sha2 is a base (non-optional) dependency — used by the startup-cache key
 # (@PLAN28) — so it is no longer listed as `dep:sha2` under `registry`.
-registry     = ["dep:ureq", "dep:zip", "dep:tar", "dep:flate2", "dep:ed25519-dalek"]
+registry     = ["dep:ureq", "dep:rustls", "dep:webpki-roots", "dep:rustls-native-certs", "dep:zip", "dep:tar", "dep:flate2", "dep:ed25519-dalek"]
 # @PLAN53 cluster 2 / S4 — arm the homegrown stack-alignment guards (frame
 # `stack_pos % 8` + per-access slot alignment).  Off by default → zero hot-path
 # cost.  NOT gated on debug_assertions: [profile.dev.package.loft] disables
@@ -131,6 +131,11 @@ loft-ffi           = { path = "loft-ffi" }
 wasm_sync          = { path = "wasm-sync", optional = true }
 console_error_panic_hook = { version = "0.1", optional = true }
 ureq               = { version = "2", optional = true }
+# The TLS client config every HTTPS request uses (src/tls.rs): ureq's own rustls, with the
+# bundled Mozilla roots PLUS the machine's store — so a request trusts what curl and git trust.
+rustls             = { version = "0.23", optional = true, default-features = false, features = ["ring", "std", "logging", "tls12"] }
+webpki-roots       = { version = "0.26", optional = true }
+rustls-native-certs = { version = "0.8", optional = true }
 zip                = { version = "2", optional = true, default-features = false, features = ["deflate"] }
 tar                = { version = "0.4", optional = true }
 flate2             = { version = "1", optional = true }

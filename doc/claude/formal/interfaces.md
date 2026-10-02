@@ -33,14 +33,15 @@ generic header; a **bound** `T: I₁ + … + Iₖ` constrains it. `C ⊨ I` read
               declares I as the set {m₁ … mₙ} of method SIGNATURES.  Each method's first
               parameter is `self: Self` (Self = the implementing type, filled in per instance);
               the interface has NO bodies.  An operator method may use sugar
-              `op <tok> (self: Self, …) -> R`, which names the method `OpCamelCase` (e.g. `<` ⟶ OpLt).
+              `op <tok> (self: Self, …) -> R`, met by the type's `operator` method (`<` ⟶
+              `operator compare`, formal/operators.md (Op-Bound)).
 ```
 
 **In words.** An interface is a named list of method shapes a type must provide — for example
-`interface Ordered { op < (self: Self, other: Self) -> boolean }`. It states *what*, never *how*
-(no method has a body). `Self` is a placeholder standing for whatever concrete type ends up
-satisfying it. Operator requirements are written with `op <` and desugar to the canonical operator
-method name.
+`interface Ordered { operator compare(self: Self, other: Self) -> Ordering }`. It states *what*,
+never *how* (no method has a body). `Self` is a placeholder standing for whatever concrete type
+ends up satisfying it. An operator requirement is written as the `operator` member that meets it,
+and brings the symbolic member a generic body's `<` reaches (formal/operators.md (Op-Bound)).
 
 ### Satisfaction — structural, at the use site
 
@@ -74,6 +75,13 @@ the functions visible *where the generic is used*, not where the interface was d
                                               receiver's former; `self: T` itself is REFUSED at the
                                               declaration — a method is found on its receiver's
                                               type, and T is not one.
+
+  (G-Gen-Scope)  a header's type variable is a NAME only inside the definition it heads:
+            there the spelling means the variable before anything else the program declares;
+            outside it the spelling means whatever the program declares.  The variable
+            reserves no name, so a declaration spelled like it — of any kind, in any file,
+            the stdlib's own `<K>` beside a REPL session's `enum K` — is neither refused nor
+            mistaken for it.
 ```
 
 **In words.** `fn total<T: Sizable>(xs: vector<T>) -> integer` is generic over any element type
@@ -253,20 +261,18 @@ The record, and every closed deviation, are in the companion
   so the two cannot disagree about which definition a signature names.  Oracle:
   `tests/scripts/1275-a-bound-offers-both-arities-of-minus.loft`.
 - **The parameter LIST is part of the signature (`G-Sat`)** — a member of the right arity whose
-  parameters are other types does not satisfy the bound: `fn OpMin(self: W, o: integer)` alone
-  leaves `W` short of `Subtractable`, refused as *"'OpMin' takes 'integer' where the interface
-  declares 'W'"*.  Each parameter is compared by its type definition after `[Self ↦ C]`; a
+  parameters are other types does not satisfy the bound: `operator minus(self: W, o: integer)`
+  alone leaves `W` short of `Subtractable`, refused as *"'minus' takes 'integer' where the
+  interface declares 'W'"*.  Each parameter is compared by its type definition after `[Self ↦ C]`; a
   nullable parameter takes its dense type, a variant and its enum take each other, and a
   parameter typed by the interface's own associated type, or by a type variable, asks nothing.
   Where the name carries an overload set, the member that takes the list is the one satisfying
-  it and the one the monomorph binds (`Data::overload_with_params` answers both).  An `OpEq`
-  that does not take `(Self, Self)` is not the type's own `==`, so `(G-Sat-Eq)` admits the type
-  by content, as the concrete `a == b` compares it.  Oracle:
+  it and the one the monomorph binds (`Data::operator_member_with` answers both).  `==` is the
+  content comparison for every type (`(G-Sat-Eq)`), as the concrete `a == b` is.  Oracle:
   `tests/scripts/1818-a-bound-is-satisfied-only-by-a-member-that-takes-its-parameters.loft`.
-- **A template member is not a concrete function (`G-Sat`)** — `fn OpAdd<U>(self: W, o: U)` alone
-  leaves `W` short of `Addable`, refused as *"'OpAdd' is a template, and a bound takes a
-  concrete 'OpAdd' of its signature"*, `==` included (the type HAS an `OpEq`, so content would
-  answer differently from the concrete site).  A concrete member of the set beside the template
+- **A template member is not a concrete function (`G-Sat`)** — `operator plus<U>(self: W, o: U)`
+  alone leaves `W` short of `Addable`, refused as *"'plus' is a template, and a bound takes a
+  concrete 'plus' of its signature"*.  A concrete member of the set beside the template
   satisfies and is what the monomorph binds, in either declaration order.  At a CONCRETE site
   the operator reaches the template as its call spelling does, instantiated at the operand
   types (`F-Recv`).  Oracles: `tests/scripts/1826-an-operator-reaches-a-template-member-as-its-call-does.loft`,

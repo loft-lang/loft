@@ -31,7 +31,7 @@
 
 mod common;
 
-use common::cached_default;
+use common::parsed_default;
 use loft::ir_schema::{
     attribute_from_json, attribute_to_json, compare_data, data_from_json, data_to_json,
     definition_from_json, definition_to_json, type_from_json, type_to_json, value_from_json,
@@ -42,7 +42,7 @@ use loft::ir_schema::{
 /// `typedef`) survives a JSON round-trip exactly.
 #[test]
 fn stdlib_types_round_trip() {
-    let (data, _db) = cached_default();
+    let (data, _db) = parsed_default();
     let mut checked = 0usize;
     for d_nr in 0..data.definitions() {
         let def = data.def(d_nr);
@@ -70,7 +70,7 @@ fn stdlib_types_round_trip() {
 /// 34-variant `Value` codec (Call / Block / If / Iter / Set / FnRef / …).
 #[test]
 fn stdlib_values_round_trip() {
-    let (data, _db) = cached_default();
+    let (data, _db) = parsed_default();
     let mut checked = 0usize;
     let mut non_null = 0usize;
     for d_nr in 0..data.definitions() {
@@ -96,7 +96,7 @@ fn stdlib_values_round_trip() {
 /// `value` / `check` / `check_message` `Value` fields) re-encodes identically.
 #[test]
 fn stdlib_attributes_round_trip() {
-    let (data, _db) = cached_default();
+    let (data, _db) = parsed_default();
     let mut checked = 0usize;
     for d_nr in 0..data.definitions() {
         let def = data.def(d_nr);
@@ -128,7 +128,7 @@ fn stdlib_attributes_round_trip() {
 /// not part of this codec by design).
 #[test]
 fn stdlib_definitions_round_trip() {
-    let (data, _db) = cached_default();
+    let (data, _db) = parsed_default();
     let mut checked = 0usize;
     for d_nr in 0..data.definitions() {
         let def = data.def(d_nr);
@@ -166,7 +166,7 @@ fn stdlib_definitions_round_trip() {
 ///   * the decoded copy compiles (codegen runs against rebuilt indices).
 #[test]
 fn stdlib_whole_data_round_trip() {
-    let (data, _db) = cached_default();
+    let (data, _db) = parsed_default();
     let n = data.definitions();
 
     let json = data_to_json(&data);
@@ -216,7 +216,7 @@ fn stdlib_whole_data_round_trip() {
 /// localized `DataDiff` (which definition, which byte), not a bare `false`.
 #[test]
 fn stdlib_load_compares_equal_to_fresh() {
-    let (reference, _db) = cached_default();
+    let (reference, _db) = parsed_default();
 
     // Round-trip through the snapshot format into a fresh, separate Data.
     let json = data_to_json(&reference);
@@ -251,7 +251,7 @@ fn stdlib_load_compares_equal_to_fresh() {
 /// (cloned per script) so the stdlib parses once, not once-per-script.
 #[test]
 fn tests_scripts_round_trip() {
-    let (stdlib_data, stdlib_db) = cached_default();
+    let (stdlib_data, stdlib_db) = parsed_default();
     let stdlib_defs = stdlib_data.definitions();
 
     let mut scripts: Vec<std::path::PathBuf> = std::fs::read_dir("tests/scripts")
@@ -323,7 +323,7 @@ fn tests_scripts_round_trip() {
 /// codec mishandles fails here loudly, localized by the `DataDiff`.
 #[test]
 fn corpus_store_codec_round_trips() {
-    let (stdlib_data, stdlib_db) = cached_default();
+    let (stdlib_data, stdlib_db) = parsed_default();
     // The stdlib itself first (the bulk of the variants).
     if let Err(diff) = loft::ir_read::ir_roundtrip_check(&stdlib_data) {
         panic!("stdlib store-codec round-trip mismatch: {diff:?}");

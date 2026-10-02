@@ -909,13 +909,11 @@ hooks:
 # that CI runs cross-backend.  See doc/claude/plans/92-feature-catalogue/.
 FEATURES_REPO ?= loft-lang/features
 
-# CAVEAT: the probe reads target/wasm32-unknown-unknown/release/libloft.rlib, and it
-# must be the `--html` shape (`--no-default-features --features random`).  `make wasm`
-# overwrites that rlib with the wasm-bindgen variant, against which the probe records
-# store_load_url and store_load_url_trusted as unavailable in the BROWSER and commits
-# that as derived truth.  So after a bundle rebuild the order is: `make wasm`, then
-# `cargo build --release --target wasm32-unknown-unknown --lib --no-default-features
-# --features random`, then this.
+# The probe reads the `--html` shape's OWN rlib, target/loft/html/wasm32-unknown-unknown/
+# release — the one `loft --html` links, in the directory `make wasm`'s wasm-bindgen build
+# cannot overwrite.  Build it first: `loft cache warm`, or `cargo build --release --target
+# wasm32-unknown-unknown --lib --no-default-features --features random --target-dir
+# target/loft/html`.
 surface-gen:  ## Regenerate index/target_surface.json (which builtins exist per target)
 	@python3 scripts/gen_target_surface.py
 
@@ -937,7 +935,7 @@ guards-check:  ## @PLN175 — fail when a library guard was added or removed sin
 features-fetch:  ## Refresh index/features.json from the loft-lang/features tracker (network; gh + jq)
 	@gh issue list -R $(FEATURES_REPO) --state all --limit 200 \
 	    --json number,title,labels,body \
-	  | jq 'sort_by(.number) | map({number, title, kind: ((.labels|map(.name)|map(select(startswith("kind:")))|.[0]) // "kind:unknown" | sub("^kind:";"")), body})' \
+	  | jq 'sort_by(.number) | map({number, title, kind: ((.labels|map(.name)|map(select(startswith("kind:")))|.[0]) // "kind:unknown" | sub("^kind:";"")), group: (.labels|map(.name)|map(select(startswith("group:"))|sub("^group:";""))|join(",")), keys: ([.body|scan("<!-- keys: ([^>]*?) -->")]|.[0][0] // ""|split(" ")|map(select(length>0))), body})' \
 	  > index/features.json
 	@echo "index/features.json: $$(jq length index/features.json) issues"
 
@@ -962,6 +960,15 @@ features-check: features-gen  ## Drift guard: fail if the committed shadow is st
 	    exit 1; \
 	fi
 	@echo "features shadow in sync with index/features.json."
+	@# @PLN183 — the overview groups and the lookup keys the issues carry: every entry in
+	@# exactly one `group:` (a `group:` label on its issue), and no key claimed by two entries.
+	@bad=$$(jq -r '.[] | select((.group // "") == "" or (.group|test(","))) | "  #\(.number) \(.title): group \"\(.group // "")\""' index/features.json); \
+	dup=$$(jq -r '[.[] | .number as $$n | (.keys // [])[] | {k: ., n: $$n}] | group_by(.k) | map(select(length > 1)) | .[] | "  key \(.[0].k): #\(map(.n|tostring)|join(", #"))"' index/features.json); \
+	if [ -n "$$bad$$dup" ]; then \
+	    echo "ERROR: an entry needs exactly one group: label, and a key one owner (edit the issues, then make features-fetch):"; \
+	    [ -n "$$bad" ] && echo "$$bad"; [ -n "$$dup" ] && echo "$$dup"; \
+	    exit 1; \
+	fi
 
 examples-index:  ## Regenerate examples-index.tsv (worked-example tag -> file:line -> blob link)
 	@bash scripts/check_doc_drift.sh write-examples-index
@@ -2035,7 +2042,7 @@ check-rlib:  ## One-second pre-flight: is target/release/libloft.rlib present an
 	@fail=0; \
 	for spec in \
 	    "target/release/libloft.rlib|cargo build --release --lib|native (--native, cdylib tests)" \
-	    "target/wasm32-unknown-unknown/release/libloft.rlib|cargo build --release --target wasm32-unknown-unknown --lib --no-default-features --features random|browser (--html)" \
+	    "target/loft/html/wasm32-unknown-unknown/release/libloft.rlib|cargo build --release --target wasm32-unknown-unknown --lib --no-default-features --features random --target-dir target/loft/html|browser (--html)" \
 	    "target/wasm32-wasip2/release/libloft.rlib|cargo build --release --target wasm32-wasip2 --lib --no-default-features --features random|wasip2 (wasm library suite)"; do \
 	    rlib=$${spec%%|*}; rest=$${spec#*|}; cure=$${rest%%|*}; what=$${rest#*|}; \
 	    dir=$$(dirname "$$(dirname "$$rlib")"); \
@@ -2152,6 +2159,10 @@ ci-guard:
 # enough to see whether a red is one defect or several, which is the question the count is
 # actually being asked.
 CI_MAX_FAIL ?= 5
+# The starvation victims (.config/nextest.toml `[profile.ci-victims]`): the gate's main pass runs
+# without them, the storm-makers wide, and a second pass runs them alone once every storm has
+# ended.  Read from the profile, so the passes, nextest and ci.yml select one set.
+CI_VICTIMS := $(shell python3 scripts/ci_test_filter.py victims)
 
 # THE LOCAL GATE IS CANCELLED WHEN IT RUNS LONG, and that is the point.  A gate that grows is
 # a gate that stops being run: measured 2026-09-12, a local `make ci` on macOS passed 45
@@ -2361,7 +2372,7 @@ ci: ci-guard
 	cargo build --release --lib >> result.txt 2>&1 && \
 	cargo build --no-default-features --target-dir target/nodefault >> result.txt 2>&1 && \
 	cargo build --release --target wasm32-wasip2 --lib --no-default-features --features random >> result.txt 2>&1 && \
-	cargo build --release --target wasm32-unknown-unknown --lib --no-default-features --features random >> result.txt 2>&1 && \
+	cargo build --release --target wasm32-unknown-unknown --lib --no-default-features --features random --target-dir target/loft/html >> result.txt 2>&1 && \
 	python3 scripts/gen_target_surface.py --check >> result.txt 2>&1 && \
 	(cargo nextest --version >/dev/null 2>&1 || cargo install cargo-nextest --locked) >> result.txt 2>&1 && \
 	./target/release/loft cache warm --from tests >> result.txt 2>&1 && \
@@ -2373,8 +2384,11 @@ ci: ci-guard
 	  case "$$sel" in \
 	    NONE) rc=0 ;; \
 	    FILTER) cargo nextest run --profile ci --max-fail $(CI_MAX_FAIL) $$first --no-tests=pass \
-	              -E "$$(cat target/gate-ledger/filter)" >> result.txt 2>&1; rc=$$? ;; \
-	    *) cargo nextest run --profile ci --max-fail $(CI_MAX_FAIL) $$first >> result.txt 2>&1; rc=$$? ;; \
+	              -E "($$(cat target/gate-ledger/filter)) - ($(CI_VICTIMS))" >> result.txt 2>&1; rc=$$?; \
+	            cargo nextest run --profile ci-victims --max-fail $(CI_MAX_FAIL) --no-tests=pass \
+	              -E "($$(cat target/gate-ledger/filter)) & ($(CI_VICTIMS))" >> result.txt 2>&1; rc=$$(( rc + $$? )) ;; \
+	    *) cargo nextest run --profile ci --max-fail $(CI_MAX_FAIL) $$first -E "not ($(CI_VICTIMS))" >> result.txt 2>&1; rc=$$?; \
+	       cargo nextest run --profile ci-victims --max-fail $(CI_MAX_FAIL) -E "$(CI_VICTIMS)" >> result.txt 2>&1; rc=$$(( rc + $$? )) ;; \
 	  esac; \
 	  python3 scripts/gate_ledger.py record >> result.txt 2>&1; \
 	  [ $$rc -eq 0 ]; } && \

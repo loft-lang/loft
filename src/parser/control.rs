@@ -6348,15 +6348,10 @@ impl Parser {
                         self.data.def(e_nr).name()
                     );
                 }
-                // Skip this arm gracefully.
-                if self.lexer.peek_token("{") {
-                    self.lexer.token("{");
-                    while !self.lexer.peek_token("}") && !self.lexer.peek_token(";") {
-                        self.lexer.has_identifier();
-                        self.lexer.has_token(",");
-                    }
-                    self.lexer.token("}");
-                }
+                // Skip this arm gracefully: its `{ … }` field pattern whole, whatever tokens
+                // it holds — a loop consuming only names and commas never advanced past
+                // anything else (`=>`, `:`, a literal), and hung the parser.
+                self.skip_braced();
                 self.expect_match_arm_arrow();
                 let mut arm_code = Value::Null;
                 self.expression(&mut arm_code);
@@ -12703,7 +12698,9 @@ impl Parser {
         } else if let Type::Reference(_, _) | Type::Integer(_) | Type::Enum(_, true, _) = in_type {
             // I13: check for custom iterator protocol before falling back.
             let next_d_nr = self.data.find_fn(u16::MAX, "next", in_type);
-            if next_d_nr != u32::MAX {
+            // Only an `operator next` drives `for` (`@FR-Op-Mark`); the refusal is the
+            // iteration's (`parse_for_iter_setup`).
+            if next_d_nr != u32::MAX && self.data.def(next_d_nr).operator_form() {
                 let item = self.data.def(next_d_nr).returned().clone();
                 // @PLN102 D1 — `next(self) -> Item?` uses null as the iteration TERMINATOR: the
                 // loop stops the moment `next` yields null, so the body only ever binds a present

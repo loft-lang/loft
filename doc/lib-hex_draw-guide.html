@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>hex_draw guide — Loft, a programming language for small browser games</title>
+  <meta name="description" content="Getting started with the loft library hex_draw — a runnable guide that is itself a loft program, so every example in it compiles.">
+<link rel="canonical" href="https://loft-lang.org/loft/lib-hex_draw-guide.html">
+<meta property="og:title" content="hex_draw guide — Loft, a programming language for small browser games">
+<meta property="og:description" content="Getting started with the loft library hex_draw — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://loft-lang.org/loft/lib-hex_draw-guide.html">
+<meta property="og:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<meta property="og:site_name" content="Loft">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="hex_draw guide — Loft, a programming language for small browser games">
+<meta name="twitter:description" content="Getting started with the loft library hex_draw — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta name="twitter:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<link rel="stylesheet" href="style.css">
+<style>.playground-link{display:inline-block;margin:0.3em 0 0.8em;padding:4px 12px;background:#2563eb;color:#fff;border-radius:4px;text-decoration:none;font-size:0.85em}.playground-link:hover{filter:brightness(1.15)}@media print{.playground-link{display:none}}</style>
+</head>
+<body>
+<nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
+<h1>hex_draw guide</h1>
+<article>
+<p><a href="lib-hex_draw.html">← hex_draw</a> · <a href="lib-hex_draw-api.html">API reference</a> · <a href="lib-hex_draw-src.html">source</a></p>
+<p><code>hex_draw</code> turns a <code>Plan</code> (a rectangle on the hex lattice: a centre cell, a width and depth in hex steps, one of six rotations and a mirror) into the layers a building is stored as: FLOOR cells, WALL edges, OPENINGS on those edges and a ROOF height field.  And it reads a wall back: the edges of one side average to one exact flat surface, which is what a renderer draws and a game collides with.</p>
+<p>It is not the storage and not the plan.  <code>hex_field</code> holds the cells, edges and heights (<code>HexSet</code>, <code>EdgeSet</code>, <code>Labels</code>, <code>Heights</code>); <code>hex_form</code> owns <code>Plan</code> and the side runs.  Reach for <code>hex_draw</code> to draw a building into those, or to recover a wall's surface from them.</p>
+<pre><code><span class="kw">use</span> hex_draw::*;
+<span class="kw">use</span> hex_form::*;
+<span class="kw">use</span> hex_field::*;</code></pre>
+<pre><code><span class="kw">struct</span> <span class="en">House</span> { cells: <span class="en">HexSet</span>, edges: <span class="en">EdgeSet</span> }</code></pre>
+<p>A 4 x 2 house on cell (0, 0), floor type 1 and wall material 7.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">house</span>() -&gt; <span class="en">House</span> {
+  h = <span class="en">House</span> { cells: <span class="fn-call">hexset_chunk</span>(-<span class="nm">10</span>, -<span class="nm">10</span>, <span class="nm">21</span>, <span class="nm">21</span>), edges: <span class="fn-call">edgeset_new</span>(-<span class="nm">10</span>, -<span class="nm">10</span>, <span class="nm">21</span>, <span class="nm">21</span>) };
+  <span class="fn-call">draw_floor</span>(<span class="fn-call">plan</span>(), h.cells, <span class="fn-call">labels_new</span>(-<span class="nm">10</span>, -<span class="nm">10</span>, <span class="nm">21</span>, <span class="nm">21</span>), <span class="nm">1</span>);
+  <span class="fn-call">draw_walls</span>(h.cells, h.edges, <span class="nm">7</span>);
+  h
+}</code></pre>
+<pre><code><span class="kw">fn</span> <span class="fn-call">plan</span>() -&gt; <span class="en">Plan</span> { <span class="fn-call">plan_new</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">4</span>, <span class="nm">2</span>, <span class="nm">0</span>, <span class="kw">false</span>) }</code></pre>
+<pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {
+  cells = <span class="fn-call">hexset_chunk</span>(-<span class="nm">10</span>, -<span class="nm">10</span>, <span class="nm">21</span>, <span class="nm">21</span>);
+  types = <span class="fn-call">labels_new</span>(-<span class="nm">10</span>, -<span class="nm">10</span>, <span class="nm">21</span>, <span class="nm">21</span>);
+  edges = <span class="fn-call">edgeset_new</span>(-<span class="nm">10</span>, -<span class="nm">10</span>, <span class="nm">21</span>, <span class="nm">21</span>);
+  <span class="bi"><a href="stdlib-math.html">floor</a></span> = <span class="fn-call">draw_floor</span>(<span class="fn-call">plan</span>(), cells, types, <span class="nm">1</span>);
+  walls = <span class="fn-call">draw_walls</span>(cells, edges, <span class="nm">7</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"floor {floor} cells, walls {walls} edges, floor after walls {hexset_count(cells)}"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-math.html">floor</a></span> == <span class="nm">13</span> &amp;&amp; walls == <span class="nm">26</span>, <span class="st">"5 + 4 + 4 cells; every edge between a floor cell and outside"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">hexset_count</span>(cells) == <span class="nm">13</span>, <span class="st">"a wall is an edge, so it costs no floor"</span>);</code></pre>
+<p>Every section below is a function, and <code>main</code> calls each one: a section nothing calls still compiles, but its assertions never run.</p>
+<pre><code>  <span class="fn-call">four_sides</span>();
+  <span class="fn-call">a_door_is_a_material</span>();
+  <span class="fn-call">a_wall_reads_back_as_one_surface</span>();
+}</code></pre>
+<p>That prints:</p>
+<pre><code>  floor 13 cells, walls 26 edges, floor after walls 13
+</code></pre>
+<h2 id="four-sides">Four sides</h2>
+<p>A wall is the boundary of the floor: every edge between a floor cell and a cell outside it. That boundary is closed by construction at any size or rotation.  <code>side_edges</code> (from <code>hex_form</code>) sorts those edges onto the plan's four sides — 0 and 2 at the ends of the width, 1 and 3 along it — and gives each one its place <code>t</code> from 0 to 1 along the side.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">four_sides</span>() {
+  h = <span class="fn-call">house</span>();
+  counts: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];
+  <span class="kw">for</span> s <span class="kw">in</span> <span class="nm">0..4</span> { counts += [<span class="fn-call">side_run_len</span>(<span class="fn-call">side_edges</span>(<span class="fn-call">plan</span>(), h.cells, s))]; }
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"{counts}"</span> == <span class="st">"[5,8,5,8]"</span>, <span class="st">"the two ends and the two long sides"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"sides   : {counts} edges, 26 in all"</span>);
+}</code></pre>
+<h2 id="a-door-is-a-material">A door is a material</h2>
+<p><code>place_opening</code> puts an opening of <code>nedges</code> edges on a side, centred at <code>t</code>, by writing an opening material onto those wall edges: <code>OPEN_DOOR</code>, <code>OPEN_WINDOW</code> or <code>OPEN_GAP</code>.  The wall stays one continuous run, so a renderer can draw a frame there.  <code>OPEN_NONE</code> is the value 0, which means NO wall: writing it deletes the edges and splits the wall in two.  <code>wall_edge_count</code> counts the edges that still carry a material.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">a_door_is_a_material</span>() {
+  h = <span class="fn-call">house</span>();
+  placed = <span class="fn-call">place_opening</span>(<span class="fn-call">plan</span>(), h.cells, h.edges, <span class="nm">1</span>, <span class="nm">0.5</span>, <span class="nm">2</span>, <span class="en">OPEN_DOOR</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(placed == <span class="nm">2</span> &amp;&amp; <span class="fn-call">wall_edge_count</span>(h.cells, h.edges) == <span class="nm">26</span>, <span class="st">"a door: still 26 wall edges"</span>);</code></pre>
+<pre><code>  g = <span class="fn-call">house</span>();
+  <span class="fn-call">place_opening</span>(<span class="fn-call">plan</span>(), g.cells, g.edges, <span class="nm">1</span>, <span class="nm">0.5</span>, <span class="nm">2</span>, <span class="en">OPEN_NONE</span>);
+  holes = <span class="fn-call">wall_edge_count</span>(g.cells, g.edges);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(holes == <span class="nm">24</span>, <span class="st">"material 0 removed two edges"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"opening : a door keeps 26 wall edges; OPEN_NONE leaves {holes}"</span>);
+}</code></pre>
+<h2 id="a-wall-reads-back-as-one-surface">A wall reads back as one surface</h2>
+<p>A wall is stored as a zigzag strip of edges, but it is meant as one flat face. <code>surface_of</code> recovers that face by AVERAGING the side's edges, in exact integers: the summed edge vector is the direction and the mean edge midpoint is the position.  Nothing is fitted, so there is no tolerance.  <code>surface_is_exact</code> says the direction lies exactly on one of the lattice's twelve headings.  Side 1's eight edges have midpoints at y = 2.25, spread evenly either side of x = 0, so that is the surface's mean.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">a_wall_reads_back_as_one_surface</span>() {
+  h = <span class="fn-call">house</span>();
+  w = <span class="fn-call">surface_of</span>(<span class="fn-call">plan</span>(), h.cells, <span class="nm">1</span>);
+  mx = <span class="fn-call">surface_mean_x</span>(w);
+  my = <span class="fn-call">surface_mean_y</span>(w);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">surface_is_exact</span>(w), <span class="st">"the averaged direction is a lattice heading"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(mx == <span class="nm">0.0</span> &amp;&amp; my == <span class="nm">2.25</span>, <span class="st">"the mean of the eight edge midpoints"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"surface : side 1 is one flat face through ({mx}, {my})"</span>);
+}</code></pre>
+<h2 id="where-to-go-next">Where to go next</h2>
+<ul>
+<li><code>tests/02-worked-examples.loft</code> — <code>@HXD-001</code> … <code>@HXD-007</code>: one quad, not a strip; why exactness is a zero cross product; the mitered corner; a door is a material; counting wall edges in all six directions; a feature indexed by its exact <code>t</code>; and the gable roof.</li>
+<li><code>draw_roof</code> writes a roof height field into a <code>Heights</code>; <code>surface_quad</code> gives the mitered quad a renderer draws.</li>
+</ul>
+
+  </article>
+<script src="search-index.js"></script>
+<script src="search.js"></script>
+<script>
+(function(){
+var m={"Keywords":"keywords","Texts":"texts","Integers":"integers","Boolean":"boolean","Float":"float","Functions":"functions","Vector":"vector","Structs":"structs","Enums":"enums","Sorted":"sorted","Index":"index","Hash":"hash","File":"file","Lexer":"lexer","Parser":"parser","Libraries":"libraries","Store Locks":"store_locks","Parallel execution":"parallel_execution","Logging":"logging","Time":"time","Safety":"safety","JSON":"json","Generics":"generics","Closures":"closures","Coroutines":"coroutines","Tuples":"tuples","Match":"match","Formatting":"formatting"};
+var h=document.querySelector('h1');
+if(!h)return;
+var key=m[h.textContent];
+if(!key)return;
+var a=document.createElement('a');
+a.className='playground-link';
+a.href='playground.html?example='+key;
+a.textContent='\u25B6 Try in Playground';
+h.parentNode.insertBefore(a,h.nextSibling);
+})();
+</script>
+</body>
+</html>

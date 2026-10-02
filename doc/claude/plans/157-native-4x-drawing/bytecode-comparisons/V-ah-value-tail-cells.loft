@@ -198,7 +198,7 @@ fn t13() {
 // builder's result passed as an argument would decline the builder (t13).
 fn gpick<T>(a: T, b: T, c: boolean) -> T { if c { a } else { b } }
 struct Coin { cents: integer }
-fn OpLt(self: Coin, other: Coin) -> boolean { self.cents < other.cents }
+operator compare(self: Coin, other: Coin) -> Ordering { self.cents.compare(other.cents) }
 fn gmax<T: Ordered>(x: T, y: T) -> T { if x > y { x } else { y } }
 fn t14() {
   p = Pt { ptx: 1.5, pty: 2.5 };

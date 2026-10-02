@@ -753,6 +753,15 @@ check_examples() {
   # byte-for-byte; the library CI sets REPO_ROOT + CITE_ROOTS to the package under test.
   local registry="${EXAMPLES_REGISTRY:-scripts/example_repos.tsv}"
   local repo_root="${EXAMPLES_REPO_ROOT:-.}"
+  # An acronym `tag_re` cannot match registers tags nothing reads: no citation of it is
+  # checked here, and gendoc's `is_example_tag` leaves it in the published prose.  So the
+  # registry may only hold three uppercase letters (a `T2D` row did exactly that).
+  local bad_acr
+  bad_acr=$(awk -F'\t' '!/^#/ && NF >= 2 && $1 !~ /^[A-Z][A-Z][A-Z]$/ {print $1}' "$registry")
+  if [ -n "$bad_acr" ]; then
+    red "  malformed acronym(s) in $registry: $(echo $bad_acr) — a tag is three uppercase letters"
+    HITS_EXAMPLES=$((HITS_EXAMPLES + 1)); DRIFT=1
+  fi
   # ⚠ The default `default lib` is LOFT's own layout.  In a library repo those directories
   # do not exist, so an unset CITE_ROOTS scans nothing and the check passes VACUOUSLY —
   # which is the worst outcome for a local preflight, because it looks like a pass.  So a
@@ -1331,8 +1340,18 @@ _libraries_in_tree() {
 # `lib/git` under `tools/`.  Keying on the index therefore reported the three best-covered
 # in-tree libraries as carrying no examples at all.  The citation is the half that lives
 # beside the `pub fn`, so it is the half that answers "does this library cite examples?".
+#
+# A published library is read at its clone's `origin/main`, the ref the guide count reads:
+# the clone's WORKING TREE is whatever branch someone last left checked out, and read there
+# it named four libraries as owing a verdict whose citations had already merged.  With $2
+# (the clone) the source is read from that ref; without it, or with no such ref, from disk.
 _libraries_citations() {
-  grep -rhoa '// Example: @[A-Z][A-Z][A-Z]-[0-9][0-9][0-9]' "$1" --include='*.loft' 2>/dev/null | wc -l
+  local re='// Example: @[A-Z][A-Z][A-Z]-[0-9][0-9][0-9]'
+  if [ -n "${2:-}" ] && git -C "$2" rev-parse -q --verify origin/main >/dev/null 2>&1; then
+    git -C "$2" grep -h -o -a -e "$re" origin/main -- "${1#"$2"/}/*.loft" 2>/dev/null | wc -l
+  else
+    grep -rhoa "$re" "$1" --include='*.loft' 2>/dev/null | wc -l
+  fi
 }
 
 # Print one grouped line of the missing report, wrapping a long member list under a hanging
@@ -1425,8 +1444,12 @@ check_libraries_progress() {
     printf '%s\tin-tree\tin-tree\t%s\t%s\t%s\t-\t-\n' "$k" "$k" "${sha:--}" "$n"
   done < <(_libraries_in_tree) >> "$pop"
   if [ $have_pub -eq 1 ]; then
+    # `loft` is in the registry but is the toolchain, not a library: its documentation is the
+    # whole site, reviewed through `make features-review` and the release checklist.  The
+    # guide count below excludes it by name for the same reason; counted here it read as a
+    # library in repo `?` that was "not checked out", on every run.
     jq -r --slurpfile r "$reg" '
-      to_entries[] | . as $p |
+      to_entries[] | select(.key != "loft") | . as $p |
       (($r[0].packages[$p.key].homepage // "")
         | capture("github\\.com/[^/]+/(?<repo>[^/]+)/tree/[^/]+/(?<dir>.+)$")
         // {repo: "?", dir: $p.key}) as $loc |
@@ -1459,7 +1482,8 @@ check_libraries_progress() {
     if [ "$kind" = "in-tree" ]; then tree="$dir"; row="$EXAMPLES_EXEMPT_FILE"
     else tree="$LIBRARIES_SIBLINGS/$group/$dir"; row="$LIBRARIES_SIBLINGS/$group/$EXAMPLES_EXEMPT_FILE"; fi
     if [ ! -e "$tree" ]; then n_blindpath=$((n_blindpath + 1)); continue; fi
-    cites=$(_libraries_citations "$tree")
+    if [ "$kind" = "in-tree" ]; then cites=$(_libraries_citations "$tree")
+    else cites=$(_libraries_citations "$tree" "$LIBRARIES_SIBLINGS/$group"); fi
     [ "${cites:-0}" -gt 0 ] && continue
     row=$(awk -F'\t' -v p="$dir" '$1 !~ /^#/ && $1 == p {print; exit}' "$row" 2>/dev/null)
     if [ -z "$row" ]; then

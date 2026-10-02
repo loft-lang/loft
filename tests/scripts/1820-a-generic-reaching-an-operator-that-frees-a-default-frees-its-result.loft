@@ -5,11 +5,11 @@
 // reads it inline, as the concrete call does (loft#1820, `(G-Mono)`).
 //
 //   value struct P { x: integer }
-//   fn OpMin(self: P, o: P?) -> P { P { x: self.x - (o ?? P { x: 0 }).x } }
+//   operator minus(self: P, o: P?) -> P { P { x: self.x - (o ?? P { x: 0 }).x } }
 //   fn diff<T: Subtractable>(a: T, b: T) -> T { a - b }
 //   diff(p, q).x            → 4, and one record left at program exit per call
 //
-// `(p - q).x` and `OpMin(p, q).x` were clean.  An inline result is lifted into a temp that is
+// `(p - q).x` and `minus(p, q).x` were clean.  An inline result is lifted into a temp that is
 // freed only when the call is proven to hand back a store the caller owns, and for an instance
 // whose tail is a call that proof asks the delegate.  Two answers were wrong.
 //
@@ -38,6 +38,7 @@
 // ⚠ A lift that fires where it should not frees the CALLER's record, so every cell re-reads its
 // operands after the loop and writes through them: a freed `p` answers another value there.
 //
+// (Measured on the `fn Op…` spelling: @C132 re-spelled the cells to `operator` methods, same values.)
 // @falsified-by: tests/falsified/1820-a-generic-reaching-an-operator-that-frees-a-default-frees-its-result.patch — interpret leaked kt=91 E×160, kt=92 Vc×160, kt=97 Rj×160, kt=93 Rc×120, kt=94 Vi×120 ... and 4 more -> clean, native leaked kt=91 E×160, kt=92 Vc×160, kt=97 Rj×160, kt=93 Rc×120, kt=94 Vi×120 ... and 4 more -> clean
 
 value struct Vc { x: integer }
@@ -52,31 +53,31 @@ value struct Vd { x: integer }
 enum E { A { n: integer }, B { s: text } }
 
 // Builds a default, with `??` and with an `if`.
-fn OpMin(self: Vc, o: Vc?) -> Vc { Vc { x: self.x - (o ?? Vc { x: 0 }).x } }
-fn OpMin(self: Rc, o: Rc?) -> Rc { Rc { x: self.x - (o ?? Rc { x: 0 }).x } }
-fn OpMin(self: Vi, o: Vi?) -> Vi {
+operator minus(self: Vc, o: Vc?) -> Vc { Vc { x: self.x - (o ?? Vc { x: 0 }).x } }
+operator minus(self: Rc, o: Rc?) -> Rc { Rc { x: self.x - (o ?? Rc { x: 0 }).x } }
+operator minus(self: Vi, o: Vi?) -> Vi {
   d = if o == null { Vi { x: 0 } } else { o };
   Vi { x: self.x - d.x }
 }
-fn OpMin(self: Ri, o: Ri?) -> Ri {
+operator minus(self: Ri, o: Ri?) -> Ri {
   d = if o == null { Ri { x: 0 } } else { o };
   Ri { x: self.x - d.x }
 }
 // Hands back `self` on every path.
-fn OpMin(self: Vs, _o: Vs?) -> Vs { self }
+operator minus(self: Vs, _o: Vs?) -> Vs { self }
 // Mints on one path and hands back `self` on the other.
-fn OpMin(self: Rj, o: Rj?) -> Rj {
+operator minus(self: Rj, o: Rj?) -> Rj {
   d = o ?? Rj { x: 0 };
   if d.x > 100 { return self; }
   Rj { x: self.x - d.x }
 }
 // Hands back the other parameter.
-fn OpMin(self: Vo, o: Vo?) -> Vo { o ?? self }
+operator minus(self: Vo, o: Vo?) -> Vo { o ?? self }
 // Hands back `self`, for the chain: a type of its own, because a write through a bound result
 // elsewhere changes how `--native` returns every record of that type.
-fn OpMin(self: Vd, _o: Vd?) -> Vd { self }
+operator minus(self: Vd, _o: Vd?) -> Vd { self }
 // No default: ends in a bare buffer, which was lifted before the fix.
-fn OpMin(self: Rn, _o: Rn?) -> Rn { Rn { x: self.x - 1 } }
+operator minus(self: Rn, _o: Rn?) -> Rn { Rn { x: self.x - 1 } }
 
 interface Pick {
   fn pick(self: Self, o: Self) -> Self
@@ -194,7 +195,7 @@ fn test_the_shapes_one_axis_away_are_unmoved() {
     assert(r.x == 4, "bound {r.x}");
     // The concrete spellings, operator and function; the concrete borrow is not freed.
     assert((vp - vq).x == 4, "concrete operator {(vp - vq).x}");
-    assert(OpMin(ip, iq).x == 40, "concrete function {OpMin(ip, iq).x}");
+    assert(minus(ip, iq).x == 40, "concrete function {minus(ip, iq).x}");
     assert((sp - sq).x == 7, "concrete borrow {(sp - sq).x}");
     // No default: lifted before the fix.
     assert(diff(np, nq).x == 10, "no default {diff(np, nq).x}");

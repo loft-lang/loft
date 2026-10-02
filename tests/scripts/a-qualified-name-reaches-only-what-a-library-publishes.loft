@@ -1,0 +1,35 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @ARGS: --lib tests/lib
+//
+// @FR-F-Surface (loft#1848) — `lib::name` reaches what `use lib::*` would and nothing more: an item `lib`
+// declares without `pub` is not its surface, and neither is a name `lib` only imports for its
+// own use (@C98).  Each refusal names the cure in one edit.  The cells that must keep
+// working are in a-qualified-name-reaches-what-a-library-publishes.loft.
+//
+// @falsified-at: 0c390b25f — interpret exit 1 -> 0, interpret expectations FAIL/5 -> 4/5 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/5 -> 4/5 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/a-qualified-name-reaches-only-what-a-library-publishes.patch — interpret exit 1 -> 0, interpret expectations FAIL/5 -> 4/5 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/5 -> 4/5 (the suite's verdict, not a count of matches)
+//   CHANNEL: the expectations — on the control every qualified reach compiles and runs, so
+//   no pin meets its refusal.
+//   WITNESS: `privlib::HID_C` answers 22 there.
+//   ARMED: nothing.
+//   HOLDS: every cell is a refusal on this tree, so leak, panic and value cannot move; only
+//   which message each pin meets does.
+use privlib;
+use c98_math;
+
+// @EXPECT_ERROR: `HID_C` is not `pub` in `privlib`, so `privlib::HID_C` cannot reach it
+fn hidden_constant() -> integer { privlib::HID_C }
+
+// @EXPECT_ERROR: `hid_f` is not `pub` in `privlib`, so `privlib::hid_f` cannot reach it
+fn hidden_function() -> integer { privlib::hid_f() }
+
+// @EXPECT_ERROR: `HidS` is not `pub` in `privlib`, so `privlib::HidS` cannot reach it
+fn hidden_struct() -> integer { privlib::HidS { b: 6 }.b }
+
+// @EXPECT_ERROR: `HidE` is not `pub` in `privlib`, so `privlib::HidE` cannot reach it
+fn hidden_enum() -> text { "{privlib::HidE.Hb}" }
+
+// @EXPECT_ERROR: `privlib::c98_len` reaches a name `privlib` only imports for its own use — it is `c98_math`'s, and `privlib` does not pass it on.
+fn privately_imported() -> integer { privlib::c98_len(c98_math::C98Vec { cx: 1, cy: 2, cz: 3 }) }

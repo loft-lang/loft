@@ -1930,6 +1930,24 @@ use a separate collection or add after the loop"
                 && self.vars.tp(var_nr).depend().is_empty())
     }
 
+    /// Is `src`, the source of a whole-value bind, a PLACE — a variable, or a projection
+    /// chain out of one — so the bind COPIES it (`(B-Copy)`, loft#1840)?  A call is never one,
+    /// whatever its first argument: a fresh value from a call or a literal BUILDS the local.
+    /// A source this declines (a `??` over a place, a call handing its argument back) keeps
+    /// the local unmarked, which costs a `lost-write` that might have fired and never one
+    /// that names a copy that did not happen.
+    fn is_copied_place(&self, src: &Value) -> bool {
+        match src.unspan() {
+            Value::Var(_) => true,
+            // A text field read is a VALUE read to the projection walk, and a place all the
+            // same: `t = s.name` copies the field's text.
+            Value::Call(d, args) if self.data.def(*d).name() == "OpGetText" => {
+                args.first().is_some_and(|base| self.is_copied_place(base))
+            }
+            _ => crate::use_analysis::projection_container_var(&self.data, src).is_some(),
+        }
+    }
+
     /// The lowering a whole-value vector bind's verdict asks for, applied in place to
     /// `code`, the source, for the local `to` (`var_nr`): nothing for the identity, else the
     /// local's own store — allocated when it owns none, cleared when it does — refilled with
@@ -1956,6 +1974,12 @@ use a separate collection or add after the loop"
         if matches!(vec_bind, VecBind::SelfAssign) {
             *code = Value::Insert(Vec::new());
             return;
+        }
+        // loft#1840 — `(B-Copy)`: this local now holds a COPY of a place, so a `+=` into it
+        // that nothing reads is a lost write.  A source that is no place (a literal, a call's
+        // fresh value) builds the local rather than copying into it.
+        if self.is_copied_place(code) && var_nr < self.vars.count() {
+            self.vars.mark_copy_bound(var_nr);
         }
         let elm_tp_clone = (**elm_tp).clone();
         let dense = Type::Vector(Box::new(elm_tp_clone.clone()), Deps::none());
@@ -4053,6 +4077,18 @@ use a separate collection or add after the loop"
         let link_tuple = self.ref_tuple_expected(op, to);
         let expect = link_tuple.as_ref().unwrap_or(f_type);
         let mut s_type = self.parse_operators(expect, code, &mut parent_tp, 0);
+        // loft#1840 — `(B-Copy)` for a text: `t = s.name` copies the text into `t`, so a `+=`
+        // into it that nothing reads is a lost write.  A text has no copy lowering of its own
+        // (the bind is the `Set`), so the verdict is recorded here, from the same place test
+        // the collection binds use.
+        if op == "="
+            && matches!(s_type.base(), Type::Text(_))
+            && let Value::Var(v) = to.unspan()
+            && *v < self.vars.count()
+            && self.is_copied_place(code)
+        {
+            self.vars.mark_copy_bound(*v);
+        }
         // `@FR-L-Null-Which` — a LOCAL spells `S?` as the POINTER (`Optional(Reference(S))`,
         // `nullref` for absence); the tagged `__nullable<S>` is a SLOT's spelling — an embedded
         // field, a vector element, a tuple member.  A projection of such a slot bound to a
@@ -6678,6 +6714,13 @@ use a separate collection or add after the loop"
                 "OpReplaceKeyed",
                 &[code.clone(), to.clone(), Value::Int(tp_val)],
             );
+            // loft#1840 — `(B-Copy)` for the keyed kinds, as `lower_vec_copy_bind` records it.
+            if self.is_copied_place(code)
+                && let Value::Var(v) = to.unspan()
+                && *v < self.vars.count()
+            {
+                self.vars.mark_copy_bound(*v);
+            }
             // The deep-copy gives `s` its OWN store, so it no longer borrows
             // the RHS.  Strip the `s["ns"]` lifetime dep the assignment set
             // up — otherwise scope analysis treats `s` as a borrow and
@@ -8224,6 +8267,16 @@ use a separate collection or add after the loop"
                     to = Value::Var(link);
                     *code = Value::Var(link);
                     f_type = self.vars.tp(link).clone();
+                }
+                // loft#1840 — the program's own append into a collection or a text, recorded
+                // on the local it lands in (a scalar's `+=` rewrites the whole value instead): every lowering below emits ops a copy's own fill emits too,
+                // so the `lost-write` lint reads this mark rather than the ops.
+                if op == "+="
+                    && (Self::is_collection_type(&f_type) || matches!(f_type.base(), Type::Text(_)))
+                    && let Some(root) = lhs_root_var(&to)
+                    && root < self.vars.count()
+                {
+                    self.vars.mark_user_appended(root);
                 }
                 // loft#1212 — an EXPLICIT `??` coalesce is not a place.  `(E-Asgn-Discharge)`
                 // (@FR-E-Asgn-Discharge) says so in as many words: *"an explicit `(a ?? d)`

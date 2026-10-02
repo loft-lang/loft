@@ -1,0 +1,40 @@
+diff --git b/src/database/search.rs a/src/database/search.rs
+index 6b84ee919..f4026638e 100644
+--- b/src/database/search.rs
++++ a/src/database/search.rs
+@@ -674,14 +674,27 @@ impl Stores {
+         };
+         let existing = self.find(coll, db, &key);
+         if existing.rec != 0 {
+-            // `(Col-Assign)`: a record already under the key is REPLACED, which is a removal
+-            // (@FR-Col-Remove) — so it takes the one removal home, which unlinks and releases
+-            // in the order each kind needs.  Its own copy released the record's claims before
+-            // unlinking it: for a hash with a TEXT key that freed the key the unlink hashes, the
+-            // bucket search missed, and the old record stayed in the table beside the new one
+-            // (`len` 2 after two writes under one key, on both backends, depending on the
+-            // seed).
+-            self.remove_owned(coll, &existing, db);
++            // dedup: free the old record's nested heap, then unlink it.
++            self.remove_claims(&existing, content_tp);
++            self.remove(coll, &existing, db);
++            // A hash record is a SEPARATE store claim, so the unlink above
++            // leaves it orphaned — reclaim it (otherwise repeated
++            // `coll[k] = v` replaces grow the store unboundedly).  Sorted /
++            // index records are inline in the vector / freed by their own
++            // `remove`, so no extra delete there.  A `Radix` element holds its
++            // own block exactly as a hash element does (the same pair
++            // `remove_owned` calls `own_block`), so it needs the same reclaim.
++            // @PLN135 arc H — a hash entry's storage goes back to its ARENA; a
++            // `Store::delete` here would hand the whole chunk (and every live entry
++            // in it) to the free tree.
++            if matches!(self.types[db as usize].parts, Parts::Hash(_, _)) {
++                hash::free_entry(coll, &existing, &mut self.allocations);
++            } else if matches!(
++                self.types[db as usize].parts,
++                Parts::Radix(_, _) | Parts::Trie(_, _)
++            ) {
++                self.store_mut(coll).delete(existing.rec);
++            }
+         }
+         // insert: claim a fresh record, deep-copy `value` into it, link by key.
+         let new = self.record_new(parent, parent_tp, field);

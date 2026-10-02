@@ -243,10 +243,17 @@ pub fn transform(canvas: Canvas, mat: math.Mat4) -> Canvas {
 When the compiler encounters `use math;` it searches:
 
 1. **Local `src/`** — sibling files in the same package
-2. **`[dependencies]` paths** — `path = "..."` entries from `loft.toml`
+2. **`[dependencies]` paths** — `path = "..."` entries from `loft.toml`: the importing
+   package's, then the **root project's**, so a path the root declares answers a `use`
+   anywhere in the program, however deep (`tests/transitive_binding.rs`)
 3. **Package lib directories** — `~/.loft/lib/math/`, project `lib/math/`
 4. **`--lib` CLI flag** — explicit search directories
 5. **`LOFT_LIB` environment variable**
+
+A package loads once, so the copy chosen is the program's; every package that `use`s it
+must accept it.  The importing package's own range is checked against that copy wherever it
+was chosen — at its first `use` or a later one — and a copy outside it is refused, naming
+both declarations, rather than loaded anyway.
 
 The first match wins, and a project `lib/` outranks `--lib`
 (`advice[lib-flag-outranked]` says so when it happens).  If the dependency has its own

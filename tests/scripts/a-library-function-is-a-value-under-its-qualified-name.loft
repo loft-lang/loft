@@ -1,0 +1,44 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @ARGS: --lib tests/lib
+//
+// A library function is a function VALUE under its qualified name, as its bare spelling is
+// under a glob import: `apply(fnvaluelib::twice, 4)` beside `apply(twice, 4)`.  A function is
+// stored `n_<name>`, so the qualified-definition lookup never found it, and the spelling fell
+// through to the unknown-variable arm — *"Unknown variable 'fnvaluelib'"*, naming the library —
+// which left a plain `use lib;` (the import C98 asks for) no way to pass a library function.
+//
+// The cells: an argument, a bound local, a struct field, a returned value, a vector element, a
+// text-returning function (its hidden return buffer), a local function of the same name beside
+// the qualified one (each answers its own), an alias import, and a constant beside them.
+// `a-library-function-value-refusals.loft` holds the three refusals.
+//
+// @falsified-at: 6399e2ad9 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-library-function-is-a-value-under-its-qualified-name.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the control refuses the program ("Unknown variable 'fnvaluelib'").
+//   ARMED: nothing.
+//   HOLDS: every assertion here; the values were hand-computed (16 + 108 for the same-named pair).
+use fnvaluelib;
+use fnvaluelib as fv;
+
+struct Holder { f: fn(integer) -> integer }
+fn apply(f: fn(integer) -> integer, x: integer) -> integer { f(x) }
+fn speak(f: fn(text) -> text, s: text) -> text { f(s) }
+fn twice(x: integer) -> integer { x + 100 }
+fn pick() -> fn(integer) -> integer { fnvaluelib::twice }
+
+fn main() {
+  assert(apply(fnvaluelib::twice, 4) == 8, "an argument");
+  f = fnvaluelib::twice;
+  assert(f(5) == 10, "a bound local");
+  h = Holder { f: fnvaluelib::twice };
+  assert(apply(h.f, 6) == 12, "a struct field");
+  assert(apply(pick(), 7) == 14, "a returned value");
+  v = [fnvaluelib::twice, twice];
+  assert(apply(v[0], 8) == 16 && apply(v[1], 8) == 108, "a vector element, beside the local twice");
+  assert(apply(twice, 1) == 101, "the bare name is the local function");
+  assert(speak(fnvaluelib::greet, "bo") == "hi bo", "a text-returning function");
+  assert(apply(fv::twice, 9) == 18, "under an alias import");
+  assert(fnvaluelib::SEVEN == 7, "a qualified constant is unchanged");
+  println("qualified fn values ok");
+}

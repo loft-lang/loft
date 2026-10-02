@@ -889,8 +889,9 @@ fn parse_sections(source: &str) -> Vec<DocSection> {
 // ─── Syntax highlighter ───────────────────────────────────────────────────────
 
 const KW: &[&str] = &[
-    "fn", "if", "else", "for", "in", "return", "break", "continue", "struct", "enum", "pub", "use",
-    "type", "as", "not", "null", "true", "false", "and", "or", "limit", "default", "virtual",
+    "fn", "operator", "if", "else", "for", "in", "return", "break", "continue", "struct", "enum",
+    "pub", "use", "type", "as", "not", "null", "true", "false", "and", "or", "limit", "default",
+    "virtual",
 ];
 const TY: &[&str] = &[
     "integer",
@@ -1943,6 +1944,8 @@ pub fn extract_api_items(content: &str) -> Vec<crate::registry_index::ApiItem> {
             // `pub type` is how a type alias is written; `pub value struct` is a struct
             // (`time::DateTime`) — both were missing from search.
             sig.starts_with("pub fn ")
+                // @PLN182 — an `operator` definition is a method under its own keyword.
+                || sig.starts_with("pub operator ")
                 || sig.starts_with("pub struct ")
                 || sig.starts_with("pub value struct ")
                 || sig.starts_with("pub enum ")
@@ -2013,11 +2016,10 @@ fn render_api_section_body(section: &PkgApiSection) -> String {
         if !shown.is_empty() {
             writeln!(body, "<pre><code>{}</code></pre>", html_escape(&shown)).expect("");
         }
-        if !item.doc.is_empty() {
-            body.push_str("<p>");
-            body.push_str(&item.doc.join(" "));
-            body.push_str("</p>\n");
-        }
+        // @PLN183 — the shared paragraph renderer: escaped, `spans` as code, citations
+        // dropped.  The lines were joined into one raw `<p>`, so a doc saying `vector<T>`
+        // reached the browser as an unknown `<T>` tag and the reader saw "vector".
+        body.push_str(&crate::doc_render::paragraphs_html(&item.doc.join("\n")));
         body.push_str("</div>\n");
     }
     body

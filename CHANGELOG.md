@@ -12,6 +12,82 @@ invariants, internal phase numbers)?  See
 
 ---
 
+## 2026-11
+
+### May need a change in your code
+
+**`operator` is a keyword.**  It starts a definition an operator form reaches (below), so a
+variable, field or function named `operator` no longer compiles: rename it.
+
+**`compare` and `then` are stdlib methods.**  `x.compare(y)` answers `Less`, `Equal` or
+`Greater` (the new `Ordering` enum) for an `integer`, `single`, `float`, `text` or `character`,
+and `a.compare(b).then(c.compare(d))` orders by a second value when the first is equal.  A
+program that defines its own `compare` or `then` for one of those types is refused with "Cannot
+redefine": rename yours, or use the stdlib's.
+
+**A function named for an operator no longer gives a type that operator.**  `fn OpLt`, `OpAdd`,
+`OpMin`, `OpMul`, `OpEq`, `OpNe`, `OpIndex`, `OpConvXFromY` and the rest are ordinary functions
+now, callable by their name and reached by no operator, `[…]`, `as` or bound.  Each definition
+says so where it is written, naming what to write instead — a warning for `OpEq` / `OpNe` /
+`OpNot`, whose operators keep answering on their own, an advice for the rest.  The cures, one
+line each:
+
+- `fn OpLt` / `OpLe` / `OpGt` / `OpGe` → one `operator compare(self: T, other: T) -> Ordering`
+  (`self.ms.compare(other.ms)`), which gives all four.
+- `fn OpAdd` / `OpMin` (two operands) / `OpMul` → `operator plus` / `minus` / `times`, same
+  parameters.
+- `fn OpEq` / `OpNe` → delete them: `==` and `!=` compare the fields of every type, always,
+  and no type redefines them.  If yours compared something else, keep it as a named method
+  (`same_second(self, other)`) and call that.
+- `fn OpConvTFromS(v: S) -> T` → `operator to_t(self: S) -> T`, with `T`'s name in snake case
+  (`OpConvDateTimeFromText` → `operator to_date_time(self: text) -> DateTime`).
+- `fn to_text(self: T…)` and `fn next(self: T)` → the same with `operator` in place of `fn`;
+  `"{x}"` and `for e in x` reach only those.
+- `fn OpIndex` → a named method, called as `x.at(i)`: `[…]` belongs to the built-in
+  collections, and `x[i]` on your type is refused naming that.
+- the unary `-` (`fn OpMin(self: T)`) → `operator negate(self: T) -> V`; `fn OpDiv` /
+  `OpRem` → `operator divided_by` / `remainder`; the bit operators → a named method (a type
+  cannot define them yet).
+
+A library that defined any of these needs a new release; `time` 0.4.0 and `server` 0.7.3 are
+written this way.
+
+**An interface names the method that meets it.**  `op <` in an interface body is refused: write
+`operator compare(self: Self, other: Self) -> Ordering`, and likewise `operator plus`, `minus`,
+`times`, `divided_by`, `remainder` and `negate` for `+`, `-`, `*`, `/`, `%` and a unary `-`.
+`op ==` needs nothing: `Equatable` declares no member, since every type meets it.  The stdlib's
+`Ordered`, `Addable`, `Subtractable` and `Numeric` are spelled so.
+
+**`integer`, `single` and `float` have methods `plus`, `minus`, `times`, `negate`, `divided_by`
+and `remainder`** (and every ordered built-in a `compare`), the `operator` definitions by which
+they meet those interfaces.  A program defining its own function of one of those names whose
+first parameter is such a number is refused with "Cannot redefine": rename it.
+
+### New
+
+**Your own type can use `<`, `<=`, `>` and `>=`.**  Write one method with `operator` in place
+of `fn` — `pub operator compare(self: Date, other: Date) -> Ordering { self.ms.compare(other.ms)
+}` — and the four comparisons, `sort()`, `min_of` and `max_of` all use it.
+
+**…and `+`, `-` and `*`.**  `operator plus`, `operator minus` and `operator times` give a type
+the three operators, `+=`, `-=` and `*=` with them, and `sum` over a vector of it.  A type may
+have several, one per right-hand type: a date minus a date, and a date minus a duration.
+
+**…and `/`, `%` and a unary `-`.**  `operator divided_by`, `remainder` and `negate` give a type
+`/`, `%` and `-x`; `/=` and `%=` come with them.  `==` is not among them: it compares the fields
+of every type, always, so `operator equals` is refused naming a named method as the cure.
+
+**…and `as`.**  `operator to_date_time(self: text) -> DateTime` makes `"2026-07-08" as DateTime`
+work; the name after `to_` is the target type in snake case.  A conversion INTO your type may
+take a foreign `self` (`text`, `integer`), so only your package can define it.
+
+**loft trusts the certificates your machine trusts** (system store, `SSL_CERT_FILE`), so it
+works behind a TLS-inspecting proxy.  Installing a package, fetching a remote store or calling a
+web service checks a server against the bundled roots and the machine's own store, as curl and
+git do.
+
+---
+
 ## 2026-10
 
 The **one-meaning** release.  A spelling now means one thing wherever it is written: `==`

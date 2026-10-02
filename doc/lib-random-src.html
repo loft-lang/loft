@@ -23,8 +23,8 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>random source</h1>
 <article>
-<p><a href="lib-random.html">← random</a> · <a href="lib-random-api.html">API reference</a> · version 0.3.3</p>
-<p class="lib-legend">5 file(s), 536 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<p><a href="lib-random.html">← random</a> · <a href="lib-random-api.html">API reference</a> · version 0.3.4</p>
+<p class="lib-legend">5 file(s), 539 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
 <table class="lib-table">
@@ -32,10 +32,10 @@
 <tr><td><code>rand</code> <span class="search-kind">fn</span></td><td><a href="#src-random-loft-L11">11</a></td><td><a href="#tests-worked-examples-loft-L30">RND-001</a></td><td><a href="#tests-15-random-loft-L11">11</a> <a href="#tests-15-random-loft-L16">16</a> <a href="#tests-15-random-loft-L18">18</a> <a href="#tests-15-random-loft-L20">20</a> <a href="#tests-15-random-loft-L23">23</a> <a href="#tests-15-random-loft-L24">24</a> … (34 total)</td></tr>
 <tr><td><code>rand_seed</code> <span class="search-kind">fn</span></td><td><a href="#src-random-loft-L21">21</a></td><td><a href="#tests-worked-examples-loft-L30">RND-001</a></td><td><a href="#tests-15-random-loft-L8">8</a> <a href="#tests-15-random-loft-L22">22</a> <a href="#tests-15-random-loft-L25">25</a> <a href="#tests-15-random-loft-L26">26</a> <a href="#tests-15-random-loft-L27">27</a> <a href="#tests-15-random-loft-L29">29</a> … (30 total)</td></tr>
 <tr><td><code>rand_indices</code> <span class="search-kind">fn</span></td><td><a href="#src-random-loft-L28">28</a></td><td><a href="#tests-worked-examples-loft-L30">RND-001</a></td><td><a href="#tests-15-random-loft-L36">36</a> <a href="#tests-15-random-loft-L37">37</a> <a href="#tests-15-random-loft-L41">41</a> <a href="#tests-15-random-loft-L42">42</a> <a href="#tests-15-random-loft-L50">50</a> <a href="#tests-15-random-loft-L53">53</a> … (21 total)</td></tr>
-<tr><td><code>RandStream</code> <span class="search-kind">struct</span></td><td><a href="#src-random-loft-L52">52</a></td><td>—</td><td><a href="#src-random-loft-L62">62</a> <a href="#src-random-loft-L69">69</a> <a href="#src-random-loft-L76">76</a> <a href="#src-random-loft-L97">97</a> <a href="#tests-worked-examples-loft-L26">26</a> <a href="#tests-worked-examples-loft-L65">65</a></td></tr>
-<tr><td><code>seed_stream</code> <span class="search-kind">fn</span></td><td><a href="#src-random-loft-L62">62</a></td><td><a href="#tests-worked-examples-loft-L99">RND-003</a></td><td><a href="#tests-16-randstream-loft-L7">7</a> <a href="#tests-16-randstream-loft-L14">14</a> <a href="#tests-16-randstream-loft-L24">24</a> <a href="#tests-16-randstream-loft-L29">29</a> <a href="#tests-16-randstream-loft-L34">34</a> <a href="#tests-16-randstream-loft-L37">37</a> … (29 total)</td></tr>
-<tr><td><code>get</code> <span class="search-kind">fn</span></td><td><a href="#src-random-loft-L76">76</a></td><td><a href="#tests-worked-examples-loft-L68">RND-002</a></td><td><a href="#src-random-loft-L104">104</a> <a href="#tests-16-randstream-loft-L8">8</a> <a href="#tests-16-randstream-loft-L9">9</a> <a href="#tests-16-randstream-loft-L17">17</a> <a href="#tests-16-randstream-loft-L20">20</a> <a href="#tests-16-randstream-loft-L25">25</a> … (39 total)</td></tr>
-<tr><td><code>indices</code> <span class="search-kind">fn</span></td><td><a href="#src-random-loft-L97">97</a></td><td><a href="#tests-worked-examples-loft-L99">RND-003</a></td><td><a href="#tests-16-randstream-loft-L54">54</a> <a href="#tests-16-randstream-loft-L80">80</a> <a href="#tests-16-randstream-loft-L91">91</a> <a href="#tests-16-randstream-loft-L96">96</a> <a href="#tests-16-randstream-loft-L98">98</a> <a href="#tests-16-randstream-loft-L101">101</a> … (8 total)</td></tr>
+<tr><td><code>RandStream</code> <span class="search-kind">struct</span></td><td><a href="#src-random-loft-L55">55</a></td><td>—</td><td><a href="#src-random-loft-L65">65</a> <a href="#src-random-loft-L72">72</a> <a href="#src-random-loft-L79">79</a> <a href="#src-random-loft-L100">100</a> <a href="#tests-worked-examples-loft-L26">26</a> <a href="#tests-worked-examples-loft-L65">65</a></td></tr>
+<tr><td><code>seed_stream</code> <span class="search-kind">fn</span></td><td><a href="#src-random-loft-L65">65</a></td><td><a href="#tests-worked-examples-loft-L99">RND-003</a></td><td><a href="#tests-16-randstream-loft-L7">7</a> <a href="#tests-16-randstream-loft-L14">14</a> <a href="#tests-16-randstream-loft-L24">24</a> <a href="#tests-16-randstream-loft-L29">29</a> <a href="#tests-16-randstream-loft-L34">34</a> <a href="#tests-16-randstream-loft-L37">37</a> … (29 total)</td></tr>
+<tr><td><code>get</code> <span class="search-kind">fn</span></td><td><a href="#src-random-loft-L79">79</a></td><td><a href="#tests-worked-examples-loft-L68">RND-002</a></td><td><a href="#src-random-loft-L107">107</a> <a href="#tests-16-randstream-loft-L8">8</a> <a href="#tests-16-randstream-loft-L9">9</a> <a href="#tests-16-randstream-loft-L17">17</a> <a href="#tests-16-randstream-loft-L20">20</a> <a href="#tests-16-randstream-loft-L25">25</a> … (39 total)</td></tr>
+<tr><td><code>indices</code> <span class="search-kind">fn</span></td><td><a href="#src-random-loft-L100">100</a></td><td><a href="#tests-worked-examples-loft-L99">RND-003</a></td><td><a href="#tests-16-randstream-loft-L54">54</a> <a href="#tests-16-randstream-loft-L80">80</a> <a href="#tests-16-randstream-loft-L91">91</a> <a href="#tests-16-randstream-loft-L96">96</a> <a href="#tests-16-randstream-loft-L98">98</a> <a href="#tests-16-randstream-loft-L101">101</a> … (8 total)</td></tr>
 </table>
 <h2 id="src-random-loft">src/random.loft</h2>
 <pre class="src"><code><span id="src-random-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -63,7 +63,7 @@
 <span id="src-random-loft-L23"></span>
 <span id="src-random-loft-L24"><span class="cm">// Returns a vector of n integers [0, 1, ..., n-1] in a random order.</span></span>
 <span id="src-random-loft-L25"><span class="cm">// Useful for random iteration, shuffling, or sampling without replacement.</span></span>
-<span id="src-random-loft-L26"><span class="cm">// Returns an empty vector when n is 0 or null.</span></span>
+<span id="src-random-loft-L26"><span class="cm">// Returns an empty vector when n is 0, negative or null.</span></span>
 <span id="src-random-loft-L27"><span class="cm">// Example: @RND-001 — this draws from the shared global generator too.</span></span>
 <span id="src-random-loft-L28"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">rand_indices</span>(n: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;;</span>
 <span id="src-random-loft-L29">#native</span>
@@ -89,68 +89,71 @@
 <span id="src-random-loft-L49"><span class="cm">//   v = r.get(1, 6);          // a die roll from THIS stream</span></span>
 <span id="src-random-loft-L50"><span class="cm">//   p = r.indices(52);        // a shuffled deck from THIS stream</span></span>
 <span id="src-random-loft-L51"></span>
-<span id="src-random-loft-L52"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">RandStream</span> {</span>
-<span id="src-random-loft-L53">  s1: <span class="ty"><a href="stdlib-types.html">integer</a></span>,   <span class="cm">// Lehmer state A in [1, 2147483562]</span></span>
-<span id="src-random-loft-L54">  s2: <span class="ty"><a href="stdlib-types.html">integer</a></span>,   <span class="cm">// Lehmer state B in [1, 2147483398]</span></span>
-<span id="src-random-loft-L55">}</span>
-<span id="src-random-loft-L56"></span>
-<span id="src-random-loft-L57"><span class="cm">// Seed an independent stream. Any integer seed is valid (negative and zero included);</span></span>
-<span id="src-random-loft-L58"><span class="cm">// equal seeds give equal streams, different seeds give decorrelated streams.</span></span>
-<span id="src-random-loft-L59"><span class="cm">// Example: @RND-001 — the reason to prefer this over `rand_seed`.</span></span>
-<span id="src-random-loft-L60"><span class="cm">// Example: @RND-003 — equal seeds replay exactly, so a recorded seed is a</span></span>
-<span id="src-random-loft-L61"><span class="cm">// recorded run.</span></span>
-<span id="src-random-loft-L62"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">seed_stream</span>(seed: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">RandStream</span> {</span>
-<span id="src-random-loft-L63">  a = seed % <span class="nm">2147483562</span> ?? <span class="nm">0</span>;</span>
-<span id="src-random-loft-L64">  <span class="kw">if</span> a &lt; <span class="nm">0</span> { a = -a; }</span>
-<span id="src-random-loft-L65">  t = seed % <span class="nm">2147483398</span> ?? <span class="nm">0</span>;</span>
-<span id="src-random-loft-L66">  <span class="kw">if</span> t &lt; <span class="nm">0</span> { t = -t; }</span>
-<span id="src-random-loft-L67">  <span class="cm">// decorrelate s2 from s1 for small seeds with one cheap Lehmer-style mix</span></span>
-<span id="src-random-loft-L68">  mix = ((a + <span class="nm">1</span>) * <span class="nm">40014</span>) % <span class="nm">2147483563</span> ?? <span class="nm">0</span>;</span>
-<span id="src-random-loft-L69">  <span class="en">RandStream</span> { s1: a + <span class="nm">1</span>, s2: ((t + mix) % <span class="nm">2147483398</span> ?? <span class="nm">0</span>) + <span class="nm">1</span> }</span>
-<span id="src-random-loft-L70">}</span>
-<span id="src-random-loft-L71"></span>
-<span id="src-random-loft-L72"><span class="cm">// A random integer in [lo, hi] (inclusive) from THIS stream, advancing it.</span></span>
-<span id="src-random-loft-L73"><span class="cm">// Returns null when lo &gt; hi (the same contract as the global rand()).</span></span>
-<span id="src-random-loft-L74"><span class="cm">// Example: @RND-002 — assigning a stream COPIES it, passing one to a function</span></span>
-<span id="src-random-loft-L75"><span class="cm">// LINKS it, so a helper that draws spends the caller's sequence.</span></span>
-<span id="src-random-loft-L76"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">get</span>(self: <span class="en">RandStream</span>, lo: <span class="ty"><a href="stdlib-types.html">integer</a></span>, hi: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>? {</span>
-<span id="src-random-loft-L77">  <span class="kw">if</span> lo &gt; hi { <span class="kw">return</span> <span class="kw">null</span>; }</span>
-<span id="src-random-loft-L78">  <span class="cm">// L'Ecuyer combined LCG, Schrage's method (all products &lt; 2^31 * 40692 — trap-safe)</span></span>
-<span id="src-random-loft-L79">  k1 = self.s1 / <span class="nm">53668</span> ?? <span class="nm">0</span>;</span>
-<span id="src-random-loft-L80">  n1 = <span class="nm">40014</span> * (self.s1 - k1 * <span class="nm">53668</span>) - k1 * <span class="nm">12211</span>;</span>
-<span id="src-random-loft-L81">  <span class="kw">if</span> n1 &lt; <span class="nm">0</span> { n1 += <span class="nm">2147483563</span>; }</span>
-<span id="src-random-loft-L82">  k2 = self.s2 / <span class="nm">52774</span> ?? <span class="nm">0</span>;</span>
-<span id="src-random-loft-L83">  n2 = <span class="nm">40692</span> * (self.s2 - k2 * <span class="nm">52774</span>) - k2 * <span class="nm">3791</span>;</span>
-<span id="src-random-loft-L84">  <span class="kw">if</span> n2 &lt; <span class="nm">0</span> { n2 += <span class="nm">2147483399</span>; }</span>
-<span id="src-random-loft-L85">  self.s1 = n1;</span>
-<span id="src-random-loft-L86">  self.s2 = n2;</span>
-<span id="src-random-loft-L87">  z = (n1 - n2) % <span class="nm">2147483562</span> ?? <span class="nm">0</span>;</span>
-<span id="src-random-loft-L88">  <span class="kw">if</span> z &lt; <span class="nm">1</span> { z += <span class="nm">2147483562</span>; }</span>
-<span id="src-random-loft-L89">  lo + ((z - <span class="nm">1</span>) % (hi - lo + <span class="nm">1</span>) ?? <span class="nm">0</span>)</span>
-<span id="src-random-loft-L90">}</span>
-<span id="src-random-loft-L91"></span>
-<span id="src-random-loft-L92"><span class="cm">// A random permutation of [0, 1, ..., n-1] from THIS stream (Fisher-Yates), advancing</span></span>
-<span id="src-random-loft-L93"><span class="cm">// it by exactly n - 1 draws. Empty when n is 0, negative or null (the same contract</span></span>
-<span id="src-random-loft-L94"><span class="cm">// as rand_indices()).</span></span>
-<span id="src-random-loft-L95"><span class="cm">// Example: @RND-003 — a shuffle is a countable number of draws, so inserting one</span></span>
-<span id="src-random-loft-L96"><span class="cm">// shifts the rest of the sequence by a known amount rather than adding noise.</span></span>
-<span id="src-random-loft-L97"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">indices</span>(self: <span class="en">RandStream</span>, n: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; {</span>
-<span id="src-random-loft-L98">  out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
-<span id="src-random-loft-L99">  <span class="kw">if</span> !n { <span class="kw">return</span> out; }</span>
-<span id="src-random-loft-L100">  <span class="kw">if</span> n &lt;= <span class="nm">0</span> { <span class="kw">return</span> out; }</span>
-<span id="src-random-loft-L101">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..</span>n { out += [i]; }</span>
-<span id="src-random-loft-L102">  j = n - <span class="nm">1</span>;</span>
-<span id="src-random-loft-L103">  while j &gt; <span class="nm">0</span> {</span>
-<span id="src-random-loft-L104">    k = <span class="fn-call">get</span>(self, <span class="nm">0</span>, j) ?? <span class="nm">0</span>;</span>
-<span id="src-random-loft-L105">    <span class="kw">if</span> k &lt; <span class="bi"><a href="stdlib-text.html">len</a></span>(out) &amp;&amp; j &lt; <span class="bi"><a href="stdlib-text.html">len</a></span>(out) {</span>
-<span id="src-random-loft-L106">      t = out[j] ?? <span class="nm">0</span>;</span>
-<span id="src-random-loft-L107">      out[j] = out[k] ?? <span class="nm">0</span>;</span>
-<span id="src-random-loft-L108">      out[k] = t;</span>
-<span id="src-random-loft-L109">    }</span>
-<span id="src-random-loft-L110">    j -= <span class="nm">1</span>;</span>
-<span id="src-random-loft-L111">  }</span>
-<span id="src-random-loft-L112">  out</span>
-<span id="src-random-loft-L113">}</span>
+<span id="src-random-loft-L52"><span class="cm">// An independent random stream: the two Lehmer generator states.  Seed one with `seed_stream`</span></span>
+<span id="src-random-loft-L53"><span class="cm">// and draw from it with its methods, so its sequence does not depend on any other draw in the</span></span>
+<span id="src-random-loft-L54"><span class="cm">// program.</span></span>
+<span id="src-random-loft-L55"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">RandStream</span> {</span>
+<span id="src-random-loft-L56">  s1: <span class="ty"><a href="stdlib-types.html">integer</a></span>,   <span class="cm">// Lehmer state A in [1, 2147483562]</span></span>
+<span id="src-random-loft-L57">  s2: <span class="ty"><a href="stdlib-types.html">integer</a></span>,   <span class="cm">// Lehmer state B in [1, 2147483398]</span></span>
+<span id="src-random-loft-L58">}</span>
+<span id="src-random-loft-L59"></span>
+<span id="src-random-loft-L60"><span class="cm">// Seed an independent stream. Any integer seed is valid (negative and zero included);</span></span>
+<span id="src-random-loft-L61"><span class="cm">// equal seeds give equal streams, different seeds give decorrelated streams.</span></span>
+<span id="src-random-loft-L62"><span class="cm">// Example: @RND-001 — the reason to prefer this over `rand_seed`.</span></span>
+<span id="src-random-loft-L63"><span class="cm">// Example: @RND-003 — equal seeds replay exactly, so a recorded seed is a</span></span>
+<span id="src-random-loft-L64"><span class="cm">// recorded run.</span></span>
+<span id="src-random-loft-L65"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">seed_stream</span>(seed: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">RandStream</span> {</span>
+<span id="src-random-loft-L66">  a = seed % <span class="nm">2147483562</span> ?? <span class="nm">0</span>;</span>
+<span id="src-random-loft-L67">  <span class="kw">if</span> a &lt; <span class="nm">0</span> { a = -a; }</span>
+<span id="src-random-loft-L68">  t = seed % <span class="nm">2147483398</span> ?? <span class="nm">0</span>;</span>
+<span id="src-random-loft-L69">  <span class="kw">if</span> t &lt; <span class="nm">0</span> { t = -t; }</span>
+<span id="src-random-loft-L70">  <span class="cm">// decorrelate s2 from s1 for small seeds with one cheap Lehmer-style mix</span></span>
+<span id="src-random-loft-L71">  mix = ((a + <span class="nm">1</span>) * <span class="nm">40014</span>) % <span class="nm">2147483563</span> ?? <span class="nm">0</span>;</span>
+<span id="src-random-loft-L72">  <span class="en">RandStream</span> { s1: a + <span class="nm">1</span>, s2: ((t + mix) % <span class="nm">2147483398</span> ?? <span class="nm">0</span>) + <span class="nm">1</span> }</span>
+<span id="src-random-loft-L73">}</span>
+<span id="src-random-loft-L74"></span>
+<span id="src-random-loft-L75"><span class="cm">// A random integer in [lo, hi] (inclusive) from THIS stream, advancing it.</span></span>
+<span id="src-random-loft-L76"><span class="cm">// Returns null when lo &gt; hi (the same contract as the global rand()).</span></span>
+<span id="src-random-loft-L77"><span class="cm">// Example: @RND-002 — assigning a stream COPIES it, passing one to a function</span></span>
+<span id="src-random-loft-L78"><span class="cm">// LINKS it, so a helper that draws spends the caller's sequence.</span></span>
+<span id="src-random-loft-L79"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">get</span>(self: <span class="en">RandStream</span>, lo: <span class="ty"><a href="stdlib-types.html">integer</a></span>, hi: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>? {</span>
+<span id="src-random-loft-L80">  <span class="kw">if</span> lo &gt; hi { <span class="kw">return</span> <span class="kw">null</span>; }</span>
+<span id="src-random-loft-L81">  <span class="cm">// L'Ecuyer combined LCG, Schrage's method (all products &lt; 2^31 * 40692 — trap-safe)</span></span>
+<span id="src-random-loft-L82">  k1 = self.s1 / <span class="nm">53668</span> ?? <span class="nm">0</span>;</span>
+<span id="src-random-loft-L83">  n1 = <span class="nm">40014</span> * (self.s1 - k1 * <span class="nm">53668</span>) - k1 * <span class="nm">12211</span>;</span>
+<span id="src-random-loft-L84">  <span class="kw">if</span> n1 &lt; <span class="nm">0</span> { n1 += <span class="nm">2147483563</span>; }</span>
+<span id="src-random-loft-L85">  k2 = self.s2 / <span class="nm">52774</span> ?? <span class="nm">0</span>;</span>
+<span id="src-random-loft-L86">  n2 = <span class="nm">40692</span> * (self.s2 - k2 * <span class="nm">52774</span>) - k2 * <span class="nm">3791</span>;</span>
+<span id="src-random-loft-L87">  <span class="kw">if</span> n2 &lt; <span class="nm">0</span> { n2 += <span class="nm">2147483399</span>; }</span>
+<span id="src-random-loft-L88">  self.s1 = n1;</span>
+<span id="src-random-loft-L89">  self.s2 = n2;</span>
+<span id="src-random-loft-L90">  z = (n1 - n2) % <span class="nm">2147483562</span> ?? <span class="nm">0</span>;</span>
+<span id="src-random-loft-L91">  <span class="kw">if</span> z &lt; <span class="nm">1</span> { z += <span class="nm">2147483562</span>; }</span>
+<span id="src-random-loft-L92">  lo + ((z - <span class="nm">1</span>) % (hi - lo + <span class="nm">1</span>) ?? <span class="nm">0</span>)</span>
+<span id="src-random-loft-L93">}</span>
+<span id="src-random-loft-L94"></span>
+<span id="src-random-loft-L95"><span class="cm">// A random permutation of [0, 1, ..., n-1] from THIS stream (Fisher-Yates), advancing</span></span>
+<span id="src-random-loft-L96"><span class="cm">// it by exactly n - 1 draws. Empty when n is 0, negative or null (the same contract</span></span>
+<span id="src-random-loft-L97"><span class="cm">// as rand_indices()).</span></span>
+<span id="src-random-loft-L98"><span class="cm">// Example: @RND-003 — a shuffle is a countable number of draws, so inserting one</span></span>
+<span id="src-random-loft-L99"><span class="cm">// shifts the rest of the sequence by a known amount rather than adding noise.</span></span>
+<span id="src-random-loft-L100"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">indices</span>(self: <span class="en">RandStream</span>, n: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; {</span>
+<span id="src-random-loft-L101">  out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
+<span id="src-random-loft-L102">  <span class="kw">if</span> !n { <span class="kw">return</span> out; }</span>
+<span id="src-random-loft-L103">  <span class="kw">if</span> n &lt;= <span class="nm">0</span> { <span class="kw">return</span> out; }</span>
+<span id="src-random-loft-L104">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..</span>n { out += [i]; }</span>
+<span id="src-random-loft-L105">  j = n - <span class="nm">1</span>;</span>
+<span id="src-random-loft-L106">  while j &gt; <span class="nm">0</span> {</span>
+<span id="src-random-loft-L107">    k = <span class="fn-call">get</span>(self, <span class="nm">0</span>, j) ?? <span class="nm">0</span>;</span>
+<span id="src-random-loft-L108">    <span class="kw">if</span> k &lt; <span class="bi"><a href="stdlib-text.html">len</a></span>(out) &amp;&amp; j &lt; <span class="bi"><a href="stdlib-text.html">len</a></span>(out) {</span>
+<span id="src-random-loft-L109">      t = out[j] ?? <span class="nm">0</span>;</span>
+<span id="src-random-loft-L110">      out[j] = out[k] ?? <span class="nm">0</span>;</span>
+<span id="src-random-loft-L111">      out[k] = t;</span>
+<span id="src-random-loft-L112">    }</span>
+<span id="src-random-loft-L113">    j -= <span class="nm">1</span>;</span>
+<span id="src-random-loft-L114">  }</span>
+<span id="src-random-loft-L115">  out</span>
+<span id="src-random-loft-L116">}</span>
 </code></pre>
 <h2 id="tests-15-random-loft">tests/15-random.loft</h2>
 <pre class="src"><code><span id="tests-15-random-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>

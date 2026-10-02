@@ -35,20 +35,24 @@
 //   HOLDS: leak and panic are equal on both trees (the loop cells run 100 compound writes
 //   of records and leave no store behind).
 
+// The members are `operator` methods (C132).  `@FR-Op-Result`: the `V?` place is discharged and
+// warned about as the argument of `m.minus(4)` is.
+// @EXPECT_WARNING: a nullable `V?` is stored into parameter 1 of `minus`
+
 struct V { x: integer }
-fn OpMin(self: V, o: integer) -> V { V { x: self.x - o * 10 } }
-fn OpMin(self: V, o: V) -> V { V { x: self.x - o.x } }
-fn OpAdd(self: V, o: V) -> V { V { x: self.x + o.x } }
-fn OpAdd(self: V, o: integer) -> V { V { x: self.x + o } }
+operator minus(self: V, o: integer) -> V { V { x: self.x - o * 10 } }
+operator minus(self: V, o: V) -> V { V { x: self.x - o.x } }
+operator plus(self: V, o: V) -> V { V { x: self.x + o.x } }
+operator plus(self: V, o: integer) -> V { V { x: self.x + o } }
 fn mk(n: integer) -> V { V { x: n } }
 fn maybe(n: integer) -> V? { if n > 0 { V { x: n } } else { null } }
 
 value struct P { x: integer, y: integer }
-fn OpAdd(self: P, o: integer) -> P { P { x: self.x + o, y: self.y + o } }
-fn OpAdd(self: P, o: P) -> P { P { x: self.x + o.x, y: self.y + o.y } }
+operator plus(self: P, o: integer) -> P { P { x: self.x + o, y: self.y + o } }
+operator plus(self: P, o: P) -> P { P { x: self.x + o.x, y: self.y + o.y } }
 
 enum Sh { Ci { r: integer }, Sq { s: integer } }
-fn OpAdd(self: Sh, o: integer) -> Sh {
+operator plus(self: Sh, o: integer) -> Sh {
   match self { Ci { r } => Ci { r: r + o }, Sq { s } => Sq { s: s + o * 2 } }
 }
 fn val(s: Sh) -> integer { match s { Ci { r } => r, Sq { s } => s } }
@@ -56,7 +60,7 @@ fn val(s: Sh) -> integer { match s { Ci { r } => r, Sq { s } => s } }
 struct Rec { f: float, n: integer, v: V, p: P, sh: Sh }
 struct Outer { r: Rec }
 struct Kv { k: text, x: integer }
-fn OpMin(self: Kv, o: integer) -> Kv { Kv { k: self.k, x: self.x - o } }
+operator minus(self: Kv, o: integer) -> Kv { Kv { k: self.k, x: self.x - o } }
 struct Ctr { n: integer }
 fn next(c: Ctr) -> integer { c.n += 1; c.n }
 fn bump(x: &float) { x += 1; }
@@ -146,7 +150,7 @@ fn main() {
   t = V { x: 0 };
   hv = Rec { f: 0.0, n: 0, v: V { x: 0 }, p: P { x: 0, y: 0 }, sh: Ci { r: 0 } };
   es = [V { x: 0 }];
-  for n in 0..100 {
+  for _n in 0..100 {
     t += V { x: 1 };
     t += 2;
     hv.v += V { x: 1 };

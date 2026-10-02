@@ -35,7 +35,7 @@ fn ir_check_passes_on_real_program() {
         .arg("--interpret")
         .arg(&script)
         .env("LOFT_IR_CHECK", "1")
-        .env_remove("LOFT_PROGRAM_CACHE")
+        .env("LOFT_NO_CACHE", "1")
         .output()
         .expect("invoke loft");
 

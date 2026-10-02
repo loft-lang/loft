@@ -342,6 +342,32 @@ stdlib method is this refusal (C95).  A generic template is keyed the same way, 
 `tests/scripts/a-method-and-a-function-of-one-name-on-one-type-are-refused.loft`;
 DESIGN_DECISIONS.md C123.
 
+### A library's surface is its `pub` items, by either spelling
+
+```
+  (F-Surface) a library L's surface is the items L declares `pub` and the names L passes on
+              with `pub use`.  A program reaches L's surface by `use L::*` / `use L::(…)` or
+              by the qualifier `L::name`, and NEITHER spelling reaches anything else:
+                - an item L declares without `pub` is refused — "`name` is not `pub` in `L`";
+                - a name L only imports for its own use (a plain `use`, C98) is refused,
+                  naming the qualifier of the library that owns it.
+              L's own code reaches all of its items.  A package qualifying its OWN name
+              (`L::name` inside L) means "in this file" and is not an outside reach.
+```
+
+**In words.** `pub` is the boundary a library draws, and the owner's ruling is that the
+boundary holds: definitions without it "should not be reachable at all" from outside.  A
+boundary that only the glob import respected would make every private helper reachable as
+`L::helper`, so no library could rename one without breaking a consumer.  The refusal names
+the one-edit cure — the owner's qualifier for an imported name, `pub` on the library's side
+for its own item.
+
+*Anchors:* `Data::qualified_refusal` (`src/data.rs`), asked where a `L::` qualifier is
+parsed — `parse_var` (`src/parser/objects.rs`) for values, calls, literals and variants, and
+the type parser (`src/parser/definitions.rs`) for `L::Type` — beside `Data::exported`, which
+the glob import reads; `tests/scripts/a-qualified-name-reaches-only-what-a-library-publishes.loft`
+and `…-reaches-what-a-library-publishes.loft`; DESIGN_DECISIONS C97, C98.
+
 
 ---
 

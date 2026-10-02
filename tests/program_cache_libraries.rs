@@ -79,7 +79,7 @@ fn run(home: &Path, env: &[(&str, &str)]) -> String {
         .env("HOME", home)
         .env("USERPROFILE", home)
         .env("XDG_CACHE_HOME", home.join("cache"))
-        .env("LOFT_PROGRAM_CACHE", "1")
+        .env_remove("LOFT_NO_CACHE")
         .env("LOFT_TRACE_WARM", "1")
         .env("LOFT_OFFLINE", "1")
         .env_remove("LOFT_NO_CACHE")

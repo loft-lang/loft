@@ -380,10 +380,10 @@ rebuild_native_cdylibs() {
   if [[ "$NEED_WASM" == 0 ]]; then
     printf '  %-44s %s\n' "wasm rlibs" "skipped — no wasm/html binary in the selection" >&2
   fi
-  if [[ "$NEED_WASM" == 1 && -d "$repo_root/target/wasm32-unknown-unknown" ]]; then
-    echo "== rebuild wasm32-unknown-unknown rlib ==" >> "$log"
+  if [[ "$NEED_WASM" == 1 && -d "$repo_root/target/loft/html/wasm32-unknown-unknown" ]]; then
+    echo "== rebuild wasm32-unknown-unknown rlib (the --html shape) ==" >> "$log"
     schedule "wasm32 rlib" "$repo_root" \
-      "cd '$repo_root' && cargo build --release --target wasm32-unknown-unknown --lib --no-default-features --features random -q"
+      "cd '$repo_root' && cargo build --release --target wasm32-unknown-unknown --lib --no-default-features --features random --target-dir target/loft/html -q"
   fi
 
   # 3b. The wasm32-wasip2 rlib that `--native-wasm` links (html_wasm's wasip2 cells).

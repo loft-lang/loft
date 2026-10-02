@@ -2581,11 +2581,18 @@ impl Type {
     /// rather than a wrapper.
     #[must_use]
     pub fn unrewritten(&self) -> Type {
+        self.peel_rewritten().clone()
+    }
+
+    /// The type under every `Rewritten` marker, borrowed — [`Type::unrewritten`] without the
+    /// clone, for a site asked on every operator of a program, which must not allocate.
+    #[must_use]
+    pub fn peel_rewritten(&self) -> &Type {
         let mut t = self;
         while let Type::Rewritten(inner) = t {
             t = inner;
         }
-        t.clone()
+        t
     }
 
     /// Pass-2 keystone, the `Type` twin of `Value::for_each_child`
@@ -5011,6 +5018,11 @@ pub struct Definition {
     /// name, as the bare call always has.  A marker on the declaration, never a name test.
     /// Persisted through the IR store (`DEF_BUILTIN`), mirrored in `tools/ir_schema/ir.loft`.
     pub builtin: bool,
+    /// @PLN182 — written `operator` in place of `fn`: a call of this method is what an
+    /// operator form on its `self` type reaches (`a < b` → `compare`).  A plain `fn` of the
+    /// same name is an ordinary method.  Persisted through the IR store (`DEF_OPERATOR_FORM`), so
+    /// a cached stdlib keeps the mark; mirrored in `tools/ir_schema/ir.loft`.
+    pub operator_form: bool,
     /// DbRef into CONST_STORE for pre-built vector constants.
     /// `None` for non-constant definitions or constants that couldn't be pre-built.
     pub const_ref: Option<crate::keys::DbRef>,
@@ -5078,6 +5090,12 @@ impl Definition {
     /// `test_*` naming rule and says so in as many words: *"a generated entry point that runs a
     /// different SET than the interpreter is a backend divergence the suite reads as a wrong
     /// answer."*  This is that sentence applied to the two TEST harnesses.
+    /// Declared in `default/` — the standard library.
+    #[must_use]
+    pub fn is_stdlib(&self) -> bool {
+        crate::portable_path::is_stdlib_source(&self.position.file)
+    }
+
     #[must_use]
     pub fn is_corpus_entry_point(&self) -> bool {
         if !matches!(self.def_type, DefType::Function) {
@@ -5141,6 +5159,12 @@ impl Definition {
     #[must_use]
     pub fn builtin(&self) -> bool {
         self.builtin
+    }
+
+    /// Written `operator` (@PLN182): the method an operator form on its `self` type reaches.
+    #[must_use]
+    pub fn operator_form(&self) -> bool {
+        self.operator_form
     }
 
     /// `#superseded "Y"` (@PLN102 arc C): the bare successor-symbol name this
@@ -6107,6 +6131,10 @@ pub struct Data {
     /// aliased via a DbRef, non-null. A thin marker (a set, not a Definition field — those
     /// serialize) consulted by the few value-semantics chokepoints.
     pub value_structs: HashSet<u32>,
+    /// `@FR-Op-Conv` — whether the program declares any function named `to_<type>`, an
+    /// `operator` or not; `x as T` asks for one only then, so a program without conversions
+    /// pays nothing at its casts.
+    pub user_operator_conversions: bool,
     /// @PLN165 D7 — generic structs refused at their declaration for an irregular self-mention
     /// (`D-Regular`): `instance_def` mints none of them, so closing their fields cannot descend
     /// forever.  A refused program does not run, so this needs no place in the image.
@@ -6862,6 +6890,7 @@ impl Data {
             adopted_stubs: Vec::new(),
             source: STD_SOURCE,
             value_structs: HashSet::new(),
+            user_operator_conversions: false,
             refused_type_templates: HashSet::new(),
             type_var_bound_keys: HashMap::new(),
             used_definitions: HashSet::new(),
@@ -7435,6 +7464,7 @@ impl Data {
             instance_of: u32::MAX,
             instance_args: Vec::new(),
             builtin: false,
+            operator_form: false,
             const_ref: None,
             literal_const: u32::MAX,
             forced_size: None,
@@ -7590,6 +7620,167 @@ impl Data {
         if !slot.contains(&d_nr) {
             slot.push(d_nr);
         }
+    }
+
+    /// `@FR-Op-Bound` (@PLN182) — the `operator compare(self: C, other: C) -> Ordering` a
+    /// type `C` declares, which meets `Ordered` the way a built-in type's `<` does.
+    #[must_use]
+    pub fn operator_compare_for(&self, concrete: &Type) -> Option<u32> {
+        self.operator_member_for("compare", concrete)
+    }
+
+    /// `@FR-Op-Bound` — the `operator <form>(self: C, other: C)` a type `C` declares at the
+    /// signature a bound asks: `compare` answering `Ordering` (`Ordered`), and `plus` /
+    /// `minus` / `times` answering `C` (`Addable`, `Subtractable`, the `*` of `Numeric`).  A
+    /// plain `fn` of the name meets nothing (`@FR-Op-Mark`).
+    #[must_use]
+    pub fn operator_member_for(&self, form: &str, concrete: &Type) -> Option<u32> {
+        let base = concrete.base().clone();
+        self.operator_member_with(form, &[base.clone(), base.clone()], Some(&base))
+    }
+
+    /// [`Self::operator_member_for`] at the signature an interface member declares, `Self`
+    /// already replaced: `params[0]` is the type, the rest what the member takes
+    /// (`op * (self: Self, factor: float)`), and `result` what it answers — `None` leaves
+    /// the result unasked.  `compare` always answers `Ordering`.
+    #[must_use]
+    pub fn operator_member_with(
+        &self,
+        form: &str,
+        params: &[Type],
+        result: Option<&Type>,
+    ) -> Option<u32> {
+        let first = params.first()?;
+        let shape = first.base();
+        if !matches!(shape, Type::Reference(_, _) | Type::Enum(_, _, _)) {
+            return None;
+        }
+        let base = shape.clone();
+        // A form may be an overload set (several right-hand types), and `compare` always is
+        // one beside the stdlib's own members on the base types.
+        let mut candidates = self.overload_routines(form);
+        let found = self.find_fn(u16::MAX, form, &base);
+        if found != u32::MAX && !candidates.contains(&found) {
+            candidates.push(found);
+        }
+        let ordering = self.def_nr("Ordering");
+        // `@FR-G-Sat` — a bound is met by a CONCRETE member of its signature; a template member
+        // (`operator plus<U>`) is reached by the operator, never bound (loft#1826).
+        candidates.into_iter().find(|&d| {
+            self.def(d).operator_form
+                && self.def(d).def_type != DefType::Generic
+                && self.params_fit(d, params)
+                && if form == "compare" {
+                    matches!(self.def(d).returned().base(), Type::Enum(e, false, _) if *e == ordering)
+                } else {
+                    // By the type alone: a method handing back `self` carries a dep on it.
+                    result.is_none_or(|r| self.def(d).returned().base().is_same(r.base()))
+                }
+        })
+    }
+
+    /// `@FR-Op-Conv` (@PLN182) — the name `to_<name>` an `operator` conversion INTO `tp` has:
+    /// the six base types by their own names, a non-generic struct or enum by its name in snake
+    /// case (`DateTime` → `date_time`; an all-capital run is one word, `HTTPRequest` →
+    /// `http_request`; a digit stays with the word before it, `Vec2` → `vec2`).  A generic
+    /// instance, a narrowed integer and any other type have none.
+    #[must_use]
+    pub fn conversion_name(&self, tp: &Type) -> Option<String> {
+        // `x as T?` converts to T: the nullability bit names no other conversion.
+        match tp.base() {
+            // `IntegerSpec::source_name` is the one home for "this spells `integer`": both
+            // templates do, and a narrow alias (`u8`, `i32`) carries a forced size of its own.
+            Type::Integer(spec)
+                if spec.source_name() == Some("integer") && spec.forced_size.is_none() =>
+            {
+                Some("integer".to_string())
+            }
+            Type::Float => Some("float".to_string()),
+            Type::Single => Some("single".to_string()),
+            Type::Text(_) => Some("text".to_string()),
+            Type::Boolean => Some("boolean".to_string()),
+            Type::Character => Some("character".to_string()),
+            Type::Reference(d, _) | Type::Enum(d, false, _)
+                if matches!(self.def(*d).def_type, DefType::Struct | DefType::Enum)
+                    && self.def(*d).instance_of == u32::MAX
+                    && !self.is_type_var_placeholder(*d) =>
+            {
+                Some(Self::snake_case(self.def(*d).name()))
+            }
+            _ => None,
+        }
+    }
+
+    /// `DateTime` → `date_time`, `HTTPRequest` → `http_request`, `Vec2` → `vec2`.
+    #[must_use]
+    pub fn snake_case_name(name: &str) -> String {
+        Self::snake_case(name)
+    }
+
+    /// `DateTime` → `date_time`, `HTTPRequest` → `http_request`, `Vec2` → `vec2`.
+    fn snake_case(name: &str) -> String {
+        let chars: Vec<char> = name.chars().collect();
+        let mut out = String::new();
+        for (i, &c) in chars.iter().enumerate() {
+            if c.is_ascii_uppercase() {
+                let prev = if i > 0 { Some(chars[i - 1]) } else { None };
+                let next_lower = chars.get(i + 1).is_some_and(char::is_ascii_lowercase);
+                let after_word = prev.is_some_and(|p| p.is_ascii_lowercase() || p.is_ascii_digit());
+                let run_ends = prev.is_some_and(|p| p.is_ascii_uppercase()) && next_lower;
+                if after_word || run_ends {
+                    out.push('_');
+                }
+                out.push(c.to_ascii_lowercase());
+            } else {
+                out.push(c);
+            }
+        }
+        out
+    }
+
+    /// The `operator` form a bound's operator member names: `OpLt` → `compare`, `OpAdd` →
+    /// `plus`, a two-operand `OpMin` → `minus`, `OpMul` → `times`, `OpDiv` → `divided_by`,
+    /// `OpRem` → `remainder`, a one-operand `OpMin` → `negate`.
+    #[must_use]
+    pub fn operator_form_of_member(member: &str, arity: usize) -> Option<&'static str> {
+        match (member, arity) {
+            ("OpLt", 2) => Some("compare"),
+            ("OpAdd", 2) => Some("plus"),
+            ("OpMin", 2) => Some("minus"),
+            ("OpMul", 2) => Some("times"),
+            ("OpDiv", 2) => Some("divided_by"),
+            ("OpRem", 2) => Some("remainder"),
+            ("OpMin", 1) => Some("negate"),
+            _ => None,
+        }
+    }
+
+    /// `@FR-Op-Std`, @C132 (@PLN182 P5) — whether the `Op…` definition `d` backs an operator:
+    /// only the stdlib's do.  A program's or a library's `fn OpAdd` / `OpLt` / `OpIndex` /
+    /// `OpConv…` is an ordinary function — callable by its name, reached by no operator, `[]`
+    /// or `as`, and meeting no bound.
+    #[must_use]
+    pub fn backs_operator(&self, d: u32) -> bool {
+        d != u32::MAX && self.def(d).is_stdlib()
+    }
+
+    /// The stored discriminant of one `Ordering` variant (`Less`, `Equal`, `Greater`), read
+    /// from the enum's own definition rather than assumed from its declaration order.
+    #[must_use]
+    pub fn ordering_discriminant(&self, variant: &str) -> i32 {
+        let ordering = self.def_nr("Ordering");
+        if ordering == u32::MAX {
+            return 0;
+        }
+        self.def(ordering)
+            .attributes()
+            .iter()
+            .find(|a| a.name == variant)
+            .and_then(|a| match a.value {
+                Value::Enum(nr, _) => Some(i32::from(nr)),
+                _ => None,
+            })
+            .unwrap_or(0)
     }
 
     #[must_use]
@@ -8823,6 +9014,17 @@ impl Data {
     #[must_use]
     pub fn name_taken_anywhere(&self, name: &str) -> bool {
         self.def_names.contains_name(name)
+    }
+
+    /// Does some generic header declare a type variable spelled `spelling`?  An undefined
+    /// type of that spelling is then a variable named outside its header, and its message
+    /// says so (`Parser::type_var_out_of_scope`).
+    #[must_use]
+    pub fn is_type_var_spelling(&self, spelling: &str) -> bool {
+        self.type_var_bound_keys.keys().any(|d| {
+            (*d as usize) < self.definitions.len()
+                && Self::type_var_spelling(self.definitions[*d as usize].name()) == spelling
+        })
     }
 
     /// The placeholder a header spelling `<T>` (or `<T: Ordered>`) already names, read off the
@@ -10797,6 +10999,32 @@ impl Data {
         d.instance_of != u32::MAX && d.instance_args.iter().any(|a| self.mentions_type_var(a))
     }
 
+    /// An instance of a generic FUNCTION bound to a type VARIABLE (`i_1U_n_hole`), minted while
+    /// another template's body was parsed: `relay<U>` calling `hole(u)` binds `hole`'s `T` to
+    /// `U`.  It is the function-side twin of [`Self::is_open_instance`] — a stand-in for its
+    /// template that the template's own IR calls, never code: `(G-Mono)` specialises at
+    /// CONCRETE argument types only, and each monomorph of the caller re-aims the call at the
+    /// instance its binding names (`instantiate_nested_generics`).  So neither backend
+    /// generates it (@FR-G-Mono, loft#1841): its body formats, sizes and lays out a type
+    /// variable, which `--native` refused with an internal error.
+    ///
+    /// Asked of the instance KEY (`D-Key`) and the parameters together.  A non-instance
+    /// function whose parameter names a type variable is no placeholder — an interface's
+    /// method stub (`OpLt(self: Self, …)`) is emitted on purpose — so the answer is `false`
+    /// for every definition this does not positively recognise, and a `false` only keeps a
+    /// function the backends generated already.
+    #[must_use]
+    pub fn is_placeholder_instance(&self, d_nr: u32) -> bool {
+        let Some(d) = self.definitions.get(d_nr as usize) else {
+            return false;
+        };
+        d.def_type == DefType::Function
+            && d.is_instance()
+            && d.attributes
+                .iter()
+                .any(|a| self.mentions_type_var(&a.typedef))
+    }
+
     /// A definition that is only a TEMPLATE's part and so never laid out (@PLN165 D8): a
     /// variant of a generic enum, whose payload is typed by the template's variables — each
     /// instance has variants of its own.
@@ -10895,18 +11123,6 @@ impl Data {
         pairs
     }
 
-    /// Give up the flat NAME of a type-variable placeholder, so a declaration in another
-    /// file may take it (`Parser::placeholder_from_another_file`).
-    ///
-    /// The definition stays — every template that declared it holds it by NUMBER, and its
-    /// instances were bound to that number — only the `(name, source)` key it occupied is
-    /// released.  It exists because a REPL input, a `<host>` string and the test harness
-    /// parse at the stdlib's own source id on purpose, so a stdlib type variable and the
-    /// reader's own struct compete for one key there where a FILE gives them two.
-    ///
-    /// ⚠ `rebuild_indices` reconstructs `def_names` from the definitions, so a rollback
-    /// after this restores the placeholder's key; the declaration that took it is rolled
-    /// back with it, which is the state they were both in before.
     /// @C98 — can `into` name what `lib` declares as `name` UNQUALIFIED?  Only through a
     /// glob or a by-name import of `lib`, directly or through a chain of `pub use`s; a bare
     /// `use lib;` binds the qualifier alone.  Asked of the imports applied so far.
@@ -10935,6 +11151,13 @@ impl Data {
         false
     }
 
+    /// Give up a definition's flat NAME in `source`, so a declaration may take it
+    /// (`Parser::release_unseen_stub`).  The definition stays — whatever refers to it does
+    /// so by NUMBER — and only the `(name, source)` key is released.
+    ///
+    /// ⚠ `rebuild_indices` reconstructs `def_names` from the definitions, so a rollback
+    /// after this restores the key; the declaration that took it is rolled back with it,
+    /// which is the state they were both in before.
     pub(crate) fn release_def_name(&mut self, name: &str, source: u16) {
         let _ = self.def_names.remove(name, source);
     }
@@ -10942,8 +11165,8 @@ impl Data {
     /// A generic type-variable placeholder: the attribute-less, self-referential
     /// `Struct` the parser registers for a `<T>` type parameter (e.g. stdlib
     /// `min_of<T>`) so the template body's types resolve.  It has store size 0 and
-    /// is an INTERNAL construct — it must never resolve as a real type outside the
-    /// default files that declare it.
+    /// is an INTERNAL construct, minted under a name no source can write (`T#1`), so a
+    /// spelling never resolves to it outside its header (@FR-G-Gen-Scope).
     #[must_use]
     pub fn is_type_var_placeholder(&self, d_nr: u32) -> bool {
         let d = &self.definitions[d_nr as usize];
@@ -12106,6 +12329,66 @@ impl Data {
         self.def_names.get(key, lib_source).filter(|&d| {
             self.definitions[d as usize].pub_visible && !self.is_private_import(lib_source, key, d)
         })
+    }
+
+    /// @FR-F-Surface (loft#1848) — the error for a qualified `lib::name` that reaches what `lib`
+    /// does not pass on, or `None` when `lib` passes it on (or does not have it: absence keeps its own
+    /// "no such" message).
+    ///
+    /// The SAME rule as the glob import — [`Self::exported`]: an item `lib` declares without
+    /// `pub`, or a name `lib` holds only through its own plain `use` (@C98), is not part of
+    /// `lib`'s surface, so `lib::name` must not reach what `use lib::*` refuses.  The message
+    /// carries the one-edit cure: the owner's own qualifier for a name `lib` merely imported,
+    /// or `pub` on `lib`'s side for an item it keeps private.
+    #[must_use]
+    pub fn qualified_refusal(&self, lib_source: u16, lib: &str, name: &str) -> Option<String> {
+        if lib_source == u16::MAX || lib_source == STD_SOURCE {
+            return None;
+        }
+        let fn_key = format!("n_{name}");
+        for key in [name, fn_key.as_str()] {
+            let Some(d) = self.def_names.get(key, lib_source) else {
+                continue;
+            };
+            // A pass-1 forward stub (a library parsed after its user, as in a mutual-use
+            // pair) is not the item yet and carries no `pub`: judging it would refuse a
+            // `pub struct` the second pass finds published.
+            if self.exported(key, lib_source).is_some()
+                || matches!(self.definitions[d as usize].def_type, DefType::Unknown)
+            {
+                return None;
+            }
+            if self.is_private_import(lib_source, key, d) {
+                let owner = self
+                    .private_imports
+                    .get(&lib_source)
+                    .and_then(|keys| keys.get(key))
+                    .and_then(|&(_, from)| {
+                        self.qualifier_of(from)
+                            .and_then(|q| self.writable_qualifier(&q, from))
+                    });
+                return Some(match owner {
+                    Some(m) => format!(
+                        "`{lib}::{name}` reaches a name `{lib}` only imports for its own use — \
+                         it is `{m}`'s, and `{lib}` does not pass it on.\n  fix: write \
+                         `{m}::{name}` after `use {m};` (or `{lib}` passes it on with \
+                         `pub use {m}::({name});`)"
+                    ),
+                    None => format!(
+                        "`{lib}::{name}` reaches a name `{lib}` only imports for its own use, \
+                         and does not pass on.\n  fix: `{lib}` passes it on with `pub use`"
+                    ),
+                });
+            }
+            if !self.definitions[d as usize].pub_visible {
+                return Some(format!(
+                    "`{name}` is not `pub` in `{lib}`, so `{lib}::{name}` cannot reach it: a \
+                     library's surface is its `pub` items.\n  fix: `{lib}` declares it `pub`, \
+                     or the program uses something `{lib}` does publish"
+                ));
+            }
+        }
+        None
     }
 
     fn is_private_import(&self, source: u16, key: &str, def_nr: u32) -> bool {

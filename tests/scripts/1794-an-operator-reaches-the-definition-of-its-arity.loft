@@ -32,22 +32,25 @@
 //   HOLDS: the binary-only type `W` and the builtin `sub(5, 2)` / `neg(4)` answer the same on
 //   both trees; clean under LOFT_POISON=1 with LOFT_STRICT_STORES=1 here.
 
+// C132 — the definitions are `operator` methods: the binary `-` is `operator minus` and the
+// unary one `operator negate` (@PLN182 P5b), so both arities stay two definitions of a type.
+
 struct V { x: integer }
-fn OpMin(self: V) -> V { V { x: -self.x } }
-fn OpMin(self: V, o: V) -> V { V { x: self.x - o.x } }
-fn OpAdd(self: V, o: V) -> V { V { x: self.x + o.x } }
-fn OpMul(self: V, o: V) -> V { V { x: self.x * o.x } }
+operator negate(self: V) -> V { V { x: -self.x } }
+operator minus(self: V, o: V) -> V { V { x: self.x - o.x } }
+operator plus(self: V, o: V) -> V { V { x: self.x + o.x } }
+operator times(self: V, o: V) -> V { V { x: self.x * o.x } }
 
 struct W { x: integer }
-fn OpMin(self: W, o: W) -> W { W { x: self.x - o.x } }
+operator minus(self: W, o: W) -> W { W { x: self.x - o.x } }
 
 struct S { t: text }
-fn OpMin(self: S) -> S { S { t: "-{self.t}" } }
-fn OpMin(self: S, o: S) -> S { S { t: "{self.t}-{o.t}" } }
+operator negate(self: S) -> S { S { t: "-{self.t}" } }
+operator minus(self: S, o: S) -> S { S { t: "{self.t}-{o.t}" } }
 
 struct N { x: integer }
-fn OpMin(self: N) -> integer { 0 - self.x }
-fn OpMin(self: N, o: N) -> integer { self.x - o.x }
+operator negate(self: N) -> integer { 0 - self.x }
+operator minus(self: N, o: N) -> integer { self.x - o.x }
 
 fn sub<T: Subtractable>(a: T, b: T) -> T { a - b }
 fn neg<T: Numeric>(a: T) -> T { -a }

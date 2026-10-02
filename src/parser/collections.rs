@@ -439,6 +439,17 @@ impl Parser {
     /// that are 4-byte handles.  It agreed with the storage side only while the
     /// storage side made the same mistake; reading both from one derivation is
     /// what keeps reader and writer in step (loft#624 nested).
+    /// How a monomorph reads an element of `vector<T>` once `T` is bound to `vtp`: the stride,
+    /// and whether the vector holds record ids (`Stores::is_linked`), in which case the read
+    /// dereferences (`OpVectorRef`) as the concrete path's does.
+    pub(crate) fn vector_elem_read(&mut self, vtp: &Type) -> crate::parser::ElemRead {
+        let db_tp = self.data.def(self.data.type_def_nr(vtp)).known_type();
+        crate::parser::ElemRead {
+            stride: i32::from(self.vector_elem_iter_stride(vtp)),
+            linked: self.database.is_linked(db_tp),
+        }
+    }
+
     pub(crate) fn vector_elem_iter_stride(&mut self, vtp: &Type) -> u16 {
         let vec_tp = self.data.type_def_nr(vtp);
         let db_tp = self.data.def(vec_tp).known_type();
@@ -862,6 +873,18 @@ impl Parser {
                     // @F32 — custom iterators via fn next(self) -> T?
                     // I13: custom iterator protocol — check for fn next(&T) -> Item?
                     let next_d_nr = self.data.find_fn(u16::MAX, "next", is_type);
+                    // `@FR-Op-Mark` (@PLN182) — `for` reaches only an `operator next`; a
+                    // plain `fn next` is an ordinary method, and the loop is refused naming it.
+                    if next_d_nr != u32::MAX && !self.data.def(next_d_nr).operator_form() {
+                        let t = is_type.base().source_name(&self.data);
+                        diagnostic!(
+                            self.lexer,
+                            Level::Error,
+                            "`{t}` has a method `next`, but `for` reaches only one written with \
+                             `operator`: declare it `operator next(self: {t}) -> …`"
+                        );
+                        return Value::Null; // refused once, without "cannot iterate" after it
+                    }
                     if next_d_nr != u32::MAX {
                         // A type's own `next()` yields values, not positions: there is no
                         // `v[i]` for `x#index`.
@@ -2756,6 +2779,19 @@ use #count instead"
         if !matches!(self.data.attr_type(stub_nr, 0), Type::Reference(r, _) if r == d_nr) {
             return None;
         }
+        // `@FR-Op-Mark` (@PLN182) — `"{x}"` reaches only an `operator to_text`; a plain
+        // `fn to_text` is an ordinary method, and formatting the type is refused naming it.
+        // A bound's stub stands for whatever the instance brings, which satisfaction checks.
+        if !self.data.is_type_var_placeholder(d_nr) && !self.data.def(stub_nr).operator_form() {
+            let t = self.data.def(d_nr).name().to_string();
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`{t}` has a method `to_text`, but `\"{{…}}\"` reaches only one written with \
+                 `operator`: declare it `operator to_text(self: {t}) -> text`"
+            );
+            return None;
+        }
         // Classify the stub's params by TYPE, not arity.  A `to_text` may or may
         // not carry a user `spec: text` param (@PLN99 Arc B — the value owns its
         // `{x:spec}` DSL), and INDEPENDENTLY may or may not carry the hidden
@@ -3222,7 +3258,7 @@ use #count instead"
                             "generic type {name} cannot be formatted — `\"{{…}}\"` needs a \
                              bound that renders it; write `<{name}: Printable>` (every \
                              built-in satisfies it, and a user type does by defining \
-                             `fn to_text(self: {name}) -> text`)"
+                             `operator to_text(self: {name}) -> text`)"
                         );
                     }
                 } else {

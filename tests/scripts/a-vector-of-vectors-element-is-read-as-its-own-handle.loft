@@ -1,0 +1,50 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A `vector<vector<τ>>` element is its own 4-byte handle, read through its record — never
+// classified by the generic `vector` definition's known type, which names whichever database
+// slot was registered first.  When that slot stopped being an enum (a stdlib generic
+// registered a `vector<integer>` earlier), `a[j] += [inner]` built the literal into the
+// element and then appended the element to itself: every row held two entries where one was
+// written, on both backends, with no diagnostic (found by 444-issue-475's triple-nesting cell).
+//
+// Axes this file MOVES: the depth (two · three), the element kind (integer · text · struct),
+// the place (a local · a struct field), and the operation (`+=` a literal · a by-value read).
+// A read `c = b[0]` is a VIEW by (B-View-Depth), so `c += [9]` grows `b[0]` too.
+//
+// @falsified-at: 844b2516f — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-vector-of-vectors-element-is-read-as-its-own-handle.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the assertion count and the exit code on both backends — a wrong value, with no
+//   diagnostic: the three-deep cell reads two entries per row.
+//   HOLDS: leak and panic are equal on both trees.
+//
+// Every expected value is worked out by hand.
+
+struct P { x: integer }
+struct Holder { rows: vector<vector<integer>> }
+
+fn main() {
+  // Three deep, += a one-element literal per row: each row holds 1 entry of 2 ints.
+  a: vector<vector<vector<integer>>> = [];
+  for _i in 0..3 { r: vector<vector<integer>> = []; a += [r]; }
+  for j in 0..3 { inner: vector<integer> = [j, j + 1]; a[j] += [inner]; }
+  m1 = "";
+  for j in 0..3 { m1 += "{len(a[j])}:{a[j][0][0] ?? -1}{a[j][0][1] ?? -1} "; }
+  assert(m1 == "1:01 1:12 1:23 ", "three deep: {m1}");
+  // A view: `c` names `b[0]`'s slot, so `c += [9]` grows it to 3; `b[1]` is untouched.
+  b = [[1, 2], [3]];
+  c = b[0];
+  c += [9];
+  assert(len(b[0]) == 3 && len(c) == 3 && len(b[1]) == 1, "a view of an element");
+  // Text and struct rows.
+  t = [["a", "b"], ["c"]];
+  t[1] += ["d"];
+  ps = [[P { x: 1 }], [P { x: 2 }, P { x: 3 }]];
+  ps[0] += [P { x: 4 }];
+  assert((t[1][1] ?? "?") == "d" && len(t[1]) == 2 && len(ps[0]) == 2 && ps[0][1].x == 4, "text and struct rows");
+  // A nested vector as a struct field.
+  h = Holder { rows: [[5], [6, 7]] };
+  h.rows[0] += [8];
+  assert(len(h.rows[0]) == 2 && (h.rows[0][1] ?? -1) == 8 && len(h.rows[1]) == 2, "a field's rows");
+  println("ok");
+}

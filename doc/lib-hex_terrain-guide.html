@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>hex_terrain guide — Loft, a programming language for small browser games</title>
+  <meta name="description" content="Getting started with the loft library hex_terrain — a runnable guide that is itself a loft program, so every example in it compiles.">
+<link rel="canonical" href="https://loft-lang.org/loft/lib-hex_terrain-guide.html">
+<meta property="og:title" content="hex_terrain guide — Loft, a programming language for small browser games">
+<meta property="og:description" content="Getting started with the loft library hex_terrain — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://loft-lang.org/loft/lib-hex_terrain-guide.html">
+<meta property="og:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<meta property="og:site_name" content="Loft">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="hex_terrain guide — Loft, a programming language for small browser games">
+<meta name="twitter:description" content="Getting started with the loft library hex_terrain — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta name="twitter:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<link rel="stylesheet" href="style.css">
+<style>.playground-link{display:inline-block;margin:0.3em 0 0.8em;padding:4px 12px;background:#2563eb;color:#fff;border-radius:4px;text-decoration:none;font-size:0.85em}.playground-link:hover{filter:brightness(1.15)}@media print{.playground-link{display:none}}</style>
+</head>
+<body>
+<nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
+<h1>hex_terrain guide</h1>
+<article>
+<p><a href="lib-hex_terrain.html">← hex_terrain</a> · <a href="lib-hex_terrain-api.html">API reference</a> · <a href="lib-hex_terrain-src.html">source</a></p>
+<p><code>hex_terrain</code> is the overland layer of the <code>hex_*</code> family.  You author a COARSE hex map — one cell is a tile hundreds of metres across, with a height, a material and a moisture — and the fine world a player walks is derived from it on demand: <code>terrain_sample(…, x, y)</code> answers the height, material and water at any point in metres, as a pure function of the map.  Between authoring and sampling run three passes, in this order: hydrology (pits fill, water flows), relief (how rugged each tile is), and rivers (the courses, with their valleys).</p>
+<p>The coarse map is <code>hex_grid</code>'s odd-r lattice scaled to your tile size; reach for <code>hex_grid</code> itself for lattice arithmetic, and for <code>hex_world</code> when you want stored cells rather than a derived surface.</p>
+<pre><code><span class="kw">use</span> hex_terrain::*;</code></pre>
+<pre><code><span class="kw">fn</span> <span class="fn-call">close</span>(a: <span class="ty"><a href="stdlib-types.html">float</a></span>, b: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> { <span class="bi"><a href="stdlib-math.html">abs</a></span>(a - b) &lt; <span class="nm">0.000001</span> }</code></pre>
+<p>The game's terrain types are content: a key, how much a tile's relief lifts it (<code>tt_rise</code>), how jagged it is inside (<code>tt_steep</code>), and whether it is water.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">types</span>() -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">TerrainType</span>&gt; {
+  [<span class="en">TerrainType</span> { tt_key: <span class="st">"grass"</span>, tt_rise: <span class="nm">20.0</span>, tt_steep: <span class="nm">4.0</span>, tt_wet: <span class="kw">false</span> },
+   <span class="en">TerrainType</span> { tt_key: <span class="st">"lake"</span>,  tt_rise: <span class="nm">0.0</span>,  tt_steep: <span class="nm">0.0</span>, tt_wet: <span class="kw">true</span> }]
+}
+<span class="en">LAKE</span> = <span class="nm">1</span>;   <span class="cm">// the lake's index in `types()`</span></code></pre>
+<p>A 3×3 map of 500 m tiles, 100 m high everywhere except the middle tile.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">plateau</span>(middle: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="en">Terrain</span> {
+  t = <span class="fn-call">terrain_new</span>(<span class="nm">3</span>, <span class="nm">3</span>);
+  hs = &amp;t.tr_h;
+  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..9</span> { hs[i] = <span class="nm">100.0</span>; }
+  hs[<span class="fn-call">terrain_idx</span>(t, <span class="nm">1</span>, <span class="nm">1</span>)] = middle;
+  t
+}</code></pre>
+<pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {
+  p = <span class="fn-call">terrain_params</span>(<span class="nm">42</span>, <span class="nm">500.0</span>);
+  (x1, y1) = <span class="fn-call">terrain_center</span>(p, <span class="nm">1</span>, <span class="nm">0</span>);
+  (x2, y2) = <span class="fn-call">terrain_center</span>(p, <span class="nm">0</span>, <span class="nm">1</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"tile (1, 0) at ({x1:.1}, {y1:.1}) m, tile (0, 1) at ({x2:.1}, {y2:.1}) m"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">close</span>(x1, <span class="nm">500.0</span>) &amp;&amp; <span class="fn-call">close</span>(y1, <span class="nm">0.0</span>), <span class="st">"the next tile along a row is one tile size east"</span>);</code></pre>
+<p>A row is 1.5 hex sizes down, and a hex size is the tile over √3: 750 / √3 = 433.0127… m.</p>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">close</span>(x2, <span class="nm">250.0</span>) &amp;&amp; <span class="fn-call">close</span>(y2, <span class="nm">433.0127018922193</span>), <span class="st">"an odd row is shifted half a tile"</span>);</code></pre>
+<p>Every section below is a function, and <code>main</code> calls each one: a section nothing calls still compiles, but its assertions never run.</p>
+<pre><code>  <span class="fn-call">water_fills_the_pits</span>();
+  <span class="fn-call">relief_counts_steep_neighbours</span>();
+  <span class="fn-call">the_blend_overlaps</span>();
+  <span class="fn-call">sampling_is_pure</span>();
+}</code></pre>
+<p>That prints:</p>
+<pre><code>  tile (1, 0) at (500.0, 0.0) m, tile (0, 1) at (250.0, 433.0) m
+</code></pre>
+<h2 id="water-fills-the-pits">Water fills the pits</h2>
+<p><code>terrain_hydrology</code> makes every land tile drain to the edge of the map or the sea.  A tile lower than everything around it is a pit: the flood raises it to just above its lowest rim (rim + 0.05 m), and a tile raised by more than <code>tp_lake_fill</code> (4 m) becomes a lake.  It REWRITES the heights you authored — the 50 m middle tile below ends at 100.05 m — and then sets each tile's downhill neighbour and how many tiles drain through it.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">water_fills_the_pits</span>() {
+  p = <span class="fn-call">terrain_params</span>(<span class="nm">42</span>, <span class="nm">500.0</span>);
+  t = <span class="fn-call">plateau</span>(<span class="nm">50.0</span>);
+  <span class="fn-call">terrain_hydrology</span>(t, p, <span class="en">LAKE</span>);
+  mid = <span class="fn-call">terrain_idx</span>(t, <span class="nm">1</span>, <span class="nm">1</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">close</span>(t.tr_h[mid]?, <span class="nm">100.05</span>), <span class="st">"the pit is filled to its rim"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(t.tr_mat[mid] == <span class="en">LAKE</span>, <span class="st">"and, raised 50 m, it is a lake"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">terrain_flow_to</span>(t, <span class="nm">1</span>, <span class="nm">1</span>) == (<span class="nm">2</span>, <span class="nm">1</span>), <span class="st">"it drains east, the first of six equal rims"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(t.tr_acc[<span class="fn-call">terrain_idx</span>(t, <span class="nm">2</span>, <span class="nm">1</span>)] == <span class="nm">2.0</span>, <span class="st">"so that tile carries two tiles' water"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"water   : the 50 m pit fills to {t.tr_h[mid]:.2} m and becomes a lake"</span>);
+}</code></pre>
+<h2 id="relief-counts-steep-neighbours">Relief counts steep neighbours</h2>
+<p><code>terrain_relief_pass</code> gives each dry tile a relief: its biggest height difference to a neighbour, times <code>0.6 + 0.2 × n</code>, where <code>n</code> is how many neighbours differ by more than 60 m. A 200 m tile among 100 m tiles has six steep neighbours: 100 × 1.8 = 180.  A tile beside it has one: 100 × 0.8 = 80.  A wet tile takes no relief at all, so rivers and lakes stay low.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">relief_counts_steep_neighbours</span>() {
+  p = <span class="fn-call">terrain_params</span>(<span class="nm">42</span>, <span class="nm">500.0</span>);
+  t = <span class="fn-call">plateau</span>(<span class="nm">200.0</span>);
+  ms = &amp;t.tr_mat;
+  ms[<span class="fn-call">terrain_idx</span>(t, <span class="nm">2</span>, <span class="nm">2</span>)] = <span class="en">LAKE</span>;
+  <span class="fn-call">terrain_relief_pass</span>(t, <span class="fn-call">types</span>(), p);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">close</span>(t.tr_relief[<span class="fn-call">terrain_idx</span>(t, <span class="nm">1</span>, <span class="nm">1</span>)]?, <span class="nm">180.0</span>), <span class="st">"six steep neighbours"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">close</span>(t.tr_relief[<span class="fn-call">terrain_idx</span>(t, <span class="nm">1</span>, <span class="nm">0</span>)]?, <span class="nm">80.0</span>), <span class="st">"one steep neighbour"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(t.tr_relief[<span class="fn-call">terrain_idx</span>(t, <span class="nm">2</span>, <span class="nm">2</span>)] == <span class="nm">0.0</span>, <span class="st">"beside the peak too, but wet: none"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"relief  : peak 180, its neighbour 80, a lake beside it 0"</span>);
+}</code></pre>
+<h2 id="the-blend-overlaps">The blend overlaps</h2>
+<p>The fine height at a point is a weighted blend of the tiles within 1.02 tile sizes of it, so neighbouring tiles merge with no seam.  The kernels overlap on purpose: at the middle tile's own centre its six neighbours still weigh 0.0015 each, so a 200 m tile among 100 m tiles reads 199.10 m there, not 200.  Outside the map the edge tiles continue as a plateau.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">the_blend_overlaps</span>() {
+  p = <span class="fn-call">terrain_params</span>(<span class="nm">42</span>, <span class="nm">500.0</span>);
+  (cx, cy) = <span class="fn-call">terrain_center</span>(p, <span class="nm">1</span>, <span class="nm">1</span>);
+  h = <span class="fn-call">terrain_blend_h</span>(<span class="fn-call">plateau</span>(<span class="nm">200.0</span>), p, cx, cy);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">close</span>(h, <span class="nm">199.103394</span>), <span class="st">"the centre reads a little of its neighbours"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">close</span>(<span class="fn-call">terrain_blend_h</span>(<span class="fn-call">plateau</span>(<span class="nm">100.0</span>), p, -<span class="nm">5000.0</span>, -<span class="nm">5000.0</span>), <span class="nm">100.0</span>), <span class="st">"outside: the edge, continued"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"blend   : {h:.2} m at the centre of a 200 m tile"</span>);
+}</code></pre>
+<h2 id="sampling-is-pure">Sampling is pure</h2>
+<p><code>terrain_sample</code> is a function of the map, the types, the params, the rivers and the point — nothing else.  So the fine world derives in any order, from any viewport, and the same seed rebuilds the same world.  The map itself is NOT independent of its extent: hydrology is global, so generate the whole overland map once, and sample windows of it.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">build</span>(p: <span class="en">TerrainParams</span>) -&gt; (<span class="en">Terrain</span>, <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">TerrainRiver</span>&gt;) {
+  t = <span class="fn-call">plateau</span>(<span class="nm">50.0</span>);
+  <span class="fn-call">terrain_hydrology</span>(t, p, <span class="en">LAKE</span>);
+  <span class="fn-call">terrain_relief_pass</span>(t, <span class="fn-call">types</span>(), p);
+  (t, <span class="fn-call">terrain_rivers</span>(t, <span class="fn-call">types</span>(), p))
+}</code></pre>
+<pre><code><span class="kw">fn</span> <span class="fn-call">sampling_is_pure</span>() {
+  p = <span class="fn-call">terrain_params</span>(<span class="nm">42</span>, <span class="nm">500.0</span>);
+  (a, ra) = <span class="fn-call">build</span>(p);
+  (b, rb) = <span class="fn-call">build</span>(p);
+  s1 = <span class="fn-call">terrain_sample</span>(a, <span class="fn-call">types</span>(), p, ra, <span class="nm">600.0</span>, <span class="nm">300.0</span>);
+  s2 = <span class="fn-call">terrain_sample</span>(b, <span class="fn-call">types</span>(), p, rb, <span class="nm">600.0</span>, <span class="nm">300.0</span>);
+  s3 = <span class="fn-call">terrain_sample</span>(a, <span class="fn-call">types</span>(), p, ra, <span class="nm">600.0</span>, <span class="nm">300.0</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(s1.ts_h == s2.ts_h &amp;&amp; s1.ts_h == s3.ts_h &amp;&amp; s1.ts_mat == s2.ts_mat, <span class="st">"same inputs, same sample"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"sample  : the same point answers the same, from a rebuilt world too"</span>);
+}</code></pre>
+<h2 id="where-to-go-next">Where to go next</h2>
+<ul>
+<li><code>tests/02-worked-examples.loft</code> — <code>@HXT-001</code> … <code>@HXT-008</code>: the overland lattice in metres, the record that depends on the map's extent, the order of the passes, relief, the overlapping kernel, the plateau outside the map, shoreline against finished water, and the type boundary that is a line rather than a crossfade.</li>
+</ul>
+
+  </article>
+<script src="search-index.js"></script>
+<script src="search.js"></script>
+<script>
+(function(){
+var m={"Keywords":"keywords","Texts":"texts","Integers":"integers","Boolean":"boolean","Float":"float","Functions":"functions","Vector":"vector","Structs":"structs","Enums":"enums","Sorted":"sorted","Index":"index","Hash":"hash","File":"file","Lexer":"lexer","Parser":"parser","Libraries":"libraries","Store Locks":"store_locks","Parallel execution":"parallel_execution","Logging":"logging","Time":"time","Safety":"safety","JSON":"json","Generics":"generics","Closures":"closures","Coroutines":"coroutines","Tuples":"tuples","Match":"match","Formatting":"formatting"};
+var h=document.querySelector('h1');
+if(!h)return;
+var key=m[h.textContent];
+if(!key)return;
+var a=document.createElement('a');
+a.className='playground-link';
+a.href='playground.html?example='+key;
+a.textContent='\u25B6 Try in Playground';
+h.parentNode.insertBefore(a,h.nextSibling);
+})();
+</script>
+</body>
+</html>

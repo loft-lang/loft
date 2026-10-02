@@ -26,6 +26,7 @@
 // still refused, at the declaration, naming both arities and the cure.  That refusal is
 // `tests/parse_errors.rs::one_bound_set_cannot_require_two_signatures_of_one_method`.
 //
+// (Measured on the `fn Op…` spelling: @C132 re-spelled the cells to `operator` methods, same values.)
 // @falsified-at: e77f5c44 — interpret exit 1 -> 0, native exit 1 -> 0.  The control build
 //   REFUSES this program at compile time, so the channel that moves is the exit code and the
 //   assertion count reads 0|0 on both trees: a guard whose program does not compile cannot
@@ -39,16 +40,16 @@
 
 struct Money1275 { cents: integer }
 
-// A user type satisfying `Subtractable`: one two-operand `OpMin` and nothing else, which is
-// the whole requirement.  (A type may define the unary one beside it — loft#1811.)
-fn OpMin(self: Money1275, other: Money1275) -> Money1275 {
+// A user type satisfying `Subtractable`: one `operator minus` and nothing else, which is the
+// whole requirement.
+operator minus(self: Money1275, other: Money1275) -> Money1275 {
   Money1275 { cents: self.cents - other.cents }
 }
 
 // A user-declared interface asking for both arities — loft#1275's own reproducer.
 interface SubNeg1275 {
-  op - (self: Self, other: Self) -> Self
-  op - (self: Self) -> Self
+  operator minus(self: Self, other: Self) -> Self
+  operator negate(self: Self) -> Self
 }
 
 fn diff1275<T: Subtractable>(a: T, b: T) -> T { a - b }
@@ -72,7 +73,7 @@ fn a_bound_offers_binary_subtraction() {
 }
 
 fn a_user_type_satisfies_the_new_bound() {
-  // `(G-Sat)` is structural: `Money1275` declares a two-operand `OpMin` and that is the whole
+  // `(G-Sat)` is structural: `Money1275` declares an `operator minus` and that is the whole
   // requirement.  Receivers are bound to locals first — a struct-returning operator on a
   // LITERAL receiver is loft#1304 and unrelated to this.
   a = Money1275 { cents: 10 };

@@ -89,7 +89,7 @@ fn main() -> std::io::Result<()> {
     let topic_info = gather_topic_info();
 
     for section in &sections {
-        generate_stdlib_section(section, &stdlib_info, &topic_info)?;
+        generate_stdlib_section(section, &stdlib_info, &topic_info, &link_map)?;
     }
 
     generate_stdlib_toc(&sections, &stdlib_info, &topic_info)?;
@@ -517,6 +517,7 @@ fn generate_stdlib_section(
     section: &SectionFull,
     stdlib_info: &[StdlibSection],
     topic_info: &[(String, String)],
+    link_map: &HashMap<String, String>,
 ) -> std::io::Result<()> {
     let stem = format!("stdlib-{}", section.id);
     let nav = build_nav(topic_info, stdlib_info, &stem);
@@ -530,12 +531,15 @@ fn generate_stdlib_section(
             }
             body.push_str("</div>\n");
         } else {
-            body.push_str("<div class=\"item\">\n");
-            body.push_str(&format!("<pre><code>{}</code></pre>\n", esc(sig)));
-            for p in &paras {
-                body.push_str(&format!("<p>{}</p>\n", esc(p)));
-            }
-            body.push_str("</div>\n");
+            // @PLN183 — the one item renderer: spans as code, the signature highlighted and
+            // linked, as the library API pages show theirs.
+            body.push_str(&loft::doc_render::item_html(
+                &loft::doc_render::Item {
+                    sig,
+                    doc: &doc_lines.join("\n"),
+                },
+                link_map,
+            ));
         }
     }
     // `stdlib_info` carries the hand-written one-line description for this
@@ -687,13 +691,14 @@ fn generate_libraries_page<S: std::hash::BuildHasher>(
         generate_library_guides(index, stdlib_sections, topic_info, link_map)?;
     println!(
         "Generated {guides} library guides ({no_guide} package(s) ship none yet, \
-         {guide_uncached} not in the local registry cache and say so)"
+         {guide_uncached} not in the local registry cache: a committed page is kept, \
+         `make doc` fetches the package)"
     );
     let (src_pages, uncached) =
         generate_library_source_pages(index, stdlib_sections, topic_info, link_map)?;
     println!(
         "Generated {src_pages} library source browsers ({uncached} package(s) not in the \
-         local registry cache and say so)"
+         local registry cache: a committed page is kept, `make doc` fetches the package)"
     );
     Ok(index.packages.len())
 }
@@ -764,6 +769,11 @@ fn generate_library_cards(
                     "none yet \u{2014} the API reference and the source below are what there is"
                         .to_string()
                 }
+                // A guide page kept from a box that had the package is still the guide.
+                GuideSource::Uncached if committed_library_page(name, "guide") => format!(
+                    "<a href=\"lib-{0}-guide.html\">getting started with {0}</a>",
+                    esc(name)
+                ),
                 GuideSource::Uncached => format!(
                     "not known \u{2014} <code>{}</code> is not in this build's registry cache",
                     esc(name)
@@ -1022,17 +1032,15 @@ fn generate_library_api_pages<S: std::hash::BuildHasher>(
                 v.api.len()
             );
             for item in &v.api {
-                // The same wrapper the stdlib section pages use for a documented entry —
-                // one structure for "a signature and its doc", so a style applied later
-                // reaches both rather than only the half that was written second.
-                body.push_str("<div class=\"item\">\n");
-                let _ = writeln!(
-                    body,
-                    "<pre><code>{}</code></pre>",
-                    loft::documentation::highlight_loft(&item.sig, link_map)
-                );
-                body.push_str(&doc_paragraphs(&item.doc));
-                body.push_str("</div>\n");
+                // @PLN183 — the one renderer the REPL and the language server show an item
+                // through, so the three cannot drift.
+                body.push_str(&loft::doc_render::item_html(
+                    &loft::doc_render::Item {
+                        sig: &item.sig,
+                        doc: &item.doc,
+                    },
+                    link_map,
+                ));
             }
         }
 
@@ -1160,6 +1168,16 @@ fn guide_source(name: &str, semver: &str) -> GuideSource {
     }
 }
 
+/// Is there a committed `doc/lib-<name>-<page>.html` to keep?  loft#1850 — a library's
+/// guide and source pages are a function of the REGISTRY (its index and the packages it
+/// serves), not of this tree, and a box whose cache lacks the indexed version can only write a
+/// "not on this build box" page.  Overwriting a committed page with that turned the published
+/// site into a record of the committing box's cache, so such a page is KEPT instead, and only a
+/// box that has the package rewrites it — `make doc` fetches every indexed version first.
+fn committed_library_page(name: &str, page: &str) -> bool {
+    std::path::Path::new(&format!("doc/lib-{name}-{page}.html")).is_file()
+}
+
 /// The `@TITLE:` a topic file declares, used only to head one guide among several.
 fn topic_title(source: &str) -> Option<String> {
     source.lines().find_map(|l| {
@@ -1209,6 +1227,10 @@ fn generate_library_source_pages<S: std::hash::BuildHasher>(
         };
         let dir = loft::registry_index::extract_dir(name, &v.semver);
         let files = collect_sources(&dir);
+        if files.is_empty() && committed_library_page(name, "src") {
+            uncached += 1;
+            continue; // kept as committed — see `committed_library_page`
+        }
 
         let mut body = String::new();
         let _ = writeln!(
@@ -1552,58 +1574,6 @@ fn numbered_source<S: std::hash::BuildHasher>(
         let _ = writeln!(out, "<span id=\"{}-L{}\">{line}</span>", f.slug, i + 1);
     }
     out.push_str("</code></pre>\n");
-    out
-}
-
-/// A doc comment from the registry, as HTML paragraphs.
-///
-/// The stored form is plain text: paragraphs separated by a blank line, wrapped with hard
-/// newlines inside a paragraph, and backtick spans for code. Rejoining the wrapped lines
-/// matters — kept as-is the text renders with the author's terminal width baked in, which
-/// is not a line break they chose for a browser.
-fn doc_paragraphs(doc: &str) -> String {
-    // Citations are dropped by LINE before the split, because a citation is appended to
-    // the prose paragraph above it rather than given one of its own.
-    let doc = without_example_citations(&doc.lines().collect::<Vec<_>>()).join("\n");
-    let mut out = String::new();
-    for para in doc.split("\n\n") {
-        let joined = para
-            .lines()
-            .map(str::trim_end)
-            .filter(|l| !l.is_empty())
-            .collect::<Vec<_>>()
-            .join(" ");
-        if joined.is_empty() {
-            continue;
-        }
-        let _ = writeln!(out, "<p>{}</p>", inline_code(&joined));
-    }
-    out
-}
-
-/// Escape one paragraph, turning `` `spans` `` into `<code>`.
-///
-/// An unclosed backtick is left as a literal character rather than swallowing the rest of
-/// the paragraph into a code span — a doc comment is prose someone typed, and the failure
-/// mode of guessing is that the sentence disappears.
-fn inline_code(text: &str) -> String {
-    let mut out = String::new();
-    let mut rest = text;
-    while let Some(open) = rest.find('`') {
-        let (before, after) = rest.split_at(open);
-        out.push_str(&esc(before));
-        match after[1..].find('`') {
-            Some(close) => {
-                let _ = write!(out, "<code>{}</code>", esc(&after[1..=close]));
-                rest = &after[close + 2..];
-            }
-            None => {
-                out.push_str(&esc(after));
-                return out;
-            }
-        }
-    }
-    out.push_str(&esc(rest));
     out
 }
 
@@ -2035,12 +2005,13 @@ fn generate_print_page(
                     content.push_str(&format!("<p class=\"section-desc\">{}</p>\n", esc(p)));
                 }
             } else {
-                content.push_str("<div class=\"item\">\n");
-                content.push_str(&format!("<pre><code>{}</code></pre>\n", esc(sig)));
-                for p in &paras {
-                    content.push_str(&format!("<p>{}</p>\n", esc(p)));
-                }
-                content.push_str("</div>\n");
+                content.push_str(&loft::doc_render::item_html(
+                    &loft::doc_render::Item {
+                        sig,
+                        doc: &doc_lines.join("\n"),
+                    },
+                    link_map,
+                ));
             }
         }
     }

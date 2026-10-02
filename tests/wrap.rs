@@ -1840,23 +1840,7 @@ fn run_test_inner(
         println!("  ok (errors consumed)");
         return Ok(());
     }
-    // The whole-program lints, in the same window `src/main.rs` runs them: on the parsed
-    // IR, after `Parser::parse` and BEFORE `scopes::check`.  Until now they ran only in
-    // the CLI, so this suite could neither confirm one of their warnings nor catch a false
-    // positive from one — `894-lost-write-through-returned-struct.loft` carried an
-    // `@EXPECT_WARNING` for a diagnostic the harness had no way to produce (loft#929).
-    // Same precondition as the CLI: an aborting error means resolution did not finish, so
-    // every ownership verdict derived from it is known-bad.
     let mut diagnostics = std::mem::take(&mut p.diagnostics);
-    if diagnostics.level() < loft::diagnostics::Level::Error {
-        loft::use_analysis::warn_dead_stores(&p.data, &mut diagnostics, &path);
-        loft::use_analysis::warn_double_move(&p.data, &mut diagnostics, &path);
-        loft::use_analysis::warn_lost_temp_writes(&p.data, &mut diagnostics, &path);
-        // loft#1397 — here for the reason the note above gives, and for the screen it buys:
-        // a false positive from this lint would otherwise be invisible to the 1200-file
-        // corpus, which is the only thing that reads that many programs.
-        loft::use_analysis::warn_variant_overwritten(&p.data, &mut diagnostics, &path);
-    }
     // Scope check and bytecode generation can panic on compiler bugs.
     // When the file has @EXPECT_FAIL annotations, tolerate the panic.
     //
@@ -1871,7 +1855,18 @@ fn run_test_inner(
     // checked and nothing runs.
     let compile_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         scopes::check(&mut p.data, &mut p.database);
+        // The whole-program lints, in the window `src/main.rs` and `loft test` run them
+        // (`post_scope_lints`): AFTER the scope pass, whose verdicts and materialised copies
+        // they read — a value-struct copy is made by that pass, so a lint run before it could
+        // not see one (loft#1840).  Here so this suite can confirm their warnings and catch a
+        // false positive from one, which only a corpus this size reads (loft#929, loft#1397).
+        // Same precondition as the CLI: an aborting error means resolution did not finish,
+        // so every ownership verdict derived from it is known-bad.
         if diagnostics.level() < loft::diagnostics::Level::Error {
+            loft::use_analysis::warn_dead_stores(&p.data, &mut diagnostics, &path);
+            loft::use_analysis::warn_double_move(&p.data, &mut diagnostics, &path);
+            loft::use_analysis::warn_lost_temp_writes(&p.data, &mut diagnostics, &path);
+            loft::use_analysis::warn_variant_overwritten(&p.data, &mut diagnostics, &path);
             loft::use_analysis::drop_copy_census(&p.data, &mut diagnostics, &path);
         }
         if diagnostics.level() >= loft::diagnostics::Level::Error {

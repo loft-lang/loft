@@ -264,7 +264,7 @@ pub(crate) const POS_FILE: u32 = 16;
 
 /// `Variable` record (element of `Function.variables` = `vector<Variable>`) —
 /// the fifteen codegen-read fields the snapshot seam exposes.
-pub(crate) const VARIABLE_STRIDE: u32 = 43;
+pub(crate) const VARIABLE_STRIDE: u32 = 45;
 pub(crate) const VAR_NAME: u32 = 24;
 pub(crate) const VAR_TYPE_DEF: u32 = 28; // vector<TypeT> (box-of-one)
 pub(crate) const VAR_STACK_POS: u32 = 0;
@@ -287,6 +287,10 @@ pub(crate) const VAR_LINKED_NARROW: u32 = 40;
 pub(crate) const VAR_STORE_TEXT_LINK: u32 = 41;
 /// loft#1834 — a user identifier names it; `is_compiler_generated` reads it.
 pub(crate) const VAR_USER_NAMED: u32 = 42;
+/// loft#1840 — the program's own `+=` wrote into it; the `lost-write` lint reads it.
+pub(crate) const VAR_USER_APPENDED: u32 = 43;
+/// loft#1840 — a whole-value bind copied a place into it; the `lost-write` lint reads it.
+pub(crate) const VAR_COPY_BOUND: u32 = 44;
 
 /// `Function` field offsets, relative to a `Function` base (it is inlined in
 /// `Definition`, never stored in a vector).
@@ -304,7 +308,7 @@ pub(crate) const NAMENR_NAME: u32 = 8; // text
 /// `Definition` record (element of `Data.definitions` = `vector<Definition>`).
 /// Inlines `Position` (`DEF_POSITION` base) and `Function` (`DEF_VARIABLES`
 /// base).  `def_type` / `purity` store integer codes (see `ir_store`).
-pub(crate) const DEFINITION_STRIDE: u32 = 184; // @PLN24 arc A — +8 for the two #c text refs; @PLN165 D2/D3 — +16 for type_params, instance_of, instance_args; arc E — +1 for builtin
+pub(crate) const DEFINITION_STRIDE: u32 = 185; // @PLN24 arc A — +8 for the two #c text refs; @PLN165 D2/D3 — +16 for type_params, instance_of, instance_args; arc E — +1 for builtin; @PLN182 — +1 for operator
 pub(crate) const DEF_SOURCE: u32 = 0;
 pub(crate) const DEF_DEF_TYPE: u32 = 8;
 pub(crate) const DEF_PARENT: u32 = 16;
@@ -332,6 +336,7 @@ pub(crate) const DEF_RETURNED_NOT_NULL: u32 = 180;
 pub(crate) const DEF_PUB_VISIBLE: u32 = 181;
 pub(crate) const DEF_NULL_SAFE: u32 = 182; // @PLN46 W2 #null_safe; false = unannotated
 pub(crate) const DEF_BUILTIN: u32 = 183; // @PLN165 arc E #builtin; false = an ordinary body
+pub(crate) const DEF_OPERATOR_FORM: u32 = 184; // @PLN182 written `operator`; false = a plain `fn`
 pub(crate) const DEF_C_SYMBOL: u32 = 164; // @PLN24 #c "sym"; "" = not a C binding
 pub(crate) const DEF_C_SIG: u32 = 168; // @PLN24 the declared C signature; "" = none
 pub(crate) const DEF_TYPE_PARAMS: u32 = 172; // @PLN165 D2 vector<integer>, header order
@@ -1474,6 +1479,8 @@ mod tests {
         assert_eq!(pos(ids.variable, "linked_narrow"), VAR_LINKED_NARROW);
         assert_eq!(pos(ids.variable, "store_text_link"), VAR_STORE_TEXT_LINK);
         assert_eq!(pos(ids.variable, "user_named"), VAR_USER_NAMED);
+        assert_eq!(pos(ids.variable, "user_appended"), VAR_USER_APPENDED);
+        assert_eq!(pos(ids.variable, "copy_bound"), VAR_COPY_BOUND);
         assert_eq!(pos(ids.variable, "owner_witness"), VAR_OWNER_WITNESS);
 
         // Function record.
@@ -1528,6 +1535,7 @@ mod tests {
         assert_eq!(pos(ids.definition, "pub_visible"), DEF_PUB_VISIBLE);
         assert_eq!(pos(ids.definition, "null_safe"), DEF_NULL_SAFE);
         assert_eq!(pos(ids.definition, "builtin"), DEF_BUILTIN);
+        assert_eq!(pos(ids.definition, "operator_form"), DEF_OPERATOR_FORM);
 
         // Data record (root).
         assert_eq!(pos(ids.data, "source"), DATA_SOURCE);

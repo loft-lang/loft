@@ -52,7 +52,7 @@
         "file": "bench/frontend/allocations.tsv",
         "format": "tsv"
       },
-      "cure": "the same delta on every corpus size is the COLD stdlib parse (a new default/ declaration): accept it with --accept frontend-allocations and name the declarations in the commit; a delta that grows with the corpus is the front end: find the new allocation (tests/frontend_counts.rs says how). PERFORMANCE.md § Front-end speed"
+      "cure": "two pins: the `stdlib` row is the COLD stdlib parse, and a new default/ declaration also moves the `tiny`/`medium` program rows by one constant (the scope pass and lints read every definition each run) — accept that with --accept frontend-allocations and name the declarations in the commit; a program delta that grows with the corpus is the front end: find the new allocation (tests/frontend_counts.rs reports both halves and says which applies). PERFORMANCE.md § Front-end speed"
     },
     {
       "name": "rewrite-census",

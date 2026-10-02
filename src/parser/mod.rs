@@ -209,6 +209,15 @@ pub(crate) struct AmpIdentity {
     pub(crate) place: bool,
 }
 
+/// How a monomorph reads an element of `vector<T>` with `T` bound (`vector_elem_read`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct ElemRead {
+    /// The element stride the read's baked type-variable marker is replaced with.
+    pub(crate) stride: i32,
+    /// The vector holds record ids (`Stores::is_linked`), so the read dereferences.
+    pub(crate) linked: bool,
+}
+
 /// Which binding position a leading `&` may occupy at the point the operand parser
 /// reaches it, and therefore which token ENDS the operand the `&` annotates.
 ///
@@ -3747,6 +3756,10 @@ impl Parser {
                 &self.data.resolved_libraries(),
             ) {
                 msg
+            } else if self.data.is_type_var_spelling(&stub_name) {
+                // `D-Scope` / @FR-G-Gen-Scope — a header's variable holds no name, so a
+                // spelling outside every header that declares it reaches here as undefined.
+                Self::type_var_out_of_scope(&stub_name)
             } else if let Some(s) = self.data.suggest_type_name(&stub_name) {
                 format!("Undefined type {stub_name} — did you mean '{s}'?")
             } else {
@@ -4008,6 +4021,13 @@ impl Parser {
         let mut files: BTreeSet<String> = BTreeSet::new();
         for path in paths {
             let p = path?;
+            // A hidden entry is no part of the library: `.loft/` is the cache and log a run
+            // writes beside its sources, `.git/` a checkout's history.  Walking one would make
+            // what a load reads — and what it costs — depend on what earlier runs left in the
+            // directory (loft#1761).
+            if p.file_name().to_string_lossy().starts_with('.') {
+                continue;
+            }
             let own_file = p
                 .path()
                 .extension()
@@ -4344,6 +4364,7 @@ impl Parser {
             "struct"
                 | "enum"
                 | "fn"
+                | "operator"
                 | "type"
                 | "pub"
                 | "use"
@@ -7115,34 +7136,14 @@ impl Parser {
         }
     }
 
-    /// A generic type-variable placeholder the DEFAULT files registered, seen while parsing
-    /// something that is not a default file — where it must not resolve as a real type.
-    ///
-    /// [`Data::is_type_var_placeholder`] already states the rule: the attribute-less
-    /// self-referential `Struct` the parser registers for a `<T>` type parameter "is an
-    /// INTERNAL construct — it must never resolve as a real type outside the default files
-    /// that declare it".  Nothing enforced it, so the stdlib's own `min_of<T>` left a def
-    /// named `T` sitting in the flat key space and a user's `enum T` collided with it:
-    /// `T.N` resolved to the placeholder, which consumed the `.` looking for a variant that
-    /// does not exist, and the user got "Expect token ;" at a `;` whose syntax is fine —
-    /// while the same declaration written ABOVE its use compiled (loft#1049).
-    ///
-    /// Two facts, not one name: the placeholder must have been declared by the DEFAULT
-    /// files (`source == STD_SOURCE`) and we must not currently be parsing them
-    /// (`!self.default`).  A user file's own `fn f<Elem>(…)` registers its placeholder
-    /// outside `STD_SOURCE`, so this leaves it alone and the body still resolves `Elem`.
-    /// `self.default` rather than the current source number because a `parse_str` snippet —
-    /// the `code!` harness, the REPL — is user code parsed AS source 0, and a source
-    /// comparison silently reads that as "this is the stdlib".
-    ///
-    /// `formal/interfaces.md` is what makes this the right cut rather than reserving the
-    /// spelling: "a type variable `T` is a name bound by a generic header", so the binding
-    /// is per-header and never global.
-    pub(crate) fn stdlib_type_var_placeholder(&self, d_nr: u32) -> bool {
-        d_nr != u32::MAX
-            && !self.default
-            && self.data.def(d_nr).source == crate::data::STD_SOURCE
-            && self.data.is_type_var_placeholder(d_nr)
+    /// The refusal for a type variable named outside the definition whose header declares
+    /// it (`D-Scope`, @FR-G-Gen-Scope) — one wording for every site that finds one.
+    pub(crate) fn type_var_out_of_scope(spelled: &str) -> String {
+        format!(
+            "`{spelled}` is not a type here — a type variable is a type only inside the \
+             definition whose header declares it; declare it on this one \
+             (`fn f<{spelled}>(x: {spelled})`) or name a type"
+        )
     }
 
     /// Resolve a NAME the source wrote, giving the enclosing generic header first refusal.
@@ -8961,7 +8962,7 @@ impl Parser {
         // type variable is.
         let mut new_code = tmpl_code;
         for (holder, bound_to) in &bindings {
-            let iter_stride = i32::from(self.vector_elem_iter_stride(bound_to));
+            let iter_stride = self.vector_elem_read(bound_to);
             new_code = Self::substitute_type_in_value(
                 new_code,
                 *holder,
@@ -9167,8 +9168,13 @@ impl Parser {
                 if self.convert_admitting(&mut trial, &types[i], &expected) {
                     continue;
                 }
-                let spelled = Data::type_var_spelling(self.data.def(*v).name()).to_string();
                 let other = Self::resolve_type_var(&self.data, &params[i].1, *v, &types[i]);
+                // The SAME type through both: what failed is not the variable but the rest of
+                // the parameter (`fn(D)` for `fn(const T)`), and the argument check names it.
+                if other == *bound {
+                    continue;
+                }
+                let spelled = Data::type_var_spelling(self.data.def(*v).name()).to_string();
                 diagnostic!(
                     self.lexer,
                     Level::Error,
@@ -9256,7 +9262,7 @@ impl Parser {
         let tmpl_vars = self.data.definitions[d as usize].variables.clone();
         let mut code = tmpl_code;
         for (holder, bound_to) in &bindings {
-            let iter_stride = i32::from(self.vector_elem_iter_stride(bound_to));
+            let iter_stride = self.vector_elem_read(bound_to);
             code = Self::substitute_type_in_value(code, *holder, bound_to, iter_stride, &self.data);
         }
         self.fill_monomorph_body(inst, code, &tmpl_vars, &bindings);
@@ -9872,7 +9878,7 @@ impl Parser {
                 let tmpl_vars = self.data.definitions[g_nr as usize].variables.clone();
                 let mut code = tmpl_code;
                 for (holder, bound_to) in &bindings {
-                    let iter_stride = i32::from(self.vector_elem_iter_stride(bound_to));
+                    let iter_stride = self.vector_elem_read(bound_to);
                     code = Self::substitute_type_in_value(
                         code,
                         *holder,
@@ -10093,6 +10099,149 @@ impl Parser {
         }
     }
 
+    /// Is `child_nr` (named `member`) the symbolic alias of an `operator` member of the same
+    /// interface — `OpLt` beside `operator compare`, `OpMin` at one operand beside `operator
+    /// negate`?  Read from the interface's own members, so it holds for an interface loaded
+    /// from the startup cache as for one parsed now.
+    fn is_operator_alias(&self, iface_nr: u32, child_nr: u32, member: &str) -> bool {
+        let arity = Self::visible_arity(&self.data, child_nr);
+        let Some(form) = Data::operator_form_of_member(member, arity) else {
+            return false;
+        };
+        self.data.children_of(iface_nr).any(|c| {
+            c != child_nr
+                && self.data.def(c).operator_form()
+                && Self::visible_arity(&self.data, c) == arity
+                && Self::interface_method_name(&self.data, c).as_deref() == Some(form)
+        })
+    }
+
+    /// The source symbol of an interface's operator member, for a message: `OpMin` at arity 1
+    /// is the unary `-`.
+    fn member_symbol(member: &str, arity: usize) -> String {
+        let sym = match (member, arity) {
+            ("OpMin", 1) => "unary -",
+            ("OpMin", _) => "-",
+            ("OpMul", _) => "*",
+            ("OpDiv", _) => "/",
+            ("OpRem", _) => "%",
+            ("OpAdd", _) => "+",
+            ("OpLt", _) => "<",
+            _ => return format!("`{member}`"),
+        };
+        format!("`{sym}`")
+    }
+
+    /// Why `concrete` does not meet the interface member `child_nr` (`method_suffix`) when it
+    /// has no method of the name.  An operator member is met by an `operator` method (C132):
+    /// the reason names the one to write, the type's own `operator` at other parameter types
+    /// or as a template, or that no program type can meet the member yet.
+    fn missing_member(&self, method_suffix: &str, child_nr: u32, concrete: &Type) -> String {
+        let arity = Self::visible_arity(&self.data, child_nr);
+        let t = concrete.source_name(&self.data);
+        // A member written `operator` IS its form; a symbolic one names it.
+        let form = if self.data.def(child_nr).operator_form() {
+            [
+                "compare",
+                "plus",
+                "minus",
+                "times",
+                "divided_by",
+                "remainder",
+                "negate",
+            ]
+            .into_iter()
+            .find(|f| *f == method_suffix)
+        } else {
+            Data::operator_form_of_member(method_suffix, arity)
+        };
+        let present = form
+            .map(|f| self.data.find_op_method(u16::MAX, f, concrete))
+            .filter(|d| *d != u32::MAX && self.data.def(*d).operator_form());
+        if let (Some(f), Some(d)) = (form, present) {
+            if self.data.def_type(d) == DefType::Generic {
+                return format!(
+                    "'{f}' is a template, and a bound takes a concrete '{f}' of its \
+                     signature; declare one for '{t}'"
+                );
+            }
+            if let Some(other) = self.data.visible_params(d).get(1) {
+                return format!(
+                    "'{f}' takes '{}' where the interface declares '{t}'",
+                    other.source_name(&self.data)
+                );
+            }
+        }
+        match form {
+            // The member's own signature, `Self` replaced: what the type has to define.
+            Some(form) => {
+                let params = self.bound_params_at(child_nr, concrete);
+                let names: Vec<String> = (0..self.data.def(child_nr).attributes().len())
+                    .filter(|a| !self.data.def(child_nr).attributes()[*a].hidden)
+                    .map(|a| self.data.attr_name(child_nr, a))
+                    .collect();
+                let list: Vec<String> = names
+                    .iter()
+                    .zip(&params)
+                    .map(|(n, p)| format!("{n}: {}", p.source_name(&self.data)))
+                    .collect();
+                let self_nr = self.data.def_nr("Self");
+                let ret = Self::substitute_type(
+                    self.data.def(child_nr).returned().clone(),
+                    self_nr,
+                    concrete,
+                );
+                let ret = if form == "compare" {
+                    "Ordering".to_string()
+                } else {
+                    ret.source_name(&self.data)
+                };
+                format!("missing `operator {form}({}) -> {ret}`", list.join(", "))
+            }
+            None if method_suffix.starts_with("Op") => format!(
+                "it needs {}, which only the built-in types define",
+                Self::member_symbol(method_suffix, arity)
+            ),
+            None => format!("missing {method_suffix}"),
+        }
+    }
+
+    /// `@FR-Op-Bound` — does `concrete` meet the operator member `child_nr` with an `operator`
+    /// method?  Asked at the member's own signature, `Self` replaced: `op <` is met by
+    /// `operator compare`, `op +` by `plus`, a two-operand `op -` by `minus`, and `op * (self:
+    /// Self, k: float)` by `operator times(self: C, k: float)`; the monomorph's operator then
+    /// calls it (`substitute_type_in_value`).
+    fn operator_meets_member(&self, method_suffix: &str, child_nr: u32, concrete: &Type) -> bool {
+        let arity = Self::visible_arity(&self.data, child_nr);
+        let form = if self.data.def(child_nr).operator_form() {
+            Data::operator_form_of_member(method_suffix, arity).or(match method_suffix {
+                "compare" => Some("compare"),
+                "plus" => Some("plus"),
+                "minus" => Some("minus"),
+                "times" => Some("times"),
+                "divided_by" => Some("divided_by"),
+                "remainder" => Some("remainder"),
+                "negate" => Some("negate"),
+                _ => None,
+            })
+        } else {
+            Data::operator_form_of_member(method_suffix, arity)
+        };
+        let Some(form) = form else {
+            return false;
+        };
+        let params = self.bound_params_at(child_nr, concrete);
+        let self_nr = self.data.def_nr("Self");
+        let result = Self::substitute_type(
+            self.data.def(child_nr).returned().clone(),
+            self_nr,
+            concrete,
+        );
+        self.data
+            .operator_member_with(form, &params, Some(&result))
+            .is_some()
+    }
+
     fn satisfaction_failures(&self, iface_nr: u32, concrete_nr: u32) -> Vec<String> {
         let concrete_name = self.data.def(concrete_nr).name().to_string();
         let concrete_type = self.data.def(concrete_nr).returned().clone();
@@ -10112,6 +10261,15 @@ impl Parser {
             let Some(method_suffix) = Self::interface_method_name(&self.data, child_nr) else {
                 continue;
             };
+            // The symbolic alias an `operator` member brings (`OpLt` beside `compare`) is the
+            // generic body's handle, not a second requirement: the member decides.
+            if self.is_operator_alias(iface_nr, child_nr, &method_suffix) {
+                continue;
+            }
+            // `@FR-Op-Bound` — an operator member met by the type's `operator` method.
+            if self.operator_meets_member(&method_suffix, child_nr, &concrete_type) {
+                continue;
+            }
             // I9-prim: use find_fn which checks both the method-style convention
             // (t_7integer_OpLt) and the add_op convention (OpLtInt via possible map).
             let mut found = variant_type
@@ -10149,6 +10307,14 @@ impl Parser {
             // disagree by design.  The re-ask goes through `possible_with_signature` — the same
             // resolver `re_resolve_call` uses for the same question — so satisfaction and
             // monomorphisation cannot disagree about which definition a signature names.
+            // `@FR-Op-Std`, C132 — a program's `fn Op…` meets no operator member: only the
+            // stdlib's definitions, or the type's `operator` method (`@FR-Op-Bound`, above).
+            if found != u32::MAX
+                && method_suffix.starts_with("Op")
+                && !self.data.backs_operator(found)
+            {
+                found = u32::MAX;
+            }
             let want = Self::visible_arity(&self.data, child_nr);
             if found != u32::MAX && Self::visible_arity(&self.data, found) != want {
                 found = self
@@ -10211,7 +10377,16 @@ impl Parser {
             if let Some(msg) = misfit {
                 out.push(msg);
             } else if found == u32::MAX {
-                out.push(format!("missing {method_suffix}"));
+                out.push(self.missing_member(&method_suffix, child_nr, &concrete_type));
+            } else if self.data.def(child_nr).operator_form()
+                && !self.data.def(found).operator_form()
+            {
+                // `@FR-Op-Iface` — a member written `operator` is met only by an `operator`
+                // definition; a plain `fn` of the name is an ordinary method.
+                out.push(format!(
+                    "`{method_suffix}` is a plain `fn`, and the interface asks for `operator \
+                     {method_suffix}`"
+                ));
             } else if let Some(msg) =
                 self.return_type_mismatch(child_nr, found, concrete_nr, &method_suffix)
             {
@@ -10741,6 +10916,11 @@ impl Parser {
             name
         };
         let mut resolved = data.find_fn(u16::MAX, fn_name, &concrete_arg);
+        // `@FR-Op-Std`, C132 — a bound's operator is never a program's `fn Op…`: `==` falls to
+        // the content comparison (`G-Sat-Eq`), and satisfaction refused the rest already.
+        if resolved != u32::MAX && fn_name.starts_with("Op") && !data.backs_operator(resolved) {
+            return d_nr;
+        }
         // `formal/interfaces.md` `(G-Sat)` judges a bound against the SIGNATURE
         // `[Self ↦ C](p̄ -> R)` — the parameter list included — and `find_fn` takes a name and
         // a receiver and no arity.  `-` desugars to `OpMin` at BOTH arities, so an interface
@@ -11267,21 +11447,17 @@ impl Parser {
     /// another template's body was parsed (`i_1S_n_inner`) — else `u32::MAX`.  An instance
     /// at a real type is its own answer; one at a variable stands for its template.
     fn placeholder_instance_template(&self, d: u32) -> u32 {
-        let def = self.data.def(d);
-        let Some(key) =
-            Data::split_key(def.name()).filter(|k| k.kind == crate::data::KeyKind::Instance)
-        else {
+        if !self.data.is_placeholder_instance(d) {
+            return u32::MAX;
+        }
+        let Some(key) = Data::split_key(self.data.def(d).name()) else {
             return u32::MAX;
         };
         let template = self.data.def_nr(key.rest);
         if template == u32::MAX || self.data.def_type(template) != DefType::Generic {
             return u32::MAX;
         }
-        let at_a_variable = def
-            .attributes()
-            .iter()
-            .any(|a| self.data.mentions_type_var(&a.typedef));
-        if at_a_variable { template } else { u32::MAX }
+        template
     }
 
     /// The half of [`re_resolve_call`] that has to CREATE rather than look up.
@@ -11586,7 +11762,7 @@ impl Parser {
         val: Value,
         tv_nr: u32,
         concrete: &Type,
-        iter_stride: i32,
+        iter_stride: ElemRead,
         data: &Data,
     ) -> Value {
         match val {
@@ -11595,6 +11771,53 @@ impl Parser {
                     .into_iter()
                     .map(|a| Self::substitute_type_in_value(a, tv_nr, concrete, iter_stride, data))
                     .collect();
+                // `@FR-Op-Bound` — `Ordered`'s `<` at a type whose order is its `operator
+                // compare`: `a < b` is `a.compare(b) == Less`, one call (`@FR-Op-Order`).
+                // `@FR-Op-Bound` — `Addable`'s `+`, `Subtractable`'s `-` and `Numeric`'s `*` at
+                // such a type are its `operator plus` / `minus` / `times`, one call each.  The
+                // stub is matched at its VISIBLE arity: a member answering a struct carries a
+                // hidden return buffer, which the stub and the member both take, in place.
+                if let Some(form) = [
+                    ("OpAdd", 2),
+                    ("OpMin", 2),
+                    ("OpMul", 2),
+                    ("OpDiv", 2),
+                    ("OpRem", 2),
+                    ("OpMin", 1),
+                ]
+                .into_iter()
+                .find(|(op, n)| Data::is_bound_stub_for(data.def(d).name(), op, *n))
+                .and_then(|(op, n)| Data::operator_form_of_member(op, n))
+                    && let Some(m) = data.operator_member_with(
+                        form,
+                        &data
+                            .visible_params(d)
+                            .into_iter()
+                            .map(|t| Self::substitute_type(t.clone(), tv_nr, concrete))
+                            .collect::<Vec<_>>(),
+                        Some(&Self::substitute_type(
+                            data.def(d).returned().clone(),
+                            tv_nr,
+                            concrete,
+                        )),
+                    )
+                    && data.def(m).attributes().len() == new_args.len()
+                {
+                    return Value::Call(m, new_args);
+                }
+                if new_args.len() == 2
+                    && Data::is_bound_stub_for(data.def(d).name(), "OpLt", 2)
+                    && let Some(cmp) = data.operator_compare_for(concrete)
+                {
+                    let read = Value::Call(
+                        data.def_nr("OpConvIntFromEnum"),
+                        vec![Value::Call(cmp, new_args)],
+                    );
+                    return Value::Call(
+                        data.def_nr("OpEqInt"),
+                        vec![read, Value::Int(data.ordering_discriminant("Less"))],
+                    );
+                }
                 // Re-resolve call target if it references the type variable.
                 let new_d = Self::re_resolve_call(d, tv_nr, concrete, data);
                 // `(G-Sat-Eq)`, @C91 — a bound `==` over a type with no `OpEq` of its own is its
@@ -11657,7 +11880,23 @@ impl Parser {
                     // The stride comes from `vector_elem_iter_stride` (the one
                     // home, computed by the caller) — NOT a re-derived byte-sum;
                     // see that helper for why the two drifted.
-                    let elm_size = iter_stride;
+                    // A linked element is a record id in the slot: the read dereferences it,
+                    // as the concrete path's `OpVectorRef` does.  Reading the slot's address
+                    // instead handed the body the id's bytes as the record.
+                    if iter_stride.linked {
+                        let deref = if data.def(new_d).name() == "OpGetVector" {
+                            "OpVectorRef"
+                        } else {
+                            "OpVectorRefNullable"
+                        };
+                        let mut it = new_args.into_iter();
+                        let (vec, _, idx) = (it.next(), it.next(), it.next());
+                        return Value::Call(
+                            data.def_nr(deref),
+                            vec![vec.unwrap_or(Value::Null), idx.unwrap_or(Value::Null)],
+                        );
+                    }
+                    let elm_size = iter_stride.stride;
                     if elm_size != cur_size {
                         let mut fixed = new_args;
                         fixed[1] = Value::Int(elm_size);
@@ -15775,6 +16014,11 @@ impl Parser {
         let mut acc: Option<Value> = None;
         for f in 0..self.data.def(d).attributes().len() {
             let ftp = self.data.attr_type(d, f);
+            // A method is a member of its type, not a field (`api_surface` reads it the same
+            // way): comparing it as one refused `==` on every value struct that has a method.
+            if matches!(ftp.base(), Type::Routine(_)) {
+                continue;
+            }
             let fa = self.get_field(d, f, sides[0].clone());
             let fb = self.get_field(d, f, sides[1].clone());
             let mut cmp = Value::Null;
@@ -15865,6 +16109,18 @@ impl Parser {
     /// answers only a name with no set, or a set that no member of takes the operands — the
     /// mismatch the caller then reports as "No matching operator".
     fn user_op_method(&mut self, op_name: &str, types: &[Type]) -> Option<u32> {
+        // `@FR-Op-Std`, C132 — only the stdlib's `Op…` definitions back an operator; a
+        // program's is an ordinary function, so the lookup answers "none" for it.
+        let found = self.user_op_method_any(op_name, types);
+        Some(match found {
+            Some(d) if d != u32::MAX && !self.data.backs_operator(d) => u32::MAX,
+            Some(d) => d,
+            None => return None,
+        })
+    }
+
+    /// [`Self::user_op_method`] without the stdlib filter.
+    fn user_op_method_any(&mut self, op_name: &str, types: &[Type]) -> Option<u32> {
         let first = types.first()?;
         let mut m = self.data.find_op_method(u16::MAX, op_name, first);
         if m == u32::MAX {
@@ -16118,24 +16374,6 @@ impl Parser {
                     }
                 }
             }
-            // `@FR-E-Eq`, loft#1581 — `!=` DERIVES from the type's own `OpEq` at a concrete
-            // site, as it already does inside a `<T: Equatable>` body (loft#1144, above):
-            // `a != b` is `!(a == b)`, each operand evaluated once.  Asked only after a user
-            // `OpNe` came up empty, so a type that defines both keeps its own.  Without it the
-            // loop below matched `OpNeRef` — identity — and two equal values answered `a == b`
-            // and `a != b` both true.
-            if op == "!="
-                && list.len() == 2
-                && let Some(eq) = self.user_op_method("OpEq", types)
-                && eq != u32::MAX
-            {
-                let mut eq_code = Value::Null;
-                let tp = self.call_nr(&mut eq_code, eq, list, types, false, &[], None);
-                if tp != Type::Null {
-                    *code = self.cl("OpNot", &[eq_code]);
-                    return Type::Boolean;
-                }
-            }
             // `@FR-E-Eq`, @C91 — vectors, keyed collections and struct-enum values compare by
             // CONTENT (`Stores::eq_content`): a vector by length and then element by element,
             // a keyed collection by its records, an enum value by its variant and then fields.
@@ -16217,7 +16455,10 @@ impl Parser {
                 // answered the other spelling with it — `a - b` over a unary-only `OpMin`
                 // computed `-a` and dropped `b`, silently.  Refused below instead, as the
                 // operator that it is not.
-                if user_op != u32::MAX && Self::visible_arity(&self.data, user_op) == list.len() {
+                if user_op != u32::MAX
+                    && self.data.backs_operator(user_op)
+                    && Self::visible_arity(&self.data, user_op) == list.len()
+                {
                     let tp = self.call_nr(code, user_op, list, types, false, &[], None);
                     if tp != Type::Null {
                         return tp;
@@ -16270,24 +16511,66 @@ impl Parser {
                 "generic type {tv_name}: operator '{spelled}' requires a concrete type",
             );
         } else if types.len() > 1 {
+            let cure = self.operator_cure(spelled, types);
             specific!(
                 self.lexer,
                 &self.lexer.peek().clone(),
                 Level::Error,
-                "No matching operator '{spelled}' on '{}' and '{}'",
+                "No matching operator '{spelled}' on '{}' and '{}'{cure}",
                 types[0].source_name(&self.data),
                 types[1].source_name(&self.data)
             );
         } else {
+            let cure = self.operator_cure(spelled, types);
             specific!(
                 self.lexer,
                 &self.lexer.peek().clone(),
                 Level::Error,
-                "No matching operator '{spelled}' on '{}'",
+                "No matching operator '{spelled}' on '{}'{cure}",
                 types[0].source_name(&self.data)
             );
         }
         Type::Unknown(0)
+    }
+
+    /// C132 (@PLN182) — what a program writes to give its own type the operator `spelled`:
+    /// the `operator` method of a built form, or a named method for a form a type cannot
+    /// define yet.  Empty when the left operand is not a program's type.
+    fn operator_cure(&self, spelled: &str, types: &[Type]) -> String {
+        let Some(left) = types.first() else {
+            return String::new();
+        };
+        let (Type::Reference(d, _) | Type::Enum(d, _, _)) = left.base() else {
+            return String::new();
+        };
+        // A type variable is not a type a program declares an operator on: its cure is a bound.
+        if self.data.def(*d).is_stdlib() || self.data.is_type_var_placeholder(*d) {
+            return String::new();
+        }
+        let t = types[0].base().source_name(&self.data);
+        let u = types
+            .get(1)
+            .map_or_else(|| t.clone(), |r| r.base().source_name(&self.data));
+        match (spelled, types.len()) {
+            ("<" | "<=" | ">" | ">=", 2) => {
+                format!("; declare `operator compare(self: {t}, other: {u}) -> Ordering`")
+            }
+            ("+" | "+=", 2) => format!("; declare `operator plus(self: {t}, other: {u}) -> …`"),
+            ("-" | "-=", 2) => format!("; declare `operator minus(self: {t}, other: {u}) -> …`"),
+            ("*" | "*=", 2) => format!("; declare `operator times(self: {t}, other: {u}) -> …`"),
+            ("/" | "/=", 2) => {
+                format!("; declare `operator divided_by(self: {t}, other: {u}) -> …`")
+            }
+            ("%" | "%=", 2) => {
+                format!("; declare `operator remainder(self: {t}, other: {u}) -> …`")
+            }
+            ("-", 1) => format!("; declare `operator negate(self: {t}) -> …`"),
+            // The reserved forms (@PLN182 Q10): a type will define these, and cannot yet.
+            ("**" | "&" | "|" | "^" | "<<" | ">>", 2) | ("~", 1) => {
+                format!("; `{t}` cannot define '{spelled}' yet — call a named method")
+            }
+            _ => String::new(),
+        }
     }
 
     /// Call a specific definition
@@ -17810,6 +18093,14 @@ impl Parser {
                     // has none, so the import binds whichever package's did load.
                     if self.data.use_exists(&id) {
                         self.module_name_clash(&id);
+                        // loft#1849 — this file's package is bound by its own range for
+                        // `id` too, whichever `use` loaded the copy.
+                        let cur_script = self.lexer.pos().file.to_string();
+                        if let Some(loaded) = self.use_paths.get(&id).cloned()
+                            && let Some(pkg_root) = crate::resolution_scope::project_root(&loaded)
+                        {
+                            self.loaded_copy_meets_declaring_range(&id, &cur_script, &pkg_root);
+                        }
                     }
                     if self.data.use_exists(&id) {
                         let lib_source = self.data.get_source(&id);
@@ -18406,6 +18697,7 @@ impl Parser {
             f = format!("{id}.loft");
         }
         self.probe_manifest_path_dep(id, cur_dir, &mut f);
+        self.probe_root_path_dep(id, &cur_script, &mut f);
         self.probe_sibling_package(id, cur_dir, &mut f);
         Self::probe_script_sibling_dir(id, &cur_script, &mut f);
         if blocked(&f) {
@@ -19444,6 +19736,84 @@ impl Parser {
         }
     }
 
+    /// loft#1849 — the ROOT project's `{ path = … }` declaration of `id` answers a `use id`
+    /// anywhere in the program, not only in the root's own files.
+    ///
+    /// PACKAGES.md: "The root project's declared constraints pin the whole tree, including
+    /// packages pulled in transitively by a `use` inside a dependency", and a package loads
+    /// once.  Every other project-side probe looks from the IMPORTING file's directory, so a
+    /// `use graphics` inside a path dependency `input` never saw the root's declaration: it
+    /// fell to the registry, and that copy — being loaded first — became the program's,
+    /// whatever the root said.  Which copy a program compiled against depended on the order
+    /// of its `use` lines.
+    ///
+    /// The importing package's own range must still hold for the copy the root names; when
+    /// it does not, the two declarations disagree and the program is refused, naming both
+    /// ([`Self::loaded_copy_meets_declaring_range`]).
+    fn probe_root_path_dep(&mut self, id: &str, cur_script: &str, f: &mut String) {
+        if std::path::Path::new(f).exists() {
+            return;
+        }
+        let Some(root) = crate::resolution_scope::project_root(&self.database.source_dir) else {
+            return;
+        };
+        let root_dir = root.to_string_lossy().to_string();
+        self.probe_manifest_path_dep(id, &root_dir, f);
+        if std::path::Path::new(f).exists()
+            && let Some(pkg_root) = Self::declared_path_dep_root(id, &root_dir)
+        {
+            self.loaded_copy_meets_declaring_range(id, cur_script, &pkg_root);
+        }
+    }
+
+    /// The version of the copy of `id` this program loads (the package at `pkg_root`) against
+    /// the range the package whose file says `use id` names for it — refused when it falls
+    /// outside, because a copy the importer excludes is the silent mismatch loft#1849 is.
+    /// Asked where the copy is chosen ([`Self::probe_root_path_dep`]) AND where a later
+    /// `use` finds it already loaded, so the verdict cannot depend on which `use` came first.
+    #[cfg(feature = "registry")]
+    fn loaded_copy_meets_declaring_range(
+        &mut self,
+        id: &str,
+        cur_script: &str,
+        pkg_root: &std::path::Path,
+    ) {
+        let Some(range) = Self::declaring_range(cur_script, id) else {
+            return;
+        };
+        let Some(version) =
+            crate::manifest::read_manifest(&pkg_root.join("loft.toml").to_string_lossy())
+                .and_then(|m| m.version)
+        else {
+            return;
+        };
+        if crate::registry_index::satisfies(&version, &range) {
+            return;
+        }
+        let importer = crate::resolution_scope::project_root(cur_script)
+            .and_then(|r| crate::manifest::read_manifest(&r.join("loft.toml").to_string_lossy()))
+            .and_then(|m| m.name)
+            .unwrap_or_else(|| cur_script.to_string());
+        diagnostic!(
+            self.lexer,
+            Level::Error,
+            "`{importer}` needs `{id} {range}`, and the copy of `{id}` this program loads ({}) \
+             is {version} — the two declarations disagree, so neither copy can stand in for \
+             the other",
+            pkg_root.display()
+        );
+    }
+
+    #[cfg(not(feature = "registry"))]
+    #[allow(clippy::unused_self)]
+    fn loaded_copy_meets_declaring_range(
+        &mut self,
+        _id: &str,
+        _cur_script: &str,
+        _pkg_root: &std::path::Path,
+    ) {
+    }
+
     /// Walk up from `cur_dir` looking for a `loft.toml`; on hit, the package's
     /// parent directory may contain sibling packages.  When the sibling is
     /// found directly (not via `lib_path_manifest`), the sibling's own
@@ -19921,10 +20291,13 @@ impl Parser {
         // decide only which file LOADED, so a pinned version that was not extracted yet
         // was installed as "newest", and a fresh box ran a different program than the
         // machine that pinned it.
+        // And the range the package whose file says `use id` names for it — the same third
+        // declaration `probe_cache_newest` honours (loft#1849).
         let pinned = self.lock_pin_in_force(id, scope, cur_script);
-        let pin = crate::install::constraint_for(
+        let pin = crate::install::use_constraint(
             pinned.as_deref(),
             self.root_dep_constraint(id).as_deref(),
+            Self::declaring_range(cur_script, id).as_deref(),
         );
         match crate::install::auto_install_if_in_catalog(id, pin.as_deref(), &opts) {
             Ok(Some(report)) => {

@@ -2,16 +2,16 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 //! Selection over a name's OVERLOAD SET (@PLN162): which of several definitions a call
-//! reaches, decided from the argument types alone.
+//! reaches, decided from the argument types alone.  The rules: `formal/dispatch.md`.
 //!
-//! `Disp-Applicable` — a definition takes the call when every argument may satisfy its
+//! `@FR-Disp-Applicable` — a definition takes the call when every argument may satisfy its
 //! parameter, which is the parser's own [`Parser::can_convert`] and not a second spelling of
-//! it.  `Disp-Specific` — per position, an exact spelling beats a widening (a variant to its
+//! it.  `@FR-Disp-Specific` — per position, an exact spelling beats a widening (a variant to its
 //! enum, `τ` into `τ?`), which beats a lossy discharge (`τ?` into `τ`, `(N-Store)`), which
 //! beats any other conversion; one definition is more specific than another when it is no
-//! worse at every position and better at one.  `Disp-Select` — the unique most-specific
-//! applicable definition.  `Disp-Ambiguous` — two minimal ones that nothing ranks are refused
-//! naming both; `Disp-Exhaustive` — none applicable is refused naming what was passed and what
+//! worse at every position and better at one.  `@FR-Disp-Select` — the unique most-specific
+//! applicable definition.  `@FR-Disp-Ambiguous` — two minimal ones that nothing ranks are refused
+//! naming both; `@FR-Disp-Exhaustive` — none applicable is refused naming what was passed and what
 //! is declared.  The nullability routing of `(F-Recv)`'s argument clause runs FIRST
 //! ([`crate::data::Data::routed_types`]), so a nullable argument anywhere reaches the `τ?`
 //! overload where one is declared.
@@ -32,7 +32,7 @@ const EXACT: Rank = 0;
 const WIDENED: Rank = 1;
 const LOSSY: Rank = 2;
 const CONVERTED: Rank = 3;
-/// `D-Rank` (@PLN165) — a template's parameter that names a type variable, where the
+/// `@FR-D-Rank` (@PLN165) — a template's parameter that names a type variable, where the
 /// variable binds.  Worse than `EXACT`, `WIDENED` and `LOSSY`: a concrete definition that
 /// takes the argument as it is wins.  Apart from the concrete ranks' sums (a conversion with
 /// a nullability step on top reaches 5), so no concrete rank ever reads as this one.

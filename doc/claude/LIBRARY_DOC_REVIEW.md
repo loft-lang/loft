@@ -139,6 +139,13 @@ current body: do the description, each parameter's meaning, the return contract,
 and any inline example still match what the code does **now**? Doc edits are XS —
 **fix drift on the spot**.
 
+Then the README and the guide, the same way: **run every example in them**, and measure
+every claim that names a target, a number or a limitation. The defect met most is an
+example written as `use lib;` followed by a bare name — a bare `use` brings in only the
+`lib::` qualifier (C98), so it does not compile; the cure is `use lib::*;`. The next is a
+limitation the code has since outgrown: "does not build on `--native-wasm`", "is not
+drawn", "import it in this order". A limitation is a claim — run it before keeping it.
+
 ### 3. Fill the highest-value coverage gap (examples)
 
 From the *uncited* public functions, pick the ones a reader "knows exists but
@@ -231,14 +238,54 @@ as a STALE ROW rather than ignored.
 
 | library | reviewed through | at commit | notes |
 |---|---|---|---|
-| `default` | 2026-10 | `497b1e491` | @STD-001..012 authored across text / collections / JSON / files-IO. Every published section read against the release and each authored sentence probed on both backends (`.doc_review_ledger` 264/264), including `len`/`size` of an absent text answering 0, `log10`/`log2` exact at powers, `StackFrame.arguments` listing the parameters, and only `///` lines published (loft#1808) |
+| `default` | 2026-10 | `a80e26737` | @STD-001..012 authored across text / collections / JSON / files-IO. Every published section read against the release and each authored sentence probed on both backends (`.doc_review_ledger` 264/264), including `len`/`size` of an absent text answering 0, `log10`/`log2` exact at powers, `StackFrame.arguments` listing the parameters, and only `///` lines published (loft#1808) |
 | `lib/git` | 2026-10 | `892ff4743` | @GIT-001..005 tagged to live uses in `scan.loft` + `refresh.loft`; 13 pub fns read. A query that cannot be ASKED halts instead of answering `""` (loft#1061), and the doc above `git_query` and `branch` says so |
 | `lib/lexer.loft` | 2026-10 | `892ff4743` | @LEX-001 (matches/test/identifier), @LEX-002 (anchor/revert backtracking) — both tagged to live uses in `parser.loft` (`function`, `object`), exercised by the `16-parser` doc test; format-protocol/comment fns still owe examples (need a non-rendered demo). `Lexer`, `Anchor.start`, `split_token` and `offset` documented with their reasons |
-| `lib/parser.loft` | 2026-10 | `822a29aad` | One `pub fn` (`parse`); @PAR-001 tags the doc test `tests/docs/16-parser.loft`, the clearest call site there is. Its doc states the contract of the grammar it has — `while`, `match` with guards, both lambda forms, `::` names, the optional `;` after a block (loft#1800) — and the doc test asserts both what it parses and the listed constructs it does not |
+| `lib/parser.loft` | 2026-10 | `a80e26737` | One `pub fn` (`parse`); @PAR-001 tags the doc test `tests/docs/16-parser.loft`, the clearest call site there is. Its doc states the contract of the grammar it has — `while`, `match` with guards, both lambda forms, `::` names, the optional `;` after a block (loft#1800) — and the doc test asserts both what it parses and the listed constructs it does not |
 | `lib/code.loft` | 2026-10 | `892ff4743` | 24 `pub fn`; the module header names what `Code` is, what `cur_arg` switches, and which half is reached; `Code` and `Structure` documented. `deferred` in `examples-exempt.tsv`: the emitter half has no call site to cite |
 | `lib/testlib.loft` | 2026-10 | `892ff4743` | `exempt` in `examples-exempt.tsv` — a fixture for `tests/docs/17-libraries.loft` and `tests/diagnostic_reach.rs`, deliberately trivial, so a call site teaches nothing its signature does not. `Point` and `Bag` documented as the fixtures they are |
+| `lib/docs.loft` | 2026-10 | `3cbc126fd` | `exempt` in `examples-exempt.tsv` — one unfinished function writing heading-only pages. Comments restated as rules instead of the loft#1339 story; its gating nullable warnings (and two in `lib/lexer.loft`) discharged |
 | `lib/audience_crystal` | 2026-10 | `f29effbf3` | @ACR-001..003 tagged to the `01-editor-helpers` test (picking inverse, incr editor loop, erase) |
 | `lib/engine_host` | 2026-08 | `7786d28c` | @EHK-001..004 tagged to CI-spawned audience-demo kernels (run loop, broadcast, sync lanes, run_client drain); 37 pub fns read while tagging |
+| `arguments` | 2026-10 | `06aa45e` | Every doc probed on both backends; three untrue promises fixed in code (0.2.4): a value option takes the next word whatever it looks like, `-h`/`-V` go to the program's own option, a short-only option is queried by its short name |
+| `cbor` | 2026-10 | `06aa45e` | "Never crashes" was false on deep nesting; `decode` refuses past `MAX_DEPTH` (0.1.9). Header no longer promises phases that shipped or a `to_cbor` that does not exist |
+| `crypto` | 2026-10 | `06aa45e` | Malformed base64 decoded to other bytes at every door; strict decode, each door refuses (0.3.11). The `+=` CAUTION on `base64_to_bytes` was stale and is gone. Two `pub` TEST-ONLY HPKE fns remain a surface question |
+| `random` | 2026-10 | `06aa45e` | `RandStream` described; `rand_indices`' negative case named (0.3.4) |
+| `regex` | 2026-10 | `06aa45e` | `regex_find`'s supersession named the wrong `search`; roadmap's FFI-gap cause was stale (0.4.2) |
+| `zttext` | 2026-10 | `06aa45e` | Guide written and falsified; `zttext_version()` answers the manifest; design pointers name where the notation lives (0.1.3) |
+| `assets` | 2026-10 | `efd8ed7` | Guide and @PAK-001..003 written; README example did not compile under C98 and the v2026.8.0 hang note was obsolete; `blob_put`'s `+=` claim was stale (0.2.4). Found loft's text-key replace duplicating (fixed in loft) |
+| `glb` | 2026-10 | `63e6b03` | Guide written; README claimed camera nodes that are never written (0.1.4). A spot light now carries the `spot` object KHR_lights_punctual requires and its node's translation (0.1.5) |
+| `mesh3d` | 2026-10 | `efd8ed7` | Guide written; `mat4_scale` is per-axis, not uniform; the bare-import claim predated C98 (0.1.3) |
+| `drawing` | 2026-10 | `1868d3c` | Guide and @DRW-001..003 written; the README's example did not compile under C98, and its rasteriser import order, `--native-wasm` and "Fronds / gradients / checks not drawn" claims were stale. 0.4.0's Brush/Lock rows read against the parser (`flip` defaults to 0); the corpus re-measured with the `Lock` brush: all 36 of the crawler's scenes byte-identical on both backends (0.4.0) |
+| `graphics` | 2026-10 | `98b270f` | README listed `mesh3d` and `glb` as sub-modules it does not pass on; every listed function exists, the wasm PNG and blend claims measured (0.9.5) |
+| `gridmesh` | 2026-10 | `98b270f` | Guide written; its read-only functions take `const`, so a rule holding the field `const` can call `idx_at`; plan history out of the comments (0.2.4). Found loft's false avoidable-copy advice on a field or parameter copy (fixed in loft) |
+| `imaging` | 2026-10 | `98b270f` | README only: `--native-wasm` builds and decodes as the interpreter does; @IMG-002 described as RGBA with alpha carried (0.4.2) |
+| `shapes` | 2026-10 | `98b270f` | Guide written; a depth is the distance out, not the part inside (0.5.2) |
+| `stage` | 2026-10 | `98b270f` | README read against the source: all 100 listed names exist, the test-backed claims each have their test; guide linked (0.18.6) |
+| `text2d` | 2026-10 | `98b270f` | Guide and @T2D-001..003 written; `write_text("")` answered -1 and a scale below 1 measured unlike it drew (0.4.3) |
+| `tween` | 2026-10 | `98b270f` | Guide and @TWN-001..003 written; the README's fixstep example did not compile under C98 (0.1.2). Found loft's misleading bare-variant import advice (fixed in loft) |
+| `fixstep` | 2026-10 | `658f0a0` | Guide written: a frame clock banking its remainder, a rate through a `Bank`, a cooldown firing once. The `--native-wasm` row was "not yet exercised"; measured, it answers as the interpreter does (0.1.3) |
+| `input` | 2026-10 | `658f0a0` | Guide written, driven headless through `input_tick_from_state`; the repo README listed `input` as "(planned)" (0.2.4) |
+| `game_protocol` | 2026-10 | `c3d22a8` | Guide written (JSON on the wire with `:j` and `GameEnvelope.parse`); the README promised framing and ack/retransmit the package does not have — it is message types and constructors (0.1.5) |
+| `ssh` | 2026-10 | `c3d22a8` | Guide written, runs with no sshd; the README's loop bounded `recv` bytes by `len` — the mistake @SSH-002 warns against (0.1.3) |
+| `web` | 2026-10 | `c3d22a8` | `byte_at`'s argument order was reversed in the README; the browser `fetch()` backend described as shipped, with what the browser does differently; `pack_u32_le` keeps the low 32 bits of a 64-bit `integer` (0.4.3) |
+| `hex_body` | 2026-10 | `c9ddda6` | Guide written; history in README and source restated (0.3.3) |
+| `hex_draw` | 2026-10 | `c9ddda6` | Guide written; `place_opening` replaces the wall's material — its comment said the material was kept (0.1.2) |
+| `hex_edge` | 2026-10 | `c9ddda6` | Guide written; a material does not open a gate — `passable` reads only the surface mark; `SURF_NONE` slot is i32, not u16 (0.2.2) |
+| `hex_field` | 2026-10 | `c9ddda6` | Status said stencils, the document format and the edge layer were "landing next"; all ship. `tests/08-hex-grid-parity.loft` keeps the restated lattice equal to `hex_grid` (0.1.4) |
+| `hex_fit` | 2026-10 | `c9ddda6` | Guide written; comments cited a `tests/fit.loft` the package lacks (0.1.3) |
+| `hex_form` | 2026-10 | `c9ddda6` | README and USAGE cited hexbody's SPEC / ROUNDTRIP.md, unreachable from the package (0.1.6) |
+| `hex_grid` | 2026-10 | `c9ddda6` | Five packages build on it, not "four"; `hex_field` and `hex_world` do not (0.1.3) |
+| `hex_place` | 2026-10 | `c9ddda6` | Guide written; USAGE omitted the seat_* family and five more functions (0.1.2) |
+| `hex_recover` | 2026-10 | `c9ddda6` | Guide written; comments cited a `tests/trip.loft` the package lacks (0.1.4) |
+| `hex_roof` | 2026-10 | `c9ddda6` | Guide written; `roof_match` answering `ROOF_UNKNOWN` dropped the closest ridge's far end — fixed in code and guarded (0.1.6) |
+| `hex_shape` | 2026-10 | `c9ddda6` | Guide written; the wall-direction error is 1.1021°, the header said 4.11° (0.1.4) |
+| `hex_terrain` | 2026-10 | `c9ddda6` | Guide written; the README example was refused under C98 (0.1.5) |
+| `hex_way` | 2026-10 | `c9ddda6` | Guide written; the README listed six of seven examples and half the surface (0.1.3) |
+| `hex_world` | 2026-10 | `c9ddda6` | Guide written; the README named two consumers that do not use it. Ships `src/overland.loft` and `src/wall.loft`, which fail `--check` and nothing reaches — left for the owner to remove (0.2.2) |
+| `pluginabi` | 2026-10 | `b4dcdb4` | Guide written (a counter plugin and its host over frames); both README examples were refused under C98, the loft#1491 leak note was obsolete (clean under `LOFT_STORES=warn`), and the header's example spelled the error code `unknown_op` (0.1.5) |
+| `html` | 2026-10 | `13205f6` | @HTM-001..002 written: escaping is one pass but not idempotent (escape once, at the output), and the apostrophe keeps a single-quoted attribute closed. "`&` is escaped first" described a replace chain the function is not (0.1.2) |
+| `markdown` | 2026-10 | `13205f6` | @MKD-001..003 written: a non-empty `base_dir` routes relative links through `/file/` (undocumented until now), a heading's text is raw with `render`'s slug, `html_escape` leaves `'`. Only `@P<n>` / `@PLAN<n>` mentions are linked (0.2.4) |
 
 Each pass's notes, row by row, are in [LIBRARY_DOC_REVIEW-history.md](LIBRARY_DOC_REVIEW-history.md).
 

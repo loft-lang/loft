@@ -669,7 +669,8 @@ are set once per loop), dispatch, the frame yield, and the halt checks.  The **f
 carries every per-op instrument — the debugger and profiler (`debug_check`), live reload, the
 stack census, the stack shadow, allocation paths, the UAF scans — and takes over the moment one
 is armed, including a debugger attaching mid-run.  Measured: the full loop's
-bookkeeping was 62 of an op's 152 instructions on a vector-writing loop.
+bookkeeping was 62 of an op's 152 instructions on a vector-writing loop.  `LOFT_NO_LEAN_LOOP=1`
+takes the full loop for a plain run — the A/B switch for what the lean loop buys.
 
 ### Stack and variable access (`src/state/mod.rs`)
 
@@ -682,6 +683,8 @@ grows the buffer and the record together — and cost 43 % of the interpreter's 
 loop.  The checked path (`*_checked`, out of line) runs whenever an instrument that watches
 stack accesses is armed — `verify_on`, `LOFT_STACK_CENSUS`, `LOFT_UAF_GEN`,
 `LOFT_STRICT_STORES`, the `stack_align_guard` feature — and in every debug-assertions build.
+`LOFT_NO_FAST_STACK=1` takes the checked path on purpose: the A/B switch for what the direct
+path buys, and the first bisect step for a wrong answer only the interpreter gives.
 
 ### Operand fusion — superinstructions
 
@@ -706,9 +709,12 @@ generated body pops a value first takes its local positions before that value is
 both are the defects the guard's planted-defect cells catch.  The shapes were chosen from
 `LOFT_OP_NGRAMS`, the statically adjacent operator runs over the bench lanes (PROFILING.md).
 
-What these buy is constant-factor speed on work that already runs in cache.  Measured over
-the 79 bench routines (`make interp-gap`): the fast stack path and the lean loop
-2.0× (median), the fusion above another 1.2×, 2.5× together; up to 5.2× on text walks.
+What these buy is constant-factor speed on work that already runs in cache.  Over the 79 bench
+routines (`bench/stats.py --lanes interp`, one binary, each path switched off with its
+`LOFT_NO_*` switch, fusion on throughout, every routine's output hash identical): the fast
+stack path and the lean loop together **2.4×** (median; interquartile 1.95–3.6×, range
+1.1–4.7×), the direct stack path alone 2.2×, the lean loop alone 1.3×.  The fusion above
+adds its own share on top (`LOFT_NO_FUSE=1` is its switch); up to 5.2× on text walks.
 Measured the same way, **none of it changed a single store operation** — which is why the
 next work is in the section below, not in more fusion.
 
@@ -771,23 +777,26 @@ and guarded by a COUNT, never by a time (@PLN166).
   cache ON and otherwise measures a cache write.
 - **The gate counts, it does not time.**  Wall clock varied ±30 % under load on one box,
   so a time gate teaches people to ignore it; an allocation count is exact.
-  `tests/frontend_counts.rs` counts the front end's heap allocations in-process over the
-  bench's corpus against `bench/frontend/allocations.tsv`, keyed by OS and cargo profile.
-  A count that GROWS fails; one that falls passes and names the re-pin
-  (`LOFT_FRONTEND_REPIN=1 cargo test [--release] --test frontend_counts`).  One uncounted
-  run goes first — the first compile in a process pays one-time setup that differs by
-  platform — and the two counted runs must agree wherever a pin is read or written; a
-  build with no pin reports and passes.
-- **The counted compile is COLD: it parses `default/` every time.**  The window opens
-  before `parse_dir("default")`, so every row carries the whole stdlib parse.  An
-  installed `loft` never pays that per run — it loads the stdlib from the startup cache
-  (`warm_load_stdlib`, [STARTUP_CACHE.md](STARTUP_CACHE.md)) — and a dev build pays it
-  because the cache is off in a `target/` tree ([STARTUP_CACHE.md § Default-on behaviour](STARTUP_CACHE.md#default-on-behaviour-and-overrides)).  So read a
-  growth by its SHAPE: the same delta on tiny and medium is a per-compile constant, i.e.
-  the stdlib parse — a new stdlib declaration, paid once per stdlib change on a real
-  install; a delta that scales with the corpus is the front end itself.  Accept the first
-  with the declarations that caused it named in the commit (`join.py rederive --accept
-  frontend-allocations`); chase the second.
+  `tests/frontend_counts.rs` counts the front end's heap allocations in-process against
+  `bench/frontend/allocations.tsv`, keyed by OS and cargo profile.  A count that GROWS
+  fails; one that falls passes and names the re-pin (`LOFT_FRONTEND_REPIN=1 cargo test
+  [--release] --test frontend_counts`).  One uncounted run goes first — the first compile
+  in a process pays one-time setup that differs by platform — and the counted runs must
+  agree wherever a pin is read or written; a build with no pin reports and passes.
+- **Two pins, because they are two costs.**  `stdlib` is the COLD stdlib parse alone —
+  what an installed `loft` pays once per stdlib change, since a run loads the stdlib from
+  the startup cache (`warm_load_stdlib`, [STARTUP_CACHE.md](STARTUP_CACHE.md)).  `tiny` and
+  `medium` are the bench's corpus compiled on top of the loaded stdlib — what a warm run
+  pays.  The scope pass and the lints walk every definition on every run, the stdlib's
+  too, so a new stdlib declaration moves its own row AND both program rows by one constant;
+  a delta that grows with the corpus is the front end itself.  The gate reports both halves
+  together and says which reading applies.  Accept a stdlib growth with the declarations
+  named in the commit (`join.py rederive --accept frontend-allocations`); chase a front-end
+  one.
+- **The count reads nothing the checkout accumulates.**  The stdlib is parsed from a
+  pristine copy of `default/`'s `.loft` files, made outside the counting window, because a
+  directory listing costs allocations per entry; and the loader skips hidden entries, so a
+  `.loft/` cache a run left beside the sources is never read as part of the stdlib.
 - **The edit loop reuses the stdlib.**  A program-cache miss takes the stdlib from its own
   cache, and the program manifest pins the stdlib it was built against with a `stdk` line,
   so an edited, added or removed stdlib file is never served stale
@@ -815,11 +824,10 @@ design of each is in the record; the delivered items are listed below the table.
 | **N3 / N5** — unchecked integer arithmetic when operands are non-null | native | the cheap version is unsound (the sentinel is core null propagation).  Counted loops already run their index chains plain behind a guard (`LOFT_NO_GUARDED_CHAIN`, [NATIVE_SWITCHES.md](NATIVE_SWITCHES.md)); straight-line code stays checked | [§ Design: N3](PERFORMANCE-history.md#design-n3--remove-long-null-sentinel-from-generated-code), [§ N5](PERFORMANCE-history.md#design-n5--inline-integer-arithmetic-when-operands-are-provably-non-null) |
 | **W1** — wasm string representation | wasm | not built | [§ Design: W1](PERFORMANCE-history.md#design-w1--wasm-string-representation) |
 | **O8.1b / O8.2 / O8.3** — packed bytes, bulk struct vectors, zero-fill defaults | both | "not started" in O8's phase table | [§ Design: O8](PERFORMANCE-history.md#design-o8--bulk-initialisation-of-constant-data) |
-| **F2** — split the allocation gate's pin ([#1761](https://github.com/loft-lang/loft/issues/1761)) | front end | one window counts the cold stdlib parse and the program together, so stdlib growth reads as front-end growth and can mask a real front-end regression of the same size | two pins in `tests/frontend_counts.rs`: the stdlib parse alone, and the corpus compiled on top of an already-loaded stdlib (what a warm run pays) — [§ Front-end speed](#front-end-speed--how-it-is-measured-and-guarded) |
 | **Worker clone** — `Stores::types` / `names` copied per `par` worker | parallel | the fields are not `Arc`-wrapped | [§ Runtime optimisation audit](PERFORMANCE-history.md#runtime-optimisation-audit) |
 
 **Delivered, for reference:** P1 (operand fusion — [§ Operand fusion](#operand-fusion--superinstructions)), N4 (`cr_call_push` suppressed on `#pure` leaves), N6 (no rustc
-probe on a cache hit), F1 (the front end's hot spots), BUILD1 (no lib/bin double compile),
+probe on a cache hit), F1 (the front end's hot spots), F2 (the allocation gate's two pins), BUILD1 (no lib/bin double compile),
 BUILD2 (the native-test binary cache), P5/P6 (amortised vector growth, free-block coalescing),
 P7's `reserve`, O8's `const_eval`, pre-allocated vector literals and constant range
 comprehensions, P2's native half, and the startup cache.

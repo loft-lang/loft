@@ -1124,7 +1124,7 @@ fn p324_integer_generator_with_concurrent_store_mutation_no_longer_panics() {
 fn satisfaction_check_passes_with_implementing_type() {
     code!(
         "struct Score { value: integer }
-         fn OpLt(self: Score, other: Score) -> boolean { self.value < other.value }
+         operator compare(self: Score, other: Score) -> Ordering { self.value.compare(other.value) }
          fn pick_first<T: Ordered>(a: T, _b: T) -> T { a }"
     )
     .expr("pick_first(Score{value:3}, Score{value:7}).value")
@@ -1155,7 +1155,7 @@ fn bounded_method_call_in_generic_body() {
 fn bounded_operator_in_generic_body() {
     code!(
         "struct Score { value: integer }
-         fn OpLt(self: Score, other: Score) -> boolean { self.value < other.value }
+         operator compare(self: Score, other: Score) -> Ordering { self.value.compare(other.value) }
          fn pick_min<T: Ordered>(a: T, b: T) -> T { if a < b { a } else { b } }"
     )
     .expr("pick_min(Score{value:7}, Score{value:3}).value")
@@ -1172,7 +1172,7 @@ fn bounded_operator_in_generic_body() {
 fn bounded_operator_self_return_type() {
     code!(
         "struct Score { value: integer }
-         fn OpLt(self: Score, other: Score) -> boolean { self.value < other.value }
+         operator compare(self: Score, other: Score) -> Ordering { self.value.compare(other.value) }
          fn pick_max<T: Ordered>(a: T, b: T) -> T { if a < b { b } else { a } }"
     )
     .expr("pick_max(Score{value:3}, Score{value:9}).value")
@@ -1181,20 +1181,18 @@ fn bounded_operator_self_return_type() {
 
 // ── I8.3 — Mixed-type binary operators (T op concrete) ──────────────────────
 
-/// I8.3: an operator with a concrete second parameter (`T * integer`) must
+/// I8.3: an operator with a concrete second parameter (`T / integer`) must
 /// compile inside a bounded generic body and produce the correct result.
-/// The interface declares a mixed-type signature: `self: Self, factor: integer -> integer`.
+/// The interface declares a mixed-type signature: `self: Self, divisor: integer -> integer`.
+/// Here the bound is met by `integer`'s own `operator divided_by`; a program's type meets it
+/// with its own (`tests/parse_errors.rs::a_divided_by_member_is_met_by_an_operator_method_only`).
 #[test]
 fn bounded_mixed_type_operator() {
     code!(
-        // @PLN25 DN3 — `self.value / divisor` types `integer?` (a variable divisor can be
-        // 0); discharge with `?? 0` so the `op / -> integer` body returns a non-null value.
-        "interface Divisible { op / (self: Self, divisor: integer) -> integer }
-         struct Score { value: integer }
-         fn OpDiv(self: Score, divisor: integer) -> integer { self.value / divisor ?? 0 }
-         fn halve<T: Divisible>(v: T, n: integer) -> integer { v / n }"
+        "interface Divisible { operator divided_by(self: Self, divisor: integer) -> integer }
+         fn halve<T: Divisible>(v: T, n: integer) -> integer { v / n ?? 0 }"
     )
-    .expr("halve(Score{value:42}, 6)")
+    .expr("halve(42, 6)")
     .result(Value::Int(7));
 }
 
@@ -1206,13 +1204,11 @@ fn bounded_mixed_type_operator() {
 #[test]
 fn bounded_unary_operator() {
     code!(
-        // @PLN25 DN3 — `self.value % modulus` types `integer?`; discharge with `?? 0`.
-        "interface Modular { op % (self: Self, modulus: integer) -> integer }
-         struct Score { value: integer }
-         fn OpRem(self: Score, modulus: integer) -> integer { self.value % modulus ?? 0 }
-         fn mod_measure<T: Modular>(v: T, m: integer) -> integer { v % m }"
+        // `integer` meets the `operator remainder` member with the stdlib's own.
+        "interface Modular { operator remainder(self: Self, modulus: integer) -> integer }
+         fn mod_measure<T: Modular>(v: T, m: integer) -> integer { v % m ?? 0 }"
     )
-    .expr("mod_measure(Score{value:42}, 10)")
+    .expr("mod_measure(42, 10)")
     .result(Value::Int(2));
 }
 
@@ -1224,7 +1220,7 @@ fn bounded_unary_operator() {
 fn stdlib_ordered_interface() {
     code!(
         "struct Score { value: integer }
-         fn OpLt(self: Score, other: Score) -> boolean { self.value < other.value }
+         operator compare(self: Score, other: Score) -> Ordering { self.value.compare(other.value) }
          fn pick_min<T: Ordered>(a: T, b: T) -> T { if a < b { a } else { b } }"
     )
     .expr("pick_min(Score{value:7}, Score{value:3}).value")
@@ -1428,7 +1424,7 @@ fn stdlib_scalable_interface() {
 #[test]
 fn two_interfaces_same_operator_no_conflict() {
     code!(
-        "interface Summable { op + (self: Self, other: Self) -> Self }
+        "interface Summable { operator plus(self: Self, other: Self) -> Self }
          fn total<T: Summable>(a: T, b: T) -> T { a + b }"
     )
     .expr("total(10, 32)")
@@ -1481,7 +1477,7 @@ fn stdlib_max_of_float() {
 fn generic_text_returning_method() {
     code!(
         "struct Tag { label: text }
-         fn to_text(self: Tag) -> text { self.label }
+         operator to_text(self: Tag) -> text { self.label }
          fn show<T: Printable>(v: T) -> text { v.to_text() }"
     )
     .expr("show(Tag{label: \"hello\"})")
@@ -1495,7 +1491,7 @@ fn generic_text_returning_method() {
 fn stdlib_printable_interface() {
     code!(
         "struct Tag { label: text }
-         fn to_text(self: Tag) -> text { self.label }
+         operator to_text(self: Tag) -> text { self.label }
          fn show<T: Printable>(v: T) -> text { v.to_text() }"
     )
     .expr("show(Tag{label: \"world\"})")

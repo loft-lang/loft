@@ -3843,11 +3843,10 @@ Free functions: a `pub` one answers to either spelling.
   assert(add(0, -5) == -5, "the same free function, written bare");
 ```
 
-A definition the library did NOT mark `pub` is reachable only through the prefix — `internal\_add(3, 4)` on its own is an unknown function here.
+A definition the library did NOT mark `pub` is not reachable from outside at all — neither `internal\_add(3, 4)` nor `testlib::internal\_add(3, 4)` compiles here; the second answers "`internal\_add` is not `pub` in `testlib`".  A library's surface is its `pub` items, by either spelling.  The library's own `pub` functions still use them:
 
 ```rust
-  assert(testlib::internal_add(3, 4) == 7, "non-pub free function via the prefix");
-  assert(testlib::INTERNAL_LIMIT == 42, "non-pub constant via the prefix");
+  assert(testlib::add(3, 4) == 7, "the pub surface answers");
 ```
 
 Library types work as function parameter types when written with their full namespace prefix in the function signature. A struct with a vector field can be initialised via a struct literal, including elements that are themselves library structs.
@@ -5374,38 +5373,31 @@ fn test_combined_bounds() {
 
 === Your own types under a bound
 
-The built-in bounds are not only for built-in types, and this is what they are for: a struct satisfies one by DEFINING the operation, with no declaration that it does. The names are the operators' own, not the symbols:
+The built-in bounds are not only for built-in types, and this is what they are for: a struct satisfies one by DEFINING the operation, with no declaration that it does.  An operator is an `operator` method — written with the keyword `operator` where a function has `fn` — named for what it does:
 
 ```
-Ordered    fn OpLt(self: T, other: T) -> boolean      (`<`)
-Equatable  fn OpEq(self: T, other: T) -> boolean      (`==`)
-Addable    fn OpAdd(self: T, other: T) -> T           (`+`)
-Numeric    fn OpMul(self: T, other: T) -> T           (`*`)
-           fn OpMin(self: T) -> T                     (unary `-`)
-Subtractable fn OpMin(self: T, other: T) -> T        (binary `-`)
-Scalable   fn scale(self: T, factor: integer) -> integer
-Printable  fn to_text(self: T) -> text
-Walkable   fn children(self: T) -> vector<T>
+Ordered      operator compare(self: T, other: T) -> Ordering   (`<` `<=` `>` `>=`)
+Addable      operator plus(self: T, other: T) -> T            (`+`)
+Subtractable operator minus(self: T, other: T) -> T           (binary `-`)
+Numeric      operator times(self: T, other: T) -> T           (`*`)
+             operator negate(self: T) -> T                    (unary `-`)
+Scalable     fn scale(self: T, factor: integer) -> integer
+Printable    operator to_text(self: T) -> text
+Walkable     fn children(self: T) -> vector<T>
 ```
 
-`Equatable` is the exception: every type satisfies it, because `==` compares what two values hold — a struct field by field.  Define `OpEq` only when equality should mean something else.
+`compare` answers `Less`, `Equal` or `Greater`; every built-in ordered type has one, so `self.cents.compare(other.cents)` is the whole body for one field. `Equatable` is met by every type, because `==` compares what two values hold — a struct field by field — unless the type defines `operator equals`.
 
-The same definition serves the bare operator: once `Money` has `OpLt`, both `a \< b` and `\<T: Ordered\>` work on it. Miss one and the error names it — "'Money' does not satisfy interface 'Ordered': missing OpLt" — at the CALL site, because that is where the concrete type is known.
+The same definition serves the bare operator: once `Money` has `compare`, both `a \< b` and `\<T: Ordered\>` work on it.  Miss one and the error names it — "'Money' does not satisfy interface 'Ordered': missing `operator compare(self: Money, other: Money) -\> Ordering`" — at the CALL site, because that is where the concrete type is known.
 
 ```rust
 struct Money { cents: integer }
-fn OpLt(self: Money, other: Money) -> boolean { self.cents < other.cents }
-fn OpEq(self: Money, other: Money) -> boolean { self.cents == other.cents }
-fn OpAdd(self: Money, other: Money) -> Money { Money { cents: self.cents + other.cents } }
-fn to_text(self: Money) -> text { "{self.cents}c" }
-```
-
-Both arities of `-`, so `Money` satisfies `Subtractable` and, with `OpMul`, `Numeric`.
-
-```rust
-fn OpMin(self: Money, other: Money) -> Money { Money { cents: self.cents - other.cents } }
-fn OpMin(self: Money) -> Money { Money { cents: 0 - self.cents } }
-fn OpMul(self: Money, other: Money) -> Money { Money { cents: self.cents * other.cents } }
+operator compare(self: Money, other: Money) -> Ordering { self.cents.compare(other.cents) }
+operator plus(self: Money, other: Money) -> Money { Money { cents: self.cents + other.cents } }
+operator minus(self: Money, other: Money) -> Money { Money { cents: self.cents - other.cents } }
+operator negate(self: Money) -> Money { Money { cents: 0 - self.cents } }
+operator times(self: Money, other: Money) -> Money { Money { cents: self.cents * other.cents } }
+operator to_text(self: Money) -> text { "{self.cents}c" }
 fn test_user_type_bounds() {
   cheap = Money { cents: 300 };
   dear = Money { cents: 700 };
@@ -5413,7 +5405,7 @@ fn test_user_type_bounds() {
   assert(best.cents == 700, "Ordered on a user type: {best.cents}");
   assert(cheap < dear, "…and the bare operator, from the same definition");
   assert(same(cheap, Money { cents: 300 }), "Equatable on a user type");
-  assert(same(Tile { height: 1, name: "t" }, Tile { height: 1, name: "t" }), "…and on one that defines no OpEq");
+  assert(same(Tile { height: 1, name: "t" }, Tile { height: 1, name: "t" }), "…and on one that defines no operator");
   assert(!same(Tile { height: 1, name: "t" }, Tile { height: 2, name: "t" }), "…comparing every field");
   total = clamped_add(cheap, cheap, Money { cents: 1000 });
   assert(total.cents == 600, "Addable on a user type: {total.cents}");
@@ -5463,7 +5455,7 @@ A generic may declare several variables, and one no argument binds may be bound 
 
 ```rust
 struct Tile { height: integer, name: text }
-fn to_text(self: Tile) -> text { self.name }
+operator to_text(self: Tile) -> text { self.name }
 struct Grid<T> { w: integer, cells: vector<T> }
 fn map_grid<T, U>(g: Grid<T>, f: fn(T) -> U) -> Grid<U> {
   out: vector<U> = [];
@@ -6978,7 +6970,7 @@ Calling the inner function directly does the same thing, and calling it twice is
 
 Every language surface and every part of the toolchain the catalogue tracks, in one list.  Each entry has a page of its own in `doc/features/` in the repository, where `\@F2` is `F2.md`.
 
-The two halves read differently.  An `\@F` page says what the feature is and how it aids you, and 72 of the 88 carry a runnable example; the rest name what demonstrates them instead, because a loft program cannot run the compiler that runs it.  An `\@I` page says what the part does and where it lives in the source — it describes how loft is built, not something you write.
+The two halves read differently.  An `\@F` page says what the feature is and how it aids you, and 76 of the 90 carry a runnable example; the rest name what demonstrates them instead, because a loft program cannot run the compiler that runs it.  An `\@I` page says what the part does and where it lives in the source — it describes how loft is built, not something you write.
 
 The catalogue is generated from the `loft-lang/features` issue tracker, which is the single source of truth: every entry is an issue, and `make features-check` regenerates this page and fails on any difference.  A feature you can name and cannot find below is missing from the TRACKER — that is a gap in the catalogue rather than a gap in loft, and the chapters of this reference are the wider list.
 
@@ -7015,7 +7007,7 @@ The catalogue is generated from the `loft-lang/features` issue tracker, which is
 - \*\*\@F29\*\* — Pattern matching — enum/scalar/tuple, guards, or-patterns, exhaustiveness
 - \*\*\@F30\*\* — `is` variant check (+ field capture)
 - \*\*\@F31\*\* — `break` / `continue` + labelled forms
-- \*\*\@F32\*\* — Custom iterators via `fn next(self) -\> T?`
+- \*\*\@F32\*\* — Custom iterators via `operator next(self) -\> T?`
 - \*\*\@F33\*\* — `par(...)` parallel for-loop
 - \*\*\@F34\*\* — Coroutines / generators — `yield`, `yield from`
 - \*\*\@F35\*\* — String literals — `{expr}` interpolation + backtick multiline
@@ -7064,14 +7056,16 @@ The catalogue is generated from the `loft-lang/features` issue tracker, which is
 - \*\*\@F111\*\* — `for f in s\#fields` — a compile-time loop over a struct's scalar fields
 - \*\*\@F112\*\* — `store\_release()` — say a record is finished, and stop holding it in memory
 - \*\*\@F113\*\* — Associated types — an interface names a companion type
-- \*\*\@F114\*\* — `x\[i\]` on a library type — `OpIndex` dispatch
+- \*\*\@F114\*\* — A library type reads an element through a named method — `\[…\]` is the built-in collections'
 - \*\*\@F115\*\* — `OpDrop` — a type runs code when its scope lets it die
 - \*\*\@F118\*\* — Time (now / ticks)
 - \*\*\@F119\*\* — Store locks (\#lock)
-- \*\*\@F120\*\* — Lexer library (lib/lexer)
-- \*\*\@F121\*\* — Parser library (lib/parser)
+- \*\*\@F120\*\* — Lexer in loft (lib/lexer.loft) — part of the loft-in-loft front end, not a user library yet
+- \*\*\@F121\*\* — Parser in loft (lib/parser.loft) — part of the loft-in-loft front end, not a user library yet
 - \*\*\@F122\*\* — Multiple dispatch — one name, a definition per combination of parameter types
 - \*\*\@F123\*\* — Foreign stores — a mapped file or a library's buffer read in place, a slice of it a view
+- \*\*\@F124\*\* — Operators on a program's own type — `operator compare`, `plus`, `minus`, `times`, `negate`, `divided\_by`, `remainder`, `to\_\<type\>`
+- \*\*\@F125\*\* — Text slicing — `s\[a..b\]`, `s\[a..\]`, `s\[..b\]`, `s\[i\]` (byte offsets; `char\_slice` for characters)
 
 === Tooling and infrastructure
 
@@ -7850,53 +7844,62 @@ pub type u32 = integer limit(0, 4294967294) size(4)
 
 4-byte unsigned: 0 – 4\_294\_967\_294.  The top code is reserved to buy the same refusal `i32` gets at the bottom (`u32 = 4294967295` does not compile) — and, unlike `i32`, it is NOT a null: an overflow here reads `0`, the type's default (C127, and the note on `i32` above says why the two differ).  size(4) forces 4-byte storage and serialisation symmetric with `i32`, and a value in the upper half (2^31..2^32-2) reads back as the same positive integer.  `u32` is for file / wire-format fields (magic numbers, counts, tick fields) where the byte width is the load-bearing property; plain `integer` holds the whole 0..2^32-1 range and more.
 
+```rust
+pub enum Ordering {
+  Less,
+  Equal,
+  Greater
+}
+```
+
+Where one value stands against another: what `compare` answers.  An enum rather than a signed number, so a comparison cannot be written as a subtraction that overflows.
+
 == Interfaces
 
 ```rust
 pub interface Ordered {
-  op < (self: Self, other: Self) -> boolean
+  operator compare(self: Self, other: Self) -> Ordering
 }
 ```
 
-Standard interfaces for bounded generic functions. A type satisfies an interface by defining the required operator or method. Types that support the `\<` comparison operator. Satisfied by integer, single, float, text, and any user type defining OpLt.
+Standard interfaces for bounded generic functions. A type satisfies an interface by defining the `operator` method or the method it names — a built-in type by the stdlib's own, a program's type by its own (`formal/operators.md`). Types that support the `\<` comparison operator. Satisfied by integer, single, float, text, and any type defining `operator compare`.
 `boolean` is NOT among them, deliberately: it satisfies Equatable below and has no ordering, so `false \< true` is a refusal rather than a convention the language picks for you.  A program that wants it says so — `(a as integer) \< (b as integer)`.  The same line bounds how null is ordered: that applies to the ordered types only, and a boolean null still compares with `==` like every other scalar.
-ONE method is all a type has to define: inside a generic bounded by this, `\>`, `\<=` and `\>=` all derive from `\<` — `a \> b` is `b \< a`, `a \<= b` is `!(b \< a)`, `a \>= b` is `!(a \< b)`.  Each evaluates its operands exactly once.
+ONE method is all a type has to define: inside a generic bounded by this, `\<`, `\<=`, `\>` and `\>=` all read it, each evaluating its operands exactly once.
 
 ```rust
 pub interface Equatable {
-  op == (self: Self, other: Self) -> boolean
 }
 ```
 
-Types that support the `==` equality operator: every type (\@C91), by its own OpEq or by content. A tuple compares element by element, as its concrete `==` does.
-`!=` derives from it (`a != b` is `!(a == b)`), so a type defining `op ==` gets both.
+Types that support the `==` equality operator: every type, compared by content at every depth (\@C91).  `==` is always structural and no type redefines it, so this declares nothing; a deep comparison of a type's own is a named method.  A tuple compares element by element, as its concrete `==` does.
+`!=` derives from it (`a != b` is `!(a == b)`).
 
 ```rust
 pub interface Addable {
-  op + (self: Self, other: Self) -> Self
+  operator plus(self: Self, other: Self) -> Self
 }
 ```
 
-Types that support the `+` addition operator, returning the same type. Satisfied by integer, single, float, and user types defining OpAdd.
+Types that support the `+` addition operator, returning the same type. Satisfied by integer, single, float, and any type defining `operator plus`.
 
 ```rust
 pub interface Numeric {
-  op * (self: Self, other: Self) -> Self
-  op - (self: Self) -> Self
+  operator times(self: Self, other: Self) -> Self
+  operator negate(self: Self) -> Self
 }
 ```
 
-Types that support `\*` and `-` (unary negation). Separate from `Addable` so a generic can ask for the fewest operators it needs. Satisfied by integer, single, float, and user types defining OpMul and OpMin.
-Binary subtraction is `Subtractable` below and deliberately NOT here.  One interface CAN declare both arities of `-`, but adding a requirement to `Numeric` would take satisfaction away from every user type that provides `OpMul` and unary `OpMin` today, which a compatible release may not do.
+Types that support `\*` and `-` (unary negation). Separate from `Addable` so a generic can ask for the fewest operators it needs. Satisfied by integer, single, float, and any type defining `operator times` and `operator negate`.
+Binary subtraction is `Subtractable` below and deliberately NOT here.  One interface CAN declare both arities of `-`, but adding a requirement to `Numeric` would take satisfaction away from every type that meets it, which a compatible release may not do.
 
 ```rust
 pub interface Subtractable {
-  op - (self: Self, other: Self) -> Self
+  operator minus(self: Self, other: Self) -> Self
 }
 ```
 
-Types that support binary `-` (subtraction), returning the same type. Satisfied by integer, single, float, and user types defining a two-operand OpMin.
-A bound of its own rather than a third requirement on `Numeric`: a bound set may declare one name at two arities (`-` means `OpMin` either way, told apart by its operand count), so `\<T: Numeric + Subtractable\>` gets negation and subtraction together from two interfaces that each name `OpMin`.  The built-in number types satisfy both, and so does a user type that defines `OpMin` at both arities, in either order — as pinned by `tests/scripts/1811-a-method-overload-set-is-one-set-in-either-declaration-order.loft`.
+Types that support binary `-` (subtraction), returning the same type. Satisfied by integer, single, float, and any type defining `operator minus`.
+A bound of its own rather than a third requirement on `Numeric`, so `\<T: Numeric + Subtractable\>` gets negation and subtraction together from two interfaces.  The built-in number types satisfy both.
 
 ```rust
 pub interface Scalable {
@@ -7904,15 +7907,15 @@ pub interface Scalable {
 }
 ```
 
-Types that support integer scaling via a `scale` method. Uses a method (not `op \*`): inside a `\<T: Numeric + …\>` body, `\*` already means Numeric's `Self \* Self`, so `x \* 2` there is refused ("operator '\*' requires a concrete type") even when another bound declares `op \* (self: Self, f: integer)`. Two SEPARATE generics may each bound their own `T` by an interface declaring the same method differently — a header binds its own type variable. User types satisfy Scalable by defining `fn scale(self: T, factor: integer) -\> integer`.
+Types that support integer scaling via a `scale` method. Uses a method (not `operator times`): inside a `\<T: Numeric + …\>` body, `\*` already means Numeric's `Self \* Self`, so `x \* 2` there is refused ("operator '\*' requires a concrete type") even when another bound declares `operator times(self: Self, f: integer)`. Two SEPARATE generics may each bound their own `T` by an interface declaring the same method differently — a header binds its own type variable. User types satisfy Scalable by defining `fn scale(self: T, factor: integer) -\> integer`.
 
 ```rust
 pub interface Printable {
-  fn to_text(self: Self) -> text
+  operator to_text(self: Self) -> text
 }
 ```
 
-Types that can be converted to text via a `to\_text` method. User types satisfy Printable by defining `fn to\_text(self: T) -\> text`.
+Types that can be converted to text via a `to\_text` method. User types satisfy Printable by defining `operator to\_text(self: T) -\> text`.
 
 == Math
 
@@ -8217,6 +8220,138 @@ pub fn clamp(self: float, lo: float, hi: float) -> float
 Clamps v into the inclusive range \[lo, hi\]. Returns null if any argument is null.
 
 ```rust
+pub fn then(self: Ordering, next: Ordering) -> Ordering
+```
+
+This answer, or `next` when this one is `Equal`: compares by several fields in turn, `a.year.compare(b.year).then(a.month.compare(b.month))`.
+
+```rust
+pub operator compare(self: integer, other: integer) -> Ordering
+```
+
+Where `self` stands against `other` — `Less`, `Equal` or `Greater` — in the order `\<` uses.
+
+```rust
+pub operator compare(self: single, other: single) -> Ordering
+```
+
+Where `self` stands against `other`, in the order `\<` uses.
+
+```rust
+pub operator compare(self: float, other: float) -> Ordering
+```
+
+Where `self` stands against `other`, in the order `\<` uses.
+
+```rust
+pub operator plus(self: integer, other: integer) -> integer
+```
+
+`+` as the method `Addable` names: `a.plus(b)` is `a + b`.
+
+```rust
+pub operator minus(self: integer, other: integer) -> integer
+```
+
+`-` as the method `Subtractable` names: `a.minus(b)` is `a - b`.
+
+```rust
+pub operator times(self: integer, other: integer) -> integer
+```
+
+`\*` as the method `Numeric` names: `a.times(b)` is `a \* b`.
+
+```rust
+pub operator negate(self: integer) -> integer
+```
+
+The unary `-` as the method `Numeric` names: `a.negate()` is `-a`.
+
+```rust
+pub operator divided_by(self: integer, other: integer) -> integer?
+```
+
+`/` as a method: `a.divided\_by(b)` is `a / b`, null on a zero divisor.
+
+```rust
+pub operator remainder(self: integer, other: integer) -> integer?
+```
+
+`%` as a method: `a.remainder(b)` is `a % b`, null on a zero divisor.
+
+```rust
+pub operator plus(self: single, other: single) -> single
+```
+
+`+` as the method `Addable` names: `a.plus(b)` is `a + b`.
+
+```rust
+pub operator minus(self: single, other: single) -> single
+```
+
+`-` as the method `Subtractable` names: `a.minus(b)` is `a - b`.
+
+```rust
+pub operator times(self: single, other: single) -> single
+```
+
+`\*` as the method `Numeric` names: `a.times(b)` is `a \* b`.
+
+```rust
+pub operator negate(self: single) -> single
+```
+
+The unary `-` as the method `Numeric` names: `a.negate()` is `-a`.
+
+```rust
+pub operator divided_by(self: single, other: single) -> single?
+```
+
+`/` as a method: `a.divided\_by(b)` is `a / b`, null on a zero divisor.
+
+```rust
+pub operator remainder(self: single, other: single) -> single?
+```
+
+`%` as a method: `a.remainder(b)` is `a % b`, null on a zero divisor.
+
+```rust
+pub operator plus(self: float, other: float) -> float
+```
+
+`+` as the method `Addable` names: `a.plus(b)` is `a + b`.
+
+```rust
+pub operator minus(self: float, other: float) -> float
+```
+
+`-` as the method `Subtractable` names: `a.minus(b)` is `a - b`.
+
+```rust
+pub operator times(self: float, other: float) -> float
+```
+
+`\*` as the method `Numeric` names: `a.times(b)` is `a \* b`.
+
+```rust
+pub operator negate(self: float) -> float
+```
+
+The unary `-` as the method `Numeric` names: `a.negate()` is `-a`.
+
+```rust
+pub operator divided_by(self: float, other: float) -> float?
+```
+
+`/` as a method: `a.divided\_by(b)` is `a / b`, null on a zero divisor.
+
+```rust
+pub operator remainder(self: float, other: float) -> float?
+```
+
+`%` as a method: `a.remainder(b)` is `a % b`, null on a zero divisor.
+
+```rust
 pub fn approx(self: float, b: float, eps: float) -> boolean
 ```
 
@@ -8249,6 +8384,18 @@ pub fn len(self: character) -> integer
 ```
 
 Byte length of the character's UTF-8 encoding (1–4).
+
+```rust
+pub operator compare(self: text, other: text) -> Ordering
+```
+
+Where `self` stands against `other`, in the order `\<` uses: by bytes, as `\<` compares text.
+
+```rust
+pub operator compare(self: character, other: character) -> Ordering
+```
+
+Where `self` stands against `other`, by code point, in the order `\<` uses.
 
 ```rust
 pub fn split(self: text, separator: character) -> vector<text>
@@ -8473,6 +8620,30 @@ pub fn sort < T: Ordered > (self: vector<T>)
 Sort a vector in place, ascending: `sort(v)` or `v.sort()`.  Takes any element with a `\<` (`Ordered`) — a struct defining `op \<` sorts by it — and is stable: elements that compare equal keep their order.  A null element sorts first.
 
 ```rust
+pub fn sort_by < T, K: Ordered > (self: vector<T>, key: fn(T) -> K)
+```
+
+Sort a vector in place by a key, ascending: `v.sort\_by(fn(d: Date) -\> integer { d.ms })`. The key is any `Ordered` value — a number or a `text` — so this is how a struct sorts (C132).  Stable, like `sort`: elements with equal keys keep their order.  `key` is called once per element.
+
+```rust
+pub fn min_by < T, K: Ordered > (self: vector<T>, key: fn(T) -> K) -> T?
+```
+
+The element with the smallest key, or null when the vector is empty: `v.min\_by(fn(d: Date) -\> integer { d.ms })`.  Of several with that key, the FIRST.
+
+```rust
+pub fn max_by < T, K: Ordered > (self: vector<T>, key: fn(T) -> K) -> T?
+```
+
+The element with the largest key, or null when the vector is empty: `v.max\_by(fn(d: Date) -\> integer { d.ms })`.  Of several with that key, the FIRST.
+
+```rust
+pub fn sum_by < T, K: Addable > (self: vector<T>, key: fn(T) -> K, init: K? = null) -> K
+```
+
+The sum of a key over the elements: `v.sum\_by(fn(o: Order) -\> float { o.price })`.  The key is any `Addable` value; `init` is the identity to start from, and left out it is the key type's own zero (0, 0.0), so an empty vector sums to it.
+
+```rust
 pub fn filter < T > (self: vector<T>, f: fn(T) -> boolean) -> vector<T>
 ```
 
@@ -8565,37 +8736,37 @@ pub struct StructField {
 Represents a single struct field during compile-time iteration.
 
 ```rust
-pub fn to_text(self: integer) -> text
+pub operator to_text(self: integer) -> text
 ```
 
 Converts an integer to its decimal text. Built-in types define `to\_text` so they satisfy the `Printable` interface (used by `print`, format strings, …).
 
 ```rust
-pub fn to_text(self: float) -> text
+pub operator to_text(self: float) -> text
 ```
 
 Converts a float to its text representation.
 
 ```rust
-pub fn to_text(self: single) -> text
+pub operator to_text(self: single) -> text
 ```
 
 Converts a single-precision float to its text representation.
 
 ```rust
-pub fn to_text(self: boolean) -> text
+pub operator to_text(self: boolean) -> text
 ```
 
 Converts a boolean to "true" or "false".
 
 ```rust
-pub fn to_text(self: character) -> text
+pub operator to_text(self: character) -> text
 ```
 
 Converts a character to a one-character text.
 
 ```rust
-pub fn to_text(self: text) -> text
+pub operator to_text(self: text) -> text
 ```
 
 Returns the text unchanged — the identity case, so `text` satisfies `Printable` too.

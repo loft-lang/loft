@@ -246,106 +246,6 @@ jobs:
           # rather than silently creating an assetless draft.
           fail_on_unmatched_files: true
 
-  docs:
-    name: Deploy HTML docs to GitHub Pages
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-
-      # gendoc + the wasm builds compile Rust, which needs a linker (`ld`).
-      # Unlike the build jobs (which pull binutils in via musl-tools), this job
-      # installs no toolchain, so the runner had none — `cargo run` died with
-      # "collect2: cannot find 'ld'".  build-essential supplies gcc + ld.
-      - name: Install C toolchain (linker)
-        run: sudo apt-get update && sudo apt-get install -y build-essential
-
-      # ...and gcc then has to FIND the linker the project asks for.
-      # `.cargo/config.toml` pins `-fuse-ld=mold` for x86_64-unknown-linux-gnu,
-      # which this job builds — the `build` job targets musl, so it is unaffected
-      # and stayed green while this one failed.
-      #
-      # The link line carries BOTH rustc's `-fuse-ld=lld` (with
-      # `-B<sysroot>/lib/rustlib/.../bin/gcc-ld`) and our `-fuse-ld=mold`; the last
-      # wins, so gcc looks for mold, finds only `ld.lld` in that `-B` directory,
-      # and reports `collect2: fatal error: cannot find 'ld'`.  That message names
-      # `ld`, not mold, which is why it reads as a missing toolchain — the
-      # build-essential step above was added for it and did not help.  gcc falls
-      # back to PATH when the `-B` directory lacks the linker, so installing mold
-      # is what actually resolves it.  Every other workflow building this target
-      # already does; this job was the only one that did not.
-      - name: Install mold
-        run: sudo apt-get install -y mold
-
-      - name: Cache cargo
-        id: cargo-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ubuntu-cargo-docs-${{ hashFiles('**/Cargo.lock') }}
-
-      # Two of the four documentation tiers render the EXTRACTED package rather than
-      # the registry index: the guide (`docs/*.loft`) and the source browser.  This
-      # runner starts with an empty `~/.loft/registry`, and without this step gendoc
-      # still succeeds — it publishes 42 "not on this build box" pages OVER the source
-      # browsers in the checkout, and every library card reports "no guide" for the
-      # packages that ship one.  Nothing goes red; the tier simply is not there.
-      - name: Fetch the registry packages the doc build renders
-        run: |
-          cargo build --release --bin loft
-          scripts/fetch-doc-packages.sh target/release/loft
-
-      - name: Generate HTML docs
-        run: cargo run --bin gendoc
-
-      # Always rebuild the wasm gallery bundle from the tag's source
-      # before deploy — never ship whatever stale doc/pkg/ was in the
-      # committed tree.  This is the primary defence against the
-      # "Failed to grow table" browser error: users open gallery.html,
-      # the JS glue loads loft_bg.wasm, and the two must agree.  By
-      # regenerating both here we guarantee they do.
-      - name: Install wasm-pack
-        run: curl -sSLf https://rustwasm.github.io/wasm-pack/installer/init.sh | sh
-
-      - name: Install wasm target
-        run: rustup target add wasm32-unknown-unknown
-
-      - name: Rebuild gallery assets
-        run: make gallery
-
-      # Same story for Brick Buster: the self-contained
-      # doc/brick-buster.html embeds a wasm produced by a *different*
-      # pipeline (loft --html) than the wasm-pack bundle used by the
-      # gallery.  Rebuild it from the tag's source so Pages never
-      # ships a stale version.
-      - name: Rebuild Brick Buster HTML
-        run: make game
-
-      - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./doc
-          exclude_assets: 'claude/**'
-      - name: Save cargo cache (main only)
-        if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
-
   # The programs built WITH loft, at this commit.  The bundle smoke above proves the
   # artefact runs its own examples; this proves the language the artefact carries against
   # its consumers — every package of moros, dryopea, crawler and the private economy
@@ -375,7 +275,8 @@ jobs:
       # tag run red.  cargo reads the token from CARGO_REGISTRY_TOKEN, so no
       # `--token ''` (which errors with "a value is required").
       # `cargo publish` VERIFIES by building for the host target (gnu), so it needs
-      # mold for the same reason the docs job does.  This job has stayed green only
+      # mold: `.cargo/config.toml` pins `-fuse-ld=mold` for x86_64-unknown-linux-gnu, and
+      # without it gcc reports "cannot find 'ld'".  This job has stayed green only
       # because the step below skips when the token is unset — it would fail on the
       # first real publish, which is the worst moment to discover it.
       - name: Install mold

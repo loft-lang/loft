@@ -41,6 +41,7 @@
 // which runs this file under `LOFT_TEXT_TIMELINE=1` and requires "NO text leak" — the exit
 // and assertion channels cannot see a leak whose value is right.
 //
+// (Measured on the `fn Op…` spelling: @C132 re-spelled the cells to `operator` methods, same values.)
 // @falsified-at: d399cdf4 — INERT on the six channels `make falsify` scores, because every
 // value was always right on both backends; measured by hand under LOFT_TEXT_TIMELINE=1 on
 // the joined tree's release binary (139b02ac, the same code for these paths): 99 orphaned
@@ -90,7 +91,7 @@ fn fld_ret(s: S) -> integer { return len(s.name ?? ""); }
 fn fld_bound(s: S) -> integer { x = len(s.name ?? ""); x }
 fn from_field(s: S) -> text { return s.name ?? "x"; }
 
-fn OpIndex(self: Row, name: text) -> integer {
+fn at(self: Row, name: text) -> integer {
   for i in 0..len(self.names) { if (self.names[i] ?? "") == name { return self.values[i] ?? -1; } }
   return -1;
 }
@@ -124,7 +125,7 @@ fn main() {
     assert(tup_tail(i) == i + 2, "a scalar tail consuming a `??` over a tuple element: {tup_tail(i)}");
     assert(fld_tail(s) == 3 && fld_ret(s) == 3 && fld_bound(s) == 3, "a scalar consuming a `??` over a field: tail, return, bound");
     assert(from_field(s) == "abc", "control — the `??` returned as text");
-    assert(w["id"] == 7 && w["score"] == 91 && w["zz"] == -1, "an `if` condition consuming a `??` whose arm returns: {w[\"id\"]} {w[\"score\"]} {w[\"zz\"]}");
+    assert(w.at("id") == 7 && w.at("score") == 91 && w.at("zz") == -1, "an `if` condition consuming a `??` whose arm returns: {w.at(\"id\")} {w.at(\"score\")} {w.at(\"zz\")}");
     assert(find_idx(["id", "score"], "score") == 1, "control — the condition without `??`");
     outer_n = 42 + i;
     parallel {

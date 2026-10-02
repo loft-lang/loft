@@ -8,8 +8,8 @@
 //! cell asserts the program's answer, not only the marker: the value printed is the fact,
 //! `LOFT_TIMING`'s `native_source_key=` line says which path answered.
 //!
-//! Each cell runs `target/debug/loft --native` with the program cache forced on
-//! (`LOFT_PROGRAM_CACHE=1`, a dev build has it off) in a private cache root.
+//! Each cell runs `target/debug/loft --native` with the program cache on (`LOFT_NO_CACHE`
+//! removed, so an exported kill switch cannot turn it off) in a private cache root.
 
 // The fast path is off on Windows by design (`main.rs`: DLL staging reads the parse), so its
 // hit/miss cells run everywhere else, and one cell measures the decline there.  The helpers
@@ -70,7 +70,7 @@ fn run_with(root: &Path, script: &Path, args: &[&str], env: &[(&str, &str)]) -> 
             cmd.env_remove(&k);
         }
     }
-    cmd.env("LOFT_PROGRAM_CACHE", "1")
+    cmd.env_remove("LOFT_NO_CACHE")
         .env("XDG_CACHE_HOME", root.join("cache"))
         .env("LOFT_TIMING", "1")
         .env("LOFT_TIMEOUT", "300");

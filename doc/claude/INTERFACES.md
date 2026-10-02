@@ -73,8 +73,9 @@ the call site.
    the start; satisfaction is checked for each bound independently.
 
 5. **Methods only** — interface method signatures use `self: Self` as the
-   first parameter, matching loft's existing method convention. Operator
-   interfaces use the `OpCamelCase` naming the stdlib already uses internally.
+   first parameter, matching loft's existing method convention. An operator
+   requirement is spelled `op ⊕`, and a type meets it with its `operator` method
+   (formal/operators.md).
 
 ---
 
@@ -88,12 +89,12 @@ interface Comparable {
 }
 
 interface Printable {
-    fn to_text(self: Self) -> text
+    operator to_text(self: Self) -> text
 }
 ```
 
-⚠ The name here is `Comparable` on purpose: the SHIPPED `Ordered` is keyed to `OpLt`, the
-operator form, so a type defining `less_than` does not satisfy it. The method form is for
+⚠ The name here is `Comparable` on purpose: the stdlib's `Ordered` asks for `op <`, which a
+type meets with `operator compare`, so a type defining `less_than` does not satisfy it. The method form is for
 interfaces you declare yourself — see the Note under § Bound checking.
 
 `interface` is a new top-level keyword. Each method is a bare signature
@@ -146,13 +147,12 @@ fn less_than(self: Priority, other: Priority) -> boolean {
 max_of([Priority{value: 3}, Priority{value: 1}, Priority{value: 7}])
 ```
 
-To satisfy a SHIPPED interface the method is the operator's own name, and one definition
-serves both the bound and the bare operator.  ⚠ C132 retires this spelling: a
-`fn Op…` outside the stdlib becomes an ordinary function, so a user type takes a named method,
-and the stdlib generics take a key through `sort_by` / `min_by` / `max_by` / `sum_by`:
+A stdlib interface whose members are operators is met by the `operator` method each one
+names, and one definition serves both the bound and the bare operator (formal/operators.md
+`(Op-Bound)`):
 
 ```loft
-fn OpLt(self: Priority, other: Priority) -> boolean { self.value < other.value }
+operator compare(self: Priority, other: Priority) -> Ordering { self.value.compare(other.value) }
 
 // Priority now satisfies Ordered, and `a < b` works on it as well.
 ```
@@ -161,7 +161,7 @@ If a method is missing, the compiler reports an error at the call site, naming t
 write:
 
 ```
-error: 'Priority' does not satisfy interface 'Ordered': missing OpLt
+error: 'Priority' does not satisfy interface 'Ordered': missing `operator compare(self: Priority, other: Priority) -> Ordering`
 ```
 
 ---
@@ -200,34 +200,30 @@ an interface defined in library B as long as both are visible to the caller.
 
 ## Operator interfaces
 
-Loft operators dispatch via the `OpCamelCase` naming scheme. An interface
-can declare operator requirements using the same names:
+An interface declares an operator requirement as the `operator` member that meets it:
 
 ```loft
-interface Addable {
-    fn OpAdd(self: Self, other: Self) -> Self
+interface Joinable {
+    operator plus(self: Self, other: Self) -> Self
 }
 
-interface Ordered {
-    fn OpLt(self: Self, other: Self) -> boolean
-    fn OpGt(self: Self, other: Self) -> boolean
-}
+struct Money { cents: integer }
+operator plus(self: Money, other: Money) -> Money { Money { cents: self.cents + other.cents } }
+
+fn join<T: Joinable>(a: T, b: T) -> T { a + b }
 ```
 
-Inside a generic body bounded by `Addable`, `x + y` is allowed and resolves
-to the `OpAdd` implementation for the concrete type. This requires a small
-change to the existing generic body type-checking: when an operator is applied
-to `T`, check if the operator name is declared in the bound interface before
-emitting the "operator requires concrete type" error.
+Inside a generic body bounded by `Joinable`, `a + b` is allowed and calls the concrete
+type's operator.  A type meets the member with its `operator` method of that name, at the
+member's own signature (`operator times(self: Self, k: float)` by `operator times(self: T, k:
+float)`); a built-in type with the stdlib's own.  The symbol spelling (`op +`) is refused in an
+interface body, naming the member to write.  The reserved forms — the bit operators, `**` —
+have no `operator` method yet, and an interface cannot require `[…]` at all (it belongs to the
+built-in collections).
 
-A built-in operator interface is **satisfied automatically** if the concrete
-type already has the relevant operator defined — no `fn OpAdd(self: Priority)`
-stub is required if `+` already works on `Priority`.
-
-**Note:** `fn less_than` (method form) and `fn OpLt` (operator form) are
-two separate ways to express the same capability. Prefer the method form for
-readability in user-defined interfaces; the operator form for stdlib interfaces
-that hook into loft's operator dispatch.
+A member written `operator` (`operator to_text(self: Self) -> text`, as `Printable`
+declares) is met only by an `operator` definition, never by a plain `fn` of the name
+(`(Op-Iface)`).
 
 ---
 
@@ -243,7 +239,7 @@ the result is either `T` or a concrete type (`boolean`).
 
 ```loft
 interface Addable {
-    fn OpAdd(self: Self, other: Self) -> Self
+    operator plus(self: Self, other: Self) -> Self
 }
 fn sum_of<T: Addable>(v: vector<T>) -> T {
     result = v[0];
@@ -266,7 +262,7 @@ type explicitly in the interface method signature:
 
 ```loft
 interface Scalable {
-    fn OpMul(self: Self, factor: float) -> Self
+    operator times(self: Self, factor: float) -> Self
 }
 fn scale_all<T: Scalable>(v: vector<T>, factor: float) -> vector<T> {
     [item * factor for item in v]
@@ -275,8 +271,9 @@ fn scale_all<T: Scalable>(v: vector<T>, factor: float) -> vector<T> {
 
 The satisfaction check (I6) matches the second parameter as a concrete type,
 not `Self`. At the operator dispatch site (I8), when `x * factor` is
-encountered with `x: T` and `factor: float`, the interface's `OpMul(Self, float)`
-signature matches and the call is allowed.
+encountered with `x: T` and `factor: float`, the interface's `op * (Self, float)`
+signature matches and the call is allowed.  A program's type meets it with `operator
+times(self: T, factor: float) -> T`.
 
 Concrete types on the **left** side (`concrete op T -> T`) are not supported
 in phase 1 — operator dispatch always starts from the `self` position.
@@ -292,8 +289,8 @@ interface Hashable {
     fn hash(self: Self) -> integer
 }
 interface Averageable {
-    fn OpAdd(self: Self, other: Self) -> Self
-    fn OpDiv(self: Self, divisor: integer) -> float
+    operator plus(self: Self, other: Self) -> Self
+    operator divided_by(self: Self, divisor: integer) -> float
 }
 fn average<T: Averageable>(v: vector<T>) -> float {
     total = v[0];
@@ -303,7 +300,7 @@ fn average<T: Averageable>(v: vector<T>) -> float {
 ```
 
 In the generic body, `total / len(v)` has type `float` (the declared return
-type of `OpDiv`), not `T`. Step I8 must propagate the return type from the
+type of the `op /` member), not `T`. Step I8 must propagate the return type from the
 interface signature to the IR expression type. `Self` in the return position
 is replaced with `T`; any concrete type is used as-is.
 
@@ -333,8 +330,8 @@ caller — `fn sum_of<T: Addable>(v: vector<T>, identity: T) -> T` (Q6 below).  
 
 ### Compound assignment
 
-`total += item` desugars to `total = total + item` in loft's parser, so it
-is handled by `OpAdd` automatically. No separate treatment needed.
+`total += item` is `total = total + item` (`(Op-Compound)`), so it reaches the `op +`
+member with no separate treatment.
 
 ### Unary operators
 
@@ -342,16 +339,15 @@ Declared with `self` only, no second parameter:
 
 ```loft
 interface Negatable {
-    fn OpNeg(self: Self) -> Self
+    operator negate(self: Self) -> Self
 }
 fn negate_all<T: Negatable>(v: vector<T>) -> vector<T> {
     [-item for item in v]
 }
 ```
 
-I8 handles unary operators identically to binary ones: map the operator token
-to its `OpCamelCase` name (`-` unary → `"OpNeg"`), check the bound, allow if
-declared.
+A unary member is checked exactly as a binary one is: a program's type meets it with its
+`operator negate`, a built-in number with the stdlib's.
 
 ---
 
@@ -382,17 +378,20 @@ than it gets credit for. Measured on the current tree, not recalled:
 
 | capability | today | how |
 |---|---|---|
-| render in `"{x}"` | **yes** | `fn to_text(self: T) -> text` (@PLN99) |
-| arithmetic / comparison | **yes** | `fn OpAdd(self: T, other: U) -> V`, `OpEq`, `OpLt`, … |
-| `for x in <value>` | **yes** | a `next(self) -> τ?` on the type — a struct iterates like a collection |
+| render in `"{x}"` | **yes** | `operator to_text(self: T) -> text` (formal/operators.md `(Op-Fold)`) |
+| order (`< <= > >=`) | **yes** | `operator compare(self: T, other: T) -> Ordering` (formal/operators.md) |
+| `+ - *` | **yes** | `operator plus` / `minus` / `times`, `a += b` included (formal/operators.md) |
+| `x as T` | **yes** | `operator to_<t>(self: S) -> T` — `to_date_time` answers `DateTime` (`(Op-Conv)`) |
+| `==` / `!=` | **yes, structural** | by the fields, for every type at every depth; no type redefines them (@C134) — a comparison of its own is a named method |
+| `for x in <value>` | **yes** | `operator next(self: T) -> τ?` on the type — a struct iterates like a collection |
 | bounded generics | **yes** | structural satisfaction, no `impl` block |
 | **receive the parts of `"{…}"`** | **yes** | `fn lit(self: T, s: text)` + `fn hole_<kind>(self: T, v: τ)` — the target type decides (@PLN124). A hole may be a scalar OR a value of a named type, whose kind is its own name in method case (`SqlIdent` → `hole_sql_ident`) |
 | **associated types** | **yes** | `type Rows: Cursor` in an interface body; `Self.Rows` in its signatures (@PLN125 arc A) |
-| **`x[i]` indexing** | **yes** | `fn OpIndex(self: T, i: τ) -> υ`; an interface requires it with `op []` (@PLN125 arc C) |
+| `x[i]` indexing | **no, by decision** | `[…]` belongs to the built-in collections; a type reads through a named method, `x.at(i)` (C132, see below) |
 | **run at scope end** | **yes** | `fn OpDrop(self: T)` — runs when the value's OWNER dies (@PLN125 arc B, @PLN139) |
 | **lease a copy** | **yes** | `fn OpCopy(self: T)` — runs on the new structure a copy makes (@PLN163 P4) |
 
-No gaps are left in the measured set. Each arc landed **inert first** — the
+One row is a NO by decision rather than a gap: `x[i]` (below).  Each arc landed **inert first** — the
 contract declared, every existing program proved byte-identical in IR and native
 Rust, before any new behaviour was routed through it. That ordering is what kept
 each language change from being a rewrite: the proof that nothing changed is a
@@ -402,57 +401,32 @@ smaller and much earlier step than the feature.
 
 ---
 
-## Indexing — `x[i]` on a library type
+## Indexing — a library type reads through a named method
 
-A type that defines `OpIndex` is subscripted like a built-in collection:
+`[…]` belongs to the built-in collections — `vector`, `text`, the keyed collections.  A
+library type reads an element through a NAMED method it defines like any other, and a bound
+can require that method:
 
 ```loft
 struct Ring { data: vector<integer>, start: integer }
 
-fn OpIndex(self: Ring, i: integer) -> integer {
+fn at(self: Ring, i: integer) -> integer {
   n = len(self.data);
   if n == 0 { return 0; }
   return self.data[(self.start + i) % n] ?? 0;
 }
 
 r = Ring { data: [10, 20, 30], start: 1 };
-r[0]        // 20 — the ring's own offset, not `data[0]`
+r.at(0)     // 20 — the ring's own offset, not `data[0]`
 ```
 
-This is the `OpAdd` / `OpEq` precedent and nothing more: `x[i]` lowers to the
-two-argument method call `OpIndex(x, i)`, so argument conversion, the heap-return
-buffer and the ownership deps all apply because it IS a method call.
-
-- **The index type is whatever the method declares.** `fn OpIndex(self: Row, name:
-  text) -> integer` gives a row addressed by column name. There is no requirement
-  that a subscript be an integer.
-- **Out of range is the TYPE's answer**, not the language's — `OpIndex` is an
-  ordinary method, so it decides what a miss means.
-- **An interface can require it**, with the operator sugar spelled `op []`:
-
-  ```loft
-  interface Indexable {
-    op [] (self: Self, i: integer) -> integer
-    fn count(self: Self) -> integer
-  }
-
-  fn total<I: Indexable>(x: I) -> integer {
-    s = 0;
-    for i in 0..x.count() { s += x[i]; }
-    return s;
-  }
-  ```
-
-  Inside a generic ONLY the bounds may be relied on, so an unbounded `<I>` cannot
-  be subscripted even when every type it is used with defines `OpIndex`.
-
-**`OpIndex` reads.** `x[i] = …` is refused, and the message says so: a writing
-counterpart is a separate decision — it needs its own method, and a decision about
-whether `x[i] += 1` may then read-modify-write — so a type that must be written
-through offers a setter (`x.set(i, v)`).
-
-Shipped as @PLN125 arc C; `tests/scripts/pln125-c-index.loft` is the behaviour
-matrix.
+The index type is whatever the method declares (a row addressed by column name takes a
+`text`), and out of range is the TYPE's answer.  `x[i]` on a program's type — and `x[a, b]`,
+`x[a..b]`, `x[i] = v` — is one refusal naming that cure, and an interface cannot require
+`op []`, since no type could meet it.  A type defined `fn OpIndex` for `x[i]` until C132
+retired it with every other `fn Op…` (@PLN182 Q10); `tests/scripts/pln125-c-index.loft` keeps
+that arc's cases running through `at`, and `tests/scripts/996-opindex-composite-subscript.loft`
+pins the refusal.
 
 ## Associated types — an interface that names a companion type
 
@@ -628,7 +602,7 @@ are not the same gap — an associated type names a COMPANION, while collapsing
 | Dynamic dispatch | Yes — interface values carry a vtable | No — bounds only, no vtables |
 | Interface as a type | `var x io.Reader = ...` | Not allowed |
 | Generic bounds | `[T interface{ M() }]` (Go 1.18+) | `<T: Interface>` (same concept) |
-| Operator requirements | Not natively expressible | Via `OpCamelCase` method names |
+| Operator requirements | Not natively expressible | `op ⊕` members, met by `operator` methods |
 | Multiple bounds | `[T A ∩ B]` | `<T: A + B>` — supported |
 | Default methods | No | No |
 
@@ -639,88 +613,45 @@ generic constraints rather than classic Go interface values.
 
 ## Standard library interfaces
 
-⚠ **The block below is the DESIGN, not what `default/01_code.loft` contains.** The file
-ships a narrower set, and the reference's Generics chapter copied this list and so promised
-operators the compiler refuses. What actually ships is:
+What `default/01_code.loft` ships, each member spelled as the definition that meets it
+(`(Op-Iface)`):
 
 ```loft
-pub interface Ordered   { op < (self: Self, other: Self) -> boolean }
-pub interface Equatable { op == (self: Self, other: Self) -> boolean }
-pub interface Addable   { op + (self: Self, other: Self) -> Self }
-pub interface Numeric   { op * (self: Self, other: Self) -> Self
-                          op - (self: Self) -> Self }              // unary negation
-pub interface Scalable  { fn scale(self: Self, factor: integer) -> integer }
-pub interface Printable { fn to_text(self: Self) -> text }
+pub interface Ordered      { operator compare(self: Self, other: Self) -> Ordering }
+pub interface Equatable    { }                     // every type meets it: `==` is structural
+pub interface Addable      { operator plus(self: Self, other: Self) -> Self }
+pub interface Subtractable { operator minus(self: Self, other: Self) -> Self }
+pub interface Numeric      { operator times(self: Self, other: Self) -> Self
+                             operator negate(self: Self) -> Self }
+pub interface Scalable     { fn scale(self: Self, factor: integer) -> integer }
+pub interface Printable    { operator to_text(self: Self) -> text }
 ```
 
-so `-` is not in `Addable`, `+` and `/` are not in `Numeric`, `Scalable` takes an INTEGER
+A built-in type meets them with the stdlib's own `operator` definitions (`integer`, `single`
+and `float` define `compare`, `plus`, `minus`, `times`, `negate`, `divided_by` and
+`remainder`; `text` and `character` define `compare`), and a program's type with its own —
+`integer` meets `Ordered` the way a `Date` does.  A generic body keeps the built-in operator
+underneath for a built-in type: each `operator` member brings the symbolic member it stands
+for (`OpLt` beside `compare`), which the monomorph lowers to `OpLtInt` at `integer` and to
+`a.compare(b) == Less` at a program's type.  `Equatable` declares nothing and is met by every
+type, because `==` is structural for all of them (@C134).
+
+So `-` is not in `Addable`, `+` and `/` are not in `Numeric`, `Scalable` takes an INTEGER
 factor through a method and answers `integer` rather than `Self`, and no built-in type
-satisfies `Scalable` at all. The derived spellings come free: `>`/`<=`/`>=` from `<`, and
-`!=` from `==`. `tests/scripts/the-reference-bounds-permit-what-it-lists.loft` holds the
-permitted half and `tests/parse_errors.rs`'s `generic_bound_*` family the refused half. A
-binary `a - b` under `Numeric` is REFUSED (loft#1274, fixed): `-` desugars to the same
-`OpMin` name at both arities, and bound satisfaction now compares the SIGNATURE rather than
-the name, so the unary negation no longer answers for the binary spelling. No built-in
-interface offers binary subtraction — write it against a concrete type.
-
-The design as originally written:
-
-```loft
-// Comparison.  `>`, `<=` and `>=` all DERIVE from `<`, so one operator is the whole bound.
-pub interface Ordered {
-  op < (self: Self, other: Self) -> boolean
-}
-
-// Equality.  `!=` derives from `==` for the same reason.
-pub interface Equatable {
-  op == (self: Self, other: Self) -> boolean
-}
-
-// Addition, returning the same type.
-pub interface Addable {
-  op + (self: Self, other: Self) -> Self
-}
-
-// Multiplication, and UNARY negation.
-pub interface Numeric {
-  op * (self: Self, other: Self) -> Self
-  op - (self: Self) -> Self
-}
-
-// BINARY subtraction — a bound of its own, see the note below.
-pub interface Subtractable {
-  op - (self: Self, other: Self) -> Self
-}
-
-// Integer scaling, as a METHOD rather than `op *` — see the note below.
-pub interface Scalable {
-  fn scale(self: Self, factor: integer) -> integer
-}
-
-// Text conversion — for generic print/log helpers.
-pub interface Printable {
-  fn to_text(self: Self) -> text
-}
-```
-
-Built-in types (`integer`, `single`, `float`, and for the two comparison bounds `text` and
-`boolean`) satisfy these through their existing operator definitions.
+satisfies `Scalable` at all.  The four order forms all read `compare`, and `!=` derives from
+`==`.  `tests/scripts/the-reference-bounds-permit-what-it-lists.loft` holds the permitted half
+and `tests/parse_errors.rs`'s `generic_bound_*` family the refused half.
 
 **The list is narrower than it looks, and deliberately so.** Each bound names the FEWEST
-operators the derivations need: `Ordered` carries only `<` because `>`, `<=` and `>=` are
-derived from it, and `Equatable` only `==` for the same reason. An interface demanding every
-spelling would break every user type that implements the minimum.
+operators its forms need: `Ordered` carries only `compare` because all four order forms read
+it, and `Equatable` nothing at all.  An interface demanding every
+spelling would break every type that implements the minimum.
 
-⚠ **`Numeric`'s `-` is UNARY negation; binary subtraction is `Subtractable`.** The two share
-one desugared name — `-` becomes `OpMin` at either arity — so they are two SIGNATURES of one
-name, and a bound-method stub is keyed by `(name, arity)` to keep them apart. Write
-`<T: Subtractable>` for `a - b`, `<T: Numeric>` for `-a`, and `<T: Numeric + Subtractable>`
-for both; the last is two interfaces on one variable that each name `OpMin`, which is the
-shape that needed the arity in the key (loft#1275).
-
-Subtraction is a separate bound rather than a third requirement on `Numeric` because adding
-one would take satisfaction away from every user type that provides `OpMul` and unary `OpMin`
-today — `(G-Sat)` is structural, so a new requirement is a breaking change
+⚠ **`Numeric`'s `-` is UNARY negation (`negate`); binary subtraction is `Subtractable`
+(`minus`).**  Write `<T: Subtractable>` for `a - b`, `<T: Numeric>` for `-a`, and `<T: Numeric
++ Subtractable>` for both.  Subtraction is a separate bound rather than a third requirement on
+`Numeric` because adding one would take satisfaction away from every type that meets
+`Numeric` without it — `(G-Sat)` is structural, so a new requirement is a breaking change
 ([COMPATIBILITY.md](COMPATIBILITY.md)).
 
 **Your own interfaces may declare both arities, in ONE interface or one per interface.** An
@@ -728,21 +659,21 @@ interface is a set of SIGNATURES (`(G-Iface)`), so
 
 ```loft
 interface SubNeg {
-  op - (self: Self, other: Self) -> Self
-  op - (self: Self) -> Self
+  operator minus(self: Self, other: Self) -> Self
+  operator negate(self: Self) -> Self
 }
 ```
 
-compiles and both arities are reachable from a `<T: SubNeg>` body. Two interfaces each
-declaring one arity work too, including when both generics spell their type variable `T` — a
-generic header binds its own type variable (`(G-Gen)`, loft#1300 / loft#1301).
+compiles and both are reachable from a `<T: SubNeg>` body.  Two interfaces each declaring one
+work too, including when both generics spell their type variable `T` — a generic header binds
+its own type variable (`(G-Gen)`).  The symbol spelling `op -` is
+refused in an interface body, naming the `operator` member to write.
 
-**A CONCRETE type may provide both arities too.** `fn OpMin(self: Money)` and
-`fn OpMin(self: Money, other: Money)` are one overload set in either declaration order
-(`tests/scripts/1811-a-method-overload-set-is-one-set-in-either-declaration-order.loft`),
-so a type defining both and `OpMul` satisfies `Numeric + Subtractable`. Asking a type for an
-arity it does not have is a compile error naming the interface (*"'Money' does not satisfy
-interface 'Subtractable': missing OpMin"*), not a silently dropped operand.
+**A built-in number provides both arities**, so it satisfies `Numeric + Subtractable`; a
+program's type provides the binary one (`operator minus`) and not yet the unary one.  Asking a
+type for a member it does not meet is a compile error naming the interface and what to write
+(*"'Money' does not satisfy interface 'Subtractable': missing `operator minus(self: Money,
+other: Money) -> Money`"*), not a silently dropped operand.
 
 `Scalable` scales through a `scale` METHOD rather than `op *` for the neighbouring reason: it
 would share `Numeric`'s `*` at the SAME arity, and same-name same-arity requirements from two
@@ -773,17 +704,10 @@ exactly as a concrete `a == b` on it is; a tuple element by element, nested tupl
 `+`-separated names in a loop; satisfaction (I6) and lookup (I7, I8) iterate
 over all bounds. The incremental cost over a single-bound design is ~40 lines.
 
-**Q2: Operator method naming in interfaces** — requiring users to write
-`fn OpLt(self: Self, other: Self) -> boolean` is consistent with internals
-but surprising to users expecting `<` syntax. Consider allowing
-`op < (self: Self, other: Self) -> boolean` as syntactic sugar in interface
-bodies that desugars to `fn OpLt`. This is a purely cosmetic change that
-can be added without altering the data model.
-
-*Mitigation:* Add `op <op> (self: Self, ...) -> T` sugar in `parse_interface`
-(`src/parser/definitions.rs`) that maps the operator token to its `OpCamelCase`
-name and stores it as an ordinary method stub. Zero data model impact; the
-desugaring happens before any downstream step sees the signature.
+**Q2: Operator method naming in interfaces** — resolved.  An interface spells an operator
+requirement as the definition that meets it, `operator compare(self: Self, other: Self) ->
+Ordering`, and a type meets it with its `operator` method, never by a function's name (C132,
+@PLN182 Q13).
 
 **Q3: Interface visibility / `pub`** — should interfaces follow the same
 `pub` / non-`pub` visibility rules as functions? Recommended: yes, using the
@@ -855,9 +779,5 @@ rewritten using commutativity: `my_t_value * 2.0`. Where commutativity does
 not hold, the user defines a helper method instead of relying on operator
 syntax.
 
-*Mitigation (phase 2):* After the primary `T.OpMul(concrete)` lookup
-succeeds, allow declaring `fn OpMul(factor: float, self: Self) -> Self` in the
-interface with `factor` as the first parameter — but this requires either
-commutativity to be declared explicitly in the interface, or a second-pass
-fallback lookup. Add a design note before implementing to avoid ambiguity with
-existing overload resolution.
+*Decided (@PLN182 Q4):* nothing commutes.  `2.0 * w` is refused, and since `float` is not
+the program's type (`(Op-Home)`) it cannot be made to work; write `w * 2.0`.

@@ -799,16 +799,31 @@ impl Stores {
         // sentinel.  Without this cap, `max = slot + 1` wraps to 0 at slot
         // 65535 and the next allocation hands out slot 0 — the eval-stack
         // store — corrupting the whole runtime (SIGSEGV at the next big
-        // copy).  Fail loudly instead: hitting this cap means ~65k stores
-        // are live at once, which in practice is a store leak.
-        assert!(
-            slot != u16::MAX,
-            "store table exhausted: 65535 stores live at once (store_nr is \
-             u16; 65535 is the null sentinel).  This usually indicates a \
-             store leak — run with LOFT_STORES=timeline, which lists the live \
-             stores by type and says whether they are a LEAK or a large but \
-             clean working set."
-        );
+        // copy).  Fail loudly instead, and say WHICH of two things filled the
+        // table: with reuse on, 65535 live stores, in practice a leak; with
+        // reuse off (`LOFT_STRICT_STORES`, `LOFT_NO_SLOT_REUSE`, a `par` worker),
+        // every store ever made, freed or not — the mode retires each freed
+        // number so a stale reference can never reach a new store, and a run
+        // that frees and re-mints more than 65535 cannot be checked that way.
+        if slot == u16::MAX {
+            let live = self.allocations.iter().filter(|s| !s.free).count();
+            let reuse_off = self.disable_slot_reuse || crate::keys::no_slot_reuse();
+            assert!(
+                !reuse_off,
+                "store table exhausted by the checking mode, not by a leak: this run made \
+                     65535 stores and {live} are live.  LOFT_STRICT_STORES (and \
+                     LOFT_NO_SLOT_REUSE) never reuse a freed store number, so that a stale \
+                     reference cannot reach a newer store, and store_nr is u16.  This program \
+                     frees and re-mints more stores than the mode can track: check it with a \
+                 smaller loop count, or run it without the switch."
+            );
+            panic!(
+                "store table exhausted: 65535 stores live at once (store_nr is u16; 65535 \
+                 is the null sentinel).  This usually indicates a store leak — run with \
+                 LOFT_STORES=timeline, which lists the live stores by type and says whether \
+                 they are a LEAK or a large but clean working set."
+            );
+        }
         if slot >= self.allocations.len() as u16 {
             self.allocations.push(Store::new(100));
         } else {

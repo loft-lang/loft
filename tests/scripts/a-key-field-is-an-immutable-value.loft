@@ -1,0 +1,125 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @FR-Col-Key (loft#1845) — the admitted half: a key field of hash / sorted / index may be a
+// scalar, a plain enum, a tuple of those, or `?` of one, and every such key inserts and looks
+// up under all three kinds.  The refused half is a-struct-key-field-is-refused.loft.
+//
+// @falsified-by: tests/falsified/a-key-field-is-an-immutable-value.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   The patch is the OVER-WIDE rule — every key type refused — so this guard holds the half of
+//   loft#1845 that must not move.
+//   CHANNEL: the exit — on the control every declaration here is refused, so nothing compiles.
+//   WITNESS: "the key field `k` of `hash<EI[…]>` is `integer`" for an integer key.
+//   ARMED: nothing.
+//   HOLDS: on this tree all 33 lookups and lengths answer on both backends, with no leak and
+//   no panic.
+
+enum Col { Red, Green }
+
+struct EI { k: integer, n: integer }
+struct EF { k: float, n: integer }
+struct ESi { k: single, n: integer }
+struct ET { k: text, n: integer }
+struct EC { k: character, n: integer }
+struct EB { k: boolean, n: integer }
+struct EE { k: Col, n: integer }
+struct ETu { k: (integer, text), n: integer }
+struct EIn { k: integer?, n: integer }
+struct ETn { k: text?, n: integer }
+struct EEn { k: Col?, n: integer }
+
+struct Hs {
+  i: hash<EI[k]>, f: hash<EF[k]>, si: hash<ESi[k]>, t: hash<ET[k]>, c: hash<EC[k]>,
+  b: hash<EB[k]>, e: hash<EE[k]>, tu: hash<ETu[k]>, ni: hash<EIn[k]>, nt: hash<ETn[k]>,
+  ne: hash<EEn[k]>
+}
+struct Ss {
+  i: sorted<EI[k]>, f: sorted<EF[k]>, si: sorted<ESi[k]>, t: sorted<ET[k]>, c: sorted<EC[k]>,
+  b: sorted<EB[k]>, e: sorted<EE[k]>, tu: sorted<ETu[k]>, ni: sorted<EIn[k]>, nt: sorted<ETn[k]>,
+  ne: sorted<EEn[k]>
+}
+struct Is {
+  i: index<EI[k]>, f: index<EF[k]>, si: index<ESi[k]>, t: index<ET[k]>, c: index<EC[k]>,
+  b: index<EB[k]>, e: index<EE[k]>, tu: index<ETu[k]>, ni: index<EIn[k]>, nt: index<ETn[k]>,
+  ne: index<EEn[k]>
+}
+
+// Each collection holds two records, so a lookup that ignored the key could not pass:
+// the one asked for answers its own `n`.
+fn test_every_admitted_key_type_inserts_and_looks_up_in_a_hash() {
+  x = Hs {};
+  x.i += [EI { k: 1, n: 10 }, EI { k: 2, n: 20 }];
+  x.f += [EF { k: 1.5, n: 10 }, EF { k: 2.5, n: 20 }];
+  x.si += [ESi { k: 1.5 as single, n: 10 }, ESi { k: 2.5 as single, n: 20 }];
+  x.t += [ET { k: "a", n: 10 }, ET { k: "b", n: 20 }];
+  x.c += [EC { k: 'a', n: 10 }, EC { k: 'b', n: 20 }];
+  x.b += [EB { k: false, n: 10 }, EB { k: true, n: 20 }];
+  x.e += [EE { k: Red, n: 10 }, EE { k: Green, n: 20 }];
+  x.tu += [ETu { k: (1, "a"), n: 10 }, ETu { k: (2, "b"), n: 20 }];
+  x.ni += [EIn { k: 1, n: 10 }, EIn { k: 2, n: 20 }];
+  x.nt += [ETn { k: "a", n: 10 }, ETn { k: "b", n: 20 }];
+  x.ne += [EEn { k: Red, n: 10 }, EEn { k: Green, n: 20 }];
+  assert(len(x.i) == 2 && x.i[2].n == 20, "integer");
+  assert(len(x.f) == 2 && x.f[2.5].n == 20, "float");
+  assert(len(x.si) == 2 && x.si[2.5 as single].n == 20, "single");
+  assert(len(x.t) == 2 && x.t["b"].n == 20, "text");
+  assert(len(x.c) == 2 && x.c['b'].n == 20, "character");
+  assert(len(x.b) == 2 && x.b[true].n == 20, "boolean");
+  assert(len(x.e) == 2 && x.e[Col.Green].n == 20, "plain enum");
+  assert(len(x.tu) == 2 && x.tu[(2, "b")].n == 20, "tuple of scalars");
+  assert(len(x.ni) == 2 && x.ni[2].n == 20, "integer?");
+  assert(len(x.nt) == 2 && x.nt["b"].n == 20, "text?");
+  assert(len(x.ne) == 2 && x.ne[Col.Green].n == 20, "Col?");
+}
+
+fn test_every_admitted_key_type_inserts_and_looks_up_in_a_sorted() {
+  x = Ss {};
+  x.i += [EI { k: 1, n: 10 }, EI { k: 2, n: 20 }];
+  x.f += [EF { k: 1.5, n: 10 }, EF { k: 2.5, n: 20 }];
+  x.si += [ESi { k: 1.5 as single, n: 10 }, ESi { k: 2.5 as single, n: 20 }];
+  x.t += [ET { k: "a", n: 10 }, ET { k: "b", n: 20 }];
+  x.c += [EC { k: 'a', n: 10 }, EC { k: 'b', n: 20 }];
+  x.b += [EB { k: false, n: 10 }, EB { k: true, n: 20 }];
+  x.e += [EE { k: Red, n: 10 }, EE { k: Green, n: 20 }];
+  x.tu += [ETu { k: (1, "a"), n: 10 }, ETu { k: (2, "b"), n: 20 }];
+  x.ni += [EIn { k: 1, n: 10 }, EIn { k: 2, n: 20 }];
+  x.nt += [ETn { k: "a", n: 10 }, ETn { k: "b", n: 20 }];
+  x.ne += [EEn { k: Red, n: 10 }, EEn { k: Green, n: 20 }];
+  assert(len(x.i) == 2 && x.i[2].n == 20, "integer");
+  assert(len(x.f) == 2 && x.f[2.5].n == 20, "float");
+  assert(len(x.si) == 2 && x.si[2.5 as single].n == 20, "single");
+  assert(len(x.t) == 2 && x.t["b"].n == 20, "text");
+  assert(len(x.c) == 2 && x.c['b'].n == 20, "character");
+  assert(len(x.b) == 2 && x.b[true].n == 20, "boolean");
+  assert(len(x.e) == 2 && x.e[Col.Green].n == 20, "plain enum");
+  assert(len(x.tu) == 2 && x.tu[(2, "b")].n == 20, "tuple of scalars");
+  assert(len(x.ni) == 2 && x.ni[2].n == 20, "integer?");
+  assert(len(x.nt) == 2 && x.nt["b"].n == 20, "text?");
+  assert(len(x.ne) == 2 && x.ne[Col.Green].n == 20, "Col?");
+}
+
+fn test_every_admitted_key_type_inserts_and_looks_up_in_an_index() {
+  x = Is {};
+  x.i += [EI { k: 1, n: 10 }, EI { k: 2, n: 20 }];
+  x.f += [EF { k: 1.5, n: 10 }, EF { k: 2.5, n: 20 }];
+  x.si += [ESi { k: 1.5 as single, n: 10 }, ESi { k: 2.5 as single, n: 20 }];
+  x.t += [ET { k: "a", n: 10 }, ET { k: "b", n: 20 }];
+  x.c += [EC { k: 'a', n: 10 }, EC { k: 'b', n: 20 }];
+  x.b += [EB { k: false, n: 10 }, EB { k: true, n: 20 }];
+  x.e += [EE { k: Red, n: 10 }, EE { k: Green, n: 20 }];
+  x.tu += [ETu { k: (1, "a"), n: 10 }, ETu { k: (2, "b"), n: 20 }];
+  x.ni += [EIn { k: 1, n: 10 }, EIn { k: 2, n: 20 }];
+  x.nt += [ETn { k: "a", n: 10 }, ETn { k: "b", n: 20 }];
+  x.ne += [EEn { k: Red, n: 10 }, EEn { k: Green, n: 20 }];
+  assert(len(x.i) == 2 && x.i[2].n == 20, "integer");
+  assert(len(x.f) == 2 && x.f[2.5].n == 20, "float");
+  assert(len(x.si) == 2 && x.si[2.5 as single].n == 20, "single");
+  assert(len(x.t) == 2 && x.t["b"].n == 20, "text");
+  assert(len(x.c) == 2 && x.c['b'].n == 20, "character");
+  assert(len(x.b) == 2 && x.b[true].n == 20, "boolean");
+  assert(len(x.e) == 2 && x.e[Col.Green].n == 20, "plain enum");
+  assert(len(x.tu) == 2 && x.tu[(2, "b")].n == 20, "tuple of scalars");
+  assert(len(x.ni) == 2 && x.ni[2].n == 20, "integer?");
+  assert(len(x.nt) == 2 && x.nt["b"].n == 20, "text?");
+  assert(len(x.ne) == 2 && x.ne[Col.Green].n == 20, "Col?");
+}

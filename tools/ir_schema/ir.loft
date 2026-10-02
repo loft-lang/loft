@@ -200,6 +200,12 @@ struct Variable {
   // loft#1834 — a user identifier names it (a signature or a mention), so a user's `_`-prefixed
   // name is not read as a compiler temporary; `is_compiler_generated` reads it
   user_named: boolean,
+  // loft#1840 — the program's own `+=` wrote into it; the `lost-write` lint reads it, because
+  // the copy-fill a whole-value bind lowers to is the same op a user's append is
+  user_appended: boolean,
+  // loft#1840 — a whole-value bind COPIED a place into it (B-Copy); the `lost-write` lint
+  // reports an append only into a copy, never into a collection being built
+  copy_bound: boolean,
   // @FR-O-Witness — the owner witness `__own_<name>` of a mixed-ownership local (u16::MAX = none);
   // read by both emitters, so it must survive the snapshot exactly as `skip_free` does
   owner_witness: integer,
@@ -257,6 +263,7 @@ struct Definition {
   instance_of: integer, // @PLN165 D3 the type template an instance was minted from; -1 = none
   instance_args: vector<TypeT>, // @PLN165 D3 that instance's type arguments, header order
   builtin: boolean, // @PLN165 arc E #builtin: a call selecting it lowers through the special form of its name
+  operator_form: boolean, // @PLN182 written `operator`: what an operator form on its `self` type reaches
 }
 
 // One retained import (src/data.rs::AppliedImport).  `rebuild_indices` can

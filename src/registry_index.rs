@@ -1451,7 +1451,7 @@ pub(crate) fn http_get_bytes(url: &str) -> Result<Vec<u8>, String> {
     if let Some(path) = url.strip_prefix("file://") {
         return std::fs::read(path).map_err(|e| format!("file:// read error for {path}: {e}"));
     }
-    let agent = ureq::AgentBuilder::new()
+    let agent = crate::tls::agent_builder()
         .timeout_connect(std::time::Duration::from_secs(15))
         .timeout(std::time::Duration::from_mins(1))
         .build();

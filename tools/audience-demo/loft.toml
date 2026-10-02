@@ -21,4 +21,4 @@ web                = ">=0.4.2"
 server             = ">=0.7.1"
 audience_crystal   = { path = "../../lib/audience_crystal" }
 gridmesh           = ">=0.2.3"
-graphics           = ">=0.9.4"
+graphics           = ">=0.9.6"

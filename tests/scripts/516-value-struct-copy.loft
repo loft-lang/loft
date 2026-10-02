@@ -15,11 +15,8 @@
 value struct Money {
   cents: integer,
 }
-fn OpLt(self: Money, other: Money) -> boolean {
-  self.cents < other.cents
-}
-fn OpEq(self: Money, other: Money) -> boolean {
-  self.cents == other.cents
+operator compare(self: Money, other: Money) -> Ordering {
+  self.cents.compare(other.cents)
 }
 
 struct Wallet {

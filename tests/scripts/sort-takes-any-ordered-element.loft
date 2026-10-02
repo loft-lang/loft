@@ -3,8 +3,8 @@
 //
 // @PLN165 E4 — `sort` is a stdlib `#builtin` METHOD on `vector`, `pub fn sort<T: Ordered>(self:
 // vector<T>)`: `sort(v)` and `v.sort()` are one call, and it takes what its bound says — any
-// element with a `<`.  The runtime still sorts `integer`, `float`, `single` and `text` itself
-// (one `OpSortVector`, as before); every other `Ordered` element — a struct defining `op <`, a
+// element with a `<` (a type's `operator compare`).  The runtime still sorts `integer`, `float`, `single` and `text` itself
+// (one `OpSortVector`, as before); every other `Ordered` element — a struct defining `operator compare`, a
 // nullable scalar — is sorted by the declaration's body, a stable merge through `<`.  Before,
 // the compiler's special form refused any other element ("sort is not supported for
 // vector<Pt>; use integer, long, float, single, or text") and refused every `sort` inside a
@@ -12,8 +12,10 @@
 // a program's own `sort` for its own type sits beside it.  Inside a generic each instance
 // takes what its hand-written twin takes: `OpSortVector` at `integer`, the body at `Pt`.
 //
+// (Measured on the `fn Op…` spelling: @C132 re-spelled the cells to `operator` methods, same values.)
 // @falsified-at: 215ce13fd — interpret exit 1 -> 0, native exit 1 -> 0
-// @falsified-by: tests/falsified/sort-takes-any-ordered-element.patch — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/sort-takes-any-ordered-element.patch — interpret exit 1 -> 0, interpret 4 assertion failures -> 0, native exit 1 -> 0, native 8 assertion failures -> 0
+//   (patch re-derived at 6b8fc663c — reintroduces: `sort` over a non-runtime element does nothing)
 //   CHANNEL: exit on both backends — the control refuses the file.
 //   ARMED: nothing.
 //   WITNESS: on the control, bare `sort(p)` over `vector<Pt>` is "sort is not supported for
@@ -22,7 +24,7 @@
 //   HOLDS: the runtime's own elements in the bare spelling; a program's own `sort(r)`.
 
 struct Pt { x: integer, y: integer }
-fn OpLt(self: Pt, other: Pt) -> boolean { self.x < other.x }
+operator compare(self: Pt, other: Pt) -> Ordering { self.x.compare(other.x) }
 struct Roster { n: integer }
 fn sort(self: Roster) -> integer { self.n * 2 }
 

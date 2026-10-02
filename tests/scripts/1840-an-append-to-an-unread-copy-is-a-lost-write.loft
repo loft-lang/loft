@@ -1,0 +1,127 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// An APPEND into a copy nothing reads is a lost write, as an element write into one is
+// (`(B-Copy)`, loft#1840).  `xs = s.items` copies; `xs += [7]` lands in the copy; the caller
+// sees `s.items` unchanged — on both backends — and `lost-write` must say so.
+//
+// The IR could not: the copy-fill `xs = s.items` lowers to is the same `OpAppendVector` a
+// `xs += other` lowers to, and a literal append's pre-allocation and pushes are what a fresh
+// literal's fill is made of.  So the parser records the two facts where they are decided —
+// the program's own `+=` (`user_appended`) and a whole-value bind that COPIED a place
+// (`copy_bound`) — and the lint reads them.  The keyed copy-fill (`OpReplaceKeyed(src, h)`)
+// and the nullable vector's (`OpReplaceVector`) were read as uses of the copy, so a keyed
+// copy's write went unreported too.
+//
+// Each warning cell names its local after the cell; `tests/dead_code_lint.rs` runs this file
+// and asserts the EXACT set of locals warned — the silent cells are half the claim: a read
+// after the append (an element, a `len`, which an append changes), the copy returned, a `&`
+// link, and a collection BUILT fresh (a literal, a call's value) rather than copied.
+//
+// @falsified-at: a80e26737 — 0 `lost-write` reports there, 11 here (fl_xs fv_xs kc_h pc_w lc_b
+//   lp_xs br_xs vs_m tx_f tx_p tx_m), on both backends; "1840 ok" on both trees.  Measured BY HAND: `make
+//   falsify` reads a warning guard INERT, because its `expect` channel counts only
+//   `@EXPECT_ERROR` / `@EXPECT_FAIL` and a file with a `main` gets a direct run, where the
+//   suite's warning matching never happens.  `tests/dead_code_lint.rs` asserts the exact set.
+//   CHANNEL: the `lost-write` warnings.
+//   ARMED: nothing.
+//   HOLDS: every value assertion, on both trees and both backends — the writes were lost before
+//     the fix as after it; only the report moved.
+
+struct K1840 { k: integer, v: integer }
+struct S1840 { items: vector<integer>, more: vector<integer>, keyed: hash<K1840[k]>, name: text }
+value struct V1840 { n: integer, items: vector<integer> }
+struct W1840 { v: V1840 }
+
+// ------------------------------------------------------------------ the append is lost
+
+// @EXPECT_WARNING: 'fl_xs' is mutated but its value is never read
+fn field_copy_literal(s: S1840) { fl_xs = s.items; fl_xs += [7]; }
+// @EXPECT_WARNING: 'fv_xs' is mutated but its value is never read
+fn field_copy_vector(s: S1840) { fv_xs = s.items; fv_xs += s.more; }
+// @EXPECT_WARNING: 'kc_h' is mutated but its value is never read
+fn keyed_copy(s: S1840) { kc_h = s.keyed; kc_h += [K1840 { k: 5, v: 6 }]; }
+// @EXPECT_WARNING: 'pc_w' is mutated but its value is never read
+fn param_copy(v: vector<integer>) { pc_w = v; pc_w += [3]; }
+// @EXPECT_WARNING: 'lc_b' is mutated but its value is never read
+fn local_copy() -> integer { lc_a: vector<integer> = [1, 2]; lc_b = lc_a; lc_b += [9]; len(lc_a) }
+// @EXPECT_WARNING: 'lp_xs' is mutated but its value is never read
+fn in_a_loop(s: S1840) { lp_xs = s.items; for i in 0..3 { lp_xs += [i]; } }
+// @EXPECT_WARNING: 'br_xs' is mutated but its value is never read
+fn in_a_branch(s: S1840, c: boolean) { br_xs = s.items; if c { br_xs += [4]; } }
+// @EXPECT_WARNING: 'vs_m' is mutated but its value is never read
+fn value_struct_copy(w: W1840) { vs_m = w.v; vs_m.items += [1]; }
+// A text is a value: its bind copies, and an append into the copy is lost the same way.
+// @EXPECT_WARNING: 'tx_f' is mutated but its value is never read
+fn text_field_copy(s: S1840) { tx_f = s.name; tx_f += "x"; }
+// @EXPECT_WARNING: 'tx_p' is mutated but its value is never read
+fn text_param_copy(v: text) { tx_p = v; tx_p += "y"; }
+// @EXPECT_WARNING: 'tx_m' is mutated but its value is never read
+fn text_formatted(s: S1840, n: integer) { tx_m = s.name; tx_m += "{n}"; }
+
+// ------------------------------------------------------------------ the append is observed
+
+fn read_after(s: S1840) -> integer { ra_xs = s.items; ra_xs += [7]; ra_xs[1] }
+fn len_after(s: S1840) -> integer { ln_xs = s.items; ln_xs += [7]; len(ln_xs) }
+fn keyed_read_after(s: S1840) -> integer { kr_h = s.keyed; kr_h += [K1840 { k: 5, v: 6 }]; len(kr_h) }
+fn returned(s: S1840) -> vector<integer> { rt_xs = s.items; rt_xs += [7]; rt_xs }
+fn linked(s: S1840) { lk_xs = &s.items; lk_xs += [7]; }
+// A whole write THROUGH a link refills the place it names, then the append lands there too:
+// the `=` is no copy, whatever the bind lowering it shares.
+fn linked_written_through(s: S1840) { lw_c = &s.more; lw_c = s.items; lw_c += [9]; }
+fn text_linked(s: S1840) { tk_t = &s.name; tk_t += "!"; }
+fn text_written_back(s: S1840) { tb_t = s.name; tb_t += "x"; s.name = tb_t; }
+fn text_len_after(s: S1840) -> integer { tl_t = s.name; tl_t += "x"; len(tl_t) }
+fn text_returned(s: S1840) -> text { tr_t = s.name; tr_t += "x"; tr_t }
+
+// ------------------------------------------------------------------ built, not copied
+
+fn mk1840() -> vector<integer> { [1] }
+fn fresh_empty() { fe_xs: vector<integer> = []; fe_xs += [7]; }
+fn fresh_literal() { fn_xs = [1, 2]; fn_xs += [3]; }
+fn fresh_keyed() { fk_h: hash<K1840[k]> = []; fk_h += [K1840 { k: 1, v: 1 }]; }
+fn from_a_call() { fc_xs = mk1840(); fc_xs += [7]; }
+fn text_fresh(n: integer) { tz_a = "ab"; tz_a += "c"; tz_b = "{n}"; tz_b += "d"; }
+
+fn main() {
+  s = S1840 { items: [1], more: [2], keyed: [K1840 { k: 1, v: 2 }], name: "n" };
+  field_copy_literal(s);
+  field_copy_vector(s);
+  keyed_copy(s);
+  param_copy(s.items);
+  in_a_loop(s);
+  in_a_branch(s, true);
+  w = W1840 { v: V1840 { n: 1, items: [5] } };
+  value_struct_copy(w);
+  text_field_copy(s);
+  text_param_copy(s.name);
+  text_formatted(s, 3);
+  assert(s.name == "n", "the text copies did not reach s.name");
+  assert(text_len_after(s) == 2, "the text copy's length counts the append");
+  assert(text_returned(s) == "nx", "the returned text copy holds the append");
+  // Every lost write is lost: the sources are as they were built.
+  assert(len(s.items) == 1 && s.items[0] == 1, "the field copies did not reach s.items");
+  assert(len(s.keyed) == 1, "the keyed copy did not reach s.keyed");
+  assert(len(w.v.items) == 1, "the value-struct copy did not reach w.v.items");
+  assert(local_copy() == 2, "the local copy did not reach its source");
+  // The observed cells see their own append, and only theirs.
+  assert(read_after(s) == 7, "the copy holds the append");
+  assert(len_after(s) == 2, "the copy's length counts the append");
+  assert(keyed_read_after(s) == 2, "the keyed copy holds the appended record");
+  assert(len(returned(s)) == 2, "the returned copy holds the append");
+  assert(len(s.items) == 1, "none of them reached s.items");
+  linked(s);
+  assert(len(s.items) == 2 && s.items[1] == 7, "the `&` link wrote through");
+  fresh_empty();
+  fresh_literal();
+  fresh_keyed();
+  from_a_call();
+  text_fresh(4);
+  text_written_back(s);
+  assert(s.name == "nx", "the text written back reached s.name");
+  linked_written_through(s);
+  assert(len(s.more) == 3 && s.more[2] == 9, "the link refilled s.more and the append landed there");
+  text_linked(s);
+  assert(s.name == "nx!", "the text link wrote through");
+  println("1840 ok");
+}

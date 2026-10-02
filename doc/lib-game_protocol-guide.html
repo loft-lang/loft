@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>game_protocol guide — Loft, a programming language for small browser games</title>
+  <meta name="description" content="Getting started with the loft library game_protocol — a runnable guide that is itself a loft program, so every example in it compiles.">
+<link rel="canonical" href="https://loft-lang.org/loft/lib-game_protocol-guide.html">
+<meta property="og:title" content="game_protocol guide — Loft, a programming language for small browser games">
+<meta property="og:description" content="Getting started with the loft library game_protocol — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://loft-lang.org/loft/lib-game_protocol-guide.html">
+<meta property="og:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<meta property="og:site_name" content="Loft">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="game_protocol guide — Loft, a programming language for small browser games">
+<meta name="twitter:description" content="Getting started with the loft library game_protocol — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta name="twitter:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<link rel="stylesheet" href="style.css">
+<style>.playground-link{display:inline-block;margin:0.3em 0 0.8em;padding:4px 12px;background:#2563eb;color:#fff;border-radius:4px;text-decoration:none;font-size:0.85em}.playground-link:hover{filter:brightness(1.15)}@media print{.playground-link{display:none}}</style>
+</head>
+<body>
+<nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
+<h1>game_protocol guide</h1>
+<article>
+<p><a href="lib-game_protocol.html">← game_protocol</a> · <a href="lib-game_protocol-api.html">API reference</a> · <a href="lib-game_protocol-src.html">source</a></p>
+<p><code>game_protocol</code> is the shared vocabulary a game's client and server agree on: a <code>MsgType</code> naming what a message is (state sync, player input, chat, ping, …), a <code>WsMessage</code> carrying that type and a text payload, and a <code>GameEnvelope</code> around it with the sender, a recipient, a sequence number and a timestamp.  The <code>msg_*</code> constructors build the common ones.</p>
+<p>It does NOT move bytes: the transport — a WebSocket from <code>web</code>, a server loop from <code>server</code>, anything that carries text — is the program's.  What both ends need is the same types, which is what this package is, and loft's own JSON formatting puts an envelope on the wire.</p>
+<pre><code><span class="kw">use</span> game_protocol::*;</code></pre>
+<pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {
+  hello = <span class="fn-call">msg_chat</span>(<span class="st">"alice"</span>, <span class="st">"hi there"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"type {hello.message.msg_type}, from {hello.sender}: {hello.message.payload}"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hello.message.msg_type == <span class="en">MsgType</span>.<span class="en">ChatMessage</span> &amp;&amp; hello.sender == <span class="st">"alice"</span>, <span class="st">"a chat from alice"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hello.timestamp &gt; <span class="nm">0</span>, <span class="st">"stamped with now() when it was built"</span>);</code></pre>
+<p>Every section below is a function, and <code>main</code> calls each one: a section nothing calls still compiles, but its assertions never run.</p>
+<pre><code>  <span class="fn-call">on_the_wire</span>();
+  <span class="fn-call">answering_by_type</span>();
+  <span class="fn-call">ping_and_pong</span>();
+}</code></pre>
+<p>That prints:</p>
+<pre><code>  type ChatMessage, from alice: hi there
+</code></pre>
+<h2 id="on-the-wire">On the wire</h2>
+<p>Format an envelope with <code>:j</code> and it is JSON text, ready for any transport; on the other side, <code>GameEnvelope.parse(text)</code> reads it back into the same structure.  The payload is text too — a game decides what goes in it (a move, a serialized state, a line of chat).</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">on_the_wire</span>() {
+  out = <span class="fn-call">msg_input</span>(<span class="st">"player1"</span>, <span class="st">"move:left"</span>);
+  out.timestamp = <span class="nm">0</span>;  <span class="cm">// pinned, so the text below is exact</span>
+  wire = <span class="st">"{out:j}"</span>;
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(wire == <span class="st">"{{\"</span>sender\<span class="st">":\"</span>player1\<span class="st">",\"</span>recipient\<span class="st">":\"</span>\<span class="st">",\"</span>sequence\<span class="st">":0,\"</span>timestamp\<span class="st">":0,\"</span>message\<span class="st">":{{\"</span>msg_type\<span class="st">":{{\"</span><span class="en">PlayerInput</span>\<span class="st">":{{}}}},\"</span>payload\<span class="st">":\"</span>move:left\<span class="st">"}}}}"</span>,
+         <span class="st">"the envelope as JSON text"</span>);
+  got = <span class="en">GameEnvelope</span>.<span class="fn-call">parse</span>(wire);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(got.sender == <span class="st">"player1"</span> &amp;&amp; got.message.payload == <span class="st">"move:left"</span>, <span class="st">"read back"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(got.message.msg_type == <span class="en">MsgType</span>.<span class="en">PlayerInput</span>, <span class="st">"and its type with it"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"wire    : {len(wire)} bytes of JSON, read back as a PlayerInput"</span>);
+}</code></pre>
+<h2 id="answering-by-type">Answering by type</h2>
+<p>A receiver dispatches on <code>message.msg_type</code>.  <code>match</code> over <code>MsgType</code> names every kind the protocol has, so a new kind added to the enum shows up as a match that no longer covers it.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">kind_of</span>(e: const <span class="en">GameEnvelope</span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {
+  match e.message.msg_type {
+    <span class="en">StateFullSync</span> | <span class="en">StateDelta</span> =&gt; <span class="st">"state"</span>,
+    <span class="en">PlayerInput</span> =&gt; <span class="st">"input"</span>,
+    <span class="en">Ping</span> | <span class="en">Pong</span> =&gt; <span class="st">"liveness"</span>,
+    <span class="en">ChatMessage</span> =&gt; <span class="st">"chat"</span>,
+    <span class="en">LobbyJoin</span> | <span class="en">LobbyLeave</span> | <span class="en">LobbyList</span> | <span class="en">MatchStart</span> | <span class="en">MatchEnd</span> =&gt; <span class="st">"lobby"</span>,
+    <span class="en">Error</span> =&gt; <span class="st">"error"</span>
+  }
+}</code></pre>
+<pre><code><span class="kw">fn</span> <span class="fn-call">answering_by_type</span>() {
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">kind_of</span>(<span class="fn-call">msg_state</span>(<span class="st">"score:42"</span>)) == <span class="st">"state"</span>, <span class="st">"a full sync"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">kind_of</span>(<span class="fn-call">msg_error</span>(<span class="st">"bad move"</span>)) == <span class="st">"error"</span>, <span class="st">"an error"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">kind_of</span>(<span class="fn-call">msg_chat</span>(<span class="st">"bob"</span>, <span class="st">"gg"</span>)) == <span class="st">"chat"</span>, <span class="st">"a chat line"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"match   : state, error, chat — one arm per kind"</span>);
+}</code></pre>
+<h2 id="ping-and-pong">Ping and pong</h2>
+<p><code>msg_ping(seq)</code> and <code>msg_pong(seq)</code> carry a sequence number, so a client can pair the answer with the question it sent and measure the round trip from the two timestamps.  The other constructors leave <code>sequence</code> at 0 and <code>recipient</code> empty: numbering and routing a game's own messages are the game's to set on the envelope.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">ping_and_pong</span>() {
+  ping = <span class="fn-call">msg_ping</span>(<span class="nm">7</span>);
+  pong = <span class="fn-call">msg_pong</span>(ping.sequence);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(pong.sequence == <span class="nm">7</span> &amp;&amp; pong.message.msg_type == <span class="en">MsgType</span>.<span class="en">Pong</span>, <span class="st">"the answer to ping 7"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">msg_chat</span>(<span class="st">"a"</span>, <span class="st">"b"</span>).sequence == <span class="nm">0</span>, <span class="st">"a chat is not numbered"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"ping    : pong {pong.sequence} answers ping {ping.sequence}"</span>);
+}</code></pre>
+<h2 id="where-to-go-next">Where to go next</h2>
+<ul>
+<li><code>examples/</code> — <code>hello_client</code> / <code>hello_server</code>, then a tic-tac-toe client and server: the same envelopes carried over <code>web</code>'s WebSocket and <code>server</code>'s loop.</li>
+</ul>
+
+  </article>
+<script src="search-index.js"></script>
+<script src="search.js"></script>
+<script>
+(function(){
+var m={"Keywords":"keywords","Texts":"texts","Integers":"integers","Boolean":"boolean","Float":"float","Functions":"functions","Vector":"vector","Structs":"structs","Enums":"enums","Sorted":"sorted","Index":"index","Hash":"hash","File":"file","Lexer":"lexer","Parser":"parser","Libraries":"libraries","Store Locks":"store_locks","Parallel execution":"parallel_execution","Logging":"logging","Time":"time","Safety":"safety","JSON":"json","Generics":"generics","Closures":"closures","Coroutines":"coroutines","Tuples":"tuples","Match":"match","Formatting":"formatting"};
+var h=document.querySelector('h1');
+if(!h)return;
+var key=m[h.textContent];
+if(!key)return;
+var a=document.createElement('a');
+a.className='playground-link';
+a.href='playground.html?example='+key;
+a.textContent='\u25B6 Try in Playground';
+h.parentNode.insertBefore(a,h.nextSibling);
+})();
+</script>
+</body>
+</html>

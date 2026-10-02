@@ -10,6 +10,20 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A development build uses the startup cache; `LOFT_NO_CACHE=1` turns it off (2026-10-01, loft#1762, @C133)
+
+`cache_decision` kept the whole-program cache off under Cargo (`CARGO_MANIFEST_DIR`) and for a
+binary in a `target/{debug,release}` tree, so every dev run and every test that spawns `loft`
+paid the cold stdlib parse.  Both behaviour classes that held it back were closed (the `plib`
+manifest list; loft#1129's diagnostic fixes), and both cache keys fold in
+`binary_signature_tag`, so a rebuild invalidates.  The policy is now the kill switch alone;
+`running_a_dev_build` and the `LOFT_PROGRAM_CACHE` force-on are gone (the variable stays in
+`INERT_ENV`, so a script still exporting it costs no warm start).  Tests that spawned the
+binary for a cold reference by REMOVING `LOFT_PROGRAM_CACHE` now set `LOFT_NO_CACHE=1`; a warm
+run removes `LOFT_NO_CACHE` so an exported switch cannot silence it.  The off switch is in
+`loft --help` (under `cache`), DEBUG.md and RUNNING_TESTS.md.  Guard:
+`arc_e_program_cache::a_development_build_caches_unless_told_not_to`.
+
 ### `(R-Header)`'s function clause — a parameter's header bound once at entry (2026-09-30)
 
 A function reading a vector parameter outside any loop paid the runtime's vector lookup at

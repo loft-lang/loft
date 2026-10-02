@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>hex_recover guide — Loft, a programming language for small browser games</title>
+  <meta name="description" content="Getting started with the loft library hex_recover — a runnable guide that is itself a loft program, so every example in it compiles.">
+<link rel="canonical" href="https://loft-lang.org/loft/lib-hex_recover-guide.html">
+<meta property="og:title" content="hex_recover guide — Loft, a programming language for small browser games">
+<meta property="og:description" content="Getting started with the loft library hex_recover — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://loft-lang.org/loft/lib-hex_recover-guide.html">
+<meta property="og:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<meta property="og:site_name" content="Loft">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="hex_recover guide — Loft, a programming language for small browser games">
+<meta name="twitter:description" content="Getting started with the loft library hex_recover — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta name="twitter:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<link rel="stylesheet" href="style.css">
+<style>.playground-link{display:inline-block;margin:0.3em 0 0.8em;padding:4px 12px;background:#2563eb;color:#fff;border-radius:4px;text-decoration:none;font-size:0.85em}.playground-link:hover{filter:brightness(1.15)}@media print{.playground-link{display:none}}</style>
+</head>
+<body>
+<nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
+<h1>hex_recover guide</h1>
+<article>
+<p><a href="lib-hex_recover.html">← hex_recover</a> · <a href="lib-hex_recover-api.html">API reference</a> · <a href="lib-hex_recover-src.html">source</a></p>
+<p><code>hex_recover</code> runs the drawing backwards.  <code>hex_form</code> turns a form (a start heading, then a length and a turn per side) into filled cells; this takes filled cells and recovers the form, exactly — integers throughout, no tolerance anywhere.  When no form draws the cells, it says so: the answer is "R2" with a residual, never a confident wrong form.</p>
+<p>It is not a shape fitter for arbitrary content, and it does not store anything.  The cells live in a <code>hex_field</code> set; the forms and their canonical text belong to <code>hex_form</code>.  Reach for this when an editor has cells and needs the stencil back: an undo history, a project file written from what is on screen, a check that a painted footprint is a real house plan.</p>
+<pre><code><span class="kw">use</span> hex_recover::*;
+<span class="kw">use</span> hex_form::*;
+<span class="kw">use</span> hex_field::*;</code></pre>
+<p>The equilateral triangle of side <code>n</code>: three sides of <code>n</code>, turning 4 twelfths (120°) at each.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">tri</span>(n: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Form</span> { <span class="fn-call">form_new</span>(<span class="nm">0</span>, [n, n, n], [<span class="nm">4</span>, <span class="nm">4</span>, <span class="nm">4</span>]) }</code></pre>
+<p>Draw a form into a fresh set, anchored at (q, r).</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">drawn</span>(f: <span class="en">Form</span>, q: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">HexSet</span> {
+  cells = <span class="fn-call">hexset_chunk</span>(-<span class="nm">20</span>, -<span class="nm">20</span>, <span class="nm">41</span>, <span class="nm">41</span>);
+  <span class="fn-call">form_fill</span>(f, q, r, cells);
+  cells
+}</code></pre>
+<pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {
+  small = <span class="fn-call">drawn</span>(<span class="fn-call">tri</span>(<span class="nm">2</span>), <span class="nm">0</span>, <span class="nm">0</span>);
+  r = <span class="fn-call">rebuild</span>(small);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"side 2: {hexset_count(small)} cells, regime {r.rb_regime}, rho {r.rb_rho}"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">hexset_count</span>(small) == <span class="nm">6</span>, <span class="st">"a side-n triangle has (n+1)(n+2)/2 cells"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(r.rb_regime == <span class="en">REGIME_R1</span> &amp;&amp; r.rb_rho == <span class="nm">0</span> &amp;&amp; r.rb_matches == <span class="nm">1</span>, <span class="st">"exact and unique"</span>);</code></pre>
+<p>Every section below is a function, and <code>main</code> calls each one: a section nothing calls still compiles, but its assertions never run.</p>
+<pre><code>  <span class="fn-call">where_it_was_drawn_does_not_matter</span>();
+  <span class="fn-call">past_the_enumerated_level</span>();
+  <span class="fn-call">a_refusal_carries_a_count</span>();
+  <span class="fn-call">many_fields_one_index</span>();
+}</code></pre>
+<p>That prints:</p>
+<pre><code>  side 2: 6 cells, regime 1, rho 0
+</code></pre>
+<p><code>REGIME_R1</code> (1) means one form draws exactly these cells, and <code>rb_form</code> is it.  <code>rho</code> is 0 because nothing is left over, and <code>rb_matches</code> is 1 because no other form draws them too.</p>
+<h2 id="where-it-was-drawn-does-not-matter">Where it was drawn does not matter</h2>
+<p>Recovery compares shapes, not positions: the same triangle drawn five cells over comes back as the same form.  Where a stencil sits is placement's business, not the stencil's.  The text route answers the form's canonical spelling — the one <code>hex_form</code> writes and reads back byte-for-byte — and <code>""</code> when it declines.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">where_it_was_drawn_does_not_matter</span>() {
+  moved = <span class="fn-call">rebuild</span>(<span class="fn-call">drawn</span>(<span class="fn-call">tri</span>(<span class="nm">2</span>), <span class="nm">5</span>, <span class="nm">3</span>));
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(moved.rb_regime == <span class="en">REGIME_R1</span>, <span class="st">"translated, still exact"</span>);
+  t = <span class="fn-call">rebuild_text</span>(<span class="fn-call">drawn</span>(<span class="fn-call">tri</span>(<span class="nm">2</span>), <span class="nm">5</span>, <span class="nm">3</span>), <span class="st">"tri"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(t == <span class="fn-call">form_write</span>(<span class="fn-call">form_canon</span>(<span class="fn-call">tri</span>(<span class="nm">2</span>)), <span class="st">"tri"</span>), <span class="st">"the canonical text of the drawn form"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">form_eq</span>(<span class="fn-call">form_read</span>(t), <span class="fn-call">form_canon</span>(<span class="fn-call">tri</span>(<span class="nm">2</span>))) &amp;&amp; <span class="bi"><a href="stdlib-text.html">len</a></span>(t.<span class="fn-call"><a href="stdlib-text.html">split</a></span>(<span class="ch">'\n'</span>)) == <span class="nm">4</span>,
+         <span class="st">"it reads back as the same form: a header line, then one line per side"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"placed  : anchored at (5, 3), still R1, as {len(t.split('\n'))} lines of text"</span>);
+}</code></pre>
+<h2 id="past-the-enumerated-level">Past the enumerated level</h2>
+<p><code>rebuild</code> matches against a fixed candidate set: triangles with sides up to <code>LEVEL</code> (2), plus four to six sides of length 1.  A side-4 triangle (15 cells) is not in it, so <code>rebuild</code> answers R2 — "nothing in the set draws this", which is NOT "no stencil draws this". <code>rebuild_construct</code> enumerates nothing: it reads each corner off the convex hull of the cells, then re-draws the result once to confirm it.  It recovers the triangle exactly.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">past_the_enumerated_level</span>() {
+  big = <span class="fn-call">drawn</span>(<span class="fn-call">tri</span>(<span class="nm">4</span>), <span class="nm">0</span>, <span class="nm">0</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">hexset_count</span>(big) == <span class="nm">15</span>, <span class="st">"5 * 6 / 2"</span>);
+  scan = <span class="fn-call">rebuild</span>(big);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(scan.rb_regime == <span class="en">REGIME_R2</span> &amp;&amp; scan.rb_matches == <span class="nm">0</span>, <span class="st">"outside the candidate set"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">rebuild_text</span>(big, <span class="st">"big"</span>) == <span class="st">""</span>, <span class="st">"so the text route declines"</span>);
+  built = <span class="fn-call">rebuild_construct</span>(big);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(built.rb_regime == <span class="en">REGIME_R1</span> &amp;&amp; built.rb_rho == <span class="nm">0</span>, <span class="st">"the construction reaches it"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">rebuild_construct_text</span>(big, <span class="st">"big"</span>) == <span class="fn-call">form_write</span>(<span class="fn-call">form_canon</span>(<span class="fn-call">tri</span>(<span class="nm">4</span>)), <span class="st">"big"</span>), <span class="st">"exactly"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"level   : side 4 is R2 to rebuild, R1 to rebuild_construct"</span>);
+}</code></pre>
+<h2 id="a-refusal-carries-a-count">A refusal carries a count</h2>
+<p>When no form draws the cells, <code>rb_rho</code> counts the cells left unexplained.  It is a COUNT, not a distance: a ring of six around an empty centre scores 1 (its hull is the seven-cell hexagon, so one cell is missing), and that is still a flat refusal, because no form has a hole.  Three scattered cells give no form at all, so all three are unexplained.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">a_refusal_carries_a_count</span>() {
+  ring = <span class="fn-call">hexset_chunk</span>(-<span class="nm">3</span>, -<span class="nm">3</span>, <span class="nm">7</span>, <span class="nm">7</span>);
+  <span class="fn-call">hexdisk_into</span>(ring, <span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">1</span>);
+  <span class="fn-call">hexset_set</span>(ring, <span class="nm">0</span>, <span class="nm">0</span>, <span class="kw">false</span>);
+  rr = <span class="fn-call">rebuild_construct</span>(ring);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">hexset_count</span>(ring) == <span class="nm">6</span> &amp;&amp; rr.rb_regime == <span class="en">REGIME_R2</span> &amp;&amp; rr.rb_rho == <span class="nm">1</span>, <span class="st">"7 - 6"</span>);</code></pre>
+<pre><code>  scatter = <span class="fn-call">hexset_chunk</span>(-<span class="nm">20</span>, -<span class="nm">20</span>, <span class="nm">41</span>, <span class="nm">41</span>);
+  <span class="fn-call">hexset_set</span>(scatter, <span class="nm">0</span>, <span class="nm">0</span>, <span class="kw">true</span>);
+  <span class="fn-call">hexset_set</span>(scatter, <span class="nm">1</span>, <span class="nm">0</span>, <span class="kw">true</span>);
+  <span class="fn-call">hexset_set</span>(scatter, <span class="nm">5</span>, <span class="nm">5</span>, <span class="kw">true</span>);
+  rs = <span class="fn-call">rebuild_construct</span>(scatter);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(rs.rb_regime == <span class="en">REGIME_R2</span> &amp;&amp; rs.rb_rho == <span class="nm">3</span>, <span class="st">"every cell unexplained"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"refusal : a ring of six is rho {rr.rb_rho}, three scattered cells rho {rs.rb_rho}"</span>);
+}</code></pre>
+<h2 id="many-fields-one-index">Many fields, one index</h2>
+<p><code>rebuild</code> builds its candidate set and re-draws every candidate on each call.  To recover many fields, build the set once with <code>candidate_forms</code>, draw it once into an index with <code>index_build</code>, and look each field up with <code>rebuild_indexed</code> — one probe per field.  The build counts candidates that draw the same cells as an earlier one; zero is the promise that a recovered form is unique.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">many_fields_one_index</span>() {
+  cand = <span class="fn-call">candidate_forms</span>();
+  idx = <span class="fn-call">index_build</span>(cand);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(idx.ri_collisions == <span class="nm">0</span> &amp;&amp; idx.ri_count == <span class="bi"><a href="stdlib-text.html">len</a></span>(cand), <span class="st">"every candidate draws its own cells"</span>);
+  hit = <span class="fn-call">rebuild_indexed</span>(idx, cand, <span class="fn-call">drawn</span>(<span class="fn-call">tri</span>(<span class="nm">1</span>), <span class="nm">2</span>, <span class="nm">2</span>));
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hit.rb_regime == <span class="en">REGIME_R1</span>, <span class="st">"one probe, an exact answer"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"index   : {idx.ri_count} candidates, {idx.ri_collisions} collisions"</span>);
+}</code></pre>
+<h2 id="where-to-go-next">Where to go next</h2>
+<ul>
+<li><code>tests/02-worked-examples.loft</code> — <code>@HXV-001</code> … <code>@HXV-009</code>: the three digests and which question each answers, why <code>rho</code> is not a distance, why a closed cycle has no first corner, and why the index fixes cost but not reach.</li>
+<li><code>hex_form</code> — authoring the forms recovered here, and their canonical text.</li>
+</ul>
+
+  </article>
+<script src="search-index.js"></script>
+<script src="search.js"></script>
+<script>
+(function(){
+var m={"Keywords":"keywords","Texts":"texts","Integers":"integers","Boolean":"boolean","Float":"float","Functions":"functions","Vector":"vector","Structs":"structs","Enums":"enums","Sorted":"sorted","Index":"index","Hash":"hash","File":"file","Lexer":"lexer","Parser":"parser","Libraries":"libraries","Store Locks":"store_locks","Parallel execution":"parallel_execution","Logging":"logging","Time":"time","Safety":"safety","JSON":"json","Generics":"generics","Closures":"closures","Coroutines":"coroutines","Tuples":"tuples","Match":"match","Formatting":"formatting"};
+var h=document.querySelector('h1');
+if(!h)return;
+var key=m[h.textContent];
+if(!key)return;
+var a=document.createElement('a');
+a.className='playground-link';
+a.href='playground.html?example='+key;
+a.textContent='\u25B6 Try in Playground';
+h.parentNode.insertBefore(a,h.nextSibling);
+})();
+</script>
+</body>
+</html>

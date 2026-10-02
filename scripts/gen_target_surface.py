@@ -45,7 +45,7 @@ OUT = ROOT / "index" / "target_surface.json"
 TARGETS = {
     "wasm-browser": {
         "triple": "wasm32-unknown-unknown",
-        "rlib": "target/wasm32-unknown-unknown/release",
+        "rlib": "target/loft/html/wasm32-unknown-unknown/release",
         "describe": "the browser target (`loft --html`)",
     },
 }

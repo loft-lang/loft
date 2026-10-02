@@ -392,8 +392,8 @@ panic site is recovered by rebuilding the same generated Rust without `-O`.
    ```bash
    rustc --edition=2024 --target wasm32-unknown-unknown \
      --crate-type cdylib \
-     --extern loft=target/wasm32-unknown-unknown/release/libloft.rlib \
-     -L dependency=target/wasm32-unknown-unknown/release/deps \
+     --extern loft=target/loft/html/wasm32-unknown-unknown/release/libloft.rlib \
+     -L dependency=target/loft/html/wasm32-unknown-unknown/release/deps \
      -L dependency=target/release/deps \
      /tmp/loft_html_saved.rs -o /tmp/debug.wasm
    ```

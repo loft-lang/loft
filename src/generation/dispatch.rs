@@ -1721,6 +1721,15 @@ impl Output<'_> {
         // so no double-borrow (and the receiver was already pre-eval-hoisted).
         if let Value::Call(call_dnr, args) = to.unspan()
             && self.data.def(*call_dnr).rust().is_empty()
+            // loft#1847, `@FR-R-ValueRecord` — an admitted callee has no return buffer and
+            // returns its fields as a tuple; the ordinary call emitter (`user_fn_call_body`)
+            // drops the buffer argument and reads the tuple, and this path spelled every
+            // argument itself, buffer included.
+            && !self.value_records.fns.contains_key(call_dnr)
+            // …and a callee receiving a parameter as a TUPLE (`@FR-R-ValueLocal`): the ordinary
+            // emitter builds that tuple from the record, and this path spelled the argument as
+            // the attribute's own `DbRef` (E0308 at a lifted call of a generic's instance).
+            && !self.value_records.params.contains_key(call_dnr)
             && args.iter().any(|a| self.arg_needs_text_hoist(a))
         {
             let def_fn = self.data.def(*call_dnr);

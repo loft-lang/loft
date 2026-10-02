@@ -191,7 +191,11 @@ lines is the disk: `df -h /`, then [RUN_BOUNDS.md § Scratch hygiene](RUN_BOUNDS
 
 ### The patch receipt — `@falsified-by:`
 
-The durable form carries the defect instead of pointing at it.
+The durable form carries the defect instead of pointing at it, and it stays durable only while
+it APPLIES: `doc_hygiene::every_patch_receipt_still_applies` fails on one the code has moved out
+from under, and the cure is a patch re-derived at the current tree that still falsifies.  The
+ones already stale when the check landed are in `tests/falsified_patches.baseline`, which only
+shrinks.
 **`// @falsified-by: tests/falsified/<guard>.patch`** names a patch that reintroduces the fault
 on top of HEAD, and `scripts/falsify.sh <guard> --patch <file>` scores it exactly as a ref
 control is scored.  Nothing outside the repository has to survive for it to be re-run.

@@ -23,139 +23,139 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>crypto source</h1>
 <article>
-<p><a href="lib-crypto.html">← crypto</a> · <a href="lib-crypto-api.html">API reference</a> · version 0.3.10</p>
-<p class="lib-legend">11 file(s), 1588 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<p><a href="lib-crypto.html">← crypto</a> · <a href="lib-crypto-api.html">API reference</a> · version 0.3.11</p>
+<p class="lib-legend">12 file(s), 1616 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
 <table class="lib-table">
 <tr><th>Item</th><th>Defined</th><th>Worked example</th><th>Call sites</th></tr>
-<tr><td><code>sha256</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L91">91</a></td><td>—</td><td><a href="#tests-crypto-loft-L27">27</a> <a href="#tests-crypto-loft-L29">29</a> <a href="#tests-crypto-loft-L33">33</a> <a href="#tests-crypto-loft-L35">35</a> <a href="#tests-crypto-loft-L40">40</a> <a href="#tests-crypto-loft-L42">42</a> … (20 total)</td></tr>
-<tr><td><code>sha256_b64</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L99">99</a></td><td><a href="#tests-worked-examples-loft-L24">CRY-001</a></td><td><a href="#tests-sha256-bytes-loft-L8">8</a> <a href="#tests-sha256-bytes-loft-L9">9</a> <a href="#tests-sha256-bytes-loft-L12">12</a> <a href="#tests-worked-examples-loft-L41">41</a> <a href="#tests-worked-examples-loft-L43">43</a> <a href="#tests-worked-examples-loft-L54">54</a></td></tr>
+<tr><td><code>sha256</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L90">90</a></td><td>—</td><td><a href="#tests-crypto-loft-L27">27</a> <a href="#tests-crypto-loft-L29">29</a> <a href="#tests-crypto-loft-L33">33</a> <a href="#tests-crypto-loft-L35">35</a> <a href="#tests-crypto-loft-L40">40</a> <a href="#tests-crypto-loft-L42">42</a> … (20 total)</td></tr>
+<tr><td><code>sha256_b64</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L99">99</a></td><td><a href="#tests-worked-examples-loft-L24">CRY-001</a></td><td><a href="#tests-malformed-base64-loft-L20">20</a> <a href="#tests-sha256-bytes-loft-L8">8</a> <a href="#tests-sha256-bytes-loft-L9">9</a> <a href="#tests-sha256-bytes-loft-L12">12</a> <a href="#tests-worked-examples-loft-L41">41</a> <a href="#tests-worked-examples-loft-L43">43</a> … (7 total)</td></tr>
 <tr><td><code>hmac_sha256</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L104">104</a></td><td>—</td><td><a href="#tests-crypto-loft-L81">81</a> <a href="#tests-crypto-loft-L88">88</a> <a href="#tests-crypto-loft-L94">94</a> <a href="#tests-crypto-loft-L100">100</a> <a href="#tests-crypto-loft-L110">110</a> <a href="#tests-crypto-loft-L118">118</a> … (8 total)</td></tr>
-<tr><td><code>base64_encode</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L109">109</a></td><td>—</td><td><a href="#tests-crypto-loft-L127">127</a> <a href="#tests-crypto-loft-L128">128</a> <a href="#tests-crypto-loft-L133">133</a> <a href="#tests-crypto-loft-L134">134</a> <a href="#tests-crypto-loft-L139">139</a> <a href="#tests-crypto-loft-L140">140</a> … (24 total)</td></tr>
-<tr><td><code>base64_decode</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L114">114</a></td><td>—</td><td><a href="#tests-crypto-loft-L146">146</a> <a href="#tests-crypto-loft-L152">152</a> <a href="#tests-crypto-loft-L158">158</a> <a href="#tests-crypto-loft-L159">159</a> <a href="#tests-crypto-loft-L160">160</a> <a href="#tests-crypto-loft-L161">161</a> … (10 total)</td></tr>
-<tr><td><code>base64url_encode</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L119">119</a></td><td>—</td><td><a href="#tests-crypto-loft-L169">169</a> <a href="#tests-crypto-loft-L175">175</a> <a href="#tests-crypto-loft-L176">176</a> <a href="#tests-crypto-loft-L177">177</a> <a href="#tests-crypto-loft-L178">178</a> <a href="#tests-crypto-loft-L185">185</a></td></tr>
-<tr><td><code>ed25519_public_key</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L132">132</a></td><td>—</td><td><a href="#tests-ed25519-loft-L27">27</a> <a href="#tests-ed25519-loft-L52">52</a> <a href="#tests-ed25519-loft-L100">100</a> <a href="#tests-ed25519-loft-L101">101</a> <a href="#tests-worked-examples-loft-L70">70</a></td></tr>
-<tr><td><code>ed25519_sign</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L139">139</a></td><td><a href="#tests-worked-examples-loft-L59">CRY-002</a></td><td><a href="#tests-ed25519-loft-L35">35</a> <a href="#tests-ed25519-loft-L60">60</a> <a href="#tests-ed25519-loft-L103">103</a> <a href="#tests-ed25519-loft-L104">104</a> <a href="#tests-worked-examples-loft-L76">76</a> <a href="#tests-worked-examples-loft-L82">82</a> … (7 total)</td></tr>
-<tr><td><code>ed25519_verify</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L146">146</a></td><td><a href="#tests-worked-examples-loft-L59">CRY-002</a></td><td><a href="#tests-ed25519-loft-L44">44</a> <a href="#tests-ed25519-loft-L69">69</a> <a href="#tests-ed25519-loft-L80">80</a> <a href="#tests-ed25519-loft-L92">92</a> <a href="#tests-ed25519-loft-L106">106</a> <a href="#tests-ed25519-loft-L107">107</a> … (9 total)</td></tr>
-<tr><td><code>ecdsa_p256_keygen</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L163">163</a></td><td>—</td><td><a href="#tests-es256-loft-L90">90</a> <a href="#tests-es256-loft-L106">106</a> <a href="#tests-es256-loft-L107">107</a> <a href="#tests-es256-parity-loft-L41">41</a> <a href="#tests-worked-examples-loft-L105">105</a> <a href="#tests-worked-examples-loft-L121">121</a></td></tr>
-<tr><td><code>ecdsa_p256_public_key</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L169">169</a></td><td><a href="#tests-worked-examples-loft-L95">CRY-003</a></td><td><a href="#tests-es256-loft-L37">37</a> <a href="#tests-es256-loft-L83">83</a> <a href="#tests-es256-loft-L93">93</a> <a href="#tests-es256-loft-L136">136</a> <a href="#tests-es256-loft-L137">137</a> <a href="#tests-es256-parity-loft-L27">27</a> … (8 total)</td></tr>
-<tr><td><code>ecdsa_p256_sign</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L176">176</a></td><td><a href="#tests-worked-examples-loft-L95">CRY-003</a></td><td><a href="#tests-es256-loft-L45">45</a> <a href="#tests-es256-loft-L63">63</a> <a href="#tests-es256-loft-L97">97</a> <a href="#tests-es256-loft-L139">139</a> <a href="#tests-es256-loft-L140">140</a> <a href="#tests-es256-parity-loft-L28">28</a> … (10 total)</td></tr>
-<tr><td><code>ecdsa_p256_verify</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L182">182</a></td><td>—</td><td><a href="#tests-es256-loft-L53">53</a> <a href="#tests-es256-loft-L71">71</a> <a href="#tests-es256-loft-L100">100</a> <a href="#tests-es256-loft-L119">119</a> <a href="#tests-es256-loft-L127">127</a> <a href="#tests-es256-loft-L142">142</a> … (11 total)</td></tr>
-<tr><td><code>x25519_dh</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L194">194</a></td><td><a href="#tests-worked-examples-loft-L125">CRY-004</a></td><td><a href="#src-crypto-loft-L375">375</a> <a href="#src-crypto-loft-L384">384</a> <a href="#src-crypto-loft-L401">401</a> <a href="#tests-aead-kex-loft-L26">26</a> <a href="#tests-aead-kex-loft-L34">34</a> <a href="#tests-aead-kex-loft-L45">45</a> … (12 total)</td></tr>
-<tr><td><code>hkdf_sha256</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L204">204</a></td><td><a href="#tests-worked-examples-loft-L125">CRY-004</a></td><td><a href="#tests-aead-kex-loft-L70">70</a> <a href="#tests-aead-kex-loft-L78">78</a> <a href="#tests-aead-kex-loft-L87">87</a> <a href="#tests-worked-examples-loft-L146">146</a> <a href="#tests-worked-examples-loft-L153">153</a> <a href="#tests-worked-examples-loft-L160">160</a></td></tr>
-<tr><td><code>hkdf_extract</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L213">213</a></td><td><a href="#tests-worked-examples-loft-L125">CRY-004</a></td><td><a href="#src-crypto-loft-L344">344</a> <a href="#tests-worked-examples-loft-L156">156</a> <a href="#tests-worked-examples-loft-L160">160</a></td></tr>
-<tr><td><code>hkdf_expand</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L219">219</a></td><td>—</td><td><a href="#src-crypto-loft-L356">356</a> <a href="#tests-worked-examples-loft-L159">159</a> <a href="#tests-worked-examples-loft-L160">160</a></td></tr>
-<tr><td><code>bytes_to_base64</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L238">238</a></td><td>—</td><td><a href="#tests-sha256-bytes-loft-L11">11</a> <a href="#tests-sha256-bytes-loft-L12">12</a> <a href="#tests-sha256-bytes-loft-L15">15</a> <a href="#tests-sha256-bytes-loft-L16">16</a> <a href="#tests-sha256-bytes-loft-L17">17</a> <a href="#tests-worked-examples-loft-L52">52</a></td></tr>
-<tr><td><code>base64_to_bytes</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L245">245</a></td><td><a href="#tests-worked-examples-loft-L24">CRY-001</a></td><td><a href="#tests-es256-loft-L91">91</a> <a href="#tests-es256-loft-L94">94</a> <a href="#tests-es256-loft-L98">98</a> <a href="#tests-sha256-bytes-loft-L15">15</a> <a href="#tests-sha256-bytes-loft-L16">16</a> <a href="#tests-sha256-bytes-loft-L17">17</a> … (16 total)</td></tr>
-<tr><td><code>aes256gcm_seal</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L259">259</a></td><td><a href="#tests-worked-examples-loft-L163">CRY-005</a></td><td><a href="#src-crypto-loft-L447">447</a> <a href="#tests-aead-kex-loft-L106">106</a> <a href="#tests-aead-kex-loft-L146">146</a> <a href="#tests-aead-kex-loft-L155">155</a> <a href="#tests-aead-kex-loft-L156">156</a> <a href="#tests-worked-examples-loft-L178">178</a> … (8 total)</td></tr>
-<tr><td><code>aes256gcm_open</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L267">267</a></td><td><a href="#tests-worked-examples-loft-L163">CRY-005</a></td><td><a href="#src-crypto-loft-L483">483</a> <a href="#tests-aead-kex-loft-L116">116</a> <a href="#tests-aead-kex-loft-L127">127</a> <a href="#tests-aead-kex-loft-L136">136</a> <a href="#tests-aead-kex-loft-L148">148</a> <a href="#tests-worked-examples-loft-L184">184</a> … (9 total)</td></tr>
-<tr><td><code>random_bytes</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L275">275</a></td><td>—</td><td><a href="#src-crypto-loft-L459">459</a> <a href="#tests-aead-kex-loft-L142">142</a> <a href="#tests-aead-kex-loft-L143">143</a> <a href="#tests-random-loft-L17">17</a> <a href="#tests-random-loft-L18">18</a> <a href="#tests-random-loft-L21">21</a> … (22 total)</td></tr>
-<tr><td><code>HpkeSealed</code> <span class="search-kind">struct</span></td><td><a href="#src-crypto-loft-L437">437</a></td><td>—</td><td><a href="#src-crypto-loft-L444">444</a> <a href="#src-crypto-loft-L446">446</a> <a href="#src-crypto-loft-L448">448</a> <a href="#src-crypto-loft-L458">458</a> <a href="#src-crypto-loft-L461">461</a> <a href="#src-crypto-loft-L468">468</a> … (7 total)</td></tr>
-<tr><td><code>hpke_seal_base</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L458">458</a></td><td><a href="#tests-worked-examples-loft-L207">CRY-006</a></td><td><a href="#tests-hpke-loft-L88">88</a> <a href="#tests-worked-examples-loft-L230">230</a> <a href="#tests-worked-examples-loft-L238">238</a></td></tr>
-<tr><td><code>hpke_seal_base_deterministic</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L468">468</a></td><td>—</td><td><a href="#tests-hpke-loft-L60">60</a></td></tr>
-<tr><td><code>hpke_open_base</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L478">478</a></td><td><a href="#tests-worked-examples-loft-L207">CRY-006</a></td><td><a href="#tests-hpke-loft-L67">67</a> <a href="#tests-hpke-loft-L75">75</a> <a href="#tests-hpke-loft-L81">81</a> <a href="#tests-hpke-loft-L93">93</a> <a href="#tests-hpke-loft-L101">101</a> <a href="#tests-worked-examples-loft-L234">234</a> … (8 total)</td></tr>
-<tr><td><code>hpke_key_schedule_base_for_test</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L488">488</a></td><td>—</td><td><a href="#tests-hpke-loft-L53">53</a></td></tr>
-<tr><td><code>hpke_encap_deterministic_for_test</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L494">494</a></td><td>—</td><td><a href="#tests-hpke-loft-L46">46</a></td></tr>
+<tr><td><code>base64_encode</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L109">109</a></td><td>—</td><td><a href="#tests-crypto-loft-L127">127</a> <a href="#tests-crypto-loft-L128">128</a> <a href="#tests-crypto-loft-L133">133</a> <a href="#tests-crypto-loft-L134">134</a> <a href="#tests-crypto-loft-L139">139</a> <a href="#tests-crypto-loft-L140">140</a> … (28 total)</td></tr>
+<tr><td><code>base64_decode</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L115">115</a></td><td>—</td><td><a href="#tests-crypto-loft-L146">146</a> <a href="#tests-crypto-loft-L152">152</a> <a href="#tests-crypto-loft-L158">158</a> <a href="#tests-crypto-loft-L159">159</a> <a href="#tests-crypto-loft-L160">160</a> <a href="#tests-crypto-loft-L161">161</a> … (13 total)</td></tr>
+<tr><td><code>base64url_encode</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L120">120</a></td><td>—</td><td><a href="#tests-crypto-loft-L169">169</a> <a href="#tests-crypto-loft-L175">175</a> <a href="#tests-crypto-loft-L176">176</a> <a href="#tests-crypto-loft-L177">177</a> <a href="#tests-crypto-loft-L178">178</a> <a href="#tests-crypto-loft-L185">185</a></td></tr>
+<tr><td><code>ed25519_public_key</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L133">133</a></td><td>—</td><td><a href="#tests-ed25519-loft-L27">27</a> <a href="#tests-ed25519-loft-L52">52</a> <a href="#tests-ed25519-loft-L100">100</a> <a href="#tests-ed25519-loft-L101">101</a> <a href="#tests-malformed-base64-loft-L14">14</a> <a href="#tests-worked-examples-loft-L70">70</a></td></tr>
+<tr><td><code>ed25519_sign</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L140">140</a></td><td><a href="#tests-worked-examples-loft-L59">CRY-002</a></td><td><a href="#tests-ed25519-loft-L35">35</a> <a href="#tests-ed25519-loft-L60">60</a> <a href="#tests-ed25519-loft-L103">103</a> <a href="#tests-ed25519-loft-L104">104</a> <a href="#tests-malformed-base64-loft-L21">21</a> <a href="#tests-malformed-base64-loft-L22">22</a> … (9 total)</td></tr>
+<tr><td><code>ed25519_verify</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L147">147</a></td><td><a href="#tests-worked-examples-loft-L59">CRY-002</a></td><td><a href="#tests-ed25519-loft-L44">44</a> <a href="#tests-ed25519-loft-L69">69</a> <a href="#tests-ed25519-loft-L80">80</a> <a href="#tests-ed25519-loft-L92">92</a> <a href="#tests-ed25519-loft-L106">106</a> <a href="#tests-ed25519-loft-L107">107</a> … (10 total)</td></tr>
+<tr><td><code>ecdsa_p256_keygen</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L164">164</a></td><td>—</td><td><a href="#tests-es256-loft-L90">90</a> <a href="#tests-es256-loft-L106">106</a> <a href="#tests-es256-loft-L107">107</a> <a href="#tests-es256-parity-loft-L41">41</a> <a href="#tests-worked-examples-loft-L105">105</a> <a href="#tests-worked-examples-loft-L121">121</a></td></tr>
+<tr><td><code>ecdsa_p256_public_key</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L170">170</a></td><td><a href="#tests-worked-examples-loft-L95">CRY-003</a></td><td><a href="#tests-es256-loft-L37">37</a> <a href="#tests-es256-loft-L83">83</a> <a href="#tests-es256-loft-L93">93</a> <a href="#tests-es256-loft-L136">136</a> <a href="#tests-es256-loft-L137">137</a> <a href="#tests-es256-parity-loft-L27">27</a> … (8 total)</td></tr>
+<tr><td><code>ecdsa_p256_sign</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L177">177</a></td><td><a href="#tests-worked-examples-loft-L95">CRY-003</a></td><td><a href="#tests-es256-loft-L45">45</a> <a href="#tests-es256-loft-L63">63</a> <a href="#tests-es256-loft-L97">97</a> <a href="#tests-es256-loft-L139">139</a> <a href="#tests-es256-loft-L140">140</a> <a href="#tests-es256-parity-loft-L28">28</a> … (10 total)</td></tr>
+<tr><td><code>ecdsa_p256_verify</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L183">183</a></td><td>—</td><td><a href="#tests-es256-loft-L53">53</a> <a href="#tests-es256-loft-L71">71</a> <a href="#tests-es256-loft-L100">100</a> <a href="#tests-es256-loft-L119">119</a> <a href="#tests-es256-loft-L127">127</a> <a href="#tests-es256-loft-L142">142</a> … (11 total)</td></tr>
+<tr><td><code>x25519_dh</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L195">195</a></td><td><a href="#tests-worked-examples-loft-L125">CRY-004</a></td><td><a href="#src-crypto-loft-L368">368</a> <a href="#src-crypto-loft-L377">377</a> <a href="#src-crypto-loft-L394">394</a> <a href="#tests-aead-kex-loft-L26">26</a> <a href="#tests-aead-kex-loft-L34">34</a> <a href="#tests-aead-kex-loft-L45">45</a> … (12 total)</td></tr>
+<tr><td><code>hkdf_sha256</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L206">206</a></td><td><a href="#tests-worked-examples-loft-L125">CRY-004</a></td><td><a href="#tests-aead-kex-loft-L70">70</a> <a href="#tests-aead-kex-loft-L78">78</a> <a href="#tests-aead-kex-loft-L87">87</a> <a href="#tests-malformed-base64-loft-L26">26</a> <a href="#tests-malformed-base64-loft-L27">27</a> <a href="#tests-worked-examples-loft-L146">146</a> … (8 total)</td></tr>
+<tr><td><code>hkdf_extract</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L216">216</a></td><td><a href="#tests-worked-examples-loft-L125">CRY-004</a></td><td><a href="#src-crypto-loft-L337">337</a> <a href="#tests-worked-examples-loft-L156">156</a> <a href="#tests-worked-examples-loft-L160">160</a></td></tr>
+<tr><td><code>hkdf_expand</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L223">223</a></td><td>—</td><td><a href="#src-crypto-loft-L349">349</a> <a href="#tests-worked-examples-loft-L159">159</a> <a href="#tests-worked-examples-loft-L160">160</a></td></tr>
+<tr><td><code>bytes_to_base64</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L235">235</a></td><td>—</td><td><a href="#tests-sha256-bytes-loft-L11">11</a> <a href="#tests-sha256-bytes-loft-L12">12</a> <a href="#tests-sha256-bytes-loft-L15">15</a> <a href="#tests-sha256-bytes-loft-L16">16</a> <a href="#tests-sha256-bytes-loft-L17">17</a> <a href="#tests-worked-examples-loft-L52">52</a></td></tr>
+<tr><td><code>base64_to_bytes</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L241">241</a></td><td><a href="#tests-worked-examples-loft-L24">CRY-001</a></td><td><a href="#tests-es256-loft-L91">91</a> <a href="#tests-es256-loft-L94">94</a> <a href="#tests-es256-loft-L98">98</a> <a href="#tests-malformed-base64-loft-L16">16</a> <a href="#tests-malformed-base64-loft-L30">30</a> <a href="#tests-malformed-base64-loft-L31">31</a> … (19 total)</td></tr>
+<tr><td><code>aes256gcm_seal</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L255">255</a></td><td><a href="#tests-worked-examples-loft-L163">CRY-005</a></td><td><a href="#src-crypto-loft-L440">440</a> <a href="#tests-aead-kex-loft-L106">106</a> <a href="#tests-aead-kex-loft-L146">146</a> <a href="#tests-aead-kex-loft-L155">155</a> <a href="#tests-aead-kex-loft-L156">156</a> <a href="#tests-malformed-base64-loft-L24">24</a> … (10 total)</td></tr>
+<tr><td><code>aes256gcm_open</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L263">263</a></td><td><a href="#tests-worked-examples-loft-L163">CRY-005</a></td><td><a href="#src-crypto-loft-L476">476</a> <a href="#tests-aead-kex-loft-L116">116</a> <a href="#tests-aead-kex-loft-L127">127</a> <a href="#tests-aead-kex-loft-L136">136</a> <a href="#tests-aead-kex-loft-L148">148</a> <a href="#tests-worked-examples-loft-L184">184</a> … (9 total)</td></tr>
+<tr><td><code>random_bytes</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L271">271</a></td><td>—</td><td><a href="#src-crypto-loft-L452">452</a> <a href="#tests-aead-kex-loft-L142">142</a> <a href="#tests-aead-kex-loft-L143">143</a> <a href="#tests-malformed-base64-loft-L11">11</a> <a href="#tests-malformed-base64-loft-L12">12</a> <a href="#tests-malformed-base64-loft-L13">13</a> … (26 total)</td></tr>
+<tr><td><code>HpkeSealed</code> <span class="search-kind">struct</span></td><td><a href="#src-crypto-loft-L430">430</a></td><td>—</td><td><a href="#src-crypto-loft-L437">437</a> <a href="#src-crypto-loft-L439">439</a> <a href="#src-crypto-loft-L441">441</a> <a href="#src-crypto-loft-L451">451</a> <a href="#src-crypto-loft-L454">454</a> <a href="#src-crypto-loft-L461">461</a> … (7 total)</td></tr>
+<tr><td><code>hpke_seal_base</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L451">451</a></td><td><a href="#tests-worked-examples-loft-L207">CRY-006</a></td><td><a href="#tests-hpke-loft-L88">88</a> <a href="#tests-worked-examples-loft-L230">230</a> <a href="#tests-worked-examples-loft-L238">238</a></td></tr>
+<tr><td><code>hpke_seal_base_deterministic</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L461">461</a></td><td>—</td><td><a href="#tests-hpke-loft-L60">60</a></td></tr>
+<tr><td><code>hpke_open_base</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L471">471</a></td><td><a href="#tests-worked-examples-loft-L207">CRY-006</a></td><td><a href="#tests-hpke-loft-L67">67</a> <a href="#tests-hpke-loft-L75">75</a> <a href="#tests-hpke-loft-L81">81</a> <a href="#tests-hpke-loft-L93">93</a> <a href="#tests-hpke-loft-L101">101</a> <a href="#tests-worked-examples-loft-L234">234</a> … (8 total)</td></tr>
+<tr><td><code>hpke_key_schedule_base_for_test</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L481">481</a></td><td>—</td><td><a href="#tests-hpke-loft-L53">53</a></td></tr>
+<tr><td><code>hpke_encap_deterministic_for_test</code> <span class="search-kind">fn</span></td><td><a href="#src-crypto-loft-L487">487</a></td><td>—</td><td><a href="#tests-hpke-loft-L46">46</a></td></tr>
 </table>
 <h2 id="src-crypto-loft">src/crypto.loft</h2>
 <pre class="src"><code><span id="src-crypto-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
 <span id="src-crypto-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
 <span id="src-crypto-loft-L3"><span class="cm">// --- Crypto ---</span></span>
-<span id="src-crypto-loft-L4"><span class="cm">// Cryptographic primitives: hashing, HMAC, base64.</span></span>
-<span id="src-crypto-loft-L5"><span class="cm">//</span></span>
-<span id="src-crypto-loft-L6"><span class="cm">// JWT signing was removed 2026-05-30 — the previous `jwt_sign` was an</span></span>
-<span id="src-crypto-loft-L7"><span class="cm">// HS256-only proof-of-concept with no verify counterpart, no claim</span></span>
-<span id="src-crypto-loft-L8"><span class="cm">// helpers, no key-rotation support, no consumers in any loft library</span></span>
-<span id="src-crypto-loft-L9"><span class="cm">// or tool, and no tests.  When a real auth use case lands, JWT</span></span>
-<span id="src-crypto-loft-L10"><span class="cm">// belongs in a dedicated `lib/auth/` package with proper algorithm</span></span>
-<span id="src-crypto-loft-L11"><span class="cm">// coverage (RS256/ES256) and a full sign+verify+claim API.</span></span>
-<span id="src-crypto-loft-L12"></span>
-<span id="src-crypto-loft-L13"><span class="cm">// --- Internal natives ---</span></span>
-<span id="src-crypto-loft-L14"><span class="cm">//</span></span>
-<span id="src-crypto-loft-L15"><span class="cm">// Each `#native "n_*"` symbol is supplied by the `native/` cdylib via a</span></span>
-<span id="src-crypto-loft-L16"><span class="cm">// `#[loft_native]` bridge; `loft-ffi-build` scans these annotations to emit</span></span>
-<span id="src-crypto-loft-L17"><span class="cm">// the cdylib's register list, so the bindings can never drift.</span></span>
-<span id="src-crypto-loft-L18"></span>
-<span id="src-crypto-loft-L19"><span class="kw">fn</span> <span class="fn-call">sha256_native</span>(data: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
-<span id="src-crypto-loft-L20">#native <span class="st">"n_sha256"</span></span>
-<span id="src-crypto-loft-L21"></span>
-<span id="src-crypto-loft-L22"><span class="kw">fn</span> <span class="fn-call">sha256_b64_native</span>(data_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
-<span id="src-crypto-loft-L23">#native <span class="st">"n_sha256_b64"</span></span>
-<span id="src-crypto-loft-L24"></span>
-<span id="src-crypto-loft-L25"><span class="kw">fn</span> <span class="fn-call">hmac_sha256_native</span>(key: <span class="ty"><a href="stdlib-types.html">text</a></span>, data: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
-<span id="src-crypto-loft-L26">#native <span class="st">"n_hmac_sha256"</span></span>
-<span id="src-crypto-loft-L27"></span>
-<span id="src-crypto-loft-L28"><span class="kw">fn</span> <span class="fn-call">base64_encode_native</span>(data: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
-<span id="src-crypto-loft-L29">#native <span class="st">"n_base64_encode"</span></span>
-<span id="src-crypto-loft-L30"></span>
-<span id="src-crypto-loft-L31"><span class="kw">fn</span> <span class="fn-call">base64_decode_native</span>(data: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
-<span id="src-crypto-loft-L32">#native <span class="st">"n_base64_decode"</span></span>
-<span id="src-crypto-loft-L33"></span>
-<span id="src-crypto-loft-L34"><span class="kw">fn</span> <span class="fn-call">base64url_encode_native</span>(data: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
-<span id="src-crypto-loft-L35">#native <span class="st">"n_base64url_encode"</span></span>
-<span id="src-crypto-loft-L36"></span>
-<span id="src-crypto-loft-L37"><span class="kw">fn</span> <span class="fn-call">ed25519_public_key_native</span>(secret_key_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
-<span id="src-crypto-loft-L38">#native <span class="st">"n_ed25519_public_key"</span></span>
-<span id="src-crypto-loft-L39"></span>
-<span id="src-crypto-loft-L40"><span class="kw">fn</span> <span class="fn-call">ed25519_sign_native</span>(secret_key_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, message_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
-<span id="src-crypto-loft-L41">#native <span class="st">"n_ed25519_sign"</span></span>
-<span id="src-crypto-loft-L42"></span>
-<span id="src-crypto-loft-L43"><span class="kw">fn</span> <span class="fn-call">ed25519_verify_native</span>(public_key_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, message_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, signature_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span>;</span>
-<span id="src-crypto-loft-L44">#native <span class="st">"n_ed25519_verify"</span></span>
-<span id="src-crypto-loft-L45"></span>
-<span id="src-crypto-loft-L46"><span class="kw">fn</span> <span class="fn-call">ecdsa_p256_keygen_native</span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
-<span id="src-crypto-loft-L47">#native <span class="st">"n_ecdsa_p256_keygen"</span></span>
-<span id="src-crypto-loft-L48"></span>
-<span id="src-crypto-loft-L49"><span class="kw">fn</span> <span class="fn-call">ecdsa_p256_public_key_native</span>(secret_key_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
-<span id="src-crypto-loft-L50">#native <span class="st">"n_ecdsa_p256_public_key"</span></span>
-<span id="src-crypto-loft-L51"></span>
-<span id="src-crypto-loft-L52"><span class="kw">fn</span> <span class="fn-call">ecdsa_p256_sign_native</span>(secret_key_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, message_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
-<span id="src-crypto-loft-L53">#native <span class="st">"n_ecdsa_p256_sign"</span></span>
-<span id="src-crypto-loft-L54"></span>
-<span id="src-crypto-loft-L55"><span class="kw">fn</span> <span class="fn-call">ecdsa_p256_verify_native</span>(public_key_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, message_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, signature_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span>;</span>
-<span id="src-crypto-loft-L56">#native <span class="st">"n_ecdsa_p256_verify"</span></span>
-<span id="src-crypto-loft-L57"></span>
-<span id="src-crypto-loft-L58"><span class="kw">fn</span> <span class="fn-call">x25519_dh_native</span>(secret_key_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, public_key_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
-<span id="src-crypto-loft-L59">#native <span class="st">"n_x25519_dh"</span></span>
-<span id="src-crypto-loft-L60"></span>
-<span id="src-crypto-loft-L61"><span class="kw">fn</span> <span class="fn-call">hkdf_sha256_native</span>(salt_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, ikm_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, info_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, length: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
-<span id="src-crypto-loft-L62">#native <span class="st">"n_hkdf_sha256"</span></span>
-<span id="src-crypto-loft-L63"></span>
-<span id="src-crypto-loft-L64"><span class="kw">fn</span> <span class="fn-call">hkdf_extract_native</span>(salt_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, ikm_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
-<span id="src-crypto-loft-L65">#native <span class="st">"n_hkdf_extract"</span></span>
-<span id="src-crypto-loft-L66"></span>
-<span id="src-crypto-loft-L67"><span class="kw">fn</span> <span class="fn-call">hkdf_expand_native</span>(prk_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, info_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, length: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
-<span id="src-crypto-loft-L68">#native <span class="st">"n_hkdf_expand"</span></span>
-<span id="src-crypto-loft-L69"></span>
-<span id="src-crypto-loft-L70"><span class="kw">fn</span> <span class="fn-call">bytes_to_base64_native</span>(bytes: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
-<span id="src-crypto-loft-L71">#native <span class="st">"n_bytes_to_base64"</span></span>
-<span id="src-crypto-loft-L72"></span>
-<span id="src-crypto-loft-L73"><span class="kw">fn</span> <span class="fn-call">base64_to_bytes_native</span>(b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt;;</span>
-<span id="src-crypto-loft-L74">#native <span class="st">"n_base64_to_bytes"</span></span>
-<span id="src-crypto-loft-L75"></span>
-<span id="src-crypto-loft-L76"><span class="kw">fn</span> <span class="fn-call">bytes_concat_b64_native</span>(a_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, b_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
-<span id="src-crypto-loft-L77">#native <span class="st">"n_bytes_concat_b64"</span></span>
-<span id="src-crypto-loft-L78"></span>
-<span id="src-crypto-loft-L79"><span class="kw">fn</span> <span class="fn-call">aes256gcm_seal_native</span>(key_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, nonce_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, aad_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, plaintext_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
-<span id="src-crypto-loft-L80">#native <span class="st">"n_aes256gcm_seal"</span></span>
-<span id="src-crypto-loft-L81"></span>
-<span id="src-crypto-loft-L82"><span class="kw">fn</span> <span class="fn-call">aes256gcm_open_native</span>(key_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, nonce_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, aad_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, ciphertext_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
-<span id="src-crypto-loft-L83">#native <span class="st">"n_aes256gcm_open"</span></span>
-<span id="src-crypto-loft-L84"></span>
-<span id="src-crypto-loft-L85"><span class="kw">fn</span> <span class="fn-call">random_bytes_native</span>(length: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
-<span id="src-crypto-loft-L86">#native <span class="st">"n_random_bytes"</span></span>
-<span id="src-crypto-loft-L87"></span>
-<span id="src-crypto-loft-L88"><span class="cm">// --- Public API ---</span></span>
-<span id="src-crypto-loft-L89"></span>
-<span id="src-crypto-loft-L90"><span class="cm">// SHA-256 hash of a string. Returns 64-char hex string.</span></span>
-<span id="src-crypto-loft-L91"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">sha256</span>(data: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
-<span id="src-crypto-loft-L92">  <span class="fn-call">sha256_native</span>(data)</span>
-<span id="src-crypto-loft-L93">}</span>
-<span id="src-crypto-loft-L94"></span>
-<span id="src-crypto-loft-L95"><span class="cm">// SHA-256 of the RAW BYTES decoded from base64 `data_b64`. Returns base64 of the</span></span>
-<span id="src-crypto-loft-L96"><span class="cm">// 32-byte digest. Use this to hash arbitrary byte strings (ciphertext, canonical</span></span>
-<span id="src-crypto-loft-L97"><span class="cm">// CBOR) that are not valid UTF-8 and so cannot be passed to `sha256` as text.</span></span>
+<span id="src-crypto-loft-L4"><span class="cm">// Cryptographic primitives: SHA-256 and HMAC, base64, Ed25519 and ES256</span></span>
+<span id="src-crypto-loft-L5"><span class="cm">// signatures, X25519 key agreement, HKDF, AES-256-GCM, a CSPRNG, and HPKE base</span></span>
+<span id="src-crypto-loft-L6"><span class="cm">// mode built from them.</span></span>
+<span id="src-crypto-loft-L7"><span class="cm">//</span></span>
+<span id="src-crypto-loft-L8"><span class="cm">// Bytes cross the API as standard base64 `text`.  Input that is not base64 is</span></span>
+<span id="src-crypto-loft-L9"><span class="cm">// refused the way each function refuses anything malformed — "" or false, never</span></span>
+<span id="src-crypto-loft-L10"><span class="cm">// a result computed from other bytes than the ones sent.</span></span>
+<span id="src-crypto-loft-L11"></span>
+<span id="src-crypto-loft-L12"><span class="cm">// --- Internal natives ---</span></span>
+<span id="src-crypto-loft-L13"><span class="cm">//</span></span>
+<span id="src-crypto-loft-L14"><span class="cm">// Each `#native "n_*"` symbol is supplied by the `native/` cdylib via a</span></span>
+<span id="src-crypto-loft-L15"><span class="cm">// `#[loft_native]` bridge; `loft-ffi-build` scans these annotations to emit</span></span>
+<span id="src-crypto-loft-L16"><span class="cm">// the cdylib's register list, so the bindings can never drift.</span></span>
+<span id="src-crypto-loft-L17"></span>
+<span id="src-crypto-loft-L18"><span class="kw">fn</span> <span class="fn-call">sha256_native</span>(data: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
+<span id="src-crypto-loft-L19">#native <span class="st">"n_sha256"</span></span>
+<span id="src-crypto-loft-L20"></span>
+<span id="src-crypto-loft-L21"><span class="kw">fn</span> <span class="fn-call">sha256_b64_native</span>(data_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
+<span id="src-crypto-loft-L22">#native <span class="st">"n_sha256_b64"</span></span>
+<span id="src-crypto-loft-L23"></span>
+<span id="src-crypto-loft-L24"><span class="kw">fn</span> <span class="fn-call">hmac_sha256_native</span>(key: <span class="ty"><a href="stdlib-types.html">text</a></span>, data: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
+<span id="src-crypto-loft-L25">#native <span class="st">"n_hmac_sha256"</span></span>
+<span id="src-crypto-loft-L26"></span>
+<span id="src-crypto-loft-L27"><span class="kw">fn</span> <span class="fn-call">base64_encode_native</span>(data: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
+<span id="src-crypto-loft-L28">#native <span class="st">"n_base64_encode"</span></span>
+<span id="src-crypto-loft-L29"></span>
+<span id="src-crypto-loft-L30"><span class="kw">fn</span> <span class="fn-call">base64_decode_native</span>(data: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
+<span id="src-crypto-loft-L31">#native <span class="st">"n_base64_decode"</span></span>
+<span id="src-crypto-loft-L32"></span>
+<span id="src-crypto-loft-L33"><span class="kw">fn</span> <span class="fn-call">base64url_encode_native</span>(data: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
+<span id="src-crypto-loft-L34">#native <span class="st">"n_base64url_encode"</span></span>
+<span id="src-crypto-loft-L35"></span>
+<span id="src-crypto-loft-L36"><span class="kw">fn</span> <span class="fn-call">ed25519_public_key_native</span>(secret_key_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
+<span id="src-crypto-loft-L37">#native <span class="st">"n_ed25519_public_key"</span></span>
+<span id="src-crypto-loft-L38"></span>
+<span id="src-crypto-loft-L39"><span class="kw">fn</span> <span class="fn-call">ed25519_sign_native</span>(secret_key_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, message_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
+<span id="src-crypto-loft-L40">#native <span class="st">"n_ed25519_sign"</span></span>
+<span id="src-crypto-loft-L41"></span>
+<span id="src-crypto-loft-L42"><span class="kw">fn</span> <span class="fn-call">ed25519_verify_native</span>(public_key_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, message_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, signature_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span>;</span>
+<span id="src-crypto-loft-L43">#native <span class="st">"n_ed25519_verify"</span></span>
+<span id="src-crypto-loft-L44"></span>
+<span id="src-crypto-loft-L45"><span class="kw">fn</span> <span class="fn-call">ecdsa_p256_keygen_native</span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
+<span id="src-crypto-loft-L46">#native <span class="st">"n_ecdsa_p256_keygen"</span></span>
+<span id="src-crypto-loft-L47"></span>
+<span id="src-crypto-loft-L48"><span class="kw">fn</span> <span class="fn-call">ecdsa_p256_public_key_native</span>(secret_key_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
+<span id="src-crypto-loft-L49">#native <span class="st">"n_ecdsa_p256_public_key"</span></span>
+<span id="src-crypto-loft-L50"></span>
+<span id="src-crypto-loft-L51"><span class="kw">fn</span> <span class="fn-call">ecdsa_p256_sign_native</span>(secret_key_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, message_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
+<span id="src-crypto-loft-L52">#native <span class="st">"n_ecdsa_p256_sign"</span></span>
+<span id="src-crypto-loft-L53"></span>
+<span id="src-crypto-loft-L54"><span class="kw">fn</span> <span class="fn-call">ecdsa_p256_verify_native</span>(public_key_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, message_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, signature_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span>;</span>
+<span id="src-crypto-loft-L55">#native <span class="st">"n_ecdsa_p256_verify"</span></span>
+<span id="src-crypto-loft-L56"></span>
+<span id="src-crypto-loft-L57"><span class="kw">fn</span> <span class="fn-call">x25519_dh_native</span>(secret_key_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, public_key_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
+<span id="src-crypto-loft-L58">#native <span class="st">"n_x25519_dh"</span></span>
+<span id="src-crypto-loft-L59"></span>
+<span id="src-crypto-loft-L60"><span class="kw">fn</span> <span class="fn-call">hkdf_sha256_native</span>(salt_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, ikm_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, info_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, length: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
+<span id="src-crypto-loft-L61">#native <span class="st">"n_hkdf_sha256"</span></span>
+<span id="src-crypto-loft-L62"></span>
+<span id="src-crypto-loft-L63"><span class="kw">fn</span> <span class="fn-call">hkdf_extract_native</span>(salt_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, ikm_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
+<span id="src-crypto-loft-L64">#native <span class="st">"n_hkdf_extract"</span></span>
+<span id="src-crypto-loft-L65"></span>
+<span id="src-crypto-loft-L66"><span class="kw">fn</span> <span class="fn-call">hkdf_expand_native</span>(prk_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, info_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, length: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
+<span id="src-crypto-loft-L67">#native <span class="st">"n_hkdf_expand"</span></span>
+<span id="src-crypto-loft-L68"></span>
+<span id="src-crypto-loft-L69"><span class="kw">fn</span> <span class="fn-call">bytes_to_base64_native</span>(bytes: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
+<span id="src-crypto-loft-L70">#native <span class="st">"n_bytes_to_base64"</span></span>
+<span id="src-crypto-loft-L71"></span>
+<span id="src-crypto-loft-L72"><span class="kw">fn</span> <span class="fn-call">base64_to_bytes_native</span>(b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt;;</span>
+<span id="src-crypto-loft-L73">#native <span class="st">"n_base64_to_bytes"</span></span>
+<span id="src-crypto-loft-L74"></span>
+<span id="src-crypto-loft-L75"><span class="kw">fn</span> <span class="fn-call">bytes_concat_b64_native</span>(a_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, b_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
+<span id="src-crypto-loft-L76">#native <span class="st">"n_bytes_concat_b64"</span></span>
+<span id="src-crypto-loft-L77"></span>
+<span id="src-crypto-loft-L78"><span class="kw">fn</span> <span class="fn-call">aes256gcm_seal_native</span>(key_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, nonce_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, aad_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, plaintext_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
+<span id="src-crypto-loft-L79">#native <span class="st">"n_aes256gcm_seal"</span></span>
+<span id="src-crypto-loft-L80"></span>
+<span id="src-crypto-loft-L81"><span class="kw">fn</span> <span class="fn-call">aes256gcm_open_native</span>(key_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, nonce_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, aad_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, ciphertext_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
+<span id="src-crypto-loft-L82">#native <span class="st">"n_aes256gcm_open"</span></span>
+<span id="src-crypto-loft-L83"></span>
+<span id="src-crypto-loft-L84"><span class="kw">fn</span> <span class="fn-call">random_bytes_native</span>(length: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
+<span id="src-crypto-loft-L85">#native <span class="st">"n_random_bytes"</span></span>
+<span id="src-crypto-loft-L86"></span>
+<span id="src-crypto-loft-L87"><span class="cm">// --- Public API ---</span></span>
+<span id="src-crypto-loft-L88"></span>
+<span id="src-crypto-loft-L89"><span class="cm">// SHA-256 hash of a string. Returns 64-char hex string.</span></span>
+<span id="src-crypto-loft-L90"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">sha256</span>(data: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-crypto-loft-L91">  <span class="fn-call">sha256_native</span>(data)</span>
+<span id="src-crypto-loft-L92">}</span>
+<span id="src-crypto-loft-L93"></span>
+<span id="src-crypto-loft-L94"><span class="cm">// SHA-256 of the RAW BYTES decoded from base64 `data_b64`. Returns base64 of the</span></span>
+<span id="src-crypto-loft-L95"><span class="cm">// 32-byte digest, or "" when `data_b64` is not base64. Use this to hash arbitrary</span></span>
+<span id="src-crypto-loft-L96"><span class="cm">// byte strings (ciphertext, canonical CBOR) that are not valid UTF-8 and so cannot</span></span>
+<span id="src-crypto-loft-L97"><span class="cm">// be passed to `sha256` as text.</span></span>
 <span id="src-crypto-loft-L98"><span class="cm">// Example: @CRY-001 — the two hashing doors: text in / hex out vs base64 both ways.</span></span>
 <span id="src-crypto-loft-L99"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">sha256_b64</span>(data_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
 <span id="src-crypto-loft-L100">  <span class="fn-call">sha256_b64_native</span>(data_b64)</span>
@@ -171,390 +171,383 @@
 <span id="src-crypto-loft-L110">  <span class="fn-call">base64_encode_native</span>(data)</span>
 <span id="src-crypto-loft-L111">}</span>
 <span id="src-crypto-loft-L112"></span>
-<span id="src-crypto-loft-L113"><span class="cm">// Base64 decode a string.</span></span>
-<span id="src-crypto-loft-L114"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">base64_decode</span>(data: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
-<span id="src-crypto-loft-L115">  <span class="fn-call">base64_decode_native</span>(data)</span>
-<span id="src-crypto-loft-L116">}</span>
-<span id="src-crypto-loft-L117"></span>
-<span id="src-crypto-loft-L118"><span class="cm">// Base64url encode (JWT-safe, no padding).</span></span>
-<span id="src-crypto-loft-L119"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">base64url_encode</span>(data: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
-<span id="src-crypto-loft-L120">  <span class="fn-call">base64url_encode_native</span>(data)</span>
-<span id="src-crypto-loft-L121">}</span>
-<span id="src-crypto-loft-L122"></span>
-<span id="src-crypto-loft-L123"><span class="cm">// --- Ed25519 signatures (RFC 8032) ---</span></span>
-<span id="src-crypto-loft-L124"><span class="cm">//</span></span>
-<span id="src-crypto-loft-L125"><span class="cm">// All key / message / signature bytes are standard base64 `text`.  A secret</span></span>
-<span id="src-crypto-loft-L126"><span class="cm">// key is the RFC 8032 32-byte seed (base64); the public key (32B) and</span></span>
-<span id="src-crypto-loft-L127"><span class="cm">// signature (64B) are the canonical encodings.  Malformed input never halts:</span></span>
-<span id="src-crypto-loft-L128"><span class="cm">// `ed25519_public_key` / `ed25519_sign` return "" and `ed25519_verify`</span></span>
-<span id="src-crypto-loft-L129"><span class="cm">// returns false.</span></span>
-<span id="src-crypto-loft-L130"></span>
-<span id="src-crypto-loft-L131"><span class="cm">// Derive the 32-byte public key (base64) from a 32-byte secret seed (base64).</span></span>
-<span id="src-crypto-loft-L132"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">ed25519_public_key</span>(secret_key_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
-<span id="src-crypto-loft-L133">  <span class="fn-call">ed25519_public_key_native</span>(secret_key_b64)</span>
-<span id="src-crypto-loft-L134">}</span>
-<span id="src-crypto-loft-L135"></span>
-<span id="src-crypto-loft-L136"><span class="cm">// Sign the base64 `message` bytes with the 32-byte secret seed (base64).</span></span>
-<span id="src-crypto-loft-L137"><span class="cm">// Returns the 64-byte signature, base64.</span></span>
-<span id="src-crypto-loft-L138"><span class="cm">// Example: @CRY-002 — sign `base64_encode(msg)`; the bare text signs other bytes, silently.</span></span>
-<span id="src-crypto-loft-L139"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">ed25519_sign</span>(secret_key_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, message_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
-<span id="src-crypto-loft-L140">  <span class="fn-call">ed25519_sign_native</span>(secret_key_b64, message_b64)</span>
-<span id="src-crypto-loft-L141">}</span>
-<span id="src-crypto-loft-L142"></span>
-<span id="src-crypto-loft-L143"><span class="cm">// Verify a signature over the base64 `message` bytes under a public key.</span></span>
-<span id="src-crypto-loft-L144"><span class="cm">// Returns true iff the signature is valid.</span></span>
-<span id="src-crypto-loft-L145"><span class="cm">// Example: @CRY-002 — why a wrongly-spelled message still verifies against itself.</span></span>
-<span id="src-crypto-loft-L146"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">ed25519_verify</span>(public_key_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, message_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, signature_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
-<span id="src-crypto-loft-L147">  <span class="fn-call">ed25519_verify_native</span>(public_key_b64, message_b64, signature_b64)</span>
-<span id="src-crypto-loft-L148">}</span>
-<span id="src-crypto-loft-L149"></span>
-<span id="src-crypto-loft-L150"><span class="cm">// --- ES256 signatures (ECDSA P-256 / SHA-256, JOSE `alg: ES256`) ---</span></span>
-<span id="src-crypto-loft-L151"><span class="cm">//</span></span>
-<span id="src-crypto-loft-L152"><span class="cm">// The signature RFC 8555 ACME requires for account keys and CSRs — Let's Encrypt</span></span>
-<span id="src-crypto-loft-L153"><span class="cm">// rejects Ed25519 account keys, so ES256 cannot be replaced by the ed25519 path.</span></span>
-<span id="src-crypto-loft-L154"><span class="cm">// All bytes are standard base64 `text`.  A secret key is the 32-byte P-256 scalar</span></span>
-<span id="src-crypto-loft-L155"><span class="cm">// `d`; a public key is the 64-byte affine point `x || y` (the JWK coordinates,</span></span>
-<span id="src-crypto-loft-L156"><span class="cm">// no 0x04 SEC1 prefix); a signature is the 64-byte raw `r || s` (the JOSE form —</span></span>
-<span id="src-crypto-loft-L157"><span class="cm">// the DER encoding is for the X.509/PKCS#10 layer, never for a JWS signature).</span></span>
-<span id="src-crypto-loft-L158"><span class="cm">// Signing is deterministic (RFC 6979), so the same key + message always signs to</span></span>
-<span id="src-crypto-loft-L159"><span class="cm">// the same bytes; only `keygen` draws entropy.  Malformed input never halts:</span></span>
-<span id="src-crypto-loft-L160"><span class="cm">// `ecdsa_p256_keygen` / `_public_key` / `_sign` return "" and `_verify` false.</span></span>
-<span id="src-crypto-loft-L161"></span>
-<span id="src-crypto-loft-L162"><span class="cm">// Generate a fresh 32-byte P-256 secret scalar (base64) from the OS CSPRNG.</span></span>
-<span id="src-crypto-loft-L163"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">ecdsa_p256_keygen</span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
-<span id="src-crypto-loft-L164">  <span class="fn-call">ecdsa_p256_keygen_native</span>()</span>
-<span id="src-crypto-loft-L165">}</span>
-<span id="src-crypto-loft-L166"></span>
-<span id="src-crypto-loft-L167"><span class="cm">// Derive the 64-byte public key `x || y` (base64) from a 32-byte secret scalar (base64).</span></span>
-<span id="src-crypto-loft-L168"><span class="cm">// Example: @CRY-003 — the three JOSE lengths (32 / 64 / 64) a caller should check.</span></span>
-<span id="src-crypto-loft-L169"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">ecdsa_p256_public_key</span>(secret_key_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
-<span id="src-crypto-loft-L170">  <span class="fn-call">ecdsa_p256_public_key_native</span>(secret_key_b64)</span>
-<span id="src-crypto-loft-L171">}</span>
-<span id="src-crypto-loft-L172"></span>
-<span id="src-crypto-loft-L173"><span class="cm">// Sign the base64 `message` bytes with the 32-byte secret scalar (base64).</span></span>
-<span id="src-crypto-loft-L174"><span class="cm">// Returns the 64-byte `r || s` signature (base64), deterministic per RFC 6979.</span></span>
-<span id="src-crypto-loft-L175"><span class="cm">// Example: @CRY-003 — signing twice answers identical bytes, and `r || s` is not DER.</span></span>
-<span id="src-crypto-loft-L176"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">ecdsa_p256_sign</span>(secret_key_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, message_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
-<span id="src-crypto-loft-L177">  <span class="fn-call">ecdsa_p256_sign_native</span>(secret_key_b64, message_b64)</span>
-<span id="src-crypto-loft-L178">}</span>
-<span id="src-crypto-loft-L179"></span>
-<span id="src-crypto-loft-L180"><span class="cm">// Verify an ES256 signature (64-byte `r || s`) over the base64 `message` bytes</span></span>
-<span id="src-crypto-loft-L181"><span class="cm">// under a 64-byte `x || y` public key.  Returns true iff the signature is valid.</span></span>
-<span id="src-crypto-loft-L182"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">ecdsa_p256_verify</span>(public_key_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, message_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, signature_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
-<span id="src-crypto-loft-L183">  <span class="fn-call">ecdsa_p256_verify_native</span>(public_key_b64, message_b64, signature_b64)</span>
-<span id="src-crypto-loft-L184">}</span>
-<span id="src-crypto-loft-L185"></span>
-<span id="src-crypto-loft-L186"><span class="cm">// --- X25519 key agreement (RFC 7748) ---</span></span>
-<span id="src-crypto-loft-L187"><span class="cm">//</span></span>
-<span id="src-crypto-loft-L188"><span class="cm">// A secret key is a 32-byte X25519 scalar (base64); a public key is the</span></span>
-<span id="src-crypto-loft-L189"><span class="cm">// 32-byte u-coordinate (base64).  Returns the raw 32-byte shared secret</span></span>
-<span id="src-crypto-loft-L190"><span class="cm">// (base64), or "" if either input is the wrong length.  Run the result</span></span>
-<span id="src-crypto-loft-L191"><span class="cm">// through `hkdf_sha256` before using it as a key (RFC 7748 §6.1).</span></span>
-<span id="src-crypto-loft-L192"><span class="cm">// Example: @CRY-004 — the DH output is keying material, not a key; and how to get a</span></span>
-<span id="src-crypto-loft-L193"><span class="cm">// public key out of a secret scalar (X25519 has no separate keygen).</span></span>
-<span id="src-crypto-loft-L194"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">x25519_dh</span>(secret_key_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, public_key_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
-<span id="src-crypto-loft-L195">  <span class="fn-call">x25519_dh_native</span>(secret_key_b64, public_key_b64)</span>
-<span id="src-crypto-loft-L196">}</span>
-<span id="src-crypto-loft-L197"></span>
-<span id="src-crypto-loft-L198"><span class="cm">// --- HKDF-SHA256 key derivation (RFC 5869) ---</span></span>
-<span id="src-crypto-loft-L199"><span class="cm">//</span></span>
-<span id="src-crypto-loft-L200"><span class="cm">// Derive `length` bytes of output keying material from `ikm`, `salt`, and</span></span>
-<span id="src-crypto-loft-L201"><span class="cm">// `info` (each base64).  An empty base64 `salt` selects the all-zero salt.</span></span>
-<span id="src-crypto-loft-L202"><span class="cm">// Returns the base64 OKM, or "" if `length` exceeds 255*32 or is &lt;= 0.</span></span>
-<span id="src-crypto-loft-L203"><span class="cm">// Example: @CRY-004 — `info` is what separates two keys from one shared secret.</span></span>
-<span id="src-crypto-loft-L204"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">hkdf_sha256</span>(salt_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, ikm_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, info_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, length: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
-<span id="src-crypto-loft-L205">  <span class="fn-call">hkdf_sha256_native</span>(salt_b64, ikm_b64, info_b64, length)</span>
-<span id="src-crypto-loft-L206">}</span>
-<span id="src-crypto-loft-L207"></span>
-<span id="src-crypto-loft-L208"><span class="cm">// HKDF-Extract (RFC 5869 §2.2): the 32-byte PRK (base64) HMAC-SHA256(salt, ikm).</span></span>
-<span id="src-crypto-loft-L209"><span class="cm">// An empty base64 `salt` selects the all-zero salt.  Use the Extract/Expand</span></span>
-<span id="src-crypto-loft-L210"><span class="cm">// halves directly (rather than `hkdf_sha256`) when a PRK is reused for several</span></span>
-<span id="src-crypto-loft-L211"><span class="cm">// Expands or when an Extract output is itself the value you want (e.g. HPKE).</span></span>
-<span id="src-crypto-loft-L212"><span class="cm">// Example: @CRY-004 — the split halves compose to exactly `hkdf_sha256`.</span></span>
-<span id="src-crypto-loft-L213"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">hkdf_extract</span>(salt_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, ikm_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
-<span id="src-crypto-loft-L214">  <span class="fn-call">hkdf_extract_native</span>(salt_b64, ikm_b64)</span>
-<span id="src-crypto-loft-L215">}</span>
-<span id="src-crypto-loft-L216"></span>
-<span id="src-crypto-loft-L217"><span class="cm">// HKDF-Expand (RFC 5869 §2.3) from an existing 32-byte PRK.  Returns `length`</span></span>
-<span id="src-crypto-loft-L218"><span class="cm">// bytes of OKM (base64), or "" on a short PRK, length &gt; 255*32, or length &lt;= 0.</span></span>
-<span id="src-crypto-loft-L219"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">hkdf_expand</span>(prk_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, info_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, length: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
-<span id="src-crypto-loft-L220">  <span class="fn-call">hkdf_expand_native</span>(prk_b64, info_b64, length)</span>
-<span id="src-crypto-loft-L221">}</span>
-<span id="src-crypto-loft-L222"></span>
-<span id="src-crypto-loft-L223"><span class="cm">// --- Raw bytes &lt;-&gt; base64 ---</span></span>
-<span id="src-crypto-loft-L224"><span class="cm">//</span></span>
-<span id="src-crypto-loft-L225"><span class="cm">// loft `text` is UTF-8-validated, so a non-UTF-8 byte string cannot ride as</span></span>
-<span id="src-crypto-loft-L226"><span class="cm">// `text` (`text_from_bytes` returns "").  These two inverse helpers move raw</span></span>
-<span id="src-crypto-loft-L227"><span class="cm">// bytes across the base64 boundary instead.</span></span>
+<span id="src-crypto-loft-L113"><span class="cm">// Base64 decode to text.  "" when `data` is not base64, or when its bytes are not</span></span>
+<span id="src-crypto-loft-L114"><span class="cm">// UTF-8 — those are not text; `base64_to_bytes` reads them.</span></span>
+<span id="src-crypto-loft-L115"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">base64_decode</span>(data: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-crypto-loft-L116">  <span class="fn-call">base64_decode_native</span>(data)</span>
+<span id="src-crypto-loft-L117">}</span>
+<span id="src-crypto-loft-L118"></span>
+<span id="src-crypto-loft-L119"><span class="cm">// Base64url encode (JWT-safe, no padding).</span></span>
+<span id="src-crypto-loft-L120"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">base64url_encode</span>(data: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-crypto-loft-L121">  <span class="fn-call">base64url_encode_native</span>(data)</span>
+<span id="src-crypto-loft-L122">}</span>
+<span id="src-crypto-loft-L123"></span>
+<span id="src-crypto-loft-L124"><span class="cm">// --- Ed25519 signatures (RFC 8032) ---</span></span>
+<span id="src-crypto-loft-L125"><span class="cm">//</span></span>
+<span id="src-crypto-loft-L126"><span class="cm">// All key / message / signature bytes are standard base64 `text`.  A secret</span></span>
+<span id="src-crypto-loft-L127"><span class="cm">// key is the RFC 8032 32-byte seed (base64); the public key (32B) and</span></span>
+<span id="src-crypto-loft-L128"><span class="cm">// signature (64B) are the canonical encodings.  Malformed input never halts:</span></span>
+<span id="src-crypto-loft-L129"><span class="cm">// `ed25519_public_key` / `ed25519_sign` return "" and `ed25519_verify`</span></span>
+<span id="src-crypto-loft-L130"><span class="cm">// returns false.</span></span>
+<span id="src-crypto-loft-L131"></span>
+<span id="src-crypto-loft-L132"><span class="cm">// Derive the 32-byte public key (base64) from a 32-byte secret seed (base64).</span></span>
+<span id="src-crypto-loft-L133"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">ed25519_public_key</span>(secret_key_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-crypto-loft-L134">  <span class="fn-call">ed25519_public_key_native</span>(secret_key_b64)</span>
+<span id="src-crypto-loft-L135">}</span>
+<span id="src-crypto-loft-L136"></span>
+<span id="src-crypto-loft-L137"><span class="cm">// Sign the base64 `message` bytes with the 32-byte secret seed (base64).</span></span>
+<span id="src-crypto-loft-L138"><span class="cm">// Returns the 64-byte signature, base64.</span></span>
+<span id="src-crypto-loft-L139"><span class="cm">// Example: @CRY-002 — sign `base64_encode(msg)`; the bare text signs other bytes, silently.</span></span>
+<span id="src-crypto-loft-L140"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">ed25519_sign</span>(secret_key_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, message_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-crypto-loft-L141">  <span class="fn-call">ed25519_sign_native</span>(secret_key_b64, message_b64)</span>
+<span id="src-crypto-loft-L142">}</span>
+<span id="src-crypto-loft-L143"></span>
+<span id="src-crypto-loft-L144"><span class="cm">// Verify a signature over the base64 `message` bytes under a public key.</span></span>
+<span id="src-crypto-loft-L145"><span class="cm">// Returns true iff the signature is valid.</span></span>
+<span id="src-crypto-loft-L146"><span class="cm">// Example: @CRY-002 — why a wrongly-spelled message still verifies against itself.</span></span>
+<span id="src-crypto-loft-L147"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">ed25519_verify</span>(public_key_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, message_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, signature_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-crypto-loft-L148">  <span class="fn-call">ed25519_verify_native</span>(public_key_b64, message_b64, signature_b64)</span>
+<span id="src-crypto-loft-L149">}</span>
+<span id="src-crypto-loft-L150"></span>
+<span id="src-crypto-loft-L151"><span class="cm">// --- ES256 signatures (ECDSA P-256 / SHA-256, JOSE `alg: ES256`) ---</span></span>
+<span id="src-crypto-loft-L152"><span class="cm">//</span></span>
+<span id="src-crypto-loft-L153"><span class="cm">// The signature RFC 8555 ACME requires for account keys and CSRs — Let's Encrypt</span></span>
+<span id="src-crypto-loft-L154"><span class="cm">// rejects Ed25519 account keys, so ES256 cannot be replaced by the ed25519 path.</span></span>
+<span id="src-crypto-loft-L155"><span class="cm">// All bytes are standard base64 `text`.  A secret key is the 32-byte P-256 scalar</span></span>
+<span id="src-crypto-loft-L156"><span class="cm">// `d`; a public key is the 64-byte affine point `x || y` (the JWK coordinates,</span></span>
+<span id="src-crypto-loft-L157"><span class="cm">// no 0x04 SEC1 prefix); a signature is the 64-byte raw `r || s` (the JOSE form —</span></span>
+<span id="src-crypto-loft-L158"><span class="cm">// the DER encoding is for the X.509/PKCS#10 layer, never for a JWS signature).</span></span>
+<span id="src-crypto-loft-L159"><span class="cm">// Signing is deterministic (RFC 6979), so the same key + message always signs to</span></span>
+<span id="src-crypto-loft-L160"><span class="cm">// the same bytes; only `keygen` draws entropy.  Malformed input never halts:</span></span>
+<span id="src-crypto-loft-L161"><span class="cm">// `ecdsa_p256_keygen` / `_public_key` / `_sign` return "" and `_verify` false.</span></span>
+<span id="src-crypto-loft-L162"></span>
+<span id="src-crypto-loft-L163"><span class="cm">// Generate a fresh 32-byte P-256 secret scalar (base64) from the OS CSPRNG.</span></span>
+<span id="src-crypto-loft-L164"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">ecdsa_p256_keygen</span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-crypto-loft-L165">  <span class="fn-call">ecdsa_p256_keygen_native</span>()</span>
+<span id="src-crypto-loft-L166">}</span>
+<span id="src-crypto-loft-L167"></span>
+<span id="src-crypto-loft-L168"><span class="cm">// Derive the 64-byte public key `x || y` (base64) from a 32-byte secret scalar (base64).</span></span>
+<span id="src-crypto-loft-L169"><span class="cm">// Example: @CRY-003 — the three JOSE lengths (32 / 64 / 64) a caller should check.</span></span>
+<span id="src-crypto-loft-L170"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">ecdsa_p256_public_key</span>(secret_key_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-crypto-loft-L171">  <span class="fn-call">ecdsa_p256_public_key_native</span>(secret_key_b64)</span>
+<span id="src-crypto-loft-L172">}</span>
+<span id="src-crypto-loft-L173"></span>
+<span id="src-crypto-loft-L174"><span class="cm">// Sign the base64 `message` bytes with the 32-byte secret scalar (base64).</span></span>
+<span id="src-crypto-loft-L175"><span class="cm">// Returns the 64-byte `r || s` signature (base64), deterministic per RFC 6979.</span></span>
+<span id="src-crypto-loft-L176"><span class="cm">// Example: @CRY-003 — signing twice answers identical bytes, and `r || s` is not DER.</span></span>
+<span id="src-crypto-loft-L177"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">ecdsa_p256_sign</span>(secret_key_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, message_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-crypto-loft-L178">  <span class="fn-call">ecdsa_p256_sign_native</span>(secret_key_b64, message_b64)</span>
+<span id="src-crypto-loft-L179">}</span>
+<span id="src-crypto-loft-L180"></span>
+<span id="src-crypto-loft-L181"><span class="cm">// Verify an ES256 signature (64-byte `r || s`) over the base64 `message` bytes</span></span>
+<span id="src-crypto-loft-L182"><span class="cm">// under a 64-byte `x || y` public key.  Returns true iff the signature is valid.</span></span>
+<span id="src-crypto-loft-L183"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">ecdsa_p256_verify</span>(public_key_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, message_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, signature_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-crypto-loft-L184">  <span class="fn-call">ecdsa_p256_verify_native</span>(public_key_b64, message_b64, signature_b64)</span>
+<span id="src-crypto-loft-L185">}</span>
+<span id="src-crypto-loft-L186"></span>
+<span id="src-crypto-loft-L187"><span class="cm">// --- X25519 key agreement (RFC 7748) ---</span></span>
+<span id="src-crypto-loft-L188"><span class="cm">//</span></span>
+<span id="src-crypto-loft-L189"><span class="cm">// A secret key is a 32-byte X25519 scalar (base64); a public key is the</span></span>
+<span id="src-crypto-loft-L190"><span class="cm">// 32-byte u-coordinate (base64).  Returns the raw 32-byte shared secret</span></span>
+<span id="src-crypto-loft-L191"><span class="cm">// (base64), or "" if either input is the wrong length.  Run the result</span></span>
+<span id="src-crypto-loft-L192"><span class="cm">// through `hkdf_sha256` before using it as a key (RFC 7748 §6.1).</span></span>
+<span id="src-crypto-loft-L193"><span class="cm">// Example: @CRY-004 — the DH output is keying material, not a key; and how to get a</span></span>
+<span id="src-crypto-loft-L194"><span class="cm">// public key out of a secret scalar (X25519 has no separate keygen).</span></span>
+<span id="src-crypto-loft-L195"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">x25519_dh</span>(secret_key_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, public_key_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-crypto-loft-L196">  <span class="fn-call">x25519_dh_native</span>(secret_key_b64, public_key_b64)</span>
+<span id="src-crypto-loft-L197">}</span>
+<span id="src-crypto-loft-L198"></span>
+<span id="src-crypto-loft-L199"><span class="cm">// --- HKDF-SHA256 key derivation (RFC 5869) ---</span></span>
+<span id="src-crypto-loft-L200"><span class="cm">//</span></span>
+<span id="src-crypto-loft-L201"><span class="cm">// Derive `length` bytes of output keying material from `ikm`, `salt`, and</span></span>
+<span id="src-crypto-loft-L202"><span class="cm">// `info` (each base64).  An empty base64 `salt` selects the all-zero salt.</span></span>
+<span id="src-crypto-loft-L203"><span class="cm">// Returns the base64 OKM, or "" if `length` exceeds 255*32 or is &lt;= 0, or an</span></span>
+<span id="src-crypto-loft-L204"><span class="cm">// argument is not base64.</span></span>
+<span id="src-crypto-loft-L205"><span class="cm">// Example: @CRY-004 — `info` is what separates two keys from one shared secret.</span></span>
+<span id="src-crypto-loft-L206"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">hkdf_sha256</span>(salt_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, ikm_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, info_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, length: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-crypto-loft-L207">  <span class="fn-call">hkdf_sha256_native</span>(salt_b64, ikm_b64, info_b64, length)</span>
+<span id="src-crypto-loft-L208">}</span>
+<span id="src-crypto-loft-L209"></span>
+<span id="src-crypto-loft-L210"><span class="cm">// HKDF-Extract (RFC 5869 §2.2): the 32-byte PRK (base64) HMAC-SHA256(salt, ikm).</span></span>
+<span id="src-crypto-loft-L211"><span class="cm">// An empty base64 `salt` selects the all-zero salt; "" when an argument is not</span></span>
+<span id="src-crypto-loft-L212"><span class="cm">// base64.  Use the Extract/Expand</span></span>
+<span id="src-crypto-loft-L213"><span class="cm">// halves directly (rather than `hkdf_sha256`) when a PRK is reused for several</span></span>
+<span id="src-crypto-loft-L214"><span class="cm">// Expands or when an Extract output is itself the value you want (e.g. HPKE).</span></span>
+<span id="src-crypto-loft-L215"><span class="cm">// Example: @CRY-004 — the split halves compose to exactly `hkdf_sha256`.</span></span>
+<span id="src-crypto-loft-L216"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">hkdf_extract</span>(salt_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, ikm_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-crypto-loft-L217">  <span class="fn-call">hkdf_extract_native</span>(salt_b64, ikm_b64)</span>
+<span id="src-crypto-loft-L218">}</span>
+<span id="src-crypto-loft-L219"></span>
+<span id="src-crypto-loft-L220"><span class="cm">// HKDF-Expand (RFC 5869 §2.3) from an existing 32-byte PRK.  Returns `length`</span></span>
+<span id="src-crypto-loft-L221"><span class="cm">// bytes of OKM (base64), or "" on a short PRK, length &gt; 255*32, length &lt;= 0, or</span></span>
+<span id="src-crypto-loft-L222"><span class="cm">// an argument that is not base64.</span></span>
+<span id="src-crypto-loft-L223"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">hkdf_expand</span>(prk_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, info_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, length: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-crypto-loft-L224">  <span class="fn-call">hkdf_expand_native</span>(prk_b64, info_b64, length)</span>
+<span id="src-crypto-loft-L225">}</span>
+<span id="src-crypto-loft-L226"></span>
+<span id="src-crypto-loft-L227"><span class="cm">// --- Raw bytes &lt;-&gt; base64 ---</span></span>
 <span id="src-crypto-loft-L228"><span class="cm">//</span></span>
-<span id="src-crypto-loft-L229"><span class="cm">// CAUTION — a `vector&lt;u8&gt;` returned by `base64_to_bytes` is sound to READ</span></span>
-<span id="src-crypto-loft-L230"><span class="cm">// (index, iterate, pass by value, or concatenate INTO a fresh loft vector with</span></span>
-<span id="src-crypto-loft-L231"><span class="cm">// `fresh += decoded`), but do NOT use it as the left-hand accumulator of `+=`</span></span>
-<span id="src-crypto-loft-L232"><span class="cm">// (`decoded += more`): in-place growth of a store-allocated byte vector after a</span></span>
-<span id="src-crypto-loft-L233"><span class="cm">// later store allocation currently corrupts it (a loft FFI-vector bug).  To</span></span>
-<span id="src-crypto-loft-L234"><span class="cm">// concatenate base64 byte strings, prefer composing in base64 throughout (see</span></span>
-<span id="src-crypto-loft-L235"><span class="cm">// how the HPKE code below uses `bytes_concat_b64_native`).</span></span>
-<span id="src-crypto-loft-L236"></span>
-<span id="src-crypto-loft-L237"><span class="cm">// Standard base64 of a raw byte vector.  Empty vector -&gt; "".</span></span>
-<span id="src-crypto-loft-L238"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">bytes_to_base64</span>(bytes: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
-<span id="src-crypto-loft-L239">  <span class="fn-call">bytes_to_base64_native</span>(bytes)</span>
-<span id="src-crypto-loft-L240">}</span>
-<span id="src-crypto-loft-L241"></span>
-<span id="src-crypto-loft-L242"><span class="cm">// Raw bytes from standard base64.  Malformed / empty input -&gt; empty vector.</span></span>
-<span id="src-crypto-loft-L243"><span class="cm">// See the CAUTION above: read the result, never `+=` onto it.</span></span>
-<span id="src-crypto-loft-L244"><span class="cm">// Example: @CRY-001 — reading a decoded byte vector, and hashing non-UTF-8 bytes.</span></span>
-<span id="src-crypto-loft-L245"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">base64_to_bytes</span>(b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt; {</span>
-<span id="src-crypto-loft-L246">  <span class="fn-call">base64_to_bytes_native</span>(b64)</span>
-<span id="src-crypto-loft-L247">}</span>
-<span id="src-crypto-loft-L248"></span>
-<span id="src-crypto-loft-L249"><span class="cm">// --- AES-256-GCM authenticated encryption ---</span></span>
-<span id="src-crypto-loft-L250"><span class="cm">//</span></span>
-<span id="src-crypto-loft-L251"><span class="cm">// All byte arguments are base64.  The key is 32 bytes and the nonce is 12</span></span>
-<span id="src-crypto-loft-L252"><span class="cm">// bytes (the standard 96-bit GCM IV).  A nonce MUST NOT be reused under one</span></span>
-<span id="src-crypto-loft-L253"><span class="cm">// key — derive a fresh one per message (e.g. random_bytes(12)).</span></span>
-<span id="src-crypto-loft-L254"></span>
-<span id="src-crypto-loft-L255"><span class="cm">// Encrypt + authenticate `plaintext` under `key`/`nonce`, binding `aad`.</span></span>
-<span id="src-crypto-loft-L256"><span class="cm">// Returns base64 of ciphertext WITH the 16-byte tag appended, or "" on bad</span></span>
-<span id="src-crypto-loft-L257"><span class="cm">// key/nonce length.</span></span>
-<span id="src-crypto-loft-L258"><span class="cm">// Example: @CRY-005 — the tag rides in the blob, and a fresh nonce per message.</span></span>
-<span id="src-crypto-loft-L259"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">aes256gcm_seal</span>(key_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, nonce_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, aad_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, plaintext_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
-<span id="src-crypto-loft-L260">  <span class="fn-call">aes256gcm_seal_native</span>(key_b64, nonce_b64, aad_b64, plaintext_b64)</span>
-<span id="src-crypto-loft-L261">}</span>
-<span id="src-crypto-loft-L262"></span>
-<span id="src-crypto-loft-L263"><span class="cm">// Verify + decrypt `ciphertext` (ciphertext||tag, base64) under `key`/`nonce`,</span></span>
-<span id="src-crypto-loft-L264"><span class="cm">// binding `aad`.  Returns the base64 plaintext, or "" on ANY authentication</span></span>
-<span id="src-crypto-loft-L265"><span class="cm">// failure — an empty result means the ciphertext/tag/aad did not verify.</span></span>
-<span id="src-crypto-loft-L266"><span class="cm">// Example: @CRY-005 — "" is a failure signal, and an authentic empty plaintext gives it too.</span></span>
-<span id="src-crypto-loft-L267"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">aes256gcm_open</span>(key_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, nonce_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, aad_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, ciphertext_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
-<span id="src-crypto-loft-L268">  <span class="fn-call">aes256gcm_open_native</span>(key_b64, nonce_b64, aad_b64, ciphertext_b64)</span>
-<span id="src-crypto-loft-L269">}</span>
-<span id="src-crypto-loft-L270"></span>
-<span id="src-crypto-loft-L271"><span class="cm">// --- CSPRNG ---</span></span>
-<span id="src-crypto-loft-L272"></span>
-<span id="src-crypto-loft-L273"><span class="cm">// Return `length` cryptographically secure random bytes (base64) from the OS</span></span>
-<span id="src-crypto-loft-L274"><span class="cm">// RNG.  Returns "" for length &lt;= 0.  Use for keys (32), nonces (12), salts.</span></span>
-<span id="src-crypto-loft-L275"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">random_bytes</span>(length: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
-<span id="src-crypto-loft-L276">  <span class="fn-call">random_bytes_native</span>(length)</span>
-<span id="src-crypto-loft-L277">}</span>
-<span id="src-crypto-loft-L278"></span>
-<span id="src-crypto-loft-L279"></span>
-<span id="src-crypto-loft-L280"><span class="cm">// ====================================================================</span></span>
-<span id="src-crypto-loft-L281"><span class="cm">// HPKE — Hybrid Public Key Encryption, base mode (RFC 9180)</span></span>
-<span id="src-crypto-loft-L282"><span class="cm">// ====================================================================</span></span>
+<span id="src-crypto-loft-L229"><span class="cm">// loft `text` is UTF-8-validated, so a non-UTF-8 byte string cannot ride as</span></span>
+<span id="src-crypto-loft-L230"><span class="cm">// `text` (`text_from_bytes` returns "").  These two inverse helpers move raw</span></span>
+<span id="src-crypto-loft-L231"><span class="cm">// bytes across the base64 boundary instead.  The vector `base64_to_bytes`</span></span>
+<span id="src-crypto-loft-L232"><span class="cm">// answers is an ordinary one: read it, append to it, pass it on.</span></span>
+<span id="src-crypto-loft-L233"></span>
+<span id="src-crypto-loft-L234"><span class="cm">// Standard base64 of a raw byte vector.  Empty vector -&gt; "".</span></span>
+<span id="src-crypto-loft-L235"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">bytes_to_base64</span>(bytes: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-crypto-loft-L236">  <span class="fn-call">bytes_to_base64_native</span>(bytes)</span>
+<span id="src-crypto-loft-L237">}</span>
+<span id="src-crypto-loft-L238"></span>
+<span id="src-crypto-loft-L239"><span class="cm">// Raw bytes from standard base64.  Input that is not base64, or empty, -&gt; empty vector.</span></span>
+<span id="src-crypto-loft-L240"><span class="cm">// Example: @CRY-001 — reading a decoded byte vector, and hashing non-UTF-8 bytes.</span></span>
+<span id="src-crypto-loft-L241"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">base64_to_bytes</span>(b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt; {</span>
+<span id="src-crypto-loft-L242">  <span class="fn-call">base64_to_bytes_native</span>(b64)</span>
+<span id="src-crypto-loft-L243">}</span>
+<span id="src-crypto-loft-L244"></span>
+<span id="src-crypto-loft-L245"><span class="cm">// --- AES-256-GCM authenticated encryption ---</span></span>
+<span id="src-crypto-loft-L246"><span class="cm">//</span></span>
+<span id="src-crypto-loft-L247"><span class="cm">// All byte arguments are base64.  The key is 32 bytes and the nonce is 12</span></span>
+<span id="src-crypto-loft-L248"><span class="cm">// bytes (the standard 96-bit GCM IV).  A nonce MUST NOT be reused under one</span></span>
+<span id="src-crypto-loft-L249"><span class="cm">// key — derive a fresh one per message (e.g. random_bytes(12)).</span></span>
+<span id="src-crypto-loft-L250"></span>
+<span id="src-crypto-loft-L251"><span class="cm">// Encrypt + authenticate `plaintext` under `key`/`nonce`, binding `aad`.</span></span>
+<span id="src-crypto-loft-L252"><span class="cm">// Returns base64 of ciphertext WITH the 16-byte tag appended, or "" on bad</span></span>
+<span id="src-crypto-loft-L253"><span class="cm">// key/nonce length or an argument that is not base64.</span></span>
+<span id="src-crypto-loft-L254"><span class="cm">// Example: @CRY-005 — the tag rides in the blob, and a fresh nonce per message.</span></span>
+<span id="src-crypto-loft-L255"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">aes256gcm_seal</span>(key_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, nonce_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, aad_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, plaintext_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-crypto-loft-L256">  <span class="fn-call">aes256gcm_seal_native</span>(key_b64, nonce_b64, aad_b64, plaintext_b64)</span>
+<span id="src-crypto-loft-L257">}</span>
+<span id="src-crypto-loft-L258"></span>
+<span id="src-crypto-loft-L259"><span class="cm">// Verify + decrypt `ciphertext` (ciphertext||tag, base64) under `key`/`nonce`,</span></span>
+<span id="src-crypto-loft-L260"><span class="cm">// binding `aad`.  Returns the base64 plaintext, or "" on ANY authentication</span></span>
+<span id="src-crypto-loft-L261"><span class="cm">// failure — an empty result means the ciphertext/tag/aad did not verify.</span></span>
+<span id="src-crypto-loft-L262"><span class="cm">// Example: @CRY-005 — "" is a failure signal, and an authentic empty plaintext gives it too.</span></span>
+<span id="src-crypto-loft-L263"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">aes256gcm_open</span>(key_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, nonce_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, aad_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, ciphertext_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-crypto-loft-L264">  <span class="fn-call">aes256gcm_open_native</span>(key_b64, nonce_b64, aad_b64, ciphertext_b64)</span>
+<span id="src-crypto-loft-L265">}</span>
+<span id="src-crypto-loft-L266"></span>
+<span id="src-crypto-loft-L267"><span class="cm">// --- CSPRNG ---</span></span>
+<span id="src-crypto-loft-L268"></span>
+<span id="src-crypto-loft-L269"><span class="cm">// Return `length` cryptographically secure random bytes (base64) from the OS</span></span>
+<span id="src-crypto-loft-L270"><span class="cm">// RNG.  Returns "" for length &lt;= 0.  Use for keys (32), nonces (12), salts.</span></span>
+<span id="src-crypto-loft-L271"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">random_bytes</span>(length: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-crypto-loft-L272">  <span class="fn-call">random_bytes_native</span>(length)</span>
+<span id="src-crypto-loft-L273">}</span>
+<span id="src-crypto-loft-L274"></span>
+<span id="src-crypto-loft-L275"></span>
+<span id="src-crypto-loft-L276"><span class="cm">// ====================================================================</span></span>
+<span id="src-crypto-loft-L277"><span class="cm">// HPKE — Hybrid Public Key Encryption, base mode (RFC 9180)</span></span>
+<span id="src-crypto-loft-L278"><span class="cm">// ====================================================================</span></span>
+<span id="src-crypto-loft-L279"><span class="cm">//</span></span>
+<span id="src-crypto-loft-L280"><span class="cm">// Single-shot Seal/Open for the ciphersuite</span></span>
+<span id="src-crypto-loft-L281"><span class="cm">//   DHKEM(X25519, HKDF-SHA256) / HKDF-SHA256 / AES-256-GCM</span></span>
+<span id="src-crypto-loft-L282"><span class="cm">//   kem_id = 0x0020, kdf_id = 0x0001, aead_id = 0x0002, mode = 0x00 (base).</span></span>
 <span id="src-crypto-loft-L283"><span class="cm">//</span></span>
-<span id="src-crypto-loft-L284"><span class="cm">// Single-shot Seal/Open for the ciphersuite</span></span>
-<span id="src-crypto-loft-L285"><span class="cm">//   DHKEM(X25519, HKDF-SHA256) / HKDF-SHA256 / AES-256-GCM</span></span>
-<span id="src-crypto-loft-L286"><span class="cm">//   kem_id = 0x0020, kdf_id = 0x0001, aead_id = 0x0002, mode = 0x00 (base).</span></span>
-<span id="src-crypto-loft-L287"><span class="cm">//</span></span>
-<span id="src-crypto-loft-L288"><span class="cm">// This is a PURE-LOFT composition over the native primitives above (X25519,</span></span>
-<span id="src-crypto-loft-L289"><span class="cm">// HKDF Extract/Expand, AES-256-GCM), so it runs identically on every backend</span></span>
-<span id="src-crypto-loft-L290"><span class="cm">// the primitives reach.  Correctness is gated on an RFC 9180 known-answer test</span></span>
-<span id="src-crypto-loft-L291"><span class="cm">// vector (see tests/hpke.loft).</span></span>
-<span id="src-crypto-loft-L292"><span class="cm">//</span></span>
-<span id="src-crypto-loft-L293"><span class="cm">// Byte composition stays entirely in base64 `text`: every byte chunk (labels,</span></span>
-<span id="src-crypto-loft-L294"><span class="cm">// suite ids, keys, DH outputs) is a base64 string, and `bytes_concat_b64`</span></span>
-<span id="src-crypto-loft-L295"><span class="cm">// concatenates the underlying raw bytes.  ASCII labels are base64-encoded with</span></span>
-<span id="src-crypto-loft-L296"><span class="cm">// the existing `base64_encode` (ASCII is valid UTF-8).  This avoids composing</span></span>
-<span id="src-crypto-loft-L297"><span class="cm">// in a store-allocated `vector&lt;u8&gt;`, whose in-place `+=` growth currently</span></span>
-<span id="src-crypto-loft-L298"><span class="cm">// corrupts after an intervening store allocation (a loft FFI-vector bug — see</span></span>
-<span id="src-crypto-loft-L299"><span class="cm">// the public `bytes_to_base64` / `base64_to_bytes` note below; they are sound</span></span>
-<span id="src-crypto-loft-L300"><span class="cm">// for read-only use, just not as a `+=` accumulator).</span></span>
-<span id="src-crypto-loft-L301"></span>
-<span id="src-crypto-loft-L302"><span class="cm">// base64(bytes(a) || bytes(b)) — concatenate two base64 byte strings.</span></span>
-<span id="src-crypto-loft-L303"><span class="kw">fn</span> <span class="fn-call">concat</span>(a_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, b_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
-<span id="src-crypto-loft-L304">  <span class="fn-call">bytes_concat_b64_native</span>(a_b64, b_b64)</span>
-<span id="src-crypto-loft-L305">}</span>
-<span id="src-crypto-loft-L306"></span>
-<span id="src-crypto-loft-L307"><span class="cm">// An ASCII label as a base64 byte string (ASCII is valid UTF-8, so this is the</span></span>
-<span id="src-crypto-loft-L308"><span class="cm">// plain text base64 encoder).</span></span>
-<span id="src-crypto-loft-L309"><span class="kw">fn</span> <span class="fn-call">label_b64</span>(s: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
-<span id="src-crypto-loft-L310">  <span class="fn-call">base64_encode_native</span>(s)</span>
-<span id="src-crypto-loft-L311">}</span>
-<span id="src-crypto-loft-L312"></span>
-<span id="src-crypto-loft-L313"><span class="cm">// I2OSP(n, 2) as base64: the 2-byte big-endian encoding of `n` (RFC 8017).</span></span>
-<span id="src-crypto-loft-L314"><span class="cm">// Only the small fixed set HPKE needs (suite-id fields and the L lengths 32/12)</span></span>
-<span id="src-crypto-loft-L315"><span class="cm">// is required here, so each is a precomputed base64 constant — no `vector&lt;u8&gt;`.</span></span>
-<span id="src-crypto-loft-L316"><span class="kw">fn</span> <span class="fn-call">i2osp_2_b64</span>(n: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
-<span id="src-crypto-loft-L317">  <span class="kw">if</span> n == <span class="nm">0x0020</span> { <span class="kw">return</span> <span class="st">"ACA="</span>; }   <span class="cm">// 0x00 0x20  (kem_id, and L = 32)</span></span>
-<span id="src-crypto-loft-L318">  <span class="kw">if</span> n == <span class="nm">0x0001</span> { <span class="kw">return</span> <span class="st">"AAE="</span>; }   <span class="cm">// 0x00 0x01  (kdf_id)</span></span>
-<span id="src-crypto-loft-L319">  <span class="kw">if</span> n == <span class="nm">0x0002</span> { <span class="kw">return</span> <span class="st">"AAI="</span>; }   <span class="cm">// 0x00 0x02  (aead_id)</span></span>
-<span id="src-crypto-loft-L320">  <span class="kw">if</span> n == <span class="nm">12</span>     { <span class="kw">return</span> <span class="st">"AAw="</span>; }   <span class="cm">// 0x00 0x0c  (L = 12, base nonce)</span></span>
-<span id="src-crypto-loft-L321">  <span class="st">""</span></span>
+<span id="src-crypto-loft-L284"><span class="cm">// This is a PURE-LOFT composition over the native primitives above (X25519,</span></span>
+<span id="src-crypto-loft-L285"><span class="cm">// HKDF Extract/Expand, AES-256-GCM), so it runs identically on every backend</span></span>
+<span id="src-crypto-loft-L286"><span class="cm">// the primitives reach.  Correctness is gated on an RFC 9180 known-answer test</span></span>
+<span id="src-crypto-loft-L287"><span class="cm">// vector (see tests/hpke.loft).</span></span>
+<span id="src-crypto-loft-L288"><span class="cm">//</span></span>
+<span id="src-crypto-loft-L289"><span class="cm">// Byte composition stays entirely in base64 `text`: every byte chunk (labels,</span></span>
+<span id="src-crypto-loft-L290"><span class="cm">// suite ids, keys, DH outputs) is a base64 string, and `bytes_concat_b64`</span></span>
+<span id="src-crypto-loft-L291"><span class="cm">// concatenates the underlying raw bytes.  ASCII labels are base64-encoded with</span></span>
+<span id="src-crypto-loft-L292"><span class="cm">// the existing `base64_encode` (ASCII is valid UTF-8), so every intermediate is</span></span>
+<span id="src-crypto-loft-L293"><span class="cm">// the base64 text the primitives take and answer.</span></span>
+<span id="src-crypto-loft-L294"></span>
+<span id="src-crypto-loft-L295"><span class="cm">// base64(bytes(a) || bytes(b)) — concatenate two base64 byte strings.</span></span>
+<span id="src-crypto-loft-L296"><span class="kw">fn</span> <span class="fn-call">concat</span>(a_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, b_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-crypto-loft-L297">  <span class="fn-call">bytes_concat_b64_native</span>(a_b64, b_b64)</span>
+<span id="src-crypto-loft-L298">}</span>
+<span id="src-crypto-loft-L299"></span>
+<span id="src-crypto-loft-L300"><span class="cm">// An ASCII label as a base64 byte string (ASCII is valid UTF-8, so this is the</span></span>
+<span id="src-crypto-loft-L301"><span class="cm">// plain text base64 encoder).</span></span>
+<span id="src-crypto-loft-L302"><span class="kw">fn</span> <span class="fn-call">label_b64</span>(s: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-crypto-loft-L303">  <span class="fn-call">base64_encode_native</span>(s)</span>
+<span id="src-crypto-loft-L304">}</span>
+<span id="src-crypto-loft-L305"></span>
+<span id="src-crypto-loft-L306"><span class="cm">// I2OSP(n, 2) as base64: the 2-byte big-endian encoding of `n` (RFC 8017).</span></span>
+<span id="src-crypto-loft-L307"><span class="cm">// Only the small fixed set HPKE needs (suite-id fields and the L lengths 32/12)</span></span>
+<span id="src-crypto-loft-L308"><span class="cm">// is required here, so each is a precomputed base64 constant — no `vector&lt;u8&gt;`.</span></span>
+<span id="src-crypto-loft-L309"><span class="kw">fn</span> <span class="fn-call">i2osp_2_b64</span>(n: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-crypto-loft-L310">  <span class="kw">if</span> n == <span class="nm">0x0020</span> { <span class="kw">return</span> <span class="st">"ACA="</span>; }   <span class="cm">// 0x00 0x20  (kem_id, and L = 32)</span></span>
+<span id="src-crypto-loft-L311">  <span class="kw">if</span> n == <span class="nm">0x0001</span> { <span class="kw">return</span> <span class="st">"AAE="</span>; }   <span class="cm">// 0x00 0x01  (kdf_id)</span></span>
+<span id="src-crypto-loft-L312">  <span class="kw">if</span> n == <span class="nm">0x0002</span> { <span class="kw">return</span> <span class="st">"AAI="</span>; }   <span class="cm">// 0x00 0x02  (aead_id)</span></span>
+<span id="src-crypto-loft-L313">  <span class="kw">if</span> n == <span class="nm">12</span>     { <span class="kw">return</span> <span class="st">"AAw="</span>; }   <span class="cm">// 0x00 0x0c  (L = 12, base nonce)</span></span>
+<span id="src-crypto-loft-L314">  <span class="st">""</span></span>
+<span id="src-crypto-loft-L315">}</span>
+<span id="src-crypto-loft-L316"></span>
+<span id="src-crypto-loft-L317"><span class="cm">// The main HPKE suite_id (base64): "HPKE" || I2OSP(kem,2) || I2OSP(kdf,2) || I2OSP(aead,2).</span></span>
+<span id="src-crypto-loft-L318"><span class="kw">fn</span> <span class="fn-call">hpke_suite_id_b64</span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-crypto-loft-L319">  s = <span class="fn-call">concat</span>(<span class="fn-call">label_b64</span>(<span class="st">"HPKE"</span>), <span class="fn-call">i2osp_2_b64</span>(<span class="nm">0x0020</span>));  <span class="cm">// + kem_id</span></span>
+<span id="src-crypto-loft-L320">  s = <span class="fn-call">concat</span>(s, <span class="fn-call">i2osp_2_b64</span>(<span class="nm">0x0001</span>));                  <span class="cm">// + kdf_id</span></span>
+<span id="src-crypto-loft-L321">  <span class="fn-call">concat</span>(s, <span class="fn-call">i2osp_2_b64</span>(<span class="nm">0x0002</span>))                       <span class="cm">// + aead_id</span></span>
 <span id="src-crypto-loft-L322">}</span>
 <span id="src-crypto-loft-L323"></span>
-<span id="src-crypto-loft-L324"><span class="cm">// The main HPKE suite_id (base64): "HPKE" || I2OSP(kem,2) || I2OSP(kdf,2) || I2OSP(aead,2).</span></span>
-<span id="src-crypto-loft-L325"><span class="kw">fn</span> <span class="fn-call">hpke_suite_id_b64</span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
-<span id="src-crypto-loft-L326">  s = <span class="fn-call">concat</span>(<span class="fn-call">label_b64</span>(<span class="st">"HPKE"</span>), <span class="fn-call">i2osp_2_b64</span>(<span class="nm">0x0020</span>));  <span class="cm">// + kem_id</span></span>
-<span id="src-crypto-loft-L327">  s = <span class="fn-call">concat</span>(s, <span class="fn-call">i2osp_2_b64</span>(<span class="nm">0x0001</span>));                  <span class="cm">// + kdf_id</span></span>
-<span id="src-crypto-loft-L328">  <span class="fn-call">concat</span>(s, <span class="fn-call">i2osp_2_b64</span>(<span class="nm">0x0002</span>))                       <span class="cm">// + aead_id</span></span>
-<span id="src-crypto-loft-L329">}</span>
-<span id="src-crypto-loft-L330"></span>
-<span id="src-crypto-loft-L331"><span class="cm">// The DHKEM suite_id (base64): "KEM" || I2OSP(kem_id,2).</span></span>
-<span id="src-crypto-loft-L332"><span class="kw">fn</span> <span class="fn-call">kem_suite_id_b64</span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
-<span id="src-crypto-loft-L333">  <span class="fn-call">concat</span>(<span class="fn-call">label_b64</span>(<span class="st">"KEM"</span>), <span class="fn-call">i2osp_2_b64</span>(<span class="nm">0x0020</span>))</span>
-<span id="src-crypto-loft-L334">}</span>
-<span id="src-crypto-loft-L335"></span>
-<span id="src-crypto-loft-L336"><span class="cm">// LabeledExtract(salt, label, ikm) [RFC 9180 §4]:</span></span>
-<span id="src-crypto-loft-L337"><span class="cm">//   labeled_ikm = "HPKE-v1" || suite_id || label || ikm</span></span>
-<span id="src-crypto-loft-L338"><span class="cm">//   return HKDF-Extract(salt, labeled_ikm)</span></span>
-<span id="src-crypto-loft-L339"><span class="cm">// All byte args are base64.  Returns the 32-byte PRK (base64).</span></span>
-<span id="src-crypto-loft-L340"><span class="kw">fn</span> <span class="fn-call">labeled_extract</span>(suite_id_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, salt_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, label: <span class="ty"><a href="stdlib-types.html">text</a></span>, ikm_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
-<span id="src-crypto-loft-L341">  li = <span class="fn-call">concat</span>(<span class="fn-call">label_b64</span>(<span class="st">"HPKE-v1"</span>), suite_id_b64);</span>
-<span id="src-crypto-loft-L342">  li = <span class="fn-call">concat</span>(li, <span class="fn-call">label_b64</span>(label));</span>
-<span id="src-crypto-loft-L343">  li = <span class="fn-call">concat</span>(li, ikm_b64);</span>
-<span id="src-crypto-loft-L344">  <span class="fn-call">hkdf_extract</span>(salt_b64, li)</span>
-<span id="src-crypto-loft-L345">}</span>
-<span id="src-crypto-loft-L346"></span>
-<span id="src-crypto-loft-L347"><span class="cm">// LabeledExpand(prk, label, info, L) [RFC 9180 §4]:</span></span>
-<span id="src-crypto-loft-L348"><span class="cm">//   labeled_info = I2OSP(L,2) || "HPKE-v1" || suite_id || label || info</span></span>
-<span id="src-crypto-loft-L349"><span class="cm">//   return HKDF-Expand(prk, labeled_info, L)</span></span>
-<span id="src-crypto-loft-L350"><span class="cm">// Returns L bytes (base64).</span></span>
-<span id="src-crypto-loft-L351"><span class="kw">fn</span> <span class="fn-call">labeled_expand</span>(suite_id_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, prk_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, label: <span class="ty"><a href="stdlib-types.html">text</a></span>, info_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, length: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
-<span id="src-crypto-loft-L352">  li = <span class="fn-call">concat</span>(<span class="fn-call">i2osp_2_b64</span>(length), <span class="fn-call">label_b64</span>(<span class="st">"HPKE-v1"</span>));</span>
-<span id="src-crypto-loft-L353">  li = <span class="fn-call">concat</span>(li, suite_id_b64);</span>
-<span id="src-crypto-loft-L354">  li = <span class="fn-call">concat</span>(li, <span class="fn-call">label_b64</span>(label));</span>
-<span id="src-crypto-loft-L355">  li = <span class="fn-call">concat</span>(li, info_b64);</span>
-<span id="src-crypto-loft-L356">  <span class="fn-call">hkdf_expand</span>(prk_b64, li, length)</span>
-<span id="src-crypto-loft-L357">}</span>
-<span id="src-crypto-loft-L358"></span>
-<span id="src-crypto-loft-L359"><span class="cm">// DHKEM ExtractAndExpand(dh, kem_context) [RFC 9180 §4.1], KEM suite_id:</span></span>
-<span id="src-crypto-loft-L360"><span class="cm">//   eae_prk       = LabeledExtract("", "eae_prk", dh)</span></span>
-<span id="src-crypto-loft-L361"><span class="cm">//   shared_secret = LabeledExpand(eae_prk, "shared_secret", kem_context, Nsecret=32)</span></span>
-<span id="src-crypto-loft-L362"><span class="cm">// Returns the 32-byte shared secret (base64).</span></span>
-<span id="src-crypto-loft-L363"><span class="kw">fn</span> <span class="fn-call">dhkem_extract_and_expand</span>(dh_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, kem_context_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
-<span id="src-crypto-loft-L364">  ks = <span class="fn-call">kem_suite_id_b64</span>();</span>
-<span id="src-crypto-loft-L365">  eae_prk = <span class="fn-call">labeled_extract</span>(ks, <span class="st">""</span>, <span class="st">"eae_prk"</span>, dh_b64);</span>
-<span id="src-crypto-loft-L366">  <span class="fn-call">labeled_expand</span>(ks, eae_prk, <span class="st">"shared_secret"</span>, kem_context_b64, <span class="nm">32</span>)</span>
-<span id="src-crypto-loft-L367">}</span>
-<span id="src-crypto-loft-L368"></span>
-<span id="src-crypto-loft-L369"><span class="cm">// The X25519 base point (base64): 0x09 followed by 31 zero bytes (RFC 7748).</span></span>
-<span id="src-crypto-loft-L370"><span class="cm">// `x25519_dh(sk, base_point)` yields sk's public key.</span></span>
-<span id="src-crypto-loft-L371">const <span class="en">X25519_BASE_POINT</span> = <span class="st">"CQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="</span>;</span>
-<span id="src-crypto-loft-L372"></span>
-<span id="src-crypto-loft-L373"><span class="cm">// The X25519 public key for secret scalar `sk_b64`: X25519(sk, base_point).</span></span>
-<span id="src-crypto-loft-L374"><span class="kw">fn</span> <span class="fn-call">x25519_public_key</span>(sk_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
-<span id="src-crypto-loft-L375">  <span class="fn-call">x25519_dh</span>(sk_b64, <span class="en">X25519_BASE_POINT</span>)</span>
-<span id="src-crypto-loft-L376">}</span>
-<span id="src-crypto-loft-L377"></span>
-<span id="src-crypto-loft-L378"><span class="cm">// DHKEM Decap(enc, skR) [RFC 9180 §4.1]:</span></span>
-<span id="src-crypto-loft-L379"><span class="cm">//   dh          = DH(skR, enc);  pkRm = pk(skR)</span></span>
-<span id="src-crypto-loft-L380"><span class="cm">//   kem_context = enc || pkRm</span></span>
-<span id="src-crypto-loft-L381"><span class="cm">//   return ExtractAndExpand(dh, kem_context)</span></span>
-<span id="src-crypto-loft-L382"><span class="cm">// Returns the 32-byte shared secret (base64), or "" if enc/skR are invalid.</span></span>
-<span id="src-crypto-loft-L383"><span class="kw">fn</span> <span class="fn-call">dhkem_decap</span>(enc_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, sk_r_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
-<span id="src-crypto-loft-L384">  dh_b64 = <span class="fn-call">x25519_dh</span>(sk_r_b64, enc_b64);</span>
-<span id="src-crypto-loft-L385">  <span class="kw">if</span> dh_b64 == <span class="st">""</span> { <span class="kw">return</span> <span class="st">""</span>; }</span>
-<span id="src-crypto-loft-L386">  pk_r_b64 = <span class="fn-call">x25519_public_key</span>(sk_r_b64);</span>
-<span id="src-crypto-loft-L387">  kem_context = <span class="fn-call">concat</span>(enc_b64, pk_r_b64);</span>
-<span id="src-crypto-loft-L388">  <span class="fn-call">dhkem_extract_and_expand</span>(dh_b64, kem_context)</span>
-<span id="src-crypto-loft-L389">}</span>
-<span id="src-crypto-loft-L390"></span>
-<span id="src-crypto-loft-L391"><span class="cm">// DHKEM Encap(pkR, skE) — the deterministic variant [RFC 9180 §4.1].  Takes a</span></span>
-<span id="src-crypto-loft-L392"><span class="cm">// fixed ephemeral secret `sk_e_b64` (the KAT path); `hpke_seal_base` generates</span></span>
-<span id="src-crypto-loft-L393"><span class="cm">// a random one.</span></span>
-<span id="src-crypto-loft-L394"><span class="cm">//   pkEm = pk(skE);  dh = DH(skE, pkR);  enc = pkEm</span></span>
-<span id="src-crypto-loft-L395"><span class="cm">//   kem_context = enc || pkR</span></span>
-<span id="src-crypto-loft-L396"><span class="cm">//   return (ExtractAndExpand(dh, kem_context), enc)</span></span>
-<span id="src-crypto-loft-L397"><span class="cm">// Returns (shared_secret_b64, enc_b64); ("","") on invalid input.</span></span>
-<span id="src-crypto-loft-L398"><span class="kw">fn</span> <span class="fn-call">dhkem_encap_deterministic</span>(pk_r_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, sk_e_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">text</a></span>, <span class="ty"><a href="stdlib-types.html">text</a></span>) {</span>
-<span id="src-crypto-loft-L399">  enc_b64 = <span class="fn-call">x25519_public_key</span>(sk_e_b64);</span>
-<span id="src-crypto-loft-L400">  <span class="kw">if</span> enc_b64 == <span class="st">""</span> { <span class="kw">return</span> (<span class="st">""</span>, <span class="st">""</span>); }</span>
-<span id="src-crypto-loft-L401">  dh_b64 = <span class="fn-call">x25519_dh</span>(sk_e_b64, pk_r_b64);</span>
-<span id="src-crypto-loft-L402">  <span class="kw">if</span> dh_b64 == <span class="st">""</span> { <span class="kw">return</span> (<span class="st">""</span>, <span class="st">""</span>); }</span>
-<span id="src-crypto-loft-L403">  kem_context = <span class="fn-call">concat</span>(enc_b64, pk_r_b64);</span>
-<span id="src-crypto-loft-L404">  shared_secret = <span class="fn-call">dhkem_extract_and_expand</span>(dh_b64, kem_context);</span>
-<span id="src-crypto-loft-L405">  (shared_secret, enc_b64)</span>
-<span id="src-crypto-loft-L406">}</span>
-<span id="src-crypto-loft-L407"></span>
-<span id="src-crypto-loft-L408"><span class="cm">// KeySchedule for base mode (RFC 9180 §5.1), MAIN suite_id.  Returns the AEAD</span></span>
-<span id="src-crypto-loft-L409"><span class="cm">// key (32 bytes) and base nonce (12 bytes) as (key_b64, nonce_b64).</span></span>
-<span id="src-crypto-loft-L410"><span class="cm">//   psk_id_hash          = LabeledExtract("", "psk_id_hash", "")</span></span>
-<span id="src-crypto-loft-L411"><span class="cm">//   info_hash            = LabeledExtract("", "info_hash", info)</span></span>
-<span id="src-crypto-loft-L412"><span class="cm">//   key_schedule_context = 0x00 || psk_id_hash || info_hash</span></span>
-<span id="src-crypto-loft-L413"><span class="cm">//   secret               = LabeledExtract(shared_secret, "secret", "")</span></span>
-<span id="src-crypto-loft-L414"><span class="cm">//   key        = LabeledExpand(secret, "key", key_schedule_context, Nk=32)</span></span>
-<span id="src-crypto-loft-L415"><span class="cm">//   base_nonce = LabeledExpand(secret, "base_nonce", key_schedule_context, Nn=12)</span></span>
-<span id="src-crypto-loft-L416"><span class="kw">fn</span> <span class="fn-call">key_schedule_base</span>(shared_secret_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, info_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">text</a></span>, <span class="ty"><a href="stdlib-types.html">text</a></span>) {</span>
-<span id="src-crypto-loft-L417">  s = <span class="fn-call">hpke_suite_id_b64</span>();</span>
-<span id="src-crypto-loft-L418"></span>
-<span id="src-crypto-loft-L419">  psk_id_hash = <span class="fn-call">labeled_extract</span>(s, <span class="st">""</span>, <span class="st">"psk_id_hash"</span>, <span class="st">""</span>);</span>
-<span id="src-crypto-loft-L420">  info_hash = <span class="fn-call">labeled_extract</span>(s, <span class="st">""</span>, <span class="st">"info_hash"</span>, info_b64);</span>
-<span id="src-crypto-loft-L421"></span>
-<span id="src-crypto-loft-L422">  <span class="cm">// key_schedule_context = mode (0x00) || psk_id_hash || info_hash.</span></span>
-<span id="src-crypto-loft-L423">  <span class="cm">// The single 0x00 mode byte as base64 is "AA==".</span></span>
-<span id="src-crypto-loft-L424">  ks_context = <span class="fn-call">concat</span>(<span class="st">"AA=="</span>, psk_id_hash);</span>
-<span id="src-crypto-loft-L425">  ks_context = <span class="fn-call">concat</span>(ks_context, info_hash);</span>
-<span id="src-crypto-loft-L426"></span>
-<span id="src-crypto-loft-L427">  <span class="cm">// secret = LabeledExtract(shared_secret, "secret", "")  — shared_secret is the salt.</span></span>
-<span id="src-crypto-loft-L428">  secret = <span class="fn-call">labeled_extract</span>(s, shared_secret_b64, <span class="st">"secret"</span>, <span class="st">""</span>);</span>
-<span id="src-crypto-loft-L429"></span>
-<span id="src-crypto-loft-L430">  key = <span class="fn-call">labeled_expand</span>(s, secret, <span class="st">"key"</span>, ks_context, <span class="nm">32</span>);</span>
-<span id="src-crypto-loft-L431">  base_nonce = <span class="fn-call">labeled_expand</span>(s, secret, <span class="st">"base_nonce"</span>, ks_context, <span class="nm">12</span>);</span>
-<span id="src-crypto-loft-L432">  (key, base_nonce)</span>
+<span id="src-crypto-loft-L324"><span class="cm">// The DHKEM suite_id (base64): "KEM" || I2OSP(kem_id,2).</span></span>
+<span id="src-crypto-loft-L325"><span class="kw">fn</span> <span class="fn-call">kem_suite_id_b64</span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-crypto-loft-L326">  <span class="fn-call">concat</span>(<span class="fn-call">label_b64</span>(<span class="st">"KEM"</span>), <span class="fn-call">i2osp_2_b64</span>(<span class="nm">0x0020</span>))</span>
+<span id="src-crypto-loft-L327">}</span>
+<span id="src-crypto-loft-L328"></span>
+<span id="src-crypto-loft-L329"><span class="cm">// LabeledExtract(salt, label, ikm) [RFC 9180 §4]:</span></span>
+<span id="src-crypto-loft-L330"><span class="cm">//   labeled_ikm = "HPKE-v1" || suite_id || label || ikm</span></span>
+<span id="src-crypto-loft-L331"><span class="cm">//   return HKDF-Extract(salt, labeled_ikm)</span></span>
+<span id="src-crypto-loft-L332"><span class="cm">// All byte args are base64.  Returns the 32-byte PRK (base64).</span></span>
+<span id="src-crypto-loft-L333"><span class="kw">fn</span> <span class="fn-call">labeled_extract</span>(suite_id_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, salt_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, label: <span class="ty"><a href="stdlib-types.html">text</a></span>, ikm_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-crypto-loft-L334">  li = <span class="fn-call">concat</span>(<span class="fn-call">label_b64</span>(<span class="st">"HPKE-v1"</span>), suite_id_b64);</span>
+<span id="src-crypto-loft-L335">  li = <span class="fn-call">concat</span>(li, <span class="fn-call">label_b64</span>(label));</span>
+<span id="src-crypto-loft-L336">  li = <span class="fn-call">concat</span>(li, ikm_b64);</span>
+<span id="src-crypto-loft-L337">  <span class="fn-call">hkdf_extract</span>(salt_b64, li)</span>
+<span id="src-crypto-loft-L338">}</span>
+<span id="src-crypto-loft-L339"></span>
+<span id="src-crypto-loft-L340"><span class="cm">// LabeledExpand(prk, label, info, L) [RFC 9180 §4]:</span></span>
+<span id="src-crypto-loft-L341"><span class="cm">//   labeled_info = I2OSP(L,2) || "HPKE-v1" || suite_id || label || info</span></span>
+<span id="src-crypto-loft-L342"><span class="cm">//   return HKDF-Expand(prk, labeled_info, L)</span></span>
+<span id="src-crypto-loft-L343"><span class="cm">// Returns L bytes (base64).</span></span>
+<span id="src-crypto-loft-L344"><span class="kw">fn</span> <span class="fn-call">labeled_expand</span>(suite_id_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, prk_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, label: <span class="ty"><a href="stdlib-types.html">text</a></span>, info_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, length: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-crypto-loft-L345">  li = <span class="fn-call">concat</span>(<span class="fn-call">i2osp_2_b64</span>(length), <span class="fn-call">label_b64</span>(<span class="st">"HPKE-v1"</span>));</span>
+<span id="src-crypto-loft-L346">  li = <span class="fn-call">concat</span>(li, suite_id_b64);</span>
+<span id="src-crypto-loft-L347">  li = <span class="fn-call">concat</span>(li, <span class="fn-call">label_b64</span>(label));</span>
+<span id="src-crypto-loft-L348">  li = <span class="fn-call">concat</span>(li, info_b64);</span>
+<span id="src-crypto-loft-L349">  <span class="fn-call">hkdf_expand</span>(prk_b64, li, length)</span>
+<span id="src-crypto-loft-L350">}</span>
+<span id="src-crypto-loft-L351"></span>
+<span id="src-crypto-loft-L352"><span class="cm">// DHKEM ExtractAndExpand(dh, kem_context) [RFC 9180 §4.1], KEM suite_id:</span></span>
+<span id="src-crypto-loft-L353"><span class="cm">//   eae_prk       = LabeledExtract("", "eae_prk", dh)</span></span>
+<span id="src-crypto-loft-L354"><span class="cm">//   shared_secret = LabeledExpand(eae_prk, "shared_secret", kem_context, Nsecret=32)</span></span>
+<span id="src-crypto-loft-L355"><span class="cm">// Returns the 32-byte shared secret (base64).</span></span>
+<span id="src-crypto-loft-L356"><span class="kw">fn</span> <span class="fn-call">dhkem_extract_and_expand</span>(dh_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, kem_context_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-crypto-loft-L357">  ks = <span class="fn-call">kem_suite_id_b64</span>();</span>
+<span id="src-crypto-loft-L358">  eae_prk = <span class="fn-call">labeled_extract</span>(ks, <span class="st">""</span>, <span class="st">"eae_prk"</span>, dh_b64);</span>
+<span id="src-crypto-loft-L359">  <span class="fn-call">labeled_expand</span>(ks, eae_prk, <span class="st">"shared_secret"</span>, kem_context_b64, <span class="nm">32</span>)</span>
+<span id="src-crypto-loft-L360">}</span>
+<span id="src-crypto-loft-L361"></span>
+<span id="src-crypto-loft-L362"><span class="cm">// The X25519 base point (base64): 0x09 followed by 31 zero bytes (RFC 7748).</span></span>
+<span id="src-crypto-loft-L363"><span class="cm">// `x25519_dh(sk, base_point)` yields sk's public key.</span></span>
+<span id="src-crypto-loft-L364">const <span class="en">X25519_BASE_POINT</span> = <span class="st">"CQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="</span>;</span>
+<span id="src-crypto-loft-L365"></span>
+<span id="src-crypto-loft-L366"><span class="cm">// The X25519 public key for secret scalar `sk_b64`: X25519(sk, base_point).</span></span>
+<span id="src-crypto-loft-L367"><span class="kw">fn</span> <span class="fn-call">x25519_public_key</span>(sk_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-crypto-loft-L368">  <span class="fn-call">x25519_dh</span>(sk_b64, <span class="en">X25519_BASE_POINT</span>)</span>
+<span id="src-crypto-loft-L369">}</span>
+<span id="src-crypto-loft-L370"></span>
+<span id="src-crypto-loft-L371"><span class="cm">// DHKEM Decap(enc, skR) [RFC 9180 §4.1]:</span></span>
+<span id="src-crypto-loft-L372"><span class="cm">//   dh          = DH(skR, enc);  pkRm = pk(skR)</span></span>
+<span id="src-crypto-loft-L373"><span class="cm">//   kem_context = enc || pkRm</span></span>
+<span id="src-crypto-loft-L374"><span class="cm">//   return ExtractAndExpand(dh, kem_context)</span></span>
+<span id="src-crypto-loft-L375"><span class="cm">// Returns the 32-byte shared secret (base64), or "" if enc/skR are invalid.</span></span>
+<span id="src-crypto-loft-L376"><span class="kw">fn</span> <span class="fn-call">dhkem_decap</span>(enc_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, sk_r_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-crypto-loft-L377">  dh_b64 = <span class="fn-call">x25519_dh</span>(sk_r_b64, enc_b64);</span>
+<span id="src-crypto-loft-L378">  <span class="kw">if</span> dh_b64 == <span class="st">""</span> { <span class="kw">return</span> <span class="st">""</span>; }</span>
+<span id="src-crypto-loft-L379">  pk_r_b64 = <span class="fn-call">x25519_public_key</span>(sk_r_b64);</span>
+<span id="src-crypto-loft-L380">  kem_context = <span class="fn-call">concat</span>(enc_b64, pk_r_b64);</span>
+<span id="src-crypto-loft-L381">  <span class="fn-call">dhkem_extract_and_expand</span>(dh_b64, kem_context)</span>
+<span id="src-crypto-loft-L382">}</span>
+<span id="src-crypto-loft-L383"></span>
+<span id="src-crypto-loft-L384"><span class="cm">// DHKEM Encap(pkR, skE) — the deterministic variant [RFC 9180 §4.1].  Takes a</span></span>
+<span id="src-crypto-loft-L385"><span class="cm">// fixed ephemeral secret `sk_e_b64` (the KAT path); `hpke_seal_base` generates</span></span>
+<span id="src-crypto-loft-L386"><span class="cm">// a random one.</span></span>
+<span id="src-crypto-loft-L387"><span class="cm">//   pkEm = pk(skE);  dh = DH(skE, pkR);  enc = pkEm</span></span>
+<span id="src-crypto-loft-L388"><span class="cm">//   kem_context = enc || pkR</span></span>
+<span id="src-crypto-loft-L389"><span class="cm">//   return (ExtractAndExpand(dh, kem_context), enc)</span></span>
+<span id="src-crypto-loft-L390"><span class="cm">// Returns (shared_secret_b64, enc_b64); ("","") on invalid input.</span></span>
+<span id="src-crypto-loft-L391"><span class="kw">fn</span> <span class="fn-call">dhkem_encap_deterministic</span>(pk_r_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, sk_e_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">text</a></span>, <span class="ty"><a href="stdlib-types.html">text</a></span>) {</span>
+<span id="src-crypto-loft-L392">  enc_b64 = <span class="fn-call">x25519_public_key</span>(sk_e_b64);</span>
+<span id="src-crypto-loft-L393">  <span class="kw">if</span> enc_b64 == <span class="st">""</span> { <span class="kw">return</span> (<span class="st">""</span>, <span class="st">""</span>); }</span>
+<span id="src-crypto-loft-L394">  dh_b64 = <span class="fn-call">x25519_dh</span>(sk_e_b64, pk_r_b64);</span>
+<span id="src-crypto-loft-L395">  <span class="kw">if</span> dh_b64 == <span class="st">""</span> { <span class="kw">return</span> (<span class="st">""</span>, <span class="st">""</span>); }</span>
+<span id="src-crypto-loft-L396">  kem_context = <span class="fn-call">concat</span>(enc_b64, pk_r_b64);</span>
+<span id="src-crypto-loft-L397">  shared_secret = <span class="fn-call">dhkem_extract_and_expand</span>(dh_b64, kem_context);</span>
+<span id="src-crypto-loft-L398">  (shared_secret, enc_b64)</span>
+<span id="src-crypto-loft-L399">}</span>
+<span id="src-crypto-loft-L400"></span>
+<span id="src-crypto-loft-L401"><span class="cm">// KeySchedule for base mode (RFC 9180 §5.1), MAIN suite_id.  Returns the AEAD</span></span>
+<span id="src-crypto-loft-L402"><span class="cm">// key (32 bytes) and base nonce (12 bytes) as (key_b64, nonce_b64).</span></span>
+<span id="src-crypto-loft-L403"><span class="cm">//   psk_id_hash          = LabeledExtract("", "psk_id_hash", "")</span></span>
+<span id="src-crypto-loft-L404"><span class="cm">//   info_hash            = LabeledExtract("", "info_hash", info)</span></span>
+<span id="src-crypto-loft-L405"><span class="cm">//   key_schedule_context = 0x00 || psk_id_hash || info_hash</span></span>
+<span id="src-crypto-loft-L406"><span class="cm">//   secret               = LabeledExtract(shared_secret, "secret", "")</span></span>
+<span id="src-crypto-loft-L407"><span class="cm">//   key        = LabeledExpand(secret, "key", key_schedule_context, Nk=32)</span></span>
+<span id="src-crypto-loft-L408"><span class="cm">//   base_nonce = LabeledExpand(secret, "base_nonce", key_schedule_context, Nn=12)</span></span>
+<span id="src-crypto-loft-L409"><span class="kw">fn</span> <span class="fn-call">key_schedule_base</span>(shared_secret_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, info_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">text</a></span>, <span class="ty"><a href="stdlib-types.html">text</a></span>) {</span>
+<span id="src-crypto-loft-L410">  s = <span class="fn-call">hpke_suite_id_b64</span>();</span>
+<span id="src-crypto-loft-L411"></span>
+<span id="src-crypto-loft-L412">  psk_id_hash = <span class="fn-call">labeled_extract</span>(s, <span class="st">""</span>, <span class="st">"psk_id_hash"</span>, <span class="st">""</span>);</span>
+<span id="src-crypto-loft-L413">  info_hash = <span class="fn-call">labeled_extract</span>(s, <span class="st">""</span>, <span class="st">"info_hash"</span>, info_b64);</span>
+<span id="src-crypto-loft-L414"></span>
+<span id="src-crypto-loft-L415">  <span class="cm">// key_schedule_context = mode (0x00) || psk_id_hash || info_hash.</span></span>
+<span id="src-crypto-loft-L416">  <span class="cm">// The single 0x00 mode byte as base64 is "AA==".</span></span>
+<span id="src-crypto-loft-L417">  ks_context = <span class="fn-call">concat</span>(<span class="st">"AA=="</span>, psk_id_hash);</span>
+<span id="src-crypto-loft-L418">  ks_context = <span class="fn-call">concat</span>(ks_context, info_hash);</span>
+<span id="src-crypto-loft-L419"></span>
+<span id="src-crypto-loft-L420">  <span class="cm">// secret = LabeledExtract(shared_secret, "secret", "")  — shared_secret is the salt.</span></span>
+<span id="src-crypto-loft-L421">  secret = <span class="fn-call">labeled_extract</span>(s, shared_secret_b64, <span class="st">"secret"</span>, <span class="st">""</span>);</span>
+<span id="src-crypto-loft-L422"></span>
+<span id="src-crypto-loft-L423">  key = <span class="fn-call">labeled_expand</span>(s, secret, <span class="st">"key"</span>, ks_context, <span class="nm">32</span>);</span>
+<span id="src-crypto-loft-L424">  base_nonce = <span class="fn-call">labeled_expand</span>(s, secret, <span class="st">"base_nonce"</span>, ks_context, <span class="nm">12</span>);</span>
+<span id="src-crypto-loft-L425">  (key, base_nonce)</span>
+<span id="src-crypto-loft-L426">}</span>
+<span id="src-crypto-loft-L427"></span>
+<span id="src-crypto-loft-L428"><span class="cm">// The result of `hpke_seal_base`: the KEM-encapsulated key `enc` and the AEAD</span></span>
+<span id="src-crypto-loft-L429"><span class="cm">// `ciphertext` (ciphertext||16-byte-tag), both base64.</span></span>
+<span id="src-crypto-loft-L430"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">HpkeSealed</span> {</span>
+<span id="src-crypto-loft-L431">  const enc: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
+<span id="src-crypto-loft-L432">  const ciphertext: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
 <span id="src-crypto-loft-L433">}</span>
 <span id="src-crypto-loft-L434"></span>
-<span id="src-crypto-loft-L435"><span class="cm">// The result of `hpke_seal_base`: the KEM-encapsulated key `enc` and the AEAD</span></span>
-<span id="src-crypto-loft-L436"><span class="cm">// `ciphertext` (ciphertext||16-byte-tag), both base64.</span></span>
-<span id="src-crypto-loft-L437"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">HpkeSealed</span> {</span>
-<span id="src-crypto-loft-L438">  const enc: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
-<span id="src-crypto-loft-L439">  const ciphertext: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
-<span id="src-crypto-loft-L440">}</span>
-<span id="src-crypto-loft-L441"></span>
-<span id="src-crypto-loft-L442"><span class="cm">// Internal: seal with an already-encapsulated (shared_secret, enc).  seq = 0,</span></span>
-<span id="src-crypto-loft-L443"><span class="cm">// so the AEAD nonce is exactly base_nonce (RFC 9180 §5.2).</span></span>
-<span id="src-crypto-loft-L444"><span class="kw">fn</span> <span class="fn-call">seal_with_context</span>(shared_secret_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, enc_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, info_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, aad_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, pt_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="en">HpkeSealed</span> {</span>
-<span id="src-crypto-loft-L445">  (key, base_nonce) = <span class="fn-call">key_schedule_base</span>(shared_secret_b64, info_b64);</span>
-<span id="src-crypto-loft-L446">  <span class="kw">if</span> key == <span class="st">""</span> || base_nonce == <span class="st">""</span> { <span class="kw">return</span> <span class="en">HpkeSealed</span> { enc: <span class="st">""</span>, ciphertext: <span class="st">""</span> }; }</span>
-<span id="src-crypto-loft-L447">  ct = <span class="fn-call">aes256gcm_seal</span>(key, base_nonce, aad_b64, pt_b64);</span>
-<span id="src-crypto-loft-L448">  <span class="en">HpkeSealed</span> { enc: enc_b64, ciphertext: ct }</span>
-<span id="src-crypto-loft-L449">}</span>
-<span id="src-crypto-loft-L450"></span>
-<span id="src-crypto-loft-L451"><span class="cm">// --- Public HPKE API ---</span></span>
-<span id="src-crypto-loft-L452"></span>
-<span id="src-crypto-loft-L453"><span class="cm">// HPKE SealBase (RFC 9180 §6.1): encrypt `pt` to recipient public key `pk_r`,</span></span>
-<span id="src-crypto-loft-L454"><span class="cm">// binding `info` (key-schedule context) and `aad` (per-message AAD).  Generates</span></span>
-<span id="src-crypto-loft-L455"><span class="cm">// a fresh ephemeral key, so each call's output differs.  All args/fields base64.</span></span>
-<span id="src-crypto-loft-L456"><span class="cm">// Returns HpkeSealed { enc, ciphertext }; both "" on failure.</span></span>
-<span id="src-crypto-loft-L457"><span class="cm">// Example: @CRY-006 — `enc` is fresh per call and must travel with the ciphertext.</span></span>
-<span id="src-crypto-loft-L458"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">hpke_seal_base</span>(pk_r_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, info_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, aad_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, pt_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="en">HpkeSealed</span> {</span>
-<span id="src-crypto-loft-L459">  sk_e_b64 = <span class="fn-call">random_bytes</span>(<span class="nm">32</span>);</span>
-<span id="src-crypto-loft-L460">  (shared_secret, enc) = <span class="fn-call">dhkem_encap_deterministic</span>(pk_r_b64, sk_e_b64);</span>
-<span id="src-crypto-loft-L461">  <span class="kw">if</span> shared_secret == <span class="st">""</span> { <span class="kw">return</span> <span class="en">HpkeSealed</span> { enc: <span class="st">""</span>, ciphertext: <span class="st">""</span> }; }</span>
-<span id="src-crypto-loft-L462">  <span class="fn-call">seal_with_context</span>(shared_secret, enc, info_b64, aad_b64, pt_b64)</span>
-<span id="src-crypto-loft-L463">}</span>
-<span id="src-crypto-loft-L464"></span>
-<span id="src-crypto-loft-L465"><span class="cm">// Deterministic SealBase — TEST ONLY.  Uses the caller-supplied ephemeral</span></span>
-<span id="src-crypto-loft-L466"><span class="cm">// secret `sk_e_b64` instead of a random one, so the output is reproducible</span></span>
-<span id="src-crypto-loft-L467"><span class="cm">// against an RFC 9180 known-answer vector.  Never use in production.</span></span>
-<span id="src-crypto-loft-L468"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">hpke_seal_base_deterministic</span>(pk_r_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, sk_e_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, info_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, aad_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, pt_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="en">HpkeSealed</span> {</span>
-<span id="src-crypto-loft-L469">  (shared_secret, enc) = <span class="fn-call">dhkem_encap_deterministic</span>(pk_r_b64, sk_e_b64);</span>
-<span id="src-crypto-loft-L470">  <span class="kw">if</span> shared_secret == <span class="st">""</span> { <span class="kw">return</span> <span class="en">HpkeSealed</span> { enc: <span class="st">""</span>, ciphertext: <span class="st">""</span> }; }</span>
-<span id="src-crypto-loft-L471">  <span class="fn-call">seal_with_context</span>(shared_secret, enc, info_b64, aad_b64, pt_b64)</span>
-<span id="src-crypto-loft-L472">}</span>
-<span id="src-crypto-loft-L473"></span>
-<span id="src-crypto-loft-L474"><span class="cm">// HPKE OpenBase (RFC 9180 §6.1): decrypt `ct` for recipient secret key `sk_r`</span></span>
-<span id="src-crypto-loft-L475"><span class="cm">// using the sender's `enc`, binding `info` and `aad`.  All args base64.  Returns</span></span>
-<span id="src-crypto-loft-L476"><span class="cm">// the base64 plaintext, or "" on ANY failure (bad enc/key or AEAD auth failure).</span></span>
-<span id="src-crypto-loft-L477"><span class="cm">// Example: @CRY-006 — `info` AND `aad` must both match the sender's, or open gives "".</span></span>
-<span id="src-crypto-loft-L478"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">hpke_open_base</span>(sk_r_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, enc_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, info_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, aad_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, ct_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
-<span id="src-crypto-loft-L479">  shared_secret = <span class="fn-call">dhkem_decap</span>(enc_b64, sk_r_b64);</span>
-<span id="src-crypto-loft-L480">  <span class="kw">if</span> shared_secret == <span class="st">""</span> { <span class="kw">return</span> <span class="st">""</span>; }</span>
-<span id="src-crypto-loft-L481">  (key, base_nonce) = <span class="fn-call">key_schedule_base</span>(shared_secret, info_b64);</span>
-<span id="src-crypto-loft-L482">  <span class="kw">if</span> key == <span class="st">""</span> || base_nonce == <span class="st">""</span> { <span class="kw">return</span> <span class="st">""</span>; }</span>
-<span id="src-crypto-loft-L483">  <span class="fn-call">aes256gcm_open</span>(key, base_nonce, aad_b64, ct_b64)</span>
-<span id="src-crypto-loft-L484">}</span>
-<span id="src-crypto-loft-L485"></span>
-<span id="src-crypto-loft-L486"><span class="cm">// Expose the key-schedule outputs for KAT assertions — TEST ONLY.  Given a</span></span>
-<span id="src-crypto-loft-L487"><span class="cm">// shared secret and base64 `info`, returns (key_b64, base_nonce_b64).</span></span>
-<span id="src-crypto-loft-L488"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">hpke_key_schedule_base_for_test</span>(shared_secret_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, info_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">text</a></span>, <span class="ty"><a href="stdlib-types.html">text</a></span>) {</span>
-<span id="src-crypto-loft-L489">  <span class="fn-call">key_schedule_base</span>(shared_secret_b64, info_b64)</span>
-<span id="src-crypto-loft-L490">}</span>
-<span id="src-crypto-loft-L491"></span>
-<span id="src-crypto-loft-L492"><span class="cm">// Expose deterministic Encap for KAT assertions — TEST ONLY.  Returns</span></span>
-<span id="src-crypto-loft-L493"><span class="cm">// (shared_secret_b64, enc_b64).</span></span>
-<span id="src-crypto-loft-L494"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">hpke_encap_deterministic_for_test</span>(pk_r_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, sk_e_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">text</a></span>, <span class="ty"><a href="stdlib-types.html">text</a></span>) {</span>
-<span id="src-crypto-loft-L495">  <span class="fn-call">dhkem_encap_deterministic</span>(pk_r_b64, sk_e_b64)</span>
-<span id="src-crypto-loft-L496">}</span>
+<span id="src-crypto-loft-L435"><span class="cm">// Internal: seal with an already-encapsulated (shared_secret, enc).  seq = 0,</span></span>
+<span id="src-crypto-loft-L436"><span class="cm">// so the AEAD nonce is exactly base_nonce (RFC 9180 §5.2).</span></span>
+<span id="src-crypto-loft-L437"><span class="kw">fn</span> <span class="fn-call">seal_with_context</span>(shared_secret_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, enc_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, info_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, aad_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, pt_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="en">HpkeSealed</span> {</span>
+<span id="src-crypto-loft-L438">  (key, base_nonce) = <span class="fn-call">key_schedule_base</span>(shared_secret_b64, info_b64);</span>
+<span id="src-crypto-loft-L439">  <span class="kw">if</span> key == <span class="st">""</span> || base_nonce == <span class="st">""</span> { <span class="kw">return</span> <span class="en">HpkeSealed</span> { enc: <span class="st">""</span>, ciphertext: <span class="st">""</span> }; }</span>
+<span id="src-crypto-loft-L440">  ct = <span class="fn-call">aes256gcm_seal</span>(key, base_nonce, aad_b64, pt_b64);</span>
+<span id="src-crypto-loft-L441">  <span class="en">HpkeSealed</span> { enc: enc_b64, ciphertext: ct }</span>
+<span id="src-crypto-loft-L442">}</span>
+<span id="src-crypto-loft-L443"></span>
+<span id="src-crypto-loft-L444"><span class="cm">// --- Public HPKE API ---</span></span>
+<span id="src-crypto-loft-L445"></span>
+<span id="src-crypto-loft-L446"><span class="cm">// HPKE SealBase (RFC 9180 §6.1): encrypt `pt` to recipient public key `pk_r`,</span></span>
+<span id="src-crypto-loft-L447"><span class="cm">// binding `info` (key-schedule context) and `aad` (per-message AAD).  Generates</span></span>
+<span id="src-crypto-loft-L448"><span class="cm">// a fresh ephemeral key, so each call's output differs.  All args/fields base64.</span></span>
+<span id="src-crypto-loft-L449"><span class="cm">// Returns HpkeSealed { enc, ciphertext }; both "" on failure.</span></span>
+<span id="src-crypto-loft-L450"><span class="cm">// Example: @CRY-006 — `enc` is fresh per call and must travel with the ciphertext.</span></span>
+<span id="src-crypto-loft-L451"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">hpke_seal_base</span>(pk_r_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, info_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, aad_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, pt_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="en">HpkeSealed</span> {</span>
+<span id="src-crypto-loft-L452">  sk_e_b64 = <span class="fn-call">random_bytes</span>(<span class="nm">32</span>);</span>
+<span id="src-crypto-loft-L453">  (shared_secret, enc) = <span class="fn-call">dhkem_encap_deterministic</span>(pk_r_b64, sk_e_b64);</span>
+<span id="src-crypto-loft-L454">  <span class="kw">if</span> shared_secret == <span class="st">""</span> { <span class="kw">return</span> <span class="en">HpkeSealed</span> { enc: <span class="st">""</span>, ciphertext: <span class="st">""</span> }; }</span>
+<span id="src-crypto-loft-L455">  <span class="fn-call">seal_with_context</span>(shared_secret, enc, info_b64, aad_b64, pt_b64)</span>
+<span id="src-crypto-loft-L456">}</span>
+<span id="src-crypto-loft-L457"></span>
+<span id="src-crypto-loft-L458"><span class="cm">// Deterministic SealBase — TEST ONLY.  Uses the caller-supplied ephemeral</span></span>
+<span id="src-crypto-loft-L459"><span class="cm">// secret `sk_e_b64` instead of a random one, so the output is reproducible</span></span>
+<span id="src-crypto-loft-L460"><span class="cm">// against an RFC 9180 known-answer vector.  Never use in production.</span></span>
+<span id="src-crypto-loft-L461"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">hpke_seal_base_deterministic</span>(pk_r_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, sk_e_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, info_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, aad_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, pt_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="en">HpkeSealed</span> {</span>
+<span id="src-crypto-loft-L462">  (shared_secret, enc) = <span class="fn-call">dhkem_encap_deterministic</span>(pk_r_b64, sk_e_b64);</span>
+<span id="src-crypto-loft-L463">  <span class="kw">if</span> shared_secret == <span class="st">""</span> { <span class="kw">return</span> <span class="en">HpkeSealed</span> { enc: <span class="st">""</span>, ciphertext: <span class="st">""</span> }; }</span>
+<span id="src-crypto-loft-L464">  <span class="fn-call">seal_with_context</span>(shared_secret, enc, info_b64, aad_b64, pt_b64)</span>
+<span id="src-crypto-loft-L465">}</span>
+<span id="src-crypto-loft-L466"></span>
+<span id="src-crypto-loft-L467"><span class="cm">// HPKE OpenBase (RFC 9180 §6.1): decrypt `ct` for recipient secret key `sk_r`</span></span>
+<span id="src-crypto-loft-L468"><span class="cm">// using the sender's `enc`, binding `info` and `aad`.  All args base64.  Returns</span></span>
+<span id="src-crypto-loft-L469"><span class="cm">// the base64 plaintext, or "" on ANY failure (bad enc/key or AEAD auth failure).</span></span>
+<span id="src-crypto-loft-L470"><span class="cm">// Example: @CRY-006 — `info` AND `aad` must both match the sender's, or open gives "".</span></span>
+<span id="src-crypto-loft-L471"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">hpke_open_base</span>(sk_r_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, enc_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, info_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, aad_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, ct_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-crypto-loft-L472">  shared_secret = <span class="fn-call">dhkem_decap</span>(enc_b64, sk_r_b64);</span>
+<span id="src-crypto-loft-L473">  <span class="kw">if</span> shared_secret == <span class="st">""</span> { <span class="kw">return</span> <span class="st">""</span>; }</span>
+<span id="src-crypto-loft-L474">  (key, base_nonce) = <span class="fn-call">key_schedule_base</span>(shared_secret, info_b64);</span>
+<span id="src-crypto-loft-L475">  <span class="kw">if</span> key == <span class="st">""</span> || base_nonce == <span class="st">""</span> { <span class="kw">return</span> <span class="st">""</span>; }</span>
+<span id="src-crypto-loft-L476">  <span class="fn-call">aes256gcm_open</span>(key, base_nonce, aad_b64, ct_b64)</span>
+<span id="src-crypto-loft-L477">}</span>
+<span id="src-crypto-loft-L478"></span>
+<span id="src-crypto-loft-L479"><span class="cm">// Expose the key-schedule outputs for KAT assertions — TEST ONLY.  Given a</span></span>
+<span id="src-crypto-loft-L480"><span class="cm">// shared secret and base64 `info`, returns (key_b64, base_nonce_b64).</span></span>
+<span id="src-crypto-loft-L481"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">hpke_key_schedule_base_for_test</span>(shared_secret_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, info_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">text</a></span>, <span class="ty"><a href="stdlib-types.html">text</a></span>) {</span>
+<span id="src-crypto-loft-L482">  <span class="fn-call">key_schedule_base</span>(shared_secret_b64, info_b64)</span>
+<span id="src-crypto-loft-L483">}</span>
+<span id="src-crypto-loft-L484"></span>
+<span id="src-crypto-loft-L485"><span class="cm">// Expose deterministic Encap for KAT assertions — TEST ONLY.  Returns</span></span>
+<span id="src-crypto-loft-L486"><span class="cm">// (shared_secret_b64, enc_b64).</span></span>
+<span id="src-crypto-loft-L487"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">hpke_encap_deterministic_for_test</span>(pk_r_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>, sk_e_b64: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">text</a></span>, <span class="ty"><a href="stdlib-types.html">text</a></span>) {</span>
+<span id="src-crypto-loft-L488">  <span class="fn-call">dhkem_encap_deterministic</span>(pk_r_b64, sk_e_b64)</span>
+<span id="src-crypto-loft-L489">}</span>
 </code></pre>
 <h2 id="tests-aead-kex-loft">tests/aead_kex.loft</h2>
 <pre class="src"><code><span id="tests-aead-kex-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -1339,6 +1332,43 @@
 <span id="tests-hpke-loft-L101">  out = crypto::<span class="fn-call">hpke_open_base</span>(<span class="en">SK_E</span>, <span class="en">ENC</span>, <span class="en">INFO</span>, <span class="en">AAD</span>, <span class="en">CT</span>);</span>
 <span id="tests-hpke-loft-L102">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(out == <span class="st">""</span>, <span class="st">"HPKE open with the wrong recipient key must fail: got {out}"</span>);</span>
 <span id="tests-hpke-loft-L103">}</span>
+</code></pre>
+<h2 id="tests-malformed-base64-loft">tests/malformed_base64.loft</h2>
+<pre class="src"><code><span id="tests-malformed-base64-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
+<span id="tests-malformed-base64-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
+<span id="tests-malformed-base64-loft-L3"><span class="cm">// Input that is not base64 is refused by every door that takes base64 — "" or false,</span></span>
+<span id="tests-malformed-base64-loft-L4"><span class="cm">// never a result computed from other bytes than the ones sent.  A lenient decoder read</span></span>
+<span id="tests-malformed-base64-loft-L5"><span class="cm">// each stray character as `A`: `base64_to_bytes("!!!!")` answered [0,0,0], and a typo in</span></span>
+<span id="tests-malformed-base64-loft-L6"><span class="cm">// a message signed, hashed and sealed bytes the caller never sent.</span></span>
+<span id="tests-malformed-base64-loft-L7"><span class="kw">use</span> crypto;</span>
+<span id="tests-malformed-base64-loft-L8"></span>
+<span id="tests-malformed-base64-loft-L9"><span class="kw">fn</span> <span class="fn-call">main</span>() {</span>
+<span id="tests-malformed-base64-loft-L10">  bad = <span class="st">"aG k="</span>;</span>
+<span id="tests-malformed-base64-loft-L11">  key = crypto::<span class="fn-call">random_bytes</span>(<span class="nm">32</span>);</span>
+<span id="tests-malformed-base64-loft-L12">  nonce = crypto::<span class="fn-call">random_bytes</span>(<span class="nm">12</span>);</span>
+<span id="tests-malformed-base64-loft-L13">  seed = crypto::<span class="fn-call">random_bytes</span>(<span class="nm">32</span>);</span>
+<span id="tests-malformed-base64-loft-L14">  pk = crypto::<span class="fn-call">ed25519_public_key</span>(seed);</span>
+<span id="tests-malformed-base64-loft-L15"></span>
+<span id="tests-malformed-base64-loft-L16">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(crypto::<span class="fn-call">base64_to_bytes</span>(<span class="st">"!!!!"</span>)) == <span class="nm">0</span>, <span class="st">"base64_to_bytes refuses"</span>);</span>
+<span id="tests-malformed-base64-loft-L17">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(crypto::<span class="fn-call">base64_decode</span>(<span class="st">"!!!"</span>) == <span class="st">""</span>, <span class="st">"base64_decode refuses"</span>);</span>
+<span id="tests-malformed-base64-loft-L18">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(crypto::<span class="fn-call">base64_decode</span>(<span class="st">"/w=="</span>) == <span class="st">""</span>, <span class="st">"bytes that are not UTF-8 are no text"</span>);</span>
+<span id="tests-malformed-base64-loft-L19">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(crypto::<span class="fn-call">base64_decode</span>(<span class="st">"aGk="</span>) == <span class="st">"hi"</span>, <span class="st">"valid input still decodes"</span>);</span>
+<span id="tests-malformed-base64-loft-L20">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(crypto::<span class="fn-call">sha256_b64</span>(bad) == <span class="st">""</span>, <span class="st">"sha256_b64 refuses rather than hash other bytes"</span>);</span>
+<span id="tests-malformed-base64-loft-L21">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(crypto::<span class="fn-call">ed25519_sign</span>(seed, bad) == <span class="st">""</span>, <span class="st">"ed25519_sign refuses the message"</span>);</span>
+<span id="tests-malformed-base64-loft-L22">  good_sig = crypto::<span class="fn-call">ed25519_sign</span>(seed, crypto::<span class="fn-call">base64_encode</span>(<span class="st">"m"</span>));</span>
+<span id="tests-malformed-base64-loft-L23">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!crypto::<span class="fn-call">ed25519_verify</span>(pk, bad, good_sig), <span class="st">"ed25519_verify refuses the message"</span>);</span>
+<span id="tests-malformed-base64-loft-L24">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(crypto::<span class="fn-call">aes256gcm_seal</span>(key, nonce, bad, crypto::<span class="fn-call">base64_encode</span>(<span class="st">"p"</span>)) == <span class="st">""</span>, <span class="st">"seal refuses the aad"</span>);</span>
+<span id="tests-malformed-base64-loft-L25">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(crypto::<span class="fn-call">aes256gcm_seal</span>(key, nonce, <span class="st">""</span>, bad) == <span class="st">""</span>, <span class="st">"seal refuses the plaintext"</span>);</span>
+<span id="tests-malformed-base64-loft-L26">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(crypto::<span class="fn-call">hkdf_sha256</span>(<span class="st">""</span>, bad, <span class="st">""</span>, <span class="nm">32</span>) == <span class="st">""</span>, <span class="st">"hkdf refuses the ikm"</span>);</span>
+<span id="tests-malformed-base64-loft-L27">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(crypto::<span class="fn-call">hkdf_sha256</span>(<span class="st">""</span>, crypto::<span class="fn-call">base64_encode</span>(<span class="st">"ikm"</span>), <span class="st">""</span>, <span class="nm">32</span>) != <span class="st">""</span>, <span class="st">"valid hkdf still answers"</span>);</span>
+<span id="tests-malformed-base64-loft-L28"></span>
+<span id="tests-malformed-base64-loft-L29">  <span class="cm">// The vector base64_to_bytes answers is an ordinary one: appending to it is sound.</span></span>
+<span id="tests-malformed-base64-loft-L30">  d = crypto::<span class="fn-call">base64_to_bytes</span>(crypto::<span class="fn-call">base64_encode</span>(<span class="st">"ab"</span>));</span>
+<span id="tests-malformed-base64-loft-L31">  noise = crypto::<span class="fn-call">base64_to_bytes</span>(crypto::<span class="fn-call">random_bytes</span>(<span class="nm">16</span>));</span>
+<span id="tests-malformed-base64-loft-L32">  d += [<span class="nm">99</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>];</span>
+<span id="tests-malformed-base64-loft-L33">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(d) == <span class="nm">3</span> &amp;&amp; d[<span class="nm">0</span>] == <span class="nm">97</span> &amp;&amp; d[<span class="nm">2</span>] == <span class="nm">99</span> &amp;&amp; <span class="bi"><a href="stdlib-text.html">len</a></span>(noise) == <span class="nm">16</span>, <span class="st">"append onto a decoded vector"</span>);</span>
+<span id="tests-malformed-base64-loft-L34">  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"malformed base64: refused everywhere"</span>);</span>
+<span id="tests-malformed-base64-loft-L35">}</span>
 </code></pre>
 <h2 id="tests-random-loft">tests/random.loft</h2>
 <pre class="src"><code><span id="tests-random-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>

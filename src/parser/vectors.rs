@@ -672,6 +672,10 @@ impl Parser {
                     concept_ref: "@F37",
                 });
             }
+            // `@FR-Op-Back` — `-x` on a user type is its `operator negate`.
+            if let Some(m) = self.operator_unary("negate", "-", &t) {
+                return self.unary_through_operator(val, "negate", m, t);
+            }
             let arg = val.clone();
             self.call_op_as(val, "Min", "-", &[arg], &[t])
         } else if self.lexer.has_token("(") {

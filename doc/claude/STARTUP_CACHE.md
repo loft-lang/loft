@@ -6,13 +6,14 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 # The startup cache
 
 What loft caches between runs so a program starts without re-parsing, how to turn it off, and
-why a benchmark must know which loft it is measuring.  Part of measuring performance:
+how to tell a warm run from a cold one.  Part of measuring performance:
 [PERFORMANCE.md](PERFORMANCE.md).
 
 The whole-program startup cache skips ALL parsing — stdlib + lazily-`use`d
 libs + user file — on warm runs by writing a binary bundle (content-addressed
 `.store` + `.manifest`) to `$XDG_CACHE_HOME/loft/` (or `$HOME/.cache/loft/`).
-It is default-on (@PLN11 G2 Track 1).
+It is on by default, for development builds too (@C133); `LOFT_NO_CACHE=1` turns it off.
+Its record: [STARTUP_CACHE-history.md](STARTUP_CACHE-history.md).
 
 ## What is cached
 
@@ -21,25 +22,23 @@ every `default/*.loft` file, every `use`-d library, and the user script.  It is
 keyed on a drift manifest holding a SHA-256 of each parsed source's bytes
 (`cache::file_hash`), so any source edit invalidates the cache automatically.
 
-## Default-on behaviour and overrides
+## Default-on behaviour and the off switch
 
-`cache::program_cache_enabled()` (`src/cache.rs`) implements the precedence
-order:
+`cache::program_cache_enabled()` (`src/cache.rs`, @C133) has one rule: the cache is **on** —
+for an installed `loft`, `cargo run`, `cargo test` and a binary under `target/` alike — unless
+**`LOFT_NO_CACHE`** is set (non-empty), which turns it **off**: no bundle is read or written.
 
-1. `LOFT_NO_CACHE` (non-empty) → **off** — the explicit kill switch for
-   production scripts that must never read/write bundles.
-2. `LOFT_PROGRAM_CACHE` (non-empty) → **on** — explicit force; used by the
-   cache's own tests to override the two dev defaults below.
-3. `CARGO_MANIFEST_DIR` present → **off** — auto-disables inside
-   `cargo run` / `cargo test`.  The compiler-debug loop and the entire
-   integration-test suite never read/write bundles with zero per-test wiring.
-4. **the binary lives in a `target/{debug,release}/` tree → off** — the OTHER
-   half of the same compiler-debug loop, and the half that surprises people.
-   Rule 3 only catches an invocation *Cargo* made; running `target/release/loft`
-   by hand sets no variable, and that is what iterating on the compiler actually
-   looks like.  Keyed on the binary's own path (`running_a_dev_build`), so it
-   also covers `CARGO_TARGET_DIR=target-da`.
-5. otherwise → **on** — the default for installed / real invocations.
+A development build is safe to cache because both cache keys fold in
+`binary_signature_tag`: a rebuilt compiler never reads a bundle an earlier build wrote.  Two
+cases no key can see need the switch:
+
+- **Instrumenting the compiler without rebuilding it.**  A warm run replaces the parse, so a
+  parser diagnostic stays silent.  With `LOFT_LOG` or `LOFT_IR` armed, a warm run says so on
+  stderr and names `LOFT_NO_CACHE=1`.
+- **Measuring a cold compile.**  A test or benchmark that runs the `loft` binary and times,
+  counts or traces the parse sets `LOFT_NO_CACHE=1` itself, as `tests/dump_determinism.rs`
+  does.  A test that parses in process (`Parser::parse_dir`, as `tests/frontend_counts.rs`
+  does) never consults the cache.
 
 ## Programs whose libraries build native, or have dependencies (loft#1684)
 
@@ -60,26 +59,13 @@ gate that missed (no manifest at the computed path, a build signature or stdlib 
 differs, a changed source, a native-library context that differs, a recorded cdylib that is
 gone) — and at a save, the search path the key used beside the one the parse ended with.
 
-## Which loft am I measuring? (rule 4 is a trap for benchmarks)
-
-Rule 4 means **a binary you built from source pays the cold cost on every run,
-forever** — by design, so a parser change is never answered by a stale bundle.  It
-also means the two binaries on your machine have startup costs that differ by
-roughly the warm/cold ratio below, and nothing in the output says which one you ran.
-
-That is not hypothetical: loft#864 was filed as *"every invocation pays full
-process-spawn + compile overhead, give me a warm session or a daemon"*, on numbers
-measured with a from-source build.  The same programs on the installed binary ran
-several times faster, because the cache the report needed was already there and
-rule 4 had switched it off.  **Benchmark the installed binary, or say which one you
-measured.**
+## Is this run warm or cold?
 
 | invocation | program cache | a rerun of an unchanged program |
 |---|---|---|
-| `loft prog.loft` (installed) | on | warm — no parsing at all |
-| `target/release/loft prog.loft` | **off** (rule 4) | full stdlib parse, every run |
-| `cargo run -- prog.loft` | off (rule 3) | full stdlib parse, every run |
-| `LOFT_NO_CACHE=1 loft prog.loft` | off (rule 1) | full stdlib parse, every run |
+| `loft prog.loft`, `target/release/loft prog.loft`, `cargo run -- prog.loft` | on | warm — no parsing at all |
+| the first run after loft is rebuilt | on | cold — the build signature moved, so the key did |
+| `LOFT_NO_CACHE=1 loft prog.loft` | off | full stdlib parse, every run |
 
 **How to tell which you got, in one command.**  `LOFT_TIMING=1` prints
 `parse_default=<n>ms`: a couple of ms is a warm bundle load, tens of ms is a cold
@@ -137,9 +123,9 @@ no report at all.
 
 **`LOFT_STDLIB_CACHE` is the narrower fallback, not an addition.**  It caches
 `default/` only, and `main.rs` engages it **just when the program cache is off** —
-so on an installed binary setting it changes nothing, while on a from-source build
-it recovers most (not all) of what rule 4 gave up.  A measurable win from setting it
-is therefore itself a signal that the program cache was disabled.
+so with the default it changes nothing, while beside `LOFT_NO_CACHE=1` it brings back
+the stdlib half of the warm start alone.  A measurable win from setting it is
+therefore itself a signal that the program cache was disabled.
 
 **`loft test` engages it too, and there it pays per FILE** (loft#925).  A suite
 builds one parser per test file — deliberately, so one file's definitions cannot

@@ -216,3 +216,19 @@ program cannot observe is the compiler's; what it can is the language's (C120, o
 
 **Revisit when.** Not stated.  Decided 2026-09-15 — [record](DESIGN_DECISIONS-history.md#c122--the-contract-is-semantics-a-rewrite-is-free-wherever-its-conditions-are-validated-and-a-library-api-is-the-one-boundary).
 Holds at `(R-Escape)`, [formal/rewrites.md](formal/rewrites.md).
+
+## C133 — A development build uses the startup cache; LOFT_NO_CACHE=1 turns it off
+
+**Decision.** The whole-program startup cache is on for every build — `cargo run`, `cargo test`
+and a binary under `target/` as much as an installed `loft` — and `LOFT_NO_CACHE=1` is the one
+switch that turns it off, shown in `loft --help`, STARTUP_CACHE.md, DEBUG.md and
+RUNNING_TESTS.md.  **Why.** Every dev run and every test that runs the binary paid the full
+stdlib parse, to guard against a stale bundle answering for a changed compiler; both cache keys
+fold in the build signature, so a rebuild already invalidates.  What no key sees — a compiler
+instrumented without a rebuild, a test measuring a cold parse — is what the switch is for.
+
+**Revisit when.** A warm run is measured answering differently from the cold run it stands in
+for, on a dev build.  Decided 2026-09-30 — loft#1762.
+**Guard:** `tests/arc_e_program_cache.rs::a_development_build_caches_unless_told_not_to`.
+**Catalogue:** STARTUP_CACHE.md § Default-on behaviour and the off switch · `src/cache.rs`
+`cache_decision`.

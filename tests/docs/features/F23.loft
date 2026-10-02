@@ -4,9 +4,14 @@
 fn double(x: integer) -> integer {
     x * 2
 }
+fn twice(f: fn(integer) -> integer, x: integer) -> integer {
+    f(f(x))                            // a parameter whose type is a function
+}
 fn main() {
     f = double;
     println("f(21) = {f(21)}");        // f(21) = 42
     doubled = map([1, 2, 3], double);
     println("{doubled}");              // [2,4,6]
+    g: fn(integer) -> integer = double;   // the type, spelled out
+    println("{twice(g, 5)}");          // 20
 }

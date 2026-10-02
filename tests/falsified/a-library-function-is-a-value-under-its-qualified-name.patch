@@ -1,0 +1,81 @@
+diff --git a/src/parser/objects.rs b/src/parser/objects.rs
+--- a/src/parser/objects.rs
++++ b/src/parser/objects.rs
+@@ -1048,77 +1048,6 @@
+             let dnr = self.data.source_nr(source, &nm);
+             self.data.def_used(dnr);
+             t = self.data.def(dnr).returned().clone();
+-        } else if qualified && source != u16::MAX {
+-            // A library-qualified FUNCTION in value position is a function value, exactly
+-            // as its bare spelling is under a glob import: `apply(ml::twice, 4)` beside
+-            // `apply(twice, 4)`.  A function is stored `n_<name>`, so the definition lookup
+-            // above never sees it, and the spelling fell through to the unknown-variable arm,
+-            // which named the LIBRARY — *"Unknown variable 'ml'"* — and left a plain `use
+-            // ml;`, the import a library's own rules ask for (C98), with no way to pass a
+-            // library function at all.  A generic is refused as its bare spelling is, and a
+-            // name the library does not have says so rather than calling the library unknown.
+-            let fq = self.data.source_nr(source, &format!("n_{nm}"));
+-            let lib = name.to_string();
+-            match (fq != u32::MAX).then(|| self.data.def_type(fq)) {
+-                Some(DefType::Function) => {
+-                    *code = Value::Int(fq as i32);
+-                    self.data.def_used(fq);
+-                    self.record_sandbox_fn_ref(fq);
+-                    let arg_types = self.fn_ref_arg_types(fq);
+-                    let ret_type = self.data.def(fq).returned().clone();
+-                    t = Type::Function(
+-                        arg_types,
+-                        Box::new(ret_type),
+-                        crate::data::Deps::none(),
+-                        self.fn_ref_consts(fq),
+-                    );
+-                }
+-                Some(DefType::Generic) => {
+-                    if !self.first_pass {
+-                        diagnostic_at!(
+-                            self.lexer,
+-                            name_pos,
+-                            Level::Error,
+-                            "`{lib}::{nm}` is a generic function, and a generic is not a function \
+-                             VALUE — it has no single body until a call fixes its type variables. \
+-                             Wrap one call of it in a lambda that names the types: \
+-                             `fn(x: integer) -> integer {{ {lib}::{nm}(x) }}`"
+-                        );
+-                    }
+-                    t = if self.first_pass {
+-                        Type::Unknown(0)
+-                    } else {
+-                        Type::Never
+-                    };
+-                }
+-                _ => {
+-                    let receivers = self.method_receivers_named(&nm);
+-                    if self.first_pass {
+-                    } else if receivers.is_empty() {
+-                        diagnostic_at!(
+-                            self.lexer,
+-                            name_pos,
+-                            Level::Error,
+-                            "library `{lib}` has no `{nm}`"
+-                        );
+-                    } else {
+-                        // The name exists as a METHOD, which is the bare spelling's answer too.
+-                        let on = receivers.join("`, `");
+-                        diagnostic_at!(
+-                            self.lexer,
+-                            name_pos,
+-                            Level::Error,
+-                            "`{lib}::{nm}` is a method on `{on}`, and a method is not a function \
+-                             VALUE — there is nothing to pass here. Wrap it: `|x| {{ x.{nm}(…) }}`"
+-                        );
+-                    }
+-                    t = if self.first_pass {
+-                        Type::Unknown(0)
+-                    } else {
+-                        Type::Never
+-                    };
+-                }
+-            }
+         } else if self.data.def_nr(name) != u32::MAX
+             && !self.at_binding_name()
+             && !matches!(

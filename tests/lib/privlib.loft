@@ -1,0 +1,18 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A library with a private half (loft#1848): items declared without `pub`, and a name it
+// only imports for its own use (@C98).  `pub_total` uses every private item, so the library
+// itself still reaches them.
+use c98_math::*;
+pub const PUB_C = 11;
+HID_C = 22;
+pub fn pub_f() -> integer { 33 }
+fn hid_f() -> integer { 44 }
+pub struct PubS { a: integer }
+struct HidS { b: integer }
+pub enum PubE { Pa, Pb }
+enum HidE { Ha, Hb }
+pub fn pub_total() -> integer {
+  hid_f() + HID_C + HidS { b: 1 }.b + c98_len(C98Vec { cx: 1, cy: 1, cz: 1 })
+}

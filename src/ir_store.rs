@@ -360,6 +360,8 @@ fn write_var_snapshot(stores: &mut Stores, r: &Record, v: &VarSnapshot) {
     r.set_field_bool(stores, ds::VAR_LINKED_NARROW, v.linked_narrow);
     r.set_field_bool(stores, ds::VAR_STORE_TEXT_LINK, v.store_text_link);
     r.set_field_bool(stores, ds::VAR_USER_NAMED, v.user_named);
+    r.set_field_bool(stores, ds::VAR_USER_APPENDED, v.user_appended);
+    r.set_field_bool(stores, ds::VAR_COPY_BOUND, v.copy_bound);
     r.set_field_int(stores, ds::VAR_OWNER_WITNESS, i64::from(v.owner_witness));
 }
 
@@ -428,6 +430,7 @@ fn write_definition(stores: &mut Stores, r: &Record, d: &Definition) {
     r.set_field_bool(stores, ds::DEF_PUB_VISIBLE, d.pub_visible);
     r.set_field_bool(stores, ds::DEF_NULL_SAFE, d.null_safe); // @PLN46 W2
     r.set_field_bool(stores, ds::DEF_BUILTIN, d.builtin); // @PLN165 arc E
+    r.set_field_bool(stores, ds::DEF_OPERATOR_FORM, d.operator_form); // @PLN182
     r.set_field_int(stores, ds::DEF_CLOSURE_RECORD, i64::from(d.closure_record));
     name_list(stores, r, ds::DEF_MUTATED_CAPTURES, &d.mutated_captures);
     name_list(stores, r, ds::DEF_SCALARS_TO_BOX, &d.scalars_to_box);

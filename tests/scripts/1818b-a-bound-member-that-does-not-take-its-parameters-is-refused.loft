@@ -8,25 +8,27 @@
 // an integer, `l(w, w)` took a SIGSEGV and `s(w)` a panic on the interpreter, and rustc
 // refused the native source.  The refusal names the parameter and the type the interface
 // declares.  The accepting half is `1818-a-bound-is-satisfied-only-by-a-member-that-takes-
-// its-parameters.loft`.
+// its-parameters.loft`.  The members are `operator` methods (C132); the refusal names the
+// method a program wrote.
 //
 // @falsified-at: bb9a31dea — interpret exit 1 -> 0, interpret expectations FAIL/3 -> 1/3 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/3 -> 1/3 (the suite's verdict, not a count of matches)
 // @falsified-by: tests/falsified/1818b-a-bound-member-that-does-not-take-its-parameters-is-refused.patch — interpret exit 1 -> 0, interpret expectations FAIL/3 -> 1/3 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/3 -> 1/3 (the suite's verdict, not a count of matches)
+//   (patch re-derived at 6b8fc663c — reintroduces: a bound member met by ARITY alone)
 //   CHANNEL: expect — the control compiles all three instances without a diagnostic.
 //   WITNESS: on the control, `d(w, w)` over `W { x: 7 }` answers `-3`-shaped garbage (the
 //   record read as the `integer` parameter) and `l(w, w)` ends in SIGSEGV at `OpLengthText`.
 //   HOLDS: leak and panic are equal on both trees.
 
 struct W { x: integer }
-fn OpMin(self: W, o: integer) -> W { W { x: self.x - o } }
-fn OpLt(self: W, o: text) -> boolean { self.x < len(o) }
+operator minus(self: W, o: integer) -> W { W { x: self.x - o } }
+operator compare(self: W, o: text) -> Ordering { self.x.compare(len(o)) }
 fn scale(self: W, factor: text) -> integer { self.x * len(factor) }
 fn d<T: Subtractable>(a: T, b: T) -> T { a - b }
 fn l<T: Ordered>(a: T, b: T) -> boolean { a < b }
 fn s<T: Scalable>(a: T) -> integer { a.scale(3) }
 
-// @EXPECT_ERROR: 'W' does not satisfy interface 'Subtractable': 'OpMin' takes 'integer' where the interface declares 'W'
-// @EXPECT_ERROR: 'W' does not satisfy interface 'Ordered': 'OpLt' takes 'text' where the interface declares 'W'
+// @EXPECT_ERROR: 'W' does not satisfy interface 'Subtractable': 'minus' takes 'integer' where the interface declares 'W'
+// @EXPECT_ERROR: 'W' does not satisfy interface 'Ordered': 'compare' takes 'text' where the interface declares 'W'
 // @EXPECT_ERROR: 'W' does not satisfy interface 'Scalable': 'scale' takes 'text' where the interface declares 'integer'
 fn uses() {
   w = W { x: 7 };

@@ -505,6 +505,13 @@ impl Parser {
                 source = self.data.source;
             }
             if let Some(id) = self.lexer.has_identifier() {
+                // loft#1848 — `lib::name` reaches only what `use lib::*` would.
+                if source != u16::MAX
+                    && source != self.data.source
+                    && let Some(msg) = self.data.qualified_refusal(source, name, &id)
+                {
+                    diagnostic!(self.lexer, Level::Error, "{msg}");
+                }
                 id
             } else {
                 diagnostic!(self.lexer, Level::Error, "Expecting identifier after ::");
@@ -1041,11 +1048,79 @@ impl Parser {
             let dnr = self.data.source_nr(source, &nm);
             self.data.def_used(dnr);
             t = self.data.def(dnr).returned().clone();
+        } else if qualified && source != u16::MAX {
+            // A library-qualified FUNCTION in value position is a function value, exactly
+            // as its bare spelling is under a glob import: `apply(ml::twice, 4)` beside
+            // `apply(twice, 4)`.  A function is stored `n_<name>`, so the definition lookup
+            // above never sees it, and the spelling fell through to the unknown-variable arm,
+            // which named the LIBRARY — *"Unknown variable 'ml'"* — and left a plain `use
+            // ml;`, the import a library's own rules ask for (C98), with no way to pass a
+            // library function at all.  A generic is refused as its bare spelling is, and a
+            // name the library does not have says so rather than calling the library unknown.
+            let fq = self.data.source_nr(source, &format!("n_{nm}"));
+            let lib = name.to_string();
+            match (fq != u32::MAX).then(|| self.data.def_type(fq)) {
+                Some(DefType::Function) => {
+                    *code = Value::Int(fq as i32);
+                    self.data.def_used(fq);
+                    self.record_sandbox_fn_ref(fq);
+                    let arg_types = self.fn_ref_arg_types(fq);
+                    let ret_type = self.data.def(fq).returned().clone();
+                    t = Type::Function(
+                        arg_types,
+                        Box::new(ret_type),
+                        crate::data::Deps::none(),
+                        self.fn_ref_consts(fq),
+                    );
+                }
+                Some(DefType::Generic) => {
+                    if !self.first_pass {
+                        diagnostic_at!(
+                            self.lexer,
+                            name_pos,
+                            Level::Error,
+                            "`{lib}::{nm}` is a generic function, and a generic is not a function \
+                             VALUE — it has no single body until a call fixes its type variables. \
+                             Wrap one call of it in a lambda that names the types: \
+                             `fn(x: integer) -> integer {{ {lib}::{nm}(x) }}`"
+                        );
+                    }
+                    t = if self.first_pass {
+                        Type::Unknown(0)
+                    } else {
+                        Type::Never
+                    };
+                }
+                _ => {
+                    let receivers = self.method_receivers_named(&nm);
+                    if self.first_pass {
+                    } else if receivers.is_empty() {
+                        diagnostic_at!(
+                            self.lexer,
+                            name_pos,
+                            Level::Error,
+                            "library `{lib}` has no `{nm}`"
+                        );
+                    } else {
+                        // The name exists as a METHOD, which is the bare spelling's answer too.
+                        let on = receivers.join("`, `");
+                        diagnostic_at!(
+                            self.lexer,
+                            name_pos,
+                            Level::Error,
+                            "`{lib}::{nm}` is a method on `{on}`, and a method is not a function \
+                             VALUE — there is nothing to pass here. Wrap it: `|x| {{ x.{nm}(…) }}`"
+                        );
+                    }
+                    t = if self.first_pass {
+                        Type::Unknown(0)
+                    } else {
+                        Type::Never
+                    };
+                }
+            }
         } else if self.data.def_nr(name) != u32::MAX
             && !self.at_binding_name()
-            // A default-file `<T>` placeholder is invisible here (loft#1049): it is an
-            // internal construct, and letting it resolve is what blocked a user `enum T`.
-            && !self.stdlib_type_var_placeholder(self.data.def_nr(name))
             && !matches!(
                 self.data.def_type(self.data.def_nr(name)),
                 // @PLN22 Phase 1 — exclude EnumValue: a bare variant used as a
@@ -1398,13 +1473,17 @@ impl Parser {
                     // imports or qualifies is the declaration's, `Slot`.  This recovery also
                     // runs in pass 1, so the message is built only for a file that imports.
                     let declared = enum_name.split('<').next().unwrap_or(&enum_name);
-                    let import_cure =
-                        if variant_enums.len() == 1 && self.data.imports_into(self.data.source) {
-                            let what = format!("bare variant '{name}' has no type here; its enum");
-                            self.data.import_cure(&what, declared, self.data.source)
-                        } else {
-                            None
-                        };
+                    // The import cures answer a name that does NOT resolve here; an enum this
+                    // file already sees is refused for want of a type, not of an import.
+                    let import_cure = if variant_enums.len() == 1
+                        && self.data.imports_into(self.data.source)
+                        && self.data.source_nr(self.data.source, declared) == u32::MAX
+                    {
+                        let what = format!("bare variant '{name}' has no type here; its enum");
+                        self.data.import_cure(&what, declared, self.data.source)
+                    } else {
+                        None
+                    };
                     if let Some(msg) = import_cure {
                         diagnostic!(self.lexer, Level::Error, "{msg}");
                     } else if variant_enums.len() == 1 {
@@ -1537,11 +1616,7 @@ impl Parser {
                         && !name.contains('_'))
                         || (name.starts_with(char::is_uppercase) && self.lexer.peek_token("."));
                     if looks_like_a_type {
-                        // A hidden default-file `<T>` placeholder does not count as "the
-                        // name is taken" — without this the forward-reference stub is never
-                        // registered and pass 2 has nothing to adopt (loft#1049).
-                        let taken = self.data.def_nr(name);
-                        if taken == u32::MAX || self.stdlib_type_var_placeholder(taken) {
+                        if self.data.def_nr(name) == u32::MAX {
                             self.speculative_type_refs.insert(self.data.add_def(
                                 name,
                                 name_pos,
@@ -2353,14 +2428,6 @@ impl Parser {
         } else {
             self.data.source_nr(source, name)
         };
-        // loft#1049 — a default-file `<T>` placeholder is invisible from a user file, so it
-        // is not "the name is taken" here either.  Without this the qualified form `T.N`
-        // resolved against the stdlib placeholder, consumed the `.` on its way to a variant
-        // that does not exist, and left the fallback looking at `N` with the qualifier
-        // already gone — which is why the user saw `Expect token ;` at the `;`.
-        if self.stdlib_type_var_placeholder(d_nr) {
-            d_nr = u32::MAX;
-        }
         // @PLN22 Phase 1 — a qualified `Enum::Variant` resolves WITHIN the
         // qualifier enum via the variant_of chokepoint, NOT the first-wins flat
         // key (which may point at a different enum's same-named variant).
@@ -3161,9 +3228,11 @@ impl Parser {
             let custom_fmt = if let Type::Reference(fd, _) = &tp {
                 self.data.def_type(*fd) == DefType::Struct && {
                     let nm = self.data.def(*fd).name().to_string();
-                    self.data
-                        .def_nr(&crate::data::Data::mangle_method(&nm, "to_text"))
-                        != u32::MAX
+                    let m = self
+                        .data
+                        .def_nr(&crate::data::Data::mangle_method(&nm, "to_text"));
+                    // Only an `operator to_text` owns the spec (`@FR-Op-Mark`).
+                    m != u32::MAX && self.data.def(m).operator_form()
                 }
             } else {
                 false

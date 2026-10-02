@@ -12,6 +12,7 @@
 // would hide these two.  The accepting half is
 // `1819-a-compound-assignment-computes-its-operator-on-both-operand-types.loft`.
 //
+// (Measured on the `fn Op…` spelling: @C132 re-spelled the cells to `operator` methods, same values.)
 // @falsified-at: d53ec702c — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 1/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 1/2 (the suite's verdict, not a count of matches)
 // @falsified-by: tests/falsified/1819b-a-compound-result-the-place-cannot-hold-is-refused.patch — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 1/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 1/2 (the suite's verdict, not a count of matches)
 //   CHANNEL: expect — the control refuses both lines with other messages.
@@ -20,7 +21,7 @@
 //   HOLDS: leak and panic are equal on both trees.
 
 struct V { x: integer }
-fn OpMin(self: V, o: integer) -> integer { self.x - o }
+operator minus(self: V, o: integer) -> integer { self.x - o }
 
 // @EXPECT_ERROR: `+=` on integer with float computes float, which the integer place cannot hold
 // @EXPECT_ERROR: `-=` on V with integer computes integer, which the V place cannot hold

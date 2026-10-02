@@ -1,0 +1,30 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @ARGS: --lib tests/lib
+//
+// @C98 — a bare `use enumlib;` brings in only the `enumlib::` qualifier, so `Status` is not
+// visible here and a bare variant of it is refused with the IMPORT cure: what is missing is
+// the name, not only a type.  The other side, an enum the file does see:
+// a-bare-variant-of-an-imported-enum-asks-for-a-type.loft.
+//
+// @falsified-by: tests/falsified/c98-a-bare-variant-through-a-bare-use-names-the-import.patch — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
+//   The patch is the OVER-WIDE cure — never give a bare variant the import advice — so this
+//   guard holds the half of the fix that must not move; against the build before the fix it
+//   reads inert, which is right for that half.
+//   CHANNEL: the expectations — on the control the pin meets the plain "qualify it as
+//   'Status.Yay'", which names no import although `Status` is not visible here.
+//   WITNESS: that sentence, in a file whose only import is a bare `use enumlib;`.
+//   ARMED: nothing.
+//   HOLDS: the program never runs on either tree (the cell is a refusal), so leak, panic and
+//   value cannot move; only which message the pin meets does.
+use enumlib;
+
+// @EXPECT_ERROR: bare variant 'Yay' has no type here; its enum Status — it is in `enumlib`, and a bare `use enumlib;` brings in only the `enumlib::` qualifier
+fn test_a_bare_variant_of_an_unimported_enum_names_the_import() {
+  n = 0;
+  for s in [Yay, Boo] {
+    if s == enumlib::Status.Boo { n += 1; }
+  }
+  assert(n == 1, "unreached");
+}

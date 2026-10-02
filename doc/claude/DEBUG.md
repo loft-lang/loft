@@ -452,6 +452,11 @@ Pattern:
    suspicious point and print it. This pinpoints the exact source location.
 4. Fix the root cause, then **remove all debug prints before committing**.
 
+A rebuilt `loft` never reads a bundle an earlier build cached, so an `eprintln!` you just added
+runs.  A rerun of an UNCHANGED program on the SAME build skips the parse, though: before arming
+`LOFT_LOG` / `LOFT_IR` or reading anything the parser prints, set **`LOFT_NO_CACHE=1`**
+([STARTUP_CACHE.md](STARTUP_CACHE.md#default-on-behaviour-and-the-off-switch)).
+
 Example: when investigating why a dead-assignment warning stopped firing, adding
 `eprintln!` to `in_use` and `track_write` immediately revealed an extra `uses` increment
 from a captured variable re-read, and the backtrace pointed to the exact `parse_var` call.
@@ -468,6 +473,12 @@ build temp dir (`$LOFT_TMPDIR`, default the system temp; the path is printed in 
 `E0xxx`). It encodes the same for-loop / yield / dispatch logic the interpreter
 compiles to bytecode, but as named-variable Rust — so a type mismatch, a wrong
 sentinel, or a doomed loop condition is visible directly.
+
+The gate and `find_problems.sh` set `LOFT_TMPDIR` to `/var/tmp/loft-test-scratch-<checkout>.<id>`,
+so the native test harness's cache (`loft_native_cache_<hash>`) from a gate is NOT the one a
+plain `cargo nextest run` reads, which falls back to `$TMPDIR`.  Before editing a cache to
+reproduce a gate failure, confirm the run reads it: its `.build` marker changes, or the run
+prints `swept … MB`.
 
 Reach for this especially when a process **hangs**: `gdb` attach (`ptrace_scope`) is
 blocked in this sandbox, and `perf` needs `perf_event_paranoid <= 2` (the default is 4;

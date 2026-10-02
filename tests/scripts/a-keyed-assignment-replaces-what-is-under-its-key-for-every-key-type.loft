@@ -1,0 +1,3595 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `(Col-Assign)`: `c[k] = v` on a key that is already there REPLACES the record under it, for
+// every keyed kind, every key type and every place the collection lives.
+//
+// The replace released the old record's claims BEFORE unlinking it.  A TEXT key is one of
+// those claims, so the unlink hashed a released key, missed the bucket, and left the old
+// record in the table beside the new one: after two writes under one key a hash held two
+// records — `len` and a walk both said 2 while a lookup answered the newer — on both backends,
+// and on the interpreter depending on where the hash seed put the released key.  Present in
+// 2026.9.0 too.  The replace now takes the removal home (`remove_owned`), which unlinks first
+// for every kind that owns its records.
+//
+// Generated cells: kind {hash, sorted, index} x key {integer, text, a two-field key with text}
+// x place {local, &param, &param via a local, struct field, field through &param} x writes
+// under one key {1, 2, 5} x churn {none, an unrelated insert-and-remove between the writes,
+// which recycles arena slots}.  Each asserts the length AND a walk AND the lookup AND that a
+// neighbouring key survives.
+//
+// @falsified-at: e07f178da — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-keyed-assignment-replaces-what-is-under-its-key-for-every-key-type.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the assertions, on both backends (the first hash-text cell reads len 3).
+//   ARMED: nothing; LOFT_STRICT_STORES=1 is clean on this tree.
+//   HOLDS: every integer-key cell and every sorted / index cell, on both trees.
+struct KI { k: integer, v: integer }
+struct KT { k: text, v: integer }
+struct K2 { a: text, b: integer, v: integer }
+struct H_hash_int { c: hash<KI[k]> }
+fn put_hash_int(c: &hash<KI[k]>, v: integer) { c[7] = KI { k: 7, v: v }; }
+fn putv_hash_int(c: &hash<KI[k]>, v: integer) { r = KI { k: 7, v: v }; c[7] = r; }
+fn putf_hash_int(h: &H_hash_int, v: integer) { h.c[7] = KI { k: 7, v: v }; }
+fn churn_hash_int(c: &hash<KI[k]>) { c[9] = KI { k: 9, v: 0 }; c[9] = null; }
+fn walk_hash_int(c: const hash<KI[k]>) -> integer { n = 0; for _e in c { n += 1; } n }
+fn c_hash_int_local_1_plain() {
+  c: hash<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  c[7] = KI { k: 7, v: 1 };
+  assert(len(c) == 2, "c_hash_int_local_1_plain: len {len(c)}");
+  assert(walk_hash_int(c) == 2, "c_hash_int_local_1_plain: walk {walk_hash_int(c)}");
+  assert(c[7].v == 1, "c_hash_int_local_1_plain: value");
+  assert(c[3].v == 100, "c_hash_int_local_1_plain: neighbour");
+}
+fn c_hash_int_local_1_churn() {
+  c: hash<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  c[7] = KI { k: 7, v: 1 };
+  churn_hash_int(c);
+  assert(len(c) == 2, "c_hash_int_local_1_churn: len {len(c)}");
+  assert(walk_hash_int(c) == 2, "c_hash_int_local_1_churn: walk {walk_hash_int(c)}");
+  assert(c[7].v == 1, "c_hash_int_local_1_churn: value");
+  assert(c[3].v == 100, "c_hash_int_local_1_churn: neighbour");
+}
+fn c_hash_int_local_2_plain() {
+  c: hash<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  c[7] = KI { k: 7, v: 1 };
+  c[7] = KI { k: 7, v: 2 };
+  assert(len(c) == 2, "c_hash_int_local_2_plain: len {len(c)}");
+  assert(walk_hash_int(c) == 2, "c_hash_int_local_2_plain: walk {walk_hash_int(c)}");
+  assert(c[7].v == 2, "c_hash_int_local_2_plain: value");
+  assert(c[3].v == 100, "c_hash_int_local_2_plain: neighbour");
+}
+fn c_hash_int_local_2_churn() {
+  c: hash<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  c[7] = KI { k: 7, v: 1 };
+  churn_hash_int(c);
+  c[7] = KI { k: 7, v: 2 };
+  churn_hash_int(c);
+  assert(len(c) == 2, "c_hash_int_local_2_churn: len {len(c)}");
+  assert(walk_hash_int(c) == 2, "c_hash_int_local_2_churn: walk {walk_hash_int(c)}");
+  assert(c[7].v == 2, "c_hash_int_local_2_churn: value");
+  assert(c[3].v == 100, "c_hash_int_local_2_churn: neighbour");
+}
+fn c_hash_int_local_5_plain() {
+  c: hash<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  c[7] = KI { k: 7, v: 1 };
+  c[7] = KI { k: 7, v: 2 };
+  c[7] = KI { k: 7, v: 3 };
+  c[7] = KI { k: 7, v: 4 };
+  c[7] = KI { k: 7, v: 5 };
+  assert(len(c) == 2, "c_hash_int_local_5_plain: len {len(c)}");
+  assert(walk_hash_int(c) == 2, "c_hash_int_local_5_plain: walk {walk_hash_int(c)}");
+  assert(c[7].v == 5, "c_hash_int_local_5_plain: value");
+  assert(c[3].v == 100, "c_hash_int_local_5_plain: neighbour");
+}
+fn c_hash_int_local_5_churn() {
+  c: hash<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  c[7] = KI { k: 7, v: 1 };
+  churn_hash_int(c);
+  c[7] = KI { k: 7, v: 2 };
+  churn_hash_int(c);
+  c[7] = KI { k: 7, v: 3 };
+  churn_hash_int(c);
+  c[7] = KI { k: 7, v: 4 };
+  churn_hash_int(c);
+  c[7] = KI { k: 7, v: 5 };
+  churn_hash_int(c);
+  assert(len(c) == 2, "c_hash_int_local_5_churn: len {len(c)}");
+  assert(walk_hash_int(c) == 2, "c_hash_int_local_5_churn: walk {walk_hash_int(c)}");
+  assert(c[7].v == 5, "c_hash_int_local_5_churn: value");
+  assert(c[3].v == 100, "c_hash_int_local_5_churn: neighbour");
+}
+fn c_hash_int_param_1_plain() {
+  c: hash<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  put_hash_int(c, 1);
+  assert(len(c) == 2, "c_hash_int_param_1_plain: len {len(c)}");
+  assert(walk_hash_int(c) == 2, "c_hash_int_param_1_plain: walk {walk_hash_int(c)}");
+  assert(c[7].v == 1, "c_hash_int_param_1_plain: value");
+  assert(c[3].v == 100, "c_hash_int_param_1_plain: neighbour");
+}
+fn c_hash_int_param_1_churn() {
+  c: hash<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  put_hash_int(c, 1);
+  churn_hash_int(c);
+  assert(len(c) == 2, "c_hash_int_param_1_churn: len {len(c)}");
+  assert(walk_hash_int(c) == 2, "c_hash_int_param_1_churn: walk {walk_hash_int(c)}");
+  assert(c[7].v == 1, "c_hash_int_param_1_churn: value");
+  assert(c[3].v == 100, "c_hash_int_param_1_churn: neighbour");
+}
+fn c_hash_int_param_2_plain() {
+  c: hash<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  put_hash_int(c, 1);
+  put_hash_int(c, 2);
+  assert(len(c) == 2, "c_hash_int_param_2_plain: len {len(c)}");
+  assert(walk_hash_int(c) == 2, "c_hash_int_param_2_plain: walk {walk_hash_int(c)}");
+  assert(c[7].v == 2, "c_hash_int_param_2_plain: value");
+  assert(c[3].v == 100, "c_hash_int_param_2_plain: neighbour");
+}
+fn c_hash_int_param_2_churn() {
+  c: hash<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  put_hash_int(c, 1);
+  churn_hash_int(c);
+  put_hash_int(c, 2);
+  churn_hash_int(c);
+  assert(len(c) == 2, "c_hash_int_param_2_churn: len {len(c)}");
+  assert(walk_hash_int(c) == 2, "c_hash_int_param_2_churn: walk {walk_hash_int(c)}");
+  assert(c[7].v == 2, "c_hash_int_param_2_churn: value");
+  assert(c[3].v == 100, "c_hash_int_param_2_churn: neighbour");
+}
+fn c_hash_int_param_5_plain() {
+  c: hash<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  put_hash_int(c, 1);
+  put_hash_int(c, 2);
+  put_hash_int(c, 3);
+  put_hash_int(c, 4);
+  put_hash_int(c, 5);
+  assert(len(c) == 2, "c_hash_int_param_5_plain: len {len(c)}");
+  assert(walk_hash_int(c) == 2, "c_hash_int_param_5_plain: walk {walk_hash_int(c)}");
+  assert(c[7].v == 5, "c_hash_int_param_5_plain: value");
+  assert(c[3].v == 100, "c_hash_int_param_5_plain: neighbour");
+}
+fn c_hash_int_param_5_churn() {
+  c: hash<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  put_hash_int(c, 1);
+  churn_hash_int(c);
+  put_hash_int(c, 2);
+  churn_hash_int(c);
+  put_hash_int(c, 3);
+  churn_hash_int(c);
+  put_hash_int(c, 4);
+  churn_hash_int(c);
+  put_hash_int(c, 5);
+  churn_hash_int(c);
+  assert(len(c) == 2, "c_hash_int_param_5_churn: len {len(c)}");
+  assert(walk_hash_int(c) == 2, "c_hash_int_param_5_churn: walk {walk_hash_int(c)}");
+  assert(c[7].v == 5, "c_hash_int_param_5_churn: value");
+  assert(c[3].v == 100, "c_hash_int_param_5_churn: neighbour");
+}
+fn c_hash_int_paramvar_1_plain() {
+  c: hash<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  putv_hash_int(c, 1);
+  assert(len(c) == 2, "c_hash_int_paramvar_1_plain: len {len(c)}");
+  assert(walk_hash_int(c) == 2, "c_hash_int_paramvar_1_plain: walk {walk_hash_int(c)}");
+  assert(c[7].v == 1, "c_hash_int_paramvar_1_plain: value");
+  assert(c[3].v == 100, "c_hash_int_paramvar_1_plain: neighbour");
+}
+fn c_hash_int_paramvar_1_churn() {
+  c: hash<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  putv_hash_int(c, 1);
+  churn_hash_int(c);
+  assert(len(c) == 2, "c_hash_int_paramvar_1_churn: len {len(c)}");
+  assert(walk_hash_int(c) == 2, "c_hash_int_paramvar_1_churn: walk {walk_hash_int(c)}");
+  assert(c[7].v == 1, "c_hash_int_paramvar_1_churn: value");
+  assert(c[3].v == 100, "c_hash_int_paramvar_1_churn: neighbour");
+}
+fn c_hash_int_paramvar_2_plain() {
+  c: hash<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  putv_hash_int(c, 1);
+  putv_hash_int(c, 2);
+  assert(len(c) == 2, "c_hash_int_paramvar_2_plain: len {len(c)}");
+  assert(walk_hash_int(c) == 2, "c_hash_int_paramvar_2_plain: walk {walk_hash_int(c)}");
+  assert(c[7].v == 2, "c_hash_int_paramvar_2_plain: value");
+  assert(c[3].v == 100, "c_hash_int_paramvar_2_plain: neighbour");
+}
+fn c_hash_int_paramvar_2_churn() {
+  c: hash<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  putv_hash_int(c, 1);
+  churn_hash_int(c);
+  putv_hash_int(c, 2);
+  churn_hash_int(c);
+  assert(len(c) == 2, "c_hash_int_paramvar_2_churn: len {len(c)}");
+  assert(walk_hash_int(c) == 2, "c_hash_int_paramvar_2_churn: walk {walk_hash_int(c)}");
+  assert(c[7].v == 2, "c_hash_int_paramvar_2_churn: value");
+  assert(c[3].v == 100, "c_hash_int_paramvar_2_churn: neighbour");
+}
+fn c_hash_int_paramvar_5_plain() {
+  c: hash<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  putv_hash_int(c, 1);
+  putv_hash_int(c, 2);
+  putv_hash_int(c, 3);
+  putv_hash_int(c, 4);
+  putv_hash_int(c, 5);
+  assert(len(c) == 2, "c_hash_int_paramvar_5_plain: len {len(c)}");
+  assert(walk_hash_int(c) == 2, "c_hash_int_paramvar_5_plain: walk {walk_hash_int(c)}");
+  assert(c[7].v == 5, "c_hash_int_paramvar_5_plain: value");
+  assert(c[3].v == 100, "c_hash_int_paramvar_5_plain: neighbour");
+}
+fn c_hash_int_paramvar_5_churn() {
+  c: hash<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  putv_hash_int(c, 1);
+  churn_hash_int(c);
+  putv_hash_int(c, 2);
+  churn_hash_int(c);
+  putv_hash_int(c, 3);
+  churn_hash_int(c);
+  putv_hash_int(c, 4);
+  churn_hash_int(c);
+  putv_hash_int(c, 5);
+  churn_hash_int(c);
+  assert(len(c) == 2, "c_hash_int_paramvar_5_churn: len {len(c)}");
+  assert(walk_hash_int(c) == 2, "c_hash_int_paramvar_5_churn: walk {walk_hash_int(c)}");
+  assert(c[7].v == 5, "c_hash_int_paramvar_5_churn: value");
+  assert(c[3].v == 100, "c_hash_int_paramvar_5_churn: neighbour");
+}
+fn c_hash_int_field_1_plain() {
+  h = H_hash_int { c: [] };
+  h.c[3] = KI { k: 3, v: 100 };
+  h.c[7] = KI { k: 7, v: 1 };
+  assert(len(h.c) == 2, "c_hash_int_field_1_plain: len {len(h.c)}");
+  assert(walk_hash_int(h.c) == 2, "c_hash_int_field_1_plain: walk {walk_hash_int(h.c)}");
+  assert(h.c[7].v == 1, "c_hash_int_field_1_plain: value");
+  assert(h.c[3].v == 100, "c_hash_int_field_1_plain: neighbour");
+}
+fn c_hash_int_field_1_churn() {
+  h = H_hash_int { c: [] };
+  h.c[3] = KI { k: 3, v: 100 };
+  h.c[7] = KI { k: 7, v: 1 };
+  churn_hash_int(h.c);
+  assert(len(h.c) == 2, "c_hash_int_field_1_churn: len {len(h.c)}");
+  assert(walk_hash_int(h.c) == 2, "c_hash_int_field_1_churn: walk {walk_hash_int(h.c)}");
+  assert(h.c[7].v == 1, "c_hash_int_field_1_churn: value");
+  assert(h.c[3].v == 100, "c_hash_int_field_1_churn: neighbour");
+}
+fn c_hash_int_field_2_plain() {
+  h = H_hash_int { c: [] };
+  h.c[3] = KI { k: 3, v: 100 };
+  h.c[7] = KI { k: 7, v: 1 };
+  h.c[7] = KI { k: 7, v: 2 };
+  assert(len(h.c) == 2, "c_hash_int_field_2_plain: len {len(h.c)}");
+  assert(walk_hash_int(h.c) == 2, "c_hash_int_field_2_plain: walk {walk_hash_int(h.c)}");
+  assert(h.c[7].v == 2, "c_hash_int_field_2_plain: value");
+  assert(h.c[3].v == 100, "c_hash_int_field_2_plain: neighbour");
+}
+fn c_hash_int_field_2_churn() {
+  h = H_hash_int { c: [] };
+  h.c[3] = KI { k: 3, v: 100 };
+  h.c[7] = KI { k: 7, v: 1 };
+  churn_hash_int(h.c);
+  h.c[7] = KI { k: 7, v: 2 };
+  churn_hash_int(h.c);
+  assert(len(h.c) == 2, "c_hash_int_field_2_churn: len {len(h.c)}");
+  assert(walk_hash_int(h.c) == 2, "c_hash_int_field_2_churn: walk {walk_hash_int(h.c)}");
+  assert(h.c[7].v == 2, "c_hash_int_field_2_churn: value");
+  assert(h.c[3].v == 100, "c_hash_int_field_2_churn: neighbour");
+}
+fn c_hash_int_field_5_plain() {
+  h = H_hash_int { c: [] };
+  h.c[3] = KI { k: 3, v: 100 };
+  h.c[7] = KI { k: 7, v: 1 };
+  h.c[7] = KI { k: 7, v: 2 };
+  h.c[7] = KI { k: 7, v: 3 };
+  h.c[7] = KI { k: 7, v: 4 };
+  h.c[7] = KI { k: 7, v: 5 };
+  assert(len(h.c) == 2, "c_hash_int_field_5_plain: len {len(h.c)}");
+  assert(walk_hash_int(h.c) == 2, "c_hash_int_field_5_plain: walk {walk_hash_int(h.c)}");
+  assert(h.c[7].v == 5, "c_hash_int_field_5_plain: value");
+  assert(h.c[3].v == 100, "c_hash_int_field_5_plain: neighbour");
+}
+fn c_hash_int_field_5_churn() {
+  h = H_hash_int { c: [] };
+  h.c[3] = KI { k: 3, v: 100 };
+  h.c[7] = KI { k: 7, v: 1 };
+  churn_hash_int(h.c);
+  h.c[7] = KI { k: 7, v: 2 };
+  churn_hash_int(h.c);
+  h.c[7] = KI { k: 7, v: 3 };
+  churn_hash_int(h.c);
+  h.c[7] = KI { k: 7, v: 4 };
+  churn_hash_int(h.c);
+  h.c[7] = KI { k: 7, v: 5 };
+  churn_hash_int(h.c);
+  assert(len(h.c) == 2, "c_hash_int_field_5_churn: len {len(h.c)}");
+  assert(walk_hash_int(h.c) == 2, "c_hash_int_field_5_churn: walk {walk_hash_int(h.c)}");
+  assert(h.c[7].v == 5, "c_hash_int_field_5_churn: value");
+  assert(h.c[3].v == 100, "c_hash_int_field_5_churn: neighbour");
+}
+fn c_hash_int_fieldprm_1_plain() {
+  h = H_hash_int { c: [] };
+  h.c[3] = KI { k: 3, v: 100 };
+  putf_hash_int(h, 1);
+  assert(len(h.c) == 2, "c_hash_int_fieldprm_1_plain: len {len(h.c)}");
+  assert(walk_hash_int(h.c) == 2, "c_hash_int_fieldprm_1_plain: walk {walk_hash_int(h.c)}");
+  assert(h.c[7].v == 1, "c_hash_int_fieldprm_1_plain: value");
+  assert(h.c[3].v == 100, "c_hash_int_fieldprm_1_plain: neighbour");
+}
+fn c_hash_int_fieldprm_1_churn() {
+  h = H_hash_int { c: [] };
+  h.c[3] = KI { k: 3, v: 100 };
+  putf_hash_int(h, 1);
+  churn_hash_int(h.c);
+  assert(len(h.c) == 2, "c_hash_int_fieldprm_1_churn: len {len(h.c)}");
+  assert(walk_hash_int(h.c) == 2, "c_hash_int_fieldprm_1_churn: walk {walk_hash_int(h.c)}");
+  assert(h.c[7].v == 1, "c_hash_int_fieldprm_1_churn: value");
+  assert(h.c[3].v == 100, "c_hash_int_fieldprm_1_churn: neighbour");
+}
+fn c_hash_int_fieldprm_2_plain() {
+  h = H_hash_int { c: [] };
+  h.c[3] = KI { k: 3, v: 100 };
+  putf_hash_int(h, 1);
+  putf_hash_int(h, 2);
+  assert(len(h.c) == 2, "c_hash_int_fieldprm_2_plain: len {len(h.c)}");
+  assert(walk_hash_int(h.c) == 2, "c_hash_int_fieldprm_2_plain: walk {walk_hash_int(h.c)}");
+  assert(h.c[7].v == 2, "c_hash_int_fieldprm_2_plain: value");
+  assert(h.c[3].v == 100, "c_hash_int_fieldprm_2_plain: neighbour");
+}
+fn c_hash_int_fieldprm_2_churn() {
+  h = H_hash_int { c: [] };
+  h.c[3] = KI { k: 3, v: 100 };
+  putf_hash_int(h, 1);
+  churn_hash_int(h.c);
+  putf_hash_int(h, 2);
+  churn_hash_int(h.c);
+  assert(len(h.c) == 2, "c_hash_int_fieldprm_2_churn: len {len(h.c)}");
+  assert(walk_hash_int(h.c) == 2, "c_hash_int_fieldprm_2_churn: walk {walk_hash_int(h.c)}");
+  assert(h.c[7].v == 2, "c_hash_int_fieldprm_2_churn: value");
+  assert(h.c[3].v == 100, "c_hash_int_fieldprm_2_churn: neighbour");
+}
+fn c_hash_int_fieldprm_5_plain() {
+  h = H_hash_int { c: [] };
+  h.c[3] = KI { k: 3, v: 100 };
+  putf_hash_int(h, 1);
+  putf_hash_int(h, 2);
+  putf_hash_int(h, 3);
+  putf_hash_int(h, 4);
+  putf_hash_int(h, 5);
+  assert(len(h.c) == 2, "c_hash_int_fieldprm_5_plain: len {len(h.c)}");
+  assert(walk_hash_int(h.c) == 2, "c_hash_int_fieldprm_5_plain: walk {walk_hash_int(h.c)}");
+  assert(h.c[7].v == 5, "c_hash_int_fieldprm_5_plain: value");
+  assert(h.c[3].v == 100, "c_hash_int_fieldprm_5_plain: neighbour");
+}
+fn c_hash_int_fieldprm_5_churn() {
+  h = H_hash_int { c: [] };
+  h.c[3] = KI { k: 3, v: 100 };
+  putf_hash_int(h, 1);
+  churn_hash_int(h.c);
+  putf_hash_int(h, 2);
+  churn_hash_int(h.c);
+  putf_hash_int(h, 3);
+  churn_hash_int(h.c);
+  putf_hash_int(h, 4);
+  churn_hash_int(h.c);
+  putf_hash_int(h, 5);
+  churn_hash_int(h.c);
+  assert(len(h.c) == 2, "c_hash_int_fieldprm_5_churn: len {len(h.c)}");
+  assert(walk_hash_int(h.c) == 2, "c_hash_int_fieldprm_5_churn: walk {walk_hash_int(h.c)}");
+  assert(h.c[7].v == 5, "c_hash_int_fieldprm_5_churn: value");
+  assert(h.c[3].v == 100, "c_hash_int_fieldprm_5_churn: neighbour");
+}
+struct H_hash_text { c: hash<KT[k]> }
+fn put_hash_text(c: &hash<KT[k]>, v: integer) { c["s7"] = KT { k: "s7", v: v }; }
+fn putv_hash_text(c: &hash<KT[k]>, v: integer) { r = KT { k: "s7", v: v }; c["s7"] = r; }
+fn putf_hash_text(h: &H_hash_text, v: integer) { h.c["s7"] = KT { k: "s7", v: v }; }
+fn churn_hash_text(c: &hash<KT[k]>) { c["s9"] = KT { k: "s9", v: 0 }; c["s9"] = null; }
+fn walk_hash_text(c: const hash<KT[k]>) -> integer { n = 0; for _e in c { n += 1; } n }
+fn c_hash_text_local_1_plain() {
+  c: hash<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  c["s7"] = KT { k: "s7", v: 1 };
+  assert(len(c) == 2, "c_hash_text_local_1_plain: len {len(c)}");
+  assert(walk_hash_text(c) == 2, "c_hash_text_local_1_plain: walk {walk_hash_text(c)}");
+  assert(c["s7"].v == 1, "c_hash_text_local_1_plain: value");
+  assert(c["nb"].v == 100, "c_hash_text_local_1_plain: neighbour");
+}
+fn c_hash_text_local_1_churn() {
+  c: hash<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  c["s7"] = KT { k: "s7", v: 1 };
+  churn_hash_text(c);
+  assert(len(c) == 2, "c_hash_text_local_1_churn: len {len(c)}");
+  assert(walk_hash_text(c) == 2, "c_hash_text_local_1_churn: walk {walk_hash_text(c)}");
+  assert(c["s7"].v == 1, "c_hash_text_local_1_churn: value");
+  assert(c["nb"].v == 100, "c_hash_text_local_1_churn: neighbour");
+}
+fn c_hash_text_local_2_plain() {
+  c: hash<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  c["s7"] = KT { k: "s7", v: 1 };
+  c["s7"] = KT { k: "s7", v: 2 };
+  assert(len(c) == 2, "c_hash_text_local_2_plain: len {len(c)}");
+  assert(walk_hash_text(c) == 2, "c_hash_text_local_2_plain: walk {walk_hash_text(c)}");
+  assert(c["s7"].v == 2, "c_hash_text_local_2_plain: value");
+  assert(c["nb"].v == 100, "c_hash_text_local_2_plain: neighbour");
+}
+fn c_hash_text_local_2_churn() {
+  c: hash<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  c["s7"] = KT { k: "s7", v: 1 };
+  churn_hash_text(c);
+  c["s7"] = KT { k: "s7", v: 2 };
+  churn_hash_text(c);
+  assert(len(c) == 2, "c_hash_text_local_2_churn: len {len(c)}");
+  assert(walk_hash_text(c) == 2, "c_hash_text_local_2_churn: walk {walk_hash_text(c)}");
+  assert(c["s7"].v == 2, "c_hash_text_local_2_churn: value");
+  assert(c["nb"].v == 100, "c_hash_text_local_2_churn: neighbour");
+}
+fn c_hash_text_local_5_plain() {
+  c: hash<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  c["s7"] = KT { k: "s7", v: 1 };
+  c["s7"] = KT { k: "s7", v: 2 };
+  c["s7"] = KT { k: "s7", v: 3 };
+  c["s7"] = KT { k: "s7", v: 4 };
+  c["s7"] = KT { k: "s7", v: 5 };
+  assert(len(c) == 2, "c_hash_text_local_5_plain: len {len(c)}");
+  assert(walk_hash_text(c) == 2, "c_hash_text_local_5_plain: walk {walk_hash_text(c)}");
+  assert(c["s7"].v == 5, "c_hash_text_local_5_plain: value");
+  assert(c["nb"].v == 100, "c_hash_text_local_5_plain: neighbour");
+}
+fn c_hash_text_local_5_churn() {
+  c: hash<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  c["s7"] = KT { k: "s7", v: 1 };
+  churn_hash_text(c);
+  c["s7"] = KT { k: "s7", v: 2 };
+  churn_hash_text(c);
+  c["s7"] = KT { k: "s7", v: 3 };
+  churn_hash_text(c);
+  c["s7"] = KT { k: "s7", v: 4 };
+  churn_hash_text(c);
+  c["s7"] = KT { k: "s7", v: 5 };
+  churn_hash_text(c);
+  assert(len(c) == 2, "c_hash_text_local_5_churn: len {len(c)}");
+  assert(walk_hash_text(c) == 2, "c_hash_text_local_5_churn: walk {walk_hash_text(c)}");
+  assert(c["s7"].v == 5, "c_hash_text_local_5_churn: value");
+  assert(c["nb"].v == 100, "c_hash_text_local_5_churn: neighbour");
+}
+fn c_hash_text_param_1_plain() {
+  c: hash<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  put_hash_text(c, 1);
+  assert(len(c) == 2, "c_hash_text_param_1_plain: len {len(c)}");
+  assert(walk_hash_text(c) == 2, "c_hash_text_param_1_plain: walk {walk_hash_text(c)}");
+  assert(c["s7"].v == 1, "c_hash_text_param_1_plain: value");
+  assert(c["nb"].v == 100, "c_hash_text_param_1_plain: neighbour");
+}
+fn c_hash_text_param_1_churn() {
+  c: hash<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  put_hash_text(c, 1);
+  churn_hash_text(c);
+  assert(len(c) == 2, "c_hash_text_param_1_churn: len {len(c)}");
+  assert(walk_hash_text(c) == 2, "c_hash_text_param_1_churn: walk {walk_hash_text(c)}");
+  assert(c["s7"].v == 1, "c_hash_text_param_1_churn: value");
+  assert(c["nb"].v == 100, "c_hash_text_param_1_churn: neighbour");
+}
+fn c_hash_text_param_2_plain() {
+  c: hash<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  put_hash_text(c, 1);
+  put_hash_text(c, 2);
+  assert(len(c) == 2, "c_hash_text_param_2_plain: len {len(c)}");
+  assert(walk_hash_text(c) == 2, "c_hash_text_param_2_plain: walk {walk_hash_text(c)}");
+  assert(c["s7"].v == 2, "c_hash_text_param_2_plain: value");
+  assert(c["nb"].v == 100, "c_hash_text_param_2_plain: neighbour");
+}
+fn c_hash_text_param_2_churn() {
+  c: hash<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  put_hash_text(c, 1);
+  churn_hash_text(c);
+  put_hash_text(c, 2);
+  churn_hash_text(c);
+  assert(len(c) == 2, "c_hash_text_param_2_churn: len {len(c)}");
+  assert(walk_hash_text(c) == 2, "c_hash_text_param_2_churn: walk {walk_hash_text(c)}");
+  assert(c["s7"].v == 2, "c_hash_text_param_2_churn: value");
+  assert(c["nb"].v == 100, "c_hash_text_param_2_churn: neighbour");
+}
+fn c_hash_text_param_5_plain() {
+  c: hash<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  put_hash_text(c, 1);
+  put_hash_text(c, 2);
+  put_hash_text(c, 3);
+  put_hash_text(c, 4);
+  put_hash_text(c, 5);
+  assert(len(c) == 2, "c_hash_text_param_5_plain: len {len(c)}");
+  assert(walk_hash_text(c) == 2, "c_hash_text_param_5_plain: walk {walk_hash_text(c)}");
+  assert(c["s7"].v == 5, "c_hash_text_param_5_plain: value");
+  assert(c["nb"].v == 100, "c_hash_text_param_5_plain: neighbour");
+}
+fn c_hash_text_param_5_churn() {
+  c: hash<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  put_hash_text(c, 1);
+  churn_hash_text(c);
+  put_hash_text(c, 2);
+  churn_hash_text(c);
+  put_hash_text(c, 3);
+  churn_hash_text(c);
+  put_hash_text(c, 4);
+  churn_hash_text(c);
+  put_hash_text(c, 5);
+  churn_hash_text(c);
+  assert(len(c) == 2, "c_hash_text_param_5_churn: len {len(c)}");
+  assert(walk_hash_text(c) == 2, "c_hash_text_param_5_churn: walk {walk_hash_text(c)}");
+  assert(c["s7"].v == 5, "c_hash_text_param_5_churn: value");
+  assert(c["nb"].v == 100, "c_hash_text_param_5_churn: neighbour");
+}
+fn c_hash_text_paramvar_1_plain() {
+  c: hash<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  putv_hash_text(c, 1);
+  assert(len(c) == 2, "c_hash_text_paramvar_1_plain: len {len(c)}");
+  assert(walk_hash_text(c) == 2, "c_hash_text_paramvar_1_plain: walk {walk_hash_text(c)}");
+  assert(c["s7"].v == 1, "c_hash_text_paramvar_1_plain: value");
+  assert(c["nb"].v == 100, "c_hash_text_paramvar_1_plain: neighbour");
+}
+fn c_hash_text_paramvar_1_churn() {
+  c: hash<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  putv_hash_text(c, 1);
+  churn_hash_text(c);
+  assert(len(c) == 2, "c_hash_text_paramvar_1_churn: len {len(c)}");
+  assert(walk_hash_text(c) == 2, "c_hash_text_paramvar_1_churn: walk {walk_hash_text(c)}");
+  assert(c["s7"].v == 1, "c_hash_text_paramvar_1_churn: value");
+  assert(c["nb"].v == 100, "c_hash_text_paramvar_1_churn: neighbour");
+}
+fn c_hash_text_paramvar_2_plain() {
+  c: hash<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  putv_hash_text(c, 1);
+  putv_hash_text(c, 2);
+  assert(len(c) == 2, "c_hash_text_paramvar_2_plain: len {len(c)}");
+  assert(walk_hash_text(c) == 2, "c_hash_text_paramvar_2_plain: walk {walk_hash_text(c)}");
+  assert(c["s7"].v == 2, "c_hash_text_paramvar_2_plain: value");
+  assert(c["nb"].v == 100, "c_hash_text_paramvar_2_plain: neighbour");
+}
+fn c_hash_text_paramvar_2_churn() {
+  c: hash<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  putv_hash_text(c, 1);
+  churn_hash_text(c);
+  putv_hash_text(c, 2);
+  churn_hash_text(c);
+  assert(len(c) == 2, "c_hash_text_paramvar_2_churn: len {len(c)}");
+  assert(walk_hash_text(c) == 2, "c_hash_text_paramvar_2_churn: walk {walk_hash_text(c)}");
+  assert(c["s7"].v == 2, "c_hash_text_paramvar_2_churn: value");
+  assert(c["nb"].v == 100, "c_hash_text_paramvar_2_churn: neighbour");
+}
+fn c_hash_text_paramvar_5_plain() {
+  c: hash<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  putv_hash_text(c, 1);
+  putv_hash_text(c, 2);
+  putv_hash_text(c, 3);
+  putv_hash_text(c, 4);
+  putv_hash_text(c, 5);
+  assert(len(c) == 2, "c_hash_text_paramvar_5_plain: len {len(c)}");
+  assert(walk_hash_text(c) == 2, "c_hash_text_paramvar_5_plain: walk {walk_hash_text(c)}");
+  assert(c["s7"].v == 5, "c_hash_text_paramvar_5_plain: value");
+  assert(c["nb"].v == 100, "c_hash_text_paramvar_5_plain: neighbour");
+}
+fn c_hash_text_paramvar_5_churn() {
+  c: hash<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  putv_hash_text(c, 1);
+  churn_hash_text(c);
+  putv_hash_text(c, 2);
+  churn_hash_text(c);
+  putv_hash_text(c, 3);
+  churn_hash_text(c);
+  putv_hash_text(c, 4);
+  churn_hash_text(c);
+  putv_hash_text(c, 5);
+  churn_hash_text(c);
+  assert(len(c) == 2, "c_hash_text_paramvar_5_churn: len {len(c)}");
+  assert(walk_hash_text(c) == 2, "c_hash_text_paramvar_5_churn: walk {walk_hash_text(c)}");
+  assert(c["s7"].v == 5, "c_hash_text_paramvar_5_churn: value");
+  assert(c["nb"].v == 100, "c_hash_text_paramvar_5_churn: neighbour");
+}
+fn c_hash_text_field_1_plain() {
+  h = H_hash_text { c: [] };
+  h.c["nb"] = KT { k: "nb", v: 100 };
+  h.c["s7"] = KT { k: "s7", v: 1 };
+  assert(len(h.c) == 2, "c_hash_text_field_1_plain: len {len(h.c)}");
+  assert(walk_hash_text(h.c) == 2, "c_hash_text_field_1_plain: walk {walk_hash_text(h.c)}");
+  assert(h.c["s7"].v == 1, "c_hash_text_field_1_plain: value");
+  assert(h.c["nb"].v == 100, "c_hash_text_field_1_plain: neighbour");
+}
+fn c_hash_text_field_1_churn() {
+  h = H_hash_text { c: [] };
+  h.c["nb"] = KT { k: "nb", v: 100 };
+  h.c["s7"] = KT { k: "s7", v: 1 };
+  churn_hash_text(h.c);
+  assert(len(h.c) == 2, "c_hash_text_field_1_churn: len {len(h.c)}");
+  assert(walk_hash_text(h.c) == 2, "c_hash_text_field_1_churn: walk {walk_hash_text(h.c)}");
+  assert(h.c["s7"].v == 1, "c_hash_text_field_1_churn: value");
+  assert(h.c["nb"].v == 100, "c_hash_text_field_1_churn: neighbour");
+}
+fn c_hash_text_field_2_plain() {
+  h = H_hash_text { c: [] };
+  h.c["nb"] = KT { k: "nb", v: 100 };
+  h.c["s7"] = KT { k: "s7", v: 1 };
+  h.c["s7"] = KT { k: "s7", v: 2 };
+  assert(len(h.c) == 2, "c_hash_text_field_2_plain: len {len(h.c)}");
+  assert(walk_hash_text(h.c) == 2, "c_hash_text_field_2_plain: walk {walk_hash_text(h.c)}");
+  assert(h.c["s7"].v == 2, "c_hash_text_field_2_plain: value");
+  assert(h.c["nb"].v == 100, "c_hash_text_field_2_plain: neighbour");
+}
+fn c_hash_text_field_2_churn() {
+  h = H_hash_text { c: [] };
+  h.c["nb"] = KT { k: "nb", v: 100 };
+  h.c["s7"] = KT { k: "s7", v: 1 };
+  churn_hash_text(h.c);
+  h.c["s7"] = KT { k: "s7", v: 2 };
+  churn_hash_text(h.c);
+  assert(len(h.c) == 2, "c_hash_text_field_2_churn: len {len(h.c)}");
+  assert(walk_hash_text(h.c) == 2, "c_hash_text_field_2_churn: walk {walk_hash_text(h.c)}");
+  assert(h.c["s7"].v == 2, "c_hash_text_field_2_churn: value");
+  assert(h.c["nb"].v == 100, "c_hash_text_field_2_churn: neighbour");
+}
+fn c_hash_text_field_5_plain() {
+  h = H_hash_text { c: [] };
+  h.c["nb"] = KT { k: "nb", v: 100 };
+  h.c["s7"] = KT { k: "s7", v: 1 };
+  h.c["s7"] = KT { k: "s7", v: 2 };
+  h.c["s7"] = KT { k: "s7", v: 3 };
+  h.c["s7"] = KT { k: "s7", v: 4 };
+  h.c["s7"] = KT { k: "s7", v: 5 };
+  assert(len(h.c) == 2, "c_hash_text_field_5_plain: len {len(h.c)}");
+  assert(walk_hash_text(h.c) == 2, "c_hash_text_field_5_plain: walk {walk_hash_text(h.c)}");
+  assert(h.c["s7"].v == 5, "c_hash_text_field_5_plain: value");
+  assert(h.c["nb"].v == 100, "c_hash_text_field_5_plain: neighbour");
+}
+fn c_hash_text_field_5_churn() {
+  h = H_hash_text { c: [] };
+  h.c["nb"] = KT { k: "nb", v: 100 };
+  h.c["s7"] = KT { k: "s7", v: 1 };
+  churn_hash_text(h.c);
+  h.c["s7"] = KT { k: "s7", v: 2 };
+  churn_hash_text(h.c);
+  h.c["s7"] = KT { k: "s7", v: 3 };
+  churn_hash_text(h.c);
+  h.c["s7"] = KT { k: "s7", v: 4 };
+  churn_hash_text(h.c);
+  h.c["s7"] = KT { k: "s7", v: 5 };
+  churn_hash_text(h.c);
+  assert(len(h.c) == 2, "c_hash_text_field_5_churn: len {len(h.c)}");
+  assert(walk_hash_text(h.c) == 2, "c_hash_text_field_5_churn: walk {walk_hash_text(h.c)}");
+  assert(h.c["s7"].v == 5, "c_hash_text_field_5_churn: value");
+  assert(h.c["nb"].v == 100, "c_hash_text_field_5_churn: neighbour");
+}
+fn c_hash_text_fieldprm_1_plain() {
+  h = H_hash_text { c: [] };
+  h.c["nb"] = KT { k: "nb", v: 100 };
+  putf_hash_text(h, 1);
+  assert(len(h.c) == 2, "c_hash_text_fieldprm_1_plain: len {len(h.c)}");
+  assert(walk_hash_text(h.c) == 2, "c_hash_text_fieldprm_1_plain: walk {walk_hash_text(h.c)}");
+  assert(h.c["s7"].v == 1, "c_hash_text_fieldprm_1_plain: value");
+  assert(h.c["nb"].v == 100, "c_hash_text_fieldprm_1_plain: neighbour");
+}
+fn c_hash_text_fieldprm_1_churn() {
+  h = H_hash_text { c: [] };
+  h.c["nb"] = KT { k: "nb", v: 100 };
+  putf_hash_text(h, 1);
+  churn_hash_text(h.c);
+  assert(len(h.c) == 2, "c_hash_text_fieldprm_1_churn: len {len(h.c)}");
+  assert(walk_hash_text(h.c) == 2, "c_hash_text_fieldprm_1_churn: walk {walk_hash_text(h.c)}");
+  assert(h.c["s7"].v == 1, "c_hash_text_fieldprm_1_churn: value");
+  assert(h.c["nb"].v == 100, "c_hash_text_fieldprm_1_churn: neighbour");
+}
+fn c_hash_text_fieldprm_2_plain() {
+  h = H_hash_text { c: [] };
+  h.c["nb"] = KT { k: "nb", v: 100 };
+  putf_hash_text(h, 1);
+  putf_hash_text(h, 2);
+  assert(len(h.c) == 2, "c_hash_text_fieldprm_2_plain: len {len(h.c)}");
+  assert(walk_hash_text(h.c) == 2, "c_hash_text_fieldprm_2_plain: walk {walk_hash_text(h.c)}");
+  assert(h.c["s7"].v == 2, "c_hash_text_fieldprm_2_plain: value");
+  assert(h.c["nb"].v == 100, "c_hash_text_fieldprm_2_plain: neighbour");
+}
+fn c_hash_text_fieldprm_2_churn() {
+  h = H_hash_text { c: [] };
+  h.c["nb"] = KT { k: "nb", v: 100 };
+  putf_hash_text(h, 1);
+  churn_hash_text(h.c);
+  putf_hash_text(h, 2);
+  churn_hash_text(h.c);
+  assert(len(h.c) == 2, "c_hash_text_fieldprm_2_churn: len {len(h.c)}");
+  assert(walk_hash_text(h.c) == 2, "c_hash_text_fieldprm_2_churn: walk {walk_hash_text(h.c)}");
+  assert(h.c["s7"].v == 2, "c_hash_text_fieldprm_2_churn: value");
+  assert(h.c["nb"].v == 100, "c_hash_text_fieldprm_2_churn: neighbour");
+}
+fn c_hash_text_fieldprm_5_plain() {
+  h = H_hash_text { c: [] };
+  h.c["nb"] = KT { k: "nb", v: 100 };
+  putf_hash_text(h, 1);
+  putf_hash_text(h, 2);
+  putf_hash_text(h, 3);
+  putf_hash_text(h, 4);
+  putf_hash_text(h, 5);
+  assert(len(h.c) == 2, "c_hash_text_fieldprm_5_plain: len {len(h.c)}");
+  assert(walk_hash_text(h.c) == 2, "c_hash_text_fieldprm_5_plain: walk {walk_hash_text(h.c)}");
+  assert(h.c["s7"].v == 5, "c_hash_text_fieldprm_5_plain: value");
+  assert(h.c["nb"].v == 100, "c_hash_text_fieldprm_5_plain: neighbour");
+}
+fn c_hash_text_fieldprm_5_churn() {
+  h = H_hash_text { c: [] };
+  h.c["nb"] = KT { k: "nb", v: 100 };
+  putf_hash_text(h, 1);
+  churn_hash_text(h.c);
+  putf_hash_text(h, 2);
+  churn_hash_text(h.c);
+  putf_hash_text(h, 3);
+  churn_hash_text(h.c);
+  putf_hash_text(h, 4);
+  churn_hash_text(h.c);
+  putf_hash_text(h, 5);
+  churn_hash_text(h.c);
+  assert(len(h.c) == 2, "c_hash_text_fieldprm_5_churn: len {len(h.c)}");
+  assert(walk_hash_text(h.c) == 2, "c_hash_text_fieldprm_5_churn: walk {walk_hash_text(h.c)}");
+  assert(h.c["s7"].v == 5, "c_hash_text_fieldprm_5_churn: value");
+  assert(h.c["nb"].v == 100, "c_hash_text_fieldprm_5_churn: neighbour");
+}
+struct H_hash_two { c: hash<K2[a, b]> }
+fn put_hash_two(c: &hash<K2[a, b]>, v: integer) { c["s7", 7] = K2 { a: "s7", b: 7, v: v }; }
+fn putv_hash_two(c: &hash<K2[a, b]>, v: integer) { r = K2 { a: "s7", b: 7, v: v }; c["s7", 7] = r; }
+fn putf_hash_two(h: &H_hash_two, v: integer) { h.c["s7", 7] = K2 { a: "s7", b: 7, v: v }; }
+fn churn_hash_two(c: &hash<K2[a, b]>) { c["s9", 9] = K2 { a: "s9", b: 9, v: 0 }; c["s9", 9] = null; }
+fn walk_hash_two(c: const hash<K2[a, b]>) -> integer { n = 0; for _e in c { n += 1; } n }
+fn c_hash_two_local_1_plain() {
+  c: hash<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 1 };
+  assert(len(c) == 2, "c_hash_two_local_1_plain: len {len(c)}");
+  assert(walk_hash_two(c) == 2, "c_hash_two_local_1_plain: walk {walk_hash_two(c)}");
+  assert(c["s7", 7].v == 1, "c_hash_two_local_1_plain: value");
+  assert(c["nb", 3].v == 100, "c_hash_two_local_1_plain: neighbour");
+}
+fn c_hash_two_local_1_churn() {
+  c: hash<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 1 };
+  churn_hash_two(c);
+  assert(len(c) == 2, "c_hash_two_local_1_churn: len {len(c)}");
+  assert(walk_hash_two(c) == 2, "c_hash_two_local_1_churn: walk {walk_hash_two(c)}");
+  assert(c["s7", 7].v == 1, "c_hash_two_local_1_churn: value");
+  assert(c["nb", 3].v == 100, "c_hash_two_local_1_churn: neighbour");
+}
+fn c_hash_two_local_2_plain() {
+  c: hash<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 1 };
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 2 };
+  assert(len(c) == 2, "c_hash_two_local_2_plain: len {len(c)}");
+  assert(walk_hash_two(c) == 2, "c_hash_two_local_2_plain: walk {walk_hash_two(c)}");
+  assert(c["s7", 7].v == 2, "c_hash_two_local_2_plain: value");
+  assert(c["nb", 3].v == 100, "c_hash_two_local_2_plain: neighbour");
+}
+fn c_hash_two_local_2_churn() {
+  c: hash<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 1 };
+  churn_hash_two(c);
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 2 };
+  churn_hash_two(c);
+  assert(len(c) == 2, "c_hash_two_local_2_churn: len {len(c)}");
+  assert(walk_hash_two(c) == 2, "c_hash_two_local_2_churn: walk {walk_hash_two(c)}");
+  assert(c["s7", 7].v == 2, "c_hash_two_local_2_churn: value");
+  assert(c["nb", 3].v == 100, "c_hash_two_local_2_churn: neighbour");
+}
+fn c_hash_two_local_5_plain() {
+  c: hash<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 1 };
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 2 };
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 3 };
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 4 };
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 5 };
+  assert(len(c) == 2, "c_hash_two_local_5_plain: len {len(c)}");
+  assert(walk_hash_two(c) == 2, "c_hash_two_local_5_plain: walk {walk_hash_two(c)}");
+  assert(c["s7", 7].v == 5, "c_hash_two_local_5_plain: value");
+  assert(c["nb", 3].v == 100, "c_hash_two_local_5_plain: neighbour");
+}
+fn c_hash_two_local_5_churn() {
+  c: hash<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 1 };
+  churn_hash_two(c);
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 2 };
+  churn_hash_two(c);
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 3 };
+  churn_hash_two(c);
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 4 };
+  churn_hash_two(c);
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 5 };
+  churn_hash_two(c);
+  assert(len(c) == 2, "c_hash_two_local_5_churn: len {len(c)}");
+  assert(walk_hash_two(c) == 2, "c_hash_two_local_5_churn: walk {walk_hash_two(c)}");
+  assert(c["s7", 7].v == 5, "c_hash_two_local_5_churn: value");
+  assert(c["nb", 3].v == 100, "c_hash_two_local_5_churn: neighbour");
+}
+fn c_hash_two_param_1_plain() {
+  c: hash<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  put_hash_two(c, 1);
+  assert(len(c) == 2, "c_hash_two_param_1_plain: len {len(c)}");
+  assert(walk_hash_two(c) == 2, "c_hash_two_param_1_plain: walk {walk_hash_two(c)}");
+  assert(c["s7", 7].v == 1, "c_hash_two_param_1_plain: value");
+  assert(c["nb", 3].v == 100, "c_hash_two_param_1_plain: neighbour");
+}
+fn c_hash_two_param_1_churn() {
+  c: hash<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  put_hash_two(c, 1);
+  churn_hash_two(c);
+  assert(len(c) == 2, "c_hash_two_param_1_churn: len {len(c)}");
+  assert(walk_hash_two(c) == 2, "c_hash_two_param_1_churn: walk {walk_hash_two(c)}");
+  assert(c["s7", 7].v == 1, "c_hash_two_param_1_churn: value");
+  assert(c["nb", 3].v == 100, "c_hash_two_param_1_churn: neighbour");
+}
+fn c_hash_two_param_2_plain() {
+  c: hash<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  put_hash_two(c, 1);
+  put_hash_two(c, 2);
+  assert(len(c) == 2, "c_hash_two_param_2_plain: len {len(c)}");
+  assert(walk_hash_two(c) == 2, "c_hash_two_param_2_plain: walk {walk_hash_two(c)}");
+  assert(c["s7", 7].v == 2, "c_hash_two_param_2_plain: value");
+  assert(c["nb", 3].v == 100, "c_hash_two_param_2_plain: neighbour");
+}
+fn c_hash_two_param_2_churn() {
+  c: hash<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  put_hash_two(c, 1);
+  churn_hash_two(c);
+  put_hash_two(c, 2);
+  churn_hash_two(c);
+  assert(len(c) == 2, "c_hash_two_param_2_churn: len {len(c)}");
+  assert(walk_hash_two(c) == 2, "c_hash_two_param_2_churn: walk {walk_hash_two(c)}");
+  assert(c["s7", 7].v == 2, "c_hash_two_param_2_churn: value");
+  assert(c["nb", 3].v == 100, "c_hash_two_param_2_churn: neighbour");
+}
+fn c_hash_two_param_5_plain() {
+  c: hash<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  put_hash_two(c, 1);
+  put_hash_two(c, 2);
+  put_hash_two(c, 3);
+  put_hash_two(c, 4);
+  put_hash_two(c, 5);
+  assert(len(c) == 2, "c_hash_two_param_5_plain: len {len(c)}");
+  assert(walk_hash_two(c) == 2, "c_hash_two_param_5_plain: walk {walk_hash_two(c)}");
+  assert(c["s7", 7].v == 5, "c_hash_two_param_5_plain: value");
+  assert(c["nb", 3].v == 100, "c_hash_two_param_5_plain: neighbour");
+}
+fn c_hash_two_param_5_churn() {
+  c: hash<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  put_hash_two(c, 1);
+  churn_hash_two(c);
+  put_hash_two(c, 2);
+  churn_hash_two(c);
+  put_hash_two(c, 3);
+  churn_hash_two(c);
+  put_hash_two(c, 4);
+  churn_hash_two(c);
+  put_hash_two(c, 5);
+  churn_hash_two(c);
+  assert(len(c) == 2, "c_hash_two_param_5_churn: len {len(c)}");
+  assert(walk_hash_two(c) == 2, "c_hash_two_param_5_churn: walk {walk_hash_two(c)}");
+  assert(c["s7", 7].v == 5, "c_hash_two_param_5_churn: value");
+  assert(c["nb", 3].v == 100, "c_hash_two_param_5_churn: neighbour");
+}
+fn c_hash_two_paramvar_1_plain() {
+  c: hash<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  putv_hash_two(c, 1);
+  assert(len(c) == 2, "c_hash_two_paramvar_1_plain: len {len(c)}");
+  assert(walk_hash_two(c) == 2, "c_hash_two_paramvar_1_plain: walk {walk_hash_two(c)}");
+  assert(c["s7", 7].v == 1, "c_hash_two_paramvar_1_plain: value");
+  assert(c["nb", 3].v == 100, "c_hash_two_paramvar_1_plain: neighbour");
+}
+fn c_hash_two_paramvar_1_churn() {
+  c: hash<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  putv_hash_two(c, 1);
+  churn_hash_two(c);
+  assert(len(c) == 2, "c_hash_two_paramvar_1_churn: len {len(c)}");
+  assert(walk_hash_two(c) == 2, "c_hash_two_paramvar_1_churn: walk {walk_hash_two(c)}");
+  assert(c["s7", 7].v == 1, "c_hash_two_paramvar_1_churn: value");
+  assert(c["nb", 3].v == 100, "c_hash_two_paramvar_1_churn: neighbour");
+}
+fn c_hash_two_paramvar_2_plain() {
+  c: hash<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  putv_hash_two(c, 1);
+  putv_hash_two(c, 2);
+  assert(len(c) == 2, "c_hash_two_paramvar_2_plain: len {len(c)}");
+  assert(walk_hash_two(c) == 2, "c_hash_two_paramvar_2_plain: walk {walk_hash_two(c)}");
+  assert(c["s7", 7].v == 2, "c_hash_two_paramvar_2_plain: value");
+  assert(c["nb", 3].v == 100, "c_hash_two_paramvar_2_plain: neighbour");
+}
+fn c_hash_two_paramvar_2_churn() {
+  c: hash<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  putv_hash_two(c, 1);
+  churn_hash_two(c);
+  putv_hash_two(c, 2);
+  churn_hash_two(c);
+  assert(len(c) == 2, "c_hash_two_paramvar_2_churn: len {len(c)}");
+  assert(walk_hash_two(c) == 2, "c_hash_two_paramvar_2_churn: walk {walk_hash_two(c)}");
+  assert(c["s7", 7].v == 2, "c_hash_two_paramvar_2_churn: value");
+  assert(c["nb", 3].v == 100, "c_hash_two_paramvar_2_churn: neighbour");
+}
+fn c_hash_two_paramvar_5_plain() {
+  c: hash<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  putv_hash_two(c, 1);
+  putv_hash_two(c, 2);
+  putv_hash_two(c, 3);
+  putv_hash_two(c, 4);
+  putv_hash_two(c, 5);
+  assert(len(c) == 2, "c_hash_two_paramvar_5_plain: len {len(c)}");
+  assert(walk_hash_two(c) == 2, "c_hash_two_paramvar_5_plain: walk {walk_hash_two(c)}");
+  assert(c["s7", 7].v == 5, "c_hash_two_paramvar_5_plain: value");
+  assert(c["nb", 3].v == 100, "c_hash_two_paramvar_5_plain: neighbour");
+}
+fn c_hash_two_paramvar_5_churn() {
+  c: hash<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  putv_hash_two(c, 1);
+  churn_hash_two(c);
+  putv_hash_two(c, 2);
+  churn_hash_two(c);
+  putv_hash_two(c, 3);
+  churn_hash_two(c);
+  putv_hash_two(c, 4);
+  churn_hash_two(c);
+  putv_hash_two(c, 5);
+  churn_hash_two(c);
+  assert(len(c) == 2, "c_hash_two_paramvar_5_churn: len {len(c)}");
+  assert(walk_hash_two(c) == 2, "c_hash_two_paramvar_5_churn: walk {walk_hash_two(c)}");
+  assert(c["s7", 7].v == 5, "c_hash_two_paramvar_5_churn: value");
+  assert(c["nb", 3].v == 100, "c_hash_two_paramvar_5_churn: neighbour");
+}
+fn c_hash_two_field_1_plain() {
+  h = H_hash_two { c: [] };
+  h.c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 1 };
+  assert(len(h.c) == 2, "c_hash_two_field_1_plain: len {len(h.c)}");
+  assert(walk_hash_two(h.c) == 2, "c_hash_two_field_1_plain: walk {walk_hash_two(h.c)}");
+  assert(h.c["s7", 7].v == 1, "c_hash_two_field_1_plain: value");
+  assert(h.c["nb", 3].v == 100, "c_hash_two_field_1_plain: neighbour");
+}
+fn c_hash_two_field_1_churn() {
+  h = H_hash_two { c: [] };
+  h.c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 1 };
+  churn_hash_two(h.c);
+  assert(len(h.c) == 2, "c_hash_two_field_1_churn: len {len(h.c)}");
+  assert(walk_hash_two(h.c) == 2, "c_hash_two_field_1_churn: walk {walk_hash_two(h.c)}");
+  assert(h.c["s7", 7].v == 1, "c_hash_two_field_1_churn: value");
+  assert(h.c["nb", 3].v == 100, "c_hash_two_field_1_churn: neighbour");
+}
+fn c_hash_two_field_2_plain() {
+  h = H_hash_two { c: [] };
+  h.c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 1 };
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 2 };
+  assert(len(h.c) == 2, "c_hash_two_field_2_plain: len {len(h.c)}");
+  assert(walk_hash_two(h.c) == 2, "c_hash_two_field_2_plain: walk {walk_hash_two(h.c)}");
+  assert(h.c["s7", 7].v == 2, "c_hash_two_field_2_plain: value");
+  assert(h.c["nb", 3].v == 100, "c_hash_two_field_2_plain: neighbour");
+}
+fn c_hash_two_field_2_churn() {
+  h = H_hash_two { c: [] };
+  h.c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 1 };
+  churn_hash_two(h.c);
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 2 };
+  churn_hash_two(h.c);
+  assert(len(h.c) == 2, "c_hash_two_field_2_churn: len {len(h.c)}");
+  assert(walk_hash_two(h.c) == 2, "c_hash_two_field_2_churn: walk {walk_hash_two(h.c)}");
+  assert(h.c["s7", 7].v == 2, "c_hash_two_field_2_churn: value");
+  assert(h.c["nb", 3].v == 100, "c_hash_two_field_2_churn: neighbour");
+}
+fn c_hash_two_field_5_plain() {
+  h = H_hash_two { c: [] };
+  h.c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 1 };
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 2 };
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 3 };
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 4 };
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 5 };
+  assert(len(h.c) == 2, "c_hash_two_field_5_plain: len {len(h.c)}");
+  assert(walk_hash_two(h.c) == 2, "c_hash_two_field_5_plain: walk {walk_hash_two(h.c)}");
+  assert(h.c["s7", 7].v == 5, "c_hash_two_field_5_plain: value");
+  assert(h.c["nb", 3].v == 100, "c_hash_two_field_5_plain: neighbour");
+}
+fn c_hash_two_field_5_churn() {
+  h = H_hash_two { c: [] };
+  h.c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 1 };
+  churn_hash_two(h.c);
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 2 };
+  churn_hash_two(h.c);
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 3 };
+  churn_hash_two(h.c);
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 4 };
+  churn_hash_two(h.c);
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 5 };
+  churn_hash_two(h.c);
+  assert(len(h.c) == 2, "c_hash_two_field_5_churn: len {len(h.c)}");
+  assert(walk_hash_two(h.c) == 2, "c_hash_two_field_5_churn: walk {walk_hash_two(h.c)}");
+  assert(h.c["s7", 7].v == 5, "c_hash_two_field_5_churn: value");
+  assert(h.c["nb", 3].v == 100, "c_hash_two_field_5_churn: neighbour");
+}
+fn c_hash_two_fieldprm_1_plain() {
+  h = H_hash_two { c: [] };
+  h.c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  putf_hash_two(h, 1);
+  assert(len(h.c) == 2, "c_hash_two_fieldprm_1_plain: len {len(h.c)}");
+  assert(walk_hash_two(h.c) == 2, "c_hash_two_fieldprm_1_plain: walk {walk_hash_two(h.c)}");
+  assert(h.c["s7", 7].v == 1, "c_hash_two_fieldprm_1_plain: value");
+  assert(h.c["nb", 3].v == 100, "c_hash_two_fieldprm_1_plain: neighbour");
+}
+fn c_hash_two_fieldprm_1_churn() {
+  h = H_hash_two { c: [] };
+  h.c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  putf_hash_two(h, 1);
+  churn_hash_two(h.c);
+  assert(len(h.c) == 2, "c_hash_two_fieldprm_1_churn: len {len(h.c)}");
+  assert(walk_hash_two(h.c) == 2, "c_hash_two_fieldprm_1_churn: walk {walk_hash_two(h.c)}");
+  assert(h.c["s7", 7].v == 1, "c_hash_two_fieldprm_1_churn: value");
+  assert(h.c["nb", 3].v == 100, "c_hash_two_fieldprm_1_churn: neighbour");
+}
+fn c_hash_two_fieldprm_2_plain() {
+  h = H_hash_two { c: [] };
+  h.c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  putf_hash_two(h, 1);
+  putf_hash_two(h, 2);
+  assert(len(h.c) == 2, "c_hash_two_fieldprm_2_plain: len {len(h.c)}");
+  assert(walk_hash_two(h.c) == 2, "c_hash_two_fieldprm_2_plain: walk {walk_hash_two(h.c)}");
+  assert(h.c["s7", 7].v == 2, "c_hash_two_fieldprm_2_plain: value");
+  assert(h.c["nb", 3].v == 100, "c_hash_two_fieldprm_2_plain: neighbour");
+}
+fn c_hash_two_fieldprm_2_churn() {
+  h = H_hash_two { c: [] };
+  h.c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  putf_hash_two(h, 1);
+  churn_hash_two(h.c);
+  putf_hash_two(h, 2);
+  churn_hash_two(h.c);
+  assert(len(h.c) == 2, "c_hash_two_fieldprm_2_churn: len {len(h.c)}");
+  assert(walk_hash_two(h.c) == 2, "c_hash_two_fieldprm_2_churn: walk {walk_hash_two(h.c)}");
+  assert(h.c["s7", 7].v == 2, "c_hash_two_fieldprm_2_churn: value");
+  assert(h.c["nb", 3].v == 100, "c_hash_two_fieldprm_2_churn: neighbour");
+}
+fn c_hash_two_fieldprm_5_plain() {
+  h = H_hash_two { c: [] };
+  h.c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  putf_hash_two(h, 1);
+  putf_hash_two(h, 2);
+  putf_hash_two(h, 3);
+  putf_hash_two(h, 4);
+  putf_hash_two(h, 5);
+  assert(len(h.c) == 2, "c_hash_two_fieldprm_5_plain: len {len(h.c)}");
+  assert(walk_hash_two(h.c) == 2, "c_hash_two_fieldprm_5_plain: walk {walk_hash_two(h.c)}");
+  assert(h.c["s7", 7].v == 5, "c_hash_two_fieldprm_5_plain: value");
+  assert(h.c["nb", 3].v == 100, "c_hash_two_fieldprm_5_plain: neighbour");
+}
+fn c_hash_two_fieldprm_5_churn() {
+  h = H_hash_two { c: [] };
+  h.c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  putf_hash_two(h, 1);
+  churn_hash_two(h.c);
+  putf_hash_two(h, 2);
+  churn_hash_two(h.c);
+  putf_hash_two(h, 3);
+  churn_hash_two(h.c);
+  putf_hash_two(h, 4);
+  churn_hash_two(h.c);
+  putf_hash_two(h, 5);
+  churn_hash_two(h.c);
+  assert(len(h.c) == 2, "c_hash_two_fieldprm_5_churn: len {len(h.c)}");
+  assert(walk_hash_two(h.c) == 2, "c_hash_two_fieldprm_5_churn: walk {walk_hash_two(h.c)}");
+  assert(h.c["s7", 7].v == 5, "c_hash_two_fieldprm_5_churn: value");
+  assert(h.c["nb", 3].v == 100, "c_hash_two_fieldprm_5_churn: neighbour");
+}
+struct H_sorted_int { c: sorted<KI[k]> }
+fn put_sorted_int(c: &sorted<KI[k]>, v: integer) { c[7] = KI { k: 7, v: v }; }
+fn putv_sorted_int(c: &sorted<KI[k]>, v: integer) { r = KI { k: 7, v: v }; c[7] = r; }
+fn putf_sorted_int(h: &H_sorted_int, v: integer) { h.c[7] = KI { k: 7, v: v }; }
+fn churn_sorted_int(c: &sorted<KI[k]>) { c[9] = KI { k: 9, v: 0 }; c[9] = null; }
+fn walk_sorted_int(c: const sorted<KI[k]>) -> integer { n = 0; for _e in c { n += 1; } n }
+fn c_sorted_int_local_1_plain() {
+  c: sorted<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  c[7] = KI { k: 7, v: 1 };
+  assert(len(c) == 2, "c_sorted_int_local_1_plain: len {len(c)}");
+  assert(walk_sorted_int(c) == 2, "c_sorted_int_local_1_plain: walk {walk_sorted_int(c)}");
+  assert(c[7].v == 1, "c_sorted_int_local_1_plain: value");
+  assert(c[3].v == 100, "c_sorted_int_local_1_plain: neighbour");
+}
+fn c_sorted_int_local_1_churn() {
+  c: sorted<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  c[7] = KI { k: 7, v: 1 };
+  churn_sorted_int(c);
+  assert(len(c) == 2, "c_sorted_int_local_1_churn: len {len(c)}");
+  assert(walk_sorted_int(c) == 2, "c_sorted_int_local_1_churn: walk {walk_sorted_int(c)}");
+  assert(c[7].v == 1, "c_sorted_int_local_1_churn: value");
+  assert(c[3].v == 100, "c_sorted_int_local_1_churn: neighbour");
+}
+fn c_sorted_int_local_2_plain() {
+  c: sorted<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  c[7] = KI { k: 7, v: 1 };
+  c[7] = KI { k: 7, v: 2 };
+  assert(len(c) == 2, "c_sorted_int_local_2_plain: len {len(c)}");
+  assert(walk_sorted_int(c) == 2, "c_sorted_int_local_2_plain: walk {walk_sorted_int(c)}");
+  assert(c[7].v == 2, "c_sorted_int_local_2_plain: value");
+  assert(c[3].v == 100, "c_sorted_int_local_2_plain: neighbour");
+}
+fn c_sorted_int_local_2_churn() {
+  c: sorted<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  c[7] = KI { k: 7, v: 1 };
+  churn_sorted_int(c);
+  c[7] = KI { k: 7, v: 2 };
+  churn_sorted_int(c);
+  assert(len(c) == 2, "c_sorted_int_local_2_churn: len {len(c)}");
+  assert(walk_sorted_int(c) == 2, "c_sorted_int_local_2_churn: walk {walk_sorted_int(c)}");
+  assert(c[7].v == 2, "c_sorted_int_local_2_churn: value");
+  assert(c[3].v == 100, "c_sorted_int_local_2_churn: neighbour");
+}
+fn c_sorted_int_local_5_plain() {
+  c: sorted<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  c[7] = KI { k: 7, v: 1 };
+  c[7] = KI { k: 7, v: 2 };
+  c[7] = KI { k: 7, v: 3 };
+  c[7] = KI { k: 7, v: 4 };
+  c[7] = KI { k: 7, v: 5 };
+  assert(len(c) == 2, "c_sorted_int_local_5_plain: len {len(c)}");
+  assert(walk_sorted_int(c) == 2, "c_sorted_int_local_5_plain: walk {walk_sorted_int(c)}");
+  assert(c[7].v == 5, "c_sorted_int_local_5_plain: value");
+  assert(c[3].v == 100, "c_sorted_int_local_5_plain: neighbour");
+}
+fn c_sorted_int_local_5_churn() {
+  c: sorted<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  c[7] = KI { k: 7, v: 1 };
+  churn_sorted_int(c);
+  c[7] = KI { k: 7, v: 2 };
+  churn_sorted_int(c);
+  c[7] = KI { k: 7, v: 3 };
+  churn_sorted_int(c);
+  c[7] = KI { k: 7, v: 4 };
+  churn_sorted_int(c);
+  c[7] = KI { k: 7, v: 5 };
+  churn_sorted_int(c);
+  assert(len(c) == 2, "c_sorted_int_local_5_churn: len {len(c)}");
+  assert(walk_sorted_int(c) == 2, "c_sorted_int_local_5_churn: walk {walk_sorted_int(c)}");
+  assert(c[7].v == 5, "c_sorted_int_local_5_churn: value");
+  assert(c[3].v == 100, "c_sorted_int_local_5_churn: neighbour");
+}
+fn c_sorted_int_param_1_plain() {
+  c: sorted<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  put_sorted_int(c, 1);
+  assert(len(c) == 2, "c_sorted_int_param_1_plain: len {len(c)}");
+  assert(walk_sorted_int(c) == 2, "c_sorted_int_param_1_plain: walk {walk_sorted_int(c)}");
+  assert(c[7].v == 1, "c_sorted_int_param_1_plain: value");
+  assert(c[3].v == 100, "c_sorted_int_param_1_plain: neighbour");
+}
+fn c_sorted_int_param_1_churn() {
+  c: sorted<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  put_sorted_int(c, 1);
+  churn_sorted_int(c);
+  assert(len(c) == 2, "c_sorted_int_param_1_churn: len {len(c)}");
+  assert(walk_sorted_int(c) == 2, "c_sorted_int_param_1_churn: walk {walk_sorted_int(c)}");
+  assert(c[7].v == 1, "c_sorted_int_param_1_churn: value");
+  assert(c[3].v == 100, "c_sorted_int_param_1_churn: neighbour");
+}
+fn c_sorted_int_param_2_plain() {
+  c: sorted<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  put_sorted_int(c, 1);
+  put_sorted_int(c, 2);
+  assert(len(c) == 2, "c_sorted_int_param_2_plain: len {len(c)}");
+  assert(walk_sorted_int(c) == 2, "c_sorted_int_param_2_plain: walk {walk_sorted_int(c)}");
+  assert(c[7].v == 2, "c_sorted_int_param_2_plain: value");
+  assert(c[3].v == 100, "c_sorted_int_param_2_plain: neighbour");
+}
+fn c_sorted_int_param_2_churn() {
+  c: sorted<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  put_sorted_int(c, 1);
+  churn_sorted_int(c);
+  put_sorted_int(c, 2);
+  churn_sorted_int(c);
+  assert(len(c) == 2, "c_sorted_int_param_2_churn: len {len(c)}");
+  assert(walk_sorted_int(c) == 2, "c_sorted_int_param_2_churn: walk {walk_sorted_int(c)}");
+  assert(c[7].v == 2, "c_sorted_int_param_2_churn: value");
+  assert(c[3].v == 100, "c_sorted_int_param_2_churn: neighbour");
+}
+fn c_sorted_int_param_5_plain() {
+  c: sorted<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  put_sorted_int(c, 1);
+  put_sorted_int(c, 2);
+  put_sorted_int(c, 3);
+  put_sorted_int(c, 4);
+  put_sorted_int(c, 5);
+  assert(len(c) == 2, "c_sorted_int_param_5_plain: len {len(c)}");
+  assert(walk_sorted_int(c) == 2, "c_sorted_int_param_5_plain: walk {walk_sorted_int(c)}");
+  assert(c[7].v == 5, "c_sorted_int_param_5_plain: value");
+  assert(c[3].v == 100, "c_sorted_int_param_5_plain: neighbour");
+}
+fn c_sorted_int_param_5_churn() {
+  c: sorted<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  put_sorted_int(c, 1);
+  churn_sorted_int(c);
+  put_sorted_int(c, 2);
+  churn_sorted_int(c);
+  put_sorted_int(c, 3);
+  churn_sorted_int(c);
+  put_sorted_int(c, 4);
+  churn_sorted_int(c);
+  put_sorted_int(c, 5);
+  churn_sorted_int(c);
+  assert(len(c) == 2, "c_sorted_int_param_5_churn: len {len(c)}");
+  assert(walk_sorted_int(c) == 2, "c_sorted_int_param_5_churn: walk {walk_sorted_int(c)}");
+  assert(c[7].v == 5, "c_sorted_int_param_5_churn: value");
+  assert(c[3].v == 100, "c_sorted_int_param_5_churn: neighbour");
+}
+fn c_sorted_int_paramvar_1_plain() {
+  c: sorted<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  putv_sorted_int(c, 1);
+  assert(len(c) == 2, "c_sorted_int_paramvar_1_plain: len {len(c)}");
+  assert(walk_sorted_int(c) == 2, "c_sorted_int_paramvar_1_plain: walk {walk_sorted_int(c)}");
+  assert(c[7].v == 1, "c_sorted_int_paramvar_1_plain: value");
+  assert(c[3].v == 100, "c_sorted_int_paramvar_1_plain: neighbour");
+}
+fn c_sorted_int_paramvar_1_churn() {
+  c: sorted<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  putv_sorted_int(c, 1);
+  churn_sorted_int(c);
+  assert(len(c) == 2, "c_sorted_int_paramvar_1_churn: len {len(c)}");
+  assert(walk_sorted_int(c) == 2, "c_sorted_int_paramvar_1_churn: walk {walk_sorted_int(c)}");
+  assert(c[7].v == 1, "c_sorted_int_paramvar_1_churn: value");
+  assert(c[3].v == 100, "c_sorted_int_paramvar_1_churn: neighbour");
+}
+fn c_sorted_int_paramvar_2_plain() {
+  c: sorted<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  putv_sorted_int(c, 1);
+  putv_sorted_int(c, 2);
+  assert(len(c) == 2, "c_sorted_int_paramvar_2_plain: len {len(c)}");
+  assert(walk_sorted_int(c) == 2, "c_sorted_int_paramvar_2_plain: walk {walk_sorted_int(c)}");
+  assert(c[7].v == 2, "c_sorted_int_paramvar_2_plain: value");
+  assert(c[3].v == 100, "c_sorted_int_paramvar_2_plain: neighbour");
+}
+fn c_sorted_int_paramvar_2_churn() {
+  c: sorted<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  putv_sorted_int(c, 1);
+  churn_sorted_int(c);
+  putv_sorted_int(c, 2);
+  churn_sorted_int(c);
+  assert(len(c) == 2, "c_sorted_int_paramvar_2_churn: len {len(c)}");
+  assert(walk_sorted_int(c) == 2, "c_sorted_int_paramvar_2_churn: walk {walk_sorted_int(c)}");
+  assert(c[7].v == 2, "c_sorted_int_paramvar_2_churn: value");
+  assert(c[3].v == 100, "c_sorted_int_paramvar_2_churn: neighbour");
+}
+fn c_sorted_int_paramvar_5_plain() {
+  c: sorted<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  putv_sorted_int(c, 1);
+  putv_sorted_int(c, 2);
+  putv_sorted_int(c, 3);
+  putv_sorted_int(c, 4);
+  putv_sorted_int(c, 5);
+  assert(len(c) == 2, "c_sorted_int_paramvar_5_plain: len {len(c)}");
+  assert(walk_sorted_int(c) == 2, "c_sorted_int_paramvar_5_plain: walk {walk_sorted_int(c)}");
+  assert(c[7].v == 5, "c_sorted_int_paramvar_5_plain: value");
+  assert(c[3].v == 100, "c_sorted_int_paramvar_5_plain: neighbour");
+}
+fn c_sorted_int_paramvar_5_churn() {
+  c: sorted<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  putv_sorted_int(c, 1);
+  churn_sorted_int(c);
+  putv_sorted_int(c, 2);
+  churn_sorted_int(c);
+  putv_sorted_int(c, 3);
+  churn_sorted_int(c);
+  putv_sorted_int(c, 4);
+  churn_sorted_int(c);
+  putv_sorted_int(c, 5);
+  churn_sorted_int(c);
+  assert(len(c) == 2, "c_sorted_int_paramvar_5_churn: len {len(c)}");
+  assert(walk_sorted_int(c) == 2, "c_sorted_int_paramvar_5_churn: walk {walk_sorted_int(c)}");
+  assert(c[7].v == 5, "c_sorted_int_paramvar_5_churn: value");
+  assert(c[3].v == 100, "c_sorted_int_paramvar_5_churn: neighbour");
+}
+fn c_sorted_int_field_1_plain() {
+  h = H_sorted_int { c: [] };
+  h.c[3] = KI { k: 3, v: 100 };
+  h.c[7] = KI { k: 7, v: 1 };
+  assert(len(h.c) == 2, "c_sorted_int_field_1_plain: len {len(h.c)}");
+  assert(walk_sorted_int(h.c) == 2, "c_sorted_int_field_1_plain: walk {walk_sorted_int(h.c)}");
+  assert(h.c[7].v == 1, "c_sorted_int_field_1_plain: value");
+  assert(h.c[3].v == 100, "c_sorted_int_field_1_plain: neighbour");
+}
+fn c_sorted_int_field_1_churn() {
+  h = H_sorted_int { c: [] };
+  h.c[3] = KI { k: 3, v: 100 };
+  h.c[7] = KI { k: 7, v: 1 };
+  churn_sorted_int(h.c);
+  assert(len(h.c) == 2, "c_sorted_int_field_1_churn: len {len(h.c)}");
+  assert(walk_sorted_int(h.c) == 2, "c_sorted_int_field_1_churn: walk {walk_sorted_int(h.c)}");
+  assert(h.c[7].v == 1, "c_sorted_int_field_1_churn: value");
+  assert(h.c[3].v == 100, "c_sorted_int_field_1_churn: neighbour");
+}
+fn c_sorted_int_field_2_plain() {
+  h = H_sorted_int { c: [] };
+  h.c[3] = KI { k: 3, v: 100 };
+  h.c[7] = KI { k: 7, v: 1 };
+  h.c[7] = KI { k: 7, v: 2 };
+  assert(len(h.c) == 2, "c_sorted_int_field_2_plain: len {len(h.c)}");
+  assert(walk_sorted_int(h.c) == 2, "c_sorted_int_field_2_plain: walk {walk_sorted_int(h.c)}");
+  assert(h.c[7].v == 2, "c_sorted_int_field_2_plain: value");
+  assert(h.c[3].v == 100, "c_sorted_int_field_2_plain: neighbour");
+}
+fn c_sorted_int_field_2_churn() {
+  h = H_sorted_int { c: [] };
+  h.c[3] = KI { k: 3, v: 100 };
+  h.c[7] = KI { k: 7, v: 1 };
+  churn_sorted_int(h.c);
+  h.c[7] = KI { k: 7, v: 2 };
+  churn_sorted_int(h.c);
+  assert(len(h.c) == 2, "c_sorted_int_field_2_churn: len {len(h.c)}");
+  assert(walk_sorted_int(h.c) == 2, "c_sorted_int_field_2_churn: walk {walk_sorted_int(h.c)}");
+  assert(h.c[7].v == 2, "c_sorted_int_field_2_churn: value");
+  assert(h.c[3].v == 100, "c_sorted_int_field_2_churn: neighbour");
+}
+fn c_sorted_int_field_5_plain() {
+  h = H_sorted_int { c: [] };
+  h.c[3] = KI { k: 3, v: 100 };
+  h.c[7] = KI { k: 7, v: 1 };
+  h.c[7] = KI { k: 7, v: 2 };
+  h.c[7] = KI { k: 7, v: 3 };
+  h.c[7] = KI { k: 7, v: 4 };
+  h.c[7] = KI { k: 7, v: 5 };
+  assert(len(h.c) == 2, "c_sorted_int_field_5_plain: len {len(h.c)}");
+  assert(walk_sorted_int(h.c) == 2, "c_sorted_int_field_5_plain: walk {walk_sorted_int(h.c)}");
+  assert(h.c[7].v == 5, "c_sorted_int_field_5_plain: value");
+  assert(h.c[3].v == 100, "c_sorted_int_field_5_plain: neighbour");
+}
+fn c_sorted_int_field_5_churn() {
+  h = H_sorted_int { c: [] };
+  h.c[3] = KI { k: 3, v: 100 };
+  h.c[7] = KI { k: 7, v: 1 };
+  churn_sorted_int(h.c);
+  h.c[7] = KI { k: 7, v: 2 };
+  churn_sorted_int(h.c);
+  h.c[7] = KI { k: 7, v: 3 };
+  churn_sorted_int(h.c);
+  h.c[7] = KI { k: 7, v: 4 };
+  churn_sorted_int(h.c);
+  h.c[7] = KI { k: 7, v: 5 };
+  churn_sorted_int(h.c);
+  assert(len(h.c) == 2, "c_sorted_int_field_5_churn: len {len(h.c)}");
+  assert(walk_sorted_int(h.c) == 2, "c_sorted_int_field_5_churn: walk {walk_sorted_int(h.c)}");
+  assert(h.c[7].v == 5, "c_sorted_int_field_5_churn: value");
+  assert(h.c[3].v == 100, "c_sorted_int_field_5_churn: neighbour");
+}
+fn c_sorted_int_fieldprm_1_plain() {
+  h = H_sorted_int { c: [] };
+  h.c[3] = KI { k: 3, v: 100 };
+  putf_sorted_int(h, 1);
+  assert(len(h.c) == 2, "c_sorted_int_fieldprm_1_plain: len {len(h.c)}");
+  assert(walk_sorted_int(h.c) == 2, "c_sorted_int_fieldprm_1_plain: walk {walk_sorted_int(h.c)}");
+  assert(h.c[7].v == 1, "c_sorted_int_fieldprm_1_plain: value");
+  assert(h.c[3].v == 100, "c_sorted_int_fieldprm_1_plain: neighbour");
+}
+fn c_sorted_int_fieldprm_1_churn() {
+  h = H_sorted_int { c: [] };
+  h.c[3] = KI { k: 3, v: 100 };
+  putf_sorted_int(h, 1);
+  churn_sorted_int(h.c);
+  assert(len(h.c) == 2, "c_sorted_int_fieldprm_1_churn: len {len(h.c)}");
+  assert(walk_sorted_int(h.c) == 2, "c_sorted_int_fieldprm_1_churn: walk {walk_sorted_int(h.c)}");
+  assert(h.c[7].v == 1, "c_sorted_int_fieldprm_1_churn: value");
+  assert(h.c[3].v == 100, "c_sorted_int_fieldprm_1_churn: neighbour");
+}
+fn c_sorted_int_fieldprm_2_plain() {
+  h = H_sorted_int { c: [] };
+  h.c[3] = KI { k: 3, v: 100 };
+  putf_sorted_int(h, 1);
+  putf_sorted_int(h, 2);
+  assert(len(h.c) == 2, "c_sorted_int_fieldprm_2_plain: len {len(h.c)}");
+  assert(walk_sorted_int(h.c) == 2, "c_sorted_int_fieldprm_2_plain: walk {walk_sorted_int(h.c)}");
+  assert(h.c[7].v == 2, "c_sorted_int_fieldprm_2_plain: value");
+  assert(h.c[3].v == 100, "c_sorted_int_fieldprm_2_plain: neighbour");
+}
+fn c_sorted_int_fieldprm_2_churn() {
+  h = H_sorted_int { c: [] };
+  h.c[3] = KI { k: 3, v: 100 };
+  putf_sorted_int(h, 1);
+  churn_sorted_int(h.c);
+  putf_sorted_int(h, 2);
+  churn_sorted_int(h.c);
+  assert(len(h.c) == 2, "c_sorted_int_fieldprm_2_churn: len {len(h.c)}");
+  assert(walk_sorted_int(h.c) == 2, "c_sorted_int_fieldprm_2_churn: walk {walk_sorted_int(h.c)}");
+  assert(h.c[7].v == 2, "c_sorted_int_fieldprm_2_churn: value");
+  assert(h.c[3].v == 100, "c_sorted_int_fieldprm_2_churn: neighbour");
+}
+fn c_sorted_int_fieldprm_5_plain() {
+  h = H_sorted_int { c: [] };
+  h.c[3] = KI { k: 3, v: 100 };
+  putf_sorted_int(h, 1);
+  putf_sorted_int(h, 2);
+  putf_sorted_int(h, 3);
+  putf_sorted_int(h, 4);
+  putf_sorted_int(h, 5);
+  assert(len(h.c) == 2, "c_sorted_int_fieldprm_5_plain: len {len(h.c)}");
+  assert(walk_sorted_int(h.c) == 2, "c_sorted_int_fieldprm_5_plain: walk {walk_sorted_int(h.c)}");
+  assert(h.c[7].v == 5, "c_sorted_int_fieldprm_5_plain: value");
+  assert(h.c[3].v == 100, "c_sorted_int_fieldprm_5_plain: neighbour");
+}
+fn c_sorted_int_fieldprm_5_churn() {
+  h = H_sorted_int { c: [] };
+  h.c[3] = KI { k: 3, v: 100 };
+  putf_sorted_int(h, 1);
+  churn_sorted_int(h.c);
+  putf_sorted_int(h, 2);
+  churn_sorted_int(h.c);
+  putf_sorted_int(h, 3);
+  churn_sorted_int(h.c);
+  putf_sorted_int(h, 4);
+  churn_sorted_int(h.c);
+  putf_sorted_int(h, 5);
+  churn_sorted_int(h.c);
+  assert(len(h.c) == 2, "c_sorted_int_fieldprm_5_churn: len {len(h.c)}");
+  assert(walk_sorted_int(h.c) == 2, "c_sorted_int_fieldprm_5_churn: walk {walk_sorted_int(h.c)}");
+  assert(h.c[7].v == 5, "c_sorted_int_fieldprm_5_churn: value");
+  assert(h.c[3].v == 100, "c_sorted_int_fieldprm_5_churn: neighbour");
+}
+struct H_sorted_text { c: sorted<KT[k]> }
+fn put_sorted_text(c: &sorted<KT[k]>, v: integer) { c["s7"] = KT { k: "s7", v: v }; }
+fn putv_sorted_text(c: &sorted<KT[k]>, v: integer) { r = KT { k: "s7", v: v }; c["s7"] = r; }
+fn putf_sorted_text(h: &H_sorted_text, v: integer) { h.c["s7"] = KT { k: "s7", v: v }; }
+fn churn_sorted_text(c: &sorted<KT[k]>) { c["s9"] = KT { k: "s9", v: 0 }; c["s9"] = null; }
+fn walk_sorted_text(c: const sorted<KT[k]>) -> integer { n = 0; for _e in c { n += 1; } n }
+fn c_sorted_text_local_1_plain() {
+  c: sorted<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  c["s7"] = KT { k: "s7", v: 1 };
+  assert(len(c) == 2, "c_sorted_text_local_1_plain: len {len(c)}");
+  assert(walk_sorted_text(c) == 2, "c_sorted_text_local_1_plain: walk {walk_sorted_text(c)}");
+  assert(c["s7"].v == 1, "c_sorted_text_local_1_plain: value");
+  assert(c["nb"].v == 100, "c_sorted_text_local_1_plain: neighbour");
+}
+fn c_sorted_text_local_1_churn() {
+  c: sorted<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  c["s7"] = KT { k: "s7", v: 1 };
+  churn_sorted_text(c);
+  assert(len(c) == 2, "c_sorted_text_local_1_churn: len {len(c)}");
+  assert(walk_sorted_text(c) == 2, "c_sorted_text_local_1_churn: walk {walk_sorted_text(c)}");
+  assert(c["s7"].v == 1, "c_sorted_text_local_1_churn: value");
+  assert(c["nb"].v == 100, "c_sorted_text_local_1_churn: neighbour");
+}
+fn c_sorted_text_local_2_plain() {
+  c: sorted<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  c["s7"] = KT { k: "s7", v: 1 };
+  c["s7"] = KT { k: "s7", v: 2 };
+  assert(len(c) == 2, "c_sorted_text_local_2_plain: len {len(c)}");
+  assert(walk_sorted_text(c) == 2, "c_sorted_text_local_2_plain: walk {walk_sorted_text(c)}");
+  assert(c["s7"].v == 2, "c_sorted_text_local_2_plain: value");
+  assert(c["nb"].v == 100, "c_sorted_text_local_2_plain: neighbour");
+}
+fn c_sorted_text_local_2_churn() {
+  c: sorted<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  c["s7"] = KT { k: "s7", v: 1 };
+  churn_sorted_text(c);
+  c["s7"] = KT { k: "s7", v: 2 };
+  churn_sorted_text(c);
+  assert(len(c) == 2, "c_sorted_text_local_2_churn: len {len(c)}");
+  assert(walk_sorted_text(c) == 2, "c_sorted_text_local_2_churn: walk {walk_sorted_text(c)}");
+  assert(c["s7"].v == 2, "c_sorted_text_local_2_churn: value");
+  assert(c["nb"].v == 100, "c_sorted_text_local_2_churn: neighbour");
+}
+fn c_sorted_text_local_5_plain() {
+  c: sorted<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  c["s7"] = KT { k: "s7", v: 1 };
+  c["s7"] = KT { k: "s7", v: 2 };
+  c["s7"] = KT { k: "s7", v: 3 };
+  c["s7"] = KT { k: "s7", v: 4 };
+  c["s7"] = KT { k: "s7", v: 5 };
+  assert(len(c) == 2, "c_sorted_text_local_5_plain: len {len(c)}");
+  assert(walk_sorted_text(c) == 2, "c_sorted_text_local_5_plain: walk {walk_sorted_text(c)}");
+  assert(c["s7"].v == 5, "c_sorted_text_local_5_plain: value");
+  assert(c["nb"].v == 100, "c_sorted_text_local_5_plain: neighbour");
+}
+fn c_sorted_text_local_5_churn() {
+  c: sorted<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  c["s7"] = KT { k: "s7", v: 1 };
+  churn_sorted_text(c);
+  c["s7"] = KT { k: "s7", v: 2 };
+  churn_sorted_text(c);
+  c["s7"] = KT { k: "s7", v: 3 };
+  churn_sorted_text(c);
+  c["s7"] = KT { k: "s7", v: 4 };
+  churn_sorted_text(c);
+  c["s7"] = KT { k: "s7", v: 5 };
+  churn_sorted_text(c);
+  assert(len(c) == 2, "c_sorted_text_local_5_churn: len {len(c)}");
+  assert(walk_sorted_text(c) == 2, "c_sorted_text_local_5_churn: walk {walk_sorted_text(c)}");
+  assert(c["s7"].v == 5, "c_sorted_text_local_5_churn: value");
+  assert(c["nb"].v == 100, "c_sorted_text_local_5_churn: neighbour");
+}
+fn c_sorted_text_param_1_plain() {
+  c: sorted<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  put_sorted_text(c, 1);
+  assert(len(c) == 2, "c_sorted_text_param_1_plain: len {len(c)}");
+  assert(walk_sorted_text(c) == 2, "c_sorted_text_param_1_plain: walk {walk_sorted_text(c)}");
+  assert(c["s7"].v == 1, "c_sorted_text_param_1_plain: value");
+  assert(c["nb"].v == 100, "c_sorted_text_param_1_plain: neighbour");
+}
+fn c_sorted_text_param_1_churn() {
+  c: sorted<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  put_sorted_text(c, 1);
+  churn_sorted_text(c);
+  assert(len(c) == 2, "c_sorted_text_param_1_churn: len {len(c)}");
+  assert(walk_sorted_text(c) == 2, "c_sorted_text_param_1_churn: walk {walk_sorted_text(c)}");
+  assert(c["s7"].v == 1, "c_sorted_text_param_1_churn: value");
+  assert(c["nb"].v == 100, "c_sorted_text_param_1_churn: neighbour");
+}
+fn c_sorted_text_param_2_plain() {
+  c: sorted<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  put_sorted_text(c, 1);
+  put_sorted_text(c, 2);
+  assert(len(c) == 2, "c_sorted_text_param_2_plain: len {len(c)}");
+  assert(walk_sorted_text(c) == 2, "c_sorted_text_param_2_plain: walk {walk_sorted_text(c)}");
+  assert(c["s7"].v == 2, "c_sorted_text_param_2_plain: value");
+  assert(c["nb"].v == 100, "c_sorted_text_param_2_plain: neighbour");
+}
+fn c_sorted_text_param_2_churn() {
+  c: sorted<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  put_sorted_text(c, 1);
+  churn_sorted_text(c);
+  put_sorted_text(c, 2);
+  churn_sorted_text(c);
+  assert(len(c) == 2, "c_sorted_text_param_2_churn: len {len(c)}");
+  assert(walk_sorted_text(c) == 2, "c_sorted_text_param_2_churn: walk {walk_sorted_text(c)}");
+  assert(c["s7"].v == 2, "c_sorted_text_param_2_churn: value");
+  assert(c["nb"].v == 100, "c_sorted_text_param_2_churn: neighbour");
+}
+fn c_sorted_text_param_5_plain() {
+  c: sorted<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  put_sorted_text(c, 1);
+  put_sorted_text(c, 2);
+  put_sorted_text(c, 3);
+  put_sorted_text(c, 4);
+  put_sorted_text(c, 5);
+  assert(len(c) == 2, "c_sorted_text_param_5_plain: len {len(c)}");
+  assert(walk_sorted_text(c) == 2, "c_sorted_text_param_5_plain: walk {walk_sorted_text(c)}");
+  assert(c["s7"].v == 5, "c_sorted_text_param_5_plain: value");
+  assert(c["nb"].v == 100, "c_sorted_text_param_5_plain: neighbour");
+}
+fn c_sorted_text_param_5_churn() {
+  c: sorted<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  put_sorted_text(c, 1);
+  churn_sorted_text(c);
+  put_sorted_text(c, 2);
+  churn_sorted_text(c);
+  put_sorted_text(c, 3);
+  churn_sorted_text(c);
+  put_sorted_text(c, 4);
+  churn_sorted_text(c);
+  put_sorted_text(c, 5);
+  churn_sorted_text(c);
+  assert(len(c) == 2, "c_sorted_text_param_5_churn: len {len(c)}");
+  assert(walk_sorted_text(c) == 2, "c_sorted_text_param_5_churn: walk {walk_sorted_text(c)}");
+  assert(c["s7"].v == 5, "c_sorted_text_param_5_churn: value");
+  assert(c["nb"].v == 100, "c_sorted_text_param_5_churn: neighbour");
+}
+fn c_sorted_text_paramvar_1_plain() {
+  c: sorted<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  putv_sorted_text(c, 1);
+  assert(len(c) == 2, "c_sorted_text_paramvar_1_plain: len {len(c)}");
+  assert(walk_sorted_text(c) == 2, "c_sorted_text_paramvar_1_plain: walk {walk_sorted_text(c)}");
+  assert(c["s7"].v == 1, "c_sorted_text_paramvar_1_plain: value");
+  assert(c["nb"].v == 100, "c_sorted_text_paramvar_1_plain: neighbour");
+}
+fn c_sorted_text_paramvar_1_churn() {
+  c: sorted<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  putv_sorted_text(c, 1);
+  churn_sorted_text(c);
+  assert(len(c) == 2, "c_sorted_text_paramvar_1_churn: len {len(c)}");
+  assert(walk_sorted_text(c) == 2, "c_sorted_text_paramvar_1_churn: walk {walk_sorted_text(c)}");
+  assert(c["s7"].v == 1, "c_sorted_text_paramvar_1_churn: value");
+  assert(c["nb"].v == 100, "c_sorted_text_paramvar_1_churn: neighbour");
+}
+fn c_sorted_text_paramvar_2_plain() {
+  c: sorted<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  putv_sorted_text(c, 1);
+  putv_sorted_text(c, 2);
+  assert(len(c) == 2, "c_sorted_text_paramvar_2_plain: len {len(c)}");
+  assert(walk_sorted_text(c) == 2, "c_sorted_text_paramvar_2_plain: walk {walk_sorted_text(c)}");
+  assert(c["s7"].v == 2, "c_sorted_text_paramvar_2_plain: value");
+  assert(c["nb"].v == 100, "c_sorted_text_paramvar_2_plain: neighbour");
+}
+fn c_sorted_text_paramvar_2_churn() {
+  c: sorted<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  putv_sorted_text(c, 1);
+  churn_sorted_text(c);
+  putv_sorted_text(c, 2);
+  churn_sorted_text(c);
+  assert(len(c) == 2, "c_sorted_text_paramvar_2_churn: len {len(c)}");
+  assert(walk_sorted_text(c) == 2, "c_sorted_text_paramvar_2_churn: walk {walk_sorted_text(c)}");
+  assert(c["s7"].v == 2, "c_sorted_text_paramvar_2_churn: value");
+  assert(c["nb"].v == 100, "c_sorted_text_paramvar_2_churn: neighbour");
+}
+fn c_sorted_text_paramvar_5_plain() {
+  c: sorted<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  putv_sorted_text(c, 1);
+  putv_sorted_text(c, 2);
+  putv_sorted_text(c, 3);
+  putv_sorted_text(c, 4);
+  putv_sorted_text(c, 5);
+  assert(len(c) == 2, "c_sorted_text_paramvar_5_plain: len {len(c)}");
+  assert(walk_sorted_text(c) == 2, "c_sorted_text_paramvar_5_plain: walk {walk_sorted_text(c)}");
+  assert(c["s7"].v == 5, "c_sorted_text_paramvar_5_plain: value");
+  assert(c["nb"].v == 100, "c_sorted_text_paramvar_5_plain: neighbour");
+}
+fn c_sorted_text_paramvar_5_churn() {
+  c: sorted<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  putv_sorted_text(c, 1);
+  churn_sorted_text(c);
+  putv_sorted_text(c, 2);
+  churn_sorted_text(c);
+  putv_sorted_text(c, 3);
+  churn_sorted_text(c);
+  putv_sorted_text(c, 4);
+  churn_sorted_text(c);
+  putv_sorted_text(c, 5);
+  churn_sorted_text(c);
+  assert(len(c) == 2, "c_sorted_text_paramvar_5_churn: len {len(c)}");
+  assert(walk_sorted_text(c) == 2, "c_sorted_text_paramvar_5_churn: walk {walk_sorted_text(c)}");
+  assert(c["s7"].v == 5, "c_sorted_text_paramvar_5_churn: value");
+  assert(c["nb"].v == 100, "c_sorted_text_paramvar_5_churn: neighbour");
+}
+fn c_sorted_text_field_1_plain() {
+  h = H_sorted_text { c: [] };
+  h.c["nb"] = KT { k: "nb", v: 100 };
+  h.c["s7"] = KT { k: "s7", v: 1 };
+  assert(len(h.c) == 2, "c_sorted_text_field_1_plain: len {len(h.c)}");
+  assert(walk_sorted_text(h.c) == 2, "c_sorted_text_field_1_plain: walk {walk_sorted_text(h.c)}");
+  assert(h.c["s7"].v == 1, "c_sorted_text_field_1_plain: value");
+  assert(h.c["nb"].v == 100, "c_sorted_text_field_1_plain: neighbour");
+}
+fn c_sorted_text_field_1_churn() {
+  h = H_sorted_text { c: [] };
+  h.c["nb"] = KT { k: "nb", v: 100 };
+  h.c["s7"] = KT { k: "s7", v: 1 };
+  churn_sorted_text(h.c);
+  assert(len(h.c) == 2, "c_sorted_text_field_1_churn: len {len(h.c)}");
+  assert(walk_sorted_text(h.c) == 2, "c_sorted_text_field_1_churn: walk {walk_sorted_text(h.c)}");
+  assert(h.c["s7"].v == 1, "c_sorted_text_field_1_churn: value");
+  assert(h.c["nb"].v == 100, "c_sorted_text_field_1_churn: neighbour");
+}
+fn c_sorted_text_field_2_plain() {
+  h = H_sorted_text { c: [] };
+  h.c["nb"] = KT { k: "nb", v: 100 };
+  h.c["s7"] = KT { k: "s7", v: 1 };
+  h.c["s7"] = KT { k: "s7", v: 2 };
+  assert(len(h.c) == 2, "c_sorted_text_field_2_plain: len {len(h.c)}");
+  assert(walk_sorted_text(h.c) == 2, "c_sorted_text_field_2_plain: walk {walk_sorted_text(h.c)}");
+  assert(h.c["s7"].v == 2, "c_sorted_text_field_2_plain: value");
+  assert(h.c["nb"].v == 100, "c_sorted_text_field_2_plain: neighbour");
+}
+fn c_sorted_text_field_2_churn() {
+  h = H_sorted_text { c: [] };
+  h.c["nb"] = KT { k: "nb", v: 100 };
+  h.c["s7"] = KT { k: "s7", v: 1 };
+  churn_sorted_text(h.c);
+  h.c["s7"] = KT { k: "s7", v: 2 };
+  churn_sorted_text(h.c);
+  assert(len(h.c) == 2, "c_sorted_text_field_2_churn: len {len(h.c)}");
+  assert(walk_sorted_text(h.c) == 2, "c_sorted_text_field_2_churn: walk {walk_sorted_text(h.c)}");
+  assert(h.c["s7"].v == 2, "c_sorted_text_field_2_churn: value");
+  assert(h.c["nb"].v == 100, "c_sorted_text_field_2_churn: neighbour");
+}
+fn c_sorted_text_field_5_plain() {
+  h = H_sorted_text { c: [] };
+  h.c["nb"] = KT { k: "nb", v: 100 };
+  h.c["s7"] = KT { k: "s7", v: 1 };
+  h.c["s7"] = KT { k: "s7", v: 2 };
+  h.c["s7"] = KT { k: "s7", v: 3 };
+  h.c["s7"] = KT { k: "s7", v: 4 };
+  h.c["s7"] = KT { k: "s7", v: 5 };
+  assert(len(h.c) == 2, "c_sorted_text_field_5_plain: len {len(h.c)}");
+  assert(walk_sorted_text(h.c) == 2, "c_sorted_text_field_5_plain: walk {walk_sorted_text(h.c)}");
+  assert(h.c["s7"].v == 5, "c_sorted_text_field_5_plain: value");
+  assert(h.c["nb"].v == 100, "c_sorted_text_field_5_plain: neighbour");
+}
+fn c_sorted_text_field_5_churn() {
+  h = H_sorted_text { c: [] };
+  h.c["nb"] = KT { k: "nb", v: 100 };
+  h.c["s7"] = KT { k: "s7", v: 1 };
+  churn_sorted_text(h.c);
+  h.c["s7"] = KT { k: "s7", v: 2 };
+  churn_sorted_text(h.c);
+  h.c["s7"] = KT { k: "s7", v: 3 };
+  churn_sorted_text(h.c);
+  h.c["s7"] = KT { k: "s7", v: 4 };
+  churn_sorted_text(h.c);
+  h.c["s7"] = KT { k: "s7", v: 5 };
+  churn_sorted_text(h.c);
+  assert(len(h.c) == 2, "c_sorted_text_field_5_churn: len {len(h.c)}");
+  assert(walk_sorted_text(h.c) == 2, "c_sorted_text_field_5_churn: walk {walk_sorted_text(h.c)}");
+  assert(h.c["s7"].v == 5, "c_sorted_text_field_5_churn: value");
+  assert(h.c["nb"].v == 100, "c_sorted_text_field_5_churn: neighbour");
+}
+fn c_sorted_text_fieldprm_1_plain() {
+  h = H_sorted_text { c: [] };
+  h.c["nb"] = KT { k: "nb", v: 100 };
+  putf_sorted_text(h, 1);
+  assert(len(h.c) == 2, "c_sorted_text_fieldprm_1_plain: len {len(h.c)}");
+  assert(walk_sorted_text(h.c) == 2, "c_sorted_text_fieldprm_1_plain: walk {walk_sorted_text(h.c)}");
+  assert(h.c["s7"].v == 1, "c_sorted_text_fieldprm_1_plain: value");
+  assert(h.c["nb"].v == 100, "c_sorted_text_fieldprm_1_plain: neighbour");
+}
+fn c_sorted_text_fieldprm_1_churn() {
+  h = H_sorted_text { c: [] };
+  h.c["nb"] = KT { k: "nb", v: 100 };
+  putf_sorted_text(h, 1);
+  churn_sorted_text(h.c);
+  assert(len(h.c) == 2, "c_sorted_text_fieldprm_1_churn: len {len(h.c)}");
+  assert(walk_sorted_text(h.c) == 2, "c_sorted_text_fieldprm_1_churn: walk {walk_sorted_text(h.c)}");
+  assert(h.c["s7"].v == 1, "c_sorted_text_fieldprm_1_churn: value");
+  assert(h.c["nb"].v == 100, "c_sorted_text_fieldprm_1_churn: neighbour");
+}
+fn c_sorted_text_fieldprm_2_plain() {
+  h = H_sorted_text { c: [] };
+  h.c["nb"] = KT { k: "nb", v: 100 };
+  putf_sorted_text(h, 1);
+  putf_sorted_text(h, 2);
+  assert(len(h.c) == 2, "c_sorted_text_fieldprm_2_plain: len {len(h.c)}");
+  assert(walk_sorted_text(h.c) == 2, "c_sorted_text_fieldprm_2_plain: walk {walk_sorted_text(h.c)}");
+  assert(h.c["s7"].v == 2, "c_sorted_text_fieldprm_2_plain: value");
+  assert(h.c["nb"].v == 100, "c_sorted_text_fieldprm_2_plain: neighbour");
+}
+fn c_sorted_text_fieldprm_2_churn() {
+  h = H_sorted_text { c: [] };
+  h.c["nb"] = KT { k: "nb", v: 100 };
+  putf_sorted_text(h, 1);
+  churn_sorted_text(h.c);
+  putf_sorted_text(h, 2);
+  churn_sorted_text(h.c);
+  assert(len(h.c) == 2, "c_sorted_text_fieldprm_2_churn: len {len(h.c)}");
+  assert(walk_sorted_text(h.c) == 2, "c_sorted_text_fieldprm_2_churn: walk {walk_sorted_text(h.c)}");
+  assert(h.c["s7"].v == 2, "c_sorted_text_fieldprm_2_churn: value");
+  assert(h.c["nb"].v == 100, "c_sorted_text_fieldprm_2_churn: neighbour");
+}
+fn c_sorted_text_fieldprm_5_plain() {
+  h = H_sorted_text { c: [] };
+  h.c["nb"] = KT { k: "nb", v: 100 };
+  putf_sorted_text(h, 1);
+  putf_sorted_text(h, 2);
+  putf_sorted_text(h, 3);
+  putf_sorted_text(h, 4);
+  putf_sorted_text(h, 5);
+  assert(len(h.c) == 2, "c_sorted_text_fieldprm_5_plain: len {len(h.c)}");
+  assert(walk_sorted_text(h.c) == 2, "c_sorted_text_fieldprm_5_plain: walk {walk_sorted_text(h.c)}");
+  assert(h.c["s7"].v == 5, "c_sorted_text_fieldprm_5_plain: value");
+  assert(h.c["nb"].v == 100, "c_sorted_text_fieldprm_5_plain: neighbour");
+}
+fn c_sorted_text_fieldprm_5_churn() {
+  h = H_sorted_text { c: [] };
+  h.c["nb"] = KT { k: "nb", v: 100 };
+  putf_sorted_text(h, 1);
+  churn_sorted_text(h.c);
+  putf_sorted_text(h, 2);
+  churn_sorted_text(h.c);
+  putf_sorted_text(h, 3);
+  churn_sorted_text(h.c);
+  putf_sorted_text(h, 4);
+  churn_sorted_text(h.c);
+  putf_sorted_text(h, 5);
+  churn_sorted_text(h.c);
+  assert(len(h.c) == 2, "c_sorted_text_fieldprm_5_churn: len {len(h.c)}");
+  assert(walk_sorted_text(h.c) == 2, "c_sorted_text_fieldprm_5_churn: walk {walk_sorted_text(h.c)}");
+  assert(h.c["s7"].v == 5, "c_sorted_text_fieldprm_5_churn: value");
+  assert(h.c["nb"].v == 100, "c_sorted_text_fieldprm_5_churn: neighbour");
+}
+struct H_sorted_two { c: sorted<K2[a, b]> }
+fn put_sorted_two(c: &sorted<K2[a, b]>, v: integer) { c["s7", 7] = K2 { a: "s7", b: 7, v: v }; }
+fn putv_sorted_two(c: &sorted<K2[a, b]>, v: integer) { r = K2 { a: "s7", b: 7, v: v }; c["s7", 7] = r; }
+fn putf_sorted_two(h: &H_sorted_two, v: integer) { h.c["s7", 7] = K2 { a: "s7", b: 7, v: v }; }
+fn churn_sorted_two(c: &sorted<K2[a, b]>) { c["s9", 9] = K2 { a: "s9", b: 9, v: 0 }; c["s9", 9] = null; }
+fn walk_sorted_two(c: const sorted<K2[a, b]>) -> integer { n = 0; for _e in c { n += 1; } n }
+fn c_sorted_two_local_1_plain() {
+  c: sorted<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 1 };
+  assert(len(c) == 2, "c_sorted_two_local_1_plain: len {len(c)}");
+  assert(walk_sorted_two(c) == 2, "c_sorted_two_local_1_plain: walk {walk_sorted_two(c)}");
+  assert(c["s7", 7].v == 1, "c_sorted_two_local_1_plain: value");
+  assert(c["nb", 3].v == 100, "c_sorted_two_local_1_plain: neighbour");
+}
+fn c_sorted_two_local_1_churn() {
+  c: sorted<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 1 };
+  churn_sorted_two(c);
+  assert(len(c) == 2, "c_sorted_two_local_1_churn: len {len(c)}");
+  assert(walk_sorted_two(c) == 2, "c_sorted_two_local_1_churn: walk {walk_sorted_two(c)}");
+  assert(c["s7", 7].v == 1, "c_sorted_two_local_1_churn: value");
+  assert(c["nb", 3].v == 100, "c_sorted_two_local_1_churn: neighbour");
+}
+fn c_sorted_two_local_2_plain() {
+  c: sorted<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 1 };
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 2 };
+  assert(len(c) == 2, "c_sorted_two_local_2_plain: len {len(c)}");
+  assert(walk_sorted_two(c) == 2, "c_sorted_two_local_2_plain: walk {walk_sorted_two(c)}");
+  assert(c["s7", 7].v == 2, "c_sorted_two_local_2_plain: value");
+  assert(c["nb", 3].v == 100, "c_sorted_two_local_2_plain: neighbour");
+}
+fn c_sorted_two_local_2_churn() {
+  c: sorted<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 1 };
+  churn_sorted_two(c);
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 2 };
+  churn_sorted_two(c);
+  assert(len(c) == 2, "c_sorted_two_local_2_churn: len {len(c)}");
+  assert(walk_sorted_two(c) == 2, "c_sorted_two_local_2_churn: walk {walk_sorted_two(c)}");
+  assert(c["s7", 7].v == 2, "c_sorted_two_local_2_churn: value");
+  assert(c["nb", 3].v == 100, "c_sorted_two_local_2_churn: neighbour");
+}
+fn c_sorted_two_local_5_plain() {
+  c: sorted<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 1 };
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 2 };
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 3 };
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 4 };
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 5 };
+  assert(len(c) == 2, "c_sorted_two_local_5_plain: len {len(c)}");
+  assert(walk_sorted_two(c) == 2, "c_sorted_two_local_5_plain: walk {walk_sorted_two(c)}");
+  assert(c["s7", 7].v == 5, "c_sorted_two_local_5_plain: value");
+  assert(c["nb", 3].v == 100, "c_sorted_two_local_5_plain: neighbour");
+}
+fn c_sorted_two_local_5_churn() {
+  c: sorted<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 1 };
+  churn_sorted_two(c);
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 2 };
+  churn_sorted_two(c);
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 3 };
+  churn_sorted_two(c);
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 4 };
+  churn_sorted_two(c);
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 5 };
+  churn_sorted_two(c);
+  assert(len(c) == 2, "c_sorted_two_local_5_churn: len {len(c)}");
+  assert(walk_sorted_two(c) == 2, "c_sorted_two_local_5_churn: walk {walk_sorted_two(c)}");
+  assert(c["s7", 7].v == 5, "c_sorted_two_local_5_churn: value");
+  assert(c["nb", 3].v == 100, "c_sorted_two_local_5_churn: neighbour");
+}
+fn c_sorted_two_param_1_plain() {
+  c: sorted<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  put_sorted_two(c, 1);
+  assert(len(c) == 2, "c_sorted_two_param_1_plain: len {len(c)}");
+  assert(walk_sorted_two(c) == 2, "c_sorted_two_param_1_plain: walk {walk_sorted_two(c)}");
+  assert(c["s7", 7].v == 1, "c_sorted_two_param_1_plain: value");
+  assert(c["nb", 3].v == 100, "c_sorted_two_param_1_plain: neighbour");
+}
+fn c_sorted_two_param_1_churn() {
+  c: sorted<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  put_sorted_two(c, 1);
+  churn_sorted_two(c);
+  assert(len(c) == 2, "c_sorted_two_param_1_churn: len {len(c)}");
+  assert(walk_sorted_two(c) == 2, "c_sorted_two_param_1_churn: walk {walk_sorted_two(c)}");
+  assert(c["s7", 7].v == 1, "c_sorted_two_param_1_churn: value");
+  assert(c["nb", 3].v == 100, "c_sorted_two_param_1_churn: neighbour");
+}
+fn c_sorted_two_param_2_plain() {
+  c: sorted<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  put_sorted_two(c, 1);
+  put_sorted_two(c, 2);
+  assert(len(c) == 2, "c_sorted_two_param_2_plain: len {len(c)}");
+  assert(walk_sorted_two(c) == 2, "c_sorted_two_param_2_plain: walk {walk_sorted_two(c)}");
+  assert(c["s7", 7].v == 2, "c_sorted_two_param_2_plain: value");
+  assert(c["nb", 3].v == 100, "c_sorted_two_param_2_plain: neighbour");
+}
+fn c_sorted_two_param_2_churn() {
+  c: sorted<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  put_sorted_two(c, 1);
+  churn_sorted_two(c);
+  put_sorted_two(c, 2);
+  churn_sorted_two(c);
+  assert(len(c) == 2, "c_sorted_two_param_2_churn: len {len(c)}");
+  assert(walk_sorted_two(c) == 2, "c_sorted_two_param_2_churn: walk {walk_sorted_two(c)}");
+  assert(c["s7", 7].v == 2, "c_sorted_two_param_2_churn: value");
+  assert(c["nb", 3].v == 100, "c_sorted_two_param_2_churn: neighbour");
+}
+fn c_sorted_two_param_5_plain() {
+  c: sorted<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  put_sorted_two(c, 1);
+  put_sorted_two(c, 2);
+  put_sorted_two(c, 3);
+  put_sorted_two(c, 4);
+  put_sorted_two(c, 5);
+  assert(len(c) == 2, "c_sorted_two_param_5_plain: len {len(c)}");
+  assert(walk_sorted_two(c) == 2, "c_sorted_two_param_5_plain: walk {walk_sorted_two(c)}");
+  assert(c["s7", 7].v == 5, "c_sorted_two_param_5_plain: value");
+  assert(c["nb", 3].v == 100, "c_sorted_two_param_5_plain: neighbour");
+}
+fn c_sorted_two_param_5_churn() {
+  c: sorted<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  put_sorted_two(c, 1);
+  churn_sorted_two(c);
+  put_sorted_two(c, 2);
+  churn_sorted_two(c);
+  put_sorted_two(c, 3);
+  churn_sorted_two(c);
+  put_sorted_two(c, 4);
+  churn_sorted_two(c);
+  put_sorted_two(c, 5);
+  churn_sorted_two(c);
+  assert(len(c) == 2, "c_sorted_two_param_5_churn: len {len(c)}");
+  assert(walk_sorted_two(c) == 2, "c_sorted_two_param_5_churn: walk {walk_sorted_two(c)}");
+  assert(c["s7", 7].v == 5, "c_sorted_two_param_5_churn: value");
+  assert(c["nb", 3].v == 100, "c_sorted_two_param_5_churn: neighbour");
+}
+fn c_sorted_two_paramvar_1_plain() {
+  c: sorted<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  putv_sorted_two(c, 1);
+  assert(len(c) == 2, "c_sorted_two_paramvar_1_plain: len {len(c)}");
+  assert(walk_sorted_two(c) == 2, "c_sorted_two_paramvar_1_plain: walk {walk_sorted_two(c)}");
+  assert(c["s7", 7].v == 1, "c_sorted_two_paramvar_1_plain: value");
+  assert(c["nb", 3].v == 100, "c_sorted_two_paramvar_1_plain: neighbour");
+}
+fn c_sorted_two_paramvar_1_churn() {
+  c: sorted<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  putv_sorted_two(c, 1);
+  churn_sorted_two(c);
+  assert(len(c) == 2, "c_sorted_two_paramvar_1_churn: len {len(c)}");
+  assert(walk_sorted_two(c) == 2, "c_sorted_two_paramvar_1_churn: walk {walk_sorted_two(c)}");
+  assert(c["s7", 7].v == 1, "c_sorted_two_paramvar_1_churn: value");
+  assert(c["nb", 3].v == 100, "c_sorted_two_paramvar_1_churn: neighbour");
+}
+fn c_sorted_two_paramvar_2_plain() {
+  c: sorted<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  putv_sorted_two(c, 1);
+  putv_sorted_two(c, 2);
+  assert(len(c) == 2, "c_sorted_two_paramvar_2_plain: len {len(c)}");
+  assert(walk_sorted_two(c) == 2, "c_sorted_two_paramvar_2_plain: walk {walk_sorted_two(c)}");
+  assert(c["s7", 7].v == 2, "c_sorted_two_paramvar_2_plain: value");
+  assert(c["nb", 3].v == 100, "c_sorted_two_paramvar_2_plain: neighbour");
+}
+fn c_sorted_two_paramvar_2_churn() {
+  c: sorted<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  putv_sorted_two(c, 1);
+  churn_sorted_two(c);
+  putv_sorted_two(c, 2);
+  churn_sorted_two(c);
+  assert(len(c) == 2, "c_sorted_two_paramvar_2_churn: len {len(c)}");
+  assert(walk_sorted_two(c) == 2, "c_sorted_two_paramvar_2_churn: walk {walk_sorted_two(c)}");
+  assert(c["s7", 7].v == 2, "c_sorted_two_paramvar_2_churn: value");
+  assert(c["nb", 3].v == 100, "c_sorted_two_paramvar_2_churn: neighbour");
+}
+fn c_sorted_two_paramvar_5_plain() {
+  c: sorted<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  putv_sorted_two(c, 1);
+  putv_sorted_two(c, 2);
+  putv_sorted_two(c, 3);
+  putv_sorted_two(c, 4);
+  putv_sorted_two(c, 5);
+  assert(len(c) == 2, "c_sorted_two_paramvar_5_plain: len {len(c)}");
+  assert(walk_sorted_two(c) == 2, "c_sorted_two_paramvar_5_plain: walk {walk_sorted_two(c)}");
+  assert(c["s7", 7].v == 5, "c_sorted_two_paramvar_5_plain: value");
+  assert(c["nb", 3].v == 100, "c_sorted_two_paramvar_5_plain: neighbour");
+}
+fn c_sorted_two_paramvar_5_churn() {
+  c: sorted<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  putv_sorted_two(c, 1);
+  churn_sorted_two(c);
+  putv_sorted_two(c, 2);
+  churn_sorted_two(c);
+  putv_sorted_two(c, 3);
+  churn_sorted_two(c);
+  putv_sorted_two(c, 4);
+  churn_sorted_two(c);
+  putv_sorted_two(c, 5);
+  churn_sorted_two(c);
+  assert(len(c) == 2, "c_sorted_two_paramvar_5_churn: len {len(c)}");
+  assert(walk_sorted_two(c) == 2, "c_sorted_two_paramvar_5_churn: walk {walk_sorted_two(c)}");
+  assert(c["s7", 7].v == 5, "c_sorted_two_paramvar_5_churn: value");
+  assert(c["nb", 3].v == 100, "c_sorted_two_paramvar_5_churn: neighbour");
+}
+fn c_sorted_two_field_1_plain() {
+  h = H_sorted_two { c: [] };
+  h.c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 1 };
+  assert(len(h.c) == 2, "c_sorted_two_field_1_plain: len {len(h.c)}");
+  assert(walk_sorted_two(h.c) == 2, "c_sorted_two_field_1_plain: walk {walk_sorted_two(h.c)}");
+  assert(h.c["s7", 7].v == 1, "c_sorted_two_field_1_plain: value");
+  assert(h.c["nb", 3].v == 100, "c_sorted_two_field_1_plain: neighbour");
+}
+fn c_sorted_two_field_1_churn() {
+  h = H_sorted_two { c: [] };
+  h.c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 1 };
+  churn_sorted_two(h.c);
+  assert(len(h.c) == 2, "c_sorted_two_field_1_churn: len {len(h.c)}");
+  assert(walk_sorted_two(h.c) == 2, "c_sorted_two_field_1_churn: walk {walk_sorted_two(h.c)}");
+  assert(h.c["s7", 7].v == 1, "c_sorted_two_field_1_churn: value");
+  assert(h.c["nb", 3].v == 100, "c_sorted_two_field_1_churn: neighbour");
+}
+fn c_sorted_two_field_2_plain() {
+  h = H_sorted_two { c: [] };
+  h.c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 1 };
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 2 };
+  assert(len(h.c) == 2, "c_sorted_two_field_2_plain: len {len(h.c)}");
+  assert(walk_sorted_two(h.c) == 2, "c_sorted_two_field_2_plain: walk {walk_sorted_two(h.c)}");
+  assert(h.c["s7", 7].v == 2, "c_sorted_two_field_2_plain: value");
+  assert(h.c["nb", 3].v == 100, "c_sorted_two_field_2_plain: neighbour");
+}
+fn c_sorted_two_field_2_churn() {
+  h = H_sorted_two { c: [] };
+  h.c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 1 };
+  churn_sorted_two(h.c);
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 2 };
+  churn_sorted_two(h.c);
+  assert(len(h.c) == 2, "c_sorted_two_field_2_churn: len {len(h.c)}");
+  assert(walk_sorted_two(h.c) == 2, "c_sorted_two_field_2_churn: walk {walk_sorted_two(h.c)}");
+  assert(h.c["s7", 7].v == 2, "c_sorted_two_field_2_churn: value");
+  assert(h.c["nb", 3].v == 100, "c_sorted_two_field_2_churn: neighbour");
+}
+fn c_sorted_two_field_5_plain() {
+  h = H_sorted_two { c: [] };
+  h.c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 1 };
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 2 };
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 3 };
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 4 };
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 5 };
+  assert(len(h.c) == 2, "c_sorted_two_field_5_plain: len {len(h.c)}");
+  assert(walk_sorted_two(h.c) == 2, "c_sorted_two_field_5_plain: walk {walk_sorted_two(h.c)}");
+  assert(h.c["s7", 7].v == 5, "c_sorted_two_field_5_plain: value");
+  assert(h.c["nb", 3].v == 100, "c_sorted_two_field_5_plain: neighbour");
+}
+fn c_sorted_two_field_5_churn() {
+  h = H_sorted_two { c: [] };
+  h.c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 1 };
+  churn_sorted_two(h.c);
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 2 };
+  churn_sorted_two(h.c);
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 3 };
+  churn_sorted_two(h.c);
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 4 };
+  churn_sorted_two(h.c);
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 5 };
+  churn_sorted_two(h.c);
+  assert(len(h.c) == 2, "c_sorted_two_field_5_churn: len {len(h.c)}");
+  assert(walk_sorted_two(h.c) == 2, "c_sorted_two_field_5_churn: walk {walk_sorted_two(h.c)}");
+  assert(h.c["s7", 7].v == 5, "c_sorted_two_field_5_churn: value");
+  assert(h.c["nb", 3].v == 100, "c_sorted_two_field_5_churn: neighbour");
+}
+fn c_sorted_two_fieldprm_1_plain() {
+  h = H_sorted_two { c: [] };
+  h.c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  putf_sorted_two(h, 1);
+  assert(len(h.c) == 2, "c_sorted_two_fieldprm_1_plain: len {len(h.c)}");
+  assert(walk_sorted_two(h.c) == 2, "c_sorted_two_fieldprm_1_plain: walk {walk_sorted_two(h.c)}");
+  assert(h.c["s7", 7].v == 1, "c_sorted_two_fieldprm_1_plain: value");
+  assert(h.c["nb", 3].v == 100, "c_sorted_two_fieldprm_1_plain: neighbour");
+}
+fn c_sorted_two_fieldprm_1_churn() {
+  h = H_sorted_two { c: [] };
+  h.c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  putf_sorted_two(h, 1);
+  churn_sorted_two(h.c);
+  assert(len(h.c) == 2, "c_sorted_two_fieldprm_1_churn: len {len(h.c)}");
+  assert(walk_sorted_two(h.c) == 2, "c_sorted_two_fieldprm_1_churn: walk {walk_sorted_two(h.c)}");
+  assert(h.c["s7", 7].v == 1, "c_sorted_two_fieldprm_1_churn: value");
+  assert(h.c["nb", 3].v == 100, "c_sorted_two_fieldprm_1_churn: neighbour");
+}
+fn c_sorted_two_fieldprm_2_plain() {
+  h = H_sorted_two { c: [] };
+  h.c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  putf_sorted_two(h, 1);
+  putf_sorted_two(h, 2);
+  assert(len(h.c) == 2, "c_sorted_two_fieldprm_2_plain: len {len(h.c)}");
+  assert(walk_sorted_two(h.c) == 2, "c_sorted_two_fieldprm_2_plain: walk {walk_sorted_two(h.c)}");
+  assert(h.c["s7", 7].v == 2, "c_sorted_two_fieldprm_2_plain: value");
+  assert(h.c["nb", 3].v == 100, "c_sorted_two_fieldprm_2_plain: neighbour");
+}
+fn c_sorted_two_fieldprm_2_churn() {
+  h = H_sorted_two { c: [] };
+  h.c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  putf_sorted_two(h, 1);
+  churn_sorted_two(h.c);
+  putf_sorted_two(h, 2);
+  churn_sorted_two(h.c);
+  assert(len(h.c) == 2, "c_sorted_two_fieldprm_2_churn: len {len(h.c)}");
+  assert(walk_sorted_two(h.c) == 2, "c_sorted_two_fieldprm_2_churn: walk {walk_sorted_two(h.c)}");
+  assert(h.c["s7", 7].v == 2, "c_sorted_two_fieldprm_2_churn: value");
+  assert(h.c["nb", 3].v == 100, "c_sorted_two_fieldprm_2_churn: neighbour");
+}
+fn c_sorted_two_fieldprm_5_plain() {
+  h = H_sorted_two { c: [] };
+  h.c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  putf_sorted_two(h, 1);
+  putf_sorted_two(h, 2);
+  putf_sorted_two(h, 3);
+  putf_sorted_two(h, 4);
+  putf_sorted_two(h, 5);
+  assert(len(h.c) == 2, "c_sorted_two_fieldprm_5_plain: len {len(h.c)}");
+  assert(walk_sorted_two(h.c) == 2, "c_sorted_two_fieldprm_5_plain: walk {walk_sorted_two(h.c)}");
+  assert(h.c["s7", 7].v == 5, "c_sorted_two_fieldprm_5_plain: value");
+  assert(h.c["nb", 3].v == 100, "c_sorted_two_fieldprm_5_plain: neighbour");
+}
+fn c_sorted_two_fieldprm_5_churn() {
+  h = H_sorted_two { c: [] };
+  h.c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  putf_sorted_two(h, 1);
+  churn_sorted_two(h.c);
+  putf_sorted_two(h, 2);
+  churn_sorted_two(h.c);
+  putf_sorted_two(h, 3);
+  churn_sorted_two(h.c);
+  putf_sorted_two(h, 4);
+  churn_sorted_two(h.c);
+  putf_sorted_two(h, 5);
+  churn_sorted_two(h.c);
+  assert(len(h.c) == 2, "c_sorted_two_fieldprm_5_churn: len {len(h.c)}");
+  assert(walk_sorted_two(h.c) == 2, "c_sorted_two_fieldprm_5_churn: walk {walk_sorted_two(h.c)}");
+  assert(h.c["s7", 7].v == 5, "c_sorted_two_fieldprm_5_churn: value");
+  assert(h.c["nb", 3].v == 100, "c_sorted_two_fieldprm_5_churn: neighbour");
+}
+struct H_index_int { c: index<KI[k]> }
+fn put_index_int(c: &index<KI[k]>, v: integer) { c[7] = KI { k: 7, v: v }; }
+fn putv_index_int(c: &index<KI[k]>, v: integer) { r = KI { k: 7, v: v }; c[7] = r; }
+fn putf_index_int(h: &H_index_int, v: integer) { h.c[7] = KI { k: 7, v: v }; }
+fn churn_index_int(c: &index<KI[k]>) { c[9] = KI { k: 9, v: 0 }; c[9] = null; }
+fn walk_index_int(c: const index<KI[k]>) -> integer { n = 0; for _e in c { n += 1; } n }
+fn c_index_int_local_1_plain() {
+  c: index<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  c[7] = KI { k: 7, v: 1 };
+  assert(len(c) == 2, "c_index_int_local_1_plain: len {len(c)}");
+  assert(walk_index_int(c) == 2, "c_index_int_local_1_plain: walk {walk_index_int(c)}");
+  assert(c[7].v == 1, "c_index_int_local_1_plain: value");
+  assert(c[3].v == 100, "c_index_int_local_1_plain: neighbour");
+}
+fn c_index_int_local_1_churn() {
+  c: index<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  c[7] = KI { k: 7, v: 1 };
+  churn_index_int(c);
+  assert(len(c) == 2, "c_index_int_local_1_churn: len {len(c)}");
+  assert(walk_index_int(c) == 2, "c_index_int_local_1_churn: walk {walk_index_int(c)}");
+  assert(c[7].v == 1, "c_index_int_local_1_churn: value");
+  assert(c[3].v == 100, "c_index_int_local_1_churn: neighbour");
+}
+fn c_index_int_local_2_plain() {
+  c: index<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  c[7] = KI { k: 7, v: 1 };
+  c[7] = KI { k: 7, v: 2 };
+  assert(len(c) == 2, "c_index_int_local_2_plain: len {len(c)}");
+  assert(walk_index_int(c) == 2, "c_index_int_local_2_plain: walk {walk_index_int(c)}");
+  assert(c[7].v == 2, "c_index_int_local_2_plain: value");
+  assert(c[3].v == 100, "c_index_int_local_2_plain: neighbour");
+}
+fn c_index_int_local_2_churn() {
+  c: index<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  c[7] = KI { k: 7, v: 1 };
+  churn_index_int(c);
+  c[7] = KI { k: 7, v: 2 };
+  churn_index_int(c);
+  assert(len(c) == 2, "c_index_int_local_2_churn: len {len(c)}");
+  assert(walk_index_int(c) == 2, "c_index_int_local_2_churn: walk {walk_index_int(c)}");
+  assert(c[7].v == 2, "c_index_int_local_2_churn: value");
+  assert(c[3].v == 100, "c_index_int_local_2_churn: neighbour");
+}
+fn c_index_int_local_5_plain() {
+  c: index<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  c[7] = KI { k: 7, v: 1 };
+  c[7] = KI { k: 7, v: 2 };
+  c[7] = KI { k: 7, v: 3 };
+  c[7] = KI { k: 7, v: 4 };
+  c[7] = KI { k: 7, v: 5 };
+  assert(len(c) == 2, "c_index_int_local_5_plain: len {len(c)}");
+  assert(walk_index_int(c) == 2, "c_index_int_local_5_plain: walk {walk_index_int(c)}");
+  assert(c[7].v == 5, "c_index_int_local_5_plain: value");
+  assert(c[3].v == 100, "c_index_int_local_5_plain: neighbour");
+}
+fn c_index_int_local_5_churn() {
+  c: index<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  c[7] = KI { k: 7, v: 1 };
+  churn_index_int(c);
+  c[7] = KI { k: 7, v: 2 };
+  churn_index_int(c);
+  c[7] = KI { k: 7, v: 3 };
+  churn_index_int(c);
+  c[7] = KI { k: 7, v: 4 };
+  churn_index_int(c);
+  c[7] = KI { k: 7, v: 5 };
+  churn_index_int(c);
+  assert(len(c) == 2, "c_index_int_local_5_churn: len {len(c)}");
+  assert(walk_index_int(c) == 2, "c_index_int_local_5_churn: walk {walk_index_int(c)}");
+  assert(c[7].v == 5, "c_index_int_local_5_churn: value");
+  assert(c[3].v == 100, "c_index_int_local_5_churn: neighbour");
+}
+fn c_index_int_param_1_plain() {
+  c: index<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  put_index_int(c, 1);
+  assert(len(c) == 2, "c_index_int_param_1_plain: len {len(c)}");
+  assert(walk_index_int(c) == 2, "c_index_int_param_1_plain: walk {walk_index_int(c)}");
+  assert(c[7].v == 1, "c_index_int_param_1_plain: value");
+  assert(c[3].v == 100, "c_index_int_param_1_plain: neighbour");
+}
+fn c_index_int_param_1_churn() {
+  c: index<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  put_index_int(c, 1);
+  churn_index_int(c);
+  assert(len(c) == 2, "c_index_int_param_1_churn: len {len(c)}");
+  assert(walk_index_int(c) == 2, "c_index_int_param_1_churn: walk {walk_index_int(c)}");
+  assert(c[7].v == 1, "c_index_int_param_1_churn: value");
+  assert(c[3].v == 100, "c_index_int_param_1_churn: neighbour");
+}
+fn c_index_int_param_2_plain() {
+  c: index<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  put_index_int(c, 1);
+  put_index_int(c, 2);
+  assert(len(c) == 2, "c_index_int_param_2_plain: len {len(c)}");
+  assert(walk_index_int(c) == 2, "c_index_int_param_2_plain: walk {walk_index_int(c)}");
+  assert(c[7].v == 2, "c_index_int_param_2_plain: value");
+  assert(c[3].v == 100, "c_index_int_param_2_plain: neighbour");
+}
+fn c_index_int_param_2_churn() {
+  c: index<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  put_index_int(c, 1);
+  churn_index_int(c);
+  put_index_int(c, 2);
+  churn_index_int(c);
+  assert(len(c) == 2, "c_index_int_param_2_churn: len {len(c)}");
+  assert(walk_index_int(c) == 2, "c_index_int_param_2_churn: walk {walk_index_int(c)}");
+  assert(c[7].v == 2, "c_index_int_param_2_churn: value");
+  assert(c[3].v == 100, "c_index_int_param_2_churn: neighbour");
+}
+fn c_index_int_param_5_plain() {
+  c: index<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  put_index_int(c, 1);
+  put_index_int(c, 2);
+  put_index_int(c, 3);
+  put_index_int(c, 4);
+  put_index_int(c, 5);
+  assert(len(c) == 2, "c_index_int_param_5_plain: len {len(c)}");
+  assert(walk_index_int(c) == 2, "c_index_int_param_5_plain: walk {walk_index_int(c)}");
+  assert(c[7].v == 5, "c_index_int_param_5_plain: value");
+  assert(c[3].v == 100, "c_index_int_param_5_plain: neighbour");
+}
+fn c_index_int_param_5_churn() {
+  c: index<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  put_index_int(c, 1);
+  churn_index_int(c);
+  put_index_int(c, 2);
+  churn_index_int(c);
+  put_index_int(c, 3);
+  churn_index_int(c);
+  put_index_int(c, 4);
+  churn_index_int(c);
+  put_index_int(c, 5);
+  churn_index_int(c);
+  assert(len(c) == 2, "c_index_int_param_5_churn: len {len(c)}");
+  assert(walk_index_int(c) == 2, "c_index_int_param_5_churn: walk {walk_index_int(c)}");
+  assert(c[7].v == 5, "c_index_int_param_5_churn: value");
+  assert(c[3].v == 100, "c_index_int_param_5_churn: neighbour");
+}
+fn c_index_int_paramvar_1_plain() {
+  c: index<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  putv_index_int(c, 1);
+  assert(len(c) == 2, "c_index_int_paramvar_1_plain: len {len(c)}");
+  assert(walk_index_int(c) == 2, "c_index_int_paramvar_1_plain: walk {walk_index_int(c)}");
+  assert(c[7].v == 1, "c_index_int_paramvar_1_plain: value");
+  assert(c[3].v == 100, "c_index_int_paramvar_1_plain: neighbour");
+}
+fn c_index_int_paramvar_1_churn() {
+  c: index<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  putv_index_int(c, 1);
+  churn_index_int(c);
+  assert(len(c) == 2, "c_index_int_paramvar_1_churn: len {len(c)}");
+  assert(walk_index_int(c) == 2, "c_index_int_paramvar_1_churn: walk {walk_index_int(c)}");
+  assert(c[7].v == 1, "c_index_int_paramvar_1_churn: value");
+  assert(c[3].v == 100, "c_index_int_paramvar_1_churn: neighbour");
+}
+fn c_index_int_paramvar_2_plain() {
+  c: index<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  putv_index_int(c, 1);
+  putv_index_int(c, 2);
+  assert(len(c) == 2, "c_index_int_paramvar_2_plain: len {len(c)}");
+  assert(walk_index_int(c) == 2, "c_index_int_paramvar_2_plain: walk {walk_index_int(c)}");
+  assert(c[7].v == 2, "c_index_int_paramvar_2_plain: value");
+  assert(c[3].v == 100, "c_index_int_paramvar_2_plain: neighbour");
+}
+fn c_index_int_paramvar_2_churn() {
+  c: index<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  putv_index_int(c, 1);
+  churn_index_int(c);
+  putv_index_int(c, 2);
+  churn_index_int(c);
+  assert(len(c) == 2, "c_index_int_paramvar_2_churn: len {len(c)}");
+  assert(walk_index_int(c) == 2, "c_index_int_paramvar_2_churn: walk {walk_index_int(c)}");
+  assert(c[7].v == 2, "c_index_int_paramvar_2_churn: value");
+  assert(c[3].v == 100, "c_index_int_paramvar_2_churn: neighbour");
+}
+fn c_index_int_paramvar_5_plain() {
+  c: index<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  putv_index_int(c, 1);
+  putv_index_int(c, 2);
+  putv_index_int(c, 3);
+  putv_index_int(c, 4);
+  putv_index_int(c, 5);
+  assert(len(c) == 2, "c_index_int_paramvar_5_plain: len {len(c)}");
+  assert(walk_index_int(c) == 2, "c_index_int_paramvar_5_plain: walk {walk_index_int(c)}");
+  assert(c[7].v == 5, "c_index_int_paramvar_5_plain: value");
+  assert(c[3].v == 100, "c_index_int_paramvar_5_plain: neighbour");
+}
+fn c_index_int_paramvar_5_churn() {
+  c: index<KI[k]> = [];
+  c[3] = KI { k: 3, v: 100 };
+  putv_index_int(c, 1);
+  churn_index_int(c);
+  putv_index_int(c, 2);
+  churn_index_int(c);
+  putv_index_int(c, 3);
+  churn_index_int(c);
+  putv_index_int(c, 4);
+  churn_index_int(c);
+  putv_index_int(c, 5);
+  churn_index_int(c);
+  assert(len(c) == 2, "c_index_int_paramvar_5_churn: len {len(c)}");
+  assert(walk_index_int(c) == 2, "c_index_int_paramvar_5_churn: walk {walk_index_int(c)}");
+  assert(c[7].v == 5, "c_index_int_paramvar_5_churn: value");
+  assert(c[3].v == 100, "c_index_int_paramvar_5_churn: neighbour");
+}
+fn c_index_int_field_1_plain() {
+  h = H_index_int { c: [] };
+  h.c[3] = KI { k: 3, v: 100 };
+  h.c[7] = KI { k: 7, v: 1 };
+  assert(len(h.c) == 2, "c_index_int_field_1_plain: len {len(h.c)}");
+  assert(walk_index_int(h.c) == 2, "c_index_int_field_1_plain: walk {walk_index_int(h.c)}");
+  assert(h.c[7].v == 1, "c_index_int_field_1_plain: value");
+  assert(h.c[3].v == 100, "c_index_int_field_1_plain: neighbour");
+}
+fn c_index_int_field_1_churn() {
+  h = H_index_int { c: [] };
+  h.c[3] = KI { k: 3, v: 100 };
+  h.c[7] = KI { k: 7, v: 1 };
+  churn_index_int(h.c);
+  assert(len(h.c) == 2, "c_index_int_field_1_churn: len {len(h.c)}");
+  assert(walk_index_int(h.c) == 2, "c_index_int_field_1_churn: walk {walk_index_int(h.c)}");
+  assert(h.c[7].v == 1, "c_index_int_field_1_churn: value");
+  assert(h.c[3].v == 100, "c_index_int_field_1_churn: neighbour");
+}
+fn c_index_int_field_2_plain() {
+  h = H_index_int { c: [] };
+  h.c[3] = KI { k: 3, v: 100 };
+  h.c[7] = KI { k: 7, v: 1 };
+  h.c[7] = KI { k: 7, v: 2 };
+  assert(len(h.c) == 2, "c_index_int_field_2_plain: len {len(h.c)}");
+  assert(walk_index_int(h.c) == 2, "c_index_int_field_2_plain: walk {walk_index_int(h.c)}");
+  assert(h.c[7].v == 2, "c_index_int_field_2_plain: value");
+  assert(h.c[3].v == 100, "c_index_int_field_2_plain: neighbour");
+}
+fn c_index_int_field_2_churn() {
+  h = H_index_int { c: [] };
+  h.c[3] = KI { k: 3, v: 100 };
+  h.c[7] = KI { k: 7, v: 1 };
+  churn_index_int(h.c);
+  h.c[7] = KI { k: 7, v: 2 };
+  churn_index_int(h.c);
+  assert(len(h.c) == 2, "c_index_int_field_2_churn: len {len(h.c)}");
+  assert(walk_index_int(h.c) == 2, "c_index_int_field_2_churn: walk {walk_index_int(h.c)}");
+  assert(h.c[7].v == 2, "c_index_int_field_2_churn: value");
+  assert(h.c[3].v == 100, "c_index_int_field_2_churn: neighbour");
+}
+fn c_index_int_field_5_plain() {
+  h = H_index_int { c: [] };
+  h.c[3] = KI { k: 3, v: 100 };
+  h.c[7] = KI { k: 7, v: 1 };
+  h.c[7] = KI { k: 7, v: 2 };
+  h.c[7] = KI { k: 7, v: 3 };
+  h.c[7] = KI { k: 7, v: 4 };
+  h.c[7] = KI { k: 7, v: 5 };
+  assert(len(h.c) == 2, "c_index_int_field_5_plain: len {len(h.c)}");
+  assert(walk_index_int(h.c) == 2, "c_index_int_field_5_plain: walk {walk_index_int(h.c)}");
+  assert(h.c[7].v == 5, "c_index_int_field_5_plain: value");
+  assert(h.c[3].v == 100, "c_index_int_field_5_plain: neighbour");
+}
+fn c_index_int_field_5_churn() {
+  h = H_index_int { c: [] };
+  h.c[3] = KI { k: 3, v: 100 };
+  h.c[7] = KI { k: 7, v: 1 };
+  churn_index_int(h.c);
+  h.c[7] = KI { k: 7, v: 2 };
+  churn_index_int(h.c);
+  h.c[7] = KI { k: 7, v: 3 };
+  churn_index_int(h.c);
+  h.c[7] = KI { k: 7, v: 4 };
+  churn_index_int(h.c);
+  h.c[7] = KI { k: 7, v: 5 };
+  churn_index_int(h.c);
+  assert(len(h.c) == 2, "c_index_int_field_5_churn: len {len(h.c)}");
+  assert(walk_index_int(h.c) == 2, "c_index_int_field_5_churn: walk {walk_index_int(h.c)}");
+  assert(h.c[7].v == 5, "c_index_int_field_5_churn: value");
+  assert(h.c[3].v == 100, "c_index_int_field_5_churn: neighbour");
+}
+fn c_index_int_fieldprm_1_plain() {
+  h = H_index_int { c: [] };
+  h.c[3] = KI { k: 3, v: 100 };
+  putf_index_int(h, 1);
+  assert(len(h.c) == 2, "c_index_int_fieldprm_1_plain: len {len(h.c)}");
+  assert(walk_index_int(h.c) == 2, "c_index_int_fieldprm_1_plain: walk {walk_index_int(h.c)}");
+  assert(h.c[7].v == 1, "c_index_int_fieldprm_1_plain: value");
+  assert(h.c[3].v == 100, "c_index_int_fieldprm_1_plain: neighbour");
+}
+fn c_index_int_fieldprm_1_churn() {
+  h = H_index_int { c: [] };
+  h.c[3] = KI { k: 3, v: 100 };
+  putf_index_int(h, 1);
+  churn_index_int(h.c);
+  assert(len(h.c) == 2, "c_index_int_fieldprm_1_churn: len {len(h.c)}");
+  assert(walk_index_int(h.c) == 2, "c_index_int_fieldprm_1_churn: walk {walk_index_int(h.c)}");
+  assert(h.c[7].v == 1, "c_index_int_fieldprm_1_churn: value");
+  assert(h.c[3].v == 100, "c_index_int_fieldprm_1_churn: neighbour");
+}
+fn c_index_int_fieldprm_2_plain() {
+  h = H_index_int { c: [] };
+  h.c[3] = KI { k: 3, v: 100 };
+  putf_index_int(h, 1);
+  putf_index_int(h, 2);
+  assert(len(h.c) == 2, "c_index_int_fieldprm_2_plain: len {len(h.c)}");
+  assert(walk_index_int(h.c) == 2, "c_index_int_fieldprm_2_plain: walk {walk_index_int(h.c)}");
+  assert(h.c[7].v == 2, "c_index_int_fieldprm_2_plain: value");
+  assert(h.c[3].v == 100, "c_index_int_fieldprm_2_plain: neighbour");
+}
+fn c_index_int_fieldprm_2_churn() {
+  h = H_index_int { c: [] };
+  h.c[3] = KI { k: 3, v: 100 };
+  putf_index_int(h, 1);
+  churn_index_int(h.c);
+  putf_index_int(h, 2);
+  churn_index_int(h.c);
+  assert(len(h.c) == 2, "c_index_int_fieldprm_2_churn: len {len(h.c)}");
+  assert(walk_index_int(h.c) == 2, "c_index_int_fieldprm_2_churn: walk {walk_index_int(h.c)}");
+  assert(h.c[7].v == 2, "c_index_int_fieldprm_2_churn: value");
+  assert(h.c[3].v == 100, "c_index_int_fieldprm_2_churn: neighbour");
+}
+fn c_index_int_fieldprm_5_plain() {
+  h = H_index_int { c: [] };
+  h.c[3] = KI { k: 3, v: 100 };
+  putf_index_int(h, 1);
+  putf_index_int(h, 2);
+  putf_index_int(h, 3);
+  putf_index_int(h, 4);
+  putf_index_int(h, 5);
+  assert(len(h.c) == 2, "c_index_int_fieldprm_5_plain: len {len(h.c)}");
+  assert(walk_index_int(h.c) == 2, "c_index_int_fieldprm_5_plain: walk {walk_index_int(h.c)}");
+  assert(h.c[7].v == 5, "c_index_int_fieldprm_5_plain: value");
+  assert(h.c[3].v == 100, "c_index_int_fieldprm_5_plain: neighbour");
+}
+fn c_index_int_fieldprm_5_churn() {
+  h = H_index_int { c: [] };
+  h.c[3] = KI { k: 3, v: 100 };
+  putf_index_int(h, 1);
+  churn_index_int(h.c);
+  putf_index_int(h, 2);
+  churn_index_int(h.c);
+  putf_index_int(h, 3);
+  churn_index_int(h.c);
+  putf_index_int(h, 4);
+  churn_index_int(h.c);
+  putf_index_int(h, 5);
+  churn_index_int(h.c);
+  assert(len(h.c) == 2, "c_index_int_fieldprm_5_churn: len {len(h.c)}");
+  assert(walk_index_int(h.c) == 2, "c_index_int_fieldprm_5_churn: walk {walk_index_int(h.c)}");
+  assert(h.c[7].v == 5, "c_index_int_fieldprm_5_churn: value");
+  assert(h.c[3].v == 100, "c_index_int_fieldprm_5_churn: neighbour");
+}
+struct H_index_text { c: index<KT[k]> }
+fn put_index_text(c: &index<KT[k]>, v: integer) { c["s7"] = KT { k: "s7", v: v }; }
+fn putv_index_text(c: &index<KT[k]>, v: integer) { r = KT { k: "s7", v: v }; c["s7"] = r; }
+fn putf_index_text(h: &H_index_text, v: integer) { h.c["s7"] = KT { k: "s7", v: v }; }
+fn churn_index_text(c: &index<KT[k]>) { c["s9"] = KT { k: "s9", v: 0 }; c["s9"] = null; }
+fn walk_index_text(c: const index<KT[k]>) -> integer { n = 0; for _e in c { n += 1; } n }
+fn c_index_text_local_1_plain() {
+  c: index<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  c["s7"] = KT { k: "s7", v: 1 };
+  assert(len(c) == 2, "c_index_text_local_1_plain: len {len(c)}");
+  assert(walk_index_text(c) == 2, "c_index_text_local_1_plain: walk {walk_index_text(c)}");
+  assert(c["s7"].v == 1, "c_index_text_local_1_plain: value");
+  assert(c["nb"].v == 100, "c_index_text_local_1_plain: neighbour");
+}
+fn c_index_text_local_1_churn() {
+  c: index<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  c["s7"] = KT { k: "s7", v: 1 };
+  churn_index_text(c);
+  assert(len(c) == 2, "c_index_text_local_1_churn: len {len(c)}");
+  assert(walk_index_text(c) == 2, "c_index_text_local_1_churn: walk {walk_index_text(c)}");
+  assert(c["s7"].v == 1, "c_index_text_local_1_churn: value");
+  assert(c["nb"].v == 100, "c_index_text_local_1_churn: neighbour");
+}
+fn c_index_text_local_2_plain() {
+  c: index<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  c["s7"] = KT { k: "s7", v: 1 };
+  c["s7"] = KT { k: "s7", v: 2 };
+  assert(len(c) == 2, "c_index_text_local_2_plain: len {len(c)}");
+  assert(walk_index_text(c) == 2, "c_index_text_local_2_plain: walk {walk_index_text(c)}");
+  assert(c["s7"].v == 2, "c_index_text_local_2_plain: value");
+  assert(c["nb"].v == 100, "c_index_text_local_2_plain: neighbour");
+}
+fn c_index_text_local_2_churn() {
+  c: index<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  c["s7"] = KT { k: "s7", v: 1 };
+  churn_index_text(c);
+  c["s7"] = KT { k: "s7", v: 2 };
+  churn_index_text(c);
+  assert(len(c) == 2, "c_index_text_local_2_churn: len {len(c)}");
+  assert(walk_index_text(c) == 2, "c_index_text_local_2_churn: walk {walk_index_text(c)}");
+  assert(c["s7"].v == 2, "c_index_text_local_2_churn: value");
+  assert(c["nb"].v == 100, "c_index_text_local_2_churn: neighbour");
+}
+fn c_index_text_local_5_plain() {
+  c: index<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  c["s7"] = KT { k: "s7", v: 1 };
+  c["s7"] = KT { k: "s7", v: 2 };
+  c["s7"] = KT { k: "s7", v: 3 };
+  c["s7"] = KT { k: "s7", v: 4 };
+  c["s7"] = KT { k: "s7", v: 5 };
+  assert(len(c) == 2, "c_index_text_local_5_plain: len {len(c)}");
+  assert(walk_index_text(c) == 2, "c_index_text_local_5_plain: walk {walk_index_text(c)}");
+  assert(c["s7"].v == 5, "c_index_text_local_5_plain: value");
+  assert(c["nb"].v == 100, "c_index_text_local_5_plain: neighbour");
+}
+fn c_index_text_local_5_churn() {
+  c: index<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  c["s7"] = KT { k: "s7", v: 1 };
+  churn_index_text(c);
+  c["s7"] = KT { k: "s7", v: 2 };
+  churn_index_text(c);
+  c["s7"] = KT { k: "s7", v: 3 };
+  churn_index_text(c);
+  c["s7"] = KT { k: "s7", v: 4 };
+  churn_index_text(c);
+  c["s7"] = KT { k: "s7", v: 5 };
+  churn_index_text(c);
+  assert(len(c) == 2, "c_index_text_local_5_churn: len {len(c)}");
+  assert(walk_index_text(c) == 2, "c_index_text_local_5_churn: walk {walk_index_text(c)}");
+  assert(c["s7"].v == 5, "c_index_text_local_5_churn: value");
+  assert(c["nb"].v == 100, "c_index_text_local_5_churn: neighbour");
+}
+fn c_index_text_param_1_plain() {
+  c: index<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  put_index_text(c, 1);
+  assert(len(c) == 2, "c_index_text_param_1_plain: len {len(c)}");
+  assert(walk_index_text(c) == 2, "c_index_text_param_1_plain: walk {walk_index_text(c)}");
+  assert(c["s7"].v == 1, "c_index_text_param_1_plain: value");
+  assert(c["nb"].v == 100, "c_index_text_param_1_plain: neighbour");
+}
+fn c_index_text_param_1_churn() {
+  c: index<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  put_index_text(c, 1);
+  churn_index_text(c);
+  assert(len(c) == 2, "c_index_text_param_1_churn: len {len(c)}");
+  assert(walk_index_text(c) == 2, "c_index_text_param_1_churn: walk {walk_index_text(c)}");
+  assert(c["s7"].v == 1, "c_index_text_param_1_churn: value");
+  assert(c["nb"].v == 100, "c_index_text_param_1_churn: neighbour");
+}
+fn c_index_text_param_2_plain() {
+  c: index<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  put_index_text(c, 1);
+  put_index_text(c, 2);
+  assert(len(c) == 2, "c_index_text_param_2_plain: len {len(c)}");
+  assert(walk_index_text(c) == 2, "c_index_text_param_2_plain: walk {walk_index_text(c)}");
+  assert(c["s7"].v == 2, "c_index_text_param_2_plain: value");
+  assert(c["nb"].v == 100, "c_index_text_param_2_plain: neighbour");
+}
+fn c_index_text_param_2_churn() {
+  c: index<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  put_index_text(c, 1);
+  churn_index_text(c);
+  put_index_text(c, 2);
+  churn_index_text(c);
+  assert(len(c) == 2, "c_index_text_param_2_churn: len {len(c)}");
+  assert(walk_index_text(c) == 2, "c_index_text_param_2_churn: walk {walk_index_text(c)}");
+  assert(c["s7"].v == 2, "c_index_text_param_2_churn: value");
+  assert(c["nb"].v == 100, "c_index_text_param_2_churn: neighbour");
+}
+fn c_index_text_param_5_plain() {
+  c: index<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  put_index_text(c, 1);
+  put_index_text(c, 2);
+  put_index_text(c, 3);
+  put_index_text(c, 4);
+  put_index_text(c, 5);
+  assert(len(c) == 2, "c_index_text_param_5_plain: len {len(c)}");
+  assert(walk_index_text(c) == 2, "c_index_text_param_5_plain: walk {walk_index_text(c)}");
+  assert(c["s7"].v == 5, "c_index_text_param_5_plain: value");
+  assert(c["nb"].v == 100, "c_index_text_param_5_plain: neighbour");
+}
+fn c_index_text_param_5_churn() {
+  c: index<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  put_index_text(c, 1);
+  churn_index_text(c);
+  put_index_text(c, 2);
+  churn_index_text(c);
+  put_index_text(c, 3);
+  churn_index_text(c);
+  put_index_text(c, 4);
+  churn_index_text(c);
+  put_index_text(c, 5);
+  churn_index_text(c);
+  assert(len(c) == 2, "c_index_text_param_5_churn: len {len(c)}");
+  assert(walk_index_text(c) == 2, "c_index_text_param_5_churn: walk {walk_index_text(c)}");
+  assert(c["s7"].v == 5, "c_index_text_param_5_churn: value");
+  assert(c["nb"].v == 100, "c_index_text_param_5_churn: neighbour");
+}
+fn c_index_text_paramvar_1_plain() {
+  c: index<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  putv_index_text(c, 1);
+  assert(len(c) == 2, "c_index_text_paramvar_1_plain: len {len(c)}");
+  assert(walk_index_text(c) == 2, "c_index_text_paramvar_1_plain: walk {walk_index_text(c)}");
+  assert(c["s7"].v == 1, "c_index_text_paramvar_1_plain: value");
+  assert(c["nb"].v == 100, "c_index_text_paramvar_1_plain: neighbour");
+}
+fn c_index_text_paramvar_1_churn() {
+  c: index<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  putv_index_text(c, 1);
+  churn_index_text(c);
+  assert(len(c) == 2, "c_index_text_paramvar_1_churn: len {len(c)}");
+  assert(walk_index_text(c) == 2, "c_index_text_paramvar_1_churn: walk {walk_index_text(c)}");
+  assert(c["s7"].v == 1, "c_index_text_paramvar_1_churn: value");
+  assert(c["nb"].v == 100, "c_index_text_paramvar_1_churn: neighbour");
+}
+fn c_index_text_paramvar_2_plain() {
+  c: index<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  putv_index_text(c, 1);
+  putv_index_text(c, 2);
+  assert(len(c) == 2, "c_index_text_paramvar_2_plain: len {len(c)}");
+  assert(walk_index_text(c) == 2, "c_index_text_paramvar_2_plain: walk {walk_index_text(c)}");
+  assert(c["s7"].v == 2, "c_index_text_paramvar_2_plain: value");
+  assert(c["nb"].v == 100, "c_index_text_paramvar_2_plain: neighbour");
+}
+fn c_index_text_paramvar_2_churn() {
+  c: index<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  putv_index_text(c, 1);
+  churn_index_text(c);
+  putv_index_text(c, 2);
+  churn_index_text(c);
+  assert(len(c) == 2, "c_index_text_paramvar_2_churn: len {len(c)}");
+  assert(walk_index_text(c) == 2, "c_index_text_paramvar_2_churn: walk {walk_index_text(c)}");
+  assert(c["s7"].v == 2, "c_index_text_paramvar_2_churn: value");
+  assert(c["nb"].v == 100, "c_index_text_paramvar_2_churn: neighbour");
+}
+fn c_index_text_paramvar_5_plain() {
+  c: index<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  putv_index_text(c, 1);
+  putv_index_text(c, 2);
+  putv_index_text(c, 3);
+  putv_index_text(c, 4);
+  putv_index_text(c, 5);
+  assert(len(c) == 2, "c_index_text_paramvar_5_plain: len {len(c)}");
+  assert(walk_index_text(c) == 2, "c_index_text_paramvar_5_plain: walk {walk_index_text(c)}");
+  assert(c["s7"].v == 5, "c_index_text_paramvar_5_plain: value");
+  assert(c["nb"].v == 100, "c_index_text_paramvar_5_plain: neighbour");
+}
+fn c_index_text_paramvar_5_churn() {
+  c: index<KT[k]> = [];
+  c["nb"] = KT { k: "nb", v: 100 };
+  putv_index_text(c, 1);
+  churn_index_text(c);
+  putv_index_text(c, 2);
+  churn_index_text(c);
+  putv_index_text(c, 3);
+  churn_index_text(c);
+  putv_index_text(c, 4);
+  churn_index_text(c);
+  putv_index_text(c, 5);
+  churn_index_text(c);
+  assert(len(c) == 2, "c_index_text_paramvar_5_churn: len {len(c)}");
+  assert(walk_index_text(c) == 2, "c_index_text_paramvar_5_churn: walk {walk_index_text(c)}");
+  assert(c["s7"].v == 5, "c_index_text_paramvar_5_churn: value");
+  assert(c["nb"].v == 100, "c_index_text_paramvar_5_churn: neighbour");
+}
+fn c_index_text_field_1_plain() {
+  h = H_index_text { c: [] };
+  h.c["nb"] = KT { k: "nb", v: 100 };
+  h.c["s7"] = KT { k: "s7", v: 1 };
+  assert(len(h.c) == 2, "c_index_text_field_1_plain: len {len(h.c)}");
+  assert(walk_index_text(h.c) == 2, "c_index_text_field_1_plain: walk {walk_index_text(h.c)}");
+  assert(h.c["s7"].v == 1, "c_index_text_field_1_plain: value");
+  assert(h.c["nb"].v == 100, "c_index_text_field_1_plain: neighbour");
+}
+fn c_index_text_field_1_churn() {
+  h = H_index_text { c: [] };
+  h.c["nb"] = KT { k: "nb", v: 100 };
+  h.c["s7"] = KT { k: "s7", v: 1 };
+  churn_index_text(h.c);
+  assert(len(h.c) == 2, "c_index_text_field_1_churn: len {len(h.c)}");
+  assert(walk_index_text(h.c) == 2, "c_index_text_field_1_churn: walk {walk_index_text(h.c)}");
+  assert(h.c["s7"].v == 1, "c_index_text_field_1_churn: value");
+  assert(h.c["nb"].v == 100, "c_index_text_field_1_churn: neighbour");
+}
+fn c_index_text_field_2_plain() {
+  h = H_index_text { c: [] };
+  h.c["nb"] = KT { k: "nb", v: 100 };
+  h.c["s7"] = KT { k: "s7", v: 1 };
+  h.c["s7"] = KT { k: "s7", v: 2 };
+  assert(len(h.c) == 2, "c_index_text_field_2_plain: len {len(h.c)}");
+  assert(walk_index_text(h.c) == 2, "c_index_text_field_2_plain: walk {walk_index_text(h.c)}");
+  assert(h.c["s7"].v == 2, "c_index_text_field_2_plain: value");
+  assert(h.c["nb"].v == 100, "c_index_text_field_2_plain: neighbour");
+}
+fn c_index_text_field_2_churn() {
+  h = H_index_text { c: [] };
+  h.c["nb"] = KT { k: "nb", v: 100 };
+  h.c["s7"] = KT { k: "s7", v: 1 };
+  churn_index_text(h.c);
+  h.c["s7"] = KT { k: "s7", v: 2 };
+  churn_index_text(h.c);
+  assert(len(h.c) == 2, "c_index_text_field_2_churn: len {len(h.c)}");
+  assert(walk_index_text(h.c) == 2, "c_index_text_field_2_churn: walk {walk_index_text(h.c)}");
+  assert(h.c["s7"].v == 2, "c_index_text_field_2_churn: value");
+  assert(h.c["nb"].v == 100, "c_index_text_field_2_churn: neighbour");
+}
+fn c_index_text_field_5_plain() {
+  h = H_index_text { c: [] };
+  h.c["nb"] = KT { k: "nb", v: 100 };
+  h.c["s7"] = KT { k: "s7", v: 1 };
+  h.c["s7"] = KT { k: "s7", v: 2 };
+  h.c["s7"] = KT { k: "s7", v: 3 };
+  h.c["s7"] = KT { k: "s7", v: 4 };
+  h.c["s7"] = KT { k: "s7", v: 5 };
+  assert(len(h.c) == 2, "c_index_text_field_5_plain: len {len(h.c)}");
+  assert(walk_index_text(h.c) == 2, "c_index_text_field_5_plain: walk {walk_index_text(h.c)}");
+  assert(h.c["s7"].v == 5, "c_index_text_field_5_plain: value");
+  assert(h.c["nb"].v == 100, "c_index_text_field_5_plain: neighbour");
+}
+fn c_index_text_field_5_churn() {
+  h = H_index_text { c: [] };
+  h.c["nb"] = KT { k: "nb", v: 100 };
+  h.c["s7"] = KT { k: "s7", v: 1 };
+  churn_index_text(h.c);
+  h.c["s7"] = KT { k: "s7", v: 2 };
+  churn_index_text(h.c);
+  h.c["s7"] = KT { k: "s7", v: 3 };
+  churn_index_text(h.c);
+  h.c["s7"] = KT { k: "s7", v: 4 };
+  churn_index_text(h.c);
+  h.c["s7"] = KT { k: "s7", v: 5 };
+  churn_index_text(h.c);
+  assert(len(h.c) == 2, "c_index_text_field_5_churn: len {len(h.c)}");
+  assert(walk_index_text(h.c) == 2, "c_index_text_field_5_churn: walk {walk_index_text(h.c)}");
+  assert(h.c["s7"].v == 5, "c_index_text_field_5_churn: value");
+  assert(h.c["nb"].v == 100, "c_index_text_field_5_churn: neighbour");
+}
+fn c_index_text_fieldprm_1_plain() {
+  h = H_index_text { c: [] };
+  h.c["nb"] = KT { k: "nb", v: 100 };
+  putf_index_text(h, 1);
+  assert(len(h.c) == 2, "c_index_text_fieldprm_1_plain: len {len(h.c)}");
+  assert(walk_index_text(h.c) == 2, "c_index_text_fieldprm_1_plain: walk {walk_index_text(h.c)}");
+  assert(h.c["s7"].v == 1, "c_index_text_fieldprm_1_plain: value");
+  assert(h.c["nb"].v == 100, "c_index_text_fieldprm_1_plain: neighbour");
+}
+fn c_index_text_fieldprm_1_churn() {
+  h = H_index_text { c: [] };
+  h.c["nb"] = KT { k: "nb", v: 100 };
+  putf_index_text(h, 1);
+  churn_index_text(h.c);
+  assert(len(h.c) == 2, "c_index_text_fieldprm_1_churn: len {len(h.c)}");
+  assert(walk_index_text(h.c) == 2, "c_index_text_fieldprm_1_churn: walk {walk_index_text(h.c)}");
+  assert(h.c["s7"].v == 1, "c_index_text_fieldprm_1_churn: value");
+  assert(h.c["nb"].v == 100, "c_index_text_fieldprm_1_churn: neighbour");
+}
+fn c_index_text_fieldprm_2_plain() {
+  h = H_index_text { c: [] };
+  h.c["nb"] = KT { k: "nb", v: 100 };
+  putf_index_text(h, 1);
+  putf_index_text(h, 2);
+  assert(len(h.c) == 2, "c_index_text_fieldprm_2_plain: len {len(h.c)}");
+  assert(walk_index_text(h.c) == 2, "c_index_text_fieldprm_2_plain: walk {walk_index_text(h.c)}");
+  assert(h.c["s7"].v == 2, "c_index_text_fieldprm_2_plain: value");
+  assert(h.c["nb"].v == 100, "c_index_text_fieldprm_2_plain: neighbour");
+}
+fn c_index_text_fieldprm_2_churn() {
+  h = H_index_text { c: [] };
+  h.c["nb"] = KT { k: "nb", v: 100 };
+  putf_index_text(h, 1);
+  churn_index_text(h.c);
+  putf_index_text(h, 2);
+  churn_index_text(h.c);
+  assert(len(h.c) == 2, "c_index_text_fieldprm_2_churn: len {len(h.c)}");
+  assert(walk_index_text(h.c) == 2, "c_index_text_fieldprm_2_churn: walk {walk_index_text(h.c)}");
+  assert(h.c["s7"].v == 2, "c_index_text_fieldprm_2_churn: value");
+  assert(h.c["nb"].v == 100, "c_index_text_fieldprm_2_churn: neighbour");
+}
+fn c_index_text_fieldprm_5_plain() {
+  h = H_index_text { c: [] };
+  h.c["nb"] = KT { k: "nb", v: 100 };
+  putf_index_text(h, 1);
+  putf_index_text(h, 2);
+  putf_index_text(h, 3);
+  putf_index_text(h, 4);
+  putf_index_text(h, 5);
+  assert(len(h.c) == 2, "c_index_text_fieldprm_5_plain: len {len(h.c)}");
+  assert(walk_index_text(h.c) == 2, "c_index_text_fieldprm_5_plain: walk {walk_index_text(h.c)}");
+  assert(h.c["s7"].v == 5, "c_index_text_fieldprm_5_plain: value");
+  assert(h.c["nb"].v == 100, "c_index_text_fieldprm_5_plain: neighbour");
+}
+fn c_index_text_fieldprm_5_churn() {
+  h = H_index_text { c: [] };
+  h.c["nb"] = KT { k: "nb", v: 100 };
+  putf_index_text(h, 1);
+  churn_index_text(h.c);
+  putf_index_text(h, 2);
+  churn_index_text(h.c);
+  putf_index_text(h, 3);
+  churn_index_text(h.c);
+  putf_index_text(h, 4);
+  churn_index_text(h.c);
+  putf_index_text(h, 5);
+  churn_index_text(h.c);
+  assert(len(h.c) == 2, "c_index_text_fieldprm_5_churn: len {len(h.c)}");
+  assert(walk_index_text(h.c) == 2, "c_index_text_fieldprm_5_churn: walk {walk_index_text(h.c)}");
+  assert(h.c["s7"].v == 5, "c_index_text_fieldprm_5_churn: value");
+  assert(h.c["nb"].v == 100, "c_index_text_fieldprm_5_churn: neighbour");
+}
+struct H_index_two { c: index<K2[a, b]> }
+fn put_index_two(c: &index<K2[a, b]>, v: integer) { c["s7", 7] = K2 { a: "s7", b: 7, v: v }; }
+fn putv_index_two(c: &index<K2[a, b]>, v: integer) { r = K2 { a: "s7", b: 7, v: v }; c["s7", 7] = r; }
+fn putf_index_two(h: &H_index_two, v: integer) { h.c["s7", 7] = K2 { a: "s7", b: 7, v: v }; }
+fn churn_index_two(c: &index<K2[a, b]>) { c["s9", 9] = K2 { a: "s9", b: 9, v: 0 }; c["s9", 9] = null; }
+fn walk_index_two(c: const index<K2[a, b]>) -> integer { n = 0; for _e in c { n += 1; } n }
+fn c_index_two_local_1_plain() {
+  c: index<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 1 };
+  assert(len(c) == 2, "c_index_two_local_1_plain: len {len(c)}");
+  assert(walk_index_two(c) == 2, "c_index_two_local_1_plain: walk {walk_index_two(c)}");
+  assert(c["s7", 7].v == 1, "c_index_two_local_1_plain: value");
+  assert(c["nb", 3].v == 100, "c_index_two_local_1_plain: neighbour");
+}
+fn c_index_two_local_1_churn() {
+  c: index<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 1 };
+  churn_index_two(c);
+  assert(len(c) == 2, "c_index_two_local_1_churn: len {len(c)}");
+  assert(walk_index_two(c) == 2, "c_index_two_local_1_churn: walk {walk_index_two(c)}");
+  assert(c["s7", 7].v == 1, "c_index_two_local_1_churn: value");
+  assert(c["nb", 3].v == 100, "c_index_two_local_1_churn: neighbour");
+}
+fn c_index_two_local_2_plain() {
+  c: index<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 1 };
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 2 };
+  assert(len(c) == 2, "c_index_two_local_2_plain: len {len(c)}");
+  assert(walk_index_two(c) == 2, "c_index_two_local_2_plain: walk {walk_index_two(c)}");
+  assert(c["s7", 7].v == 2, "c_index_two_local_2_plain: value");
+  assert(c["nb", 3].v == 100, "c_index_two_local_2_plain: neighbour");
+}
+fn c_index_two_local_2_churn() {
+  c: index<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 1 };
+  churn_index_two(c);
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 2 };
+  churn_index_two(c);
+  assert(len(c) == 2, "c_index_two_local_2_churn: len {len(c)}");
+  assert(walk_index_two(c) == 2, "c_index_two_local_2_churn: walk {walk_index_two(c)}");
+  assert(c["s7", 7].v == 2, "c_index_two_local_2_churn: value");
+  assert(c["nb", 3].v == 100, "c_index_two_local_2_churn: neighbour");
+}
+fn c_index_two_local_5_plain() {
+  c: index<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 1 };
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 2 };
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 3 };
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 4 };
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 5 };
+  assert(len(c) == 2, "c_index_two_local_5_plain: len {len(c)}");
+  assert(walk_index_two(c) == 2, "c_index_two_local_5_plain: walk {walk_index_two(c)}");
+  assert(c["s7", 7].v == 5, "c_index_two_local_5_plain: value");
+  assert(c["nb", 3].v == 100, "c_index_two_local_5_plain: neighbour");
+}
+fn c_index_two_local_5_churn() {
+  c: index<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 1 };
+  churn_index_two(c);
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 2 };
+  churn_index_two(c);
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 3 };
+  churn_index_two(c);
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 4 };
+  churn_index_two(c);
+  c["s7", 7] = K2 { a: "s7", b: 7, v: 5 };
+  churn_index_two(c);
+  assert(len(c) == 2, "c_index_two_local_5_churn: len {len(c)}");
+  assert(walk_index_two(c) == 2, "c_index_two_local_5_churn: walk {walk_index_two(c)}");
+  assert(c["s7", 7].v == 5, "c_index_two_local_5_churn: value");
+  assert(c["nb", 3].v == 100, "c_index_two_local_5_churn: neighbour");
+}
+fn c_index_two_param_1_plain() {
+  c: index<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  put_index_two(c, 1);
+  assert(len(c) == 2, "c_index_two_param_1_plain: len {len(c)}");
+  assert(walk_index_two(c) == 2, "c_index_two_param_1_plain: walk {walk_index_two(c)}");
+  assert(c["s7", 7].v == 1, "c_index_two_param_1_plain: value");
+  assert(c["nb", 3].v == 100, "c_index_two_param_1_plain: neighbour");
+}
+fn c_index_two_param_1_churn() {
+  c: index<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  put_index_two(c, 1);
+  churn_index_two(c);
+  assert(len(c) == 2, "c_index_two_param_1_churn: len {len(c)}");
+  assert(walk_index_two(c) == 2, "c_index_two_param_1_churn: walk {walk_index_two(c)}");
+  assert(c["s7", 7].v == 1, "c_index_two_param_1_churn: value");
+  assert(c["nb", 3].v == 100, "c_index_two_param_1_churn: neighbour");
+}
+fn c_index_two_param_2_plain() {
+  c: index<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  put_index_two(c, 1);
+  put_index_two(c, 2);
+  assert(len(c) == 2, "c_index_two_param_2_plain: len {len(c)}");
+  assert(walk_index_two(c) == 2, "c_index_two_param_2_plain: walk {walk_index_two(c)}");
+  assert(c["s7", 7].v == 2, "c_index_two_param_2_plain: value");
+  assert(c["nb", 3].v == 100, "c_index_two_param_2_plain: neighbour");
+}
+fn c_index_two_param_2_churn() {
+  c: index<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  put_index_two(c, 1);
+  churn_index_two(c);
+  put_index_two(c, 2);
+  churn_index_two(c);
+  assert(len(c) == 2, "c_index_two_param_2_churn: len {len(c)}");
+  assert(walk_index_two(c) == 2, "c_index_two_param_2_churn: walk {walk_index_two(c)}");
+  assert(c["s7", 7].v == 2, "c_index_two_param_2_churn: value");
+  assert(c["nb", 3].v == 100, "c_index_two_param_2_churn: neighbour");
+}
+fn c_index_two_param_5_plain() {
+  c: index<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  put_index_two(c, 1);
+  put_index_two(c, 2);
+  put_index_two(c, 3);
+  put_index_two(c, 4);
+  put_index_two(c, 5);
+  assert(len(c) == 2, "c_index_two_param_5_plain: len {len(c)}");
+  assert(walk_index_two(c) == 2, "c_index_two_param_5_plain: walk {walk_index_two(c)}");
+  assert(c["s7", 7].v == 5, "c_index_two_param_5_plain: value");
+  assert(c["nb", 3].v == 100, "c_index_two_param_5_plain: neighbour");
+}
+fn c_index_two_param_5_churn() {
+  c: index<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  put_index_two(c, 1);
+  churn_index_two(c);
+  put_index_two(c, 2);
+  churn_index_two(c);
+  put_index_two(c, 3);
+  churn_index_two(c);
+  put_index_two(c, 4);
+  churn_index_two(c);
+  put_index_two(c, 5);
+  churn_index_two(c);
+  assert(len(c) == 2, "c_index_two_param_5_churn: len {len(c)}");
+  assert(walk_index_two(c) == 2, "c_index_two_param_5_churn: walk {walk_index_two(c)}");
+  assert(c["s7", 7].v == 5, "c_index_two_param_5_churn: value");
+  assert(c["nb", 3].v == 100, "c_index_two_param_5_churn: neighbour");
+}
+fn c_index_two_paramvar_1_plain() {
+  c: index<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  putv_index_two(c, 1);
+  assert(len(c) == 2, "c_index_two_paramvar_1_plain: len {len(c)}");
+  assert(walk_index_two(c) == 2, "c_index_two_paramvar_1_plain: walk {walk_index_two(c)}");
+  assert(c["s7", 7].v == 1, "c_index_two_paramvar_1_plain: value");
+  assert(c["nb", 3].v == 100, "c_index_two_paramvar_1_plain: neighbour");
+}
+fn c_index_two_paramvar_1_churn() {
+  c: index<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  putv_index_two(c, 1);
+  churn_index_two(c);
+  assert(len(c) == 2, "c_index_two_paramvar_1_churn: len {len(c)}");
+  assert(walk_index_two(c) == 2, "c_index_two_paramvar_1_churn: walk {walk_index_two(c)}");
+  assert(c["s7", 7].v == 1, "c_index_two_paramvar_1_churn: value");
+  assert(c["nb", 3].v == 100, "c_index_two_paramvar_1_churn: neighbour");
+}
+fn c_index_two_paramvar_2_plain() {
+  c: index<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  putv_index_two(c, 1);
+  putv_index_two(c, 2);
+  assert(len(c) == 2, "c_index_two_paramvar_2_plain: len {len(c)}");
+  assert(walk_index_two(c) == 2, "c_index_two_paramvar_2_plain: walk {walk_index_two(c)}");
+  assert(c["s7", 7].v == 2, "c_index_two_paramvar_2_plain: value");
+  assert(c["nb", 3].v == 100, "c_index_two_paramvar_2_plain: neighbour");
+}
+fn c_index_two_paramvar_2_churn() {
+  c: index<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  putv_index_two(c, 1);
+  churn_index_two(c);
+  putv_index_two(c, 2);
+  churn_index_two(c);
+  assert(len(c) == 2, "c_index_two_paramvar_2_churn: len {len(c)}");
+  assert(walk_index_two(c) == 2, "c_index_two_paramvar_2_churn: walk {walk_index_two(c)}");
+  assert(c["s7", 7].v == 2, "c_index_two_paramvar_2_churn: value");
+  assert(c["nb", 3].v == 100, "c_index_two_paramvar_2_churn: neighbour");
+}
+fn c_index_two_paramvar_5_plain() {
+  c: index<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  putv_index_two(c, 1);
+  putv_index_two(c, 2);
+  putv_index_two(c, 3);
+  putv_index_two(c, 4);
+  putv_index_two(c, 5);
+  assert(len(c) == 2, "c_index_two_paramvar_5_plain: len {len(c)}");
+  assert(walk_index_two(c) == 2, "c_index_two_paramvar_5_plain: walk {walk_index_two(c)}");
+  assert(c["s7", 7].v == 5, "c_index_two_paramvar_5_plain: value");
+  assert(c["nb", 3].v == 100, "c_index_two_paramvar_5_plain: neighbour");
+}
+fn c_index_two_paramvar_5_churn() {
+  c: index<K2[a, b]> = [];
+  c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  putv_index_two(c, 1);
+  churn_index_two(c);
+  putv_index_two(c, 2);
+  churn_index_two(c);
+  putv_index_two(c, 3);
+  churn_index_two(c);
+  putv_index_two(c, 4);
+  churn_index_two(c);
+  putv_index_two(c, 5);
+  churn_index_two(c);
+  assert(len(c) == 2, "c_index_two_paramvar_5_churn: len {len(c)}");
+  assert(walk_index_two(c) == 2, "c_index_two_paramvar_5_churn: walk {walk_index_two(c)}");
+  assert(c["s7", 7].v == 5, "c_index_two_paramvar_5_churn: value");
+  assert(c["nb", 3].v == 100, "c_index_two_paramvar_5_churn: neighbour");
+}
+fn c_index_two_field_1_plain() {
+  h = H_index_two { c: [] };
+  h.c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 1 };
+  assert(len(h.c) == 2, "c_index_two_field_1_plain: len {len(h.c)}");
+  assert(walk_index_two(h.c) == 2, "c_index_two_field_1_plain: walk {walk_index_two(h.c)}");
+  assert(h.c["s7", 7].v == 1, "c_index_two_field_1_plain: value");
+  assert(h.c["nb", 3].v == 100, "c_index_two_field_1_plain: neighbour");
+}
+fn c_index_two_field_1_churn() {
+  h = H_index_two { c: [] };
+  h.c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 1 };
+  churn_index_two(h.c);
+  assert(len(h.c) == 2, "c_index_two_field_1_churn: len {len(h.c)}");
+  assert(walk_index_two(h.c) == 2, "c_index_two_field_1_churn: walk {walk_index_two(h.c)}");
+  assert(h.c["s7", 7].v == 1, "c_index_two_field_1_churn: value");
+  assert(h.c["nb", 3].v == 100, "c_index_two_field_1_churn: neighbour");
+}
+fn c_index_two_field_2_plain() {
+  h = H_index_two { c: [] };
+  h.c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 1 };
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 2 };
+  assert(len(h.c) == 2, "c_index_two_field_2_plain: len {len(h.c)}");
+  assert(walk_index_two(h.c) == 2, "c_index_two_field_2_plain: walk {walk_index_two(h.c)}");
+  assert(h.c["s7", 7].v == 2, "c_index_two_field_2_plain: value");
+  assert(h.c["nb", 3].v == 100, "c_index_two_field_2_plain: neighbour");
+}
+fn c_index_two_field_2_churn() {
+  h = H_index_two { c: [] };
+  h.c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 1 };
+  churn_index_two(h.c);
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 2 };
+  churn_index_two(h.c);
+  assert(len(h.c) == 2, "c_index_two_field_2_churn: len {len(h.c)}");
+  assert(walk_index_two(h.c) == 2, "c_index_two_field_2_churn: walk {walk_index_two(h.c)}");
+  assert(h.c["s7", 7].v == 2, "c_index_two_field_2_churn: value");
+  assert(h.c["nb", 3].v == 100, "c_index_two_field_2_churn: neighbour");
+}
+fn c_index_two_field_5_plain() {
+  h = H_index_two { c: [] };
+  h.c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 1 };
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 2 };
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 3 };
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 4 };
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 5 };
+  assert(len(h.c) == 2, "c_index_two_field_5_plain: len {len(h.c)}");
+  assert(walk_index_two(h.c) == 2, "c_index_two_field_5_plain: walk {walk_index_two(h.c)}");
+  assert(h.c["s7", 7].v == 5, "c_index_two_field_5_plain: value");
+  assert(h.c["nb", 3].v == 100, "c_index_two_field_5_plain: neighbour");
+}
+fn c_index_two_field_5_churn() {
+  h = H_index_two { c: [] };
+  h.c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 1 };
+  churn_index_two(h.c);
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 2 };
+  churn_index_two(h.c);
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 3 };
+  churn_index_two(h.c);
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 4 };
+  churn_index_two(h.c);
+  h.c["s7", 7] = K2 { a: "s7", b: 7, v: 5 };
+  churn_index_two(h.c);
+  assert(len(h.c) == 2, "c_index_two_field_5_churn: len {len(h.c)}");
+  assert(walk_index_two(h.c) == 2, "c_index_two_field_5_churn: walk {walk_index_two(h.c)}");
+  assert(h.c["s7", 7].v == 5, "c_index_two_field_5_churn: value");
+  assert(h.c["nb", 3].v == 100, "c_index_two_field_5_churn: neighbour");
+}
+fn c_index_two_fieldprm_1_plain() {
+  h = H_index_two { c: [] };
+  h.c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  putf_index_two(h, 1);
+  assert(len(h.c) == 2, "c_index_two_fieldprm_1_plain: len {len(h.c)}");
+  assert(walk_index_two(h.c) == 2, "c_index_two_fieldprm_1_plain: walk {walk_index_two(h.c)}");
+  assert(h.c["s7", 7].v == 1, "c_index_two_fieldprm_1_plain: value");
+  assert(h.c["nb", 3].v == 100, "c_index_two_fieldprm_1_plain: neighbour");
+}
+fn c_index_two_fieldprm_1_churn() {
+  h = H_index_two { c: [] };
+  h.c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  putf_index_two(h, 1);
+  churn_index_two(h.c);
+  assert(len(h.c) == 2, "c_index_two_fieldprm_1_churn: len {len(h.c)}");
+  assert(walk_index_two(h.c) == 2, "c_index_two_fieldprm_1_churn: walk {walk_index_two(h.c)}");
+  assert(h.c["s7", 7].v == 1, "c_index_two_fieldprm_1_churn: value");
+  assert(h.c["nb", 3].v == 100, "c_index_two_fieldprm_1_churn: neighbour");
+}
+fn c_index_two_fieldprm_2_plain() {
+  h = H_index_two { c: [] };
+  h.c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  putf_index_two(h, 1);
+  putf_index_two(h, 2);
+  assert(len(h.c) == 2, "c_index_two_fieldprm_2_plain: len {len(h.c)}");
+  assert(walk_index_two(h.c) == 2, "c_index_two_fieldprm_2_plain: walk {walk_index_two(h.c)}");
+  assert(h.c["s7", 7].v == 2, "c_index_two_fieldprm_2_plain: value");
+  assert(h.c["nb", 3].v == 100, "c_index_two_fieldprm_2_plain: neighbour");
+}
+fn c_index_two_fieldprm_2_churn() {
+  h = H_index_two { c: [] };
+  h.c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  putf_index_two(h, 1);
+  churn_index_two(h.c);
+  putf_index_two(h, 2);
+  churn_index_two(h.c);
+  assert(len(h.c) == 2, "c_index_two_fieldprm_2_churn: len {len(h.c)}");
+  assert(walk_index_two(h.c) == 2, "c_index_two_fieldprm_2_churn: walk {walk_index_two(h.c)}");
+  assert(h.c["s7", 7].v == 2, "c_index_two_fieldprm_2_churn: value");
+  assert(h.c["nb", 3].v == 100, "c_index_two_fieldprm_2_churn: neighbour");
+}
+fn c_index_two_fieldprm_5_plain() {
+  h = H_index_two { c: [] };
+  h.c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  putf_index_two(h, 1);
+  putf_index_two(h, 2);
+  putf_index_two(h, 3);
+  putf_index_two(h, 4);
+  putf_index_two(h, 5);
+  assert(len(h.c) == 2, "c_index_two_fieldprm_5_plain: len {len(h.c)}");
+  assert(walk_index_two(h.c) == 2, "c_index_two_fieldprm_5_plain: walk {walk_index_two(h.c)}");
+  assert(h.c["s7", 7].v == 5, "c_index_two_fieldprm_5_plain: value");
+  assert(h.c["nb", 3].v == 100, "c_index_two_fieldprm_5_plain: neighbour");
+}
+fn c_index_two_fieldprm_5_churn() {
+  h = H_index_two { c: [] };
+  h.c["nb", 3] = K2 { a: "nb", b: 3, v: 100 };
+  putf_index_two(h, 1);
+  churn_index_two(h.c);
+  putf_index_two(h, 2);
+  churn_index_two(h.c);
+  putf_index_two(h, 3);
+  churn_index_two(h.c);
+  putf_index_two(h, 4);
+  churn_index_two(h.c);
+  putf_index_two(h, 5);
+  churn_index_two(h.c);
+  assert(len(h.c) == 2, "c_index_two_fieldprm_5_churn: len {len(h.c)}");
+  assert(walk_index_two(h.c) == 2, "c_index_two_fieldprm_5_churn: walk {walk_index_two(h.c)}");
+  assert(h.c["s7", 7].v == 5, "c_index_two_fieldprm_5_churn: value");
+  assert(h.c["nb", 3].v == 100, "c_index_two_fieldprm_5_churn: neighbour");
+}
+fn main() {
+  c_hash_int_local_1_plain();
+  c_hash_int_local_1_churn();
+  c_hash_int_local_2_plain();
+  c_hash_int_local_2_churn();
+  c_hash_int_local_5_plain();
+  c_hash_int_local_5_churn();
+  c_hash_int_param_1_plain();
+  c_hash_int_param_1_churn();
+  c_hash_int_param_2_plain();
+  c_hash_int_param_2_churn();
+  c_hash_int_param_5_plain();
+  c_hash_int_param_5_churn();
+  c_hash_int_paramvar_1_plain();
+  c_hash_int_paramvar_1_churn();
+  c_hash_int_paramvar_2_plain();
+  c_hash_int_paramvar_2_churn();
+  c_hash_int_paramvar_5_plain();
+  c_hash_int_paramvar_5_churn();
+  c_hash_int_field_1_plain();
+  c_hash_int_field_1_churn();
+  c_hash_int_field_2_plain();
+  c_hash_int_field_2_churn();
+  c_hash_int_field_5_plain();
+  c_hash_int_field_5_churn();
+  c_hash_int_fieldprm_1_plain();
+  c_hash_int_fieldprm_1_churn();
+  c_hash_int_fieldprm_2_plain();
+  c_hash_int_fieldprm_2_churn();
+  c_hash_int_fieldprm_5_plain();
+  c_hash_int_fieldprm_5_churn();
+  c_hash_text_local_1_plain();
+  c_hash_text_local_1_churn();
+  c_hash_text_local_2_plain();
+  c_hash_text_local_2_churn();
+  c_hash_text_local_5_plain();
+  c_hash_text_local_5_churn();
+  c_hash_text_param_1_plain();
+  c_hash_text_param_1_churn();
+  c_hash_text_param_2_plain();
+  c_hash_text_param_2_churn();
+  c_hash_text_param_5_plain();
+  c_hash_text_param_5_churn();
+  c_hash_text_paramvar_1_plain();
+  c_hash_text_paramvar_1_churn();
+  c_hash_text_paramvar_2_plain();
+  c_hash_text_paramvar_2_churn();
+  c_hash_text_paramvar_5_plain();
+  c_hash_text_paramvar_5_churn();
+  c_hash_text_field_1_plain();
+  c_hash_text_field_1_churn();
+  c_hash_text_field_2_plain();
+  c_hash_text_field_2_churn();
+  c_hash_text_field_5_plain();
+  c_hash_text_field_5_churn();
+  c_hash_text_fieldprm_1_plain();
+  c_hash_text_fieldprm_1_churn();
+  c_hash_text_fieldprm_2_plain();
+  c_hash_text_fieldprm_2_churn();
+  c_hash_text_fieldprm_5_plain();
+  c_hash_text_fieldprm_5_churn();
+  c_hash_two_local_1_plain();
+  c_hash_two_local_1_churn();
+  c_hash_two_local_2_plain();
+  c_hash_two_local_2_churn();
+  c_hash_two_local_5_plain();
+  c_hash_two_local_5_churn();
+  c_hash_two_param_1_plain();
+  c_hash_two_param_1_churn();
+  c_hash_two_param_2_plain();
+  c_hash_two_param_2_churn();
+  c_hash_two_param_5_plain();
+  c_hash_two_param_5_churn();
+  c_hash_two_paramvar_1_plain();
+  c_hash_two_paramvar_1_churn();
+  c_hash_two_paramvar_2_plain();
+  c_hash_two_paramvar_2_churn();
+  c_hash_two_paramvar_5_plain();
+  c_hash_two_paramvar_5_churn();
+  c_hash_two_field_1_plain();
+  c_hash_two_field_1_churn();
+  c_hash_two_field_2_plain();
+  c_hash_two_field_2_churn();
+  c_hash_two_field_5_plain();
+  c_hash_two_field_5_churn();
+  c_hash_two_fieldprm_1_plain();
+  c_hash_two_fieldprm_1_churn();
+  c_hash_two_fieldprm_2_plain();
+  c_hash_two_fieldprm_2_churn();
+  c_hash_two_fieldprm_5_plain();
+  c_hash_two_fieldprm_5_churn();
+  c_sorted_int_local_1_plain();
+  c_sorted_int_local_1_churn();
+  c_sorted_int_local_2_plain();
+  c_sorted_int_local_2_churn();
+  c_sorted_int_local_5_plain();
+  c_sorted_int_local_5_churn();
+  c_sorted_int_param_1_plain();
+  c_sorted_int_param_1_churn();
+  c_sorted_int_param_2_plain();
+  c_sorted_int_param_2_churn();
+  c_sorted_int_param_5_plain();
+  c_sorted_int_param_5_churn();
+  c_sorted_int_paramvar_1_plain();
+  c_sorted_int_paramvar_1_churn();
+  c_sorted_int_paramvar_2_plain();
+  c_sorted_int_paramvar_2_churn();
+  c_sorted_int_paramvar_5_plain();
+  c_sorted_int_paramvar_5_churn();
+  c_sorted_int_field_1_plain();
+  c_sorted_int_field_1_churn();
+  c_sorted_int_field_2_plain();
+  c_sorted_int_field_2_churn();
+  c_sorted_int_field_5_plain();
+  c_sorted_int_field_5_churn();
+  c_sorted_int_fieldprm_1_plain();
+  c_sorted_int_fieldprm_1_churn();
+  c_sorted_int_fieldprm_2_plain();
+  c_sorted_int_fieldprm_2_churn();
+  c_sorted_int_fieldprm_5_plain();
+  c_sorted_int_fieldprm_5_churn();
+  c_sorted_text_local_1_plain();
+  c_sorted_text_local_1_churn();
+  c_sorted_text_local_2_plain();
+  c_sorted_text_local_2_churn();
+  c_sorted_text_local_5_plain();
+  c_sorted_text_local_5_churn();
+  c_sorted_text_param_1_plain();
+  c_sorted_text_param_1_churn();
+  c_sorted_text_param_2_plain();
+  c_sorted_text_param_2_churn();
+  c_sorted_text_param_5_plain();
+  c_sorted_text_param_5_churn();
+  c_sorted_text_paramvar_1_plain();
+  c_sorted_text_paramvar_1_churn();
+  c_sorted_text_paramvar_2_plain();
+  c_sorted_text_paramvar_2_churn();
+  c_sorted_text_paramvar_5_plain();
+  c_sorted_text_paramvar_5_churn();
+  c_sorted_text_field_1_plain();
+  c_sorted_text_field_1_churn();
+  c_sorted_text_field_2_plain();
+  c_sorted_text_field_2_churn();
+  c_sorted_text_field_5_plain();
+  c_sorted_text_field_5_churn();
+  c_sorted_text_fieldprm_1_plain();
+  c_sorted_text_fieldprm_1_churn();
+  c_sorted_text_fieldprm_2_plain();
+  c_sorted_text_fieldprm_2_churn();
+  c_sorted_text_fieldprm_5_plain();
+  c_sorted_text_fieldprm_5_churn();
+  c_sorted_two_local_1_plain();
+  c_sorted_two_local_1_churn();
+  c_sorted_two_local_2_plain();
+  c_sorted_two_local_2_churn();
+  c_sorted_two_local_5_plain();
+  c_sorted_two_local_5_churn();
+  c_sorted_two_param_1_plain();
+  c_sorted_two_param_1_churn();
+  c_sorted_two_param_2_plain();
+  c_sorted_two_param_2_churn();
+  c_sorted_two_param_5_plain();
+  c_sorted_two_param_5_churn();
+  c_sorted_two_paramvar_1_plain();
+  c_sorted_two_paramvar_1_churn();
+  c_sorted_two_paramvar_2_plain();
+  c_sorted_two_paramvar_2_churn();
+  c_sorted_two_paramvar_5_plain();
+  c_sorted_two_paramvar_5_churn();
+  c_sorted_two_field_1_plain();
+  c_sorted_two_field_1_churn();
+  c_sorted_two_field_2_plain();
+  c_sorted_two_field_2_churn();
+  c_sorted_two_field_5_plain();
+  c_sorted_two_field_5_churn();
+  c_sorted_two_fieldprm_1_plain();
+  c_sorted_two_fieldprm_1_churn();
+  c_sorted_two_fieldprm_2_plain();
+  c_sorted_two_fieldprm_2_churn();
+  c_sorted_two_fieldprm_5_plain();
+  c_sorted_two_fieldprm_5_churn();
+  c_index_int_local_1_plain();
+  c_index_int_local_1_churn();
+  c_index_int_local_2_plain();
+  c_index_int_local_2_churn();
+  c_index_int_local_5_plain();
+  c_index_int_local_5_churn();
+  c_index_int_param_1_plain();
+  c_index_int_param_1_churn();
+  c_index_int_param_2_plain();
+  c_index_int_param_2_churn();
+  c_index_int_param_5_plain();
+  c_index_int_param_5_churn();
+  c_index_int_paramvar_1_plain();
+  c_index_int_paramvar_1_churn();
+  c_index_int_paramvar_2_plain();
+  c_index_int_paramvar_2_churn();
+  c_index_int_paramvar_5_plain();
+  c_index_int_paramvar_5_churn();
+  c_index_int_field_1_plain();
+  c_index_int_field_1_churn();
+  c_index_int_field_2_plain();
+  c_index_int_field_2_churn();
+  c_index_int_field_5_plain();
+  c_index_int_field_5_churn();
+  c_index_int_fieldprm_1_plain();
+  c_index_int_fieldprm_1_churn();
+  c_index_int_fieldprm_2_plain();
+  c_index_int_fieldprm_2_churn();
+  c_index_int_fieldprm_5_plain();
+  c_index_int_fieldprm_5_churn();
+  c_index_text_local_1_plain();
+  c_index_text_local_1_churn();
+  c_index_text_local_2_plain();
+  c_index_text_local_2_churn();
+  c_index_text_local_5_plain();
+  c_index_text_local_5_churn();
+  c_index_text_param_1_plain();
+  c_index_text_param_1_churn();
+  c_index_text_param_2_plain();
+  c_index_text_param_2_churn();
+  c_index_text_param_5_plain();
+  c_index_text_param_5_churn();
+  c_index_text_paramvar_1_plain();
+  c_index_text_paramvar_1_churn();
+  c_index_text_paramvar_2_plain();
+  c_index_text_paramvar_2_churn();
+  c_index_text_paramvar_5_plain();
+  c_index_text_paramvar_5_churn();
+  c_index_text_field_1_plain();
+  c_index_text_field_1_churn();
+  c_index_text_field_2_plain();
+  c_index_text_field_2_churn();
+  c_index_text_field_5_plain();
+  c_index_text_field_5_churn();
+  c_index_text_fieldprm_1_plain();
+  c_index_text_fieldprm_1_churn();
+  c_index_text_fieldprm_2_plain();
+  c_index_text_fieldprm_2_churn();
+  c_index_text_fieldprm_5_plain();
+  c_index_text_fieldprm_5_churn();
+  c_index_two_local_1_plain();
+  c_index_two_local_1_churn();
+  c_index_two_local_2_plain();
+  c_index_two_local_2_churn();
+  c_index_two_local_5_plain();
+  c_index_two_local_5_churn();
+  c_index_two_param_1_plain();
+  c_index_two_param_1_churn();
+  c_index_two_param_2_plain();
+  c_index_two_param_2_churn();
+  c_index_two_param_5_plain();
+  c_index_two_param_5_churn();
+  c_index_two_paramvar_1_plain();
+  c_index_two_paramvar_1_churn();
+  c_index_two_paramvar_2_plain();
+  c_index_two_paramvar_2_churn();
+  c_index_two_paramvar_5_plain();
+  c_index_two_paramvar_5_churn();
+  c_index_two_field_1_plain();
+  c_index_two_field_1_churn();
+  c_index_two_field_2_plain();
+  c_index_two_field_2_churn();
+  c_index_two_field_5_plain();
+  c_index_two_field_5_churn();
+  c_index_two_fieldprm_1_plain();
+  c_index_two_fieldprm_1_churn();
+  c_index_two_fieldprm_2_plain();
+  c_index_two_fieldprm_2_churn();
+  c_index_two_fieldprm_5_plain();
+  c_index_two_fieldprm_5_churn();
+  println("cells ok: 270");
+}

@@ -1,0 +1,50 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-ValueLocal` — a callee that receives a `value struct` parameter as a TUPLE is passed
+// that tuple at every call site, a LIFTED one included.  A call whose arguments are hoisted
+// (inside `assert(… && …)`) spelled each argument as the attribute's own `DbRef`, so a
+// generic's instance taking `(i64,)` was handed a record: rustc refused the program (E0308),
+// `--interpret` ran it.  The sibling of loft#1847's lifted call RETURNING a value record.
+//
+// Axes this file MOVES: the callee (a generic's instance · a plain function · a method), the
+// argument (a literal · a local · a call), and the position (inside `assert(… && …)` · a
+// plain `&&` bound to a local).
+//
+// @falsified-at: 8cece94bf — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/a-lifted-call-passes-a-value-record-parameter-as-its-tuple.patch — native exit 1 -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   CHANNEL: exit on native — rustc refuses the control's source (E0308, `(i64,)` expected,
+//   `DbRef` found); the interpreter answers alike on both trees.
+//   HOLDS: every asserted value on --interpret; leak and panic equal on both trees.
+//
+// Every expected value is worked out by hand.
+
+value struct M { c: integer }
+fn neg(self: M) -> M { M { c: 0 - self.c } }
+fn mul(self: M, other: M) -> M { M { c: self.c * other.c } }
+fn div(self: M, other: M) -> M { M { c: self.c / other.c ?? 0 } }
+interface Ar {
+  fn neg(self: Self) -> Self
+  fn mul(self: Self, other: Self) -> Self
+}
+fn neg_of<T: Ar>(a: T) -> T { a.neg() }
+fn mul_of<T: Ar>(a: T, b: T) -> T { a.mul(b) }
+fn twice(m: M) -> M { M { c: m.c * 2 } }
+fn mk(c: integer) -> M { M { c: c } }
+
+fn main() {
+  a = M { c: 17 };
+  b = M { c: 5 };
+  // -17; 17 / 5 = 3; -(4) = -4; 3 * 4 = 12.
+  assert(a.neg().c == -17 && a.div(b).c == 3, "methods in one assert");
+  assert(neg_of(M { c: 4 }).c == -4 && mul_of(M { c: 3 }, M { c: 4 }).c == 12, "generic instances, literal arguments");
+  // A local and a call as the argument: -(17) = -17; mk(6) * 5 = 30.
+  assert(neg_of(a).c == -17 && mul_of(mk(6), b).c == 30, "a local and a call");
+  // A plain function taking the record: 2 * 9 = 18.
+  assert(twice(M { c: 9 }).c == 18 && twice(mk(1)).c == 2, "a plain function");
+  // The same calls bound to a local.
+  r = neg_of(M { c: 4 }).c == -4 && mul_of(M { c: 3 }, M { c: 4 }).c == 12;
+  assert(r, "bound to a local");
+  println("ok");
+}

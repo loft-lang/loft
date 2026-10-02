@@ -1,0 +1,12 @@
+diff --git a/src/exit_vector.rs b/src/exit_vector.rs
+--- a/src/exit_vector.rs
++++ b/src/exit_vector.rs
+@@ -252,7 +252,7 @@
+             // a `vector<T>` local (hex_shape's `wall_chain_walk`), and a release that walks
+             // that wrapper by its type reads every integer as a vector handle.  A store of
+             // its own never walks, so the mismatch was silent until now; here it declines.
+-            if in_loop {
++            if false && in_loop {
+                 if crate::keys::trace_place() {
+                     eprintln!(
+                         "[exit-vector] v={}: DECLINED — the wrapper is minted inside a loop, once per iteration",

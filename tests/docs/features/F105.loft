@@ -3,7 +3,7 @@
 // @F105 — GENERATED from loft-lang/features#105 by tools/features/gen.loft — DO NOT EDIT.
 value struct Money { cents: integer }
 
-fn to_text(self: Money, spec: text) -> text {
+operator to_text(self: Money, spec: text) -> text {
     whole = self.cents / 100;
     rest = self.cents % 100;
     out = if spec == "raw" { "{self.cents}" } else { "{whole}.{rest:02}" };

@@ -298,7 +298,9 @@ pub fn default_registry_path() -> PathBuf {
 /// be created, or the response body cannot be copied to disk.
 #[cfg(feature = "registry")]
 pub fn download_file(url: &str, dst: &Path) -> Result<(), String> {
-    let resp = ureq::get(url)
+    let resp = crate::tls::agent_builder()
+        .build()
+        .get(url)
         .call()
         .map_err(|e| format!("download failed: {e}"))?;
     let mut reader = resp.into_reader();

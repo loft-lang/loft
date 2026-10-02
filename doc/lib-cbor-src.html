@@ -23,17 +23,18 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>cbor source</h1>
 <article>
-<p><a href="lib-cbor.html">← cbor</a> · <a href="lib-cbor-api.html">API reference</a> · version 0.1.8</p>
-<p class="lib-legend">3 file(s), 537 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<p><a href="lib-cbor.html">← cbor</a> · <a href="lib-cbor-api.html">API reference</a> · version 0.1.9</p>
+<p class="lib-legend">3 file(s), 560 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
 <table class="lib-table">
 <tr><th>Item</th><th>Defined</th><th>Worked example</th><th>Call sites</th></tr>
-<tr><td><code>CborValue</code> <span class="search-kind">enum</span></td><td><a href="#src-cbor-loft-L26">26</a></td><td><a href="#tests-worked-examples-loft-L58">CBR-002</a></td><td><a href="#src-cbor-loft-L32">32</a> <a href="#src-cbor-loft-L38">38</a> <a href="#src-cbor-loft-L39">39</a> <a href="#src-cbor-loft-L156">156</a> <a href="#src-cbor-loft-L192">192</a> <a href="#src-cbor-loft-L257">257</a> … (7 total)</td></tr>
-<tr><td><code>CborEntry</code> <span class="search-kind">struct</span></td><td><a href="#src-cbor-loft-L37">37</a></td><td>—</td><td><a href="#src-cbor-loft-L33">33</a> <a href="#src-cbor-loft-L107">107</a> <a href="#src-cbor-loft-L270">270</a> <a href="#src-cbor-loft-L281">281</a> <a href="#tests-cbor-loft-L48">48</a> <a href="#tests-cbor-loft-L49">49</a> … (25 total)</td></tr>
+<tr><td><code>CborValue</code> <span class="search-kind">enum</span></td><td><a href="#src-cbor-loft-L26">26</a></td><td><a href="#tests-worked-examples-loft-L58">CBR-002</a></td><td><a href="#src-cbor-loft-L32">32</a> <a href="#src-cbor-loft-L38">38</a> <a href="#src-cbor-loft-L39">39</a> <a href="#src-cbor-loft-L156">156</a> <a href="#src-cbor-loft-L192">192</a> <a href="#src-cbor-loft-L264">264</a> … (7 total)</td></tr>
+<tr><td><code>CborEntry</code> <span class="search-kind">struct</span></td><td><a href="#src-cbor-loft-L37">37</a></td><td>—</td><td><a href="#src-cbor-loft-L33">33</a> <a href="#src-cbor-loft-L107">107</a> <a href="#src-cbor-loft-L277">277</a> <a href="#src-cbor-loft-L288">288</a> <a href="#tests-cbor-loft-L48">48</a> <a href="#tests-cbor-loft-L49">49</a> … (25 total)</td></tr>
 <tr><td><code>encode</code> <span class="search-kind">fn</span></td><td><a href="#src-cbor-loft-L156">156</a></td><td><a href="#tests-worked-examples-loft-L112">CBR-004</a></td><td><a href="#src-cbor-loft-L115">115</a> <a href="#src-cbor-loft-L140">140</a> <a href="#src-cbor-loft-L178">178</a> <a href="#tests-cbor-loft-L14">14</a> <a href="#tests-cbor-loft-L16">16</a> <a href="#tests-cbor-loft-L21">21</a> … (33 total)</td></tr>
-<tr><td><code>Decoded</code> <span class="search-kind">struct</span></td><td><a href="#src-cbor-loft-L191">191</a></td><td>—</td><td><a href="#src-cbor-loft-L200">200</a> <a href="#src-cbor-loft-L202">202</a> <a href="#src-cbor-loft-L240">240</a> <a href="#src-cbor-loft-L242">242</a> <a href="#src-cbor-loft-L243">243</a> <a href="#src-cbor-loft-L245">245</a> … (19 total)</td></tr>
-<tr><td><code>decode</code> <span class="search-kind">fn</span></td><td><a href="#src-cbor-loft-L305">305</a></td><td><a href="#tests-worked-examples-loft-L112">CBR-004</a></td><td><a href="#tests-cbor-loft-L14">14</a> <a href="#tests-cbor-loft-L86">86</a> <a href="#tests-cbor-loft-L87">87</a> <a href="#tests-cbor-loft-L88">88</a> <a href="#tests-worked-examples-loft-L91">91</a> <a href="#tests-worked-examples-loft-L96">96</a> … (11 total)</td></tr>
+<tr><td><code>Decoded</code> <span class="search-kind">struct</span></td><td><a href="#src-cbor-loft-L191">191</a></td><td>—</td><td><a href="#src-cbor-loft-L207">207</a> <a href="#src-cbor-loft-L209">209</a> <a href="#src-cbor-loft-L247">247</a> <a href="#src-cbor-loft-L249">249</a> <a href="#src-cbor-loft-L250">250</a> <a href="#src-cbor-loft-L252">252</a> … (19 total)</td></tr>
+<tr><td><code>MAX_DEPTH</code> <span class="search-kind">const</span></td><td><a href="#src-cbor-loft-L201">201</a></td><td>—</td><td><a href="#src-cbor-loft-L209">209</a> <a href="#tests-cbor-loft-L92">92</a> <a href="#tests-cbor-loft-L93">93</a></td></tr>
+<tr><td><code>decode</code> <span class="search-kind">fn</span></td><td><a href="#src-cbor-loft-L313">313</a></td><td><a href="#tests-worked-examples-loft-L112">CBR-004</a></td><td><a href="#tests-cbor-loft-L14">14</a> <a href="#tests-cbor-loft-L86">86</a> <a href="#tests-cbor-loft-L87">87</a> <a href="#tests-cbor-loft-L88">88</a> <a href="#tests-cbor-loft-L92">92</a> <a href="#tests-cbor-loft-L93">93</a> … (14 total)</td></tr>
 </table>
 <h2 id="src-cbor-loft">src/cbor.loft</h2>
 <pre class="src"><code><span id="src-cbor-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -52,9 +53,9 @@
 <span id="src-cbor-loft-L14"><span class="cm">// bridge, and no external-crate trust surface — and the codec runs identically</span></span>
 <span id="src-cbor-loft-L15"><span class="cm">// native and in the browser (native == wasm) by construction.</span></span>
 <span id="src-cbor-loft-L16"><span class="cm">//</span></span>
-<span id="src-cbor-loft-L17"><span class="cm">// Build a `CborValue` and `encode` it; the canonical encoder picks shortest-form</span></span>
-<span id="src-cbor-loft-L18"><span class="cm">// integer/length heads.  (Map-key canonical ordering, decode, and the typed</span></span>
-<span id="src-cbor-loft-L19"><span class="cm">// `T.to_cbor()` path land in later phases — see the plan.)</span></span>
+<span id="src-cbor-loft-L17"><span class="cm">// Build a `CborValue` and `encode` it: the canonical encoder picks shortest-form</span></span>
+<span id="src-cbor-loft-L18"><span class="cm">// integer/length heads and sorts a map's entries by their encoded keys.  `decode`</span></span>
+<span id="src-cbor-loft-L19"><span class="cm">// reads canonical bytes back and refuses anything else.</span></span>
 <span id="src-cbor-loft-L20"></span>
 <span id="src-cbor-loft-L21"><span class="cm">/// A dynamic CBOR value.  Mirrors the stdlib `JsonValue`, with CBOR's extra</span></span>
 <span id="src-cbor-loft-L22"><span class="cm">/// `CBytes` (native byte string) and the integer split that CBOR makes at the</span></span>
@@ -224,129 +225,137 @@
 <span id="src-cbor-loft-L186"></span>
 <span id="src-cbor-loft-L187"><span class="cm">/// The result of decoding one CBOR value: the `value`, the byte position just</span></span>
 <span id="src-cbor-loft-L188"><span class="cm">/// past it (`next`), and `ok` — false on any malformed / non-canonical /</span></span>
-<span id="src-cbor-loft-L189"><span class="cm">/// truncated input.  Decoding never crashes (loft-safe): a bad byte stream</span></span>
-<span id="src-cbor-loft-L190"><span class="cm">/// yields ok=false rather than a trap.</span></span>
+<span id="src-cbor-loft-L189"><span class="cm">/// truncated input, and on nesting deeper than `MAX_DEPTH`.  Decoding never</span></span>
+<span id="src-cbor-loft-L190"><span class="cm">/// crashes (loft-safe): a bad byte stream yields ok=false rather than a trap.</span></span>
 <span id="src-cbor-loft-L191"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Decoded</span> {</span>
 <span id="src-cbor-loft-L192">  const value: <span class="en">CborValue</span>,</span>
 <span id="src-cbor-loft-L193">  const next:  <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
 <span id="src-cbor-loft-L194">  const ok:    <span class="ty"><a href="stdlib-types.html">boolean</a></span>,</span>
 <span id="src-cbor-loft-L195">}</span>
 <span id="src-cbor-loft-L196"></span>
-<span id="src-cbor-loft-L197"><span class="cm">// Decode one CBOR value starting at `pos`.  Recursive: arrays/maps thread the</span></span>
-<span id="src-cbor-loft-L198"><span class="cm">// running position through their children.  Enforces canonical shortest-form</span></span>
-<span id="src-cbor-loft-L199"><span class="cm">// heads (an overlong argument is rejected) and definite lengths only.</span></span>
-<span id="src-cbor-loft-L200"><span class="kw">fn</span> <span class="fn-call">read_value</span>(bytes: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt;, pos: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Decoded</span> {</span>
-<span id="src-cbor-loft-L201">  n = <span class="bi"><a href="stdlib-text.html">len</a></span>(bytes);</span>
-<span id="src-cbor-loft-L202">  <span class="kw">if</span> pos &gt;= n { <span class="kw">return</span> <span class="en">Decoded</span> { value: <span class="en">CNull</span>, next: pos, ok: <span class="kw">false</span> }; }</span>
-<span id="src-cbor-loft-L203">  <span class="cm">// Every `bytes[…]` read below is already bounds-guarded (the `&gt;= n` checks set</span></span>
-<span id="src-cbor-loft-L204">  <span class="cm">// `argok = false`), so `?? 0` only discharges the nullable-index type the current</span></span>
-<span id="src-cbor-loft-L205">  <span class="cm">// loft gives `bytes[i]` (@PLN25) — the default is never actually reached.</span></span>
-<span id="src-cbor-loft-L206">  b = bytes[pos] ?? <span class="nm">0</span>;</span>
-<span id="src-cbor-loft-L207">  major = b / <span class="nm">32</span>;</span>
-<span id="src-cbor-loft-L208">  info = b % <span class="nm">32</span>;</span>
-<span id="src-cbor-loft-L209">  <span class="cm">// --- argument (length / integer payload), canonical shortest-form ---</span></span>
-<span id="src-cbor-loft-L210">  arg = <span class="nm">0</span>;</span>
-<span id="src-cbor-loft-L211">  argpos = pos + <span class="nm">1</span>;</span>
-<span id="src-cbor-loft-L212">  argok = <span class="kw">true</span>;</span>
-<span id="src-cbor-loft-L213">  <span class="kw">if</span> info &lt; <span class="nm">24</span> {</span>
-<span id="src-cbor-loft-L214">    arg = info;</span>
-<span id="src-cbor-loft-L215">  } <span class="kw">else</span> <span class="kw">if</span> info == <span class="nm">24</span> {</span>
-<span id="src-cbor-loft-L216">    <span class="kw">if</span> argpos &gt;= n { argok = <span class="kw">false</span>; }</span>
-<span id="src-cbor-loft-L217">    <span class="kw">else</span> { arg = bytes[argpos] ?? <span class="nm">0</span>; argpos = argpos + <span class="nm">1</span>; <span class="kw">if</span> arg &lt; <span class="nm">24</span> { argok = <span class="kw">false</span>; } }</span>
-<span id="src-cbor-loft-L218">  } <span class="kw">else</span> <span class="kw">if</span> info == <span class="nm">25</span> {</span>
-<span id="src-cbor-loft-L219">    <span class="kw">if</span> argpos + <span class="nm">1</span> &gt;= n { argok = <span class="kw">false</span>; }</span>
-<span id="src-cbor-loft-L220">    <span class="kw">else</span> { arg = (bytes[argpos] ?? <span class="nm">0</span>) * <span class="nm">256</span> + (bytes[argpos + <span class="nm">1</span>] ?? <span class="nm">0</span>); argpos = argpos + <span class="nm">2</span>; <span class="kw">if</span> arg &lt; <span class="nm">256</span> { argok = <span class="kw">false</span>; } }</span>
-<span id="src-cbor-loft-L221">  } <span class="kw">else</span> <span class="kw">if</span> info == <span class="nm">26</span> {</span>
-<span id="src-cbor-loft-L222">    <span class="kw">if</span> argpos + <span class="nm">3</span> &gt;= n { argok = <span class="kw">false</span>; }</span>
-<span id="src-cbor-loft-L223">    <span class="kw">else</span> {</span>
-<span id="src-cbor-loft-L224">      arg = (((bytes[argpos] ?? <span class="nm">0</span>) * <span class="nm">256</span> + (bytes[argpos + <span class="nm">1</span>] ?? <span class="nm">0</span>)) * <span class="nm">256</span> + (bytes[argpos + <span class="nm">2</span>] ?? <span class="nm">0</span>)) * <span class="nm">256</span> + (bytes[argpos + <span class="nm">3</span>] ?? <span class="nm">0</span>);</span>
-<span id="src-cbor-loft-L225">      argpos = argpos + <span class="nm">4</span>;</span>
-<span id="src-cbor-loft-L226">      <span class="kw">if</span> arg &lt; <span class="nm">65536</span> { argok = <span class="kw">false</span>; }</span>
-<span id="src-cbor-loft-L227">    }</span>
-<span id="src-cbor-loft-L228">  } <span class="kw">else</span> <span class="kw">if</span> info == <span class="nm">27</span> {</span>
-<span id="src-cbor-loft-L229">    <span class="kw">if</span> argpos + <span class="nm">7</span> &gt;= n { argok = <span class="kw">false</span>; }</span>
-<span id="src-cbor-loft-L230">    <span class="kw">else</span> <span class="kw">if</span> (bytes[argpos] ?? <span class="nm">0</span>) &gt;= <span class="nm">128</span> { argok = <span class="kw">false</span>; }   <span class="cm">// exceeds i64 range</span></span>
-<span id="src-cbor-loft-L231">    <span class="kw">else</span> {</span>
-<span id="src-cbor-loft-L232">      arg = bytes[argpos] ?? <span class="nm">0</span>;</span>
-<span id="src-cbor-loft-L233">      <span class="kw">for</span> k <span class="kw">in</span> <span class="nm">1..8</span> { arg = arg * <span class="nm">256</span> + (bytes[argpos + k] ?? <span class="nm">0</span>); }</span>
-<span id="src-cbor-loft-L234">      argpos = argpos + <span class="nm">8</span>;</span>
-<span id="src-cbor-loft-L235">      <span class="kw">if</span> arg &lt; <span class="nm">4294967296</span> { argok = <span class="kw">false</span>; }</span>
-<span id="src-cbor-loft-L236">    }</span>
-<span id="src-cbor-loft-L237">  } <span class="kw">else</span> {</span>
-<span id="src-cbor-loft-L238">    argok = <span class="kw">false</span>;   <span class="cm">// 28/29/30 reserved, 31 indefinite — not canonical</span></span>
-<span id="src-cbor-loft-L239">  }</span>
-<span id="src-cbor-loft-L240">  <span class="kw">if</span> !argok { <span class="kw">return</span> <span class="en">Decoded</span> { value: <span class="en">CNull</span>, next: pos, ok: <span class="kw">false</span> }; }</span>
-<span id="src-cbor-loft-L241">  <span class="cm">// --- dispatch on major type ---</span></span>
-<span id="src-cbor-loft-L242">  <span class="kw">if</span> major == <span class="nm">0</span> { <span class="kw">return</span> <span class="en">Decoded</span> { value: <span class="en">CInt</span> { value: arg }, next: argpos, ok: <span class="kw">true</span> }; }</span>
-<span id="src-cbor-loft-L243">  <span class="kw">if</span> major == <span class="nm">1</span> { <span class="kw">return</span> <span class="en">Decoded</span> { value: <span class="en">CInt</span> { value: <span class="nm">0</span> - arg - <span class="nm">1</span> }, next: argpos, ok: <span class="kw">true</span> }; }</span>
-<span id="src-cbor-loft-L244">  <span class="kw">if</span> major == <span class="nm">2</span> {</span>
-<span id="src-cbor-loft-L245">    <span class="kw">if</span> argpos + arg &gt; n { <span class="kw">return</span> <span class="en">Decoded</span> { value: <span class="en">CNull</span>, next: pos, ok: <span class="kw">false</span> }; }</span>
-<span id="src-cbor-loft-L246">    bs: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt; = [];</span>
-<span id="src-cbor-loft-L247">    <span class="kw">for</span> k <span class="kw">in</span> <span class="nm">0..</span>arg { bs += [bytes[argpos + k] ?? <span class="nm">0</span>]; }</span>
-<span id="src-cbor-loft-L248">    <span class="kw">return</span> <span class="en">Decoded</span> { value: <span class="en">CBytes</span> { value: bs }, next: argpos + arg, ok: <span class="kw">true</span> };</span>
-<span id="src-cbor-loft-L249">  }</span>
-<span id="src-cbor-loft-L250">  <span class="kw">if</span> major == <span class="nm">3</span> {</span>
-<span id="src-cbor-loft-L251">    <span class="kw">if</span> argpos + arg &gt; n { <span class="kw">return</span> <span class="en">Decoded</span> { value: <span class="en">CNull</span>, next: pos, ok: <span class="kw">false</span> }; }</span>
-<span id="src-cbor-loft-L252">    tb: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt; = [];</span>
-<span id="src-cbor-loft-L253">    <span class="kw">for</span> k <span class="kw">in</span> <span class="nm">0..</span>arg { tb += [bytes[argpos + k] ?? <span class="nm">0</span>]; }</span>
-<span id="src-cbor-loft-L254">    <span class="kw">return</span> <span class="en">Decoded</span> { value: <span class="en">CText</span> { value: <span class="fn-call"><a href="stdlib-text-bytes-and-code-points.html">text_from_bytes</a></span>(tb) }, next: argpos + arg, ok: <span class="kw">true</span> };</span>
-<span id="src-cbor-loft-L255">  }</span>
-<span id="src-cbor-loft-L256">  <span class="kw">if</span> major == <span class="nm">4</span> {</span>
-<span id="src-cbor-loft-L257">    items: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">CborValue</span>&gt; = [];</span>
-<span id="src-cbor-loft-L258">    p = argpos;</span>
-<span id="src-cbor-loft-L259">    aok = <span class="kw">true</span>;</span>
-<span id="src-cbor-loft-L260">    <span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..</span>arg {</span>
-<span id="src-cbor-loft-L261">      <span class="kw">if</span> aok {</span>
-<span id="src-cbor-loft-L262">        sub = <span class="fn-call">read_value</span>(bytes, p);</span>
-<span id="src-cbor-loft-L263">        <span class="kw">if</span> sub.ok { items += [sub.value]; p = sub.next; } <span class="kw">else</span> { aok = <span class="kw">false</span>; }</span>
-<span id="src-cbor-loft-L264">      }</span>
-<span id="src-cbor-loft-L265">    }</span>
-<span id="src-cbor-loft-L266">    <span class="kw">if</span> !aok { <span class="kw">return</span> <span class="en">Decoded</span> { value: <span class="en">CNull</span>, next: pos, ok: <span class="kw">false</span> }; }</span>
-<span id="src-cbor-loft-L267">    <span class="kw">return</span> <span class="en">Decoded</span> { value: <span class="en">CArray</span> { items: items }, next: p, ok: <span class="kw">true</span> };</span>
-<span id="src-cbor-loft-L268">  }</span>
-<span id="src-cbor-loft-L269">  <span class="kw">if</span> major == <span class="nm">5</span> {</span>
-<span id="src-cbor-loft-L270">    entries: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">CborEntry</span>&gt; = [];</span>
-<span id="src-cbor-loft-L271">    p = argpos;</span>
-<span id="src-cbor-loft-L272">    mok = <span class="kw">true</span>;</span>
-<span id="src-cbor-loft-L273">    <span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..</span>arg {</span>
-<span id="src-cbor-loft-L274">      <span class="kw">if</span> mok {</span>
-<span id="src-cbor-loft-L275">        kd = <span class="fn-call">read_value</span>(bytes, p);</span>
-<span id="src-cbor-loft-L276">        <span class="kw">if</span> kd.ok {</span>
-<span id="src-cbor-loft-L277">          vd = <span class="fn-call">read_value</span>(bytes, kd.next);</span>
-<span id="src-cbor-loft-L278">          <span class="kw">if</span> vd.ok {</span>
-<span id="src-cbor-loft-L279">            kv = kd.value;</span>
-<span id="src-cbor-loft-L280">            vv = vd.value;</span>
-<span id="src-cbor-loft-L281">            entries += [<span class="en">CborEntry</span> { key: kv, value: vv }];</span>
-<span id="src-cbor-loft-L282">            p = vd.next;</span>
-<span id="src-cbor-loft-L283">          } <span class="kw">else</span> { mok = <span class="kw">false</span>; }</span>
-<span id="src-cbor-loft-L284">        } <span class="kw">else</span> { mok = <span class="kw">false</span>; }</span>
-<span id="src-cbor-loft-L285">      }</span>
-<span id="src-cbor-loft-L286">    }</span>
-<span id="src-cbor-loft-L287">    <span class="kw">if</span> !mok { <span class="kw">return</span> <span class="en">Decoded</span> { value: <span class="en">CNull</span>, next: pos, ok: <span class="kw">false</span> }; }</span>
-<span id="src-cbor-loft-L288">    <span class="kw">return</span> <span class="en">Decoded</span> { value: <span class="en">CMap</span> { entries: entries }, next: p, ok: <span class="kw">true</span> };</span>
-<span id="src-cbor-loft-L289">  }</span>
-<span id="src-cbor-loft-L290">  <span class="kw">if</span> major == <span class="nm">7</span> {</span>
-<span id="src-cbor-loft-L291">    <span class="kw">if</span> info == <span class="nm">20</span> { <span class="kw">return</span> <span class="en">Decoded</span> { value: <span class="en">CBool</span> { value: <span class="kw">false</span> }, next: argpos, ok: <span class="kw">true</span> }; }</span>
-<span id="src-cbor-loft-L292">    <span class="kw">if</span> info == <span class="nm">21</span> { <span class="kw">return</span> <span class="en">Decoded</span> { value: <span class="en">CBool</span> { value: <span class="kw">true</span> },  next: argpos, ok: <span class="kw">true</span> }; }</span>
-<span id="src-cbor-loft-L293">    <span class="kw">if</span> info == <span class="nm">22</span> { <span class="kw">return</span> <span class="en">Decoded</span> { value: <span class="en">CNull</span>, next: argpos, ok: <span class="kw">true</span> }; }</span>
-<span id="src-cbor-loft-L294">  }</span>
-<span id="src-cbor-loft-L295">  <span class="cm">// major 6 (tags), float / undefined simples — unsupported in the signable subset</span></span>
-<span id="src-cbor-loft-L296">  <span class="kw">return</span> <span class="en">Decoded</span> { value: <span class="en">CNull</span>, next: pos, ok: <span class="kw">false</span> };</span>
-<span id="src-cbor-loft-L297">}</span>
-<span id="src-cbor-loft-L298"></span>
-<span id="src-cbor-loft-L299"><span class="cm">/// Decode canonical CBOR bytes into a `CborValue`.  Returns `ok=false` on any</span></span>
-<span id="src-cbor-loft-L300"><span class="cm">/// malformed, non-canonical, or truncated input — and rejects trailing bytes</span></span>
-<span id="src-cbor-loft-L301"><span class="cm">/// after the top-level value.  Never crashes.</span></span>
-<span id="src-cbor-loft-L302"><span class="cm">// Example: @CBR-003 — `ok=false` is one answer for four different problems, and</span></span>
-<span id="src-cbor-loft-L303"><span class="cm">// the surprising one is that well-formed but NON-canonical CBOR is refused.</span></span>
-<span id="src-cbor-loft-L304"><span class="cm">// Example: @CBR-004 — a map carrying two entries under one key decodes ok=true.</span></span>
-<span id="src-cbor-loft-L305"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">decode</span>(bytes: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt;) -&gt; <span class="en">Decoded</span> {</span>
-<span id="src-cbor-loft-L306">  d = <span class="fn-call">read_value</span>(bytes, <span class="nm">0</span>);</span>
-<span id="src-cbor-loft-L307">  <span class="kw">if</span> d.ok {</span>
-<span id="src-cbor-loft-L308">    <span class="kw">if</span> d.next != <span class="bi"><a href="stdlib-text.html">len</a></span>(bytes) { <span class="kw">return</span> <span class="en">Decoded</span> { value: <span class="en">CNull</span>, next: d.next, ok: <span class="kw">false</span> }; }</span>
-<span id="src-cbor-loft-L309">  }</span>
-<span id="src-cbor-loft-L310">  <span class="kw">return</span> d;</span>
-<span id="src-cbor-loft-L311">}</span>
+<span id="src-cbor-loft-L197"><span class="cm">/// How deep arrays and maps may nest in bytes `decode` accepts — a value inside</span></span>
+<span id="src-cbor-loft-L198"><span class="cm">/// `MAX_DEPTH` enclosing arrays or maps is the deepest that decodes.  Deeper input is</span></span>
+<span id="src-cbor-loft-L199"><span class="cm">/// refused with ok=false: each level is one call, and a hostile byte stream of</span></span>
+<span id="src-cbor-loft-L200"><span class="cm">/// nothing but array heads would otherwise exhaust the call stack.</span></span>
+<span id="src-cbor-loft-L201"><span class="kw">pub</span> const <span class="en">MAX_DEPTH</span> = <span class="nm">256</span>;</span>
+<span id="src-cbor-loft-L202"></span>
+<span id="src-cbor-loft-L203"><span class="cm">// Decode one CBOR value starting at `pos`, `depth` levels inside the top-level one.</span></span>
+<span id="src-cbor-loft-L204"><span class="cm">// Recursive: arrays/maps thread the running position through their children.</span></span>
+<span id="src-cbor-loft-L205"><span class="cm">// Enforces canonical shortest-form heads (an overlong argument is rejected),</span></span>
+<span id="src-cbor-loft-L206"><span class="cm">// definite lengths only, and `MAX_DEPTH`.</span></span>
+<span id="src-cbor-loft-L207"><span class="kw">fn</span> <span class="fn-call">read_value</span>(bytes: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt;, pos: <span class="ty"><a href="stdlib-types.html">integer</a></span>, depth: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Decoded</span> {</span>
+<span id="src-cbor-loft-L208">  n = <span class="bi"><a href="stdlib-text.html">len</a></span>(bytes);</span>
+<span id="src-cbor-loft-L209">  <span class="kw">if</span> pos &gt;= n || depth &gt; <span class="en">MAX_DEPTH</span> { <span class="kw">return</span> <span class="en">Decoded</span> { value: <span class="en">CNull</span>, next: pos, ok: <span class="kw">false</span> }; }</span>
+<span id="src-cbor-loft-L210">  <span class="cm">// Every `bytes[…]` read below is already bounds-guarded (the `&gt;= n` checks set</span></span>
+<span id="src-cbor-loft-L211">  <span class="cm">// `argok = false`), so `?? 0` only discharges the nullable-index type the current</span></span>
+<span id="src-cbor-loft-L212">  <span class="cm">// loft gives `bytes[i]` (@PLN25) — the default is never actually reached.</span></span>
+<span id="src-cbor-loft-L213">  b = bytes[pos] ?? <span class="nm">0</span>;</span>
+<span id="src-cbor-loft-L214">  major = b / <span class="nm">32</span>;</span>
+<span id="src-cbor-loft-L215">  info = b % <span class="nm">32</span>;</span>
+<span id="src-cbor-loft-L216">  <span class="cm">// --- argument (length / integer payload), canonical shortest-form ---</span></span>
+<span id="src-cbor-loft-L217">  arg = <span class="nm">0</span>;</span>
+<span id="src-cbor-loft-L218">  argpos = pos + <span class="nm">1</span>;</span>
+<span id="src-cbor-loft-L219">  argok = <span class="kw">true</span>;</span>
+<span id="src-cbor-loft-L220">  <span class="kw">if</span> info &lt; <span class="nm">24</span> {</span>
+<span id="src-cbor-loft-L221">    arg = info;</span>
+<span id="src-cbor-loft-L222">  } <span class="kw">else</span> <span class="kw">if</span> info == <span class="nm">24</span> {</span>
+<span id="src-cbor-loft-L223">    <span class="kw">if</span> argpos &gt;= n { argok = <span class="kw">false</span>; }</span>
+<span id="src-cbor-loft-L224">    <span class="kw">else</span> { arg = bytes[argpos] ?? <span class="nm">0</span>; argpos = argpos + <span class="nm">1</span>; <span class="kw">if</span> arg &lt; <span class="nm">24</span> { argok = <span class="kw">false</span>; } }</span>
+<span id="src-cbor-loft-L225">  } <span class="kw">else</span> <span class="kw">if</span> info == <span class="nm">25</span> {</span>
+<span id="src-cbor-loft-L226">    <span class="kw">if</span> argpos + <span class="nm">1</span> &gt;= n { argok = <span class="kw">false</span>; }</span>
+<span id="src-cbor-loft-L227">    <span class="kw">else</span> { arg = (bytes[argpos] ?? <span class="nm">0</span>) * <span class="nm">256</span> + (bytes[argpos + <span class="nm">1</span>] ?? <span class="nm">0</span>); argpos = argpos + <span class="nm">2</span>; <span class="kw">if</span> arg &lt; <span class="nm">256</span> { argok = <span class="kw">false</span>; } }</span>
+<span id="src-cbor-loft-L228">  } <span class="kw">else</span> <span class="kw">if</span> info == <span class="nm">26</span> {</span>
+<span id="src-cbor-loft-L229">    <span class="kw">if</span> argpos + <span class="nm">3</span> &gt;= n { argok = <span class="kw">false</span>; }</span>
+<span id="src-cbor-loft-L230">    <span class="kw">else</span> {</span>
+<span id="src-cbor-loft-L231">      arg = (((bytes[argpos] ?? <span class="nm">0</span>) * <span class="nm">256</span> + (bytes[argpos + <span class="nm">1</span>] ?? <span class="nm">0</span>)) * <span class="nm">256</span> + (bytes[argpos + <span class="nm">2</span>] ?? <span class="nm">0</span>)) * <span class="nm">256</span> + (bytes[argpos + <span class="nm">3</span>] ?? <span class="nm">0</span>);</span>
+<span id="src-cbor-loft-L232">      argpos = argpos + <span class="nm">4</span>;</span>
+<span id="src-cbor-loft-L233">      <span class="kw">if</span> arg &lt; <span class="nm">65536</span> { argok = <span class="kw">false</span>; }</span>
+<span id="src-cbor-loft-L234">    }</span>
+<span id="src-cbor-loft-L235">  } <span class="kw">else</span> <span class="kw">if</span> info == <span class="nm">27</span> {</span>
+<span id="src-cbor-loft-L236">    <span class="kw">if</span> argpos + <span class="nm">7</span> &gt;= n { argok = <span class="kw">false</span>; }</span>
+<span id="src-cbor-loft-L237">    <span class="kw">else</span> <span class="kw">if</span> (bytes[argpos] ?? <span class="nm">0</span>) &gt;= <span class="nm">128</span> { argok = <span class="kw">false</span>; }   <span class="cm">// exceeds i64 range</span></span>
+<span id="src-cbor-loft-L238">    <span class="kw">else</span> {</span>
+<span id="src-cbor-loft-L239">      arg = bytes[argpos] ?? <span class="nm">0</span>;</span>
+<span id="src-cbor-loft-L240">      <span class="kw">for</span> k <span class="kw">in</span> <span class="nm">1..8</span> { arg = arg * <span class="nm">256</span> + (bytes[argpos + k] ?? <span class="nm">0</span>); }</span>
+<span id="src-cbor-loft-L241">      argpos = argpos + <span class="nm">8</span>;</span>
+<span id="src-cbor-loft-L242">      <span class="kw">if</span> arg &lt; <span class="nm">4294967296</span> { argok = <span class="kw">false</span>; }</span>
+<span id="src-cbor-loft-L243">    }</span>
+<span id="src-cbor-loft-L244">  } <span class="kw">else</span> {</span>
+<span id="src-cbor-loft-L245">    argok = <span class="kw">false</span>;   <span class="cm">// 28/29/30 reserved, 31 indefinite — not canonical</span></span>
+<span id="src-cbor-loft-L246">  }</span>
+<span id="src-cbor-loft-L247">  <span class="kw">if</span> !argok { <span class="kw">return</span> <span class="en">Decoded</span> { value: <span class="en">CNull</span>, next: pos, ok: <span class="kw">false</span> }; }</span>
+<span id="src-cbor-loft-L248">  <span class="cm">// --- dispatch on major type ---</span></span>
+<span id="src-cbor-loft-L249">  <span class="kw">if</span> major == <span class="nm">0</span> { <span class="kw">return</span> <span class="en">Decoded</span> { value: <span class="en">CInt</span> { value: arg }, next: argpos, ok: <span class="kw">true</span> }; }</span>
+<span id="src-cbor-loft-L250">  <span class="kw">if</span> major == <span class="nm">1</span> { <span class="kw">return</span> <span class="en">Decoded</span> { value: <span class="en">CInt</span> { value: <span class="nm">0</span> - arg - <span class="nm">1</span> }, next: argpos, ok: <span class="kw">true</span> }; }</span>
+<span id="src-cbor-loft-L251">  <span class="kw">if</span> major == <span class="nm">2</span> {</span>
+<span id="src-cbor-loft-L252">    <span class="kw">if</span> argpos + arg &gt; n { <span class="kw">return</span> <span class="en">Decoded</span> { value: <span class="en">CNull</span>, next: pos, ok: <span class="kw">false</span> }; }</span>
+<span id="src-cbor-loft-L253">    bs: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt; = [];</span>
+<span id="src-cbor-loft-L254">    <span class="kw">for</span> k <span class="kw">in</span> <span class="nm">0..</span>arg { bs += [bytes[argpos + k] ?? <span class="nm">0</span>]; }</span>
+<span id="src-cbor-loft-L255">    <span class="kw">return</span> <span class="en">Decoded</span> { value: <span class="en">CBytes</span> { value: bs }, next: argpos + arg, ok: <span class="kw">true</span> };</span>
+<span id="src-cbor-loft-L256">  }</span>
+<span id="src-cbor-loft-L257">  <span class="kw">if</span> major == <span class="nm">3</span> {</span>
+<span id="src-cbor-loft-L258">    <span class="kw">if</span> argpos + arg &gt; n { <span class="kw">return</span> <span class="en">Decoded</span> { value: <span class="en">CNull</span>, next: pos, ok: <span class="kw">false</span> }; }</span>
+<span id="src-cbor-loft-L259">    tb: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt; = [];</span>
+<span id="src-cbor-loft-L260">    <span class="kw">for</span> k <span class="kw">in</span> <span class="nm">0..</span>arg { tb += [bytes[argpos + k] ?? <span class="nm">0</span>]; }</span>
+<span id="src-cbor-loft-L261">    <span class="kw">return</span> <span class="en">Decoded</span> { value: <span class="en">CText</span> { value: <span class="fn-call"><a href="stdlib-text-bytes-and-code-points.html">text_from_bytes</a></span>(tb) }, next: argpos + arg, ok: <span class="kw">true</span> };</span>
+<span id="src-cbor-loft-L262">  }</span>
+<span id="src-cbor-loft-L263">  <span class="kw">if</span> major == <span class="nm">4</span> {</span>
+<span id="src-cbor-loft-L264">    items: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">CborValue</span>&gt; = [];</span>
+<span id="src-cbor-loft-L265">    p = argpos;</span>
+<span id="src-cbor-loft-L266">    aok = <span class="kw">true</span>;</span>
+<span id="src-cbor-loft-L267">    <span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..</span>arg {</span>
+<span id="src-cbor-loft-L268">      <span class="kw">if</span> aok {</span>
+<span id="src-cbor-loft-L269">        sub = <span class="fn-call">read_value</span>(bytes, p, depth + <span class="nm">1</span>);</span>
+<span id="src-cbor-loft-L270">        <span class="kw">if</span> sub.ok { items += [sub.value]; p = sub.next; } <span class="kw">else</span> { aok = <span class="kw">false</span>; }</span>
+<span id="src-cbor-loft-L271">      }</span>
+<span id="src-cbor-loft-L272">    }</span>
+<span id="src-cbor-loft-L273">    <span class="kw">if</span> !aok { <span class="kw">return</span> <span class="en">Decoded</span> { value: <span class="en">CNull</span>, next: pos, ok: <span class="kw">false</span> }; }</span>
+<span id="src-cbor-loft-L274">    <span class="kw">return</span> <span class="en">Decoded</span> { value: <span class="en">CArray</span> { items: items }, next: p, ok: <span class="kw">true</span> };</span>
+<span id="src-cbor-loft-L275">  }</span>
+<span id="src-cbor-loft-L276">  <span class="kw">if</span> major == <span class="nm">5</span> {</span>
+<span id="src-cbor-loft-L277">    entries: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">CborEntry</span>&gt; = [];</span>
+<span id="src-cbor-loft-L278">    p = argpos;</span>
+<span id="src-cbor-loft-L279">    mok = <span class="kw">true</span>;</span>
+<span id="src-cbor-loft-L280">    <span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..</span>arg {</span>
+<span id="src-cbor-loft-L281">      <span class="kw">if</span> mok {</span>
+<span id="src-cbor-loft-L282">        kd = <span class="fn-call">read_value</span>(bytes, p, depth + <span class="nm">1</span>);</span>
+<span id="src-cbor-loft-L283">        <span class="kw">if</span> kd.ok {</span>
+<span id="src-cbor-loft-L284">          vd = <span class="fn-call">read_value</span>(bytes, kd.next, depth + <span class="nm">1</span>);</span>
+<span id="src-cbor-loft-L285">          <span class="kw">if</span> vd.ok {</span>
+<span id="src-cbor-loft-L286">            kv = kd.value;</span>
+<span id="src-cbor-loft-L287">            vv = vd.value;</span>
+<span id="src-cbor-loft-L288">            entries += [<span class="en">CborEntry</span> { key: kv, value: vv }];</span>
+<span id="src-cbor-loft-L289">            p = vd.next;</span>
+<span id="src-cbor-loft-L290">          } <span class="kw">else</span> { mok = <span class="kw">false</span>; }</span>
+<span id="src-cbor-loft-L291">        } <span class="kw">else</span> { mok = <span class="kw">false</span>; }</span>
+<span id="src-cbor-loft-L292">      }</span>
+<span id="src-cbor-loft-L293">    }</span>
+<span id="src-cbor-loft-L294">    <span class="kw">if</span> !mok { <span class="kw">return</span> <span class="en">Decoded</span> { value: <span class="en">CNull</span>, next: pos, ok: <span class="kw">false</span> }; }</span>
+<span id="src-cbor-loft-L295">    <span class="kw">return</span> <span class="en">Decoded</span> { value: <span class="en">CMap</span> { entries: entries }, next: p, ok: <span class="kw">true</span> };</span>
+<span id="src-cbor-loft-L296">  }</span>
+<span id="src-cbor-loft-L297">  <span class="kw">if</span> major == <span class="nm">7</span> {</span>
+<span id="src-cbor-loft-L298">    <span class="kw">if</span> info == <span class="nm">20</span> { <span class="kw">return</span> <span class="en">Decoded</span> { value: <span class="en">CBool</span> { value: <span class="kw">false</span> }, next: argpos, ok: <span class="kw">true</span> }; }</span>
+<span id="src-cbor-loft-L299">    <span class="kw">if</span> info == <span class="nm">21</span> { <span class="kw">return</span> <span class="en">Decoded</span> { value: <span class="en">CBool</span> { value: <span class="kw">true</span> },  next: argpos, ok: <span class="kw">true</span> }; }</span>
+<span id="src-cbor-loft-L300">    <span class="kw">if</span> info == <span class="nm">22</span> { <span class="kw">return</span> <span class="en">Decoded</span> { value: <span class="en">CNull</span>, next: argpos, ok: <span class="kw">true</span> }; }</span>
+<span id="src-cbor-loft-L301">  }</span>
+<span id="src-cbor-loft-L302">  <span class="cm">// major 6 (tags), float / undefined simples — unsupported in the signable subset</span></span>
+<span id="src-cbor-loft-L303">  <span class="kw">return</span> <span class="en">Decoded</span> { value: <span class="en">CNull</span>, next: pos, ok: <span class="kw">false</span> };</span>
+<span id="src-cbor-loft-L304">}</span>
+<span id="src-cbor-loft-L305"></span>
+<span id="src-cbor-loft-L306"><span class="cm">/// Decode canonical CBOR bytes into a `CborValue`.  Returns `ok=false` on any</span></span>
+<span id="src-cbor-loft-L307"><span class="cm">/// malformed, non-canonical, or truncated input, on nesting deeper than</span></span>
+<span id="src-cbor-loft-L308"><span class="cm">/// `MAX_DEPTH` — and rejects trailing bytes after the top-level value.  Never</span></span>
+<span id="src-cbor-loft-L309"><span class="cm">/// crashes.</span></span>
+<span id="src-cbor-loft-L310"><span class="cm">// Example: @CBR-003 — `ok=false` is one answer for four different problems, and</span></span>
+<span id="src-cbor-loft-L311"><span class="cm">// the surprising one is that well-formed but NON-canonical CBOR is refused.</span></span>
+<span id="src-cbor-loft-L312"><span class="cm">// Example: @CBR-004 — a map carrying two entries under one key decodes ok=true.</span></span>
+<span id="src-cbor-loft-L313"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">decode</span>(bytes: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt;) -&gt; <span class="en">Decoded</span> {</span>
+<span id="src-cbor-loft-L314">  d = <span class="fn-call">read_value</span>(bytes, <span class="nm">0</span>, <span class="nm">0</span>);</span>
+<span id="src-cbor-loft-L315">  <span class="kw">if</span> d.ok {</span>
+<span id="src-cbor-loft-L316">    <span class="kw">if</span> d.next != <span class="bi"><a href="stdlib-text.html">len</a></span>(bytes) { <span class="kw">return</span> <span class="en">Decoded</span> { value: <span class="en">CNull</span>, next: d.next, ok: <span class="kw">false</span> }; }</span>
+<span id="src-cbor-loft-L317">  }</span>
+<span id="src-cbor-loft-L318">  <span class="kw">return</span> d;</span>
+<span id="src-cbor-loft-L319">}</span>
 </code></pre>
 <h2 id="tests-cbor-loft">tests/cbor.loft</h2>
 <pre class="src"><code><span id="tests-cbor-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -438,8 +447,23 @@
 <span id="tests-cbor-loft-L87">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="fn-call">decode</span>([<span class="nm">0x18</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>, <span class="nm">0x00</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>]).ok, <span class="st">"overlong head rejected"</span>);</span>
 <span id="tests-cbor-loft-L88">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="fn-call">decode</span>([<span class="nm">0x00</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>, <span class="nm">0x00</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>]).ok, <span class="st">"trailing bytes rejected"</span>);</span>
 <span id="tests-cbor-loft-L89"></span>
-<span id="tests-cbor-loft-L90">  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"cbor: all RFC 8949 vectors pass"</span>);</span>
-<span id="tests-cbor-loft-L91">}</span>
+<span id="tests-cbor-loft-L90">  <span class="cm">// Nesting: MAX_DEPTH levels decode, one more is refused, and a hostile stream of</span></span>
+<span id="tests-cbor-loft-L91">  <span class="cm">// array heads far past it answers ok=false instead of exhausting the call stack.</span></span>
+<span id="tests-cbor-loft-L92">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">decode</span>(<span class="fn-call">nested_arrays</span>(<span class="en">MAX_DEPTH</span>)).ok, <span class="st">"MAX_DEPTH levels decode"</span>);</span>
+<span id="tests-cbor-loft-L93">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="fn-call">decode</span>(<span class="fn-call">nested_arrays</span>(<span class="en">MAX_DEPTH</span> + <span class="nm">1</span>)).ok, <span class="st">"one level more is refused"</span>);</span>
+<span id="tests-cbor-loft-L94">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="fn-call">decode</span>(<span class="fn-call">nested_arrays</span>(<span class="nm">100000</span>)).ok, <span class="st">"100000 levels are refused, not a crash"</span>);</span>
+<span id="tests-cbor-loft-L95">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">roundtrip</span>(<span class="en">CArray</span> { items: [<span class="en">CArray</span> { items: [<span class="en">CInt</span> { value: <span class="nm">1</span> }] }] }), <span class="st">"shallow nesting still round-trips"</span>);</span>
+<span id="tests-cbor-loft-L96"></span>
+<span id="tests-cbor-loft-L97">  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"cbor: all RFC 8949 vectors pass"</span>);</span>
+<span id="tests-cbor-loft-L98">}</span>
+<span id="tests-cbor-loft-L99"></span>
+<span id="tests-cbor-loft-L100"><span class="cm">// A null inside `depth` one-element arrays: a value at nesting depth `depth`.</span></span>
+<span id="tests-cbor-loft-L101"><span class="kw">fn</span> <span class="fn-call">nested_arrays</span>(depth: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt; {</span>
+<span id="tests-cbor-loft-L102">  b: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt; = [];</span>
+<span id="tests-cbor-loft-L103">  <span class="kw">for</span> _i <span class="kw">in</span> <span class="nm">0..</span>depth { b += [<span class="nm">0x81</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>]; }</span>
+<span id="tests-cbor-loft-L104">  b += [<span class="nm">0xf6</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>];</span>
+<span id="tests-cbor-loft-L105">  b</span>
+<span id="tests-cbor-loft-L106">}</span>
 </code></pre>
 <h2 id="tests-worked-examples-loft">tests/worked-examples.loft</h2>
 <pre class="src"><code><span id="tests-worked-examples-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>

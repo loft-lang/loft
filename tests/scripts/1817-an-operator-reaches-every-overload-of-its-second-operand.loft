@@ -23,6 +23,7 @@
 //
 // @falsified-at: 1d5577aa4 — interpret exit 1 -> 0, native exit 1 -> 0
 // @falsified-by: tests/falsified/1817-an-operator-reaches-every-overload-of-its-second-operand.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   (patch re-derived at 6b8fc663c — reintroduces: the operator takes the incumbent member, ignoring the overload set)
 //   CHANNEL: exit on both backends — the control refuses this file at compile time.
 //   WITNESS: on the control `V`'s `a - 1` is "No matching operator '-' on 'V' and 'integer'";
 //   measured cell by cell there, `u - 1` answers 400 where this file asserts 490, and
@@ -31,36 +32,40 @@
 //   HOLDS: leak and panic are equal on both trees; the call spellings `OpMin(a, 1)` and
 //   `a.OpMin(1)` answer the same on both.
 
+// `@FR-Op-Result` — the `V?` receiver is discharged and warned about exactly as the argument of
+// `m.minus(b)` is, once per cell:
+// @EXPECT_WARNING: a nullable `V?` is stored into parameter 1 of `minus`
+// @EXPECT_WARNING: a nullable `V?` is stored into parameter 1 of `minus`
+//
+// C132 — the members are `operator` methods; `==` compares the fields, so the `V == integer`
+// and `P == integer` cells wait for `operator equals` (@PLN182 Q14), and the unary member in
+// `W`'s set is a plain receiver-only `minus` (a program's type cannot define the unary `-`).
 struct V { x: integer }
-fn OpMin(self: V, o: V) -> V { V { x: self.x - o.x } }
-fn OpMin(self: V, o: integer) -> V { V { x: self.x - o * 10 } }
-fn OpAdd(self: V, o: float) -> V { V { x: self.x + (o * 2.0) as integer } }
-fn OpAdd(self: V, o: V) -> V { V { x: self.x + o.x } }
-fn OpMul(self: V, o: V) -> V { V { x: self.x * o.x } }
-fn OpMul(self: V, o: text) -> V { V { x: self.x * len(o) + 100 } }
-fn OpEq(self: V, o: integer) -> boolean { self.x == o }
-fn OpEq(self: V, o: V) -> boolean { self.x == o.x }
-fn OpLt(self: V, o: V) -> boolean { self.x < o.x }
-fn OpLt(self: V, o: integer) -> boolean { self.x < o }
+operator minus(self: V, o: V) -> V { V { x: self.x - o.x } }
+operator minus(self: V, o: integer) -> V { V { x: self.x - o * 10 } }
+operator plus(self: V, o: float) -> V { V { x: self.x + (o * 2.0) as integer } }
+operator plus(self: V, o: V) -> V { V { x: self.x + o.x } }
+operator times(self: V, o: V) -> V { V { x: self.x * o.x } }
+operator times(self: V, o: text) -> V { V { x: self.x * len(o) + 100 } }
+operator compare(self: V, o: V) -> Ordering { self.x.compare(o.x) }
+operator compare(self: V, o: integer) -> Ordering { self.x.compare(o) }
 
-// The struct member LAST, with a unary member between (loft#1794 / #1811 stay fixed).
+// The struct member LAST, with a receiver-only member between (loft#1794 / #1811 stay fixed).
 struct W { y: integer }
-fn OpMin(self: W, o: integer) -> W { W { y: self.y - o * 10 } }
-fn OpMin(self: W) -> W { W { y: 0 - self.y } }
-fn OpMin(self: W, o: W) -> W { W { y: self.y - o.y } }
-fn OpAdd(self: W, o: integer) -> W { W { y: self.y + o * 10 } }
-fn OpAdd(self: W, o: W) -> W { W { y: self.y + o.y } }
+operator minus(self: W, o: integer) -> W { W { y: self.y - o * 10 } }
+fn minus(self: W) -> W { W { y: 0 - self.y } }
+operator minus(self: W, o: W) -> W { W { y: self.y - o.y } }
+operator plus(self: W, o: integer) -> W { W { y: self.y + o * 10 } }
+operator plus(self: W, o: W) -> W { W { y: self.y + o.y } }
 
 // An exact member declared AFTER one the operand converts to.
 struct U { x: integer }
-fn OpMin(self: U, o: float) -> U { U { x: self.x - (o * 100.0) as integer } }
-fn OpMin(self: U, o: integer) -> U { U { x: self.x - o * 10 } }
+operator minus(self: U, o: float) -> U { U { x: self.x - (o * 100.0) as integer } }
+operator minus(self: U, o: integer) -> U { U { x: self.x - o * 10 } }
 
 value struct P { x: integer, y: integer }
-fn OpAdd(self: P, o: integer) -> P { P { x: self.x + o, y: self.y + o } }
-fn OpAdd(self: P, o: P) -> P { P { x: self.x + o.x, y: self.y + o.y } }
-fn OpEq(self: P, o: integer) -> boolean { self.x == o && self.y == o }
-fn OpEq(self: P, o: P) -> boolean { self.x == o.x && self.y == o.y }
+operator plus(self: P, o: integer) -> P { P { x: self.x + o, y: self.y + o } }
+operator plus(self: P, o: P) -> P { P { x: self.x + o.x, y: self.y + o.y } }
 
 fn diff<T: Subtractable>(p: T, q: T) -> T { p - q }
 fn total<T: Addable>(v: vector<T>, z: T) -> T {
@@ -80,9 +85,9 @@ fn main() {
   assert((a - 1).x == -5, "V - integer: {(a - 1).x}");
   assert((c - d).y == 5, "W - W, the struct member declared last: {(c - d).y}");
   assert((c - 1).y == -3, "W - integer, declared first: {(c - 1).y}");
-  assert((-c).y == -7, "unary -W beside both binary members: {(-c).y}");
+  assert(c.minus().y == -7, "receiver-only minus beside both binary members: {c.minus().y}");
   // The three spellings of one call agree.
-  assert(OpMin(a, 1).x == (a - 1).x && a.OpMin(1).x == (a - 1).x, "spellings of OpMin(a, 1)");
+  assert(minus(a, 1).x == (a - 1).x && a.minus(1).x == (a - 1).x, "spellings of minus(a, 1)");
   // + over a float member first: 5 + 1.5*2 = 8; 5 + 3 = 8; W: 7 + 2 = 9, 7 + 4*10 = 47.
   assert((a + 1.5).x == 8, "V + float: {(a + 1.5).x}");
   assert((a + b).x == 8, "V + V: {(a + b).x}");
@@ -90,11 +95,9 @@ fn main() {
   // * over a text member: 5*3 = 15; 5*len("abc") + 100 = 115.
   assert((a * b).x == 15, "V * V: {(a * b).x}");
   assert((a * "abc").x == 115, "V * text: {(a * "abc").x}");
-  // == / != (derived from == ) / < over integer and struct members.
+  // == / != compare the fields; < over integer and struct members.
   e = V { x: 5 };
-  assert(a == e && !(a == b), "V == V");
-  assert(a == 5 && !(a == 4), "V == integer");
-  assert(!(a != 5) && a != 4 && a != b, "V != derives from both OpEq members");
+  assert(a == e && !(a == b) && a != b, "V == V by its fields");
   assert(b < a && !(a < b), "V < V");
   assert(a < 6 && !(a < 5), "V < integer");
   // The exact member wins over the one the operand converts to: 500 - 1*10 = 490;
@@ -109,7 +112,7 @@ fn main() {
   s = p + 100;
   assert(r.x == 11 && r.y == 22, "P + P: {r.x},{r.y}");
   assert(s.x == 101 && s.y == 102, "P + integer: {s.x},{s.y}");
-  assert(P { x: 7, y: 7 } == 7 && p + 1 == P { x: 2, y: 3 } && p != 7, "P == over both members");
+  assert(p + 1 == P { x: 2, y: 3 } && p != q, "P == by its fields");
   // A nullable receiver: 5 - 3 = 2, 5 - 10 = -5.
   m = maybe(5);
   assert((m - b).x == 2 && (m - 1).x == -5, "V? - V / V? - integer");

@@ -681,32 +681,28 @@ Full design: [INTERFACES.md](INTERFACES.md).
 **Standard library interfaces** (declared in `default/01_code.loft`):
 
 ```loft
-pub interface Ordered   { fn OpLt(self: Self, other: Self) -> boolean
-                          fn OpGt(self: Self, other: Self) -> boolean }
-pub interface Equatable { fn OpEq(self: Self, other: Self) -> boolean
-                          fn OpNe(self: Self, other: Self) -> boolean }
-pub interface Addable   { fn OpAdd(self: Self, other: Self) -> Self }
-pub interface Printable { fn to_text(self: Self) -> text }
+pub interface Ordered   { operator compare(self: Self, other: Self) -> Ordering }
+pub interface Equatable { }    // every type: `==` is structural (C134)
+pub interface Addable   { operator plus(self: Self, other: Self) -> Self }
+pub interface Printable { operator to_text(self: Self) -> text }
 ```
+
+The full list and what meets each: [INTERFACES.md § Standard library interfaces](INTERFACES.md#standard-library-interfaces).
 
 **Example:**
 
 ```loft
-interface Ordered {
-    fn OpLt(self: Self, other: Self) -> boolean
-}
-
-fn max_of<T: Ordered>(v: vector<T>) -> T {
+fn best_of<T: Ordered>(v: vector<T>) -> T {
     result = v[0];
     for item in v { if result < item { result = item; } }
     result
 }
 
 struct Score { value: integer }
-fn OpLt(self: Score, other: Score) -> boolean { self.value < other.value }
+operator compare(self: Score, other: Score) -> Ordering { self.value.compare(other.value) }
 
 // Score satisfies Ordered automatically — no explicit declaration needed.
-best = max_of([Score{value: 3}, Score{value: 7}, Score{value: 1}]);
+best = best_of([Score{value: 3}, Score{value: 7}, Score{value: 1}]);
 ```
 
 **Steps:**
