@@ -1,5 +1,5 @@
 diff --git b/src/data.rs a/src/data.rs
-index ceba616a7..6e5bfc743 100644
+index cbf8a3ba9..6e5bfc743 100644
 --- b/src/data.rs
 +++ a/src/data.rs
 @@ -10106,19 +10106,6 @@ impl Data {
@@ -22,8 +22,40 @@ index ceba616a7..6e5bfc743 100644
      pub fn resolve_adopted_stubs(&mut self, lexer: &mut Lexer) -> Vec<(u32, Type)> {
          // Not a stub a GENERIC struct adopted: its target would be the bare template, where
          // each use names an instance whose arguments the paths that read them resolve
+@@ -12380,7 +12367,7 @@ impl Data {
+             .iter()
+             .filter(|&(name, src, def_nr)| {
+                 src == lib_source
+-                    && self.passes_on(def_nr)
++                    && self.definitions[def_nr as usize].pub_visible
+                     && !self.is_private_import(lib_source, name, def_nr)
+             })
+             .map(|(name, _, def_nr)| (name.to_string(), def_nr))
+@@ -12389,19 +12376,9 @@ impl Data {
+ 
+     /// The definition `lib_source` passes on under `key`, if any (see [`Self::exported_names`]).
+     fn exported(&self, key: &str, lib_source: u16) -> Option<u32> {
+-        self.def_names
+-            .get(key, lib_source)
+-            .filter(|&d| self.passes_on(d) && !self.is_private_import(lib_source, key, d))
+-    }
+-
+-    /// @FR-F-Surface — a `pub` item, or a forward-reference stub.  A stub is not an item and
+-    /// has no `pub` of its own: it travels with the import so the importer's declaration can
+-    /// adopt it (loft#801), and that declaration decides whether it is `pub`.  Its USER's
+-    /// `pub` decided the trip before, so a private function naming the importer's type
+-    /// above its declaration was refused where a `pub` one compiled (loft#1856).
+-    fn passes_on(&self, d_nr: u32) -> bool {
+-        let d = &self.definitions[d_nr as usize];
+-        d.pub_visible || matches!(d.def_type, DefType::Unknown)
++        self.def_names.get(key, lib_source).filter(|&d| {
++            self.definitions[d as usize].pub_visible && !self.is_private_import(lib_source, key, d)
++        })
+     }
+ 
+     /// @FR-F-Surface (loft#1848) — the error for a qualified `lib::name` that reaches what `lib`
 diff --git b/src/parser/mod.rs a/src/parser/mod.rs
-index c21c2036a..ec282691f 100644
+index 79ef55fa7..ec282691f 100644
 --- b/src/parser/mod.rs
 +++ a/src/parser/mod.rs
 @@ -18376,7 +18376,6 @@ impl Parser {
@@ -34,24 +66,28 @@ index c21c2036a..ec282691f 100644
              if self.lexer.diagnostics().level() == Level::Fatal
                  || (!self.parse_capability()
                      && !self.parse_enum()
-@@ -18388,19 +18387,9 @@ impl Parser {
+@@ -18388,22 +18387,12 @@ impl Parser {
              {
                  break;
              }
--            // @FR-F-Surface: what is `pub` is what a `pub` declaration DECLARES — never decided
--            // by where an item is first named.  A type named above its declaration is a
--            // forward-reference stub created by the declaration that NAMED it, so the range of
--            // defs new to this declaration holds the stubs it only used (still `Unknown` here,
--            // and not its to publish) and misses the stub it ADOPTED (created earlier, by a
--            // user).  Both made the user's `pub`-ness the type's (loft#1856).
+-            // @FR-F-Surface: what is `pub` is what a declaration DECLARES, never where the
+-            // item was first named.  A type named above its declaration is a stub created
+-            // inside the declaration that NAMED it, so the range below holds stubs this
+-            // declaration only USED (still `Unknown`, not its to publish) and misses the one
+-            // it ADOPTED (created earlier, by a user; `note_stub_adopted` records each).  The
+-            // adopting declaration decides, either way (loft#1856).
 +            // mark newly created definitions as pub-visible.
              if is_pub {
                  for d_nr in before..self.data.definitions() {
 -                    if self.data.def_type(d_nr) != DefType::Unknown {
 -                        self.data.def_mut(d_nr).pub_visible = true;
 -                    }
--                }
--                for d_nr in self.data.adopted_since(adopted_before).to_vec() {
-                     self.data.def_mut(d_nr).pub_visible = true;
++                    self.data.def_mut(d_nr).pub_visible = true;
                  }
              }
+-            for d_nr in self.data.adopted_since(adopted_before).to_vec() {
+-                self.data.def_mut(d_nr).pub_visible = is_pub;
+-            }
+         }
+         let res = self.lexer.peek().clone();
+         if res.has != LexItem::None && self.lexer.diagnostics().level() != Level::Fatal {

@@ -1,0 +1,6 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1856 — a `pub` function names the entry's PRIVATE type first, which used to
+// publish it.
+pub fn f1856_hid() -> integer { F1856Hid { h_n: 42 }.h_n }
