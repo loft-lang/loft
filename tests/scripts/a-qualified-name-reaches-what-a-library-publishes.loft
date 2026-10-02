@@ -7,6 +7,15 @@
 // what a library publishes stays reachable through its qualifier — its `pub` items, a variant
 // of its `pub` enum, a type in a parameter position, a name a facade passes on with
 // `pub use` — and the library's own code still reaches its private half.
+//
+// @falsified-by: tests/falsified/a-qualified-name-reaches-what-a-library-publishes.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   The patch is the OVER-WIDE refusal — every item the library defines refused through its
+//   qualifier, `pub` or not — so this guard holds the half of loft#1848 that must not move.
+//   CHANNEL: the exit — on the control `privlib::PUB_C` and every other published reach is
+//   refused, so nothing compiles.
+//   WITNESS: "`PUB_C` is not `pub` in `privlib`" for a constant declared `pub`.
+//   ARMED: nothing.
+//   HOLDS: on this tree every assertion passes on both backends, with no leak and no panic.
 use privlib;
 use c98_facade;
 use c98_math;
