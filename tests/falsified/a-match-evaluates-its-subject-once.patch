@@ -1,0 +1,51 @@
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index 240cda9d..88f8b11b 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -586,24 +586,6 @@ pub(crate) enum MethodSelect {
+     },
+ }
+ 
+-/// `@FR-M-Match` — is `v` a PLACE, read the same each time it is read: a variable, or a field
+-/// or element of one at a constant or variable position?  A call, an expression that builds a
+-/// value, or anything else answers no, and the match binds it once.
+-fn is_place(v: &Value, data: &crate::data::Data) -> bool {
+-    match v.unspan() {
+-        Value::Var(_) => true,
+-        Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
+-            let name = data.def(*d).name();
+-            (name == "OpGetField" || name.starts_with("OpGetVector"))
+-                && args.first().is_some_and(|a| is_place(a, data))
+-                && args[1..]
+-                    .iter()
+-                    .all(|a| matches!(a.unspan(), Value::Int(_) | Value::Long(_) | Value::Var(_)))
+-        }
+-        _ => false,
+-    }
+-}
+-
+ impl Parser {
+     /// Consume the `=>` separator that follows a match-arm pattern.
+     ///
+@@ -6086,16 +6068,11 @@ impl Parser {
+             }
+         };
+ 
+-        // `@FR-M-Match` — the subject is evaluated ONCE: every arm's test and every binding read
+-        // the one value.  A plain enum (stack bytes) is always bound to a temp.  A struct enum
+-        // or struct read from a PLACE (a variable, or a field or element of one) is read in
+-        // place, since reading it again reads the same value; anything else — a call above
+-        // all — is bound to a temp, which the scope pass owns and frees like any local.  Spliced
+-        // into each test and binding, `match next(lx)` ran the call once for the variant and
+-        // again for each field.
+-        let (subject_val, preamble): (Value, Option<(u16, Value)>) = if !valid_enum
+-            || (is_struct && is_place(&subject, &self.data))
+-        {
++        // For plain enums (stack bytes), use a temp var to avoid re-evaluating the subject.
++        // For struct enums (database references / DbRef), do NOT create a temp var — the
++        // allocation system requires DbRefs to be freed in strict LIFO order and copying them
++        // to a new variable breaks that invariant.  Instead, use the subject Value directly.
++        let (subject_val, preamble): (Value, Option<(u16, Value)>) = if is_struct || !valid_enum {
+             (subject, None)
+         } else {
+             let v = self.create_unique("match_subj", &subject_type);

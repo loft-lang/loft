@@ -6093,15 +6093,14 @@ impl Parser {
         // all — is bound to a temp, which the scope pass owns and frees like any local.  Spliced
         // into each test and binding, `match next(lx)` ran the call once for the variant and
         // again for each field.
-        let (subject_val, preamble): (Value, Option<(u16, Value)>) = if !valid_enum
-            || (is_struct && is_place(&subject, &self.data))
-        {
-            (subject, None)
-        } else {
-            let v = self.create_unique("match_subj", &subject_type);
-            self.vars.defined(v);
-            (Value::Var(v), Some((v, subject)))
-        };
+        let (subject_val, preamble): (Value, Option<(u16, Value)>) =
+            if !valid_enum || (is_struct && is_place(&subject, &self.data)) {
+                (subject, None)
+            } else {
+                let v = self.create_unique("match_subj", &subject_type);
+                self.vars.defined(v);
+                (Value::Var(v), Some((v, subject)))
+            };
 
         // Build discriminant expression: integer representation of the active variant.
         let disc_expr = if is_struct {

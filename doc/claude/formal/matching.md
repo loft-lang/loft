@@ -272,7 +272,7 @@ is a view; `..rest` / repetition are fresh vectors); the pattern grammar + prece
 
 ## Deviations
 
-OPEN: **0** — every entry, `D-match-1` to `-15`, is closed; the record is in
+OPEN: **0** — every entry, `D-match-1` to `-16`, is closed; the record is in
 [matching-history.md](matching-history.md).
 
 Cursor matches (a struct with a `vector` source and a `pos`, consumed as a PREFIX) and sub-rule
@@ -295,6 +295,10 @@ follows `(P-Seq)` as a prefix reading of it.
 
 ## Conformance
 
+- **The subject is evaluated once (`M-Match`)** — `match next(lx) { Num { v } => …, … }` calls
+  `next` once: the variant tested and the payload bound are the same token's.  A subject that is
+  a place (a variable, a field or element of one) is read in place; anything else is bound
+  once.  Guard `tests/scripts/a-match-evaluates-its-subject-once.loft` c1–c10.
 - **Arm selection + payload bind (`M-Variant`)** — `match Sh::Circle { r: 5 } { Dot => 0,
   Circle { r } => r*r }` is `25`.
 - **Wildcard default (`M-Wild`)** — `match C::D { A => 1, _ => 0 }` is `0`; an arm after `_` is a

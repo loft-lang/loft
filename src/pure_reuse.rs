@@ -29,8 +29,24 @@ use crate::fxhash::FxHashSet as HashSet;
 fn reads_only(name: &str) -> bool {
     const PREFIXES: [&str; 6] = ["OpGet", "OpLength", "OpConv", "OpCast", "OpEq", "OpNe"];
     const ARITH: [&str; 18] = [
-        "OpAdd", "OpMin", "OpMul", "OpDiv", "OpRem", "OpLt", "OpLe", "OpGt", "OpGe", "OpAnd",
-        "OpOr", "OpXor", "OpNeg", "OpAbs", "OpShl", "OpShr", "OpLogical", "OpMathFunc",
+        "OpAdd",
+        "OpMin",
+        "OpMul",
+        "OpDiv",
+        "OpRem",
+        "OpLt",
+        "OpLe",
+        "OpGt",
+        "OpGe",
+        "OpAnd",
+        "OpOr",
+        "OpXor",
+        "OpNeg",
+        "OpAbs",
+        "OpShl",
+        "OpShr",
+        "OpLogical",
+        "OpMathFunc",
     ];
     PREFIXES.iter().any(|p| name.starts_with(p))
         || ARITH.iter().any(|p| name.starts_with(p))
@@ -395,10 +411,7 @@ fn reuse_in_block(
     for i in 0..ops.len() {
         let mut first_positions = Vec::new();
         always_evaluated(&ops[i], &mut first_positions);
-        let Some((key, ..)) = first_positions
-            .iter()
-            .find_map(|p| call_key(p, wrappers))
-        else {
+        let Some((key, ..)) = first_positions.iter().find_map(|p| call_key(p, wrappers)) else {
             continue;
         };
         for j in i + 1..ops.len() {
@@ -473,20 +486,20 @@ fn rewrite(
         .hidden_return_buffer_attr()
         .map(|k| inner.attributes()[k].typedef.clone());
     let vars = &mut data.definitions[f as usize].variables;
-    let t = vars.add_unique("reuse", &ret_tp, u16::MAX);
+    let local = vars.add_unique("reuse", &ret_tp, u16::MAX);
     let mut args: Vec<Value> = key.args.iter().map(|a| Value::Var(*a)).collect();
     let mut prelude = Vec::new();
     if let Some(btp) = buf_tp {
-        let b = vars.add_unique("reuse_buf", &btp, u16::MAX);
-        prelude.push(Value::Set(b, Box::new(Value::Null)));
-        args.push(Value::Var(b));
+        let buf = vars.add_unique("reuse_buf", &btp, u16::MAX);
+        prelude.push(Value::Set(buf, Box::new(Value::Null)));
+        args.push(Value::Var(buf));
     }
-    prelude.push(Value::Set(t, Box::new(Value::Call(key.inner, args))));
-    for k in [i, j] {
-        replace_calls(&mut ops[k], key, t, data, wrappers);
+    prelude.push(Value::Set(local, Box::new(Value::Call(key.inner, args))));
+    for at in [i, j] {
+        replace_calls(&mut ops[at], key, local, wrappers);
     }
-    for (n, p) in prelude.into_iter().enumerate() {
-        ops.insert(i + n, p);
+    for (offset, stmt) in prelude.into_iter().enumerate() {
+        ops.insert(i + offset, stmt);
     }
 }
 
@@ -494,19 +507,18 @@ fn rewrite(
 fn replace_calls(
     v: &mut Value,
     key: &Key,
-    t: u16,
-    data: &Data,
+    local: u16,
     wrappers: &crate::fxhash::FxHashMap<u32, Projection>,
 ) {
     if let Some((k, read, consts)) = call_key(v, wrappers)
         && &k == key
     {
-        let mut args = vec![Value::Var(t)];
+        let mut args = vec![Value::Var(local)];
         args.extend(consts);
         *v = Value::Call(read, args);
         return;
     }
-    v.for_each_child_mut(&mut |c| replace_calls(c, key, t, data, wrappers));
+    v.for_each_child_mut(&mut |c| replace_calls(c, key, local, wrappers));
 }
 
 /// `LOFT_PURE_REUSE_DUMP=<fn>` — print the named function's body as the scope pass receives it.
@@ -523,7 +535,11 @@ fn dump(data: &Data) {
         let mut vars = def.variables.clone();
         let mut buf: Vec<u8> = Vec::new();
         let _ = data.show_code(&mut buf, &mut vars, def.code(), 0, true);
-        eprintln!("[pure-reuse] {}:\n{}", def.name(), String::from_utf8_lossy(&buf));
+        eprintln!(
+            "[pure-reuse] {}:\n{}",
+            def.name(),
+            String::from_utf8_lossy(&buf)
+        );
     }
 }
 
@@ -543,20 +559,14 @@ pub fn rewrite_program(data: &mut Data) {
                 if data.def(f).variables.done {
                     continue;
                 }
-                let mut code = std::mem::replace(&mut data.definitions[f as usize].code, Value::Null);
-                let mut changed = false;
+                let mut code =
+                    std::mem::replace(&mut data.definitions[f as usize].code, Value::Null);
                 if let Value::Block(bl) = &mut code {
                     let mut ops = std::mem::take(&mut bl.operators);
-                    while reuse_in_block(&mut ops, f, data, &free, &wrappers, trace) {
-                        changed = true;
-                    }
+                    while reuse_in_block(&mut ops, f, data, &free, &wrappers, trace) {}
                     bl.operators = ops;
                 }
-                if changed {
-                    data.definitions[f as usize].code = code;
-                } else {
-                    data.definitions[f as usize].code = code;
-                }
+                data.definitions[f as usize].code = code;
             }
         }
     }

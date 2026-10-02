@@ -14,10 +14,16 @@
 // different arguments.  An effect-free call cannot be counted, so the reuse cells check the
 // values and `tests/pure_reuse.rs` pins which bodies reuse; the decline cells count calls.
 // Values hand-computed.
+//
+// @falsified-at: none — the rule has no earlier build to catch, so the receipt is planted
+//   defects (2026-10-02), on --interpret: the "nothing in between" test struck fails p2 (3 and 3:
+//   the rebound vector read as the old one); every function admitted as effect-free fails p3
+//   (length 3 for 4: the second append lost).  Admitting an `if` arm as always evaluated is
+//   INERT — an effect-free call made on a path that did not make it changes no value, only
+//   work — and the pin still sees the two admitted reuses.
+//   CHANNEL: an assertion (p2, p3) and the pin's trace and emission counts.
 
 struct Parsed { ok: boolean, total: integer, first: integer }
-
-struct Counter { n: integer }
 
 // The effect-free function: sums a vector, and is ok when it is non-empty.
 fn parse(v: vector<integer>) -> Parsed {
@@ -50,20 +56,19 @@ fn p2() {
   assert(a == 3 && b == 60, "p2 got {a} {b}");
 }
 
-// An effect: the wrapped function writes through its `&` parameter.
-fn counted(v: vector<integer>, c: &Counter) -> Parsed {
-  c.n += 1;
+// An effect: the wrapped function appends to the vector it is handed.
+fn tally(v: vector<integer>) -> Parsed {
+  v += [0];
   parse(v)
 }
-fn counted_total(v: vector<integer>, c: &Counter) -> integer { p = counted(v, c); return p.total; }
+fn tally_total(v: vector<integer>) -> integer { p = tally(v); return p.total; }
 
-// p3: a function with an effect is called every time
+// p3: a function with an effect is called every time: the vector grows by one per call
 fn p3() {
-  c = Counter { n: 0 };
   v = [2, 2];
-  a = counted_total(v, c);
-  b = counted_total(v, c);
-  assert(a == 4 && b == 4 && c.n == 2, "p3 got {a} {b} calls={c.n}");
+  a = tally_total(v);
+  b = tally_total(v);
+  assert(a == 4 && b == 4 && len(v) == 4, "p3 got {a} {b} len={len(v)}");
 }
 
 // p4: the argument's store is written between the two calls

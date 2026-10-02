@@ -30,6 +30,14 @@ after it.  The arm rule's "bare binding" wording stood for two months without th
 having it — corrected 2026-09-07, with the silence that hid it (an arm naming nothing was
 skipped without a diagnostic).
 
+- **D-match-16 — OPENED AND CLOSED 2026-10-02.** `(M-Match)`: a struct-enum or struct subject
+  that was not a variable was spliced into every arm test and every field binding, so a call
+  ran once for the variant and again for each field read.  `match next(lx) { Num { v } => … }`
+  tested the first token's variant and read the second token's payload, on both backends and
+  on main, with nothing reported; a lookup in a `match` subject (`match pa_get(m, key)`) ran
+  its lookup and its copy twice.  The subject is now bound once unless it is a place, which
+  reads the same value each time (`tests/scripts/a-match-evaluates-its-subject-once.loft`).
+  The binding had been held back for a free-order constraint `(H-FreeAny)` had already lifted.
 - **D-match-15 — OPENED AND CLOSED 2026-09-29.** `(P-Seq)` × `(P-Rep)` × `(P-Rest)`: a fixed
   tail after a variant repetition, with a `..rest` after the tail, was refused ("cannot combine
   with `..rest` (yet)"), and so was any tail after a repetition in a cursor match.  By `(P-Seq)`
