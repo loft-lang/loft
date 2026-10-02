@@ -10,6 +10,10 @@
 // type defines only the spec form.  These are `time`'s three conversions and its spec-taking
 // `to_text`, written the new way.
 //
+// @falsified-at: 87eed3737 — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the control refuses `operator to_integer` by name (the
+//   conversion form was not built), so the file does not compile there.
+//
 struct Cnt { n: integer, max: integer }
 pub operator next(self: Cnt) -> integer? { if self.n >= self.max { return null; } self.n += 1; self.n }
 

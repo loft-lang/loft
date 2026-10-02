@@ -678,7 +678,6 @@
 98-struct-order-in-use.loft
 990-backtick-dedent-with-holes.loft
 992-match-tail-with-return-arm.loft
-996-opindex-composite-subscript.loft
 99-dump-struct.loft
 a-block-bodied-null-match-arm-delivers-the-sentinel.loft
 absent-nullable-field-default.loft
