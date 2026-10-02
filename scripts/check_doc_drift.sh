@@ -753,6 +753,15 @@ check_examples() {
   # byte-for-byte; the library CI sets REPO_ROOT + CITE_ROOTS to the package under test.
   local registry="${EXAMPLES_REGISTRY:-scripts/example_repos.tsv}"
   local repo_root="${EXAMPLES_REPO_ROOT:-.}"
+  # An acronym `tag_re` cannot match registers tags nothing reads: no citation of it is
+  # checked here, and gendoc's `is_example_tag` leaves it in the published prose.  So the
+  # registry may only hold three uppercase letters (a `T2D` row did exactly that).
+  local bad_acr
+  bad_acr=$(awk -F'\t' '!/^#/ && NF >= 2 && $1 !~ /^[A-Z][A-Z][A-Z]$/ {print $1}' "$registry")
+  if [ -n "$bad_acr" ]; then
+    red "  malformed acronym(s) in $registry: $(echo $bad_acr) — a tag is three uppercase letters"
+    HITS_EXAMPLES=$((HITS_EXAMPLES + 1)); DRIFT=1
+  fi
   # ⚠ The default `default lib` is LOFT's own layout.  In a library repo those directories
   # do not exist, so an unset CITE_ROOTS scans nothing and the check passes VACUOUSLY —
   # which is the worst outcome for a local preflight, because it looks like a pass.  So a

@@ -43,7 +43,7 @@ ZTX	loft-libs-core	https://github.com/loft-lang/loft-libs-core	main
 # loft-libs-graphics (graphics, gridmesh, shapes, imaging, stage, text2d, tween, drawing)
 GFX	loft-libs-graphics	https://github.com/loft-lang/loft-libs-graphics	main
 STG	loft-libs-graphics	https://github.com/loft-lang/loft-libs-graphics	main
-T2D	loft-libs-graphics	https://github.com/loft-lang/loft-libs-graphics	main
+TXD	loft-libs-graphics	https://github.com/loft-lang/loft-libs-graphics	main
 TWN	loft-libs-graphics	https://github.com/loft-lang/loft-libs-graphics	main
 GRM	loft-libs-graphics	https://github.com/loft-lang/loft-libs-graphics	main
 IMG	loft-libs-graphics	https://github.com/loft-lang/loft-libs-graphics	main
