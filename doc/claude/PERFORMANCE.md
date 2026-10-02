@@ -709,9 +709,12 @@ generated body pops a value first takes its local positions before that value is
 both are the defects the guard's planted-defect cells catch.  The shapes were chosen from
 `LOFT_OP_NGRAMS`, the statically adjacent operator runs over the bench lanes (PROFILING.md).
 
-What these buy is constant-factor speed on work that already runs in cache.  Measured over
-the 79 bench routines (`make interp-gap`): the fast stack path and the lean loop
-2.0× (median), the fusion above another 1.2×, 2.5× together; up to 5.2× on text walks.
+What these buy is constant-factor speed on work that already runs in cache.  Over the 79 bench
+routines (`bench/stats.py --lanes interp`, one binary, each path switched off with its
+`LOFT_NO_*` switch, fusion on throughout, every routine's output hash identical): the fast
+stack path and the lean loop together **2.4×** (median; interquartile 1.95–3.6×, range
+1.1–4.7×), the direct stack path alone 2.2×, the lean loop alone 1.3×.  The fusion above
+adds its own share on top (`LOFT_NO_FUSE=1` is its switch); up to 5.2× on text walks.
 Measured the same way, **none of it changed a single store operation** — which is why the
 next work is in the section below, not in more fusion.
 
