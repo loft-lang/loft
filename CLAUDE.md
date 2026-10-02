@@ -574,7 +574,7 @@ report says so rather than printing nothing (loft#1088). PERFORMANCE.md § LOFT_
 the bisect switches: [NATIVE_SWITCHES.md](doc/claude/NATIVE_SWITCHES.md) (`--native` rewrites) /
 [BOTH_BACKEND_SWITCHES.md](doc/claude/BOTH_BACKEND_SWITCHES.md) (lowering + runtime store) ·
 [PROFILING.md](doc/claude/PROFILING.md) which switch arms which profiler ·
-[PERFORMANCE.md](doc/claude/PERFORMANCE.md) benchmarks + profiling (its oracle: [PROFILE_ORACLE.md](doc/claude/PROFILE_ORACLE.md)) · [PERF_PORTAL.md](doc/claude/PERF_PORTAL.md) (GENERATED: every measured routine against its Rust twin, by mechanism class — `make perf-portal`) · [KERNELS.md](doc/claude/KERNELS.md) the kernel register — every Rust stand-in for a loft loop, why it exists and its removal trigger (`make kernel-ratio`); a stop-gap, the loft version is preferred · [CI_BUDGET.md](doc/claude/CI_BUDGET.md) what runs
+[PERFORMANCE.md](doc/claude/PERFORMANCE.md) benchmarks + profiling (its oracle: [PROFILE_ORACLE.md](doc/claude/PROFILE_ORACLE.md)) · [INTERPRETER_PERFORMANCE.md](doc/claude/INTERPRETER_PERFORMANCE.md) how the interpreter executes and what made it fast · [PERF_PORTAL.md](doc/claude/PERF_PORTAL.md) (GENERATED: every measured routine against its Rust twin, by mechanism class — `make perf-portal`) · [KERNELS.md](doc/claude/KERNELS.md) the kernel register — every Rust stand-in for a loft loop, why it exists and its removal trigger (`make kernel-ratio`); a stop-gap, the loft version is preferred · [CI_BUDGET.md](doc/claude/CI_BUDGET.md) what runs
 when + the 20-min PR rule.
 
 **Quality / stability / formal:** [CODE.md](doc/claude/CODE.md) · [DOC_QUALITY.md](doc/claude/DOC_QUALITY.md) ·

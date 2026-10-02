@@ -15,7 +15,7 @@ caller: forwards, tuple TWINS for the sites that owe a record, a tuple copied in
 and slice 5 (nested layouts).  `resolve_move` returns and receives tuples on both backends.
 **Open:** slice 2 (a written tuple local, `TuplePut`).
 
-The bar the interpreter work answers to is in PERFORMANCE.md § Why the interpreter is
+The bar the interpreter work answers to is in INTERPRETER_PERFORMANCE.md § Why the interpreter is
 optimised at all: native is the target, a cliff is about 100× (optimised interpreter against
 optimised native, real time), and no change may make native or any routine's ratio worse.
 
@@ -225,5 +225,5 @@ Probed, clean on both backends:
 ## See also
 
 [formal/rewrites.md](../formal/rewrites.md) R-ValueRecord / R-ValueLocal ·
-[PERFORMANCE.md § How the interpreter executes](../PERFORMANCE.md) (store work) ·
+[INTERPRETER_PERFORMANCE.md](../INTERPRETER_PERFORMANCE.md) (store work) ·
 [NATIVE_SWITCHES.md](../NATIVE_SWITCHES.md) (`LOFT_NO_VALUE_RECORD`, `LOFT_NO_VALUE_LOCAL`).

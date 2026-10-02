@@ -4151,3 +4151,26 @@ cycles (2026-10-01).  The crash context, before it was derived from the register
 (`(R-DispatchPublish)`), was written per op; the function is not tracked, the report's `at:`
 line names it.
 
+
+## The interpreter section: dates and episodes behind its measurements
+
+Moved from PERFORMANCE.md § How the interpreter executes when that section became
+INTERPRETER_PERFORMANCE.md (2026-10-02).  Vector growth was priced against a hand-reserved
+vector on 2026-10-01.  The layout measurements (bench 14 at +6 % cycles with equal
+instructions, a hash loop +14 % then −4 % once pinned) and the pre-rebase "before" that made
+`join` read −95 % and `split` −90 % were both taken on 2026-10-01.  The cross-rebase
+comparison that read wrong credited a change with −4.2 % that was −5.6 % of main's commits and
++0.9 % of its own.
+
+## Dates and episodes moved out of PERFORMANCE.md (2026-10-02)
+
+`--annotate` once printed forty lines of disassembly about a one-sample `getenv` from libc,
+which is why it refuses a low-sample symbol.  The owner set the WIDE-not-deep direction for
+the perf stream on 2026-09-23.  The library A/B that reads flat (394 ms against 393 ms under
+`LOFT_NO_SCALAR_HOIST=1`) was measured on 2026-09-10 while attributing loft#1426's `smooth`
+row.  On 2026-10-02 a commit that edited `default/` without regenerating the compiled stdlib
+read as a +2213 % "regression" of the next change measured.  The single-file Rust-emit harness
+is how N4 and N5 were found (commenting out `cr_call_push`, replacing `op_add_int` with `+`),
+and it surfaced the `--native` against `--native-release` gap (`-O` missing from the default
+mode), fixed in `ae34bdb1` (`make index` uses `--native-release`).  P2's interpreter half
+(`(R-StackBase)`) was delivered on 2026-10-01.

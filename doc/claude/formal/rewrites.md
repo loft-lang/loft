@@ -76,8 +76,8 @@ assumption.  A site enforcing a rule cites its `@FR-R-…` tag
                  bytecode (`loft introspect`) is the census, since the generator's
                  admissions are not counted.  A TIMING of such a rewrite is read on
                  two builds that differ only in it with the layout pinned
-                 (PERFORMANCE.md § Measuring an interpreter change): two ordinary
-                 builds differ by 15 % at identical instruction counts.
+                 (INTERPRETER_PERFORMANCE.md § Measuring an interpreter change):
+                 two ordinary builds differ by 15 % at identical instruction counts.
   (R-Phase)      every rule is APPLIED BY one phase, and the phase decides its oracle:
                  the IR phase (both backends run the rewritten IR — the switch A/B is
                  the oracle, BOTH-BACKEND CLAUSE), the native generator (the interpreter
@@ -3207,8 +3207,9 @@ ceiling each is measured against.
 
 Applied by the interpreter's bytecode generator or runtime (`(R-Phase)`); native never sees
 them and is the oracle of every cell (`(R-Switch)`'s interpreter clause).  Each REMOVES ops
-or work; none merges ops into a new one (PERFORMANCE.md § Why the interpreter is optimised at
-all): an op merged per shape is fast for that shape only and grows the instruction set.
+or work; none merges ops into a new one (INTERPRETER_PERFORMANCE.md § Why the interpreter is
+optimised at all): an op merged per shape is fast for that shape only and grows the
+instruction set.
 
 ### An integer operator over locals and literals is one op
 
