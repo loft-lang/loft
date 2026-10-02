@@ -1545,13 +1545,16 @@ fn main() {{
         "the mid-build edit must requeue:\n{stderr}"
     );
     // ── Phase 2 (c'): a build that FAILED on a source edited since must requeue too, not
-    // report failure.  The source is a broken one when the build is requested and the
-    // settled one before the first poll (completion is judged at the poll), so the build
-    // fails for certain and the drift is certain — the shape of a build that read a file
-    // halfway through being rewritten.  Before drift was checked ahead of the exit status
-    // this read `status:3` and left the settled source unbuilt.
+    // report failure.  The source is a broken one when the build is requested; the build is
+    // given time to read it and fail (the driver rejects it in ~40 ms) WITHOUT a poll, since
+    // completion is judged at the poll; then the settled source is written and polled.  So the
+    // build failed for certain and the drift is certain — the shape of a build that read a
+    // file halfway through being rewritten.  Rewriting at once instead lets the child read the
+    // settled source and succeed, which never reaches the failure arm.  Before drift was
+    // checked ahead of the exit status this read `status:3` and left the source unbuilt.
     std::fs::write(&prog, "fn main( {").unwrap();
     assert_eq!(ask("rebuild"), "rebuild:true");
+    std::thread::sleep(Duration::from_secs(2));
     std::fs::write(&prog, fixture(1)).unwrap();
     let deadline = vm_deadline(300);
     loop {
