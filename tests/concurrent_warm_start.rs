@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Concurrent `loft` processes share the cached stdlib and program images, and opening one
+//! `@FR-H-ReadSurface` — concurrent `loft` processes share the cached stdlib and program images, and opening one
 //! must not write it (`Store::open_read_surface`).  The mapping is shared between processes,
 //! so a start that rebuilt the image's free-block tree in place handed another start, mid-
 //! rebuild, a tree link to read as a record number: eight concurrent warm starts of a program
