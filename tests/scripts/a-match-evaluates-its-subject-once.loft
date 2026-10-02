@@ -1,0 +1,155 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-M-Match` — a `match` evaluates its subject ONCE, then tests that value against the arms.
+//
+// A struct-enum subject that is a call was spliced into every test and every binding, so the
+// call ran once for the variant test and again for each field read: a lexer's `match next(lx)`
+// tested the first token's variant and read the second token's payload, and the lexer moved
+// twice.  Every cell counts the calls beside the value.  Values hand-computed.
+
+enum Tok { Num { v: integer }, Word { w: text }, End }
+
+struct Lexer { pos: integer, calls: integer }
+
+struct P { x: integer, y: integer }
+
+fn next(lx: &Lexer) -> Tok {
+  lx.calls += 1;
+  lx.pos += 1;
+  if lx.pos == 1 { return Num { v: 10 }; }
+  if lx.pos == 2 { return Word { w: "hi" }; }
+  End
+}
+
+fn mk(c: &Lexer) -> P {
+  c.calls += 1;
+  P { x: c.calls * 3, y: 4 }
+}
+
+// c1: a payload variant from a call: one call, the first token's payload
+fn c1() {
+  lx = Lexer { pos: 0, calls: 0 };
+  a = 0;
+  match next(lx) {
+    Num { v } => { a = v; },
+    Word { w } => { a = len(w); },
+    End => { a = -1; },
+  }
+  assert(a == 10 && lx.calls == 1 && lx.pos == 1, "c1 got a={a} calls={lx.calls}");
+}
+
+// c2: a unit variant: the third call is End, one more call
+fn c2() {
+  lx = Lexer { pos: 2, calls: 0 };
+  a = 0;
+  match next(lx) {
+    Num { v } => { a = v; },
+    End => { a = -1; },
+    _ => { a = 5; },
+  }
+  assert(a == -1 && lx.calls == 1, "c2 got a={a} calls={lx.calls}");
+}
+
+// c3: a variable subject (the control)
+fn c3() {
+  lx = Lexer { pos: 1, calls: 0 };
+  t = next(lx);
+  a = 0;
+  match t {
+    Word { w } => { a = len(w); },
+    _ => { a = 0; },
+  }
+  assert(a == 2 && lx.calls == 1, "c3 got a={a} calls={lx.calls}");
+}
+
+struct Holder { t: Tok }
+
+// c4: a field subject
+fn c4() {
+  h = Holder { t: Word { w: "abc" } };
+  a = 0;
+  match h.t {
+    Word { w } => { a = len(w); },
+    _ => { a = 0; },
+  }
+  assert(a == 3, "c4 got {a}");
+}
+
+// c5: a vector element subject
+fn c5() {
+  ts = [Num { v: 1 }, Word { w: "four" }];
+  a = 0;
+  match ts[1] {
+    Word { w } => { a = len(w); },
+    _ => { a = 0; },
+  }
+  assert(a == 4, "c5 got {a}");
+}
+
+// c6: a plain struct from a call: x is 3 on the first call
+fn c6() {
+  c = Lexer { pos: 0, calls: 0 };
+  a = 0;
+  match mk(c) {
+    P { x, y } => { a = x * 10 + y; }
+  }
+  assert(a == 34 && c.calls == 1, "c6 got a={a} calls={c.calls}");
+}
+
+// c7: a call subject in a loop: three tokens, then End twice — one call a round
+fn c7() {
+  lx = Lexer { pos: 0, calls: 0 };
+  t = 0;
+  for _ in 0..5 {
+    match next(lx) {
+      Num { v } => { t += v; },
+      Word { w } => { t += len(w) * 100; },
+      End => { t += 1000; },
+    }
+  }
+  assert(t == 10 + 200 + 3000 && lx.calls == 5, "c7 got t={t} calls={lx.calls}");
+}
+
+// c8: a match as a value
+fn c8() {
+  lx = Lexer { pos: 1, calls: 0 };
+  r = match next(lx) {
+    Word { w } => len(w) * 7,
+    _ => 0,
+  };
+  assert(r == 14 && lx.calls == 1, "c8 got r={r} calls={lx.calls}");
+}
+
+// c9: a call subject inside an arm of an outer call subject
+fn c9() {
+  lx = Lexer { pos: 0, calls: 0 };
+  a = 0;
+  match next(lx) {
+    Num { v } => {
+      match next(lx) {
+        Word { w } => { a = v + len(w); },
+        _ => { a = -1; },
+      }
+    },
+    _ => { a = -2; },
+  }
+  assert(a == 12 && lx.calls == 2 && lx.pos == 2, "c9 got a={a} calls={lx.calls}");
+}
+
+// c10: a guarded arm reads the payload of the same token
+fn c10() {
+  lx = Lexer { pos: 0, calls: 0 };
+  a = 0;
+  match next(lx) {
+    Num { v } if v > 5 => { a = v * 2; },
+    Num { v } => { a = v; },
+    _ => { a = -1; },
+  }
+  assert(a == 20 && lx.calls == 1, "c10 got a={a} calls={lx.calls}");
+}
+
+fn main() {
+  c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10();
+  println("done");
+}

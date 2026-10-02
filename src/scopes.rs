@@ -556,6 +556,8 @@ struct Scopes<'s> {
 /// allocation (the Phase-4 Goal-E watermark guard).  Never panics in normal builds.
 #[expect(clippy::too_many_lines, reason = "inherited")]
 pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
+    // `@FR-R-PureReuse` — on the parser's bodies, before any of this pass's own rewrites.
+    crate::pure_reuse::rewrite_program(data);
     // `(H-Spent)` — the reads of a moved name, found while every body is still the parser's:
     // the scan below adds reads of its own (releases, hooks, snapshots) that are not the author's.
     crate::spent::record_all(data);

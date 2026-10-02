@@ -1296,6 +1296,23 @@ pub fn refill_buffer_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_REFILL_BUFFER"))
 }
 
+/// A call of an effect-free function made twice in one body on arguments nothing writes in
+/// between is computed once, on both backends (`@FR-R-PureReuse`, `pure_reuse`) — **DEFAULT
+/// ON**.  Opt OUT with `LOFT_NO_PURE_REUSE` (read at the scope pass): every call is made, the
+/// before-half of the A/B and the first bisect step for a wrong value read from such a call.
+#[must_use]
+pub fn pure_reuse_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_PURE_REUSE"))
+}
+
+/// `LOFT_TRACE_PURE_REUSE=1` — name each call `pure_reuse` computes once.
+#[must_use]
+pub fn trace_pure_reuse() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_TRACE_PURE_REUSE"))
+}
+
 /// A counted range whose start is not a literal steps ONE counter on the interpreter: the
 /// index is seeded from the start and the rotated loop enters past its step, so the copy
 /// from the second counter is not emitted — **DEFAULT ON** (`@FR-R-StartStep`).  Opt OUT
