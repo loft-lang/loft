@@ -8734,7 +8734,7 @@ pub fn refill_buffers(data: &Data, stores: &Stores, def_nr: u32) -> RefillBuffer
     out
 }
 
-/// @PLN157 § V-y (`@FR-R-CompleteWrite`) — the literal groups whose write set is/// @PLN157 § V-y (`@FR-R-CompleteWrite`) — the literal groups whose write set is
+/// @PLN157 § V-y (`@FR-R-CompleteWrite`) — the literal groups whose write set is
 /// COMPLETE, so the default prefill writes nothing that survives: the parser's lowering
 /// writes every field explicitly (a named value, the declared default, the interned
 /// empty text, the null sentinel, `false`, the variant tag), and the emitter's proof is

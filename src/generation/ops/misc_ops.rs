@@ -158,6 +158,7 @@ impl OpEmitter for OpDatabaseEmitter {
                 && matches!(var_val.unspan(), Value::Var(w) if ctx.output.refill.var == Some(*w));
             ctx.emit(var_val)?;
             if refill {
+                crate::rewrite_census::fired("R-RefillBuffer", 1);
                 write!(ctx.w, " = OpDatabaseRefill(cell,")?;
             } else if np {
                 write!(ctx.w, " = OpDatabaseNP(cell,")?;

@@ -480,6 +480,7 @@ fn rewrite(
     data: &mut Data,
     wrappers: &crate::fxhash::FxHashMap<u32, Projection>,
 ) {
+    crate::rewrite_census::fired("R-PureReuse", 1);
     let inner = data.def(key.inner);
     let ret_tp = inner.returned.without_deps();
     let buf_tp = inner
@@ -559,6 +560,7 @@ pub fn rewrite_program(data: &mut Data) {
                 if data.def(f).variables.done {
                     continue;
                 }
+                let _in = crate::rewrite_census::InBody::enter("ir", &data.def(f).name.clone());
                 let mut code =
                     std::mem::replace(&mut data.definitions[f as usize].code, Value::Null);
                 if let Value::Block(bl) = &mut code {

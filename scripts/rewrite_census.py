@@ -7,6 +7,7 @@
     scripts/rewrite_census.py --bless    # …and write what it counted as the new baseline
     scripts/rewrite_census.py --only 12_drawing,drawing
     scripts/rewrite_census.py --verbose  # also list every rise and new row
+    LOFT_BIN=<loft> scripts/rewrite_census.py   # census another build (default target/release/loft)
 
 Why
 ---
@@ -139,7 +140,7 @@ def main() -> int:
     only = None
     if "--only" in args:
         only = set(args[args.index("--only") + 1].split(","))
-    loft = str(ROOT / "target" / "release" / "loft")
+    loft = os.environ.get("LOFT_BIN") or str(ROOT / "target" / "release" / "loft")
     progs = [p for p in programs() if only is None or p[0] in only]
     warm_dependencies(loft, progs)
     with ThreadPoolExecutor(max_workers=4) as pool:

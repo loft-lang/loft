@@ -156,15 +156,16 @@ fn the_exits_hand_the_root_store_over() {
     );
 }
 
-/// 2000 rounds.  r9 (a struct-enum wrapper whose field is the answer) minted the wrapper and a
-/// copy of the field per call, now the wrapper alone, on both backends; r1's copy census
-/// reads zero and the switch puts one copy per call back.
+/// 2000 rounds, one `r9` call each (`@FR-M-Match`: the match subject is evaluated once).  r9 (a
+/// struct-enum wrapper whose field is the answer) mints the wrapper alone per call — the
+/// switch adds the field's copy — on both backends; r1's copy census reads zero and the
+/// switch puts one copy per call back.
 #[test]
 fn the_censuses_drop() {
     for mode in ["--interpret", "--native"] {
         let on = store_mints(mode, "r9", &[]);
         let off = store_mints(mode, "r9", OFF);
-        assert_eq!((on, off), (4000, 8000), "{mode}: r9 mints (on, off)");
+        assert_eq!((on, off), (2000, 4000), "{mode}: r9 mints (on, off)");
     }
     assert_eq!(copies("r1", &[]), 0, "r1: no copy with the hand-over");
     assert_eq!(
