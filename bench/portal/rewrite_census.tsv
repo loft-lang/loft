@@ -655,6 +655,7 @@ drawing	a03cd8e5a	R-PushFill/record	6
 drawing	a03cd8e5a	R-PushRec	20
 drawing	a03cd8e5a	R-Range	362
 drawing	a03cd8e5a	R-RecPtr	75
+drawing	a03cd8e5a	R-RepeatRun	19
 drawing	a03cd8e5a	R-RetAdopt	8
 drawing	a03cd8e5a	R-Reuse	55
 drawing	a03cd8e5a	R-Scalar	102
@@ -751,6 +752,7 @@ glb	68545089b	R-LiteralWalk	2
 glb	68545089b	R-Push	8
 glb	68545089b	R-Range	89
 glb	68545089b	R-RecPtr	9
+glb	68545089b	R-RepeatRun	16
 glb	68545089b	R-RetAdopt	5
 glb	68545089b	R-Reuse	7
 glb	68545089b	R-SingleUse	3
@@ -794,6 +796,7 @@ graphics	a03cd8e5a	R-PushFill	5
 graphics	a03cd8e5a	R-PushRec	2
 graphics	a03cd8e5a	R-Range	279
 graphics	a03cd8e5a	R-RecPtr	13
+graphics	a03cd8e5a	R-RepeatRun	19
 graphics	a03cd8e5a	R-RetAdopt	6
 graphics	a03cd8e5a	R-Reuse	6
 graphics	a03cd8e5a	R-Scalar	45
@@ -864,6 +867,7 @@ hex_body	46120aa09	R-PushFill	1
 hex_body	46120aa09	R-Range	33
 hex_body	46120aa09	R-Rebind	2
 hex_body	46120aa09	R-RecPtr	1
+hex_body	46120aa09	R-RepeatRun	1
 hex_body	46120aa09	R-RetAdopt	3
 hex_body	46120aa09	R-Reuse	4
 hex_body	46120aa09	R-SingleUse	12
@@ -1397,6 +1401,7 @@ mesh3d	68545089b	R-Push	6
 mesh3d	68545089b	R-Range	20
 mesh3d	68545089b	R-Rebind	1
 mesh3d	68545089b	R-RecPtr	5
+mesh3d	68545089b	R-RepeatRun	16
 mesh3d	68545089b	R-RetAdopt	5
 mesh3d	68545089b	R-Reuse	4
 mesh3d	68545089b	R-SingleUse	16
@@ -1585,6 +1590,7 @@ stage	a03cd8e5a	R-PushFill	7
 stage	a03cd8e5a	R-PushRec	5
 stage	a03cd8e5a	R-Range	294
 stage	a03cd8e5a	R-RecPtr	70
+stage	a03cd8e5a	R-RepeatRun	20
 stage	a03cd8e5a	R-RetAdopt	6
 stage	a03cd8e5a	R-Reuse	16
 stage	a03cd8e5a	R-Scalar	62
@@ -1631,6 +1637,7 @@ text2d	a03cd8e5a	R-Push	21
 text2d	a03cd8e5a	R-PushFill	7
 text2d	a03cd8e5a	R-Range	186
 text2d	a03cd8e5a	R-RecPtr	15
+text2d	a03cd8e5a	R-RepeatRun	19
 text2d	a03cd8e5a	R-RetAdopt	6
 text2d	a03cd8e5a	R-Reuse	5
 text2d	a03cd8e5a	R-Scalar	38
