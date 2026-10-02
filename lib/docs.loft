@@ -7,27 +7,25 @@ use lexer;
 // source is the part still to write; until it is, this demonstrates the walk and the
 // naming and not the conversion.
 //
-// The suffix is `.loft`.  It read `.lav` — an extension from before the lavition→loft
-// rename that this repo has never carried — so every file was skipped and the function
-// reported nothing (loft#1339).  The `- 5` below is part of that same fix, not a separate
-// tidy: the slice drops the extension by LENGTH, and `.loft` is one character longer than
-// `.lav`, so a filter fixed on its own would have written `parser..html`.
+// The suffix is `.loft`, and the `- 5` below drops it by LENGTH: the filter and the slice
+// name the same extension, so changing one without the other writes `parser..html`
+// (loft#1339).
 pub fn convert(dir: text, into: text) {
   l = lexer::Lexer { };
   l.set_tokens(["+=", "*=", "-=", "<=", ">=", "!=", "==", ">>", "<<", "->", "=>", ">>>", "..", "..=", "&&", "||"]);
   l.set_keywords(["for", "in", "if", "else", "fn", "pub", "use", "struct", "enum", "match", "and", "or"]);
-  // `write` does not create a missing directory — it reports and skips — so without this
-  // a correct filter would only have turned a silent no-op into an error for every file.
+  // `write` does not create a missing directory — it reports and skips — so the output
+  // directory is made first.
   mkdir_all(into);
   for f in file(dir).files() {
     // `files()` returns DIRECTORIES as well, and `.loft/` — the build cache loft writes
-    // beside whatever it runs — ends with the very suffix being matched.  Filtering on
-    // the name alone therefore picked up the cache directory and wrote a page called
-    // `.html` for it, on every run and in any directory the tool had ever been used in.
+    // beside whatever it runs — ends with the very suffix being matched, so the name
+    // alone would pick up the cache directory; the format test excludes it.
     if f.format != Format.Directory && f.path.ends_with(".loft") {
-      n = f.path[f.path.rfind("/")..];
-      i = into + f.path[f.path.rfind("/")..- 5] + ".html";
-      l.parse_string(n, f.content());
+      slash = f.path.rfind("/") ?? 0;
+      n = f.path[slash..];
+      i = into + f.path[slash..- 5] + ".html";
+      l.parse_string(n, f.content() ?? "");
       to = file(i);
       to.write("<html><body>\n");
       to.write("<h1>{n}</h1>\n");
@@ -40,15 +38,11 @@ pub fn convert(dir: text, into: text) {
 // the file runs its zero-parameter functions anyway, so the name buys nothing, and an
 // importer's own `main` is the one that should be reached.
 //
-// It converted nothing even with the filter fixed, because
-// `tests/suite` has never existed in this repo — and it would not have found one at that
-// path anyway: a RELATIVE path resolves against the SCRIPT's directory, not the process
-// working directory, so `"tests/suite"` here means `lib/tests/suite`.  `"."` is therefore
-// `lib` itself, which is a directory of loft sources.
-//
-// The output goes to an ABSOLUTE path under the system temp directory, for the same
-// reason read the other way: a relative `into` would deposit the pages inside `lib/`, and
-// a demo should not leave anything behind in the tree it read.
+// A RELATIVE path resolves against the SCRIPT's directory, not the process working
+// directory, so `"."` is `lib` itself — a directory of loft sources.  The output goes to
+// an ABSOLUTE path under the system temp directory for the same reason read the other way:
+// a relative `into` would deposit the pages inside `lib/`, and a demo should leave nothing
+// behind in the tree it read.
 fn demo() {
   base = temp_dir() ?? ".";
   out = "{base}/loft-docs";
