@@ -1,13 +1,12 @@
 diff --git a/src/data.rs b/src/data.rs
-index 03562620c..f95084b55 100644
 --- a/src/data.rs
 +++ b/src/data.rs
-@@ -7662,7 +7662,7 @@ impl Data {
+@@ -7669,7 +7669,7 @@
          candidates.into_iter().find(|&d| {
              self.def(d).operator_form
                  && self.def(d).def_type != DefType::Generic
 -                && self.params_fit(d, params)
 +                && self.visible_params(d).len() == params.len()
                  && if form == "compare" {
-                     matches!(self.def(d).returned(), Type::Enum(e, false, _) if *e == ordering)
+                     matches!(self.def(d).returned().base(), Type::Enum(e, false, _) if *e == ordering)
                  } else {
