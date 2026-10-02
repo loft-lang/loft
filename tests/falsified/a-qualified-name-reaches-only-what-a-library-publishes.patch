@@ -1,8 +1,8 @@
 diff --git a/src/data.rs b/src/data.rs
 --- a/src/data.rs
 +++ b/src/data.rs
-@@ -12327,66 +12327,6 @@
-         })
+@@ -12404,66 +12404,6 @@
+         d.pub_visible || matches!(d.def_type, DefType::Unknown)
      }
  
 -    /// @FR-F-Surface (loft#1848) — the error for a qualified `lib::name` that reaches what `lib`
