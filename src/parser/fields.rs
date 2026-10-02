@@ -3348,7 +3348,12 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         let _index_t = if open_start {
             Type::Null // from=[] → no lower bound
         } else {
+            // A lookup key is a checked position like a call argument: the key field's type
+            // is pushed on the one `⇐` channel, so a bare variant (`h[Green]`) resolves
+            // against the key's enum exactly as `f(Green)` does against a parameter's.
+            let saved_expected = std::mem::replace(&mut self.expected, key_0.clone());
             let t = self.expression(&mut p);
+            self.expected = saved_expected;
             // @FR-N-Store — a lookup KEY is a slot like an index: a null key reads null.
             if !self.convert_store_lenient(&mut p, &t, key_0, "the key", None) && !self.first_pass {
                 // A tuple key is the one place the arity is worth naming: `h[(1, 2, 3)]` on
@@ -3389,7 +3394,9 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                     break;
                 }
                 let mut ex = Value::Null;
+                let saved_expected = std::mem::replace(&mut self.expected, key_types[nr].clone());
                 let ex_t = self.expression(&mut ex);
+                self.expected = saved_expected;
                 if !self.convert_store_lenient(&mut ex, &ex_t, &key_types[nr], "the key", None)
                     && !self.first_pass
                 {

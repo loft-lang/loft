@@ -1,0 +1,31 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A lookup key is a checked position like a call argument: the key field's type is the
+// expected type, so a bare variant resolves against the key's enum — `h[Green]` as `f(Green)`
+// does against a parameter.  Each collection is over its own record type, so no linked group
+// (`(Col-Group)`) shares records between them.
+//
+// @falsified-at: c152e6e83 — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: the exit — on the control `x.h[Green]` is refused ("bare variant 'Green' has no
+//   type here"), so nothing compiles.
+//   WITNESS: that refusal, at the first subscript.
+//   ARMED: nothing.
+//   HOLDS: on this tree all six lookups and three lengths answer on both backends.
+
+enum Col { Red, Green }
+struct EH { k: Col, n: integer }
+struct ES { k: Col, n: integer }
+struct EI { a: integer, k: Col, n: integer }
+struct H { h: hash<EH[k]>, s: sorted<ES[k]>, i: index<EI[a, k]> }
+
+fn test_a_bare_variant_looks_up_by_the_key_type() {
+  x = H {};
+  x.h += [EH { k: Red, n: 1 }, EH { k: Green, n: 2 }];
+  x.s += [ES { k: Red, n: 3 }, ES { k: Green, n: 4 }];
+  x.i += [EI { a: 1, k: Red, n: 5 }, EI { a: 1, k: Green, n: 6 }];
+  assert(x.h[Green].n == 2 && x.h[Red].n == 1, "hash");
+  assert(x.s[Green].n == 4 && x.s[Red].n == 3, "sorted");
+  assert(x.i[1, Green].n == 6 && x.i[1, Red].n == 5, "index, the second key of a multi-key");
+  assert(len(x.h) == 2 && len(x.s) == 2 && len(x.i) == 2, "two records each");
+}
