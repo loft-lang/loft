@@ -2581,11 +2581,18 @@ impl Type {
     /// rather than a wrapper.
     #[must_use]
     pub fn unrewritten(&self) -> Type {
+        self.peel_rewritten().clone()
+    }
+
+    /// The type under every `Rewritten` marker, borrowed — [`Type::unrewritten`] without the
+    /// clone, for a site asked on every operator of a program, which must not allocate.
+    #[must_use]
+    pub fn peel_rewritten(&self) -> &Type {
         let mut t = self;
         while let Type::Rewritten(inner) = t {
             t = inner;
         }
-        t.clone()
+        t
     }
 
     /// Pass-2 keystone, the `Type` twin of `Value::for_each_child`
@@ -7664,7 +7671,7 @@ impl Data {
                 && self.def(d).def_type != DefType::Generic
                 && self.params_fit(d, params)
                 && if form == "compare" {
-                    matches!(self.def(d).returned(), Type::Enum(e, false, _) if *e == ordering)
+                    matches!(self.def(d).returned().base(), Type::Enum(e, false, _) if *e == ordering)
                 } else {
                     // By the type alone: a method handing back `self` carries a dep on it.
                     result.is_none_or(|r| self.def(d).returned().base().is_same(r.base()))

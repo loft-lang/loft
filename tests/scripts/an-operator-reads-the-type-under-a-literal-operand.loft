@@ -1,0 +1,36 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-N-Shape` — an operator reads the type UNDER a wrapper.  A struct literal's type carries
+// the `Rewritten` marker (it is built in place), so a literal operand of `<` or `+` is asked
+// about the type beneath the marker: `M { c: 5 } < b` reaches `M`'s `operator compare`, and
+// two literals handed to an `Ordered` bound reach it through the instance.  The left operand's
+// test peels the marker and then `.base()`; the member and definition checks of `compare`
+// peel `.base()` and state the one nullability question they ask (`-> Ordering?` stays
+// refused, `tests/parse_errors.rs::operator_compare_answering_a_nullable_ordering_is_refused`).
+//
+// Axes this file MOVES: the operand (a literal on the left · a literal on the right · two
+// literals through a generic bound), and the form (`compare` through `<` · `plus` through `+`).
+//
+// @falsified-at: 4fe642f3c — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit — before the left operand's marker was peeled, `M { c: 5 } < b` found no
+//   `compare` and the assert failed on both backends.
+//   HOLDS: every asserted value; leak and panic equal on both trees.
+//
+// Every expected value is worked out by hand.
+
+struct M { c: integer }
+operator compare(self: M, other: M) -> Ordering { self.c.compare(other.c) }
+operator plus(self: M, other: M) -> M { M { c: self.c + other.c } }
+fn least<T: Ordered>(a: T, b: T) -> T { if a < b { a } else { b } }
+
+fn main() {
+  b = M { c: 9 };
+  // 5 < 9; 5 + 9 = 14; 9 < 10; the lesser of 12 and 3 is 3.
+  assert(M { c: 5 } < b, "a literal on the left of <");
+  assert((M { c: 5 } + b).c == 14, "a literal on the left of +");
+  assert(b < M { c: 10 }, "a literal on the right of <");
+  assert(!(M { c: 12 } < M { c: 3 }), "two literals: 12 is not less than 3");
+  assert(least(M { c: 12 }, M { c: 3 }).c == 3, "two literals through an Ordered bound");
+  println("ok");
+}
