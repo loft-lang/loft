@@ -63,7 +63,7 @@ const CALLS: &[(&str, usize)] = &[
     ("n_c2", 0),             // bumpw has no twin
     ("n_c3", 0),             // the loop writes the field: no hoist, no twin
     ("n_c4", 0),             // setw's write evicts width
-    ("n_c5", 0),             // a field path, not a variable, as the argument
+    ("n_c5", 1),             // a field path as the argument (`hoist::path_scalar`)
     ("n_c6", 0),             // an optional element view as the argument
     ("n_c7", 2),             // two records, two twin calls
     ("n_c8", 1),             // blend

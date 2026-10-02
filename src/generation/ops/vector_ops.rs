@@ -165,7 +165,11 @@ impl OpEmitter for FusedElementReadEmitter {
                 "vector::get_elem_hoisted::<{ty}, {verify}>(&{header}, &("
             )?;
         }
-        ctx.emit(fused.vector)?;
+        // The `DbRef` the loop prelude bound beside the header, when it did.
+        match ctx.output.header_dbrefs.get(&header) {
+            Some(vd) => write!(ctx.w, "{vd}")?,
+            None => ctx.emit(fused.vector)?,
+        }
         write!(ctx.w, "), (")?;
         ctx.emit(fused.size)?;
         write!(ctx.w, ") as u32, ")?;

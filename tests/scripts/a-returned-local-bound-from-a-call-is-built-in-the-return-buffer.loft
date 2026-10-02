@@ -1,0 +1,103 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A RETURNED LOCAL BOUND FROM A CALL IS BUILT IN THE RETURN BUFFER (`(R-ForwardResult)`).
+// `buf = head(…); buf += value; buf` as one arm of a match hands `head` this function's own
+// return buffer, so the appends land where the result belongs and the delivery copy goes.
+// What must still hold: the result is exactly the copy's; a reused caller buffer carries
+// nothing over from an earlier, longer result; a recursive arm's inner calls build in their
+// own buffers; a callee that answers a borrowed view and a local named in two arms keep the
+// copy.
+//
+// Expected values by hand: head(m, a) is [m*32 + a] below 24 and [m*32 + 24, a] from 24.
+// bytes(30 × (i*7)&255): [88, 30] + 30 bytes = 32 long, [30] = v[28] = 196.  bytes(3 × …):
+// [67, 0, 7, 14], 4 long — after the 32-long result in the same buffer.  arr([int 5, int 30,
+// bytes 2]): head(4, 3) = [131], then [5], [24, 30], [66, 0, 7] — 7 bytes summing 131 + 5 +
+// 54 + 73 = 263.  text "ab": [98, 97, 98].  pick(true) = [1, 2, 9] → 12; pick(false) = [7].
+//
+// @falsified-by: tests/falsified/a-returned-local-bound-from-a-call-is-built-in-the-return-buffer.patch — CHANNEL and HOLDS below
+
+enum CV {
+  CInt { value: integer },
+  CBytes { value: vector<u8> },
+  CText { value: text },
+  CArr { items: vector<CV> },
+}
+fn head(major: integer, arg: integer) -> vector<u8> {
+  buf: vector<u8> = [];
+  if arg < 24 {
+    buf += [((major * 32 + arg) & 255) as u8];
+  } else {
+    buf += [((major * 32 + 24) & 255) as u8];
+    buf += [(arg & 255) as u8];
+  }
+  buf
+}
+fn encode(v: CV) -> vector<u8> {
+  match v {
+    CInt { value } => head(0, value),
+    CBytes { value } => {
+      buf = head(2, len(value));
+      buf += value;
+      buf
+    },
+    CText { value } => {
+      n = size(value);
+      buf = head(3, n);
+      for i in 0..n { buf += [(value.byte_at(i) & 255) as u8]; }
+      buf
+    },
+    CArr { items } => {
+      buf = head(4, len(items));
+      for i in 0..len(items) { buf += encode(items[i]); }
+      if len(buf) > 100 { buf += [0 as u8]; }
+      buf
+    },
+  }
+}
+fn keep(x: vector<u8>) -> vector<u8> { x }
+fn borrowed(v: vector<u8>) -> vector<u8> {
+  buf = keep(v);
+  buf += [9 as u8];
+  buf
+}
+fn pick(c: boolean) -> vector<u8> {
+  buf: vector<u8> = [];
+  if c {
+    buf = head(0, 1);
+    buf += [2 as u8];
+  } else {
+    buf = head(0, 7);
+  }
+  buf += [];
+  if c { buf += [9 as u8]; }
+  buf
+}
+fn sumb(v: vector<u8>) -> integer { t = 0; for b in v { t += b as integer; } t }
+fn bytes(n: integer) -> vector<u8> {
+  v: vector<u8> = [];
+  for i in 0..n { v += [((i * 7) & 255) as u8]; }
+  v
+}
+
+fn main() {
+  e = encode(CBytes { value: bytes(30) });
+  assert(len(e) == 32 && e[0] == 88 && e[1] == 30 && e[30] == 196, "bytes: header and payload");
+  for _ in 0..3 {
+    e = encode(CBytes { value: bytes(30) });
+    assert(len(e) == 32, "the same result again");
+    e = encode(CBytes { value: bytes(3) });
+    assert(len(e) == 4 && e[0] == 67 && e[3] == 14, "a shorter result carries nothing over");
+  }
+  a = encode(CArr { items: [CInt { value: 5 }, CInt { value: 30 }, CBytes { value: bytes(2) }] });
+  assert(len(a) == 7 && sumb(a) == 263 && a[0] == 131, "an array arm: inner calls in their own buffers");
+  t = encode(CText { value: "ab" });
+  assert(len(t) == 3 && t[0] == 98 && t[2] == 98, "a text arm built byte by byte");
+  src = bytes(4);
+  b = borrowed(src);
+  assert(len(b) == 5 && b[4] == 9 && len(src) == 4, "a callee answering a borrowed view keeps the copy");
+  p = pick(true);
+  assert(len(p) == 3 && sumb(p) == 12, "a local named in two arms keeps the copy");
+  q = pick(false);
+  assert(len(q) == 1 && q[0] == 7, "…on both arms");
+}

@@ -341,6 +341,7 @@ pub mod const_fn;
 pub mod copy_view;
 pub mod discharge_into;
 pub mod exit_vector;
+pub mod forward_result;
 pub mod forward_walk;
 pub mod in_range;
 pub mod leaf_inline;
