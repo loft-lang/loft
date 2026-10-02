@@ -7132,36 +7132,6 @@ impl Parser {
         }
     }
 
-    /// A generic type-variable placeholder the DEFAULT files registered, seen while parsing
-    /// something that is not a default file — where it must not resolve as a real type.
-    ///
-    /// [`Data::is_type_var_placeholder`] already states the rule: the attribute-less
-    /// self-referential `Struct` the parser registers for a `<T>` type parameter "is an
-    /// INTERNAL construct — it must never resolve as a real type outside the default files
-    /// that declare it".  Nothing enforced it, so the stdlib's own `min_of<T>` left a def
-    /// named `T` sitting in the flat key space and a user's `enum T` collided with it:
-    /// `T.N` resolved to the placeholder, which consumed the `.` looking for a variant that
-    /// does not exist, and the user got "Expect token ;" at a `;` whose syntax is fine —
-    /// while the same declaration written ABOVE its use compiled (loft#1049).
-    ///
-    /// Two facts, not one name: the placeholder must have been declared by the DEFAULT
-    /// files (`source == STD_SOURCE`) and we must not currently be parsing them
-    /// (`!self.default`).  A user file's own `fn f<Elem>(…)` registers its placeholder
-    /// outside `STD_SOURCE`, so this leaves it alone and the body still resolves `Elem`.
-    /// `self.default` rather than the current source number because a `parse_str` snippet —
-    /// the `code!` harness, the REPL — is user code parsed AS source 0, and a source
-    /// comparison silently reads that as "this is the stdlib".
-    ///
-    /// `formal/interfaces.md` is what makes this the right cut rather than reserving the
-    /// spelling: "a type variable `T` is a name bound by a generic header", so the binding
-    /// is per-header and never global.
-    pub(crate) fn stdlib_type_var_placeholder(&self, d_nr: u32) -> bool {
-        d_nr != u32::MAX
-            && !self.default
-            && self.data.def(d_nr).source == crate::data::STD_SOURCE
-            && self.data.is_type_var_placeholder(d_nr)
-    }
-
     /// Resolve a NAME the source wrote, giving the enclosing generic header first refusal.
     ///
     /// `formal/interfaces.md` `(G-Gen)` — a header `fn f<T: I>` *introduces* `T`, so inside

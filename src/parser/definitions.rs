@@ -1025,19 +1025,6 @@ impl Parser {
     /// stdlib's `DefType::Type` at source 0) are NEVER shadowable (shadowing them
     /// would re-point the language's own types).  Every other prelude/import kind
     /// (const, struct, enum, library typedef) is shadowable.
-    /// Is `d_nr` a type-variable placeholder some OTHER file declared?
-    ///
-    /// Then a declaration here shadows it, exactly as it shadows a stdlib `<T>` reached
-    /// through the prelude.  Asked by FILE rather than by source id, because a REPL input, a
-    /// `<host>` string and the test harness parse at the stdlib's own source id and would
-    /// otherwise read a stdlib type variable as their own same-source clash — which the
-    /// dedicated diagnostic exists to report and they have not made.
-    fn placeholder_from_another_file(&self, d_nr: u32) -> bool {
-        d_nr != u32::MAX
-            && self.data.is_type_var_placeholder(d_nr)
-            && self.data.def(d_nr).position.file != self.lexer.pos().file
-    }
-
     /// @C98 — `d_nr` is a forward-reference stub ANOTHER file left under `name`, bound here
     /// only because this file imports that one, while that file imports THIS one with a bare
     /// `use` — the qualifier alone — and no glob or by-name import that would carry `name`.
@@ -1147,7 +1134,8 @@ impl Parser {
         // `D-Template` — an enum with a header is a template: its instances are the enums
         // (`Shape<integer>`, variants and all); the template itself is laid out nowhere.
         self.context_type_template = d_nr;
-        if !header.is_empty() && !conflict && self.bind_type_header(&header) {
+        if !header.is_empty() && !conflict {
+            self.bind_type_header(&header);
             self.data.definitions[d_nr as usize].def_type = DefType::TypeTemplate;
         }
         if !self.lexer.token("{") {
@@ -2707,15 +2695,15 @@ impl Parser {
     }
 
     /// Bind one header variable to the placeholder that stands for it (`(G-Gen)`: a header
-    /// INTRODUCES its variables).  `Some(u32::MAX)` when there is nothing to bind (a header
-    /// the first pass refused).
+    /// INTRODUCES its variables).  `u32::MAX` when there is nothing to bind (a header the
+    /// first pass refused).
     ///
     /// @FR-G-Gen-Scope — the placeholder is minted under a name the source cannot write
     /// (`K#1`), so the variable occupies no spelling: a declaration of the same name — in
     /// this file, another, the stdlib or a REPL session — is neither blocked by it nor
     /// mistaken for it, and inside the header's own definition `def_nr_in_scope` resolves
     /// the spelling to the variable first.
-    fn bind_header_var(&mut self, var: &HeaderVar) -> Option<u32> {
+    fn bind_header_var(&mut self, var: &HeaderVar) -> u32 {
         let type_var_name = &var.name;
         let bounds_key = Self::type_var_bounds_key(&var.bounds);
         let claimed = self
@@ -2737,7 +2725,7 @@ impl Parser {
             // This exact `(spelling, bounds)` header has been seen — on the other
             // pass, or in another function declaring the same variable the same way.
             self.data.type_var_bound_keys.insert(holder, bounds_key);
-            return Some(holder);
+            return holder;
         }
         // `(G-Gen)`: this header INTRODUCES the variable.  It may reuse the
         // placeholder the spelling already names, but only while that placeholder
@@ -2793,7 +2781,7 @@ impl Parser {
                 .insert(holder, bounds_key.clone());
             self.type_var_bounds.insert(holder, bounds_key);
         }
-        Some(holder)
+        holder
     }
 
     /// The bound-set key (`Parser::type_var_bounds_key`'s spelling) of the bounds a type-variable
@@ -2844,7 +2832,7 @@ impl Parser {
         // detect `<T>` type parameter after function name.
         // @F25 — generics: type variables, inferred from the call's arguments.
         let header = self.parse_type_var_header();
-        let mut is_generic = !header.is_empty();
+        let is_generic = !header.is_empty();
         let type_var_name = header.first().map(|v| v.name.clone()).unwrap_or_default();
         // @PLN165 C2 — a header declares a LIST of variables (`<K, V>`); each is bound on its
         // own, carries its own bounds, and is inferred from the parameters that name it.
@@ -2870,24 +2858,15 @@ impl Parser {
             // compiled — it only exists for the template's type resolution.
             if is_generic {
                 for var in &header {
-                    match self.bind_header_var(var) {
-                        // @PLN25 E2 — the placeholder is recorded here (valid in both passes:
-                        // it is added on the first and found again on the second) so
-                        // `e2_nullable_elem` leaves a generic `vector<T>` dense.  It is also
-                        // what `parse_type` resolves the spelling to from here on, which is
-                        // what keeps two headers writing `T` apart.  A header the first pass
-                        // refused binds nothing.
-                        Some(holder) if holder != u32::MAX => {
-                            self.cur_type_vars.push((var.name.clone(), holder));
-                        }
-                        Some(_) => {}
-                        None => {
-                            // Stop treating the function as generic so the unresolved
-                            // parameter never reaches the generic type-resolution path.
-                            is_generic = false;
-                            self.cur_type_vars.clear();
-                            break;
-                        }
+                    // @PLN25 E2 — the placeholder is recorded here (valid in both passes:
+                    // it is added on the first and found again on the second) so
+                    // `e2_nullable_elem` leaves a generic `vector<T>` dense.  It is also
+                    // what `parse_type` resolves the spelling to from here on, which is
+                    // what keeps two headers writing `T` apart.  A header the first pass
+                    // refused binds nothing.
+                    let holder = self.bind_header_var(var);
+                    if holder != u32::MAX {
+                        self.cur_type_vars.push((var.name.clone(), holder));
                     }
                 }
             }
@@ -5720,33 +5699,15 @@ impl Parser {
         // `Definition::position` is for ("only allow redefinitions within the same file").
         if self.prelude_shadowed(&id) || (self.first_pass && self.release_unseen_stub(d_nr, &id)) {
             d_nr = u32::MAX;
-        } else if self.placeholder_from_another_file(d_nr) {
-            // The same shadow where the parse SHARES the stdlib's source id.  There the two
-            // compete for ONE `(name, source)` key, so the placeholder gives its name up
-            // rather than a second definition being added beside it.
-            let source = self.data.source;
-            self.data.release_def_name(&id, source);
-            d_nr = u32::MAX;
         }
         if d_nr == u32::MAX {
             d_nr = self.data.add_def(&id, self.lexer.pos(), DefType::Struct);
             self.data.definitions[d_nr as usize].returned =
                 Type::Reference(d_nr, crate::data::Deps::none());
         } else if self.first_pass {
-            // fix-tvscope: a SAME-FILE type-var placeholder blocks the struct — a genuine
-            // clash worth the dedicated diagnostic rather than the confusing "Redefined
-            // struct".  (A stdlib `<T>` is shadowed above, by source where the reader has one
-            // of their own and by FILE where the parse shares the stdlib's source id.)  A
-            // header's own variables are scoped to it and are not keyed here, so what reaches
-            // this arm is a placeholder keyed in the reader's own file.
-            if self.data.is_type_var_placeholder(d_nr) {
-                diagnostic!(
-                    self.lexer,
-                    Level::Error,
-                    "'{}' is reserved as a generic type variable — choose a different struct name",
-                    id
-                );
-            } else if self.data.def_type(d_nr) == DefType::Unknown
+            // A type variable's placeholder holds no spelling (@FR-G-Gen-Scope), so `d_nr`
+            // here is a definition the program wrote.
+            if self.data.def_type(d_nr) == DefType::Unknown
                 && matches!(
                     self.data.definitions[d_nr as usize].returned,
                     Type::Unknown(_)
@@ -5778,7 +5739,8 @@ impl Parser {
         // `D-Template` — a struct with a header is a type template: its variables are types
         // in its fields, and the definition is its own kind, so no struct site lays it out.
         self.context_type_template = d_nr;
-        if !header.is_empty() && self.bind_type_header(&header) {
+        if !header.is_empty() {
+            self.bind_type_header(&header);
             self.data.definitions[d_nr as usize].def_type = DefType::TypeTemplate;
         }
         let context = self.context;
@@ -5860,18 +5822,12 @@ impl Parser {
 
     /// Bind a TYPE template's header (@PLN165 D2): each variable to its placeholder, as a
     /// function's header binds them, and each bound set to the stubs its fields' methods
-    /// will call.  `false` when a variable collides with another definition (reported).
-    fn bind_type_header(&mut self, header: &[HeaderVar]) -> bool {
+    /// will call.
+    fn bind_type_header(&mut self, header: &[HeaderVar]) {
         for var in header {
-            match self.bind_header_var(var) {
-                Some(holder) if holder != u32::MAX => {
-                    self.cur_type_vars.push((var.name.clone(), holder));
-                }
-                Some(_) => {}
-                None => {
-                    self.cur_type_vars.clear();
-                    return false;
-                }
+            let holder = self.bind_header_var(var);
+            if holder != u32::MAX {
+                self.cur_type_vars.push((var.name.clone(), holder));
             }
         }
         // The variables in HEADER order: `Box<integer, text>` binds its arguments by position.
@@ -5891,7 +5847,6 @@ impl Parser {
                 self.create_bound_method_stubs(holder, &bounds);
             }
         }
-        true
     }
 
     /// @PLN25 Scope B — a keyed field that shares its record set with a sibling NULLABLE
