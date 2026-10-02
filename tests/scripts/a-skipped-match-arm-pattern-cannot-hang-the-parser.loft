@@ -1,0 +1,17 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// An arm naming no variant of the subject's enum is reported and SKIPPED, field pattern and
+// all.  The skip consumed only names and commas inside the pattern's braces, so any other
+// token there — the `:` of `Zz { a: 1 }` — advanced nothing and the parser looped for ever:
+// the run ended only at the watchdog (`phase=parse`, exit 134).  It takes the `{ … }` group
+// whole now (`skip_braced`), whatever it holds.
+// @EXPECT_ERROR: 'Zz' is not a variant of E
+
+enum E { A { a: integer }, B }
+
+fn main() {
+  e = E.B;
+  v = match e { A { a } => a, Zz { a: 1 } => 0, B => 7 };
+  println("{v}");
+}

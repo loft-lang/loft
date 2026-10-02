@@ -1,0 +1,16 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `match Q.Qb { … }` where `Q` is a STRUCT with no variant `Qb`: the parser spun in
+// `parse_match_inner`'s arm skip (99 % of a perf sample) until the watchdog stopped it — a
+// typo-sized mistake that froze the compiler.  The skip takes a `{ … }` group whole now
+// (`skip_braced`), and the program is refused instead.
+// @EXPECT_ERROR: Expect token {
+// @EXPECT_ERROR: Expect token }
+
+struct Q { x: integer }
+
+fn main() {
+  v = match Q.Qb { Qa => 1, Qb => 2 };
+  println("{v}");
+}
