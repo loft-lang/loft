@@ -1347,29 +1347,34 @@ impl Stores {
     // The fused append fast paths are called once per element from GENERATED code, which is
     // another crate: without `#[inline]`, whether they are inlined there — and whether
     // `store_mut` is inlined into them — is rustc's call, and that call moves when this crate
-    // grows elsewhere.  The hint makes the per-element cost a property of this code.
-    #[inline]
+    // grows elsewhere.  Forced since the two operator tables (`@FR-R-FastTable`) doubled their
+    // callers: `append_i64` ran as a call of its own, 17 % of a push loop (2026-10-02).
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
     pub fn append_i64(&mut self, db: &DbRef, v: i64) {
         self.append_with(db, 8, |store, slot| {
             store.set_int(slot.rec, slot.pos, v);
         });
     }
 
-    #[inline]
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
     pub fn append_i32(&mut self, db: &DbRef, v: i32) {
         self.append_with(db, 4, |store, slot| {
             store.set_i32_raw(slot.rec, slot.pos, v);
         });
     }
 
-    #[inline]
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
     pub fn append_f64(&mut self, db: &DbRef, v: f64) {
         self.append_with(db, 8, |store, slot| {
             store.set_float(slot.rec, slot.pos, v);
         });
     }
 
-    #[inline]
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
     pub fn append_f32(&mut self, db: &DbRef, v: f32) {
         self.append_with(db, 4, |store, slot| {
             store.set_single(slot.rec, slot.pos, v);
@@ -1385,7 +1390,8 @@ impl Stores {
 
     /// One element of a `vector<u8>` / `vector<i8>` (a byte biased by `min`), written as
     /// `OpSetByte` writes it — `OpPushByte`, the fused `v += [x]`.
-    #[inline]
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
     pub fn append_byte_min(&mut self, db: &DbRef, min: i32, v: i32) {
         self.append_with(db, 1, |store, slot| {
             store.set_byte(slot.rec, slot.pos, min, v);
@@ -1413,7 +1419,8 @@ impl Stores {
         crate::vector::append_bytes(db, &bytes[lo..hi], &mut self.allocations);
     }
 
-    #[inline]
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
     pub fn append_u32(&mut self, db: &DbRef, v: u32) {
         self.append_with(db, 4, |store, slot| {
             store.set_u32_raw(slot.rec, slot.pos, v);

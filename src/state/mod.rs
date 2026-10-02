@@ -6494,9 +6494,12 @@ impl State {
     /// part — one unsigned compare, which a negative index fails too — and the rest (counting
     /// from the end, the two raises) is out of line.  Kept whole, the raises made the function
     /// too big for LLVM to inline reliably: an unrelated change to `State::code` flipped that
-    /// decision and cost `sort` 5 % of its cycles (measured 2026-10-01).
+    /// decision and cost `sort` 5 % of its cycles (measured 2026-10-01).  Forced since the two
+    /// operator tables (`@FR-R-FastTable`) doubled its callers and it fell out of line again —
+    /// 19.7 % of an element-write loop's cycles in a call of its own (2026-10-02).
     #[must_use]
-    #[inline]
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
     pub fn vec_get_or_raise(
         &mut self,
         db: &crate::keys::DbRef,
