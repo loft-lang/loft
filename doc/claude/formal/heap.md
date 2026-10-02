@@ -451,6 +451,14 @@ parameter (via `&`) is host, a genuinely-copied one is script-owned.
                  previous tree moves to the released slot with the rest of `x`'s store
                  and is freed with it, which is what the reset releases.  Every other
                  condition is the exchange's; where one fails, the reset and the copy run.
+  (H-SwapKeyed)  a keyed LOCAL rebound from a call that gave its collection up (`h =
+                 build(…)`, `OpReplaceKeyed`'s free-source form) is `(H-SwapRebind)`'s
+                 exchange on both backends: a keyed local is a dedicated store with its
+                 header at `1@8`, so the source's whole store is the value the copy would
+                 rebuild.  A keyed collection's own pointers are record numbers inside its
+                 store, so they survive; what keeps the copy is a stored reference in the
+                 ELEMENT tree, which could name the source slot.  The released slot holds
+                 the old collection and is freed, never parked for a buffer refill.
 ```
 
 **`H-SwapIn` is the copy's own answer, delivered without the copy.** The copy it replaces

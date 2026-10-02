@@ -337,7 +337,10 @@ push moves; the rule is written for the next mover too.  Sites: `hoist::owned_lo
                  host, the adopted result's witness — is left to that rewrite.
 
   (R-PushFill)   a counted loop (`for … in lo..hi`, `lo..=hi`) whose body pushes k
-                 scalars to ONE pure path at its top level every iteration — nothing
+                 scalars to ONE pure path at its top level every iteration — or to
+                 SEVERAL paths with distinct roots, each judged on its own with the
+                 others' pushes read as plain statements, which reserves every path
+                 first and re-derives every header after (no fill, no window) — nothing
                  in the body can leave the loop early or loop again, no push to the
                  path stands under a branch, no other write reaches the path, the
                  range's end is a simple invariant — RESERVES k times its trip count
@@ -830,7 +833,11 @@ is cheaper through the runtime).  Switch `LOFT_NO_VIEW_HOIST`; falsifier
                  loop's end signal — is admitted as its inner record: the null
                  record keeps its sentinel, the address is null and every read
                  tests it.  An enum payload and a synthetic `__nullable<S>` are
-                 not plain records and are never bound.  THE BASE CLAUSE: where
+                 not plain records and are never bound.  THE PARAMETER CLAUSE: a
+                 plain-record PARAMETER is a view the caller fixed before the first
+                 statement, so the whole body is its remainder and takes the same
+                 verdict; a generator's parameters, which outlive a resumption, never
+                 do.  THE BASE CLAUSE: where
                  the binding is the head of `for e in v` — `e = { idx = idx + 1;
                  v[idx] }` — over a path whose header AND element base the loop
                  holds (R-Base), the address is `base + idx * size` when `idx` is
@@ -1012,9 +1019,12 @@ Sites: `hoist::one_op_wrapper`, `Output::wrapper_op`.
                  fields p.f its own write set does not reach and the vector paths
                  p.g it views (R-View) or indexes (R-Header); for a vector p, its
                  own header when it indexes p (g empty).  A caller loop that holds,
-                 for the argument a it passes for p — a leaf variable c for a scalar
-                 input, a pure path (R-Header) for a header input — the value of
-                 (c, f) under (R-Scalar) and the header of a.g under (R-Header) —
+                 for the argument a it passes for p — a leaf variable c, or a path of
+                 INLINE sub-records over c, for a scalar input; a pure path (R-Header)
+                 for a header input — the value of (c, f) under (R-Scalar), keyed on
+                 the root and the field's SUMMED offset for a path and stale after a
+                 write at the root's type and that offset or at any sub-record's type
+                 and the offset within it, and the header of a.g under (R-Header) —
                  EVERY input of the callee — calls the callee's TWIN: the same body
                  emitted with those values as extra parameters, read in place of
                  the record — the caller's holders handed in (R-State: a path held
@@ -2032,6 +2042,34 @@ across calls — and collapsing the delivery BLOCK whole drops its scope-exit fr
 `OpDatabaseEmitter`, the scoped pair blanking in `TextDispatchEmitter`, the
 `in_adopt_delivery` scope in `Output::output_block`, the placement re-target in the
 § V-j hook.
+
+### A returned local bound from a call is built in the return buffer
+
+```
+  (R-ForwardResult) a local L of a function value-returning a vector through its
+                 hidden return buffer rb, bound in a block from a call that delivers
+                 into its hidden buffer argument (a one-buffer return, never a borrowed
+                 view) — `buf = head(…, __ref_N)` — and delivered later in the SAME
+                 block by `OpClearVector(rb); OpAppendVector(rb, L)`, with nothing
+                 between the bind and the delivery naming rb and nothing after it
+                 naming L, hands the call rb instead: L is then rb, the delivery pair
+                 is the identity and goes, and `__ref_N` — named only at its null
+                 inits, its null guard, this call and its frees — is never minted.
+                 L is judged across all its sites (the arms of one `match` bind one
+                 `buf`): outside them it is named only at its null inits.  rb shares
+                 no store with a parameter (every road that hands a buffer in refuses
+                 one that does), and the callee's entry clear is the buffer's reuse
+                 contract (R-RetAdopt), which is why the delivery's clear can go.
+```
+
+**In words.** cbor's `encode` arms (`buf = head(2, len(value)); buf += value; buf`)
+minted a store per call, built the header and the payload in it, copied the whole vector
+into the caller's buffer and freed the store; the other arms of the same `match` already
+handed `head` the return buffer.  Switch `LOFT_NO_FORWARD_RESULT`;
+`LOFT_TRACE_FORWARD_RESULT=1` names each admission and decline.  Site:
+`forward_result::rewrite`, in the scope pass after `(R-ExitVector)`, so both backends
+read it.  Guard
+`tests/scripts/a-returned-local-bound-from-a-call-is-built-in-the-return-buffer.loft`.
 
 ### A filling loop is one slice fill
 
