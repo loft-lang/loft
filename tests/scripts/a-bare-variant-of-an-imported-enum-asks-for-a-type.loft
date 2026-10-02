@@ -1,0 +1,27 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @ARGS: --lib tests/lib
+//
+// A bare variant with nothing to type it is refused, and the refusal names the cure for what is
+// actually missing.  Here `use enumlib::*;` has brought `Status` in, so what is missing is a
+// type — qualify the variant, or give the target the enum's type — and the import advice ("it
+// is in `enumlib`, which nothing this file imports passes on: … `use enumlib::*;`") would tell
+// the author to write the line they already wrote.  The import advice stays for an enum that
+// is NOT visible: c98-a-bare-variant-through-a-bare-use-names-the-import.loft.
+use enumlib::*;
+
+// @EXPECT_ERROR: bare variant 'Yay' has no type here — qualify it as 'Status.Yay', or give the target an enum type
+fn test_a_vector_of_bare_variants_wants_a_type() {
+  n = 0;
+  for s in [Yay, Boo] {
+    if s == Status.Boo { n += 1; }
+  }
+  assert(n == 1, "unreached");
+}
+
+// @EXPECT_ERROR: bare variant 'Pending' has no type here — qualify it as 'Status.Pending', or give the target an enum type
+fn test_a_bound_bare_variant_wants_a_type() {
+  s = Pending;
+  assert(s == Status.Pending, "unreached");
+}

@@ -1469,13 +1469,17 @@ impl Parser {
                     // imports or qualifies is the declaration's, `Slot`.  This recovery also
                     // runs in pass 1, so the message is built only for a file that imports.
                     let declared = enum_name.split('<').next().unwrap_or(&enum_name);
-                    let import_cure =
-                        if variant_enums.len() == 1 && self.data.imports_into(self.data.source) {
-                            let what = format!("bare variant '{name}' has no type here; its enum");
-                            self.data.import_cure(&what, declared, self.data.source)
-                        } else {
-                            None
-                        };
+                    // The import cures answer a name that does NOT resolve here; an enum this
+                    // file already sees is refused for want of a type, not of an import.
+                    let import_cure = if variant_enums.len() == 1
+                        && self.data.imports_into(self.data.source)
+                        && self.data.source_nr(self.data.source, declared) == u32::MAX
+                    {
+                        let what = format!("bare variant '{name}' has no type here; its enum");
+                        self.data.import_cure(&what, declared, self.data.source)
+                    } else {
+                        None
+                    };
                     if let Some(msg) = import_cure {
                         diagnostic!(self.lexer, Level::Error, "{msg}");
                     } else if variant_enums.len() == 1 {
