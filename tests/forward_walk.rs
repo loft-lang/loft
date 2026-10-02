@@ -22,6 +22,8 @@ const WALKS: &[(&str, &str, bool)] = &[
     ("n_nested_walk", "y", true),
     // `x#remove` shrinks the vector under the walk.
     ("n_remove_walk", "x", false),
+    // The vector handed to a function: the rewrite does not look into callees.
+    ("n_handed_on", "x", false),
     // `b` is a `&` parameter: the caller passes the walked vector as it (`both(w, w)`).
     ("n_both", "x", false),
 ];
