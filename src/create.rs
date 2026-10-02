@@ -150,7 +150,7 @@ pub fn generate_code_to(data: &Data, path: &str) -> std::io::Result<String> {
     std::fs::read_to_string(path)
 }
 
-/// The operators in slot order: the `#hot` ones first, then those with no priority, then the
+/// `@FR-R-OpPriority` — the operators in slot order: the `#hot` ones first, then those with no priority, then the
 /// `#cold` ones, each class in declaration order — the numbering `Data::op_code` gives them
 /// from the two class sizes returned beside it.  A one-byte opcode is a slot below 255, so
 /// every hot operator gets one, and the cold ones are what moves into the two-byte escape.
@@ -261,8 +261,8 @@ pub static OPERATORS: &[fn(&mut State)] = &["
         writeln!(into, "    {}::<true>,", operator_name(&data.def(d_nr).name))?;
     }
     writeln!(into, "];")?;
-    // The same direct-path operators with the position and the stack top passed in registers
-    // (`State::regs_in` / `regs_out`), dispatched by the lean loop.
+    // `@FR-R-RegisterTable` — the same direct-path operators with the position and the stack
+    // top passed in registers (`State::regs_in` / `regs_out`), dispatched by the lean loop.
     writeln!(
         into,
         "\n/// [`OPERATORS_FAST`] with the bytecode position and the stack top passed in and\n\
@@ -312,7 +312,7 @@ pub static OPERATORS: &[fn(&mut State)] = &["
         let mut inner: Vec<u8> = Vec::new();
         let into: &mut dyn Write = &mut inner;
         let mut res = data.def(d_nr).rust.clone();
-        // The operands (the non-mutable attributes), each at its offset in the stream.  When
+        // `@FR-R-OperandSpan` — the operands (the non-mutable attributes), each at its offset.  When
         // every one has a fixed width they are bounds-checked and stepped over ONCE
         // (`State::operands`); otherwise each is read on its own, as `State::code` does.
         let operands: Vec<(&str, String)> = data
@@ -420,8 +420,8 @@ pub static OPERATORS: &[fn(&mut State)] = &["
             hot_arms.push((slot_of[&d_nr], name.clone()));
         }
     }
-    // The lean loop's dispatch: each `#hot` operator inline on the loop's registers, every
-    // other one through the register table.
+    // `@FR-R-HotInline` — the lean loop's dispatch: each `#hot` operator inline on the loop's
+    // registers, every other one through the register table.
     writeln!(
         into,
         "\n/// The lean loop's dispatch: a `#hot` operator runs inline on the loop's registers\n\

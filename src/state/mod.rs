@@ -45,8 +45,8 @@ fn dev_soft_halt_enabled() -> bool {
 
 pub const STRING_NULL: &str = "\0";
 
-/// The bytecode position and the stack top, carried in registers from one operator to the
-/// next by the lean loop's register table (`fill::OPERATORS_REG`) instead of through
+/// `@FR-R-RegisterTable` — the bytecode position and the stack top, carried in registers from
+/// one operator to the next by the lean loop's register table (`fill::OPERATORS_REG`) instead of through
 /// `State`'s fields: each operator receives them as arguments and returns them, so no op
 /// waits on the previous op's store of `code_pos` / `stack_pos` to read them back.
 #[derive(Clone, Copy)]
@@ -55,7 +55,7 @@ pub struct Regs {
     pub sp: u32,
 }
 
-/// A `#hot` operator's view of the machine (`fill::dispatch_lean`).  The bytecode position and
+/// `@FR-R-HotInline` — a `#hot` operator's view of the machine (`fill::dispatch_lean`).  The bytecode position and
 /// the stack top are LOCALS here: `State`'s two fields are reloaded after every write through
 /// the stack's raw pointer (which may, for all the compiler can prove, point into `State`), and
 /// these are not, so they stay in registers across the operator and from one hot operator to
@@ -3099,8 +3099,8 @@ impl State {
         self.code_pos += value.len() as u32;
     }
 
-    /// The fixed-width operands of the op being executed: `len` bytes from `code_pos`, bounds
-    /// checked ONCE for all of them, with `code_pos` advanced past them in one step.  The
+    /// `@FR-R-OperandSpan` — the fixed-width operands of the op being executed: `len` bytes from
+    /// `code_pos`, bounds checked ONCE for all of them, with `code_pos` advanced past them in one step.  The
     /// generator emits this wherever every operand of an op has a fixed width, which is every
     /// operator today; [`Operands::get`] then reads each one at its constant offset.
     ///
@@ -6429,12 +6429,12 @@ impl State {
         }
     }
 
-    /// The lean loop over the register table: the position and the stack top travel between
-    /// ops in registers (`Regs`).  With `HOT`, a `#hot` operator runs inline on them
-    /// (`fill::dispatch_lean`) and leaves `State`'s copy behind, so `State` is brought up to
-    /// the registers before anything else reads it — the stop path, and the loop's end.  Every
-    /// other operator writes them into `State` itself on entry (`State::regs_in`).  Answers
-    /// whether a frame yield hands control back to the host.
+    /// The lean loop over the register table (`@FR-R-RegisterTable`): the position and the stack
+    /// top travel between ops in registers (`Regs`).  With `HOT`, a `#hot` operator runs inline
+    /// on them (`fill::dispatch_lean`, `@FR-R-HotInline`) and leaves `State`'s copy behind, so
+    /// `State` is brought up to the registers before anything else reads it — the stop path,
+    /// and the loop's end.  Every other operator writes them into `State` itself on entry
+    /// (`State::regs_in`).  Answers whether a frame yield hands control back to the host.
     #[inline(never)]
     fn lean_register_loop<const HOT: bool>(&mut self, bytecode_len: u32) -> bool {
         let reg_ops = crate::fill::OPERATORS_REG;

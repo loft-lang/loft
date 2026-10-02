@@ -741,22 +741,21 @@ the candidate to move into the IR phase, where both backends get it.
 
 ### Dispatch loop (`src/state/mod.rs`)
 
-The loop fetches one opcode byte and calls the corresponding function from the `OPERATORS`
-function-pointer slice (`src/fill.rs`, generated from the `#rust` templates in
-`default/*.loft`).  Bytes 0–254 are one-byte opcodes; **byte 255 is an escape prefix** — the
-loop reads a second byte `ext` and dispatches `OPERATORS[255 + ext]` (`emit_op`).
+The loop fetches one opcode byte and dispatches the operator in that slot (`src/fill.rs`,
+generated from the `#rust` templates in `default/*.loft`).  Bytes 0–254 are one-byte opcodes;
+**byte 255 is an escape prefix** — the loop reads a second byte `ext` and dispatches slot
+`255 + ext` (`emit_op`).  Which operators get a one-byte slot is chosen in `default/`: the
+`#hot` ones first, the `#cold` ones last (formal/rewrites.md `(R-OpPriority)`).
 
 There are two loops in `execute_argv`.  The **lean loop** runs whenever nothing watches
 individual ops, and does per op only what an ordinary run needs: publish the allocation site
-(`alloc_pc`) — which is also the crash report's position: the loop registers that field and its
-bytecode once (`crash_report::LeanSource`) and a report derives the op from them, so nothing
-else is written per op (formal/rewrites.md `(R-DispatchPublish)`; the function is not tracked,
-the report's `at:` line names it) — dispatch, and ONE test of `Stores::dispatch_stop`, which every rare event that ends the loop —
-a runtime error, a frame yield, a `par` worker's fault, a debugger arming — sets where it
-happens (formal/rewrites.md `(R-DispatchStop)`).  Testing the five events after every op
-instead was 15–24 % of a loop's time.  An operand read (`State::code`) keeps its bounds
-check with the report out of line: the formatted `assert!` it replaced cost 5–7 % of a vector
-loop's cycles (2026-10-01).  The **full loop**
+(`alloc_pc`), which is also the crash report's position (`crash_report::LeanSource`,
+`(R-DispatchPublish)`); dispatch; and ONE test of `Stores::dispatch_stop`, which every rare
+event that ends the loop sets where it happens (`(R-DispatchStop)`).  It carries the bytecode
+position and the stack top in registers — each operator receives and returns them
+(`(R-RegisterTable)`), a `#hot` one runs inline on them (`(R-HotInline)`; `LOFT_NO_HOT=1`
+compares) — and an op checks all its operands at once (`(R-OperandSpan)`), each report out of
+line.  The **full loop**
 carries every per-op instrument — the debugger and profiler (`debug_check`), live reload, the
 stack census, the stack shadow, allocation paths, the UAF scans — and takes over the moment one
 is armed, including a debugger attaching mid-run.  Measured: the full loop's
