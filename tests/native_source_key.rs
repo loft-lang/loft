@@ -223,7 +223,7 @@ fn an_unchanged_program_is_served_from_its_source_key_and_every_damaged_sidecar_
     // Cell 10 — garbage, then a truncated sidecar.
     let sidecar = sidecar_of(&root);
     let good = std::fs::read_to_string(&sidecar).expect("sidecar");
-    assert_eq!(good.lines().count(), 3, "sig / fp / bin: {good}");
+    assert_eq!(good.lines().count(), 4, "sig / fp / bin / man: {good}");
     std::fs::write(&sidecar, "not a sidecar\n").expect("garbage");
     let r = run(&root, &script);
     assert!(
@@ -240,7 +240,7 @@ fn an_unchanged_program_is_served_from_its_source_key_and_every_damaged_sidecar_
         "rewritten after garbage: {}",
         r.stderr
     );
-    let two_lines: String = good.lines().take(2).map(|l| format!("{l}\n")).collect();
+    let two_lines: String = good.lines().take(3).map(|l| format!("{l}\n")).collect();
     std::fs::write(&sidecar, two_lines).expect("truncate");
     let r = run(&root, &script);
     assert_eq!(
@@ -302,6 +302,38 @@ fn an_edit_that_changes_the_program_is_never_served_stale() {
     assert!(
         r.stdout.contains("sum=100") && r.source_key() == "hit",
         "{}{}",
+        r.stdout,
+        r.stderr
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Cell 2b — the program manifest is SHARED with the interpreter: an `--interpret` run of
+/// an edited source re-validates and rewrites it for the new source, so a sidecar that only
+/// asked "is the manifest current?" execs the OLD binary on the next native run.  The
+/// sidecar names the manifest it was built beside.
+#[cfg(not(windows))]
+#[test]
+fn an_interpret_run_between_two_native_runs_never_serves_the_old_binary() {
+    let root = fresh_root("interleave");
+    let script = root.join("prog.loft");
+    std::fs::write(&script, PROG_30).expect("script");
+    warm_to_a_hit(&root, &script, "sum=30");
+    std::fs::write(&script, PROG_100).expect("edit");
+    let i = run_with(&root, &script, &["--interpret"], &[]);
+    assert!(i.ok && i.stdout.contains("sum=100"), "{}{}", i.stdout, i.stderr);
+    let r = run(&root, &script);
+    assert!(
+        r.ok && r.stdout.contains("sum=100"),
+        "the edited program's answer, never the binary of the source the interpreter replaced: {}{}",
+        r.stdout,
+        r.stderr
+    );
+    assert_eq!(r.source_key(), "miss", "{}", r.stderr);
+    let r = run(&root, &script);
+    assert!(
+        r.stdout.contains("sum=100") && r.source_key() == "hit",
+        "re-keyed beside the interpreter's manifest: {}{}",
         r.stdout,
         r.stderr
     );

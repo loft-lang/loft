@@ -731,11 +731,19 @@ pub fn native_fast_path(
         _ => return None,
     }
     let binary = std::path::PathBuf::from(lines.next()?.strip_prefix("bin ")?);
+    // The manifest the binary was built beside.  The manifest is SHARED with every other
+    // mode: an `--interpret` run of an edited source rewrites it for the new source, and
+    // without this line the next native run validated the new source against it and
+    // exec'd the old source's binary — a silent answer from code that no longer exists.
+    let built_beside = lines.next()?.strip_prefix("man ")?.to_string();
     // A line this build does not know is a sidecar this build did not write.
     if lines.next().is_some() {
         return None;
     }
     if !binary.is_file() {
+        return None;
+    }
+    if crate::cache::file_hash(manifest.to_str()?).map(|h| hex32(&h)) != Some(built_beside) {
         return None;
     }
     let state = manifest_state(&manifest, &stdlib_key_hex(default_dir)?)?;
@@ -769,10 +777,14 @@ pub fn save_native_sidecar(
     let Some(binary) = binary.to_str() else {
         return;
     };
+    let Some(built_beside) = manifest.to_str().and_then(crate::cache::file_hash) else {
+        return;
+    };
     let sidecar = crate::cache::native_sidecar_path(&manifest);
     let body = format!(
-        "sig {}\nfp {fingerprint:016x}\nbin {binary}\n",
-        crate::cache::build_signature()
+        "sig {}\nfp {fingerprint:016x}\nbin {binary}\nman {}\n",
+        crate::cache::build_signature(),
+        hex32(&built_beside)
     );
     let tmp = sidecar.with_extension(format!("native.{}.tmp", std::process::id()));
     if std::fs::write(&tmp, body.as_bytes()).is_ok() {
