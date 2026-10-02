@@ -283,6 +283,85 @@ pub fn append_bytes(db: &DbRef, bytes: &[u8], stores: &mut [Store]) {
     store.set_u32_raw(vec_rec, 4, needed);
 }
 
+/// The capacity, in elements, of the vector `db` names in `vec_rec` — after the two refusals
+/// that make reading it meaningful (loft#810).  Shared by [`vector_append`] and the in-capacity
+/// path [`append_slot_in_capacity`], so each refusal has one home.
+#[allow(clippy::inline_always)]
+#[inline(always)]
+fn append_capacity(store: &Store, db: &DbRef, vec_rec: u32, size: u32) -> u32 {
+    let owner_words = store.read::<i32>(db.rec, 0);
+    if !(owner_words >= 1 && u64::from(db.pos) + 4 <= owner_words as u64 * 8) {
+        append_field_outside_record(db, owner_words);
+    }
+    // Only then: the field IS inside the record, so the handle is a real one — and
+    // a non-zero handle must point at a CLAIMED record, every one of which has a
+    // positive size word (`Store::claim` asserts it).  Zero or negative here means
+    // the handle outlived what it pointed at.  Either way the append is about to
+    // derive a capacity and a copy length from that word, and both wrap, so the
+    // failure would otherwise surface far away as an unbounded `memcpy` inside
+    // `resize` — naming the copy, which is innocent.
+    let cur_words_signed = store.read::<i32>(vec_rec, 0);
+    if cur_words_signed <= 0 {
+        append_handle_names_no_record(db, vec_rec, cur_words_signed);
+    }
+    vector_capacity(cur_words_signed as u32, size)
+}
+
+/// `@FR-R-ElementPath` — the slot an append writes when the element FITS: the vector record,
+/// the length and the capacity read once each, the slot built here, nothing claimed or moved.
+/// `None` for a vector with no record yet or a full one — and the caller then takes
+/// [`vector_append`], which handles both (and null).  Inlined into the typed appends: called,
+/// the slot came back through memory as three narrow stores the caller re-read as one wide
+/// load, a store-forward stall on every push.
+#[allow(clippy::inline_always)]
+#[inline(always)]
+pub(crate) fn append_slot_in_capacity(db: &DbRef, size: u32, store: &Store) -> Option<DbRef> {
+    if db.rec == 0 {
+        return None;
+    }
+    let vec_rec = store.collection_rec(db.rec, db.pos);
+    if vec_rec == 0 {
+        return None;
+    }
+    let length = store.get_u32_raw(vec_rec, 4);
+    (length < append_capacity(store, db, vec_rec, size)).then(|| DbRef {
+        store_nr: db.store_nr,
+        rec: vec_rec,
+        pos: checked_vec_pos(length, size),
+    })
+}
+
+/// The first of [`vector_append`]'s two refusals, out of line so its test inlines
+/// (`@FR-R-Cold`): formatted inline, the message's argument setup sat in every append.
+#[cold]
+#[inline(never)]
+fn append_field_outside_record(db: &DbRef, owner_words: i32) -> ! {
+    panic!(
+        "vector_append: in store {}, field {}.{} lies outside its own record, which \
+         claims {owner_words} words ({} bytes) — so the vector handle read there is \
+         whatever follows the record in the arena, not a vector.  The record in this \
+         slot is not the one the field offset was computed for: re-run with \
+         LOFT_NO_SLOT_REUSE=1, and if that clears it the store was freed while \
+         another variable still named it (loft#810)",
+        db.store_nr,
+        db.rec,
+        db.pos,
+        i64::from(owner_words) * 8
+    );
+}
+
+/// The second of [`vector_append`]'s refusals, out of line for the same reason.
+#[cold]
+#[inline(never)]
+fn append_handle_names_no_record(db: &DbRef, vec_rec: u32, cur_words_signed: i32) -> ! {
+    panic!(
+        "vector_append: in store {}, the vector handle in record {}.{} points at record \
+         {vec_rec}, whose size word is {cur_words_signed} — the record it named has been \
+         freed or was never claimed, so this vector's capacity cannot be read (loft#810)",
+        db.store_nr, db.rec, db.pos
+    );
+}
+
 /// Make room for one more element at the end of the vector `db` points at, and
 /// answer where to write it.  Grows the backing record ~2x when it is full, and
 /// follows the record if the grow had to move it.
@@ -351,38 +430,7 @@ pub fn vector_append(db: &DbRef, size: u32, stores: &mut [Store]) -> DbRef {
         // freed a store that was still named, not who computed the offset: the offset
         // is right for the type the caller thinks it is holding.  `LOFT_NO_SLOT_REUSE=1`
         // settles it in one run — if the fault vanishes, the slot had two owners.
-        let owner_words = store.read::<i32>(db.rec, 0);
-        assert!(
-            owner_words >= 1 && u64::from(db.pos) + 4 <= owner_words as u64 * 8,
-            "vector_append: in store {}, field {}.{} lies outside its own record, which \
-             claims {owner_words} words ({} bytes) — so the vector handle read there is \
-             whatever follows the record in the arena, not a vector.  The record in this \
-             slot is not the one the field offset was computed for: re-run with \
-             LOFT_NO_SLOT_REUSE=1, and if that clears it the store was freed while \
-             another variable still named it (loft#810)",
-            db.store_nr,
-            db.rec,
-            db.pos,
-            i64::from(owner_words) * 8
-        );
-        // Only then: the field IS inside the record, so the handle is a real one — and
-        // a non-zero handle must point at a CLAIMED record, every one of which has a
-        // positive size word (`Store::claim` asserts it).  Zero or negative here means
-        // the handle outlived what it pointed at.  Either way the append is about to
-        // derive a capacity and a copy length from that word, and both wrap, so the
-        // failure would otherwise surface far away as an unbounded `memcpy` inside
-        // `resize` — naming the copy, which is innocent.
-        let cur_words_signed = store.read::<i32>(vec_rec, 0);
-        assert!(
-            cur_words_signed > 0,
-            "vector_append: in store {}, the vector handle in record {}.{} points at record \
-             {vec_rec}, whose size word is {cur_words_signed} — the record it named has been \
-             freed or was never claimed, so this vector's capacity cannot be read (loft#810)",
-            db.store_nr,
-            db.rec,
-            db.pos
-        );
-        let cur_cap = vector_capacity(cur_words_signed as u32, size);
+        let cur_cap = append_capacity(store, db, vec_rec, size);
         // An element that fits needs no `resize`: that call re-read the header, bumped
         // the store generation and answered the same record on every append that was
         // not a growth step (@PLN157 § V-k — 2 % of the `lock` row).  The growth step

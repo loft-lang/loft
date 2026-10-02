@@ -935,6 +935,7 @@ impl Parser {
         }
         if !self.first_pass {
             self.rotate_loop_retbufs(&mut v);
+            self.own_fresh_binds(&mut v);
         }
         // Plan-22 phase 02a (2026-05-12): also save body in pass 1
         // so the closure mutation walker can run in pass 1 BEFORE
@@ -959,6 +960,74 @@ impl Parser {
             self.data.definitions[self.context as usize].code = v;
         }
         result
+    }
+
+    /// A vector local that BORROWS its store at some bind — the literal `p = ["z"]` makes it a
+    /// view of the record `__vdb_N` owns — and at another bind adopts a FRESH store from a call
+    /// (`p = s.split(',')`, `p = arguments()`, `p = j.keys()`): that store gets an owner of its
+    /// own, a work-ref, and `p` views it.  A local has ONE type, so once it borrows anywhere
+    /// neither a rebind's displacement free nor the scope-exit sweep counts it as an owner
+    /// anywhere, and every store it adopted leaked — once per evaluation, on both backends,
+    /// unbounded in a loop, whichever of the two binds came first.  @FR-O-Owner: every store
+    /// has exactly one owner.  A loft function's result is already delivered this way, into
+    /// the caller buffer its call mints; this gives a native result the same shape.
+    ///
+    /// Run once the body is complete (pass 2), because only then is the local's type final:
+    /// its dep list grows as the body parses and the first bind precedes the one that borrows.
+    /// A local that never borrows is untouched — it owns what it adopts, and its rebind frees
+    /// the store it displaces.  A bare `Call` whose declared result is a dep-free vector is the
+    /// fresh-store proxy the bind itself reads; a call handing back a view carries its source
+    /// in its deps, and a loft function's buffered result arrives as a block, not a bare call.
+    fn own_fresh_binds(&mut self, body: &mut Value) {
+        let mut owners = Vec::new();
+        self.own_fresh_bind_sites(body, &mut owners);
+        // Each owner is declared at the top of the frame, null: it then lives as long as the
+        // frame, which outlives `p` wherever `p` is read, and its scope-exit free releases the
+        // last store it adopted (a rebind releases the one it displaces).  Declared where its
+        // bind sits instead, an owner in a branch was freed at the branch's end while `p` still
+        // viewed it.  `inline_ref`: the declaration holds the null sentinel rather than a store
+        // minted only to be displaced by the call.  `p`'s own type is left as it is — it already
+        // borrows, which is what keeps it from freeing, and a second dep would make it a
+        // multi-store local whose literal record the block-confinement pass frees at the
+        // literal's block.
+        if let Value::Block(bl) = body {
+            for w in owners.into_iter().rev() {
+                self.vars.mark_inline_ref(w);
+                bl.operators.insert(0, crate::data::v_set(w, Value::Null));
+            }
+        }
+    }
+
+    fn own_fresh_bind_sites(&mut self, node: &mut Value, owners: &mut Vec<u16>) {
+        // `@FR-N-Shape`: `vector<τ>?` is the same store as `vector<τ>`, so both types are PEELED
+        // — a nullable local or a nullable native result leaked exactly as the dense one did.
+        // `deps_ref` and `with_deps` see through the wrapper themselves.
+        if let Value::Set(p, rhs) = node
+            && let Value::Call(d, _) = rhs.unspan()
+            && !self.vars.is_argument(*p)
+            && matches!(self.vars.tp(*p).base(), Type::Vector(_, _))
+            && self.vars.tp(*p).deps_ref().is_some_and(|d| !d.is_empty())
+            && matches!(self.data.def(*d).returned().base(), Type::Vector(_, deps) if deps.is_empty())
+        {
+            // Cloned only here, where the rewrite fires: the checks above run for every bind.
+            let returned = self.data.def(*d).returned().clone();
+            let Type::Vector(elm, _) = returned.base() else {
+                return;
+            };
+            let w = self
+                .vars
+                .work_refs_p2(&Type::Vector(elm.clone(), Deps::none()), &mut self.lexer);
+            let owned = returned.with_deps(&Deps::frame1(w));
+            let call = std::mem::replace(rhs.as_mut(), Value::Null);
+            **rhs = crate::data::v_block(
+                vec![crate::data::v_set(w, call), Value::Var(w)],
+                owned,
+                "owned_fresh_bind",
+            );
+            owners.push(w);
+            return;
+        }
+        node.for_each_child_mut(&mut |c| self.own_fresh_bind_sites(c, owners));
     }
 
     /// H7 — give a loop-carried return buffer a partner and rotate the two.

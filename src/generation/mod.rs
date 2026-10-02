@@ -4821,7 +4821,8 @@ impl Output<'_> {
         if self.base_rec_ptr_disabled {
             return None;
         }
-        let it = hoist::iteration_head(stmt, self.data)?;
+        let it = hoist::iteration_head(stmt, self.data)
+            .or_else(|| hoist::element_binding(stmt, self.data))?;
         let path = hoist::vector_path(self.data, it.vector)?;
         let header = self.active_vec_header(&path)?.to_owned();
         let base = self.active_vec_base(&path)?.to_owned();
@@ -5119,12 +5120,16 @@ impl Output<'_> {
     /// reading it off a write: @PLN164 C5's VIEW LEAF, whose tuple element is the PLACE the
     /// field views (`hoist::leaf_source`) and whose record-form write is the deep copy the
     /// leaf removes.  Every other slot must be written, or the whole block declines.
+    ///
+    /// Beside the slots, the ORDER the block writes them in: the tuple lists its elements
+    /// in field order, and a literal whose field expressions have effects must still run
+    /// them in the order the program wrote them.
     #[must_use]
     pub fn value_record_parts(
         &self,
         bl: &crate::data::Block,
         tp: u16,
-    ) -> Option<Vec<Option<Value>>> {
+    ) -> Option<(Vec<Option<Value>>, Vec<usize>)> {
         let n = self
             .value_records
             .index
@@ -5132,6 +5137,7 @@ impl Output<'_> {
             .filter(|(t, _)| *t == tp)
             .count();
         let mut slots: Vec<Option<Value>> = vec![None; n];
+        let mut fill: Vec<usize> = Vec::new();
         let copy_nr = self.data.def_nr("OpCopyRecord");
         for op in &bl.operators {
             let Value::Call(d, args) = op.unspan() else {
@@ -5164,6 +5170,7 @@ impl Output<'_> {
                         getter,
                         vec![src.clone(), Value::Int(i32::try_from(*off - base).ok()?)],
                     ));
+                    fill.push(idx);
                 }
                 continue;
             }
@@ -5194,6 +5201,7 @@ impl Output<'_> {
                 return None;
             }
             slots[idx] = args.get(2).cloned();
+            fill.push(idx);
         }
         // A VIEW-LEAF slot is derived, not written: its own `OpAppendVector` is the copy the
         // leaf replaces, and the emitter answers the place instead.
@@ -5215,7 +5223,7 @@ impl Output<'_> {
         {
             return None;
         }
-        Some(slots)
+        Some((slots, fill))
     }
 
     /// `@FR-R-LazySplit` — the lazy split whose hidden vector `v` reads through the op

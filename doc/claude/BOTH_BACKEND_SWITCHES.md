@@ -78,6 +78,22 @@ tuple-destructured local `tests/branch_join.rs::a_vector_local_is_backed_by_its_
 guards).  A vector placed this way is not a fresh store root, so the native header and base hoists (`(R-LoopBuffer)`, `(R-CompleteWrite)`,
 `(R-Base)`) decline the loops that fill it — measured on the cbor decoder's bench: decode
 34.7 ms → 26.2 ms per op, and stores per `check_request` 20 → 7.
+**`LOFT_NO_RETURN_FIELD=1`** (`(R-ReturnField)`, `@FR-R-ReturnField`, decided in the scope
+pass after the exit vector, BOTH backends) keeps the parser's copy at an exit that returns a
+FIELD of an owned record local (`p = mk(n); return p.a`, or `v = p.a; return v`): the return
+buffer minted, the field deep-copied into it, the local freed.  With it off, the exit hands
+the local's store over at the field's position (`return OpGetField(p, …)` in a
+`return_field_handover` block), the root's own free goes, and every other store free in the
+exit is witnessed against the root — a pooled `__ref_N` the root adopted or an alias `q = p`
+is then skipped, a distinct buffer freed as before.  It is the first bisect step for a wrong
+or freed record out of a callee that returns a field of a local, and for a caller reading a
+store that was released under it; `LOFT_TRACE_PLACE=1` names each admission
+(`[return-field]`) and each decline (a parameter's or a view's field, an element, a returned
+record that owns no heap — the native value form's to answer — a statement in the exit that
+is not a free, a buffer that is not the function's own).  Measured on pluginabi's
+`check_request` driver (`--native-release`, this box): 0.34 s → 0.33 s per 40 rounds; the
+copy census of `return p.a` 1 → 0 per call.
+
 **`LOFT_NO_REBIND_PLACE=1`** (`@FR-R-Rebind`, default-ON, parse time +
 scope pass, BOTH backends) keeps `x = f(x, …)` minting the callee's exit record in a store
 of its own and copying it over `x` again — with it off, the call's hidden buffer argument IS
@@ -216,8 +232,25 @@ the type MAXIMUM that never terminates on either form.
 loop is one append of the bytes `[lo, hi)` behind `0 <= lo && lo <= hi && hi <= size(t)`,
 the loop as written running for a range the guard refuses (cbor `encode_bytes` 94.7× →
 43.1×; 2.9 → 0.4 ns a byte on the probe) — and is the first bisect step for a wrong, missing
-or extra byte out of such a copy.  `LOFT_TRACE_BYTE_COPY=1` names each site admitted and
-each kept.
+or extra byte out of such a copy.  It turns off the rule's vector clause with it
+(`for i in lo..hi { buf += [v[off + i] ?? d] }` as one slice append behind its in-range
+guard) and `@FR-R-TextRun`, which builds on that clause: a byte vector filled only by such a
+copy and read once by `text_from_bytes` is read in place by `text_from_byte_range`, so the
+switch is also the first bisect step for a wrong text out of a decoder.
+`LOFT_TRACE_BYTE_COPY=1` names each site admitted and each kept (`[byte-copy]`, `[text-run]`).
+
+**`LOFT_NO_REPEAT_RUN=1`** (`@FR-R-RepeatRun`, default-ON, scope pass, BOTH backends) keeps a
+literal that spells one constant four or more times (`[0.0, 0.0, 0.0, 0.0, …]`) as one push per
+element — with it off, the run is a reservation, one template push and one doubling fill, as
+`[0.0; n]` lowers — and is the first bisect step for a wrong element out of such a literal.
+`LOFT_TRACE_REPEAT_RUN=1` names each run admitted.
+
+**`LOFT_NO_STORE_SWAP=1`** (`@FR-H-SwapIn`, default-ON, runtime, BOTH backends) keeps the deep
+copy of a rebind `x = f(…, x, …)` from a callee that minted its result — with it off, the two
+stores' contents are exchanged and the released slot freed, where both records are their
+store's root of the copied type and the type keeps its pointers inside its store — and is the
+first bisect step for a wrong record after such a rebind.  Read at run time, so one binary
+serves both arms.  `LOFT_TRACE_STORE_SWAP=1` names each exchange.
 
 **`LOFT_NO_REBIND_OWN_BUFFER=1`** (`@FR-R-Rebind`'s own-buffer clause, default-ON, scope
 pass, BOTH backends) keeps `(R-Rebind)` to plain locals: a builder's `d = step(d, …)`, where
@@ -263,6 +296,53 @@ first bound inside an `if` (whose pre-init makes the bind a rebind) adopts at th
 null again and mints no snapshot — the first bisect step for a use-after-free or a wrong
 field out of a callee that rebinds or returns past a local it promoted onto its buffer.
 `LOFT_TRACE_POOL=1` names the gate that keeps each witnessed buffer out of the pool.
+
+**A reduction loop as one kernel call (@PLN180 § Kernels, `@FR-R-BoundedNest`'s reduction
+clause, default-ON, both backends, scope pass):** `acc = acc + v[i]` over `0..v.len()` of an
+integer vector — the stdlib `sum` over integers — is one call of the loop kernel
+`vector_sum_int`, so the interpreter runs the whole sum in Rust instead of dispatching every
+element.  **`LOFT_NO_LOOP_KERNELS=1`** keeps every loop a loop; it is the first bisect step
+for a wrong sum on either backend.  `LOFT_HOIST_VERIFY=1` re-checks each plain block the
+kernel admits against the checked add.
+
+**A small record returned as a tuple (@PLN180, `@FR-R-ValueRecord`, default-ON, both
+backends, at the top of `byte_code_from`):** a function returning a flat record of scalars
+from an object literal, whose every caller only reads fields off the local it binds, returns
+a tuple, and its callers read tuple elements.  The call's buffer store, its mint and its
+frees leave the IR, so the interpreter claims no store per call.  A program parsed against
+again after compiling (the REPL, the debugger, live reload, a host calling by name) keeps
+records (`Data::open_world`).  **`LOFT_NO_IR_VALUE_RECORD=1`** restores the record form on
+both backends, leaving the case to `--native`'s own rewrite (`LOFT_NO_VALUE_RECORD`).  It is
+the first bisect step for a wrong field read out of a small-record call on the interpreter.
+
+**A scalar leaf's call is its body (`@FR-R-InlineLeaf`, default-ON, both backends, at the
+top of `byte_code_from` after the value records):** a call of a function whose parameters,
+locals and result are scalars and whose body is operators over them is replaced by that body
+over fresh locals, literal and plain-variable arguments read in place.  Inside the inlined
+body three reductions follow: a redundant all-ones mask and a provably non-null `??` go
+(`@FR-R-MaskRange`), the last temporary moves into its one read (`@FR-R-SingleUse`), and a
+power-of-two scale folds into a literal divisor (`@FR-R-ScaleFold`).  A program parsed against
+again keeps the calls (`Data::open_world`).  **`LOFT_NO_INLINE_LEAF=1`** keeps every call and
+is the first bisect step for a wrong answer out of a small scalar function on either backend;
+**`LOFT_NO_MASK_RANGE=1`**, **`LOFT_NO_SINGLE_USE=1`** and **`LOFT_NO_SCALE_FOLD=1`** keep one
+reduction each; **`LOFT_TRACE_INLINE_LEAF=1`** names every inlined call, every declined leaf
+and every reduction, per function.
+
+**The IR-phase eliminations (default-ON, both backends, at the top of `byte_code_from` after
+the leaf inliner):** each removes work the IR shows is redundant, and each has its switch and
+its trace.  **`LOFT_NO_FORWARD_WALK=1`** keeps `for x in v` an iterator where the body cannot
+resize `v` (`@FR-R-ForwardWalk`); **`LOFT_NO_SAME_READ=1`** keeps both of two equal discharged
+reads in one statement (`@FR-R-SameRead`); **`LOFT_NO_IN_RANGE=1`** keeps the discharge of a
+record element its loop proves in range (`@FR-R-InRange`); **`LOFT_NO_SINGLE_USE=1`** also keeps
+a comprehension's element temporary (`@FR-R-SingleUse`'s statement clause);
+**`LOFT_NO_DISCHARGE_INTO=1`** keeps the temporary of a text discharge that assigns a local
+(`@FR-R-DischargeInto`).  The `LOFT_TRACE_*` of the same name lists what each rewrote, per
+function.  For a wrong answer out of a loop or a `??`, these are the bisect steps, one at a
+time.
+
+**The key list a keyed lookup pops is cached per type (`@FR-R-KeyList`, interpreter):**
+**`LOFT_KEY_LIST_VERIFY=1`** re-derives every cached list from its type on each read and stops
+the run on a disagreement, naming the type — the falsifier for a wrong-width key pop.
 
 **Append in place (@PLN157 § V-d, default-ON, both backends, parse time):** a vector-literal
 element that is a call to a loft-defined builder — `v += [mk(…)]`, the builder writing a
@@ -525,3 +605,18 @@ is the smallest that fits, so the remainder keeps its order, and every claim tak
 always took (`hash_text_keys` −8 %).  **`LOFT_NO_CARVE_IN_PLACE=1`** deletes and inserts again
 (read per store at construction) and is the bisect step for a store-layout fault or a corrupt
 free tree after a claim.
+
+**A store starts in a lazy-free phase (default-ON, both backends, `@FR-H-LazyFree`):** a
+delete of a small block (at most 64 words) merges with its free neighbours as ever and leaves
+the result out of the tree (a block ending the store becomes the wilderness); a larger block is
+tracked at its delete as ever — and the phase ends at the first
+claim once the untracked words reach 256 and a fifth of the extent written, with one sweep
+that merges and tracks every free block, or at an explicit reclaim; a fresh or reset store
+starts the phase again, a store bound to a file never enters it.  A store built once and freed whole
+(a call's result buffer, a decoder's tree) never pays for its deletes, and its claims stay on
+the tail (pluginabi's `check_request` −6 %: the free-tree walks were a quarter of the row).
+**`LOFT_NO_LAZY_FREE=1`** tracks every delete at its site again (read per store at
+construction) and is the first bisect step for a store-layout fault, a claim that hands out a
+live block, or a store that grows instead of reusing a freed block.  The falsifiers are the free tree's
+own — `LOFT_POISON=1`, `LOFT_STRICT_STORES=1` — and the seeded unit tests in `src/store.rs`
+pin the untracked delete, the growth below the floor and the one sweep at the bound.

@@ -395,7 +395,64 @@ parameter (via `&`) is host, a genuinely-copied one is script-owned.
                  and the layout is unchanged; what changes is that the claim costs no
                  tree delete, insert or rebalance.  A remainder under n words, or
                  under the tree's minimum, takes the delete and the insert.
+  (H-LazyFree)   inside one store, a delete of a SMALL block (at most 64 words) during
+                 the store's LAZY phase merges with its free neighbours in O(1) as the
+                 exact delete does — forward by header, backward by a footer CONFIRMED
+                 by the phase's record of lazily freed block starts (claimed data can
+                 spell a footer, and that record cannot lie) — and inserts the merged
+                 block into no tree; a block that ends the store becomes the wilderness.
+                 A larger block (a vector rung, a hash table) is tracked at its delete
+                 as ever, the tree's insert being nothing beside the block's own copy.
+                 So a claim in the phase finds what the tree holds (the wilderness, the
+                 large blocks, the remainders claims leave) or an untracked block the
+                 chain walk meets, and a scratch freed each round leaves the layout as
+                 it found it.  The count the phase is judged by is the untracked words
+                 held NOW: a claim, a resize or a merge that consumes such a block takes
+                 it off, and a tree rebuild clears the record whole.  The phase ends at the
+                 first claim once the untracked words reach a floor (256) AND a fifth of
+                 the extent written so far, whatever the wilderness holds: ONE sweep
+                 merges every free block and rebuilds the tree, and from then on each
+                 delete is tracked at its site as before; an explicit reclaim ends it
+                 the same way.  A fresh or reset store starts the phase again; a store
+                 bound to a file never enters it, because a file is read, reclaimed and
+                 paged by its layout.  Every block is still free or claimed by its
+                 header, so the usage walk, an image and the open walk read the same
+                 store; what changes is WHEN the tree learns of a free.  A store built
+                 once and released whole never pays for its deletes, a tree whose dead
+                 words stay a small share of its live ones stays lazy however big it
+                 grows, and a vector ladder — dead about half of what it wrote — sweeps
+                 within its first rungs, so the working set never doubles.  Below the
+                 bound a claim the wilderness cannot hold grows the store, or takes an
+                 untracked block the chain walk meets on its way to growing.
+  (H-SwapIn)     the deep copy of a store's ROOT record into the root of another store
+                 that holds nothing else, the source store given up after it (the copy's
+                 free-source form — the rebind `x = f(…, x, …)` from a callee that minted
+                 its result), is an EXCHANGE of the two stores' contents followed by the
+                 release of the slot that ends up holding the destination's empty root.
+                 A root is a record at `1@8` OF THE STORE'S OWN ROOT TYPE — a record's
+                 first field shares its root's address, and only the type says the copy is
+                 of the whole record.  Each slot keeps its number, so every reference to
+                 the destination reads the source's records as it would read their copy,
+                 and the released slot holds what the copy would have released.  Exact
+                 only when the copied type keeps every pointer as a record number inside
+                 its own store (scalars, texts, enums, inline structs and enum values,
+                 vectors of those): a stored reference names a slot and keeps the copy, as
+                 do the keyed collections, arrays and child records.  A store pinned to its
+                 slot — a file, foreign bytes, a recording, a lock, a borrow, a constant,
+                 a lazy binding, the interpreter's stack — keeps the copy; a free
+                 protection refuses only the side the exchange releases.
 ```
+
+**`H-SwapIn` is the copy's own answer, delivered without the copy.** The copy it replaces
+resets the destination to an empty root, rebuilds the source's tree inside it, and releases
+the source store; the exchange ends in the same two states — the destination's slot holding
+that tree, the released slot gone — and skips the rebuild.  Its conditions are the copy's
+facts made checkable: "the destination holds nothing else" is `holds_only_root`, "the source
+is given up" is the free-source flag the caller set, "nothing outside the tree points into it"
+is the type walk.  `LOFT_NO_STORE_SWAP=1` keeps the copy; `LOFT_TRACE_STORE_SWAP=1` names
+each exchange.  Site: `Stores::try_swap_in`, called by both backends' `OpCopyRecord`.  Guard
+`tests/scripts/a-rebind-from-a-fresh-result-exchanges-the-stores.loft`, pin
+`tests/store_swap.rs`.
 
 **`H-RootExtent` is what makes `H-ClearRelease`'s release affordable.** The release has to
 reach everything the cleared elements own, and it can do that two ways: walk the elements and

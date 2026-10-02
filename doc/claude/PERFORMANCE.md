@@ -22,6 +22,7 @@ read by the release checklist's `M-perf-pass`.
 
 ## Contents
 - [Where the numbers are](#where-the-numbers-are)
+- [How to optimise — the checklist](#how-to-optimise--the-checklist)
 - [Profiling a run](#profiling-a-run)
 - [Measuring native code](#measuring-native-code)
 - [How the interpreter executes](#how-the-interpreter-executes)
@@ -44,8 +45,54 @@ Ask the tool that measures:
 | what got slower or faster than on `main` | `make speed` (a report); `make speed-gate` is the one speed gate |
 | the classic benchmark suite, every lane | `bench/run_bench.sh` |
 | which fn, line or path burns the time | `make profile` — § Profiling a run |
+| the interpreter against native, every routine with its censuses | `make interp-gap` → `target/interp-gap/report.md` |
+| did this change move the WORST routines — interpreter/native and native/Rust, re-timed in seconds to minutes | `make worst` (`scripts/worst.py`): the working set is taken from the last complete `make interp-gap` and `make perf-portal`, so a full run is what redefines it |
 
 The rendered benchmark page for users is [doc/00-performance.html](../00-performance.html).
+
+---
+
+## How to optimise — the checklist
+
+Both backends, in this order.  Each step's detail lives where it points; the order is the rule.
+
+1. **Pick the row by measurement.**  `make interp-gap` (interpreter against native, the ~100×
+   cliff) or `make perf-portal` (native against Rust); rank by [§ The clear case
+   first](#the-clear-case-first), within [§ Wide before deep](#wide-before-deep).
+2. **Measure real time on the tier that ships**, never the semantics build (CLAUDE.md § three
+   optimisation tiers), pinned to one core (`taskset`, `perf stat -e instructions,cycles`).
+   `LOFT_PROFILE` samples by OPERATION COUNT, not time: a line full of cheap ops reads hot and
+   is not — confirm with `perf` before believing it.  Run nothing beside a gate: it perturbs
+   the timing and can starve the gate of memory.
+3. **Name the work the slow form does that the fast one does not** — a copy, a record claimed,
+   a conversion, a call frame, a store grown.  [§ Count before you
+   time](#count-before-you-time) for an asymptotic question; `LOFT_STORE_CENSUS` for data that
+   leaves the cache ([INTERPRETER_PERFORMANCE.md § What to
+   optimise](INTERPRETER_PERFORMANCE.md#what-to-optimise-the-data-that-leaves-the-cache)).
+4. **Hand-write the efficient form first** — in loft, or as the IR the rewrite would produce —
+   for that one case, read what it compiles to on BOTH backends (`--interpret --dump`,
+   `--native-emit`, `bench/portal/hand_price.sh`) and time it.  That is the prize, and the
+   proof the target shape is fast.  If the hand-written form is not faster, the named work was
+   not the cost: go back to step 3.
+5. **Only then build the rewrite that removes the unneeded work**, turning the natural spelling
+   (the canonical one) into that form.  Where both backends gain, in the IR phase — a native
+   rule moved there ([INTERPRETER_PERFORMANCE.md § Why the interpreter is optimised at
+   all](INTERPRETER_PERFORMANCE.md#why-the-interpreter-is-optimised-at-all)); a runtime lever
+   before a generator rewrite ([§ Wide before deep](#wide-before-deep)).  **No combined opcode
+   or kernel built for one row**: it speeds one spelling and nothing next to it ([KERNELS.md](KERNELS.md)); an
+   operator comes after the IR work, from broad evidence (formal/performance.md `(Perf-Order)`).  Only proven situations
+   ([C120](DESIGN_DECISIONS_VALUES.md)), the contract is semantics, not representation
+   ([C122](DESIGN_DECISIONS_PLATFORM.md)), remove the object rather than complicate the memory
+   model ([C125](DESIGN_DECISIONS_OWNERSHIP.md)).
+6. **Verify it cannot be wrong**: a guard with hand-computed values on both backends whose
+   planted defects go red (`@falsified-at`, [GUARDS.md](GUARDS.md)), its switch A/B
+   ([formal/rewrites.md § Every rewrite is switchable and
+   falsifiable](formal/rewrites.md#every-rewrite-is-switchable-and-falsifiable)),
+   `make rewrite-census`, and native's signatures unchanged — no change may make native or any
+   routine's ratio worse.  Regenerate what it derives: `make compiled-stdlib` after a change to
+   what stdlib functions compile to, `make surface-gen` after a new op or builtin.
+7. **Record it**: `make perf-check ARGS=--record` beside the change, and the measured
+   before/after in the commit and in the plan or ledger that owns the row.
 
 ---
 
@@ -307,10 +354,10 @@ per row: [PROFILE_ORACLE.md](PROFILE_ORACLE.md).
 ### Sample counts
 
 The perf banner carries the sample count — `self time — 42 samples`. Read it before you
-read the percentages: at fifty samples a 2 % row is one sample. `--annotate` used to
-annotate whichever symbol won that coin toss — it once printed forty lines of disassembly
-about a **one-sample `getenv`** from libc — so it now refuses a symbol whose share rests on
-fewer than ~50 samples and says why. A short run wants a higher `--freq`, or more work.
+read the percentages: at fifty samples a 2 % row is one sample. `--annotate` refuses a
+symbol whose share rests on fewer than ~50 samples and says why, because a symbol that won a
+coin toss would be annotated as if it were the hot one. A short run wants a higher `--freq`,
+or more work.
 
 ### One-time setup
 
@@ -535,7 +582,7 @@ FLAT — nothing over about 5 % — that is the finding to record: the row is bo
 
 ### Wide before deep
 
-**The owner's direction for the perf stream (2026-09-23): WIDE, not deep.** Optimisation stays
+**The owner's direction for the perf stream: WIDE, not deep.** Optimisation stays
 — it is the usability measure game developers judge a language by — but it is aimed at the
 breadth of what programs do, not at the next increment on a row that is already measured.
 Before any existing portal row is taken deeper, every mechanism class gets a measured row per
@@ -605,10 +652,9 @@ history is the density of the commits, which is why `--record` exists.
 > PROGRAM and leaves the library's machine code exactly as it was, so the A/B reads as a flat
 > no-difference and looks like "the optimisation does not matter here".
 >
-> Measured 2026-09-10 while attributing loft#1426's `smooth` row: baseline and
-> `LOFT_NO_SCALAR_HOIST=1` timed 394 ms and 393 ms on a 20 000-call probe whose whole hot loop
-> is inside `drawing`. Both numbers were also dominated by the rustc compile the run pays, which
-> is the second way that shape of timing misleads.
+> On a 20 000-call probe whose whole hot loop is inside `drawing`, the baseline and
+> `LOFT_NO_SCALAR_HOIST=1` time 394 ms and 393 ms. Both numbers are also dominated by the rustc
+> compile the run pays, which is the second way that shape of timing misleads.
 >
 > To A/B a library's own codegen, the cdylib has to be rebuilt under the switch — clear
 > `native-auto/` (in a SCRATCH COPY of the package, never the consumer's tree) or run the lane
@@ -616,144 +662,46 @@ history is the density of the commits, which is why `--record` exists.
 > again. Attribute inside a library with `LOFT_PROFILE` under `LOFT_NO_NATIVE_LIBS=1` — the
 > sampler cannot enter a cdylib at all, so without it the library's time lands on the calling
 > line and a library doing the work reads as a hot caller.
+>
+> The standard library is compiled the same way for an interpreted program (@PLN181): the
+> functions `compiled_stdlib::export_set` picks — the ones whose loft body loops — run their
+> compiled bodies, built into the loft binary, and the sampler sees each as one call.
+> `LOFT_NO_COMPILED_STDLIB=1` interprets them instead, which is how to attribute inside one and
+> the A/B for anything the compiled bodies are suspected of.  `LOFT_TIMING=1` prints how many
+> dispatched, and 0 means declined: the program's type table does not start with the standard
+> library's, or `default/*.loft` is not the source they were compiled from (an edited stdlib
+> runs its current loft bodies until `make compiled-stdlib`).
+>
+> That decline is correct and SILENT — 5–23× slower on text routines, so a commit that edits
+> `default/` without regenerating reads as a large "regression" (+2213 % on `join`) of the next
+> change measured.  So staleness is asked at every point that can act on it, all through one
+> check (`scripts/compiled_stdlib_fresh.py`, the runtime's source hash re-derived): **the build**
+> prints a cargo warning naming `make compiled-stdlib`; **the gate pre-flight** refuses;
+> **`find_problems --changed`** runs `tests/compiled_stdlib.rs` for any `default/` edit; and
+> **`bench/stats.py`** asks the binary under test (`LOFT_TIMING=1`) and refuses an interpreter lane
+> whose compiled stdlib is declined, a binary built before the stdlib moved included
+> (`--allow-declined-stdlib` measures that state on purpose).
 
 ### Validating a codegen change — the single-file Rust-emit harness
 
-N4 and N5 were discovered by emitting `--native-emit` output to a
-standalone `.rs` file and compiling it with `rustc --edition=2024
--O --extern loft=…/libloft.rlib -L target/release/deps`.  This
-isolates each codegen variant (commenting out `cr_call_push`,
-replacing `ops::op_add_int(a, b)` with `a + b`, etc.) and times
-the resulting binary directly.  No build-system or loft-compiler
-edit needed per variant.  Recommended for validating any future
-codegen-side change before landing it in `src/generation/`.
+Emit the program with `--native-emit` to a standalone `.rs` file and compile it with
+`rustc --edition=2024 -O --extern loft=…/libloft.rlib -L target/release/deps`.  Each codegen
+variant (a call left out, `ops::op_add_int(a, b)` replaced by `a + b`) is then an edit to that
+one file, timed as a binary directly, with no build-system or compiler edit per variant.  Use
+it to price a codegen change before writing it in `src/generation/`
+(`bench/portal/hand_price.sh` wraps it).
 
-The same harness surfaced the `--native` vs `--native-release` gap
-(`-O` missing from the default mode) — a 10× wall-clock difference
-that was not a codegen issue at all.  That fix shipped in commit
-`ae34bdb1` (Makefile: `make index` uses `--native-release`).
-Other consumers of bare `--native` for runtime-heavy work likely
-have similar headroom; this is a CLI-UX question, not a codegen
-follow-up, so it is not tracked here.
+Time the binary the release ships: bare `--native` is the semantics build, about 10× slower in
+wall-clock on runtime-heavy work than `--native-release`, and that gap is not a codegen
+question.
 
 ---
 
 ## How the interpreter executes
 
-Understanding the interpreter's execution model is prerequisite to every performance design
-below.
-
-### What to optimise: the data that leaves the cache
-
-The interpreter's own bookkeeping — dispatch, stack slots, operand decoding — runs on a hot
-frame that lives in L1.  Cutting it makes every run faster by a constant factor, and it has
-been cut (below).  What decides how an ALGORITHM scales is the data that flows out of the
-caches: records claimed, grown and relocated, blocks copied, stores created.  So the first
-question for an interpreter routine is not *how many instructions* but **does the interpreter
-do more work on stores than the compiled code does for the same routine?**  `LOFT_STORE_CENSUS`
-answers it for both backends with the same counters ([§ Store work](#store-work-interpreter-against-native)),
-and a row where the interpreter does more is where a native rule avoids an object or a move —
-the candidate to move into the IR phase, where both backends get it.
-
-### Dispatch loop (`src/state/mod.rs`)
-
-The loop fetches one opcode byte and calls the corresponding function from the `OPERATORS`
-function-pointer slice (`src/fill.rs`, generated from the `#rust` templates in
-`default/*.loft`).  Bytes 0–254 are one-byte opcodes; **byte 255 is an escape prefix** — the
-loop reads a second byte `ext` and dispatches `OPERATORS[255 + ext]` (`emit_op`).
-
-There are two loops in `execute_argv`.  The **lean loop** runs whenever nothing watches
-individual ops, and does per op only what an ordinary run needs: publish the allocation site
-(`alloc_pc`), publish the crash context (`crash_report::set_dispatch`, twelve bytes; the labels
-are set once per loop), dispatch, the frame yield, and the halt checks.  The **full loop**
-carries every per-op instrument — the debugger and profiler (`debug_check`), live reload, the
-stack census, the stack shadow, allocation paths, the UAF scans — and takes over the moment one
-is armed, including a debugger attaching mid-run.  Measured: the full loop's
-bookkeeping was 62 of an op's 152 instructions on a vector-writing loop.  `LOFT_NO_LEAN_LOOP=1`
-takes the full loop for a plain run — the A/B switch for what the lean loop buys.
-
-### Stack and variable access (`src/state/mod.rs`)
-
-The execution stack is a single flat region inside a `Stores` record, addressed by
-`stack_cur: DbRef` and `stack_pos: u32`.  `get_stack`, `put_stack`, `get_var` and `put_var`
-have a **direct path** (`State::fast_stack`): the stack store's buffer plus the offset, inlined
-into every operator.  The general store path re-checks on every push and pop what the stack
-guarantees by construction — its store is live, not foreign, not locked, and `ensure_stack`
-grows the buffer and the record together — and cost 43 % of the interpreter's time on that
-loop.  The checked path (`*_checked`, out of line) runs whenever an instrument that watches
-stack accesses is armed — `verify_on`, `LOFT_STACK_CENSUS`, `LOFT_UAF_GEN`,
-`LOFT_STRICT_STORES`, the `stack_align_guard` feature — and in every debug-assertions build.
-`LOFT_NO_FAST_STACK=1` takes the checked path on purpose: the A/B switch for what the direct
-path buys, and the first bisect step for a wrong answer only the interpreter gives.
-
-### Operand fusion — superinstructions
-
-The bytecode generator emits the most frequent operator shapes as ONE op that reads its
-operands in place instead of pushing them first.  Each fused op calls the unfused operators'
-own functions in the same order, so fusion changes where operands come from and nothing about
-what is computed; `LOFT_NO_FUSE=1` emits the unfused form (R-Switch), and
-`tests/scripts/an-integer-operator-over-locals-runs-as-one-op.loft` is the guard.
-
-| fused op | replaces | chosen by |
-|---|---|---|
-| `OpIntVV` / `VC`, `OpCmpIntVV` / `VC` | an integer operator over locals and literals | `fusable_int` |
-| `OpIntVVPut` / `VCPut` | `x = a op c`, e.g. `i += 1` | `set_var` |
-| `OpCmpIntVVJump` / `VCJump` | an `if` or loop test and its jump | `gen_if_test` |
-| `OpTextWalkStep` | the step of `for c in T` | `hoist::char_walks` (native's `(R-CharWalk)` matcher) |
-| `OpTextNullJump`, `OpTextEndJump` | a text walk's two end tests | `emit_text_end_test` |
-| `OpVecGetInt[Nullable]`, `OpVecSetInt` | an integer element of a local vector at a local index | `emit_fused_vec` |
-| `OpVecEndJump` | `for x in v`'s end test | `gen_if_test` |
-
-A position operand is taken at the stack height the op STARTS at, and a fused op whose
-generated body pops a value first takes its local positions before that value is pushed;
-both are the defects the guard's planted-defect cells catch.  The shapes were chosen from
-`LOFT_OP_NGRAMS`, the statically adjacent operator runs over the bench lanes (PROFILING.md).
-
-What these buy is constant-factor speed on work that already runs in cache.  Over the 79 bench
-routines (`bench/stats.py --lanes interp`, one binary, each path switched off with its
-`LOFT_NO_*` switch, fusion on throughout, every routine's output hash identical): the fast
-stack path and the lean loop together **2.4×** (median; interquartile 1.95–3.6×, range
-1.1–4.7×), the direct stack path alone 2.2×, the lean loop alone 1.3×.  The fusion above
-adds its own share on top (`LOFT_NO_FUSE=1` is its switch); up to 5.2× on text walks.
-Measured the same way, **none of it changed a single store operation** — which is why the
-next work is in the section below, not in more fusion.
-
-### Store work: interpreter against native
-
-`LOFT_STORE_CENSUS=<file>` (PROFILING.md) counts, at the chokepoints both backends share,
-stores created and freed, records claimed, deleted, grown and relocated, and the bytes block
-copies and text writes move — one line per `ticks()` call, so a bench routine's work is the
-difference between the two lines around its timed loop.  Build the interpreter and the native
-program against the `op-census` feature (the counters are compiled only there):
-
-```bash
-cargo build --release --lib --bin loft --features op-census --target-dir target/op-census
-LOFT_STORE_CENSUS=i.tsv target/op-census/release/loft --interpret bench.loft --n 2
-target/op-census/release/loft --native-emit n.rs --lean bench.loft
-rustc -C opt-level=3 --edition=2024 --extern loft=target/op-census/release/libloft.rlib \
-      -L target/op-census/release/deps -o n n.rs && LOFT_STORE_CENSUS=n.tsv ./n --n 2
-```
-
-Measured on `14_stdlib_vector`, per op (interpreter / native):
-
-| routine | claims | grows | relocations | bytes relocated |
-|---|--:|--:|--:|--:|
-| `push` | 4 / 1 | 4 / 0 | 4 / 0 | 81,526 / 0 |
-| `record_append` | 3 / 2 | 6 / 0 | 1 / 0 | 233,380 / 0 |
-| `grid` | 392 / 137 | 260 / 4 | 4 / 4 | 1,210 / 824 |
-| `copy`, `remove_front` | equal | equal | equal | equal — shared runtime work |
-| element reads and writes | none | none | none | none on either side |
-
-The interpreter's extra store work is **vector growth**: native sizes a vector it fills once
-(`(R-Push)`, `(R-PushFill)`, `(R-PushRec)`) where the interpreter grows it step by step and
-relocates the data on each step.  Those rules are the first candidates for the IR phase.
-
-### Function calls
-
-`fn_call` pushes the return address onto the stack and jumps `code_pos` to the callee. The
-callee's locals live above the caller's on the same flat stack record — there is no frame
-allocation. A return slides the return value down with `copy_block`, which the store census
-counts as copied bytes (8 per integer return).
+The interpreter's execution model is [INTERPRETER_PERFORMANCE.md](INTERPRETER_PERFORMANCE.md):
+why it is optimised at all, the dispatch loop, stack access, operand fusion, its store work
+against native, calls, and how to measure an interpreter change (pin the layout first).
 
 ---
 
@@ -814,7 +762,6 @@ design of each is in the record; the delivered items are listed below the table.
 
 | Item | Backend | Open because | Design |
 |---|---|---|---|
-| **P2** — stack raw-pointer cache, the interpreter half | interpreter | the native half ships (loft#885); the interpreter half carries memory-model risk and a bounded gain | [§ Design: P2](PERFORMANCE-history.md#design-p2--reduce-store-indirection-on-the-stack) |
 | **P3** — integer paths carry no `long` sentinel | both | no audit test exists | [§ Design: P3](PERFORMANCE-history.md#design-p3--confirm-integer-paths-carry-no-long-sentinel) |
 | **P4** — block-copy slice materialisation | both | `OpAppendVectorSlice` does not exist | [§ Design: P4](PERFORMANCE-history.md#design-p4--block-copy-slice-materialisation-for-primitive-vectors) |
 | **P7** — `shrink_to_fit(v)` | both | `reserve` ships; `shrink_to_fit` does not | [§ Open work](PERFORMANCE-history.md#open-work) |
@@ -826,11 +773,12 @@ design of each is in the record; the delivered items are listed below the table.
 | **O8.1b / O8.2 / O8.3** — packed bytes, bulk struct vectors, zero-fill defaults | both | "not started" in O8's phase table | [§ Design: O8](PERFORMANCE-history.md#design-o8--bulk-initialisation-of-constant-data) |
 | **Worker clone** — `Stores::types` / `names` copied per `par` worker | parallel | the fields are not `Arc`-wrapped | [§ Runtime optimisation audit](PERFORMANCE-history.md#runtime-optimisation-audit) |
 
-**Delivered, for reference:** P1 (operand fusion — [§ Operand fusion](#operand-fusion--superinstructions)), N4 (`cr_call_push` suppressed on `#pure` leaves), N6 (no rustc
+**Delivered, for reference:** P1 (operand fusion — [INTERPRETER_PERFORMANCE.md § Operand fusion](INTERPRETER_PERFORMANCE.md#operand-fusion--superinstructions)), N4 (`cr_call_push` suppressed on `#pure` leaves), N6 (no rustc
 probe on a cache hit), F1 (the front end's hot spots), F2 (the allocation gate's two pins), BUILD1 (no lib/bin double compile),
 BUILD2 (the native-test binary cache), P5/P6 (amortised vector growth, free-block coalescing),
 P7's `reserve`, O8's `const_eval`, pre-allocated vector literals and constant range
-comprehensions, P2's native half, and the startup cache.
+comprehensions, P2's native half and its interpreter half (formal/rewrites.md `(R-StackBase)`),
+and the startup cache.
 
 The two measurement notes that invalidate naïve numbers: `loft --native` compiles a
 SEMANTICS build — measure what ships with `--native-release` or a performance lane (CLAUDE.md

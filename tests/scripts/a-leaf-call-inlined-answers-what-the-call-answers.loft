@@ -1,0 +1,181 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A leaf call replaced by its body answers what the call answers, and the reductions the
+// body then admits change no value.  `@FR-R-InlineLeaf`, `@FR-R-MaskRange`,
+// `@FR-R-SingleUse`, `@FR-R-ScaleFold`.
+//
+// The IR phase replaces a call of a scalar leaf — one block of assignments and a result,
+// operators only — by its body over fresh locals, a literal argument substituted.  Inside
+// that body it then drops a mask whose operand already fits it, the `??` of a division that
+// cannot be null, the store of a value read once just after, and folds a power-of-two scale
+// into a literal divisor.  Every one of those is a claim about values, so the cells sit
+// where each must NOT fire as much as where it does:
+//
+//   - the hash itself, by literal arguments (the rules all fire), by a variable argument,
+//     and by a null argument — where the `??` is what answers, so it must stay;
+//   - a parameter the body reassigns (never substituted by its literal), and a local the
+//     result reads twice (kept, not substituted into one of the reads);
+//   - a literal fold that would overflow (left to the operator, which answers null);
+//   - a mask its operand exceeds; a xor with a negative operand; a mask not of the form
+//     `2^k - 1`, which `a & lit` does not leave alone even inside the range;
+//   - a `??` over a value that can be null;
+//   - a scale by 3 (no power of two) and by a divisor whose half is subnormal;
+//   - argument evaluation order, with arguments that write;
+//   - a tuple result of scalars built by an `if` chain, both elements read, in a loop; and a
+//     tuple holding text, which stays a call (the language makes it a record with a result
+//     buffer, `__tuple<integer,text>`, so it never reaches the tuple clause).
+//
+// Expected values are computed by hand (Python over the same integer and IEEE rules).
+//
+// @falsified-at: none — it guards a pass no earlier build has, so no control fails it.
+//   Falsified instead by planted defects, 2026-10-01, each failing its own cell: a reassigned
+//   parameter substituted (a panic in the remap); arguments bound in reverse (the order cell
+//   reads [2,1]); a mask that is not all ones removed (`part(k)` reads 5); the fallback dropped
+//   without the non-null proof (the null-seed hash reads null); single use with two reads (a
+//   panic on the stale local); a scale by 3 folded (`third(9)` reads ...568 for ...577); a
+//   xor ranged with a negative operand (`negxor` reads -2).  `tests/leaf_inline.rs` pins where
+//   each rule fires.
+
+pub fn seed_hash(hseed: integer, hidx: integer, hsalt: integer) -> float {
+  hx = ((hseed * 73856093) ^ (hidx * 19349663) ^ (hsalt * 83492791)) & 0xFFFFFFFF;
+  hx = (hx ^ (hx >> 13)) & 0xFFFFFFFF;
+  hx = (hx * 1274126177) & 0xFFFFFFFF;
+  ((hx as float) / 4294967295.0 ?? 0.0) * 2.0 - 1.0
+}
+
+fn shifted(a: integer, b: integer) -> integer {
+  a = a * 2;
+  a + b
+}
+
+fn masked(x: integer) -> integer {
+  (x * 19349663) & 0xFFFFFFFF
+}
+
+fn negxor(x: integer) -> integer {
+  ((0 - 5) ^ (x >> 1)) & 0xFFFFFFFF
+}
+
+fn part(x: integer) -> integer {
+  (x & 7) & 6
+}
+
+fn halfnull(x: integer) -> float {
+  ((x as float) / 4.0 ?? 0.0) * 2.0 - 1.0
+}
+
+fn third(x: integer) -> float {
+  (x as float) / 7.0 * 3.0
+}
+
+fn tiny(x: integer) -> float {
+  (x as float) / 0.00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001 * 2.0
+}
+
+fn twice(a: integer) -> integer {
+  t = a * 3;
+  t + t
+}
+
+fn step(q: integer, r: integer, d: integer) -> (integer, integer) {
+  odd = r & 1;
+  if d == 0 { (q + 1, r) } else if d == 1 { (q - 1, r) } else { (q + odd, r - 1) }
+}
+
+fn named(q: integer) -> (integer, text) {
+  (q, "n{q}")
+}
+
+fn pair(a: integer, b: integer) -> integer {
+  a * 10 + b
+}
+
+fn tally(log: &vector<integer>, k: integer) -> integer {
+  log += [k];
+  k
+}
+
+fn test_the_hash_by_literal_arguments() {
+  assert(seed_hash(1, 12345, 7) == -0.5691349235291441, "one {seed_hash(1, 12345, 7)}");
+  acc = 0.0;
+  for i in 0..1000 {
+    acc += seed_hash(1, i, 7);
+  }
+  assert((acc * 1000000.0) as integer == -17577640, "sum {(acc * 1000000.0) as integer}");
+}
+
+fn test_the_hash_by_variable_arguments() {
+  s = 3;
+  t = 9;
+  assert(seed_hash(s, 77, t) == 0.48328489891329895, "variables {seed_hash(s, 77, t)}");
+}
+
+fn test_the_hash_of_a_null_seed_is_its_fallback() {
+  v: vector<integer> = [];
+  n = v[3];
+  assert(seed_hash(n, 1, 7) == -1.0, "null seed {seed_hash(n, 1, 7)}");
+}
+
+fn test_a_reassigned_parameter_is_never_substituted() {
+  assert(shifted(3, 4) == 10, "shifted {shifted(3, 4)}");
+}
+
+fn test_masks_that_must_stay() {
+  assert(masked(100000) == 2231016800, "masked {masked(100000)}");
+  assert(negxor(10) == 4294967294, "negxor {negxor(10)}");
+  assert(part(5) == 4, "part {part(5)}");
+  k = 5;
+  assert(part(k) == 4, "part of a ranged local {part(k)}");
+}
+
+fn test_a_value_read_twice_is_kept() {
+  assert(twice(4) == 24, "twice {twice(4)}");
+}
+
+fn test_a_fallback_over_a_possible_null_stays() {
+  v: vector<integer> = [];
+  assert(halfnull(v[0]) == -1.0, "null {halfnull(v[0])}");
+  assert(halfnull(10) == 4.0, "ten {halfnull(10)}");
+}
+
+fn test_scales_that_do_not_fold() {
+  assert(third(10) == 4.285714285714286, "third {third(10)}");
+  assert(third(9) == 3.8571428571428577, "third of 9 {third(9)}");
+  assert(tiny(0) == 0.0, "tiny {tiny(0)}");
+}
+
+fn test_a_tuple_result() {
+  a = step(5, 3, 0);
+  b = step(5, 3, 1);
+  c = step(5, 3, 2);
+  assert(a.0 == 6 && a.1 == 3 && b.0 == 4 && c.0 == 6 && c.1 == 2, "tuple {a.0} {a.1} {b.0} {c.0} {c.1}");
+  t = 0;
+  for d in 0..3 {
+    p = step(10, 4, d);
+    t += p.0 * 10 + p.1;
+  }
+  assert(t == 311, "tuple in a loop {t}");
+  m = named(7);
+  assert(m.0 == 7 && m.1 == "n7", "a tuple holding text stays a call {m.0} {m.1}");
+}
+
+fn test_arguments_evaluate_in_order() {
+  log: vector<integer> = [];
+  r = pair(tally(log, 1), tally(log, 2));
+  assert(r == 12 && "{log}" == "[1,2]", "order {r} {log}");
+}
+
+fn main() {
+  test_the_hash_by_literal_arguments();
+  test_the_hash_by_variable_arguments();
+  test_the_hash_of_a_null_seed_is_its_fallback();
+  test_a_reassigned_parameter_is_never_substituted();
+  test_masks_that_must_stay();
+  test_a_value_read_twice_is_kept();
+  test_a_fallback_over_a_possible_null_stays();
+  test_scales_that_do_not_fold();
+  test_arguments_evaluate_in_order();
+  test_a_tuple_result();
+  println("ok");
+}

@@ -68,7 +68,13 @@ fn section<'a>(text: &'a str, name: &str) -> &'a str {
 
 fn store_mints(mode: &str, env: &[(&str, &str)]) -> usize {
     let mut cmd = loft();
-    cmd.arg(mode).arg(cells()).env("LOFT_TRACE_DB", "1");
+    // The interpreter's OWN mints: a compiled standard-library body (@PLN181) mints natively,
+    // where this trace does not count, so the census would move with the compiled set rather
+    // than with the pool it measures.
+    cmd.arg(mode)
+        .arg(cells())
+        .env("LOFT_TRACE_DB", "1")
+        .env("LOFT_NO_COMPILED_STDLIB", "1");
     with_env(&mut cmd, env);
     let out = cmd.output().expect("spawn loft");
     assert!(
@@ -305,7 +311,10 @@ fn the_store_census_drops() {
         (i_on, i_off, n_on, n_off),
         // 2026-09-29: `(R-ExitVector)` claims four local vectors' wrappers in their return
         // buffers' stores (four mints fewer on each backend, same on and off the pool).
-        (190, 299, 166, 265),
+        // 2026-09-30: a LIFTED call result adopts the callee's minted store as a named bind
+        // does (`Scopes::lift_set`, `tests/lift_adopt.rs`): the copy's store per lifted
+        // minted call goes — seven fewer pooled and four fewer unpooled, on each backend.
+        (183, 295, 159, 261),
         "mints (interpret on, off, native on, off)"
     );
 }

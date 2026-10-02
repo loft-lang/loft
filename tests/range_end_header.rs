@@ -33,6 +33,9 @@ fn emit(off: bool) -> String {
         .arg(&out)
         .arg(&src)
         .env("LOFT_TIMEOUT", "120")
+        // The native rule, read with the loop kernels off: with them on (@PLN180 § Kernels)
+        // `empty_sum`'s loop is one `vector_sum_int` call and has no range end to test.
+        .env("LOFT_NO_LOOP_KERNELS", "1")
         .env_remove("LOFT_NO_RANGE_END_HEADER");
     if off {
         cmd.env("LOFT_NO_RANGE_END_HEADER", "1");

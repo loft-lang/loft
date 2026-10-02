@@ -220,9 +220,16 @@ const STORE_BORROWS: [(&str, &[&str], &[&str]); 7] = [
 
 #[test]
 fn a_parameters_text_is_borrowed_while_the_frame_writes_only_stores_it_minted() {
-    let rust = emit_cells(STORE_CELLS, "store", &[]);
-    for (name, temps, locals) in STORE_BORROWS {
-        let b = body(&rust, name);
+    // The temps are asked of the emission that still HAS them: `@FR-R-DischargeInto` reads a
+    // statement's discharge straight into its local, so with it on a temp binding `w` is gone
+    // and the local carries the borrow alone (the locals are asked of both emissions below).
+    let kept = emit_cells(
+        STORE_CELLS,
+        "store_kept",
+        &[("LOFT_NO_DISCHARGE_INTO", "1")],
+    );
+    for (name, temps, _) in STORE_BORROWS {
+        let b = body(&kept, name);
         for t in temps {
             assert_eq!(
                 count(b, &format!("let var_{t}: &str = ")),
@@ -230,17 +237,22 @@ fn a_parameters_text_is_borrowed_while_the_frame_writes_only_stores_it_minted() 
                 "{name}: the discharge temp `{t}` binds the parameter's text as a `&str`"
             );
         }
-        for l in locals {
-            assert_eq!(
-                count(b, &format!("let mut var_{l}: &str = ")),
-                1,
-                "{name}: the local `{l}` is a `&str` slot"
-            );
-            assert_eq!(
-                count(b, &format!("var_{l}.clone()")) + count(b, &format!("&var_{l}")),
-                0,
-                "{name}: `{l}` is read bare and never copied"
-            );
+    }
+    let rust = emit_cells(STORE_CELLS, "store", &[]);
+    for (name, _, locals) in STORE_BORROWS {
+        for b in [body(&kept, name), body(&rust, name)] {
+            for l in locals {
+                assert_eq!(
+                    count(b, &format!("let mut var_{l}: &str = ")),
+                    1,
+                    "{name}: the local `{l}` is a `&str` slot"
+                );
+                assert_eq!(
+                    count(b, &format!("var_{l}.clone()")) + count(b, &format!("&var_{l}")),
+                    0,
+                    "{name}: `{l}` is read bare and never copied"
+                );
+            }
         }
     }
     // The bench shape: `w = words[i]?` copies the element neither at the read nor at the

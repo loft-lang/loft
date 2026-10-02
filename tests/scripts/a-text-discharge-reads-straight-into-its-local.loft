@@ -1,0 +1,69 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A text discharge that assigns a local is read straight into that local, and answers what
+// the temporary answered.  `@FR-R-DischargeInto`.
+//
+// `w = v[i] ?? d` reads the element into a temporary, tests it, copies it into `w` and frees
+// it.  The rewrite reads into `w` and tests `w`.  It is exact only when `w` appears in neither
+// the read nor the default: assigning a text clears it first, so a read of `w` would see it
+// emptied, and the default would see the read instead of `w`'s old value.  So the cells put
+// the two side by side: in range, out of range, a named default, a loop of binds — and a read
+// indexed by `len(w)` and a default built from `w`, which must keep their temporaries
+// (`tests/discharge_into.rs` pins which functions are rewritten).  Every value by hand.
+//
+// @falsified-at: none — it guards a rewrite no earlier build has.  Falsified by planted defects,
+//   2026-10-02: the null test inverted (`[]` for `[yy]`) and the default dropped (`[null]` for
+//   `[]`), both silent.  The two target cells are defensive: the parser routes them elsewhere.
+
+fn bind(v: const vector<text>, i: integer) -> text {
+  w = v[i] ?? "";
+  "[{w}]"
+}
+
+fn named_default(v: const vector<text>, i: integer) -> text {
+  w = v[i] ?? "none";
+  w
+}
+
+fn lengths(v: const vector<text>, n: integer) -> integer {
+  t = 0;
+  for i in 0..n {
+    w = v[i % 4] ?? "";
+    t += len(w);
+  }
+  t
+}
+
+fn read_names_the_target(v: const vector<text>) -> text {
+  w = "ab";
+  w = v[len(w)] ?? "";
+  w
+}
+
+fn default_names_the_target(v: const vector<text>) -> text {
+  w = "old";
+  w = v[9] ?? "{w}!";
+  w
+}
+
+fn test_reads_straight_in() {
+  v = ["x", "yy", "zzz"];
+  assert(bind(v, 1) == "[yy]", "in range {bind(v, 1)}");
+  assert(bind(v, 7) == "[]", "out of range {bind(v, 7)}");
+  assert(named_default(v, 2) == "zzz" && named_default(v, 5) == "none", "named default");
+  // i % 4 over 0..10: indexes 0,1,2,3 ×2, 0,1 → lengths 1+2+3+0 twice, then 1+2.
+  assert(lengths(v, 10) == 15, "a loop of binds {lengths(v, 10)}");
+}
+
+fn test_the_target_in_the_read_or_the_default() {
+  v = ["x", "yy", "zzz"];
+  assert(read_names_the_target(v) == "zzz", "read by len(w) {read_names_the_target(v)}");
+  assert(default_names_the_target(v) == "old!", "default from w {default_names_the_target(v)}");
+}
+
+fn main() {
+  test_reads_straight_in();
+  test_the_target_in_the_read_or_the_default();
+  println("ok");
+}

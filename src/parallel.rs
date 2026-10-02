@@ -63,6 +63,9 @@ pub struct WorkerProgram {
     /// `&Data` held by the spawning frame, which outlives `thread::scope`.
     pub data_ptr: crate::data_ref::DataRef,
     pub fn_positions: Arc<Vec<u32>>,
+    /// `@FR-R-FrameHeadroom` — the parent's per-function frame heights: a worker pushes
+    /// frames of the same functions, through the same direct-path operators.
+    pub frame_headroom: Arc<Vec<u32>>,
     /// Source-line lookup table (bytecode position → source line) shared from
     /// the parent State.  Workers populate `State::line_numbers` from this so
     /// `stack_trace()` can resolve real source lines instead of always
@@ -101,6 +104,7 @@ impl WorkerProgram {
         // a parallel worker can resolve the worker's d_nr → name/file/line.
         state.data_ptr = self.data_ptr.clone();
         state.fn_positions.clone_from(&*self.fn_positions);
+        state.frame_headroom = Arc::clone(&self.frame_headroom);
         state.line_numbers = (*self.line_numbers).clone();
         state
     }

@@ -184,6 +184,8 @@ impl Program {
     /// parse / compile.
     pub fn from_source_with_stdlib(source: &str, stdlib_dir: &str) -> Result<Program, LoftError> {
         let mut p = parser::Parser::new();
+        // Parsed against again after compiling: no whole-program signature rewrite.
+        p.data.open_world = true;
         p.parse_stdlib(stdlib_dir)
             .map_err(|e| LoftError::Parse(format!("cannot read stdlib at {stdlib_dir}: {e}")))?;
         p.parse_str(source, "<host>", false);
@@ -210,6 +212,8 @@ impl Program {
         stdlib_dir: &std::path::Path,
     ) -> Result<Program, LoftError> {
         let mut p = parser::Parser::new();
+        // Parsed against again after compiling: no whole-program signature rewrite.
+        p.data.open_world = true;
         p.parse_stdlib(&stdlib_dir.to_string_lossy()).map_err(|e| {
             LoftError::Parse(format!(
                 "cannot read stdlib at {}: {e}",

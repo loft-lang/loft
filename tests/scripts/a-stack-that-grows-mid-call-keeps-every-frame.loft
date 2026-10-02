@@ -1,0 +1,105 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A stack that grows while frames are live keeps every frame's values.  `@FR-R-StackBase`.
+//
+// The interpreter addresses its stack through a base pointer cached in `State`, so a stack
+// access is one add rather than three dependent loads.  The buffer that pointer names moves
+// when the stack grows (`grow_stack`), when a `par` worker claims its text work buffers in the
+// stack store (`claim_in_stack`) and on a debugger's checkpoint restore — each re-derives the
+// pointer — and every other buffer move refuses the stack store.  A missed re-derivation reads
+// and writes the OLD buffer: the frames below the growth read stale bytes and the frames above
+// it write where no one looks.
+//
+// So each cell grows the stack many times over with frames still live beneath: a recursion
+// 3000 deep whose frames hold five integers and a text, each re-read AFTER the recursive call
+// returns; one whose frames hold a vector built before the call and read after it; and one whose
+// frames write a local through a `&` reference after the call and read it back — the cell that
+// mixes the two ways to a slot (the store's path names the current buffer, the fast path the
+// cached one).  And a `par` worker that returns text, which claims in the stack store.
+//
+// @falsified-at: none — it guards a cache no earlier build has, so no control fails it.
+//   Falsified instead by planted defects, 2026-10-01: `grow_stack` not re-deriving the base
+//   aborts the run (heap corruption: the fast path keeps writing the freed buffer), exit 134.
+//   `claim_in_stack` not re-deriving it fails `par_nested`'s text-returning worker.  The
+//   checkpoint restore's re-derivation is `rpc.rs`'s continue-after-step-back cell; the
+//   refusal of every other buffer move is `store::tests::a_claim_that_grows_the_stack_store_is_refused`.
+//   LESSON: a stale base is invisible while only the fast path uses it — the freed buffer
+//   still holds what the fast path wrote — so a cell has to reach the same slot both ways.
+
+fn deep(n: integer) -> integer {
+  a = n;
+  b = a + 1;
+  c = b + 1;
+  d = c + 1;
+  e = d + 1;
+  t = "v{n}";
+  if n == 0 {
+    return 0;
+  }
+  r = deep(n - 1);
+  wrong = if t == "v{n}" && e - a == 4 && c == n + 2 { 0 } else { 1000000000 };
+  r + a + wrong
+}
+
+fn deep_vec(n: integer) -> integer {
+  v = [n, n * 2, n * 3];
+  if n == 0 {
+    return 0;
+  }
+  r = deep_vec(n - 1);
+  r + v[2] - v[1]
+}
+
+fn bump(x: &integer) {
+  x += 7;
+}
+
+// After the stack has grown beneath it, a frame writes its own local THROUGH a `&` reference —
+// the store's path, which always names the current buffer — and reads it back the fast way,
+// through the cached base.  A base left on the old buffer reads the value from before the write.
+fn deep_ref(n: integer) -> integer {
+  a = n;
+  if n == 0 {
+    return 0;
+  }
+  r = deep_ref(n - 1);
+  bump(a);
+  r + a - 7
+}
+
+fn label(x: integer) -> text {
+  "w{x}"
+}
+
+fn test_deep_frames_survive_growth() {
+  assert(deep(3000) == 4501500, "deep {deep(3000)}");
+  assert(deep(10) == 55, "shallow {deep(10)}");
+}
+
+fn test_deep_vector_frames_survive_growth() {
+  assert(deep_vec(2000) == 2001000, "deep_vec {deep_vec(2000)}");
+}
+
+fn test_a_reference_write_after_growth_is_read_back() {
+  assert(deep_ref(3000) == 4501500, "deep_ref {deep_ref(3000)}");
+}
+
+fn test_a_par_worker_returning_text() {
+  v = [1, 2, 3, 4, 5, 6];
+  n = 0;
+  total = 0;
+  for e in v par(r = label(e), 2) {
+    n += 1;
+    total += len(r);
+  }
+  assert(n == 6 && total == 12, "par text {n} {total}");
+}
+
+fn main() {
+  test_deep_frames_survive_growth();
+  test_deep_vector_frames_survive_growth();
+  test_a_reference_write_after_growth_is_read_back();
+  test_a_par_worker_returning_text();
+  println("ok");
+}

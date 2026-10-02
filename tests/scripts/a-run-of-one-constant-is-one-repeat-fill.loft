@@ -1,0 +1,123 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-RepeatRun` — four or more equal constants spelled out in a vector literal are the
+// repeat literal: one push of the template and one doubling fill (`OpAppendCopy`), not one
+// append per element.
+//
+// The fill copies the vector's LAST element — the template — `count - 1` more times, so
+// elements appended before the run stay where they were.  Every cell answers the same with
+// `LOFT_NO_REPEAT_RUN=1`, and that A/B is the falsifier together with the pin
+// (`tests/repeat_run.rs`).  Every value is hand-computed and checked by length AND content.
+//
+// @falsified-at: none — the rule has no earlier build to catch, so the receipt is a SABOTAGE
+//   (2026-10-02): with the fill handed `count - 1` for its total, r1 fails on both backends —
+//   the matrix reads 15 elements for 16.
+//   CHANNEL: the VALUE channel (an assertion) on both backends.
+//   HOLDS: leak, panic and free-refusal are equal on both trees and clean here.
+
+struct M { m: vector<float> }
+
+struct Outer { inner: V, k: integer }
+
+struct V { xs: vector<integer> }
+
+fn zero() -> M {
+  M { m: [
+    0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+    0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+  ] }
+}
+
+fn fsum(v: vector<float>) -> float {
+  s = 0.0;
+  for x in v { s += x; }
+  s
+}
+
+fn isum(v: vector<integer>) -> integer {
+  s = 0;
+  for x in v { s += x; }
+  s
+}
+
+// a record field: the matrix library's zero result
+fn r1() {
+  z = zero();
+  assert(len(z.m) == 16 && fsum(z.m) == 0.0, "r1 got {z.m}");
+  z.m[15] = 2.5;
+  assert((z.m[15] ?? 0.0) == 2.5 && (z.m[14] ?? 1.0) == 0.0, "r1 write {z.m}");
+}
+
+// a local
+fn r2() {
+  v: vector<float> = [1.5, 1.5, 1.5, 1.5, 1.5];
+  assert(len(v) == 5 && fsum(v) == 7.5, "r2 got {v}");
+}
+
+// onto a filled vector, after a different element
+fn r3() {
+  v: vector<integer> = [9];
+  v += [1, 2, 2, 2, 2, 2];
+  assert(len(v) == 7 && isum(v) == 20 && (v[0] ?? 0) == 9 && (v[1] ?? 0) == 1 && (v[6] ?? 0) == 2,
+         "r3 got {v}");
+}
+
+// three equal elements stay pushes
+fn r4() {
+  v: vector<integer> = [4, 4, 4];
+  assert(len(v) == 3 && isum(v) == 12, "r4 got {v}");
+}
+
+// two runs in one literal
+fn r5() {
+  v: vector<integer> = [1, 1, 1, 1, 0, 0, 0, 0, 0];
+  assert(len(v) == 9 && isum(v) == 4 && (v[3] ?? 0) == 1 && (v[4] ?? 9) == 0, "r5 got {v}");
+}
+
+// a different constant in the middle breaks the run into pieces
+fn r6() {
+  v: vector<float> = [0.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0, 0.0];
+  assert(len(v) == 9 && fsum(v) == 3.0 && (v[4] ?? 0.0) == 3.0 && (v[8] ?? 1.0) == 0.0, "r6 got {v}");
+}
+
+// a nested field path as the target
+fn r7() {
+  o = Outer { inner: V { xs: [7, 7, 7, 7, 7, 7] }, k: 3 };
+  assert(len(o.inner.xs) == 6 && isum(o.inner.xs) == 42 && o.k == 3, "r7 got {o.inner.xs}");
+}
+
+// single precision
+fn r8() {
+  v: vector<single> = [0.5f, 0.5f, 0.5f, 0.5f];
+  assert(len(v) == 4 && (v[3] ?? 0.0f) == 0.5f, "r8 got {v}");
+}
+
+// a computed element keeps its pushes
+fn r9() {
+  t = 0;
+  for i in 0..3 {
+    w: vector<integer> = [i, i, i, i];
+    t += isum(w);
+  }
+  assert(t == 12, "r9 got {t}");   // 0 + 4 + 8
+}
+
+// a run built many times: nothing accumulates
+fn r10() {
+  t = 0.0;
+  for _ in 0..20000 { t += fsum(zero().m) + 1.0; }
+  assert(t == 20000.0, "r10 got {t}");
+}
+
+// a long run
+fn r11() {
+  v: vector<integer> = [3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+                        3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3];
+  assert(len(v) == 40 && isum(v) == 120 && (v[39] ?? 0) == 3, "r11 got {len(v)} {isum(v)}");
+}
+
+fn main() {
+  r1(); r2(); r3(); r4(); r5(); r6(); r7(); r8(); r9(); r10(); r11();
+  println("done");
+}

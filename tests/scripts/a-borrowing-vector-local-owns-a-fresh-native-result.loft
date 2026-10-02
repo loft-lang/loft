@@ -1,0 +1,74 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// `@FR-O-Owner` — A VECTOR LOCAL THAT BORROWS SOMEWHERE STILL FREES A FRESH NATIVE RESULT.  A
+// literal bind (`p = ["z"]`) makes `p` a view of the record that holds the literal, and a local
+// has ONE type, so once it borrows at any bind, nothing frees what it holds at any bind.  A
+// rebind to a native's fresh store (`p = j.keys()`), or a first bind to one followed by a
+// literal, left that store to nobody: one store per evaluation, on both backends, unbounded in a
+// loop.  Each such bind now hands its store to an owner of its own, declared at the frame's top.
+//
+// The `after the branch` cells read `p` after a branch rebound it to a literal and after another
+// literal was built: an earlier cure gave `p` two deps, the block-confinement pass then freed the
+// literal's record at the branch's end, and `p` answered `1 k k` where `2 x k` is owed.
+//
+// The last cells are controls that were right before: a literal rebind, and a loft function's
+// result, which arrives in its own caller buffer.
+//
+// @falsified-at: a401738f4 — interpret leaked kt=65535 ?×45 -> clean, native leaked kt=65535 ?×45 -> clean
+// @falsified-by: tests/falsified/a-borrowing-vector-local-owns-a-fresh-native-result.patch — interpret
+//   leaked kt=65535 ?×45 -> clean, native leaked kt=65535 ?×45 -> clean
+// CHANNEL: the leak check alone, on both backends — the values are right on both trees, which is
+//   why they are asserted (the first cure of this defect moved a VALUE, `after the branch`).
+// ARMED: the harness's store census at exit, which names each store left behind by type.
+// WITNESS: 45 stores left on the control, each a native's `vector<text>` that a borrowing local
+//   took and nothing freed (`kt=65535` is the census's untyped main vector).
+// HOLDS: exit, assertions, panic, refusals and expectations are unmoved on both trees.
+
+fn jv() -> JsonValue { json_parse("{{\"k1\":1,\"k2\":2,\"k3\":3}}") }
+fn mk() -> vector<text> { r: vector<text> = []; r += ["q1"]; r += ["q2"]; r }
+
+fn main() {
+  j = jv();
+  p = ["z"];
+  p = j.keys();
+  assert(p.len() == 3 && p[0] == "k1", "a literal, then a native: {p.len()}");
+  b = ["z"];
+  if j.keys().len() == 3 { b = j.keys(); }
+  assert(b.len() == 3, "a native in a taken branch: {b.len()}");
+  n = ["z"];
+  if j.keys().len() == 4 { n = j.keys(); }
+  assert(n.len() == 1 && n[0] == "z", "a native in a branch not taken: {n.len()}");
+  // 20 rebinds of one local.
+  l = ["z"];
+  for _i in 0..20 { l = j.keys(); l += ["x"]; }
+  assert(l.len() == 4, "a rebind per iteration: {l.len()}");
+
+  r = j.keys();
+  if r.len() == 3 { r = ["x", "y"]; }
+  q = ["k"];
+  assert(r.len() == 2 && r[0] == "x" && q[0] == "k", "after the branch, a literal: {r.len()} {r[0]} {q[0]}");
+  s = j.keys();
+  if s.len() == 4 { s = ["x", "y"]; }
+  q2 = ["k"];
+  assert(s.len() == 3 && s[0] == "k1" && q2[0] == "k", "after the branch, not taken: {s.len()} {s[0]}");
+  // 10 iterations: the even ones rebind to two elements, the odd ones keep three.
+  t = 0;
+  for i in 0..10 { u = j.keys(); if i % 2 == 0 { u = ["x", "y"]; } t += u.len(); }
+  assert(t == 25, "a literal over a native, per iteration: {t}");
+
+  // `vector<text>?` is the same store (`@FR-N-Shape`): 10 rebinds, and a first bind a literal
+  // displaces in a branch.
+  np: vector<text>? = ["z"];
+  for _i in 0..10 { np = j.keys(); }
+  nq: vector<text>? = j.keys();
+  if nq?.len() == 3 { nq = ["x", "y"]; }
+  nr = ["k"];
+  assert(np?.len() == 3 && nq?.len() == 2 && nq?[0] == "x" && nr[0] == "k", "the nullable spelling: {np?.len()} {nq?.len()}");
+
+  c = ["z"];
+  c = ["x", "y"];
+  assert(c.len() == 2, "control, a literal rebind: {c.len()}");
+  f = ["z"];
+  if f.len() == 1 { f = mk(); }
+  assert(f.len() == 2 && f[1] == "q2", "control, a loft function's result: {f.len()}");
+}

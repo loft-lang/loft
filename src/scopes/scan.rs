@@ -12,6 +12,7 @@ use super::free_vars::Delivered;
 use super::handoff::collect_drop_transferred;
 use super::insert_free::scope_free_op_var;
 use super::witness::witness_points_at;
+use super::{Adopts, BindShape};
 use crate::data::{Block, Data, Type, Value, v_set};
 use crate::fxhash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use crate::variables::Function;
@@ -543,7 +544,7 @@ impl Scopes<'_> {
                         } else {
                             self.new_lift_var(function, &ret)
                         };
-                        ops.push(v_set(rtmp, call));
+                        ops.push(self.lift_set(rtmp, call, function, data));
                         ops.extend(postamble);
                         ops.push(Value::Var(rtmp));
                     }
@@ -591,7 +592,7 @@ impl Scopes<'_> {
                     {
                         let tmp = self.new_lift_var(function, &tp);
                         let last = ops.pop().unwrap();
-                        ops.push(v_set(tmp, last));
+                        ops.push(self.lift_set(tmp, last, function, data));
                         Value::Insert(ops)
                     } else {
                         Value::Drop(Box::new(Value::Insert(ops)))
@@ -600,7 +601,7 @@ impl Scopes<'_> {
                     self.inline_struct_return(&scanned, data, u32::MAX, function)
                 {
                     let tmp = self.new_lift_var(function, &tp);
-                    v_set(tmp, scanned)
+                    self.lift_set(tmp, scanned, function, data)
                 } else {
                     Value::Drop(Box::new(scanned))
                 }
@@ -830,6 +831,169 @@ impl Scopes<'_> {
     /// function-entry `Set(v, Null)` slot reservation).  The caller emits
     /// the `Set(tmp, call)` itself — as an arg preamble (`scan_args`) or as
     /// the statement replacing a `Drop` (#490).
+    /// The `__ref_N` / `__rref_N` buffers a call hands to a loft-defined callee, paired with
+    /// the variable `v` its result is bound to — the identity-guarded frees `get_free_vars`
+    /// emits (`OpFreeRefIfDistinct`) where the two may alias at run time.  One home for the
+    /// named bind (`scan_set`) and the lifted one (`lift_set`): the pairing is a property of
+    /// the call and its destination, not of how the destination was spelled.
+    pub(super) fn pair_call_buffers(
+        &mut self,
+        v: u16,
+        unspanned_value: &Value,
+        function: &Function,
+        bind: BindShape,
+    ) {
+        let BindShape {
+            adopts,
+            publishes_through_ref,
+            vector_shaped,
+        } = bind;
+        let adopts_fresh_store = adopts == Adopts::Fresh;
+        let adopts_minted = adopts == Adopts::Minted;
+        if (adopts_fresh_store || adopts_minted || publishes_through_ref || vector_shaped)
+            && let Value::Call(_, args) = unspanned_value
+        {
+            for arg in args {
+                let arg_var = match arg.unspan() {
+                    Value::Var(av) => Some(*av),
+                    Value::Set(av, _) => Some(*av),
+                    _ => None,
+                };
+                if let Some(av) = arg_var {
+                    let n = function.name(av);
+                    if n.starts_with("__ref_") || n.starts_with("__rref_") {
+                        // `av`'s scope is inherited from the enclosing
+                        // assignment: `self.scope`.  `v`'s scope was
+                        // just written above.  Only pair when the
+                        // witness `v` lives AT LEAST as long as
+                        // `av` — i.e. `var_scope[v] <= var_scope[av]`.
+                        // Otherwise, when codegen lowers the function
+                        // to Rust, the witness's `let` falls out of
+                        // its block scope before `av`'s OpFreeRef
+                        // fires, and the emitted `var_f.store_nr`
+                        // references a dead name (e.g. `f = file(…,
+                        // __ref_1)` inside a nested `{}` block).
+                        //
+                        // loft#759 — a PARAMETER has no such block to fall
+                        // out of: its `let` is the function signature, so
+                        // it outlives every local including `av`, on both
+                        // backends.  Its `var_scope` entry is written when
+                        // the body first assigns it, which for a set inside
+                        // an `if` reads as INNER-scoped and would route a
+                        // valid witness into the @P378(a) branch below.
+                        let av_scope = self.var_scope.get(&av).copied().unwrap_or(u16::MAX);
+                        let v_scope = self.var_scope.get(&v).copied().unwrap_or(u16::MAX);
+                        // A buffer is never its own witness.  The pairing exists to
+                        // skip the buffer's free when ANOTHER variable adopted its
+                        // store; `__ref_N = f(__ref_N)` has no other variable, and
+                        // the guard then compares the store with itself and never
+                        // frees at all — the buffer's own store leaks (loft#1013,
+                        // where capturing the call's answer into the buffer it was
+                        // handed is what gives the value an owner).
+                        if av == v {
+                            continue;
+                        }
+                        if adopts_minted && !adopts_fresh_store {
+                            self.minted_pairs.insert(av);
+                        }
+                        // A vector admitted here ONLY by the alias case below
+                        // (`!adopts_fresh_store`, no `&`) takes the inner-slot branch
+                        // and nothing else.  Making the BUFFER's own free conditional
+                        // on the slot is the opposite trade and is wrong for it: the
+                        // slot may have no free of its own, and then neither store is
+                        // released.  Measured — widening both branches leaked across
+                        // sixteen suites (loft#1201).
+                        let vector_alias_only =
+                            vector_shaped && !adopts_fresh_store && !publishes_through_ref;
+                        if !vector_alias_only
+                            && ((publishes_through_ref && function.is_argument(v))
+                                || (v_scope <= av_scope && v_scope != u16::MAX))
+                        {
+                            self.paired_witness.entry(av).or_insert(v);
+                        } else if v_scope != u16::MAX && av_scope != u16::MAX && v_scope > av_scope
+                        {
+                            // @P378(a) — witness `v` is INNER-scoped (e.g.
+                            // a loop body) while the `__ref_N` buffer `av`
+                            // is OUTER (function).  The buffer is reserved
+                            // once but `v` (which adopts the buffer's
+                            // store) is freed every iteration; that frees
+                            // the buffer's store, which `find_free_slot`
+                            // then recycles to a callee temp next
+                            // iteration — two OpDatabase targets collide on
+                            // one record (self-referential keyed insert →
+                            // SIGSEGV).  Make `v`'s per-iteration free
+                            // conditional on NOT aliasing the buffer:
+                            // adoption → skip (store stays reserved, freed
+                            // once by the buffer's function-exit OpFreeRef);
+                            // fresh-store → real free.  Scope-safe for
+                            // native because `av` (outer) outlives `v`.
+                            let buffers = self.witness_buffer.entry(v).or_default();
+                            if !buffers.contains(&av) {
+                                buffers.push(av);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// `Set(tmp, call)` for a `__lift_N` temp — the bind of a call result the argument
+    /// scan LIFTED out of its call (`use(mk(n), …)`).
+    ///
+    /// The temp is null-initialised in the function prologue (`lift_vars`), so its one bind
+    /// here read as a REBIND, and a rebind of a record from a callee whose return carries its
+    /// buffer's dep copies where a first bind adopts (`@FR-O-Move`): `pa_text(pa_decode(f),
+    /// "op")` deep-copied the decoded tree into a store minted for the copy and freed the
+    /// callee's, while `d = pa_decode(f); pa_text(d, "op")` took the callee's store as it
+    /// was — 14 % of `check_request`'s profile in one `OpCopyRecord`.  The bind after the
+    /// prologue's null-init is the temp's first on every path (`deferred_first_bind`, the
+    /// fact @PLN164 B1 records for a local behind an `if` pre-init), and the buffer is paired
+    /// for the identity-guarded free exactly as the named bind's is (`pair_call_buffers`).
+    ///
+    /// Only the callee shape that COPIED changes: a fresh (dep-empty) return already adopted
+    /// at the rebind, a borrowed view is never lifted, and a temp `mark_lift_handoff` moved
+    /// into its callee keeps the ownership the move relies on — the temp still owns one store
+    /// exclusively, the callee's mint instead of a copy of it.
+    pub(super) fn lift_set(
+        &mut self,
+        tmp: u16,
+        value: Value,
+        function: &mut Function,
+        data: &Data,
+    ) -> Value {
+        let unspanned = value.unspan();
+        if let Value::Call(fn_nr, _) = unspanned
+            && (*fn_nr as usize) < data.definitions.len()
+            && data.def(*fn_nr).is_loft_defined()
+            && !data.def(*fn_nr).return_adopts_fresh_store()
+            && crate::use_analysis::adopts_minted_at_bind(data, function, tmp, unspanned)
+        {
+            function.mark_deferred_first_bind(tmp);
+            // A temp a copy CONSUMES (`keep += [mk(i)]`: the element copy's source-free bit
+            // releases the temp's store, `mark_lift_handoff`) has no free of its own to guard,
+            // so the buffer is not paired: pairing it in a loop enrolls it in the record-buffer
+            // pool (`reuse_record_buffers` reads `witness_buffer`), and the consuming copy then
+            // released the pooled store every turn — `164-forward-tuple`'s q6 read a freed
+            // record on both backends.  Unpaired, the buffer stays null and the callee mints
+            // per call, which the copy releases: the shape the named form has had all along.
+            if self.drop_transferred.contains(&tmp) || self.free_transferred.contains(&tmp) {
+                return v_set(tmp, value);
+            }
+            self.pair_call_buffers(
+                tmp,
+                unspanned,
+                function,
+                BindShape {
+                    adopts: Adopts::Minted,
+                    publishes_through_ref: false,
+                    vector_shaped: false,
+                },
+            );
+        }
+        v_set(tmp, value)
+    }
+
     pub(super) fn new_lift_var(&mut self, function: &mut Function, tp: &Type) -> u16 {
         self.lift_counter += 1;
         let name = format!("__lift_{}", self.lift_counter);

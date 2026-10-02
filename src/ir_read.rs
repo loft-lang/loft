@@ -507,8 +507,7 @@ pub fn ir_roundtrip_check(data: &Data) -> Result<(), crate::ir_schema::DataDiff>
 /// through it.
 #[cfg(feature = "mmap")]
 fn adopt_read_surface(path: &str, stores: &mut Stores) -> u16 {
-    let mut fstore = crate::store::Store::open(path);
-    fstore.read_only = true;
+    let fstore = crate::store::Store::open_read_surface(path);
     stores.adopt_store(fstore)
 }
 
@@ -683,7 +682,8 @@ pub fn read_definition(stores: &Stores, r: Record, bodies: bool) -> Definition {
         known_type: r.field_int(stores, ds::DEF_KNOWN_TYPE) as u16,
         pub_visible: r.field_bool(stores, ds::DEF_PUB_VISIBLE),
         null_safe: r.field_bool(stores, ds::DEF_NULL_SAFE), // @PLN46 W2
-        builtin: r.field_bool(stores, ds::DEF_BUILTIN),     // @PLN165 arc E
+        op_priority: crate::data::OP_NORMAL,
+        builtin: r.field_bool(stores, ds::DEF_BUILTIN), // @PLN165 arc E
         operator_form: r.field_bool(stores, ds::DEF_OPERATOR_FORM), // @PLN182
         closure_record: r.field_int(stores, ds::DEF_CLOSURE_RECORD) as u32,
         mutated_captures: read_name_list(

@@ -1,0 +1,4 @@
+// finding 013 — the probe reads the largest source file as lines; it holds while that takes
+// longer than the bar (ms, best of 5 by the driver).
+#cwd
+fn main() { n = 0; for l in file("src/parser/mod.rs").lines() { n += 1; } println("{n}"); }

@@ -1,0 +1,2 @@
+// finding 004 — still holds while this is refused (the script library's method shape).
+fn main() { r = "a.txt".copy_to("b.txt"); println("{r == FileResult.Ok}"); }

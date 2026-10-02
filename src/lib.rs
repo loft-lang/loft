@@ -339,7 +339,12 @@ pub mod byte_copy;
 pub mod compact;
 pub mod const_fn;
 pub mod copy_view;
+pub mod discharge_into;
 pub mod exit_vector;
+pub mod forward_walk;
+pub mod in_range;
+pub mod leaf_inline;
+pub mod loop_kernels;
 pub(crate) mod net;
 pub mod ownership_cfg;
 #[cfg(paged_store)]
@@ -348,12 +353,19 @@ pub mod place_result;
 pub mod placement;
 pub mod portable_path;
 pub mod rebind_place;
+pub mod repeat_run;
 pub mod resolution;
 pub mod resolution_scope;
+pub mod return_field;
 pub mod rewrite_census;
+pub mod same_read;
 pub mod scopes;
+pub mod single_use;
 pub mod siphash;
+pub mod slot_alias;
+pub mod text_run;
 pub mod use_analysis;
+pub mod value_record;
 mod variables;
 pub mod vec_copy;
 pub mod vector;
@@ -393,6 +405,7 @@ pub mod git_query;
 pub mod live_dispatch;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod live_reload;
+pub mod process_run;
 pub mod repl;
 pub mod rpc;
 pub mod script;
@@ -410,6 +423,7 @@ pub mod wasm_debug;
 pub use extensions::native_call;
 // @PLN53 F1/F2 — raw-source fuzz oracle + keyed-container generator; available
 // under cargo-fuzz (the `fuzzing` feature) and under `cargo test`.
+pub mod compiled_stdlib;
 #[cfg(any(test, feature = "fuzzing"))]
 pub mod fuzz_keyed;
 #[cfg(any(test, feature = "fuzzing"))]

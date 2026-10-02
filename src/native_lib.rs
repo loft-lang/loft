@@ -615,10 +615,13 @@ pub fn generate_shared_cdylib_lib_rs(
     stores: &Stores,
     export_set: &HashSet<u32>,
 ) -> String {
-    let entry: Vec<u32> = export_set.iter().copied().collect();
+    // Sorted: the artifact's source is then the same bytes for the same set, which a
+    // generated file under a drift guard needs (@PLN181), and a `HashSet`'s order is not.
+    let mut entry: Vec<u32> = export_set.iter().copied().collect();
+    entry.sort_unstable();
     let mut src = emit_program(data, stores, &entry);
     let dups = crate::generation::duplicate_fn_names(data);
-    for &d in export_set {
+    for &d in &entry {
         src.push('\n');
         src.push_str(&shared_bridge_wrapper(data, stores, &dups, d));
     }

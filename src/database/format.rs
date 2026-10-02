@@ -514,11 +514,16 @@ impl Stores {
     /// Build a `vector<text>` from an explicit string slice.
     #[must_use]
     pub fn text_vector(&mut self, args: &[String]) -> DbRef {
+        self.text_vector_of(args.iter().map(String::as_str))
+    }
+
+    /// A fresh `vector<text>` holding `parts`, in order — the one builder the text kernels share.
+    fn text_vector_of<'a>(&mut self, parts: impl Iterator<Item = &'a str>) -> DbRef {
         let vec = self.database(4);
         self.store_mut(&vec).set_u32_raw(vec.rec, vec.pos, 0);
-        for v in args {
+        for part in parts {
             let elm = vector::vector_append(&vec, 4, &mut self.allocations);
-            let s = self.store_mut(&vec).set_str(v.as_str());
+            let s = self.store_mut(&vec).set_str(part);
             self.store_mut(&vec).set_u32_raw(elm.rec, elm.pos, s);
             vector::vector_finish(&vec, &mut self.allocations);
         }

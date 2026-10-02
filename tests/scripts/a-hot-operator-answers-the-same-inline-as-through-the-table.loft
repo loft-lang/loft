@@ -1,0 +1,133 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A `#hot` operator gives the same answer run inline on the lean loop's registers as run
+// through the register table.
+//
+// The lean loop runs a `#hot` operator inline (`fill::dispatch_lean`) on its own copies of the
+// bytecode position and the stack top (`State::Hot`), generated from the same `#rust`
+// template as the table's body.  What can go wrong is the copy: a stack top the view moves
+// differently from `State`, a slot addressed off by its step, a jump taken from the wrong
+// position, or the one call that hands the registers back to `State` (`raise_recoverable`,
+// a division by zero) losing them.  So each cell drives one family of hot operators over
+// STACK temporaries (the unfused forms — the fused ones have their own guard,
+// `an-integer-operator-over-locals-runs-as-one-op.loft`), with neighbouring values that
+// differ, and reads the result back after more work in the same frame.
+//
+// Covered: integer `+ - * / % &` and `== < <=` on stack temporaries, a negative operand, a
+// division and a remainder by zero (null, and the run carries on), float `+ - * /`, a float
+// division by zero (infinity) and by a variable (`?`), `<` over two temporaries, an
+// integer widened to float, boolean literals and locals, and the jumps of `if`, `while` and
+// `for`.  `LOFT_NO_HOT=1` runs every operator through the table; both must pass, and so must
+// `--native`, which has no dispatch loop.
+//
+// @falsified-at: none — it guards a rewrite no earlier build has, so no control fails it.
+//   Falsified instead by planted defects in `State::Hot`, each caught on the default (inline)
+//   path and passing with `LOFT_NO_HOT=1`: a push that does not advance the stack top ends the
+//   run in SIGSEGV at the first fused push; a local read one slot high never leaves a loop (the
+//   watchdog stops it); `raise_recoverable` called without handing the registers back to
+//   `State` fails `test_float` (the error is raised over a stale stack top).
+
+fn int_ops(a: integer, b: integer) -> text {
+  sum = (a + 1) + (b + 2);
+  dif = (a + 1) - (b + 2);
+  prd = (a + 1) * (b - 2);
+  msk = (a + 5) & (b + 7);
+  "{sum} {dif} {prd} {msk}"
+}
+
+fn int_div(a: integer, b: integer) -> text {
+  d = ((a + 1) / (b + 0)) ?? -1;
+  r = ((a + 1) % (b + 0)) ?? -1;
+  e = (a + 1) / 3;
+  m = (a + 1) % 3;
+  "{d} {r} {e} {m}"
+}
+
+fn int_cmp(a: integer, b: integer) -> text {
+  "{(a + 1) == (b + 5)} {(a + 1) == (b + 0)} {(a + 1) < (b + 0)} {(b + 0) < (a + 1)} {(a + 1) <= (b + 5)}"
+}
+
+fn float_ops(x: float, y: float) -> text {
+  sum = (x + 1.0) + (y + 2.0);
+  dif = (x + 1.0) - (y + 2.0);
+  prd = (x + 1.0) * (y + 2.0);
+  quo = (x + 1.0) / (y + 1.0);
+  "{sum} {dif} {prd} {quo}"
+}
+
+fn float_div(x: float, y: float) -> text {
+  q = (x / y)?;
+  z = (x + 1.0) / (y + 0.5);
+  "{q} {z}"
+}
+
+fn float_lt(x: float, y: float) -> text {
+  "{(x + 0.0) < (y + 0.0)} {(y + 0.0) < (x + 0.0)} {(x + 0.0) < (x + 0.0)}"
+}
+
+fn widen(i: integer) -> float {
+  (i + 1) as float * 0.5
+}
+
+fn flags(t: boolean) -> text {
+  f = false;
+  u = true;
+  "{t && u} {t && f} {f || u}"
+}
+
+fn jumps(n: integer) -> integer {
+  total = 0;
+  i = 0;
+  while i < n {
+    if (i + 0) < 3 {
+      total += i;
+    } else {
+      total += 10;
+    }
+    i += 1;
+  }
+  for j in 0..n {
+    total += j * 100;
+  }
+  total
+}
+
+fn test_int() {
+  assert(int_ops(7, -3) == "7 9 -40 4", "+ - * & over stack temporaries");
+  assert(int_ops(-7, 3) == "-1 -11 -6 10", "a negative operand");
+}
+
+fn test_int_div() {
+  assert(int_div(7, 3) == "2 2 2 2", "a division and a remainder, by a variable and by a literal");
+  assert(int_div(7, 0) == "-1 -1 2 2", "by zero: null each, and the run carries on");
+  assert(int_div(11, 4) == "3 0 4 0", "the frame is intact after a division by zero");
+}
+
+fn test_int_cmp() {
+  assert(int_cmp(7, 3) == "true false false true true", "== < <= over stack temporaries");
+}
+
+fn test_float() {
+  assert(float_ops(2.5, -0.5) == "5 2 5.25 7", "+ - * / over stack temporaries");
+  assert(float_div(2.5, -0.5) == "-5 inf", "by a variable, and by zero");
+  assert(float_div(3.0, 1.5) == "2 2", "the frame is intact after a division by zero");
+}
+
+fn test_float_lt() {
+  assert(float_lt(2.0, -1.5) == "false true false", "< over stack temporaries, and an equal pair");
+}
+
+fn test_widen() {
+  assert(widen(6) == 3.5, "an integer widened to float");
+}
+
+fn test_flags() {
+  assert(flags(true) == "true false true", "boolean literals and locals");
+  assert(flags(false) == "false false true", "a false parameter");
+}
+
+fn test_jumps() {
+  assert(jumps(5) == 1023, "if, while and for");
+  assert(jumps(0) == 0, "no iteration");
+}

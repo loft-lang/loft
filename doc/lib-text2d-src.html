@@ -23,45 +23,45 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>text2d source</h1>
 <article>
-<p><a href="lib-text2d.html">← text2d</a> · <a href="lib-text2d-api.html">API reference</a> · version 0.4.4</p>
-<p class="lib-legend">7 file(s), 1122 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<p><a href="lib-text2d.html">← text2d</a> · <a href="lib-text2d-api.html">API reference</a> · version 0.4.5</p>
+<p class="lib-legend">7 file(s), 1124 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
 <table class="lib-table">
 <tr><th>Item</th><th>Defined</th><th>Worked example</th><th>Call sites</th></tr>
-<tr><td><code>GLYPH_W</code> <span class="search-kind">const</span></td><td><a href="#src-face-loft-L15">15</a></td><td>—</td><td><a href="#src-text2d-loft-L47">47</a> <a href="#src-text2d-loft-L48">48</a> <a href="#src-text2d-loft-L71">71</a> <a href="#src-text2d-loft-L96">96</a> <a href="#src-text2d-loft-L148">148</a> <a href="#src-text2d-loft-L171">171</a> … (10 total)</td></tr>
-<tr><td><code>GLYPH_H</code> <span class="search-kind">const</span></td><td><a href="#src-face-loft-L16">16</a></td><td>—</td><td><a href="#src-text2d-loft-L31">31</a> <a href="#src-text2d-loft-L45">45</a> <a href="#src-text2d-loft-L75">75</a> <a href="#src-text2d-loft-L148">148</a> <a href="#src-text2d-loft-L172">172</a> <a href="#src-text2d-loft-L176">176</a> … (7 total)</td></tr>
+<tr><td><code>GLYPH_W</code> <span class="search-kind">const</span></td><td><a href="#src-face-loft-L15">15</a></td><td>—</td><td><a href="#src-text2d-loft-L47">47</a> <a href="#src-text2d-loft-L48">48</a> <a href="#src-text2d-loft-L71">71</a> <a href="#src-text2d-loft-L96">96</a> <a href="#src-text2d-loft-L150">150</a> <a href="#src-text2d-loft-L173">173</a> … (10 total)</td></tr>
+<tr><td><code>GLYPH_H</code> <span class="search-kind">const</span></td><td><a href="#src-face-loft-L16">16</a></td><td>—</td><td><a href="#src-text2d-loft-L31">31</a> <a href="#src-text2d-loft-L45">45</a> <a href="#src-text2d-loft-L75">75</a> <a href="#src-text2d-loft-L150">150</a> <a href="#src-text2d-loft-L174">174</a> <a href="#src-text2d-loft-L178">178</a> … (7 total)</td></tr>
 <tr><td><code>face_codes</code> <span class="search-kind">fn</span></td><td><a href="#src-face-loft-L19">19</a></td><td>—</td><td><a href="#src-text2d-loft-L25">25</a></td></tr>
 <tr><td><code>face_rows</code> <span class="search-kind">fn</span></td><td><a href="#src-face-loft-L29">29</a></td><td>—</td><td><a href="#src-text2d-loft-L44">44</a></td></tr>
-<tr><td><code>blit_glyph</code> <span class="search-kind">fn</span></td><td><a href="#src-text2d-loft-L40">40</a></td><td>—</td><td><a href="#src-text2d-loft-L95">95</a> <a href="#src-text2d-loft-L177">177</a></td></tr>
+<tr><td><code>blit_glyph</code> <span class="search-kind">fn</span></td><td><a href="#src-text2d-loft-L40">40</a></td><td>—</td><td><a href="#src-text2d-loft-L95">95</a> <a href="#src-text2d-loft-L179">179</a></td></tr>
 <tr><td><code>text_width</code> <span class="search-kind">fn</span></td><td><a href="#src-text2d-loft-L67">67</a></td><td><a href="#tests-worked-examples-loft-L10">TXD-001</a></td><td><a href="#src-text2d-loft-L105">105</a> <a href="#tests-metrics-loft-L109">109</a> <a href="#tests-text2d-loft-L25">25</a> <a href="#tests-text2d-loft-L34">34</a> <a href="#tests-text2d-loft-L41">41</a> <a href="#tests-text2d-loft-L42">42</a> … (13 total)</td></tr>
-<tr><td><code>line_height</code> <span class="search-kind">fn</span></td><td><a href="#src-text2d-loft-L75">75</a></td><td>—</td><td><a href="#src-text2d-loft-L106">106</a> <a href="#src-text2d-loft-L271">271</a> <a href="#tests-metrics-loft-L107">107</a> <a href="#tests-text2d-loft-L45">45</a></td></tr>
+<tr><td><code>line_height</code> <span class="search-kind">fn</span></td><td><a href="#src-text2d-loft-L75">75</a></td><td>—</td><td><a href="#src-text2d-loft-L106">106</a> <a href="#src-text2d-loft-L273">273</a> <a href="#tests-metrics-loft-L107">107</a> <a href="#tests-text2d-loft-L45">45</a></td></tr>
 <tr><td><code>write_text</code> <span class="search-kind">fn</span></td><td><a href="#src-text2d-loft-L90">90</a></td><td>—</td><td><a href="#src-text2d-loft-L107">107</a> <a href="#tests-atlas-loft-L70">70</a> <a href="#tests-atlas-loft-L101">101</a> <a href="#tests-text2d-loft-L23">23</a> <a href="#tests-text2d-loft-L32">32</a> <a href="#tests-text2d-loft-L51">51</a> … (14 total)</td></tr>
 <tr><td><code>write_centred</code> <span class="search-kind">fn</span></td><td><a href="#src-text2d-loft-L103">103</a></td><td>—</td><td><a href="#tests-text2d-loft-L98">98</a></td></tr>
-<tr><td><code>Atlas</code> <span class="search-kind">struct</span></td><td><a href="#src-text2d-loft-L118">118</a></td><td>—</td><td><a href="#src-text2d-loft-L137">137</a> <a href="#src-text2d-loft-L147">147</a> <a href="#src-text2d-loft-L156">156</a> <a href="#src-text2d-loft-L162">162</a> <a href="#src-text2d-loft-L165">165</a> <a href="#src-text2d-loft-L186">186</a> … (7 total)</td></tr>
-<tr><td><code>Quad</code> <span class="search-kind">struct</span></td><td><a href="#src-text2d-loft-L128">128</a></td><td>—</td><td><a href="#src-text2d-loft-L186">186</a> <a href="#src-text2d-loft-L187">187</a> <a href="#src-text2d-loft-L191">191</a> <a href="#src-text2d-loft-L198">198</a> <a href="#tests-atlas-loft-L58">58</a> <a href="#tests-atlas-loft-L59">59</a> … (8 total)</td></tr>
-<tr><td><code>atlas_new</code> <span class="search-kind">fn</span></td><td><a href="#src-text2d-loft-L137">137</a></td><td>—</td><td><a href="#tests-atlas-loft-L24">24</a> <a href="#tests-atlas-loft-L44">44</a> <a href="#tests-atlas-loft-L55">55</a> <a href="#tests-atlas-loft-L72">72</a> <a href="#tests-atlas-loft-L85">85</a> <a href="#tests-atlas-loft-L97">97</a> … (8 total)</td></tr>
-<tr><td><code>atlas_glyph_count</code> <span class="search-kind">fn</span></td><td><a href="#src-text2d-loft-L156">156</a></td><td>—</td><td><a href="#tests-atlas-loft-L39">39</a> <a href="#tests-worked-examples-loft-L44">44</a></td></tr>
-<tr><td><code>atlas_writes</code> <span class="search-kind">fn</span></td><td><a href="#src-text2d-loft-L162">162</a></td><td><a href="#tests-worked-examples-loft-L37">TXD-003</a></td><td><a href="#tests-atlas-loft-L28">28</a> <a href="#tests-atlas-loft-L37">37</a> <a href="#tests-atlas-loft-L38">38</a> <a href="#tests-atlas-loft-L46">46</a> <a href="#tests-atlas-loft-L48">48</a> <a href="#tests-atlas-loft-L50">50</a> … (8 total)</td></tr>
-<tr><td><code>atlas_cell</code> <span class="search-kind">fn</span></td><td><a href="#src-text2d-loft-L165">165</a></td><td>—</td><td><a href="#src-text2d-loft-L190">190</a></td></tr>
-<tr><td><code>layout</code> <span class="search-kind">fn</span></td><td><a href="#src-text2d-loft-L186">186</a></td><td>—</td><td><a href="#tests-atlas-loft-L27">27</a> <a href="#tests-atlas-loft-L35">35</a> <a href="#tests-atlas-loft-L45">45</a> <a href="#tests-atlas-loft-L47">47</a> <a href="#tests-atlas-loft-L49">49</a> <a href="#tests-atlas-loft-L56">56</a> … (13 total)</td></tr>
-<tr><td><code>draw_quads</code> <span class="search-kind">fn</span></td><td><a href="#src-text2d-loft-L198">198</a></td><td>—</td><td><a href="#tests-atlas-loft-L74">74</a> <a href="#tests-atlas-loft-L91">91</a> <a href="#tests-atlas-loft-L99">99</a></td></tr>
-<tr><td><code>Metrics</code> <span class="search-kind">struct</span></td><td><a href="#src-text2d-loft-L231">231</a></td><td>—</td><td><a href="#src-text2d-loft-L258">258</a> <a href="#src-text2d-loft-L260">260</a> <a href="#src-text2d-loft-L262">262</a> <a href="#src-text2d-loft-L269">269</a> <a href="#src-text2d-loft-L270">270</a> <a href="#src-text2d-loft-L276">276</a> … (17 total)</td></tr>
-<tr><td><code>metrics_measured</code> <span class="search-kind">fn</span></td><td><a href="#src-text2d-loft-L257">257</a></td><td>—</td><td><a href="#tests-metrics-loft-L29">29</a> <a href="#tests-metrics-loft-L30">30</a> <a href="#tests-metrics-loft-L45">45</a> <a href="#tests-metrics-loft-L58">58</a> <a href="#tests-metrics-loft-L73">73</a> <a href="#tests-metrics-loft-L88">88</a> … (9 total)</td></tr>
-<tr><td><code>metrics_builtin</code> <span class="search-kind">fn</span></td><td><a href="#src-text2d-loft-L269">269</a></td><td>—</td><td><a href="#tests-metrics-loft-L104">104</a> <a href="#tests-metrics-loft-L119">119</a> <a href="#tests-metrics-loft-L128">128</a> <a href="#tests-metrics-loft-L143">143</a> <a href="#tests-worked-examples-loft-L21">21</a> <a href="#tests-worked-examples-loft-L32">32</a> … (18 total)</td></tr>
-<tr><td><code>advance64</code> <span class="search-kind">fn</span></td><td><a href="#src-text2d-loft-L276">276</a></td><td>—</td><td><a href="#tests-metrics-loft-L46">46</a> <a href="#tests-metrics-loft-L89">89</a></td></tr>
-<tr><td><code>advance</code> <span class="search-kind">fn</span></td><td><a href="#src-text2d-loft-L282">282</a></td><td>—</td><td><a href="#src-text2d-loft-L241">241</a> <a href="#src-text2d-loft-L330">330</a> <a href="#tests-metrics-loft-L36">36</a> <a href="#tests-metrics-loft-L37">37</a> <a href="#tests-metrics-loft-L47">47</a> <a href="#tests-metrics-loft-L65">65</a> … (9 total)</td></tr>
-<tr><td><code>height</code> <span class="search-kind">fn</span></td><td><a href="#src-text2d-loft-L285">285</a></td><td>—</td><td><a href="#src-text2d-loft-L172">172</a> <a href="#src-text2d-loft-L242">242</a> <a href="#tests-metrics-loft-L48">48</a> <a href="#tests-metrics-loft-L91">91</a> <a href="#tests-metrics-loft-L107">107</a> <a href="#tests-text2d-loft-L45">45</a></td></tr>
-<tr><td><code>is_mono</code> <span class="search-kind">fn</span></td><td><a href="#src-text2d-loft-L289">289</a></td><td>—</td><td><a href="#tests-metrics-loft-L31">31</a> <a href="#tests-metrics-loft-L32">32</a> <a href="#tests-metrics-loft-L90">90</a> <a href="#tests-metrics-loft-L105">105</a></td></tr>
-<tr><td><code>width</code> <span class="search-kind">fn</span></td><td><a href="#src-text2d-loft-L302">302</a></td><td>—</td><td><a href="#src-text2d-loft-L171">171</a> <a href="#src-text2d-loft-L310">310</a> <a href="#src-text2d-loft-L329">329</a> <a href="#src-text2d-loft-L430">430</a> <a href="#src-text2d-loft-L438">438</a> <a href="#src-text2d-loft-L472">472</a> … (14 total)</td></tr>
-<tr><td><code>fits</code> <span class="search-kind">fn</span></td><td><a href="#src-text2d-loft-L309">309</a></td><td>—</td><td><a href="#tests-metrics-loft-L120">120</a> <a href="#tests-metrics-loft-L121">121</a> <a href="#tests-metrics-loft-L129">129</a> <a href="#tests-worked-examples-loft-L34">34</a> <a href="#tests-wrap-loft-L35">35</a> <a href="#tests-wrap-loft-L102">102</a></td></tr>
-<tr><td><code>fit_text</code> <span class="search-kind">fn</span></td><td><a href="#src-text2d-loft-L327">327</a></td><td>—</td><td><a href="#tests-metrics-loft-L129">129</a> <a href="#tests-metrics-loft-L130">130</a> <a href="#tests-metrics-loft-L131">131</a> <a href="#tests-metrics-loft-L144">144</a> <a href="#tests-metrics-loft-L145">145</a> <a href="#tests-metrics-loft-L152">152</a> … (11 total)</td></tr>
-<tr><td><code>ALIGN_LEFT</code> <span class="search-kind">const</span></td><td><a href="#src-text2d-loft-L353">353</a></td><td>—</td><td><a href="#tests-wrap-loft-L146">146</a> <a href="#tests-wrap-loft-L156">156</a></td></tr>
-<tr><td><code>ALIGN_CENTRE</code> <span class="search-kind">const</span></td><td><a href="#src-text2d-loft-L354">354</a></td><td>—</td><td><a href="#src-text2d-loft-L474">474</a> <a href="#tests-wrap-loft-L147">147</a> <a href="#tests-wrap-loft-L156">156</a></td></tr>
-<tr><td><code>ALIGN_RIGHT</code> <span class="search-kind">const</span></td><td><a href="#src-text2d-loft-L355">355</a></td><td>—</td><td><a href="#src-text2d-loft-L475">475</a> <a href="#tests-wrap-loft-L148">148</a> <a href="#tests-wrap-loft-L156">156</a></td></tr>
-<tr><td><code>take_chars</code> <span class="search-kind">fn</span></td><td><a href="#src-text2d-loft-L360">360</a></td><td><a href="#tests-worked-examples-loft-L24">TXD-002</a></td><td><a href="#src-text2d-loft-L338">338</a> <a href="#src-text2d-loft-L340">340</a> <a href="#src-text2d-loft-L440">440</a> <a href="#tests-worked-examples-loft-L31">31</a></td></tr>
-<tr><td><code>wrap</code> <span class="search-kind">fn</span></td><td><a href="#src-text2d-loft-L395">395</a></td><td>—</td><td><a href="#tests-wrap-loft-L28">28</a> <a href="#tests-wrap-loft-L29">29</a> <a href="#tests-wrap-loft-L30">30</a> <a href="#tests-wrap-loft-L31">31</a> <a href="#tests-wrap-loft-L32">32</a> <a href="#tests-wrap-loft-L33">33</a> … (17 total)</td></tr>
-<tr><td><code>align_x</code> <span class="search-kind">fn</span></td><td><a href="#src-text2d-loft-L470">470</a></td><td>—</td><td><a href="#tests-wrap-loft-L146">146</a> <a href="#tests-wrap-loft-L147">147</a> <a href="#tests-wrap-loft-L148">148</a> <a href="#tests-wrap-loft-L157">157</a></td></tr>
+<tr><td><code>Atlas</code> <span class="search-kind">struct</span></td><td><a href="#src-text2d-loft-L120">120</a></td><td>—</td><td><a href="#src-text2d-loft-L139">139</a> <a href="#src-text2d-loft-L149">149</a> <a href="#src-text2d-loft-L158">158</a> <a href="#src-text2d-loft-L164">164</a> <a href="#src-text2d-loft-L167">167</a> <a href="#src-text2d-loft-L188">188</a> … (7 total)</td></tr>
+<tr><td><code>Quad</code> <span class="search-kind">struct</span></td><td><a href="#src-text2d-loft-L130">130</a></td><td>—</td><td><a href="#src-text2d-loft-L188">188</a> <a href="#src-text2d-loft-L189">189</a> <a href="#src-text2d-loft-L193">193</a> <a href="#src-text2d-loft-L200">200</a> <a href="#tests-atlas-loft-L58">58</a> <a href="#tests-atlas-loft-L59">59</a> … (8 total)</td></tr>
+<tr><td><code>atlas_new</code> <span class="search-kind">fn</span></td><td><a href="#src-text2d-loft-L139">139</a></td><td>—</td><td><a href="#tests-atlas-loft-L24">24</a> <a href="#tests-atlas-loft-L44">44</a> <a href="#tests-atlas-loft-L55">55</a> <a href="#tests-atlas-loft-L72">72</a> <a href="#tests-atlas-loft-L85">85</a> <a href="#tests-atlas-loft-L97">97</a> … (8 total)</td></tr>
+<tr><td><code>atlas_glyph_count</code> <span class="search-kind">fn</span></td><td><a href="#src-text2d-loft-L158">158</a></td><td>—</td><td><a href="#tests-atlas-loft-L39">39</a> <a href="#tests-worked-examples-loft-L44">44</a></td></tr>
+<tr><td><code>atlas_writes</code> <span class="search-kind">fn</span></td><td><a href="#src-text2d-loft-L164">164</a></td><td><a href="#tests-worked-examples-loft-L37">TXD-003</a></td><td><a href="#tests-atlas-loft-L28">28</a> <a href="#tests-atlas-loft-L37">37</a> <a href="#tests-atlas-loft-L38">38</a> <a href="#tests-atlas-loft-L46">46</a> <a href="#tests-atlas-loft-L48">48</a> <a href="#tests-atlas-loft-L50">50</a> … (8 total)</td></tr>
+<tr><td><code>atlas_cell</code> <span class="search-kind">fn</span></td><td><a href="#src-text2d-loft-L167">167</a></td><td>—</td><td><a href="#src-text2d-loft-L192">192</a></td></tr>
+<tr><td><code>layout</code> <span class="search-kind">fn</span></td><td><a href="#src-text2d-loft-L188">188</a></td><td>—</td><td><a href="#tests-atlas-loft-L27">27</a> <a href="#tests-atlas-loft-L35">35</a> <a href="#tests-atlas-loft-L45">45</a> <a href="#tests-atlas-loft-L47">47</a> <a href="#tests-atlas-loft-L49">49</a> <a href="#tests-atlas-loft-L56">56</a> … (13 total)</td></tr>
+<tr><td><code>draw_quads</code> <span class="search-kind">fn</span></td><td><a href="#src-text2d-loft-L200">200</a></td><td>—</td><td><a href="#tests-atlas-loft-L74">74</a> <a href="#tests-atlas-loft-L91">91</a> <a href="#tests-atlas-loft-L99">99</a></td></tr>
+<tr><td><code>Metrics</code> <span class="search-kind">struct</span></td><td><a href="#src-text2d-loft-L233">233</a></td><td>—</td><td><a href="#src-text2d-loft-L260">260</a> <a href="#src-text2d-loft-L262">262</a> <a href="#src-text2d-loft-L264">264</a> <a href="#src-text2d-loft-L271">271</a> <a href="#src-text2d-loft-L272">272</a> <a href="#src-text2d-loft-L278">278</a> … (17 total)</td></tr>
+<tr><td><code>metrics_measured</code> <span class="search-kind">fn</span></td><td><a href="#src-text2d-loft-L259">259</a></td><td>—</td><td><a href="#tests-metrics-loft-L29">29</a> <a href="#tests-metrics-loft-L30">30</a> <a href="#tests-metrics-loft-L45">45</a> <a href="#tests-metrics-loft-L58">58</a> <a href="#tests-metrics-loft-L73">73</a> <a href="#tests-metrics-loft-L88">88</a> … (9 total)</td></tr>
+<tr><td><code>metrics_builtin</code> <span class="search-kind">fn</span></td><td><a href="#src-text2d-loft-L271">271</a></td><td>—</td><td><a href="#tests-metrics-loft-L104">104</a> <a href="#tests-metrics-loft-L119">119</a> <a href="#tests-metrics-loft-L128">128</a> <a href="#tests-metrics-loft-L143">143</a> <a href="#tests-worked-examples-loft-L21">21</a> <a href="#tests-worked-examples-loft-L32">32</a> … (18 total)</td></tr>
+<tr><td><code>advance64</code> <span class="search-kind">fn</span></td><td><a href="#src-text2d-loft-L278">278</a></td><td>—</td><td><a href="#tests-metrics-loft-L46">46</a> <a href="#tests-metrics-loft-L89">89</a></td></tr>
+<tr><td><code>advance</code> <span class="search-kind">fn</span></td><td><a href="#src-text2d-loft-L284">284</a></td><td>—</td><td><a href="#src-text2d-loft-L243">243</a> <a href="#src-text2d-loft-L332">332</a> <a href="#tests-metrics-loft-L36">36</a> <a href="#tests-metrics-loft-L37">37</a> <a href="#tests-metrics-loft-L47">47</a> <a href="#tests-metrics-loft-L65">65</a> … (9 total)</td></tr>
+<tr><td><code>height</code> <span class="search-kind">fn</span></td><td><a href="#src-text2d-loft-L287">287</a></td><td>—</td><td><a href="#src-text2d-loft-L174">174</a> <a href="#src-text2d-loft-L244">244</a> <a href="#tests-metrics-loft-L48">48</a> <a href="#tests-metrics-loft-L91">91</a> <a href="#tests-metrics-loft-L107">107</a> <a href="#tests-text2d-loft-L45">45</a></td></tr>
+<tr><td><code>is_mono</code> <span class="search-kind">fn</span></td><td><a href="#src-text2d-loft-L291">291</a></td><td>—</td><td><a href="#tests-metrics-loft-L31">31</a> <a href="#tests-metrics-loft-L32">32</a> <a href="#tests-metrics-loft-L90">90</a> <a href="#tests-metrics-loft-L105">105</a></td></tr>
+<tr><td><code>width</code> <span class="search-kind">fn</span></td><td><a href="#src-text2d-loft-L304">304</a></td><td>—</td><td><a href="#src-text2d-loft-L173">173</a> <a href="#src-text2d-loft-L312">312</a> <a href="#src-text2d-loft-L331">331</a> <a href="#src-text2d-loft-L432">432</a> <a href="#src-text2d-loft-L440">440</a> <a href="#src-text2d-loft-L474">474</a> … (14 total)</td></tr>
+<tr><td><code>fits</code> <span class="search-kind">fn</span></td><td><a href="#src-text2d-loft-L311">311</a></td><td>—</td><td><a href="#tests-metrics-loft-L120">120</a> <a href="#tests-metrics-loft-L121">121</a> <a href="#tests-metrics-loft-L129">129</a> <a href="#tests-worked-examples-loft-L34">34</a> <a href="#tests-wrap-loft-L35">35</a> <a href="#tests-wrap-loft-L102">102</a></td></tr>
+<tr><td><code>fit_text</code> <span class="search-kind">fn</span></td><td><a href="#src-text2d-loft-L329">329</a></td><td>—</td><td><a href="#tests-metrics-loft-L129">129</a> <a href="#tests-metrics-loft-L130">130</a> <a href="#tests-metrics-loft-L131">131</a> <a href="#tests-metrics-loft-L144">144</a> <a href="#tests-metrics-loft-L145">145</a> <a href="#tests-metrics-loft-L152">152</a> … (11 total)</td></tr>
+<tr><td><code>ALIGN_LEFT</code> <span class="search-kind">const</span></td><td><a href="#src-text2d-loft-L355">355</a></td><td>—</td><td><a href="#tests-wrap-loft-L146">146</a> <a href="#tests-wrap-loft-L156">156</a></td></tr>
+<tr><td><code>ALIGN_CENTRE</code> <span class="search-kind">const</span></td><td><a href="#src-text2d-loft-L356">356</a></td><td>—</td><td><a href="#src-text2d-loft-L476">476</a> <a href="#tests-wrap-loft-L147">147</a> <a href="#tests-wrap-loft-L156">156</a></td></tr>
+<tr><td><code>ALIGN_RIGHT</code> <span class="search-kind">const</span></td><td><a href="#src-text2d-loft-L357">357</a></td><td>—</td><td><a href="#src-text2d-loft-L477">477</a> <a href="#tests-wrap-loft-L148">148</a> <a href="#tests-wrap-loft-L156">156</a></td></tr>
+<tr><td><code>take_chars</code> <span class="search-kind">fn</span></td><td><a href="#src-text2d-loft-L362">362</a></td><td><a href="#tests-worked-examples-loft-L24">TXD-002</a></td><td><a href="#src-text2d-loft-L340">340</a> <a href="#src-text2d-loft-L342">342</a> <a href="#src-text2d-loft-L442">442</a> <a href="#tests-worked-examples-loft-L31">31</a></td></tr>
+<tr><td><code>wrap</code> <span class="search-kind">fn</span></td><td><a href="#src-text2d-loft-L397">397</a></td><td>—</td><td><a href="#tests-wrap-loft-L28">28</a> <a href="#tests-wrap-loft-L29">29</a> <a href="#tests-wrap-loft-L30">30</a> <a href="#tests-wrap-loft-L31">31</a> <a href="#tests-wrap-loft-L32">32</a> <a href="#tests-wrap-loft-L33">33</a> … (17 total)</td></tr>
+<tr><td><code>align_x</code> <span class="search-kind">fn</span></td><td><a href="#src-text2d-loft-L472">472</a></td><td>—</td><td><a href="#tests-wrap-loft-L146">146</a> <a href="#tests-wrap-loft-L147">147</a> <a href="#tests-wrap-loft-L148">148</a> <a href="#tests-wrap-loft-L157">157</a></td></tr>
 </table>
 <h2 id="src-face-loft">src/face.loft</h2>
 <pre class="src"><code><span id="src-face-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -240,366 +240,368 @@
 <span id="src-text2d-loft-L115"><span class="cm">// Brick Buster pre-baked digits 0-9 and one texture per level numeral to avoid it.</span></span>
 <span id="src-text2d-loft-L116"><span class="cm">// A glyph sheet is written once; a new string only re-lays-out quads over it.</span></span>
 <span id="src-text2d-loft-L117"></span>
-<span id="src-text2d-loft-L118"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Atlas</span> {</span>
-<span id="src-text2d-loft-L119">  a_cv: graphics::<span class="en">Canvas</span>,</span>
-<span id="src-text2d-loft-L120">  a_codes: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,   <span class="cm">// codepoint held in each cell, in cell order</span></span>
-<span id="src-text2d-loft-L121">  a_scale: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-text2d-loft-L122">  a_cols: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-text2d-loft-L123">  a_next: <span class="ty"><a href="stdlib-types.html">integer</a></span>,            <span class="cm">// the next free cell</span></span>
-<span id="src-text2d-loft-L124">  a_writes: <span class="ty"><a href="stdlib-types.html">integer</a></span>,          <span class="cm">// how many times the SHEET changed — the gate reads this</span></span>
-<span id="src-text2d-loft-L125">}</span>
-<span id="src-text2d-loft-L126"></span>
-<span id="src-text2d-loft-L127"><span class="cm">// One glyph placed on a line: where it goes, and which cell it comes from.</span></span>
-<span id="src-text2d-loft-L128"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Quad</span> {</span>
-<span id="src-text2d-loft-L129">  q_x: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-text2d-loft-L130">  q_y: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-text2d-loft-L131">  q_cell: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-text2d-loft-L132">}</span>
-<span id="src-text2d-loft-L133"></span>
-<span id="src-text2d-loft-L134"><span class="cm">// A sheet with room for `capacity` glyphs at `scale`.  Shelf-packed in a grid,</span></span>
-<span id="src-text2d-loft-L135"><span class="cm">// which is enough for a fixed-width face — a proportional one would want a real</span></span>
-<span id="src-text2d-loft-L136"><span class="cm">// packer, and would still not change what the caller sees.</span></span>
-<span id="src-text2d-loft-L137"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">atlas_new</span>(scale: <span class="ty"><a href="stdlib-types.html">integer</a></span>, capacity: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Atlas</span> {</span>
-<span id="src-text2d-loft-L138">  sc = <span class="kw">if</span> scale &lt; <span class="nm">1</span> { <span class="nm">1</span> } <span class="kw">else</span> { scale };</span>
-<span id="src-text2d-loft-L139">  cap = <span class="kw">if</span> capacity &lt; <span class="nm">1</span> { <span class="nm">1</span> } <span class="kw">else</span> { capacity };</span>
-<span id="src-text2d-loft-L140">  <span class="cm">// ⚠ The sheet holds exactly `capacity`, not the next multiple of a row width.</span></span>
-<span id="src-text2d-loft-L141">  <span class="cm">// Rounding up would have made `atlas_new(1, 2)` hold sixteen — a caller asking</span></span>
-<span id="src-text2d-loft-L142">  <span class="cm">// for a small sheet and silently getting a large one is the kind of generosity</span></span>
-<span id="src-text2d-loft-L143">  <span class="cm">// that hides a full-sheet path until a consumer meets it.</span></span>
-<span id="src-text2d-loft-L144">  cols = <span class="kw">if</span> cap &lt; <span class="nm">16</span> { cap } <span class="kw">else</span> { <span class="nm">16</span> };</span>
-<span id="src-text2d-loft-L145">  rows = (cap + cols - <span class="nm">1</span>) / cols ?? <span class="nm">1</span>;</span>
-<span id="src-text2d-loft-L146">  <span class="kw">if</span> rows &lt; <span class="nm">1</span> { rows = <span class="nm">1</span>; }</span>
-<span id="src-text2d-loft-L147">  <span class="en">Atlas</span> {</span>
-<span id="src-text2d-loft-L148">    a_cv: graphics::<span class="fn-call">canvas</span>(cols * face::<span class="en">GLYPH_W</span> * sc, rows * face::<span class="en">GLYPH_H</span> * sc, <span class="nm">0</span>),</span>
-<span id="src-text2d-loft-L149">    a_codes: [], a_scale: sc, a_cols: cols, a_next: <span class="nm">0</span>, a_writes: <span class="nm">0</span>,</span>
-<span id="src-text2d-loft-L150">  }</span>
-<span id="src-text2d-loft-L151">}</span>
-<span id="src-text2d-loft-L152"></span>
-<span id="src-text2d-loft-L153"><span class="cm">// How many distinct glyphs the sheet holds.  It rises only when a code is met</span></span>
-<span id="src-text2d-loft-L154"><span class="cm">// for the FIRST time, so it measures what the atlas actually cost rather than</span></span>
-<span id="src-text2d-loft-L155"><span class="cm">// how much text has been drawn through it.</span></span>
-<span id="src-text2d-loft-L156"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">atlas_glyph_count</span>(self: const <span class="en">Atlas</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> { self.a_next }</span>
-<span id="src-text2d-loft-L157"></span>
-<span id="src-text2d-loft-L158"><span class="cm">// How many times the sheet has been WRITTEN.  A GL consumer uploads on exactly</span></span>
-<span id="src-text2d-loft-L159"><span class="cm">// these, so a caller can assert that a changing label costs no upload — which is</span></span>
-<span id="src-text2d-loft-L160"><span class="cm">// the property the whole arc exists for.</span></span>
-<span id="src-text2d-loft-L161"><span class="cm">// Example: @TXD-003</span></span>
-<span id="src-text2d-loft-L162"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">atlas_writes</span>(self: const <span class="en">Atlas</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> { self.a_writes }</span>
-<span id="src-text2d-loft-L163"></span>
-<span id="src-text2d-loft-L164"><span class="cm">// The cell holding `code`, rasterising it on first use.  -1 when the sheet is full.</span></span>
-<span id="src-text2d-loft-L165"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">atlas_cell</span>(self: <span class="en">Atlas</span>, code: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-text2d-loft-L166">  c = code;</span>
-<span id="src-text2d-loft-L167">  <span class="kw">if</span> c &gt;= <span class="nm">97</span> <span class="kw">and</span> c &lt;= <span class="nm">122</span> { c = c - <span class="nm">32</span>; }</span>
-<span id="src-text2d-loft-L168">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..l</span><span class="fn-call">en</span>(self.a_codes) {</span>
-<span id="src-text2d-loft-L169">    <span class="kw">if</span> (self.a_codes[i] ?? -<span class="nm">1</span>) == c { <span class="kw">return</span> i; }</span>
-<span id="src-text2d-loft-L170">  }</span>
-<span id="src-text2d-loft-L171">  cap = (self.a_cv.width / (face::<span class="en">GLYPH_W</span> * self.a_scale) ?? <span class="nm">1</span>)</span>
-<span id="src-text2d-loft-L172">      * (self.a_cv.height / (face::<span class="en">GLYPH_H</span> * self.a_scale) ?? <span class="nm">1</span>);</span>
-<span id="src-text2d-loft-L173">  <span class="kw">if</span> self.a_next &gt;= cap { <span class="kw">return</span> -<span class="nm">1</span>; }</span>
-<span id="src-text2d-loft-L174">  cell = self.a_next;</span>
-<span id="src-text2d-loft-L175">  cx = (cell % self.a_cols ?? <span class="nm">0</span>) * face::<span class="en">GLYPH_W</span> * self.a_scale;</span>
-<span id="src-text2d-loft-L176">  cy = (cell / self.a_cols ?? <span class="nm">0</span>) * face::<span class="en">GLYPH_H</span> * self.a_scale;</span>
-<span id="src-text2d-loft-L177">  <span class="fn-call">blit_glyph</span>(self.a_cv, c, cx, cy, <span class="nm">0xffffffff</span>, self.a_scale);</span>
-<span id="src-text2d-loft-L178">  self.a_codes += [c];</span>
-<span id="src-text2d-loft-L179">  self.a_next = cell + <span class="nm">1</span>;</span>
-<span id="src-text2d-loft-L180">  self.a_writes = self.a_writes + <span class="nm">1</span>;</span>
-<span id="src-text2d-loft-L181">  cell</span>
-<span id="src-text2d-loft-L182">}</span>
-<span id="src-text2d-loft-L183"></span>
-<span id="src-text2d-loft-L184"><span class="cm">// Lay a string out over the sheet.  Answers one quad per character; NOTHING is</span></span>
-<span id="src-text2d-loft-L185"><span class="cm">// written to the sheet unless a character is new to it.</span></span>
-<span id="src-text2d-loft-L186"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">layout</span>(self: <span class="en">Atlas</span>, s: <span class="ty"><a href="stdlib-types.html">text</a></span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Quad</span>&gt; {</span>
-<span id="src-text2d-loft-L187">  out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Quad</span>&gt; = [];</span>
-<span id="src-text2d-loft-L188">  pen = x;</span>
-<span id="src-text2d-loft-L189">  <span class="kw">for</span> ch <span class="kw">in</span> s {</span>
-<span id="src-text2d-loft-L190">    cell = <span class="fn-call">atlas_cell</span>(self, ch <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>);</span>
-<span id="src-text2d-loft-L191">    out += [<span class="en">Quad</span> { q_x: pen, q_y: y, q_cell: cell }];</span>
-<span id="src-text2d-loft-L192">    pen = pen + (face::<span class="en">GLYPH_W</span> + <span class="nm">1</span>) * self.a_scale;</span>
-<span id="src-text2d-loft-L193">  }</span>
-<span id="src-text2d-loft-L194">  out</span>
-<span id="src-text2d-loft-L195">}</span>
-<span id="src-text2d-loft-L196"></span>
-<span id="src-text2d-loft-L197"><span class="cm">// Blit laid-out quads from the sheet onto a canvas.</span></span>
-<span id="src-text2d-loft-L198"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">draw_quads</span>(cv: graphics::<span class="en">Canvas</span>, atlas: const <span class="en">Atlas</span>, quads: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Quad</span>&gt;,</span>
-<span id="src-text2d-loft-L199">                  colour: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
-<span id="src-text2d-loft-L200">  gw = face::<span class="en">GLYPH_W</span> * atlas.a_scale;</span>
-<span id="src-text2d-loft-L201">  gh = face::<span class="en">GLYPH_H</span> * atlas.a_scale;</span>
-<span id="src-text2d-loft-L202">  <span class="kw">for</span> q <span class="kw">in</span> quads {</span>
-<span id="src-text2d-loft-L203">    <span class="kw">if</span> q.q_cell &lt; <span class="nm">0</span> { <span class="kw">continue</span>; }</span>
-<span id="src-text2d-loft-L204">    sx = (q.q_cell % atlas.a_cols ?? <span class="nm">0</span>) * gw;</span>
-<span id="src-text2d-loft-L205">    sy = (q.q_cell / atlas.a_cols ?? <span class="nm">0</span>) * gh;</span>
-<span id="src-text2d-loft-L206">    <span class="kw">for</span> py <span class="kw">in</span> <span class="nm">0..</span>gh {</span>
-<span id="src-text2d-loft-L207">      <span class="kw">for</span> px <span class="kw">in</span> <span class="nm">0..</span>gw {</span>
-<span id="src-text2d-loft-L208">        <span class="kw">if</span> atlas.a_cv.<span class="fn-call">get_pixel</span>(sx + px, sy + py) != <span class="nm">0</span> {</span>
-<span id="src-text2d-loft-L209">          cv.<span class="fn-call">set_pixel</span>(q.q_x + px, q.q_y + py, colour);</span>
-<span id="src-text2d-loft-L210">        }</span>
-<span id="src-text2d-loft-L211">      }</span>
-<span id="src-text2d-loft-L212">    }</span>
-<span id="src-text2d-loft-L213">  }</span>
-<span id="src-text2d-loft-L214">}</span>
-<span id="src-text2d-loft-L215"></span>
-<span id="src-text2d-loft-L216"></span>
-<span id="src-text2d-loft-L217"><span class="cm">// ── B1m: the metrics seam ────────────────────────────────────────────────────</span></span>
-<span id="src-text2d-loft-L218"><span class="cm">//</span></span>
-<span id="src-text2d-loft-L219"><span class="cm">// This package has no GL context and no font file, so it cannot measure a real</span></span>
-<span id="src-text2d-loft-L220"><span class="cm">// face itself.  The consumer measures ONCE at startup through whichever backend</span></span>
-<span id="src-text2d-loft-L221"><span class="cm">// resolved and hands the numbers over; everything a layout needs is derived</span></span>
-<span id="src-text2d-loft-L222"><span class="cm">// here.  That keeps `text2d` headless — the property `B0` exists for — while</span></span>
-<span id="src-text2d-loft-L223"><span class="cm">// still serving a game that ships a real TTF.</span></span>
-<span id="src-text2d-loft-L224"></span>
-<span id="src-text2d-loft-L225"><span class="cm">// What the consumer measured.</span></span>
-<span id="src-text2d-loft-L226"><span class="cm">//</span></span>
-<span id="src-text2d-loft-L227"><span class="cm">// ⚠ `m_mono` IS A FACT ABOUT THE FACE THAT RESOLVED, not the one that was asked</span></span>
-<span id="src-text2d-loft-L228"><span class="cm">// for.  Requesting `DejaVuSansMono.ttf` gives a fixed-pitch face on the desktop</span></span>
-<span id="src-text2d-loft-L229"><span class="cm">// and a PROPORTIONAL fallback in the browser, because the browser resolves the</span></span>
-<span id="src-text2d-loft-L230"><span class="cm">// base name to a CSS family it does not know.  Only a measurement can tell.</span></span>
-<span id="src-text2d-loft-L231"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Metrics</span> {</span>
-<span id="src-text2d-loft-L232">    <span class="cm">// ⚠ THE ADVANCE IS IN 1/64 PIXEL, and a whole-pixel field is what this</span></span>
-<span id="src-text2d-loft-L233">    <span class="cm">// replaces.  DejaVu Sans Mono at 16 px advances 9.6 px, which truncates to</span></span>
-<span id="src-text2d-loft-L234">    <span class="cm">// 9 — and the error is per CHARACTER, so it accumulates: a 60-character</span></span>
-<span id="src-text2d-loft-L235">    <span class="cm">// line comes out 36 px short.  Under-estimating is the dangerous direction,</span></span>
-<span id="src-text2d-loft-L236">    <span class="cm">// because a fit check then believes more fits than does and the text</span></span>
-<span id="src-text2d-loft-L237">    <span class="cm">// overflows the box it was just proved to fit, silently.</span></span>
-<span id="src-text2d-loft-L238">    <span class="cm">//</span></span>
-<span id="src-text2d-loft-L239">    <span class="cm">// 1/64 is the unit fonts are hinted in, and it keeps the residual under one</span></span>
-<span id="src-text2d-loft-L240">    <span class="cm">// pixel over any line a panel can hold.</span></span>
-<span id="src-text2d-loft-L241">    m_adv64: <span class="ty"><a href="stdlib-types.html">integer</a></span>,        <span class="cm">// advance in 1/64 px</span></span>
-<span id="src-text2d-loft-L242">    m_line_h: <span class="ty"><a href="stdlib-types.html">integer</a></span>,       <span class="cm">// line height in whole px</span></span>
-<span id="src-text2d-loft-L243">    m_mono: <span class="ty"><a href="stdlib-types.html">boolean</a></span>,         <span class="cm">// is the resolved face actually fixed-pitch?</span></span>
-<span id="src-text2d-loft-L244">}</span>
-<span id="src-text2d-loft-L245"></span>
-<span id="src-text2d-loft-L246"><span class="cm">// Build metrics from two runs the consumer measured: `n` copies of a WIDE</span></span>
-<span id="src-text2d-loft-L247"><span class="cm">// character and `n` copies of a NARROW one.</span></span>
-<span id="src-text2d-loft-L248"><span class="cm">//</span></span>
-<span id="src-text2d-loft-L249"><span class="cm">// ⚠ THE TWO RUNS ARE THE WHOLE INSTRUMENT, and one width cannot replace them.</span></span>
-<span id="src-text2d-loft-L250"><span class="cm">// Ten M's are ten M's in any font, so a single measurement gives the advance of</span></span>
-<span id="src-text2d-loft-L251"><span class="cm">// an M and nothing about whether the face is fixed-pitch.  Two same-length,</span></span>
-<span id="src-text2d-loft-L252"><span class="cm">// opposite-width strings answer it in one comparison.</span></span>
-<span id="src-text2d-loft-L253"><span class="cm">//</span></span>
-<span id="src-text2d-loft-L254"><span class="cm">// The advance is taken from the WIDE run: under fixed pitch the two agree, and</span></span>
-<span id="src-text2d-loft-L255"><span class="cm">// when they do not, the wider one is the safe basis for a fits-in-the-box</span></span>
-<span id="src-text2d-loft-L256"><span class="cm">// question — it over-estimates rather than overflowing.</span></span>
-<span id="src-text2d-loft-L257"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">metrics_measured</span>(wide_run: <span class="ty"><a href="stdlib-types.html">float</a></span>, narrow_run: <span class="ty"><a href="stdlib-types.html">float</a></span>, n: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-text2d-loft-L258">                        line_h: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Metrics</span> {</span>
-<span id="src-text2d-loft-L259">    <span class="kw">if</span> n &lt;= <span class="nm">0</span> {</span>
-<span id="src-text2d-loft-L260">        <span class="kw">return</span> <span class="en">Metrics</span> { m_adv64: <span class="nm">0</span>, m_line_h: line_h, m_mono: <span class="kw">false</span> };</span>
-<span id="src-text2d-loft-L261">    }</span>
-<span id="src-text2d-loft-L262">    <span class="en">Metrics</span> { m_adv64: ((wide_run * <span class="nm">64.0</span> / (n <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>)) ?? <span class="nm">0.0</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-text2d-loft-L263">              m_line_h: line_h,</span>
-<span id="src-text2d-loft-L264">              m_mono: wide_run == narrow_run }</span>
-<span id="src-text2d-loft-L265">}</span>
-<span id="src-text2d-loft-L266"></span>
-<span id="src-text2d-loft-L267"><span class="cm">// The built-in face's own metrics, so a layout written against this seam works</span></span>
-<span id="src-text2d-loft-L268"><span class="cm">// with no font file at all — the property `B0` exists for, carried forward.</span></span>
-<span id="src-text2d-loft-L269"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">metrics_builtin</span>(scale: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Metrics</span> {</span>
-<span id="src-text2d-loft-L270">    <span class="en">Metrics</span> { m_adv64: (face::<span class="en">GLYPH_W</span> + <span class="nm">1</span>) * scale * <span class="nm">64</span>,</span>
-<span id="src-text2d-loft-L271">              m_line_h: <span class="fn-call">line_height</span>(scale),</span>
-<span id="src-text2d-loft-L272">              m_mono: <span class="kw">true</span> }</span>
-<span id="src-text2d-loft-L273">}</span>
-<span id="src-text2d-loft-L274"></span>
-<span id="src-text2d-loft-L275"><span class="cm">// The advance in 1/64 px, as measured.</span></span>
-<span id="src-text2d-loft-L276"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">advance64</span>(self: const <span class="en">Metrics</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> { self.m_adv64 }</span>
-<span id="src-text2d-loft-L277"></span>
-<span id="src-text2d-loft-L278"><span class="cm">// The advance in whole pixels, for a caller that wants to show it.</span></span>
-<span id="src-text2d-loft-L279"><span class="cm">//</span></span>
-<span id="src-text2d-loft-L280"><span class="cm">// ⚠ DERIVED, NOT A SECOND FIELD.  One quantity stored twice is how two numbers</span></span>
-<span id="src-text2d-loft-L281"><span class="cm">// describing one distance drift apart the moment either is edited.</span></span>
-<span id="src-text2d-loft-L282"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">advance</span>(self: const <span class="en">Metrics</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> { (self.m_adv64 + <span class="nm">32</span>) / <span class="nm">64</span> ?? <span class="nm">0</span> }</span>
-<span id="src-text2d-loft-L283"></span>
-<span id="src-text2d-loft-L284"><span class="cm">// The line height in pixels — what to advance y by between two lines.</span></span>
-<span id="src-text2d-loft-L285"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">height</span>(self: const <span class="en">Metrics</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> { self.m_line_h }</span>
-<span id="src-text2d-loft-L286"></span>
-<span id="src-text2d-loft-L287"><span class="cm">// Is the pitch fixed?  True is what makes `width` exact instead of an</span></span>
-<span id="src-text2d-loft-L288"><span class="cm">// over-estimate, so a caller laying out columns can trust the number.</span></span>
-<span id="src-text2d-loft-L289"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">is_mono</span>(self: const <span class="en">Metrics</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> { self.m_mono }</span>
-<span id="src-text2d-loft-L290"></span>
-<span id="src-text2d-loft-L291"><span class="cm">// The ADVANCE width of `s` — what to reserve a box by.</span></span>
-<span id="src-text2d-loft-L292"><span class="cm">//</span></span>
-<span id="src-text2d-loft-L293"><span class="cm">// ⚠ ROUNDED UP.  The residual is a fraction of a pixel per character, and the</span></span>
-<span id="src-text2d-loft-L294"><span class="cm">// safe direction to spend it is outwards: an over-estimate reserves a pixel too</span></span>
-<span id="src-text2d-loft-L295"><span class="cm">// many and the text still fits, an under-estimate spills out of a box that was</span></span>
-<span id="src-text2d-loft-L296"><span class="cm">// just measured as fitting.  Exact under fixed pitch, an over-estimate</span></span>
-<span id="src-text2d-loft-L297"><span class="cm">// otherwise — the same reason the advance comes from the wide run.</span></span>
-<span id="src-text2d-loft-L298"><span class="cm">//</span></span>
-<span id="src-text2d-loft-L299"><span class="cm">// Distinct from `text_width`, which is the built-in face's INK extent: the two</span></span>
-<span id="src-text2d-loft-L300"><span class="cm">// differ by the one trailing gap the ink extent leaves off, and they answer</span></span>
-<span id="src-text2d-loft-L301"><span class="cm">// different questions — centre by the ink, reserve by the advance.</span></span>
-<span id="src-text2d-loft-L302"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">width</span>(self: const <span class="en">Metrics</span>, s: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-text2d-loft-L303">    (<span class="bi"><a href="stdlib-text.html">len</a></span>(s) * self.m_adv64 + <span class="nm">63</span>) / <span class="nm">64</span> ?? <span class="nm">0</span></span>
-<span id="src-text2d-loft-L304">}</span>
-<span id="src-text2d-loft-L305"></span>
-<span id="src-text2d-loft-L306"><span class="cm">// Does `s` fit in `px`?  Asks the ADVANCE width, which rounds outwards, so a</span></span>
-<span id="src-text2d-loft-L307"><span class="cm">// true here means drawing it will not spill — the direction a caller needs.</span></span>
-<span id="src-text2d-loft-L308"><span class="cm">// `fit_text` is what to reach for when the answer is no.</span></span>
-<span id="src-text2d-loft-L309"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">fits</span>(self: const <span class="en">Metrics</span>, s: <span class="ty"><a href="stdlib-types.html">text</a></span>, px: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
-<span id="src-text2d-loft-L310">    <span class="fn-call">width</span>(self, s) &lt;= px</span>
-<span id="src-text2d-loft-L311">}</span>
-<span id="src-text2d-loft-L312"></span>
-<span id="src-text2d-loft-L313"><span class="cm">// The longest prefix of `s` that fits in `px`, with ".." marking the cut.</span></span>
-<span id="src-text2d-loft-L314"><span class="cm">//</span></span>
-<span id="src-text2d-loft-L315"><span class="cm">// ⚠ AN UNTOUCHED STRING COMES BACK UNTOUCHED, so a caller cannot tell "fitted"</span></span>
-<span id="src-text2d-loft-L316"><span class="cm">// from "never measured" by looking for the marker — it appears only when</span></span>
-<span id="src-text2d-loft-L317"><span class="cm">// something was actually removed.</span></span>
-<span id="src-text2d-loft-L318"><span class="cm">//</span></span>
-<span id="src-text2d-loft-L319"><span class="cm">// ".." rather than a single "…": the ellipsis is one code point but several</span></span>
-<span id="src-text2d-loft-L320"><span class="cm">// bytes, and a marker whose own width is ambiguous is the wrong thing to measure</span></span>
-<span id="src-text2d-loft-L321"><span class="cm">// a truncation with.</span></span>
-<span id="src-text2d-loft-L322"><span class="cm">//</span></span>
-<span id="src-text2d-loft-L323"><span class="cm">// ⚠ CUTS BY CHARACTERS.  This shipped in B1m as `s[0..keep]`, a BYTE range given</span></span>
-<span id="src-text2d-loft-L324"><span class="cm">// a character count — safe, because loft snaps a byte cut outward to a character</span></span>
-<span id="src-text2d-loft-L325"><span class="cm">// boundary, but wrong: a non-ASCII label came back shorter than it needed to be.</span></span>
-<span id="src-text2d-loft-L326"><span class="cm">// B2's `take_chars` is the cure and the trap is the same one wrapping has.</span></span>
-<span id="src-text2d-loft-L327"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">fit_text</span>(self: const <span class="en">Metrics</span>, s: <span class="ty"><a href="stdlib-types.html">text</a></span>, px: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
-<span id="src-text2d-loft-L328">    <span class="kw">if</span> self.m_adv64 &lt;= <span class="nm">0</span> { <span class="kw">return</span> s; }</span>
-<span id="src-text2d-loft-L329">    <span class="kw">if</span> <span class="fn-call">width</span>(self, s) &lt;= px { <span class="kw">return</span> s; }</span>
-<span id="src-text2d-loft-L330">    adv = <span class="fn-call">advance</span>(self);</span>
-<span id="src-text2d-loft-L331">    <span class="kw">if</span> adv &lt;= <span class="nm">0</span> { <span class="kw">return</span> s; }</span>
-<span id="src-text2d-loft-L332">    <span class="cm">// Room for the marker itself.  Below that there is no honest answer, so it</span></span>
-<span id="src-text2d-loft-L333">    <span class="cm">// gives back as much as fits and no marker.</span></span>
-<span id="src-text2d-loft-L334">    keep = (px / adv ?? <span class="nm">0</span>) - <span class="nm">2</span>;</span>
-<span id="src-text2d-loft-L335">    <span class="kw">if</span> keep &lt;= <span class="nm">0</span> {</span>
-<span id="src-text2d-loft-L336">        room = px / adv ?? <span class="nm">0</span>;</span>
-<span id="src-text2d-loft-L337">        <span class="kw">if</span> room &lt;= <span class="nm">0</span> { <span class="kw">return</span> <span class="st">""</span>; }</span>
-<span id="src-text2d-loft-L338">        <span class="kw">return</span> <span class="fn-call">take_chars</span>(s, room);</span>
-<span id="src-text2d-loft-L339">    }</span>
-<span id="src-text2d-loft-L340">    <span class="fn-call">take_chars</span>(s, keep) + <span class="st">".."</span></span>
-<span id="src-text2d-loft-L341">}</span>
-<span id="src-text2d-loft-L342"></span>
-<span id="src-text2d-loft-L343"></span>
-<span id="src-text2d-loft-L344"><span class="cm">// ── B2: wrapping and alignment ───────────────────────────────────────────────</span></span>
-<span id="src-text2d-loft-L345"><span class="cm">//</span></span>
-<span id="src-text2d-loft-L346"><span class="cm">// ⚠ `len(text)` COUNTS CHARACTERS; `s[a..b]` SLICES BYTES.  `"héllo"[0..5]` is</span></span>
-<span id="src-text2d-loft-L347"><span class="cm">// `"héll"` — four characters, not five.  loft snaps a byte cut outward to a</span></span>
-<span id="src-text2d-loft-L348"><span class="cm">// character boundary, so the failure is not mojibake but something quieter: a</span></span>
-<span id="src-text2d-loft-L349"><span class="cm">// break computed as a character count and applied as a byte range fits FEWER</span></span>
-<span id="src-text2d-loft-L350"><span class="cm">// characters than it measured, silently, and only in text that is not ASCII.</span></span>
-<span id="src-text2d-loft-L351"><span class="cm">// Everything here counts and cuts in characters for that reason.</span></span>
-<span id="src-text2d-loft-L352"></span>
-<span id="src-text2d-loft-L353"><span class="kw">pub</span> const <span class="en">ALIGN_LEFT</span>: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>;</span>
-<span id="src-text2d-loft-L354"><span class="kw">pub</span> const <span class="en">ALIGN_CENTRE</span>: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">1</span>;</span>
-<span id="src-text2d-loft-L355"><span class="kw">pub</span> const <span class="en">ALIGN_RIGHT</span>: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">2</span>;</span>
-<span id="src-text2d-loft-L356"></span>
-<span id="src-text2d-loft-L357"><span class="cm">// The first `n` CHARACTERS of `s`.  The cure for the trap above, and public</span></span>
-<span id="src-text2d-loft-L358"><span class="cm">// because every caller that slices text by a measured count needs it.</span></span>
-<span id="src-text2d-loft-L359"><span class="cm">// Example: @TXD-002</span></span>
-<span id="src-text2d-loft-L360"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">take_chars</span>(s: <span class="ty"><a href="stdlib-types.html">text</a></span>, n: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
-<span id="src-text2d-loft-L361">    <span class="kw">if</span> n &lt;= <span class="nm">0</span> { <span class="kw">return</span> <span class="st">""</span>; }</span>
-<span id="src-text2d-loft-L362">    out = <span class="st">""</span>;</span>
-<span id="src-text2d-loft-L363">    k = <span class="nm">0</span>;</span>
-<span id="src-text2d-loft-L364">    <span class="kw">for</span> c <span class="kw">in</span> s {</span>
-<span id="src-text2d-loft-L365">        <span class="kw">if</span> k &gt;= n { <span class="kw">break</span>; }</span>
-<span id="src-text2d-loft-L366">        out += c;</span>
-<span id="src-text2d-loft-L367">        k = k + <span class="nm">1</span>;</span>
-<span id="src-text2d-loft-L368">    }</span>
-<span id="src-text2d-loft-L369">    out</span>
-<span id="src-text2d-loft-L370">}</span>
-<span id="src-text2d-loft-L371"></span>
-<span id="src-text2d-loft-L372"><span class="cm">// How many characters of `s` fit in `px`.</span></span>
-<span id="src-text2d-loft-L373"><span class="cm">//</span></span>
-<span id="src-text2d-loft-L374"><span class="cm">// Computed rather than searched: a width is `ceil(chars * adv64 / 64)`, which is</span></span>
-<span id="src-text2d-loft-L375"><span class="cm">// monotonic in the count, so the largest count that fits is a division.  Never</span></span>
-<span id="src-text2d-loft-L376"><span class="cm">// answers zero — see `wrap`.</span></span>
-<span id="src-text2d-loft-L377"><span class="kw">fn</span> <span class="fn-call">chars_fitting</span>(self: const <span class="en">Metrics</span>, s: <span class="ty"><a href="stdlib-types.html">text</a></span>, px: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-text2d-loft-L378">    <span class="kw">if</span> self.m_adv64 &lt;= <span class="nm">0</span> { <span class="kw">return</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(s); }</span>
-<span id="src-text2d-loft-L379">    k = (px * <span class="nm">64</span>) / self.m_adv64 ?? <span class="nm">0</span>;</span>
-<span id="src-text2d-loft-L380">    <span class="kw">if</span> k &lt; <span class="nm">1</span> { k = <span class="nm">1</span>; }</span>
-<span id="src-text2d-loft-L381">    <span class="kw">if</span> k &gt; <span class="bi"><a href="stdlib-text.html">len</a></span>(s) { k = <span class="bi"><a href="stdlib-text.html">len</a></span>(s); }</span>
-<span id="src-text2d-loft-L382">    k</span>
-<span id="src-text2d-loft-L383">}</span>
-<span id="src-text2d-loft-L384"></span>
-<span id="src-text2d-loft-L385"><span class="cm">// Break `s` into lines that each fit `px`, greedily, on measured advances.</span></span>
-<span id="src-text2d-loft-L386"><span class="cm">//</span></span>
-<span id="src-text2d-loft-L387"><span class="cm">// ⚠ A LINE ALWAYS TAKES AT LEAST ONE CHARACTER.  In a box narrower than the</span></span>
-<span id="src-text2d-loft-L388"><span class="cm">// narrowest glyph the alternatives are an infinite loop or dropping the text,</span></span>
-<span id="src-text2d-loft-L389"><span class="cm">// and a line that overflows and says so is better than either.</span></span>
-<span id="src-text2d-loft-L390"><span class="cm">//</span></span>
-<span id="src-text2d-loft-L391"><span class="cm">// ⚠ AND THE RESULTING TABLE IS PER TARGET.  Native measures a real TTF, the</span></span>
-<span id="src-text2d-loft-L392"><span class="cm">// browser measures whatever family resolved, so the same string breaks in</span></span>
-<span id="src-text2d-loft-L393"><span class="cm">// different places.  The invariant that travels is self-consistency: every line</span></span>
-<span id="src-text2d-loft-L394"><span class="cm">// here fits the box THESE metrics measured.</span></span>
-<span id="src-text2d-loft-L395"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">wrap</span>(self: const <span class="en">Metrics</span>, s: <span class="ty"><a href="stdlib-types.html">text</a></span>, px: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt; {</span>
-<span id="src-text2d-loft-L396">    lines: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt; = [];</span>
-<span id="src-text2d-loft-L397">    line = <span class="st">""</span>;</span>
-<span id="src-text2d-loft-L398">    word = <span class="st">""</span>;</span>
-<span id="src-text2d-loft-L399">    <span class="kw">for</span> c <span class="kw">in</span> s {</span>
-<span id="src-text2d-loft-L400">        <span class="kw">if</span> c == <span class="ch">'\n'</span> {</span>
-<span id="src-text2d-loft-L401">            lines += [<span class="fn-call">flush_word</span>(self, line, word, px, lines)];</span>
-<span id="src-text2d-loft-L402">            <span class="cm">// `flush_word` returns the line it could not place; a hard break</span></span>
-<span id="src-text2d-loft-L403">            <span class="cm">// ends the line whatever is left on it.</span></span>
-<span id="src-text2d-loft-L404">            line = <span class="st">""</span>;</span>
-<span id="src-text2d-loft-L405">            word = <span class="st">""</span>;</span>
-<span id="src-text2d-loft-L406">            <span class="kw">continue</span>;</span>
-<span id="src-text2d-loft-L407">        }</span>
-<span id="src-text2d-loft-L408">        <span class="kw">if</span> c == <span class="ch">' '</span> {</span>
-<span id="src-text2d-loft-L409">            line = <span class="fn-call">place</span>(self, line, word, px, lines);</span>
-<span id="src-text2d-loft-L410">            word = <span class="st">""</span>;</span>
-<span id="src-text2d-loft-L411">            <span class="kw">continue</span>;</span>
-<span id="src-text2d-loft-L412">        }</span>
-<span id="src-text2d-loft-L413">        word += c;</span>
-<span id="src-text2d-loft-L414">    }</span>
-<span id="src-text2d-loft-L415">    line = <span class="fn-call">place</span>(self, line, word, px, lines);</span>
-<span id="src-text2d-loft-L416">    <span class="cm">// ⚠ The open line is pushed unless it is empty AND something was already</span></span>
-<span id="src-text2d-loft-L417">    <span class="cm">// pushed: a hard break that consumed the whole word leaves nothing open, and</span></span>
-<span id="src-text2d-loft-L418">    <span class="cm">// a trailing blank line is a real one to a caller drawing carets or counting</span></span>
-<span id="src-text2d-loft-L419">    <span class="cm">// height.  An EMPTY document still gets its single empty line.</span></span>
-<span id="src-text2d-loft-L420">    <span class="kw">if</span> line != <span class="st">""</span> <span class="kw">or</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(lines) == <span class="nm">0</span> { lines += [line]; }</span>
-<span id="src-text2d-loft-L421">    lines</span>
-<span id="src-text2d-loft-L422">}</span>
-<span id="src-text2d-loft-L423"></span>
-<span id="src-text2d-loft-L424"><span class="cm">// Put `word` onto `line`, pushing completed lines into `lines`, and answer the</span></span>
-<span id="src-text2d-loft-L425"><span class="cm">// line that is still open.</span></span>
-<span id="src-text2d-loft-L426"><span class="kw">fn</span> <span class="fn-call">place</span>(self: const <span class="en">Metrics</span>, line: <span class="ty"><a href="stdlib-types.html">text</a></span>, word: <span class="ty"><a href="stdlib-types.html">text</a></span>, px: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-text2d-loft-L427">         lines: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
-<span id="src-text2d-loft-L428">    <span class="kw">if</span> word == <span class="st">""</span> { <span class="kw">return</span> line; }</span>
-<span id="src-text2d-loft-L429">    cand = <span class="kw">if</span> line == <span class="st">""</span> { word } <span class="kw">else</span> { line + <span class="st">" "</span> + word };</span>
-<span id="src-text2d-loft-L430">    <span class="kw">if</span> <span class="fn-call">width</span>(self, cand) &lt;= px { <span class="kw">return</span> cand; }</span>
-<span id="src-text2d-loft-L431">    open = line;</span>
-<span id="src-text2d-loft-L432">    <span class="kw">if</span> open != <span class="st">""</span> {</span>
-<span id="src-text2d-loft-L433">        lines += [open];</span>
-<span id="src-text2d-loft-L434">        open = <span class="st">""</span>;</span>
-<span id="src-text2d-loft-L435">    }</span>
-<span id="src-text2d-loft-L436">    <span class="cm">// The word alone, hard-broken if it cannot fit even on an empty line.</span></span>
-<span id="src-text2d-loft-L437">    rest = word;</span>
-<span id="src-text2d-loft-L438">    while <span class="fn-call">width</span>(self, rest) &gt; px {</span>
-<span id="src-text2d-loft-L439">        k = <span class="fn-call">chars_fitting</span>(self, rest, px);</span>
-<span id="src-text2d-loft-L440">        lines += [<span class="fn-call">take_chars</span>(rest, k)];</span>
-<span id="src-text2d-loft-L441">        rest = <span class="fn-call">drop_chars</span>(rest, k);</span>
-<span id="src-text2d-loft-L442">    }</span>
-<span id="src-text2d-loft-L443">    rest</span>
-<span id="src-text2d-loft-L444">}</span>
-<span id="src-text2d-loft-L445"></span>
-<span id="src-text2d-loft-L446"><span class="cm">// The line `flush_word` leaves open is always empty — an explicit break ends the</span></span>
-<span id="src-text2d-loft-L447"><span class="cm">// line — but the words before it still have to be placed.</span></span>
-<span id="src-text2d-loft-L448"><span class="kw">fn</span> <span class="fn-call">flush_word</span>(self: const <span class="en">Metrics</span>, line: <span class="ty"><a href="stdlib-types.html">text</a></span>, word: <span class="ty"><a href="stdlib-types.html">text</a></span>, px: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-text2d-loft-L449">              lines: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
-<span id="src-text2d-loft-L450">    <span class="fn-call">place</span>(self, line, word, px, lines)</span>
-<span id="src-text2d-loft-L451">}</span>
-<span id="src-text2d-loft-L452"></span>
-<span id="src-text2d-loft-L453"><span class="cm">// Everything after the first `n` CHARACTERS.</span></span>
-<span id="src-text2d-loft-L454"><span class="kw">fn</span> <span class="fn-call">drop_chars</span>(s: <span class="ty"><a href="stdlib-types.html">text</a></span>, n: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
-<span id="src-text2d-loft-L455">    out = <span class="st">""</span>;</span>
-<span id="src-text2d-loft-L456">    k = <span class="nm">0</span>;</span>
-<span id="src-text2d-loft-L457">    <span class="kw">for</span> c <span class="kw">in</span> s {</span>
-<span id="src-text2d-loft-L458">        <span class="kw">if</span> k &gt;= n { out += c; }</span>
-<span id="src-text2d-loft-L459">        k = k + <span class="nm">1</span>;</span>
-<span id="src-text2d-loft-L460">    }</span>
-<span id="src-text2d-loft-L461">    out</span>
-<span id="src-text2d-loft-L462">}</span>
-<span id="src-text2d-loft-L463"></span>
-<span id="src-text2d-loft-L464"><span class="cm">// Where to start drawing `line` inside a box at `bx` of width `bw`.</span></span>
-<span id="src-text2d-loft-L465"><span class="cm">//</span></span>
-<span id="src-text2d-loft-L466"><span class="cm">// ⚠ A LINE WIDER THAN ITS BOX STARTS AT THE BOX.  Centring or right-aligning it</span></span>
-<span id="src-text2d-loft-L467"><span class="cm">// arithmetically would push its beginning off the left edge, where it cannot be</span></span>
-<span id="src-text2d-loft-L468"><span class="cm">// clipped back into view — overflow to the right is recoverable, overflow to the</span></span>
-<span id="src-text2d-loft-L469"><span class="cm">// left loses the start of the text.</span></span>
-<span id="src-text2d-loft-L470"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">align_x</span>(self: const <span class="en">Metrics</span>, line: <span class="ty"><a href="stdlib-types.html">text</a></span>, bx: <span class="ty"><a href="stdlib-types.html">integer</a></span>, bw: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-text2d-loft-L471">               align: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-text2d-loft-L472">    slack = bw - <span class="fn-call">width</span>(self, line);</span>
-<span id="src-text2d-loft-L473">    <span class="kw">if</span> slack &lt;= <span class="nm">0</span> { <span class="kw">return</span> bx; }</span>
-<span id="src-text2d-loft-L474">    <span class="kw">if</span> align == <span class="en">ALIGN_CENTRE</span> { <span class="kw">return</span> bx + (slack / <span class="nm">2</span> ?? <span class="nm">0</span>); }</span>
-<span id="src-text2d-loft-L475">    <span class="kw">if</span> align == <span class="en">ALIGN_RIGHT</span> { <span class="kw">return</span> bx + slack; }</span>
-<span id="src-text2d-loft-L476">    bx</span>
-<span id="src-text2d-loft-L477">}</span>
+<span id="src-text2d-loft-L118"><span class="cm">// A glyph atlas: a canvas of glyph cells, the codepoint each cell holds, the scale they</span></span>
+<span id="src-text2d-loft-L119"><span class="cm">// were drawn at, and how many times the sheet itself changed (`a_writes`).</span></span>
+<span id="src-text2d-loft-L120"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Atlas</span> {</span>
+<span id="src-text2d-loft-L121">  a_cv: graphics::<span class="en">Canvas</span>,</span>
+<span id="src-text2d-loft-L122">  a_codes: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,   <span class="cm">// codepoint held in each cell, in cell order</span></span>
+<span id="src-text2d-loft-L123">  a_scale: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-text2d-loft-L124">  a_cols: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-text2d-loft-L125">  a_next: <span class="ty"><a href="stdlib-types.html">integer</a></span>,            <span class="cm">// the next free cell</span></span>
+<span id="src-text2d-loft-L126">  a_writes: <span class="ty"><a href="stdlib-types.html">integer</a></span>,          <span class="cm">// how many times the SHEET changed — the gate reads this</span></span>
+<span id="src-text2d-loft-L127">}</span>
+<span id="src-text2d-loft-L128"></span>
+<span id="src-text2d-loft-L129"><span class="cm">// One glyph placed on a line: where it goes, and which cell it comes from.</span></span>
+<span id="src-text2d-loft-L130"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Quad</span> {</span>
+<span id="src-text2d-loft-L131">  q_x: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-text2d-loft-L132">  q_y: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-text2d-loft-L133">  q_cell: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-text2d-loft-L134">}</span>
+<span id="src-text2d-loft-L135"></span>
+<span id="src-text2d-loft-L136"><span class="cm">// A sheet with room for `capacity` glyphs at `scale`.  Shelf-packed in a grid,</span></span>
+<span id="src-text2d-loft-L137"><span class="cm">// which is enough for a fixed-width face — a proportional one would want a real</span></span>
+<span id="src-text2d-loft-L138"><span class="cm">// packer, and would still not change what the caller sees.</span></span>
+<span id="src-text2d-loft-L139"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">atlas_new</span>(scale: <span class="ty"><a href="stdlib-types.html">integer</a></span>, capacity: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Atlas</span> {</span>
+<span id="src-text2d-loft-L140">  sc = <span class="kw">if</span> scale &lt; <span class="nm">1</span> { <span class="nm">1</span> } <span class="kw">else</span> { scale };</span>
+<span id="src-text2d-loft-L141">  cap = <span class="kw">if</span> capacity &lt; <span class="nm">1</span> { <span class="nm">1</span> } <span class="kw">else</span> { capacity };</span>
+<span id="src-text2d-loft-L142">  <span class="cm">// ⚠ The sheet holds exactly `capacity`, not the next multiple of a row width.</span></span>
+<span id="src-text2d-loft-L143">  <span class="cm">// Rounding up would have made `atlas_new(1, 2)` hold sixteen — a caller asking</span></span>
+<span id="src-text2d-loft-L144">  <span class="cm">// for a small sheet and silently getting a large one is the kind of generosity</span></span>
+<span id="src-text2d-loft-L145">  <span class="cm">// that hides a full-sheet path until a consumer meets it.</span></span>
+<span id="src-text2d-loft-L146">  cols = <span class="kw">if</span> cap &lt; <span class="nm">16</span> { cap } <span class="kw">else</span> { <span class="nm">16</span> };</span>
+<span id="src-text2d-loft-L147">  rows = (cap + cols - <span class="nm">1</span>) / cols ?? <span class="nm">1</span>;</span>
+<span id="src-text2d-loft-L148">  <span class="kw">if</span> rows &lt; <span class="nm">1</span> { rows = <span class="nm">1</span>; }</span>
+<span id="src-text2d-loft-L149">  <span class="en">Atlas</span> {</span>
+<span id="src-text2d-loft-L150">    a_cv: graphics::<span class="fn-call">canvas</span>(cols * face::<span class="en">GLYPH_W</span> * sc, rows * face::<span class="en">GLYPH_H</span> * sc, <span class="nm">0</span>),</span>
+<span id="src-text2d-loft-L151">    a_codes: [], a_scale: sc, a_cols: cols, a_next: <span class="nm">0</span>, a_writes: <span class="nm">0</span>,</span>
+<span id="src-text2d-loft-L152">  }</span>
+<span id="src-text2d-loft-L153">}</span>
+<span id="src-text2d-loft-L154"></span>
+<span id="src-text2d-loft-L155"><span class="cm">// How many distinct glyphs the sheet holds.  It rises only when a code is met</span></span>
+<span id="src-text2d-loft-L156"><span class="cm">// for the FIRST time, so it measures what the atlas actually cost rather than</span></span>
+<span id="src-text2d-loft-L157"><span class="cm">// how much text has been drawn through it.</span></span>
+<span id="src-text2d-loft-L158"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">atlas_glyph_count</span>(self: const <span class="en">Atlas</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> { self.a_next }</span>
+<span id="src-text2d-loft-L159"></span>
+<span id="src-text2d-loft-L160"><span class="cm">// How many times the sheet has been WRITTEN.  A GL consumer uploads on exactly</span></span>
+<span id="src-text2d-loft-L161"><span class="cm">// these, so a caller can assert that a changing label costs no upload — which is</span></span>
+<span id="src-text2d-loft-L162"><span class="cm">// the property the whole arc exists for.</span></span>
+<span id="src-text2d-loft-L163"><span class="cm">// Example: @TXD-003</span></span>
+<span id="src-text2d-loft-L164"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">atlas_writes</span>(self: const <span class="en">Atlas</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> { self.a_writes }</span>
+<span id="src-text2d-loft-L165"></span>
+<span id="src-text2d-loft-L166"><span class="cm">// The cell holding `code`, rasterising it on first use.  -1 when the sheet is full.</span></span>
+<span id="src-text2d-loft-L167"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">atlas_cell</span>(self: <span class="en">Atlas</span>, code: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-text2d-loft-L168">  c = code;</span>
+<span id="src-text2d-loft-L169">  <span class="kw">if</span> c &gt;= <span class="nm">97</span> <span class="kw">and</span> c &lt;= <span class="nm">122</span> { c = c - <span class="nm">32</span>; }</span>
+<span id="src-text2d-loft-L170">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..l</span><span class="fn-call">en</span>(self.a_codes) {</span>
+<span id="src-text2d-loft-L171">    <span class="kw">if</span> (self.a_codes[i] ?? -<span class="nm">1</span>) == c { <span class="kw">return</span> i; }</span>
+<span id="src-text2d-loft-L172">  }</span>
+<span id="src-text2d-loft-L173">  cap = (self.a_cv.width / (face::<span class="en">GLYPH_W</span> * self.a_scale) ?? <span class="nm">1</span>)</span>
+<span id="src-text2d-loft-L174">      * (self.a_cv.height / (face::<span class="en">GLYPH_H</span> * self.a_scale) ?? <span class="nm">1</span>);</span>
+<span id="src-text2d-loft-L175">  <span class="kw">if</span> self.a_next &gt;= cap { <span class="kw">return</span> -<span class="nm">1</span>; }</span>
+<span id="src-text2d-loft-L176">  cell = self.a_next;</span>
+<span id="src-text2d-loft-L177">  cx = (cell % self.a_cols ?? <span class="nm">0</span>) * face::<span class="en">GLYPH_W</span> * self.a_scale;</span>
+<span id="src-text2d-loft-L178">  cy = (cell / self.a_cols ?? <span class="nm">0</span>) * face::<span class="en">GLYPH_H</span> * self.a_scale;</span>
+<span id="src-text2d-loft-L179">  <span class="fn-call">blit_glyph</span>(self.a_cv, c, cx, cy, <span class="nm">0xffffffff</span>, self.a_scale);</span>
+<span id="src-text2d-loft-L180">  self.a_codes += [c];</span>
+<span id="src-text2d-loft-L181">  self.a_next = cell + <span class="nm">1</span>;</span>
+<span id="src-text2d-loft-L182">  self.a_writes = self.a_writes + <span class="nm">1</span>;</span>
+<span id="src-text2d-loft-L183">  cell</span>
+<span id="src-text2d-loft-L184">}</span>
+<span id="src-text2d-loft-L185"></span>
+<span id="src-text2d-loft-L186"><span class="cm">// Lay a string out over the sheet.  Answers one quad per character; NOTHING is</span></span>
+<span id="src-text2d-loft-L187"><span class="cm">// written to the sheet unless a character is new to it.</span></span>
+<span id="src-text2d-loft-L188"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">layout</span>(self: <span class="en">Atlas</span>, s: <span class="ty"><a href="stdlib-types.html">text</a></span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Quad</span>&gt; {</span>
+<span id="src-text2d-loft-L189">  out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Quad</span>&gt; = [];</span>
+<span id="src-text2d-loft-L190">  pen = x;</span>
+<span id="src-text2d-loft-L191">  <span class="kw">for</span> ch <span class="kw">in</span> s {</span>
+<span id="src-text2d-loft-L192">    cell = <span class="fn-call">atlas_cell</span>(self, ch <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>);</span>
+<span id="src-text2d-loft-L193">    out += [<span class="en">Quad</span> { q_x: pen, q_y: y, q_cell: cell }];</span>
+<span id="src-text2d-loft-L194">    pen = pen + (face::<span class="en">GLYPH_W</span> + <span class="nm">1</span>) * self.a_scale;</span>
+<span id="src-text2d-loft-L195">  }</span>
+<span id="src-text2d-loft-L196">  out</span>
+<span id="src-text2d-loft-L197">}</span>
+<span id="src-text2d-loft-L198"></span>
+<span id="src-text2d-loft-L199"><span class="cm">// Blit laid-out quads from the sheet onto a canvas.</span></span>
+<span id="src-text2d-loft-L200"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">draw_quads</span>(cv: graphics::<span class="en">Canvas</span>, atlas: const <span class="en">Atlas</span>, quads: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Quad</span>&gt;,</span>
+<span id="src-text2d-loft-L201">                  colour: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-text2d-loft-L202">  gw = face::<span class="en">GLYPH_W</span> * atlas.a_scale;</span>
+<span id="src-text2d-loft-L203">  gh = face::<span class="en">GLYPH_H</span> * atlas.a_scale;</span>
+<span id="src-text2d-loft-L204">  <span class="kw">for</span> q <span class="kw">in</span> quads {</span>
+<span id="src-text2d-loft-L205">    <span class="kw">if</span> q.q_cell &lt; <span class="nm">0</span> { <span class="kw">continue</span>; }</span>
+<span id="src-text2d-loft-L206">    sx = (q.q_cell % atlas.a_cols ?? <span class="nm">0</span>) * gw;</span>
+<span id="src-text2d-loft-L207">    sy = (q.q_cell / atlas.a_cols ?? <span class="nm">0</span>) * gh;</span>
+<span id="src-text2d-loft-L208">    <span class="kw">for</span> py <span class="kw">in</span> <span class="nm">0..</span>gh {</span>
+<span id="src-text2d-loft-L209">      <span class="kw">for</span> px <span class="kw">in</span> <span class="nm">0..</span>gw {</span>
+<span id="src-text2d-loft-L210">        <span class="kw">if</span> atlas.a_cv.<span class="fn-call">get_pixel</span>(sx + px, sy + py) != <span class="nm">0</span> {</span>
+<span id="src-text2d-loft-L211">          cv.<span class="fn-call">set_pixel</span>(q.q_x + px, q.q_y + py, colour);</span>
+<span id="src-text2d-loft-L212">        }</span>
+<span id="src-text2d-loft-L213">      }</span>
+<span id="src-text2d-loft-L214">    }</span>
+<span id="src-text2d-loft-L215">  }</span>
+<span id="src-text2d-loft-L216">}</span>
+<span id="src-text2d-loft-L217"></span>
+<span id="src-text2d-loft-L218"></span>
+<span id="src-text2d-loft-L219"><span class="cm">// ── B1m: the metrics seam ────────────────────────────────────────────────────</span></span>
+<span id="src-text2d-loft-L220"><span class="cm">//</span></span>
+<span id="src-text2d-loft-L221"><span class="cm">// This package has no GL context and no font file, so it cannot measure a real</span></span>
+<span id="src-text2d-loft-L222"><span class="cm">// face itself.  The consumer measures ONCE at startup through whichever backend</span></span>
+<span id="src-text2d-loft-L223"><span class="cm">// resolved and hands the numbers over; everything a layout needs is derived</span></span>
+<span id="src-text2d-loft-L224"><span class="cm">// here.  That keeps `text2d` headless — the property `B0` exists for — while</span></span>
+<span id="src-text2d-loft-L225"><span class="cm">// still serving a game that ships a real TTF.</span></span>
+<span id="src-text2d-loft-L226"></span>
+<span id="src-text2d-loft-L227"><span class="cm">// What the consumer measured.</span></span>
+<span id="src-text2d-loft-L228"><span class="cm">//</span></span>
+<span id="src-text2d-loft-L229"><span class="cm">// ⚠ `m_mono` IS A FACT ABOUT THE FACE THAT RESOLVED, not the one that was asked</span></span>
+<span id="src-text2d-loft-L230"><span class="cm">// for.  Requesting `DejaVuSansMono.ttf` gives a fixed-pitch face on the desktop</span></span>
+<span id="src-text2d-loft-L231"><span class="cm">// and a PROPORTIONAL fallback in the browser, because the browser resolves the</span></span>
+<span id="src-text2d-loft-L232"><span class="cm">// base name to a CSS family it does not know.  Only a measurement can tell.</span></span>
+<span id="src-text2d-loft-L233"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Metrics</span> {</span>
+<span id="src-text2d-loft-L234">    <span class="cm">// ⚠ THE ADVANCE IS IN 1/64 PIXEL, and a whole-pixel field is what this</span></span>
+<span id="src-text2d-loft-L235">    <span class="cm">// replaces.  DejaVu Sans Mono at 16 px advances 9.6 px, which truncates to</span></span>
+<span id="src-text2d-loft-L236">    <span class="cm">// 9 — and the error is per CHARACTER, so it accumulates: a 60-character</span></span>
+<span id="src-text2d-loft-L237">    <span class="cm">// line comes out 36 px short.  Under-estimating is the dangerous direction,</span></span>
+<span id="src-text2d-loft-L238">    <span class="cm">// because a fit check then believes more fits than does and the text</span></span>
+<span id="src-text2d-loft-L239">    <span class="cm">// overflows the box it was just proved to fit, silently.</span></span>
+<span id="src-text2d-loft-L240">    <span class="cm">//</span></span>
+<span id="src-text2d-loft-L241">    <span class="cm">// 1/64 is the unit fonts are hinted in, and it keeps the residual under one</span></span>
+<span id="src-text2d-loft-L242">    <span class="cm">// pixel over any line a panel can hold.</span></span>
+<span id="src-text2d-loft-L243">    m_adv64: <span class="ty"><a href="stdlib-types.html">integer</a></span>,        <span class="cm">// advance in 1/64 px</span></span>
+<span id="src-text2d-loft-L244">    m_line_h: <span class="ty"><a href="stdlib-types.html">integer</a></span>,       <span class="cm">// line height in whole px</span></span>
+<span id="src-text2d-loft-L245">    m_mono: <span class="ty"><a href="stdlib-types.html">boolean</a></span>,         <span class="cm">// is the resolved face actually fixed-pitch?</span></span>
+<span id="src-text2d-loft-L246">}</span>
+<span id="src-text2d-loft-L247"></span>
+<span id="src-text2d-loft-L248"><span class="cm">// Build metrics from two runs the consumer measured: `n` copies of a WIDE</span></span>
+<span id="src-text2d-loft-L249"><span class="cm">// character and `n` copies of a NARROW one.</span></span>
+<span id="src-text2d-loft-L250"><span class="cm">//</span></span>
+<span id="src-text2d-loft-L251"><span class="cm">// ⚠ THE TWO RUNS ARE THE WHOLE INSTRUMENT, and one width cannot replace them.</span></span>
+<span id="src-text2d-loft-L252"><span class="cm">// Ten M's are ten M's in any font, so a single measurement gives the advance of</span></span>
+<span id="src-text2d-loft-L253"><span class="cm">// an M and nothing about whether the face is fixed-pitch.  Two same-length,</span></span>
+<span id="src-text2d-loft-L254"><span class="cm">// opposite-width strings answer it in one comparison.</span></span>
+<span id="src-text2d-loft-L255"><span class="cm">//</span></span>
+<span id="src-text2d-loft-L256"><span class="cm">// The advance is taken from the WIDE run: under fixed pitch the two agree, and</span></span>
+<span id="src-text2d-loft-L257"><span class="cm">// when they do not, the wider one is the safe basis for a fits-in-the-box</span></span>
+<span id="src-text2d-loft-L258"><span class="cm">// question — it over-estimates rather than overflowing.</span></span>
+<span id="src-text2d-loft-L259"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">metrics_measured</span>(wide_run: <span class="ty"><a href="stdlib-types.html">float</a></span>, narrow_run: <span class="ty"><a href="stdlib-types.html">float</a></span>, n: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-text2d-loft-L260">                        line_h: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Metrics</span> {</span>
+<span id="src-text2d-loft-L261">    <span class="kw">if</span> n &lt;= <span class="nm">0</span> {</span>
+<span id="src-text2d-loft-L262">        <span class="kw">return</span> <span class="en">Metrics</span> { m_adv64: <span class="nm">0</span>, m_line_h: line_h, m_mono: <span class="kw">false</span> };</span>
+<span id="src-text2d-loft-L263">    }</span>
+<span id="src-text2d-loft-L264">    <span class="en">Metrics</span> { m_adv64: ((wide_run * <span class="nm">64.0</span> / (n <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>)) ?? <span class="nm">0.0</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-text2d-loft-L265">              m_line_h: line_h,</span>
+<span id="src-text2d-loft-L266">              m_mono: wide_run == narrow_run }</span>
+<span id="src-text2d-loft-L267">}</span>
+<span id="src-text2d-loft-L268"></span>
+<span id="src-text2d-loft-L269"><span class="cm">// The built-in face's own metrics, so a layout written against this seam works</span></span>
+<span id="src-text2d-loft-L270"><span class="cm">// with no font file at all — the property `B0` exists for, carried forward.</span></span>
+<span id="src-text2d-loft-L271"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">metrics_builtin</span>(scale: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Metrics</span> {</span>
+<span id="src-text2d-loft-L272">    <span class="en">Metrics</span> { m_adv64: (face::<span class="en">GLYPH_W</span> + <span class="nm">1</span>) * scale * <span class="nm">64</span>,</span>
+<span id="src-text2d-loft-L273">              m_line_h: <span class="fn-call">line_height</span>(scale),</span>
+<span id="src-text2d-loft-L274">              m_mono: <span class="kw">true</span> }</span>
+<span id="src-text2d-loft-L275">}</span>
+<span id="src-text2d-loft-L276"></span>
+<span id="src-text2d-loft-L277"><span class="cm">// The advance in 1/64 px, as measured.</span></span>
+<span id="src-text2d-loft-L278"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">advance64</span>(self: const <span class="en">Metrics</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> { self.m_adv64 }</span>
+<span id="src-text2d-loft-L279"></span>
+<span id="src-text2d-loft-L280"><span class="cm">// The advance in whole pixels, for a caller that wants to show it.</span></span>
+<span id="src-text2d-loft-L281"><span class="cm">//</span></span>
+<span id="src-text2d-loft-L282"><span class="cm">// ⚠ DERIVED, NOT A SECOND FIELD.  One quantity stored twice is how two numbers</span></span>
+<span id="src-text2d-loft-L283"><span class="cm">// describing one distance drift apart the moment either is edited.</span></span>
+<span id="src-text2d-loft-L284"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">advance</span>(self: const <span class="en">Metrics</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> { (self.m_adv64 + <span class="nm">32</span>) / <span class="nm">64</span> ?? <span class="nm">0</span> }</span>
+<span id="src-text2d-loft-L285"></span>
+<span id="src-text2d-loft-L286"><span class="cm">// The line height in pixels — what to advance y by between two lines.</span></span>
+<span id="src-text2d-loft-L287"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">height</span>(self: const <span class="en">Metrics</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> { self.m_line_h }</span>
+<span id="src-text2d-loft-L288"></span>
+<span id="src-text2d-loft-L289"><span class="cm">// Is the pitch fixed?  True is what makes `width` exact instead of an</span></span>
+<span id="src-text2d-loft-L290"><span class="cm">// over-estimate, so a caller laying out columns can trust the number.</span></span>
+<span id="src-text2d-loft-L291"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">is_mono</span>(self: const <span class="en">Metrics</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> { self.m_mono }</span>
+<span id="src-text2d-loft-L292"></span>
+<span id="src-text2d-loft-L293"><span class="cm">// The ADVANCE width of `s` — what to reserve a box by.</span></span>
+<span id="src-text2d-loft-L294"><span class="cm">//</span></span>
+<span id="src-text2d-loft-L295"><span class="cm">// ⚠ ROUNDED UP.  The residual is a fraction of a pixel per character, and the</span></span>
+<span id="src-text2d-loft-L296"><span class="cm">// safe direction to spend it is outwards: an over-estimate reserves a pixel too</span></span>
+<span id="src-text2d-loft-L297"><span class="cm">// many and the text still fits, an under-estimate spills out of a box that was</span></span>
+<span id="src-text2d-loft-L298"><span class="cm">// just measured as fitting.  Exact under fixed pitch, an over-estimate</span></span>
+<span id="src-text2d-loft-L299"><span class="cm">// otherwise — the same reason the advance comes from the wide run.</span></span>
+<span id="src-text2d-loft-L300"><span class="cm">//</span></span>
+<span id="src-text2d-loft-L301"><span class="cm">// Distinct from `text_width`, which is the built-in face's INK extent: the two</span></span>
+<span id="src-text2d-loft-L302"><span class="cm">// differ by the one trailing gap the ink extent leaves off, and they answer</span></span>
+<span id="src-text2d-loft-L303"><span class="cm">// different questions — centre by the ink, reserve by the advance.</span></span>
+<span id="src-text2d-loft-L304"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">width</span>(self: const <span class="en">Metrics</span>, s: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-text2d-loft-L305">    (<span class="bi"><a href="stdlib-text.html">len</a></span>(s) * self.m_adv64 + <span class="nm">63</span>) / <span class="nm">64</span> ?? <span class="nm">0</span></span>
+<span id="src-text2d-loft-L306">}</span>
+<span id="src-text2d-loft-L307"></span>
+<span id="src-text2d-loft-L308"><span class="cm">// Does `s` fit in `px`?  Asks the ADVANCE width, which rounds outwards, so a</span></span>
+<span id="src-text2d-loft-L309"><span class="cm">// true here means drawing it will not spill — the direction a caller needs.</span></span>
+<span id="src-text2d-loft-L310"><span class="cm">// `fit_text` is what to reach for when the answer is no.</span></span>
+<span id="src-text2d-loft-L311"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">fits</span>(self: const <span class="en">Metrics</span>, s: <span class="ty"><a href="stdlib-types.html">text</a></span>, px: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-text2d-loft-L312">    <span class="fn-call">width</span>(self, s) &lt;= px</span>
+<span id="src-text2d-loft-L313">}</span>
+<span id="src-text2d-loft-L314"></span>
+<span id="src-text2d-loft-L315"><span class="cm">// The longest prefix of `s` that fits in `px`, with ".." marking the cut.</span></span>
+<span id="src-text2d-loft-L316"><span class="cm">//</span></span>
+<span id="src-text2d-loft-L317"><span class="cm">// ⚠ AN UNTOUCHED STRING COMES BACK UNTOUCHED, so a caller cannot tell "fitted"</span></span>
+<span id="src-text2d-loft-L318"><span class="cm">// from "never measured" by looking for the marker — it appears only when</span></span>
+<span id="src-text2d-loft-L319"><span class="cm">// something was actually removed.</span></span>
+<span id="src-text2d-loft-L320"><span class="cm">//</span></span>
+<span id="src-text2d-loft-L321"><span class="cm">// ".." rather than a single "…": the ellipsis is one code point but several</span></span>
+<span id="src-text2d-loft-L322"><span class="cm">// bytes, and a marker whose own width is ambiguous is the wrong thing to measure</span></span>
+<span id="src-text2d-loft-L323"><span class="cm">// a truncation with.</span></span>
+<span id="src-text2d-loft-L324"><span class="cm">//</span></span>
+<span id="src-text2d-loft-L325"><span class="cm">// ⚠ CUTS BY CHARACTERS.  This shipped in B1m as `s[0..keep]`, a BYTE range given</span></span>
+<span id="src-text2d-loft-L326"><span class="cm">// a character count — safe, because loft snaps a byte cut outward to a character</span></span>
+<span id="src-text2d-loft-L327"><span class="cm">// boundary, but wrong: a non-ASCII label came back shorter than it needed to be.</span></span>
+<span id="src-text2d-loft-L328"><span class="cm">// B2's `take_chars` is the cure and the trap is the same one wrapping has.</span></span>
+<span id="src-text2d-loft-L329"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">fit_text</span>(self: const <span class="en">Metrics</span>, s: <span class="ty"><a href="stdlib-types.html">text</a></span>, px: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-text2d-loft-L330">    <span class="kw">if</span> self.m_adv64 &lt;= <span class="nm">0</span> { <span class="kw">return</span> s; }</span>
+<span id="src-text2d-loft-L331">    <span class="kw">if</span> <span class="fn-call">width</span>(self, s) &lt;= px { <span class="kw">return</span> s; }</span>
+<span id="src-text2d-loft-L332">    adv = <span class="fn-call">advance</span>(self);</span>
+<span id="src-text2d-loft-L333">    <span class="kw">if</span> adv &lt;= <span class="nm">0</span> { <span class="kw">return</span> s; }</span>
+<span id="src-text2d-loft-L334">    <span class="cm">// Room for the marker itself.  Below that there is no honest answer, so it</span></span>
+<span id="src-text2d-loft-L335">    <span class="cm">// gives back as much as fits and no marker.</span></span>
+<span id="src-text2d-loft-L336">    keep = (px / adv ?? <span class="nm">0</span>) - <span class="nm">2</span>;</span>
+<span id="src-text2d-loft-L337">    <span class="kw">if</span> keep &lt;= <span class="nm">0</span> {</span>
+<span id="src-text2d-loft-L338">        room = px / adv ?? <span class="nm">0</span>;</span>
+<span id="src-text2d-loft-L339">        <span class="kw">if</span> room &lt;= <span class="nm">0</span> { <span class="kw">return</span> <span class="st">""</span>; }</span>
+<span id="src-text2d-loft-L340">        <span class="kw">return</span> <span class="fn-call">take_chars</span>(s, room);</span>
+<span id="src-text2d-loft-L341">    }</span>
+<span id="src-text2d-loft-L342">    <span class="fn-call">take_chars</span>(s, keep) + <span class="st">".."</span></span>
+<span id="src-text2d-loft-L343">}</span>
+<span id="src-text2d-loft-L344"></span>
+<span id="src-text2d-loft-L345"></span>
+<span id="src-text2d-loft-L346"><span class="cm">// ── B2: wrapping and alignment ───────────────────────────────────────────────</span></span>
+<span id="src-text2d-loft-L347"><span class="cm">//</span></span>
+<span id="src-text2d-loft-L348"><span class="cm">// ⚠ `len(text)` COUNTS CHARACTERS; `s[a..b]` SLICES BYTES.  `"héllo"[0..5]` is</span></span>
+<span id="src-text2d-loft-L349"><span class="cm">// `"héll"` — four characters, not five.  loft snaps a byte cut outward to a</span></span>
+<span id="src-text2d-loft-L350"><span class="cm">// character boundary, so the failure is not mojibake but something quieter: a</span></span>
+<span id="src-text2d-loft-L351"><span class="cm">// break computed as a character count and applied as a byte range fits FEWER</span></span>
+<span id="src-text2d-loft-L352"><span class="cm">// characters than it measured, silently, and only in text that is not ASCII.</span></span>
+<span id="src-text2d-loft-L353"><span class="cm">// Everything here counts and cuts in characters for that reason.</span></span>
+<span id="src-text2d-loft-L354"></span>
+<span id="src-text2d-loft-L355"><span class="kw">pub</span> const <span class="en">ALIGN_LEFT</span>: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>;</span>
+<span id="src-text2d-loft-L356"><span class="kw">pub</span> const <span class="en">ALIGN_CENTRE</span>: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">1</span>;</span>
+<span id="src-text2d-loft-L357"><span class="kw">pub</span> const <span class="en">ALIGN_RIGHT</span>: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">2</span>;</span>
+<span id="src-text2d-loft-L358"></span>
+<span id="src-text2d-loft-L359"><span class="cm">// The first `n` CHARACTERS of `s`.  The cure for the trap above, and public</span></span>
+<span id="src-text2d-loft-L360"><span class="cm">// because every caller that slices text by a measured count needs it.</span></span>
+<span id="src-text2d-loft-L361"><span class="cm">// Example: @TXD-002</span></span>
+<span id="src-text2d-loft-L362"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">take_chars</span>(s: <span class="ty"><a href="stdlib-types.html">text</a></span>, n: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-text2d-loft-L363">    <span class="kw">if</span> n &lt;= <span class="nm">0</span> { <span class="kw">return</span> <span class="st">""</span>; }</span>
+<span id="src-text2d-loft-L364">    out = <span class="st">""</span>;</span>
+<span id="src-text2d-loft-L365">    k = <span class="nm">0</span>;</span>
+<span id="src-text2d-loft-L366">    <span class="kw">for</span> c <span class="kw">in</span> s {</span>
+<span id="src-text2d-loft-L367">        <span class="kw">if</span> k &gt;= n { <span class="kw">break</span>; }</span>
+<span id="src-text2d-loft-L368">        out += c;</span>
+<span id="src-text2d-loft-L369">        k = k + <span class="nm">1</span>;</span>
+<span id="src-text2d-loft-L370">    }</span>
+<span id="src-text2d-loft-L371">    out</span>
+<span id="src-text2d-loft-L372">}</span>
+<span id="src-text2d-loft-L373"></span>
+<span id="src-text2d-loft-L374"><span class="cm">// How many characters of `s` fit in `px`.</span></span>
+<span id="src-text2d-loft-L375"><span class="cm">//</span></span>
+<span id="src-text2d-loft-L376"><span class="cm">// Computed rather than searched: a width is `ceil(chars * adv64 / 64)`, which is</span></span>
+<span id="src-text2d-loft-L377"><span class="cm">// monotonic in the count, so the largest count that fits is a division.  Never</span></span>
+<span id="src-text2d-loft-L378"><span class="cm">// answers zero — see `wrap`.</span></span>
+<span id="src-text2d-loft-L379"><span class="kw">fn</span> <span class="fn-call">chars_fitting</span>(self: const <span class="en">Metrics</span>, s: <span class="ty"><a href="stdlib-types.html">text</a></span>, px: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-text2d-loft-L380">    <span class="kw">if</span> self.m_adv64 &lt;= <span class="nm">0</span> { <span class="kw">return</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(s); }</span>
+<span id="src-text2d-loft-L381">    k = (px * <span class="nm">64</span>) / self.m_adv64 ?? <span class="nm">0</span>;</span>
+<span id="src-text2d-loft-L382">    <span class="kw">if</span> k &lt; <span class="nm">1</span> { k = <span class="nm">1</span>; }</span>
+<span id="src-text2d-loft-L383">    <span class="kw">if</span> k &gt; <span class="bi"><a href="stdlib-text.html">len</a></span>(s) { k = <span class="bi"><a href="stdlib-text.html">len</a></span>(s); }</span>
+<span id="src-text2d-loft-L384">    k</span>
+<span id="src-text2d-loft-L385">}</span>
+<span id="src-text2d-loft-L386"></span>
+<span id="src-text2d-loft-L387"><span class="cm">// Break `s` into lines that each fit `px`, greedily, on measured advances.</span></span>
+<span id="src-text2d-loft-L388"><span class="cm">//</span></span>
+<span id="src-text2d-loft-L389"><span class="cm">// ⚠ A LINE ALWAYS TAKES AT LEAST ONE CHARACTER.  In a box narrower than the</span></span>
+<span id="src-text2d-loft-L390"><span class="cm">// narrowest glyph the alternatives are an infinite loop or dropping the text,</span></span>
+<span id="src-text2d-loft-L391"><span class="cm">// and a line that overflows and says so is better than either.</span></span>
+<span id="src-text2d-loft-L392"><span class="cm">//</span></span>
+<span id="src-text2d-loft-L393"><span class="cm">// ⚠ AND THE RESULTING TABLE IS PER TARGET.  Native measures a real TTF, the</span></span>
+<span id="src-text2d-loft-L394"><span class="cm">// browser measures whatever family resolved, so the same string breaks in</span></span>
+<span id="src-text2d-loft-L395"><span class="cm">// different places.  The invariant that travels is self-consistency: every line</span></span>
+<span id="src-text2d-loft-L396"><span class="cm">// here fits the box THESE metrics measured.</span></span>
+<span id="src-text2d-loft-L397"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">wrap</span>(self: const <span class="en">Metrics</span>, s: <span class="ty"><a href="stdlib-types.html">text</a></span>, px: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt; {</span>
+<span id="src-text2d-loft-L398">    lines: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt; = [];</span>
+<span id="src-text2d-loft-L399">    line = <span class="st">""</span>;</span>
+<span id="src-text2d-loft-L400">    word = <span class="st">""</span>;</span>
+<span id="src-text2d-loft-L401">    <span class="kw">for</span> c <span class="kw">in</span> s {</span>
+<span id="src-text2d-loft-L402">        <span class="kw">if</span> c == <span class="ch">'\n'</span> {</span>
+<span id="src-text2d-loft-L403">            lines += [<span class="fn-call">flush_word</span>(self, line, word, px, lines)];</span>
+<span id="src-text2d-loft-L404">            <span class="cm">// `flush_word` returns the line it could not place; a hard break</span></span>
+<span id="src-text2d-loft-L405">            <span class="cm">// ends the line whatever is left on it.</span></span>
+<span id="src-text2d-loft-L406">            line = <span class="st">""</span>;</span>
+<span id="src-text2d-loft-L407">            word = <span class="st">""</span>;</span>
+<span id="src-text2d-loft-L408">            <span class="kw">continue</span>;</span>
+<span id="src-text2d-loft-L409">        }</span>
+<span id="src-text2d-loft-L410">        <span class="kw">if</span> c == <span class="ch">' '</span> {</span>
+<span id="src-text2d-loft-L411">            line = <span class="fn-call">place</span>(self, line, word, px, lines);</span>
+<span id="src-text2d-loft-L412">            word = <span class="st">""</span>;</span>
+<span id="src-text2d-loft-L413">            <span class="kw">continue</span>;</span>
+<span id="src-text2d-loft-L414">        }</span>
+<span id="src-text2d-loft-L415">        word += c;</span>
+<span id="src-text2d-loft-L416">    }</span>
+<span id="src-text2d-loft-L417">    line = <span class="fn-call">place</span>(self, line, word, px, lines);</span>
+<span id="src-text2d-loft-L418">    <span class="cm">// ⚠ The open line is pushed unless it is empty AND something was already</span></span>
+<span id="src-text2d-loft-L419">    <span class="cm">// pushed: a hard break that consumed the whole word leaves nothing open, and</span></span>
+<span id="src-text2d-loft-L420">    <span class="cm">// a trailing blank line is a real one to a caller drawing carets or counting</span></span>
+<span id="src-text2d-loft-L421">    <span class="cm">// height.  An EMPTY document still gets its single empty line.</span></span>
+<span id="src-text2d-loft-L422">    <span class="kw">if</span> line != <span class="st">""</span> <span class="kw">or</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(lines) == <span class="nm">0</span> { lines += [line]; }</span>
+<span id="src-text2d-loft-L423">    lines</span>
+<span id="src-text2d-loft-L424">}</span>
+<span id="src-text2d-loft-L425"></span>
+<span id="src-text2d-loft-L426"><span class="cm">// Put `word` onto `line`, pushing completed lines into `lines`, and answer the</span></span>
+<span id="src-text2d-loft-L427"><span class="cm">// line that is still open.</span></span>
+<span id="src-text2d-loft-L428"><span class="kw">fn</span> <span class="fn-call">place</span>(self: const <span class="en">Metrics</span>, line: <span class="ty"><a href="stdlib-types.html">text</a></span>, word: <span class="ty"><a href="stdlib-types.html">text</a></span>, px: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-text2d-loft-L429">         lines: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-text2d-loft-L430">    <span class="kw">if</span> word == <span class="st">""</span> { <span class="kw">return</span> line; }</span>
+<span id="src-text2d-loft-L431">    cand = <span class="kw">if</span> line == <span class="st">""</span> { word } <span class="kw">else</span> { line + <span class="st">" "</span> + word };</span>
+<span id="src-text2d-loft-L432">    <span class="kw">if</span> <span class="fn-call">width</span>(self, cand) &lt;= px { <span class="kw">return</span> cand; }</span>
+<span id="src-text2d-loft-L433">    open = line;</span>
+<span id="src-text2d-loft-L434">    <span class="kw">if</span> open != <span class="st">""</span> {</span>
+<span id="src-text2d-loft-L435">        lines += [open];</span>
+<span id="src-text2d-loft-L436">        open = <span class="st">""</span>;</span>
+<span id="src-text2d-loft-L437">    }</span>
+<span id="src-text2d-loft-L438">    <span class="cm">// The word alone, hard-broken if it cannot fit even on an empty line.</span></span>
+<span id="src-text2d-loft-L439">    rest = word;</span>
+<span id="src-text2d-loft-L440">    while <span class="fn-call">width</span>(self, rest) &gt; px {</span>
+<span id="src-text2d-loft-L441">        k = <span class="fn-call">chars_fitting</span>(self, rest, px);</span>
+<span id="src-text2d-loft-L442">        lines += [<span class="fn-call">take_chars</span>(rest, k)];</span>
+<span id="src-text2d-loft-L443">        rest = <span class="fn-call">drop_chars</span>(rest, k);</span>
+<span id="src-text2d-loft-L444">    }</span>
+<span id="src-text2d-loft-L445">    rest</span>
+<span id="src-text2d-loft-L446">}</span>
+<span id="src-text2d-loft-L447"></span>
+<span id="src-text2d-loft-L448"><span class="cm">// The line `flush_word` leaves open is always empty — an explicit break ends the</span></span>
+<span id="src-text2d-loft-L449"><span class="cm">// line — but the words before it still have to be placed.</span></span>
+<span id="src-text2d-loft-L450"><span class="kw">fn</span> <span class="fn-call">flush_word</span>(self: const <span class="en">Metrics</span>, line: <span class="ty"><a href="stdlib-types.html">text</a></span>, word: <span class="ty"><a href="stdlib-types.html">text</a></span>, px: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-text2d-loft-L451">              lines: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-text2d-loft-L452">    <span class="fn-call">place</span>(self, line, word, px, lines)</span>
+<span id="src-text2d-loft-L453">}</span>
+<span id="src-text2d-loft-L454"></span>
+<span id="src-text2d-loft-L455"><span class="cm">// Everything after the first `n` CHARACTERS.</span></span>
+<span id="src-text2d-loft-L456"><span class="kw">fn</span> <span class="fn-call">drop_chars</span>(s: <span class="ty"><a href="stdlib-types.html">text</a></span>, n: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-text2d-loft-L457">    out = <span class="st">""</span>;</span>
+<span id="src-text2d-loft-L458">    k = <span class="nm">0</span>;</span>
+<span id="src-text2d-loft-L459">    <span class="kw">for</span> c <span class="kw">in</span> s {</span>
+<span id="src-text2d-loft-L460">        <span class="kw">if</span> k &gt;= n { out += c; }</span>
+<span id="src-text2d-loft-L461">        k = k + <span class="nm">1</span>;</span>
+<span id="src-text2d-loft-L462">    }</span>
+<span id="src-text2d-loft-L463">    out</span>
+<span id="src-text2d-loft-L464">}</span>
+<span id="src-text2d-loft-L465"></span>
+<span id="src-text2d-loft-L466"><span class="cm">// Where to start drawing `line` inside a box at `bx` of width `bw`.</span></span>
+<span id="src-text2d-loft-L467"><span class="cm">//</span></span>
+<span id="src-text2d-loft-L468"><span class="cm">// ⚠ A LINE WIDER THAN ITS BOX STARTS AT THE BOX.  Centring or right-aligning it</span></span>
+<span id="src-text2d-loft-L469"><span class="cm">// arithmetically would push its beginning off the left edge, where it cannot be</span></span>
+<span id="src-text2d-loft-L470"><span class="cm">// clipped back into view — overflow to the right is recoverable, overflow to the</span></span>
+<span id="src-text2d-loft-L471"><span class="cm">// left loses the start of the text.</span></span>
+<span id="src-text2d-loft-L472"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">align_x</span>(self: const <span class="en">Metrics</span>, line: <span class="ty"><a href="stdlib-types.html">text</a></span>, bx: <span class="ty"><a href="stdlib-types.html">integer</a></span>, bw: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-text2d-loft-L473">               align: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-text2d-loft-L474">    slack = bw - <span class="fn-call">width</span>(self, line);</span>
+<span id="src-text2d-loft-L475">    <span class="kw">if</span> slack &lt;= <span class="nm">0</span> { <span class="kw">return</span> bx; }</span>
+<span id="src-text2d-loft-L476">    <span class="kw">if</span> align == <span class="en">ALIGN_CENTRE</span> { <span class="kw">return</span> bx + (slack / <span class="nm">2</span> ?? <span class="nm">0</span>); }</span>
+<span id="src-text2d-loft-L477">    <span class="kw">if</span> align == <span class="en">ALIGN_RIGHT</span> { <span class="kw">return</span> bx + slack; }</span>
+<span id="src-text2d-loft-L478">    bx</span>
+<span id="src-text2d-loft-L479">}</span>
 </code></pre>
 <h2 id="tests-atlas-loft">tests/atlas.loft</h2>
 <pre class="src"><code><span id="tests-atlas-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>

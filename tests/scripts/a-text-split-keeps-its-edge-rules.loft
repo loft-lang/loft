@@ -1,0 +1,50 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// `text.split(c)` keeps loft's own answers where Rust's `str::split` differs: an EMPTY text
+// splits into no parts (Rust answers one empty part), and otherwise every separator ends a
+// part, the last included when it is empty.  `split` is a loft function: an interpreted program
+// runs its body COMPILED (@PLN181, the standard library compiled like any library) and
+// `--native` compiles it in — a Rust kernel stood in for it until then (KERNELS.md § Removed).
+// The `kept` cells are the ones `--native` cannot answer from its lazy split, so the body runs.
+//
+// @falsified-at: none — the rules it pins held on every earlier build; the receipt is the plant.
+// Hand-sabotaged 2026-09-30: dropping the empty-text rule from the loft body (the trailing part
+// appended unconditionally) fails `empty text` on both backends — the interpreted run declines
+// the compiled body, whose source no longer matches, and runs the planted one.
+
+fn joined(parts: vector<text>) -> text {
+  out = "";
+  for p in parts { out += "[{p}]"; }
+  out
+}
+
+fn main() {
+  assert(joined("a,b,c".split(',')) == "[a][b][c]", "three parts: {joined("a,b,c".split(','))}");
+  assert("".split(',').len() == 0, "empty text: {"".split(',').len()}");
+  // The same edge where the vector is KEPT — handed to a function, appended to — so `--native`
+  // runs the kernel too; the bare `len` above is answered by its lazy split (`R-LazySplit`).
+  assert(joined("".split(',')) == "", "empty text, handed on: {joined("".split(','))}");
+  kept = "".split(',');
+  kept += ["x"];
+  assert(kept.len() == 1, "empty text, appended to: {kept.len()}");
+  assert(joined("a,".split(',')) == "[a][]", "trailing separator: {joined("a,".split(','))}");
+  assert(joined(",a".split(',')) == "[][a]", "leading separator: {joined(",a".split(','))}");
+  assert(joined("abc".split(',')) == "[abc]", "no separator: {joined("abc".split(','))}");
+  assert(joined(",,".split(',')) == "[][][]", "separators only: {joined(",,".split(','))}");
+
+  // Multi-byte text and a multi-byte separator: sizes are bytes.
+  m = "é,ü,∑".split(',');
+  assert(m.len() == 3 && m[0].size() == 2 && m[2].size() == 3, "multi-byte parts");
+  assert(joined("a∑b∑".split('∑')) == "[a][b][]", "multi-byte separator: {joined("a∑b∑".split('∑'))}");
+
+  // 200 lines of "line N": "line " is 5 bytes, plus the digits of N.
+  src = "";
+  for i in 0..200 { src += "line {i}\n"; }
+  lines = src.split('\n');
+  total = 0;
+  for l in lines { total += l.size(); }
+  // 200 lines + one empty trailing part; 10 * 6 + 90 * 7 + 100 * 8 = 1490 bytes.
+  assert(lines.len() == 201 && total == 1490, "lines: {lines.len()} {total}");
+  lines[0] = "changed";
+  assert(src.split('\n')[0] == "line 0" && lines[0] == "changed", "an independent vector");
+}

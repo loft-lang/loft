@@ -4864,6 +4864,13 @@ impl LinkedFieldGroup {
     }
 }
 
+/// [`Definition::op_priority`] of a `#hot` operator: the first slots, run inline.
+pub const OP_HOT: u8 = 0;
+/// [`Definition::op_priority`] of an operator with no priority mark.
+pub const OP_NORMAL: u8 = 1;
+/// [`Definition::op_priority`] of a `#cold` operator: the last slots, two-byte opcodes.
+pub const OP_COLD: u8 = 2;
+
 /// Game definition, the data cannot be changed, there can be instances with differences
 // `Definition` is the parser's per-definition RECORD, and its boolean columns are independent
 // facts about one definition rather than a state machine that could be an enum — `bound_holder`
@@ -4939,6 +4946,12 @@ pub struct Definition {
     /// stdlib helper loaded from the `LOFT_STDLIB_CACHE` bundle still suppresses;
     /// mirrored in `tools/ir_schema/ir.loft` (`Definition.null_safe`).
     pub null_safe: bool,
+    /// A standard-library operator's dispatch priority, from `#hot` / `#cold`: [`OP_HOT`] runs
+    /// inline in the lean loop on its registers and takes a one-byte opcode, [`OP_COLD`] is
+    /// rare and takes a two-byte one, [`OP_NORMAL`] is everything else.  Read at parse time
+    /// (`Data::op_code`) and by the `fill.rs` generator, both from a fresh parse of
+    /// `default/`, so it is not part of the persisted IR.
+    pub op_priority: u8,
     /// @PLN102 arc C — `#superseded "Y"`: the bare name of the successor symbol
     /// this callable is superseded by (e.g. `"write_through"`).  Empty = not
     /// superseded.  Set by the `#superseded` attribute; step 1 only parses +
@@ -6026,6 +6039,17 @@ impl Clone for OpSetCache {
 /// The immutable data of a parsed loft program
 pub struct Data {
     pub definitions: Vec<Definition>,
+    /// Parsing continues against this `Data` after it is compiled — the REPL, the debugger,
+    /// live reload, a host calling functions by name.  A whole-program rewrite that changes
+    /// a SIGNATURE (`value_record::rewrite_program`, `@FR-R-ValueRecord`) runs only on a
+    /// closed program: a later parse would type a call by the rewritten signature, and a
+    /// caller outside loft would read a record the function no longer returns.
+    pub open_world: bool,
+    /// The run this program is compiled for OBSERVES function entries — `loft test`'s
+    /// coverage, which counts a function covered when a call enters it.  A rewrite that
+    /// removes calls (`leaf_inline::rewrite_program`, `@FR-R-InlineLeaf`) leaves them alone
+    /// here, as it does in an `open_world` program, so the report names what the tests call.
+    pub observes_entries: bool,
     /// @PLN133 S9 — the lazy drivers, answered once per definition set.
     ///
     /// [`Data::lazy_fetch_drivers`] walks every definition, and it is asked on
@@ -6152,6 +6176,9 @@ pub struct Data {
     /// Static data
     statics: Vec<u8>,
     pub(crate) op_codes: u16,
+    /// The next number within each priority class (`OP_HOT`, `OP_NORMAL`, `OP_COLD`) —
+    /// `Data::op_code`.
+    op_next: [u16; 3],
     possible: HashMap<String, Vec<u32>>,
     pub(crate) operators: HashMap<u16, u32>,
     /// PKG.4: native function symbols — loft function name → Rust symbol path.
@@ -6639,6 +6666,10 @@ pub fn v_set(var: u16, value: Value) -> Value {
     Value::Set(var, Box::new(value))
 }
 
+/// The name of the one-statement block `(I-RangeNull)`'s guard occupies in a counted range's
+/// prelude: a rewrite that matches that prelude by shape steps over a block of this name.
+pub const RANGE_NULL_GUARD: &str = "Range null guard";
+
 #[must_use]
 pub fn v_block(operators: Vec<Value>, result: Type, name: &'static str) -> Value {
     Value::Block(Box::new(Block {
@@ -6877,6 +6908,8 @@ impl Data {
     pub fn new() -> Data {
         Data {
             definitions: Vec::new(),
+            open_world: false,
+            observes_entries: false,
             lazy_drivers: LazyDriverCache::default(),
             def_names: DefIndex::default(),
             use_names: HashMap::new(),
@@ -6898,6 +6931,7 @@ impl Data {
             referenced: HashMap::new(),
             statics: Vec::new(),
             op_codes: 0,
+            op_next: [0; 3],
             possible: HashMap::new(),
             operators: HashMap::new(),
             native_symbols: HashMap::new(),
@@ -7453,6 +7487,7 @@ impl Data {
             variables: Function::new(name, &position.file),
             pub_visible: false,
             null_safe: false,
+            op_priority: OP_NORMAL,
             superseded: String::new(),
             c_symbol: String::new(),
             c_sig: String::new(),
@@ -7484,7 +7519,7 @@ impl Data {
         self.definitions[d_nr as usize].synthetic = Some(reason);
     }
 
-    /// Assign a sequential op_code to an operator definition.
+    /// Assign an operator definition its op_code.
     ///
     /// Op_codes 0..N map to `fill::OPERATORS[0..N]`.  Bytecode encoding is
     /// transparent via `fill::emit_op`: codes < 255 use 1 byte, codes >= 255
@@ -7497,13 +7532,28 @@ impl Data {
     /// `fill_rs_up_to_date` in `tests/issues.rs`) catch the drift; the
     /// runtime would index-OOB on dispatch if a stale `fill.rs` were
     /// actually executed.
+    ///
+    /// `@FR-R-OpPriority` — the number depends on the operator's priority (`#hot` / `#cold`,
+    /// parsed before this runs): hot operators take the first slots, cold ones the last, the rest between, each
+    /// class in declaration order — the slot order the `fill.rs` generator lays the tables
+    /// out in, from the class sizes it recorded there (`fill::OP_HOT`, `fill::OP_NORMAL`).
+    /// So every route that parses `default/` numbers it the same way, and `stdlib_ops::verify`
+    /// still compares the result slot by slot.
     pub fn op_code(&mut self, def_nr: u32) {
         if !self.def(def_nr).is_operator() || self.def(def_nr).op_code != u16::MAX {
             return;
         }
-        self.definitions[def_nr as usize].op_code = self.op_codes;
-        self.operators.insert(self.op_codes, def_nr);
-        self.op_codes += 1;
+        let class = usize::from(self.def(def_nr).op_priority);
+        let base = [
+            0,
+            crate::fill::OP_HOT,
+            crate::fill::OP_HOT + crate::fill::OP_NORMAL,
+        ][class];
+        let code = base + self.op_next[class];
+        self.op_next[class] += 1;
+        self.definitions[def_nr as usize].op_code = code;
+        self.operators.insert(code, def_nr);
+        self.op_codes = self.op_codes.max(code + 1);
     }
 
     #[must_use]

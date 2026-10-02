@@ -7,7 +7,7 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **0** — D-own-48 OPENED AND CLOSED 2026-09-22 (loft#1599: a returned vector local rebound by a call in a loop or a branch answered a store its caller never handed in, in ownership.md); D-own-38 CLOSED 2026-09-06 (loft#1388: the release is by STORE IDENTITY now, `@FR-O-Witness`, with the hand-off at the closure build; below); D-own-39 OPENED AND CLOSED 2026-09-06 (loft#1398: the `is` payload binding recorded no borrow in its TYPE, so the empty-deps proxy read it as OWNED and `--native` copied where the interpreter aliased — #429's cure applied to one of its two sites, below); D-own-38 OPEN 2026-09-06 (loft#1388 residual: the release of a store a closure record adopted, and of one orphaned beside it, is decided per BINDING where the question is per STORE, below); D-own-37 OPENED AND CLOSED 2026-09-06 (loft#1389: the degenerate self-dep was stripped for one of the two RECORD kinds, so an annotated struct-enum local read as borrowed and never freed what a join displaced, below); D-own-36 OPENED AND CLOSED 2026-09-06 (the `@FR-O-Detach` walk: a collection literal's detach ran before its reads on every destination, and `--native` declined a value-`if`'s displaced free, below); D-own-35 OPENED AND CLOSED 2026-09-05 (loft#1370: the per-path fact had no home for a VECTOR local — every value-branch bind aliased the chosen arm — closed at the parser's selector, below); D-own-34 OPENED AND CLOSED 2026-09-05 (the owner witness did not survive the cache, and a nullable bind from a borrow-returning call aliased); D-own-33 OPENED AND CLOSED 2026-09-05 (the per-path fact was short of four homes, every one a nullable local not treated as the heap local it is: a literal buffer adopted inside a loop, the branch pre-init, the loop hoist, a keyed `match` bind, below; a fifth face is loft#1367, owned by @PLN153); D-own-32 OPENED AND CLOSED 2026-09-05 (the oracle called a minted variable Owned regardless of its other definitions, and its shadow re-derived the base translation, below); D-own-31 OPENED AND CLOSED 2026-09-05 (the never-free contract named one spelling of five and forbade a release the language ships, below); D-own-30 OPENED AND CLOSED 2026-09-05 (a nullable local holding a projection VIEW freed the store it displaced, below), after D-own-29 2026-09-04 (loft#1346, below) and D-own-28 the same day (loft#1335).  D-own-8 CLOSED 2026-09-03 (opened 2026-08-24, NARROWED 2026-08-25 to a
+OPEN: **0** — D-own-54 OPENED AND CLOSED 2026-09-30 (a native's fresh vector had no owner at a slice's name, a borrowing local's bind, a returned local's bind and an early literal return, below); D-own-48 OPENED AND CLOSED 2026-09-22 (loft#1599: a returned vector local rebound by a call in a loop or a branch answered a store its caller never handed in, in ownership.md); D-own-38 CLOSED 2026-09-06 (loft#1388: the release is by STORE IDENTITY now, `@FR-O-Witness`, with the hand-off at the closure build; below); D-own-39 OPENED AND CLOSED 2026-09-06 (loft#1398: the `is` payload binding recorded no borrow in its TYPE, so the empty-deps proxy read it as OWNED and `--native` copied where the interpreter aliased — #429's cure applied to one of its two sites, below); D-own-38 OPEN 2026-09-06 (loft#1388 residual: the release of a store a closure record adopted, and of one orphaned beside it, is decided per BINDING where the question is per STORE, below); D-own-37 OPENED AND CLOSED 2026-09-06 (loft#1389: the degenerate self-dep was stripped for one of the two RECORD kinds, so an annotated struct-enum local read as borrowed and never freed what a join displaced, below); D-own-36 OPENED AND CLOSED 2026-09-06 (the `@FR-O-Detach` walk: a collection literal's detach ran before its reads on every destination, and `--native` declined a value-`if`'s displaced free, below); D-own-35 OPENED AND CLOSED 2026-09-05 (loft#1370: the per-path fact had no home for a VECTOR local — every value-branch bind aliased the chosen arm — closed at the parser's selector, below); D-own-34 OPENED AND CLOSED 2026-09-05 (the owner witness did not survive the cache, and a nullable bind from a borrow-returning call aliased); D-own-33 OPENED AND CLOSED 2026-09-05 (the per-path fact was short of four homes, every one a nullable local not treated as the heap local it is: a literal buffer adopted inside a loop, the branch pre-init, the loop hoist, a keyed `match` bind, below; a fifth face is loft#1367, owned by @PLN153); D-own-32 OPENED AND CLOSED 2026-09-05 (the oracle called a minted variable Owned regardless of its other definitions, and its shadow re-derived the base translation, below); D-own-31 OPENED AND CLOSED 2026-09-05 (the never-free contract named one spelling of five and forbade a release the language ships, below); D-own-30 OPENED AND CLOSED 2026-09-05 (a nullable local holding a projection VIEW freed the store it displaced, below), after D-own-29 2026-09-04 (loft#1346, below) and D-own-28 the same day (loft#1335).  D-own-8 CLOSED 2026-09-03 (opened 2026-08-24, NARROWED 2026-08-25 to a
 single cell, its Face B CLOSED the same day, that cell's one known SYMPTOM closed 2026-08-26
 with the FACT still wrong, loft#1098, and the fact itself closed by giving every path of a
 value branch its own binding — below).  D-own-26 CLOSED 2026-09-03: its gate existed all
@@ -3046,6 +3046,47 @@ calls peaked at 1 000 live stores and now at 1–3; no copy on the mint arm.
 Guard: `tests/scripts/1659-an-opaque-fn-ref-record-result-is-owned-once.loft` — 14 cells, ten of
 which fail on the build before (the 70 000-call cells on the store ceiling, the capture cells on
 the value; both backends).
+
+### D-own-54 — OPENED AND CLOSED (2026-09-30): a native's fresh vector had no owner wherever the bind that took it was not a plain owned local
+
+`(O-Owner)`: every store has exactly one owner.  A native returning a vector (`arguments()`,
+`j.keys()`, and `s.split(c)` / `File.lines()` once they became kernels, @PLN180) hands back a
+FRESH store that no argument or buffer names.  A plain local bound from it owns it.  Four other
+binds took it without giving it an owner, one store per evaluation, identically on both backends
+(the interpreter hid the fourth by coincidence, below).  All four were present on released
+builds with `arguments()` and `keys()`; the split kernel made them common.
+
+1. **A slice's named subject** (`arguments()[0..2]`).  loft#1521's name BORROWS, because a loft
+   function's result sits in its caller buffer and a `??` default in its work-ref.  A bare call's
+   dep-free result has neither.  Closed in `parse_in_range_body`: such a name owns.
+2. **A vector local that borrows at another bind** (`p = ["z"]; p = j.keys()`, and the reverse
+   order).  A local has one type, so once a literal makes it a view of the literal's record,
+   nothing frees what it holds at any bind.  Closed by `Parser::own_fresh_binds` once the body is
+   parsed: each such bind hands its store to a work-ref declared at the frame's top.
+   **The first cure was silently wrong**, and is recorded because it is the obvious one: adding
+   the work-ref to the local's dep list makes it a two-store local.  The block-confinement pass
+   then scopes the LITERAL's record to the block that built it (`confine_reassign_safe`
+   does not treat a conditional reassignment as invalidating), and `p = j.keys(); if c { p =
+   ["x","y"] }; q = ["k"]` answered `1 k k` where `2 x k` is owed.  The local's type is left
+   alone instead.
+3. **A returned local bound from a native** (`fn r() -> vector<text> { p = arguments(); p }`).
+   D-own-48's rule — every bind of a local renamed onto the return buffer fills that buffer —
+   holds for a loft call (handed the buffer itself) and failed for a native, which cannot be
+   handed one.  Closed where D-own-48 was: `Parser::var_bound_from_fresh_call` refuses the
+   rename, and the local is copied into the buffer at the return.  The interpreter's own cells
+   read clean only because its callee freed the caller's buffer unguarded and the fresh store
+   usually took that store's number back.  A right-hand side that allocates first in the same
+   frame broke that and leaked there too.
+4. **An early literal return beside a native tail** (`if c { return []; } s.split(',')`).  The
+   literal was delivered into the buffer only where the buffer had been renamed `__ref_1` onto a
+   loft call's; beside a native tail it was returned raw while the signature said *the result is
+   the buffer*.  Closed in `parse_return`, gated on that signature, since a tail that answers a
+   fresh store keeps a fresh-store signature, under which the raw literal is right.
+
+Guards `tests/scripts/a-slice-of-a-fresh-native-result-frees-it.loft`,
+`a-borrowing-vector-local-owns-a-fresh-native-result.loft` and
+`a-returned-vector-bound-from-a-native-call-frees-it.loft` (faces 3 and 4); face 4 was found by
+`repro_p365.loft`.
 
 ### D-own-47 — OPENED AND CLOSED (2026-09-21): a local a `match` statement's arms first assign died at the match's block, and was read after it
 

@@ -34,6 +34,8 @@
 //   first build had, which crashed the probe) fails `test_vector_elements`.
 //   `OpTextEndJump` continuing at `size == index` (one step past the end) fails
 //   `test_char_walk`.
+//   A literal-on-the-left comparison mirrored the wrong way (2026-10-01: `<` kept for `3 < a`,
+//   and `>` for `3 <= a`) fails `test_literal_on_the_left`.
 
 fn arith(a: integer, b: integer) -> text {
   x = a + b;
@@ -147,6 +149,39 @@ fn test_compare() {
   assert(comparisons(3, 3) == "true false false true true false false true", "equal operands");
   assert(comparisons(2, 3) == "false true true true false true true true", "smaller first");
   assert(comparisons(4, 3) == "false true false false false true false false", "larger first");
+}
+
+// `@FR-R-Fuse`'s mirror clause: a comparison with its literal on the LEFT reads the local first and mirrors the test
+// (`3 < a` is `a > 3`, `3 <= a` is `a >= 3`) — the end test of every counted range over a
+// literal end.  A mirror the wrong way round (`<` for `>`, or `>` for `>=`) answers wrongly at
+// one of the three positions each cell takes: below, at and above the literal.
+fn compare_left(a: integer) -> text {
+  "{3 == a} {3 != a} {3 < a} {3 <= a} {-5 < a} {5000000000 <= a}"
+}
+
+fn branch_left(a: integer) -> text {
+  r = "";
+  if 3 == a { r += "eq "; } else { r += "EQ "; }
+  if 3 < a { r += "lt "; } else { r += "LT "; }
+  if 3 <= a { r += "le"; } else { r += "LE"; }
+  r
+}
+
+fn test_literal_on_the_left() {
+  assert(compare_left(2) == "false true false false true false", "below {compare_left(2)}");
+  assert(compare_left(3) == "true false false true true false", "at {compare_left(3)}");
+  assert(compare_left(4) == "false true true true true false", "above {compare_left(4)}");
+  assert(compare_left(6000000000) == "false true true true true true", "wide {compare_left(6000000000)}");
+  assert(branch_left(2) == "EQ LT LE", "branch below {branch_left(2)}");
+  assert(branch_left(3) == "eq LT le", "branch at {branch_left(3)}");
+  assert(branch_left(4) == "EQ lt le", "branch above {branch_left(4)}");
+  t = 0;
+  r = 0;
+  for i in 0..4 { t += i; r += 1; }
+  for i in -3..0 { t += i; r += 1; }
+  for i in 1..=3 { t += i * 10; r += 1; }
+  for _ in 5..5 { r += 100; }
+  assert(t == 60 && r == 10, "literal-ended loops {t} {r}");
 }
 
 fn test_wide_literal_and_same_local() {

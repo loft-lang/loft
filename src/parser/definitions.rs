@@ -3751,6 +3751,32 @@ impl Parser {
                 // calls a `#c` function yet, and `native` is deliberately left
                 // empty so the Rust dispatch path does not pick it up.
                 self.parse_c_binding();
+            } else if matches!(id.as_deref(), Some("hot" | "cold")) {
+                // `#hot` / `#cold` — the dispatch priority of a standard-library operator: a hot
+                // one runs inline in the lean loop on its registers (`fill::dispatch_lean`), a
+                // cold one is rare.  The generator reads it; the language never does.
+                let d_nr = self.context;
+                let priority = if id.as_deref() == Some("hot") {
+                    crate::data::OP_HOT
+                } else {
+                    crate::data::OP_COLD
+                };
+                let current = self.data.def(d_nr).op_priority;
+                if !(self.default && self.data.def(d_nr).is_operator()) {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "#hot and #cold set the dispatch priority of a standard-library operator"
+                    );
+                } else if current != crate::data::OP_NORMAL && current != priority {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "an operator is #hot or #cold, not both"
+                    );
+                } else {
+                    self.data.definitions[d_nr as usize].op_priority = priority;
+                }
             } else if id == Some("null_safe".to_string()) {
                 // @PLN46 W2 — `#null_safe` asserts every nullable parameter
                 // tolerates null and yields a defined result, so a fault-prone

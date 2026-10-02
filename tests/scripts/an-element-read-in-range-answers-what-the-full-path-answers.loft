@@ -1,0 +1,205 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// An element read takes the interpreter's short path only when it is in range, and answers
+// there exactly what the full path answers.  `@FR-R-ElementPath`.
+//
+// `v[i]` on a live vector with `0 <= i < len` reads the collection record and the length once
+// each and builds the element's address itself; everything else — a null or absent vector, an
+// empty one, an index counted from the end, one out of range — takes the full path
+// (`@FR-H-Index`).  So the cells put both kinds side by side, on every element shape whose size
+// changes the address (8-byte integer and float, a three-field struct, text), on a vector that
+// lives in a struct field (a non-zero field position) and inside another vector, and on writes
+// through `v[i] = x`, which are addressed by the same read.  Every expected value is computed
+// by hand.
+//
+// The append half has the same shape: `v += [x]` writes in place when the element fits (the
+// slot built inline, the length derived from it) and takes the full path for a vector with no
+// record yet and for one that is full.  So each typed append — integer, i32, float, single,
+// boolean, character, enum, u8 and i8 — runs 25 times from empty, which crosses the first
+// claim's capacity (11 elements) and then a growth step, and its length, sum and two elements
+// on either side of the boundary are checked.
+//
+// @falsified-at: none — it guards a path no earlier build has.  Falsified by planted defects,
+//   2026-10-01: the length compare taking `<=` (an index equal to the length read past the
+//   end), and the address built with a fixed element size of 8 (the struct and text cells).
+
+struct P {
+  a: integer,
+  b: float,
+  c: text
+}
+
+struct H {
+  name: text,
+  xs: vector<integer>
+}
+
+enum Hue {
+  Red,
+  Green,
+  Blue
+}
+
+fn test_integers_in_and_out_of_range() {
+  v = [10, 20, 30, 40];
+  assert(v[0] == 10 && v[3] == 40, "ends {v[0]} {v[3]}");
+  assert(v[-1] == 40 && v[-4] == 10, "from the end {v[-1]} {v[-4]}");
+  assert(!v[4] && !v[-5], "out of range {v[4]} {v[-5]}");
+  i = len(v) - 1;
+  assert(v[i] == 40, "last by variable {v[i]}");
+  i = len(v);
+  assert(!v[i], "one past by variable {v[i]}");
+}
+
+fn test_floats() {
+  f = [1.5, 2.5, 3.5];
+  assert(f[1] == 2.5, "middle {f[1]}");
+  t = 0.0;
+  for k in 0..len(f) {
+    t += f[k];
+  }
+  assert(t == 7.5, "sum {t}");
+}
+
+fn test_structs_are_addressed_by_their_size() {
+  ps = [P { a: 1, b: 0.5, c: "x" }, P { a: 2, b: 1.5, c: "yy" }, P { a: 3, b: 2.5, c: "zzz" }];
+  assert(ps[2].c == "zzz" && ps[1].b == 1.5 && ps[0].a == 1, "fields {ps[2].c} {ps[1].b} {ps[0].a}");
+  assert(ps[-1].a == 3, "from the end {ps[-1].a}");
+  ps[0].a = 7;
+  assert(ps[0].a == 7 && ps[1].a == 2 && ps[2].a == 3, "write {ps[0].a} {ps[1].a} {ps[2].a}");
+}
+
+fn test_texts() {
+  t = ["a", "bb", "ccc"];
+  assert(t[1] == "bb" && t[2] == "ccc" && t[0] == "a", "texts {t[0]} {t[1]} {t[2]}");
+  assert(!t[3], "past the end {t[3]}");
+}
+
+fn test_writes_through_an_index() {
+  v = [10, 20, 30, 40];
+  v[2] = 99;
+  v[0] = v[3] + 1;
+  assert("{v}" == "[41,20,99,40]", "after writes {v}");
+}
+
+fn test_a_vector_in_a_struct_field() {
+  h = H { name: "h", xs: [5, 6, 7] };
+  assert(h.xs[1] == 6 && h.xs[2] == 7, "field elements {h.xs[1]} {h.xs[2]}");
+  assert(!h.xs[3], "past the field's end {h.xs[3]}");
+  n = H { name: "n" };
+  assert(!n.xs[0], "an absent field vector {n.xs[0]}");
+}
+
+fn test_nested_and_empty() {
+  m = [[1, 2], [3, 4, 5]];
+  assert(m[1][2] == 5 && m[0][1] == 2 && m[1][-1] == 5, "nested {m[1][2]} {m[0][1]} {m[1][-1]}");
+  assert(!m[0][2], "past an inner end {m[0][2]}");
+  e: vector<integer> = [];
+  assert(!e[0], "empty {e[0]}");
+}
+
+fn test_a_long_walk() {
+  v: vector<integer> = [];
+  for k in 0..1000 {
+    v += [k];
+  }
+  t = 0;
+  for k in 0..len(v) {
+    t += v[k];
+  }
+  assert(t == 499500, "sum {t}");
+  b = 0;
+  for k in 1..=len(v) {
+    b += v[-k];
+  }
+  assert(b == 499500, "sum from the end {b}");
+}
+
+fn test_appends_from_empty_across_growth() {
+  v: vector<integer> = [];
+  w: vector<i32> = [];
+  f: vector<float> = [];
+  g: vector<single> = [];
+  b: vector<boolean> = [];
+  e: vector<Hue> = [];
+  u: vector<u8> = [];
+  i: vector<i8> = [];
+  for k in 0..25 {
+    v += [k * 3];
+    w += [k * 3 ?? 0];
+    f += [k as float * 0.5];
+    g += [k as single * 0.25f];
+    b += [k % 3 == 0];
+    hue = Hue.Blue;
+    if k % 3 == 0 { hue = Hue.Red; }
+    if k % 3 == 1 { hue = Hue.Green; }
+    e += [hue];
+    u += [k * 10 ?? 0];
+    i += [k - 12 ?? 0];
+  }
+  vs = 0;
+  ws = 0;
+  fs = 0.0;
+  gs = 0.0;
+  bs = 0;
+  es = 0;
+  us = 0;
+  isum = 0;
+  for k in 0..25 {
+    vs += v[k];
+    ws += w[k];
+    fs += f[k];
+    gs += g[k] as float;
+    if b[k] { bs += 1; }
+    if e[k] == Hue.Blue { es += 1; }
+    us += u[k];
+    isum += i[k];
+  }
+  assert(len(v) == 25 && vs == 900 && v[10] == 30 && v[11] == 33 && v[24] == 72, "integer {len(v)} {vs} {v[10]} {v[11]} {v[24]}");
+  assert(len(w) == 25 && ws == 900 && w[11] == 33 && w[12] == 36, "i32 {len(w)} {ws} {w[11]} {w[12]}");
+  assert(len(f) == 25 && fs == 150.0 && f[24] == 12.0, "float {len(f)} {fs} {f[24]}");
+  assert(len(g) == 25 && gs == 75.0 && g[12] == 3.0f, "single {len(g)} {gs} {g[12]}");
+  assert(len(b) == 25 && bs == 9 && b[24] && !b[23], "boolean {len(b)} {bs}");
+  assert(len(e) == 25 && es == 8 && e[23] == Hue.Blue && e[24] == Hue.Red, "enum {len(e)} {es}");
+  assert(len(u) == 25 && us == 3000 && u[24] == 240 && u[11] == 110, "u8 {len(u)} {us} {u[24]} {u[11]}");
+  assert(len(i) == 25 && isum == 0 && i[0] == -12 && i[24] == 12, "i8 {len(i)} {isum} {i[0]} {i[24]}");
+}
+
+fn test_character_appends() {
+  c: vector<character> = [];
+  for ch in "abcdefghijklmnopqrstuvwxy" {
+    c += [ch];
+  }
+  assert(len(c) == 25 && c[0] == 'a' && c[11] == 'l' && c[24] == 'y', "characters {len(c)} {c[11]} {c[24]}");
+}
+
+fn test_appends_to_a_field_vector() {
+  h = H { name: "h" };
+  for k in 0..25 {
+    h.xs += [k];
+  }
+  t = 0;
+  for x in h.xs {
+    t += x;
+  }
+  assert(len(h.xs) == 25 && t == 300 && h.xs[24] == 24, "field appends {len(h.xs)} {t}");
+  one: vector<integer> = [];
+  one += [7];
+  assert(len(one) == 1 && one[0] == 7, "one append {len(one)} {one[0]}");
+}
+
+fn main() {
+  test_appends_from_empty_across_growth();
+  test_character_appends();
+  test_appends_to_a_field_vector();
+  test_integers_in_and_out_of_range();
+  test_floats();
+  test_structs_are_addressed_by_their_size();
+  test_texts();
+  test_writes_through_an_index();
+  test_a_vector_in_a_struct_field();
+  test_nested_and_empty();
+  test_a_long_walk();
+  println("ok");
+}

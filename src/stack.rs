@@ -26,6 +26,10 @@ pub struct Loop {
     start: u32,
     stack: u16,
     breaks: Vec<u32>,
+    /// `@FR-R-Rotate` — a rotated loop's test sits after its body, so a `continue` jumps FORWARD to it and is
+    /// patched when the test is emitted (`rotated` set), as a `break` is at the loop's end.
+    rotated: bool,
+    continues: Vec<u32>,
 }
 
 /// Stack information on variable positions and scopes to generate byte-code.
@@ -193,7 +197,34 @@ impl<'a> Stack<'a> {
             start: code_pos,
             stack: self.position,
             breaks: Vec::new(),
+            rotated: false,
+            continues: Vec::new(),
         });
+    }
+
+    /// The innermost loop tests at its bottom: its `continue`s are forward jumps.
+    pub fn set_rotated(&mut self) {
+        let l = self.loops.len() - 1;
+        self.loops[l].rotated = true;
+    }
+
+    #[must_use]
+    pub fn is_rotated(&self, loop_nr: u16) -> bool {
+        let l = self.loops.len() - 1;
+        self.loops[l - loop_nr as usize].rotated
+    }
+
+    pub fn add_continue(&mut self, code_pos: u32, loop_nr: u16) {
+        let l = self.loops.len() - 1;
+        self.loops[l - loop_nr as usize].continues.push(code_pos);
+    }
+
+    /// Point the innermost loop's `continue`s at the current position — its test.
+    pub fn patch_continues(&mut self, state: &mut State) {
+        let l = self.loops.len() - 1;
+        for c in std::mem::take(&mut self.loops[l].continues) {
+            state.code_put(c, (i64::from(state.code_pos) - i64::from(c) - 4) as i32);
+        }
     }
 
     pub fn end_loop(&mut self, state: &mut State) {

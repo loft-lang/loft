@@ -1,0 +1,24 @@
+# Copyright (c) 2026 Jurjen Stellingwerff
+# SPDX-License-Identifier: LGPL-3.0-or-later
+#
+# @PLN179 strand 4 — running a program from loft under two rules: a value can never become
+# syntax (the command is a typed format string), and a stream is never left without a reader
+# (`run` drains every pipe).  Design: doc/claude/plans/179-scripts-in-loft/PROCESS.md.
+
+[package]
+name    = "process"
+version = "0.1.0"
+loft    = ">=0.8"
+
+[library]
+entry = "src/process.loft"
+
+# A script names `Command`, never the library: the trigger surface is derived from the
+# `pub` declarations below.
+[triggers]
+enabled = true
+
+# The natives are registered inside the loft binary — a subprocess is a host privilege the
+# binary grants, and the drainer threads are the binary's to own.  No cdylib.
+[native]
+in_binary = true

@@ -1,0 +1,73 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A character literal met as an integer — a comparison, an `as integer` — is its code point.
+//
+// The parser spells a literal as `OpConvCharacterFromInt(cp)`, and a comparison converts both
+// sides to integers, so `c == 'x'` used to undo the literal's conversion on every evaluation
+// (`Parser::convert` now folds it to `cp`).  NUL is the one literal that does NOT fold: it is
+// the character null, which converts to the integer null rather than 0, so a null character
+// still equals `'\0'`.  What a wrong fold would change is a VALUE: a code point off by one,
+// NUL folded to 0, a multi-byte character truncated to a byte.
+//
+// Covered: `==`, `!=`, `<`, `<=` with the literal on either side, ASCII, two- three- and
+// four-byte UTF-8 literals, a null character (an empty text's first character) against
+// ordinary literals and against `'\0'`, and literal arithmetic through `as integer`.
+//
+// @falsified-at: none — it guards a fold no earlier build has, so no control fails it.
+//   Falsified instead by planted defects, 2026-10-01: folding NUL as well fails
+//   `test_nul`; folding to `cp + 1` fails the other three (`'\0'` never folds).
+
+fn classify(s: text) -> integer {
+  k = s[0];
+  n = 0;
+  if k == 'x' { n = 1; } else if k != 'y' { n = 2; }
+  if k < 'm' { n += 10; }
+  if 'm' <= k { n += 100; }
+  n
+}
+
+fn wide(s: text) -> text {
+  r = "";
+  for c in s {
+    if c == 'é' { r += "e"; }
+    else if c == '€' { r += "E"; }
+    else if c == '😀' { r += "S"; }
+    else if c > 'z' { r += "?"; }
+    else { r += "."; }
+  }
+  r
+}
+
+fn code_of(c: character) -> integer { (c as integer) - ('a' as integer) }
+
+fn nul(s: text) -> text {
+  k = s[0];
+  "{k == '\0'} {k != '\0'} {'\0' == k}"
+}
+
+fn test_ascii() {
+  assert(classify("x1") == 101, "x: {classify("x1")}");
+  assert(classify("y2") == 100, "y: {classify("y2")}");
+  assert(classify("z") == 102, "z: {classify("z")}");
+  assert(classify("a") == 12, "a: {classify("a")}");
+  // the null character: not 'x', not 'y' (so `!=` holds), and below every literal
+  assert(classify("") == 12, "empty: {classify("")}");
+}
+
+fn test_wide() {
+  w = wide("aé€😀~ÿ");
+  assert(w == ".eES??", "wide: {w}");
+}
+
+fn test_arith() {
+  assert(code_of('a') == 0, "a: {code_of('a')}");
+  assert(code_of('z') == 25, "z: {code_of('z')}");
+  assert(code_of('é') == 136, "é: {code_of('é')}");
+  assert(code_of('😀') == 128415, "emoji: {code_of('😀')}");
+}
+
+fn test_nul() {
+  assert(nul("") == "true false true", "null character: {nul("")}");
+  assert(nul("a") == "false true false", "a: {nul("a")}");
+}

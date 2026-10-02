@@ -68,6 +68,26 @@ pub fn byte_code_from(
     // that verdict in now, while `Data` and the live schema are both in hand; this
     // is the single funnel every `byte_code*` entry point goes through.
     crate::typedef::sync_capture_ownership(data, &mut state.database);
+    // `@FR-R-ValueRecord` (@PLN180) — a small record returned to a caller that only reads
+    // its fields travels as a tuple.  Here and not in `scopes::check` because it changes
+    // signatures: this is where the program is closed.  A warm start reads its bodies from
+    // the cached store instead of `data`, so it keeps the record form.
+    if start_d_nr == 0 && warm_store.is_none() {
+        crate::value_record::rewrite_program(data, &state.database);
+        // `@FR-R-InlineLeaf` (with `R-MaskRange`, `R-SingleUse`, `R-ScaleFold` inside the
+        // inlined bodies) — after the value records, so a leaf it inlines is final.
+        crate::leaf_inline::rewrite_program(data);
+        // `@FR-R-ForwardWalk` — a vector walk the body cannot resize as a counted loop.
+        crate::forward_walk::rewrite_program(data);
+        // `@FR-R-SameRead` — a discharged read a statement spells twice, read once.
+        crate::same_read::rewrite_program(data);
+        // `@FR-R-InRange` — a record element its loop proves in range, read without a discharge.
+        crate::in_range::rewrite_program(data);
+        // `@FR-R-SingleUse`'s statement clause — a comprehension's element temporary.
+        crate::single_use::rewrite_program(data);
+        // `@FR-R-DischargeInto` — a text discharge read straight into the local it assigns.
+        crate::discharge_into::rewrite_program(data);
+    }
     // @PLN165 D10 — an instance's literal names its template (`Stores::shown`).
     for d in 0..data.definitions() {
         let def = data.def(d);

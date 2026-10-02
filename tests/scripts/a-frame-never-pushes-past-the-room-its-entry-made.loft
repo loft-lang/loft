@@ -1,0 +1,61 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A frame's operators never push past the room its entry made.  `@FR-R-FrameHeadroom`.
+//
+// The interpreter's direct-path push tests no capacity: every frame enters through
+// `State::push_frame`, which grows the stack store once to the function's height — the highest
+// stack position codegen recorded in it, plus a margin.  The stack grows only at a frame entry
+// and only to exactly the room asked, so a height recorded too low is a push past the buffer.
+// So `wide` evaluates a right-nested sum of 100 terms — some 800 bytes of evaluation stack above
+// its frame, far past the margin — at the top of a recursion 1500 deep, which grows the stack
+// many times; and a `par` worker calls it in its own stack.  Expected values by hand:
+// wide(n) = sum over i < 100 of (n + i % 10 + i) = 100 n + 5400.
+//
+// @falsified-at: none — it guards a mechanism no earlier build has.  Falsified instead by planted
+//   defects, 2026-10-01, run under `LOFT_HEADROOM_VERIFY=1` (tests/frame_headroom.rs): `push_frame`
+//   making no room (the room-in-buffer check), the height recorded as the margin alone (the
+//   position check).  Without the verifier both passed: the store grows by 7/3, so a push past
+//   the room lands in slack.
+
+fn wide(n: integer) -> integer {
+  a0 = n + 0;
+  a1 = n + 1;
+  a2 = n + 2;
+  a3 = n + 3;
+  a4 = n + 4;
+  a5 = n + 5;
+  a6 = n + 6;
+  a7 = n + 7;
+  a8 = n + 8;
+  a9 = n + 9;
+  ((a0 + 0) + ((a1 + 1) + ((a2 + 2) + ((a3 + 3) + ((a4 + 4) + ((a5 + 5) + ((a6 + 6) + ((a7 + 7) + ((a8 + 8) + ((a9 + 9) + ((a0 + 10) + ((a1 + 11) + ((a2 + 12) + ((a3 + 13) + ((a4 + 14) + ((a5 + 15) + ((a6 + 16) + ((a7 + 17) + ((a8 + 18) + ((a9 + 19) + ((a0 + 20) + ((a1 + 21) + ((a2 + 22) + ((a3 + 23) + ((a4 + 24) + ((a5 + 25) + ((a6 + 26) + ((a7 + 27) + ((a8 + 28) + ((a9 + 29) + ((a0 + 30) + ((a1 + 31) + ((a2 + 32) + ((a3 + 33) + ((a4 + 34) + ((a5 + 35) + ((a6 + 36) + ((a7 + 37) + ((a8 + 38) + ((a9 + 39) + ((a0 + 40) + ((a1 + 41) + ((a2 + 42) + ((a3 + 43) + ((a4 + 44) + ((a5 + 45) + ((a6 + 46) + ((a7 + 47) + ((a8 + 48) + ((a9 + 49) + ((a0 + 50) + ((a1 + 51) + ((a2 + 52) + ((a3 + 53) + ((a4 + 54) + ((a5 + 55) + ((a6 + 56) + ((a7 + 57) + ((a8 + 58) + ((a9 + 59) + ((a0 + 60) + ((a1 + 61) + ((a2 + 62) + ((a3 + 63) + ((a4 + 64) + ((a5 + 65) + ((a6 + 66) + ((a7 + 67) + ((a8 + 68) + ((a9 + 69) + ((a0 + 70) + ((a1 + 71) + ((a2 + 72) + ((a3 + 73) + ((a4 + 74) + ((a5 + 75) + ((a6 + 76) + ((a7 + 77) + ((a8 + 78) + ((a9 + 79) + ((a0 + 80) + ((a1 + 81) + ((a2 + 82) + ((a3 + 83) + ((a4 + 84) + ((a5 + 85) + ((a6 + 86) + ((a7 + 87) + ((a8 + 88) + ((a9 + 89) + ((a0 + 90) + ((a1 + 91) + ((a2 + 92) + ((a3 + 93) + ((a4 + 94) + ((a5 + 95) + ((a6 + 96) + ((a7 + 97) + ((a8 + 98) + (a9 + 99))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))
+}
+
+fn deep(n: integer) -> integer {
+  if n == 0 {
+    return 0;
+  }
+  r = deep(n - 1);
+  r + wide(n)
+}
+
+fn test_a_tall_expression_at_the_top_of_a_deep_recursion() {
+  assert(wide(1) == 5500, "wide {wide(1)}");
+  assert(deep(1500) == 120675000, "deep {deep(1500)}");
+}
+
+fn test_a_par_worker_evaluates_it_in_its_own_stack() {
+  v = [1, 2, 3, 4, 5, 6];
+  t = 0;
+  for e in v par(r = wide(e), 2) {
+    t += r;
+  }
+  assert(t == 34500, "par {t}");
+}
+
+fn main() {
+  test_a_tall_expression_at_the_top_of_a_deep_recursion();
+  test_a_par_worker_evaluates_it_in_its_own_stack();
+  println("ok");
+}

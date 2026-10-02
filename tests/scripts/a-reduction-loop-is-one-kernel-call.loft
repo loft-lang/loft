@@ -1,0 +1,63 @@
+// @PLN180 § Kernels — a reduction loop `acc = acc + v[i]` over `0..v.len()` of an integer
+// vector is ONE call of the loop kernel `vector_sum_int` on both backends: the interpreter
+// runs the whole sum through its single native-call path instead of dispatching every element,
+// and `--native` calls the same Rust.  The stdlib `sum` over integers is that loop.
+// `LOFT_NO_LOOP_KERNELS=1` keeps every loop a loop and must answer identically.
+//
+// The cell that pins the rule's soundness is `another vector`: the range is one vector's
+// length and the body sums ANOTHER, which a kernel over one vector cannot answer.
+//
+// @falsified-at: none — it guards a rewrite no earlier build has, so no control fails it.
+// Hand-sabotaged 2026-09-30: dropping the check that the summed vector is the ranged one
+// admits `another vector`, and the call sums the RANGED vector: 6 where 60 is owed, on both
+// backends.  A loop whose variable is read after it cannot be written — a loop variable is
+// out of scope after its loop — so the rule's mention check defends only its hidden index
+// and range end.
+
+fn by_hand(v: const vector<integer>, init: integer) -> integer {
+  result = init;
+  for i in 0..v.len() { result = result + v[i] };
+  result
+}
+
+// A second statement in the body: this loop is not the reduction and stays a loop.
+fn with_count(v: const vector<integer>) -> integer {
+  s = 0;
+  n = 0;
+  for i in 0..v.len() {
+    s = s + v[i];
+    n += 1;
+  }
+  s * 100 + n
+}
+
+// Ranged over one vector, summing another: the loop stays.
+fn another(v: const vector<integer>, w: const vector<integer>) -> integer {
+  s = 0;
+  for i in 0..v.len() { s = s + w[i] };
+  s
+}
+
+fn main() {
+  big: vector<integer> = [];
+  for k in 0..20000 { big += [k]; }
+  // 0 + 1 + … + 19999 = 199,990,000.
+  assert(sum(big) == 199990000, "stdlib sum: {sum(big)}");
+  assert(by_hand(big, 5) == 199990005, "by hand, from 5: {by_hand(big, 5)}");
+
+  e: vector<integer> = [];
+  assert(sum(e, 7) == 7 && by_hand(e, 3) == 3, "empty: {sum(e, 7)} {by_hand(e, 3)}");
+
+  // 9223372036854775000 + 500 + 400 passes i64::MAX (…775807): null, and it stays null.
+  near: vector<integer> = [9223372036854775000, 500, 400];
+  assert(!sum(near), "overflow gives null");
+  fits: vector<integer> = [9223372036854775000, 500, 300];
+  assert(sum(fits) == 9223372036854775800, "near the edge: {sum(fits)}");
+
+  // 1 + 2 + 3 = 6 over 3 elements.
+  small: vector<integer> = [1, 2, 3];
+  assert(with_count(small) == 603, "second statement: {with_count(small)}");
+  // w[0] + w[1] + w[2] over v's three indices = 60, not all of w (100).
+  w: vector<integer> = [10, 20, 30, 40];
+  assert(another(small, w) == 60, "another vector: {another(small, w)}");
+}

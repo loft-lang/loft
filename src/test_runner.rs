@@ -2042,6 +2042,9 @@ pub(crate) fn run_tests(
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         let mut data_copy = clean_data.clone();
                         let mut state = State::new(clean_db.clone());
+                        // Coverage is armed below and counts a function entered by a CALL, so
+                        // the calls stay calls (`@FR-R-InlineLeaf`).
+                        data_copy.observes_entries = true;
                         compile::byte_code(&mut state, &mut data_copy);
                         // Load native extensions for packages with #native functions.
                         crate::extensions::load_all(&mut state, pending_native.clone());

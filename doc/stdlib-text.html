@@ -46,7 +46,7 @@
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-text.html">split</a></span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>, separator: <span class="ty"><a href="stdlib-types.html">character</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt;</code></pre>
-<p>Splits self on every occurrence of separator and returns the parts as a vector. Use to parse CSV lines or space-separated tokens.</p>
+<p>Splits self on every occurrence of separator and returns the parts as a vector. Use to parse CSV lines or space-separated tokens. Every separator ends a part, so a trailing separator leaves an empty last part (&quot;a,&quot;.split(',') is [&quot;a&quot;, &quot;&quot;]); an empty text has no parts at all.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-text.html">split_text</a></span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>, separator: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt;</code></pre>

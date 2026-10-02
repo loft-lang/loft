@@ -23,6 +23,7 @@ use super::witness::{
     WitnessSet, displaces_owned_through_fresh_callee, mints_a_store_the_target_does_not_hold,
     release_witness, witness_points_at, witness_set_kind,
 };
+use super::{Adopts, BindShape};
 use super::{Scopes, call};
 use crate::data::{Data, Deps, Type, Value, v_if, v_set};
 use crate::fxhash::FxHashMap as HashMap;
@@ -1078,94 +1079,22 @@ impl Scopes<'_> {
             // the free (loft#1201).  `OpFreeRefIfDistinct` answers both cases at run time
             // and is conservative in the direction that matters: it frees exactly as the
             // plain free did when the stores DIFFER, and only skips when they alias.
-            if (adopts_fresh_store || adopts_minted || publishes_through_ref || vector_shaped)
-                && let Value::Call(_, args) = unspanned_value
-            {
-                for arg in args {
-                    let arg_var = match arg {
-                        Value::Var(av) => Some(*av),
-                        Value::Set(av, _) => Some(*av),
-                        _ => None,
-                    };
-                    if let Some(av) = arg_var {
-                        let n = function.name(av);
-                        if n.starts_with("__ref_") || n.starts_with("__rref_") {
-                            // `av`'s scope is inherited from the enclosing
-                            // assignment: `self.scope`.  `v`'s scope was
-                            // just written above.  Only pair when the
-                            // witness `v` lives AT LEAST as long as
-                            // `av` — i.e. `var_scope[v] <= var_scope[av]`.
-                            // Otherwise, when codegen lowers the function
-                            // to Rust, the witness's `let` falls out of
-                            // its block scope before `av`'s OpFreeRef
-                            // fires, and the emitted `var_f.store_nr`
-                            // references a dead name (e.g. `f = file(…,
-                            // __ref_1)` inside a nested `{}` block).
-                            //
-                            // loft#759 — a PARAMETER has no such block to fall
-                            // out of: its `let` is the function signature, so
-                            // it outlives every local including `av`, on both
-                            // backends.  Its `var_scope` entry is written when
-                            // the body first assigns it, which for a set inside
-                            // an `if` reads as INNER-scoped and would route a
-                            // valid witness into the @P378(a) branch below.
-                            let av_scope = self.var_scope.get(&av).copied().unwrap_or(u16::MAX);
-                            let v_scope = self.var_scope.get(&v).copied().unwrap_or(u16::MAX);
-                            // A buffer is never its own witness.  The pairing exists to
-                            // skip the buffer's free when ANOTHER variable adopted its
-                            // store; `__ref_N = f(__ref_N)` has no other variable, and
-                            // the guard then compares the store with itself and never
-                            // frees at all — the buffer's own store leaks (loft#1013,
-                            // where capturing the call's answer into the buffer it was
-                            // handed is what gives the value an owner).
-                            if av == v {
-                                continue;
-                            }
-                            if adopts_minted && !adopts_fresh_store {
-                                self.minted_pairs.insert(av);
-                            }
-                            // A vector admitted here ONLY by the alias case below
-                            // (`!adopts_fresh_store`, no `&`) takes the inner-slot branch
-                            // and nothing else.  Making the BUFFER's own free conditional
-                            // on the slot is the opposite trade and is wrong for it: the
-                            // slot may have no free of its own, and then neither store is
-                            // released.  Measured — widening both branches leaked across
-                            // sixteen suites (loft#1201).
-                            let vector_alias_only =
-                                vector_shaped && !adopts_fresh_store && !publishes_through_ref;
-                            if !vector_alias_only
-                                && ((publishes_through_ref && function.is_argument(v))
-                                    || (v_scope <= av_scope && v_scope != u16::MAX))
-                            {
-                                self.paired_witness.entry(av).or_insert(v);
-                            } else if v_scope != u16::MAX
-                                && av_scope != u16::MAX
-                                && v_scope > av_scope
-                            {
-                                // @P378(a) — witness `v` is INNER-scoped (e.g.
-                                // a loop body) while the `__ref_N` buffer `av`
-                                // is OUTER (function).  The buffer is reserved
-                                // once but `v` (which adopts the buffer's
-                                // store) is freed every iteration; that frees
-                                // the buffer's store, which `find_free_slot`
-                                // then recycles to a callee temp next
-                                // iteration — two OpDatabase targets collide on
-                                // one record (self-referential keyed insert →
-                                // SIGSEGV).  Make `v`'s per-iteration free
-                                // conditional on NOT aliasing the buffer:
-                                // adoption → skip (store stays reserved, freed
-                                // once by the buffer's function-exit OpFreeRef);
-                                // fresh-store → real free.  Scope-safe for
-                                // native because `av` (outer) outlives `v`.
-                                let buffers = self.witness_buffer.entry(v).or_default();
-                                if !buffers.contains(&av) {
-                                    buffers.push(av);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            self.pair_call_buffers(
+                v,
+                unspanned_value,
+                function,
+                BindShape {
+                    adopts: if adopts_fresh_store {
+                        Adopts::Fresh
+                    } else if adopts_minted {
+                        Adopts::Minted
+                    } else {
+                        Adopts::Neither
+                    },
+                    publishes_through_ref,
+                    vector_shaped,
+                },
+            );
         }
         // @PLN85 over-free class — a VECTOR return-buffer (the hidden SRet arg,
         // NRVO'd into a source local like `best`) bound from a call that

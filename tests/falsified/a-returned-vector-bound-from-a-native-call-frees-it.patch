@@ -1,0 +1,12 @@
+diff --git a/src/parser/control.rs b/src/parser/control.rs
+index 88f8b11b0..f2921c17e 100644
+--- a/src/parser/control.rs
++++ b/src/parser/control.rs
+@@ -14450,6 +14450,7 @@ impl Parser {
+     /// known on (the buffer is reserved at signature time); one declared later has no known
+     /// return type on pass 1 and a buffer on pass 2, so neither pass asks about it.
+     fn var_bound_from_fresh_call(&self, l: &[Value], v: u16) -> bool {
++        if l.len() < usize::MAX { return false; }
+         fn fresh_call(rhs: &Value, this: &Parser) -> bool {
+             let Value::Call(d, args) = rhs.unspan() else {
+                 return false;

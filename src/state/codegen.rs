@@ -230,13 +230,9 @@ impl State {
         let console = false; //logging;
         let mut stack = Stack::new(data.def(def_nr).variables().clone(), data, def_nr, logging);
         self.fused_away.clear();
-        self.walk_steps = if fusion_enabled() {
-            crate::generation::hoist::char_walks(data, def_nr)
-                .into_values()
-                .collect()
-        } else {
-            Vec::new()
-        };
+        // `@FR-R-FrameHeadroom` — this function's height starts from nothing.
+        self.gen_max_position = 0;
+        self.walk_steps = None;
         // @PLN11 G2/M6 — read the body's SHAPE (null / empty-block) from the
         // persistent store when present, so these last native body reads are
         // also store-backed; else from the native graph.
@@ -282,6 +278,7 @@ impl State {
             self.add_return(&mut stack, start);
             data.definitions[def_nr as usize].code_position = start;
             data.definitions[def_nr as usize].code_length = self.code_pos - start;
+            self.record_frame_headroom(def_nr);
             return;
         }
         let is_empty_stub = body_is_empty_block;
@@ -347,6 +344,7 @@ impl State {
             self.add_return(&mut stack, start);
             data.definitions[def_nr as usize].code_position = start;
             data.definitions[def_nr as usize].code_length = self.code_pos - start;
+            self.record_frame_headroom(def_nr);
             return;
         }
         // Plan-04 Phase B.3 atomic bundle: single function-entry
@@ -467,6 +465,7 @@ impl State {
         }
         data.definitions[def_nr as usize].code_position = start;
         data.definitions[def_nr as usize].code_length = self.code_pos - start;
+        self.record_frame_headroom(def_nr);
         if let Some(v) = self.calls.get(&def_nr) {
             let old = self.code_pos;
             for pos in v.clone() {
@@ -1159,6 +1158,30 @@ impl State {
     }
 
     pub(super) fn gen_loop(&mut self, lp: IrBlock, stack: &mut Stack) -> Type {
+        if crate::keys::loop_rotate_enabled()
+            && let Some(first) = lp.operators().iter().next()
+            && let Some(r) = rotation(&first.to_owned_value())
+        {
+            let r = match start_step(&r).filter(|_| crate::keys::start_step_enabled()) {
+                Some(s) => {
+                    let holds = Self::start_step_holds(&lp, &s, stack);
+                    if crate::keys::trace_start_step()
+                        && let Some((lv, _)) = s.store
+                    {
+                        let f = &stack.function;
+                        let verdict = if holds {
+                            "steps one counter"
+                        } else {
+                            "declined — the body names a counter"
+                        };
+                        eprintln!("start-step: {} {} {verdict}", f.name, f.name(lv));
+                    }
+                    if holds { s } else { r }
+                }
+                None => r,
+            };
+            return self.gen_rotated_loop(lp, &r, stack);
+        }
         stack.add_loop(self.code_pos);
         let pos = self.code_pos;
         for v in lp.operators().iter() {
@@ -1169,6 +1192,92 @@ impl State {
         self.code_add((i64::from(pos) - i64::from(self.code_pos) - 4) as i32);
         stack.end_loop(self);
         Type::Void
+    }
+
+    /// `@FR-R-Rotate` — a loop laid out with its exit test at the BOTTOM ([`rotation`] read its first
+    /// statement): one jump enters at the test, and the test jumps back to the body while the
+    /// loop goes on, so a round runs one jump where the top-tested form ran two.
+    ///
+    /// ```text
+    ///       GotoWord → T
+    ///   B:  the iterator's statements after its test; the loop variable's store; the body
+    ///   T:  the iterator's statements before its test; the test, jumping to B unless it ends
+    /// ```
+    ///
+    /// The test falls through at the end, where the `break` it replaces would have jumped; an
+    /// earlier `if … break` of the iterator (an inclusive range's stop) is emitted as it was.
+    /// A `continue` jumps forward to T, patched when T is emitted.  A loop variable sharing its
+    /// index's slot (`slot_alias`) is written by the step at T; its store span is the entry
+    /// jump, which every first round passes before the body.  The test is attributed to the
+    /// line the loop started on, so stepping and the profiler see the loop's line there.
+    fn gen_rotated_loop(&mut self, lp: IrBlock, r: &Rotation, stack: &mut Stack) -> Type {
+        // The test belongs to the loop's own line, as at the top: a step off the body's last
+        // line pauses there, not on the next round's first line.
+        let loop_line = self
+            .line_numbers
+            .range(..=self.code_pos)
+            .next_back()
+            .map(|(_, &l)| l);
+        if let Some((ix, nxt)) = r.seed {
+            self.generate(&Value::Set(ix, Box::new(Value::Var(nxt))), stack, false);
+        }
+        stack.add_loop(self.code_pos);
+        stack.set_rotated();
+        let entry_op = self.code_pos;
+        stack.add_op("OpGotoWord", self);
+        let entry = self.code_pos;
+        self.code_add(0i32);
+        let body = self.code_pos;
+        for p in &r.post {
+            self.generate(p, stack, false);
+        }
+        if let Some((lv, ix)) = r.store {
+            let pos = stack.function.stack(lv);
+            if pos != u16::MAX && pos == stack.function.stack(ix) {
+                stack.function.set_stack_allocated(lv);
+                self.store_spans.push((entry_op, body, lv));
+            } else {
+                self.generate(&Value::Set(lv, Box::new(Value::Var(ix))), stack, false);
+            }
+        }
+        for v in lp.operators().iter().skip(1) {
+            self.generate_node(v, stack, false);
+        }
+        self.clear_stack(stack, 0);
+        if r.seed.is_none() {
+            self.code_put(entry, (self.code_pos - entry - 4) as i32);
+        }
+        if let Some(l) = loop_line {
+            self.line_numbers.insert(self.code_pos, l);
+        }
+        stack.patch_continues(self);
+        for p in &r.pre {
+            self.generate(p, stack, false);
+        }
+        // A seeded counter enters past its step: the first round tests the start itself.
+        if r.seed.is_some() {
+            self.code_put(entry, (self.code_pos - entry - 4) as i32);
+        }
+        let step = self.gen_if_test(IrNode::Native(&r.test), stack);
+        self.code_put(step, (i64::from(body) - i64::from(self.code_pos)) as i32);
+        self.clear_stack(stack, 0);
+        stack.end_loop(self);
+        Type::Void
+    }
+
+    /// [`start_step`]'s conditions on the rest of the loop: nothing after the iterator names
+    /// `next`, and the index is the loop variable's own slot (`(R-LoopSlot)`, which already
+    /// proved the body neither writes it nor takes its address) or is not named at all.
+    fn start_step_holds(lp: &IrBlock, s: &Rotation, stack: &Stack) -> bool {
+        let (Some((ix, nxt)), Some((lv, _))) = (s.seed, s.store) else {
+            return false;
+        };
+        let pos = stack.function.stack(lv);
+        let shared = pos != u16::MAX && pos == stack.function.stack(ix);
+        lp.operators().iter().skip(1).all(|n| {
+            let v = n.to_owned_value();
+            !v.reads_var(nxt) && (shared || !v.reads_var(ix))
+        })
     }
 
     pub(super) fn gen_break(&mut self, loop_nr: u16, stack: &mut Stack) -> Type {
@@ -1185,6 +1294,12 @@ impl State {
         let old_pos = stack.position;
         self.clear_stack(stack, loop_nr);
         stack.add_op("OpGotoWord", self);
+        if stack.is_rotated(loop_nr) {
+            stack.add_continue(self.code_pos, loop_nr);
+            self.code_add(0i32); // patched to the loop's test when it is emitted
+            stack.position = old_pos;
+            return Type::Void;
+        }
         self.code_add((i64::from(stack.get_loop(loop_nr)) - i64::from(self.code_pos) - 4) as i32);
         stack.position = old_pos;
         Type::Void
@@ -2215,6 +2330,27 @@ impl State {
         let value = &value_owned;
         self.vars.insert(self.code_pos, v);
         if matches!(value.unspan(), Value::Block(_)) && self.emit_walk_step(stack, v) {
+            return;
+        }
+        // `@FR-R-LoopSlot` — a counted loop's variable placed in its range index's own slot (`slot_alias`): the
+        // iterator's yield and the store of it would copy the slot onto itself, so the
+        // iterator runs without them.  Read off the two positions, so a variable table that
+        // carries no alias decision keeps the copy.
+        if let Value::Block(bl) = value.unspan()
+            && bl.name == "Iter range"
+            && let Some(Value::Var(w)) = bl.operators.last().map(Value::unspan)
+            && *w != v
+            && stack.function.stack(v) != u16::MAX
+            && stack.function.stack(v) == stack.function.stack(*w)
+        {
+            let mut step = (**bl).clone();
+            step.operators.pop();
+            step.result = Type::Void;
+            let from = self.code_pos;
+            self.generate(&Value::Block(Box::new(step)), stack, false);
+            // The step writes the shared slot: from here on the debugger may show `v`.
+            self.record_store_span(from, v);
+            stack.function.set_stack_allocated(v);
             return;
         }
         // Zero-sized variables (null-typed) have no stack storage.
@@ -4298,6 +4434,18 @@ impl State {
             parameters.len(),
             stack.data.def(op).attributes().len(),
         );
+        // `@FR-R-FirstClaim` — the parser's reservation before a literal append of at most 11 elements claims
+        // exactly what the append's own first claim would (`vector_append` and
+        // `pre_alloc_vector` share the 11-element floor) and nothing once the vector has a
+        // record, so it is not emitted.  Over a plain variable only: reading one has no
+        // effect to keep.  `keys::prealloc_elide_enabled`.
+        if stack.data.def(op).name() == "OpPreAllocVector"
+            && crate::keys::prealloc_elide_enabled()
+            && let [Value::Var(_), count, _] = parameters
+            && matches!(count.unspan(), Value::Int(n) if (0..=11).contains(n))
+        {
+            return Type::Void;
+        }
         // S34: suppress OpFreeRef for variables moved to a shared slot by Option A.
         // The outer variable at the same slot emits its own OpFreeRef; emitting a
         // second one would produce a double-free of the same database record.
@@ -4865,15 +5013,7 @@ impl State {
     /// (`OpNot(OpConvBoolFromText(T))`) as `OpTextNullJump`, `size(T) <= index` as
     /// `OpTextEndJump`.  Answers where the jump's displacement sits, or `None` — emitting
     /// nothing — for any other test.
-    fn emit_text_end_test(&mut self, test: IrNode, stack: &mut Stack) -> Option<u32> {
-        if !fusion_enabled() || test.kind() != ValueType::Call {
-            return None;
-        }
-        let args: Vec<Value> = test
-            .call_args()
-            .iter()
-            .map(|a| a.to_owned_value())
-            .collect();
+    fn emit_text_end_test(&mut self, name: &str, args: &[Value], stack: &mut Stack) -> Option<u32> {
         let inner = |v: &Value, name: &str| -> Option<u16> {
             let Value::Call(op, a) = v.unspan() else {
                 return None;
@@ -4882,7 +5022,7 @@ impl State {
             (stack.data.def(*op).name() == name).then_some(())?;
             text_local(stack, t)
         };
-        let (src, idx) = match (stack.data.def(test.call_to()).name(), &args[..]) {
+        let (src, idx) = match (name, args) {
             ("OpNot", [b]) => (inner(b, "OpConvBoolFromText")?, None),
             ("OpLeInt", [size, i]) => (inner(size, "OpSizeText")?, Some(int_local(stack, i)?)),
             _ => return None,
@@ -4977,7 +5117,15 @@ impl State {
     /// before it stores, which grows the stack, and this op pushes nothing.  Any other state
     /// answers `false`, and the block is emitted as before.
     fn emit_walk_step(&mut self, stack: &mut Stack, c: u16) -> bool {
-        let Some(w) = self.walk_steps.iter().find(|w| w.loop_var == c).cloned() else {
+        if !fusion_enabled() || !matches!(stack.function.tp(c).base(), Type::Character) {
+            return false;
+        }
+        let walks = self.walk_steps.get_or_insert_with(|| {
+            crate::generation::hoist::char_walks(stack.data, stack.def_nr)
+                .into_values()
+                .collect()
+        });
+        let Some(w) = walks.iter().find(|w| w.loop_var == c).cloned() else {
             return false;
         };
         let f = &stack.function;
@@ -5023,22 +5171,15 @@ impl State {
     /// is the test followed by `OpGotoFalseWord`.  Both end in the displacement, so the patch
     /// is the same.
     fn gen_if_test(&mut self, test: IrNode, stack: &mut Stack) -> u32 {
-        let fused = if test.kind() == ValueType::Call {
-            let args: Vec<Value> = test
-                .call_args()
-                .iter()
-                .map(|a| a.to_owned_value())
-                .collect();
-            fusable_int(stack, test.call_to(), &args).filter(|f| f.compare)
-        } else {
-            None
-        };
-        if let Some(code_step) = self.emit_text_end_test(test, stack) {
-            return code_step;
-        }
-        let le_args: Vec<Value> = if test.kind() == ValueType::Call
-            && stack.data.def(test.call_to()).name() == "OpLeInt"
-        {
+        // The arguments are materialised once, and only for an operator one of the fused
+        // tests below can take: an `if` over anything else pays nothing for them.
+        let op = (test.kind() == ValueType::Call).then(|| test.call_to());
+        let name = op.map_or("", |op| stack.data.def(op).name());
+        let args: Vec<Value> = if fusion_enabled()
+            && matches!(
+                name,
+                "OpEqInt" | "OpNeInt" | "OpLtInt" | "OpLeInt" | "OpNot"
+            ) {
             test.call_args()
                 .iter()
                 .map(|a| a.to_owned_value())
@@ -5046,8 +5187,15 @@ impl State {
         } else {
             Vec::new()
         };
-        if fusion_enabled()
-            && let [len, idx] = &le_args[..]
+        let fused = op
+            .filter(|_| !args.is_empty())
+            .and_then(|op| fusable_int(stack, op, &args))
+            .filter(|f| f.compare);
+        if let Some(code_step) = self.emit_text_end_test(name, &args, stack) {
+            return code_step;
+        }
+        if name == "OpLeInt"
+            && let [len, idx] = &args[..]
             && let Value::Call(len_op, len_args) = len.unspan()
             && stack.data.def(*len_op).name() == "OpLengthVector"
             && let [vec] = &len_args[..]
@@ -6406,11 +6554,34 @@ fn fusable_int(stack: &Stack, op: u32, params: &[Value]) -> Option<FusedInt> {
         "OpLeInt" => (true, fused::LE),
         _ => return None,
     };
+    let literal = |v: &Value| match v.unspan() {
+        Value::Int(c) => Some(i64::from(*c)),
+        Value::Long(c) => Some(*c),
+        _ => None,
+    };
+    // `@FR-R-Fuse`'s mirror clause — a comparison with its literal on the LEFT (`100000 <= i`, the end test of a counted
+    // range over a literal) is mirrored so the local reads first.  Only comparisons: an
+    // arithmetic op reports an overflow with its operands in the order written.
+    if compare
+        && let Some(c) = literal(&params[0])
+        && let Some(a) = int_local(stack, &params[1])
+    {
+        let kind = match kind {
+            fused::LT => fused::GT,
+            fused::LE => fused::GE,
+            k => k, // EQ, NE
+        };
+        return Some(FusedInt {
+            compare,
+            kind,
+            a,
+            b: FusedOperand::Const(c),
+        });
+    }
     let a = int_local(stack, &params[0])?;
-    let b = match params[1].unspan() {
-        Value::Int(c) => FusedOperand::Const(i64::from(*c)),
-        Value::Long(c) => FusedOperand::Const(*c),
-        other => FusedOperand::Var(int_local(stack, other)?),
+    let b = match literal(&params[1]) {
+        Some(c) => FusedOperand::Const(c),
+        None => FusedOperand::Var(int_local(stack, &params[1])?),
     };
     Some(FusedInt {
         compare,
@@ -6756,4 +6927,137 @@ mod self_reference_guard {
         );
         assert!(ir_reads_var(&data, &ir, 4), "the index var beside it is");
     }
+}
+
+/// The parts of a loop whose FIRST statement carries its exit test, for
+/// [`State::gen_rotated_loop`]: the statements before the last `if … break` of this loop, its
+/// condition, the statements after it, and the loop variable a counted range's iterator yields
+/// into with the index it yields.
+pub(super) struct Rotation {
+    pre: Vec<Value>,
+    test: Value,
+    post: Vec<Value>,
+    store: Option<(u16, u16)>,
+    /// `(index, next)` for [`start_step`]: the index is seeded from `next` before the loop and
+    /// the entry jump lands past `pre`, so the first round runs no step.
+    seed: Option<(u16, u16)>,
+}
+
+/// `if c { break }` of the innermost loop — the break bare or alone in a block — answering `c`.
+fn exit_test(node: &Value) -> Option<&Value> {
+    let Value::If(cond, then_arm, else_arm) = node.unspan() else {
+        return None;
+    };
+    let brk = match then_arm.unspan() {
+        Value::Break(0) => true,
+        Value::Block(b) => {
+            b.operators.len() == 1 && matches!(b.operators[0].unspan(), Value::Break(0))
+        }
+        _ => false,
+    };
+    (brk && matches!(else_arm.unspan(), Value::Null)).then_some(cond)
+}
+
+/// Read a loop's first statement as a rotatable exit: a `while`'s `if !c { break }`, or a
+/// counted range's iterator `v = {#Iter range: …; if c break; …; index}`.  `None` for anything
+/// else — a text or vector walk, a filter, a statement that is no exit — which keeps the
+/// top-tested layout: the cost of a wrong decline is the jump the loop already pays.
+pub(super) fn rotation(first: &Value) -> Option<Rotation> {
+    if let Some(c) = exit_test(first) {
+        return Some(Rotation {
+            pre: Vec::new(),
+            test: c.clone(),
+            post: Vec::new(),
+            store: None,
+            seed: None,
+        });
+    }
+    let Value::Set(lv, val) = first.unspan() else {
+        return None;
+    };
+    let Value::Block(bl) = val.unspan() else {
+        return None;
+    };
+    if bl.name != "Iter range" {
+        return None;
+    }
+    let (last, ops) = bl.operators.split_last()?;
+    let Value::Var(ix) = last.unspan() else {
+        return None;
+    };
+    let k = ops.iter().rposition(|o| exit_test(o).is_some())?;
+    // Every other statement is a plain step: a `continue` or a second loop in the iterator
+    // would jump on the old layout.
+    if ops.iter().enumerate().any(|(i, o)| {
+        i != k && o.any_node(&mut |n| matches!(n, Value::Continue(_) | Value::Loop(_)))
+    }) {
+        return None;
+    }
+    Some(Rotation {
+        pre: ops[..k].to_vec(),
+        test: exit_test(&ops[k])?.clone(),
+        post: ops[k + 1..].to_vec(),
+        store: Some((*lv, *ix)),
+        seed: None,
+    })
+}
+
+/// `@FR-R-StartStep` — a computed start's two counters as one.  The iterator `{if c(next)
+/// break; index = next; next = next + 1; index}` keeps `next` one ahead of `index` after every
+/// round and equal to the start before the first, so with `index` seeded from `next` the test
+/// may read `index` after stepping IT, and the first round skips the step.  Every compare sees
+/// the value it saw: the step cannot overflow (the round ran because `index < end`), and a
+/// null start stays null under both steps.  `None` for any other iterator — an inclusive or
+/// reverse range, a filter, a literal start — which keeps the two-counter form: a missed
+/// match costs the copy the loop already pays.  The rest of the loop is checked by
+/// [`State::start_step_holds`].
+fn start_step(r: &Rotation) -> Option<Rotation> {
+    let (_, ix) = r.store?;
+    if !r.pre.is_empty() || r.seed.is_some() {
+        return None;
+    }
+    let [copy, step] = r.post.as_slice() else {
+        return None;
+    };
+    let Value::Set(cix, cval) = copy.unspan() else {
+        return None;
+    };
+    let Value::Var(nxt) = cval.unspan() else {
+        return None;
+    };
+    let Value::Set(snxt, sval) = step.unspan() else {
+        return None;
+    };
+    let Value::Call(add, sargs) = sval.unspan() else {
+        return None;
+    };
+    if *cix != ix
+        || snxt != nxt
+        || *nxt == ix
+        || !matches!(sargs.as_slice(), [a, Value::Int(1)] if matches!(a.unspan(), Value::Var(x) if x == nxt))
+    {
+        return None;
+    }
+    let Value::Call(cmp, targs) = r.test.unspan() else {
+        return None;
+    };
+    let [end, last] = targs.as_slice() else {
+        return None;
+    };
+    if !matches!(last.unspan(), Value::Var(x) if x == nxt)
+        || end.reads_var(*nxt)
+        || end.reads_var(ix)
+    {
+        return None;
+    }
+    Some(Rotation {
+        pre: vec![Value::Set(
+            ix,
+            Box::new(Value::Call(*add, vec![Value::Var(ix), Value::Int(1)])),
+        )],
+        test: Value::Call(*cmp, vec![end.clone(), Value::Var(ix)]),
+        post: Vec::new(),
+        store: r.store,
+        seed: Some((ix, *nxt)),
+    })
 }

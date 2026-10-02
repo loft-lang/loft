@@ -1155,6 +1155,9 @@ impl Stores {
     /// Idempotent: it clears and recomputes, so the end-of-parse sweep still produces the
     /// identical table whether or not a bake site ran it earlier.
     pub(crate) fn determine_keys_for(&mut self, t_nr: usize) {
+        // `@FR-R-KeyList` — the descriptors are derived again, so the list derived from them
+        // is too: the next lookup re-derives it.
+        self.types[t_nr].key_contents = KeyList::default();
         match self.types[t_nr].parts.clone() {
             // Hash and Radix both key on a bare `Vec<u16>` of ascending field
             // numbers.  Radix's key positions are what the Morton oracle reads
@@ -3381,6 +3384,19 @@ impl Clone for TypeFacts {
 
 /// Derived from `parts`, so two rows with equal parts have equal facts whether
 /// or not either has derived them yet.
+/// `@FR-R-KeyList` — a keyed type's key content list, derived from its `parts` on the first
+/// lookup that asks (`Stores::get_keys`) and reset whenever the type's key descriptors are
+/// derived again (`determine_keys_for`), so the front end pays nothing for it.  Two schemas
+/// that agree on their parts agree on it, so equality ignores it, as it ignores `TypeFacts`.
+#[derive(Clone, Default, Debug)]
+pub(crate) struct KeyList(pub(crate) std::sync::OnceLock<Vec<u16>>);
+
+impl PartialEq for KeyList {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
 impl PartialEq for TypeFacts {
     fn eq(&self, _: &Self) -> bool {
         true
@@ -3448,6 +3464,9 @@ pub struct Type {
     pub(super) nullable_wrapper: bool,
     pub parts: Parts,
     pub keys: Vec<crate::keys::Key>,
+    /// The key content types a keyed operation pops (`Stores::get_keys`), derived on the
+    /// first lookup and reset by `determine_keys_for`.
+    pub(super) key_contents: KeyList,
     pub(super) parents: std::collections::BTreeSet<u16>,
     pub(super) complex: bool,
     pub(super) linked: bool,
@@ -3508,6 +3527,8 @@ impl Type {
             nullable_wrapper,
             parts,
             keys,
+            // Derived on the first lookup (`@FR-R-KeyList`).
+            key_contents: KeyList::default(),
             parents: std::collections::BTreeSet::new(),
             complex,
             linked,
@@ -3529,6 +3550,7 @@ impl Type {
         Type {
             name: name.to_string(),
             nullable_wrapper: name.starts_with("__nullable<"),
+            key_contents: KeyList::default(),
             parts,
             keys: Vec::new(),
             parents: std::collections::BTreeSet::new(),
@@ -3546,6 +3568,7 @@ impl Type {
         Type {
             name: name.to_string(),
             nullable_wrapper: name.starts_with("__nullable<"),
+            key_contents: KeyList::default(),
             parts,
             keys: Vec::new(),
             parents: std::collections::BTreeSet::new(),

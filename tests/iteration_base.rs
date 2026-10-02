@@ -15,18 +15,23 @@ const CELLS: &str = "tests/scripts/158-iteration-base.loft";
 /// Per function: `(addresses from a held base, addresses from rec_ptr, unchecked index
 /// steps, checked index steps)`.  A `rec_ptr` beside a base address is the mint window of
 /// an append the cell makes itself (`@FR-R-RecPtr`'s mint clause), not an iteration.
+///
+/// A walk whose body cannot resize its vector runs as a counted loop (`@FR-R-ForwardWalk`):
+/// its index steps through the range's plain add (`@FR-R-Range` — the counter is bounded by
+/// the length read before the loop), which neither step column counts, and its element
+/// address still comes from the held base (`hoist::element_binding`).
 const EXPECTED: &[(&str, usize, usize, usize, usize)] = &[
-    ("n_w1_sum", 1, 0, 1, 0),
+    ("n_w1_sum", 1, 0, 0, 0),
     // The twin shares the caller's header and base, and takes the address from them.
-    ("n_w1_sum__inv", 1, 0, 1, 0),
+    ("n_w1_sum__inv", 1, 0, 0, 0),
     ("n_w1", 2, 0, 2, 0),
     // …and the cell's own append mints through a push window (`@FR-R-PushFill`'s record
     // clause), whose address is the window's slot — no `rec_ptr`.
-    ("n_w2", 1, 0, 1, 0),
+    ("n_w2", 1, 0, 0, 0),
     // Two indexes over ONE base.
-    ("n_w3", 2, 0, 2, 0),
+    ("n_w3", 2, 0, 1, 0),
     // The write-through walk and the read walk.
-    ("n_w4", 2, 0, 2, 0),
+    ("n_w4", 2, 0, 0, 0),
     // The chunk walk that appends holds no address; the two read walks do.
     ("n_w5", 2, 2, 3, 0),
     // A callee grows the walked vector: no address, the index still bounded.
@@ -34,19 +39,21 @@ const EXPECTED: &[(&str, usize, usize, usize, usize)] = &[
     // The walk that appends ELSEWHERE holds its address too (`@FR-R-Base`'s growth clause:
     // `out` is another store), as the read walk after it does; the append's own mint keeps
     // its `rec_ptr`.
-    ("n_w7", 2, 1, 2, 0),
-    ("n_w8", 1, 0, 1, 0),
-    ("n_w9", 1, 0, 1, 0),
+    ("n_w7", 2, 1, 0, 0),
+    ("n_w8", 1, 0, 0, 0),
+    ("n_w9", 1, 0, 0, 0),
     // Heap-owning elements: the text and vector field reads are not fused, but the walk
     // holds its base (`len(it.nm)` is a text-value op, no writer since `@FR-R-TextBorrow`)
     // and `it.k` is read through the iteration's address.
-    ("n_w11", 1, 0, 1, 0),
-    ("n_w12", 1, 0, 1, 0),
+    ("n_w11", 1, 0, 0, 0),
+    ("n_w12", 1, 0, 0, 0),
     // A vector of scalars is another iterator: its step stays checked.
-    ("n_w13", 0, 0, 0, 1),
-    ("n_w14", 1, 0, 1, 0),
-    // `e = v[i]?` binds by explicit index: `rec_ptr`, as before.
-    ("n_w15", 0, 1, 0, 0),
+    ("n_w13", 0, 0, 0, 0),
+    ("n_w14", 1, 0, 0, 0),
+    // `e = v[i]?` binds by explicit index.  In `for i in 0..len(v)` the `?` is dropped
+    // (`@FR-R-InRange`), so the binding is the plain element read and takes its address from
+    // the held base (`hoist::element_binding`); `LOFT_NO_IN_RANGE=1` gives `rec_ptr` again.
+    ("n_w15", 1, 0, 0, 0),
 ];
 
 const SWITCHES: [&str; 5] = [

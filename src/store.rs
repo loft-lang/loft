@@ -73,6 +73,24 @@ fn carve_enabled() -> bool {
     static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *FLAG.get_or_init(|| !std::env::var("LOFT_NO_CARVE_IN_PLACE").is_ok_and(|v| v != "0"))
 }
+/// `LOFT_NO_LAZY_FREE=1` tracks every deleted block in the free tree at the delete — no lazy
+/// phase (`@FR-H-LazyFree`); the bisect step for a store-layout fault, a claim that hands
+/// out a live block, or a store that grows instead of reusing a freed block.  Read once; each
+/// store copies it at construction, so a unit test can build one of each in a process.
+fn lazy_free_enabled() -> bool {
+    static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *FLAG.get_or_init(|| !std::env::var("LOFT_NO_LAZY_FREE").is_ok_and(|v| v != "0"))
+}
+/// `@FR-H-LazyFree` — a lazy store leaves the phase at the first claim once its untracked
+/// words reach this floor (2 KB) and a fifth of its written extent: below it the sweep could
+/// never give back more than a few pages, so the store grows instead.
+const LAZY_FLOOR_WORDS: u32 = 256;
+/// `@FR-H-LazyFree` — the phase covers blocks of at most this many words (512 B): a record,
+/// a text, a small vector.  A larger block — a vector rung, a hash table — is tracked at
+/// its delete as before: the tree's insert is nothing beside the block's own copy, and
+/// leaving it dead is what doubled a ladder's working set and moved a persisted hash's
+/// layout.
+const LAZY_MAX_WORDS: i32 = 64;
 /// Byte offset of a record's PAYLOAD — past the 8-byte size header at word 0.
 ///
 /// A field's `position` in a struct type is an offset from HERE, so any `DbRef`
@@ -313,6 +331,10 @@ pub struct Store {
     // format 0 = SIGNATURE, 4 = free_space_index, 8 = record_size, 12 = content
     pub ptr: *mut u8,
     claims: Claims,
+    /// `@FR-R-StackBase` — this store holds the interpreter's stack, whose buffer `State`
+    /// addresses through a cached base pointer: only `State::grow_stack` (and a checkpoint
+    /// restore, which refreshes the cache) may move it, so every other buffer move refuses it.
+    pub(crate) stack_buffer: bool,
     size: u32,
     #[cfg(feature = "mmap")]
     file: Option<MmapStorage>,
@@ -400,6 +422,21 @@ pub struct Store {
     /// alloc-only workload never pays for a fruitless O(n) pass.  A single
     /// flag — NOT an index; it does not grow with the free-block count.
     needs_coalesce: bool,
+    /// `@FR-H-LazyFree` — while set, a delete of a SMALL block (`LAZY_MAX_WORDS`) marks it
+    /// free and leaves it out of the tree (a block that meets the wilderness folds into
+    /// it), and a claim takes the tail; the phase ends at the first claim once
+    /// `dead_words` (the untracked words) reach `LAZY_FLOOR_WORDS` and a fifth of
+    /// `claimed_end`, with the one sweep that tracks them all, and at an explicit reclaim.
+    /// A fresh or reset store starts the phase again; a store bound to a file never
+    /// enters it.
+    lazy: bool,
+    /// The words the lazy phase holds untracked right now: added at a lazy delete, taken
+    /// off where a claim, a resize, a merge or a growth step consumes such a block.
+    dead_words: u32,
+    /// The start of every untracked free block the lazy phase holds: what confirms a
+    /// backward merge (a footer alone can be spelled by claimed data) and what tells a
+    /// consumer the block it takes was dead.  Empty outside the phase.
+    lazy_free: Claims,
     /// CO1.9/S28: monotonic counter incremented on every `claim`, `resize`, and `delete`.
     /// Saved into `CoroutineFrame` at yield; compared at resume to detect store mutations
     /// that may have invalidated `DbRef` locals held by the generator.  Always compiled in
@@ -1030,6 +1067,7 @@ impl Store {
             foreign: None,
             free_protect_depth: 0,
             borrowed: false,
+            stack_buffer: false,
             store_nr: u16::MAX,
             alloc_serial: 0,
             created_at: 0,
@@ -1039,6 +1077,9 @@ impl Store {
             wilderness: wilderness_enabled(),
             carve: carve_enabled(),
             needs_coalesce: false,
+            lazy: lazy_free_enabled(),
+            dead_words: 0,
+            lazy_free: Claims::default(),
             released_bytes: 0,
             claimed_end: 0,
             generation: 0,
@@ -1121,6 +1162,31 @@ impl Store {
 
     #[cfg(feature = "mmap")]
     pub fn open(path: &str) -> Store {
+        Self::open_mapped(path, false)
+    }
+
+    /// [`open`](Store::open) for a READ SURFACE — a cache bundle or image another process may
+    /// map at the same time.  The mapping is the file's own pages (`MAP_SHARED`), so anything
+    /// `open` writes reaches every process using the file: the free-list and claims rebuilds
+    /// write block footers and tree links into free blocks, and N processes warm-loading one
+    /// stdlib bundle rebuilt them into each other's pages and crashed on corrupt references.
+    /// A read surface never claims or frees, so it needs neither rebuild; it is read-only from
+    /// the first instruction rather than flagged so after `open` has already written.
+    #[cfg(feature = "mmap")]
+    #[must_use]
+    pub fn open_read_surface(path: &str) -> Store {
+        Self::open_mapped(path, true)
+    }
+
+    #[cfg(not(feature = "mmap"))]
+    pub fn open_read_surface(_path: &str) -> Store {
+        panic!(
+            "mmap feature is not compiled in; enable the `mmap` Cargo feature to use file-backed stores"
+        )
+    }
+
+    #[cfg(feature = "mmap")]
+    fn open_mapped(path: &str, read_surface: bool) -> Store {
         let mut file = MmapStorage::open(path).expect("Opening file");
         let init = if (file.capacity() / 8) < MIN_BOUND_WORDS as usize {
             file.resize(8192).unwrap();
@@ -1160,12 +1226,18 @@ impl Store {
             wilderness: wilderness_enabled(),
             carve: carve_enabled(),
             needs_coalesce: false,
+            // A store bound to a file never enters the lazy phase: it is read,
+            // reclaimed and paged by its layout (`@FR-H-LazyFree`).
+            lazy: false,
+            dead_words: 0,
+            lazy_free: Claims::default(),
             released_bytes: 0,
             claimed_end: 0,
             generation: 0,
             recording: None,
             tag: 0,
             borrowed: false,
+            stack_buffer: false,
             store_nr: u16::MAX,
             alloc_serial: 0,
             created_at: 0,
@@ -1188,8 +1260,12 @@ impl Store {
             );
             #[cfg(debug_assertions)]
             store.validate(0);
-            store.fl_rebuild();
-            store.claims_rebuild();
+            if read_surface {
+                store.read_only = true;
+            } else {
+                store.fl_rebuild();
+                store.claims_rebuild();
+            }
         }
         store
     }
@@ -1245,6 +1321,7 @@ impl Store {
             foreign: None,
             free_protect_depth: 0,
             borrowed: false,
+            stack_buffer: false,
             store_nr: u16::MAX,
             alloc_serial: 0,
             created_at: 0,
@@ -1254,6 +1331,11 @@ impl Store {
             wilderness: wilderness_enabled(),
             carve: carve_enabled(),
             needs_coalesce: false,
+            // A store bound to a file never enters the lazy phase: it is read,
+            // reclaimed and paged by its layout (`@FR-H-LazyFree`).
+            lazy: false,
+            dead_words: 0,
+            lazy_free: Claims::default(),
             released_bytes: 0,
             claimed_end: 0,
             generation: 0,
@@ -1348,6 +1430,7 @@ impl Store {
             foreign: None,
             free_protect_depth: 0,
             borrowed: false,
+            stack_buffer: false,
             store_nr: u16::MAX,
             alloc_serial: 0,
             created_at: 0,
@@ -1357,6 +1440,9 @@ impl Store {
             wilderness: wilderness_enabled(),
             carve: carve_enabled(),
             needs_coalesce: false,
+            lazy: lazy_free_enabled(),
+            dead_words: 0,
+            lazy_free: Claims::default(),
             released_bytes: 0,
             claimed_end: 0,
             generation: 0,
@@ -1398,6 +1484,10 @@ impl Store {
         self.free_root = 0;
         self.wild = 0;
         self.claims.clear();
+        // `@FR-H-LazyFree` — a reset store has no dead words and starts the phase again.
+        self.lazy = lazy_free_enabled();
+        self.dead_words = 0;
+        self.lazy_free.clear();
         // NOT `claims.insert(PRIMARY)`.  `set_free_header(1, …)` above makes word 1 the
         // store's one FREE block, so naming it in the live-record set records a block that
         // is free.  `claims_rebuild` answers the same question off the store's own bytes for
@@ -1501,6 +1591,17 @@ impl Store {
         self.generation = self.generation.wrapping_add(1);
         #[cfg(debug_assertions)]
         self.fl_validate();
+        // `@FR-H-LazyFree` — the phase ends at the claim that finds the untracked words
+        // worth one sweep: at least the floor, and at least a fifth of the extent written
+        // so far.  Whatever the wilderness holds: a buffer reset each round keeps one that
+        // holds everything, and a vector ladder placed tail-first each round doubled the
+        // working set (`mesh_emit` +24 %).
+        if self.lazy && self.sweep_due() {
+            self.coalesce_free();
+            self.lazy = false;
+            self.dead_words = 0;
+            self.lazy_free.clear();
+        }
         // Faster path: the store has freed nothing yet, so its one free block is the
         // tail and the claim is two header writes (`bump_tail`).
         if !self.wilderness
@@ -1522,7 +1623,8 @@ impl Store {
         // below would grow the store.  Coalesce the chain (reusing the one
         // free tree — no new index) and retry once before growing.  Guarded
         // by `needs_coalesce` so an alloc-only workload never sweeps.
-        if self.needs_coalesce {
+        // `@FR-H-LazyFree` — a lazy store below the bound grows rather than sweeps.
+        if self.needs_coalesce && !self.lazy {
             self.coalesce_free();
             if let Some(result) = self.claim_best_fit(size) {
                 #[cfg(debug_assertions)]
@@ -1537,6 +1639,75 @@ impl Store {
         #[cfg(debug_assertions)]
         self.fl_validate();
         self.finish_claim(result)
+    }
+
+    /// `@FR-H-LazyFree` — the lazy delete: merge forward over every free block that follows
+    /// (a block start is known there by construction), backward over a predecessor its
+    /// footer names only when that predecessor is CONFIRMED free — a lazy block by
+    /// `lazy_free`, a tracked one by the tree, since claimed data can spell a footer — and
+    /// record the result untracked, or as the wilderness when it ends the store.
+    fn lazy_delete(&mut self, rec: u32) {
+        let mut start = rec;
+        let mut words = self.read::<i32>(rec, 0);
+        self.claims.remove(rec);
+        loop {
+            let next = start + words as u32;
+            if next >= self.size {
+                break;
+            }
+            let nh = self.read::<i32>(next, 0);
+            if nh >= 0 {
+                break;
+            }
+            self.forget_free(next);
+            words -= nh;
+        }
+        if start > PRIMARY {
+            let f = self.read::<i32>(start - 1, 4);
+            if f < 0 {
+                let pw = -f;
+                if let Some(prev) = start.checked_sub(pw as u32)
+                    && prev >= PRIMARY
+                    && self.read::<i32>(prev, 0) == f
+                    && (self.lazy_free.contains(prev) || self.fl_tree_contains(prev))
+                {
+                    self.forget_free(prev);
+                    start = prev;
+                    words += pw;
+                }
+            }
+        }
+        self.set_free_header(start, words);
+        if start + words as u32 == self.size {
+            // The merged block ends the store: it is the wilderness (or a tree node when the
+            // wilderness is switched off), the layout the exact delete leaves.
+            self.fl_insert(start);
+        } else {
+            self.lazy_free.insert(start);
+            self.dead_words = self.dead_words.saturating_add(words as u32);
+            self.needs_coalesce = true;
+        }
+    }
+
+    /// Take the free block at `pos` out of whichever record holds it — `lazy_free` and the
+    /// dead count, the tree, or the wilderness — before its words are absorbed.
+    fn forget_free(&mut self, pos: u32) {
+        if self.lazy_free.remove(pos) {
+            let w = -self.read::<i32>(pos, 0);
+            self.dead_words = self.dead_words.saturating_sub(w.max(0) as u32);
+        } else {
+            self.fl_remove(pos);
+        }
+    }
+
+    /// `@FR-H-LazyFree` — are the untracked words worth the one sweep that ends the
+    /// phase?  At least the floor, and at least a fifth of the extent written so far: a
+    /// store built once and freed whole never sweeps, a decoder's tree (dead a small share
+    /// of live) stays lazy however big it grows, and a vector ladder (dead about half)
+    /// sweeps within its first rungs and is exact from then on.
+    fn sweep_due(&self) -> bool {
+        self.dead_words >= LAZY_FLOOR_WORDS
+            && u64::from(self.dead_words) * 5 >= u64::from(self.claimed_end)
     }
 
     /// The common claim, done without the free tree: a store that has freed nothing yet
@@ -1671,6 +1842,11 @@ impl Store {
         // not for a block that fits; claimed here, it must not stay the wilderness.
         if pos == self.wild {
             self.wild = 0;
+        } else if pos < self.size && self.lazy_free.remove(pos) {
+            // `@FR-H-LazyFree` — an untracked block the walk takes leaves the dead count,
+            // and the remainder the split leaves goes into the tree.
+            let words = -self.read::<i32>(pos, 0);
+            self.dead_words = self.dead_words.saturating_sub(words.max(0) as u32);
         }
         self.claim_block(pos, size)
     }
@@ -1678,6 +1854,7 @@ impl Store {
     /// Grow the store to accommodate `size` words and return the position of the
     /// new free block (either the extended last block or a fresh one).
     fn claim_grow(&mut self, size: u32, last: u32, last_claim: i32) -> u32 {
+        refuse_stack_buffer(self.stack_buffer, "claim_grow");
         let cur = self.size;
         let new_size = if last_claim < 0 {
             (self.size as i32 + size as i32 + last_claim) as u32
@@ -1836,6 +2013,18 @@ impl Store {
             if let Some(log) = self.recording.as_mut() {
                 log.push(StoreChange::Free { pos: rec, before });
             }
+        }
+        // `@FR-H-LazyFree` — in the lazy phase a small block is freed without the tree: it
+        // merges with its free neighbours in O(1), as the exact delete does, and the merged
+        // block is recorded in `lazy_free` instead of inserted — unless it ends the store,
+        // where it becomes the wilderness.  The sweep `claim` runs at the bound tracks every
+        // such block at once, and a store freed whole before that never pays for its
+        // deletes at all.
+        if self.lazy && self.read::<i32>(rec, 0) <= LAZY_MAX_WORDS {
+            self.lazy_delete(rec);
+            #[cfg(debug_assertions)]
+            self.fl_validate();
+            return;
         }
         let mut claim = self.read::<i32>(rec, 0);
         self.claims.remove(rec);
@@ -2390,6 +2579,60 @@ impl Store {
         self.free_protect_depth > 0
     }
 
+    /// `@FR-H-SwapIn` — may this store's CONTENT be exchanged with another's: an ordinary
+    /// in-memory store nothing pins to its slot (no file, no foreign bytes, no recording,
+    /// no lock, no borrow, not the interpreter's stack).  A free protection (a call's
+    /// deep-copy bracket) guards the slot against a FREE, so it refuses only the side the
+    /// exchange then frees: `released` is that side.
+    pub(crate) fn content_swappable(&self, released: bool) -> bool {
+        !self.free
+            && !self.read_only
+            && !self.user_locked
+            && !self.borrowed
+            && !self.stack_buffer
+            && !self.pinned
+            && (!released || self.free_protect_depth == 0)
+            && !self.is_file_backed()
+            && self.foreign.is_none()
+            && self.recording.is_none()
+            && self.durable_meta_path.is_none()
+            && self.file_path.is_none()
+            && self.tag == 0
+    }
+
+    /// Does this store hold exactly one live record, its root at record 1 — the shape a
+    /// reset store has right after `OpDatabase` claimed its root?
+    pub(crate) fn holds_only_root(&self) -> bool {
+        self.claims.live == 1 && self.claims.contains(1)
+    }
+
+    /// `@FR-H-SwapIn` — exchange the CONTENT of two stores (their memory, claims, free
+    /// tree and lazy phase, and the root's type) while each keeps its SLOT identity (its
+    /// number, serial and debug stamps), so every reference to either slot now reads the
+    /// other's records.  Both generations move past either, so no vector header cached
+    /// against the old content can validate against the new.  The caller has checked
+    /// [`Store::content_swappable`] on both.
+    pub(crate) fn swap_contents(a: &mut Store, b: &mut Store) {
+        std::mem::swap(&mut a.ptr, &mut b.ptr);
+        std::mem::swap(&mut a.claims, &mut b.claims);
+        std::mem::swap(&mut a.size, &mut b.size);
+        std::mem::swap(&mut a.released_bytes, &mut b.released_bytes);
+        std::mem::swap(&mut a.claimed_end, &mut b.claimed_end);
+        std::mem::swap(&mut a.free_root, &mut b.free_root);
+        std::mem::swap(&mut a.wild, &mut b.wild);
+        std::mem::swap(&mut a.wilderness, &mut b.wilderness);
+        std::mem::swap(&mut a.carve, &mut b.carve);
+        std::mem::swap(&mut a.needs_coalesce, &mut b.needs_coalesce);
+        std::mem::swap(&mut a.lazy, &mut b.lazy);
+        std::mem::swap(&mut a.dead_words, &mut b.dead_words);
+        std::mem::swap(&mut a.lazy_free, &mut b.lazy_free);
+        std::mem::swap(&mut a.known_type, &mut b.known_type);
+        std::mem::swap(&mut a.init_shadow, &mut b.init_shadow);
+        let generation = a.generation.max(b.generation).wrapping_add(1);
+        a.generation = generation;
+        b.generation = generation;
+    }
+
     /// Has this store been freed?
     ///
     /// A freed store keeps its buffer until its slot is reused, so reading a record
@@ -2525,12 +2768,16 @@ impl Store {
             wilderness: self.wilderness,
             carve: self.carve,
             needs_coalesce: false,
+            lazy: lazy_free_enabled(),
+            dead_words: 0,
+            lazy_free: Claims::default(),
             released_bytes: 0,
             claimed_end: 0,
             generation: self.generation,
             recording: None,
             tag: self.tag,
             borrowed: false,
+            stack_buffer: false,
             store_nr: u16::MAX,
             alloc_serial: 0,
             created_at: 0,
@@ -2577,6 +2824,7 @@ impl Store {
             foreign: self.foreign.clone(),
             free_protect_depth: self.free_protect_depth,
             borrowed: false,
+            stack_buffer: self.stack_buffer,
             store_nr: self.store_nr,
             alloc_serial: self.alloc_serial,
             created_at: self.created_at,
@@ -2586,6 +2834,9 @@ impl Store {
             wilderness: self.wilderness,
             carve: self.carve,
             needs_coalesce: self.needs_coalesce,
+            lazy: self.lazy,
+            dead_words: self.dead_words,
+            lazy_free: self.lazy_free.clone(),
             released_bytes: 0,
             claimed_end: 0,
             generation: self.generation,
@@ -2630,12 +2881,16 @@ impl Store {
             wilderness: self.wilderness,
             carve: self.carve,
             needs_coalesce: false,
+            lazy: lazy_free_enabled(),
+            dead_words: 0,
+            lazy_free: Claims::default(),
             released_bytes: 0,
             claimed_end: 0,
             generation: self.generation,
             recording: None,
             tag: self.tag,
             borrowed: true,
+            stack_buffer: false,
             store_nr: u16::MAX,
             alloc_serial: 0,
             created_at: 0,
@@ -2979,6 +3234,15 @@ impl Store {
 
     /// Remove `rec` from the free tree if it is currently tracked.
     fn fl_remove(&mut self, rec: u32) {
+        // `@FR-H-LazyFree` — a lazy store's free block may be untracked (a lazy delete
+        // beside a tree the sweep or a split left), and only a tree node leaves the tree:
+        // the exact-position claim, an in-place resize and the chain walk's growth step
+        // all remove the free block they meet without asking.  The block stops being
+        // dead here, so it leaves the count the sweep is judged by.
+        if self.lazy && self.lazy_free.remove(rec) {
+            self.dead_words = self.dead_words.saturating_sub(self.fl_size(rec) as u32);
+            return;
+        }
         if rec == self.wild && rec != 0 {
             self.wild = 0;
             return;
@@ -3028,6 +3292,10 @@ impl Store {
     pub fn fl_rebuild(&mut self) {
         self.free_root = 0;
         self.wild = 0;
+        // `@FR-H-LazyFree` — the rebuild tracks every free block, the lazy ones included,
+        // so nothing is untracked after it: a bit left set would name a tree node as dead.
+        self.lazy_free.clear();
+        self.dead_words = 0;
         let mut pos = PRIMARY;
         while pos < self.size {
             let header = self.read::<i32>(pos, 0);
@@ -3067,6 +3335,7 @@ impl Store {
     /// Without it the tail is whatever this buffer held, and a zero word there
     /// reads as a zero-size block: the chain walk then never terminates.
     pub fn adopt_image(&mut self, bytes: &[u8]) {
+        refuse_stack_buffer(self.stack_buffer, "adopt_image");
         let words = u32::try_from(bytes.len() / 8)
             .unwrap_or(u32::MAX)
             .max(PRIMARY + 1);
@@ -3193,9 +3462,15 @@ impl Store {
     /// free path ever walks the chain.
     #[allow(dead_code)] // @PLN123 A2 lands inert: A3 is what calls it.
     pub fn reclaim_tail(&mut self) -> u32 {
+        refuse_stack_buffer(self.stack_buffer, "reclaim_tail");
         if self.needs_coalesce {
             self.coalesce_free();
         }
+        // `@FR-H-LazyFree` — an explicit reclaim asks for a compact store: every later
+        // delete is tracked at its site.
+        self.lazy = false;
+        self.dead_words = 0;
+        self.lazy_free.clear();
         let before = self.size;
         let mark = self.usage().live_end_words;
         // Not to the bare mark: the store stays LIVE, so it keeps allocating,
@@ -4060,38 +4335,44 @@ impl Store {
             self.read_only || self.is_file_backed() || self.claims.contains(rec),
             "Unknown record {rec}"
         );
-        // Read size before any multiplication to avoid overflow when fld 0 is negative
-        // (a negative header means the block was freed — a bug if still in claims).
-        let size: i32 = self.read(rec, 0);
-        debug_assert!(
-            size > 0,
-            "Freed record {rec} (size={size}) accessed at fld {fld}"
-        );
-        debug_assert!(
-            fld >= 4 && fld < 8 * size as u32,
-            "Fld {fld} is outside of record {rec} size {}",
-            8 * size as u32
-        );
-        debug_assert!(
-            rec != 0 && u64::from(rec) * 8 + u64::from(fld) <= u64::from(self.size) * 8,
-            "Reading outside store ({rec}.{fld}) > {}",
-            self.size
-        );
-        if fld != 0 {
-            // The first 4 positions are reserved for the record size
+        // Only the assertions read the size, so a build without them skips the read: kept, it
+        // was a second bounds check per raw access, whose every failure the field read's own
+        // check catches too (`@FR-R-ElementPath`).
+        #[cfg(debug_assertions)]
+        {
+            // Read size before any multiplication to avoid overflow when fld 0 is negative
+            // (a negative header means the block was freed — a bug if still in claims).
+            let size: i32 = self.read(rec, 0);
             debug_assert!(
-                rec + size as u32 <= self.size,
-                "Inconsistent record {rec} size {size} > {}",
+                size > 0,
+                "Freed record {rec} (size={size}) accessed at fld {fld}"
+            );
+            debug_assert!(
+                fld >= 4 && fld < 8 * size as u32,
+                "Fld {fld} is outside of record {rec} size {}",
+                8 * size as u32
+            );
+            debug_assert!(
+                rec != 0 && u64::from(rec) * 8 + u64::from(fld) <= u64::from(self.size) * 8,
+                "Reading outside store ({rec}.{fld}) > {}",
                 self.size
             );
-            debug_assert!(
-                fld >= 4,
-                "Field {fld} too low, overlapping with size on ({rec}.{fld})"
-            );
-            debug_assert!(
-                size >= 1 && fld <= size as u32 * 8,
-                "Reading fields outside record ({rec}.{fld}) > {size}"
-            );
+            if fld != 0 {
+                // The first 4 positions are reserved for the record size
+                debug_assert!(
+                    rec + size as u32 <= self.size,
+                    "Inconsistent record {rec} size {size} > {}",
+                    self.size
+                );
+                debug_assert!(
+                    fld >= 4,
+                    "Field {fld} too low, overlapping with size on ({rec}.{fld})"
+                );
+                debug_assert!(
+                    size >= 1 && fld <= size as u32 * 8,
+                    "Reading fields outside record ({rec}.{fld}) > {size}"
+                );
+            }
         }
         true
     }
@@ -5435,6 +5716,28 @@ impl Store {
     }
 }
 
+/// `@FR-R-StackBase` — a buffer move on the interpreter's stack store other than
+/// `State::grow_stack` would leave `State::stack_base` pointing into a freed buffer, so the
+/// moves that are not the stack's own refuse it.  None reaches the stack store today (nothing
+/// claims into it, adopts an image into it, trims it or takes it out of the table); this
+/// makes that a checked fact rather than a convention.  The paths are rare, so the check
+/// costs nothing a run can measure.
+#[cold]
+#[inline(never)]
+fn refuse_stack_buffer_failed(what: &str) -> ! {
+    panic!(
+        "{what} on the interpreter's stack store: only State::grow_stack may move its buffer \
+         (@FR-R-StackBase)"
+    )
+}
+
+#[inline]
+pub(crate) fn refuse_stack_buffer(is_stack: bool, what: &str) {
+    if is_stack {
+        refuse_stack_buffer_failed(what);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -6037,8 +6340,17 @@ mod tests {
     /// confirmation is what keeps `delete` from merging into the middle of it.
     #[test]
     fn a_fake_footer_in_claimed_data_never_merges() {
+        // Both deletes: the exact one confirms by the tree, the lazy one (`@FR-H-LazyFree`)
+        // by `lazy_free`; neither may trust the footer alone.
+        for lazy in [false, true] {
+            fake_footer_cell(lazy);
+        }
+    }
+
+    fn fake_footer_cell(lazy: bool) {
         let mut store = Store::new(64);
         store.free = false;
+        store.lazy = lazy;
         let a = store.claim(5);
         let b = store.claim(5);
         let _c = store.claim(5);
@@ -6065,12 +6377,38 @@ mod tests {
         );
     }
 
+    /// `@FR-H-LazyFree` — a lazy delete merges BACKWARD into a lazily freed predecessor,
+    /// confirmed by `lazy_free`, and the merged block keeps one entry there.
+    #[test]
+    fn a_lazy_delete_merges_backward_into_a_lazy_predecessor() {
+        // Sixteen words: the three blocks fill the store, so no tail can take the claim.
+        let mut store = Store::new(16);
+        store.free = false;
+        let a = store.claim(5);
+        let b = store.claim(5);
+        let _c = store.claim(5);
+        store.delete(a);
+        store.delete(b);
+        assert_eq!(store.read::<i32>(a, 0), -10, "A and B are one free block");
+        assert!(store.lazy_free.contains(a) && !store.lazy_free.contains(b));
+        assert_eq!(store.dead_words, 10);
+        assert_eq!(
+            store.claim(10),
+            a,
+            "the chain walk hands the merged block back"
+        );
+        assert_eq!(store.dead_words, 0, "and it is no longer dead");
+        assert!(!store.lazy_free.contains(a));
+    }
+
     /// @FR-H-FreeFooter — a ONE-word free predecessor is untracked and unconfirmable, so
     /// the delete leaves it and arms the lazy sweep, which still merges the pair.
     #[test]
     fn one_word_frees_still_fall_to_the_lazy_sweep() {
+        // The exact allocator's sweep (`@FR-H-FreeFooter`), not the lazy phase's.
         let mut store = Store::new(64);
         store.free = false;
+        store.lazy = false;
         let _a = store.claim(4);
         let b = store.claim(1);
         let c = store.claim(4);
@@ -6089,10 +6427,159 @@ mod tests {
         );
     }
 
+    /// `@FR-H-LazyFree` — in the lazy phase two adjacent deletes merge at the site, as the
+    /// exact delete does, and the merged block goes into no tree: the next claim comes off
+    /// the tail rather than out of it.  Nothing is lost: the usage walk still counts the
+    /// words as free, and a block freed beside the wilderness folds into it.
+    #[test]
+    fn a_lazy_delete_is_untracked_and_the_claim_takes_the_tail() {
+        let mut store = Store::new(64);
+        store.free = false;
+        assert!(store.lazy, "a fresh store starts the lazy phase");
+        let _a = store.claim(5);
+        let b = store.claim(5);
+        let c = store.claim(5);
+        let d = store.claim(5);
+        store.delete(b);
+        store.delete(c);
+        assert_eq!(
+            store.usage().mergeable_free_pairs,
+            0,
+            "merged at the delete"
+        );
+        assert!(store.lazy_free.contains(b), "recorded as a lazy block");
+        assert!(!store.fl_tree_contains(b), "and tracked in no tree");
+        assert_eq!(store.dead_words, 10, "the dead words are counted");
+        assert_eq!(
+            store.usage().free_words,
+            64 - 1 - 10,
+            "the usage walk sees them free"
+        );
+        let cap_before = store.byte_capacity();
+        let e = store.claim(9);
+        assert!(
+            e > d,
+            "claimed from the tail, not the freed pair (got {e}, D={d})"
+        );
+        assert_eq!(
+            store.byte_capacity(),
+            cap_before,
+            "the tail had room: no growth"
+        );
+        assert!(store.lazy, "still in the phase");
+        // The block that meets the wilderness folds into it: freed last, claimed first.
+        store.delete(e);
+        assert_eq!(store.wild, e, "folded into the wilderness");
+        assert_eq!(store.dead_words, 10, "not counted as dead");
+        assert_eq!(store.claim(9), e, "the next claim takes it back");
+    }
+
+    /// `@FR-H-LazyFree` — below the floor the store GROWS rather than sweeps: a small
+    /// store's churn is never worth an O(blocks) walk, and the phase goes on.
+    #[test]
+    fn below_the_floor_a_lazy_store_grows_rather_than_sweeps() {
+        let mut store = Store::new(64);
+        store.free = false;
+        let recs: Vec<u32> = (0..10).map(|_| store.claim(5)).collect();
+        for r in &recs[..8] {
+            store.delete(*r);
+        }
+        assert!(store.dead_words < super::LAZY_FLOOR_WORDS);
+        let cap_before = store.byte_capacity();
+        store.claim(41); // more than the tail (13 words) or the merged dead run (40) holds
+        assert!(
+            store.byte_capacity() > cap_before,
+            "grew instead of sweeping"
+        );
+        assert!(store.lazy, "the phase goes on below the floor");
+    }
+
+    /// `@FR-H-LazyFree` — at the bound (the untracked words at the floor and a fifth of
+    /// the extent) the next claim sweeps ONCE instead of growing: the untracked blocks
+    /// merge and enter the tree, the claim reuses them, and the phase ends — a later
+    /// delete merges at the site again, as the exact allocator always did.
+    #[test]
+    fn at_the_growth_bound_one_sweep_ends_the_phase() {
+        let size = 4 * super::LAZY_FLOOR_WORDS;
+        let mut store = Store::new(size);
+        store.free = false;
+        // Fill three quarters of the store in 16-word blocks, then free every one of
+        // them but the last (the survivor keeps the run off the wilderness): the dead
+        // words pass the floor.
+        let recs: Vec<u32> = (0..(3 * size / 4 / 16)).map(|_| store.claim(15)).collect();
+        for r in &recs[..recs.len() - 1] {
+            store.delete(*r);
+        }
+        assert!(store.dead_words >= super::LAZY_FLOOR_WORDS);
+        assert!(store.lazy);
+        let cap_before = store.byte_capacity();
+        let big = store.claim(size / 2); // more than the tail holds, less than the merged run
+        assert_eq!(
+            store.byte_capacity(),
+            cap_before,
+            "the sweep reclaimed: no growth"
+        );
+        assert!(
+            big < recs[recs.len() - 1],
+            "placed in the merged run below the survivor"
+        );
+        assert!(!store.lazy, "the phase ended with the sweep");
+        assert_eq!(store.dead_words, 0);
+        // Exact from here: a delete beside a free block merges at the site.
+        let x = store.claim(5);
+        let y = store.claim(5);
+        store.delete(x);
+        store.delete(y);
+        assert_eq!(
+            store.usage().mergeable_free_pairs,
+            0,
+            "merged at the delete"
+        );
+    }
+
+    /// `@FR-H-LazyFree` — an untracked free block beside a NON-empty tree (with the tail
+    /// in the tree, as under `LOFT_NO_WILDERNESS=1`) leaves the tree untouched when the
+    /// exact-position claim covers it: the claim lands, the block is claimed, and the next
+    /// best-fit claim does not hand it out again.
+    #[test]
+    fn a_lazy_free_block_beside_a_tree_is_claimed_at_its_position() {
+        let mut store = Store::new(64);
+        store.free = false;
+        store.wilderness = false; // the tail is a tree node, so the tree is not empty
+        let a = store.claim(5);
+        let _b = store.claim(5);
+        store.delete(a); // lazy: free at both ends, in no tree
+        assert!(store.lazy && store.free_root != 0);
+        assert_eq!(
+            store.claim_at(a, 5),
+            a,
+            "the recorded position is claimed again"
+        );
+        assert!(store.claims.contains(a));
+        let c = store.claim(5);
+        assert_ne!(c, a, "a claimed block is never handed out");
+        store.validate(0);
+    }
+
+    /// `@FR-H-LazyFree` — a block above the phase's size cap is tracked at its delete
+    /// even in the phase: the next claim that fits reuses it instead of taking the tail.
+    #[test]
+    fn a_large_block_is_tracked_at_its_delete_even_in_the_phase() {
+        let mut store = Store::new(512);
+        store.free = false;
+        let big = store.claim(100);
+        let _after = store.claim(5);
+        store.delete(big);
+        assert!(store.lazy, "still in the phase");
+        assert_eq!(store.dead_words, 0, "a tracked delete counts no dead words");
+        assert_eq!(store.claim(100), big, "the tree hands the block back");
+    }
+
     #[test]
     fn coalesce_free_merges_adjacent_and_reuses_space() {
         let mut store = Store::new(64);
         store.free = false;
+        store.lazy = false; // the exact allocator's merge, not the lazy phase
         let _a = store.claim(5);
         let b = store.claim(5);
         let c = store.claim(5);
@@ -6190,6 +6677,9 @@ mod tests {
         store.wilderness = wilderness;
         store.init();
         store.free = false;
+        // The seeded side-by-side tests pin the EXACT allocator's layout across its
+        // switches; the lazy phase folds a freed tail block into the wilderness only.
+        store.lazy = false;
         store
     }
 
@@ -6646,6 +7136,7 @@ mod tests {
         fn fragmented() -> (Store, Vec<u32>) {
             let mut store = Store::new(256);
             store.free = false;
+            store.lazy = false; // the exact allocator's merge, not the lazy phase
             let recs: Vec<u32> = (0..21).map(|_| store.claim(5)).collect();
             for i in (0..18).step_by(3) {
                 store.delete(recs[i]);
@@ -6825,6 +7316,93 @@ mod tests {
             store.read::<u32>(a, 32 + 100),
             0,
             "absorbed region must be zeroed (kept 0xCAFE pre-fix)"
+        );
+    }
+
+    /// `@FR-R-StackBase` — a buffer move on the interpreter's stack store other than the
+    /// stack's own growth panics, so a cached stack base can never be left dangling.
+    #[test]
+    #[should_panic(expected = "only State::grow_stack may move its buffer")]
+    fn a_claim_that_grows_the_stack_store_is_refused() {
+        let mut store = Store::new(16);
+        store.stack_buffer = true;
+        for _ in 0..64 {
+            store.claim(8);
+        }
+    }
+
+    /// The control: the same claims on any other store grow it as always.
+    /// `@FR-R-ElementPath` — a raw read no longer reads the record's size header in a build
+    /// without debug assertions (only those assertions used it).  What that header read also
+    /// did was a bounds check, and this is the claim that the field read's own check catches
+    /// every failure it caught: a record past the store's end still refuses.
+    #[test]
+    // A build with debug assertions refuses one step earlier, at the claims check; both
+    // messages are this refusal.
+    #[cfg_attr(debug_assertions, should_panic(expected = "Unknown record"))]
+    #[cfg_attr(
+        not(debug_assertions),
+        should_panic(expected = "Store access out of bounds")
+    )]
+    fn a_raw_read_past_the_store_still_refuses() {
+        let s = Store::new(16);
+        let _ = s.get_u32_raw(1000, 4);
+    }
+
+    #[test]
+    fn a_claim_that_grows_another_store_is_allowed() {
+        let mut store = Store::new_in_use(16);
+        for _ in 0..64 {
+            store.claim(8);
+        }
+    }
+
+    /// A store file with freed blocks in it, written and flushed: the image a cache bundle is.
+    #[cfg(feature = "mmap")]
+    fn image_with_freed_blocks(tag: &str) -> (std::path::PathBuf, Vec<u8>) {
+        let path = std::env::temp_dir().join(format!(
+            "loft_read_surface_{tag}_{}.store",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        {
+            let mut s = Store::open(path.to_str().unwrap());
+            let recs: Vec<u32> = (0..24).map(|_| s.claim(6)).collect();
+            for r in recs.iter().step_by(2) {
+                s.delete(*r);
+            }
+        }
+        let bytes = std::fs::read(&path).unwrap();
+        (path, bytes)
+    }
+
+    /// `Store::open_read_surface` writes NOTHING to the file.  A cache bundle is mapped
+    /// `MAP_SHARED` by every process that loads it, so a write made while opening reaches
+    /// them all: the free-list and claims rebuilds of an ordinary `open` wrote block footers
+    /// and tree links into the file, and processes warm-loading one stdlib bundle at once
+    /// crashed on each other's links.  The control proves the harness can fail: the ordinary
+    /// `open` of the same image does change it.
+    #[cfg(feature = "mmap")]
+    #[test]
+    fn a_read_surface_open_writes_nothing_to_its_file() {
+        let (path, before) = image_with_freed_blocks("rs");
+        {
+            let s = Store::open_read_surface(path.to_str().unwrap());
+            assert!(s.read_only, "a read surface is read-only from the start");
+        }
+        let after = std::fs::read(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert!(before == after, "opening a read surface changed its file");
+
+        let (path, before) = image_with_freed_blocks("ctl");
+        {
+            let _s = Store::open(path.to_str().unwrap());
+        }
+        let after = std::fs::read(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert!(
+            before != after,
+            "the control: an ordinary open rebuilds into the file"
         );
     }
 }

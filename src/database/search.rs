@@ -366,8 +366,34 @@ impl Stores {
         }
     }
 
+    /// The key content types of `db`, as many as a keyed operation pops off the stack.
+    ///
+    /// `@FR-R-KeyList`: a fact of the schema, derived on the first lookup of the type and read
+    /// from it afterwards instead of being re-derived per lookup.  Re-deriving the type's key
+    /// descriptors ([`Self::determine_keys_for`]) resets it, so it never outlives them.
+    ///
+    /// # Panics
+    /// Under `LOFT_KEY_LIST_VERIFY=1`, when the cached list disagrees with the type's parts.
     #[must_use]
-    pub fn get_keys(&self, db: u16) -> Vec<u16> {
+    pub fn get_keys(&self, db: u16) -> &[u16] {
+        let cached = self.types[db as usize]
+            .key_contents
+            .0
+            .get_or_init(|| self.compute_key_contents(db));
+        if key_list_verify() {
+            let computed = self.compute_key_contents(db);
+            assert!(
+                computed == *cached,
+                "LOFT_KEY_LIST_VERIFY: type {db} ({}) caches keys {cached:?}, its parts derive {computed:?}",
+                self.types[db as usize].name
+            );
+        }
+        cached
+    }
+
+    /// The key content types of `db`, derived from its parts: what [`Self::get_keys`] caches.
+    #[must_use]
+    pub(crate) fn compute_key_contents(&self, db: u16) -> Vec<u16> {
         match &self.types[db as usize].parts {
             Parts::Vector(_) | Parts::Array(_) => vec![0],
             Parts::Sorted(c, key) | Parts::Ordered(c, key) | Parts::Index(c, key, _) => {
@@ -1324,6 +1350,12 @@ impl Stores {
         }
         Ordering::Equal
     }
+}
+
+/// `LOFT_KEY_LIST_VERIFY=1` — `@FR-R-KeyList`'s falsifier: every cached key list is re-derived
+/// from its type's parts on each read and a disagreement stops the run, naming the type.
+fn key_list_verify() -> bool {
+    crate::env_once!(std::env::var("LOFT_KEY_LIST_VERIFY").is_ok_and(|v| v != "0"))
 }
 
 #[cfg(test)]

@@ -1,0 +1,66 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A comprehension's element value goes straight into its append when it is pure, and the
+// vector answers what it answered.  `@FR-R-SingleUse` (the statement clause).
+//
+// `[for i in 0..n { e }]` binds each element to a temporary and appends it in the next
+// statement.  When `e` is operators over locals and literals, the temporary goes and `e` is the
+// append's operand.  The cells: pure scalar and float elements, a nested comprehension, a
+// filtered one, and an element computed by a function with a side effect — which keeps its
+// temporary (`tests/single_use.rs` pins which comprehensions move).  Expected values by hand.
+//
+// @falsified-at: none — it guards a rewrite no earlier build has.  Falsified by a planted defect,
+//   2026-10-02: any element taken as pure moves the side-effecting one too (the pin is red).
+
+fn tick(log: &vector<integer>, k: integer) -> integer {
+  log += [k];
+  k * 10
+}
+
+fn squares(n: integer, s: integer) -> integer {
+  v = [for i in 0..n { i * i + s }];
+  t = 0;
+  for x in v { t += x; }
+  t * 100 + len(v)
+}
+
+fn halves() -> float {
+  f = [for i in 0..4 { i as float * 0.5 }];
+  t = 0.0;
+  for x in f { t += x; }
+  t
+}
+
+fn grid_diagonal() -> integer {
+  g = [for y in 0..3 { [for x in 0..3 { x * y }] }];
+  t = 0;
+  for d in 0..3 { t += g[d]?[d] ?? 0; }
+  t
+}
+
+fn evens() -> integer {
+  e = [for i in 0..10 if i % 2 == 0 { i }];
+  t = 0;
+  for x in e { t += x; }
+  t * 100 + len(e)
+}
+
+fn with_effects() -> text {
+  log: vector<integer> = [];
+  r = [for i in 0..3 { tick(log, i) }];
+  "{r} {log}"
+}
+
+fn test_comprehensions() {
+  assert(squares(5, 3) == 4505, "squares {squares(5, 3)}");
+  assert(halves() == 3.0, "halves {halves()}");
+  assert(grid_diagonal() == 5, "grid {grid_diagonal()}");
+  assert(evens() == 2005, "evens {evens()}");
+  assert(with_effects() == "[0,10,20] [0,1,2]", "effects {with_effects()}");
+}
+
+fn main() {
+  test_comprehensions();
+  println("ok");
+}

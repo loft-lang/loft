@@ -4081,8 +4081,20 @@ impl Parser {
         if *data != Value::Null && !Self::is_repeatable_place(&self.data, data) {
             let named = self.vars.work_refs(subject_tp, &mut self.lexer);
             if named != u16::MAX {
-                self.vars.set_skip_free(named);
-                self.vars.mark_inline_ref(named);
+                // …unless nothing else keeps it.  A CALL whose result carries no deps hands
+                // back a FRESH store — a native `arguments()`, the `split` kernel — which no
+                // caller buffer holds, so the name is its only owner, exactly as the bind
+                // `x = arguments()` owns it (@FR-O-Owner).  Borrowing there leaked the whole
+                // subject on both backends.  A loft function's result arrives in its caller
+                // buffer (an `inline_container` block, not a bare call) and a discharge
+                // default in its work-ref, and both keep the release.
+                let fresh = matches!(data.unspan(), Value::Call(..))
+                    && subject_tp.deps_ref().is_none_or(|d| d.is_empty())
+                    && !matches!(subject_tp.base(), Type::Text(_));
+                if !fresh {
+                    self.vars.set_skip_free(named);
+                    self.vars.mark_inline_ref(named);
+                }
                 iter_prelude.push(v_set(named, data.clone()));
                 *data = Value::Var(named);
             }
@@ -4163,6 +4175,19 @@ impl Parser {
         // no longer moves the end (`loop-source-written`).  A slice clamps and binds its own
         // bounds below.
         if *data == Value::Null {
+            // `@FR-I-RangeNull` — a bound that is `null` where it is WRITTEN can never yield a
+            // round, so it is refused here rather than lowered: the loop it spells never runs.
+            // Judged on the second pass only: on the first, a call to a function declared
+            // further down the file (`0..layer_count(ly)`) parses as a `Null` placeholder.
+            if !self.first_pass
+                && (matches!(expr.unspan(), Value::Null) || matches!(till.unspan(), Value::Null))
+            {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "a range bound is `null`, so this loop never runs"
+                );
+            }
             for bound in [&*expr, &till] {
                 self.record_source_places(bound);
             }
@@ -4182,6 +4207,60 @@ impl Parser {
             if !matches!(till.unspan(), Value::Int(_) | Value::Long(_)) {
                 let hi = self.create_unique("range_end", &till_tp);
                 iter_prelude.push(v_set(hi, std::mem::replace(&mut till, Value::Var(hi))));
+            }
+            // `@FR-I-RangeNull` — a bound only known at run time that turns out `null` makes
+            // the range EMPTY.  Without this a null start never advances (`null + 1` is null,
+            // and `null` orders below every end) and the loop runs forever — or, on native,
+            // counts up from the null sentinel.  A null END already gives zero rounds under
+            // the order, so only a start that is not a literal needs the guard, and it runs
+            // ONCE, before the first round: a null bound resets the pair to `1` and `0`, which
+            // is empty in every form (`a..b`, `a..=b`, `a..`, and each reversed).  A literal
+            // end below the type's maximum keeps its literal — the start is moved past it
+            // instead — so a counted loop keeps its literal-end lowering.
+            if let Value::Var(lo) = *expr.unspan() {
+                let lit = |tp: &Type, n: i64| -> Value {
+                    match tp.base() {
+                        Type::Integer(spec) if spec.max > i64::from(i32::MAX) => Value::Long(n),
+                        _ => Value::Int(i32::try_from(n).unwrap_or(i32::MAX)),
+                    }
+                };
+                let past_end = match till.unspan() {
+                    Value::Int(t) => Some(i64::from(*t) + i64::from(incl)),
+                    _ => None,
+                };
+                // The guard is ONE statement, a block named `Range null guard`, so a rewrite
+                // that matches this prelude by its shape (`compact::match_loop`) can step over
+                // it rather than decline the loop.
+                let mut guard = Vec::new();
+                if let Some(past) = past_end {
+                    let start_null = self.single_op("!", Value::Var(lo), in_type.clone());
+                    guard.push(v_if(
+                        start_null,
+                        v_set(lo, lit(&in_type, past)),
+                        Value::Null,
+                    ));
+                } else {
+                    if !matches!(till.unspan(), Value::Var(_)) {
+                        let hi = self.create_unique("range_end", &till_tp);
+                        iter_prelude.push(v_set(hi, std::mem::replace(&mut till, Value::Var(hi))));
+                    }
+                    if let Value::Var(hi) = *till.unspan() {
+                        for bound in [lo, hi] {
+                            let tp = if bound == lo { &in_type } else { &till_tp };
+                            let is_null = self.single_op("!", Value::Var(bound), tp.clone());
+                            guard.push(v_if(
+                                is_null,
+                                v_block(
+                                    vec![v_set(lo, lit(&in_type, 1)), v_set(hi, lit(&till_tp, 0))],
+                                    Type::Void,
+                                    "empty range",
+                                ),
+                                Value::Null,
+                            ));
+                        }
+                    }
+                }
+                iter_prelude.push(v_block(guard, Type::Void, crate::data::RANGE_NULL_GUARD));
             }
         }
         // loft#384: a vector slice (`data` present, not a pure `0..n` range) must

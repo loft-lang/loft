@@ -1,0 +1,97 @@
+#!/usr/bin/env -S loft --interpret
+// Turn an osmium OPL stream on stdin into the point corpus `radix_db::pages` reads.
+//
+// One line per node: `x<TAB>y<TAB>name`, with coordinates as integers of 1e-7 degrees
+// — the fixed-point form an OSM-derived index stores, and what `routing`'s `Coord`
+// holds. A node with no `name` tag keeps an empty third field; most POI nodes have
+// none, and dropping them would invent a corpus where every record carries a string.
+//
+//     osmium cat -f opl poi.osm.pbf | scripts/opl_points > ~/.cache/loft-spatial/points.tsv
+//
+// See `mod pages` in `src/radix_db.rs` (@PLN136).  The loft twin of scripts/opl_points.py
+// (@PLN179 strand 3): the same lines out, the same count on stderr.
+
+// OPL escapes a special character as %<hex>% — including the spaces and commas that
+// would otherwise end a field or a tag.  A URL decoder would leave the trailing `%`
+// behind, which is how a name silently gains punctuation.
+fn unescape(s: text) -> text {
+  out = "";
+  i = 0;
+  n = s.size();
+  while i < n {
+    c = s[i];
+    if c == '%' {
+      j = i + 1;
+      hex = "";
+      while j < n && j - i <= 6 && is_hex(s[j]) { hex += "{s[j]}"; j += 1; }
+      if hex != "" && j < n && s[j] == '%' {
+        out += "{hex_to_char(hex)}";
+        i = j + 1;
+        continue;
+      }
+    }
+    out += "{c}";
+    i += 1;
+  }
+  out
+}
+
+fn is_hex(c: character) -> boolean {
+  (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+}
+
+fn hex_to_char(hex: text) -> character {
+  v = 0;
+  for c in hex {
+    d = 0;
+    if c >= '0' && c <= '9' { d = (c as integer) - ('0' as integer); }
+    else if c >= 'a' && c <= 'f' { d = (c as integer) - ('a' as integer) + 10; }
+    else { d = (c as integer) - ('A' as integer) + 10; }
+    v = v * 16 + d;
+  }
+  v as character
+}
+
+// A coordinate as an integer of 1e-7 degrees, rounded as Python's `round` rounds
+// (half to even), or null when the text is not a number.
+fn fixed(s: text) -> integer? {
+  f = s as float?;
+  if f == null { return null; }
+  x = (f ?? 0.0) * 10000000.0;
+  r = round(x);
+  // half to even: a value exactly on .5 rounds to the even neighbour
+  if abs(x - floor(x) - 0.5) < 0.0000001 {
+    lo = floor(x) as integer;
+    if lo % 2 == 0 { r = lo as float; } else { r = (lo + 1) as float; }
+  }
+  r as integer
+}
+
+fn main() {
+  written = 0;
+  for line in host_input().split('\n') {
+    if !line.starts_with("n") { continue; }
+    x = "";
+    y = "";
+    name = "";
+    for field in line.split(' ') {
+      if field == "" { continue; }
+      kind = field[0];
+      if kind == 'x' { x = field[1..]; }
+      else if kind == 'y' { y = field[1..]; }
+      else if kind == 'T' {
+        for kv in field[1..].split(',') {
+          if kv.starts_with("name=") { name = unescape(kv[5..]).replace("\t", " "); break; }
+        }
+      }
+    }
+    if x == "" || y == "" { continue; }
+    xi = fixed(x);
+    yi = fixed(y);
+    if xi == null || yi == null { continue; }
+    if xi == 0 && yi == 0 { continue; }
+    print("{xi}\t{yi}\t{name}\n");
+    written += 1;
+  }
+  eprintln("{written} points");
+}

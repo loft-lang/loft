@@ -1,0 +1,161 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A literal append of at most 11 elements runs no separate reservation on the interpreter.
+// `@FR-R-FirstClaim`.
+//
+// The parser emits `OpPreAllocVector(v, n, size)` before every literal append to a local
+// vector.  It claims a record for an ABSENT vector, `max(n, 11)` elements wide, and does
+// nothing to a vector that already has one; the append's own first claim (`vector_append`)
+// is the same 11 elements.  So for n <= 11 the interpreter emits nothing for it, and a
+// counted push loop no longer re-runs it every iteration (`keys::prealloc_elide_enabled`,
+// `LOFT_NO_PREALLOC_ELIDE=1` keeps it).  The IR keeps the op: `--native` reads an append
+// group's head and stride from it, and its own emission is unchanged.
+//
+// The elision changes which call makes the first claim and nothing a program can read:
+// `len` reads the length and `size` multiplies it by the stride.  So the defect it could
+// cause is an append that does NOT claim for itself and relied on the reservation having
+// claimed first.  Each cell checks value AND length over the kinds whose first claim takes a
+// different path or width: integer, a narrow `u8`, a record, a nested vector, text, a literal
+// of exactly 11 and of 12 (the op kept), the hidden return buffer, a cleared vector refilled,
+// an `array` (record-id slots), and a vector field (no reservation at all).
+//
+// @falsified-at: none — it guards an emission no earlier build has, so no control fails it.
+//   Falsified instead by a planted defect, 2026-10-01: `vector_append` claiming nothing for an
+//   absent vector fails the first cell with the elision on; with `LOFT_NO_PREALLOC_ELIDE=1`
+//   every reserved cell passes and only `test_field`, which never had a reservation, fails.
+//   Two emission plants did NOT fail it, and are no defect of this elision: the skipped op
+//   answering `integer`, and its vector operand left pushed (the loop's jumps reset the
+//   stack).  `tests/prealloc_elide.rs` pins where the op is gone and where it is kept.
+
+struct P {
+  x: float,
+  id: integer
+}
+
+struct Bag {
+  items: vector<integer>
+}
+
+struct Item {
+  id: integer,
+  name: text
+}
+
+struct Cat {
+  by_id: hash<Item[id]>
+}
+
+fn ints(n: integer) -> vector<integer> {
+  v: vector<integer> = [];
+  for i in 0..n { v += [i * 3]; }
+  v
+}
+
+fn test_integer_loop() {
+  v = ints(25);
+  assert(len(v) == 25, "len {len(v)}");
+  assert(v[24] == 72, "last {v[24]}");
+  assert(sum(v) == 900, "sum {sum(v)}");
+}
+
+fn test_return_buffer_twice() {
+  a = ints(4);
+  b = ints(13);
+  assert(len(a) == 4 && a[3] == 9, "a {a}");
+  assert(len(b) == 13 && b[12] == 36, "b {len(b)} {b[12]}");
+}
+
+fn test_narrow_bytes() {
+  v: vector<u8> = [];
+  for i in 0..300 { v += [(i & 255) as u8]; }
+  t = 0;
+  for e in v { t += e as integer; }
+  assert(len(v) == 300, "len {len(v)}");
+  assert(t == 33586, "sum {t}");
+  assert(v[299] as integer == 43, "last {v[299]}");
+}
+
+fn test_records() {
+  v: vector<P> = [];
+  for i in 0..20 { v += [P { x: i as float * 0.5, id: i * 2 }]; }
+  t = 0.0;
+  for p in v { t += p.x; }
+  assert(len(v) == 20, "len {len(v)}");
+  assert(v[19].id == 38, "id {v[19].id}");
+  assert(t == 95.0, "x sum {t}");
+}
+
+fn test_nested() {
+  g: vector<vector<integer>> = [];
+  for r in 0..5 { g += [[r, r * 2]]; }
+  assert(len(g) == 5, "len {len(g)}");
+  assert(g[4][1] == 8, "g[4][1] {g[4][1]}");
+  assert(len(g[2]) == 2, "row {len(g[2])}");
+}
+
+fn test_text() {
+  v: vector<text> = [];
+  for i in 0..15 { v += ["w{i}"]; }
+  t = 0;
+  for s in v { t += len(s); }
+  assert(len(v) == 15, "len {len(v)}");
+  assert(t == 35, "chars {t}");
+  assert(v[14] == "w14", "last {v[14]}");
+}
+
+fn test_eleven_and_twelve() {
+  a: vector<integer> = [];
+  a += [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+  a += [12];
+  b: vector<integer> = [];
+  b += [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+  b += [13];
+  assert(len(a) == 12 && a[11] == 12 && sum(a) == 78, "a {a}");
+  assert(len(b) == 13 && b[12] == 13 && sum(b) == 91, "b {b}");
+}
+
+fn test_cleared_refill() {
+  v: vector<integer> = [];
+  for i in 0..30 { v += [i]; }
+  v.clear();
+  for i in 0..7 { v += [i + 100]; }
+  assert(len(v) == 7, "len {len(v)}");
+  assert(v[0] == 100 && v[6] == 106, "v {v}");
+}
+
+fn test_field() {
+  b = Bag { items: [] };
+  for i in 0..14 { b.items += [i + 1]; }
+  assert(len(b.items) == 14, "len {len(b.items)}");
+  assert(sum(b.items) == 105, "sum {sum(b.items)}");
+}
+
+// A vector whose element type a keyed collection also holds is an `array`: its slots are
+// record ids and each element is a record of its own.
+fn test_array() {
+  c = Cat { by_id: [] };
+  c.by_id += [Item { id: 7, name: "seven" }];
+  v: vector<Item> = [];
+  for i in 0..15 { v += [Item { id: i, name: "n{i}" }]; }
+  t = 0;
+  for it in v { t += it.id; }
+  assert(len(v) == 15, "len {len(v)}");
+  assert(t == 105, "ids {t}");
+  assert(v[14].name == "n14", "last {v[14].name}");
+  assert(len(c.by_id) == 1, "hash {len(c.by_id)}");
+}
+
+fn main() {
+  test_integer_loop();
+  test_return_buffer_twice();
+  test_narrow_bytes();
+  test_records();
+  test_nested();
+  test_text();
+  test_eleven_and_twelve();
+  test_cleared_refill();
+  test_field();
+  test_array();
+  println("ok");
+}

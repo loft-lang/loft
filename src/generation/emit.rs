@@ -116,8 +116,24 @@ impl Output<'_> {
             }
             ValueType::Enum => return write!(w, "{}_u8", node.enum_pair().0),
             ValueType::Boolean => return write!(w, "{}", node.bool_value()),
-            ValueType::Float => return write!(w, "{}_f64", node.float_value()),
-            ValueType::Single => return write!(w, "{}_f32", node.single_value()),
+            // A NaN or an infinity has no literal form: `{}` prints `NaN` / `inf`, which is no
+            // Rust.  The float NULL is NaN, so a null carried as a constant needs this.
+            ValueType::Float => {
+                let v = node.float_value();
+                return if v.is_finite() {
+                    write!(w, "{v}_f64")
+                } else {
+                    write!(w, "{}", non_finite_literal(v.is_nan(), v > 0.0, "f64"))
+                };
+            }
+            ValueType::Single => {
+                let v = node.single_value();
+                return if v.is_finite() {
+                    write!(w, "{v}_f32")
+                } else {
+                    write!(w, "{}", non_finite_literal(v.is_nan(), v > 0.0, "f32"))
+                };
+            }
             ValueType::Null => return write!(w, "()"),
             // @PLN11 G2/M4.2 — scalar arms (no Value child).
             ValueType::Line => {
@@ -1819,6 +1835,24 @@ impl Output<'_> {
     /// per field, in field order, so a null record answers each field's null exactly as a
     /// later field read would.  A view leaf at a value position and a record handed to a
     /// TUPLE PARAMETER (`(R-ValueLocal)`, `Output::emit_call_arg`) are both this.
+    /// One element of a value-returned record's tuple.  A boolean field's operand may be the
+    /// STORAGE byte (a `u8` parameter or field read) where the tuple carries `bool`; the
+    /// coercion is the one every test predicate uses.
+    fn output_tuple_part(
+        &mut self,
+        w: &mut dyn Write,
+        val: &Value,
+        boolean: bool,
+    ) -> std::io::Result<()> {
+        if boolean {
+            write!(w, "((")?;
+            self.output_code_inner(w, val)?;
+            write!(w, ") as u8) == 1")
+        } else {
+            self.output_code_inner(w, val)
+        }
+    }
+
     pub(super) fn output_record_tuple(
         &mut self,
         w: &mut dyn Write,
@@ -2805,7 +2839,7 @@ impl Output<'_> {
                 .objects
                 .contains(&(std::ptr::from_ref(bl) as usize))
             && let Some(&tp) = self.value_records.fns.get(&self.def_nr)
-            && let Some(parts) = self.value_record_parts(bl, tp)
+            && let Some((parts, fill)) = self.value_record_parts(bl, tp)
         {
             let kinds: Vec<&'static str> = self
                 .value_records
@@ -2829,6 +2863,23 @@ impl Output<'_> {
             // tuple is evaluated first, the block's other statements — the frees the
             // return owes — run in their order, and the tuple is returned.
             let own_ret = super::hoist::object_own_return(bl);
+            // `@FR-R-ValueRecord` — the tuple lists its elements in FIELD order; a literal
+            // that writes its fields in another order has each value bound first, in the
+            // order it wrote them, so a field expression with an effect runs where the
+            // program put it (`Ord4 { ok: tick(1), f: tick(2), n: tick(3) }` ran 3, 1, 2).
+            let staged: crate::fxhash::FxHashSet<usize> = if fill.windows(2).all(|p| p[0] < p[1]) {
+                crate::fxhash::FxHashSet::default()
+            } else {
+                fill.iter().copied().collect()
+            };
+            for &i in &fill {
+                if let Some(Some(val)) = parts.get(i).filter(|_| staged.contains(&i)) {
+                    self.indent(w)?;
+                    write!(w, "let __vf{i} = ")?;
+                    self.output_tuple_part(w, val, kinds.get(i) == Some(&"bool"))?;
+                    writeln!(w, ";")?;
+                }
+            }
             if own_ret.is_some() {
                 self.indent(w)?;
                 write!(w, "let __obj = ")?;
@@ -2900,15 +2951,10 @@ impl Output<'_> {
                     }
                     continue;
                 };
-                // A boolean field's operand may be the STORAGE byte (a `u8` parameter or
-                // field read) where the tuple carries `bool`; the coercion is the one
-                // every test predicate uses.
-                if kinds.get(i) == Some(&"bool") {
-                    write!(w, "((")?;
-                    self.output_code_inner(w, val)?;
-                    write!(w, ") as u8) == 1")?;
+                if staged.contains(&i) {
+                    write!(w, "__vf{i}")?;
                 } else {
-                    self.output_code_inner(w, val)?;
+                    self.output_tuple_part(w, val, kinds.get(i) == Some(&"bool"))?;
                 }
             }
             // The 1-tuple's trailing comma, matching the signature built in
@@ -3831,4 +3877,16 @@ impl Output<'_> {
             )
         }
     }
+}
+
+/// The Rust spelling of a float that has no literal: `f64::NAN`, `f64::INFINITY`, …
+fn non_finite_literal(nan: bool, positive: bool, ty: &str) -> String {
+    let name = if nan {
+        "NAN"
+    } else if positive {
+        "INFINITY"
+    } else {
+        "NEG_INFINITY"
+    };
+    format!("{ty}::{name}")
 }

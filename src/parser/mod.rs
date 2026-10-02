@@ -4316,6 +4316,10 @@ impl Parser {
     /// local-persistence path is the remaining increment, paired with phase 03's
     /// runtime that keeps the session instance alive.
     pub fn parse_statement(&mut self, input: &str) -> ParseResult {
+        // A `Data` that takes statements is parsed against again after it compiles, which is
+        // what `open_world` names: whole-program rewrites (`@FR-R-ValueRecord`,
+        // `@FR-R-InlineLeaf`) leave its signatures and calls as written.
+        self.data.open_world = true;
         if Self::statement_incomplete(input) {
             return ParseResult::NeedMore;
         }
@@ -6780,6 +6784,21 @@ impl Parser {
                 if self.data.attributes(dnr) > 1 {
                     struct_conv = Some(dnr); // struct-returning: dispatch after the loop
                     break;
+                }
+                // A character LITERAL met as an integer is its code point: the literal is
+                // spelled `OpConvCharacterFromInt(cp)`, so the conversion would only undo it
+                // (`c == 'x'` compared through three conversions on every evaluation).  Not for
+                // NUL, the character null, which converts to the integer null rather than 0.
+                if self.data.def(dnr).name() == "OpConvIntFromCharacter"
+                    && let Value::Call(inner, args) = code.unspan()
+                    && self.data.def(*inner).name() == "OpConvCharacterFromInt"
+                    && let [arg] = args.as_slice()
+                    && let Value::Int(cp) = arg.unspan()
+                    && *cp != 0
+                    && u32::try_from(*cp).ok().and_then(char::from_u32).is_some()
+                {
+                    *code = Value::Int(*cp);
+                    return true;
                 }
                 // Stdlib primitive conversions (attributes() == 1) keep the direct Call.
                 *code = Value::Call(dnr, vec![code.clone()]);

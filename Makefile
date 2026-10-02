@@ -600,6 +600,9 @@ interp-gap:  ## Where the interpreter still moves data native no longer does, pe
 	cargo build --release --lib --bin loft -q
 	cargo build --release --lib --bin loft -q --features op-census --target-dir target/op-census
 	python3 scripts/interp_gap.py $(ARGS)
+worst:  ## The worst routines of the last complete runs (interp-gap, perf-portal), re-timed quickly (ARGS="--axis interp|native", "--list")
+	cargo build --release --bin loft -q
+	python3 scripts/worst.py $(ARGS)
 rewrite-census-bless:  ## Record the current rewrite counts as the baseline (a deliberate decline)
 	cargo build --release --bin loft -q
 	python3 scripts/rewrite_census.py --bless
@@ -2818,8 +2821,30 @@ rule-coverage:  ## What share of the formal rules carry a code annotation, and a
 .PHONY: script-census
 script-census:  ## @PLN179 the work list: every Python/bash script by what a loft port needs (a report)
 	@cargo build --release --bin loft -q
-	@target/release/loft scripts/script_census.loft > doc/claude/plans/179-scripts-in-loft/WORKLIST.md
-	@target/release/loft scripts/script_census.loft --count | sed 's/^/scripts\/ Python+bash lines (the ratchet): /'
+	@target/release/loft --interpret scripts/script_census > doc/claude/plans/179-scripts-in-loft/WORKLIST.md
+	@target/release/loft --interpret scripts/script_census --count | sed 's/^/scripts\/ Python+bash lines (the ratchet): /'
+
+.PHONY: script-reasons
+script-reasons:  ## @PLN179 the reasons register, rendered from findings/*.md (ARGS=--count prints the open number instead)
+	@cargo build --release --bin loft -q
+	@if [ "$(ARGS)" = "--count" ]; then target/release/loft --interpret scripts/script_reasons --count; else target/release/loft --interpret scripts/script_reasons > doc/claude/plans/179-scripts-in-loft/REASONS.md.new && mv doc/claude/plans/179-scripts-in-loft/REASONS.md.new doc/claude/plans/179-scripts-in-loft/REASONS.md; fi
+
+.PHONY: compiled-stdlib
+compiled-stdlib:  ## @PLN181 regenerate src/compiled_stdlib_gen.rs — the stdlib's compiled loft bodies (run after changing default/*.loft)
+	@cargo test --release --test compiled_stdlib regen_compiled_stdlib -- --ignored --nocapture > /dev/null 2>&1
+	@cargo build --release --bin loft -q
+	@echo "src/compiled_stdlib_gen.rs regenerated and built"
+
+.PHONY: kernel-ratio
+kernel-ratio:  ## every kernel against the loft body it stands in for, both backends — a kernel within 2x is due for removal (doc/claude/KERNELS.md; a report)
+	@cargo build --release --bin loft -q
+	@echo "== --interpret"; LOFT_TIMEOUT=600 target/release/loft --interpret scripts/kernel_ratio
+	@echo "== --native-release"; LOFT_TIMEOUT=600 target/release/loft --native-release scripts/kernel_ratio
+
+.PHONY: script-twin
+script-twin:  ## @PLN179 does a port leave the same world as its original?  ORIG=<script> PORT=<script> [ARGS="…"] [FILES=<dir>] [BY_CONTENT=1] [RUNS=n]
+	@[ -n "$(ORIG)" ] && [ -n "$(PORT)" ] || { echo "usage: make script-twin ORIG=<script> PORT=<script> [ARGS=…] [FILES=<dir>] [BY_CONTENT=1] [RUNS=n]"; exit 2; }
+	@PATH="$(CURDIR)/target/release:$$PATH" scripts/script_twin.sh $(if $(FILES),--files $(FILES)) $(if $(BY_CONTENT),--by-content) --runs $(or $(RUNS),1) $(ORIG) $(PORT) -- $(ARGS)
 
 .PHONY: falsify-review
 falsify-review:  ## Which falsification receipts can still be re-validated, and how quickly

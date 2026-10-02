@@ -1281,61 +1281,104 @@ impl Stores {
         self.vector_add(db, o_db, known);
     }
 
-    /// @PLN157 § V-m — the slot of one fused scalar append: `vector_append` claims it (and
-    /// grows on the ladder), the caller writes it, and the length bump lands on the same
-    /// resolved store.  `None` for a null or absent vector, which the four-op path also
-    /// left untouched (`OpNewRecord` answered the null slot and every op after it declined).
-    #[inline]
-    fn append_slot(&mut self, db: &DbRef, size: u32) -> Option<DbRef> {
+    /// @PLN157 § V-m — one fused scalar append: the slot claimed (`vector_append`, growing on
+    /// the ladder), `write` puts the element there, and the length bump lands on the same
+    /// resolved store.  Nothing for a null or absent vector, which the four-op path also left
+    /// untouched (`OpNewRecord` answered the null slot and every op after it declined).
+    ///
+    /// `@FR-R-ElementPath` — an element that fits takes the inline path
+    /// ([`vector::append_slot_in_capacity`]); a new or full vector takes `vector_append`.  Each
+    /// branch finishes the append itself: joined into one `Option<DbRef>` the two answers met
+    /// in memory, written as narrow fields and re-read as one wide load — a store-forward
+    /// stall on every push.
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
+    fn append_with(&mut self, db: &DbRef, size: u32, write: impl Fn(&mut Store, &DbRef)) {
+        if db.is_null() {
+            return;
+        }
+        if let Some(slot) =
+            vector::append_slot_in_capacity(db, size, crate::keys::store(db, &self.allocations))
+        {
+            let store = self.append_store(&slot);
+            write(store, &slot);
+            Self::append_done(store, &slot, size);
+            return;
+        }
         let slot = vector::vector_append(db, size, &mut self.allocations);
-        (slot.rec != 0).then_some(slot)
+        if slot.rec != 0 {
+            let store = self.append_store(&slot);
+            write(store, &slot);
+            Self::append_done(store, &slot, size);
+        }
     }
 
-    /// The length bump of [`Self::append_slot`]: `slot.rec` IS the vector record.
+    /// The store an append writes its element to — `store_mut`'s answer, with its
+    /// `LOFT_STRICT_STORES` report behind a cold call so this inlines into every append op
+    /// (`@FR-R-Cold`): `store_mut` whole, with the report's argument setup inline, fell out of
+    /// line in them and cost a push op a call per element.
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
+    fn append_store(&mut self, slot: &DbRef) -> &mut Store {
+        let i = slot.store_nr as usize;
+        if crate::keys::strict_stores() && self.allocations[i].free {
+            self.append_to_freed_store(slot);
+        }
+        &mut self.allocations[i]
+    }
+
+    /// [`Self::append_store`]'s rare half: the write through a freed store, reported by
+    /// `store_mut` exactly as any other write is.
+    #[cold]
+    #[inline(never)]
+    fn append_to_freed_store(&mut self, slot: &DbRef) {
+        let _ = self.store_mut(slot);
+    }
+
+    /// The length bump of [`Self::append_with`]: `slot.rec` IS the vector record, and the
+    /// slot it answered is element `len` (`8 + len * size`), so the length is derived rather
+    /// than read a second time (`@FR-R-ElementPath`).
     #[inline]
-    fn append_done(store: &mut Store, slot: &DbRef) {
-        let len = store.get_u32_raw(slot.rec, 4);
+    fn append_done(store: &mut Store, slot: &DbRef, size: u32) {
+        let len = (slot.pos - 8) / size;
         store.set_u32_raw(slot.rec, 4, len + 1);
     }
 
     // The fused append fast paths are called once per element from GENERATED code, which is
     // another crate: without `#[inline]`, whether they are inlined there — and whether
     // `store_mut` is inlined into them — is rustc's call, and that call moves when this crate
-    // grows elsewhere.  The hint makes the per-element cost a property of this code.
-    #[inline]
+    // grows elsewhere.  Forced since the two operator tables (`@FR-R-FastTable`) doubled their
+    // callers: `append_i64` ran as a call of its own, 17 % of a push loop.
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
     pub fn append_i64(&mut self, db: &DbRef, v: i64) {
-        if let Some(slot) = self.append_slot(db, 8) {
-            let store = self.store_mut(&slot);
+        self.append_with(db, 8, |store, slot| {
             store.set_int(slot.rec, slot.pos, v);
-            Self::append_done(store, &slot);
-        }
+        });
     }
 
-    #[inline]
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
     pub fn append_i32(&mut self, db: &DbRef, v: i32) {
-        if let Some(slot) = self.append_slot(db, 4) {
-            let store = self.store_mut(&slot);
+        self.append_with(db, 4, |store, slot| {
             store.set_i32_raw(slot.rec, slot.pos, v);
-            Self::append_done(store, &slot);
-        }
+        });
     }
 
-    #[inline]
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
     pub fn append_f64(&mut self, db: &DbRef, v: f64) {
-        if let Some(slot) = self.append_slot(db, 8) {
-            let store = self.store_mut(&slot);
+        self.append_with(db, 8, |store, slot| {
             store.set_float(slot.rec, slot.pos, v);
-            Self::append_done(store, &slot);
-        }
+        });
     }
 
-    #[inline]
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
     pub fn append_f32(&mut self, db: &DbRef, v: f32) {
-        if let Some(slot) = self.append_slot(db, 4) {
-            let store = self.store_mut(&slot);
+        self.append_with(db, 4, |store, slot| {
             store.set_single(slot.rec, slot.pos, v);
-            Self::append_done(store, &slot);
-        }
+        });
     }
 
     /// A boolean or a plain enum: one byte, no sentinel (`OpSetBoolean` / `OpSetEnum`'s
@@ -1347,13 +1390,12 @@ impl Stores {
 
     /// One element of a `vector<u8>` / `vector<i8>` (a byte biased by `min`), written as
     /// `OpSetByte` writes it — `OpPushByte`, the fused `v += [x]`.
-    #[inline]
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
     pub fn append_byte_min(&mut self, db: &DbRef, min: i32, v: i32) {
-        if let Some(slot) = self.append_slot(db, 1) {
-            let store = self.store_mut(&slot);
+        self.append_with(db, 1, |store, slot| {
             store.set_byte(slot.rec, slot.pos, min, v);
-            Self::append_done(store, &slot);
-        }
+        });
     }
 
     /// `@FR-R-ByteCopy` — the bytes `[lo, hi)` of a text appended to a byte vector as ONE
@@ -1377,13 +1419,12 @@ impl Stores {
         crate::vector::append_bytes(db, &bytes[lo..hi], &mut self.allocations);
     }
 
-    #[inline]
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
     pub fn append_u32(&mut self, db: &DbRef, v: u32) {
-        if let Some(slot) = self.append_slot(db, 4) {
-            let store = self.store_mut(&slot);
+        self.append_with(db, 4, |store, slot| {
             store.set_u32_raw(slot.rec, slot.pos, v);
-            Self::append_done(store, &slot);
-        }
+        });
     }
 
     /// The fill behind `[x; n]` (and the comprehension of a constant, which lowers to it):

@@ -1,0 +1,155 @@
+// `@FR-O-Move` at a LIFT: a call result the argument scan lifts into a `__lift_N` temp
+// (`use(mk(n), …)`) adopts the callee's minted store the way a named bind
+// (`z = mk(n); use(z, …)`) does.  The temp is null-initialised in the prologue, so its one
+// bind read as a REBIND, and a rebind of a record from a callee whose return carries its
+// buffer's dep COPIED where a first bind adopts: `pa_text(pa_decode(frame), "op")` deep-copied
+// the decoded tree into a store minted for the copy and freed the callee's — one store and one
+// `OpCopyRecord` per call that the named spelling never paid (14 % of pluginabi's
+// `check_request`).  Now the bind after the prologue's null-init is the temp's first
+// (`deferred_first_bind`) and the call's buffer is paired for the identity-guarded free
+// exactly as a named bind's is (`Scopes::pair_call_buffers`, one home for both spellings).
+//
+// The cells, hand-computed, both backends: c1 the named control beside c2 the lifted form;
+// c3 a lift in a loop; c4 two lifts in one call; c5 a struct-enum result; c6 an early return
+// before the bind (check_request's shape); c7 the result discarded as a statement; c8 a lift
+// inside a `??` value block; c9 a fresh (dep-empty) callee — the control that adopted already;
+// c10 a view of a local — never lifted; c11 a lift feeding a callee that mints from it; c12 the
+// callee writes the copy before its exit; c13 a lift as a field read's receiver; c14 a lift
+// inside a formatted string.  `LOFT_ALLOC_REPORT=1 loft --interpret <this> c2` counts the
+// stores: c1 and c2 both 2 per call (c2 was 3); `tests/lift_adopt.rs` pins the count, the IR
+// shape and the switch (`LOFT_NO_ADOPT_FIRST_BIND=1` restores the copy).
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-30) — the `deferred_first_bind` mark removed
+// from `Scopes::lift_set` (the pairing kept): the copy is back, `tests/lift_adopt.rs` reads
+// 6000 mints for c2 against the control's 4000 and `CopyRefOrNull` in c2's listing, and on
+// `--native` c3 (the lift in a loop) answers WRONG (`assertion failed: c3`, the interpreter's
+// values unchanged) — the pairing and the mark travel together.  The pairing removed instead
+// (the mark kept): every value, leak and falsifier check here stays green on both backends and
+// only the IR pin reads the buffer's free as plain — the caller's buffer holds the null
+// sentinel today, so the guarded free is inert until something pre-mints it (`minted_pairs`
+// is what keeps the pool from doing so).  Restored byte-identically.  A third receipt from
+// the suite (2026-09-30): the pairing applied to a temp a COPY consumes (`keep += [mk(i)]` in
+// a loop, c15 here, `164-forward-tuple`'s q6) enrolled its buffer in the record-buffer pool
+// while the consuming copy's source-free bit released the store every turn — q6 read a freed
+// record on both backends (`assertion failed: q6 in a loop: 871878381216,…`); the pairing is
+// skipped for a transferred temp, and c15 holds.  `matrix_axes.py`: A4
+// reaches every statement context but `coalesce-subject` (a `mk(n) ?? d` subject takes the
+// join route, `lift_join_witness`, not this one); A9 loop and single.
+struct Rec { items: vector<integer>, name: text, k: integer }
+struct Wrap { value: Rec, ok: boolean }
+enum CV { CNull, CText { value: text }, CMap { entries: vector<Rec> } }
+struct DWrap { value: CV, ok: boolean }
+
+fn inner(n: integer) -> Wrap { return Wrap { value: Rec { items: [n, n + 1, n + 2], name: "r{n}", k: n }, ok: true }; }
+// w2: the callee copies a field of a local out and returns it — its return carries its
+// buffer's dep, so a bind of it ADOPTS the minted store (`(O-Move)`, @PLN164 B1).
+fn mk(n: integer) -> Rec { d = inner(n); v = d.value; return v; }
+// the same with a write to the copy before the exit
+fn mk_w(n: integer) -> Rec { d = inner(n); v = d.value; v.k = v.k + 100; return v; }
+// a literal exit — a FRESH return (dep-empty), the control that adopted already
+fn lit(n: integer) -> Rec { return Rec { items: [n, n * 2], name: "l{n}", k: n }; }
+// a view of the argument — never lifted
+fn first(rs: vector<Rec>) -> Rec { return rs[0] ?? Rec { items: [], name: "none", k: -1 }; }
+fn dinner(n: integer) -> DWrap { return DWrap { value: CMap { entries: [mk(n), mk(n + 10)] }, ok: true }; }
+fn mkcv(n: integer) -> CV { d = dinner(n); v = d.value; return v; }
+fn wrap_rec(r: Rec) -> Rec { return Rec { items: r.items, name: "w{r.name}", k: r.k * 2 }; }
+
+fn use_rec(r: Rec, key: text) -> text { return "{r.name}{key}{len(r.items)}:{r.k}"; }
+fn use_two(a: Rec, b: Rec) -> text { return "{a.name}+{b.name}:{a.k + b.k}"; }
+fn use_cv(m: CV, key: text) -> text {
+  match m { CMap { entries } => { e0 = entries[0] ?? lit(0); return "{len(entries)}{key}{e0.name}"; }, _ => {} }
+  return "";
+}
+fn valid(s: text) -> boolean { return s == "r7!3:7"; }
+
+// c1 the named control
+fn c1(n: integer) -> text { z = mk(n); return use_rec(z, "!"); }
+// c2 the lifted form
+fn c2(n: integer) -> text { return use_rec(mk(n), "!"); }
+// c3 lifted in a loop
+fn c3(n: integer) -> text { s = ""; for i in 0..3 { s += use_rec(mk(n + i), ","); } return s; }
+// c4 two lifts in one call
+fn c4(n: integer) -> text { return use_two(mk(n), mk(n + 1)); }
+// c5 a struct-enum result
+fn c5(n: integer) -> text { return use_cv(mkcv(n), "?"); }
+// c6 an early return before the bind, then the lift (check_request's shape)
+fn c6(n: integer) -> text {
+  if n < 0 { return "neg"; }
+  op = use_rec(mk(n), "!");
+  if !valid(op) { return "bad:{op}"; }
+  return "";
+}
+// c7 the result discarded as a statement
+fn c7(n: integer) -> integer { mk(n); mk(n + 1); return n; }
+// c8 a lift inside a `??` value block
+fn c8(n: integer) -> integer { x = mk(n).items[1] ?? 99; return x; }
+// c9 a fresh (dep-empty) callee's result lifted — the control that already adopts
+fn c9(n: integer) -> text { return use_rec(lit(n), "!"); }
+// c10 a view of a local — no lift
+fn c10(n: integer) -> text { rs = [mk(n), mk(n + 5)]; return use_rec(first(rs), "!"); }
+// c11 a lift feeding a callee that mints from it
+fn c11(n: integer) -> text { return use_rec(wrap_rec(mk(n)), "!"); }
+// c12 the copy written before the exit
+fn c12(n: integer) -> text { return use_rec(mk_w(n), "!"); }
+// c13 a lift as the receiver of a field read
+fn c13(n: integer) -> integer { return mk(n).k + len(mk(n + 1).items); }
+// c14 a lift inside a formatted string
+fn c14(n: integer) -> text { return "<{use_rec(mk(n), "~")}>"; }
+// c15 a lift a COPY consumes, in a loop: the element copy's source-free bit releases the
+// temp's store, so the temp has no free of its own and its buffer must not join the pool
+fn c15(n: integer) -> text {
+  keep: vector<Rec> = [];
+  for i in 0..3 { keep += [mk(n + i)]; last = keep[len(keep) - 1] ?? lit(0); keep[0]?.k += last.k; }
+  s = "";
+  for r in keep { s += "{r.name}:{r.k};"; }
+  return s;
+}
+
+fn run_all() {
+  assert(c1(7) == "r7!3:7", "c1");
+  assert(c2(7) == "r7!3:7", "c2");
+  assert(c3(4) == "r4,3:4r5,3:5r6,3:6", "c3");
+  assert(c4(2) == "r2+r3:5", "c4");
+  assert(c5(3) == "2?r3", "c5");
+  assert(c6(-1) == "neg", "c6a");
+  assert(c6(7) == "", "c6b");
+  assert(c6(8) == "bad:r8!3:8", "c6c");
+  assert(c7(5) == 5, "c7");
+  assert(c8(6) == 7, "c8");
+  assert(c9(9) == "l9!2:9", "c9");
+  assert(c10(11) == "r11!3:11", "c10");
+  assert(c11(12) == "wr12!3:24", "c11");
+  assert(c12(13) == "r13!3:113", "c12");
+  assert(c13(20) == 23, "c13");
+  assert(c14(21) == "<r21~3:21>", "c14");
+  assert(c15(10) == "r10:43;r11:11;r12:12;", "c15");
+  println("ok");
+}
+
+fn run_cell(cell: text, r: integer) -> integer {
+  s = 0;
+  if cell == "c1" { s += len(c1(r % 50)); }
+  if cell == "c2" { s += len(c2(r % 50)); }
+  if cell == "c3" { s += len(c3(r % 50)); }
+  if cell == "c4" { s += len(c4(r % 50)); }
+  if cell == "c5" { s += len(c5(r % 50)); }
+  if cell == "c6" { s += len(c6(r % 50)); }
+  if cell == "c7" { s += c7(r % 50); }
+  if cell == "c8" { s += c8(r % 50); }
+  if cell == "c9" { s += len(c9(r % 50)); }
+  if cell == "c11" { s += len(c11(r % 50)); }
+  if cell == "c12" { s += len(c12(r % 50)); }
+  if cell == "c13" { s += c13(r % 50); }
+  if cell == "c14" { s += len(c14(r % 50)); }
+  if cell == "c15" { s += len(c15(r % 50)); }
+  return s;
+}
+
+fn main() {
+  args = arguments();
+  if len(args) == 0 { run_all(); return; }
+  cell = args[0] ?? "";
+  s = 0;
+  for r in 0..2000 { s += run_cell(cell, r); }
+  println("{cell} {s}");
+}

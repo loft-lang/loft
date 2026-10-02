@@ -70,6 +70,8 @@ pub fn start(program_src: &str) -> bool {
 /// The parse diagnostics, rendered, when the stdlib or the program does not compile.
 pub fn start_reporting(program_src: &str) -> Result<(), String> {
     let mut p = Box::new(crate::parser::Parser::new());
+    // Parsed against again after compiling: no whole-program signature rewrite.
+    p.data.open_world = true;
     for (name, content) in crate::stdlib_sources::STDLIB_SOURCES {
         if !p.parse_source(content, name, true) {
             return Err(format!(

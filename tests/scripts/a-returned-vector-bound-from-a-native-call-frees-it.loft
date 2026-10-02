@@ -1,0 +1,70 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// `@FR-O-Owner` — A RETURNED VECTOR BOUND FROM A NATIVE CALL FREES IT.  A vector local that a
+// function returns is renamed onto the caller's return buffer, and every bind of it must then fill
+// that buffer (loft#1599).  A loft call is handed the buffer itself; a native (`j.keys()`,
+// `arguments()`, `s.split(',')`) cannot be handed one, so the bind pointed the local at the
+// native's fresh store, and the function answered a store its caller never handed in.  The caller
+// freed its own buffer and the answer leaked: one store per call.  Such a local now keeps its own
+// store and is copied into the buffer at the return.
+//
+// ⚠ The interpreter's control reads clean HERE, and that is a coincidence, not a pass: its callee
+// freed the caller's buffer unguarded and the native's fresh store usually took that store's
+// number back, so the caller's buffer free released the answer.  A right-hand side that allocates
+// in the same frame first can break it (`a = jk(); b = jk()` alone in `main` leaked two stores on
+// the interpreter too), but store numbering depends on everything before it, so this file scores
+// the leak on `--native`, where it is unconditional.
+//
+// The same function shape reached a second leak: an EARLY `return [ … ]` beside a native tail.
+// A literal's value is a view of the record it minted, delivered into the caller's buffer only
+// where that buffer had been renamed onto a loft call's; beside a native tail it was returned
+// raw, and the caller took the literal's store as its answer while freeing only its buffer.
+//
+// The last cell is the control that was right before: a local filled in place.
+//
+// @falsified-at: a401738f4 — native leaked kt=65535 ?×17 -> clean; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/a-returned-vector-bound-from-a-native-call-frees-it.patch — native
+//   leaked kt=65535 ?×17 -> clean; interpret INERT (expected for a backend-divergence guard — only
+//   one side can move)
+// CHANNEL: the leak check on `--native`; the interpreter's control reads clean (see the ⚠ above).
+// ARMED: the harness's store census at exit, which names each store left behind by type.
+// WITNESS: 17 stores left on the native control, each an answer the caller never handed in — a
+//   native's fresh store, or an early literal's record.
+// HOLDS: exit, assertions, panic, refusals and expectations are unmoved on both trees.
+
+fn jv() -> JsonValue { json_parse("{{\"k1\":1,\"k2\":2,\"k3\":3}}") }
+
+fn jk() -> vector<text> { p = json_parse("{{\"k1\":1,\"k2\":2,\"k3\":3}}").keys(); p }
+fn args() -> vector<text> { p = arguments(); p }
+fn either(c: boolean) -> vector<text> { p: vector<text> = []; if c { p += ["x"]; } else { p = jv().keys(); } p }
+fn twice() -> vector<text> { p = jv().keys(); p = arguments(); p = jv().keys(); p }
+fn fwd() -> vector<text> { q = jk(); q }
+fn early(c: boolean) -> vector<text> { if c { return ["q", "r"]; } jv().keys() }
+fn early_empty(t: text) -> vector<text> { if t.len() == 0 { return []; } t.split(',') }
+fn inplace() -> vector<text> { p: vector<text> = []; p += ["x"]; p += ["y"]; p }
+
+fn main() {
+  a = jk();
+  assert(a.len() == 3 && a[2] == "k3", "a native bound and returned: {a.len()}");
+  e = args();
+  assert(e.len() == 0, "arguments() bound and returned: {e.len()}");
+  x = either(true);
+  y = either(false);
+  assert(x.len() == 1 && y.len() == 3, "filled or rebound by branch: {x.len()} {y.len()}");
+  w = twice();
+  assert(w.len() == 3 && w[0] == "k1", "rebound three times: {w.len()}");
+  f = fwd();
+  assert(f.len() == 3, "forwarded through a second buffer: {f.len()}");
+  // 10 calls of `jk`, 3 each.
+  t = 0;
+  for _i in 0..10 { t += jk().len(); }
+  assert(t == 30, "a call per iteration: {t}");
+  // 10 calls each: early(true) answers 2, early(false) 3; the empty text answers 0, "a,b" 2.
+  u = 0;
+  for i in 0..10 { u += early(i % 2 == 0).len() + early_empty(if i % 2 == 0 { "" } else { "a,b" }).len(); }
+  assert(u == 35, "an early literal return beside a native tail: {u}");
+  assert(early(true)[1] == "r", "the early literal's own elements: {early(true)[1]}");
+  c = inplace();
+  assert(c.len() == 2 && c[1] == "y", "control, filled in place: {c.len()}");
+}

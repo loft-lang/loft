@@ -23,8 +23,8 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>hex_edge source</h1>
 <article>
-<p><a href="lib-hex_edge.html">← hex_edge</a> · <a href="lib-hex_edge-api.html">API reference</a> · version 0.2.2</p>
-<p class="lib-legend">3 file(s), 1360 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<p><a href="lib-hex_edge.html">← hex_edge</a> · <a href="lib-hex_edge-api.html">API reference</a> · version 0.2.3</p>
+<p class="lib-legend">3 file(s), 1365 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
 <table class="lib-table">
@@ -33,52 +33,52 @@
 <tr><td><code>surfaces_new</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L76">76</a></td><td><a href="#tests-02-worked-examples-loft-L46">HXE-001</a></td><td><a href="#tests-01-hex-edge-loft-L13">13</a> <a href="#tests-01-hex-edge-loft-L20">20</a> <a href="#tests-01-hex-edge-loft-L31">31</a> <a href="#tests-02-worked-examples-loft-L42">42</a> <a href="#tests-02-worked-examples-loft-L57">57</a> <a href="#tests-02-worked-examples-loft-L283">283</a> … (10 total)</td></tr>
 <tr><td><code>surf_straight</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L89">89</a></td><td><a href="#tests-02-worked-examples-loft-L46">HXE-001</a></td><td><a href="#tests-01-hex-edge-loft-L22">22</a> <a href="#tests-02-worked-examples-loft-L60">60</a> <a href="#tests-02-worked-examples-loft-L284">284</a> <a href="#tests-02-worked-examples-loft-L285">285</a> <a href="#tests-02-worked-examples-loft-L328">328</a> <a href="#tests-02-worked-examples-loft-L359">359</a> … (9 total)</td></tr>
 <tr><td><code>surf_arc</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L97">97</a></td><td>—</td><td><a href="#tests-01-hex-edge-loft-L32">32</a> <a href="#tests-02-worked-examples-loft-L61">61</a> <a href="#tests-02-worked-examples-loft-L556">556</a></td></tr>
-<tr><td><code>surf_distance</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L104">104</a></td><td>—</td><td><a href="#src-hex-edge-loft-L278">278</a> <a href="#src-hex-edge-loft-L279">279</a> <a href="#src-hex-edge-loft-L341">341</a> <a href="#src-hex-edge-loft-L342">342</a> <a href="#tests-01-hex-edge-loft-L24">24</a> <a href="#tests-01-hex-edge-loft-L34">34</a> … (13 total)</td></tr>
-<tr><td><code>surf_normal</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L120">120</a></td><td>—</td><td><a href="#src-hex-edge-loft-L328">328</a> <a href="#src-hex-edge-loft-L329">329</a> <a href="#src-hex-edge-loft-L477">477</a> <a href="#tests-01-hex-edge-loft-L26">26</a> <a href="#tests-02-worked-examples-loft-L69">69</a></td></tr>
+<tr><td><code>surf_distance</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L104">104</a></td><td>—</td><td><a href="#src-hex-edge-loft-L278">278</a> <a href="#src-hex-edge-loft-L279">279</a> <a href="#src-hex-edge-loft-L343">343</a> <a href="#src-hex-edge-loft-L344">344</a> <a href="#tests-01-hex-edge-loft-L24">24</a> <a href="#tests-01-hex-edge-loft-L34">34</a> … (13 total)</td></tr>
+<tr><td><code>surf_normal</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L120">120</a></td><td>—</td><td><a href="#src-hex-edge-loft-L330">330</a> <a href="#src-hex-edge-loft-L331">331</a> <a href="#src-hex-edge-loft-L482">482</a> <a href="#tests-01-hex-edge-loft-L26">26</a> <a href="#tests-02-worked-examples-loft-L69">69</a></td></tr>
 <tr><td><code>Materials</code> <span class="search-kind">struct</span></td><td><a href="#src-hex-edge-loft-L141">141</a></td><td>—</td><td><a href="#src-hex-edge-loft-L153">153</a> <a href="#src-hex-edge-loft-L158">158</a> <a href="#src-hex-edge-loft-L164">164</a> <a href="#src-hex-edge-loft-L181">181</a> <a href="#src-hex-edge-loft-L187">187</a> <a href="#src-hex-edge-loft-L193">193</a> … (11 total)</td></tr>
 <tr><td><code>materials_new</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L153">153</a></td><td>—</td><td><a href="#tests-01-hex-edge-loft-L41">41</a> <a href="#tests-02-worked-examples-loft-L361">361</a> <a href="#tests-02-worked-examples-loft-L496">496</a></td></tr>
 <tr><td><code>material_add</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L164">164</a></td><td>—</td><td><a href="#tests-01-hex-edge-loft-L42">42</a> <a href="#tests-02-worked-examples-loft-L362">362</a> <a href="#tests-02-worked-examples-loft-L363">363</a> <a href="#tests-02-worked-examples-loft-L497">497</a> <a href="#tests-02-worked-examples-loft-L520">520</a> <a href="#tests-02-worked-examples-loft-L530">530</a></td></tr>
 <tr><td><code>material_set_solid</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L181">181</a></td><td><a href="#tests-02-worked-examples-loft-L475">HXE-010</a></td><td><a href="#tests-02-worked-examples-loft-L510">510</a></td></tr>
 <tr><td><code>mat_solid</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L187">187</a></td><td>—</td><td><a href="#tests-01-hex-edge-loft-L43">43</a> <a href="#tests-01-hex-edge-loft-L45">45</a> <a href="#tests-02-worked-examples-loft-L388">388</a> <a href="#tests-02-worked-examples-loft-L511">511</a></td></tr>
-<tr><td><code>mat_height</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L193">193</a></td><td>—</td><td><a href="#src-hex-edge-loft-L701">701</a> <a href="#tests-01-hex-edge-loft-L44">44</a></td></tr>
-<tr><td><code>mat_opacity</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L198">198</a></td><td>—</td><td><a href="#src-hex-edge-loft-L699">699</a></td></tr>
+<tr><td><code>mat_height</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L193">193</a></td><td>—</td><td><a href="#src-hex-edge-loft-L706">706</a> <a href="#tests-01-hex-edge-loft-L44">44</a></td></tr>
+<tr><td><code>mat_opacity</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L198">198</a></td><td>—</td><td><a href="#src-hex-edge-loft-L704">704</a></td></tr>
 <tr><td><code>mat_sound</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L203">203</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L531">531</a></td></tr>
 <tr><td><code>mat_perm</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L209">209</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L532">532</a></td></tr>
 <tr><td><code>mat_bounce</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L214">214</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L533">533</a></td></tr>
 <tr><td><code>edge_k</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L228">228</a></td><td>—</td><td><a href="#src-hex-edge-loft-L256">256</a></td></tr>
 <tr><td><code>edge_m</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L234">234</a></td><td>—</td><td><a href="#src-hex-edge-loft-L257">257</a></td></tr>
-<tr><td><code>edge_block_surf</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L246">246</a></td><td><a href="#tests-02-worked-examples-loft-L270">HXE-006</a></td><td><a href="#src-hex-edge-loft-L451">451</a> <a href="#src-hex-edge-loft-L461">461</a> <a href="#src-hex-edge-loft-L651">651</a> <a href="#tests-02-worked-examples-loft-L295">295</a> <a href="#tests-02-worked-examples-loft-L296">296</a> <a href="#tests-02-worked-examples-loft-L298">298</a> … (8 total)</td></tr>
-<tr><td><code>edge_point</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L255">255</a></td><td>—</td><td><a href="#src-hex-edge-loft-L277">277</a> <a href="#src-hex-edge-loft-L424">424</a> <a href="#src-hex-edge-loft-L476">476</a> <a href="#tests-01-hex-edge-loft-L52">52</a> <a href="#tests-01-hex-edge-loft-L53">53</a> <a href="#tests-02-worked-examples-loft-L287">287</a> … (7 total)</td></tr>
+<tr><td><code>edge_block_surf</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L246">246</a></td><td><a href="#tests-02-worked-examples-loft-L270">HXE-006</a></td><td><a href="#src-hex-edge-loft-L456">456</a> <a href="#src-hex-edge-loft-L466">466</a> <a href="#src-hex-edge-loft-L656">656</a> <a href="#tests-02-worked-examples-loft-L295">295</a> <a href="#tests-02-worked-examples-loft-L296">296</a> <a href="#tests-02-worked-examples-loft-L298">298</a> … (8 total)</td></tr>
+<tr><td><code>edge_point</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L255">255</a></td><td>—</td><td><a href="#src-hex-edge-loft-L277">277</a> <a href="#src-hex-edge-loft-L429">429</a> <a href="#src-hex-edge-loft-L481">481</a> <a href="#tests-01-hex-edge-loft-L52">52</a> <a href="#tests-01-hex-edge-loft-L53">53</a> <a href="#tests-02-worked-examples-loft-L287">287</a> … (7 total)</td></tr>
 <tr><td><code>edge_block_arb</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L270">270</a></td><td><a href="#tests-02-worked-examples-loft-L270">HXE-006</a></td><td><a href="#tests-02-worked-examples-loft-L305">305</a> <a href="#tests-02-worked-examples-loft-L306">306</a> <a href="#tests-02-worked-examples-loft-L308">308</a> <a href="#tests-02-worked-examples-loft-L309">309</a></td></tr>
-<tr><td><code>JOIN_SMOOTH</code> <span class="search-kind">const</span></td><td><a href="#src-hex-edge-loft-L292">292</a></td><td>—</td><td><a href="#src-hex-edge-loft-L332">332</a> <a href="#tests-02-worked-examples-loft-L560">560</a> <a href="#tests-02-worked-examples-loft-L561">561</a></td></tr>
+<tr><td><code>JOIN_SMOOTH</code> <span class="search-kind">const</span></td><td><a href="#src-hex-edge-loft-L292">292</a></td><td>—</td><td><a href="#src-hex-edge-loft-L334">334</a> <a href="#tests-02-worked-examples-loft-L560">560</a> <a href="#tests-02-worked-examples-loft-L561">561</a></td></tr>
 <tr><td><code>JOIN_CORNER</code> <span class="search-kind">const</span></td><td><a href="#src-hex-edge-loft-L293">293</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L559">559</a></td></tr>
-<tr><td><code>Junctions</code> <span class="search-kind">struct</span></td><td><a href="#src-hex-edge-loft-L295">295</a></td><td>—</td><td><a href="#src-hex-edge-loft-L306">306</a> <a href="#src-hex-edge-loft-L309">309</a> <a href="#src-hex-edge-loft-L313">313</a> <a href="#src-hex-edge-loft-L323">323</a> <a href="#src-hex-edge-loft-L338">338</a></td></tr>
-<tr><td><code>junctions_new</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L306">306</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L558">558</a></td></tr>
-<tr><td><code>junction_add</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L313">313</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L559">559</a> <a href="#tests-02-worked-examples-loft-L560">560</a> <a href="#tests-02-worked-examples-loft-L561">561</a></td></tr>
-<tr><td><code>junction_ok</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L323">323</a></td><td><a href="#tests-02-worked-examples-loft-L541">HXE-011</a></td><td><a href="#tests-02-worked-examples-loft-L563">563</a> <a href="#tests-02-worked-examples-loft-L564">564</a> <a href="#tests-02-worked-examples-loft-L566">566</a></td></tr>
-<tr><td><code>junction_g0</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L338">338</a></td><td><a href="#tests-02-worked-examples-loft-L541">HXE-011</a></td><td><a href="#tests-02-worked-examples-loft-L570">570</a></td></tr>
-<tr><td><code>FEAT_DOOR</code> <span class="search-kind">const</span></td><td><a href="#src-hex-edge-loft-L361">361</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L372">372</a></td></tr>
-<tr><td><code>FEAT_WINDOW</code> <span class="search-kind">const</span></td><td><a href="#src-hex-edge-loft-L362">362</a></td><td>—</td><td>none in this package</td></tr>
-<tr><td><code>FEAT_LOOPHOLE</code> <span class="search-kind">const</span></td><td><a href="#src-hex-edge-loft-L363">363</a></td><td>—</td><td>none in this package</td></tr>
-<tr><td><code>Features</code> <span class="search-kind">struct</span></td><td><a href="#src-hex-edge-loft-L365">365</a></td><td>—</td><td><a href="#src-hex-edge-loft-L378">378</a> <a href="#src-hex-edge-loft-L382">382</a> <a href="#src-hex-edge-loft-L388">388</a> <a href="#src-hex-edge-loft-L414">414</a></td></tr>
-<tr><td><code>features_new</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L378">378</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L369">369</a></td></tr>
-<tr><td><code>feature_add</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L388">388</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L372">372</a></td></tr>
-<tr><td><code>surf_param</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L398">398</a></td><td>—</td><td><a href="#src-hex-edge-loft-L425">425</a> <a href="#tests-02-worked-examples-loft-L371">371</a> <a href="#tests-02-worked-examples-loft-L394">394</a> <a href="#tests-02-worked-examples-loft-L395">395</a></td></tr>
-<tr><td><code>apply_features</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L414">414</a></td><td><a href="#tests-02-worked-examples-loft-L347">HXE-008</a></td><td><a href="#tests-02-worked-examples-loft-L375">375</a></td></tr>
-<tr><td><code>edge_block_full</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L449">449</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L367">367</a> <a href="#tests-02-worked-examples-loft-L500">500</a> <a href="#tests-02-worked-examples-loft-L522">522</a> <a href="#tests-02-worked-examples-loft-L536">536</a></td></tr>
-<tr><td><code>SURF_NONE</code> <span class="search-kind">const</span></td><td><a href="#src-hex-edge-loft-L457">457</a></td><td>—</td><td><a href="#src-hex-edge-loft-L461">461</a> <a href="#src-hex-edge-loft-L661">661</a> <a href="#tests-02-worked-examples-loft-L332">332</a></td></tr>
-<tr><td><code>edge_block</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L460">460</a></td><td><a href="#tests-02-worked-examples-loft-L315">HXE-007</a></td><td><a href="#src-hex-edge-loft-L617">617</a> <a href="#src-hex-edge-loft-L632">632</a> <a href="#tests-02-worked-examples-loft-L37">37</a> <a href="#tests-02-worked-examples-loft-L210">210</a> <a href="#tests-02-worked-examples-loft-L253">253</a> <a href="#tests-02-worked-examples-loft-L331">331</a></td></tr>
-<tr><td><code>edge_blocked</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L466">466</a></td><td>—</td><td><a href="#src-hex-edge-loft-L484">484</a> <a href="#tests-02-worked-examples-loft-L469">469</a></td></tr>
-<tr><td><code>collide</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L472">472</a></td><td><a href="#tests-02-worked-examples-loft-L315">HXE-007</a></td><td><a href="#tests-02-worked-examples-loft-L335">335</a> <a href="#tests-02-worked-examples-loft-L336">336</a> <a href="#tests-02-worked-examples-loft-L342">342</a></td></tr>
-<tr><td><code>passable</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L483">483</a></td><td><a href="#tests-02-worked-examples-loft-L475">HXE-010</a></td><td><a href="#src-hex-edge-loft-L596">596</a> <a href="#tests-02-worked-examples-loft-L334">334</a> <a href="#tests-02-worked-examples-loft-L425">425</a> <a href="#tests-02-worked-examples-loft-L427">427</a> <a href="#tests-02-worked-examples-loft-L429">429</a> <a href="#tests-02-worked-examples-loft-L506">506</a> … (10 total)</td></tr>
-<tr><td><code>sweep_path</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L513">513</a></td><td><a href="#tests-02-worked-examples-loft-L244">HXE-005</a></td><td><a href="#tests-02-worked-examples-loft-L100">100</a> <a href="#tests-02-worked-examples-loft-L111">111</a> <a href="#tests-02-worked-examples-loft-L151">151</a> <a href="#tests-02-worked-examples-loft-L186">186</a> <a href="#tests-02-worked-examples-loft-L216">216</a> <a href="#tests-02-worked-examples-loft-L233">233</a> … (12 total)</td></tr>
-<tr><td><code>sweep_path_from</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L549">549</a></td><td><a href="#tests-02-worked-examples-loft-L122">HXE-003</a></td><td><a href="#src-hex-edge-loft-L516">516</a> <a href="#tests-02-worked-examples-loft-L155">155</a></td></tr>
-<tr><td><code>edges_cut</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L610">610</a></td><td><a href="#tests-02-worked-examples-loft-L398">HXE-009</a></td><td><a href="#tests-02-worked-examples-loft-L416">416</a></td></tr>
-<tr><td><code>edges_solid</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L628">628</a></td><td><a href="#tests-02-worked-examples-loft-L398">HXE-009</a></td><td><a href="#tests-02-worked-examples-loft-L418">418</a></td></tr>
-<tr><td><code>edges_halfplane_surf</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L640">640</a></td><td>—</td><td><a href="#src-hex-edge-loft-L661">661</a></td></tr>
-<tr><td><code>edges_halfplane</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L659">659</a></td><td><a href="#tests-02-worked-examples-loft-L398">HXE-009</a></td><td><a href="#tests-02-worked-examples-loft-L437">437</a> <a href="#tests-02-worked-examples-loft-L451">451</a></td></tr>
-<tr><td><code>sight_clear</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L682">682</a></td><td><a href="#tests-02-worked-examples-loft-L475">HXE-010</a></td><td><a href="#tests-02-worked-examples-loft-L507">507</a> <a href="#tests-02-worked-examples-loft-L524">524</a></td></tr>
-<tr><td><code>surf_point</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L719">719</a></td><td><a href="#tests-02-worked-examples-loft-L347">HXE-008</a></td><td><a href="#tests-02-worked-examples-loft-L393">393</a></td></tr>
+<tr><td><code>Junctions</code> <span class="search-kind">struct</span></td><td><a href="#src-hex-edge-loft-L297">297</a></td><td>—</td><td><a href="#src-hex-edge-loft-L308">308</a> <a href="#src-hex-edge-loft-L311">311</a> <a href="#src-hex-edge-loft-L315">315</a> <a href="#src-hex-edge-loft-L325">325</a> <a href="#src-hex-edge-loft-L340">340</a></td></tr>
+<tr><td><code>junctions_new</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L308">308</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L558">558</a></td></tr>
+<tr><td><code>junction_add</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L315">315</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L559">559</a> <a href="#tests-02-worked-examples-loft-L560">560</a> <a href="#tests-02-worked-examples-loft-L561">561</a></td></tr>
+<tr><td><code>junction_ok</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L325">325</a></td><td><a href="#tests-02-worked-examples-loft-L541">HXE-011</a></td><td><a href="#tests-02-worked-examples-loft-L563">563</a> <a href="#tests-02-worked-examples-loft-L564">564</a> <a href="#tests-02-worked-examples-loft-L566">566</a></td></tr>
+<tr><td><code>junction_g0</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L340">340</a></td><td><a href="#tests-02-worked-examples-loft-L541">HXE-011</a></td><td><a href="#tests-02-worked-examples-loft-L570">570</a></td></tr>
+<tr><td><code>FEAT_DOOR</code> <span class="search-kind">const</span></td><td><a href="#src-hex-edge-loft-L363">363</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L372">372</a></td></tr>
+<tr><td><code>FEAT_WINDOW</code> <span class="search-kind">const</span></td><td><a href="#src-hex-edge-loft-L364">364</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>FEAT_LOOPHOLE</code> <span class="search-kind">const</span></td><td><a href="#src-hex-edge-loft-L365">365</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>Features</code> <span class="search-kind">struct</span></td><td><a href="#src-hex-edge-loft-L370">370</a></td><td>—</td><td><a href="#src-hex-edge-loft-L383">383</a> <a href="#src-hex-edge-loft-L387">387</a> <a href="#src-hex-edge-loft-L393">393</a> <a href="#src-hex-edge-loft-L419">419</a></td></tr>
+<tr><td><code>features_new</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L383">383</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L369">369</a></td></tr>
+<tr><td><code>feature_add</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L393">393</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L372">372</a></td></tr>
+<tr><td><code>surf_param</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L403">403</a></td><td>—</td><td><a href="#src-hex-edge-loft-L430">430</a> <a href="#tests-02-worked-examples-loft-L371">371</a> <a href="#tests-02-worked-examples-loft-L394">394</a> <a href="#tests-02-worked-examples-loft-L395">395</a></td></tr>
+<tr><td><code>apply_features</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L419">419</a></td><td><a href="#tests-02-worked-examples-loft-L347">HXE-008</a></td><td><a href="#tests-02-worked-examples-loft-L375">375</a></td></tr>
+<tr><td><code>edge_block_full</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L454">454</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L367">367</a> <a href="#tests-02-worked-examples-loft-L500">500</a> <a href="#tests-02-worked-examples-loft-L522">522</a> <a href="#tests-02-worked-examples-loft-L536">536</a></td></tr>
+<tr><td><code>SURF_NONE</code> <span class="search-kind">const</span></td><td><a href="#src-hex-edge-loft-L462">462</a></td><td>—</td><td><a href="#src-hex-edge-loft-L466">466</a> <a href="#src-hex-edge-loft-L666">666</a> <a href="#tests-02-worked-examples-loft-L332">332</a></td></tr>
+<tr><td><code>edge_block</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L465">465</a></td><td><a href="#tests-02-worked-examples-loft-L315">HXE-007</a></td><td><a href="#src-hex-edge-loft-L622">622</a> <a href="#src-hex-edge-loft-L637">637</a> <a href="#tests-02-worked-examples-loft-L37">37</a> <a href="#tests-02-worked-examples-loft-L210">210</a> <a href="#tests-02-worked-examples-loft-L253">253</a> <a href="#tests-02-worked-examples-loft-L331">331</a></td></tr>
+<tr><td><code>edge_blocked</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L471">471</a></td><td>—</td><td><a href="#src-hex-edge-loft-L489">489</a> <a href="#tests-02-worked-examples-loft-L469">469</a></td></tr>
+<tr><td><code>collide</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L477">477</a></td><td><a href="#tests-02-worked-examples-loft-L315">HXE-007</a></td><td><a href="#tests-02-worked-examples-loft-L335">335</a> <a href="#tests-02-worked-examples-loft-L336">336</a> <a href="#tests-02-worked-examples-loft-L342">342</a></td></tr>
+<tr><td><code>passable</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L488">488</a></td><td><a href="#tests-02-worked-examples-loft-L475">HXE-010</a></td><td><a href="#src-hex-edge-loft-L601">601</a> <a href="#tests-02-worked-examples-loft-L334">334</a> <a href="#tests-02-worked-examples-loft-L425">425</a> <a href="#tests-02-worked-examples-loft-L427">427</a> <a href="#tests-02-worked-examples-loft-L429">429</a> <a href="#tests-02-worked-examples-loft-L506">506</a> … (10 total)</td></tr>
+<tr><td><code>sweep_path</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L518">518</a></td><td><a href="#tests-02-worked-examples-loft-L244">HXE-005</a></td><td><a href="#tests-02-worked-examples-loft-L100">100</a> <a href="#tests-02-worked-examples-loft-L111">111</a> <a href="#tests-02-worked-examples-loft-L151">151</a> <a href="#tests-02-worked-examples-loft-L186">186</a> <a href="#tests-02-worked-examples-loft-L216">216</a> <a href="#tests-02-worked-examples-loft-L233">233</a> … (12 total)</td></tr>
+<tr><td><code>sweep_path_from</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L554">554</a></td><td><a href="#tests-02-worked-examples-loft-L122">HXE-003</a></td><td><a href="#src-hex-edge-loft-L521">521</a> <a href="#tests-02-worked-examples-loft-L155">155</a></td></tr>
+<tr><td><code>edges_cut</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L615">615</a></td><td><a href="#tests-02-worked-examples-loft-L398">HXE-009</a></td><td><a href="#tests-02-worked-examples-loft-L416">416</a></td></tr>
+<tr><td><code>edges_solid</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L633">633</a></td><td><a href="#tests-02-worked-examples-loft-L398">HXE-009</a></td><td><a href="#tests-02-worked-examples-loft-L418">418</a></td></tr>
+<tr><td><code>edges_halfplane_surf</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L645">645</a></td><td>—</td><td><a href="#src-hex-edge-loft-L666">666</a></td></tr>
+<tr><td><code>edges_halfplane</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L664">664</a></td><td><a href="#tests-02-worked-examples-loft-L398">HXE-009</a></td><td><a href="#tests-02-worked-examples-loft-L437">437</a> <a href="#tests-02-worked-examples-loft-L451">451</a></td></tr>
+<tr><td><code>sight_clear</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L687">687</a></td><td><a href="#tests-02-worked-examples-loft-L475">HXE-010</a></td><td><a href="#tests-02-worked-examples-loft-L507">507</a> <a href="#tests-02-worked-examples-loft-L524">524</a></td></tr>
+<tr><td><code>surf_point</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-edge-loft-L724">724</a></td><td><a href="#tests-02-worked-examples-loft-L347">HXE-008</a></td><td><a href="#tests-02-worked-examples-loft-L393">393</a></td></tr>
 </table>
 <h2 id="src-hex-edge-loft">src/hex_edge.loft</h2>
 <pre class="src"><code><span id="src-hex-edge-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -375,445 +375,450 @@
 <span id="src-hex-edge-loft-L292"><span class="kw">pub</span> const <span class="en">JOIN_SMOOTH</span> = <span class="nm">1</span>;      <span class="cm">// G1 intended — tangents must agree</span></span>
 <span id="src-hex-edge-loft-L293"><span class="kw">pub</span> const <span class="en">JOIN_CORNER</span> = <span class="nm">2</span>;      <span class="cm">// a deliberate angle — a corner on purpose</span></span>
 <span id="src-hex-edge-loft-L294"></span>
-<span id="src-hex-edge-loft-L295"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Junctions</span> {</span>
-<span id="src-hex-edge-loft-L296">  jn_a:    <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,</span>
-<span id="src-hex-edge-loft-L297">  jn_b:    <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,</span>
-<span id="src-hex-edge-loft-L298">  jn_kind: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,</span>
-<span id="src-hex-edge-loft-L299">  jn_x:    <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;,</span>
-<span id="src-hex-edge-loft-L300">  jn_y:    <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;,</span>
-<span id="src-hex-edge-loft-L301">  jn_n:    <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-hex-edge-loft-L302">}</span>
-<span id="src-hex-edge-loft-L303"></span>
-<span id="src-hex-edge-loft-L304"><span class="cm">// An empty set of junctions: where walls meet, for consumers that draw a corner post or</span></span>
-<span id="src-hex-edge-loft-L305"><span class="cm">// need to know a wall's ends rather than just its middle.</span></span>
-<span id="src-hex-edge-loft-L306"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">junctions_new</span>() -&gt; <span class="en">Junctions</span> {</span>
-<span id="src-hex-edge-loft-L307">  a: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = []; b: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = []; k: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
-<span id="src-hex-edge-loft-L308">  x: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt; = []; y: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt; = [];</span>
-<span id="src-hex-edge-loft-L309">  <span class="en">Junctions</span> { jn_a: a, jn_b: b, jn_kind: k, jn_x: x, jn_y: y, jn_n: <span class="nm">0</span> }</span>
-<span id="src-hex-edge-loft-L310">}</span>
-<span id="src-hex-edge-loft-L311"></span>
-<span id="src-hex-edge-loft-L312"><span class="cm">// Record that two surfaces meet here, of this kind, at this world point.</span></span>
-<span id="src-hex-edge-loft-L313"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">junction_add</span>(j: <span class="en">Junctions</span>, sa: <span class="ty"><a href="stdlib-types.html">integer</a></span>, sb: <span class="ty"><a href="stdlib-types.html">integer</a></span>, kind: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-hex-edge-loft-L314">                    x: <span class="ty"><a href="stdlib-types.html">float</a></span>, y: <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
-<span id="src-hex-edge-loft-L315">  j.jn_a += [sa]; j.jn_b += [sb]; j.jn_kind += [kind];</span>
-<span id="src-hex-edge-loft-L316">  j.jn_x += [x]; j.jn_y += [y];</span>
-<span id="src-hex-edge-loft-L317">  j.jn_n = j.jn_n + <span class="nm">1</span>;</span>
-<span id="src-hex-edge-loft-L318">}</span>
-<span id="src-hex-edge-loft-L319"></span>
-<span id="src-hex-edge-loft-L320"><span class="cm">// Does the junction honour what was intended?  G0 is exact by construction (both</span></span>
-<span id="src-hex-edge-loft-L321"><span class="cm">// surfaces pass through the seam point); this checks the TANGENT.</span></span>
-<span id="src-hex-edge-loft-L322"><span class="cm">// Example: @HXE-011</span></span>
-<span id="src-hex-edge-loft-L323"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">junction_ok</span>(j: <span class="en">Junctions</span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>, sf: <span class="en">Surfaces</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
-<span id="src-hex-edge-loft-L324">  sa = j.jn_a[i] ?? <span class="nm">0</span>;</span>
-<span id="src-hex-edge-loft-L325">  sb = j.jn_b[i] ?? <span class="nm">0</span>;</span>
-<span id="src-hex-edge-loft-L326">  x = j.jn_x[i] ?? <span class="nm">0.0</span>;</span>
-<span id="src-hex-edge-loft-L327">  y = j.jn_y[i] ?? <span class="nm">0.0</span>;</span>
-<span id="src-hex-edge-loft-L328">  (ax, ay) = <span class="fn-call">surf_normal</span>(sf, sa, x, y);</span>
-<span id="src-hex-edge-loft-L329">  (bx, by) = <span class="fn-call">surf_normal</span>(sf, sb, x, y);</span>
-<span id="src-hex-edge-loft-L330">  dot = ax * bx + ay * by;</span>
-<span id="src-hex-edge-loft-L331">  <span class="kw">if</span> dot &lt; <span class="nm">0.0</span> { dot = <span class="nm">0.0</span> - dot; }</span>
-<span id="src-hex-edge-loft-L332">  <span class="kw">if</span> (j.jn_kind[i] ?? <span class="nm">0</span>) == <span class="en">JOIN_SMOOTH</span> { <span class="kw">return</span> dot &gt; <span class="nm">0.999</span>; }</span>
-<span id="src-hex-edge-loft-L333">  dot &lt; <span class="nm">0.999</span></span>
-<span id="src-hex-edge-loft-L334">}</span>
-<span id="src-hex-edge-loft-L335"></span>
-<span id="src-hex-edge-loft-L336"><span class="cm">// G0: both surfaces must actually pass through the seam point.</span></span>
-<span id="src-hex-edge-loft-L337"><span class="cm">// Example: @HXE-011</span></span>
-<span id="src-hex-edge-loft-L338"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">junction_g0</span>(j: <span class="en">Junctions</span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>, sf: <span class="en">Surfaces</span>, tol: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
-<span id="src-hex-edge-loft-L339">  x = j.jn_x[i] ?? <span class="nm">0.0</span>;</span>
-<span id="src-hex-edge-loft-L340">  y = j.jn_y[i] ?? <span class="nm">0.0</span>;</span>
-<span id="src-hex-edge-loft-L341">  da = <span class="fn-call">surf_distance</span>(sf, j.jn_a[i] ?? <span class="nm">0</span>, x, y);</span>
-<span id="src-hex-edge-loft-L342">  db = <span class="fn-call">surf_distance</span>(sf, j.jn_b[i] ?? <span class="nm">0</span>, x, y);</span>
-<span id="src-hex-edge-loft-L343">  da &lt;= tol &amp;&amp; db &lt;= tol</span>
-<span id="src-hex-edge-loft-L344">}</span>
-<span id="src-hex-edge-loft-L345"></span>
-<span id="src-hex-edge-loft-L346"><span class="cm">// ── FEATURES — doors, windows, loopholes ────────────────────────────────────</span></span>
-<span id="src-hex-edge-loft-L347"><span class="cm">//</span></span>
-<span id="src-hex-edge-loft-L348"><span class="cm">// A feature is an INTERVAL ON THE SURFACE, never a hole cut in the cell outline. That is</span></span>
-<span id="src-hex-edge-loft-L349"><span class="cm">// forced by measurement: the traced boundary turns at every vertex, so an opening cut</span></span>
-<span id="src-hex-edge-loft-L350"><span class="cm">// from cells can never be straight beyond one 1.0-unit edge. On the surface it is</span></span>
-<span id="src-hex-edge-loft-L351"><span class="cm">// [s0,s1] of an exact straight or arc — straight because the surface is, at any width.</span></span>
-<span id="src-hex-edge-loft-L352"><span class="cm">//</span></span>
-<span id="src-hex-edge-loft-L353"><span class="cm">// It carries a VERTICAL interval too. A window is sill..head, and Materials.height is a</span></span>
-<span id="src-hex-edge-loft-L354"><span class="cm">// single scalar that can only say "a wall of height h" — so without (z0,z1) a window</span></span>
-<span id="src-hex-edge-loft-L355"><span class="cm">// cannot be expressed at all.</span></span>
-<span id="src-hex-edge-loft-L356"><span class="cm">//</span></span>
-<span id="src-hex-edge-loft-L357"><span class="cm">// And it points at its own MATERIAL rather than replacing terms one by one: a door</span></span>
-<span id="src-hex-edge-loft-L358"><span class="cm">// changes `solid`, a window changes `opacity`/`sound`/`permeability` but NOT `solid`</span></span>
-<span id="src-hex-edge-loft-L359"><span class="cm">// (you cannot walk through it). Pointing at a material expresses "override this subset"</span></span>
-<span id="src-hex-edge-loft-L360"><span class="cm">// without inventing a per-term override mechanism.</span></span>
-<span id="src-hex-edge-loft-L361"><span class="kw">pub</span> const <span class="en">FEAT_DOOR</span>     = <span class="nm">1</span>;</span>
-<span id="src-hex-edge-loft-L362"><span class="kw">pub</span> const <span class="en">FEAT_WINDOW</span>   = <span class="nm">2</span>;</span>
-<span id="src-hex-edge-loft-L363"><span class="kw">pub</span> const <span class="en">FEAT_LOOPHOLE</span> = <span class="nm">3</span>;</span>
-<span id="src-hex-edge-loft-L364"></span>
-<span id="src-hex-edge-loft-L365"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Features</span> {</span>
-<span id="src-hex-edge-loft-L366">  fe_surf: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,</span>
-<span id="src-hex-edge-loft-L367">  fe_s0:   <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;,     <span class="cm">// interval along the surface parameter</span></span>
-<span id="src-hex-edge-loft-L368">  fe_s1:   <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;,</span>
-<span id="src-hex-edge-loft-L369">  fe_z0:   <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;,     <span class="cm">// vertical extent: sill..head</span></span>
-<span id="src-hex-edge-loft-L370">  fe_z1:   <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;,</span>
-<span id="src-hex-edge-loft-L371">  fe_kind: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,</span>
-<span id="src-hex-edge-loft-L372">  fe_mat:  <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,   <span class="cm">// the material INSIDE the feature</span></span>
-<span id="src-hex-edge-loft-L373">  fe_n:    <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-hex-edge-loft-L374">}</span>
-<span id="src-hex-edge-loft-L375"></span>
-<span id="src-hex-edge-loft-L376"><span class="cm">// An empty set of features: doors, windows and openings placed ALONG a surface rather</span></span>
-<span id="src-hex-edge-loft-L377"><span class="cm">// than replacing it, so the wall stays one wall with holes in it.</span></span>
-<span id="src-hex-edge-loft-L378"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">features_new</span>() -&gt; <span class="en">Features</span> {</span>
-<span id="src-hex-edge-loft-L379">  a: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = []; b: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt; = []; c: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt; = [];</span>
-<span id="src-hex-edge-loft-L380">  d: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt; = []; e: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt; = []; k: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
-<span id="src-hex-edge-loft-L381">  m: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
-<span id="src-hex-edge-loft-L382">  <span class="en">Features</span> { fe_surf: a, fe_s0: b, fe_s1: c, fe_z0: d, fe_z1: e,</span>
-<span id="src-hex-edge-loft-L383">             fe_kind: k, fe_mat: m, fe_n: <span class="nm">0</span> }</span>
-<span id="src-hex-edge-loft-L384">}</span>
-<span id="src-hex-edge-loft-L385"></span>
-<span id="src-hex-edge-loft-L386"><span class="cm">// Place a feature on a surface, between two positions along it and two heights up it, so a</span></span>
-<span id="src-hex-edge-loft-L387"><span class="cm">// door or a window is a hole IN a wall rather than a break in it.</span></span>
-<span id="src-hex-edge-loft-L388"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">feature_add</span>(f: <span class="en">Features</span>, surf: <span class="ty"><a href="stdlib-types.html">integer</a></span>, s0: <span class="ty"><a href="stdlib-types.html">float</a></span>, s1: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
-<span id="src-hex-edge-loft-L389">                   z0: <span class="ty"><a href="stdlib-types.html">float</a></span>, z1: <span class="ty"><a href="stdlib-types.html">float</a></span>, kind: <span class="ty"><a href="stdlib-types.html">integer</a></span>, mat: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-hex-edge-loft-L390">  f.fe_surf += [surf]; f.fe_s0 += [s0]; f.fe_s1 += [s1];</span>
-<span id="src-hex-edge-loft-L391">  f.fe_z0 += [z0]; f.fe_z1 += [z1]; f.fe_kind += [kind]; f.fe_mat += [mat];</span>
-<span id="src-hex-edge-loft-L392">  f.fe_n = f.fe_n + <span class="nm">1</span>;</span>
-<span id="src-hex-edge-loft-L393">  f.fe_n - <span class="nm">1</span></span>
-<span id="src-hex-edge-loft-L394">}</span>
-<span id="src-hex-edge-loft-L395"></span>
-<span id="src-hex-edge-loft-L396"><span class="cm">// Where along surface `id` does this point sit?  Straight: distance along its direction.</span></span>
-<span id="src-hex-edge-loft-L397"><span class="cm">// Arc: arc length from angle 0.  This is the parameter a feature interval is stated in.</span></span>
-<span id="src-hex-edge-loft-L398"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">surf_param</span>(s: <span class="en">Surfaces</span>, id: <span class="ty"><a href="stdlib-types.html">integer</a></span>, px: <span class="ty"><a href="stdlib-types.html">float</a></span>, py: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
-<span id="src-hex-edge-loft-L399">  <span class="kw">if</span> id &lt;= <span class="nm">0</span> || id &gt;= s.sf_n { <span class="kw">return</span> <span class="nm">0.0</span>; }</span>
-<span id="src-hex-edge-loft-L400">  <span class="kw">if</span> (s.sf_kind[id] ?? <span class="nm">0</span>) == <span class="nm">1</span> {</span>
-<span id="src-hex-edge-loft-L401">    nx = s.sf_a[id] ?? <span class="nm">0.0</span>;</span>
-<span id="src-hex-edge-loft-L402">    ny = s.sf_b[id] ?? <span class="nm">0.0</span>;</span>
-<span id="src-hex-edge-loft-L403">    <span class="kw">return</span> (<span class="nm">0.0</span> - ny) * px + nx * py;</span>
-<span id="src-hex-edge-loft-L404">  }</span>
-<span id="src-hex-edge-loft-L405">  cx = s.sf_a[id] ?? <span class="nm">0.0</span>;</span>
-<span id="src-hex-edge-loft-L406">  cy = s.sf_b[id] ?? <span class="nm">0.0</span>;</span>
-<span id="src-hex-edge-loft-L407">  <span class="fn-call"><a href="stdlib-math.html">atan2</a></span>(py - cy, px - cx) * (s.sf_c[id] ?? <span class="nm">1.0</span>)</span>
-<span id="src-hex-edge-loft-L408">}</span>
-<span id="src-hex-edge-loft-L409"></span>
-<span id="src-hex-edge-loft-L410"><span class="cm">// Apply every feature to the edge layer: an edge whose contact point falls inside a</span></span>
-<span id="src-hex-edge-loft-L411"><span class="cm">// feature's interval takes that feature's material.  The SURFACE is untouched — which is</span></span>
-<span id="src-hex-edge-loft-L412"><span class="cm">// why the body never fragments and the matcher still sees one wall.</span></span>
-<span id="src-hex-edge-loft-L413"><span class="cm">// Example: @HXE-008</span></span>
-<span id="src-hex-edge-loft-L414"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">apply_features</span>(e: <span class="en">EdgeSet</span>, sf: <span class="en">Surfaces</span>, f: <span class="en">Features</span>,</span>
-<span id="src-hex-edge-loft-L415">                      q0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, w: <span class="ty"><a href="stdlib-types.html">integer</a></span>, h: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-hex-edge-loft-L416">  hits = <span class="nm">0</span>;</span>
-<span id="src-hex-edge-loft-L417">  <span class="kw">for</span> r <span class="kw">in</span> r0..r0 + h {</span>
-<span id="src-hex-edge-loft-L418">    <span class="kw">for</span> q <span class="kw">in</span> q0..q0 + w {</span>
-<span id="src-hex-edge-loft-L419">      <span class="kw">for</span> d <span class="kw">in</span> <span class="nm">0..6</span> {</span>
-<span id="src-hex-edge-loft-L420">        nq = <span class="fn-call">nb_q</span>(q, r, d);</span>
-<span id="src-hex-edge-loft-L421">        nr = <span class="fn-call">nb_r</span>(q, r, d);</span>
-<span id="src-hex-edge-loft-L422">        sid = <span class="fn-call">edge_surf</span>(e, q, r, nq, nr);</span>
-<span id="src-hex-edge-loft-L423">        <span class="kw">if</span> sid &gt; <span class="nm">0</span> {</span>
-<span id="src-hex-edge-loft-L424">          (px, py) = <span class="fn-call">edge_point</span>(q, r, nq, nr);</span>
-<span id="src-hex-edge-loft-L425">          t = <span class="fn-call">surf_param</span>(sf, sid, px, py);</span>
-<span id="src-hex-edge-loft-L426">          <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..f</span>.fe_n {</span>
-<span id="src-hex-edge-loft-L427">            <span class="kw">if</span> (f.fe_surf[i] ?? -<span class="nm">1</span>) == sid {</span>
-<span id="src-hex-edge-loft-L428">              lo = f.fe_s0[i] ?? <span class="nm">0.0</span>;</span>
-<span id="src-hex-edge-loft-L429">              hi = f.fe_s1[i] ?? <span class="nm">0.0</span>;</span>
-<span id="src-hex-edge-loft-L430">              <span class="kw">if</span> t &gt;= lo &amp;&amp; t &lt;= hi {</span>
-<span id="src-hex-edge-loft-L431">                <span class="cm">// Through the accessor rather than an index this loop already holds: the</span></span>
-<span id="src-hex-edge-loft-L432">                <span class="cm">// library keeps its layout private, and one extra index computation per</span></span>
-<span id="src-hex-edge-loft-L433">                <span class="cm">// feature hit is a build-time cost, not a per-frame one.</span></span>
-<span id="src-hex-edge-loft-L434">                <span class="fn-call">edge_set_mat</span>(e, q, r, nq, nr, f.fe_mat[i] ?? <span class="nm">0</span>);</span>
-<span id="src-hex-edge-loft-L435">                hits = hits + <span class="nm">1</span>;</span>
-<span id="src-hex-edge-loft-L436">              }</span>
-<span id="src-hex-edge-loft-L437">            }</span>
-<span id="src-hex-edge-loft-L438">          }</span>
-<span id="src-hex-edge-loft-L439">        }</span>
-<span id="src-hex-edge-loft-L440">      }</span>
-<span id="src-hex-edge-loft-L441">    }</span>
-<span id="src-hex-edge-loft-L442">  }</span>
-<span id="src-hex-edge-loft-L443">  hits</span>
-<span id="src-hex-edge-loft-L444">}</span>
-<span id="src-hex-edge-loft-L445"></span>
-<span id="src-hex-edge-loft-L446"><span class="cm">// Record BOTH halves: which surface (geometry) and which material (physics).  The surface</span></span>
-<span id="src-hex-edge-loft-L447"><span class="cm">// keeps first-writer-wins; the material does NOT, because a feature (a door, a window)</span></span>
-<span id="src-hex-edge-loft-L448"><span class="cm">// legitimately retargets the material of an edge whose surface is already settled.</span></span>
-<span id="src-hex-edge-loft-L449"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">edge_block_full</span>(e: <span class="en">EdgeSet</span>, qa: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ra: <span class="ty"><a href="stdlib-types.html">integer</a></span>, qb: <span class="ty"><a href="stdlib-types.html">integer</a></span>, rb: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-hex-edge-loft-L450">                       surf: <span class="ty"><a href="stdlib-types.html">integer</a></span>, mat: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
-<span id="src-hex-edge-loft-L451">  <span class="fn-call">edge_block_surf</span>(e, qa, ra, qb, rb, surf);</span>
-<span id="src-hex-edge-loft-L452">  <span class="fn-call">edge_set_mat</span>(e, qa, ra, qb, rb, mat);</span>
-<span id="src-hex-edge-loft-L453">}</span>
-<span id="src-hex-edge-loft-L454"></span>
-<span id="src-hex-edge-loft-L455"><span class="cm">// A bare blocker with no recoverable geometry: an id no `Surfaces` table reaches, so the</span></span>
-<span id="src-hex-edge-loft-L456"><span class="cm">// edge is blocked but `collide` reports a (0,0) normal.</span></span>
-<span id="src-hex-edge-loft-L457"><span class="kw">pub</span> const <span class="en">SURF_NONE</span> = <span class="nm">65535</span>;</span>
-<span id="src-hex-edge-loft-L458"></span>
-<span id="src-hex-edge-loft-L459"><span class="cm">// Example: @HXE-007</span></span>
-<span id="src-hex-edge-loft-L460"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">edge_block</span>(e: <span class="en">EdgeSet</span>, qa: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ra: <span class="ty"><a href="stdlib-types.html">integer</a></span>, qb: <span class="ty"><a href="stdlib-types.html">integer</a></span>, rb: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
-<span id="src-hex-edge-loft-L461">  <span class="fn-call">edge_block_surf</span>(e, qa, ra, qb, rb, <span class="en">SURF_NONE</span>);</span>
-<span id="src-hex-edge-loft-L462">}</span>
+<span id="src-hex-edge-loft-L295"><span class="cm">// Where surfaces meet: for each junction, the two surfaces, the continuity intended there</span></span>
+<span id="src-hex-edge-loft-L296"><span class="cm">// (`JOIN_SMOOTH`, `JOIN_CORNER`) and its position.  `junctions_new` makes an empty set.</span></span>
+<span id="src-hex-edge-loft-L297"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Junctions</span> {</span>
+<span id="src-hex-edge-loft-L298">  jn_a:    <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,</span>
+<span id="src-hex-edge-loft-L299">  jn_b:    <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,</span>
+<span id="src-hex-edge-loft-L300">  jn_kind: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,</span>
+<span id="src-hex-edge-loft-L301">  jn_x:    <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;,</span>
+<span id="src-hex-edge-loft-L302">  jn_y:    <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;,</span>
+<span id="src-hex-edge-loft-L303">  jn_n:    <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-hex-edge-loft-L304">}</span>
+<span id="src-hex-edge-loft-L305"></span>
+<span id="src-hex-edge-loft-L306"><span class="cm">// An empty set of junctions: where walls meet, for consumers that draw a corner post or</span></span>
+<span id="src-hex-edge-loft-L307"><span class="cm">// need to know a wall's ends rather than just its middle.</span></span>
+<span id="src-hex-edge-loft-L308"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">junctions_new</span>() -&gt; <span class="en">Junctions</span> {</span>
+<span id="src-hex-edge-loft-L309">  a: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = []; b: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = []; k: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
+<span id="src-hex-edge-loft-L310">  x: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt; = []; y: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt; = [];</span>
+<span id="src-hex-edge-loft-L311">  <span class="en">Junctions</span> { jn_a: a, jn_b: b, jn_kind: k, jn_x: x, jn_y: y, jn_n: <span class="nm">0</span> }</span>
+<span id="src-hex-edge-loft-L312">}</span>
+<span id="src-hex-edge-loft-L313"></span>
+<span id="src-hex-edge-loft-L314"><span class="cm">// Record that two surfaces meet here, of this kind, at this world point.</span></span>
+<span id="src-hex-edge-loft-L315"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">junction_add</span>(j: <span class="en">Junctions</span>, sa: <span class="ty"><a href="stdlib-types.html">integer</a></span>, sb: <span class="ty"><a href="stdlib-types.html">integer</a></span>, kind: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-hex-edge-loft-L316">                    x: <span class="ty"><a href="stdlib-types.html">float</a></span>, y: <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
+<span id="src-hex-edge-loft-L317">  j.jn_a += [sa]; j.jn_b += [sb]; j.jn_kind += [kind];</span>
+<span id="src-hex-edge-loft-L318">  j.jn_x += [x]; j.jn_y += [y];</span>
+<span id="src-hex-edge-loft-L319">  j.jn_n = j.jn_n + <span class="nm">1</span>;</span>
+<span id="src-hex-edge-loft-L320">}</span>
+<span id="src-hex-edge-loft-L321"></span>
+<span id="src-hex-edge-loft-L322"><span class="cm">// Does the junction honour what was intended?  G0 is exact by construction (both</span></span>
+<span id="src-hex-edge-loft-L323"><span class="cm">// surfaces pass through the seam point); this checks the TANGENT.</span></span>
+<span id="src-hex-edge-loft-L324"><span class="cm">// Example: @HXE-011</span></span>
+<span id="src-hex-edge-loft-L325"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">junction_ok</span>(j: <span class="en">Junctions</span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>, sf: <span class="en">Surfaces</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-hex-edge-loft-L326">  sa = j.jn_a[i] ?? <span class="nm">0</span>;</span>
+<span id="src-hex-edge-loft-L327">  sb = j.jn_b[i] ?? <span class="nm">0</span>;</span>
+<span id="src-hex-edge-loft-L328">  x = j.jn_x[i] ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-edge-loft-L329">  y = j.jn_y[i] ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-edge-loft-L330">  (ax, ay) = <span class="fn-call">surf_normal</span>(sf, sa, x, y);</span>
+<span id="src-hex-edge-loft-L331">  (bx, by) = <span class="fn-call">surf_normal</span>(sf, sb, x, y);</span>
+<span id="src-hex-edge-loft-L332">  dot = ax * bx + ay * by;</span>
+<span id="src-hex-edge-loft-L333">  <span class="kw">if</span> dot &lt; <span class="nm">0.0</span> { dot = <span class="nm">0.0</span> - dot; }</span>
+<span id="src-hex-edge-loft-L334">  <span class="kw">if</span> (j.jn_kind[i] ?? <span class="nm">0</span>) == <span class="en">JOIN_SMOOTH</span> { <span class="kw">return</span> dot &gt; <span class="nm">0.999</span>; }</span>
+<span id="src-hex-edge-loft-L335">  dot &lt; <span class="nm">0.999</span></span>
+<span id="src-hex-edge-loft-L336">}</span>
+<span id="src-hex-edge-loft-L337"></span>
+<span id="src-hex-edge-loft-L338"><span class="cm">// G0: both surfaces must actually pass through the seam point.</span></span>
+<span id="src-hex-edge-loft-L339"><span class="cm">// Example: @HXE-011</span></span>
+<span id="src-hex-edge-loft-L340"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">junction_g0</span>(j: <span class="en">Junctions</span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>, sf: <span class="en">Surfaces</span>, tol: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-hex-edge-loft-L341">  x = j.jn_x[i] ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-edge-loft-L342">  y = j.jn_y[i] ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-edge-loft-L343">  da = <span class="fn-call">surf_distance</span>(sf, j.jn_a[i] ?? <span class="nm">0</span>, x, y);</span>
+<span id="src-hex-edge-loft-L344">  db = <span class="fn-call">surf_distance</span>(sf, j.jn_b[i] ?? <span class="nm">0</span>, x, y);</span>
+<span id="src-hex-edge-loft-L345">  da &lt;= tol &amp;&amp; db &lt;= tol</span>
+<span id="src-hex-edge-loft-L346">}</span>
+<span id="src-hex-edge-loft-L347"></span>
+<span id="src-hex-edge-loft-L348"><span class="cm">// ── FEATURES — doors, windows, loopholes ────────────────────────────────────</span></span>
+<span id="src-hex-edge-loft-L349"><span class="cm">//</span></span>
+<span id="src-hex-edge-loft-L350"><span class="cm">// A feature is an INTERVAL ON THE SURFACE, never a hole cut in the cell outline. That is</span></span>
+<span id="src-hex-edge-loft-L351"><span class="cm">// forced by measurement: the traced boundary turns at every vertex, so an opening cut</span></span>
+<span id="src-hex-edge-loft-L352"><span class="cm">// from cells can never be straight beyond one 1.0-unit edge. On the surface it is</span></span>
+<span id="src-hex-edge-loft-L353"><span class="cm">// [s0,s1] of an exact straight or arc — straight because the surface is, at any width.</span></span>
+<span id="src-hex-edge-loft-L354"><span class="cm">//</span></span>
+<span id="src-hex-edge-loft-L355"><span class="cm">// It carries a VERTICAL interval too. A window is sill..head, and Materials.height is a</span></span>
+<span id="src-hex-edge-loft-L356"><span class="cm">// single scalar that can only say "a wall of height h" — so without (z0,z1) a window</span></span>
+<span id="src-hex-edge-loft-L357"><span class="cm">// cannot be expressed at all.</span></span>
+<span id="src-hex-edge-loft-L358"><span class="cm">//</span></span>
+<span id="src-hex-edge-loft-L359"><span class="cm">// And it points at its own MATERIAL rather than replacing terms one by one: a door</span></span>
+<span id="src-hex-edge-loft-L360"><span class="cm">// changes `solid`, a window changes `opacity`/`sound`/`permeability` but NOT `solid`</span></span>
+<span id="src-hex-edge-loft-L361"><span class="cm">// (you cannot walk through it). Pointing at a material expresses "override this subset"</span></span>
+<span id="src-hex-edge-loft-L362"><span class="cm">// without inventing a per-term override mechanism.</span></span>
+<span id="src-hex-edge-loft-L363"><span class="kw">pub</span> const <span class="en">FEAT_DOOR</span>     = <span class="nm">1</span>;</span>
+<span id="src-hex-edge-loft-L364"><span class="kw">pub</span> const <span class="en">FEAT_WINDOW</span>   = <span class="nm">2</span>;</span>
+<span id="src-hex-edge-loft-L365"><span class="kw">pub</span> const <span class="en">FEAT_LOOPHOLE</span> = <span class="nm">3</span>;</span>
+<span id="src-hex-edge-loft-L366"></span>
+<span id="src-hex-edge-loft-L367"><span class="cm">// The openings cut into surfaces — doors, windows, loopholes (`FEAT_*`): for each, its</span></span>
+<span id="src-hex-edge-loft-L368"><span class="cm">// surface, its interval along it, its vertical extent (sill to head), its kind and the</span></span>
+<span id="src-hex-edge-loft-L369"><span class="cm">// material inside it.  `features_new` makes an empty set.</span></span>
+<span id="src-hex-edge-loft-L370"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Features</span> {</span>
+<span id="src-hex-edge-loft-L371">  fe_surf: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,</span>
+<span id="src-hex-edge-loft-L372">  fe_s0:   <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;,     <span class="cm">// interval along the surface parameter</span></span>
+<span id="src-hex-edge-loft-L373">  fe_s1:   <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;,</span>
+<span id="src-hex-edge-loft-L374">  fe_z0:   <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;,     <span class="cm">// vertical extent: sill..head</span></span>
+<span id="src-hex-edge-loft-L375">  fe_z1:   <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;,</span>
+<span id="src-hex-edge-loft-L376">  fe_kind: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,</span>
+<span id="src-hex-edge-loft-L377">  fe_mat:  <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,   <span class="cm">// the material INSIDE the feature</span></span>
+<span id="src-hex-edge-loft-L378">  fe_n:    <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-hex-edge-loft-L379">}</span>
+<span id="src-hex-edge-loft-L380"></span>
+<span id="src-hex-edge-loft-L381"><span class="cm">// An empty set of features: doors, windows and openings placed ALONG a surface rather</span></span>
+<span id="src-hex-edge-loft-L382"><span class="cm">// than replacing it, so the wall stays one wall with holes in it.</span></span>
+<span id="src-hex-edge-loft-L383"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">features_new</span>() -&gt; <span class="en">Features</span> {</span>
+<span id="src-hex-edge-loft-L384">  a: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = []; b: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt; = []; c: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt; = [];</span>
+<span id="src-hex-edge-loft-L385">  d: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt; = []; e: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt; = []; k: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
+<span id="src-hex-edge-loft-L386">  m: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
+<span id="src-hex-edge-loft-L387">  <span class="en">Features</span> { fe_surf: a, fe_s0: b, fe_s1: c, fe_z0: d, fe_z1: e,</span>
+<span id="src-hex-edge-loft-L388">             fe_kind: k, fe_mat: m, fe_n: <span class="nm">0</span> }</span>
+<span id="src-hex-edge-loft-L389">}</span>
+<span id="src-hex-edge-loft-L390"></span>
+<span id="src-hex-edge-loft-L391"><span class="cm">// Place a feature on a surface, between two positions along it and two heights up it, so a</span></span>
+<span id="src-hex-edge-loft-L392"><span class="cm">// door or a window is a hole IN a wall rather than a break in it.</span></span>
+<span id="src-hex-edge-loft-L393"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">feature_add</span>(f: <span class="en">Features</span>, surf: <span class="ty"><a href="stdlib-types.html">integer</a></span>, s0: <span class="ty"><a href="stdlib-types.html">float</a></span>, s1: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-hex-edge-loft-L394">                   z0: <span class="ty"><a href="stdlib-types.html">float</a></span>, z1: <span class="ty"><a href="stdlib-types.html">float</a></span>, kind: <span class="ty"><a href="stdlib-types.html">integer</a></span>, mat: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-hex-edge-loft-L395">  f.fe_surf += [surf]; f.fe_s0 += [s0]; f.fe_s1 += [s1];</span>
+<span id="src-hex-edge-loft-L396">  f.fe_z0 += [z0]; f.fe_z1 += [z1]; f.fe_kind += [kind]; f.fe_mat += [mat];</span>
+<span id="src-hex-edge-loft-L397">  f.fe_n = f.fe_n + <span class="nm">1</span>;</span>
+<span id="src-hex-edge-loft-L398">  f.fe_n - <span class="nm">1</span></span>
+<span id="src-hex-edge-loft-L399">}</span>
+<span id="src-hex-edge-loft-L400"></span>
+<span id="src-hex-edge-loft-L401"><span class="cm">// Where along surface `id` does this point sit?  Straight: distance along its direction.</span></span>
+<span id="src-hex-edge-loft-L402"><span class="cm">// Arc: arc length from angle 0.  This is the parameter a feature interval is stated in.</span></span>
+<span id="src-hex-edge-loft-L403"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">surf_param</span>(s: <span class="en">Surfaces</span>, id: <span class="ty"><a href="stdlib-types.html">integer</a></span>, px: <span class="ty"><a href="stdlib-types.html">float</a></span>, py: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="src-hex-edge-loft-L404">  <span class="kw">if</span> id &lt;= <span class="nm">0</span> || id &gt;= s.sf_n { <span class="kw">return</span> <span class="nm">0.0</span>; }</span>
+<span id="src-hex-edge-loft-L405">  <span class="kw">if</span> (s.sf_kind[id] ?? <span class="nm">0</span>) == <span class="nm">1</span> {</span>
+<span id="src-hex-edge-loft-L406">    nx = s.sf_a[id] ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-edge-loft-L407">    ny = s.sf_b[id] ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-edge-loft-L408">    <span class="kw">return</span> (<span class="nm">0.0</span> - ny) * px + nx * py;</span>
+<span id="src-hex-edge-loft-L409">  }</span>
+<span id="src-hex-edge-loft-L410">  cx = s.sf_a[id] ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-edge-loft-L411">  cy = s.sf_b[id] ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-edge-loft-L412">  <span class="fn-call"><a href="stdlib-math.html">atan2</a></span>(py - cy, px - cx) * (s.sf_c[id] ?? <span class="nm">1.0</span>)</span>
+<span id="src-hex-edge-loft-L413">}</span>
+<span id="src-hex-edge-loft-L414"></span>
+<span id="src-hex-edge-loft-L415"><span class="cm">// Apply every feature to the edge layer: an edge whose contact point falls inside a</span></span>
+<span id="src-hex-edge-loft-L416"><span class="cm">// feature's interval takes that feature's material.  The SURFACE is untouched — which is</span></span>
+<span id="src-hex-edge-loft-L417"><span class="cm">// why the body never fragments and the matcher still sees one wall.</span></span>
+<span id="src-hex-edge-loft-L418"><span class="cm">// Example: @HXE-008</span></span>
+<span id="src-hex-edge-loft-L419"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">apply_features</span>(e: <span class="en">EdgeSet</span>, sf: <span class="en">Surfaces</span>, f: <span class="en">Features</span>,</span>
+<span id="src-hex-edge-loft-L420">                      q0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, w: <span class="ty"><a href="stdlib-types.html">integer</a></span>, h: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-hex-edge-loft-L421">  hits = <span class="nm">0</span>;</span>
+<span id="src-hex-edge-loft-L422">  <span class="kw">for</span> r <span class="kw">in</span> r0..r0 + h {</span>
+<span id="src-hex-edge-loft-L423">    <span class="kw">for</span> q <span class="kw">in</span> q0..q0 + w {</span>
+<span id="src-hex-edge-loft-L424">      <span class="kw">for</span> d <span class="kw">in</span> <span class="nm">0..6</span> {</span>
+<span id="src-hex-edge-loft-L425">        nq = <span class="fn-call">nb_q</span>(q, r, d);</span>
+<span id="src-hex-edge-loft-L426">        nr = <span class="fn-call">nb_r</span>(q, r, d);</span>
+<span id="src-hex-edge-loft-L427">        sid = <span class="fn-call">edge_surf</span>(e, q, r, nq, nr);</span>
+<span id="src-hex-edge-loft-L428">        <span class="kw">if</span> sid &gt; <span class="nm">0</span> {</span>
+<span id="src-hex-edge-loft-L429">          (px, py) = <span class="fn-call">edge_point</span>(q, r, nq, nr);</span>
+<span id="src-hex-edge-loft-L430">          t = <span class="fn-call">surf_param</span>(sf, sid, px, py);</span>
+<span id="src-hex-edge-loft-L431">          <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..f</span>.fe_n {</span>
+<span id="src-hex-edge-loft-L432">            <span class="kw">if</span> (f.fe_surf[i] ?? -<span class="nm">1</span>) == sid {</span>
+<span id="src-hex-edge-loft-L433">              lo = f.fe_s0[i] ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-edge-loft-L434">              hi = f.fe_s1[i] ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-edge-loft-L435">              <span class="kw">if</span> t &gt;= lo &amp;&amp; t &lt;= hi {</span>
+<span id="src-hex-edge-loft-L436">                <span class="cm">// Through the accessor rather than an index this loop already holds: the</span></span>
+<span id="src-hex-edge-loft-L437">                <span class="cm">// library keeps its layout private, and one extra index computation per</span></span>
+<span id="src-hex-edge-loft-L438">                <span class="cm">// feature hit is a build-time cost, not a per-frame one.</span></span>
+<span id="src-hex-edge-loft-L439">                <span class="fn-call">edge_set_mat</span>(e, q, r, nq, nr, f.fe_mat[i] ?? <span class="nm">0</span>);</span>
+<span id="src-hex-edge-loft-L440">                hits = hits + <span class="nm">1</span>;</span>
+<span id="src-hex-edge-loft-L441">              }</span>
+<span id="src-hex-edge-loft-L442">            }</span>
+<span id="src-hex-edge-loft-L443">          }</span>
+<span id="src-hex-edge-loft-L444">        }</span>
+<span id="src-hex-edge-loft-L445">      }</span>
+<span id="src-hex-edge-loft-L446">    }</span>
+<span id="src-hex-edge-loft-L447">  }</span>
+<span id="src-hex-edge-loft-L448">  hits</span>
+<span id="src-hex-edge-loft-L449">}</span>
+<span id="src-hex-edge-loft-L450"></span>
+<span id="src-hex-edge-loft-L451"><span class="cm">// Record BOTH halves: which surface (geometry) and which material (physics).  The surface</span></span>
+<span id="src-hex-edge-loft-L452"><span class="cm">// keeps first-writer-wins; the material does NOT, because a feature (a door, a window)</span></span>
+<span id="src-hex-edge-loft-L453"><span class="cm">// legitimately retargets the material of an edge whose surface is already settled.</span></span>
+<span id="src-hex-edge-loft-L454"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">edge_block_full</span>(e: <span class="en">EdgeSet</span>, qa: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ra: <span class="ty"><a href="stdlib-types.html">integer</a></span>, qb: <span class="ty"><a href="stdlib-types.html">integer</a></span>, rb: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-hex-edge-loft-L455">                       surf: <span class="ty"><a href="stdlib-types.html">integer</a></span>, mat: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-hex-edge-loft-L456">  <span class="fn-call">edge_block_surf</span>(e, qa, ra, qb, rb, surf);</span>
+<span id="src-hex-edge-loft-L457">  <span class="fn-call">edge_set_mat</span>(e, qa, ra, qb, rb, mat);</span>
+<span id="src-hex-edge-loft-L458">}</span>
+<span id="src-hex-edge-loft-L459"></span>
+<span id="src-hex-edge-loft-L460"><span class="cm">// A bare blocker with no recoverable geometry: an id no `Surfaces` table reaches, so the</span></span>
+<span id="src-hex-edge-loft-L461"><span class="cm">// edge is blocked but `collide` reports a (0,0) normal.</span></span>
+<span id="src-hex-edge-loft-L462"><span class="kw">pub</span> const <span class="en">SURF_NONE</span> = <span class="nm">65535</span>;</span>
 <span id="src-hex-edge-loft-L463"></span>
-<span id="src-hex-edge-loft-L464"><span class="cm">// Can a mover cross this edge?  THE collision question, and the reason the edge layer</span></span>
-<span id="src-hex-edge-loft-L465"><span class="cm">// exists — asked from either side with the same answer.</span></span>
-<span id="src-hex-edge-loft-L466"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">edge_blocked</span>(e: <span class="en">EdgeSet</span>, qa: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ra: <span class="ty"><a href="stdlib-types.html">integer</a></span>, qb: <span class="ty"><a href="stdlib-types.html">integer</a></span>, rb: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
-<span id="src-hex-edge-loft-L467">  <span class="fn-call">edge_surf</span>(e, qa, ra, qb, rb) != <span class="nm">0</span></span>
-<span id="src-hex-edge-loft-L468">}</span>
-<span id="src-hex-edge-loft-L469"></span>
-<span id="src-hex-edge-loft-L470"><span class="cm">// THE COLLISION RESPONSE QUERY: blocked?, and the EXACT outward normal to bounce off.</span></span>
-<span id="src-hex-edge-loft-L471"><span class="cm">// Example: @HXE-007</span></span>
-<span id="src-hex-edge-loft-L472"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">collide</span>(e: <span class="en">EdgeSet</span>, s: <span class="en">Surfaces</span>,</span>
-<span id="src-hex-edge-loft-L473">               qa: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ra: <span class="ty"><a href="stdlib-types.html">integer</a></span>, qb: <span class="ty"><a href="stdlib-types.html">integer</a></span>, rb: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">boolean</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
-<span id="src-hex-edge-loft-L474">  id = <span class="fn-call">edge_surf</span>(e, qa, ra, qb, rb);</span>
-<span id="src-hex-edge-loft-L475">  <span class="kw">if</span> id == <span class="nm">0</span> { <span class="kw">return</span> (<span class="kw">false</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>); }</span>
-<span id="src-hex-edge-loft-L476">  (px, py) = <span class="fn-call">edge_point</span>(qa, ra, qb, rb);</span>
-<span id="src-hex-edge-loft-L477">  (nx, ny) = <span class="fn-call">surf_normal</span>(s, id, px, py);</span>
-<span id="src-hex-edge-loft-L478">  (<span class="kw">true</span>, nx, ny)</span>
-<span id="src-hex-edge-loft-L479">}</span>
-<span id="src-hex-edge-loft-L480"></span>
-<span id="src-hex-edge-loft-L481"><span class="cm">// THE collision query.  Everything else is construction.</span></span>
-<span id="src-hex-edge-loft-L482"><span class="cm">// Example: @HXE-010</span></span>
-<span id="src-hex-edge-loft-L483"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">passable</span>(e: <span class="en">EdgeSet</span>, qa: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ra: <span class="ty"><a href="stdlib-types.html">integer</a></span>, qb: <span class="ty"><a href="stdlib-types.html">integer</a></span>, rb: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
-<span id="src-hex-edge-loft-L484">  !<span class="fn-call">edge_blocked</span>(e, qa, ra, qb, rb)</span>
-<span id="src-hex-edge-loft-L485">}</span>
-<span id="src-hex-edge-loft-L486"></span>
-<span id="src-hex-edge-loft-L487"><span class="cm">// ── SWEPT MOVEMENT ───────────────────────────────────────────────────────────</span></span>
-<span id="src-hex-edge-loft-L488"><span class="cm">//</span></span>
-<span id="src-hex-edge-loft-L489"><span class="cm">// `passable` answers about one edge; this answers about a PATH. Walk the segment</span></span>
-<span id="src-hex-edge-loft-L490"><span class="cm">// (x0,y0) -&gt; (x1,y1) across the lattice one edge at a time and stop at the first edge</span></span>
-<span id="src-hex-edge-loft-L491"><span class="cm">// the field blocks.</span></span>
-<span id="src-hex-edge-loft-L492"><span class="cm">//</span></span>
-<span id="src-hex-edge-loft-L493"><span class="cm">// There is no step size anywhere, which is the whole point. A point's cell is its</span></span>
-<span id="src-hex-edge-loft-L494"><span class="cm">// NEAREST CENTRE, so a crossing is exactly where the segment meets the bisector between</span></span>
-<span id="src-hex-edge-loft-L495"><span class="cm">// the current centre and a neighbour's — one linear solve per neighbour:</span></span>
-<span id="src-hex-edge-loft-L496"><span class="cm">//</span></span>
-<span id="src-hex-edge-loft-L497"><span class="cm">//     |P(t) - C|² = |P(t) - N|²   ⟺   P(t)·(N-C) = midpoint·(N-C)</span></span>
-<span id="src-hex-edge-loft-L498"><span class="cm">//     ⟹  t = ((M - P0)·D) / (V·D)     with D = N-C, and only when V·D &gt; 0</span></span>
-<span id="src-hex-edge-loft-L499"><span class="cm">//</span></span>
-<span id="src-hex-edge-loft-L500"><span class="cm">// So the answer is a function of the SEGMENT, not of how many frames it was cut into:</span></span>
-<span id="src-hex-edge-loft-L501"><span class="cm">// dropping frames or falling fast cannot step over a wall. Centres come from the exact</span></span>
-<span id="src-hex-edge-loft-L502"><span class="cm">// integer lattice (`lattice_k`/`lattice_m`), so the geometry carries no accumulated error.</span></span>
-<span id="src-hex-edge-loft-L503"><span class="cm">//</span></span>
-<span id="src-hex-edge-loft-L504"><span class="cm">// Returns the fraction of the segment that may be travelled (1.0 = all of it), the cell</span></span>
-<span id="src-hex-edge-loft-L505"><span class="cm">// it stopped in, and the DIRECTION of the blocking edge — `dir &lt; 0` meaning nothing</span></span>
-<span id="src-hex-edge-loft-L506"><span class="cm">// blocked. The signal is the direction and never a coordinate: hex coordinates are</span></span>
-<span id="src-hex-edge-loft-L507"><span class="cm">// signed, so a -1 sentinel in q or r would collide with real cells in any chunk that</span></span>
-<span id="src-hex-edge-loft-L508"><span class="cm">// spans the origin.  Feed (q, r, dir) to `nb_q`/`nb_r` and `collide` for the exact</span></span>
-<span id="src-hex-edge-loft-L509"><span class="cm">// bounce normal.</span></span>
-<span id="src-hex-edge-loft-L510"><span class="cm">// Example: @HXE-002</span></span>
-<span id="src-hex-edge-loft-L511"><span class="cm">// Example: @HXE-004</span></span>
-<span id="src-hex-edge-loft-L512"><span class="cm">// Example: @HXE-005</span></span>
-<span id="src-hex-edge-loft-L513"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">sweep_path</span>(e: <span class="en">EdgeSet</span>, x0: <span class="ty"><a href="stdlib-types.html">float</a></span>, y0: <span class="ty"><a href="stdlib-types.html">float</a></span>, x1: <span class="ty"><a href="stdlib-types.html">float</a></span>, y1: <span class="ty"><a href="stdlib-types.html">float</a></span>)</span>
-<span id="src-hex-edge-loft-L514">    -&gt; (<span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
-<span id="src-hex-edge-loft-L515">  (sq, sr) = <span class="fn-call">hex_at</span>(x0, y0);</span>
-<span id="src-hex-edge-loft-L516">  <span class="fn-call">sweep_path_from</span>(e, sq, sr, x0, y0, x1, y1)</span>
-<span id="src-hex-edge-loft-L517">}</span>
-<span id="src-hex-edge-loft-L518"></span>
-<span id="src-hex-edge-loft-L519"><span class="cm">// THE SAME SWEEP, TOLD WHICH CELL IT STARTS IN — and the one to call in a movement loop.</span></span>
-<span id="src-hex-edge-loft-L520"><span class="cm">//</span></span>
-<span id="src-hex-edge-loft-L521"><span class="cm">// `sweep_path` derives the starting cell with `hex_at`, and that is exactly what a caller</span></span>
-<span id="src-hex-edge-loft-L522"><span class="cm">// cannot afford on the step AFTER a stop. Stopping at a wall leaves the position exactly ON</span></span>
-<span id="src-hex-edge-loft-L523"><span class="cm">// the bisector between two cells (the comment in the loop below says so: it is the normal</span></span>
-<span id="src-hex-edge-loft-L524"><span class="cm">// state, not an edge case), and `hex_at` on a bisector does not toss a coin — measured over</span></span>
-<span id="src-hex-edge-loft-L525"><span class="cm">// all six directions, it answers the FAR cell every time. So the next call starts past the</span></span>
-<span id="src-hex-edge-loft-L526"><span class="cm">// wall with the wall behind it, sees nothing, and reports the whole segment clear. The</span></span>
-<span id="src-hex-edge-loft-L527"><span class="cm">// symptom is "collision does not work"; the truth is that it worked for exactly one step.</span></span>
-<span id="src-hex-edge-loft-L528"><span class="cm">//</span></span>
-<span id="src-hex-edge-loft-L529"><span class="cm">// The cure is not a tolerance. The previous call already RETURNED the cell you are resting</span></span>
-<span id="src-hex-edge-loft-L530"><span class="cm">// in, so hand it back: `(t, cq, cr, d) = sweep_path_from(e, cq, cr, …)`, threading `cq, cr`</span></span>
-<span id="src-hex-edge-loft-L531"><span class="cm">// from one step to the next. Pressing on into the wall then answers `t = 0` in the cell you</span></span>
-<span id="src-hex-edge-loft-L532"><span class="cm">// are in, which is the honest answer, and sliding along the wall works from the same call.</span></span>
+<span id="src-hex-edge-loft-L464"><span class="cm">// Example: @HXE-007</span></span>
+<span id="src-hex-edge-loft-L465"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">edge_block</span>(e: <span class="en">EdgeSet</span>, qa: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ra: <span class="ty"><a href="stdlib-types.html">integer</a></span>, qb: <span class="ty"><a href="stdlib-types.html">integer</a></span>, rb: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-hex-edge-loft-L466">  <span class="fn-call">edge_block_surf</span>(e, qa, ra, qb, rb, <span class="en">SURF_NONE</span>);</span>
+<span id="src-hex-edge-loft-L467">}</span>
+<span id="src-hex-edge-loft-L468"></span>
+<span id="src-hex-edge-loft-L469"><span class="cm">// Can a mover cross this edge?  THE collision question, and the reason the edge layer</span></span>
+<span id="src-hex-edge-loft-L470"><span class="cm">// exists — asked from either side with the same answer.</span></span>
+<span id="src-hex-edge-loft-L471"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">edge_blocked</span>(e: <span class="en">EdgeSet</span>, qa: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ra: <span class="ty"><a href="stdlib-types.html">integer</a></span>, qb: <span class="ty"><a href="stdlib-types.html">integer</a></span>, rb: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-hex-edge-loft-L472">  <span class="fn-call">edge_surf</span>(e, qa, ra, qb, rb) != <span class="nm">0</span></span>
+<span id="src-hex-edge-loft-L473">}</span>
+<span id="src-hex-edge-loft-L474"></span>
+<span id="src-hex-edge-loft-L475"><span class="cm">// THE COLLISION RESPONSE QUERY: blocked?, and the EXACT outward normal to bounce off.</span></span>
+<span id="src-hex-edge-loft-L476"><span class="cm">// Example: @HXE-007</span></span>
+<span id="src-hex-edge-loft-L477"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">collide</span>(e: <span class="en">EdgeSet</span>, s: <span class="en">Surfaces</span>,</span>
+<span id="src-hex-edge-loft-L478">               qa: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ra: <span class="ty"><a href="stdlib-types.html">integer</a></span>, qb: <span class="ty"><a href="stdlib-types.html">integer</a></span>, rb: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">boolean</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
+<span id="src-hex-edge-loft-L479">  id = <span class="fn-call">edge_surf</span>(e, qa, ra, qb, rb);</span>
+<span id="src-hex-edge-loft-L480">  <span class="kw">if</span> id == <span class="nm">0</span> { <span class="kw">return</span> (<span class="kw">false</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>); }</span>
+<span id="src-hex-edge-loft-L481">  (px, py) = <span class="fn-call">edge_point</span>(qa, ra, qb, rb);</span>
+<span id="src-hex-edge-loft-L482">  (nx, ny) = <span class="fn-call">surf_normal</span>(s, id, px, py);</span>
+<span id="src-hex-edge-loft-L483">  (<span class="kw">true</span>, nx, ny)</span>
+<span id="src-hex-edge-loft-L484">}</span>
+<span id="src-hex-edge-loft-L485"></span>
+<span id="src-hex-edge-loft-L486"><span class="cm">// THE collision query.  Everything else is construction.</span></span>
+<span id="src-hex-edge-loft-L487"><span class="cm">// Example: @HXE-010</span></span>
+<span id="src-hex-edge-loft-L488"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">passable</span>(e: <span class="en">EdgeSet</span>, qa: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ra: <span class="ty"><a href="stdlib-types.html">integer</a></span>, qb: <span class="ty"><a href="stdlib-types.html">integer</a></span>, rb: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-hex-edge-loft-L489">  !<span class="fn-call">edge_blocked</span>(e, qa, ra, qb, rb)</span>
+<span id="src-hex-edge-loft-L490">}</span>
+<span id="src-hex-edge-loft-L491"></span>
+<span id="src-hex-edge-loft-L492"><span class="cm">// ── SWEPT MOVEMENT ───────────────────────────────────────────────────────────</span></span>
+<span id="src-hex-edge-loft-L493"><span class="cm">//</span></span>
+<span id="src-hex-edge-loft-L494"><span class="cm">// `passable` answers about one edge; this answers about a PATH. Walk the segment</span></span>
+<span id="src-hex-edge-loft-L495"><span class="cm">// (x0,y0) -&gt; (x1,y1) across the lattice one edge at a time and stop at the first edge</span></span>
+<span id="src-hex-edge-loft-L496"><span class="cm">// the field blocks.</span></span>
+<span id="src-hex-edge-loft-L497"><span class="cm">//</span></span>
+<span id="src-hex-edge-loft-L498"><span class="cm">// There is no step size anywhere, which is the whole point. A point's cell is its</span></span>
+<span id="src-hex-edge-loft-L499"><span class="cm">// NEAREST CENTRE, so a crossing is exactly where the segment meets the bisector between</span></span>
+<span id="src-hex-edge-loft-L500"><span class="cm">// the current centre and a neighbour's — one linear solve per neighbour:</span></span>
+<span id="src-hex-edge-loft-L501"><span class="cm">//</span></span>
+<span id="src-hex-edge-loft-L502"><span class="cm">//     |P(t) - C|² = |P(t) - N|²   ⟺   P(t)·(N-C) = midpoint·(N-C)</span></span>
+<span id="src-hex-edge-loft-L503"><span class="cm">//     ⟹  t = ((M - P0)·D) / (V·D)     with D = N-C, and only when V·D &gt; 0</span></span>
+<span id="src-hex-edge-loft-L504"><span class="cm">//</span></span>
+<span id="src-hex-edge-loft-L505"><span class="cm">// So the answer is a function of the SEGMENT, not of how many frames it was cut into:</span></span>
+<span id="src-hex-edge-loft-L506"><span class="cm">// dropping frames or falling fast cannot step over a wall. Centres come from the exact</span></span>
+<span id="src-hex-edge-loft-L507"><span class="cm">// integer lattice (`lattice_k`/`lattice_m`), so the geometry carries no accumulated error.</span></span>
+<span id="src-hex-edge-loft-L508"><span class="cm">//</span></span>
+<span id="src-hex-edge-loft-L509"><span class="cm">// Returns the fraction of the segment that may be travelled (1.0 = all of it), the cell</span></span>
+<span id="src-hex-edge-loft-L510"><span class="cm">// it stopped in, and the DIRECTION of the blocking edge — `dir &lt; 0` meaning nothing</span></span>
+<span id="src-hex-edge-loft-L511"><span class="cm">// blocked. The signal is the direction and never a coordinate: hex coordinates are</span></span>
+<span id="src-hex-edge-loft-L512"><span class="cm">// signed, so a -1 sentinel in q or r would collide with real cells in any chunk that</span></span>
+<span id="src-hex-edge-loft-L513"><span class="cm">// spans the origin.  Feed (q, r, dir) to `nb_q`/`nb_r` and `collide` for the exact</span></span>
+<span id="src-hex-edge-loft-L514"><span class="cm">// bounce normal.</span></span>
+<span id="src-hex-edge-loft-L515"><span class="cm">// Example: @HXE-002</span></span>
+<span id="src-hex-edge-loft-L516"><span class="cm">// Example: @HXE-004</span></span>
+<span id="src-hex-edge-loft-L517"><span class="cm">// Example: @HXE-005</span></span>
+<span id="src-hex-edge-loft-L518"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">sweep_path</span>(e: <span class="en">EdgeSet</span>, x0: <span class="ty"><a href="stdlib-types.html">float</a></span>, y0: <span class="ty"><a href="stdlib-types.html">float</a></span>, x1: <span class="ty"><a href="stdlib-types.html">float</a></span>, y1: <span class="ty"><a href="stdlib-types.html">float</a></span>)</span>
+<span id="src-hex-edge-loft-L519">    -&gt; (<span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-hex-edge-loft-L520">  (sq, sr) = <span class="fn-call">hex_at</span>(x0, y0);</span>
+<span id="src-hex-edge-loft-L521">  <span class="fn-call">sweep_path_from</span>(e, sq, sr, x0, y0, x1, y1)</span>
+<span id="src-hex-edge-loft-L522">}</span>
+<span id="src-hex-edge-loft-L523"></span>
+<span id="src-hex-edge-loft-L524"><span class="cm">// THE SAME SWEEP, TOLD WHICH CELL IT STARTS IN — and the one to call in a movement loop.</span></span>
+<span id="src-hex-edge-loft-L525"><span class="cm">//</span></span>
+<span id="src-hex-edge-loft-L526"><span class="cm">// `sweep_path` derives the starting cell with `hex_at`, and that is exactly what a caller</span></span>
+<span id="src-hex-edge-loft-L527"><span class="cm">// cannot afford on the step AFTER a stop. Stopping at a wall leaves the position exactly ON</span></span>
+<span id="src-hex-edge-loft-L528"><span class="cm">// the bisector between two cells (the comment in the loop below says so: it is the normal</span></span>
+<span id="src-hex-edge-loft-L529"><span class="cm">// state, not an edge case), and `hex_at` on a bisector does not toss a coin — measured over</span></span>
+<span id="src-hex-edge-loft-L530"><span class="cm">// all six directions, it answers the FAR cell every time. So the next call starts past the</span></span>
+<span id="src-hex-edge-loft-L531"><span class="cm">// wall with the wall behind it, sees nothing, and reports the whole segment clear. The</span></span>
+<span id="src-hex-edge-loft-L532"><span class="cm">// symptom is "collision does not work"; the truth is that it worked for exactly one step.</span></span>
 <span id="src-hex-edge-loft-L533"><span class="cm">//</span></span>
-<span id="src-hex-edge-loft-L534"><span class="cm">// WHY NOT A SKIN. The consumer-side workaround is to come to rest a small distance short,</span></span>
-<span id="src-hex-edge-loft-L535"><span class="cm">// and it does work — but the smallest distance that works</span></span>
-<span id="src-hex-edge-loft-L536"><span class="cm">// is not a constant. Measured: 1e-15 at the origin, 1e-11 about 1.7e3 world units out,</span></span>
-<span id="src-hex-edge-loft-L537"><span class="cm">// 1e-9 about 1.7e6 out. It is a float-resolution floor, not a geometric clearance, so a</span></span>
-<span id="src-hex-edge-loft-L538"><span class="cm">// constant chosen at one extent is silently wrong at another and the library has no better</span></span>
-<span id="src-hex-edge-loft-L539"><span class="cm">// idea of the right value than the caller does. Threading the cell needs no such number.</span></span>
-<span id="src-hex-edge-loft-L540"><span class="cm">//</span></span>
-<span id="src-hex-edge-loft-L541"><span class="cm">// THE FAR-FIELD LIMIT, which no cure removes: past roughly 5e6 cells from the origin a</span></span>
-<span id="src-hex-edge-loft-L542"><span class="cm">// double position can no longer hold "on the bisector" to better than this code's 1e-9</span></span>
-<span id="src-hex-edge-loft-L543"><span class="cm">// tolerance (measured: the recoverable offset from an absolute position loses 2.9e-10 at</span></span>
-<span id="src-hex-edge-loft-L544"><span class="cm">// 3e6 cells and 6.4e-10 at 1e7). At that point the position itself is the limit, not the</span></span>
-<span id="src-hex-edge-loft-L545"><span class="cm">// sweep, and the fix is to recentre the world rather than the arithmetic.</span></span>
-<span id="src-hex-edge-loft-L546"><span class="cm">//</span></span>
-<span id="src-hex-edge-loft-L547"><span class="cm">// Example: @HXE-002</span></span>
-<span id="src-hex-edge-loft-L548"><span class="cm">// Example: @HXE-003</span></span>
-<span id="src-hex-edge-loft-L549"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">sweep_path_from</span>(e: <span class="en">EdgeSet</span>, sq: <span class="ty"><a href="stdlib-types.html">integer</a></span>, sr: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-hex-edge-loft-L550">                       x0: <span class="ty"><a href="stdlib-types.html">float</a></span>, y0: <span class="ty"><a href="stdlib-types.html">float</a></span>, x1: <span class="ty"><a href="stdlib-types.html">float</a></span>, y1: <span class="ty"><a href="stdlib-types.html">float</a></span>)</span>
-<span id="src-hex-edge-loft-L551">    -&gt; (<span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
-<span id="src-hex-edge-loft-L552">  vx = x1 - x0;</span>
-<span id="src-hex-edge-loft-L553">  vy = y1 - y0;</span>
-<span id="src-hex-edge-loft-L554">  cq = sq;</span>
-<span id="src-hex-edge-loft-L555">  cr = sr;</span>
-<span id="src-hex-edge-loft-L556">  pq = cq;                    <span class="cm">// the cell we came from: the ONLY one to exclude</span></span>
-<span id="src-hex-edge-loft-L557">  pr = cr;</span>
-<span id="src-hex-edge-loft-L558">  havep = <span class="kw">false</span>;</span>
-<span id="src-hex-edge-loft-L559">  t = <span class="nm">0.0</span>;</span>
-<span id="src-hex-edge-loft-L560">  steps = <span class="nm">0</span>;</span>
-<span id="src-hex-edge-loft-L561">  <span class="cm">// Bounded, and the bound fails SAFE: on exhaustion the caller is told it may travel</span></span>
-<span id="src-hex-edge-loft-L562">  <span class="cm">// only as far as was actually verified, never that the rest is clear.</span></span>
-<span id="src-hex-edge-loft-L563">  while steps &lt; <span class="nm">256</span> {</span>
-<span id="src-hex-edge-loft-L564">    steps = steps + <span class="nm">1</span>;</span>
-<span id="src-hex-edge-loft-L565">    ck = (<span class="fn-call">lattice_k</span>(cq, cr) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.8660254037844386</span>;</span>
-<span id="src-hex-edge-loft-L566">    cm = (<span class="fn-call">lattice_m</span>(cq, cr) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.5</span>;</span>
-<span id="src-hex-edge-loft-L567">    bt = <span class="nm">2.0</span>;</span>
-<span id="src-hex-edge-loft-L568">    bd = -<span class="nm">1</span>;</span>
-<span id="src-hex-edge-loft-L569">    <span class="kw">for</span> d <span class="kw">in</span> <span class="nm">0..6</span> {</span>
-<span id="src-hex-edge-loft-L570">      nq = <span class="fn-call">nb_q</span>(cq, cr, d);</span>
-<span id="src-hex-edge-loft-L571">      nr = <span class="fn-call">nb_r</span>(cq, cr, d);</span>
-<span id="src-hex-edge-loft-L572">      <span class="cm">// Exclude the cell we CAME FROM, not crossings at the current parameter. Filtering</span></span>
-<span id="src-hex-edge-loft-L573">      <span class="cm">// by parameter (tt &gt; t + eps) drops a crossing that sits exactly at t — and that is</span></span>
-<span id="src-hex-edge-loft-L574">      <span class="cm">// the normal state, not an edge case: stopping at a wall leaves the position exactly</span></span>
-<span id="src-hex-edge-loft-L575">      <span class="cm">// ON a bisector, so the very next sweep starts there and would skip its first edge.</span></span>
-<span id="src-hex-edge-loft-L576">      <span class="cm">// Excluding the previous cell also lets a corner be walked THROUGH: both of its</span></span>
-<span id="src-hex-edge-loft-L577">      <span class="cm">// edges get tested at the same t, so a path cannot slip between two walls that meet.</span></span>
-<span id="src-hex-edge-loft-L578">      <span class="kw">if</span> !(havep &amp;&amp; nq == pq &amp;&amp; nr == pr) {</span>
-<span id="src-hex-edge-loft-L579">        nk = (<span class="fn-call">lattice_k</span>(nq, nr) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.8660254037844386</span>;</span>
-<span id="src-hex-edge-loft-L580">        nm = (<span class="fn-call">lattice_m</span>(nq, nr) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.5</span>;</span>
-<span id="src-hex-edge-loft-L581">        dx = nk - ck;</span>
-<span id="src-hex-edge-loft-L582">        dy = nm - cm;</span>
-<span id="src-hex-edge-loft-L583">        den = vx * dx + vy * dy;</span>
-<span id="src-hex-edge-loft-L584">        <span class="kw">if</span> den &gt; <span class="nm">0.000000001</span> {                <span class="cm">// only bisectors we are moving TOWARD</span></span>
-<span id="src-hex-edge-loft-L585">          mx = (nk + ck) * <span class="nm">0.5</span>;</span>
-<span id="src-hex-edge-loft-L586">          my = (nm + cm) * <span class="nm">0.5</span>;</span>
-<span id="src-hex-edge-loft-L587">          tt = ((mx - x0) * dx + (my - y0) * dy) / den ?? <span class="nm">2.0</span>;</span>
-<span id="src-hex-edge-loft-L588">          <span class="kw">if</span> tt &gt; t - <span class="nm">0.000000001</span> &amp;&amp; tt &lt; bt { bt = tt; bd = d; }</span>
-<span id="src-hex-edge-loft-L589">        }</span>
-<span id="src-hex-edge-loft-L590">      }</span>
-<span id="src-hex-edge-loft-L591">    }</span>
-<span id="src-hex-edge-loft-L592">    <span class="kw">if</span> bd &lt; <span class="nm">0</span> || bt &gt; <span class="nm">1.0</span> { <span class="kw">return</span> (<span class="nm">1.0</span>, cq, cr, -<span class="nm">1</span>); }   <span class="cm">// no crossing left in range</span></span>
-<span id="src-hex-edge-loft-L593">    <span class="kw">if</span> bt &lt; t { bt = t; }                                 <span class="cm">// never report travel backwards</span></span>
-<span id="src-hex-edge-loft-L594">    bq = <span class="fn-call">nb_q</span>(cq, cr, bd);</span>
-<span id="src-hex-edge-loft-L595">    br = <span class="fn-call">nb_r</span>(cq, cr, bd);</span>
-<span id="src-hex-edge-loft-L596">    <span class="kw">if</span> !<span class="fn-call">passable</span>(e, cq, cr, bq, br) { <span class="kw">return</span> (bt, cq, cr, bd); }</span>
-<span id="src-hex-edge-loft-L597">    t = bt;</span>
-<span id="src-hex-edge-loft-L598">    pq = cq;</span>
-<span id="src-hex-edge-loft-L599">    pr = cr;</span>
-<span id="src-hex-edge-loft-L600">    havep = <span class="kw">true</span>;</span>
-<span id="src-hex-edge-loft-L601">    cq = bq;</span>
-<span id="src-hex-edge-loft-L602">    cr = br;</span>
-<span id="src-hex-edge-loft-L603">  }</span>
-<span id="src-hex-edge-loft-L604">  (t, cq, cr, -<span class="nm">1</span>)</span>
-<span id="src-hex-edge-loft-L605">}</span>
-<span id="src-hex-edge-loft-L606"></span>
-<span id="src-hex-edge-loft-L607"><span class="cm">// A THIN wall: the cut between the cells of `s` and everything else.  One edge thick,</span></span>
-<span id="src-hex-edge-loft-L608"><span class="cm">// and it separates by construction — in every one of the 24 headings.</span></span>
-<span id="src-hex-edge-loft-L609"><span class="cm">// Example: @HXE-009</span></span>
-<span id="src-hex-edge-loft-L610"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">edges_cut</span>(s: <span class="en">HexSet</span>, e: <span class="en">EdgeSet</span>) {</span>
-<span id="src-hex-edge-loft-L611">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
-<span id="src-hex-edge-loft-L612">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
-<span id="src-hex-edge-loft-L613">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
-<span id="src-hex-edge-loft-L614">        <span class="kw">for</span> d <span class="kw">in</span> <span class="nm">0..6</span> {</span>
-<span id="src-hex-edge-loft-L615">          nq = <span class="fn-call">nb_q</span>(q, r, d);</span>
-<span id="src-hex-edge-loft-L616">          nr = <span class="fn-call">nb_r</span>(q, r, d);</span>
-<span id="src-hex-edge-loft-L617">          <span class="kw">if</span> !<span class="fn-call">hexset_get</span>(s, nq, nr) { <span class="fn-call">edge_block</span>(e, q, r, nq, nr); }</span>
-<span id="src-hex-edge-loft-L618">        }</span>
-<span id="src-hex-edge-loft-L619">      }</span>
-<span id="src-hex-edge-loft-L620">    }</span>
-<span id="src-hex-edge-loft-L621">  }</span>
-<span id="src-hex-edge-loft-L622">}</span>
-<span id="src-hex-edge-loft-L623"></span>
-<span id="src-hex-edge-loft-L624"><span class="cm">// A SOLID body: every edge incident to an occupied cell, so the cells cannot be entered</span></span>
-<span id="src-hex-edge-loft-L625"><span class="cm">// at all.  This is the cell model expressed in the edge primitive — which is the point:</span></span>
-<span id="src-hex-edge-loft-L626"><span class="cm">// one collision layer serves both.</span></span>
-<span id="src-hex-edge-loft-L627"><span class="cm">// Example: @HXE-009</span></span>
-<span id="src-hex-edge-loft-L628"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">edges_solid</span>(s: <span class="en">HexSet</span>, e: <span class="en">EdgeSet</span>) {</span>
-<span id="src-hex-edge-loft-L629">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
-<span id="src-hex-edge-loft-L630">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
-<span id="src-hex-edge-loft-L631">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
-<span id="src-hex-edge-loft-L632">        <span class="kw">for</span> d <span class="kw">in</span> <span class="nm">0..6</span> { <span class="fn-call">edge_block</span>(e, q, r, <span class="fn-call">nb_q</span>(q, r, d), <span class="fn-call">nb_r</span>(q, r, d)); }</span>
-<span id="src-hex-edge-loft-L633">      }</span>
-<span id="src-hex-edge-loft-L634">    }</span>
-<span id="src-hex-edge-loft-L635">  }</span>
-<span id="src-hex-edge-loft-L636">}</span>
-<span id="src-hex-edge-loft-L637"></span>
-<span id="src-hex-edge-loft-L638"><span class="cm">// Block every edge a straight line crosses: the wall runs along `n·p = c` in world</span></span>
-<span id="src-hex-edge-loft-L639"><span class="cm">// units, with n the unit normal.  A thin wall in ANY heading, one edge thick.</span></span>
-<span id="src-hex-edge-loft-L640"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">edges_halfplane_surf</span>(e: <span class="en">EdgeSet</span>, q0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, w: <span class="ty"><a href="stdlib-types.html">integer</a></span>, h: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-hex-edge-loft-L641">                            nx: <span class="ty"><a href="stdlib-types.html">float</a></span>, ny: <span class="ty"><a href="stdlib-types.html">float</a></span>, c: <span class="ty"><a href="stdlib-types.html">float</a></span>, surf: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
-<span id="src-hex-edge-loft-L642">  <span class="kw">for</span> r <span class="kw">in</span> r0..r0 + h {</span>
-<span id="src-hex-edge-loft-L643">    <span class="kw">for</span> q <span class="kw">in</span> q0..q0 + w {</span>
-<span id="src-hex-edge-loft-L644">      sa = (<span class="fn-call">lattice_k</span>(q, r) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.8660254037844386</span> * nx</span>
-<span id="src-hex-edge-loft-L645">         + (<span class="fn-call">lattice_m</span>(q, r) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.5</span> * ny - c;</span>
-<span id="src-hex-edge-loft-L646">      <span class="kw">for</span> d <span class="kw">in</span> <span class="nm">0..6</span> {</span>
-<span id="src-hex-edge-loft-L647">        nq = <span class="fn-call">nb_q</span>(q, r, d);</span>
-<span id="src-hex-edge-loft-L648">        nr = <span class="fn-call">nb_r</span>(q, r, d);</span>
-<span id="src-hex-edge-loft-L649">        sb = (<span class="fn-call">lattice_k</span>(nq, nr) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.8660254037844386</span> * nx</span>
-<span id="src-hex-edge-loft-L650">           + (<span class="fn-call">lattice_m</span>(nq, nr) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.5</span> * ny - c;</span>
-<span id="src-hex-edge-loft-L651">        <span class="kw">if</span> sa &lt; <span class="nm">0.0</span> &amp;&amp; sb &gt;= <span class="nm">0.0</span> { <span class="fn-call">edge_block_surf</span>(e, q, r, nq, nr, surf); }</span>
-<span id="src-hex-edge-loft-L652">      }</span>
-<span id="src-hex-edge-loft-L653">    }</span>
-<span id="src-hex-edge-loft-L654">  }</span>
-<span id="src-hex-edge-loft-L655">}</span>
-<span id="src-hex-edge-loft-L656"></span>
-<span id="src-hex-edge-loft-L657"><span class="cm">// Back-compat: a halfplane wall with no surface recorded.</span></span>
-<span id="src-hex-edge-loft-L658"><span class="cm">// Example: @HXE-009</span></span>
-<span id="src-hex-edge-loft-L659"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">edges_halfplane</span>(e: <span class="en">EdgeSet</span>, q0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, w: <span class="ty"><a href="stdlib-types.html">integer</a></span>, h: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-hex-edge-loft-L660">                       nx: <span class="ty"><a href="stdlib-types.html">float</a></span>, ny: <span class="ty"><a href="stdlib-types.html">float</a></span>, c: <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
-<span id="src-hex-edge-loft-L661">  <span class="fn-call">edges_halfplane_surf</span>(e, q0, r0, w, h, nx, ny, c, <span class="en">SURF_NONE</span>);</span>
-<span id="src-hex-edge-loft-L662">}</span>
-<span id="src-hex-edge-loft-L663"></span>
-<span id="src-hex-edge-loft-L664"><span class="cm">// ── SIGHT ───────────────────────────────────────────────────────────────────</span></span>
-<span id="src-hex-edge-loft-L665"><span class="cm">//</span></span>
-<span id="src-hex-edge-loft-L666"><span class="cm">// Is there a clear line of sight from an eye to a target?</span></span>
-<span id="src-hex-edge-loft-L667"><span class="cm">//</span></span>
-<span id="src-hex-edge-loft-L668"><span class="cm">// Sight is blocked by OPACITY, not by solidity.  A chain-link fence is solid and</span></span>
-<span id="src-hex-edge-loft-L669"><span class="cm">// transparent; a hedge is permeable and opaque.  This is the first consumer to read one</span></span>
-<span id="src-hex-edge-loft-L670"><span class="cm">// material axis while deliberately ignoring another, and it is the whole reason a material</span></span>
-<span id="src-hex-edge-loft-L671"><span class="cm">// carries a vector of transmission terms rather than a single flag.</span></span>
+<span id="src-hex-edge-loft-L534"><span class="cm">// The cure is not a tolerance. The previous call already RETURNED the cell you are resting</span></span>
+<span id="src-hex-edge-loft-L535"><span class="cm">// in, so hand it back: `(t, cq, cr, d) = sweep_path_from(e, cq, cr, …)`, threading `cq, cr`</span></span>
+<span id="src-hex-edge-loft-L536"><span class="cm">// from one step to the next. Pressing on into the wall then answers `t = 0` in the cell you</span></span>
+<span id="src-hex-edge-loft-L537"><span class="cm">// are in, which is the honest answer, and sliding along the wall works from the same call.</span></span>
+<span id="src-hex-edge-loft-L538"><span class="cm">//</span></span>
+<span id="src-hex-edge-loft-L539"><span class="cm">// WHY NOT A SKIN. The consumer-side workaround is to come to rest a small distance short,</span></span>
+<span id="src-hex-edge-loft-L540"><span class="cm">// and it does work — but the smallest distance that works</span></span>
+<span id="src-hex-edge-loft-L541"><span class="cm">// is not a constant. Measured: 1e-15 at the origin, 1e-11 about 1.7e3 world units out,</span></span>
+<span id="src-hex-edge-loft-L542"><span class="cm">// 1e-9 about 1.7e6 out. It is a float-resolution floor, not a geometric clearance, so a</span></span>
+<span id="src-hex-edge-loft-L543"><span class="cm">// constant chosen at one extent is silently wrong at another and the library has no better</span></span>
+<span id="src-hex-edge-loft-L544"><span class="cm">// idea of the right value than the caller does. Threading the cell needs no such number.</span></span>
+<span id="src-hex-edge-loft-L545"><span class="cm">//</span></span>
+<span id="src-hex-edge-loft-L546"><span class="cm">// THE FAR-FIELD LIMIT, which no cure removes: past roughly 5e6 cells from the origin a</span></span>
+<span id="src-hex-edge-loft-L547"><span class="cm">// double position can no longer hold "on the bisector" to better than this code's 1e-9</span></span>
+<span id="src-hex-edge-loft-L548"><span class="cm">// tolerance (measured: the recoverable offset from an absolute position loses 2.9e-10 at</span></span>
+<span id="src-hex-edge-loft-L549"><span class="cm">// 3e6 cells and 6.4e-10 at 1e7). At that point the position itself is the limit, not the</span></span>
+<span id="src-hex-edge-loft-L550"><span class="cm">// sweep, and the fix is to recentre the world rather than the arithmetic.</span></span>
+<span id="src-hex-edge-loft-L551"><span class="cm">//</span></span>
+<span id="src-hex-edge-loft-L552"><span class="cm">// Example: @HXE-002</span></span>
+<span id="src-hex-edge-loft-L553"><span class="cm">// Example: @HXE-003</span></span>
+<span id="src-hex-edge-loft-L554"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">sweep_path_from</span>(e: <span class="en">EdgeSet</span>, sq: <span class="ty"><a href="stdlib-types.html">integer</a></span>, sr: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-hex-edge-loft-L555">                       x0: <span class="ty"><a href="stdlib-types.html">float</a></span>, y0: <span class="ty"><a href="stdlib-types.html">float</a></span>, x1: <span class="ty"><a href="stdlib-types.html">float</a></span>, y1: <span class="ty"><a href="stdlib-types.html">float</a></span>)</span>
+<span id="src-hex-edge-loft-L556">    -&gt; (<span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-hex-edge-loft-L557">  vx = x1 - x0;</span>
+<span id="src-hex-edge-loft-L558">  vy = y1 - y0;</span>
+<span id="src-hex-edge-loft-L559">  cq = sq;</span>
+<span id="src-hex-edge-loft-L560">  cr = sr;</span>
+<span id="src-hex-edge-loft-L561">  pq = cq;                    <span class="cm">// the cell we came from: the ONLY one to exclude</span></span>
+<span id="src-hex-edge-loft-L562">  pr = cr;</span>
+<span id="src-hex-edge-loft-L563">  havep = <span class="kw">false</span>;</span>
+<span id="src-hex-edge-loft-L564">  t = <span class="nm">0.0</span>;</span>
+<span id="src-hex-edge-loft-L565">  steps = <span class="nm">0</span>;</span>
+<span id="src-hex-edge-loft-L566">  <span class="cm">// Bounded, and the bound fails SAFE: on exhaustion the caller is told it may travel</span></span>
+<span id="src-hex-edge-loft-L567">  <span class="cm">// only as far as was actually verified, never that the rest is clear.</span></span>
+<span id="src-hex-edge-loft-L568">  while steps &lt; <span class="nm">256</span> {</span>
+<span id="src-hex-edge-loft-L569">    steps = steps + <span class="nm">1</span>;</span>
+<span id="src-hex-edge-loft-L570">    ck = (<span class="fn-call">lattice_k</span>(cq, cr) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.8660254037844386</span>;</span>
+<span id="src-hex-edge-loft-L571">    cm = (<span class="fn-call">lattice_m</span>(cq, cr) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.5</span>;</span>
+<span id="src-hex-edge-loft-L572">    bt = <span class="nm">2.0</span>;</span>
+<span id="src-hex-edge-loft-L573">    bd = -<span class="nm">1</span>;</span>
+<span id="src-hex-edge-loft-L574">    <span class="kw">for</span> d <span class="kw">in</span> <span class="nm">0..6</span> {</span>
+<span id="src-hex-edge-loft-L575">      nq = <span class="fn-call">nb_q</span>(cq, cr, d);</span>
+<span id="src-hex-edge-loft-L576">      nr = <span class="fn-call">nb_r</span>(cq, cr, d);</span>
+<span id="src-hex-edge-loft-L577">      <span class="cm">// Exclude the cell we CAME FROM, not crossings at the current parameter. Filtering</span></span>
+<span id="src-hex-edge-loft-L578">      <span class="cm">// by parameter (tt &gt; t + eps) drops a crossing that sits exactly at t — and that is</span></span>
+<span id="src-hex-edge-loft-L579">      <span class="cm">// the normal state, not an edge case: stopping at a wall leaves the position exactly</span></span>
+<span id="src-hex-edge-loft-L580">      <span class="cm">// ON a bisector, so the very next sweep starts there and would skip its first edge.</span></span>
+<span id="src-hex-edge-loft-L581">      <span class="cm">// Excluding the previous cell also lets a corner be walked THROUGH: both of its</span></span>
+<span id="src-hex-edge-loft-L582">      <span class="cm">// edges get tested at the same t, so a path cannot slip between two walls that meet.</span></span>
+<span id="src-hex-edge-loft-L583">      <span class="kw">if</span> !(havep &amp;&amp; nq == pq &amp;&amp; nr == pr) {</span>
+<span id="src-hex-edge-loft-L584">        nk = (<span class="fn-call">lattice_k</span>(nq, nr) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.8660254037844386</span>;</span>
+<span id="src-hex-edge-loft-L585">        nm = (<span class="fn-call">lattice_m</span>(nq, nr) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.5</span>;</span>
+<span id="src-hex-edge-loft-L586">        dx = nk - ck;</span>
+<span id="src-hex-edge-loft-L587">        dy = nm - cm;</span>
+<span id="src-hex-edge-loft-L588">        den = vx * dx + vy * dy;</span>
+<span id="src-hex-edge-loft-L589">        <span class="kw">if</span> den &gt; <span class="nm">0.000000001</span> {                <span class="cm">// only bisectors we are moving TOWARD</span></span>
+<span id="src-hex-edge-loft-L590">          mx = (nk + ck) * <span class="nm">0.5</span>;</span>
+<span id="src-hex-edge-loft-L591">          my = (nm + cm) * <span class="nm">0.5</span>;</span>
+<span id="src-hex-edge-loft-L592">          tt = ((mx - x0) * dx + (my - y0) * dy) / den ?? <span class="nm">2.0</span>;</span>
+<span id="src-hex-edge-loft-L593">          <span class="kw">if</span> tt &gt; t - <span class="nm">0.000000001</span> &amp;&amp; tt &lt; bt { bt = tt; bd = d; }</span>
+<span id="src-hex-edge-loft-L594">        }</span>
+<span id="src-hex-edge-loft-L595">      }</span>
+<span id="src-hex-edge-loft-L596">    }</span>
+<span id="src-hex-edge-loft-L597">    <span class="kw">if</span> bd &lt; <span class="nm">0</span> || bt &gt; <span class="nm">1.0</span> { <span class="kw">return</span> (<span class="nm">1.0</span>, cq, cr, -<span class="nm">1</span>); }   <span class="cm">// no crossing left in range</span></span>
+<span id="src-hex-edge-loft-L598">    <span class="kw">if</span> bt &lt; t { bt = t; }                                 <span class="cm">// never report travel backwards</span></span>
+<span id="src-hex-edge-loft-L599">    bq = <span class="fn-call">nb_q</span>(cq, cr, bd);</span>
+<span id="src-hex-edge-loft-L600">    br = <span class="fn-call">nb_r</span>(cq, cr, bd);</span>
+<span id="src-hex-edge-loft-L601">    <span class="kw">if</span> !<span class="fn-call">passable</span>(e, cq, cr, bq, br) { <span class="kw">return</span> (bt, cq, cr, bd); }</span>
+<span id="src-hex-edge-loft-L602">    t = bt;</span>
+<span id="src-hex-edge-loft-L603">    pq = cq;</span>
+<span id="src-hex-edge-loft-L604">    pr = cr;</span>
+<span id="src-hex-edge-loft-L605">    havep = <span class="kw">true</span>;</span>
+<span id="src-hex-edge-loft-L606">    cq = bq;</span>
+<span id="src-hex-edge-loft-L607">    cr = br;</span>
+<span id="src-hex-edge-loft-L608">  }</span>
+<span id="src-hex-edge-loft-L609">  (t, cq, cr, -<span class="nm">1</span>)</span>
+<span id="src-hex-edge-loft-L610">}</span>
+<span id="src-hex-edge-loft-L611"></span>
+<span id="src-hex-edge-loft-L612"><span class="cm">// A THIN wall: the cut between the cells of `s` and everything else.  One edge thick,</span></span>
+<span id="src-hex-edge-loft-L613"><span class="cm">// and it separates by construction — in every one of the 24 headings.</span></span>
+<span id="src-hex-edge-loft-L614"><span class="cm">// Example: @HXE-009</span></span>
+<span id="src-hex-edge-loft-L615"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">edges_cut</span>(s: <span class="en">HexSet</span>, e: <span class="en">EdgeSet</span>) {</span>
+<span id="src-hex-edge-loft-L616">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
+<span id="src-hex-edge-loft-L617">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
+<span id="src-hex-edge-loft-L618">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="src-hex-edge-loft-L619">        <span class="kw">for</span> d <span class="kw">in</span> <span class="nm">0..6</span> {</span>
+<span id="src-hex-edge-loft-L620">          nq = <span class="fn-call">nb_q</span>(q, r, d);</span>
+<span id="src-hex-edge-loft-L621">          nr = <span class="fn-call">nb_r</span>(q, r, d);</span>
+<span id="src-hex-edge-loft-L622">          <span class="kw">if</span> !<span class="fn-call">hexset_get</span>(s, nq, nr) { <span class="fn-call">edge_block</span>(e, q, r, nq, nr); }</span>
+<span id="src-hex-edge-loft-L623">        }</span>
+<span id="src-hex-edge-loft-L624">      }</span>
+<span id="src-hex-edge-loft-L625">    }</span>
+<span id="src-hex-edge-loft-L626">  }</span>
+<span id="src-hex-edge-loft-L627">}</span>
+<span id="src-hex-edge-loft-L628"></span>
+<span id="src-hex-edge-loft-L629"><span class="cm">// A SOLID body: every edge incident to an occupied cell, so the cells cannot be entered</span></span>
+<span id="src-hex-edge-loft-L630"><span class="cm">// at all.  This is the cell model expressed in the edge primitive — which is the point:</span></span>
+<span id="src-hex-edge-loft-L631"><span class="cm">// one collision layer serves both.</span></span>
+<span id="src-hex-edge-loft-L632"><span class="cm">// Example: @HXE-009</span></span>
+<span id="src-hex-edge-loft-L633"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">edges_solid</span>(s: <span class="en">HexSet</span>, e: <span class="en">EdgeSet</span>) {</span>
+<span id="src-hex-edge-loft-L634">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
+<span id="src-hex-edge-loft-L635">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
+<span id="src-hex-edge-loft-L636">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="src-hex-edge-loft-L637">        <span class="kw">for</span> d <span class="kw">in</span> <span class="nm">0..6</span> { <span class="fn-call">edge_block</span>(e, q, r, <span class="fn-call">nb_q</span>(q, r, d), <span class="fn-call">nb_r</span>(q, r, d)); }</span>
+<span id="src-hex-edge-loft-L638">      }</span>
+<span id="src-hex-edge-loft-L639">    }</span>
+<span id="src-hex-edge-loft-L640">  }</span>
+<span id="src-hex-edge-loft-L641">}</span>
+<span id="src-hex-edge-loft-L642"></span>
+<span id="src-hex-edge-loft-L643"><span class="cm">// Block every edge a straight line crosses: the wall runs along `n·p = c` in world</span></span>
+<span id="src-hex-edge-loft-L644"><span class="cm">// units, with n the unit normal.  A thin wall in ANY heading, one edge thick.</span></span>
+<span id="src-hex-edge-loft-L645"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">edges_halfplane_surf</span>(e: <span class="en">EdgeSet</span>, q0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, w: <span class="ty"><a href="stdlib-types.html">integer</a></span>, h: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-hex-edge-loft-L646">                            nx: <span class="ty"><a href="stdlib-types.html">float</a></span>, ny: <span class="ty"><a href="stdlib-types.html">float</a></span>, c: <span class="ty"><a href="stdlib-types.html">float</a></span>, surf: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-hex-edge-loft-L647">  <span class="kw">for</span> r <span class="kw">in</span> r0..r0 + h {</span>
+<span id="src-hex-edge-loft-L648">    <span class="kw">for</span> q <span class="kw">in</span> q0..q0 + w {</span>
+<span id="src-hex-edge-loft-L649">      sa = (<span class="fn-call">lattice_k</span>(q, r) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.8660254037844386</span> * nx</span>
+<span id="src-hex-edge-loft-L650">         + (<span class="fn-call">lattice_m</span>(q, r) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.5</span> * ny - c;</span>
+<span id="src-hex-edge-loft-L651">      <span class="kw">for</span> d <span class="kw">in</span> <span class="nm">0..6</span> {</span>
+<span id="src-hex-edge-loft-L652">        nq = <span class="fn-call">nb_q</span>(q, r, d);</span>
+<span id="src-hex-edge-loft-L653">        nr = <span class="fn-call">nb_r</span>(q, r, d);</span>
+<span id="src-hex-edge-loft-L654">        sb = (<span class="fn-call">lattice_k</span>(nq, nr) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.8660254037844386</span> * nx</span>
+<span id="src-hex-edge-loft-L655">           + (<span class="fn-call">lattice_m</span>(nq, nr) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.5</span> * ny - c;</span>
+<span id="src-hex-edge-loft-L656">        <span class="kw">if</span> sa &lt; <span class="nm">0.0</span> &amp;&amp; sb &gt;= <span class="nm">0.0</span> { <span class="fn-call">edge_block_surf</span>(e, q, r, nq, nr, surf); }</span>
+<span id="src-hex-edge-loft-L657">      }</span>
+<span id="src-hex-edge-loft-L658">    }</span>
+<span id="src-hex-edge-loft-L659">  }</span>
+<span id="src-hex-edge-loft-L660">}</span>
+<span id="src-hex-edge-loft-L661"></span>
+<span id="src-hex-edge-loft-L662"><span class="cm">// Back-compat: a halfplane wall with no surface recorded.</span></span>
+<span id="src-hex-edge-loft-L663"><span class="cm">// Example: @HXE-009</span></span>
+<span id="src-hex-edge-loft-L664"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">edges_halfplane</span>(e: <span class="en">EdgeSet</span>, q0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, w: <span class="ty"><a href="stdlib-types.html">integer</a></span>, h: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-hex-edge-loft-L665">                       nx: <span class="ty"><a href="stdlib-types.html">float</a></span>, ny: <span class="ty"><a href="stdlib-types.html">float</a></span>, c: <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
+<span id="src-hex-edge-loft-L666">  <span class="fn-call">edges_halfplane_surf</span>(e, q0, r0, w, h, nx, ny, c, <span class="en">SURF_NONE</span>);</span>
+<span id="src-hex-edge-loft-L667">}</span>
+<span id="src-hex-edge-loft-L668"></span>
+<span id="src-hex-edge-loft-L669"><span class="cm">// ── SIGHT ───────────────────────────────────────────────────────────────────</span></span>
+<span id="src-hex-edge-loft-L670"><span class="cm">//</span></span>
+<span id="src-hex-edge-loft-L671"><span class="cm">// Is there a clear line of sight from an eye to a target?</span></span>
 <span id="src-hex-edge-loft-L672"><span class="cm">//</span></span>
-<span id="src-hex-edge-loft-L673"><span class="cm">// Height matters as much as opacity: the sight line rises from eye to target, so an</span></span>
-<span id="src-hex-edge-loft-L674"><span class="cm">// obstruction blocks only while the line is still below its top.  A near wall hides what</span></span>
-<span id="src-hex-edge-loft-L675"><span class="cm">// the identical wall further along does not — which is exactly the railway sighting</span></span>
-<span id="src-hex-edge-loft-L676"><span class="cm">// problem, and it falls out of the geometry rather than being special-cased.</span></span>
+<span id="src-hex-edge-loft-L673"><span class="cm">// Sight is blocked by OPACITY, not by solidity.  A chain-link fence is solid and</span></span>
+<span id="src-hex-edge-loft-L674"><span class="cm">// transparent; a hedge is permeable and opaque.  This is the first consumer to read one</span></span>
+<span id="src-hex-edge-loft-L675"><span class="cm">// material axis while deliberately ignoring another, and it is the whole reason a material</span></span>
+<span id="src-hex-edge-loft-L676"><span class="cm">// carries a vector of transmission terms rather than a single flag.</span></span>
 <span id="src-hex-edge-loft-L677"><span class="cm">//</span></span>
-<span id="src-hex-edge-loft-L678"><span class="cm">// The walk steps at 0.2 world units.  A hex inradius is sqrt(3)/2 = 0.866, so consecutive</span></span>
-<span id="src-hex-edge-loft-L679"><span class="cm">// samples cannot skip a cell: every cell change is a step to a NEIGHBOUR, and the edge</span></span>
-<span id="src-hex-edge-loft-L680"><span class="cm">// between them is exactly the one to test.</span></span>
-<span id="src-hex-edge-loft-L681"><span class="cm">// Example: @HXE-010</span></span>
-<span id="src-hex-edge-loft-L682"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">sight_clear</span>(e: <span class="en">EdgeSet</span>, m: <span class="en">Materials</span>, x0: <span class="ty"><a href="stdlib-types.html">float</a></span>, y0: <span class="ty"><a href="stdlib-types.html">float</a></span>, z0: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
-<span id="src-hex-edge-loft-L683">                   x1: <span class="ty"><a href="stdlib-types.html">float</a></span>, y1: <span class="ty"><a href="stdlib-types.html">float</a></span>, z1: <span class="ty"><a href="stdlib-types.html">float</a></span>, opaque_at: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
-<span id="src-hex-edge-loft-L684">  dx = x1 - x0;</span>
-<span id="src-hex-edge-loft-L685">  dy = y1 - y0;</span>
-<span id="src-hex-edge-loft-L686">  dist = <span class="bi"><a href="stdlib-math.html">sqrt</a></span>(dx * dx + dy * dy) ?? <span class="nm">0.0</span>;</span>
-<span id="src-hex-edge-loft-L687">  <span class="kw">if</span> dist &lt; <span class="nm">0.000001</span> { <span class="kw">return</span> <span class="kw">true</span>; }</span>
-<span id="src-hex-edge-loft-L688">  n = ((dist / <span class="nm">0.2</span> ?? <span class="nm">0.0</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>) + <span class="nm">1</span>;</span>
-<span id="src-hex-edge-loft-L689">  (pq, pr) = <span class="fn-call">hex_at</span>(x0, y0);</span>
-<span id="src-hex-edge-loft-L690">  clear = <span class="kw">true</span>;</span>
-<span id="src-hex-edge-loft-L691">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">1..</span>n + <span class="nm">1</span> {</span>
-<span id="src-hex-edge-loft-L692">    t = (i <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) / (n <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) ?? <span class="nm">0.0</span>;</span>
-<span id="src-hex-edge-loft-L693">    (cq, cr) = <span class="fn-call">hex_at</span>(x0 + dx * t, y0 + dy * t);</span>
-<span id="src-hex-edge-loft-L694">    <span class="kw">if</span> cq != pq || cr != pr {</span>
-<span id="src-hex-edge-loft-L695">      <span class="kw">if</span> clear {</span>
-<span id="src-hex-edge-loft-L696">        sid = <span class="fn-call">edge_surf</span>(e, pq, pr, cq, cr);</span>
-<span id="src-hex-edge-loft-L697">        <span class="kw">if</span> sid &gt; <span class="nm">0</span> {</span>
-<span id="src-hex-edge-loft-L698">          mid = <span class="fn-call">edge_mat</span>(e, pq, pr, cq, cr);</span>
-<span id="src-hex-edge-loft-L699">          <span class="kw">if</span> <span class="fn-call">mat_opacity</span>(m, mid) &gt;= opaque_at {</span>
-<span id="src-hex-edge-loft-L700">            zl = z0 + (z1 - z0) * t;          <span class="cm">// sight-line height at the crossing</span></span>
-<span id="src-hex-edge-loft-L701">            <span class="kw">if</span> <span class="fn-call">mat_height</span>(m, mid) &gt; zl { clear = <span class="kw">false</span>; }</span>
-<span id="src-hex-edge-loft-L702">          }</span>
-<span id="src-hex-edge-loft-L703">        }</span>
-<span id="src-hex-edge-loft-L704">      }</span>
-<span id="src-hex-edge-loft-L705">      pq = cq;</span>
-<span id="src-hex-edge-loft-L706">      pr = cr;</span>
-<span id="src-hex-edge-loft-L707">    }</span>
-<span id="src-hex-edge-loft-L708">  }</span>
-<span id="src-hex-edge-loft-L709">  clear</span>
-<span id="src-hex-edge-loft-L710">}</span>
-<span id="src-hex-edge-loft-L711"></span>
-<span id="src-hex-edge-loft-L712"><span class="cm">// The inverse of surf_param: where along a surface does this parameter land?</span></span>
-<span id="src-hex-edge-loft-L713"><span class="cm">//</span></span>
-<span id="src-hex-edge-loft-L714"><span class="cm">// surf_param answers "where is this point on that surface"; derived placement needs the</span></span>
-<span id="src-hex-edge-loft-L715"><span class="cm">// other direction — a Feature states an INTERVAL in surface parameters, and</span></span>
-<span id="src-hex-edge-loft-L716"><span class="cm">// putting a door there means turning that interval back into a position. Without this the</span></span>
-<span id="src-hex-edge-loft-L717"><span class="cm">// only way to place a door on an existing opening is to search for it.</span></span>
-<span id="src-hex-edge-loft-L718"><span class="cm">// Example: @HXE-008</span></span>
-<span id="src-hex-edge-loft-L719"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">surf_point</span>(s: <span class="en">Surfaces</span>, id: <span class="ty"><a href="stdlib-types.html">integer</a></span>, t: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
-<span id="src-hex-edge-loft-L720">  <span class="kw">if</span> id &lt;= <span class="nm">0</span> || id &gt;= s.sf_n { <span class="kw">return</span> (<span class="nm">0.0</span>, <span class="nm">0.0</span>); }</span>
-<span id="src-hex-edge-loft-L721">  <span class="kw">if</span> (s.sf_kind[id] ?? <span class="nm">0</span>) == <span class="nm">1</span> {</span>
-<span id="src-hex-edge-loft-L722">    nx = s.sf_a[id] ?? <span class="nm">0.0</span>;</span>
-<span id="src-hex-edge-loft-L723">    ny = s.sf_b[id] ?? <span class="nm">0.0</span>;</span>
-<span id="src-hex-edge-loft-L724">    c = s.sf_c[id] ?? <span class="nm">0.0</span>;</span>
-<span id="src-hex-edge-loft-L725">    <span class="cm">// the foot of the perpendicular, then t along the surface's own direction</span></span>
-<span id="src-hex-edge-loft-L726">    <span class="kw">return</span> (c * nx - t * ny, c * ny + t * nx);</span>
-<span id="src-hex-edge-loft-L727">  }</span>
-<span id="src-hex-edge-loft-L728">  cx = s.sf_a[id] ?? <span class="nm">0.0</span>;</span>
-<span id="src-hex-edge-loft-L729">  cy = s.sf_b[id] ?? <span class="nm">0.0</span>;</span>
-<span id="src-hex-edge-loft-L730">  r = s.sf_c[id] ?? <span class="nm">1.0</span>;</span>
-<span id="src-hex-edge-loft-L731">  a = t / r ?? <span class="nm">0.0</span>;</span>
-<span id="src-hex-edge-loft-L732">  (cx + r * <span class="bi"><a href="stdlib-math.html">cos</a></span>(a), cy + r * <span class="bi"><a href="stdlib-math.html">sin</a></span>(a))</span>
-<span id="src-hex-edge-loft-L733">}</span>
+<span id="src-hex-edge-loft-L678"><span class="cm">// Height matters as much as opacity: the sight line rises from eye to target, so an</span></span>
+<span id="src-hex-edge-loft-L679"><span class="cm">// obstruction blocks only while the line is still below its top.  A near wall hides what</span></span>
+<span id="src-hex-edge-loft-L680"><span class="cm">// the identical wall further along does not — which is exactly the railway sighting</span></span>
+<span id="src-hex-edge-loft-L681"><span class="cm">// problem, and it falls out of the geometry rather than being special-cased.</span></span>
+<span id="src-hex-edge-loft-L682"><span class="cm">//</span></span>
+<span id="src-hex-edge-loft-L683"><span class="cm">// The walk steps at 0.2 world units.  A hex inradius is sqrt(3)/2 = 0.866, so consecutive</span></span>
+<span id="src-hex-edge-loft-L684"><span class="cm">// samples cannot skip a cell: every cell change is a step to a NEIGHBOUR, and the edge</span></span>
+<span id="src-hex-edge-loft-L685"><span class="cm">// between them is exactly the one to test.</span></span>
+<span id="src-hex-edge-loft-L686"><span class="cm">// Example: @HXE-010</span></span>
+<span id="src-hex-edge-loft-L687"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">sight_clear</span>(e: <span class="en">EdgeSet</span>, m: <span class="en">Materials</span>, x0: <span class="ty"><a href="stdlib-types.html">float</a></span>, y0: <span class="ty"><a href="stdlib-types.html">float</a></span>, z0: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-hex-edge-loft-L688">                   x1: <span class="ty"><a href="stdlib-types.html">float</a></span>, y1: <span class="ty"><a href="stdlib-types.html">float</a></span>, z1: <span class="ty"><a href="stdlib-types.html">float</a></span>, opaque_at: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-hex-edge-loft-L689">  dx = x1 - x0;</span>
+<span id="src-hex-edge-loft-L690">  dy = y1 - y0;</span>
+<span id="src-hex-edge-loft-L691">  dist = <span class="bi"><a href="stdlib-math.html">sqrt</a></span>(dx * dx + dy * dy) ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-edge-loft-L692">  <span class="kw">if</span> dist &lt; <span class="nm">0.000001</span> { <span class="kw">return</span> <span class="kw">true</span>; }</span>
+<span id="src-hex-edge-loft-L693">  n = ((dist / <span class="nm">0.2</span> ?? <span class="nm">0.0</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>) + <span class="nm">1</span>;</span>
+<span id="src-hex-edge-loft-L694">  (pq, pr) = <span class="fn-call">hex_at</span>(x0, y0);</span>
+<span id="src-hex-edge-loft-L695">  clear = <span class="kw">true</span>;</span>
+<span id="src-hex-edge-loft-L696">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">1..</span>n + <span class="nm">1</span> {</span>
+<span id="src-hex-edge-loft-L697">    t = (i <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) / (n <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-edge-loft-L698">    (cq, cr) = <span class="fn-call">hex_at</span>(x0 + dx * t, y0 + dy * t);</span>
+<span id="src-hex-edge-loft-L699">    <span class="kw">if</span> cq != pq || cr != pr {</span>
+<span id="src-hex-edge-loft-L700">      <span class="kw">if</span> clear {</span>
+<span id="src-hex-edge-loft-L701">        sid = <span class="fn-call">edge_surf</span>(e, pq, pr, cq, cr);</span>
+<span id="src-hex-edge-loft-L702">        <span class="kw">if</span> sid &gt; <span class="nm">0</span> {</span>
+<span id="src-hex-edge-loft-L703">          mid = <span class="fn-call">edge_mat</span>(e, pq, pr, cq, cr);</span>
+<span id="src-hex-edge-loft-L704">          <span class="kw">if</span> <span class="fn-call">mat_opacity</span>(m, mid) &gt;= opaque_at {</span>
+<span id="src-hex-edge-loft-L705">            zl = z0 + (z1 - z0) * t;          <span class="cm">// sight-line height at the crossing</span></span>
+<span id="src-hex-edge-loft-L706">            <span class="kw">if</span> <span class="fn-call">mat_height</span>(m, mid) &gt; zl { clear = <span class="kw">false</span>; }</span>
+<span id="src-hex-edge-loft-L707">          }</span>
+<span id="src-hex-edge-loft-L708">        }</span>
+<span id="src-hex-edge-loft-L709">      }</span>
+<span id="src-hex-edge-loft-L710">      pq = cq;</span>
+<span id="src-hex-edge-loft-L711">      pr = cr;</span>
+<span id="src-hex-edge-loft-L712">    }</span>
+<span id="src-hex-edge-loft-L713">  }</span>
+<span id="src-hex-edge-loft-L714">  clear</span>
+<span id="src-hex-edge-loft-L715">}</span>
+<span id="src-hex-edge-loft-L716"></span>
+<span id="src-hex-edge-loft-L717"><span class="cm">// The inverse of surf_param: where along a surface does this parameter land?</span></span>
+<span id="src-hex-edge-loft-L718"><span class="cm">//</span></span>
+<span id="src-hex-edge-loft-L719"><span class="cm">// surf_param answers "where is this point on that surface"; derived placement needs the</span></span>
+<span id="src-hex-edge-loft-L720"><span class="cm">// other direction — a Feature states an INTERVAL in surface parameters, and</span></span>
+<span id="src-hex-edge-loft-L721"><span class="cm">// putting a door there means turning that interval back into a position. Without this the</span></span>
+<span id="src-hex-edge-loft-L722"><span class="cm">// only way to place a door on an existing opening is to search for it.</span></span>
+<span id="src-hex-edge-loft-L723"><span class="cm">// Example: @HXE-008</span></span>
+<span id="src-hex-edge-loft-L724"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">surf_point</span>(s: <span class="en">Surfaces</span>, id: <span class="ty"><a href="stdlib-types.html">integer</a></span>, t: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
+<span id="src-hex-edge-loft-L725">  <span class="kw">if</span> id &lt;= <span class="nm">0</span> || id &gt;= s.sf_n { <span class="kw">return</span> (<span class="nm">0.0</span>, <span class="nm">0.0</span>); }</span>
+<span id="src-hex-edge-loft-L726">  <span class="kw">if</span> (s.sf_kind[id] ?? <span class="nm">0</span>) == <span class="nm">1</span> {</span>
+<span id="src-hex-edge-loft-L727">    nx = s.sf_a[id] ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-edge-loft-L728">    ny = s.sf_b[id] ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-edge-loft-L729">    c = s.sf_c[id] ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-edge-loft-L730">    <span class="cm">// the foot of the perpendicular, then t along the surface's own direction</span></span>
+<span id="src-hex-edge-loft-L731">    <span class="kw">return</span> (c * nx - t * ny, c * ny + t * nx);</span>
+<span id="src-hex-edge-loft-L732">  }</span>
+<span id="src-hex-edge-loft-L733">  cx = s.sf_a[id] ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-edge-loft-L734">  cy = s.sf_b[id] ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-edge-loft-L735">  r = s.sf_c[id] ?? <span class="nm">1.0</span>;</span>
+<span id="src-hex-edge-loft-L736">  a = t / r ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-edge-loft-L737">  (cx + r * <span class="bi"><a href="stdlib-math.html">cos</a></span>(a), cy + r * <span class="bi"><a href="stdlib-math.html">sin</a></span>(a))</span>
+<span id="src-hex-edge-loft-L738">}</span>
 </code></pre>
 <h2 id="tests-01-hex-edge-loft">tests/01-hex-edge.loft</h2>
 <pre class="src"><code><span id="tests-01-hex-edge-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>

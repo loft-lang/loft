@@ -1174,8 +1174,19 @@ fn native_scripts_chunk(chunk: usize) -> std::io::Result<()> {
         // recorded exit 0 when written, and the suite read green while none of them ran.
         // A file that is not meant to build declares it — `@EXPECT_ERROR`, a file-level
         // `@EXPECT_FAIL`, or a row in `SCRIPTS_NATIVE_SKIP` with its reason — above.
-        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| prepare_native_test(&entry)))
-        {
+        //
+        // Compiled on a thread with the `loft` CLI's own stack — the main thread's 8 MiB on
+        // Linux, where a test thread has 2 MiB — so a program the CLI compiles is not refused
+        // here for the depth of its expressions (a 100-term nested sum needs more than 2 MiB
+        // on aarch64).  A panic joins as `Err`, the same verdict `catch_unwind` gave.
+        let prepared = std::thread::scope(|sc| {
+            std::thread::Builder::new()
+                .stack_size(8 << 20)
+                .spawn_scoped(sc, || prepare_native_test(&entry))
+                .expect("spawn the compile thread")
+                .join()
+        });
+        match prepared {
             Ok(Ok(job)) => jobs.push(job),
             Ok(Err(e)) => not_generated.push(format!("{entry:?} (prepare error: {e})")),
             Err(_) => not_generated.push(format!("{entry:?} (codegen panic)")),

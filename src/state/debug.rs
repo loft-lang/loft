@@ -1250,12 +1250,11 @@ impl State {
         // stack_trace() returns the same frame count as execute_argv.
         // @PLAN53 cluster 2 / S4: match execute_argv's aligned entry base.
         let entry_base = crate::variables::aligned_stack_step(4);
-        self.call_stack.push(super::CallFrame {
+        self.push_frame(super::CallFrame {
             d_nr,
             call_pos: 0,
             args_base: entry_base,
             args_size: 0,
-            line: 0,
         });
         // Write the return address of the main function but do not override the record size.
         self.stack_pos = entry_base;
@@ -1635,7 +1634,7 @@ impl State {
     pub(super) fn get_record_keys(&mut self, data: &Data, attr: &mut BTreeMap<usize, String>) {
         let db_tp = u16::from_str(&attr[&1][6..]).unwrap_or(0);
         let no_keys = u8::from_str(&attr[&2][8..]).unwrap_or(0) as usize;
-        let keys = self.database.get_keys(db_tp);
+        let keys = self.database.get_keys(db_tp).to_vec();
         for (idx, key) in keys.iter().enumerate() {
             if idx >= no_keys {
                 break;
@@ -1939,6 +1938,7 @@ pub(super) fn execute_log_impl(
         bytecode: &raw const state.bytecode,
         library: &raw const state.library,
         stack_trace_lib_nr: stk_lib_nr,
+        frame_headroom: std::sync::Arc::clone(&state.frame_headroom),
     }));
     // `LOFT_LOG=poison_free`: wire the runtime flag into the Stores so
     // every `free_named` overwrites the freed buffer with 0xDEADBEEF.

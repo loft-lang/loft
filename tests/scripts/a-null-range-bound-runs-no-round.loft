@@ -1,0 +1,65 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `(I-RangeNull)` — a range bound that is `null` only at run time makes the range EMPTY.  Before,
+// a null START never advanced: under `(E-NullArg)` `null` sorts below every end and `null + 1`
+// stays `null`, so the interpreter looped forever on `x = null`, and native counted up from the
+// null sentinel (`null, -9223372036854775807, …`) — the backends disagreed and neither stopped.
+// A null END already ran zero rounds under the order; it is kept here as the control.
+//
+// Axes this file MOVES: which bound is null (start · end · both), the form (`a..b` · `a..=b` ·
+// `a..` · `rev(a..b)` · `rev(a..=b)`), and the end (a literal · a variable · an expression).  The
+// non-null controls run the same forms with a start of 2 and must yield exactly what they did.
+// Every loop also breaks after 5 rounds, so a regression shows as a count, never as a hang.
+//
+// The literal spelling (`null..3`) is refused at compile time:
+// `a-literal-null-range-bound-is-refused.loft`.
+//
+// @falsified-at: a90114f53 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-null-range-bound-runs-no-round.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   HOLDS: leak, panic and free-refusal are equal on both trees.
+
+fn rounds(seen: text) -> integer { len(seen) }
+
+fn main() {
+  n: integer? = null;
+  e: integer? = null;
+  s = "";
+  k = 0;
+  for x in n..3 { k += 1; s += "{x}"; if k >= 5 { break } }
+  assert(k == 0, "null..3 ran {k} rounds: {s}");
+  for x in n..=3 { k += 1; s += "{x}"; if k >= 5 { break } }
+  assert(k == 0, "null..=3 ran {k} rounds: {s}");
+  for x in n.. { k += 1; s += "{x}"; if k >= 5 { break } }
+  assert(k == 0, "null.. ran {k} rounds: {s}");
+  for x in n..n { k += 1; s += "{x}"; if k >= 5 { break } }
+  assert(k == 0, "null..null ran {k} rounds: {s}");
+  for x in n..(k + 3) { k += 1; s += "{x}"; if k >= 5 { break } }
+  assert(k == 0, "null..expr ran {k} rounds: {s}");
+  for x in rev(n..3) { k += 1; s += "{x}"; if k >= 5 { break } }
+  assert(k == 0, "rev(null..3) ran {k} rounds: {s}");
+  for x in rev(n..=3) { k += 1; s += "{x}"; if k >= 5 { break } }
+  assert(k == 0, "rev(null..=3) ran {k} rounds: {s}");
+  for x in 0..e { k += 1; s += "{x}"; if k >= 5 { break } }
+  assert(k == 0, "0..null ran {k} rounds: {s}");
+  for x in rev(0..e) { k += 1; s += "{x}"; if k >= 5 { break } }
+  assert(k == 0, "rev(0..null) ran {k} rounds: {s}");
+
+  // Controls: the same forms with a non-null start are untouched.
+  n = 2;
+  t = "";
+  for x in n..5 { t += "{x}"; }
+  for x in n..=5 { t += "{x}"; }
+  for x in rev(n..5) { t += "{x}"; }
+  c = 0;
+  for x in n.. { t += "{x}"; c += 1; if c >= 3 { break } }
+  // A bound that CALLS a function declared further down is no `null`: on the parser's first
+  // pass the call is a placeholder, and the refusal must not judge it there (hex_field's
+  // `0..layer_count(ly)` was refused before the refusal moved to the second pass).
+  for x in 0..declared_below(2) { t += "{x}"; }
+  assert(t == "234" + "2345" + "432" + "234" + "01", "controls gave {t}");
+  assert(rounds(s) == 0, "a null-bound loop yielded {s}");
+  println("ok");
+}
+
+fn declared_below(n: integer) -> integer { n }

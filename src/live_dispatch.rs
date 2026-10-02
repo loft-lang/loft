@@ -129,6 +129,8 @@ fn bootstrap(fn_names: &'static [&'static str]) -> Result<Stores, String> {
         .map_err(|_| "LOFT_LIVE_SRC not set (run through the loft driver)".to_string())?;
     let stdlib = std::env::var("LOFT_LIVE_STDLIB").unwrap_or_else(|_| "default".to_string());
     let mut p = Box::new(crate::parser::Parser::new());
+    // Parsed against again after compiling: no whole-program signature rewrite.
+    p.data.open_world = true;
     p.parse_stdlib(&stdlib)
         .map_err(|e| format!("stdlib `{stdlib}`: {e}"))?;
     if let Ok(libs) = std::env::var("LOFT_LIVE_LIBS") {
@@ -162,6 +164,8 @@ pub fn bootstrap_from_bytes(
     program_src: &str,
 ) -> Result<Stores, String> {
     let mut p = Box::new(crate::parser::Parser::new());
+    // Parsed against again after compiling: no whole-program signature rewrite.
+    p.data.open_world = true;
     for (name, content) in crate::stdlib_sources::STDLIB_SOURCES {
         if !p.parse_source(content, name, true) {
             return Err(format!("embedded stdlib `{name}`: {}", p.diagnostics));
@@ -207,6 +211,7 @@ fn bootstrap_core(
         library: &raw const state.library,
         data: data_ptr,
         stack_trace_lib_nr: stk_lib_nr,
+        frame_headroom: std::sync::Arc::clone(&state.frame_headroom),
     }));
     crate::crash_report::set_source_spans(Some(std::sync::Arc::new(state.source_spans.clone())));
 
@@ -360,6 +365,8 @@ pub fn wasm_host_log(msg: &str) {
 pub fn wasm_debug_selftest() -> String {
     use crate::debugger::StepMode;
     let mut p = Box::new(crate::parser::Parser::new());
+    // Parsed against again after compiling: no whole-program signature rewrite.
+    p.data.open_world = true;
     for (name, content) in crate::stdlib_sources::STDLIB_SOURCES {
         if !p.parse_source(content, name, true) {
             return format!("FAIL parse-stdlib {name}");
@@ -823,6 +830,29 @@ fn rebuild_status() -> i64 {
             }
         };
         let src = std::env::var("LOFT_LIVE_SRC").unwrap_or_default();
+        // Drift first, whatever the build's outcome: a build of a source that has changed
+        // since is stale whether it succeeded or failed — and a failure is often BECAUSE of
+        // the edit (the build read the file while it was being rewritten, half written).
+        // Reporting it as FAILED would leave the settled source unbuilt.
+        let now = std::fs::read(&src).unwrap_or_default();
+        if now != *snapshot {
+            // Stale: the source changed while the build ran.  Requeue with the
+            // current content — the cache makes an already-built version
+            // instant, so this converges as soon as the source settles.
+            eprintln!("loft-live: rebuild stale (source changed during build) — requeued");
+            let driver = std::env::var("LOFT_LIVE_DRIVER").unwrap_or_default();
+            *r = match spawn_build(&driver, &src) {
+                Ok(b) => b,
+                Err(msg) => {
+                    eprintln!("loft-live: requeue failed — {msg}");
+                    Rebuild::Failed
+                }
+            };
+            return match &*r {
+                Rebuild::Building { .. } => REBUILD_BUILDING,
+                _ => REBUILD_FAILED,
+            };
+        }
         if !status.success() {
             let tail: String = std::fs::read_to_string(err_path)
                 .unwrap_or_default()
@@ -846,25 +876,6 @@ fn rebuild_status() -> i64 {
             .unwrap_or("")
             .trim()
             .to_string();
-        let now = std::fs::read(&src).unwrap_or_default();
-        if now != *snapshot {
-            // Stale: the source changed while rustc ran.  Requeue with the
-            // current content — the cache makes an already-built version
-            // instant, so this converges as soon as the source settles.
-            eprintln!("loft-live: rebuild stale (source changed during build) — requeued");
-            let driver = std::env::var("LOFT_LIVE_DRIVER").unwrap_or_default();
-            *r = match spawn_build(&driver, &src) {
-                Ok(b) => b,
-                Err(msg) => {
-                    eprintln!("loft-live: requeue failed — {msg}");
-                    Rebuild::Failed
-                }
-            };
-            return match &*r {
-                Rebuild::Building { .. } => REBUILD_BUILDING,
-                _ => REBUILD_FAILED,
-            };
-        }
         if artifact.is_empty() || !std::path::Path::new(&artifact).exists() {
             eprintln!("loft-live: rebuild succeeded but no artifact on the ok line ({out:?})");
             *r = Rebuild::Failed;
@@ -969,6 +980,8 @@ mod tests {
     /// return `(def_count, n_main_resolves)`.
     fn parse_fs(program_path: &str) -> (u32, bool) {
         let mut p = Parser::new();
+        // Parsed against again after compiling: no whole-program signature rewrite.
+        p.data.open_world = true;
         p.parse_dir("default", true, false).expect("parse default/");
         assert!(p.parse(program_path, false), "fs program parses");
         crate::scopes::check(&mut p.data, &mut p.database);
@@ -980,6 +993,8 @@ mod tests {
     /// `scopes::check`.
     fn parse_embedded(program_src: &str) -> (u32, bool) {
         let mut p = Parser::new();
+        // Parsed against again after compiling: no whole-program signature rewrite.
+        p.data.open_world = true;
         for (name, content) in crate::stdlib_sources::STDLIB_SOURCES {
             assert!(
                 p.parse_source(content, name, true),

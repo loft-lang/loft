@@ -187,15 +187,27 @@ fn mints(mode: &str, env: &[(&str, &str)]) -> usize {
 /// complete-write `OpDatabaseNP` a no-heap literal such as `mk_rgb`'s takes, so its count
 /// under the switch reads 30 low; native's parity is the value equality, the leak gate and
 /// the IR shape pinned above.
+///
+/// Read with the IR's small-record tuples off (@PLN180, `LOFT_NO_IR_VALUE_RECORD`): they
+/// remove `mk_rgb`'s buffer whether placement is on or not, so with them on the difference
+/// no longer isolates placement.  With them on the census may only drop further.
 #[test]
 fn the_store_census_drops_by_one_per_admitted_call() {
     const ADMITTED_CALLS: usize = 4 + 60 + 30 + 40;
-    let on = mints("--interpret", &[]);
-    let off = mints("--interpret", OFF);
+    const NO_TUPLES: (&str, &str) = ("LOFT_NO_IR_VALUE_RECORD", "1");
+    let on = mints("--interpret", &[NO_TUPLES]);
+    let mut off_env = OFF.to_vec();
+    off_env.push(NO_TUPLES);
+    let off = mints("--interpret", &off_env);
     assert_eq!(
         off - on,
         ADMITTED_CALLS,
         "interpreter: {off} mints under the switch, {on} with placement"
+    );
+    let tuples = mints("--interpret", &[]);
+    assert!(
+        tuples <= on,
+        "the IR's small-record tuples must not add a mint: {tuples} with them, {on} without"
     );
 }
 

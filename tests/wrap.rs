@@ -1676,7 +1676,30 @@ fn source_without_failing_fns(src: &str, diags: &[String], path: &str) -> Option
 fn run_test(entry: PathBuf, debug: bool, allow_dump: bool) -> std::io::Result<()> {
     let mut collected: Vec<String> = Vec::new();
     let _run_lock = common::source_run_lock(&entry);
-    run_test_inner(entry, debug, allow_dump, None, 0, &mut collected)
+    // On a thread with the `loft` CLI's own stack — the main thread's 8 MiB on Linux, where a
+    // test thread has 2 MiB — as `tests/native.rs` compiles its corpus: a program the CLI runs
+    // is not failed here for the depth of its expressions.  A 100-term nested sum
+    // (`a-frame-never-pushes-past-the-room-its-entry-made.loft`) overflowed the test thread
+    // under LOFT_POISON / LOFT_VERIFY_STACK, whose extra frames tipped it.  A panic re-raises
+    // here, so a failing script fails its test exactly as before.  A sanitizer build's frames
+    // are several times larger (ASan's redzones), so its jobs raise the floor through
+    // `RUST_MIN_STACK`, the knob std's own threads read.
+    let stack = std::env::var("RUST_MIN_STACK")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .map_or(8 << 20, |v| v.max(8 << 20));
+    std::thread::scope(|sc| {
+        let run = std::thread::Builder::new()
+            .stack_size(stack)
+            .spawn_scoped(sc, || {
+                run_test_inner(entry, debug, allow_dump, None, 0, &mut collected)
+            })
+            .expect("spawn the script thread");
+        match run.join() {
+            Ok(result) => result,
+            Err(panic) => std::panic::resume_unwind(panic),
+        }
+    })
 }
 
 /// How many times a file may be peeled before the harness gives up (loft#1242).

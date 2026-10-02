@@ -1,0 +1,147 @@
+// `(R-ReturnField)`: `p = mk(…); return p.a` — the returned FIELD of an owned local is
+// answered as the local's own store at the field's position, instead of a fresh store minted
+// for the return and the field deep-copied into it.  The parser materialises such an exit
+// (`materialized_view_return`: mint the buffer, copy the field, free the local) because a
+// view of a frame local would dangle; when the local is the frame's own store and the exit
+// is the last thing that names it, the store goes to the caller as it stands, and the caller
+// frees it whole as it frees any adopted store — a store's free is keyed on the store, never
+// on the handle's type or position.  The buffer frees the exit keeps are re-witnessed against
+// the root, so a buffer that aliases the handed store is skipped and one that does not is
+// freed as before.
+//
+// Hand-computed cells, both backends: r1 the first field; r2 the second (a nonzero offset);
+// r3 a field holding a vector (the caller reads the elements); r4 a PARAMETER's field (not
+// owned: the copy stays); r5 the field of an alias `q = p` (the alias's free is re-witnessed
+// against the root and skipped); r6 two exits returning two fields; r7 the caller binding in
+// a loop (a reused buffer: the values hold every round); r8 the view-local spelling
+// (`v = d.a; return v` — pluginabi's `pa_decode`); r9 a struct-enum field out of its wrapper;
+// r10 a LIFTED root (`return mk(n).b`); r11 a literal exit beside a field exit; r12 the root
+// bound in a loop from a pooled buffer and returned from inside it; r13 a nested record.
+// `LOFT_ALLOC_REPORT=1 loft --interpret <this> r9` counts the stores: r9 4 → 2 per call;
+// `LOFT_COPY_DUMP=1 … r1` the copies: 1 → 0 per call.  `tests/return_field.rs` pins the IR
+// shape, both censuses and the switch (`LOFT_NO_RETURN_FIELD=1` restores the copy).
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-30) — the re-witnessing removed from
+// `return_field::apply` (every buffer free keeps the witness it had): r12, the pooled loop
+// root, answers WRONG on both backends (`assertion failed: r12`; the cell driver's sink reads
+// `null`) — its `__ref_1` aliases the handed store and, witnessed against the buffer the exit
+// no longer mints, is freed under the caller — while every other cell stays green, so the
+// witness rewrite is load-bearing for exactly the aliasing buffer.  The root's own free kept as
+// a plain `OpFreeRef` before the return: r6 answers wrong on the interpreter, r1 under
+// `LOFT_POISON=1`, and `--native` panics in the allocator (`allocation.rs`, a freed store
+// claimed again) plain and under `LOFT_STRICT_STORES=1`.  A first attempt at that second
+// sabotage kept the root's GUARDED free and read green everywhere: it had become
+// `OpFreeRefIfDistinct(p, p)`, a witness against itself, which never frees — the inert shape
+// `scopes` already documents, and a receipt that the guard cannot tell from the fix.
+// Restored byte-identically.
+struct In { n: integer, tag: text }
+struct Pair { a: In, b: In, k: integer }
+struct Tree { items: vector<In>, count: integer }
+struct Box { t: Tree, extra: text }
+fn mk(n: integer) -> Pair { Pair { a: In { n: n, tag: "a{n}" }, b: In { n: n * 2, tag: "b{n}" }, k: n * 3 } }
+fn build(n: integer) -> Box {
+  items: vector<In> = [];
+  for i in 0..n { items += [In { n: i, tag: "i{i}" }]; }
+  return Box { t: Tree { items: items, count: n }, extra: "x{n}" };
+}
+fn r1(n: integer) -> In { p = mk(n); return p.a; }
+fn r2(n: integer) -> In { p = mk(n); return p.b; }
+fn r3(n: integer) -> Tree { bx = build(n); return bx.t; }
+fn r4(p: Pair) -> In { return p.a; }
+fn r5(n: integer) -> In { p = mk(n); q = p; return q.a; }
+fn r6(n: integer) -> In {
+  p = mk(n);
+  if p.k > 100 { return p.b; }
+  return p.a;
+}
+
+struct Deep { inner: In, z: integer }
+enum CV { CNull, CText { value: text }, CMap { entries: vector<In> } }
+struct DWrap { value: CV, ok: boolean }
+fn mk_deep(n: integer) -> Deep { return Deep { inner: In { n: n, tag: "d{n}" }, z: n + 1 }; }
+fn dinner(n: integer) -> DWrap { return DWrap { value: CMap { entries: [In { n: n, tag: "e{n}" }] }, ok: true }; }
+// r8 the view-local spelling (pa_decode's): `v = d.value; return v`
+fn r8(n: integer) -> In { d = mk(n); v = d.a; return v; }
+// r9 a struct-enum field out of its wrapper
+fn r9(n: integer) -> CV { d = dinner(n); v = d.value; return v; }
+// r10 the root is a lifted call
+fn r10(n: integer) -> In { return mk(n).b; }
+// r11 one literal exit beside one field exit
+fn r11(n: integer) -> In { if n < 0 { return In { n: -1, tag: "neg" }; } p = mk(n); return p.a; }
+// r12 the root bound in a loop, returned from inside it
+fn r12(n: integer) -> In {
+  for i in 0..n { p = mk(i); if p.k > 6 { return p.b; } }
+  return In { n: 0, tag: "none" };
+}
+// r13 a nested field path
+fn r13(n: integer) -> In { d = mk_deep(n); return d.inner; }
+fn run_cell(cell: text, r: integer) -> integer {
+  s = 0;
+  if cell == "r1" { s += r1(r % 7).n; }
+  if cell == "r2" { s += r2(r % 7).n; }
+  if cell == "r3" { s += r3(r % 4).count; }
+  if cell == "r4" { pp = mk(r % 5); s += r4(pp).n; }
+  if cell == "r6" { s += r6(r % 50).n; }
+  if cell == "r8" { s += r8(r % 7).n; }
+  if cell == "r9" { match r9(r % 7) { CMap { entries } => { s += len(entries); }, _ => {} } }
+  if cell == "r10" { s += r10(r % 7).n; }
+  if cell == "r11" { s += r11(r % 9 - 2).n; }
+  if cell == "r12" { s += r12(r % 6).n; }
+  if cell == "r13" { s += r13(r % 7).n; }
+  return s;
+}
+
+fn run_all() {
+  x1 = r1(4);
+  println("r1 {x1.n} {x1.tag}");
+  assert(x1.n == 4 && x1.tag == "a4", "r1");
+  x2 = r2(4);
+  println("r2 {x2.n} {x2.tag}");
+  assert(x2.n == 8 && x2.tag == "b4", "r2");
+  t3 = r3(3);
+  s3 = 0;
+  g3 = "";
+  for it in t3.items { s3 += it.n; g3 += it.tag; }
+  println("r3 {t3.count} {len(t3.items)} {s3} {g3}");
+  assert(t3.count == 3 && len(t3.items) == 3 && s3 == 3 && g3 == "i0i1i2", "r3");
+  p4 = mk(5);
+  x4 = r4(p4);
+  println("r4 {x4.n} {x4.tag} {p4.a.n} {p4.k}");
+  assert(x4.n == 5 && x4.tag == "a5" && p4.a.n == 5 && p4.k == 15, "r4");
+  x5 = r5(6);
+  println("r5 {x5.n} {x5.tag}");
+  assert(x5.n == 6 && x5.tag == "a6", "r5");
+  x6a = r6(40);
+  x6b = r6(2);
+  println("r6 {x6a.n} {x6a.tag} {x6b.n} {x6b.tag}");
+  assert(x6a.n == 80 && x6a.tag == "b40" && x6b.n == 2 && x6b.tag == "a2", "r6");   // 40*3 = 120 > 100 → b
+  s7 = 0;
+  g7 = "";
+  for i in 0..5 { y = r1(i); s7 += y.n; g7 += y.tag; }
+  println("r7 {s7} {g7}");
+  assert(s7 == 10 && g7 == "a0a1a2a3a4", "r7");
+  x8 = r8(9);
+  assert(x8.n == 9 && x8.tag == "a9", "r8");
+  x9 = r9(3);
+  match x9 { CMap { entries } => { e0 = entries[0] ?? In { n: -1, tag: "" }; assert(len(entries) == 1 && e0.tag == "e3", "r9"); }, _ => { assert(false, "r9 arm"); } }
+  x10 = r10(7);
+  assert(x10.n == 14 && x10.tag == "b7", "r10");
+  x11a = r11(-3);
+  x11b = r11(5);
+  assert(x11a.n == -1 && x11a.tag == "neg" && x11b.n == 5 && x11b.tag == "a5", "r11");
+  x12a = r12(5);
+  x12b = r12(2);
+  assert(x12a.n == 6 && x12a.tag == "b3" && x12b.n == 0 && x12b.tag == "none", "r12");
+  x13 = r13(8);
+  assert(x13.n == 8 && x13.tag == "d8", "r13");
+  println("return-field ok");
+}
+
+fn main() {
+  args = arguments();
+  if len(args) == 0 { run_all(); return; }
+  cell = args[0] ?? "";
+  s = 0;
+  for r in 0..2000 { s += run_cell(cell, r); }
+  println("{cell} sink={s}");
+}

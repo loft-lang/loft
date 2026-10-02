@@ -2496,8 +2496,8 @@ impl Function {
 
     /// The name the `for` loop now being parsed binds its variable under (loft#915).
     ///
-    /// A loop variable stays a function-scoped local — `i` after the loop still reads the
-    /// value the loop left, which programs rely on — but each LOOP gets its own binding,
+    /// A loop variable is scoped to its loop's body — `i` after the loop is
+    /// `local-out-of-scope` (LOFT.md, the `for` loop) — and each LOOP gets its own binding,
     /// so a second loop may spell one name at a different element type instead of
     /// re-typing the first loop's slot.  That is also what keeps loft#690 fixed by
     /// construction rather than by diagnostic: the second loop can no longer inherit the
@@ -2976,7 +2976,9 @@ impl Function {
         v
     }
 
-    #[cfg(test)]
+    /// A fresh local `_<prefix>_<n>` in `scope`, for a pass that adds one after parsing
+    /// (`value_record::literals_to_tuples` staging a literal's values in the order it wrote
+    /// them).  Its interval and slot come from the frame layout that pass re-runs.
     pub fn add_unique(&mut self, prefix: &str, type_def: &Type, scope: u16) -> u16 {
         let v = self.variables.len() as u16;
         self.variables.push(Variable {
@@ -3883,6 +3885,13 @@ impl Function {
     pub fn bind_admits_absence(&self, var: u16, src: u16) -> bool {
         matches!(self.tp(src), Type::Optional(_)) || matches!(self.tp(var), Type::Optional(_))
     }
+    /// `var_nr` stops being a parameter: the definition dropped the attribute it received
+    /// (`value_record::rewrite_program` removing a return buffer the function no longer
+    /// writes).  It stays in the table as a local nothing mentions.
+    pub fn drop_argument(&mut self, var_nr: u16) {
+        self.variables[var_nr as usize].argument = false;
+    }
+
     pub fn is_argument(&self, var_nr: u16) -> bool {
         (var_nr as usize) < self.variables.len() && self.variables[var_nr as usize].argument
     }
@@ -5375,6 +5384,7 @@ impl Function {
             })
     }
 
+    #[track_caller]
     pub fn set_skip_free(&mut self, v: u16) {
         if let Some(want) =
             crate::env_once!(@value Option<String>, std::env::var("LOFT_SKIPFREE_TRACE").ok())
@@ -5691,6 +5701,16 @@ impl Function {
     pub fn set_type(&mut self, var_nr: u16, tp: Type) {
         self.trace_type_change(var_nr, &tp, "set_type");
         self.variables[var_nr as usize].type_def = tp;
+    }
+
+    /// Forget every variable's live interval, so `compute_intervals` can read a body that
+    /// changed after it last ran (`value_record::rewrite_program`).  The walk only ever
+    /// widens an interval, so a second walk over stale ones would keep the old extent.
+    pub fn reset_intervals(&mut self) {
+        for v in &mut self.variables {
+            v.first_def = u32::MAX;
+            v.last_use = 0;
+        }
     }
 
     /// Reset every non-argument variable's `stack_pos` and

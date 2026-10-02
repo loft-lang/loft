@@ -331,6 +331,14 @@ not a check, so the expensive option costs a flag to ask for rather than a flag 
 Selection flags combine with `--bg` / `--peek` / `--wait` / `--stop`, and the rebuild step
 builds only what the selection links (§ [Preferred shape](#preferred-shape-human-at-a-terminal--background--peek--wait)).
 
+**On a shared box, cap it.**  nextest runs one test process per hardware thread and every
+native test starts its own `rustc` besides, so an uncapped curated run holds the machine at a
+load of several times its core count for its whole length.  `NEXTEST_TEST_THREADS=<n> nice -n 10
+./scripts/find_problems.sh …` caps the processes and yields the CPU to whatever else runs (the
+environment reaches nextest unchanged).  And read the first line, `changed: …`: a file no subject
+claims sends `--changed` to the whole curated set — claim it in `scripts/test_subjects.sh` when it
+has an obvious subject.
+
 ### Why it curates by EXCLUSION
 
 Because inclusion does not work.  An additive map ("you touched the parser, run these four

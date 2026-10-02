@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+#![cfg(feature = "registry")]
 
 //! loft trusts the certificates the machine trusts (`src/tls.rs`): the bundled Mozilla roots
 //! PLUS the platform store, which `SSL_CERT_FILE` / `SSL_CERT_DIR` override exactly as they do

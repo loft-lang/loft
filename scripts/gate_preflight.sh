@@ -20,6 +20,10 @@
 #                `ir_walker_audit.py`, compared exactly as doc_hygiene's
 #                `quality_*_table_matches_the_audit` compare them         ~6 s
 #   doc drift    `scripts/check_doc_drift.sh -q`                           ~30 s
+#   stdlib       `scripts/compiled_stdlib_fresh.py` — the compiled stdlib
+#                was compiled from default/ as it is now; when it was not,
+#                `make compiled-stdlib` regenerates it here and the step
+#                says so (commit the regenerated file with the change)      <1 s, or ~2 min
 #   full only    `cargo nextest run --release` over doc_hygiene and
 #                frontend_counts — seconds of tests, minutes of compiling
 #                when the release test binaries are stale
@@ -69,10 +73,23 @@ sys.exit(1 if bad else 0)
 EOF
 }
 
+# fd 3 reaches the terminal past `step`'s capture: a step that SUCCEEDS by repairing something
+# (the stdlib regeneration) still says what it changed.
+exec 3>&1
 echo "gate pre-flight (CI_NO_PREFLIGHT=1 skips it):"
 step fmt cargo fmt -- --check
 step "audit rows" audit_rows
 step "doc drift" scripts/check_doc_drift.sh -q
+# A stale compiled stdlib is REGENERATED, not refused: it is a derived file whose only cure is
+# this command, and a gate on a stale one measures an interpreted stdlib (5-23x slower on text).
+stdlib_fresh() {
+  python3 scripts/compiled_stdlib_fresh.py >/dev/null 2>&1 && return 0
+  echo "    the compiled stdlib was stale: regenerating (make compiled-stdlib)" >&3
+  make -s compiled-stdlib || return 1
+  python3 scripts/compiled_stdlib_fresh.py || return 1
+  echo "    regenerated src/compiled_stdlib_gen.rs — commit it with this change" >&3
+}
+step stdlib stdlib_fresh
 if [ "${CI_PREFLIGHT:-}" = full ]; then
   step "hygiene+fe" cargo nextest run --release -E 'binary(doc_hygiene) + binary(frontend_counts)'
 fi

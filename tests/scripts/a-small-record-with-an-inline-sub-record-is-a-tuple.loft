@@ -1,0 +1,75 @@
+// @PLN180 (`@FR-R-ValueRecord` / `@FR-R-ValueLocal`, decided in the IR phase) — a small
+// record whose fields include an INLINE sub-record is carried as ONE flat tuple: the schema
+// lays the sub-record's scalars into the parent, so `m.pos.y` is a read at the summed offset
+// and the tuple lists every scalar in schema order.  The shape `resolve_move` returns
+// (`MoveResult { mr_pos: Vec3, mr_vel_y, mr_on_ground }`).
+// `LOFT_NO_IR_VALUE_RECORD=1` restores the record form and must answer identically.
+//
+// @falsified-at: none — it guards a rewrite no earlier build has, so no control fails it.
+// Hand-sabotaged 2026-09-30: a read through an inline sub-record that drops the path's own
+// offset (the rewrite indexing the tuple by the last offset alone) reads `t.a.y` for `t.b.y`
+// and fails `two sub-records` on both backends.  Two findings from the attempt: every other
+// cell's sub-record sits at offset 0, so a lost offset moves no read there — `Two` puts one
+// at 24; and the same defect planted in the SHARED path helper declined the function instead
+// (its literal no longer covered the record), which answers right — a read-path plant has to
+// go where only reads go.
+
+struct V3 { x: float, y: float, z: float }
+struct Move { pos: V3, vy: float, on: boolean }
+struct Wrap { tag: integer, at: Move }
+struct Two { a: V3, b: V3 }
+struct Log { seq: vector<integer> }
+
+fn mk3(a: float) -> V3 { V3 { x: a, y: a * 2.0, z: a * 3.0 } }
+
+// The sub-record written as its own literal.
+fn direct(a: float) -> Move { Move { pos: V3 { x: a, y: a + 1.0, z: a + 2.0 }, vy: a * 10.0, on: a > 1.0 } }
+
+// The sub-record copied from a call, as `resolve_move` builds it.
+fn from_call(a: float) -> Move { Move { pos: mk3(a), vy: 0.5, on: false } }
+
+// A nested record received as a tuple.
+fn speed(m: Move) -> float { m.pos.x + m.pos.z + m.vy }
+
+// Out of schema order, with effects: `on` and `vy` are written before `pos`.
+fn tick(log: Log, k: integer) -> integer {
+  log.seq += [k];
+  k
+}
+fn ordered(log: Log) -> Move {
+  Move { on: tick(log, 1) == 1, vy: tick(log, 2) as float, pos: V3 { x: tick(log, 3) as float, y: 0.0, z: tick(log, 4) as float } }
+}
+
+// Two sub-records: one of them sits at a non-zero offset whichever way the schema orders them.
+fn two(a: float) -> Two { Two { a: mk3(a), b: mk3(a + 1.0) } }
+
+// Two levels: a record holding a record holding a record.
+fn wrapped(a: float) -> Wrap { Wrap { tag: 7, at: direct(a) } }
+
+fn main() {
+  // direct(2): pos (2, 3, 4), vy 20, on.
+  d = direct(2.0);
+  assert(d.pos.x == 2.0 && d.pos.y == 3.0 && d.pos.z == 4.0 && d.vy == 20.0 && d.on, "direct: {d.pos.y} {d.vy}");
+
+  // from_call(3): pos (3, 6, 9), vy 0.5, not on.
+  c = from_call(3.0);
+  assert(c.pos.x + c.pos.y + c.pos.z == 18.0 && c.vy == 0.5 && !c.on, "from a call: {c.pos.y}");
+
+  // speed(direct(1)) = 1 + 3 + 10; speed(from_call(2)) = 2 + 6 + 0.5.
+  assert(speed(direct(1.0)) == 14.0, "nested parameter: {speed(direct(1.0))}");
+  assert(speed(from_call(2.0)) == 8.5, "nested parameter from a call");
+
+  // Fill order: 1, 2, 3, 4, and each value lands in its field.
+  log = Log { seq: [] };
+  o = ordered(log);
+  assert("{log.seq}" == "[1,2,3,4]", "fill order: {log.seq}");
+  assert(o.on && o.vy == 2.0 && o.pos.x == 3.0 && o.pos.z == 4.0, "out-of-order nested: {o.vy} {o.pos.x}");
+
+  // two(1): a = (1, 2, 3), b = (2, 4, 6).
+  t = two(1.0);
+  assert(t.a.y == 2.0 && t.b.y == 4.0 && t.b.z == 6.0, "two sub-records: {t.a.y} {t.b.y}");
+
+  // Two levels: wrapped(5).at.pos.y = 6, tag 7.
+  w = wrapped(5.0);
+  assert(w.tag == 7 && w.at.pos.y == 6.0 && w.at.vy == 50.0, "two levels: {w.at.pos.y} {w.at.vy}");
+}

@@ -86,6 +86,7 @@ row whose skill was deleted.
 | `formal-rules` | 2026-10-01 | `dc94504f1` |
 | `loft-codegen` | 2026-10-01 | `a80e26737` |
 | `loft-debug` | 2026-10-01 | `a80e26737` |
+| `loft-optimize` | 2026-10-01 | `37b0678b5` |
 | `loft-plan-workflow` | 2026-10-01 | `a80e26737` |
 | `loft-ship` | 2026-10-01 | `a80e26737` |
 | `loft-test` | 2026-10-01 | `a80e26737` |

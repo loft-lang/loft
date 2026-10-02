@@ -588,7 +588,8 @@ struct SharedSig {
 /// `shared_store_dispatch`.  Separate from `NATIVE_SIGS` because the ABI differs
 /// (a `*mut Stores` + `LibArg` bridge, not the `LoftStore`/raw-ptr marshalling).
 #[cfg(feature = "native-extensions")]
-static SHARED_SIGS: Mutex<Option<HashMap<u16, (FnPtr, SharedSig)>>> = Mutex::new(None);
+static SHARED_SIGS: Mutex<Option<HashMap<u16, (FnPtr, std::sync::Arc<SharedSig>)>>> =
+    Mutex::new(None);
 
 /// loft#715 — library slot → the bridge symbol it dispatches to.  Populated once
 /// at wiring; read only when a fault is raised while a bridge call is on the
@@ -1419,7 +1420,11 @@ pub fn wire_shared_native_fns(state: &mut crate::state::State, data: &crate::dat
                 def.original_name(),
             );
         };
-        let Some((ptr, _uses_v1)) = try_dlsym(sym) else {
+        // @PLN181 — the compiled standard library is in this binary, not in a cdylib.
+        let found = crate::compiled_stdlib::bridge(sym)
+            .map(|p| (p, false))
+            .or_else(|| try_dlsym(sym));
+        let Some((ptr, _uses_v1)) = found else {
             unwired("bridge symbol not found in any loaded cdylib");
             continue;
         };
@@ -1441,7 +1446,7 @@ pub fn wire_shared_native_fns(state: &mut crate::state::State, data: &crate::dat
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let table = guard.get_or_insert_with(HashMap::new);
         for (_, lib_idx, ptr, sig) in &wired {
-            table.insert(*lib_idx, (FnPtr(*ptr), sig.clone()));
+            table.insert(*lib_idx, (FnPtr(*ptr), std::sync::Arc::new(sig.clone())));
         }
     }
     // loft#715 — remember which symbol each slot dispatches to, so a fault raised
@@ -1595,8 +1600,11 @@ fn shared_store_dispatch(stores: &mut crate::database::Stores, stack: &mut crate
     // the callee IGNORES the retbuf and returns a fresh store (e.g. a struct
     // literal that allocates a fresh record), the returned ref differs from the
     // forwarded retbuf and the retbuf is orphaned — one leaked store per call.
-    // Gated, zero cost off.
-    if std::env::var_os("LOFT_TRACE_SHARED_RET").is_some()
+    // Gated.
+    // Asked once: a `getenv` per bridge call was 1.5 % of an interpreted script whose
+    // compiled standard library calls cross here 350,000 times.
+    static TRACE_SHARED_RET: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *TRACE_SHARED_RET.get_or_init(|| std::env::var_os("LOFT_TRACE_SHARED_RET").is_some())
         && let Some(hd) = sig.hidden_dest
         && matches!(sig.ret, Some(ArgT::Ref | ArgT::Vec))
     {

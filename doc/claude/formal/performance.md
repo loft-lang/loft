@@ -120,6 +120,28 @@ loft#1426 is the rule applied: the profiler showed the loft hot loop matching th
 reference's, so the deviation is filed against the ENGINE (N1 class), and the drawing
 library's source does not change.
 
+### What to optimise is read off broad evidence, and new operators come last
+
+```
+  (Perf-Order)   the engine is optimised in this order: the IR first — remove
+                 the work and the objects the natural spelling causes, so both
+                 backends gain — and an interpreter operator built for speed
+                 (a fused or specialised op) only after that, designed from
+                 what many programs share, never from one slow row.  The
+                 evidence that decides what to optimise is the scripts written
+                 IN loft, weighed above the benchmark routines: a routine that
+                 lives in a library runs compiled, so a cost only its
+                 interpreted form pays is not the user's cost.
+```
+
+**In words** (owner's ruling).  New operators are not refused; the error was their ORDER.
+Operators built before the memory model settled and before the IR was reduced were designed
+against IR that was still about to change.  An operator
+is therefore designed after the IR work, against what a broad set of programs still runs, and
+the bench routines are one input to that, not the source of it.  Example: special float
+operators for geometry buy little, because geometry routines live in libraries and run
+compiled.  The interpreter's cost that matters is the code a user writes and runs directly.
+
 ### An advantage the twin's language holds is a missing abstraction, not a caveat
 
 ```

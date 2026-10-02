@@ -1,0 +1,13 @@
+diff --git a/src/parser/objects.rs b/src/parser/objects.rs
+index 169df3d49..957095926 100644
+--- a/src/parser/objects.rs
++++ b/src/parser/objects.rs
+@@ -4260,7 +4260,7 @@ impl Parser {
+                         }
+                     }
+                 }
+-                iter_prelude.push(v_block(guard, Type::Void, crate::data::RANGE_NULL_GUARD));
++                drop(guard);
+             }
+         }
+         // loft#384: a vector slice (`data` present, not a pure `0..n` range) must

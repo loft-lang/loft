@@ -1,0 +1,81 @@
+// @PLN180 slice 3 (`@FR-R-ValueLocal`, decided in the IR phase) — a by-value parameter of a
+// small record of scalars is received as a TUPLE on BOTH backends, and a small record
+// returned by a function and handed on to such a parameter never becomes a record: the
+// caller's buffer store, its mint and its frees leave the IR.  A plain record local handed
+// to such a parameter has its fields read into a tuple at the call.
+// `LOFT_NO_IR_VALUE_RECORD=1` restores the record form and must answer identically.
+//
+// The cell that pins soundness is `aliased`: a by-value record parameter is a VIEW of the
+// argument's place, so `bump(a, a)` must see its own write through the other parameter.
+// Reading the fields at the call would answer 1; the parameter gate declines it.
+//
+// @falsified-at: none — it guards a rewrite no earlier build has, so no control fails it.
+// Hand-sabotaged 2026-09-30: admitting `bump`'s parameters past the native write gate makes
+// `p` a tuple read at the call, and `aliased` fails on both backends (bump answers 1).
+
+struct V3 { x: float, y: float, z: float }
+struct Ord4 { n: integer, ok: boolean, s: single, f: float }
+struct Log { seq: vector<integer> }
+
+fn v3(a: float, b: float, c: float) -> V3 { V3 { x: a, y: b, z: c } }
+fn blocked(f: V3, t: V3) -> boolean { t.x - f.x + t.z - f.z > 1.5 }
+
+fn step(from: V3, dx: float, dz: float) -> float {
+  nx = from.x;
+  to_x = v3(from.x + dx, from.y, from.z);
+  if !blocked(from, to_x) { nx = to_x.x; }
+  to_z = v3(nx, from.y, from.z + dz);
+  if !blocked(from, to_z) { nx += to_z.z; }
+  nx
+}
+
+// A parameter handed on to another tuple parameter.
+fn sum3(p: V3) -> float { p.x + p.y + p.z }
+fn twice(p: V3) -> float { sum3(p) * 2.0 }
+
+// Out of schema order, with effects, and its result handed on.
+fn tick(log: Log, k: integer) -> integer {
+  log.seq += [k];
+  k
+}
+fn mk_ord(log: Log) -> Ord4 {
+  Ord4 { ok: tick(log, 1) == 1, f: tick(log, 2) as float, n: tick(log, 3), s: tick(log, 4) as single }
+}
+fn ord_sum(o: Ord4) -> float { o.n as float + o.s as float + o.f }
+
+// Writes a record of the parameter's type: the gate keeps both parameters records.
+fn bump(p: V3, w: V3) -> float {
+  w.x = 5.0;
+  p.x
+}
+
+fn main() {
+  // step(v3(i, 1, 2), 0.5, dz): the x move is never blocked (0.5 <= 1.5), so nx = i + 0.5;
+  // the z move is blocked iff 0.5 + dz > 1.5, i.e. i % 7 in {4, 5, 6}; unblocked it adds
+  // z = 2 + dz.  Over i in 0..14: sum(i + 0.5) = 91 + 7 = 98, plus two rounds of
+  // (2 + 0) + (2 + 0.3) + (2 + 0.6) + (2 + 0.9) = 9.8  ->  98 + 19.6 = 117.6.
+  acc = 0.0;
+  for i in 0..14 {
+    acc += step(v3(i as float, 1.0, 2.0), 0.5, (i % 7) as float * 0.3);
+  }
+  assert(acc > 117.599 && acc < 117.601, "tuple parameters and returns: {acc}");
+
+  // Handed on: 2 * (1 + 2 + 3).
+  assert(twice(v3(1.0, 2.0, 3.0)) == 12.0, "parameter handed on");
+
+  // A plain record local read into a tuple at the call.
+  r = V3 { x: 4.0, y: 5.0, z: 6.0 };
+  assert(sum3(r) == 15.0, "plain local into a tuple parameter: {sum3(r)}");
+  r.x = 10.0;
+  assert(sum3(r) == 21.0, "the read happens at the call: {sum3(r)}");
+
+  // Fill order survives a tuple that flows into a parameter: 3 + 4 + 2.
+  log = Log { seq: [] };
+  o = mk_ord(log);
+  assert(ord_sum(o) == 9.0, "out-of-order literal handed on: {ord_sum(o)}");
+  assert("{log.seq}" == "[1,2,3,4]", "fill order: {log.seq}");
+
+  // Aliased: the write through `w` is seen through `p`.
+  a = V3 { x: 1.0, y: 0.0, z: 0.0 };
+  assert(bump(a, a) == 5.0, "aliased parameters stay records: {a.x}");
+}

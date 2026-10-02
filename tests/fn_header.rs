@@ -24,6 +24,7 @@ const EXPECTED: &[(&str, usize)] = &[
     ("n_f8", 0),  // a local built then read: not a parameter, and written
     ("n_f9", 0),  // the parameter is rebound
     ("n_f10", 0), // the parameter is pushed to
+    ("n_f11", 1), // a slice of the parameter only reads it
 ];
 
 fn emit(env: &[(&str, &str)]) -> String {

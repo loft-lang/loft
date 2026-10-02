@@ -52,8 +52,23 @@ pub enum Verdict {
 /// symbol does (with sealed shapes inlined, so a sealed rename is not a break).
 #[must_use]
 pub fn diff(old: &[Member], new: &[Member]) -> Verdict {
+    // A type the OLD surface sealed and the new one PUBLISHES is compared by its shape on both
+    // sides: the old signatures inlined it, so naming it now rewrites every signature that
+    // uses it while no caller can tell (`arguments` 0.2.5 made `Args` pub — the type twenty
+    // pub methods already took — and read as twenty dropped-parameter breaks).  Its shape is
+    // the new surface's own, so a field the publication also changed still breaks.
+    let old_sealed: std::collections::HashSet<&str> = old
+        .iter()
+        .filter(|m| m.tier == Tier::Sealed)
+        .map(|m| m.name.as_str())
+        .collect();
+    let published: Vec<&str> = new
+        .iter()
+        .filter(|m| m.tier == Tier::Public && old_sealed.contains(m.name.as_str()))
+        .map(|m| m.name.as_str())
+        .collect();
     let old_pub = inlined_public(old);
-    let new_pub = inlined_public(new);
+    let new_pub = inlined_public_also(new, &published);
     let new_map: HashMap<(&str, &str), &str> = new_pub
         .iter()
         .map(|(n, k, s)| ((n.as_str(), *k), s.as_str()))
@@ -302,9 +317,17 @@ fn members_of(sig: &str) -> Option<Vec<(String, String)>> {
 /// The PUBLIC members of a surface, each with sealed types inlined into its signature (so a
 /// sealed rename is invisible and a sealed field change flows through).
 fn inlined_public(surface: &[Member]) -> Vec<(String, &'static str, String)> {
+    inlined_public_also(surface, &[])
+}
+
+/// [`inlined_public`], also inlining the PUBLIC types named in `also` — the ones an older
+/// surface sealed, so both sides of a diff spell them the same way.
+fn inlined_public_also(surface: &[Member], also: &[&str]) -> Vec<(String, &'static str, String)> {
     let sealed: HashMap<&str, &str> = surface
         .iter()
-        .filter(|m| m.tier == Tier::Sealed)
+        .filter(|m| {
+            m.tier == Tier::Sealed || (m.tier == Tier::Public && also.contains(&m.name.as_str()))
+        })
         .map(|m| (m.name.as_str(), m.signature.as_str()))
         .collect();
     surface
@@ -445,6 +468,37 @@ mod tests {
         let old = vec![pubm("f", "fn", "(a: integer) -> integer")];
         let new = vec![pubm("f", "fn", "(a: number) -> integer")];
         assert!(is_break(&diff(&old, &new)), "a widened param still breaks");
+    }
+
+    #[test]
+    fn publishing_a_sealed_type_with_its_shape_is_not_a_break() {
+        // `arguments` 0.2.5: `Args` was sealed and every pub method took it; making it pub
+        // names it in each signature instead of inlining it, and no caller can tell.
+        let old = vec![
+            pubm("flag", "method", "(self: Args, name: text)"),
+            sealed("Args", "struct", "{ name: text, n: integer }"),
+        ];
+        let new = vec![
+            pubm("flag", "method", "(self: Args, name: text)"),
+            pubm("Args", "struct", "{ name: text, n: integer }"),
+        ];
+        assert_eq!(diff(&old, &new), Verdict::Superset);
+    }
+
+    #[test]
+    fn publishing_a_sealed_type_with_a_changed_field_still_breaks() {
+        let old = vec![
+            pubm("flag", "method", "(self: Args, name: text)"),
+            sealed("Args", "struct", "{ name: text, n: integer }"),
+        ];
+        let new = vec![
+            pubm("flag", "method", "(self: Args, name: text)"),
+            pubm("Args", "struct", "{ name: text, n: float }"),
+        ];
+        assert!(
+            is_break(&diff(&old, &new)),
+            "the field the publication changed still breaks"
+        );
     }
 
     #[test]

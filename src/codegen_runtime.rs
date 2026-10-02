@@ -109,6 +109,7 @@ pub const CODEGEN_RUNTIME_FNS: &[RuntimeFn] = &[
     RuntimeFn { name: "n_reflect_field",              abi: Abi::Cell },
     RuntimeFn { name: "n_reflect_field_path",         abi: Abi::Cell },
     RuntimeFn { name: "n_hash_sorted",                abi: Abi::Cell },
+    RuntimeFn { name: "n_vector_sum_int",             abi: Abi::Cell },
     RuntimeFn { name: "n_hash_unsorted",              abi: Abi::Cell },
     RuntimeFn { name: "n_radix_sorted",               abi: Abi::Cell },
     RuntimeFn { name: "n_spatial_range",              abi: Abi::Cell },
@@ -150,6 +151,7 @@ pub const CODEGEN_RUNTIME_FNS: &[RuntimeFn] = &[
     // calls the SAME in-binary kernel the interpreter uses — one
     // implementation, two calling conventions.
     RuntimeFn { name: "n_git_query",                  abi: Abi::Cell },
+    RuntimeFn { name: "n_process_run",                abi: Abi::Cell },
     RuntimeFn { name: "n_kernel_listen",              abi: Abi::Cell },
     RuntimeFn { name: "n_kernel_pump",                abi: Abi::Cell },
     RuntimeFn { name: "n_kernel_next_event",          abi: Abi::Cell },
@@ -220,6 +222,8 @@ pub const CODEGEN_RUNTIME_FNS: &[RuntimeFn] = &[
 pub use crate::engine_host::typed::*;
 // @PLN119 arc F — `lib/git`'s single native, so a COMPILED program can ask git too.
 pub use crate::git_query::typed::*;
+// @PLN179 strand 4b — `lib/process`'s run, so a COMPILED script runs programs too.
+pub use crate::process_run::typed::*;
 // @PLN18 08-S2 — the live-flip surface (typed twin in live_dispatch).
 pub use crate::live_dispatch::n_live_flip;
 // @PLN18 08-S4 — the background-rebuild surface.
@@ -1199,6 +1203,16 @@ pub fn OpCopyRecord(cell: &std::cell::UnsafeCell<Stores>, data: DbRef, to: DbRef
             to.pos,
         );
     }
+    // @PLN150 — a store the most recent fn-ref call BORROWED rather than minted is not the
+    // callee's to give away, so the source-free is declined for it.  The interpreter reaches
+    // the same rule in `State::copy_ref_or_null`; measured without this,
+    // `b.p = fwd(s, 1)` over `fn fwd(f, v) -> P { r = f(v); r }` freed the CALLER'S capture on
+    // `--native` alone — the field destination of the shape loft#1185 closed for a local.
+    let borrowed = cr_take_fnref_borrowed(data.store_nr) && free_source;
+    // `@FR-H-SwapIn` — a given-up source copied into a reset root is the stores exchanged.
+    if free_source && !borrowed && stores.try_swap_in(&data, &to, tp) {
+        return;
+    }
     if !fresh_dest {
         stores.remove_claims(&to, tp);
     }
@@ -1208,12 +1222,6 @@ pub fn OpCopyRecord(cell: &std::cell::UnsafeCell<Stores>, data: DbRef, to: DbRef
     if stores.copy_check_enabled() {
         stores.report_copy_mismatches(&data, &to, tp, "OpCopyRecord");
     }
-    // @PLN150 — a store the most recent fn-ref call BORROWED rather than minted is not the
-    // callee's to give away, so the source-free is declined for it.  The interpreter reaches
-    // the same rule in `State::copy_ref_or_null`; measured without this,
-    // `b.p = fwd(s, 1)` over `fn fwd(f, v) -> P { r = f(v); r }` freed the CALLER'S capture on
-    // `--native` alone — the field destination of the shape loft#1185 closed for a local.
-    let borrowed = cr_take_fnref_borrowed(data.store_nr) && free_source;
     if free_source
         && !borrowed
         && data.store_nr != to.store_nr
@@ -2941,6 +2949,13 @@ pub fn n_path_sep() -> i32 {
 /// path calls this with the hash's type id as a compile-time constant
 /// and iterates the result via Ordered (on=3).  Bytecode equivalent:
 /// `n_hash_sorted` in `src/native.rs`.
+/// The loop kernel `vector_sum_int` (`loop_kernels::vector_sum_int`).  Bytecode equivalent:
+/// `n_vector_sum_int` in `src/native.rs`.
+pub fn n_vector_sum_int(cell: &std::cell::UnsafeCell<Stores>, v: DbRef, acc: i64) -> i64 {
+    let stores: &Stores = unsafe { &*cell.get() };
+    crate::loop_kernels::vector_sum_int(&stores.allocations, &v, acc)
+}
+
 pub fn n_hash_sorted(cell: &std::cell::UnsafeCell<Stores>, h: DbRef, tp: i64) -> DbRef {
     let stores: &mut Stores = unsafe { &mut *cell.get() };
     stores.build_hash_sorted_vec(&h, tp as u16)

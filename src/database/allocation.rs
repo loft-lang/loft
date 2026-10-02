@@ -967,6 +967,130 @@ impl Stores {
         self.free_named(db, "");
     }
 
+    /// `@FR-H-SwapIn` — the deep copy of a store's ROOT record into the root of another
+    /// store that holds nothing else, the source store released after it (`OpCopyRecord`'s
+    /// free-source form: the rebind of `x = f(…, x, …)` from a callee that minted its
+    /// result), is an EXCHANGE of the two stores' contents and the release of the slot that
+    /// ends up holding the destination's empty root.  Every reference to the destination's
+    /// slot then reads the source's records exactly as it would read their copy, and the
+    /// released slot holds what the copy would have released.  Answers whether it did so;
+    /// on `false` the caller copies.
+    ///
+    /// Declined — the caller copies — when either record is not its store's root (`1@8` and
+    /// of the store's own root type: a first field shares the root's address),
+    /// the destination store holds more than its root (an owned field the copy would release
+    /// first), either store is pinned to its slot ([`Store::content_swappable`]), a lazy
+    /// binding, a live scratch or a constant names a store, or the type's tree holds a
+    /// stored reference (a `reference<T>`, a keyed collection's pointers), whose store number
+    /// would still name the old slot.
+    pub(crate) fn try_swap_in(&mut self, data: &DbRef, to: &DbRef, tp: u16) -> bool {
+        if !crate::keys::store_swap_enabled() {
+            return false;
+        }
+        let (ds, ts) = (data.store_nr as usize, to.store_nr as usize);
+        if ds == ts || ds >= self.allocations.len() || ts >= self.allocations.len() {
+            return false;
+        }
+        // At `1@8` AND of the copied type: a record's FIRST field shares its root's address
+        // (`h.p` of `h: Hold { p: Vert, … }` is `#h@1,8`), and only the root's own type —
+        // the one `OpDatabase` stamped on the store — says the copy is of the whole record.
+        if (data.rec, data.pos) != (1, 8)
+            || (to.rec, to.pos) != (1, 8)
+            || self.allocations[ds].known_type != tp
+            || self.allocations[ts].known_type != tp
+        {
+            return false;
+        }
+        if self.is_stack_store(data.store_nr) || self.is_stack_store(to.store_nr) {
+            return false;
+        }
+        if !self.allocations[ds].content_swappable(true)
+            || !self.allocations[ts].content_swappable(false)
+            || !self.allocations[ts].holds_only_root()
+        {
+            return false;
+        }
+        if !self.lazy_sources.is_empty()
+            || !self.lazy_errors.is_empty()
+            || !self.live_scratches.is_empty()
+            || self
+                .const_refs
+                .iter()
+                .any(|r| r.store_nr == data.store_nr || r.store_nr == to.store_nr)
+        {
+            return false;
+        }
+        let known = self.swap_safe_types.get(tp as usize).copied().unwrap_or(0);
+        let safe = if known == 0 {
+            let safe = self.tree_holds_no_stored_refs(tp, &mut Vec::new());
+            if self.swap_safe_types.len() <= tp as usize {
+                self.swap_safe_types.resize(tp as usize + 1, 0);
+            }
+            self.swap_safe_types[tp as usize] = if safe { 1 } else { 2 };
+            safe
+        } else {
+            known == 1
+        };
+        if !safe {
+            return false;
+        }
+        let (lo, hi) = (ds.min(ts), ds.max(ts));
+        let (left, right) = self.allocations.split_at_mut(hi);
+        crate::store::Store::swap_contents(&mut left[lo], &mut right[0]);
+        if crate::keys::trace_store_swap() {
+            crate::loft_eprintln!(
+                "[swap-in] store #{} takes the content of #{} (tp={tp}); #{} released",
+                to.store_nr,
+                data.store_nr,
+                data.store_nr
+            );
+        }
+        self.free(data);
+        true
+    }
+
+    /// Does a record of type `tp` keep every pointer it holds as a record number INSIDE its
+    /// own store — scalars, texts, enums, inline structs and enum values, and vectors of
+    /// those — so that moving its store's content to another slot leaves its tree intact?
+    /// Anything else answers `false`: a stored `DbRef` (`reference<T>`, a closure's
+    /// capture) names a slot, and the keyed collections, arrays and child records are
+    /// declined with it, as is a type the walk does not know — the conservative answer,
+    /// because a wrong `true` reads another store's records.  A type already on the walk
+    /// (a vector of its own type) adds no new kind of field and answers `true`.
+    fn tree_holds_no_stored_refs(&self, tp: u16, walking: &mut Vec<u16>) -> bool {
+        use crate::database::Parts;
+        if walking.contains(&tp) {
+            return true;
+        }
+        let Some(t) = self.types.get(tp as usize) else {
+            return false;
+        };
+        walking.push(tp);
+        let ok = match &t.parts {
+            // A struct-enum names its variants' types here; a plain enum's entries name no
+            // `EnumValue` type and are values.
+            Parts::Enum(values) => values.iter().all(|(v, _)| {
+                !matches!(
+                    self.types.get(*v as usize).map(|t| &t.parts),
+                    Some(Parts::EnumValue(..))
+                ) || self.tree_holds_no_stored_refs(*v, walking)
+            }),
+            Parts::Base
+            | Parts::Byte(..)
+            | Parts::Short(..)
+            | Parts::Int(..)
+            | Parts::ShortRaw(..)
+            | Parts::IntRaw(..) => true,
+            Parts::Struct(fields) | Parts::EnumValue(_, fields) => fields
+                .iter()
+                .all(|f| self.tree_holds_no_stored_refs(f.content, walking)),
+            Parts::Vector(elem) => self.tree_holds_no_stored_refs(*elem, walking),
+            _ => false,
+        };
+        walking.pop();
+        ok
+    }
+
     /// Release the store a binding STOPPED pointing at — the ownership-transition free.
     ///
     /// `displaced` is the store the binding held before a write installed `witness`.  When the
@@ -2541,6 +2665,8 @@ impl Stores {
             logger: self.logger.clone(),
             had_fatal: false,
             runtime_error: None,
+            dispatch_stop: std::sync::atomic::AtomicBool::new(false),
+            swap_safe_types: Vec::new(),
             // #255 / @PLN9: a parallel worker's file ops must resolve paths the
             // same way as the main thread — carry the anchor + mode.
             source_dir: self.source_dir.clone(),
@@ -4571,9 +4697,22 @@ impl Stores {
     /// slot past the store's end — answers "may hold heap", so the full walk runs for it.
     /// A `false` here only costs the walk the release always did.
     fn holds_no_heap(&self, rec: &DbRef, tp: u16) -> bool {
-        let (Parts::Struct(fields) | Parts::EnumValue(_, fields)) = &self.types[tp as usize].parts
-        else {
-            return false;
+        let fields = match &self.types[tp as usize].parts {
+            Parts::Struct(fields) | Parts::EnumValue(_, fields) => fields,
+            // A struct-enum holds exactly what its LIVE variant holds, read the way the
+            // walk reads it: a null or absent tag owns no payload, a payload-less variant
+            // owns nothing, and a payload is the variant's record at the same position.
+            Parts::Enum(values) => {
+                let e_nr = self.store(rec).get_byte(rec.rec, rec.pos, -1);
+                if e_nr < 0 || (e_nr as usize) >= values.len() {
+                    return true;
+                }
+                let vtp = values[e_nr as usize].0;
+                return vtp == u16::MAX
+                    || !self.type_owns_heap(vtp)
+                    || self.holds_no_heap(rec, vtp);
+            }
+            _ => return false,
         };
         let capacity_bytes = u64::from(self.store(rec).capacity_words()) * 8;
         fields.iter().all(|f| {
@@ -4588,7 +4727,7 @@ impl Stores {
                 return false;
             }
             match &self.types[f.content as usize].parts {
-                Parts::Struct(_) | Parts::EnumValue(..) => self.holds_no_heap(
+                Parts::Struct(_) | Parts::EnumValue(..) | Parts::Enum(_) => self.holds_no_heap(
                     &DbRef {
                         store_nr: rec.store_nr,
                         rec: rec.rec,

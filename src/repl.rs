@@ -1846,6 +1846,8 @@ impl ReplSession {
     /// Returns the I/O error if the stdlib directory cannot be read.
     pub fn new(stdlib_dir: &str) -> std::io::Result<Self> {
         let mut parser = Parser::new();
+        // Parsed against again after compiling: no whole-program signature rewrite.
+        parser.data.open_world = true;
         parser.parse_stdlib(stdlib_dir)?;
         Ok(Self {
             parser,
@@ -1923,7 +1925,9 @@ impl ReplSession {
     /// the program's types + functions in scope.  The accumulated body starts
     /// empty; persistence is off.
     #[must_use]
-    pub fn from_parser(parser: Parser) -> Self {
+    pub fn from_parser(mut parser: Parser) -> Self {
+        // Parsed against again from here on: no whole-program signature rewrite.
+        parser.data.open_world = true;
         Self {
             parser,
             // `from_parser` builds a debugger-eval session over an existing program, not a
@@ -2151,6 +2155,8 @@ impl ReplSession {
         // program load, not an append — the REPL's incremental path is `eval`, not this.
         let lib_dirs = std::mem::take(&mut self.parser.lib_dirs);
         let mut parser = Parser::new();
+        // Parsed against again after compiling: no whole-program signature rewrite.
+        parser.data.open_world = true;
         parser.lib_dirs = lib_dirs;
         parser.parse_stdlib(&self.stdlib_dir)?;
         self.parser = parser;
@@ -2209,6 +2215,8 @@ impl ReplSession {
         let _ = std::fs::read_to_string(path)?;
         let abs = crate::portable_path::plain_canonical_str(path);
         let mut parser = Parser::new();
+        // Parsed against again after compiling: no whole-program signature rewrite.
+        parser.data.open_world = true;
         parser.lib_dirs.clone_from(&self.parser.lib_dirs);
         for d in extra_lib_dirs {
             if !parser.lib_dirs.contains(d) {
@@ -3889,8 +3897,8 @@ impl ReplSession {
     }
 
     /// Store `var`'s snapshot `lit` as the binding `var = lit`: appended to `body`, filed in the
-    /// session store as `materialized` (the record it replaces is released — @PLN14 arc G, so a
-    /// long session does not grow per re-bind), and persisted as the snapshot, not the source
+    /// session store as `materialized` (the record it replaces is released, so a long session
+    /// does not grow per re-bind), and persisted as the snapshot, not the source
     /// that produced it.  `false` when the literal does not recompile; the caller falls back.
     fn commit_snapshot(
         &mut self,
@@ -3942,8 +3950,8 @@ impl ReplSession {
     /// Keep `input` in the session as SOURCE: appended to `body`, replayed by every later
     /// generation, persisted.  `execute` runs it now as well (it has not run yet); a side
     /// effect in it then repeats on a later replay, which is the trade the binding path makes
-    /// for a value it cannot snapshot.  The session store no longer holds the current value
-    /// of the variables it `names`, so their records go and a read of them replays.
+    /// for a value it cannot snapshot.  The session store then holds no current value for the
+    /// variables it `names`, so their records go and a read of them replays.
     fn keep_as_source(
         &mut self,
         input: &str,

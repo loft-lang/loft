@@ -18,20 +18,62 @@ honest.  A workaround inside a port would teach every reader the wrong shape.
 
 ## Status (REQUIRED)
 
-Open — design ready; strand 1's census ships with the plan (`scripts/script_census.loft`,
-the plan's first loft script, and `WORKLIST.md` it generates), nothing ported.  Two loft scripts already exist under `scripts/`
-(`build-gallery-examples.loft`, `build-playground-examples.loft`); nothing in the Makefile,
-CI or the hooks runs either, so they are the first two subjects for the twin harness rather
-than a head start.  Long-term and low urgency by the owner's own framing (2026-09-29): the
+Open — strand 1's census ships with the plan (`scripts/script_census`, the plan's first
+loft script, and `WORKLIST.md` it generates); six ports are twinned green on both backends
+([SCOREBOARD.md](SCOREBOARD.md)), each beside its original, which every caller still calls.
+Two loft scripts already exist under `scripts/` (`build-gallery-examples.loft`,
+`build-playground-examples.loft`); nothing in the Makefile, CI or the hooks runs either, so
+they are subjects for the twin harness rather than a head start.
+
+**Next, from the 2026-10-01 evaluation** (`releases/2026-10/RECOMMENDATIONS.md` § @PLN179,
+checked against the tree): **strand 4 before any T3–T5 port.**  Those three tiers (135 files)
+need the `process` library — `Command`, `run`, the `lines()` cursor — which is a design in
+[PROCESS.md](PROCESS.md) and not built; its five gate probes come first, then `lib/git` over
+`run`, twinned, as the first T3 port.  That is also the surface no port has touched yet
+(natives, pipes, back-pressure, a child's cleanup).  T2 is not "more text scanners": it waits
+on regex capture groups (finding 011), TOML, JSON and argparse, so closing 011 is library work
+that can run beside strand 4.  The six ports so far are not all `report` originals —
+`opl_points.py` and `rule_predicate_audit.py` are `gate`s and `gen_probes.py` `writes`.
+**Sequencing (owner, 2026-10-01):** strand 4 starts once the interpreter work is cleanly below
+100× native on every measured routine.  Long-term and low urgency by the owner's own framing (2026-09-29): the
 plan exists so the ports accumulate as a measured body of examples, not so the population
 is cleared fast.
 
 ## Goal (REQUIRED)
 
-Every script this repository runs is a loft program, and each port was proven against the
-Python or bash script it replaced by running both on the same inputs and comparing the four
-channels byte-for-byte — so the pairs are the comparison material `00-vs-python.html` never
-had: the same tool, in the language it was written in and in loft, both still runnable.
+**loft measured as a FULL replacement for this repository's scripting: when the plan closes
+there is no reason outside familiarity to reach for Python or bash** — not behaviour (the
+port leaves the same world, proven by the twin), not performance (start-up and run time at or
+below the original's), not clarity or compactness (the port reads no longer and no less
+plainly).  Every script the repository runs is then a loft program, each pair still runnable
+as the comparison `00-vs-python.html` never had, and every reason found on the way was a gap
+fixed in loft and struck from a register that reads zero.
+
+## The bar — three verdicts per script, and a register driven to zero
+
+The owner's framing (2026-09-30) makes the plan a MEASUREMENT with a fix loop under it, not
+a rewrite: a port that is slower, longer or less clear than its original is not "done with a
+note", it is a reason to reach for the other tool, and reasons are what this plan removes.
+So every port carries three verdicts, each from an instrument that can say no:
+
+| axis | instrument | the bar | goal it serves |
+|---|---|---|---|
+| **behaviour** | the twin (strand 2): stdout, stderr, exit status, written files | byte-identical | D parity, A soundness |
+| **performance** | the twin's wall clock on both sides, start-up included, best of 5 on an idle box | loft ≤ original; a script's start-up ≤ Python's for the same `hello` | G — the original IS the industry reference twin |
+| **clarity** | lines and a by-hand read against `loft-write`: no construct exists only to work around loft | loft ≤ original in lines; every longer port names why | F friction-free, B legible |
+
+A verdict that fails names its reason, and the reason is one FILE under
+[`findings/`](findings/): a title, then `axis`, `met-by`, `status`, `fix` and `ref` lines,
+then the measurement in prose.  Assessing it is editing its `status` (open → accepted or
+declined) and `fix` lines; tracking a change is setting `ref` (an issue, a commit, a PR)
+and `status: fixed`; an issue is filed only when a finding turns into work someone picks
+up, never per finding.  [`REASONS.md`](REASONS.md) is rendered from those files by
+`make script-reasons` (a loft script), grouped by state, with the open count as the
+headline — nothing else is maintained by hand.  **The register's open count is the plan's headline
+number and it must reach zero**; `WORKLIST.md` is what is left to port, `REASONS.md` is what
+is left to fix, and the second is the one the goal is stated in.  Two readings keep it
+honest: a reason is recorded when a port MEETS it, never guessed in advance, and it is
+struck only when the port that met it re-measures green on that axis.
 
 ## The census, as measured 2026-09-29
 
@@ -44,10 +86,10 @@ had: the same tool, in the language it was written in and in loft, both still ru
 | files that shell out to `gh` / `git` / `cargo` / `rustc` / `jq` / `curl` | 58 / 42 / 37 / 26 / 12 / 9 |
 | Python files using `re` / `json` / TOML / `argparse` / `subprocess` | 48 / 31 / 37 / 24 / 40 |
 | **files needing neither a subprocess nor a regex** | **5** (813 lines): `doc_review.py`, `api_lint.py`, `install_claude_hooks.py`, `registry_schema_gate.sh`, `browser/coop_server.py` |
-| start-up, `println("hi")`, warm, this box | loft (release) 75–80 ms · `python3 -c` 13 ms |
+| start-up, `println("hi")`, installed binary, idle box | `--interpret` 15–22 ms · default (native, warm) 32–37 ms · `python3 -c` 15–19 ms · bash 5 ms — the from-source binary reads 78–84 ms because its program cache is off (PERFORMANCE.md rule 4) |
 
-The last row is the number a hook or a per-file CI step pays on every call; where it goes
-(the `default/*.loft` load, after @PLN52) is measured in strand 1, not assumed.
+The last row is the number a hook or a per-file CI step pays on every call: interpreted,
+loft is at Python's bar today; the warm native path is not yet (REASONS.md row 1).
 
 **What loft has today for a script:** file I/O and `list_dir`, `json_parse`, `arguments()`,
 `env_variable(s)`, stdin as `host_input`, `eprintln`, `assert`/`panic` (a non-zero exit),
@@ -56,16 +98,27 @@ The last row is the number a hook or a per-file CI step pays on every call; wher
 query vocabulary (`src/git_query.rs`, @I117, @PLN119 arc F).
 
 **What it lacks, and the doctrine that decides how each gap closes:** no TOML reader, no
-explicit `exit(code)`, no typed access to `cargo`, `gh`, `rustc`, `jq`, `curl` — and no
-general `run(cmd, args)`, by decision ([@PLN119 § Why not a subprocess
-primitive](../119-out-of-process-libraries/README.md)): an external command lives INSIDE a
-vetted library that names the questions and builds the argv itself.  So this plan never asks
-for a subprocess primitive.  Each tool the scripts lean on gets the `lib/git` treatment or
-disappears: `jq` is `json_parse`; `curl` and `gh` are HTTP against a JSON API, which the
-`web` library already speaks, so a pure-loft `github` library needs no native at all;
-`rustc` is only ever reached through `cargo` or loft's own build phase; `cargo` is the one
-tool that earns a native in the `git_query.rs` shape (`metadata`, `build`, `test`, each a
-closed query).
+explicit `exit(code)`, and no way to run a program.  Until 2026-09-30 the last was by
+decision ([@PLN119 § Why not a subprocess
+primitive](../119-out-of-process-libraries/README.md)): an external command lived INSIDE a
+vetted library that built the argv itself.  **The owner reversed that on 2026-09-30: loft
+may run a subprocess, under two rules** that keep what @PLN119 was protecting —
+
+1. **A value can never become syntax.**  The command is a TYPED FORMAT STRING in the
+   @PLN124 shape the SQL layer already uses (`lit` + `hole_…`, [LOFT.md § String
+   formatting](../../LOFT.md)): the author's bytes are split into argv words, an
+   interpolated value is ONE argv word exactly as given, and no shell is ever between loft
+   and `execve`.  `c: Command = "git log -n {n} -- {path}"` cannot be injected, by
+   construction rather than by an escaping rule.
+2. **A stream is never left without a reader.**  `run` drains stdout and stderr
+   concurrently and feeds stdin beside them, so a child that fills one pipe while loft reads
+   the other can never deadlock — the classic `subprocess.communicate` failure that every
+   hand-rolled pipe loop reproduces.  The caller sees results, never file descriptors.
+
+With that, `jq` is `json_parse`, and `gh`, `git`, `cargo`, `rustc` and `curl` are run as the
+originals run them — which is also what makes a port twin-able against its original byte
+for byte.  `lib/git`'s closed query vocabulary stays as a library, rewritten over `run` and
+twinned against its natives.
 
 ## The one invariant, and the harness that checks it
 
@@ -93,7 +146,7 @@ Each strand is cut so the old path and the new one run at once and are compared 
 
 ### Strand 1 — Census + ratchet (XS–S, the first loft script — SHIPPED with the plan)
 
-`scripts/script_census.loft` — in loft, because it needs only file reading and text
+`scripts/script_census` — in loft, because it needs only file reading and text
 search: per script its language, lines, callers (Makefile / CI / hook / another script), the
 external tools it names on a non-comment line, the Python modules it imports, its I/O
 contract (report · gate · writes) and the tranche it falls in.  `make script-census` writes
@@ -115,13 +168,28 @@ What writing it measured — the first gaps, each closed before strand 3 starts:
 - **The tokenizer is by hand** (a character loop) because `split` takes one separator
   character and `find` answers a byte index against `len`'s character count — a script
   wants a regex or a `split_on(predicate)`; the `regex` library is the answer to measure.
+- **An interpreter segfault** on `f(self.v[n - 1] ?? "")` inside a mutating struct method,
+  heap-state dependent, native fine — [loft#1773](https://github.com/loft-lang/loft/issues/1773),
+  REASONS.md row 3; the census carries a marked local binding until it closes.
 - **`function-complexity` nudged the first draft's `main` at 103** (nudge at 40) — the advice
   was right, and the split it asked for is the version that shipped.  A data point for the
   advice tier: a script's `main` reaches the nudge fast.
 
+The first port taught the census two tranches it lacked: **T5**, a script that runs a
+program of its own choosing (`"$@"`, `exec`, a command held in a variable, a `$LOFT`
+binary) and so needs strand 4's `run` before any tool library — most of what the tool
+list had read as "needs nothing" — and **T8**, a shell fragment another script `source`s,
+which is not a program and is ported when its last consumer is.
+
 Still open in this strand: the start-up row above re-measured with `LOFT_PROFILE`, and the
 cross-check against `git ls-files` made a test once strand 4's `git` query exists (today it
 is a by-hand comparison, exact on 2026-09-29).
+
+**A registry library on a box the registry cannot reach** (REASONS row 6): `git clone
+https://github.com/loft-lang/loft-libs-core` and copy the package under `~/.loft/lib/<name>`
+— the third place loft's resolver looks (PACKAGES.md § Package lib directories); its native
+crate builds on first use, and both backends then resolve `use <name>;`.  That is how
+`scripts/wasm_bundle_stamp` runs here; the registry fetch itself stays the gap.
 
 ### Strand 2 — The twin harness (S)
 
@@ -141,18 +209,16 @@ scripts read TOML; loft parses `loft.toml` in Rust today and exposes nothing), *
 `STDLIB.md`), and whatever the `regex` library turns out not to cover.  Each gap is a fix or
 a library with its own test, never a workaround in the port.
 
-### Strand 4 — Typed tool interfaces (M, one tool per phase, one consumer each)
+### Strand 4 — `Command` + `run`: a subprocess under the two rules (S–M, owner-directed 2026-09-30)
 
-| tool | route | first consumer |
-|---|---|---|
-| `jq` | `json_parse` — nothing to build | the smallest `jq`-only bash script |
-| `curl` / `gh` | `github` library, pure loft over `web` (issues, labels, PRs, workflow runs, releases — the vocabulary the 58 scripts actually use, measured by strand 1) | `work-issues.sh` (`make work`) |
-| `git` | `lib/git`, extended query by query | the first `git`-reading report script |
-| `cargo` | a native in the `git_query.rs` shape: `metadata`, `build`, `test` as closed queries | `check-rlib` or `rewrite_census.py` |
-| `rustc` | never direct — through `cargo` or `loft --native` | — |
-
-Every interface lands with its recording mode (strand 2's rule) and with its first consumer
-ported and twinned; an interface nobody calls is green by construction and is not a phase.
+The design is its own document, [`PROCESS.md`](PROCESS.md): a `process` LIBRARY, invisible
+on use through its `Command` type trigger, natives in the binary, absent from the browser;
+`Command` as a typed format string (a hole is one argv word, an option-shaped value needs
+`flag()`); `run()` for the OK notice and a native-backed `lines()` cursor for the large
+output, over one drainer per pipe that no surface above it can undo; recording and replay
+inside `run`; and the five probes that gate it before any port calls it.  4d ports the tools
+in work-list order — `lib/git` rewritten over `run` and twinned against its natives first,
+then `gh` and `cargo` as the originals call them.
 
 ### Strand 5 — Tranches by caller class (M–L, repeating)
 
@@ -165,6 +231,73 @@ ported and twinned; an interface nobody calls is green by construction and is no
 4. **Never, unless the owner says so:** `registry-sign.sh` / `registry_maintain.sh` (signing
    and the registry's own maintenance — a port changes a security surface), `release-checklist.py`
    until the `github` library has carried a full release cycle, and `coop_server.py`.
+
+### Strand 8 — The `script` library: helpers on demand, the stdlib small (S–M, owner-directed 2026-09-30)
+
+**The rule: the standard library stays small and clean; every common helper lives OUTSIDE
+it and loads on demand.**  The split is mechanical: a primitive only the runtime or the OS
+can answer — `is_symlink`, `exit(code)`, a file's bytes — belongs in the stdlib; anything
+expressible in loft over such primitives — a walk, a copy, a glob, a table — belongs in a
+library, and a script that uses it must not have to say so.  That library is **`script`**,
+a `loft-libs-core` package with `[triggers] enabled = true`: its surface hangs off the
+types a script already holds — `dir.walk(suffix)`, `path.copy_to(dst)`, `pattern.glob()`,
+`rows.markdown()` — because a method on `text` or `File` is a trigger the resolver fires
+and a free function is not (@I87), so `use script;` is never written.  Its first contents
+are exactly what the ports duplicated (findings 004, 005, 008, the five hand-written
+walks); each later port that repeats itself adds a method, with the library's own testbed
+(LIBRARY_AUTHORING.md) and the twin as its gates.  Findings whose fix is a helper name the
+`script` method in their `fix:` line and keep their probe in that shape, so the register
+turns green the day the library ships it.
+
+**The direction is OUT, not in (owner, 2026-09-30): as loft stabilises, what the stdlib
+holds that is expressible in loft over primitives moves into on-demand libraries, and
+nothing of that kind is added.**  The instrument is a census of `default/*.loft` — per
+`pub fn`, whether it is a primitive (a `#rust` body the runtime must answer) or loft over
+primitives, and who calls it — and the number it moves is the one finding 001 measures: 748
+definitions parsed before a script's first statement.  A move is invisible to a caller
+because the trigger surface fires on the moved name and `std::name` / C97 keep the
+resolution rule, and it is gated the way every library is: the testbed, the twin on the
+scripts that used it, and the shipped libraries re-validated (REVALIDATE_LIBS.md).
+
+A first census by hand (2026-09-30, `default/*.loft`, 4553 lines): of 210 public functions,
+104 are runtime declarations and the rest have bodies, but most bodies are one-line opcode
+wrappers (`sin` is `OpMathFuncFloat(1, self)`) and stay.  **Pure loft over primitives, and
+so movable now**: the seven text predicates (`is_lowercase` … `is_control`; their
+`character` twins are natives and stay), `starts_with_at`, `char_slice`, `split_text`
+(called only by their own guards), the four path helpers (`resolve`, `dir`, `basename`,
+`join` on text — called by `lib/docs`, `tools/indexer`, the census), and `chr`, `sum_of`,
+`approx`, `floor_mod` — about 20 functions and 180 lines, 3 % of the definitions, so a
+clarity and ownership gain, not a start-up one.  **Library-shaped but runtime-answered**,
+the real weight: `06_json.loft` (24 declarations, the `JsonValue` type, 260 lines),
+`07_reflect.loft` (4 + 7 types, 316 lines) and `04_stacktrace.loft` — a move in the
+`engine_host` shape, natives in the binary behind a library surface, larger and later.
+What stays by the rule: operators, the opcode wrappers, file I/O, `len` / `print`,
+`content` / `lines` (the parser names `n_content`).
+
+**The collection kinds are a different question** (owner, 2026-09-30): `hash`, `sorted`,
+`index`, `spatial`, `trie` are not stdlib functions but language structures — each has
+parser syntax, typedef and scope rules, codegen, a store layout, a reflection
+`CollectionKind` and natives — so they cannot move to a library until a KIND is something
+the language loads, which is @PLN91 strand 3 (types and structures as bundles) and has no
+seam yet.  Measured weight and reach (2026-09-30): `spatial.rs` 702 lines, `trie_db.rs`
+1359 + `radix_db.rs` 1182 + `radix_tree.rs` 3382, `hash.rs` 1134; declared in 377 test
+files for `hash`, 194 `sorted`, 149 `index`, 76 `spatial`, 67 `trie`, and in the
+published libraries by none of them.  So `spatial` and `trie` are the first candidates —
+self-contained, and lightly used but NOT unimportant: the games depend on them (owner), so
+their move is gated by the games' twins the way a library change is — and `vector`, `hash`,
+`sorted` and `index` are the store's spine that lazy stores, reflection and the SQL
+derivation are built on, and go last.  **The owner's direction (2026-09-30): not a priority, but eventually
+every kind leaves the base language, and the syntax stays** — `spatial<T[x, y]>` keeps
+reading as it does, defined through a flexible kind construct a bundle supplies rather than
+by the parser knowing the word.  The design home is @PLN91 strand 3; this plan only measures
+what the kinds weigh and who uses them.  **The first concrete use of that construct is
+already known**: `spatial`'s open-ended walk (`..:n`, the `Near` form) is approximate by
+design — it follows the Morton curve, which jumps at quadrant boundaries, so a truly-near
+point can arrive late; `within` and `nearest` are exact (`src/spatial.rs`).  Agents have
+asked for a precise walk, and a slower, exact `spatial` beside the fast one is cumbersome
+today because the kind is baked into the parser, codegen and store; as a bundle it is one
+more implementation of one construct that the user chooses — as would a `spatial` over
+`float` coordinates, which the baked kind refuses (loft#1431).
 
 ### Strand 7 — The RPC standard must not hamper a general script (S, evaluate then fix)
 
@@ -194,36 +327,78 @@ then fixes, on four questions:
 4. **The client half in loft.**  A script that drives a `--rpc` session (the debugger
    automations, today Python and bash — the census lists them) needs the envelope typed:
    an `rpc` library over `json_parse` / `to_json` with `request(req) -> Reply` and an event
-   stream, the same shape the `github` client of strand 4 takes.  Its first consumer is the
+   stream, spawning the server through strand 4's `run` with stdin fed and both pipes read.  Its first consumer is the
    smallest `--rpc` driver in the work list, twinned.
 
-### Strand 6 — The comparison yield (S, continuous)
+### Strand 6 — The scoreboard (S, continuous)
 
 When a port replaces its original, the original does not vanish: it moves to
 `tests/comparisons/scripts/<name>/orig.py` (or `.sh`) beside `port.loft` and the fixtures,
 so the twin keeps running and the pair stays a **claim as a program** in the
 `tests/comparisons` sense.  A generator (loft) renders the pairs as a page beside
-`00-vs-python.html`: per script the two sources, lines, the start-up and run-time row from
-the twin, and the constructs the port needed — the language comparison the owner asked for,
-made of tools that are used every day rather than of samples written to be compared.
+`00-vs-python.html`: per script the two sources, the three verdicts of the bar with their
+numbers (lines, start-up, run time), and the open `REASONS.md` rows it still carries — the
+language comparison the owner asked for, made of tools that are used every day rather than
+of samples written to be compared, and readable as a scoreboard: how many scripts loft
+replaces with no reason left, today.
+
+## A script's name — no extension, a `#!` line (owner's question 2026-09-30; works today)
+
+`loft` runs a file with no extension, the lexer skips a first `#!` line, `#cwd` may follow
+it, and `#!/usr/bin/env -S loft --interpret` carries a flag.  So a ported script is a bare
+executable invoked as the bash one was, and **a port is a swap under the same name**: the
+Makefile line, the workflow step and the hook that call `scripts/idx` do not change when
+`idx` stops being bash, and the twin compares two files that differ in their first line.
+That holds for an original with no extension.  **Callers move when the plan closes, not
+when a port lands** (owner ruling, 2026-10-01): until then every port sits beside its
+original and every caller keeps calling the original, so a gate stays judged by a program
+that is not the loft under test — and for an original WITH an extension (`x.sh`, `x.py`)
+the move does change the caller's line, which drops the extension.
+Six bare executables exist already, which the census classifies by their `#!` line.  To
+carry: a gate that finds loft sources by `*.loft` (the formatter, the fence checks) must
+learn the `#!` line, and Windows has no shebang — a caller there spells `loft scripts/idx`.
+
+## Execution modes — evaluated in [`MODES.md`](MODES.md)
+
+The dual mode the owner asked for (2026-09-30) is loft's steady state already: one source,
+`--interpret` / `--native` (cached by source hash) / `--native-release`.  The compiled
+version is never stored in git (3.5 GB a generation, stale weekly); the source-keyed cache
+is the store and CI warms it.  **The rule: a script runs interpreted; a script whose source
+has stopped changing runs optimised** — loft measures the age of the hash on two clocks
+(first seen, last git change), the run count and the last interpreted duration, and when a
+script has earned it (a day old, ≥ 100 ms, run twice) builds the release binary detached
+after the run, so the next run takes it.  the flag in a script's `#!` line pins the
+exceptions; the twin runs both modes so promotion can never change an answer; and a TEST is never subject to it — a
+backend flag or a test context (`LOFT_MODE_POLICY=off`, set by every runner) switches the
+policy and its bookkeeping off.
 
 ## Phase ordering
 
-1 (shipped) → 2 → 3 → (4 and 5 interleave: an interface, then the tranche it unblocks) → 6
-runs from the first replaced script onward.  7 runs beside 3: its questions 1 and 3 are met
+1 (shipped) → 2 (shipped) → 3 and 8 together (a port meets a helper, the library gains it) →
+(4 and 5 interleave: an interface, then the tranche it unblocks) → 6 runs from the first
+replaced script onward.  7 runs beside 3: its questions 1 and 3 are met
 by the first filter-shaped script, question 2 is a decision the owner takes once, and
 question 4 lands with the first `--rpc` driver in the tranche.  Strand 3 is the first tranche
 that ships value; 1 and 2 are the instruments and are cheap.
 
 ## Open design questions
 
+0. **What counts as "clear and compact" when the original is bash?**  A 30-line bash gate
+   is often three pipes; the loft port is a loop with names.  Recommendation: lines are the
+   number, but the by-hand read decides, and the bar is "no longer AND no less plain" — a
+   port may spend lines on names bash did not have, and must not spend them on ceremony.
+
 1. **Replace or accompany?**  Recommendation: replace after the shadow period, with the
    original kept under `tests/comparisons/scripts/` (strand 6).  Two live copies of one
    tool drift; one copy plus a gated twin does not.
-2. **Where does the `github` vocabulary stop?**  `gh` is used for issues, labels, PRs,
-   workflow runs, releases and `api` calls; strand 1 measures which, and the library carries
-   only those.  A script needing an endpoint outside it extends the library, never calls
-   `web` directly from the script.
+2. **`gh` as a command, or a `github` library over `web`?**  With `run`, calling `gh` as
+   the originals do is the cheaper port and the exact twin; a pure-loft REST client is the
+   better library.  Recommendation: `gh` for the ports, the library only if a consumer
+   outside this repo asks for one.
+2b. **Where the process surface lives — DECIDED (owner, 2026-09-30): a `process` library,
+   auto-used through its `Command` type trigger, natives in the binary, absent from the
+   browser** (strand 4 § Where it lives).  Open under it: does `make surface-gen` see an
+   in-binary library's natives the way it sees the stdlib's?  If not, that is the first item.
 3. **The ratchet as a gate.**  Recommendation: from strand 1, `make ci` fails when a NEW
    `.py`/`.sh` appears under `scripts/` without a `# why-not-loft: <gap>` line naming the
    gap that stopped it being loft — the line is a finding for strand 3/4, and the
@@ -231,11 +406,13 @@ that ships value; 1 and 2 are the instruments and are cheap.
 
 ## Cross-arc dependencies
 
-- @PLN119 — the typed-library doctrine and `lib/git` as the shape for `cargo`.
+- @PLN119 — the typed-library doctrine strand 4 reverses under two rules; `lib/git` is its first twin.
+- @PLN124 — typed format strings (`lit` + `hole_…`), the mechanism `Command` opts into; @PLN23's `SqlText` is the worked example.
 - @PLN142 — a user-local install, which is what a hook needs before a build exists.
 - @PLN102 arc E — `behavior_golden`'s four-channel comparison; the twin is its per-script form.
 - @PLN52 — stdlib fast start; the 75 ms start-up row is re-measured against it in strand 1.
 - @PLN91 — the self-hosting epic; this plan is the tooling floor under it, not one of its strands.
+- @PLN180 — interpreter speed: a port slower than its original whose profile names one stdlib loop routes there, and the port's scoreboard row is the measurement.  The fix wanted is fast LOFT code; a kernel is a stop-gap with a removal trigger ([KERNELS.md](../../KERNELS.md)).  Finding 013 was answered with the first two (`split`, `lines`).
 
 ## See also
 

@@ -25,6 +25,7 @@
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
+use std::path::PathBuf;
 
 struct Counting;
 
@@ -71,8 +72,12 @@ fn corpus(size: &str) -> String {
 /// parse, then the corpus parse, scope pass and post-scope lints on top of it.  Each call is
 /// a fresh parser; nothing is cached across calls.
 fn front_end_allocations(src: &str, tag: &str) -> (u64, u64) {
-    let dir = std::env::temp_dir().join(format!("loft_fc_{}_{tag}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("temp dir");
+    // A path of the same length everywhere: the source path is text the front end keeps, so
+    // a temp dir whose length follows the checkout's name (a test runner's scratch dir does)
+    // moved the count by a constant between checkouts of one commit.  Relative to the crate
+    // root, where the tests run, the name is identical wherever the tree lives.
+    let dir = PathBuf::from(format!("target/frontend_counts/{tag}"));
+    std::fs::create_dir_all(&dir).expect("corpus dir");
     let file = dir.join("corpus.loft");
     std::fs::write(&file, src).expect("write corpus");
     let path = file.to_string_lossy().to_string();

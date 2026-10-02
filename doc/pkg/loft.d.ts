@@ -77,10 +77,10 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
-    readonly compile_and_run: (a: number, b: number) => [number, number];
-    readonly compile_and_start: (a: number, b: number) => [number, number];
     readonly debug_command: (a: number, b: number) => [number, number];
     readonly debug_start: (a: number, b: number) => [number, number];
+    readonly compile_and_run: (a: number, b: number) => [number, number];
+    readonly compile_and_start: (a: number, b: number) => [number, number];
     readonly resume_frame: () => [number, number];
     readonly swap_export: () => [number, number];
     readonly swap_stage: (a: number, b: number) => void;

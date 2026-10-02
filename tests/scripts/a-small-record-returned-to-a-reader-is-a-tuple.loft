@@ -1,0 +1,95 @@
+// @PLN180 slice 1 (`@FR-R-ValueRecord`, decided in the IR phase) — a small record of
+// scalars returned to callers that only read its fields is carried as a TUPLE on BOTH
+// backends: the callee builds `(a, b, c)` instead of filling a return buffer, the caller
+// reads `p.0` instead of a field, and the interpreter claims no buffer store for the call.
+// `LOFT_NO_IR_VALUE_RECORD=1` restores the record form and must answer identically.
+//
+// The cell that pins the design choice is `fill order`: the tuple is built in the order
+// the literal WRITES its fields, never in schema order, so field expressions with side
+// effects run in the order the program wrote them.
+//
+// @falsified-at: none — it guards a rewrite no earlier build has, so no control fails it.
+// Hand-sabotaged 2026-09-30: building the tuple in SCHEMA order (the literal's fields
+// sorted by offset, reads indexed to match, so every value still lands in its field) runs
+// `tick` as 3, 2, 4, 1 and fails the `fill order` assert on both backends.  And the native
+// rewrite's own out-of-order build (`--native`, before this commit) ran 7, 5, 8, 6 in
+// `handed-on`: a literal's field values were evaluated in schema order.
+
+struct V3 { x: float, y: float, z: float }
+struct Ord4 { n: integer, ok: boolean, s: single, f: float }
+struct Log { seq: vector<integer> }
+
+fn mk3(a: float) -> V3 { V3 { x: a, y: a * 2.0, z: a * 3.0 } }
+
+fn tick(log: Log, k: integer) -> integer {
+  log.seq += [k];
+  k
+}
+
+// Fields written in another order than the schema lays them out in.
+fn mk_ord(log: Log) -> Ord4 {
+  Ord4 { ok: tick(log, 1) == 1, f: tick(log, 2) as float, n: tick(log, 3), s: tick(log, 4) as single }
+}
+
+// The same literal, but its one call hands the record on: this pass declines it and
+// `--native`'s own rewrite takes it, so the fill order is asked of that rewrite too.
+fn mk_ord_kept(log: Log) -> Ord4 {
+  Ord4 { ok: tick(log, 5) == 5, f: tick(log, 6) as float, n: tick(log, 7), s: tick(log, 8) as single }
+}
+fn ord_sum(o: Ord4) -> float { o.n as float + o.s as float + o.f }
+
+// A literal in an early return and one as the tail.
+fn pick(k: integer) -> V3 {
+  if k > 2 {
+    return V3 { x: 1.0, y: 2.0, z: 3.0 };
+  }
+  V3 { x: k as float, y: 0.0, z: 0.5 }
+}
+
+// Its one call hands the record on, so it keeps the record form.
+fn mk_kept(a: float) -> V3 { V3 { x: a, y: a + 1.0, z: a + 2.0 } }
+fn total(v: V3) -> float { v.x + v.y + v.z }
+
+fn main() {
+  // Every field of every call reads back: 6 * (1 + 2 + 3 + 4).
+  t = 0.0;
+  for i in 0..4 {
+    p = mk3((i + 1) as float);
+    t += p.x + p.y + p.z;
+  }
+  assert(t == 60.0, "fields of a tuple-returned record: {t}");
+
+  // Fill order: `tick` runs 1, 2, 3, 4 and each field gets its own value.
+  log = Log { seq: [] };
+  o = mk_ord(log);
+  assert("{log.seq}" == "[1,2,3,4]", "fill order: {log.seq}");
+  assert(o.n == 3 && o.ok && o.s == 4.0 && o.f == 2.0, "mixed kinds: {o.n} {o.ok} {o.s} {o.f}");
+  // Handed on: 7 + 8 + 6, and still 5, 6, 7, 8.
+  k2 = mk_ord_kept(log);
+  assert(ord_sum(k2) == 21.0, "handed-on literal: {ord_sum(k2)}");
+  assert("{log.seq}" == "[1,2,3,4,5,6,7,8]", "fill order when handed on: {log.seq}");
+
+  // Early return and tail: 0.5 + 1.5 + 2.5 + 6 + 6.
+  u = 0.0;
+  for k in 0..5 {
+    q = pick(k);
+    u += q.x + q.y + q.z;
+  }
+  assert(u == 16.5, "early return and tail literal: {u}");
+
+  // One local bound twice, read between the binds.
+  r = mk3(1.0);
+  a = r.x;
+  r = mk3(2.0);
+  b = r.z;
+  assert(a == 1.0 && b == 6.0, "rebound local: {a} {b}");
+
+  // A read inside a branch: y = 6 > 5, so z = 9.
+  s = mk3(3.0);
+  w = if s.y > 5.0 { s.z } else { s.x };
+  assert(w == 9.0, "read in a branch: {w}");
+
+  // The declined shape answers the same: 2 + 3 + 4.
+  kept = mk_kept(2.0);
+  assert(total(kept) == 9.0, "record handed on: {total(kept)}");
+}

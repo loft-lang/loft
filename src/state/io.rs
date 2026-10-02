@@ -1680,6 +1680,12 @@ impl State {
         if to.store_nr == u16::MAX {
             return;
         }
+        // `@FR-H-SwapIn` — a given-up source copied into a reset root is the stores exchanged:
+        // no copy runs, so none is reported below.
+        if free_source && self.database.try_swap_in(&data, &to, tp) {
+            self.database.allocations[to.store_nr as usize].last_op_at = self.code_pos;
+            return;
+        }
         // @PLN90 phase 1 — make the copy visible. A real record deep-copy is about to
         // run (the no-op-alias and null cases returned above). LOFT_COPY_DUMP prints one
         // line per executed structure copy so we can inventory every copy + map it to its
@@ -2119,12 +2125,23 @@ impl State {
     /// The first `no_keys` keys of `db_tp`, popped off the stack — the one reader both a
     /// keyed lookup (`OpGetRecord`) and a keyed assignment (`OpSetKeyed`) use.
     pub(super) fn stack_keys(&mut self, db_tp: u16, no_keys: u8) -> Vec<Content> {
-        let keys = self.database.get_keys(db_tp);
-        let mut key = Vec::new();
-        for (k_nr, k) in keys.iter().enumerate() {
-            if k_nr >= no_keys as usize {
-                break;
+        // The kinds are copied out of the schema's cached list (`@FR-R-KeyList`) so the pops
+        // below may borrow `self`; a key of more than eight values takes the heap.
+        let mut inline = [0u16; 8];
+        let spilled: Vec<u16>;
+        let keys: &[u16] = {
+            let all = self.database.get_keys(db_tp);
+            let n = all.len().min(no_keys as usize);
+            if n <= inline.len() {
+                inline[..n].copy_from_slice(&all[..n]);
+                &inline[..n]
+            } else {
+                spilled = all[..n].to_vec();
+                &spilled
             }
+        };
+        let mut key = Vec::with_capacity(keys.len());
+        for k in keys {
             match k {
                 0 | 1 => key.push(Content::Long(self.get_stack::<i64>())),
                 2 => key.push(Content::Single(self.get_stack::<f32>())),

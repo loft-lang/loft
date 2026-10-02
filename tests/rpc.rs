@@ -327,6 +327,39 @@ fn rpc_eval_bare_vector_live() {
     let _ = std::fs::remove_file(&path);
 }
 
+// `@FR-R-StackBase` — a step back restores the heap from a checkpoint, which REPLACES every
+// store's buffer, the stack's included; the interpreter's cached stack base must follow it.
+// The run then continues on the restored frame: re-running lines 3 and 4 from `a == 1` prints
+// `a=4`.  A base left on the freed pre-restore buffer reads `a == 2` there and prints `a=5`
+// (or reads freed memory), while the stop event — read through the store — still shows 1.
+#[test]
+fn rpc_a_run_continues_on_the_restored_frame_after_a_step_back() {
+    let path = tmp_program(
+        "rxcont",
+        "fn main() {\n  a = 1;\n  a = a + 1;\n  a = a + 2;\n  print(\"a={a}\")\n}\n",
+    );
+    let file = json_path(&path);
+    let out = drive(&[
+        format!("{{\"id\":1,\"req\":\"launch\",\"file\":\"{file}\"}}"),
+        format!(
+            "{{\"id\":2,\"req\":\"setBreakpoints\",\"file\":\"{file}\",\"breakpoints\":[{{\"line\":3}}]}}"
+        ),
+        "{\"id\":3,\"req\":\"setReverse\",\"on\":true}".to_string(),
+        "{\"id\":4,\"req\":\"run\"}".to_string(),
+        "{\"id\":5,\"req\":\"stepOver\"}".to_string(),
+        "{\"id\":6,\"req\":\"stepBack\"}".to_string(),
+        "{\"id\":7,\"req\":\"setBreakpoints\",\"file\":\"FILE\",\"breakpoints\":[]}"
+            .replace("FILE", &file),
+        "{\"id\":8,\"req\":\"continue\"}".to_string(),
+        "{\"id\":9,\"req\":\"disconnect\"}".to_string(),
+    ]);
+    assert!(
+        out.contains("\"category\":\"stdout\",\"text\":\"a=4\""),
+        "the continued run computes from the restored a == 1: {out}"
+    );
+    let _ = std::fs::remove_file(&path);
+}
+
 // @PLN63 RX4 — `stepBack` REVERSES a forward step over the RPC (distinct from the edit-scoped
 // `undo`, which was a no-op after a step).  Arm reverse, run to a breakpoint, step over a
 // mutating line, then step back — the frame returns to the exact prior stop (line + value).

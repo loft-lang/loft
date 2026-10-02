@@ -1249,6 +1249,70 @@ pub fn retbuf_hoist_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_RETBUF_HOIST"))
 }
 
+/// A counted loop's variable shares its range index's slot on the interpreter, so the copy
+/// from the index at the top of every round is not emitted — **DEFAULT ON**
+/// (`slot_alias::range_slot_aliases`).  Opt OUT with `LOFT_NO_LOOP_VAR_ALIAS` (read at slot
+/// assignment): every loop variable gets its own slot and its copy again, the before-half of
+/// the A/B and the first bisect step for a wrong loop variable on the interpreter.
+#[must_use]
+pub fn loop_var_alias_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_LOOP_VAR_ALIAS"))
+}
+
+/// A loop whose first statement carries its exit test — a counted range's iterator, or the
+/// `if !c { break }` of a `while` — tests at the BOTTOM on the interpreter: entered by one jump
+/// to the test, the test jumps back to the body while the loop goes on, so a round takes one
+/// jump where a test at the top and a jump back took two — **DEFAULT ON**.  Opt OUT with
+/// `LOFT_NO_LOOP_ROTATE` (read at bytecode generation): the before-half of the A/B and the
+/// first bisect step for a loop that runs a round too many or too few on the interpreter.
+#[must_use]
+pub fn loop_rotate_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_LOOP_ROTATE"))
+}
+
+/// A counted range whose start is not a literal steps ONE counter on the interpreter: the
+/// index is seeded from the start and the rotated loop enters past its step, so the copy
+/// from the second counter is not emitted — **DEFAULT ON** (`@FR-R-StartStep`).  Opt OUT
+/// with `LOFT_NO_START_STEP` (read at bytecode generation): the before-half of the A/B and
+/// the first bisect step for a wrong value out of such a loop on the interpreter.
+#[must_use]
+pub fn start_step_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_START_STEP"))
+}
+
+/// `LOFT_TRACE_START_STEP=1` — name each counted loop with a computed start that steps one
+/// counter on the interpreter, and each one declined.
+#[must_use]
+pub fn trace_start_step() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_TRACE_START_STEP"))
+}
+
+/// `LOFT_TRACE_LOOP_VAR_ALIAS=1` — name each counted loop whose variable shares its range
+/// index's slot, and each one declined with the reason.
+#[must_use]
+pub fn trace_loop_var_alias() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_TRACE_LOOP_VAR_ALIAS"))
+}
+
+/// The interpreter emits no `OpPreAllocVector` that only repeats the append after it —
+/// **DEFAULT ON**.  The op claims a record for an ABSENT vector, `max(count, 11)` elements wide,
+/// and does nothing to a vector that has one; `vector_append` claims the same 11 elements on
+/// an absent vector.  So for a literal of at most 11 elements the op is the append's own first
+/// claim run early, and in a loop it ran once per iteration for nothing.  The IR keeps it:
+/// `--native`'s append-group recognisers read the group's head and stride from it.  Opt OUT
+/// with `LOFT_NO_PREALLOC_ELIDE` (read at bytecode generation): the before-half of the A/B
+/// and the first bisect step for a wrong first claim on the interpreter.
+#[must_use]
+pub fn prealloc_elide_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_PREALLOC_ELIDE"))
+}
+
 /// @PLN157 § V-m: `v += [x]` on a plain vector of a scalar kind is ONE fused
 /// `OpAppend<Kind>` — **DEFAULT ON**.  Opt OUT with `LOFT_NO_FUSED_APPEND` (read at PARSE
 /// time: the before-half of the A/B on one binary — the four-op form, five runtime calls
@@ -1481,6 +1545,38 @@ pub fn vec_copy_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_VEC_COPY"))
 }
 
+/// `@FR-R-RepeatRun` — four or more equal constant pushes into one target are one repeat fill
+/// — **DEFAULT ON**.  `LOFT_NO_REPEAT_RUN` keeps every push: the first bisect step for a wrong
+/// element out of a literal that spells one constant many times.
+#[must_use]
+pub fn repeat_run_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_REPEAT_RUN"))
+}
+
+/// `LOFT_TRACE_REPEAT_RUN=1` — name each run `@FR-R-RepeatRun` turns into one fill.
+#[must_use]
+pub fn trace_repeat_run() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_TRACE_REPEAT_RUN"))
+}
+
+/// `@FR-H-SwapIn` — the rebind copy of a callee's minted result into a just-reset root is an
+/// exchange of the two stores' contents — **DEFAULT ON**.  `LOFT_NO_STORE_SWAP` keeps the deep
+/// copy: the first bisect step for a wrong record after `x = f(…, x, …)` on either backend.
+#[must_use]
+pub fn store_swap_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_STORE_SWAP"))
+}
+
+/// `LOFT_TRACE_STORE_SWAP=1` — name each store exchange `@FR-H-SwapIn` makes.
+#[must_use]
+pub fn trace_store_swap() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_TRACE_STORE_SWAP"))
+}
+
 /// `LOFT_TRACE_VEC_COPY=1` — name each element-wise vector copy made one append and each kept.
 pub fn trace_vec_copy() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
@@ -1556,6 +1652,15 @@ pub fn api_advice_enabled() -> bool {
 pub fn exit_vector_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| !env_set("LOFT_NO_EXIT_VECTOR"))
+}
+
+/// `LOFT_NO_RETURN_FIELD=1` (scope pass, BOTH backends): the returned field of an owned local
+/// keeps the parser's copy into a minted return buffer instead of handing the local's store
+/// over at the field's position — the before-half of `(R-ReturnField)`'s A/B, and the first
+/// bisect step for a wrong or freed record out of a callee that returns a field of a local.
+pub fn return_field_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_RETURN_FIELD"))
 }
 
 /// `LOFT_HOIST_VERIFY=1` read at RUNTIME, for the store operations whose same-store

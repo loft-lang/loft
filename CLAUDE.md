@@ -42,7 +42,9 @@ cargo run --bin loft -- prog.loft        # run     |  -- repl  |  -- introspect 
 loft debug prog.loft:12 [--lib dir]      # STOP at line 12: read/edit the live frame, step
                                          #   (pipe commands on stdin; `--rpc` = scripted NDJSON)
                                          #   reach for this INSTEAD of adding println — DEBUG.md
-cargo run --bin gendoc                   # regenerate doc/*.html
+make doc                                 # regenerate doc/*.html: fetches the library packages,
+                                         #   then gendoc.  A bare `cargo run --bin gendoc` on a box
+                                         #   without them keeps the committed lib pages
 make ci                                  # fmt → clippy → test (full local gate).  Unreliable
                                          #   here (memory, a sibling gate)?  Run the SAME gate
                                          #   on GitHub, no PR needed: `gh workflow run ci.yml
@@ -334,7 +336,7 @@ src/main.rs            CLI; loads default/ then user file
 3. **Never create a branch or open a loft PR without an explicit user ask** ("create PR",
    "switch branch"). "fix X" / "push" / "retry" are NOT such asks; a prior ask doesn't carry
    over. If a protected branch blocks a commit, surface it and ask — don't invent a branch.
-   ⚠ **A MERGE never waits for the owner** (owner, 2026-10-02): once a PR is open, arm
+   ⚠ **A MERGE never waits for the owner:** once a PR is open, arm
    `gh pr merge --auto --squash` — the required checks ARE the merge rule.  **A library PR
    does not wait either:** every `loft-libs-*` `main` requires a PR (admins included), so a
    library change is a branch + a PR + auto-merge, opened without asking; publish only from
@@ -572,7 +574,7 @@ report says so rather than printing nothing (loft#1088). PERFORMANCE.md § LOFT_
 the bisect switches: [NATIVE_SWITCHES.md](doc/claude/NATIVE_SWITCHES.md) (`--native` rewrites) /
 [BOTH_BACKEND_SWITCHES.md](doc/claude/BOTH_BACKEND_SWITCHES.md) (lowering + runtime store) ·
 [PROFILING.md](doc/claude/PROFILING.md) which switch arms which profiler ·
-[PERFORMANCE.md](doc/claude/PERFORMANCE.md) benchmarks + profiling (its oracle: [PROFILE_ORACLE.md](doc/claude/PROFILE_ORACLE.md)) · [PERF_PORTAL.md](doc/claude/PERF_PORTAL.md) (GENERATED: every measured routine against its Rust twin, by mechanism class — `make perf-portal`) · [CI_BUDGET.md](doc/claude/CI_BUDGET.md) what runs
+[PERFORMANCE.md](doc/claude/PERFORMANCE.md) benchmarks + profiling (its oracle: [PROFILE_ORACLE.md](doc/claude/PROFILE_ORACLE.md)) · [INTERPRETER_PERFORMANCE.md](doc/claude/INTERPRETER_PERFORMANCE.md) how the interpreter executes and what made it fast · [PERF_PORTAL.md](doc/claude/PERF_PORTAL.md) (GENERATED: every measured routine against its Rust twin, by mechanism class — `make perf-portal`) · [KERNELS.md](doc/claude/KERNELS.md) the kernel register — every Rust stand-in for a loft loop, why it exists and its removal trigger (`make kernel-ratio`); a stop-gap, the loft version is preferred · [CI_BUDGET.md](doc/claude/CI_BUDGET.md) what runs
 when + the 20-min PR rule.
 
 **Quality / stability / formal:** [CODE.md](doc/claude/CODE.md) · [DOC_QUALITY.md](doc/claude/DOC_QUALITY.md) ·
@@ -647,7 +649,7 @@ repositioning from one-game project to distribution ·
 [LAVITION.md](doc/claude/LAVITION.md) · [PROMPTS.md](doc/PROMPTS.md).
 
 **Skills** (`.claude/skills/`): `loft-write` (.loft authoring) · `loft-debug` (runtime crashes) ·
-`loft-test` · `loft-codegen` · `loft-ship` (library cross-target + publish) · `engineering-rigor` /
+`loft-test` · `loft-codegen` · `loft-optimize` (making code faster, both backends) · `loft-ship` (library cross-target + publish) · `engineering-rigor` /
 `design-protocol` (rigor) · `doc-quality` · `draw` ([DRAWING.md](doc/claude/DRAWING.md), the method it follows) · `loft-plan-workflow`.
 
 ## Environment switches

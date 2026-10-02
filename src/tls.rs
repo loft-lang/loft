@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I77 — Registry / manifest / lockfile resolution (the TLS trust every HTTPS request uses)
 
 //! The one TLS client configuration every HTTPS request loft makes uses.
 //!
@@ -28,14 +29,19 @@ fn client_config() -> Arc<rustls::ClientConfig> {
             // A source that could not be read, or a certificate in it that rustls cannot use,
             // is skipped: the bundled roots still stand, and one bad entry in a system bundle
             // must not stop every download.  Said once, because a proxy CA that silently fails
-            // to load is exactly what someone debugging an UnknownIssuer needs to see.
-            for e in &native.errors {
-                eprintln!("loft: a certificate source could not be read and is skipped: {e}");
+            // to load is exactly what someone debugging an UnknownIssuer needs to see.  The
+            // notes carry no value read from the store: what the store holds is not loft's to
+            // print, and where it lives is `SSL_CERT_FILE` / `SSL_CERT_DIR` or the system path.
+            if !native.errors.is_empty() {
+                eprintln!(
+                    "loft: a certificate source in the machine's trust store could not be read \
+                     and is skipped (check SSL_CERT_FILE / SSL_CERT_DIR)"
+                );
             }
             if unusable > 0 {
                 eprintln!(
-                    "loft: {unusable} certificate(s) in the machine's trust store could not be \
-                     used and are skipped"
+                    "loft: a certificate in the machine's trust store could not be used and is \
+                     skipped"
                 );
             }
             Arc::new(

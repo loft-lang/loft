@@ -284,6 +284,10 @@ pub const FUNCTIONS: &[(&str, Call)] = &[
     // it runs `git`, and no browser page has a subprocess to run it in.
     #[cfg(not(target_arch = "wasm32"))]
     ("n_git_query", crate::git_query::n_git_query),
+    // @PLN179 strand 4b — `lib/process`'s run.  Native targets only: no browser page has a
+    // subprocess to run.
+    #[cfg(not(target_arch = "wasm32"))]
+    ("n_process_run", crate::process_run::n_process_run),
     // @PLN18 — engine-host kernel natives (mechanics only; lib/engine_host
     // declares them; native targets only — the kernel has no wasm story).
     #[cfg(not(target_arch = "wasm32"))]
@@ -460,6 +464,7 @@ pub const FUNCTIONS: &[(&str, Call)] = &[
     ("n_path_sep", n_path_sep),
     ("i_parse_error_push", i_parse_error_push),
     ("n_hash_sorted", n_hash_sorted),
+    ("n_vector_sum_int", n_vector_sum_int),
     ("n_radix_sorted", n_radix_sorted),
     ("n_spatial_range", n_spatial_range),
     ("n_trie_prefix", n_trie_prefix),
@@ -901,7 +906,7 @@ fn n_assert(stores: &mut Stores, stack: &mut DbRef) {
     // `main.rs` renders via the phase-2 pretty renderer.  Prior
     // production-mode log path above is unchanged — production
     // intentionally keeps logging-and-continuing semantics.
-    stores.runtime_error = Some(Box::new(
+    stores.raise_runtime_error(Box::new(
         crate::runtime_error::RuntimeError::assertion_failed(
             v_message.str().to_string(),
             v_file.str().to_string(),
@@ -927,7 +932,7 @@ fn n_panic(stores: &mut Stores, stack: &mut DbRef) {
     // Plan-07 phase 4 — typed runtime error.  Same shape as n_assert
     // above; the loft `panic("msg")` builtin lands a `UserPanic`
     // variant.  See `RuntimeError::user_panic` for the constructor.
-    stores.runtime_error = Some(Box::new(crate::runtime_error::RuntimeError::user_panic(
+    stores.raise_runtime_error(Box::new(crate::runtime_error::RuntimeError::user_panic(
         v_message.str().to_string(),
         v_file.str().to_string(),
         v_line as u32,
@@ -1824,6 +1829,7 @@ fn n_parallel_for_light(_stores: &mut Stores, _stack: &mut DbRef) {
 /// 10 (drop materialised vector) extends this contract: any par call
 /// whose result is consumed single-pass without random access lowers
 /// here.
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn n_parallel_discard(stores: &mut Stores, stack: &mut DbRef) {
     // Same stack layout / pop order as n_parallel_for.
     let n_extra = stores.get::<i64>(stack) as usize;
@@ -1861,6 +1867,7 @@ fn n_parallel_discard(stores: &mut Stores, stack: &mut DbRef) {
                 stack_trace_lib_nr: ctx.stack_trace_lib_nr,
                 data_ptr: ctx.data.clone(),
                 fn_positions: Arc::new(data.definitions.iter().map(|d| d.code_position).collect()),
+                frame_headroom: Arc::clone(&ctx.frame_headroom),
                 line_numbers: Arc::new(std::collections::BTreeMap::new()),
             },
         )
@@ -2039,6 +2046,7 @@ fn parallel_queue_dispatch(stores: &mut Stores, stack: &mut DbRef, stitch: Queue
             stack_trace_lib_nr: ctx.stack_trace_lib_nr,
             data_ptr: ctx.data.clone(),
             fn_positions: Arc::new(data.definitions.iter().map(|d| d.code_position).collect()),
+            frame_headroom: Arc::clone(&ctx.frame_headroom),
             line_numbers: Arc::new(std::collections::BTreeMap::new()),
         };
         // Per-stitch extras (computed unconditionally; cost is a
@@ -2283,6 +2291,7 @@ fn n_parallel_fold(stores: &mut Stores, stack: &mut DbRef) {
                 stack_trace_lib_nr: ctx.stack_trace_lib_nr,
                 data_ptr: ctx.data.clone(),
                 fn_positions: Arc::new(data.definitions.iter().map(|d| d.code_position).collect()),
+                frame_headroom: Arc::clone(&ctx.frame_headroom),
                 line_numbers: Arc::new(std::collections::BTreeMap::new()),
             },
             elem_size,
@@ -3605,6 +3614,15 @@ fn i_parse_errors_dest(stores: &mut Stores, stack: &mut DbRef) {
 // The cdylib stores the response body in a thread-local, returned via LoftStr.
 
 // ── Crypto built-ins moved to lib/crypto/native (plan-12 phase 1a) ──────
+
+/// `vector_sum_int(v, acc)` — the loop kernel (`loop_kernels::vector_sum_int`), one
+/// `OpStaticCall` for the whole sum.  Its native twin is `codegen_runtime::n_vector_sum_int`.
+fn n_vector_sum_int(stores: &mut Stores, stack: &mut DbRef) {
+    let acc = stores.get::<i64>(stack);
+    let v = stores.get::<DbRef>(stack);
+    let result = crate::loop_kernels::vector_sum_int(&stores.allocations, &v, acc);
+    stores.put(stack, result);
+}
 
 /// C60 Step 3a-part2: iterate a hash in ascending key order.
 /// Wraps `Stores::build_hash_sorted_vec` (src/database/allocation.rs).

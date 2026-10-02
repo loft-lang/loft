@@ -30,10 +30,19 @@ that removes it — scratch nobody removes grows into hundreds of GB.
 | `<dir>/.loft/cache/<entry>` | the program cache a test writes beside its probe — every probe has a fresh name, so the cache only grows | `sweep_scratch.sh` (entries older than a day, in a temp dir); `scripts/disk_janitor.sh` (under a checkout's `tests/`, older than two days) |
 | `loft_html_*`, `loft_p*`, `loft_rebuild_*`, `loft-*` | the html, probe, rebuild and serve suites | `sweep_scratch.sh` (older than a day) |
 | `~/.cache/loft-falsify/<ref>{,-target}` (`LOFT_FALSIFY_CACHE`) | `make falsify` control builds | the script itself, LRU to `LOFT_FALSIFY_KEEP` after a successful build; `sweep_scratch.sh` a control unused for `--falsify-days` (7), a failed build's included |
-| `~/.cache/tmp/claude-<uid>/<project>/<session>` | the agent harness's per-session scratch | `make sweep-scratch` (nothing in it changed for two weeks — two days on a RAM tmpfs) |
+| `~/.cache/tmp/claude-<uid>/<project>/<session>`, or `/tmp/claude-<uid>/…` where `TMPDIR` is unset | the agent harness's per-session scratch | `make sweep-scratch` (nothing in it changed for two weeks — two days on a RAM tmpfs); within those two days, the agent that wrote it — see below |
 | `target/debug/deps` | cargo: every test binary of every dependency hash ever built (tens of GB per checkout) | `scripts/disk_janitor.sh`, beside every build (`cargo sweep --time 3`, `--time 1` under 50 GB free), on every checkout, under cargo's own build lock; `make sweep-target` by hand |
 | `target/*/incremental` | cargo: the incremental compilation cache (9 GB measured) | `scripts/disk_janitor.sh` (sessions older than a day, under the build lock); `scripts/disk_headroom.sh`, whole, when the disk is short — it costs a rebuild's time, nothing else |
 | `/var/tmp/loft-test-scratch-<checkout>.<cksum>` as a whole | ONE gate run's fixtures and native test cache (23 GB measured in a single run — today's entries, which the day-old rule keeps) | `scripts/disk_headroom.sh`, when the disk is still short after the steps above and NO gate of this checkout is alive (its pid file and `.ci-running`, liveness-tested): a finished run's fixtures are garbage, the next run writes fresh ones, and the native cache is rebuilt |
+
+**A session scratch on a RAM-backed `/tmp` is memory, not disk.**  A control worktree's
+`target/` or a probe directory's `.loft/` cache left there counts against the memory a gate's
+compile needs, and the system's out-of-memory daemon then kills cargo with nothing else running
+(measured: two gates in a row, 4 GB of one session's scratch — a 2.4 GB control
+build and 1.4 GB of program caches).  `df -h /tmp` before a gate; clear a scratch worktree's
+build with `cargo clean --manifest-path <worktree>/Cargo.toml` and remove scratch `.loft/`
+caches when the probes are done.  Build a scratch worktree OUTSIDE a RAM `/tmp` (under
+`~/.cache`) in the first place.
 
 **The builds run the janitor.**  `scripts/disk_janitor.sh` starts, detached, beside whatever
 starts a build: `find_problems.sh`, `bench/stats.py`, and every build-shaped command an agent
@@ -68,6 +77,22 @@ alone runs on the checkout's scratch at the start of every gate, and `make sweep
 it on the checkout's scratch and on `TMPDIR` with the session prune, printing `df` after.  All
 of them touch only loft's own names, only dead pids or aged entries, and never a sibling
 checkout's gate scratch.
+
+**And an agent session sweeps after every turn.**  `scripts/tmp_headroom.sh` is the harness's
+`Stop` and `SubagentStop` hook (`.claude/settings.json`): the standing sweep over `/tmp` and
+`TMPDIR` with the session prune, then — when `/tmp` is below 4 GB and no cargo, nextest or
+rustc process is alive — the suites' native binary caches (`loft_native_cache_<checkout>/`,
+14 GB measured after one `cargo nextest` run started by hand with `TMPDIR` unset, and the
+`loft_test_native_*_bin` entries; the next run rebuilds them), then `disk_headroom.sh` for
+the checkout's disk.  A test run started by hand should set `TMPDIR` to the checkout's gate
+scratch, as `find_problems.sh` does, so its cache lands on the disk and not on the tmpfs.  The two fill
+differently and each kills the box in its own way: `/tmp` is a 16 GB tmpfs on the Lima box,
+and a full one stops the harness from capturing any command's output, while a full disk fakes
+a red gate (both measured, once each way, in the session that added it).  Silent
+when nothing needed doing; `/tmp/loft_tmp_headroom.last` is the stamp of its last run.  It
+never touches a live run's caches or another program's files, and it does not replace the
+20 GB floor a gate refuses under — lowering `LOFT_GATE_MIN_FREE_GB` for one run is what let
+the second fill happen.
 
 ## Store-memory ceiling (`LOFT_MEMORY_LIMIT`)
 
@@ -218,12 +243,15 @@ Guards against hangs that would wedge `cargo test` or `find_problems.sh`.  The d
 layered:
 
 - **Cooperative diagnostic check** fires at `T` (the requested deadline) — at every loft
-  checkpoint (fn-entry on both backends, the lexer recovery loop).  Raises a typed `Timeout`,
+  checkpoint (fn-entry on both backends, the lexer recovery loop), and on the interpreter at
+  ANY op: the watchdog sets the dispatch loop's stop flag at `T`, which the loop tests after
+  every op anyway (`@FR-R-DispatchStop`), so a loop that calls nothing stops cleanly too and
+  names the frame that runs.  Raises a typed `Timeout`,
   dumps the call stack (interpreter: `crash_tail` + `StackFrame`; native: the `CALL_STACK`
   thread-local), and exits cleanly with `124`.
 - **Watchdog hard-kill** fires at `T + grace` (grace 2 s, `LOFT_TIMEOUT_GRACE`) — a background
   thread calls `std::process::abort()`, so the run ends even when stuck in Rust, native code or
-  a blocking syscall.  It prints a breadcrumb so the kill is still informative:
+  a blocking syscall (on the interpreter, only those: a loft loop stops at `T`).  It prints a breadcrumb so the kill is still informative:
 
   ```
   [timeout] hard-kill after 300s+2s grace: phase=run-interpret fn=helper952 \

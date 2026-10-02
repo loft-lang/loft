@@ -140,6 +140,7 @@ fn scopes_can_conflict(sa: u16, sb: u16, parents: &HashMap<u16, u16>) -> bool {
 pub(super) fn find_conflict(
     vars: &[Variable],
     scope_parents: &HashMap<u16, u16>,
+    aliases: &[(u16, u16)],
 ) -> Option<(usize, u16, usize, u16)> {
     for left_idx in 0..vars.len() {
         let left = &vars[left_idx];
@@ -181,6 +182,11 @@ pub(super) fn find_conflict(
                 // variable is marked skip_free so that only the outer variable emits
                 // OpFreeRef.  The slot is intentionally aliased — not a real conflict.
                 if left.skip_free || right.skip_free {
+                    continue;
+                }
+                // A counted loop's variable placed in its range index's slot holds the
+                // index's value for its whole life (`slot_alias`) — one value, two names.
+                if is_alias(aliases, left_idx, right_idx) {
                     continue;
                 }
                 return Some((left_idx, left_slot_end, right_idx, right_slot_end));
@@ -472,7 +478,18 @@ fn walk_frame_bases(val: &Value, current_base: u16, frames: &mut HashMap<u16, (u
 ///
 /// Returns `Some((loop_scope, left_idx, right_idx))` on the first
 /// violation.
-fn check_i6_loop_iteration(vars: &[Variable], function: &Function) -> Option<(u16, usize, usize)> {
+/// Is `(a, b)` a loop variable and the range index whose slot it shares (`@FR-R-LoopSlot`)?
+fn is_alias(aliases: &[(u16, u16)], a: usize, b: usize) -> bool {
+    aliases.iter().any(|&(lv, ix)| {
+        (usize::from(lv), usize::from(ix)) == (a, b) || (usize::from(ix), usize::from(lv)) == (a, b)
+    })
+}
+
+fn check_i6_loop_iteration(
+    vars: &[Variable],
+    function: &Function,
+    aliases: &[(u16, u16)],
+) -> Option<(u16, usize, usize)> {
     // Enumerate the loop scopes referenced by any placed variable.
     let mut loop_scopes: std::collections::BTreeSet<u16> = std::collections::BTreeSet::new();
     for v in vars {
@@ -496,7 +513,7 @@ fn check_i6_loop_iteration(vars: &[Variable], function: &Function) -> Option<(u1
                 if r.stack_pos == u16::MAX || r.first_def == u32::MAX {
                     continue;
                 }
-                if l.stack_pos != r.stack_pos {
+                if l.stack_pos != r.stack_pos || is_alias(aliases, li, ri) {
                     continue;
                 }
                 let disjoint = l.last_use < r.first_def || r.last_use < l.first_def;
@@ -540,6 +557,7 @@ fn check_i6_loop_iteration(vars: &[Variable], function: &Function) -> Option<(u1
 pub fn validate_slots(function: &Function, data: &Data, def_nr: u32, scope_blind: bool) {
     let vars = &function.variables;
     let local_start = compute_local_start(function);
+    let aliases = crate::slot_alias::range_slot_aliases(data, def_nr);
 
     // ── I4: every defined variable is placed ─────────────────────────────
     if let Some(idx) = check_i4_every_var_placed(vars) {
@@ -624,7 +642,7 @@ pub fn validate_slots(function: &Function, data: &Data, def_nr: u32, scope_blind
     }
 
     // ── I6: loop-iteration safety ────────────────────────────────────────
-    if let Some((loop_scope, li, ri)) = check_i6_loop_iteration(vars, function) {
+    if let Some((loop_scope, li, ri)) = check_i6_loop_iteration(vars, function, &aliases) {
         let l = &vars[li];
         let r = &vars[ri];
         panic!(
@@ -649,7 +667,7 @@ pub fn validate_slots(function: &Function, data: &Data, def_nr: u32, scope_blind
     build_scope_parents(&data.def(def_nr).code, u16::MAX, &mut scope_parents);
 
     let Some((left_idx, left_slot_end, right_idx, right_slot_end)) =
-        find_conflict(vars, &scope_parents)
+        find_conflict(vars, &scope_parents, &aliases)
     else {
         return;
     };

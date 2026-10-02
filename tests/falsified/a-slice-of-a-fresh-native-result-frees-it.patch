@@ -1,0 +1,13 @@
+diff --git a/src/parser/objects.rs b/src/parser/objects.rs
+index 169df3d49..93510245d 100644
+--- a/src/parser/objects.rs
++++ b/src/parser/objects.rs
+@@ -4088,7 +4088,7 @@ impl Parser {
+                 // subject on both backends.  A loft function's result arrives in its caller
+                 // buffer (an `inline_container` block, not a bare call) and a discharge
+                 // default in its work-ref, and both keep the release.
+-                let fresh = matches!(data.unspan(), Value::Call(..))
++                let fresh = false && matches!(data.unspan(), Value::Call(..))
+                     && subject_tp.deps_ref().is_none_or(|d| d.is_empty())
+                     && !matches!(subject_tp.base(), Type::Text(_));
+                 if !fresh {

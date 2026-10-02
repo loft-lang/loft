@@ -45,6 +45,176 @@ fn dev_soft_halt_enabled() -> bool {
 
 pub const STRING_NULL: &str = "\0";
 
+/// `@FR-R-RegisterTable` — the bytecode position and the stack top, carried in registers from
+/// one operator to the next by the lean loop's register table (`fill::OPERATORS_REG`) instead of through
+/// `State`'s fields: each operator receives them as arguments and returns them, so no op
+/// waits on the previous op's store of `code_pos` / `stack_pos` to read them back.
+#[derive(Clone, Copy)]
+pub struct Regs {
+    pub pc: u32,
+    pub sp: u32,
+}
+
+/// `@FR-R-HotInline` — a `#hot` operator's view of the machine (`fill::dispatch_lean`).  The bytecode position and
+/// the stack top are LOCALS here: `State`'s two fields are reloaded after every write through
+/// the stack's raw pointer (which may, for all the compiler can prove, point into `State`), and
+/// these are not, so they stay in registers across the operator and from one hot operator to
+/// the next.  The view offers exactly what a hot body may use — its operands, the four stack
+/// accessors, the jump target `code_pos`, and `raise_recoverable`, which hands the registers
+/// back to `State` first — so a template that reaches for anything else does not compile as
+/// `#hot`.
+pub struct Hot<'a> {
+    s: &'a mut State,
+    pub code_pos: u32,
+    pub stack_pos: u32,
+    base: *mut u8,
+    code: *const u8,
+    code_len: u32,
+    high: u32,
+}
+
+#[allow(clippy::inline_always)]
+impl<'a> Hot<'a> {
+    #[inline(always)]
+    pub(crate) fn new(s: &'a mut State, r: Regs) -> Self {
+        Hot {
+            base: s.stack_base,
+            code: s.code_base,
+            code_len: s.code_len,
+            high: s.stack_high,
+            code_pos: r.pc,
+            stack_pos: r.sp,
+            s,
+        }
+    }
+
+    /// The registers the operator ended on; `State` keeps the stack's high-water mark.
+    #[inline(always)]
+    pub(crate) fn finish(self) -> Regs {
+        self.s.stack_high = self.high;
+        Regs {
+            pc: self.code_pos,
+            sp: self.stack_pos,
+        }
+    }
+
+    /// [`State::operands`] on the registers.
+    #[inline(always)]
+    pub fn operands(&mut self, len: u32) -> Operands {
+        if self.code_pos + len > self.code_len {
+            code_out_of_range(self.code_pos, len as usize, self.code_len as usize);
+        }
+        // SAFETY: `code_pos + len` lies inside the bytecode, checked above.
+        let at = unsafe { self.code.add(self.code_pos as usize) };
+        self.code_pos += len;
+        Operands { at, len }
+    }
+
+    /// [`State::get_stack_m`]'s direct path on the registers.
+    #[inline(always)]
+    pub fn get_stack<T: 'static + Copy>(&mut self) -> T {
+        if (size_of::<T>() as u32) >= self.stack_pos {
+            stack_underflow(self.stack_pos, size_of::<T>() as u32);
+        }
+        self.stack_pos -= crate::variables::aligned_stack_step(size_of::<T>() as u32);
+        // SAFETY: below the stack top, so inside the stack record (`@FR-R-StackBase`).
+        unsafe {
+            self.base
+                .add(self.stack_pos as usize)
+                .cast::<T>()
+                .read_unaligned()
+        }
+    }
+
+    /// [`State::put_stack_m`]'s direct path on the registers.
+    #[inline(always)]
+    pub fn put_stack<T: 'static>(&mut self, val: T) {
+        // SAFETY: inside the room `push_frame` ensured (`@FR-R-FrameHeadroom`); aligned.
+        unsafe { *self.base.add(self.stack_pos as usize).cast::<T>() = val };
+        self.stack_pos += crate::variables::aligned_stack_step(size_of::<T>() as u32);
+        if self.stack_pos > self.high {
+            self.high = self.stack_pos;
+        }
+    }
+
+    /// [`State::get_var_m`]'s direct path on the registers.
+    #[inline(always)]
+    pub fn get_var<T: 'static + Copy>(&mut self, pos: u16) -> T {
+        // SAFETY: inside the frame, which lies inside the stack record.
+        unsafe {
+            self.base
+                .add((self.stack_pos - u32::from(pos)) as usize)
+                .cast::<T>()
+                .read_unaligned()
+        }
+    }
+
+    /// [`State::put_var_m`]'s direct path on the registers.
+    #[inline(always)]
+    pub fn put_var<T: 'static>(&mut self, pos: u16, value: T) {
+        let step = crate::variables::aligned_stack_step(size_of::<T>() as u32);
+        // SAFETY: a frame slot, inside the stack record and aligned.
+        unsafe {
+            *self
+                .base
+                .add((self.stack_pos + step - u32::from(pos)) as usize)
+                .cast::<T>() = value;
+        }
+    }
+
+    /// [`State::raise_recoverable`], with `State` brought up to the registers first and the
+    /// registers taken back after, as the register table does around a whole operator.
+    #[inline(always)]
+    pub fn raise_recoverable(&mut self, kind: crate::runtime_error::RuntimeErrorKind) {
+        self.s.stack_high = self.high;
+        self.s.regs_in(Regs {
+            pc: self.code_pos,
+            sp: self.stack_pos,
+        });
+        self.s.raise_recoverable(kind);
+        let r = self.s.regs_out();
+        self.code_pos = r.pc;
+        self.stack_pos = r.sp;
+        self.high = self.s.stack_high;
+    }
+}
+
+/// An op's fixed-width operands, bounds-checked once by [`State::operands`].
+#[derive(Clone, Copy)]
+pub struct Operands {
+    at: *const u8,
+    len: u32,
+}
+
+impl Operands {
+    /// The operand of type `T` at byte `off` of the op's operands.  The generator passes
+    /// constant offsets inside the length it asked for, so the check below folds away.
+    ///
+    /// # Panics
+    /// When `off` and `T` reach past the operands.
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
+    #[must_use]
+    pub fn get<T: Copy>(self, off: u32) -> T {
+        assert!(
+            off + size_of::<T>() as u32 <= self.len,
+            "operand beyond its op"
+        );
+        // SAFETY: inside the `len` bytes `State::operands` checked against the bytecode.
+        unsafe { self.at.add(off as usize).cast::<T>().read_unaligned() }
+    }
+}
+
+/// What the lean dispatch loop does once its one exit test fired (`@FR-R-DispatchStop`).
+enum LeanStop {
+    /// Nothing ends the loop: carry on with the next op.
+    Continue,
+    /// A frame yield: hand control back to the host.
+    Return,
+    /// A debugger or profiler attached: the full loop takes the run over.
+    Leave,
+}
+
 /// One entry in the shadow call-frame vector (TR1.1).
 /// Pushed by `fn_call`, popped by `fn_return`.  Stores enough information for
 /// `stack_trace()` to reconstruct function names, source lines, and argument
@@ -59,8 +229,6 @@ pub struct CallFrame {
     pub args_base: u32,
     /// Total byte size of all parameters.
     pub args_size: u16,
-    /// Source line number of the call site (TR1.4).  0 if unknown.
-    pub line: u32,
 }
 
 /// May the interpreter stack take its direct path (`State::fast_stack`)?  Not while any
@@ -270,8 +438,9 @@ pub struct State {
     /// build, so each keeps its own path.
     pub(crate) fast_stack: bool,
     /// Codegen only: the character walks of the function being generated
-    /// (`hoist::char_walks`), whose step is emitted as one `OpTextWalkStep`.
-    pub(crate) walk_steps: Vec<crate::generation::hoist::CharWalk>,
+    /// (`hoist::char_walks`), whose step is emitted as one `OpTextWalkStep` — found on the
+    /// first character local a block assigns, since most functions have none.
+    pub(crate) walk_steps: Option<Vec<crate::generation::hoist::CharWalk>>,
     /// Locals whose only write a fused op of the function being generated took over, so
     /// the slot they were given is never written (a character walk's result temp, which
     /// `OpTextWalkStep` writes straight into the loop variable).  Read by the @PLN120 A
@@ -283,6 +452,19 @@ pub struct State {
     /// buffer only grows through `ensure_stack`; this cache lets the hot
     /// push/reserve paths skip the store lookup when no growth is needed.
     pub(crate) stack_cap_bytes: u32,
+    /// `@FR-R-StackBase` — the address of the stack record's field base in the stack store's
+    /// buffer, so a stack access is one add instead of three dependent loads (the store
+    /// table, the store, its buffer).  Set where `stack_cap_bytes` is: at construction, by
+    /// `grow_stack`, by a checkpoint restore — the only places the buffer can move, which the
+    /// store's own buffer moves enforce by refusing the stack store (`Store::stack_buffer`).
+    pub(crate) stack_base: *mut u8,
+    /// `@FR-R-CodeBase` — `bytecode`'s buffer and length, cached so that reading an operand is
+    /// one add to a pointer `State` holds instead of a walk through the `Arc` and the `Vec`
+    /// (three dependent loads on every op's critical path).  Set at construction and by
+    /// [`State::edit_code`], the one writer of the bytecode, since a write that grows the buffer
+    /// or unshares it from a worker's `Arc` moves it.
+    pub(crate) code_base: *const u8,
+    pub(crate) code_len: u32,
     pub code_pos: u32,
     pub(crate) def_pos: u32,
     pub(crate) source: u16,
@@ -366,6 +548,16 @@ pub struct State {
     /// indistinguishable from coverage — the same shape as the backend-scope note.
     pub entered_fns: Option<Vec<bool>>,
     pub(crate) fn_positions: Vec<u32>,
+    /// The last `(code position, definition)` pair [`State::worker_d_nr`] answered: a `par`
+    /// worker enters the same function for every element.
+    worker_fn_memo: (u32, u32),
+    /// `@FR-R-FrameHeadroom` — per definition, the bytes above its frame base its operators
+    /// can reach (the highest stack position codegen recorded in it, plus a margin).
+    /// `push_frame` ensures that much room once per frame, so the direct-path push
+    /// (`put_stack_m::<true, _>`) tests no capacity.  Shared with `par` workers.
+    pub(crate) frame_headroom: Arc<Vec<u32>>,
+    /// The highest stack position recorded while the current function is generated.
+    pub(crate) gen_max_position: u16,
     /// @PLN16 debugger — present only while debugging; the execute loop pauses at
     /// a registered breakpoint offset and captures the frame.  `None` on normal
     /// runs (the only per-op cost is one `is_some` branch).
@@ -683,7 +875,9 @@ impl State {
         if crate::stack_verify::enabled() {
             db.store_mut(&stack_cur).arm_init_shadow();
         }
+        db.store_mut(&stack_cur).stack_buffer = true;
         let stack_cap_bytes = db.store(&stack_cur).byte_capacity() as u32;
+        let stack_base = stack_base_of(&db, &stack_cur);
         // Allocate the constant store (CONST_STORE = 1). Starts empty,
         // populated during byte_code(), locked before execution.
         let _const_store = db.database(100);
@@ -695,13 +889,16 @@ impl State {
         );
         State {
             bytecode: Arc::new(Vec::new()),
+            code_base: std::ptr::null(),
+            code_len: 0,
             stack_cur,
             stack_pos: 4,
             stack_high: 4,
             stack_cap_bytes,
+            stack_base,
             verify_on: crate::stack_verify::enabled(),
             fast_stack: fast_stack_allowed(),
-            walk_steps: Vec::new(),
+            walk_steps: None,
             fused_away: Vec::new(),
             code_pos: 0,
             def_pos: 0,
@@ -723,6 +920,9 @@ impl State {
             published_spans: None,
             entered_fns: None,
             fn_positions: Vec::new(),
+            worker_fn_memo: (u32::MAX, u32::MAX),
+            frame_headroom: Arc::new(Vec::new()),
+            gen_max_position: 0,
             debug: None,
             call_stack: Vec::new(),
             fnref_bufs: Vec::new(),
@@ -789,6 +989,19 @@ impl State {
         }
     }
 
+    /// `@FR-R-CallLine` — the source line of the call made at `call_pos`: the nearest line entry STRICTLY before
+    /// it.  Entries sit before the first instruction of each line, and a frame's `call_pos` is
+    /// already past the whole Call instruction, so an entry AT it belongs to the next statement
+    /// (loft#1753).  0 for a frame with no call site (`call_pos` 0).  Asked when a stack is
+    /// rendered, not at every call: the lookup was 8 % of a call-heavy interpreted loop.
+    #[must_use]
+    pub fn call_line(&self, call_pos: u32) -> u32 {
+        self.line_numbers
+            .range(..call_pos)
+            .next_back()
+            .map_or(0, |(_, &v)| v)
+    }
+
     /// Call a function, remember the current code position on the stack.
     ///
     /// * `d_nr` - definition number of the called function.
@@ -803,11 +1016,6 @@ impl State {
         // sit before the first instruction of each line, and `code_pos` is already past the
         // whole Call instruction, so an entry AT `code_pos` belongs to the next statement —
         // the one a call that ends its statement is followed by (loft#1753).
-        let line = self
-            .line_numbers
-            .range(..self.code_pos)
-            .next_back()
-            .map_or(0, |(_, &v)| v);
         // Plan-07 phase 4f.12 — stack overflow becomes a typed
         // RuntimeError instead of an opaque Rust panic.  Detect at
         // call entry, raise StackOverflow.  Production logs +
@@ -851,12 +1059,11 @@ impl State {
         // entered, so it is what a hang should be reported against.  Two relaxed stores
         // when armed, one load and a branch when not.
         crate::timeout::checkpoint_interp_call(d_nr);
-        self.call_stack.push(CallFrame {
+        self.push_frame(CallFrame {
             d_nr,
             call_pos: self.code_pos,
             args_base,
             args_size,
-            line,
         });
         self.put_stack(self.code_pos);
         self.code_pos = to as u32;
@@ -1200,10 +1407,14 @@ impl State {
                         // next frame's `line`.  (loft#1753: a lookup of the next frame's
                         // call position here named the statement AFTER a call that ended
                         // its statement, and only then.)
-                        (name, file, f.line)
+                        (name, file, self.call_line(f.call_pos))
                     } else {
                         // Worker frame without Data context — use placeholder.
-                        ("<worker>".to_string(), String::new(), f.line)
+                        (
+                            "<worker>".to_string(),
+                            String::new(),
+                            self.call_line(f.call_pos),
+                        )
                     }
                 })
                 .collect();
@@ -1329,6 +1540,16 @@ impl State {
         crate::extensions::set_current_lib_idx(call);
         self.library[call as usize](&mut self.database, &mut stack);
         self.stack_pos = stack.pos - 8;
+        // `@FR-R-DispatchStop` — the events only a native starts: a frame yield, a runtime
+        // error it raised, a `par` worker's fatal noticed after the join this native waited on.
+        if self.database.frame_yield
+            || self.database.runtime_error.is_some()
+            || crate::parallel::worker_fatal_pending()
+        {
+            self.database
+                .dispatch_stop
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+        }
     }
 
     /// loft#1658 (@FR-L-FnRef) — a call through a function value whose function has NO loft body (a native
@@ -2615,6 +2836,21 @@ impl State {
         // and a release build simply writes.
         store.extend_primary_to_store_end();
         self.stack_cap_bytes = store.byte_capacity() as u32;
+        self.stack_base = stack_base_of(&self.database, &self.stack_cur);
+    }
+
+    /// `@FR-R-StackBase` — claim a record IN the stack store (a `par` worker's text work
+    /// buffers).  The claim may grow the store and move its buffer, which every other mover
+    /// refuses (`Store::stack_buffer`); this one is sanctioned because it re-derives the
+    /// cached base and capacity after it, as `grow_stack` does.
+    fn claim_in_stack(&mut self, words: u32) -> DbRef {
+        self.database.store_mut(&self.stack_cur).stack_buffer = false;
+        let cr = self.database.claim(&self.stack_cur, words);
+        let store = self.database.store_mut(&self.stack_cur);
+        store.stack_buffer = true;
+        self.stack_cap_bytes = store.byte_capacity() as u32;
+        self.stack_base = stack_base_of(&self.database, &self.stack_cur);
+        cr
     }
 
     /// The address of stack byte `off` (relative to the stack record's field base), for the
@@ -2625,15 +2861,14 @@ impl State {
     #[allow(clippy::inline_always)]
     #[inline(always)]
     fn stack_slot(&self, off: u32) -> *mut u8 {
-        let store = &self.database.allocations[self.stack_cur.store_nr as usize];
-        let at = (self.stack_cur.rec * 8 + self.stack_cur.pos + off) as usize;
         debug_assert!(
-            (at as u64) < store.byte_capacity(),
-            "fast stack access at byte {at} beyond the stack store's {} bytes",
-            store.byte_capacity()
+            u64::from(self.stack_cur.rec * 8 + self.stack_cur.pos + off)
+                < self.database.allocations[self.stack_cur.store_nr as usize].byte_capacity(),
+            "fast stack access at byte {off} beyond the stack store's buffer",
         );
-        // SAFETY: `at` is inside the stack store's buffer (above).
-        unsafe { store.ptr.add(at) }
+        // SAFETY: `stack_base` is the stack record's base in the current buffer
+        // (@FR-R-StackBase), and `off` lies inside the stack record.
+        unsafe { self.stack_base.add(off as usize) }
     }
 
     /// @PLAN53 cluster 2 / S4 — one eval-TOS / frame-reserve advance, always
@@ -2768,23 +3003,71 @@ impl State {
     When that was problematic
     */
     pub fn code_put<T>(&mut self, on: u32, value: T) {
-        unsafe {
-            let off = Arc::make_mut(&mut self.bytecode)
-                .as_mut_ptr()
-                .offset(on as isize)
-                .cast::<T>();
+        self.edit_code(|bc| unsafe {
+            let off = bc.as_mut_ptr().offset(on as isize).cast::<T>();
             // The bytecode buffer is byte-granular (`Vec<u8>`); a `T` wider than
             // 1 byte usually lands at an unaligned offset.  Constructing `&mut T`
             // there is UB even where the hardware tolerates the access (the
             // @PLAN53 cluster-1 Miri finding) — write through the unaligned
             // intrinsic instead, which is defined at any alignment.
             off.write_unaligned(value);
-        }
+        });
+    }
+
+    /// `@FR-R-CodeBase` — the one writer of the bytecode: runs `f` on the buffer, then
+    /// re-derives the cached base and length every operand read goes through.  A write may
+    /// grow the buffer or, while a `par` worker shares it, copy it — either moves it.
+    fn edit_code<R>(&mut self, f: impl FnOnce(&mut Vec<u8>) -> R) -> R {
+        let r = f(Arc::make_mut(&mut self.bytecode));
+        self.code_base = self.bytecode.as_ptr();
+        self.code_len = self.bytecode.len() as u32;
+        r
     }
 
     /** Remember the stack position for the current code. */
     pub fn remember_stack(&mut self, position: u16) {
         self.stack.insert(self.code_pos, position);
+        self.gen_max_position = self.gen_max_position.max(position);
+    }
+
+    /// `@FR-R-FrameHeadroom` — the bytes past the stack's highest recorded position any one
+    /// operator may push before the next records its own: its result, at most a few words.
+    const FRAME_MARGIN: u32 = 256;
+
+    /// `@FR-R-FrameHeadroom` — the room a frame of `d_nr` needs above its base.  A definition
+    /// with no recorded height (not compiled here) is given 64 KiB, far above any frame the
+    /// generator lays out.
+    fn frame_headroom_of(&self, d_nr: u32) -> u32 {
+        self.frame_headroom
+            .get(d_nr as usize)
+            .copied()
+            .unwrap_or(1 << 16)
+    }
+
+    /// `@FR-R-FrameHeadroom` — every frame enters through here: the frame is pushed and the
+    /// stack store is grown, once, to hold everything the function's operators can push
+    /// (`frame_headroom`), so the direct-path push needs no capacity test.  The only way a
+    /// `CallFrame` reaches `call_stack` (`tests/frame_headroom.rs` checks the source).
+    pub(crate) fn push_frame(&mut self, frame: CallFrame) {
+        let top = self.stack_cur.rec * 8
+            + self.stack_cur.pos
+            + frame.args_base
+            + self.frame_headroom_of(frame.d_nr);
+        if top >= self.stack_cap_bytes {
+            self.grow_stack(top);
+        }
+        self.call_stack.push(frame);
+    }
+
+    /// Record the frame height the function just generated needs (`def_code`).
+    pub(crate) fn record_frame_headroom(&mut self, d_nr: u32) {
+        let need = u32::from(self.gen_max_position) + Self::FRAME_MARGIN;
+        let table = Arc::make_mut(&mut self.frame_headroom);
+        if table.len() <= d_nr as usize {
+            table.resize(d_nr as usize + 1, 1 << 16);
+        }
+        table[d_nr as usize] = need;
+        self.gen_max_position = 0;
     }
 
     /**
@@ -2793,29 +3076,50 @@ impl State {
     When that was problematic
     */
     pub fn code_add<T: std::fmt::Display>(&mut self, value: T) {
-        let bc = Arc::make_mut(&mut self.bytecode);
-        if self.code_pos as usize + size_of::<T>() > bc.len() {
-            bc.resize(self.code_pos as usize + size_of::<T>(), 0);
-        }
-        unsafe {
-            let off = bc.as_mut_ptr().offset(self.code_pos as isize).cast::<T>();
-            self.code_pos += u32::try_from(size_of::<T>()).expect("Problem");
+        let pos = self.code_pos as usize;
+        self.edit_code(|bc| {
+            if pos + size_of::<T>() > bc.len() {
+                bc.resize(pos + size_of::<T>(), 0);
+            }
             // Unaligned by construction — see code_put (@PLAN53 cluster 1).
-            off.write_unaligned(value);
-        }
+            unsafe { bc.as_mut_ptr().add(pos).cast::<T>().write_unaligned(value) };
+        });
+        self.code_pos += u32::try_from(size_of::<T>()).expect("Problem");
     }
 
     pub fn code_add_str(&mut self, value: &str) {
         self.code_add(value.len() as u8);
-        let bc = Arc::make_mut(&mut self.bytecode);
-        if self.code_pos as usize + value.len() > bc.len() {
-            bc.resize(self.code_pos as usize + value.len(), 0);
-        }
-        unsafe {
-            let off = bc.as_mut_ptr().offset(self.code_pos as isize);
-            value.as_ptr().copy_to(off, value.len());
-        }
+        let pos = self.code_pos as usize;
+        self.edit_code(|bc| {
+            if pos + value.len() > bc.len() {
+                bc.resize(pos + value.len(), 0);
+            }
+            unsafe {
+                value
+                    .as_ptr()
+                    .copy_to(bc.as_mut_ptr().add(pos), value.len())
+            };
+        });
         self.code_pos += value.len() as u32;
+    }
+
+    /// `@FR-R-OperandSpan` — the fixed-width operands of the op being executed: `len` bytes from
+    /// `code_pos`, bounds checked ONCE for all of them, with `code_pos` advanced past them in one step.  The
+    /// generator emits this wherever every operand of an op has a fixed width, which is every
+    /// operator today; [`Operands::get`] then reads each one at its constant offset.
+    ///
+    /// # Panics
+    /// When the operands reach past the bytecode — as [`Self::code`] does for one operand.
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
+    pub fn operands(&mut self, len: u32) -> Operands {
+        if self.code_pos + len > self.code_len {
+            code_out_of_range(self.code_pos, len as usize, self.code_len as usize);
+        }
+        // SAFETY: `code_pos + len` lies inside the bytecode, checked above.
+        let at = unsafe { self.code_base.add(self.code_pos as usize) };
+        self.code_pos += len;
+        Operands { at, len }
     }
 
     /** Get a value from the byte-code increasing the position to after this value
@@ -2823,19 +3127,16 @@ impl State {
     When the position is outside the byte-code
     */
     pub fn code<T: Copy>(&mut self) -> T {
-        assert!(
-            self.code_pos + (size_of::<T>() as u32) <= self.bytecode.len() as u32,
-            "Position {} + {} outside generated code {}",
-            self.code_pos,
-            size_of::<T>(),
-            self.bytecode.len()
-        );
+        // The bound stays checked in every build; only the report is out of line.  A formatted
+        // `assert!` inside this generic, inlined into every operator, cost 13 % of the cycles of
+        // an interpreted vector loop (measured): the panic's argument setup sat in
+        // the hot path of each operand read.
+        // `@FR-R-CodeBase` — through the cached base and length, not the `Arc`.
+        if self.code_pos + (size_of::<T>() as u32) > self.code_len {
+            code_out_of_range(self.code_pos, size_of::<T>(), self.code_len as usize);
+        }
         unsafe {
-            let off = self
-                .bytecode
-                .as_ptr()
-                .offset(self.code_pos as isize)
-                .cast::<T>();
+            let off = self.code_base.add(self.code_pos as usize).cast::<T>();
             self.code_pos += size_of::<T>() as u32;
             // Returns the operand BY VALUE via the unaligned read intrinsic.
             // The buffer is byte-granular, so a `&T` into it would be an
@@ -2848,10 +3149,80 @@ impl State {
     pub fn code_str(&mut self) -> &str {
         let len = self.code::<u8>();
         unsafe {
-            let off = self.bytecode.as_ptr().offset(self.code_pos as isize);
+            let off = self.code_base.add(self.code_pos as usize);
             self.code_pos += u32::from(len);
             std::str::from_utf8_unchecked(std::slice::from_raw_parts(off, len as usize))
         }
+    }
+
+    /// `@FR-R-FastTable` — the four stack accessors with the access mode fixed at compile
+    /// time: `F = true` is the direct path, valid only when `State::fast_stack` holds (the
+    /// `OPERATORS_FAST` table is dispatched only then); `F = false` is the ordinary accessor,
+    /// which decides at run time and is valid in every mode.  The generated operators call
+    /// these, so the table chosen once per run removes the mode test from every op.
+    ///
+    /// # Panics
+    /// When the stack holds fewer bytes than a `T` — as [`Self::get_stack`] does.
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
+    pub fn get_stack_m<const F: bool, T: 'static + Copy>(&mut self) -> T {
+        if !F {
+            return self.get_stack();
+        }
+        // The report is out of line, as `State::code`'s: a formatted `assert!` takes the
+        // field's address, which keeps it in memory across the whole operator.
+        if (size_of::<T>() as u32) >= self.stack_pos {
+            stack_underflow(self.stack_pos, size_of::<T>() as u32);
+        }
+        self.stack_pos -= self.stack_step(size_of::<T>() as u32);
+        // SAFETY: below `stack_pos`, so inside the stack record (see `fast_stack`).
+        unsafe { self.stack_slot(self.stack_pos).cast::<T>().read_unaligned() }
+    }
+
+    /// [`Self::get_stack_m`]'s push.
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
+    pub fn put_stack_m<const F: bool, T: 'static>(&mut self, val: T) {
+        if !F {
+            return self.put_stack(val);
+        }
+        // `@FR-R-FrameHeadroom` — no capacity test: the frame's entry (`push_frame`) made room
+        // for every push its operators can make.
+        let slot = self.stack_slot(self.stack_pos);
+        // SAFETY: inside the room `push_frame` ensured; aligned as in `put_var`.
+        unsafe { *slot.cast::<T>() = val };
+        self.stack_pos += self.stack_step(size_of::<T>() as u32);
+        if self.stack_pos > self.stack_high {
+            self.stack_high = self.stack_pos;
+        }
+    }
+
+    /// [`Self::get_stack_m`]'s local read.
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
+    pub fn get_var_m<const F: bool, T: 'static + Copy>(&mut self, pos: u16) -> T {
+        if !F {
+            return self.get_var(pos);
+        }
+        // SAFETY: inside the frame, which lies inside the stack record.
+        unsafe {
+            self.stack_slot(self.stack_pos - u32::from(pos))
+                .cast::<T>()
+                .read_unaligned()
+        }
+    }
+
+    /// [`Self::get_stack_m`]'s local write.
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
+    pub fn put_var_m<const F: bool, T: 'static>(&mut self, pos: u16, value: T) {
+        if !F {
+            return self.put_var(pos, value);
+        }
+        let step = self.stack_step(size_of::<T>() as u32);
+        let slot = self.stack_slot(self.stack_pos + step - u32::from(pos));
+        // SAFETY: a frame slot, inside the stack record and aligned.
+        unsafe { *slot.cast::<T>() = value };
     }
 
     /**
@@ -2865,12 +3236,11 @@ impl State {
     #[allow(clippy::inline_always)]
     #[inline(always)]
     pub fn get_stack<T: 'static + Copy>(&mut self) -> T {
-        assert!(
-            (size_of::<T>() as u32) < self.stack_pos,
-            "No elements left on the stack {} < {}",
-            self.stack_pos,
-            size_of::<T>() as u32
-        );
+        // The report is out of line, as `State::code`'s: a formatted `assert!` takes the
+        // field's address, which keeps it in memory across the whole operator.
+        if (size_of::<T>() as u32) >= self.stack_pos {
+            stack_underflow(self.stack_pos, size_of::<T>() as u32);
+        }
         self.stack_pos -= self.stack_step(size_of::<T>() as u32);
         if self.fast_stack {
             // SAFETY: below `stack_pos`, so inside the stack record (see `fast_stack`).
@@ -3063,10 +3433,18 @@ impl State {
             stack_trace_lib_nr: self.stack_trace_lib_nr,
             data_ptr: self.data_ptr.clone(),
             fn_positions: Arc::new(self.fn_positions.clone()),
+            frame_headroom: Arc::clone(&self.frame_headroom),
             line_numbers: Arc::new(self.line_numbers.clone()),
         };
         crate::parallel::run_parallel_block(&self.database, program, &positions, &parent_snapshot);
-        // The worker's halt is re-raised by the dispatch loop's own check, which every par
+        // `@FR-R-DispatchStop` — a worker's fatal is noticed after the join.
+        if crate::parallel::worker_fatal_pending() {
+            self.database
+                .dispatch_stop
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        // The worker's halt is re-raised by the dispatch loop's own check (its cold path,
+        // which the flag above sends it to), which every par
         // family passes through — this site had its own copy first, and keeping both would
         // be two homes for one decision (and did hide, in the bite proof, that the block
         // form was covered while the other three were not).
@@ -3546,6 +3924,10 @@ impl State {
         if self.debug.is_none() {
             self.debug = Some(Box::default());
         }
+        // `@FR-R-DispatchStop` — a debugger attaching mid-run hands the run to the full loop.
+        self.database
+            .dispatch_stop
+            .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Register a breakpoint at the entry of function `d_nr` (its first bytecode
@@ -5220,6 +5602,7 @@ impl State {
         self.stack_high = cp.stack_high;
         self.stack_pos = cp.stack_pos;
         self.stack_cap_bytes = cp.stack_cap_bytes;
+        self.stack_base = stack_base_of(&self.database, &self.stack_cur);
         self.arguments = cp.arguments;
         self.coroutines.clone_from(&cp.coroutines);
         self.active_coroutines.clone_from(&cp.active_coroutines);
@@ -5534,6 +5917,8 @@ impl State {
             };
             (at, at + u32::from(crate::variables::size(vars.tp(i), &ctx)))
         };
+        let aliases = slot_aliases(data, d_nr);
+        let one_value = |a: u16, b: u16| aliases.iter().any(|&p| p == (a, b) || p == (b, a));
         let mut out = Vec::new();
         for i in 0..n {
             let slot = vars.stack(i);
@@ -5565,6 +5950,7 @@ impl State {
                 let usurper = (0..n)
                     .filter(|&j| {
                         j != i
+                            && !one_value(i, j)
                             && !vars.is_argument(j)
                             && vars.stack(j) != u16::MAX
                             && stored[j as usize] != u32::MAX
@@ -5969,8 +6355,20 @@ impl State {
     /// `op_ceiling` of `0` switches off the runaway-worker `debug_assert`; see
     /// [`Self::WORKER_OP_CEILING`].
     fn run_to_return(&mut self, op_ceiling: u64) {
-        let mut step: u64 = 0;
         let bytecode_len = self.bytecode.len() as u32;
+        // `@FR-R-WorkerLean` — a worker runs the main run's lean register loop where the main
+        // run would: nothing watches individual ops.  The fault test after each op is the
+        // loop's stop flag, which `raise_runtime_error` sets, and the end is the same
+        // `code_pos == u32::MAX` the loop condition reads.
+        if self.worker_lean_ok() {
+            if Self::no_hot() {
+                self.lean_register_loop::<false, true>(bytecode_len);
+            } else {
+                self.lean_register_loop::<true, true>(bytecode_len);
+            }
+            return;
+        }
+        let mut step: u64 = 0;
         while self.code_pos < bytecode_len {
             let op = self.code::<u8>();
             if op == 255 {
@@ -6011,6 +6409,225 @@ impl State {
             .rev() // innermost first
             .map(|frame| data.def(frame.d_nr).trace_name())
             .collect()
+    }
+
+    /// Enter an operator of the register table: `State`'s copy of the position and the stack
+    /// top is written from the registers, so the operator body — and anything it calls — sees
+    /// the machine exactly as the plain table leaves it.  Inlined beside the body, the body's
+    /// reads of the two fields fold to the register values; the writes remain, which keeps
+    /// `State` in step after every op for whatever inspects it between ops.
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
+    pub(crate) fn regs_in(&mut self, r: Regs) {
+        self.code_pos = r.pc;
+        self.stack_pos = r.sp;
+    }
+
+    /// Leave an operator of the register table: the position and stack top it ended on.
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
+    pub(crate) fn regs_out(&self) -> Regs {
+        Regs {
+            pc: self.code_pos,
+            sp: self.stack_pos,
+        }
+    }
+
+    /// `@FR-R-FastTable` — the operator table for this run: the stack access mode is fixed
+    /// when the `State` is built (`fast_stack`), so the table is chosen once, the direct path
+    /// compiled into every op or the checked one.  The fast table is never handed to a run
+    /// that needs the checked path, whose instruments would then see nothing.
+    pub(crate) fn op_table(&self) -> &'static [fn(&mut State)] {
+        if self.fast_stack {
+            crate::fill::OPERATORS_FAST
+        } else {
+            OPERATORS
+        }
+    }
+
+    /// The lean loop over the register table (`@FR-R-RegisterTable`): the position and the stack
+    /// top travel between ops in registers (`Regs`).  With `HOT`, a `#hot` operator runs inline
+    /// on them (`fill::dispatch_lean`, `@FR-R-HotInline`) and leaves `State`'s copy behind, so
+    /// `State` is brought up to the registers before anything else reads it — the stop path,
+    /// and the loop's end.  Every other operator writes them into `State` itself on entry
+    /// (`State::regs_in`).  Answers whether a frame yield hands control back to the host.
+    ///
+    /// `WORKER` is a `par` worker's frame (`run_to_return`): its stop path leaves the
+    /// published fault of a SIBLING worker to the parent that collects it, where the main
+    /// loop raises it.
+    #[inline(never)]
+    fn lean_register_loop<const HOT: bool, const WORKER: bool>(
+        &mut self,
+        bytecode_len: u32,
+    ) -> bool {
+        let reg_ops = crate::fill::OPERATORS_REG;
+        let mut r = self.regs_out();
+        while r.pc < bytecode_len {
+            self.database.alloc_pc = r.pc;
+            if r.pc + 1 > self.code_len {
+                code_out_of_range(r.pc, 1, self.code_len as usize);
+            }
+            // SAFETY: `r.pc` is inside the bytecode, checked above.
+            let op = unsafe { *self.code_base.add(r.pc as usize) };
+            r.pc += 1;
+            let opcode = if op == 255 {
+                if r.pc + 1 > self.code_len {
+                    code_out_of_range(r.pc, 1, self.code_len as usize);
+                }
+                // SAFETY: as above, for the escape's second byte.
+                let ext = unsafe { *self.code_base.add(r.pc as usize) };
+                r.pc += 1;
+                255 + u16::from(ext)
+            } else {
+                u16::from(op)
+            };
+            r = if HOT {
+                crate::fill::dispatch_lean(self, opcode, r)
+            } else {
+                reg_ops[usize::from(opcode)](self, r)
+            };
+            if self
+                .database
+                .dispatch_stop
+                .load(std::sync::atomic::Ordering::Relaxed)
+            {
+                self.regs_in(r);
+                match self.lean_stop(WORKER) {
+                    LeanStop::Continue => r = self.regs_out(),
+                    LeanStop::Return => return true,
+                    LeanStop::Leave => return false,
+                }
+            }
+        }
+        self.regs_in(r);
+        false
+    }
+
+    /// The definition whose code starts at `fn_pos` (`u32::MAX` for none), for a worker
+    /// frame's call stack.  A worker enters one function per element, so the last answer is
+    /// kept: the scan over every definition ran once per ELEMENT, a tenth of a one-worker
+    /// `par` pass.
+    fn worker_d_nr(&mut self, fn_pos: u32) -> u32 {
+        if self.worker_fn_memo.0 == fn_pos {
+            return self.worker_fn_memo.1;
+        }
+        let d_nr = self
+            .fn_positions
+            .iter()
+            .position(|&p| p == fn_pos)
+            .map_or(u32::MAX, |i| i as u32);
+        self.worker_fn_memo = (fn_pos, d_nr);
+        d_nr
+    }
+
+    /// May a worker frame run on the lean register loop?  Exactly when the main run would
+    /// take it (`execute_argv_shared`): a release build, no debugger, no op-watching
+    /// instrument, the fast stack and the register table — and `LOFT_NO_WORKER_LEAN` unset.
+    fn worker_lean_ok(&self) -> bool {
+        !cfg!(debug_assertions)
+            && !cfg!(feature = "stack_align_guard")
+            && self.debug.is_none()
+            && self.fast_stack
+            && !self.verify_on
+            && !Self::no_register_table()
+            && !Self::headroom_verify()
+            && !Self::no_worker_lean()
+            && !crate::stack_census::enabled()
+            && !crate::keys::uaf_check_enabled()
+            && !crate::keys::uaf_src_enabled()
+            && !crate::keys::uaf_gen_enabled()
+    }
+
+    /// `LOFT_NO_WORKER_LEAN=1` — every worker frame runs the plain checked loop
+    /// (`@FR-R-WorkerLean`'s A/B switch, and the first bisect step for a wrong answer that
+    /// appears only under `par`).
+    fn no_worker_lean() -> bool {
+        crate::env_once!(std::env::var("LOFT_NO_WORKER_LEAN").is_ok_and(|v| v != "0"))
+    }
+
+    /// `LOFT_NO_HOT=1` — the lean loop dispatches every operator through the register table,
+    /// none inline (the A/B switch of `#hot`).
+    fn no_hot() -> bool {
+        crate::env_once!(std::env::var("LOFT_NO_HOT").is_ok_and(|v| v != "0"))
+    }
+
+    /// `LOFT_NO_REGISTER_TABLE=1` — the lean loop dispatches the plain table, the position
+    /// and the stack top going through `State` between ops (the A/B switch of the register
+    /// table).
+    fn no_register_table() -> bool {
+        crate::env_once!(std::env::var("LOFT_NO_REGISTER_TABLE").is_ok_and(|v| v != "0"))
+    }
+
+    /// `LOFT_HEADROOM_VERIFY=1` — `@FR-R-FrameHeadroom`'s falsifier: the lean loop stops after
+    /// every op (the stop flag is held set) and checks the running frame against its room.
+    fn headroom_verify() -> bool {
+        crate::env_once!(std::env::var("LOFT_HEADROOM_VERIFY").is_ok_and(|v| v != "0"))
+    }
+
+    /// The check [`Self::headroom_verify`] runs after each op: the stack top lies inside the
+    /// running frame's recorded room, and that room inside the stack store's buffer.
+    #[cold]
+    fn verify_frame_room(&self) {
+        let Some(f) = self.call_stack.last() else {
+            return;
+        };
+        let room = f.args_base + self.frame_headroom_of(f.d_nr);
+        assert!(
+            self.stack_pos <= room,
+            "@FR-R-FrameHeadroom: fn {} reached stack position {} past its room {room}",
+            f.d_nr,
+            self.stack_pos
+        );
+        let top = self.stack_cur.rec * 8 + self.stack_cur.pos + room;
+        assert!(
+            top <= self.stack_cap_bytes,
+            "@FR-R-FrameHeadroom: fn {}'s room ends at byte {top}, past the stack buffer's {}",
+            f.d_nr,
+            self.stack_cap_bytes
+        );
+    }
+
+    /// `@FR-R-DispatchStop` — the lean loop's one flag is set: do what the per-op tests did,
+    /// in their order, then re-derive the flag from the events themselves.  It is a cache,
+    /// never cleared past an event still pending: a halted run keeps it for every loop it
+    /// returns to, and an attached debugger keeps it while it is attached.
+    #[cold]
+    #[inline(never)]
+    fn lean_stop(&mut self, worker: bool) -> LeanStop {
+        if Self::headroom_verify() {
+            self.verify_frame_room();
+        }
+        // The watchdog's request at the deadline: a graceful stop from any op, a loop that
+        // calls nothing included, naming the frame that was running.
+        if crate::timeout::deadline_reached() {
+            let d_nr = self.call_stack.last().map_or(u32::MAX, |f| f.d_nr);
+            crate::timeout::stop_at_deadline(d_nr);
+        }
+        if self.database.frame_yield {
+            // The host's resume clears `frame_yield`; the next op re-derives the flag.
+            return LeanStop::Return;
+        }
+        // A worker's own halt reaches `runtime_error` directly; the published one is a
+        // sibling's, for the parent's loop to raise once the workers have joined.
+        if !worker
+            && crate::parallel::worker_fatal_pending()
+            && let Some(err) = crate::parallel::take_worker_fatal()
+        {
+            self.database.raise_runtime_error(err);
+            self.database.had_fatal = true;
+        }
+        self.note_runtime_error_halt();
+        self.database.dispatch_stop.store(
+            self.database.runtime_error.is_some()
+                || self.debug.is_some()
+                || Self::headroom_verify(),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        if self.debug.is_some() {
+            LeanStop::Leave
+        } else {
+            LeanStop::Continue
+        }
     }
 
     /// Turn a pending typed fault into a halt of the running dispatch loop, with the
@@ -6143,14 +6760,15 @@ impl State {
         let message = kind.describe();
         let op_pc = self.code_pos;
         let call_chain = self.current_call_chain();
-        self.database.runtime_error = Some(Box::new(crate::runtime_error::RuntimeError {
-            kind,
-            position,
-            op_pc,
-            message,
-            call_chain,
-            crossed_placement: false,
-        }));
+        self.database
+            .raise_runtime_error(Box::new(crate::runtime_error::RuntimeError {
+                kind,
+                position,
+                op_pc,
+                message,
+                call_chain,
+                crossed_placement: false,
+            }));
         self.database.had_fatal = true;
     }
 
@@ -6206,14 +6824,55 @@ impl State {
     /// WRITE side asks nothing of its own (`@FR-H-WriteOOB`): `v[i] = x` is
     /// `OpSet*(OpGetVector(v, i), 0, x)`, so the element's address is this answer and an
     /// absent one is the `nullref` the setter's `rec != 0` test declines (`@FR-H-WriteNull`).
+    ///
+    /// The in-range index is the whole of an ordinary loop's traffic, so it is the inlined
+    /// part — one unsigned compare, which a negative index fails too — and the rest (counting
+    /// from the end, the two raises) is out of line.  Kept whole, the raises made the function
+    /// too big for LLVM to inline reliably: an unrelated change to `State::code` flipped that
+    /// decision and cost `sort` 5 % of its cycles.  Forced since the two
+    /// operator tables (`@FR-R-FastTable`) doubled its callers and it fell out of line again —
+    /// 19.7 % of an element-write loop's cycles in a call of its own.
     #[must_use]
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
     pub fn vec_get_or_raise(
         &mut self,
         db: &crate::keys::DbRef,
         size: u32,
         index: i64,
     ) -> crate::keys::DbRef {
+        // `@FR-R-ElementPath` — the in-range element of a live vector: the collection record
+        // and the length read once each, one unsigned compare (a negative index fails it
+        // too), the element ref built here.  Everything else — null, empty, absent, counted
+        // from the end, out of range — takes the unchanged path below.
+        if !db.is_null() && db.rec != 0 && db.pos != 0 {
+            let store = crate::keys::store(db, &self.database.allocations);
+            let v_rec = store.collection_rec(db.rec, db.pos);
+            if v_rec != 0 && (index as u64) < u64::from(store.get_u32_raw(v_rec, 4)) {
+                return crate::keys::DbRef {
+                    store_nr: db.store_nr,
+                    rec: v_rec,
+                    pos: crate::vector::checked_vec_pos(index as u32, size),
+                };
+            }
+        }
         let len = crate::vector::length_vector(db, &self.database.allocations);
+        if (index as u64) < u64::from(len) {
+            return crate::vector::get_vector(db, size, index, &self.database.allocations);
+        }
+        self.vec_get_or_raise_slow(db, size, index, len)
+    }
+
+    /// [`Self::vec_get_or_raise`] for an index outside `0..len`: counted from the end, or raised.
+    #[cold]
+    #[inline(never)]
+    fn vec_get_or_raise_slow(
+        &mut self,
+        db: &crate::keys::DbRef,
+        size: u32,
+        index: i64,
+        len: u32,
+    ) -> crate::keys::DbRef {
         let normalized = if index < 0 {
             index + i64::from(len)
         } else {
@@ -6360,9 +7019,11 @@ impl State {
             library: lib_ptr,
             data: data_ptr,
             stack_trace_lib_nr: stk_lib_nr,
+            frame_headroom: Arc::clone(&self.frame_headroom),
         }));
 
         self.fn_positions = data.definitions.iter().map(|d| d.code_position).collect();
+        self.worker_fn_memo = (u32::MAX, u32::MAX);
         self.code_pos = pos;
         // @PLAN53 cluster 2 / S4: the entry frame base must be 8-aligned in
         // aligned mode (step(4)=8) so the entry function's locals — and every
@@ -6414,12 +7075,11 @@ impl State {
         });
         // Fix #88: push a synthetic CallFrame for the entry function so it
         // appears in stack_trace() output.
-        self.call_stack.push(CallFrame {
+        self.push_frame(CallFrame {
             d_nr,
             call_pos: 0,
             args_base: entry_base,
             args_size: 0,
-            line: 0,
         });
         // If fn main declares a vector<text> parameter, push argv before the return address.
         //
@@ -6547,31 +7207,57 @@ impl State {
             || cfg!(debug_assertions)
             || cfg!(feature = "stack_align_guard"));
         crate::crash_report::set_dispatch_names("(opcode dispatch)", "");
-        if lean_loop {
-            while self.code_pos < bytecode_len && self.debug.is_none() {
-                let op_pos_rt = self.code_pos;
-                self.database.alloc_pc = op_pos_rt;
-                let op = self.code::<u8>();
-                let opcode = if op == 255 {
-                    255 + u16::from(self.code::<u8>())
+        // `@FR-R-DispatchStop` — after each op the lean loop tests ONE flag, which every rare
+        // event that ends or diverts it sets where it happens; the cold path below does what
+        // the per-op tests did.  The end of the run needs no test of its own: a halt and the
+        // entry function's return set `code_pos` to `u32::MAX`, which the loop condition ends.
+        if lean_loop && self.debug.is_none() {
+            // `@FR-R-DispatchPublish` — the crash context is derived from the position the
+            // loop stores for the allocator and the bytecode, registered once, instead of being
+            // written per op.
+            let _stop = crate::timeout::publish_stop_flag(&self.database.dispatch_stop);
+            let ops = self.op_table();
+            if Self::headroom_verify() {
+                self.database
+                    .dispatch_stop
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+            let _published = crate::crash_report::LeanSource::register(
+                std::ptr::addr_of!(self.database.alloc_pc),
+                std::ptr::addr_of!(self.code_base),
+                std::ptr::addr_of!(self.code_len),
+            );
+            if self.fast_stack && !Self::no_register_table() {
+                let yielded = if Self::no_hot() {
+                    self.lean_register_loop::<false, false>(bytecode_len)
                 } else {
-                    u16::from(op)
+                    self.lean_register_loop::<true, false>(bytecode_len)
                 };
-                let fn_d_nr = self.call_stack.last().map_or(u32::MAX, |f| f.d_nr);
-                crate::crash_report::set_dispatch(op_pos_rt, opcode, fn_d_nr);
-                OPERATORS[usize::from(opcode)](self);
-                if self.database.frame_yield {
+                if yielded {
                     return;
                 }
-                if crate::parallel::worker_fatal_pending()
-                    && let Some(err) = crate::parallel::take_worker_fatal()
-                {
-                    self.database.runtime_error = Some(err);
-                    self.database.had_fatal = true;
-                }
-                self.note_runtime_error_halt();
-                if self.code_pos == u32::MAX {
-                    break;
+            } else {
+                while self.code_pos < bytecode_len {
+                    let op_pos_rt = self.code_pos;
+                    self.database.alloc_pc = op_pos_rt;
+                    let op = self.code::<u8>();
+                    let opcode = if op == 255 {
+                        255 + u16::from(self.code::<u8>())
+                    } else {
+                        u16::from(op)
+                    };
+                    ops[usize::from(opcode)](self);
+                    if self
+                        .database
+                        .dispatch_stop
+                        .load(std::sync::atomic::Ordering::Relaxed)
+                    {
+                        match self.lean_stop(false) {
+                            LeanStop::Continue => {}
+                            LeanStop::Return => return,
+                            LeanStop::Leave => break,
+                        }
+                    }
                 }
             }
         }
@@ -6782,7 +7468,7 @@ impl State {
             if crate::parallel::worker_fatal_pending()
                 && let Some(err) = crate::parallel::take_worker_fatal()
             {
-                self.database.runtime_error = Some(err);
+                self.database.raise_runtime_error(err);
                 self.database.had_fatal = true;
             }
             self.note_runtime_error_halt();
@@ -6970,6 +7656,9 @@ impl State {
         // pays nothing for it; armed, it needs the `Debugger` that branch tests for.
         if crate::op_census::enabled() && self.debug.is_none() {
             self.debug = Some(Box::default());
+            self.database
+                .dispatch_stop
+                .store(true, std::sync::atomic::Ordering::Relaxed);
         }
         if self.debug.as_deref().is_some_and(|d| d.prof.is_some()) {
             return;
@@ -6984,6 +7673,9 @@ impl State {
         if prof.is_none() {
             if self.debug.is_none() {
                 self.debug = Some(Box::default());
+                self.database
+                    .dispatch_stop
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
             }
             crate::profiler::install_signal_flush();
             return;
@@ -6991,6 +7683,9 @@ impl State {
         let Some(prof) = prof else { return };
         if self.debug.is_none() {
             self.debug = Some(Box::default());
+            self.database
+                .dispatch_stop
+                .store(true, std::sync::atomic::Ordering::Relaxed);
         }
         if let Some(d) = self.debug.as_deref_mut() {
             d.prof = Some(Box::new(prof));
@@ -7298,12 +7993,11 @@ impl State {
         let base = self.stack_high.next_multiple_of(8);
         self.stack_pos = base;
         push_args(self);
-        self.call_stack.push(CallFrame {
+        self.push_frame(CallFrame {
             d_nr,
             call_pos: 0,
             args_base: base,
             args_size: 0,
-            line: 0,
         });
         self.put_stack(u32::MAX);
         self.code_pos = code_position;
@@ -7343,12 +8037,11 @@ impl State {
         let base = self.stack_high.next_multiple_of(8);
         self.stack_pos = base;
         push_args(self);
-        self.call_stack.push(CallFrame {
+        self.push_frame(CallFrame {
             d_nr,
             call_pos: 0,
             args_base: base,
             args_size: 0,
-            line: 0,
         });
         self.put_stack(u32::MAX);
         self.code_pos = code_position;
@@ -7427,12 +8120,11 @@ impl State {
         // (`fn_return`) — without this push the FIRST re-entry pops the
         // paused program's own frame (probe-caught: heap corruption at
         // teardown after 200k imbalanced pops).
-        self.call_stack.push(CallFrame {
+        self.push_frame(CallFrame {
             d_nr,
             call_pos: 0,
             args_base: base,
             args_size: 0,
-            line: 0,
         });
         self.put_stack(u32::MAX);
         self.code_pos = code_position;
@@ -7609,6 +8301,7 @@ impl State {
             stack_trace_lib_nr,
             data_ptr: self.data_ptr.clone(),
             fn_positions: Arc::new(self.fn_positions.clone()),
+            frame_headroom: Arc::clone(&self.frame_headroom),
             line_numbers: Arc::new(self.line_numbers.clone()),
         }
     }
@@ -7632,15 +8325,20 @@ impl State {
         if crate::stack_verify::enabled() {
             db.store_mut(&stack_cur).arm_init_shadow();
         }
+        db.store_mut(&stack_cur).stack_buffer = true;
         let stack_cap_bytes = db.store(&stack_cur).byte_capacity() as u32;
+        let stack_base = stack_base_of(&db, &stack_cur);
         State {
             stack_cur,
             stack_pos: 4,
             stack_high: 4,
             stack_cap_bytes,
+            stack_base,
+            code_base: bytecode.as_ptr(),
+            code_len: bytecode.len() as u32,
             verify_on: crate::stack_verify::enabled(),
             fast_stack: fast_stack_allowed(),
-            walk_steps: Vec::new(),
+            walk_steps: None,
             fused_away: Vec::new(),
             code_pos: 0,
             def_pos: 0,
@@ -7663,6 +8361,9 @@ impl State {
             published_spans: None,
             entered_fns: None,
             fn_positions: Vec::new(),
+            worker_fn_memo: (u32::MAX, u32::MAX),
+            frame_headroom: Arc::new(Vec::new()),
+            gen_max_position: 0,
             debug: None,
             call_stack: Vec::new(),
             fnref_bufs: Vec::new(),
@@ -7816,19 +8517,15 @@ impl State {
                 && let Some(data) = ctx.data.get()
             {
                 self.fn_positions = data.definitions.iter().map(|d| d.code_position).collect();
+                self.worker_fn_memo = (u32::MAX, u32::MAX);
             }
         }
-        let d_nr = self
-            .fn_positions
-            .iter()
-            .position(|&p| p == fn_pos)
-            .map_or(u32::MAX, |i| i as u32);
-        self.call_stack.push(CallFrame {
+        let d_nr = self.worker_d_nr(fn_pos);
+        self.push_frame(CallFrame {
             d_nr,
             call_pos: 0,
             args_base: self.stack_step(4),
             args_size: 12,
-            line: 0,
         });
         self.stack_pos = self.stack_step(4); // @PLAN53 2j: stepped par-worker entry base (guard-clean; identity flag-OFF)
         self.put_stack(*arg); // 12 bytes → stack_pos = 16
@@ -7853,19 +8550,15 @@ impl State {
                 && let Some(data) = ctx.data.get()
             {
                 self.fn_positions = data.definitions.iter().map(|d| d.code_position).collect();
+                self.worker_fn_memo = (u32::MAX, u32::MAX);
             }
         }
-        let d_nr = self
-            .fn_positions
-            .iter()
-            .position(|&p| p == fn_pos)
-            .map_or(u32::MAX, |i| i as u32);
-        self.call_stack.push(CallFrame {
+        let d_nr = self.worker_d_nr(fn_pos);
+        self.push_frame(CallFrame {
             d_nr,
             call_pos: 0,
             args_base: self.stack_step(4),
             args_size: 12,
-            line: 0,
         });
         self.stack_pos = self.stack_step(4); // @PLAN53 2j: stepped par-worker entry base (guard-clean; identity flag-OFF)
         // Push extra context args first (they precede the element arg in the
@@ -7910,19 +8603,15 @@ impl State {
                 && let Some(data) = ctx.data.get()
             {
                 self.fn_positions = data.definitions.iter().map(|d| d.code_position).collect();
+                self.worker_fn_memo = (u32::MAX, u32::MAX);
             }
         }
-        let d_nr = self
-            .fn_positions
-            .iter()
-            .position(|&p| p == fn_pos)
-            .map_or(u32::MAX, |i| i as u32);
-        self.call_stack.push(CallFrame {
+        let d_nr = self.worker_d_nr(fn_pos);
+        self.push_frame(CallFrame {
             d_nr,
             call_pos: 0,
             args_base: self.stack_step(4),
             args_size: input_size as u16,
-            line: 0,
         });
         self.stack_pos = self.stack_step(4); // @PLAN53 2j: stepped par-worker entry base (guard-clean; identity flag-OFF)
         // Push the primitive input value at its native byte width.
@@ -8010,13 +8699,10 @@ impl State {
                 && let Some(data) = ctx.data.get()
             {
                 self.fn_positions = data.definitions.iter().map(|d| d.code_position).collect();
+                self.worker_fn_memo = (u32::MAX, u32::MAX);
             }
         }
-        let d_nr = self
-            .fn_positions
-            .iter()
-            .position(|&p| p == fn_pos)
-            .map_or(u32::MAX, |i| i as u32);
+        let d_nr = self.worker_d_nr(fn_pos);
         // @PLAN53 cluster 2 / 2i: the worker body's frame reserves the tuple arg
         // at a STEPPED span (codegen advances each arg by stack_step(size)), so a
         // tuple whose raw total is not a multiple of 8 (e.g. (integer, character) =
@@ -8025,12 +8711,11 @@ impl State {
         // copied DATA is still the raw `input_bytes`; only the reserved frame span
         // (args_size + the TOS advance) is rounded up.  Identity flag-OFF (step==id).
         let stepped_size = self.stack_step(input_bytes.len() as u32);
-        self.call_stack.push(CallFrame {
+        self.push_frame(CallFrame {
             d_nr,
             call_pos: 0,
             args_base: self.stack_step(4),
             args_size: stepped_size as u16,
-            line: 0,
         });
         self.stack_pos = self.stack_step(4); // @PLAN53 2j: stepped par-worker entry base (guard-clean; identity flag-OFF)
         self.ensure_stack(stepped_size);
@@ -8099,19 +8784,15 @@ impl State {
                 && let Some(data) = ctx.data.get()
             {
                 self.fn_positions = data.definitions.iter().map(|d| d.code_position).collect();
+                self.worker_fn_memo = (u32::MAX, u32::MAX);
             }
         }
-        let d_nr = self
-            .fn_positions
-            .iter()
-            .position(|&p| p == fn_pos)
-            .map_or(u32::MAX, |i| i as u32);
-        self.call_stack.push(CallFrame {
+        let d_nr = self.worker_d_nr(fn_pos);
+        self.push_frame(CallFrame {
             d_nr,
             call_pos: 0,
             args_base: self.stack_step(4),
             args_size: 12,
-            line: 0,
         });
         self.stack_pos = self.stack_step(4); // @PLAN53 2j: stepped par-worker entry base (guard-clean; identity flag-OFF)
         self.put_stack(*arg);
@@ -8166,14 +8847,11 @@ impl State {
                 && let Some(data) = ctx.data.get()
             {
                 self.fn_positions = data.definitions.iter().map(|d| d.code_position).collect();
+                self.worker_fn_memo = (u32::MAX, u32::MAX);
             }
         }
-        let d_nr = self
-            .fn_positions
-            .iter()
-            .position(|&p| p == fn_pos)
-            .map_or(u32::MAX, |i| i as u32);
-        self.call_stack.push(CallFrame {
+        let d_nr = self.worker_d_nr(fn_pos);
+        self.push_frame(CallFrame {
             d_nr,
             call_pos: 0,
             args_base: self.stack_step(4),
@@ -8182,7 +8860,6 @@ impl State {
             // variable-snapshot readers scan `args_size` bytes of the frame, so a
             // hardcoded 16 sends them past the argument in a browser build.
             args_size: size_of::<Str>() as u16,
-            line: 0,
         });
         self.stack_pos = self.stack_step(4); // @PLAN53 2j: stepped par-worker entry base (guard-clean; identity flag-OFF)
         self.put_stack(input_str);
@@ -8279,20 +8956,16 @@ impl State {
                 && let Some(data) = ctx.data.get()
             {
                 self.fn_positions = data.definitions.iter().map(|d| d.code_position).collect();
+                self.worker_fn_memo = (u32::MAX, u32::MAX);
             }
         }
-        let d_nr = self
-            .fn_positions
-            .iter()
-            .position(|&p| p == fn_pos)
-            .map_or(u32::MAX, |i| i as u32);
+        let d_nr = self.worker_d_nr(fn_pos);
         let args_size = self.worker_arg_size(&arg);
-        self.call_stack.push(CallFrame {
+        self.push_frame(CallFrame {
             d_nr,
             call_pos: 0,
             args_base: self.stack_step(4),
             args_size,
-            line: 0,
         });
         self.stack_pos = self.stack_step(4); // @PLAN53 2j: stepped par-worker entry base (guard-clean; identity flag-OFF)
         self.push_worker_arg(arg);
@@ -8330,25 +9003,21 @@ impl State {
                 && let Some(data) = ctx.data.get()
             {
                 self.fn_positions = data.definitions.iter().map(|d| d.code_position).collect();
+                self.worker_fn_memo = (u32::MAX, u32::MAX);
             }
         }
-        let d_nr = self
-            .fn_positions
-            .iter()
-            .position(|&p| p == fn_pos)
-            .map_or(u32::MAX, |i| i as u32);
+        let d_nr = self.worker_d_nr(fn_pos);
         let args_size = self.worker_arg_size(&arg);
-        self.call_stack.push(CallFrame {
+        self.push_frame(CallFrame {
             d_nr,
             call_pos: 0,
             args_base: self.stack_step(4),
             args_size,
-            line: 0,
         });
         // Allocate String buffers for hidden RefVar(Text) params in the stack store.
         let mut work_crs: Vec<DbRef> = Vec::with_capacity(n_hidden_text);
         for _ in 0..n_hidden_text {
-            let cr = self.database.claim(&self.stack_cur, 4); // 32 bytes; String needs 24
+            let cr = self.claim_in_stack(4); // 32 bytes; String needs 24
             unsafe {
                 let p = self
                     .database
@@ -8427,30 +9096,27 @@ impl State {
             library: lib_ptr,
             data: data_ptr,
             stack_trace_lib_nr: stk_lib_nr,
+            frame_headroom: Arc::clone(&self.frame_headroom),
         }));
         if self.fn_positions.is_empty() {
             self.fn_positions = data.definitions.iter().map(|d| d.code_position).collect();
+            self.worker_fn_memo = (u32::MAX, u32::MAX);
         }
         self.publish_source_spans();
 
-        let d_nr = self
-            .fn_positions
-            .iter()
-            .position(|&p| p == fn_pos)
-            .map_or(u32::MAX, |i| i as u32);
+        let d_nr = self.worker_d_nr(fn_pos);
         let args_size: u16 = args.iter().map(|a| self.worker_arg_size(a)).sum();
-        self.call_stack.push(CallFrame {
+        self.push_frame(CallFrame {
             d_nr,
             call_pos: 0,
             args_base: self.stack_step(4),
             args_size,
-            line: 0,
         });
         // Hidden text work-buffers (String allocated in the stack store), mirroring
         // `execute_at_text` — a `-> text` callee reads/writes these before the return.
         let mut work_crs: Vec<DbRef> = Vec::with_capacity(n_hidden_text);
         for _ in 0..n_hidden_text {
-            let cr = self.database.claim(&self.stack_cur, 4); // 32 bytes; String needs 24
+            let cr = self.claim_in_stack(4); // 32 bytes; String needs 24
             unsafe {
                 let p = self
                     .database
@@ -8606,4 +9272,57 @@ pub fn size_str() -> u32 {
 #[must_use]
 pub fn size_ref() -> u32 {
     size_of::<DbRef>() as u32
+}
+
+/// The report of [`State::code`] reading past the generated code — out of line, so the check in
+/// every operand read stays one compare and a branch.
+/// A pop below the stack's floor — out of line for the reason `code_out_of_range` is.
+#[cold]
+#[inline(never)]
+fn stack_underflow(pos: u32, size: u32) -> ! {
+    panic!("No elements left on the stack {pos} < {size}");
+}
+
+#[cold]
+#[inline(never)]
+fn code_out_of_range(pos: u32, size: usize, len: usize) -> ! {
+    panic!("Position {pos} + {size} outside generated code {len}");
+}
+
+/// The loop variables of `d_nr` that share their range index's slot (`@FR-R-LoopSlot`): one value
+/// under two names, so in a frame view neither ever takes the bytes over from the other.
+/// Trusted only where the two slots do coincide in the function's own table.
+fn slot_aliases(data: &crate::data::Data, d_nr: u32) -> Vec<(u16, u16)> {
+    let vars = &data.def(d_nr).variables;
+    let n = vars.count();
+    crate::slot_alias::range_slot_aliases(data, d_nr)
+        .into_iter()
+        .filter(|&(lv, ix)| {
+            lv < n && ix < n && vars.stack(lv) != u16::MAX && vars.stack(lv) == vars.stack(ix)
+        })
+        .collect()
+}
+
+/// `@FR-R-StackBase` — the stack record's field base in the stack store's buffer, the value
+/// `State::stack_base` caches.
+fn stack_base_of(db: &Stores, stack_cur: &DbRef) -> *mut u8 {
+    let store = &db.allocations[stack_cur.store_nr as usize];
+    // SAFETY: the stack record lies inside its store's buffer.
+    unsafe { store.ptr.add((stack_cur.rec * 8 + stack_cur.pos) as usize) }
+}
+
+#[cfg(test)]
+mod fast_table_tests {
+    use super::State;
+
+    /// `@FR-R-FastTable` — a run that takes the checked stack path is never given the fast
+    /// table; one that takes the direct path is.
+    #[test]
+    fn the_operator_table_follows_the_stack_mode() {
+        let mut s = State::new(crate::database::Stores::new());
+        s.fast_stack = false;
+        assert!(std::ptr::eq(s.op_table(), crate::fill::OPERATORS));
+        s.fast_stack = true;
+        assert!(std::ptr::eq(s.op_table(), crate::fill::OPERATORS_FAST));
+    }
 }

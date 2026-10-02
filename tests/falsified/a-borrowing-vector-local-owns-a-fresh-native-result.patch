@@ -1,0 +1,13 @@
+diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
+index 54f0812c6..a75bb22c0 100644
+--- a/src/parser/expressions.rs
++++ b/src/parser/expressions.rs
+@@ -935,7 +935,7 @@ impl Parser {
+         }
+         if !self.first_pass {
+             self.rotate_loop_retbufs(&mut v);
+-            self.own_fresh_binds(&mut v);
++            let _ = &v;
+         }
+         // Plan-22 phase 02a (2026-05-12): also save body in pass 1
+         // so the closure mutation walker can run in pass 1 BEFORE

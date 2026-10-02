@@ -271,7 +271,7 @@ Functions for interacting with the host operating system.
 
 | Function | Description |
 |----------|-------------|
-| `arguments() -> vector<text>` | Returns the command-line arguments passed to the program. The first element is typically the program name. |
+| `arguments() -> vector<text>` | The arguments after the program's path, in order — `loft p.loft --count x` answers `["--count", "x"]`; the program name is NOT in it, on every backend. |
 
 ### Environment Variables
 

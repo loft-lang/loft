@@ -23,8 +23,8 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>hex_terrain source</h1>
 <article>
-<p><a href="lib-hex_terrain.html">← hex_terrain</a> · <a href="lib-hex_terrain-api.html">API reference</a> · version 0.1.5</p>
-<p class="lib-legend">3 file(s), 1610 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<p><a href="lib-hex_terrain.html">← hex_terrain</a> · <a href="lib-hex_terrain-api.html">API reference</a> · version 0.1.6</p>
+<p class="lib-legend">3 file(s), 1613 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
 <table class="lib-table">
@@ -45,16 +45,16 @@
 <tr><td><code>terrain_hydrology</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-terrain-loft-L239">239</a></td><td><a href="#tests-02-worked-examples-loft-L199">HXT-003</a></td><td><a href="#tests-01-hex-terrain-loft-L57">57</a> <a href="#tests-02-worked-examples-loft-L72">72</a> <a href="#tests-02-worked-examples-loft-L217">217</a></td></tr>
 <tr><td><code>terrain_relief_pass</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-terrain-loft-L375">375</a></td><td><a href="#tests-02-worked-examples-loft-L237">HXT-004</a></td><td><a href="#tests-01-hex-terrain-loft-L79">79</a> <a href="#tests-02-worked-examples-loft-L73">73</a></td></tr>
 <tr><td><code>TerrainSurf</code> <span class="search-kind">struct</span></td><td><a href="#src-hex-terrain-loft-L425">425</a></td><td>—</td><td><a href="#src-hex-terrain-loft-L441">441</a> <a href="#src-hex-terrain-loft-L547">547</a></td></tr>
-<tr><td><code>terrain_surface_at</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-terrain-loft-L441">441</a></td><td><a href="#tests-02-worked-examples-loft-L362">HXT-008</a></td><td><a href="#src-hex-terrain-loft-L595">595</a> <a href="#src-hex-terrain-loft-L954">954</a> <a href="#tests-01-hex-terrain-loft-L162">162</a> <a href="#tests-01-hex-terrain-loft-L176">176</a> <a href="#tests-01-hex-terrain-loft-L179">179</a> <a href="#tests-02-worked-examples-loft-L83">83</a> … (13 total)</td></tr>
+<tr><td><code>terrain_surface_at</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-terrain-loft-L441">441</a></td><td><a href="#tests-02-worked-examples-loft-L362">HXT-008</a></td><td><a href="#src-hex-terrain-loft-L595">595</a> <a href="#src-hex-terrain-loft-L957">957</a> <a href="#tests-01-hex-terrain-loft-L162">162</a> <a href="#tests-01-hex-terrain-loft-L176">176</a> <a href="#tests-01-hex-terrain-loft-L179">179</a> <a href="#tests-02-worked-examples-loft-L83">83</a> … (13 total)</td></tr>
 <tr><td><code>terrain_blend_h</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-terrain-loft-L555">555</a></td><td><a href="#tests-02-worked-examples-loft-L306">HXT-006</a></td><td><a href="#src-hex-terrain-loft-L670">670</a> <a href="#src-hex-terrain-loft-L671">671</a> <a href="#src-hex-terrain-loft-L674">674</a> <a href="#src-hex-terrain-loft-L751">751</a> <a href="#src-hex-terrain-loft-L752">752</a> <a href="#src-hex-terrain-loft-L758">758</a> … (14 total)</td></tr>
-<tr><td><code>terrain_lake_field</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-terrain-loft-L586">586</a></td><td>—</td><td><a href="#src-hex-terrain-loft-L596">596</a> <a href="#src-hex-terrain-loft-L998">998</a></td></tr>
+<tr><td><code>terrain_lake_field</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-terrain-loft-L586">586</a></td><td>—</td><td><a href="#src-hex-terrain-loft-L596">596</a> <a href="#src-hex-terrain-loft-L1001">1001</a></td></tr>
 <tr><td><code>terrain_water_at</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-terrain-loft-L594">594</a></td><td><a href="#tests-02-worked-examples-loft-L333">HXT-007</a></td><td><a href="#src-hex-terrain-loft-L714">714</a> <a href="#src-hex-terrain-loft-L902">902</a> <a href="#tests-01-hex-terrain-loft-L149">149</a> <a href="#tests-01-hex-terrain-loft-L150">150</a> <a href="#tests-02-worked-examples-loft-L358">358</a></td></tr>
-<tr><td><code>TerrainRiver</code> <span class="search-kind">struct</span></td><td><a href="#src-hex-terrain-loft-L603">603</a></td><td>—</td><td><a href="#src-hex-terrain-loft-L728">728</a> <a href="#src-hex-terrain-loft-L771">771</a> <a href="#src-hex-terrain-loft-L780">780</a> <a href="#src-hex-terrain-loft-L784">784</a> <a href="#src-hex-terrain-loft-L953">953</a></td></tr>
+<tr><td><code>TerrainRiver</code> <span class="search-kind">struct</span></td><td><a href="#src-hex-terrain-loft-L603">603</a></td><td>—</td><td><a href="#src-hex-terrain-loft-L728">728</a> <a href="#src-hex-terrain-loft-L771">771</a> <a href="#src-hex-terrain-loft-L780">780</a> <a href="#src-hex-terrain-loft-L784">784</a> <a href="#src-hex-terrain-loft-L956">956</a></td></tr>
 <tr><td><code>terrain_edge_cross</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-terrain-loft-L630">630</a></td><td>—</td><td><a href="#src-hex-terrain-loft-L848">848</a></td></tr>
 <tr><td><code>terrain_control_pt</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-terrain-loft-L658">658</a></td><td>—</td><td><a href="#src-hex-terrain-loft-L853">853</a></td></tr>
 <tr><td><code>terrain_rivers</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-terrain-loft-L780">780</a></td><td><a href="#tests-02-worked-examples-loft-L131">HXT-002</a></td><td><a href="#tests-01-hex-terrain-loft-L122">122</a> <a href="#tests-01-hex-terrain-loft-L186">186</a> <a href="#tests-01-hex-terrain-loft-L201">201</a> <a href="#tests-02-worked-examples-loft-L195">195</a> <a href="#tests-02-worked-examples-loft-L196">196</a> <a href="#tests-02-worked-examples-loft-L346">346</a></td></tr>
-<tr><td><code>TerrainSample</code> <span class="search-kind">struct</span></td><td><a href="#src-hex-terrain-loft-L941">941</a></td><td>—</td><td><a href="#src-hex-terrain-loft-L953">953</a> <a href="#src-hex-terrain-loft-L1006">1006</a></td></tr>
-<tr><td><code>terrain_sample</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-terrain-loft-L953">953</a></td><td><a href="#tests-02-worked-examples-loft-L333">HXT-007</a></td><td><a href="#tests-01-hex-terrain-loft-L163">163</a> <a href="#tests-01-hex-terrain-loft-L191">191</a> <a href="#tests-01-hex-terrain-loft-L192">192</a> <a href="#tests-01-hex-terrain-loft-L206">206</a> <a href="#tests-01-hex-terrain-loft-L207">207</a> <a href="#tests-02-worked-examples-loft-L356">356</a></td></tr>
+<tr><td><code>TerrainSample</code> <span class="search-kind">struct</span></td><td><a href="#src-hex-terrain-loft-L944">944</a></td><td>—</td><td><a href="#src-hex-terrain-loft-L956">956</a> <a href="#src-hex-terrain-loft-L1009">1009</a></td></tr>
+<tr><td><code>terrain_sample</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-terrain-loft-L956">956</a></td><td><a href="#tests-02-worked-examples-loft-L333">HXT-007</a></td><td><a href="#tests-01-hex-terrain-loft-L163">163</a> <a href="#tests-01-hex-terrain-loft-L191">191</a> <a href="#tests-01-hex-terrain-loft-L192">192</a> <a href="#tests-01-hex-terrain-loft-L206">206</a> <a href="#tests-01-hex-terrain-loft-L207">207</a> <a href="#tests-02-worked-examples-loft-L356">356</a></td></tr>
 </table>
 <h2 id="src-hex-terrain-loft">src/hex_terrain.loft</h2>
 <pre class="src"><code><span id="src-hex-terrain-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -997,73 +997,76 @@
 <span id="src-hex-terrain-loft-L938"></span>
 <span id="src-hex-terrain-loft-L939"><span class="cm">// ── Fine sampling (the game-facing surface) ────────────────────────────────</span></span>
 <span id="src-hex-terrain-loft-L940"></span>
-<span id="src-hex-terrain-loft-L941"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">TerrainSample</span> {</span>
-<span id="src-hex-terrain-loft-L942">  ts_h:     <span class="ty"><a href="stdlib-types.html">float</a></span>,    <span class="cm">// carved fine height</span></span>
-<span id="src-hex-terrain-loft-L943">  ts_mat:   <span class="ty"><a href="stdlib-types.html">integer</a></span>,  <span class="cm">// winning land material</span></span>
-<span id="src-hex-terrain-loft-L944">  ts_water: <span class="ty"><a href="stdlib-types.html">integer</a></span>,  <span class="cm">// 0 dry, 1 river, 2 sea, 3 lake</span></span>
-<span id="src-hex-terrain-loft-L945">  ts_rdist: <span class="ty"><a href="stdlib-types.html">float</a></span>,    <span class="cm">// distance to the nearest river course (1e9 = none)</span></span>
-<span id="src-hex-terrain-loft-L946">}</span>
-<span id="src-hex-terrain-loft-L947"></span>
-<span id="src-hex-terrain-loft-L948"><span class="cm">// The full sample: surface + ADDITIVE valley carving from every course near</span></span>
-<span id="src-hex-terrain-loft-L949"><span class="cm">// the point + the water classification (sea floods the carved mouth).  Pure</span></span>
-<span id="src-hex-terrain-loft-L950"><span class="cm">// function of (t, types, p, rivers, x, y) — THE window-independence invariant.</span></span>
-<span id="src-hex-terrain-loft-L951"><span class="cm">//</span></span>
-<span id="src-hex-terrain-loft-L952"><span class="cm">// Example: @HXT-007</span></span>
-<span id="src-hex-terrain-loft-L953"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">terrain_sample</span>(t: <span class="en">Terrain</span>, types: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">TerrainType</span>&gt;, p: <span class="en">TerrainParams</span>, rivers: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">TerrainRiver</span>&gt;, x: <span class="ty"><a href="stdlib-types.html">float</a></span>, y: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="en">TerrainSample</span> {</span>
-<span id="src-hex-terrain-loft-L954">  sf = <span class="fn-call">terrain_surface_at</span>(t, types, p, x, y);</span>
-<span id="src-hex-terrain-loft-L955">  carve = <span class="nm">0.0</span>;</span>
-<span id="src-hex-terrain-loft-L956">  gdist = <span class="nm">1.0</span>e9;</span>
-<span id="src-hex-terrain-loft-L957">  gw = <span class="nm">0.0</span>;</span>
-<span id="src-hex-terrain-loft-L958">  <span class="kw">for</span> ri <span class="kw">in</span> <span class="nm">0..l</span><span class="fn-call">en</span>(rivers) {</span>
-<span id="src-hex-terrain-loft-L959">    rv = rivers[ri];</span>
-<span id="src-hex-terrain-loft-L960">    <span class="kw">if</span> rv != <span class="kw">null</span> &amp;&amp; x &gt;= rv.rv_x0 &amp;&amp; x &lt;= rv.rv_x1 &amp;&amp; y &gt;= rv.rv_y0 &amp;&amp; y &lt;= rv.rv_y1 {</span>
-<span id="src-hex-terrain-loft-L961">      cd = <span class="nm">1.0</span>e9;</span>
-<span id="src-hex-terrain-loft-L962">      cdep = <span class="nm">0.0</span>;</span>
-<span id="src-hex-terrain-loft-L963">      cvw = p.tp_valley_w;</span>
-<span id="src-hex-terrain-loft-L964">      <span class="kw">for</span> k <span class="kw">in</span> <span class="nm">0..l</span><span class="fn-call">en</span>(rv.rv_x) - <span class="nm">1</span> {</span>
-<span id="src-hex-terrain-loft-L965">        ax = rv.rv_x[k] ?? <span class="nm">0.0</span>;</span>
-<span id="src-hex-terrain-loft-L966">        ay = rv.rv_y[k] ?? <span class="nm">0.0</span>;</span>
-<span id="src-hex-terrain-loft-L967">        bx = rv.rv_x[k + <span class="nm">1</span>] ?? <span class="nm">0.0</span>;</span>
-<span id="src-hex-terrain-loft-L968">        by = rv.rv_y[k + <span class="nm">1</span>] ?? <span class="nm">0.0</span>;</span>
-<span id="src-hex-terrain-loft-L969">        ex = bx - ax;</span>
-<span id="src-hex-terrain-loft-L970">        ey = by - ay;</span>
-<span id="src-hex-terrain-loft-L971">        ee = ex * ex + ey * ey;</span>
-<span id="src-hex-terrain-loft-L972">        <span class="kw">if</span> ee &gt; <span class="nm">0.000000001</span> {</span>
-<span id="src-hex-terrain-loft-L973">          tt = <span class="bi"><a href="stdlib-min-max-clamp.html">min</a></span>(<span class="bi"><a href="stdlib-min-max-clamp.html">max</a></span>((((x - ax) * ex + (y - ay) * ey) / ee) ?? <span class="nm">0.0</span>, <span class="nm">0.0</span>), <span class="nm">1.0</span>);</span>
-<span id="src-hex-terrain-loft-L974">          ddx = x - (ax + tt * ex);</span>
-<span id="src-hex-terrain-loft-L975">          ddy = y - (ay + tt * ey);</span>
-<span id="src-hex-terrain-loft-L976">          d = <span class="bi"><a href="stdlib-math.html">sqrt</a></span>(ddx * ddx + ddy * ddy) ?? <span class="nm">0.0</span>;</span>
-<span id="src-hex-terrain-loft-L977">          <span class="kw">if</span> d &lt; cd {</span>
-<span id="src-hex-terrain-loft-L978">            cd = d;</span>
-<span id="src-hex-terrain-loft-L979">            cdep = (rv.rv_d[k] ?? <span class="nm">0.0</span>) * (<span class="nm">1.0</span> - tt) + (rv.rv_d[k + <span class="nm">1</span>] ?? <span class="nm">0.0</span>) * tt;</span>
-<span id="src-hex-terrain-loft-L980">            cvw = (rv.rv_vw[k] ?? p.tp_valley_w) * (<span class="nm">1.0</span> - tt) + (rv.rv_vw[k + <span class="nm">1</span>] ?? p.tp_valley_w) * tt;</span>
-<span id="src-hex-terrain-loft-L981">            <span class="kw">if</span> d &lt; gdist {</span>
-<span id="src-hex-terrain-loft-L982">              gdist = d;</span>
-<span id="src-hex-terrain-loft-L983">              gw = (rv.rv_w[k] ?? <span class="nm">0.0</span>) * (<span class="nm">1.0</span> - tt) + (rv.rv_w[k + <span class="nm">1</span>] ?? <span class="nm">0.0</span>) * tt;</span>
-<span id="src-hex-terrain-loft-L984">            }</span>
-<span id="src-hex-terrain-loft-L985">          }</span>
-<span id="src-hex-terrain-loft-L986">        }</span>
-<span id="src-hex-terrain-loft-L987">      }</span>
-<span id="src-hex-terrain-loft-L988">      <span class="kw">if</span> cd &lt; cvw * <span class="nm">4.0</span> {</span>
-<span id="src-hex-terrain-loft-L989">        carve = carve + cdep * <span class="fn-call"><a href="stdlib-exp-ln-log2-log10.html">exp</a></span>(<span class="nm">0.0</span> - ((cd / cvw) ?? <span class="nm">0.0</span>)) * (<span class="nm">1.0</span> - ((cd / (<span class="nm">4.0</span> * cvw)) ?? <span class="nm">0.0</span>));</span>
+<span id="src-hex-terrain-loft-L941"><span class="cm">// The terrain at one point, as `terrain_sample` answers it: the carved height, the land</span></span>
+<span id="src-hex-terrain-loft-L942"><span class="cm">// material, the water there (0 dry, 1 river, 2 sea, 3 lake) and the distance to the nearest</span></span>
+<span id="src-hex-terrain-loft-L943"><span class="cm">// river.</span></span>
+<span id="src-hex-terrain-loft-L944"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">TerrainSample</span> {</span>
+<span id="src-hex-terrain-loft-L945">  ts_h:     <span class="ty"><a href="stdlib-types.html">float</a></span>,    <span class="cm">// carved fine height</span></span>
+<span id="src-hex-terrain-loft-L946">  ts_mat:   <span class="ty"><a href="stdlib-types.html">integer</a></span>,  <span class="cm">// winning land material</span></span>
+<span id="src-hex-terrain-loft-L947">  ts_water: <span class="ty"><a href="stdlib-types.html">integer</a></span>,  <span class="cm">// 0 dry, 1 river, 2 sea, 3 lake</span></span>
+<span id="src-hex-terrain-loft-L948">  ts_rdist: <span class="ty"><a href="stdlib-types.html">float</a></span>,    <span class="cm">// distance to the nearest river course (1e9 = none)</span></span>
+<span id="src-hex-terrain-loft-L949">}</span>
+<span id="src-hex-terrain-loft-L950"></span>
+<span id="src-hex-terrain-loft-L951"><span class="cm">// The full sample: surface + ADDITIVE valley carving from every course near</span></span>
+<span id="src-hex-terrain-loft-L952"><span class="cm">// the point + the water classification (sea floods the carved mouth).  Pure</span></span>
+<span id="src-hex-terrain-loft-L953"><span class="cm">// function of (t, types, p, rivers, x, y) — THE window-independence invariant.</span></span>
+<span id="src-hex-terrain-loft-L954"><span class="cm">//</span></span>
+<span id="src-hex-terrain-loft-L955"><span class="cm">// Example: @HXT-007</span></span>
+<span id="src-hex-terrain-loft-L956"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">terrain_sample</span>(t: <span class="en">Terrain</span>, types: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">TerrainType</span>&gt;, p: <span class="en">TerrainParams</span>, rivers: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">TerrainRiver</span>&gt;, x: <span class="ty"><a href="stdlib-types.html">float</a></span>, y: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="en">TerrainSample</span> {</span>
+<span id="src-hex-terrain-loft-L957">  sf = <span class="fn-call">terrain_surface_at</span>(t, types, p, x, y);</span>
+<span id="src-hex-terrain-loft-L958">  carve = <span class="nm">0.0</span>;</span>
+<span id="src-hex-terrain-loft-L959">  gdist = <span class="nm">1.0</span>e9;</span>
+<span id="src-hex-terrain-loft-L960">  gw = <span class="nm">0.0</span>;</span>
+<span id="src-hex-terrain-loft-L961">  <span class="kw">for</span> ri <span class="kw">in</span> <span class="nm">0..l</span><span class="fn-call">en</span>(rivers) {</span>
+<span id="src-hex-terrain-loft-L962">    rv = rivers[ri];</span>
+<span id="src-hex-terrain-loft-L963">    <span class="kw">if</span> rv != <span class="kw">null</span> &amp;&amp; x &gt;= rv.rv_x0 &amp;&amp; x &lt;= rv.rv_x1 &amp;&amp; y &gt;= rv.rv_y0 &amp;&amp; y &lt;= rv.rv_y1 {</span>
+<span id="src-hex-terrain-loft-L964">      cd = <span class="nm">1.0</span>e9;</span>
+<span id="src-hex-terrain-loft-L965">      cdep = <span class="nm">0.0</span>;</span>
+<span id="src-hex-terrain-loft-L966">      cvw = p.tp_valley_w;</span>
+<span id="src-hex-terrain-loft-L967">      <span class="kw">for</span> k <span class="kw">in</span> <span class="nm">0..l</span><span class="fn-call">en</span>(rv.rv_x) - <span class="nm">1</span> {</span>
+<span id="src-hex-terrain-loft-L968">        ax = rv.rv_x[k] ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-terrain-loft-L969">        ay = rv.rv_y[k] ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-terrain-loft-L970">        bx = rv.rv_x[k + <span class="nm">1</span>] ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-terrain-loft-L971">        by = rv.rv_y[k + <span class="nm">1</span>] ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-terrain-loft-L972">        ex = bx - ax;</span>
+<span id="src-hex-terrain-loft-L973">        ey = by - ay;</span>
+<span id="src-hex-terrain-loft-L974">        ee = ex * ex + ey * ey;</span>
+<span id="src-hex-terrain-loft-L975">        <span class="kw">if</span> ee &gt; <span class="nm">0.000000001</span> {</span>
+<span id="src-hex-terrain-loft-L976">          tt = <span class="bi"><a href="stdlib-min-max-clamp.html">min</a></span>(<span class="bi"><a href="stdlib-min-max-clamp.html">max</a></span>((((x - ax) * ex + (y - ay) * ey) / ee) ?? <span class="nm">0.0</span>, <span class="nm">0.0</span>), <span class="nm">1.0</span>);</span>
+<span id="src-hex-terrain-loft-L977">          ddx = x - (ax + tt * ex);</span>
+<span id="src-hex-terrain-loft-L978">          ddy = y - (ay + tt * ey);</span>
+<span id="src-hex-terrain-loft-L979">          d = <span class="bi"><a href="stdlib-math.html">sqrt</a></span>(ddx * ddx + ddy * ddy) ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-terrain-loft-L980">          <span class="kw">if</span> d &lt; cd {</span>
+<span id="src-hex-terrain-loft-L981">            cd = d;</span>
+<span id="src-hex-terrain-loft-L982">            cdep = (rv.rv_d[k] ?? <span class="nm">0.0</span>) * (<span class="nm">1.0</span> - tt) + (rv.rv_d[k + <span class="nm">1</span>] ?? <span class="nm">0.0</span>) * tt;</span>
+<span id="src-hex-terrain-loft-L983">            cvw = (rv.rv_vw[k] ?? p.tp_valley_w) * (<span class="nm">1.0</span> - tt) + (rv.rv_vw[k + <span class="nm">1</span>] ?? p.tp_valley_w) * tt;</span>
+<span id="src-hex-terrain-loft-L984">            <span class="kw">if</span> d &lt; gdist {</span>
+<span id="src-hex-terrain-loft-L985">              gdist = d;</span>
+<span id="src-hex-terrain-loft-L986">              gw = (rv.rv_w[k] ?? <span class="nm">0.0</span>) * (<span class="nm">1.0</span> - tt) + (rv.rv_w[k + <span class="nm">1</span>] ?? <span class="nm">0.0</span>) * tt;</span>
+<span id="src-hex-terrain-loft-L987">            }</span>
+<span id="src-hex-terrain-loft-L988">          }</span>
+<span id="src-hex-terrain-loft-L989">        }</span>
 <span id="src-hex-terrain-loft-L990">      }</span>
-<span id="src-hex-terrain-loft-L991">    }</span>
-<span id="src-hex-terrain-loft-L992">  }</span>
-<span id="src-hex-terrain-loft-L993">  h = sf.sf_h - <span class="bi"><a href="stdlib-min-max-clamp.html">min</a></span>(carve, p.tp_carve_max * <span class="nm">1.25</span>);</span>
-<span id="src-hex-terrain-loft-L994">  water = <span class="nm">0</span>;</span>
-<span id="src-hex-terrain-loft-L995">  <span class="kw">if</span> h &lt;= p.tp_sea {</span>
-<span id="src-hex-terrain-loft-L996">    water = <span class="nm">2</span>;     <span class="cm">// sea — including the flooded estuary</span></span>
-<span id="src-hex-terrain-loft-L997">  } <span class="kw">else</span> {</span>
-<span id="src-hex-terrain-loft-L998">    <span class="kw">if</span> <span class="fn-call">terrain_lake_field</span>(p, x, y, sf.sf_lakey) &gt;= <span class="nm">0.5</span> {</span>
-<span id="src-hex-terrain-loft-L999">      water = <span class="nm">3</span>;   <span class="cm">// lake (a FLAT filled surface — render without hillshade)</span></span>
-<span id="src-hex-terrain-loft-L1000">    } <span class="kw">else</span> {</span>
-<span id="src-hex-terrain-loft-L1001">      <span class="kw">if</span> gdist &lt; gw * <span class="nm">0.5</span> &amp;&amp; sf.sf_h &gt; p.tp_sea &amp;&amp; sf.sf_watery &lt; <span class="nm">0.5</span> {</span>
-<span id="src-hex-terrain-loft-L1002">        water = <span class="nm">1</span>; <span class="cm">// river</span></span>
-<span id="src-hex-terrain-loft-L1003">      }</span>
-<span id="src-hex-terrain-loft-L1004">    }</span>
-<span id="src-hex-terrain-loft-L1005">  }</span>
-<span id="src-hex-terrain-loft-L1006">  <span class="en">TerrainSample</span> { ts_h: h, ts_mat: sf.sf_mat, ts_water: water, ts_rdist: gdist }</span>
-<span id="src-hex-terrain-loft-L1007">}</span>
+<span id="src-hex-terrain-loft-L991">      <span class="kw">if</span> cd &lt; cvw * <span class="nm">4.0</span> {</span>
+<span id="src-hex-terrain-loft-L992">        carve = carve + cdep * <span class="fn-call"><a href="stdlib-exp-ln-log2-log10.html">exp</a></span>(<span class="nm">0.0</span> - ((cd / cvw) ?? <span class="nm">0.0</span>)) * (<span class="nm">1.0</span> - ((cd / (<span class="nm">4.0</span> * cvw)) ?? <span class="nm">0.0</span>));</span>
+<span id="src-hex-terrain-loft-L993">      }</span>
+<span id="src-hex-terrain-loft-L994">    }</span>
+<span id="src-hex-terrain-loft-L995">  }</span>
+<span id="src-hex-terrain-loft-L996">  h = sf.sf_h - <span class="bi"><a href="stdlib-min-max-clamp.html">min</a></span>(carve, p.tp_carve_max * <span class="nm">1.25</span>);</span>
+<span id="src-hex-terrain-loft-L997">  water = <span class="nm">0</span>;</span>
+<span id="src-hex-terrain-loft-L998">  <span class="kw">if</span> h &lt;= p.tp_sea {</span>
+<span id="src-hex-terrain-loft-L999">    water = <span class="nm">2</span>;     <span class="cm">// sea — including the flooded estuary</span></span>
+<span id="src-hex-terrain-loft-L1000">  } <span class="kw">else</span> {</span>
+<span id="src-hex-terrain-loft-L1001">    <span class="kw">if</span> <span class="fn-call">terrain_lake_field</span>(p, x, y, sf.sf_lakey) &gt;= <span class="nm">0.5</span> {</span>
+<span id="src-hex-terrain-loft-L1002">      water = <span class="nm">3</span>;   <span class="cm">// lake (a FLAT filled surface — render without hillshade)</span></span>
+<span id="src-hex-terrain-loft-L1003">    } <span class="kw">else</span> {</span>
+<span id="src-hex-terrain-loft-L1004">      <span class="kw">if</span> gdist &lt; gw * <span class="nm">0.5</span> &amp;&amp; sf.sf_h &gt; p.tp_sea &amp;&amp; sf.sf_watery &lt; <span class="nm">0.5</span> {</span>
+<span id="src-hex-terrain-loft-L1005">        water = <span class="nm">1</span>; <span class="cm">// river</span></span>
+<span id="src-hex-terrain-loft-L1006">      }</span>
+<span id="src-hex-terrain-loft-L1007">    }</span>
+<span id="src-hex-terrain-loft-L1008">  }</span>
+<span id="src-hex-terrain-loft-L1009">  <span class="en">TerrainSample</span> { ts_h: h, ts_mat: sf.sf_mat, ts_water: water, ts_rdist: gdist }</span>
+<span id="src-hex-terrain-loft-L1010">}</span>
 </code></pre>
 <h2 id="tests-01-hex-terrain-loft">tests/01-hex-terrain.loft</h2>
 <pre class="src"><code><span id="tests-01-hex-terrain-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>

@@ -23,6 +23,193 @@ binary for a cold reference by REMOVING `LOFT_PROGRAM_CACHE` now set `LOFT_NO_CA
 run removes `LOFT_NO_CACHE` so an exported switch cannot silence it.  The off switch is in
 `loft --help` (under `cache`), DEBUG.md and RUNNING_TESTS.md.  Guard:
 `arc_e_program_cache::a_development_build_caches_unless_told_not_to`.
+### `(H-LazyFree)`: a store's deletes go untracked until one sweep at the growth bound, and a struct-enum field answers `holds_no_heap` by its variant (2026-09-30)
+### `(R-StartStep)` — a computed range start steps one counter on the interpreter (2026-10-02)
+
+`for i in a..b` with `a` not a literal iterates with two counters, `next` one ahead of the
+index, so a start at `i64::MIN + 1` never needs `a - 1` (the null sentinel).  The bytecode
+generator now seeds the index from `next` before the rotated loop, steps the index at the test
+and enters past the step, where nothing after the iterator names `next` and the index is the
+loop variable's own slot or is not named.  The IR keeps both counters, so `--native` and every
+IR rewrite are unchanged.  `LOFT_NO_START_STEP=1`, `LOFT_TRACE_START_STEP=1`.
+
+Measured on `09_matrix_mul/dot_product` (`--interpret`, release, one core): 16 → 14 operators
+a round, 128–135 → 109–118 ms an op (−15 %), same hash.  Guard s1–s12 identical under the
+switch, `LOFT_NO_LOOP_ROTATE` and `LOFT_NO_LOOP_VAR_ALIAS`, and on `--native`; plants: the entry
+on the step (s1), `continue` past the step (s2 never ends), the seed dropped (s1 never ends).
+
+Recorded beside it: `(Perf-Order)` in formal/performance.md, the owner's ruling that the IR
+work comes before new interpreter operators, which are designed from broad evidence, with the
+scripts written in loft weighed above the bench routines.
+
+### `(R-WorkerLean)` — a `par` worker runs on the lean loop (2026-10-02)
+
+A `par` worker's frame (`State::run_to_return`) ran the checked loop and found the function it
+entered by scanning every definition, for each element: `par(…, 1)` cost 1.9× the same loop
+without `par`.  It now runs the lean register loop whenever the main run would, with `#hot`
+operators inline, and remembers the definition per function position (reset wherever
+`fn_positions` is rebuilt).  The worker's stop path leaves out the main loop's takeover of
+another worker's fault.  `LOFT_NO_WORKER_LEAN=1` keeps the checked loop.
+
+Measured on a 1000-element `par` (`--interpret`, release): one thread 306 → 175 ms (the loop
+without `par`), four threads 92 → 49 ms.  Guard w1–w5 identical under both switch arms;
+sabotage: the worker ignoring its stop flag fails `runtime_errors::i1056…` and placement_parity's
+two library-fault cells.  A sabotage of the remembered lookup is inert: each `par` loop builds
+fresh worker States.  The runtime subject passes 1432/1432 under both arms.
+
+### `(H-SwapIn)` and `(R-RepeatRun)` — a rebind exchanges stores instead of copying, and a spelled-out run of one constant is one fill (2026-10-02)
+
+**`(H-SwapIn)`** (`Stores::try_swap_in`, called by both backends' `OpCopyRecord`): the rebind
+`x = f(…, x, …)` from a callee that minted its result reset x's store, deep-copied the result's
+tree into it and freed the callee's store.  Where both records are their store's root — at
+`1@8` AND of the store's own root type, because a record's first field shares that address —
+the destination holds nothing else, the type keeps its pointers inside its store, and neither
+store is pinned to its slot, the two stores' contents are exchanged and the released slot
+freed.  The first form keyed on the address alone and replaced a whole `Hold` when its first
+field `h.p` was rebound on the interpreter (`1647-a-moved-call-result…` M7, `a-small-record-is-
+forwarded…`); the root-type test closes it and cell s13 falsifies it.  A free protection
+refuses only the released side (the interpreter brackets the destination during the call).
+The interpreter reports no copy for an exchange.  `LOFT_NO_STORE_SWAP=1`, read at run time.
+
+**`(R-RepeatRun)`** (`src/repeat_run.rs`, scope pass): four or more pushes of one literal into
+one target are `OpPreAllocVector` + one template push + `OpAppendCopy`, the lowering `[c; n]`
+already had.  `LOFT_NO_REPEAT_RUN=1`.  Fires in mesh3d, drawing, text2d, graphics, stage, glb
+and hex_body (the census).  The front-end allocation pin is unchanged with it on and off.
+
+Beside them, `tests/native.rs` compiles each corpus script on an 8 MiB thread, the CLI's own
+stack: a 100-term nested sum's front-end recursion overflows a 2 MiB test thread on aarch64.
+
+Measured on mesh3d's `mat4_mul` (`--native-release`, one core, interleaved): the exchange
+29.7 → 26.9 ms an op (−9.5 %, one binary, the switch as the OFF arm), the repeat fill 27.3 →
+23.1 ms (−15 %); same result hash throughout.  Guards s1–s13 and r1–r11, both backends, both
+switches, every store falsifier; sabotages: the released slot kept (s12 exhausts the store
+table), the root-type test struck (s13 loses the second field on `--interpret`), the fill
+handed `count - 1` (r1 reads 15 elements).  Subjects store, runtime, scopes and codegen green
+(the codegen shards and 15 store tests first failed on a full disk and on rlibs `make
+disk-headroom` swept, green rerun after `cargo test --release --no-run`).
+
+### `(R-ByteCopy)`'s vector clause and `(R-TextRun)` — a decoder's byte strings are one copy, its texts no object at all (2026-10-02)
+
+**The vector clause** (`src/byte_copy.rs`): `for k in lo..hi { buf += [v[off + k] ?? d] }` —
+a raw byte vector variable `v`, `off` a literal or a variable, `d` a literal, `buf` exclusive —
+is `if 0 <= off && 0 <= lo && lo <= hi && hi <= len(v) - off { OpSliceVector(buf, v, off +
+lo, off + hi, tp) } else { the loop }`.  A raw byte read in range is never null, so the `??`
+never fires inside the guard; an `integer` or `float` element can hold the null its `??`
+replaces and keeps the loop.  The destination test is `(R-VecCopy)`'s, now one predicate
+(`vec_copy::exclusive_vector`) that also reads a record `(R-Place)` claimed for the vector as
+minted here, and a hoisted null declaration as no binding — cbor's `bs` and `tb` are both.
+
+**`(R-TextRun)`** (`src/text_run.rs`, run by `byte_copy::rewrite` on the copies it just
+guarded): a byte vector declared empty right before such a copy and read once by `x =
+text_from_bytes(t)` is never built on the guard's path — its declaration and copy move under
+`!g`, leaving their variables' null initialisers in place (the native generator declares at
+the first assignment), and the read becomes `if g { x = text_from_byte_range(v, …) } else { x
+= text_from_bytes(t) }`, the choice above the assignment because a text native assigned to its
+destination is lowered destination-passing.  The guard is evaluated twice, so the statements
+between may only read, mint the frame's return buffer and write its scalar fields.
+`LOFT_NO_BYTE_COPY=1` turns both off.
+
+Guards `a-byte-range-of-a-vector-copied-one-at-a-time-is-one-append.loft` (v1–v17) and
+`a-byte-run-read-once-as-text-is-read-in-place.loft` (t1–t12), both backends, rewrite on and
+off with the program cache off, under `LOFT_STRICT_STORES`, `LOFT_POISON`, `LOFT_POISON_CLAIM`,
+`LOFT_STORES=warn` and `LOFT_NATIVE_LEAK_CHECK`; each sabotaged once (the slice guard's upper
+test: v5 reads 3 bytes for 5; the protected-variable test: t6 reads "world" for "hello").  Pins
+`tests/byte_copy.rs` and `tests/text_run.rs`.
+
+**The function header survives a slice** (`hoist::call_leaves_param`): an `OpSliceVector`
+reads its source as `OpAppendVector` does, so `(R-Header)`'s function clause no longer declines
+a parameter a slice is taken from — cbor's `read_value` keeps the header of `bytes`, and so does
+any hand-written `t += p[lo..hi]` over a parameter (cell f11 of the function-clause guard).
+
+Measured on pluginabi's `check_request` over cbor as written (`--native-release`, 200 000
+checks, one core, five interleaved runs): 3.62 → 2.26 µs a check (−38 %); the hand-written
+`text_from_byte_range` and slice forms measured 3.56 → 2.35 before the header fix; the vector
+clause alone 3.55 → 3.46, equal to the hand-written slice.
+
+### `(H-LazyFree)`: a store's small deletes merge but stay out of the free tree until one sweep, and a struct-enum field answers `holds_no_heap` by its variant (2026-09-30)
+
+Item 3 of `bench/portal/analysis/records.md` § check_request on the library as written, and
+the claims-walk half of item 3 of its six.  **The lazy phase** (`Store::lazy`, `dead_words`,
+`lazy_free`): `delete` of a block of at most `LAZY_MAX_WORDS` (64) takes `lazy_delete` — it
+merges forward by header and backward by a footer confirmed by `lazy_free` or the tree, as the
+exact delete does, and records the merged block in `lazy_free` instead of the tree (a block
+ending the store becomes the wilderness).  A larger block (a vector rung, a hash table) takes
+the exact path: the tree's insert is nothing beside the block's own copy, and leaving it dead
+moved a persisted hash's layout (the paged lookup's 512 KB budget, five bytes over).  `claim`
+sweeps (`coalesce_free`, then `fl_rebuild`) and ends the phase at its entry once `sweep_due` —
+the untracked words reach `LAZY_FLOOR_WORDS` (256) and a fifth of `claimed_end` — whatever the
+wilderness holds: gated on the wilderness running out, a pooled buffer reset each round placed
+its vector ladder tail-first every round and doubled `mesh_emit`'s working set (+24 % on the
+lane, 10 MB against 5.9).  `dead_words` counts what is untracked NOW: `forget_free`, the lazy
+arm of `fl_remove` and `claim_scan`'s untracked pick take a consumed block off, and
+`fl_rebuild` clears `lazy_free` whole — without that, a scratch the chain walk reused was
+counted again at each free, and without the merge a scratch pair freed per round fragmented the
+read-repeat census's store.  `reclaim_tail` ends the phase too; `init` re-arms it; the `open`
+and `load` constructors (a store bound to a file, read, reclaimed and paged by its layout) never
+enter it.  Every block keeps its header, so `usage`, an image and the open walk are unchanged.
+`LOFT_NO_LAZY_FREE=1` restores the per-delete tracking (read per store at construction).
+Pinned by seven seeded unit tests in `src/store.rs` (the merged pair out of the tree, the tail
+claim and the wilderness fold; growth below the floor; the one sweep at the bound and the exact
+phase after it; an untracked block claimed at its position beside a non-empty tree; a block
+above the cap tracked in the phase; the backward merge confirmed by `lazy_free`; the forged
+footer refused by both deletes); the tests pinning the exact allocator's layout build exact
+stores, and the two slack fixtures of `store_persist_loft` write under `LOFT_NO_LAZY_FREE=1`,
+because the phase writes their data into a file a third smaller than the slack they exist to
+shed (1.37× content against 2.07×).
+
+**`holds_no_heap`'s enum arm** (`allocation.rs`): a `Parts::Enum` field or record answers by
+its LIVE variant the way `owned_walk` reads it — a null or absent tag, a payload-less variant,
+or a payload that holds no heap — where it answered "may hold heap" and forced the walk.  A
+decoder's per-node wrapper (`Decoded { value: CborValue, … }`) is released after its value
+moved out, and walked every time.
+
+Measured on pluginabi's check driver (`--native-release`, 40 rounds of 2 048 checks, three
+runs each on a quiet box): 0.318 s → 0.30 s with the enum arm (−6 %; `remove_claims_mode`
+4.0 → 2.3 % of the samples, `owned_walk` 3.3 → 1.6 %), → 0.286 s with the phase (−6 % more,
+−10 % in all; `claim_best_fit`, `fl_insert`, `fl_set_red`, `fl_delete_node` and `delete`'s
+merge were 27 % of the row's samples); `mesh_emit` level, cbor `decode` −30 % on the
+perf-check.  Hash unchanged; `LOFT_NO_LAZY_FREE=1` on the same
+binary is the OFF arm.
+
+### `(R-ReturnField)` and the lifted bind that adopts — pluginabi's `check_request` copies nothing (2026-09-30)
+
+Items 1 and 2 of `bench/portal/analysis/records.md` § check_request on the library as
+written.  **The lift** (`Scopes::lift_set`): a call result the argument scan lifts into a
+`__lift_N` temp (`pa_text(pa_decode(frame), "op")`) is null-initialised in the prologue, so its
+one bind read as a REBIND and took the copy protocol on both backends where the named spelling
+adopts (`@FR-O-Move`, @PLN164 B1); the bind after the prologue's null-init is now marked the
+temp's first (`deferred_first_bind`) and the call's buffer paired for the identity-guarded free
+through `pair_call_buffers` — `scan_set`'s pairing block, extracted byte-identically.  Guard
+`tests/scripts/a-lifted-call-result-adopts-like-a-named-bind.loft`, pin `tests/lift_adopt.rs`;
+two exact-count census pins re-measured (`adopt_first_bind`, `adopt_buffer_reuse`).  **The
+return field** (`return_field.rs`, new, run after the exit vector; `@FR-R-ReturnField`): the
+parser's `materialized_view_return` exit over the function's own buffer — mint the buffer, copy
+a field path of an owned record local (or a local view of one) into it, free the local — is
+rewritten into a hand-over: the mint, the copy and the root's own free go, the exit returns the
+field's address into the root's store, and every other store free in the exit is re-witnessed
+against the ROOT (a pooled `__ref_N` the root adopted, an alias `q = p`: skipped; a distinct
+buffer: freed as before).  Admitted only where the returned record owns heap (a scalar-only
+record is the native value form's), the block renamed `return_field_handover` so the value
+form's reader and the copy census see no copy.  Guard
+`tests/scripts/a-returned-field-of-an-owned-local-hands-its-store-over.loft` (r1–r13, both
+backends, every store falsifier), pin `tests/return_field.rs`; the rule reaches seven corpus
+files and no stdlib function.  Falsified by sabotage: without the re-witnessing the pooled loop
+root answers wrong on both backends; with the root freed plainly, native panics in the
+allocator.  Measured on the check driver (`--native-release`, 40 rounds of 2 048 checks, seven
+interleaved runs): 0.38 s → 0.34 s with the lift, → 0.33 s with both; stores per call in the
+guards' cells: the lifted form 3 → 2, a lift in a loop of three 9 → 4, the struct-enum field
+return 4 → 2; the copy census of `return p.a` 1 → 0.  Switches `LOFT_NO_ADOPT_FIRST_BIND`
+(the existing one, covering the lift) and `LOFT_NO_RETURN_FIELD`; `LOFT_TRACE_PLACE=1` names
+each admission and decline (`[return-field]`).  Found by the suite and fixed in the same
+arc: a lifted temp a COPY consumes (`keep += [mk(i)]` in a loop — the element copy's
+source-free bit releases its store) must not pair its buffer, because the pairing enrolls
+the buffer in the record-buffer pool and the consuming copy then released the pooled store
+every turn (`164-forward-tuple`'s q6 read a freed record on both backends); the temp still
+adopts, its buffer stays null.  Two derived rows re-measured on the way: the range-end
+header pin (`n_update`, `n_square_sum` keep their local tests since `(R-Header)`'s function
+clause holds the header their ends are read from) and the front-end allocation pin (+365 per
+compile on linux-release, of which nine are this arc's pairing entries; the rest predate it —
+the builtin and the header clause landed after the last pin).
 
 ### `(R-Header)`'s function clause — a parameter's header bound once at entry (2026-09-30)
 
