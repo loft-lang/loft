@@ -353,6 +353,7 @@ pub mod place_result;
 pub mod placement;
 pub mod portable_path;
 pub mod rebind_place;
+pub mod repeat_run;
 pub mod resolution;
 pub mod resolution_scope;
 pub mod return_field;

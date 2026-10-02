@@ -1020,7 +1020,18 @@ impl Stores {
         {
             return false;
         }
-        if !self.tree_holds_no_stored_refs(tp, &mut Vec::new()) {
+        let known = self.swap_safe_types.get(tp as usize).copied().unwrap_or(0);
+        let safe = if known == 0 {
+            let safe = self.tree_holds_no_stored_refs(tp, &mut Vec::new());
+            if self.swap_safe_types.len() <= tp as usize {
+                self.swap_safe_types.resize(tp as usize + 1, 0);
+            }
+            self.swap_safe_types[tp as usize] = if safe { 1 } else { 2 };
+            safe
+        } else {
+            known == 1
+        };
+        if !safe {
             return false;
         }
         let (lo, hi) = (ds.min(ts), ds.max(ts));
@@ -2655,6 +2666,7 @@ impl Stores {
             had_fatal: false,
             runtime_error: None,
             dispatch_stop: std::sync::atomic::AtomicBool::new(false),
+            swap_safe_types: Vec::new(),
             // #255 / @PLN9: a parallel worker's file ops must resolve paths the
             // same way as the main thread — carry the anchor + mode.
             source_dir: self.source_dir.clone(),

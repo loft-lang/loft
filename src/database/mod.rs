@@ -639,6 +639,10 @@ pub struct Stores {
     /// `arm_profiler`).  A cache, never the truth: the loop's cold path re-derives it from the
     /// events themselves, so a nested loop never clears one its caller still needs.
     pub dispatch_stop: std::sync::atomic::AtomicBool,
+    /// `@FR-H-SwapIn` — per type number, whether its tree keeps every pointer as a record
+    /// number inside its own store: `0` not asked yet, `1` yes, `2` no.  The schema does not
+    /// change once a program runs, so the answer is computed once per type.
+    pub(crate) swap_safe_types: Vec<u8>,
     /// When true, `free_named` overwrites the freed store's buffer with a
     /// poison pattern (`0xDEADBEEF` i32 words) so subsequent reads through a
     /// stale DbRef hit recognisable garbage instead of whatever bytes the
@@ -772,6 +776,7 @@ impl Clone for Stores {
             had_fatal: false,
             runtime_error: None,
             dispatch_stop: std::sync::atomic::AtomicBool::new(false),
+            swap_safe_types: Vec::new(),
             // #255: `source_dir` is parse-time CONFIG (the main source file's
             // directory), not runtime state — it must survive `clone()` so the
             // `source_dir()` builtin works after the test runner / native paths
@@ -1542,6 +1547,7 @@ impl Stores {
             had_fatal: false,
             runtime_error: None,
             dispatch_stop: std::sync::atomic::AtomicBool::new(false),
+            swap_safe_types: Vec::new(),
             source_dir: String::new(),
             // #255 / @PLN9: program-relative by default — a relative file path
             // re-homes against the program's own directory, so "program + assets"

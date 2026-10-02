@@ -1526,6 +1526,22 @@ pub fn vec_copy_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_VEC_COPY"))
 }
 
+/// `@FR-R-RepeatRun` — four or more equal constant pushes into one target are one repeat fill
+/// — **DEFAULT ON**.  `LOFT_NO_REPEAT_RUN` keeps every push: the first bisect step for a wrong
+/// element out of a literal that spells one constant many times.
+#[must_use]
+pub fn repeat_run_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_REPEAT_RUN"))
+}
+
+/// `LOFT_TRACE_REPEAT_RUN=1` — name each run `@FR-R-RepeatRun` turns into one fill.
+#[must_use]
+pub fn trace_repeat_run() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_TRACE_REPEAT_RUN"))
+}
+
 /// `@FR-H-SwapIn` — the rebind copy of a callee's minted result into a just-reset root is an
 /// exchange of the two stores' contents — **DEFAULT ON**.  `LOFT_NO_STORE_SWAP` keeps the deep
 /// copy: the first bisect step for a wrong record after `x = f(…, x, …)` on either backend.
