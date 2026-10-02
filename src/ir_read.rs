@@ -507,8 +507,7 @@ pub fn ir_roundtrip_check(data: &Data) -> Result<(), crate::ir_schema::DataDiff>
 /// through it.
 #[cfg(feature = "mmap")]
 fn adopt_read_surface(path: &str, stores: &mut Stores) -> u16 {
-    let mut fstore = crate::store::Store::open(path);
-    fstore.read_only = true;
+    let fstore = crate::store::Store::open_read_surface(path);
     stores.adopt_store(fstore)
 }
 

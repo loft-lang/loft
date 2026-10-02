@@ -1162,6 +1162,31 @@ impl Store {
 
     #[cfg(feature = "mmap")]
     pub fn open(path: &str) -> Store {
+        Self::open_mapped(path, false)
+    }
+
+    /// [`open`](Store::open) for a READ SURFACE — a cache bundle or image another process may
+    /// map at the same time.  The mapping is the file's own pages (`MAP_SHARED`), so anything
+    /// `open` writes reaches every process using the file: the free-list and claims rebuilds
+    /// write block footers and tree links into free blocks, and N processes warm-loading one
+    /// stdlib bundle rebuilt them into each other's pages and crashed on corrupt references.
+    /// A read surface never claims or frees, so it needs neither rebuild; it is read-only from
+    /// the first instruction rather than flagged so after `open` has already written.
+    #[cfg(feature = "mmap")]
+    #[must_use]
+    pub fn open_read_surface(path: &str) -> Store {
+        Self::open_mapped(path, true)
+    }
+
+    #[cfg(not(feature = "mmap"))]
+    pub fn open_read_surface(_path: &str) -> Store {
+        panic!(
+            "mmap feature is not compiled in; enable the `mmap` Cargo feature to use file-backed stores"
+        )
+    }
+
+    #[cfg(feature = "mmap")]
+    fn open_mapped(path: &str, read_surface: bool) -> Store {
         let mut file = MmapStorage::open(path).expect("Opening file");
         let init = if (file.capacity() / 8) < MIN_BOUND_WORDS as usize {
             file.resize(8192).unwrap();
@@ -1235,8 +1260,12 @@ impl Store {
             );
             #[cfg(debug_assertions)]
             store.validate(0);
-            store.fl_rebuild();
-            store.claims_rebuild();
+            if read_surface {
+                store.read_only = true;
+            } else {
+                store.fl_rebuild();
+                store.claims_rebuild();
+            }
         }
         store
     }
@@ -7326,5 +7355,54 @@ mod tests {
         for _ in 0..64 {
             store.claim(8);
         }
+    }
+
+    /// A store file with freed blocks in it, written and flushed: the image a cache bundle is.
+    #[cfg(feature = "mmap")]
+    fn image_with_freed_blocks(tag: &str) -> (std::path::PathBuf, Vec<u8>) {
+        let path = std::env::temp_dir().join(format!(
+            "loft_read_surface_{tag}_{}.store",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        {
+            let mut s = Store::open(path.to_str().unwrap());
+            let recs: Vec<u32> = (0..24).map(|_| s.claim(6)).collect();
+            for r in recs.iter().step_by(2) {
+                s.delete(*r);
+            }
+        }
+        let bytes = std::fs::read(&path).unwrap();
+        (path, bytes)
+    }
+
+    /// `Store::open_read_surface` writes NOTHING to the file.  A cache bundle is mapped
+    /// `MAP_SHARED` by every process that loads it, so a write made while opening reaches
+    /// them all: the free-list and claims rebuilds of an ordinary `open` wrote block footers
+    /// and tree links into the file, and processes warm-loading one stdlib bundle at once
+    /// crashed on each other's links.  The control proves the harness can fail: the ordinary
+    /// `open` of the same image does change it.
+    #[cfg(feature = "mmap")]
+    #[test]
+    fn a_read_surface_open_writes_nothing_to_its_file() {
+        let (path, before) = image_with_freed_blocks("rs");
+        {
+            let s = Store::open_read_surface(path.to_str().unwrap());
+            assert!(s.read_only, "a read surface is read-only from the start");
+        }
+        let after = std::fs::read(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert!(before == after, "opening a read surface changed its file");
+
+        let (path, before) = image_with_freed_blocks("ctl");
+        {
+            let _s = Store::open(path.to_str().unwrap());
+        }
+        let after = std::fs::read(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert!(
+            before != after,
+            "the control: an ordinary open rebuilds into the file"
+        );
     }
 }
