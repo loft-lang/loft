@@ -7,6 +7,7 @@
 // (`(Col-Group)`) shares records between them.
 //
 // @falsified-at: c152e6e83 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-bare-variant-is-typed-by-the-key-it-looks-up.patch — interpret exit 1 -> 0, native exit 1 -> 0
 //   CHANNEL: the exit — on the control `x.h[Green]` is refused ("bare variant 'Green' has no
 //   type here"), so nothing compiles.
 //   WITNESS: that refusal, at the first subscript.
