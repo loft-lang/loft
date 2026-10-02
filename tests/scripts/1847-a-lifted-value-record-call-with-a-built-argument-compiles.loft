@@ -17,7 +17,9 @@
 //
 // @falsified-by: tests/falsified/1847-a-lifted-value-record-call-with-a-built-argument-compiles.patch — native exit 1 -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
 //   CHANNEL: exit on native — the control's generated Rust does not compile (E0061).
-//   ARMED: nothing.
+//   ARMED: nothing.  The patch removes BOTH exclusions that route this call to the
+//     ordinary emitter — the value-record callee and the tuple parameter (`@FR-R-ValueLocal`);
+//     either alone reads INERT, because the other still routes it.
 //   WITNESS: "this function takes 3 arguments but 4 arguments were supplied".
 //   HOLDS: every asserted value on both trees for the interpreter, and on this tree for native.
 value struct V { ms: integer }
