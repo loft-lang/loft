@@ -3157,6 +3157,8 @@ impl Output<'_> {
         // block's statements are emitted inside a group's range and never reach here.
         self.block_serial += 1;
         let block_serial = self.block_serial;
+        // `@FR-R-PushFill`'s repeat-literal clause — the statement the fill already emitted.
+        let mut repeat_skip: Option<usize> = None;
         for (vnr, v) in operators.iter().enumerate() {
             self.close_groups_before(w, block_serial, vnr)?;
             self.close_ptr_windows_before(block_serial, vnr);
@@ -3175,6 +3177,39 @@ impl Output<'_> {
                 self.ckpt_cur_line = *line;
                 self.indent(w)?;
                 writeln!(w, "// loft:{file}:{line}")?;
+                continue;
+            }
+            if repeat_skip == Some(vnr) {
+                continue;
+            }
+            // `@FR-R-PushFill`'s repeat-literal clause — a `[c; n]` template and its copies are
+            // one fill of the tail; the two statements stand as the fallback for a count or a
+            // vector the fill refuses.
+            if !self.hoist_disabled
+                && !self.push_fill_disabled
+                && let Some(next) = operators.get(vnr + 1)
+                && let Some(rl) = super::hoist::repeat_literal(v, next, self.data)
+            {
+                let vec = self.expr_string(rl.vector)?;
+                let val = self.expr_string(rl.val)?;
+                let ty = rl.rust_type;
+                self.indent(w)?;
+                writeln!(
+                    w,
+                    "if !{{ let mut __rl = vector::push_header(&({vec}), &stores.allocations); stores.push_fill::<{ty}, false>(&mut __rl, &({vec}), {}_u32, {}_i64, ({val}) as {ty}) }} {{ //@FR-R-PushFill repeat literal",
+                    rl.size, rl.count
+                )?;
+                self.indent += 1;
+                for s in [v, next] {
+                    self.indent(w)?;
+                    self.output_code_inner(w, s)?;
+                    writeln!(w, ";")?;
+                }
+                self.indent -= 1;
+                self.indent(w)?;
+                writeln!(w, "}}")?;
+                crate::rewrite_census::fired("R-PushFill", 1);
+                repeat_skip = Some(vnr + 1);
                 continue;
             }
             // loft#1753 — a statement that calls into a frame first records the line it calls
