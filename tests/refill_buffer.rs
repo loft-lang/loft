@@ -83,6 +83,9 @@ fn the_cells_answer_the_same_and_free_every_store() {
         env.push(("LOFT_NATIVE_LEAK_CHECK", "1"));
         let (out, err, ok) = loft(&["--native", &cells()], &env);
         assert!(ok && out.contains("done"), "{env:?}:\n{out}\n{err}");
-        assert!(!err.contains("not freed"), "{env:?} left stores behind:\n{err}");
+        assert!(
+            !err.contains("not freed"),
+            "{env:?} left stores behind:\n{err}"
+        );
     }
 }

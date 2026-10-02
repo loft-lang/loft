@@ -10,6 +10,20 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### `(R-RefillBuffer)` — a return buffer refills the store a rebind released (2026-10-02)
+
+A builder called in a loop, `c = mul(a, c)`, minted its result's store every call, claimed
+its vector and filled it, and the rebind then freed the store holding `c`'s old value.  On
+`--native` that store is now kept (one at a time, never by a `par` worker), and a callee whose
+return buffer is built by a literal that writes every field, of a type whose heap is only
+vectors of no-heap elements, takes it: `OpDatabaseRefill`, with each vector field's zero
+emptying the vector in place.  Every other callee still mints.  `LOFT_NO_REFILL_BUFFER=1`.
+
+Measured on mesh3d's `mat4_mul` loop (`opt-level=3`, one core, three interleaved runs):
+0.16 → 0.10 s for 10⁶ multiplies (−37 %), same result and peak memory; with `(H-SwapRebind)`
+the loop is 0.19 → 0.10 s.  Guard f1–f7 on both backends, both switch arms and every store
+falsifier; plants named in its header.
+
 ### A cached image opens without writing its shared mapping (2026-10-02)
 
 Concurrent `loft` processes crashed each other on a warm cache: eight starts of a program that

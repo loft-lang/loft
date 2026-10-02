@@ -11,7 +11,16 @@
 // (`LOFT_NO_REFILL_BUFFER=1` frees it and mints).  What can go wrong is the previous value
 // showing through: a longer old vector, a field the literal did not write, a kept store of
 // another type, a value still read after the rebind.  Every cell checks values AND lengths.
-// Values hand-computed.
+// Values hand-computed; `tests/refill_buffer.rs` pins which callees refill.
+//
+// @falsified-at: none — the rule has no earlier build to catch, so the receipt is planted
+//   defects (2026-10-02), on --native: the vector field's in-place empty left out fails f1
+//   (length 8 for 4: the old elements stay and the fill appends); the kept store handed out
+//   whatever its type crashes on a record read through the wrong layout.  Admitting every
+//   type as refillable is INERT here — the text field's handle is overwritten, so every value
+//   still reads right — and is caught by the pin: an old text left in the kept store is
+//   invisible to a value, and the exit census skips the kept store by design.
+//   CHANNEL: an assertion (f1), a crash, and the pin's emission check.
 
 struct M { m: vector<float> }
 
