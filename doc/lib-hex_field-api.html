@@ -23,14 +23,14 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>hex_field API</h1>
 <article>
-<p><a href="lib-hex_field.html">← hex_field</a> · version 0.1.3</p>
+<p><a href="lib-hex_field.html">← hex_field</a> · version 0.1.4</p>
 <p class="lib-legend">92 public items, in source order. Generated from the registry index, which re-derives them from the package source at publish time — so a signature here is the one that version actually ships.</p>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">HexSet</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">HexSet</span> { hs_q0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, hs_r0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, hs_w: <span class="ty"><a href="stdlib-types.html">integer</a></span>, hs_h: <span class="ty"><a href="stdlib-types.html">integer</a></span>, hs_cells: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">boolean</a></span>&gt;, hs_count: <span class="ty"><a href="stdlib-types.html">integer</a></span> }</code></pre>
 <p>Occupancy over a BOUNDED CHUNK of hex coords: q in [hs_q0 .. hs_q0+hs_w), r in [hs_r0 .. hs_r0+hs_h).  Deliberately a chunk, not a global graph — every routine here is O(chunk) and never walks an unbounded neighbourhood, so the same code serves a 32x32 world chunk (plan #2) as serves a one-off tower window. Anything spanning chunks is traced per chunk (with a halo) and stitched; nothing here assumes the form is centred, or that the world is reachable.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">VecMap</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">VecMap</span> { vm_k: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;, vm_m: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;, vm_start: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;, vm_loops: <span class="ty"><a href="stdlib-types.html">integer</a></span> }</code></pre>
 <p>A vector map: loops concatenated, loop i occupying [vm_start[i], vm_start[i+1]).</p>
 </div>
 <div class="item">
@@ -86,7 +86,7 @@
 <p>The neighbour's <code>r</code>, the companion of <code>nb_q</code>.  Walk both to step across the field.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Heights</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Heights</span> { hz_q0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, hz_r0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, hz_w: <span class="ty"><a href="stdlib-types.html">integer</a></span>, hz_h: <span class="ty"><a href="stdlib-types.html">integer</a></span>, hz_z: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt; }</code></pre>
 <p>── HEIGHTS ─────────────────────────────────────────────────────────────────</p>
 <p>A per-CELL height, chunk-indexed exactly like a HexSet.  Everything before stairs got by with height on the material (how tall a wall is); a staircase is the first thing that needs the GROUND itself to have a z, because each step is a different floor.</p>
 <p>It is deliberately a separate structure rather than a field on HexSet: most of the world is flat and should not pay for a height it never reads, and a height field is derived (from a way, a contour, a terrace) exactly as the edge field is.</p>
@@ -104,7 +104,7 @@
 <p>One cell's height, or 0.0 outside the window — probe a neighbour without guarding.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Labels</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Labels</span> { lb_q0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, lb_r0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, lb_w: <span class="ty"><a href="stdlib-types.html">integer</a></span>, lb_h: <span class="ty"><a href="stdlib-types.html">integer</a></span>, lb_v: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; }</code></pre>
 <p>── LABELS ──────────────────────────────────────────────────────────────────</p>
 <p>A per-CELL integer, chunk-indexed exactly like Heights.  Heights answers &quot;how high is this cell&quot;; Labels answers &quot;whose is it&quot;.  Plan #9 (canopy-first trees) needs the second because a canopy is a PARTITION under competition rather than a stamped footprint — the assignment is the output, not a tie-break.</p>
 <p>-1 means unowned, which is a real state: a cell no crown reaches belongs to nobody.</p>
@@ -179,19 +179,19 @@
 <p>Returns 0 when the vector map is safe to consume; otherwise a failure code: 1 no loops   2 degenerate loop   3 segment is not a hex edge 4 area round-trip failed         5 no outer loop at all 6 a vertex repeats (the outline touches itself)</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">HexDoc</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">HexDoc</span> { doc_code: <span class="ty"><a href="stdlib-types.html">integer</a></span>, doc_cells: <span class="en">HexSet</span>, doc_heights: <span class="en">Heights</span>, doc_labels: <span class="en">Labels</span>, doc_edges: <span class="en">EdgeSet</span>, doc_layers: <span class="en">Layers</span>, doc_has_h: <span class="ty"><a href="stdlib-types.html">boolean</a></span>, doc_has_l: <span class="ty"><a href="stdlib-types.html">boolean</a></span>, doc_has_e: <span class="ty"><a href="stdlib-types.html">boolean</a></span>, doc_skipped: <span class="ty"><a href="stdlib-types.html">integer</a></span> }</code></pre>
 <p>What a load produced.  <code>doc_code</code> is the refusal code; the field members are meaningful only when it is HXF_OK.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">doc_write</span>(</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">doc_write</span>( path: <span class="ty"><a href="stdlib-types.html">text</a></span>, s: <span class="en">HexSet</span>, hz: <span class="en">Heights</span>, lb: <span class="en">Labels</span>, has_h: <span class="ty"><a href="stdlib-types.html">boolean</a></span>, has_l: <span class="ty"><a href="stdlib-types.html">boolean</a></span> )</code></pre>
 <p>Write a field.  <code>heights</code> / <code>labels</code> are optional: pass has_h/has_l false to leave the section out entirely rather than writing a zero-filled one, so a stencil that only carries occupancy costs only occupancy.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">doc_write_edges</span>(</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">doc_write_edges</span>( path: <span class="ty"><a href="stdlib-types.html">text</a></span>, s: <span class="en">HexSet</span>, hz: <span class="en">Heights</span>, lb: <span class="en">Labels</span>, eg: <span class="en">EdgeSet</span>, has_h: <span class="ty"><a href="stdlib-types.html">boolean</a></span>, has_l: <span class="ty"><a href="stdlib-types.html">boolean</a></span>, has_e: <span class="ty"><a href="stdlib-types.html">boolean</a></span> )</code></pre>
 <p>As doc_write, plus the wall layer.  The EDGE payload is the halo grid — gw*gh*3 slots — because an edge on the chunk boundary belongs to a cell outside it, and dropping those would silently open the walls of every stamped building's rim.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">doc_write_all</span>(</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">doc_write_all</span>( path: <span class="ty"><a href="stdlib-types.html">text</a></span>, s: <span class="en">HexSet</span>, hz: <span class="en">Heights</span>, lb: <span class="en">Labels</span>, eg: <span class="en">EdgeSet</span>, ly: <span class="en">Layers</span>, has_h: <span class="ty"><a href="stdlib-types.html">boolean</a></span>, has_l: <span class="ty"><a href="stdlib-types.html">boolean</a></span>, has_e: <span class="ty"><a href="stdlib-types.html">boolean</a></span> )</code></pre>
 <p>The full form: cells, optional heights/labels/edges, and any number of NAMED integer layers.</p>
 </div>
 <div class="item">
@@ -214,14 +214,14 @@
 <p>Reflect a cell in the vertical axis (k → −k).  With the six rotations this gives the 12 orientations handed content needs — an L-shaped house, a stair.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Stencil</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Stencil</span> { sn_cells: <span class="en">HexSet</span>, sn_heights: <span class="en">Heights</span>, sn_labels: <span class="en">Labels</span>, sn_edges: <span class="en">EdgeSet</span>, sn_layers: <span class="en">Layers</span>, sn_has_h: <span class="ty"><a href="stdlib-types.html">boolean</a></span>, sn_has_l: <span class="ty"><a href="stdlib-types.html">boolean</a></span>, sn_has_e: <span class="ty"><a href="stdlib-types.html">boolean</a></span>, sn_code: <span class="ty"><a href="stdlib-types.html">integer</a></span> }</code></pre>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">stencil_from</span>(s: <span class="en">HexSet</span>, hz: <span class="en">Heights</span>, lb: <span class="en">Labels</span>, has_h: <span class="ty"><a href="stdlib-types.html">boolean</a></span>, has_l: <span class="ty"><a href="stdlib-types.html">boolean</a></span>) -&gt; <span class="en">Stencil</span></code></pre>
 <p>Build the field FIRST, then construct the stencil: these take their arguments by value, so cells set on the HexSet afterwards do not reach the stencil.  The failure is quiet — the stencil reports the right layer count and extent, and only the contents are missing.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">stencil_with_edges</span>(s: <span class="en">HexSet</span>, hz: <span class="en">Heights</span>, lb: <span class="en">Labels</span>, eg: <span class="en">EdgeSet</span>,</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">stencil_with_edges</span>(s: <span class="en">HexSet</span>, hz: <span class="en">Heights</span>, lb: <span class="en">Labels</span>, eg: <span class="en">EdgeSet</span>, has_h: <span class="ty"><a href="stdlib-types.html">boolean</a></span>, has_l: <span class="ty"><a href="stdlib-types.html">boolean</a></span>) -&gt; <span class="en">Stencil</span></code></pre>
 <p>A stencil that carries walls.  Separate constructor so the common case — a footprint with no walls — does not allocate an edge layer it never reads.</p>
 </div>
 <div class="item">
@@ -237,37 +237,37 @@
 <p>Degrees, refused rather than rounded when they are not a multiple of 60. A rotation that silently rounds is how an exact lattice quietly becomes an approximate one, so this returns an EMPTY stencil carrying ROT_NOT_MULTIPLE.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">stencil_stamp</span>(</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">stencil_stamp</span>( dst: <span class="en">HexSet</span>, dst_h: <span class="en">Heights</span>, dst_l: <span class="en">Labels</span>, st: <span class="en">Stencil</span>, aq: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ar: <span class="ty"><a href="stdlib-types.html">integer</a></span> )</code></pre>
 <p>Stamp <code>st</code> so its (0,0) lands on target cell (aq, ar).  Occupied stencil cells win; everything else in the target is untouched, which is what makes two stamps at different places order-free.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">stencil_stamp_layers</span>(</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">stencil_stamp_layers</span>( dst: <span class="en">HexSet</span>, dst_h: <span class="en">Heights</span>, dst_l: <span class="en">Labels</span>, dst_y: <span class="en">Layers</span>, st: <span class="en">Stencil</span>, aq: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ar: <span class="ty"><a href="stdlib-types.html">integer</a></span> )</code></pre>
 <p>Stamp the named layers too.  Separate from stencil_stamp so a consumer that uses no layers pays nothing for them.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">stencil_stamp_all</span>(</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">stencil_stamp_all</span>( dst: <span class="en">HexSet</span>, dst_h: <span class="en">Heights</span>, dst_l: <span class="en">Labels</span>, dst_y: <span class="en">Layers</span>, dst_e: <span class="en">EdgeSet</span>, st: <span class="en">Stencil</span>, aq: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ar: <span class="ty"><a href="stdlib-types.html">integer</a></span> )</code></pre>
 <p>Everything at once: cells, heights, labels, named layers and walls.  Exists so a consumer does not stamp cells three times by calling the three narrower forms, and so there is ONE place that knows the full payload.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">stencil_stamp_edges</span>(</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">stencil_stamp_edges</span>( dst: <span class="en">HexSet</span>, dst_h: <span class="en">Heights</span>, dst_l: <span class="en">Labels</span>, dst_e: <span class="en">EdgeSet</span>, st: <span class="en">Stencil</span>, aq: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ar: <span class="ty"><a href="stdlib-types.html">integer</a></span> )</code></pre>
 <p>Stamp including the wall layer.  Edges translate the same way cells do — in lattice space — so a wall stamped on an odd row stays on the edge it was authored on.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">stencil_unstamp</span>(</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">stencil_unstamp</span>( dst: <span class="en">HexSet</span>, dst_h: <span class="en">Heights</span>, dst_l: <span class="en">Labels</span>, st: <span class="en">Stencil</span>, aq: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ar: <span class="ty"><a href="stdlib-types.html">integer</a></span> )</code></pre>
 <p>Clear the cells, heights and labels a <code>stencil_stamp</code> wrote.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">stencil_unstamp_layers</span>(</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">stencil_unstamp_layers</span>( dst: <span class="en">HexSet</span>, dst_h: <span class="en">Heights</span>, dst_l: <span class="en">Labels</span>, dst_y: <span class="en">Layers</span>, st: <span class="en">Stencil</span>, aq: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ar: <span class="ty"><a href="stdlib-types.html">integer</a></span> )</code></pre>
 <p>Clear the named layers too — the inverse of <code>stencil_stamp_layers</code>.</p>
 <p>The layer NAMES the stamp added to the target stay: a name is a property of the field, not of one placement, and a second placement of the same part would only add it back.  Only the VALUES under this footprint are cleared.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">stencil_unstamp_all</span>(</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">stencil_unstamp_all</span>( dst: <span class="en">HexSet</span>, dst_h: <span class="en">Heights</span>, dst_l: <span class="en">Labels</span>, dst_y: <span class="en">Layers</span>, dst_e: <span class="en">EdgeSet</span>, st: <span class="en">Stencil</span>, aq: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ar: <span class="ty"><a href="stdlib-types.html">integer</a></span> )</code></pre>
 <p>Everything at once — the inverse of <code>stencil_stamp_all</code>, and the form a consumer should use, so one place knows the full payload in BOTH directions.</p>
 <p>Edges walk the same halo the stamp did, and clear only the slots the stencil itself carried a material for.  Iterating the occupied cells instead would leave the rim walls behind — the same blindness that once turned 18 edge slots into 10 with every cell count still agreeing.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">EdgeSet</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">EdgeSet</span> { eg_q0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, eg_r0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, eg_w: <span class="ty"><a href="stdlib-types.html">integer</a></span>, eg_h: <span class="ty"><a href="stdlib-types.html">integer</a></span>, eg_gw: <span class="ty"><a href="stdlib-types.html">integer</a></span>, eg_gh: <span class="ty"><a href="stdlib-types.html">integer</a></span>, eg_mat: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt;, eg_surf: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">i32</a></span>&gt;, eg_count: <span class="ty"><a href="stdlib-types.html">integer</a></span>, eg_refused: <span class="ty"><a href="stdlib-types.html">integer</a></span> }</code></pre>
 <p>TWO SLOTS, TWO OWNERS.  <code>eg_mat</code> is the PHYSICS of an edge — what it is made of — and is authored: a stencil carries materials, a document round-trips them.  <code>eg_surf</code> is the GEOMETRY — WHICH exact surface blocks here — and is derived at build time.</p>
 <p>The surface slot exists because a hex edge has only 6 possible normals, and measured against the true wall normal across 24 headings, using the edge's own normal is wrong by up to 90 degrees: a bounce that sends you sideways.  So the edge stores an id and the surface carries the exact geometry.  That makes the grid a SPATIAL INDEX — it says THAT you hit something and WHICH thing — while the normal stays exact and mesh-free.</p>
 <p><code>eg_surf</code> is DELIBERATELY NOT SERIALIZED by the document format, and that is not an omission to fix later: a surface id points into a <code>Surfaces</code> table this library does not own, so writing ids to a file would persist dangling references.  Materials are ids into a closed enumeration of mechanisms and travel fine; surfaces are not.  The TAG_EDGE section stays exactly <code>(w+2)*(h+2)*3</code> material bytes, so existing documents keep loading.</p>
@@ -292,7 +292,7 @@
 <p>The material on the edge between two neighbouring cells, or 0 when there is none. Edges carry what cells cannot: a wall belongs BETWEEN two hexes, not inside one.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">edge_set_surf</span>(e: <span class="en">EdgeSet</span>, qa: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ra: <span class="ty"><a href="stdlib-types.html">integer</a></span>, qb: <span class="ty"><a href="stdlib-types.html">integer</a></span>, rb: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">edge_set_surf</span>(e: <span class="en">EdgeSet</span>, qa: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ra: <span class="ty"><a href="stdlib-types.html">integer</a></span>, qb: <span class="ty"><a href="stdlib-types.html">integer</a></span>, rb: <span class="ty"><a href="stdlib-types.html">integer</a></span>, surf: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
 <p>Write the surface blocking this edge, maintaining the blocked count exactly. Unconditional — the WRITE POLICY belongs to the caller, because there is more than one: crawler's collision layer wants first-writer-wins for plain construction and nearest-surface arbitration where two parts meet.  A policy baked in here would silently decide which surface owns a junction, which is a physics question, not a storage one.</p>
 </div>
 <div class="item">
@@ -300,7 +300,7 @@
 <p>The surface on that same edge — the finish, where <code>edge_mat</code> is the substance.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">edge_set_both</span>(e: <span class="en">EdgeSet</span>, qa: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ra: <span class="ty"><a href="stdlib-types.html">integer</a></span>, qb: <span class="ty"><a href="stdlib-types.html">integer</a></span>, rb: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">edge_set_both</span>(e: <span class="en">EdgeSet</span>, qa: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ra: <span class="ty"><a href="stdlib-types.html">integer</a></span>, qb: <span class="ty"><a href="stdlib-types.html">integer</a></span>, rb: <span class="ty"><a href="stdlib-types.html">integer</a></span>, surf: <span class="ty"><a href="stdlib-types.html">integer</a></span>, mat: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
 <p>Both halves of an edge in one call, so a caller cannot set geometry and forget physics.</p>
 </div>
 <div class="item">
@@ -345,7 +345,7 @@
 <p>How many edges carry a material.  Walks the canonical slots only, so each edge is counted once however many cells touch it.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Layers</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Layers</span> { ly_q0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ly_r0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ly_w: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ly_h: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ly_names: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt;, ly_vals: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; }</code></pre>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">layers_new</span>(q0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, w: <span class="ty"><a href="stdlib-types.html">integer</a></span>, h: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Layers</span></code></pre>

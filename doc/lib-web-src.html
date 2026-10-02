@@ -23,8 +23,8 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>web source</h1>
 <article>
-<p><a href="lib-web.html">← web</a> · <a href="lib-web-api.html">API reference</a> · version 0.4.2</p>
-<p class="lib-legend">4 file(s), 653 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<p><a href="lib-web.html">← web</a> · <a href="lib-web-api.html">API reference</a> · version 0.4.3</p>
+<p class="lib-legend">4 file(s), 646 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
 <table class="lib-table">
@@ -42,27 +42,27 @@
 <tr><td><code>http_get_range</code> <span class="search-kind">fn</span></td><td><a href="#src-web-loft-L113">113</a></td><td>—</td><td><a href="#src-web-loft-L153">153</a></td></tr>
 <tr><td><code>http_get_range_h</code> <span class="search-kind">fn</span></td><td><a href="#src-web-loft-L120">120</a></td><td>—</td><td>none in this package</td></tr>
 <tr><td><code>http_size</code> <span class="search-kind">fn</span></td><td><a href="#src-web-loft-L150">150</a></td><td>—</td><td>none in this package</td></tr>
-<tr><td><code>WsHandler</code> <span class="search-kind">struct</span></td><td><a href="#src-web-loft-L183">183</a></td><td>—</td><td><a href="#src-web-loft-L244">244</a> <a href="#src-web-loft-L247">247</a> <a href="#src-web-loft-L254">254</a> <a href="#src-web-loft-L262">262</a> <a href="#src-web-loft-L269">269</a> <a href="#src-web-loft-L278">278</a> … (9 total)</td></tr>
-<tr><td><code>ws_handler</code> <span class="search-kind">fn</span></td><td><a href="#src-web-loft-L244">244</a></td><td><a href="#tests-worked-examples-loft-L72">WEB-003</a></td><td><a href="#tests-worked-examples-loft-L83">83</a> <a href="#tests-worked-examples-loft-L86">86</a></td></tr>
-<tr><td><code>send</code> <span class="search-kind">fn</span></td><td><a href="#src-web-loft-L254">254</a></td><td><a href="#tests-worked-examples-loft-L72">WEB-003</a></td><td><a href="#tests-worked-examples-loft-L99">99</a> <a href="#tests-worked-examples-loft-L100">100</a></td></tr>
-<tr><td><code>send_binary</code> <span class="search-kind">fn</span></td><td><a href="#src-web-loft-L262">262</a></td><td>—</td><td>none in this package</td></tr>
-<tr><td><code>last_opcode</code> <span class="search-kind">fn</span></td><td><a href="#src-web-loft-L269">269</a></td><td>—</td><td>none in this package</td></tr>
-<tr><td><code>pump</code> <span class="search-kind">fn</span></td><td><a href="#src-web-loft-L278">278</a></td><td>—</td><td><a href="#tests-worked-examples-loft-L100">100</a></td></tr>
-<tr><td><code>try_recv</code> <span class="search-kind">fn</span></td><td><a href="#src-web-loft-L292">292</a></td><td>—</td><td><a href="#tests-worked-examples-loft-L101">101</a> <a href="#tests-worked-examples-loft-L102">102</a></td></tr>
-<tr><td><code>close</code> <span class="search-kind">fn</span></td><td><a href="#src-web-loft-L298">298</a></td><td>—</td><td><a href="#tests-worked-examples-loft-L104">104</a></td></tr>
-<tr><td><code>sleep_ms</code> <span class="search-kind">fn</span></td><td><a href="#src-web-loft-L306">306</a></td><td>—</td><td>none in this package</td></tr>
-<tr><td><code>pack_reset</code> <span class="search-kind">fn</span></td><td><a href="#src-web-loft-L332">332</a></td><td><a href="#tests-worked-examples-loft-L17">WEB-001</a></td><td><a href="#tests-byte-at-loft-L25">25</a> <a href="#tests-byte-at-loft-L55">55</a> <a href="#tests-pack-loft-L11">11</a> <a href="#tests-pack-loft-L21">21</a> <a href="#tests-pack-loft-L31">31</a> <a href="#tests-pack-loft-L40">40</a> … (10 total)</td></tr>
-<tr><td><code>pack_u8</code> <span class="search-kind">fn</span></td><td><a href="#src-web-loft-L336">336</a></td><td>—</td><td><a href="#tests-byte-at-loft-L26">26</a> <a href="#tests-byte-at-loft-L56">56</a> <a href="#tests-byte-at-loft-L57">57</a> <a href="#tests-pack-loft-L12">12</a> <a href="#tests-pack-loft-L13">13</a> <a href="#tests-pack-loft-L41">41</a> … (13 total)</td></tr>
-<tr><td><code>pack_u16_le</code> <span class="search-kind">fn</span></td><td><a href="#src-web-loft-L340">340</a></td><td>—</td><td><a href="#tests-byte-at-loft-L27">27</a> <a href="#tests-pack-loft-L22">22</a></td></tr>
-<tr><td><code>pack_u32_le</code> <span class="search-kind">fn</span></td><td><a href="#src-web-loft-L346">346</a></td><td>—</td><td><a href="#tests-pack-loft-L32">32</a></td></tr>
-<tr><td><code>pack_take</code> <span class="search-kind">fn</span></td><td><a href="#src-web-loft-L352">352</a></td><td><a href="#tests-worked-examples-loft-L17">WEB-001</a></td><td><a href="#tests-byte-at-loft-L28">28</a> <a href="#tests-byte-at-loft-L58">58</a> <a href="#tests-pack-loft-L14">14</a> <a href="#tests-pack-loft-L23">23</a> <a href="#tests-pack-loft-L33">33</a> <a href="#tests-pack-loft-L42">42</a> … (12 total)</td></tr>
-<tr><td><code>byte_at</code> <span class="search-kind">fn</span></td><td><a href="#src-web-loft-L361">361</a></td><td><a href="#tests-byte-at-loft-L1">WEB-002</a></td><td><a href="#tests-byte-at-loft-L18">18</a> <a href="#tests-byte-at-loft-L19">19</a> <a href="#tests-byte-at-loft-L20">20</a> <a href="#tests-byte-at-loft-L29">29</a> <a href="#tests-byte-at-loft-L31">31</a> <a href="#tests-byte-at-loft-L32">32</a> … (19 total)</td></tr>
-<tr><td><code>WsGroupEvent</code> <span class="search-kind">struct</span></td><td><a href="#src-web-loft-L381">381</a></td><td>—</td><td><a href="#src-web-loft-L414">414</a> <a href="#src-web-loft-L418">418</a> <a href="#src-web-loft-L420">420</a></td></tr>
-<tr><td><code>WsGroup</code> <span class="search-kind">struct</span></td><td><a href="#src-web-loft-L386">386</a></td><td>—</td><td><a href="#src-web-loft-L400">400</a> <a href="#src-web-loft-L402">402</a> <a href="#src-web-loft-L406">406</a> <a href="#src-web-loft-L414">414</a></td></tr>
-<tr><td><code>ws_group</code> <span class="search-kind">fn</span></td><td><a href="#src-web-loft-L400">400</a></td><td>—</td><td>none in this package</td></tr>
-<tr><td><code>add</code> <span class="search-kind">fn</span></td><td><a href="#src-web-loft-L406">406</a></td><td>—</td><td>none in this package</td></tr>
-<tr><td><code>poll</code> <span class="search-kind">fn</span></td><td><a href="#src-web-loft-L414">414</a></td><td>—</td><td>none in this package</td></tr>
-<tr><td><code>frame_yield</code> <span class="search-kind">fn</span></td><td><a href="#src-web-loft-L426">426</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>WsHandler</code> <span class="search-kind">struct</span></td><td><a href="#src-web-loft-L174">174</a></td><td>—</td><td><a href="#src-web-loft-L231">231</a> <a href="#src-web-loft-L234">234</a> <a href="#src-web-loft-L241">241</a> <a href="#src-web-loft-L249">249</a> <a href="#src-web-loft-L256">256</a> <a href="#src-web-loft-L265">265</a> … (9 total)</td></tr>
+<tr><td><code>ws_handler</code> <span class="search-kind">fn</span></td><td><a href="#src-web-loft-L231">231</a></td><td><a href="#tests-worked-examples-loft-L72">WEB-003</a></td><td><a href="#tests-worked-examples-loft-L83">83</a> <a href="#tests-worked-examples-loft-L86">86</a></td></tr>
+<tr><td><code>send</code> <span class="search-kind">fn</span></td><td><a href="#src-web-loft-L241">241</a></td><td><a href="#tests-worked-examples-loft-L72">WEB-003</a></td><td><a href="#tests-worked-examples-loft-L99">99</a> <a href="#tests-worked-examples-loft-L100">100</a></td></tr>
+<tr><td><code>send_binary</code> <span class="search-kind">fn</span></td><td><a href="#src-web-loft-L249">249</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>last_opcode</code> <span class="search-kind">fn</span></td><td><a href="#src-web-loft-L256">256</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>pump</code> <span class="search-kind">fn</span></td><td><a href="#src-web-loft-L265">265</a></td><td>—</td><td><a href="#tests-worked-examples-loft-L100">100</a></td></tr>
+<tr><td><code>try_recv</code> <span class="search-kind">fn</span></td><td><a href="#src-web-loft-L279">279</a></td><td>—</td><td><a href="#tests-worked-examples-loft-L101">101</a> <a href="#tests-worked-examples-loft-L102">102</a></td></tr>
+<tr><td><code>close</code> <span class="search-kind">fn</span></td><td><a href="#src-web-loft-L285">285</a></td><td>—</td><td><a href="#tests-worked-examples-loft-L104">104</a></td></tr>
+<tr><td><code>sleep_ms</code> <span class="search-kind">fn</span></td><td><a href="#src-web-loft-L293">293</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>pack_reset</code> <span class="search-kind">fn</span></td><td><a href="#src-web-loft-L319">319</a></td><td><a href="#tests-worked-examples-loft-L17">WEB-001</a></td><td><a href="#tests-byte-at-loft-L25">25</a> <a href="#tests-byte-at-loft-L55">55</a> <a href="#tests-pack-loft-L11">11</a> <a href="#tests-pack-loft-L21">21</a> <a href="#tests-pack-loft-L31">31</a> <a href="#tests-pack-loft-L40">40</a> … (10 total)</td></tr>
+<tr><td><code>pack_u8</code> <span class="search-kind">fn</span></td><td><a href="#src-web-loft-L323">323</a></td><td>—</td><td><a href="#tests-byte-at-loft-L26">26</a> <a href="#tests-byte-at-loft-L56">56</a> <a href="#tests-byte-at-loft-L57">57</a> <a href="#tests-pack-loft-L12">12</a> <a href="#tests-pack-loft-L13">13</a> <a href="#tests-pack-loft-L41">41</a> … (13 total)</td></tr>
+<tr><td><code>pack_u16_le</code> <span class="search-kind">fn</span></td><td><a href="#src-web-loft-L327">327</a></td><td>—</td><td><a href="#tests-byte-at-loft-L27">27</a> <a href="#tests-pack-loft-L22">22</a></td></tr>
+<tr><td><code>pack_u32_le</code> <span class="search-kind">fn</span></td><td><a href="#src-web-loft-L332">332</a></td><td>—</td><td><a href="#tests-pack-loft-L32">32</a></td></tr>
+<tr><td><code>pack_take</code> <span class="search-kind">fn</span></td><td><a href="#src-web-loft-L338">338</a></td><td><a href="#tests-worked-examples-loft-L17">WEB-001</a></td><td><a href="#tests-byte-at-loft-L28">28</a> <a href="#tests-byte-at-loft-L58">58</a> <a href="#tests-pack-loft-L14">14</a> <a href="#tests-pack-loft-L23">23</a> <a href="#tests-pack-loft-L33">33</a> <a href="#tests-pack-loft-L42">42</a> … (12 total)</td></tr>
+<tr><td><code>byte_at</code> <span class="search-kind">fn</span></td><td><a href="#src-web-loft-L346">346</a></td><td><a href="#tests-byte-at-loft-L1">WEB-002</a></td><td><a href="#tests-byte-at-loft-L18">18</a> <a href="#tests-byte-at-loft-L19">19</a> <a href="#tests-byte-at-loft-L20">20</a> <a href="#tests-byte-at-loft-L29">29</a> <a href="#tests-byte-at-loft-L31">31</a> <a href="#tests-byte-at-loft-L32">32</a> … (19 total)</td></tr>
+<tr><td><code>WsGroupEvent</code> <span class="search-kind">struct</span></td><td><a href="#src-web-loft-L373">373</a></td><td>—</td><td><a href="#src-web-loft-L407">407</a> <a href="#src-web-loft-L411">411</a> <a href="#src-web-loft-L413">413</a></td></tr>
+<tr><td><code>WsGroup</code> <span class="search-kind">struct</span></td><td><a href="#src-web-loft-L379">379</a></td><td>—</td><td><a href="#src-web-loft-L393">393</a> <a href="#src-web-loft-L395">395</a> <a href="#src-web-loft-L399">399</a> <a href="#src-web-loft-L407">407</a></td></tr>
+<tr><td><code>ws_group</code> <span class="search-kind">fn</span></td><td><a href="#src-web-loft-L393">393</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>add</code> <span class="search-kind">fn</span></td><td><a href="#src-web-loft-L399">399</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>poll</code> <span class="search-kind">fn</span></td><td><a href="#src-web-loft-L407">407</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>frame_yield</code> <span class="search-kind">fn</span></td><td><a href="#src-web-loft-L419">419</a></td><td>—</td><td>none in this package</td></tr>
 </table>
 <h2 id="src-web-loft">src/web.loft</h2>
 <pre class="src"><code><span id="src-web-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -176,7 +176,7 @@
 <span id="src-web-loft-L109"><span class="cm">// Read the byte range [offset, offset+len) of a remote file via a Range</span></span>
 <span id="src-web-loft-L110"><span class="cm">// request. Returns status 206 (Partial Content) with the raw bytes in `body`</span></span>
 <span id="src-web-loft-L111"><span class="cm">// when the server honours ranges; a server that ignores Range returns 200 with</span></span>
-<span id="src-web-loft-L112"><span class="cm">// the full body. Read the bytes with `byte_at(response.body, i)`.</span></span>
+<span id="src-web-loft-L112"><span class="cm">// the full body. Read the bytes with `byte_at(i, response.body)`.</span></span>
 <span id="src-web-loft-L113"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">http_get_range</span>(url: <span class="ty"><a href="stdlib-types.html">text</a></span>, offset: <span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="bi"><a href="stdlib-text.html">len</a></span>: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">HttpResponse</span> {</span>
 <span id="src-web-loft-L114">  last = offset + <span class="bi"><a href="stdlib-text.html">len</a></span> - <span class="nm">1</span>;</span>
 <span id="src-web-loft-L115">  status = <span class="fn-call">http_do</span>(<span class="st">"GET"</span>, url, <span class="st">""</span>, <span class="st">"Range: bytes={offset}-{last}"</span>);</span>
@@ -232,266 +232,259 @@
 <span id="src-web-loft-L165"><span class="cm">// connect at registration time, auto-reconnect on transient failure</span></span>
 <span id="src-web-loft-L166"><span class="cm">// (exponential backoff capped at 10 seconds), close on `close()`.</span></span>
 <span id="src-web-loft-L167"><span class="cm">//</span></span>
-<span id="src-web-loft-L168"><span class="cm">// The `pump` closure is passed in per call rather than stored in the</span></span>
-<span id="src-web-loft-L169"><span class="cm">// `WsHandler` struct — that's the workaround for the layout limit on</span></span>
-<span id="src-web-loft-L170"><span class="cm">// closure-in-struct-field captures (PROBLEMS.md § 213).  Once full</span></span>
-<span id="src-web-loft-L171"><span class="cm">// closure support lands, `on_message` will move into the struct so</span></span>
-<span id="src-web-loft-L172"><span class="cm">// it can be registered once at `ws_handler` time.  The architecture</span></span>
-<span id="src-web-loft-L173"><span class="cm">// validated here is the one the eventual API targets; only the</span></span>
-<span id="src-web-loft-L174"><span class="cm">// "where does the closure live" detail changes.</span></span>
-<span id="src-web-loft-L175"><span class="cm">//</span></span>
-<span id="src-web-loft-L176"><span class="cm">// State pattern: the closure typically captures a `Reference&lt;T&gt;` to</span></span>
-<span id="src-web-loft-L177"><span class="cm">// state held in a Store (the "store with a fixed pointer" workaround</span></span>
-<span id="src-web-loft-L178"><span class="cm">// — the pointer is snapshotted at capture time, and the record it</span></span>
-<span id="src-web-loft-L179"><span class="cm">// points at remains mutable through the pointer).  This makes the</span></span>
-<span id="src-web-loft-L180"><span class="cm">// per-message handler look identical to the future direct-capture</span></span>
-<span id="src-web-loft-L181"><span class="cm">// style.</span></span>
+<span id="src-web-loft-L168"><span class="cm">// `pump` takes its callback per call, so a handler holds no closure: the</span></span>
+<span id="src-web-loft-L169"><span class="cm">// callback typically captures a `Reference&lt;T&gt;` to state held in a store, and</span></span>
+<span id="src-web-loft-L170"><span class="cm">// updates that state through it for each message.</span></span>
+<span id="src-web-loft-L171"></span>
+<span id="src-web-loft-L172"><span class="cm">// An open WebSocket session, from `ws_handler`.  It is a slot number on the</span></span>
+<span id="src-web-loft-L173"><span class="cm">// native side; the connection behind it reconnects on its own.</span></span>
+<span id="src-web-loft-L174"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">WsHandler</span> {</span>
+<span id="src-web-loft-L175">  id: <span class="ty"><a href="stdlib-types.html">integer</a></span>            <span class="cm">// Rust-side connection slot</span></span>
+<span id="src-web-loft-L176">}</span>
+<span id="src-web-loft-L177"></span>
+<span id="src-web-loft-L178"><span class="cm">// --- Internal natives (lifecycle primitives) ---</span></span>
+<span id="src-web-loft-L179"></span>
+<span id="src-web-loft-L180"><span class="kw">fn</span> <span class="fn-call">ws_client_connect_native</span>(url: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-web-loft-L181">#native <span class="st">"n_ws_connect"</span></span>
 <span id="src-web-loft-L182"></span>
-<span id="src-web-loft-L183"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">WsHandler</span> {</span>
-<span id="src-web-loft-L184">  id: <span class="ty"><a href="stdlib-types.html">integer</a></span>            <span class="cm">// Rust-side connection slot</span></span>
-<span id="src-web-loft-L185">}</span>
-<span id="src-web-loft-L186"></span>
-<span id="src-web-loft-L187"><span class="cm">// --- Internal natives (lifecycle primitives) ---</span></span>
-<span id="src-web-loft-L188"></span>
-<span id="src-web-loft-L189"><span class="kw">fn</span> <span class="fn-call">ws_client_connect_native</span>(url: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
-<span id="src-web-loft-L190">#native <span class="st">"n_ws_connect"</span></span>
-<span id="src-web-loft-L191"></span>
-<span id="src-web-loft-L192"><span class="kw">fn</span> <span class="fn-call">ws_client_send_native</span>(handle: <span class="ty"><a href="stdlib-types.html">integer</a></span>, msg: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span>;</span>
-<span id="src-web-loft-L193">#native <span class="st">"n_ws_client_send"</span></span>
-<span id="src-web-loft-L194"></span>
-<span id="src-web-loft-L195"><span class="cm">// Send the byte buffer as a binary WebSocket frame (opcode 2)</span></span>
-<span id="src-web-loft-L196"><span class="cm">// instead of a text frame (opcode 1).  Same payload encoding —</span></span>
-<span id="src-web-loft-L197"><span class="cm">// loft `text` is a byte buffer; this just changes the frame type</span></span>
-<span id="src-web-loft-L198"><span class="cm">// the peer sees.  Used by TTT v5 + plan-36 for binary world data.</span></span>
-<span id="src-web-loft-L199"><span class="kw">fn</span> <span class="fn-call">ws_client_send_binary_native</span>(handle: <span class="ty"><a href="stdlib-types.html">integer</a></span>, msg: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span>;</span>
-<span id="src-web-loft-L200">#native <span class="st">"n_ws_client_send_binary"</span></span>
+<span id="src-web-loft-L183"><span class="kw">fn</span> <span class="fn-call">ws_client_send_native</span>(handle: <span class="ty"><a href="stdlib-types.html">integer</a></span>, msg: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span>;</span>
+<span id="src-web-loft-L184">#native <span class="st">"n_ws_client_send"</span></span>
+<span id="src-web-loft-L185"></span>
+<span id="src-web-loft-L186"><span class="cm">// Send the byte buffer as a binary WebSocket frame (opcode 2)</span></span>
+<span id="src-web-loft-L187"><span class="cm">// instead of a text frame (opcode 1).  Same payload encoding —</span></span>
+<span id="src-web-loft-L188"><span class="cm">// loft `text` is a byte buffer; this just changes the frame type</span></span>
+<span id="src-web-loft-L189"><span class="cm">// the peer sees.  Used by TTT v5 + plan-36 for binary world data.</span></span>
+<span id="src-web-loft-L190"><span class="kw">fn</span> <span class="fn-call">ws_client_send_binary_native</span>(handle: <span class="ty"><a href="stdlib-types.html">integer</a></span>, msg: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span>;</span>
+<span id="src-web-loft-L191">#native <span class="st">"n_ws_client_send_binary"</span></span>
+<span id="src-web-loft-L192"></span>
+<span id="src-web-loft-L193"><span class="cm">// Returns true when a message has been delivered to the receive</span></span>
+<span id="src-web-loft-L194"><span class="cm">// buffer; false when the queue is empty or the connection is currently</span></span>
+<span id="src-web-loft-L195"><span class="cm">// down.  After true, call ws_client_message_native() to read the payload.</span></span>
+<span id="src-web-loft-L196"><span class="kw">fn</span> <span class="fn-call">ws_client_recv_native</span>(handle: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span>;</span>
+<span id="src-web-loft-L197">#native <span class="st">"n_ws_client_recv"</span></span>
+<span id="src-web-loft-L198"></span>
+<span id="src-web-loft-L199"><span class="kw">fn</span> <span class="fn-call">ws_client_message_native</span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
+<span id="src-web-loft-L200">#native <span class="st">"n_ws_client_message"</span></span>
 <span id="src-web-loft-L201"></span>
-<span id="src-web-loft-L202"><span class="cm">// Returns true when a message has been delivered to the receive</span></span>
-<span id="src-web-loft-L203"><span class="cm">// buffer; false when the queue is empty or the connection is currently</span></span>
-<span id="src-web-loft-L204"><span class="cm">// down.  After true, call ws_client_message_native() to read the payload.</span></span>
-<span id="src-web-loft-L205"><span class="kw">fn</span> <span class="fn-call">ws_client_recv_native</span>(handle: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span>;</span>
-<span id="src-web-loft-L206">#native <span class="st">"n_ws_client_recv"</span></span>
-<span id="src-web-loft-L207"></span>
-<span id="src-web-loft-L208"><span class="kw">fn</span> <span class="fn-call">ws_client_message_native</span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
-<span id="src-web-loft-L209">#native <span class="st">"n_ws_client_message"</span></span>
-<span id="src-web-loft-L210"></span>
-<span id="src-web-loft-L211"><span class="cm">// Opcode of the last frame surfaced by `ws_client_recv_native`.</span></span>
-<span id="src-web-loft-L212"><span class="cm">// 1 = text, 2 = binary, 8 = close, 9 = ping, 10 = pong.</span></span>
-<span id="src-web-loft-L213"><span class="cm">// Loft programs that handle binary frames check this after a</span></span>
-<span id="src-web-loft-L214"><span class="cm">// successful recv to decide whether the message bytes are text</span></span>
-<span id="src-web-loft-L215"><span class="cm">// (utf-8) or a binary blob.</span></span>
-<span id="src-web-loft-L216"><span class="kw">fn</span> <span class="fn-call">ws_client_opcode_native</span>() -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
-<span id="src-web-loft-L217">#native <span class="st">"n_ws_client_opcode"</span></span>
-<span id="src-web-loft-L218"></span>
-<span id="src-web-loft-L219"><span class="kw">fn</span> <span class="fn-call">ws_client_close_native</span>(handle: <span class="ty"><a href="stdlib-types.html">integer</a></span>);</span>
-<span id="src-web-loft-L220">#native <span class="st">"n_ws_client_close"</span></span>
-<span id="src-web-loft-L221"></span>
-<span id="src-web-loft-L222"><span class="cm">// --- Public API ---</span></span>
-<span id="src-web-loft-L223"></span>
-<span id="src-web-loft-L224"><span class="cm">// Open a WebSocket session.  Returns null only if the URL is</span></span>
-<span id="src-web-loft-L225"><span class="cm">// malformed; transient connection failures (server not yet up,</span></span>
-<span id="src-web-loft-L226"><span class="cm">// network blip) are absorbed by the auto-reconnect loop in the Rust</span></span>
-<span id="src-web-loft-L227"><span class="cm">// layer, so this call always returns a usable handle for any</span></span>
-<span id="src-web-loft-L228"><span class="cm">// well-formed `ws://...` or `wss://...` URL.</span></span>
-<span id="src-web-loft-L229"><span class="cm">//</span></span>
-<span id="src-web-loft-L230"><span class="cm">// `wss://` (TLS) works on BOTH targets: the browser uses the platform</span></span>
-<span id="src-web-loft-L231"><span class="cm">// WebSocket (which has always spoken wss), and since web 0.3.2 the</span></span>
-<span id="src-web-loft-L232"><span class="cm">// native client dials TLS through rustls with certificate validation</span></span>
-<span id="src-web-loft-L233"><span class="cm">// ON by default (default port 443).  For a self-signed dev endpoint,</span></span>
-<span id="src-web-loft-L234"><span class="cm">// set `LOFT_WS_INSECURE_SKIP_VERIFY=1` in the native process — an</span></span>
-<span id="src-web-loft-L235"><span class="cm">// explicit opt-out, never a URL option, so it cannot be baked into a</span></span>
-<span id="src-web-loft-L236"><span class="cm">// deployed config by accident.</span></span>
-<span id="src-web-loft-L237"><span class="cm">// Example: @WEB-003 — a handle is not a connection; ask the traffic, not the handle.</span></span>
-<span id="src-web-loft-L238"><span class="cm">//</span></span>
-<span id="src-web-loft-L239"><span class="cm">// ⚠ The return is `WsHandler?` and not `WsHandler`, because null is the whole</span></span>
-<span id="src-web-loft-L240"><span class="cm">// point of the call: it is the one distinction this function exists to make.</span></span>
-<span id="src-web-loft-L241"><span class="cm">// It used to be declared non-null, which meant the compiler called the</span></span>
-<span id="src-web-loft-L242"><span class="cm">// `== null` test the contract asks for redundant — the signature denied the</span></span>
-<span id="src-web-loft-L243"><span class="cm">// only thing it had to say.</span></span>
-<span id="src-web-loft-L244"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">ws_handler</span>(url: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="en">WsHandler</span>? {</span>
-<span id="src-web-loft-L245">  id = <span class="fn-call">ws_client_connect_native</span>(url);</span>
-<span id="src-web-loft-L246">  <span class="kw">if</span> id &lt; <span class="nm">0</span> { <span class="kw">return</span> <span class="kw">null</span>; }</span>
-<span id="src-web-loft-L247">  <span class="en">WsHandler</span> { id: id }</span>
-<span id="src-web-loft-L248">}</span>
-<span id="src-web-loft-L249"></span>
-<span id="src-web-loft-L250"><span class="cm">// Send a text message to the server.  Returns true on success; false</span></span>
-<span id="src-web-loft-L251"><span class="cm">// means the connection is currently in backoff / reconnecting and the</span></span>
-<span id="src-web-loft-L252"><span class="cm">// caller may retry after the next `pump()`.</span></span>
-<span id="src-web-loft-L253"><span class="cm">// Example: @WEB-003 — this false, not a null handle, is what reports the link down.</span></span>
-<span id="src-web-loft-L254"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">send</span>(self: <span class="en">WsHandler</span>, msg: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
-<span id="src-web-loft-L255">  <span class="fn-call">ws_client_send_native</span>(self.id, msg)</span>
-<span id="src-web-loft-L256">}</span>
-<span id="src-web-loft-L257"></span>
-<span id="src-web-loft-L258"><span class="cm">// Send `msg` as a binary WebSocket frame (opcode 2).  Loft `text`</span></span>
-<span id="src-web-loft-L259"><span class="cm">// is a byte buffer — pack u8/u16/i32/etc. into it via `to_bytes`</span></span>
-<span id="src-web-loft-L260"><span class="cm">// style code, then ship it.  Returns true on success; false means</span></span>
-<span id="src-web-loft-L261"><span class="cm">// the connection is currently in backoff / reconnecting.</span></span>
-<span id="src-web-loft-L262"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">send_binary</span>(self: <span class="en">WsHandler</span>, msg: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
-<span id="src-web-loft-L263">  <span class="fn-call">ws_client_send_binary_native</span>(self.id, msg)</span>
-<span id="src-web-loft-L264">}</span>
-<span id="src-web-loft-L265"></span>
-<span id="src-web-loft-L266"><span class="cm">// Opcode of the last frame surfaced by `try_recv` / `pump` on this</span></span>
-<span id="src-web-loft-L267"><span class="cm">// handler.  Use after a successful read to decide whether to</span></span>
-<span id="src-web-loft-L268"><span class="cm">// interpret the payload as utf-8 text or as a binary blob.</span></span>
-<span id="src-web-loft-L269"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">last_opcode</span>(self: <span class="en">WsHandler</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-web-loft-L270">  _ = self;</span>
-<span id="src-web-loft-L271">  <span class="fn-call">ws_client_opcode_native</span>()</span>
+<span id="src-web-loft-L202"><span class="cm">// Opcode of the last frame surfaced by `ws_client_recv_native`.</span></span>
+<span id="src-web-loft-L203"><span class="cm">// 1 = text, 2 = binary, 8 = close, 9 = ping, 10 = pong.</span></span>
+<span id="src-web-loft-L204"><span class="cm">// Loft programs that handle binary frames check this after a</span></span>
+<span id="src-web-loft-L205"><span class="cm">// successful recv to decide whether the message bytes are text</span></span>
+<span id="src-web-loft-L206"><span class="cm">// (utf-8) or a binary blob.</span></span>
+<span id="src-web-loft-L207"><span class="kw">fn</span> <span class="fn-call">ws_client_opcode_native</span>() -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-web-loft-L208">#native <span class="st">"n_ws_client_opcode"</span></span>
+<span id="src-web-loft-L209"></span>
+<span id="src-web-loft-L210"><span class="kw">fn</span> <span class="fn-call">ws_client_close_native</span>(handle: <span class="ty"><a href="stdlib-types.html">integer</a></span>);</span>
+<span id="src-web-loft-L211">#native <span class="st">"n_ws_client_close"</span></span>
+<span id="src-web-loft-L212"></span>
+<span id="src-web-loft-L213"><span class="cm">// --- Public API ---</span></span>
+<span id="src-web-loft-L214"></span>
+<span id="src-web-loft-L215"><span class="cm">// Open a WebSocket session.  Returns null only if the URL is</span></span>
+<span id="src-web-loft-L216"><span class="cm">// malformed; transient connection failures (server not yet up,</span></span>
+<span id="src-web-loft-L217"><span class="cm">// network blip) are absorbed by the auto-reconnect loop in the Rust</span></span>
+<span id="src-web-loft-L218"><span class="cm">// layer, so this call always returns a usable handle for any</span></span>
+<span id="src-web-loft-L219"><span class="cm">// well-formed `ws://...` or `wss://...` URL.</span></span>
+<span id="src-web-loft-L220"><span class="cm">//</span></span>
+<span id="src-web-loft-L221"><span class="cm">// `wss://` (TLS) works on BOTH targets: the browser uses the platform</span></span>
+<span id="src-web-loft-L222"><span class="cm">// WebSocket, and the native client dials TLS through rustls with</span></span>
+<span id="src-web-loft-L223"><span class="cm">// certificate validation ON by default (default port 443).  For a self-signed dev endpoint,</span></span>
+<span id="src-web-loft-L224"><span class="cm">// set `LOFT_WS_INSECURE_SKIP_VERIFY=1` in the native process — an</span></span>
+<span id="src-web-loft-L225"><span class="cm">// explicit opt-out, never a URL option, so it cannot be baked into a</span></span>
+<span id="src-web-loft-L226"><span class="cm">// deployed config by accident.</span></span>
+<span id="src-web-loft-L227"><span class="cm">// Example: @WEB-003 — a handle is not a connection; ask the traffic, not the handle.</span></span>
+<span id="src-web-loft-L228"><span class="cm">//</span></span>
+<span id="src-web-loft-L229"><span class="cm">// ⚠ The return is `WsHandler?` because null is the one distinction this call</span></span>
+<span id="src-web-loft-L230"><span class="cm">// exists to make: test it with `== null`.</span></span>
+<span id="src-web-loft-L231"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">ws_handler</span>(url: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="en">WsHandler</span>? {</span>
+<span id="src-web-loft-L232">  id = <span class="fn-call">ws_client_connect_native</span>(url);</span>
+<span id="src-web-loft-L233">  <span class="kw">if</span> id &lt; <span class="nm">0</span> { <span class="kw">return</span> <span class="kw">null</span>; }</span>
+<span id="src-web-loft-L234">  <span class="en">WsHandler</span> { id: id }</span>
+<span id="src-web-loft-L235">}</span>
+<span id="src-web-loft-L236"></span>
+<span id="src-web-loft-L237"><span class="cm">// Send a text message to the server.  Returns true on success; false</span></span>
+<span id="src-web-loft-L238"><span class="cm">// means the connection is currently in backoff / reconnecting and the</span></span>
+<span id="src-web-loft-L239"><span class="cm">// caller may retry after the next `pump()`.</span></span>
+<span id="src-web-loft-L240"><span class="cm">// Example: @WEB-003 — this false, not a null handle, is what reports the link down.</span></span>
+<span id="src-web-loft-L241"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">send</span>(self: <span class="en">WsHandler</span>, msg: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-web-loft-L242">  <span class="fn-call">ws_client_send_native</span>(self.id, msg)</span>
+<span id="src-web-loft-L243">}</span>
+<span id="src-web-loft-L244"></span>
+<span id="src-web-loft-L245"><span class="cm">// Send `msg` as a binary WebSocket frame (opcode 2).  Loft `text`</span></span>
+<span id="src-web-loft-L246"><span class="cm">// is a byte buffer — build it with `pack_reset` / `pack_u8` / … /</span></span>
+<span id="src-web-loft-L247"><span class="cm">// `pack_take`, then ship it.  Returns true on success; false means</span></span>
+<span id="src-web-loft-L248"><span class="cm">// the connection is currently in backoff / reconnecting.</span></span>
+<span id="src-web-loft-L249"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">send_binary</span>(self: <span class="en">WsHandler</span>, msg: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-web-loft-L250">  <span class="fn-call">ws_client_send_binary_native</span>(self.id, msg)</span>
+<span id="src-web-loft-L251">}</span>
+<span id="src-web-loft-L252"></span>
+<span id="src-web-loft-L253"><span class="cm">// Opcode of the last frame surfaced by `try_recv` / `pump` on this</span></span>
+<span id="src-web-loft-L254"><span class="cm">// handler.  Use after a successful read to decide whether to</span></span>
+<span id="src-web-loft-L255"><span class="cm">// interpret the payload as utf-8 text or as a binary blob.</span></span>
+<span id="src-web-loft-L256"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">last_opcode</span>(self: <span class="en">WsHandler</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-web-loft-L257">  _ = self;</span>
+<span id="src-web-loft-L258">  <span class="fn-call">ws_client_opcode_native</span>()</span>
+<span id="src-web-loft-L259">}</span>
+<span id="src-web-loft-L260"></span>
+<span id="src-web-loft-L261"><span class="cm">// Drain any pending received messages, firing `on_message` for each.</span></span>
+<span id="src-web-loft-L262"><span class="cm">// Returns the count of messages delivered this call.  Call this from</span></span>
+<span id="src-web-loft-L263"><span class="cm">// a main loop (and yield to the host between iterations on the browser</span></span>
+<span id="src-web-loft-L264"><span class="cm">// target) to drive event delivery without async.</span></span>
+<span id="src-web-loft-L265"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">pump</span>(self: <span class="en">WsHandler</span>, on_message: <span class="kw">fn</span>(<span class="ty"><a href="stdlib-types.html">text</a></span>)) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-web-loft-L266">  count = <span class="nm">0</span>;</span>
+<span id="src-web-loft-L267">  while <span class="fn-call">ws_client_recv_native</span>(self.id) {</span>
+<span id="src-web-loft-L268">    <span class="fn-call">on_message</span>(<span class="fn-call">ws_client_message_native</span>());</span>
+<span id="src-web-loft-L269">    count += <span class="nm">1</span>;</span>
+<span id="src-web-loft-L270">  }</span>
+<span id="src-web-loft-L271">  count</span>
 <span id="src-web-loft-L272">}</span>
 <span id="src-web-loft-L273"></span>
-<span id="src-web-loft-L274"><span class="cm">// Drain any pending received messages, firing `on_message` for each.</span></span>
-<span id="src-web-loft-L275"><span class="cm">// Returns the count of messages delivered this call.  Call this from</span></span>
-<span id="src-web-loft-L276"><span class="cm">// a main loop (and yield to the host between iterations on the browser</span></span>
-<span id="src-web-loft-L277"><span class="cm">// target) to drive event delivery without async.</span></span>
-<span id="src-web-loft-L278"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">pump</span>(self: <span class="en">WsHandler</span>, on_message: <span class="kw">fn</span>(<span class="ty"><a href="stdlib-types.html">text</a></span>)) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-web-loft-L279">  count = <span class="nm">0</span>;</span>
-<span id="src-web-loft-L280">  while <span class="fn-call">ws_client_recv_native</span>(self.id) {</span>
-<span id="src-web-loft-L281">    <span class="fn-call">on_message</span>(<span class="fn-call">ws_client_message_native</span>());</span>
-<span id="src-web-loft-L282">    count += <span class="nm">1</span>;</span>
-<span id="src-web-loft-L283">  }</span>
-<span id="src-web-loft-L284">  count</span>
-<span id="src-web-loft-L285">}</span>
-<span id="src-web-loft-L286"></span>
-<span id="src-web-loft-L287"><span class="cm">// Non-blocking single-message receive.  Returns the next pending</span></span>
-<span id="src-web-loft-L288"><span class="cm">// message text if one is available, null otherwise.  Equivalent to a</span></span>
-<span id="src-web-loft-L289"><span class="cm">// single iteration of pump without the callback — useful when the</span></span>
-<span id="src-web-loft-L290"><span class="cm">// receiver wants to drive its own loop and accumulate messages</span></span>
-<span id="src-web-loft-L291"><span class="cm">// locally without capturing state inside a closure.</span></span>
-<span id="src-web-loft-L292"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">try_recv</span>(self: <span class="en">WsHandler</span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>? {</span>
-<span id="src-web-loft-L293">  <span class="kw">if</span> !<span class="fn-call">ws_client_recv_native</span>(self.id) { <span class="kw">return</span> <span class="kw">null</span>; }</span>
-<span id="src-web-loft-L294">  <span class="fn-call">ws_client_message_native</span>()</span>
-<span id="src-web-loft-L295">}</span>
-<span id="src-web-loft-L296"></span>
-<span id="src-web-loft-L297"><span class="cm">// Permanently close the session (no further reconnect attempts).</span></span>
-<span id="src-web-loft-L298"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">close</span>(self: <span class="en">WsHandler</span>) {</span>
-<span id="src-web-loft-L299">  <span class="fn-call">ws_client_close_native</span>(self.id);</span>
-<span id="src-web-loft-L300">}</span>
-<span id="src-web-loft-L301"></span>
-<span id="src-web-loft-L302"><span class="cm">// Block the calling thread for `ms` milliseconds.  Convenience for</span></span>
-<span id="src-web-loft-L303"><span class="cm">// tests and pacing loops; non-positive values are a no-op.  Not</span></span>
-<span id="src-web-loft-L304"><span class="cm">// available on the WASM target — the host event loop is the</span></span>
-<span id="src-web-loft-L305"><span class="cm">// equivalent.</span></span>
-<span id="src-web-loft-L306"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">sleep_ms</span>(ms: <span class="ty"><a href="stdlib-types.html">integer</a></span>);</span>
-<span id="src-web-loft-L307">#native</span>
-<span id="src-web-loft-L308"></span>
-<span id="src-web-loft-L309"><span class="cm">// --- Binary buffer construction (TTT v5 + plan-36) ---</span></span>
-<span id="src-web-loft-L310"><span class="cm">//</span></span>
-<span id="src-web-loft-L311"><span class="cm">// Loft `text` is a UTF-8 byte buffer; a NUL byte (codepoint 0) is the</span></span>
-<span id="src-web-loft-L312"><span class="cm">// `character` null sentinel, so a `text` built via `"{c}{c}…"`</span></span>
-<span id="src-web-loft-L313"><span class="cm">// interpolation silently drops zero bytes.  Binary protocols that</span></span>
-<span id="src-web-loft-L314"><span class="cm">// include zero bytes (e.g. the v5 5-byte blob header `[type:u8]</span></span>
-<span id="src-web-loft-L315"><span class="cm">// [session:u32-LE]` for any small session id) cannot be assembled</span></span>
-<span id="src-web-loft-L316"><span class="cm">// that way.</span></span>
-<span id="src-web-loft-L317"><span class="cm">//</span></span>
-<span id="src-web-loft-L318"><span class="cm">// `pack_*` are a thread-local builder pattern: `pack_reset()` empties</span></span>
-<span id="src-web-loft-L319"><span class="cm">// the buffer, `pack_u8` / `pack_u16_le` / `pack_u32_le` append fields</span></span>
-<span id="src-web-loft-L320"><span class="cm">// by type, and `pack_take()` returns a `text` whose bytes carry the</span></span>
-<span id="src-web-loft-L321"><span class="cm">// binary payload verbatim — NUL bytes preserved.  The buffer survives</span></span>
-<span id="src-web-loft-L322"><span class="cm">// across calls within a single thread; reset before each blob.  The</span></span>
-<span id="src-web-loft-L323"><span class="cm">// returned `text` lives until the next `pack_take()`, so `send_binary`</span></span>
-<span id="src-web-loft-L324"><span class="cm">// it (or copy it) before reusing the builder.</span></span>
-<span id="src-web-loft-L325"><span class="cm">//</span></span>
-<span id="src-web-loft-L326"><span class="cm">// On the receive side, `byte_at(t, i)` returns the single byte at</span></span>
-<span id="src-web-loft-L327"><span class="cm">// offset `i` of `t` (regardless of UTF-8 interpretation).  Use it to</span></span>
-<span id="src-web-loft-L328"><span class="cm">// decode binary frames returned by `try_recv` / `pump` field-by-field.</span></span>
+<span id="src-web-loft-L274"><span class="cm">// Non-blocking single-message receive.  Returns the next pending</span></span>
+<span id="src-web-loft-L275"><span class="cm">// message text if one is available, null otherwise.  Equivalent to a</span></span>
+<span id="src-web-loft-L276"><span class="cm">// single iteration of pump without the callback — useful when the</span></span>
+<span id="src-web-loft-L277"><span class="cm">// receiver wants to drive its own loop and accumulate messages</span></span>
+<span id="src-web-loft-L278"><span class="cm">// locally without capturing state inside a closure.</span></span>
+<span id="src-web-loft-L279"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">try_recv</span>(self: <span class="en">WsHandler</span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>? {</span>
+<span id="src-web-loft-L280">  <span class="kw">if</span> !<span class="fn-call">ws_client_recv_native</span>(self.id) { <span class="kw">return</span> <span class="kw">null</span>; }</span>
+<span id="src-web-loft-L281">  <span class="fn-call">ws_client_message_native</span>()</span>
+<span id="src-web-loft-L282">}</span>
+<span id="src-web-loft-L283"></span>
+<span id="src-web-loft-L284"><span class="cm">// Permanently close the session (no further reconnect attempts).</span></span>
+<span id="src-web-loft-L285"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">close</span>(self: <span class="en">WsHandler</span>) {</span>
+<span id="src-web-loft-L286">  <span class="fn-call">ws_client_close_native</span>(self.id);</span>
+<span id="src-web-loft-L287">}</span>
+<span id="src-web-loft-L288"></span>
+<span id="src-web-loft-L289"><span class="cm">// Block the calling thread for `ms` milliseconds.  Convenience for</span></span>
+<span id="src-web-loft-L290"><span class="cm">// tests and pacing loops; non-positive values are a no-op.  In the</span></span>
+<span id="src-web-loft-L291"><span class="cm">// browser it returns at once — the host event loop paces there, so</span></span>
+<span id="src-web-loft-L292"><span class="cm">// call `frame_yield` instead.</span></span>
+<span id="src-web-loft-L293"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">sleep_ms</span>(ms: <span class="ty"><a href="stdlib-types.html">integer</a></span>);</span>
+<span id="src-web-loft-L294">#native</span>
+<span id="src-web-loft-L295"></span>
+<span id="src-web-loft-L296"><span class="cm">// --- Binary buffer construction ---</span></span>
+<span id="src-web-loft-L297"><span class="cm">//</span></span>
+<span id="src-web-loft-L298"><span class="cm">// Loft `text` is a UTF-8 byte buffer; a NUL byte (codepoint 0) is the</span></span>
+<span id="src-web-loft-L299"><span class="cm">// `character` null sentinel, so a `text` built via `"{c}{c}…"`</span></span>
+<span id="src-web-loft-L300"><span class="cm">// interpolation silently drops zero bytes.  Binary protocols that</span></span>
+<span id="src-web-loft-L301"><span class="cm">// include zero bytes (e.g. the v5 5-byte blob header `[type:u8]</span></span>
+<span id="src-web-loft-L302"><span class="cm">// [session:u32-LE]` for any small session id) cannot be assembled</span></span>
+<span id="src-web-loft-L303"><span class="cm">// that way.</span></span>
+<span id="src-web-loft-L304"><span class="cm">//</span></span>
+<span id="src-web-loft-L305"><span class="cm">// `pack_*` are a thread-local builder pattern: `pack_reset()` empties</span></span>
+<span id="src-web-loft-L306"><span class="cm">// the buffer, `pack_u8` / `pack_u16_le` / `pack_u32_le` append fields</span></span>
+<span id="src-web-loft-L307"><span class="cm">// by type, and `pack_take()` returns a `text` whose bytes carry the</span></span>
+<span id="src-web-loft-L308"><span class="cm">// binary payload verbatim — NUL bytes preserved.  The buffer survives</span></span>
+<span id="src-web-loft-L309"><span class="cm">// across calls within a single thread; reset before each blob.  The</span></span>
+<span id="src-web-loft-L310"><span class="cm">// returned `text` lives until the next `pack_take()`, so `send_binary`</span></span>
+<span id="src-web-loft-L311"><span class="cm">// it (or copy it) before reusing the builder.</span></span>
+<span id="src-web-loft-L312"><span class="cm">//</span></span>
+<span id="src-web-loft-L313"><span class="cm">// On the receive side, `byte_at(i, t)` returns the single byte at</span></span>
+<span id="src-web-loft-L314"><span class="cm">// offset `i` of `t` (regardless of UTF-8 interpretation).  Use it to</span></span>
+<span id="src-web-loft-L315"><span class="cm">// decode binary frames returned by `try_recv` / `pump` field-by-field.</span></span>
+<span id="src-web-loft-L316"></span>
+<span id="src-web-loft-L317"><span class="cm">// Empty the per-thread pack buffer.  Call before each blob.</span></span>
+<span id="src-web-loft-L318"><span class="cm">// Example: @WEB-001 — reset, append in wire order, take (which moves, not reads).</span></span>
+<span id="src-web-loft-L319"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">pack_reset</span>();</span>
+<span id="src-web-loft-L320">#native</span>
+<span id="src-web-loft-L321"></span>
+<span id="src-web-loft-L322"><span class="cm">// Append a single byte to the pack buffer: the low 8 bits of `b`.</span></span>
+<span id="src-web-loft-L323"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">pack_u8</span>(b: <span class="ty"><a href="stdlib-types.html">integer</a></span>);</span>
+<span id="src-web-loft-L324">#native</span>
+<span id="src-web-loft-L325"></span>
+<span id="src-web-loft-L326"><span class="cm">// Append the low 16 bits of `v`, little-endian.</span></span>
+<span id="src-web-loft-L327"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">pack_u16_le</span>(v: <span class="ty"><a href="stdlib-types.html">integer</a></span>);</span>
+<span id="src-web-loft-L328">#native</span>
 <span id="src-web-loft-L329"></span>
-<span id="src-web-loft-L330"><span class="cm">// Empty the per-thread pack buffer.  Call before each blob.</span></span>
-<span id="src-web-loft-L331"><span class="cm">// Example: @WEB-001 — reset, append in wire order, take (which moves, not reads).</span></span>
-<span id="src-web-loft-L332"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">pack_reset</span>();</span>
+<span id="src-web-loft-L330"><span class="cm">// Append the low 32 bits of `v`, little-endian — so -1 packs as</span></span>
+<span id="src-web-loft-L331"><span class="cm">// FF FF FF FF, the same bytes as 0xFFFFFFFF.</span></span>
+<span id="src-web-loft-L332"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">pack_u32_le</span>(v: <span class="ty"><a href="stdlib-types.html">integer</a></span>);</span>
 <span id="src-web-loft-L333">#native</span>
 <span id="src-web-loft-L334"></span>
-<span id="src-web-loft-L335"><span class="cm">// Append a single byte to the pack buffer.  `b` is masked to 8 bits.</span></span>
-<span id="src-web-loft-L336"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">pack_u8</span>(b: <span class="ty"><a href="stdlib-types.html">integer</a></span>);</span>
-<span id="src-web-loft-L337">#native</span>
-<span id="src-web-loft-L338"></span>
-<span id="src-web-loft-L339"><span class="cm">// Append a 2-byte little-endian unsigned value.</span></span>
-<span id="src-web-loft-L340"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">pack_u16_le</span>(v: <span class="ty"><a href="stdlib-types.html">integer</a></span>);</span>
-<span id="src-web-loft-L341">#native</span>
-<span id="src-web-loft-L342"></span>
-<span id="src-web-loft-L343"><span class="cm">// Append a 4-byte little-endian unsigned value.  Loft `integer` is</span></span>
-<span id="src-web-loft-L344"><span class="cm">// i32 — bit-cast to u32 to preserve the LE byte pattern across the</span></span>
-<span id="src-web-loft-L345"><span class="cm">// sign boundary.</span></span>
-<span id="src-web-loft-L346"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">pack_u32_le</span>(v: <span class="ty"><a href="stdlib-types.html">integer</a></span>);</span>
+<span id="src-web-loft-L335"><span class="cm">// Take the contents of the pack buffer and return them as a `text`</span></span>
+<span id="src-web-loft-L336"><span class="cm">// whose UTF-8 bytes are exactly the buffer bytes.  Resets the buffer.</span></span>
+<span id="src-web-loft-L337"><span class="cm">// Example: @WEB-001 — the three-step protocol, and the NUL that interpolation drops.</span></span>
+<span id="src-web-loft-L338"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">pack_take</span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
+<span id="src-web-loft-L339">#native</span>
+<span id="src-web-loft-L340"></span>
+<span id="src-web-loft-L341"><span class="cm">// Read the byte at `idx` of the text payload.  Out-of-range (negative</span></span>
+<span id="src-web-loft-L342"><span class="cm">// or past the end) returns -1.  Use to decode binary frames received</span></span>
+<span id="src-web-loft-L343"><span class="cm">// via `try_recv` / `pump`.  Argument order is (idx, t), unlike the</span></span>
+<span id="src-web-loft-L344"><span class="cm">// (text, index) order elsewhere.</span></span>
+<span id="src-web-loft-L345"><span class="cm">// Example: @WEB-002 — why the bounds test is `&lt; 0` and never `== 0`.</span></span>
+<span id="src-web-loft-L346"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-text-bytes-and-code-points.html">byte_at</a></span>(idx: <span class="ty"><a href="stdlib-types.html">integer</a></span>, t: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
 <span id="src-web-loft-L347">#native</span>
 <span id="src-web-loft-L348"></span>
-<span id="src-web-loft-L349"><span class="cm">// Take the contents of the pack buffer and return them as a `text`</span></span>
-<span id="src-web-loft-L350"><span class="cm">// whose UTF-8 bytes are exactly the buffer bytes.  Resets the buffer.</span></span>
-<span id="src-web-loft-L351"><span class="cm">// Example: @WEB-001 — the three-step protocol, and the NUL that interpolation drops.</span></span>
-<span id="src-web-loft-L352"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">pack_take</span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
-<span id="src-web-loft-L353">#native</span>
-<span id="src-web-loft-L354"></span>
-<span id="src-web-loft-L355"><span class="cm">// Read the byte at `idx` of the text payload.  Out-of-range (negative</span></span>
-<span id="src-web-loft-L356"><span class="cm">// or past the end) returns -1.  Use to decode binary frames received</span></span>
-<span id="src-web-loft-L357"><span class="cm">// via `try_recv` / `pump`.  Argument order is (idx, t) — the C-ABI</span></span>
-<span id="src-web-loft-L358"><span class="cm">// auto-marshal in src/extensions.rs supports (I32, Text) -&gt; I32 but</span></span>
-<span id="src-web-loft-L359"><span class="cm">// not (Text, I32) -&gt; I32.</span></span>
-<span id="src-web-loft-L360"><span class="cm">// Example: @WEB-002 — why the bounds test is `&lt; 0` and never `== 0`.</span></span>
-<span id="src-web-loft-L361"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-text-bytes-and-code-points.html">byte_at</a></span>(idx: <span class="ty"><a href="stdlib-types.html">integer</a></span>, t: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
-<span id="src-web-loft-L362">#native</span>
-<span id="src-web-loft-L363"></span>
-<span id="src-web-loft-L364"><span class="cm">// --- Multiplexed client receiver (WsGroup) ---</span></span>
+<span id="src-web-loft-L349"><span class="cm">// --- Multiplexed client receiver (WsGroup) ---</span></span>
+<span id="src-web-loft-L350"><span class="cm">//</span></span>
+<span id="src-web-loft-L351"><span class="cm">// Watch multiple WsHandler connections and receive from whichever has</span></span>
+<span id="src-web-loft-L352"><span class="cm">// data ready — one scan across all handles instead of polling each</span></span>
+<span id="src-web-loft-L353"><span class="cm">// individually.  The key difference: handles with no data are skipped</span></span>
+<span id="src-web-loft-L354"><span class="cm">// after one short timeout, so N idle sockets cost one timeout total</span></span>
+<span id="src-web-loft-L355"><span class="cm">// instead of N timeouts.</span></span>
+<span id="src-web-loft-L356"><span class="cm">//</span></span>
+<span id="src-web-loft-L357"><span class="cm">//   group = web::ws_group();</span></span>
+<span id="src-web-loft-L358"><span class="cm">//   group.add(h1);</span></span>
+<span id="src-web-loft-L359"><span class="cm">//   group.add(h2);</span></span>
+<span id="src-web-loft-L360"><span class="cm">//   for _ in 0..1000 {</span></span>
+<span id="src-web-loft-L361"><span class="cm">//     ev = group.poll();</span></span>
+<span id="src-web-loft-L362"><span class="cm">//     if ev.handle &lt; 0 { break; }</span></span>
+<span id="src-web-loft-L363"><span class="cm">//     // ev.message has the data</span></span>
+<span id="src-web-loft-L364"><span class="cm">//   }</span></span>
 <span id="src-web-loft-L365"><span class="cm">//</span></span>
-<span id="src-web-loft-L366"><span class="cm">// Watch multiple WsHandler connections and receive from whichever has</span></span>
-<span id="src-web-loft-L367"><span class="cm">// data ready — one scan across all handles instead of polling each</span></span>
-<span id="src-web-loft-L368"><span class="cm">// individually.  The key difference: handles with no data are skipped</span></span>
-<span id="src-web-loft-L369"><span class="cm">// after one short timeout, so N idle sockets cost one timeout total</span></span>
-<span id="src-web-loft-L370"><span class="cm">// instead of N timeouts.</span></span>
-<span id="src-web-loft-L371"><span class="cm">//</span></span>
-<span id="src-web-loft-L372"><span class="cm">//   group = web::ws_group()</span></span>
-<span id="src-web-loft-L373"><span class="cm">//   group.add(h1)</span></span>
-<span id="src-web-loft-L374"><span class="cm">//   group.add(h2)</span></span>
-<span id="src-web-loft-L375"><span class="cm">//   while true {</span></span>
-<span id="src-web-loft-L376"><span class="cm">//     ev = group.poll()</span></span>
-<span id="src-web-loft-L377"><span class="cm">//     if ev.handle &lt; 0 { break }</span></span>
-<span id="src-web-loft-L378"><span class="cm">//     // ev.message has the data</span></span>
-<span id="src-web-loft-L379"><span class="cm">//   }</span></span>
-<span id="src-web-loft-L380"></span>
-<span id="src-web-loft-L381"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">WsGroupEvent</span> {</span>
-<span id="src-web-loft-L382">  handle: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-web-loft-L383">  message: <span class="ty"><a href="stdlib-types.html">text</a></span></span>
-<span id="src-web-loft-L384">}</span>
+<span id="src-web-loft-L366"><span class="cm">// The group's list lives on the native side and there is one per thread:</span></span>
+<span id="src-web-loft-L367"><span class="cm">// `ws_group()` empties it, so a second group replaces the first.  In the</span></span>
+<span id="src-web-loft-L368"><span class="cm">// browser `poll` always answers -1: receive with each handler's `try_recv`</span></span>
+<span id="src-web-loft-L369"><span class="cm">// there.</span></span>
+<span id="src-web-loft-L370"></span>
+<span id="src-web-loft-L371"><span class="cm">// What one `poll` found: the handler slot that had a message and the</span></span>
+<span id="src-web-loft-L372"><span class="cm">// message, or `handle == -1` and "" when none had.</span></span>
+<span id="src-web-loft-L373"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">WsGroupEvent</span> {</span>
+<span id="src-web-loft-L374">  handle: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-web-loft-L375">  message: <span class="ty"><a href="stdlib-types.html">text</a></span></span>
+<span id="src-web-loft-L376">}</span>
+<span id="src-web-loft-L377"></span>
+<span id="src-web-loft-L378"><span class="cm">// A set of handlers to receive from in one scan; see above.</span></span>
+<span id="src-web-loft-L379"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">WsGroup</span> {</span>
+<span id="src-web-loft-L380">  _dummy: <span class="ty"><a href="stdlib-types.html">integer</a></span>   <span class="cm">// no state on loft side; Rust owns the list</span></span>
+<span id="src-web-loft-L381">}</span>
+<span id="src-web-loft-L382"></span>
+<span id="src-web-loft-L383"><span class="kw">fn</span> <span class="fn-call">ws_group_clear_native</span>();</span>
+<span id="src-web-loft-L384">#native <span class="st">"n_ws_group_clear"</span></span>
 <span id="src-web-loft-L385"></span>
-<span id="src-web-loft-L386"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">WsGroup</span> {</span>
-<span id="src-web-loft-L387">  _dummy: <span class="ty"><a href="stdlib-types.html">integer</a></span>   <span class="cm">// no state on loft side; Rust owns the list</span></span>
-<span id="src-web-loft-L388">}</span>
-<span id="src-web-loft-L389"></span>
-<span id="src-web-loft-L390"><span class="kw">fn</span> <span class="fn-call">ws_group_clear_native</span>();</span>
-<span id="src-web-loft-L391">#native <span class="st">"n_ws_group_clear"</span></span>
-<span id="src-web-loft-L392"></span>
-<span id="src-web-loft-L393"><span class="kw">fn</span> <span class="fn-call">ws_group_add_native</span>(handle: <span class="ty"><a href="stdlib-types.html">integer</a></span>);</span>
-<span id="src-web-loft-L394">#native <span class="st">"n_ws_group_add"</span></span>
-<span id="src-web-loft-L395"></span>
-<span id="src-web-loft-L396"><span class="kw">fn</span> <span class="fn-call">ws_group_poll_native</span>() -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
-<span id="src-web-loft-L397">#native <span class="st">"n_ws_group_poll"</span></span>
-<span id="src-web-loft-L398"></span>
-<span id="src-web-loft-L399"><span class="cm">// Create a new (empty) group.</span></span>
-<span id="src-web-loft-L400"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">ws_group</span>() -&gt; <span class="en">WsGroup</span> {</span>
-<span id="src-web-loft-L401">  <span class="fn-call">ws_group_clear_native</span>();</span>
-<span id="src-web-loft-L402">  <span class="en">WsGroup</span> { _dummy: <span class="nm">0</span> }</span>
-<span id="src-web-loft-L403">}</span>
-<span id="src-web-loft-L404"></span>
-<span id="src-web-loft-L405"><span class="cm">// Add a handler to the group.</span></span>
-<span id="src-web-loft-L406"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">add</span>(self: <span class="en">WsGroup</span>, h: <span class="en">WsHandler</span>) {</span>
-<span id="src-web-loft-L407">  _ = self;</span>
-<span id="src-web-loft-L408">  <span class="fn-call">ws_group_add_native</span>(h.id);</span>
-<span id="src-web-loft-L409">}</span>
-<span id="src-web-loft-L410"></span>
-<span id="src-web-loft-L411"><span class="cm">// Poll all handles round-robin.  Returns a WsGroupEvent with</span></span>
-<span id="src-web-loft-L412"><span class="cm">// handle &gt;= 0 and the message if one is ready; handle == -1</span></span>
-<span id="src-web-loft-L413"><span class="cm">// means nothing is available right now.</span></span>
-<span id="src-web-loft-L414"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">poll</span>(self: <span class="en">WsGroup</span>) -&gt; <span class="en">WsGroupEvent</span> {</span>
-<span id="src-web-loft-L415">  _ = self;</span>
-<span id="src-web-loft-L416">  h = <span class="fn-call">ws_group_poll_native</span>();</span>
-<span id="src-web-loft-L417">  <span class="kw">if</span> h &lt; <span class="nm">0</span> {</span>
-<span id="src-web-loft-L418">    <span class="kw">return</span> <span class="en">WsGroupEvent</span> { handle: -<span class="nm">1</span>, message: <span class="st">""</span> };</span>
-<span id="src-web-loft-L419">  }</span>
-<span id="src-web-loft-L420">  <span class="en">WsGroupEvent</span> { handle: h, message: <span class="fn-call">ws_client_message_native</span>() }</span>
-<span id="src-web-loft-L421">}</span>
-<span id="src-web-loft-L422"></span>
-<span id="src-web-loft-L423"><span class="cm">// Yield one frame to the host event loop (@PLN84 ZT-C); native no-op,</span></span>
-<span id="src-web-loft-L424"><span class="cm">// browser asyncify suspend (loft_web.ws_yield).  Call once per WS poll</span></span>
-<span id="src-web-loft-L425"><span class="cm">// iteration so the browser event loop can deliver WebSocket messages.</span></span>
-<span id="src-web-loft-L426"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">frame_yield</span>();</span>
-<span id="src-web-loft-L427">#native <span class="st">"n_yield_frame"</span></span>
+<span id="src-web-loft-L386"><span class="kw">fn</span> <span class="fn-call">ws_group_add_native</span>(handle: <span class="ty"><a href="stdlib-types.html">integer</a></span>);</span>
+<span id="src-web-loft-L387">#native <span class="st">"n_ws_group_add"</span></span>
+<span id="src-web-loft-L388"></span>
+<span id="src-web-loft-L389"><span class="kw">fn</span> <span class="fn-call">ws_group_poll_native</span>() -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-web-loft-L390">#native <span class="st">"n_ws_group_poll"</span></span>
+<span id="src-web-loft-L391"></span>
+<span id="src-web-loft-L392"><span class="cm">// Create a new (empty) group.</span></span>
+<span id="src-web-loft-L393"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">ws_group</span>() -&gt; <span class="en">WsGroup</span> {</span>
+<span id="src-web-loft-L394">  <span class="fn-call">ws_group_clear_native</span>();</span>
+<span id="src-web-loft-L395">  <span class="en">WsGroup</span> { _dummy: <span class="nm">0</span> }</span>
+<span id="src-web-loft-L396">}</span>
+<span id="src-web-loft-L397"></span>
+<span id="src-web-loft-L398"><span class="cm">// Add a handler to the group.</span></span>
+<span id="src-web-loft-L399"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">add</span>(self: <span class="en">WsGroup</span>, h: <span class="en">WsHandler</span>) {</span>
+<span id="src-web-loft-L400">  _ = self;</span>
+<span id="src-web-loft-L401">  <span class="fn-call">ws_group_add_native</span>(h.id);</span>
+<span id="src-web-loft-L402">}</span>
+<span id="src-web-loft-L403"></span>
+<span id="src-web-loft-L404"><span class="cm">// Poll all handles round-robin.  Returns a WsGroupEvent with</span></span>
+<span id="src-web-loft-L405"><span class="cm">// handle &gt;= 0 and the message if one is ready; handle == -1</span></span>
+<span id="src-web-loft-L406"><span class="cm">// means nothing is available right now.</span></span>
+<span id="src-web-loft-L407"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">poll</span>(self: <span class="en">WsGroup</span>) -&gt; <span class="en">WsGroupEvent</span> {</span>
+<span id="src-web-loft-L408">  _ = self;</span>
+<span id="src-web-loft-L409">  h = <span class="fn-call">ws_group_poll_native</span>();</span>
+<span id="src-web-loft-L410">  <span class="kw">if</span> h &lt; <span class="nm">0</span> {</span>
+<span id="src-web-loft-L411">    <span class="kw">return</span> <span class="en">WsGroupEvent</span> { handle: -<span class="nm">1</span>, message: <span class="st">""</span> };</span>
+<span id="src-web-loft-L412">  }</span>
+<span id="src-web-loft-L413">  <span class="en">WsGroupEvent</span> { handle: h, message: <span class="fn-call">ws_client_message_native</span>() }</span>
+<span id="src-web-loft-L414">}</span>
+<span id="src-web-loft-L415"></span>
+<span id="src-web-loft-L416"><span class="cm">// Yield one frame to the host event loop: a no-op natively, and in the</span></span>
+<span id="src-web-loft-L417"><span class="cm">// browser the suspend point that lets the event loop run.  Call once per WS poll</span></span>
+<span id="src-web-loft-L418"><span class="cm">// iteration so the browser event loop can deliver WebSocket messages.</span></span>
+<span id="src-web-loft-L419"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">frame_yield</span>();</span>
+<span id="src-web-loft-L420">#native <span class="st">"n_yield_frame"</span></span>
 </code></pre>
 <h2 id="tests-byte-at-loft">tests/byte_at.loft</h2>
 <pre class="src"><code><span id="tests-byte-at-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>

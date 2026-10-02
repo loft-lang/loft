@@ -23,27 +23,27 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>assets source</h1>
 <article>
-<p><a href="lib-assets.html">← assets</a> · <a href="lib-assets-api.html">API reference</a> · version 0.2.4</p>
-<p class="lib-legend">6 file(s), 1043 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<p><a href="lib-assets.html">← assets</a> · <a href="lib-assets-api.html">API reference</a> · version 0.3.0</p>
+<p class="lib-legend">7 file(s), 1277 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
 <table class="lib-table">
 <tr><th>Item</th><th>Defined</th><th>Worked example</th><th>Call sites</th></tr>
-<tr><td><code>BlobKind</code> <span class="search-kind">enum</span></td><td><a href="#src-assets-loft-L30">30</a></td><td>—</td><td><a href="#src-assets-loft-L44">44</a> <a href="#src-assets-loft-L196">196</a></td></tr>
+<tr><td><code>BlobKind</code> <span class="search-kind">enum</span></td><td><a href="#src-assets-loft-L30">30</a></td><td>—</td><td><a href="#src-assets-loft-L44">44</a> <a href="#src-assets-loft-L196">196</a> <a href="#src-assets-loft-L577">577</a></td></tr>
 <tr><td><code>DefKind</code> <span class="search-kind">enum</span></td><td><a href="#src-assets-loft-L34">34</a></td><td>—</td><td><a href="#src-assets-loft-L100">100</a></td></tr>
-<tr><td><code>Blob</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L42">42</a></td><td>—</td><td><a href="#src-assets-loft-L196">196</a> <a href="#src-assets-loft-L202">202</a> <a href="#src-assets-loft-L213">213</a> <a href="#src-assets-loft-L288">288</a> <a href="#src-assets-loft-L476">476</a> <a href="#tests-layout-loft-L47">47</a> … (22 total)</td></tr>
-<tr><td><code>PageInfo</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L54">54</a></td><td>—</td><td><a href="#src-assets-loft-L158">158</a> <a href="#src-assets-loft-L340">340</a> <a href="#src-assets-loft-L366">366</a> <a href="#src-assets-loft-L423">423</a> <a href="#src-assets-loft-L448">448</a> <a href="#src-assets-loft-L476">476</a> … (14 total)</td></tr>
-<tr><td><code>Cell</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L68">68</a></td><td>—</td><td><a href="#src-assets-loft-L159">159</a> <a href="#src-assets-loft-L341">341</a> <a href="#src-assets-loft-L366">366</a> <a href="#src-assets-loft-L424">424</a> <a href="#src-assets-loft-L448">448</a> <a href="#src-assets-loft-L476">476</a> … (14 total)</td></tr>
-<tr><td><code>Seq</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L82">82</a></td><td>—</td><td><a href="#src-assets-loft-L160">160</a> <a href="#src-assets-loft-L476">476</a> <a href="#tests-layout-loft-L47">47</a> <a href="#tests-scene-loft-L17">17</a></td></tr>
-<tr><td><code>Def</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L98">98</a></td><td>—</td><td><a href="#src-assets-loft-L161">161</a> <a href="#src-assets-loft-L476">476</a> <a href="#tests-layout-loft-L47">47</a> <a href="#tests-scene-loft-L19">19</a> <a href="#tests-scene-loft-L21">21</a> <a href="#tests-scene-loft-L23">23</a> … (7 total)</td></tr>
-<tr><td><code>Anim</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L114">114</a></td><td>—</td><td><a href="#src-assets-loft-L162">162</a> <a href="#src-assets-loft-L476">476</a> <a href="#tests-layout-loft-L47">47</a> <a href="#tests-scene-loft-L25">25</a> <a href="#tests-scene-loft-L27">27</a> <a href="#tests-worked-examples-loft-L74">74</a></td></tr>
-<tr><td><code>Scene</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L123">123</a></td><td>—</td><td><a href="#src-assets-loft-L163">163</a> <a href="#src-assets-loft-L476">476</a> <a href="#tests-layout-loft-L47">47</a> <a href="#tests-scene-loft-L29">29</a> <a href="#tests-scene-loft-L38">38</a> <a href="#tests-worked-examples-loft-L21">21</a></td></tr>
-<tr><td><code>Placed</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L134">134</a></td><td>—</td><td><a href="#src-assets-loft-L164">164</a> <a href="#src-assets-loft-L476">476</a> <a href="#tests-layout-loft-L47">47</a> <a href="#tests-scene-loft-L30">30</a> <a href="#tests-scene-loft-L32">32</a> <a href="#tests-scene-loft-L34">34</a> … (10 total)</td></tr>
-<tr><td><code>Pack</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L157">157</a></td><td>—</td><td><a href="#src-assets-loft-L173">173</a> <a href="#src-assets-loft-L174">174</a> <a href="#src-assets-loft-L213">213</a> <a href="#src-assets-loft-L230">230</a> <a href="#src-assets-loft-L244">244</a> <a href="#src-assets-loft-L257">257</a> … (11 total)</td></tr>
-<tr><td><code>new_pack</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L173">173</a></td><td>—</td><td><a href="#tests-pack-loft-L52">52</a> <a href="#tests-pack-loft-L57">57</a> <a href="#tests-pack-loft-L88">88</a> <a href="#tests-pack-loft-L113">113</a> <a href="#tests-pack-loft-L128">128</a> <a href="#tests-pack-loft-L142">142</a> … (15 total)</td></tr>
+<tr><td><code>Blob</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L42">42</a></td><td>—</td><td><a href="#src-assets-loft-L196">196</a> <a href="#src-assets-loft-L202">202</a> <a href="#src-assets-loft-L213">213</a> <a href="#src-assets-loft-L288">288</a> <a href="#src-assets-loft-L540">540</a> <a href="#src-assets-loft-L590">590</a> … (29 total)</td></tr>
+<tr><td><code>PageInfo</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L54">54</a></td><td>—</td><td><a href="#src-assets-loft-L158">158</a> <a href="#src-assets-loft-L340">340</a> <a href="#src-assets-loft-L366">366</a> <a href="#src-assets-loft-L423">423</a> <a href="#src-assets-loft-L448">448</a> <a href="#src-assets-loft-L559">559</a> … (15 total)</td></tr>
+<tr><td><code>Cell</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L68">68</a></td><td>—</td><td><a href="#src-assets-loft-L159">159</a> <a href="#src-assets-loft-L341">341</a> <a href="#src-assets-loft-L366">366</a> <a href="#src-assets-loft-L424">424</a> <a href="#src-assets-loft-L448">448</a> <a href="#src-assets-loft-L570">570</a> … (15 total)</td></tr>
+<tr><td><code>Seq</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L82">82</a></td><td>—</td><td><a href="#src-assets-loft-L160">160</a> <a href="#src-assets-loft-L590">590</a> <a href="#tests-layout-loft-L47">47</a> <a href="#tests-scene-loft-L17">17</a></td></tr>
+<tr><td><code>Def</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L98">98</a></td><td>—</td><td><a href="#src-assets-loft-L161">161</a> <a href="#src-assets-loft-L590">590</a> <a href="#tests-layout-loft-L47">47</a> <a href="#tests-scene-loft-L19">19</a> <a href="#tests-scene-loft-L21">21</a> <a href="#tests-scene-loft-L23">23</a> … (7 total)</td></tr>
+<tr><td><code>Anim</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L114">114</a></td><td>—</td><td><a href="#src-assets-loft-L162">162</a> <a href="#src-assets-loft-L590">590</a> <a href="#tests-layout-loft-L47">47</a> <a href="#tests-scene-loft-L25">25</a> <a href="#tests-scene-loft-L27">27</a> <a href="#tests-worked-examples-loft-L74">74</a></td></tr>
+<tr><td><code>Scene</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L123">123</a></td><td>—</td><td><a href="#src-assets-loft-L163">163</a> <a href="#src-assets-loft-L590">590</a> <a href="#tests-layout-loft-L47">47</a> <a href="#tests-scene-loft-L29">29</a> <a href="#tests-scene-loft-L38">38</a> <a href="#tests-worked-examples-loft-L21">21</a></td></tr>
+<tr><td><code>Placed</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L134">134</a></td><td>—</td><td><a href="#src-assets-loft-L164">164</a> <a href="#src-assets-loft-L590">590</a> <a href="#tests-layout-loft-L47">47</a> <a href="#tests-scene-loft-L30">30</a> <a href="#tests-scene-loft-L32">32</a> <a href="#tests-scene-loft-L34">34</a> … (10 total)</td></tr>
+<tr><td><code>Pack</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L157">157</a></td><td>—</td><td><a href="#src-assets-loft-L173">173</a> <a href="#src-assets-loft-L174">174</a> <a href="#src-assets-loft-L213">213</a> <a href="#src-assets-loft-L230">230</a> <a href="#src-assets-loft-L244">244</a> <a href="#src-assets-loft-L257">257</a> … (12 total)</td></tr>
+<tr><td><code>new_pack</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L173">173</a></td><td>—</td><td><a href="#tests-pack-loft-L52">52</a> <a href="#tests-pack-loft-L57">57</a> <a href="#tests-pack-loft-L88">88</a> <a href="#tests-pack-loft-L113">113</a> <a href="#tests-pack-loft-L128">128</a> <a href="#tests-pack-loft-L142">142</a> … (21 total)</td></tr>
 <tr><td><code>meta_path</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L183">183</a></td><td>—</td><td><a href="#src-assets-loft-L215">215</a> <a href="#src-assets-loft-L231">231</a> <a href="#src-assets-loft-L232">232</a> <a href="#tests-pack-loft-L43">43</a> <a href="#tests-pack-loft-L44">44</a> <a href="#tests-pack-loft-L165">165</a> … (8 total)</td></tr>
 <tr><td><code>blobs_path</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L186">186</a></td><td>—</td><td><a href="#src-assets-loft-L216">216</a> <a href="#tests-pack-loft-L43">43</a> <a href="#tests-pack-loft-L44">44</a> <a href="#tests-pack-loft-L67">67</a> <a href="#tests-pack-loft-L97">97</a> <a href="#tests-pack-loft-L106">106</a> … (14 total)</td></tr>
-<tr><td><code>blob_put</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L196">196</a></td><td>—</td><td><a href="#tests-pack-loft-L31">31</a> <a href="#tests-pack-loft-L32">32</a> <a href="#tests-pack-loft-L33">33</a> <a href="#tests-pack-loft-L174">174</a> <a href="#tests-pack-loft-L175">175</a> <a href="#tests-pack-loft-L176">176</a> … (7 total)</td></tr>
+<tr><td><code>blob_put</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L196">196</a></td><td>—</td><td><a href="#src-assets-loft-L577">577</a> <a href="#tests-pack-loft-L31">31</a> <a href="#tests-pack-loft-L32">32</a> <a href="#tests-pack-loft-L33">33</a> <a href="#tests-pack-loft-L174">174</a> <a href="#tests-pack-loft-L175">175</a> … (8 total)</td></tr>
 <tr><td><code>pack_write</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L213">213</a></td><td><a href="#tests-worked-examples-loft-L29">PAK-001</a></td><td><a href="#tests-pack-loft-L55">55</a> <a href="#tests-pack-loft-L91">91</a> <a href="#tests-pack-loft-L116">116</a> <a href="#tests-pack-loft-L131">131</a> <a href="#tests-pack-loft-L162">162</a> <a href="#tests-worked-examples-loft-L38">38</a> … (7 total)</td></tr>
 <tr><td><code>pack_read</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L230">230</a></td><td>—</td><td><a href="#tests-pack-loft-L58">58</a> <a href="#tests-pack-loft-L143">143</a> <a href="#tests-worked-examples-loft-L40">40</a> <a href="#tests-worked-examples-loft-L60">60</a></td></tr>
 <tr><td><code>anim_of</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L244">244</a></td><td><a href="#tests-worked-examples-loft-L69">PAK-003</a></td><td><a href="#tests-scene-loft-L46">46</a> <a href="#tests-scene-loft-L47">47</a> <a href="#tests-scene-loft-L50">50</a> <a href="#tests-scene-loft-L51">51</a> <a href="#tests-scene-loft-L52">52</a> <a href="#tests-worked-examples-loft-L75">75</a> … (8 total)</td></tr>
@@ -52,10 +52,13 @@
 <tr><td><code>PROXY_ALPHA_ON</code> <span class="search-kind">const</span></td><td><a href="#src-assets-loft-L314">314</a></td><td>—</td><td><a href="#src-assets-loft-L350">350</a> <a href="#src-assets-loft-L392">392</a> <a href="#src-assets-loft-L428">428</a></td></tr>
 <tr><td><code>PROXY_BANDS</code> <span class="search-kind">const</span></td><td><a href="#src-assets-loft-L323">323</a></td><td>—</td><td><a href="#src-assets-loft-L449">449</a></td></tr>
 <tr><td><code>opaque_texels</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L423">423</a></td><td>—</td><td><a href="#tests-proxy-loft-L78">78</a> <a href="#tests-proxy-loft-L96">96</a> <a href="#tests-proxy-loft-L114">114</a> <a href="#tests-proxy-loft-L129">129</a></td></tr>
-<tr><td><code>cell_proxy</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L448">448</a></td><td>—</td><td><a href="#tests-proxy-loft-L63">63</a> <a href="#tests-proxy-loft-L81">81</a> <a href="#tests-proxy-loft-L97">97</a> <a href="#tests-proxy-loft-L115">115</a> <a href="#tests-proxy-loft-L130">130</a></td></tr>
+<tr><td><code>cell_proxy</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L448">448</a></td><td>—</td><td><a href="#src-assets-loft-L573">573</a> <a href="#tests-proxy-loft-L63">63</a> <a href="#tests-proxy-loft-L81">81</a> <a href="#tests-proxy-loft-L97">97</a> <a href="#tests-proxy-loft-L115">115</a> <a href="#tests-proxy-loft-L130">130</a></td></tr>
 <tr><td><code>proxy_overshoot</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L462">462</a></td><td>—</td><td><a href="#tests-proxy-loft-L82">82</a> <a href="#tests-proxy-loft-L87">87</a> <a href="#tests-proxy-loft-L102">102</a> <a href="#tests-proxy-loft-L132">132</a></td></tr>
-<tr><td><code>layout_descriptor</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L474">474</a></td><td>—</td><td><a href="#src-assets-loft-L498">498</a> <a href="#tests-layout-loft-L31">31</a> <a href="#tests-layout-loft-L39">39</a> <a href="#tests-layout-loft-L43">43</a> <a href="#tests-layout-loft-L58">58</a> <a href="#tests-layout-loft-L59">59</a></td></tr>
-<tr><td><code>layout_fingerprint</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L496">496</a></td><td>—</td><td><a href="#tests-layout-loft-L30">30</a> <a href="#tests-layout-loft-L31">31</a> <a href="#tests-layout-loft-L38">38</a></td></tr>
+<tr><td><code>texels</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L478">478</a></td><td>—</td><td><a href="#tests-page-loft-L26">26</a> <a href="#tests-page-loft-L91">91</a> <a href="#tests-proxy-loft-L79">79</a> <a href="#tests-worked-examples-loft-L45">45</a></td></tr>
+<tr><td><code>Tile</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L494">494</a></td><td>—</td><td><a href="#src-assets-loft-L541">541</a> <a href="#tests-page-loft-L37">37</a> <a href="#tests-page-loft-L38">38</a> <a href="#tests-page-loft-L54">54</a> <a href="#tests-page-loft-L55">55</a> <a href="#tests-page-loft-L67">67</a> … (13 total)</td></tr>
+<tr><td><code>page_grid</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L540">540</a></td><td>—</td><td><a href="#tests-page-loft-L36">36</a> <a href="#tests-page-loft-L53">53</a> <a href="#tests-page-loft-L66">66</a> <a href="#tests-page-loft-L83">83</a> <a href="#tests-page-loft-L98">98</a> <a href="#tests-page-loft-L102">102</a> … (7 total)</td></tr>
+<tr><td><code>layout_descriptor</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L588">588</a></td><td>—</td><td><a href="#src-assets-loft-L612">612</a> <a href="#tests-layout-loft-L31">31</a> <a href="#tests-layout-loft-L39">39</a> <a href="#tests-layout-loft-L43">43</a> <a href="#tests-layout-loft-L58">58</a> <a href="#tests-layout-loft-L59">59</a></td></tr>
+<tr><td><code>layout_fingerprint</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L610">610</a></td><td>—</td><td><a href="#tests-layout-loft-L30">30</a> <a href="#tests-layout-loft-L31">31</a> <a href="#tests-layout-loft-L38">38</a></td></tr>
 </table>
 <h2 id="src-assets-loft">src/assets.loft</h2>
 <pre class="src"><code><span id="src-assets-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -524,43 +527,157 @@
 <span id="src-assets-loft-L464">  ((<span class="fn-call">boxes_area</span>(po_boxes) - (po_solid <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>)) / (po_solid <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>))?</span>
 <span id="src-assets-loft-L465">}</span>
 <span id="src-assets-loft-L466"></span>
-<span id="src-assets-loft-L467"><span class="cm">// --- Checking the layout before anything reads a pack ---</span></span>
+<span id="src-assets-loft-L467"><span class="cm">// --- Building a page out of sprites ---</span></span>
 <span id="src-assets-loft-L468"></span>
-<span id="src-assets-loft-L469"><span class="cm">/// The pack's own types, field by field, as the store records them.</span></span>
+<span id="src-assets-loft-L469"><span class="cm">/// The RGBA bytes of a row-major buffer of `0xAARRGGBB` words.</span></span>
 <span id="src-assets-loft-L470"><span class="cm">///</span></span>
-<span id="src-assets-loft-L471"><span class="cm">/// Read this when the fingerprints below disagree: it names the type and the field</span></span>
-<span id="src-assets-loft-L472"><span class="cm">/// whose position moved, which the single number cannot. Derived by reflection from</span></span>
-<span id="src-assets-loft-L473"><span class="cm">/// the schema itself, so it cannot drift from it.</span></span>
-<span id="src-assets-loft-L474"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">layout_descriptor</span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
-<span id="src-assets-loft-L475">  d = <span class="st">""</span>;</span>
-<span id="src-assets-loft-L476">  <span class="kw">for</span> n <span class="kw">in</span> [<span class="st">"Blob"</span>, <span class="st">"PageInfo"</span>, <span class="st">"Cell"</span>, <span class="st">"Seq"</span>, <span class="st">"Def"</span>, <span class="st">"Anim"</span>, <span class="st">"Scene"</span>, <span class="st">"Placed"</span>, <span class="st">"Pack"</span>] {</span>
-<span id="src-assets-loft-L477">    t = <span class="fn-call"><a href="stdlib-type-reflection.html">type_named</a></span>(n);</span>
-<span id="src-assets-loft-L478">    <span class="kw">if</span> t == <span class="kw">null</span> { d += <span class="st">"{n} MISSING\n"</span>; <span class="kw">continue</span> }</span>
-<span id="src-assets-loft-L479">    d += <span class="st">"{t.name} size={t.size}\n"</span>;</span>
-<span id="src-assets-loft-L480">    <span class="kw">for</span> f <span class="kw">in</span> t.fields {</span>
-<span id="src-assets-loft-L481">      d += <span class="st">"  {f.name} {f.type_name} @{f.position} {f.kind} null={f.nullable}\n"</span>;</span>
-<span id="src-assets-loft-L482">    }</span>
+<span id="src-assets-loft-L471"><span class="cm">/// Both routes into a `Tile` end here. A `graphics::Canvas` holds exactly these</span></span>
+<span id="src-assets-loft-L472"><span class="cm">/// words in `data`, and a PNG decoded by `imaging` answers them one pixel at a time</span></span>
+<span id="src-assets-loft-L473"><span class="cm">/// through `Pixel.rgba()` — so a sprite rendered in this process and the same sprite</span></span>
+<span id="src-assets-loft-L474"><span class="cm">/// read back off disk become the same texels by the same arithmetic, rather than by</span></span>
+<span id="src-assets-loft-L475"><span class="cm">/// two conversions that agree until one of them is edited.</span></span>
+<span id="src-assets-loft-L476"><span class="cm">///</span></span>
+<span id="src-assets-loft-L477"><span class="cm">/// Alpha is carried STRAIGHT, not premultiplied: see `page_grid`.</span></span>
+<span id="src-assets-loft-L478"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">texels</span>(words: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt; {</span>
+<span id="src-assets-loft-L479">  tx_out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt; = [];</span>
+<span id="src-assets-loft-L480">  <span class="kw">for</span> w <span class="kw">in</span> words {</span>
+<span id="src-assets-loft-L481">    tx_out += [((w &gt;&gt; <span class="nm">16</span>) &amp; <span class="nm">255</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>, ((w &gt;&gt; <span class="nm">8</span>) &amp; <span class="nm">255</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>,</span>
+<span id="src-assets-loft-L482">               (w &amp; <span class="nm">255</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>, ((w &gt;&gt; <span class="nm">24</span>) &amp; <span class="nm">255</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>];</span>
 <span id="src-assets-loft-L483">  }</span>
-<span id="src-assets-loft-L484">  d</span>
+<span id="src-assets-loft-L484">  tx_out</span>
 <span id="src-assets-loft-L485">}</span>
 <span id="src-assets-loft-L486"></span>
-<span id="src-assets-loft-L487"><span class="cm">/// One number naming this build's pack layout — compare it across targets before a</span></span>
-<span id="src-assets-loft-L488"><span class="cm">/// pack is read.</span></span>
+<span id="src-assets-loft-L487"><span class="cm">/// One sprite on its way into a page: the key it will be known by, its size, and</span></span>
+<span id="src-assets-loft-L488"><span class="cm">/// its texels.</span></span>
 <span id="src-assets-loft-L489"><span class="cm">///</span></span>
-<span id="src-assets-loft-L490"><span class="cm">/// The struct definition IS the file layout, so a field that sits four bytes further</span></span>
-<span id="src-assets-loft-L491"><span class="cm">/// along on one target reads a NEIGHBOUR's value on the other, silently, and the file</span></span>
-<span id="src-assets-loft-L492"><span class="cm">/// looks corrupt rather than the layout looking wrong. A game that reads packs built</span></span>
-<span id="src-assets-loft-L493"><span class="cm">/// elsewhere should compare this once at boot and refuse rather than draw garbage.</span></span>
-<span id="src-assets-loft-L494"><span class="cm">/// (A 32-bit FNV-1a over `layout_descriptor`, masked at every step because an</span></span>
-<span id="src-assets-loft-L495"><span class="cm">/// unbounded multiply would reach loft's null.)</span></span>
-<span id="src-assets-loft-L496"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">layout_fingerprint</span>() -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-assets-loft-L497">  h = <span class="nm">2166136261</span>;</span>
-<span id="src-assets-loft-L498">  <span class="kw">for</span> c <span class="kw">in</span> <span class="fn-call">layout_descriptor</span>() {</span>
-<span id="src-assets-loft-L499">    h = (h ^ (c <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>)) &amp; <span class="nm">4294967295</span>;</span>
-<span id="src-assets-loft-L500">    h = (h * <span class="nm">16777619</span>) &amp; <span class="nm">4294967295</span>;</span>
-<span id="src-assets-loft-L501">  }</span>
-<span id="src-assets-loft-L502">  h</span>
+<span id="src-assets-loft-L490"><span class="cm">/// `ti_px` is `ti_w * ti_h * 4` bytes of STRAIGHT-alpha RGBA, row-major. Where</span></span>
+<span id="src-assets-loft-L491"><span class="cm">/// those bytes came from is deliberately not this package's business — a decoded</span></span>
+<span id="src-assets-loft-L492"><span class="cm">/// PNG and a canvas rendered in this process are the same tile here, which is what</span></span>
+<span id="src-assets-loft-L493"><span class="cm">/// lets a sprite authored as text skip the file it used to have to become.</span></span>
+<span id="src-assets-loft-L494"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Tile</span> {</span>
+<span id="src-assets-loft-L495">  ti_key: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
+<span id="src-assets-loft-L496">  ti_w: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-assets-loft-L497">  ti_h: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-assets-loft-L498">  ti_px: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt;,</span>
+<span id="src-assets-loft-L499">  <span class="cm">/// Where the stage places the sprite BY, in cell-local texels — the feet of a</span></span>
+<span id="src-assets-loft-L500">  <span class="cm">/// character rather than its top-left corner.</span></span>
+<span id="src-assets-loft-L501">  ti_ox: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
+<span id="src-assets-loft-L502">  ti_oy: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
 <span id="src-assets-loft-L503">}</span>
+<span id="src-assets-loft-L504"></span>
+<span id="src-assets-loft-L505"><span class="cm">/// `n` zero bytes.</span></span>
+<span id="src-assets-loft-L506"><span class="cm">///</span></span>
+<span id="src-assets-loft-L507"><span class="cm">/// Built by DOUBLING: a page buffer is megabytes, and appending one element at a</span></span>
+<span id="src-assets-loft-L508"><span class="cm">/// time costs three bytecodes each, while appending a vector to itself is one</span></span>
+<span id="src-assets-loft-L509"><span class="cm">/// block copy.</span></span>
+<span id="src-assets-loft-L510"><span class="kw">fn</span> <span class="fn-call">zero_bytes</span>(n: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt; {</span>
+<span id="src-assets-loft-L511">  zb: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt; = [];</span>
+<span id="src-assets-loft-L512">  <span class="kw">if</span> n &lt;= <span class="nm">0</span> { <span class="kw">return</span> zb }</span>
+<span id="src-assets-loft-L513">  zb += [<span class="nm">0</span>];</span>
+<span id="src-assets-loft-L514">  while <span class="bi"><a href="stdlib-text.html">len</a></span>(zb) &lt; n { zb += zb; }</span>
+<span id="src-assets-loft-L515">  <span class="kw">if</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(zb) == n { <span class="kw">return</span> zb }</span>
+<span id="src-assets-loft-L516">  zt = zb[<span class="nm">0..</span>n];</span>
+<span id="src-assets-loft-L517">  zt</span>
+<span id="src-assets-loft-L518">}</span>
+<span id="src-assets-loft-L519"></span>
+<span id="src-assets-loft-L520"><span class="cm">/// The smallest square-ish column count for `n` tiles.</span></span>
+<span id="src-assets-loft-L521"><span class="kw">fn</span> <span class="fn-call">grid_cols</span>(n: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-assets-loft-L522">  gc = <span class="nm">1</span>;</span>
+<span id="src-assets-loft-L523">  while gc * gc &lt; n { gc += <span class="nm">1</span>; }</span>
+<span id="src-assets-loft-L524">  gc</span>
+<span id="src-assets-loft-L525">}</span>
+<span id="src-assets-loft-L526"></span>
+<span id="src-assets-loft-L527"><span class="cm">/// Lay tiles out in a grid page, blit their texels into it, and record one `Cell`</span></span>
+<span id="src-assets-loft-L528"><span class="cm">/// per tile — with each cell's collision proxy DERIVED from the alpha as it lands.</span></span>
+<span id="src-assets-loft-L529"><span class="cm">///</span></span>
+<span id="src-assets-loft-L530"><span class="cm">/// The page is sized from the widest and tallest tile, so every cell shares one</span></span>
+<span id="src-assets-loft-L531"><span class="cm">/// grid step; `pad` puts transparent texels between them, which is what a sampler</span></span>
+<span id="src-assets-loft-L532"><span class="cm">/// that filters needs to stop a neighbour bleeding in. Answers false — writing</span></span>
+<span id="src-assets-loft-L533"><span class="cm">/// nothing — when a tile's byte count disagrees with the size it declares, because</span></span>
+<span id="src-assets-loft-L534"><span class="cm">/// a packer that quietly places a truncated sprite is the failure this exists to</span></span>
+<span id="src-assets-loft-L535"><span class="cm">/// prevent.</span></span>
+<span id="src-assets-loft-L536"><span class="cm">///</span></span>
+<span id="src-assets-loft-L537"><span class="cm">/// The pixels land under `blob` as `Bytes`: STRAIGHT alpha, not premultiplied,</span></span>
+<span id="src-assets-loft-L538"><span class="cm">/// because that is what a blend of SRC_ALPHA / ONE_MINUS_SRC_ALPHA expects.</span></span>
+<span id="src-assets-loft-L539"><span class="cm">/// `BlobKind::Rgba` promises premultiplied texels and these are not.</span></span>
+<span id="src-assets-loft-L540"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">page_grid</span>(p: <span class="en">Pack</span>, blobs: &amp;<span class="ty">hash</span>&lt;<span class="en">Blob</span>[bl_key]&gt;, page: <span class="ty"><a href="stdlib-types.html">text</a></span>, blob: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
+<span id="src-assets-loft-L541">                 tiles: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Tile</span>&gt;, cols: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
+<span id="src-assets-loft-L542">                 pad: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-assets-loft-L543">  <span class="kw">if</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(tiles) == <span class="nm">0</span> { <span class="kw">return</span> <span class="kw">false</span> }</span>
+<span id="src-assets-loft-L544">  <span class="kw">for</span> t <span class="kw">in</span> tiles {</span>
+<span id="src-assets-loft-L545">    <span class="kw">if</span> t.ti_w &lt;= <span class="nm">0</span> || t.ti_h &lt;= <span class="nm">0</span> { <span class="kw">return</span> <span class="kw">false</span> }</span>
+<span id="src-assets-loft-L546">    <span class="kw">if</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(t.ti_px) != t.ti_w * t.ti_h * <span class="nm">4</span> { <span class="kw">return</span> <span class="kw">false</span> }</span>
+<span id="src-assets-loft-L547">  }</span>
+<span id="src-assets-loft-L548">  pg_cols = <span class="kw">if</span> cols &gt; <span class="nm">0</span> { cols } <span class="kw">else</span> { <span class="fn-call">grid_cols</span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(tiles)) };</span>
+<span id="src-assets-loft-L549">  pg_rows = ((<span class="bi"><a href="stdlib-text.html">len</a></span>(tiles) + pg_cols - <span class="nm">1</span>) / pg_cols)?;</span>
+<span id="src-assets-loft-L550">  pg_cw = <span class="nm">0</span>;</span>
+<span id="src-assets-loft-L551">  pg_ch = <span class="nm">0</span>;</span>
+<span id="src-assets-loft-L552">  <span class="kw">for</span> t <span class="kw">in</span> tiles {</span>
+<span id="src-assets-loft-L553">    <span class="kw">if</span> t.ti_w &gt; pg_cw { pg_cw = t.ti_w; }</span>
+<span id="src-assets-loft-L554">    <span class="kw">if</span> t.ti_h &gt; pg_ch { pg_ch = t.ti_h; }</span>
+<span id="src-assets-loft-L555">  }</span>
+<span id="src-assets-loft-L556">  pg_w = pg_cols * (pg_cw + pad) - pad;</span>
+<span id="src-assets-loft-L557">  pg_h = pg_rows * (pg_ch + pad) - pad;</span>
+<span id="src-assets-loft-L558">  pg_px = <span class="fn-call">zero_bytes</span>(pg_w * pg_h * <span class="nm">4</span>);</span>
+<span id="src-assets-loft-L559">  pg_info = <span class="en">PageInfo</span> { pi_name: page, pi_w: pg_w, pi_h: pg_h, pi_blob: blob };</span>
+<span id="src-assets-loft-L560"></span>
+<span id="src-assets-loft-L561">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..l</span><span class="fn-call">en</span>(tiles) {</span>
+<span id="src-assets-loft-L562">    pg_t = tiles[i]?;</span>
+<span id="src-assets-loft-L563">    pg_x = ((i % pg_cols)?) * (pg_cw + pad);</span>
+<span id="src-assets-loft-L564">    pg_y = ((i / pg_cols)?) * (pg_ch + pad);</span>
+<span id="src-assets-loft-L565">    <span class="kw">for</span> y <span class="kw">in</span> <span class="nm">0..</span>pg_t.ti_h {</span>
+<span id="src-assets-loft-L566">      pg_src = y * pg_t.ti_w * <span class="nm">4</span>;</span>
+<span id="src-assets-loft-L567">      pg_dst = ((pg_y + y) * pg_w + pg_x) * <span class="nm">4</span>;</span>
+<span id="src-assets-loft-L568">      <span class="kw">for</span> k <span class="kw">in</span> <span class="nm">0..</span>(pg_t.ti_w * <span class="nm">4</span>) { pg_px[pg_dst + k] = pg_t.ti_px[pg_src + k]?; }</span>
+<span id="src-assets-loft-L569">    }</span>
+<span id="src-assets-loft-L570">    pg_c = <span class="en">Cell</span> { ce_key: pg_t.ti_key, ce_page: page, ce_x: pg_x, ce_y: pg_y,</span>
+<span id="src-assets-loft-L571">                  ce_w: pg_t.ti_w, ce_h: pg_t.ti_h,</span>
+<span id="src-assets-loft-L572">                  ce_ox: pg_t.ti_ox, ce_oy: pg_t.ti_oy, ce_proxy: [] };</span>
+<span id="src-assets-loft-L573">    pg_c.ce_proxy = <span class="fn-call">cell_proxy</span>(pg_c, pg_info, pg_px);</span>
+<span id="src-assets-loft-L574">    p.cells += [pg_c];</span>
+<span id="src-assets-loft-L575">  }</span>
+<span id="src-assets-loft-L576">  p.pages += [pg_info];</span>
+<span id="src-assets-loft-L577">  <span class="fn-call">blob_put</span>(blobs, blob, <span class="en">BlobKind</span>.<span class="en">Bytes</span>, pg_px);</span>
+<span id="src-assets-loft-L578">  <span class="kw">true</span></span>
+<span id="src-assets-loft-L579">}</span>
+<span id="src-assets-loft-L580"></span>
+<span id="src-assets-loft-L581"><span class="cm">// --- Checking the layout before anything reads a pack ---</span></span>
+<span id="src-assets-loft-L582"></span>
+<span id="src-assets-loft-L583"><span class="cm">/// The pack's own types, field by field, as the store records them.</span></span>
+<span id="src-assets-loft-L584"><span class="cm">///</span></span>
+<span id="src-assets-loft-L585"><span class="cm">/// Read this when the fingerprints below disagree: it names the type and the field</span></span>
+<span id="src-assets-loft-L586"><span class="cm">/// whose position moved, which the single number cannot. Derived by reflection from</span></span>
+<span id="src-assets-loft-L587"><span class="cm">/// the schema itself, so it cannot drift from it.</span></span>
+<span id="src-assets-loft-L588"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">layout_descriptor</span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-assets-loft-L589">  d = <span class="st">""</span>;</span>
+<span id="src-assets-loft-L590">  <span class="kw">for</span> n <span class="kw">in</span> [<span class="st">"Blob"</span>, <span class="st">"PageInfo"</span>, <span class="st">"Cell"</span>, <span class="st">"Seq"</span>, <span class="st">"Def"</span>, <span class="st">"Anim"</span>, <span class="st">"Scene"</span>, <span class="st">"Placed"</span>, <span class="st">"Pack"</span>] {</span>
+<span id="src-assets-loft-L591">    t = <span class="fn-call"><a href="stdlib-type-reflection.html">type_named</a></span>(n);</span>
+<span id="src-assets-loft-L592">    <span class="kw">if</span> t == <span class="kw">null</span> { d += <span class="st">"{n} MISSING\n"</span>; <span class="kw">continue</span> }</span>
+<span id="src-assets-loft-L593">    d += <span class="st">"{t.name} size={t.size}\n"</span>;</span>
+<span id="src-assets-loft-L594">    <span class="kw">for</span> f <span class="kw">in</span> t.fields {</span>
+<span id="src-assets-loft-L595">      d += <span class="st">"  {f.name} {f.type_name} @{f.position} {f.kind} null={f.nullable}\n"</span>;</span>
+<span id="src-assets-loft-L596">    }</span>
+<span id="src-assets-loft-L597">  }</span>
+<span id="src-assets-loft-L598">  d</span>
+<span id="src-assets-loft-L599">}</span>
+<span id="src-assets-loft-L600"></span>
+<span id="src-assets-loft-L601"><span class="cm">/// One number naming this build's pack layout — compare it across targets before a</span></span>
+<span id="src-assets-loft-L602"><span class="cm">/// pack is read.</span></span>
+<span id="src-assets-loft-L603"><span class="cm">///</span></span>
+<span id="src-assets-loft-L604"><span class="cm">/// The struct definition IS the file layout, so a field that sits four bytes further</span></span>
+<span id="src-assets-loft-L605"><span class="cm">/// along on one target reads a NEIGHBOUR's value on the other, silently, and the file</span></span>
+<span id="src-assets-loft-L606"><span class="cm">/// looks corrupt rather than the layout looking wrong. A game that reads packs built</span></span>
+<span id="src-assets-loft-L607"><span class="cm">/// elsewhere should compare this once at boot and refuse rather than draw garbage.</span></span>
+<span id="src-assets-loft-L608"><span class="cm">/// (A 32-bit FNV-1a over `layout_descriptor`, masked at every step because an</span></span>
+<span id="src-assets-loft-L609"><span class="cm">/// unbounded multiply would reach loft's null.)</span></span>
+<span id="src-assets-loft-L610"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">layout_fingerprint</span>() -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-assets-loft-L611">  h = <span class="nm">2166136261</span>;</span>
+<span id="src-assets-loft-L612">  <span class="kw">for</span> c <span class="kw">in</span> <span class="fn-call">layout_descriptor</span>() {</span>
+<span id="src-assets-loft-L613">    h = (h ^ (c <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>)) &amp; <span class="nm">4294967295</span>;</span>
+<span id="src-assets-loft-L614">    h = (h * <span class="nm">16777619</span>) &amp; <span class="nm">4294967295</span>;</span>
+<span id="src-assets-loft-L615">  }</span>
+<span id="src-assets-loft-L616">  h</span>
+<span id="src-assets-loft-L617">}</span>
 </code></pre>
 <h2 id="tests-layout-loft">tests/layout.loft</h2>
 <pre class="src"><code><span id="tests-layout-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -807,6 +924,128 @@
 <span id="tests-pack-loft-L180">  got = b[<span class="st">"page/a"</span>].bl_bytes ?? [];</span>
 <span id="tests-pack-loft-L181">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(got) == <span class="nm">2</span> &amp;&amp; b[<span class="st">"page/a"</span>].bl_kind == <span class="en">Png</span>, <span class="st">"the newer blob"</span>);</span>
 <span id="tests-pack-loft-L182">}</span>
+</code></pre>
+<h2 id="tests-page-loft">tests/page.loft</h2>
+<pre class="src"><code><span id="tests-page-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
+<span id="tests-page-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
+<span id="tests-page-loft-L3"><span class="cm">//</span></span>
+<span id="tests-page-loft-L4"><span class="cm">// Building a page out of sprites: where each cell lands, what the texels between</span></span>
+<span id="tests-page-loft-L5"><span class="cm">// them are, and what happens to a tile that lies about its size.</span></span>
+<span id="tests-page-loft-L6"><span class="cm">//</span></span>
+<span id="tests-page-loft-L7"><span class="cm">// Every expected value here is hand-computed from the grid arithmetic rather than</span></span>
+<span id="tests-page-loft-L8"><span class="cm">// read off a run — a placer that agrees with itself is exactly the failure a</span></span>
+<span id="tests-page-loft-L9"><span class="cm">// self-comparison cannot see.</span></span>
+<span id="tests-page-loft-L10"><span class="kw">use</span> assets::*;</span>
+<span id="tests-page-loft-L11"></span>
+<span id="tests-page-loft-L12"><span class="cm">/// `w * h` texels of one colour, as straight-alpha RGBA bytes.</span></span>
+<span id="tests-page-loft-L13"><span class="kw">fn</span> <span class="fn-call">solid</span>(w: <span class="ty"><a href="stdlib-types.html">integer</a></span>, h: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r: <span class="ty"><a href="stdlib-types.html">integer</a></span>, g: <span class="ty"><a href="stdlib-types.html">integer</a></span>, b: <span class="ty"><a href="stdlib-types.html">integer</a></span>, a: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt; {</span>
+<span id="tests-page-loft-L14">  out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt; = [];</span>
+<span id="tests-page-loft-L15">  <span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..</span>(w * h) { out += [(r &amp; <span class="nm">255</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>, (g &amp; <span class="nm">255</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>, (b &amp; <span class="nm">255</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>, (a &amp; <span class="nm">255</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>]; }</span>
+<span id="tests-page-loft-L16">  out</span>
+<span id="tests-page-loft-L17">}</span>
+<span id="tests-page-loft-L18"></span>
+<span id="tests-page-loft-L19"><span class="kw">fn</span> <span class="fn-call"><a href="stdlib-text-bytes-and-code-points.html">byte_at</a></span>(px: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt;, w: <span class="ty"><a href="stdlib-types.html">integer</a></span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, c: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="tests-page-loft-L20">  px[(y * w + x) * <span class="nm">4</span> + c]?</span>
+<span id="tests-page-loft-L21">}</span>
+<span id="tests-page-loft-L22"></span>
+<span id="tests-page-loft-L23"><span class="kw">fn</span> <span class="fn-call">test_a_word_becomes_four_bytes_in_rgba_order</span>() {</span>
+<span id="tests-page-loft-L24">  <span class="cm">// 0xAARRGGBB in, R G B A out — the order a texture page holds and the order a</span></span>
+<span id="tests-page-loft-L25">  <span class="cm">// decoded PNG arrives in.</span></span>
+<span id="tests-page-loft-L26">  got = <span class="fn-call">texels</span>([<span class="nm">0x804090C0</span>, <span class="nm">0xFF000000</span>]);</span>
+<span id="tests-page-loft-L27">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(got) == <span class="nm">8</span>, <span class="st">"two words, eight bytes, got {len(got)}"</span>);</span>
+<span id="tests-page-loft-L28">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(got[<span class="nm">0</span>]? == <span class="nm">0x40</span> &amp;&amp; got[<span class="nm">1</span>]? == <span class="nm">0x90</span> &amp;&amp; got[<span class="nm">2</span>]? == <span class="nm">0xC0</span> &amp;&amp; got[<span class="nm">3</span>]? == <span class="nm">0x80</span>,</span>
+<span id="tests-page-loft-L29">         <span class="st">"R G B A, got {got[0]?} {got[1]?} {got[2]?} {got[3]?}"</span>);</span>
+<span id="tests-page-loft-L30">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(got[<span class="nm">7</span>]? == <span class="nm">255</span>, <span class="st">"an opaque black stays opaque"</span>);</span>
+<span id="tests-page-loft-L31">}</span>
+<span id="tests-page-loft-L32"></span>
+<span id="tests-page-loft-L33"><span class="kw">fn</span> <span class="fn-call">test_two_tiles_share_one_page</span>() {</span>
+<span id="tests-page-loft-L34">  p = <span class="fn-call">new_pack</span>();</span>
+<span id="tests-page-loft-L35">  blobs: <span class="ty">hash</span>&lt;<span class="en">Blob</span>[bl_key]&gt; = [];</span>
+<span id="tests-page-loft-L36">  ok = <span class="fn-call">page_grid</span>(p, blobs, <span class="st">"atlas"</span>, <span class="st">"page/atlas"</span>,</span>
+<span id="tests-page-loft-L37">                 [<span class="en">Tile</span> { ti_key: <span class="st">"a"</span>, ti_w: <span class="nm">2</span>, ti_h: <span class="nm">2</span>, ti_px: <span class="fn-call">solid</span>(<span class="nm">2</span>, <span class="nm">2</span>, <span class="nm">200</span>, <span class="nm">10</span>, <span class="nm">10</span>, <span class="nm">255</span>) },</span>
+<span id="tests-page-loft-L38">                  <span class="en">Tile</span> { ti_key: <span class="st">"b"</span>, ti_w: <span class="nm">2</span>, ti_h: <span class="nm">2</span>, ti_px: <span class="fn-call">solid</span>(<span class="nm">2</span>, <span class="nm">2</span>, <span class="nm">10</span>, <span class="nm">10</span>, <span class="nm">200</span>, <span class="nm">255</span>) }], <span class="nm">2</span>);</span>
+<span id="tests-page-loft-L39">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(ok, <span class="st">"two well-formed tiles are placed"</span>);</span>
+<span id="tests-page-loft-L40">  info = p.pages[<span class="st">"atlas"</span>];</span>
+<span id="tests-page-loft-L41">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(info.pi_w == <span class="nm">4</span> &amp;&amp; info.pi_h == <span class="nm">2</span>, <span class="st">"two 2x2 cells side by side: 4x2, got {info.pi_w}x{info.pi_h}"</span>);</span>
+<span id="tests-page-loft-L42">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(p.cells[<span class="st">"a"</span>].ce_x == <span class="nm">0</span> &amp;&amp; p.cells[<span class="st">"a"</span>].ce_y == <span class="nm">0</span>, <span class="st">"the first cell is at the origin"</span>);</span>
+<span id="tests-page-loft-L43">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(p.cells[<span class="st">"b"</span>].ce_x == <span class="nm">2</span> &amp;&amp; p.cells[<span class="st">"b"</span>].ce_y == <span class="nm">0</span>, <span class="st">"the second is one grid step along"</span>);</span>
+<span id="tests-page-loft-L44">  px = blobs[<span class="st">"page/atlas"</span>].bl_bytes?;</span>
+<span id="tests-page-loft-L45">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(px) == <span class="nm">4</span> * <span class="nm">2</span> * <span class="nm">4</span>, <span class="st">"the page is width*height*4 bytes, got {len(px)}"</span>);</span>
+<span id="tests-page-loft-L46">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call"><a href="stdlib-text-bytes-and-code-points.html">byte_at</a></span>(px, <span class="nm">4</span>, <span class="nm">0</span>, <span class="nm">1</span>, <span class="nm">0</span>) == <span class="nm">200</span>, <span class="st">"a's second ROW is a's, not b's"</span>);</span>
+<span id="tests-page-loft-L47">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call"><a href="stdlib-text-bytes-and-code-points.html">byte_at</a></span>(px, <span class="nm">4</span>, <span class="nm">2</span>, <span class="nm">1</span>, <span class="nm">2</span>) == <span class="nm">200</span>, <span class="st">"and b's second row is b's — the blit is row-major"</span>);</span>
+<span id="tests-page-loft-L48">}</span>
+<span id="tests-page-loft-L49"></span>
+<span id="tests-page-loft-L50"><span class="kw">fn</span> <span class="fn-call">test_padding_puts_transparent_texels_between_cells</span>() {</span>
+<span id="tests-page-loft-L51">  p = <span class="fn-call">new_pack</span>();</span>
+<span id="tests-page-loft-L52">  blobs: <span class="ty">hash</span>&lt;<span class="en">Blob</span>[bl_key]&gt; = [];</span>
+<span id="tests-page-loft-L53">  _ = <span class="fn-call">page_grid</span>(p, blobs, <span class="st">"atlas"</span>, <span class="st">"page/atlas"</span>,</span>
+<span id="tests-page-loft-L54">                [<span class="en">Tile</span> { ti_key: <span class="st">"a"</span>, ti_w: <span class="nm">2</span>, ti_h: <span class="nm">2</span>, ti_px: <span class="fn-call">solid</span>(<span class="nm">2</span>, <span class="nm">2</span>, <span class="nm">200</span>, <span class="nm">10</span>, <span class="nm">10</span>, <span class="nm">255</span>) },</span>
+<span id="tests-page-loft-L55">                 <span class="en">Tile</span> { ti_key: <span class="st">"b"</span>, ti_w: <span class="nm">2</span>, ti_h: <span class="nm">2</span>, ti_px: <span class="fn-call">solid</span>(<span class="nm">2</span>, <span class="nm">2</span>, <span class="nm">10</span>, <span class="nm">10</span>, <span class="nm">200</span>, <span class="nm">255</span>) }], <span class="nm">2</span>, <span class="nm">1</span>);</span>
+<span id="tests-page-loft-L56">  info = p.pages[<span class="st">"atlas"</span>];</span>
+<span id="tests-page-loft-L57">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(info.pi_w == <span class="nm">5</span>, <span class="st">"2*(2+1)-1 = 5 — the gutter is BETWEEN cells, not after the last"</span>);</span>
+<span id="tests-page-loft-L58">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(p.cells[<span class="st">"b"</span>].ce_x == <span class="nm">3</span>, <span class="st">"b starts past the gutter, got {p.cells[\"</span>b\<span class="st">"].ce_x}"</span>);</span>
+<span id="tests-page-loft-L59">  px = blobs[<span class="st">"page/atlas"</span>].bl_bytes?;</span>
+<span id="tests-page-loft-L60">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call"><a href="stdlib-text-bytes-and-code-points.html">byte_at</a></span>(px, <span class="nm">5</span>, <span class="nm">2</span>, <span class="nm">0</span>, <span class="nm">3</span>) == <span class="nm">0</span>, <span class="st">"the gutter column is transparent"</span>);</span>
+<span id="tests-page-loft-L61">}</span>
+<span id="tests-page-loft-L62"></span>
+<span id="tests-page-loft-L63"><span class="kw">fn</span> <span class="fn-call">test_a_smaller_tile_keeps_its_own_rect</span>() {</span>
+<span id="tests-page-loft-L64">  p = <span class="fn-call">new_pack</span>();</span>
+<span id="tests-page-loft-L65">  blobs: <span class="ty">hash</span>&lt;<span class="en">Blob</span>[bl_key]&gt; = [];</span>
+<span id="tests-page-loft-L66">  _ = <span class="fn-call">page_grid</span>(p, blobs, <span class="st">"atlas"</span>, <span class="st">"page/atlas"</span>,</span>
+<span id="tests-page-loft-L67">                [<span class="en">Tile</span> { ti_key: <span class="st">"big"</span>, ti_w: <span class="nm">2</span>, ti_h: <span class="nm">2</span>, ti_px: <span class="fn-call">solid</span>(<span class="nm">2</span>, <span class="nm">2</span>, <span class="nm">200</span>, <span class="nm">10</span>, <span class="nm">10</span>, <span class="nm">255</span>) },</span>
+<span id="tests-page-loft-L68">                 <span class="en">Tile</span> { ti_key: <span class="st">"small"</span>, ti_w: <span class="nm">1</span>, ti_h: <span class="nm">1</span>, ti_px: <span class="fn-call">solid</span>(<span class="nm">1</span>, <span class="nm">1</span>, <span class="nm">10</span>, <span class="nm">200</span>, <span class="nm">10</span>, <span class="nm">255</span>) }], <span class="nm">2</span>);</span>
+<span id="tests-page-loft-L69">  info = p.pages[<span class="st">"atlas"</span>];</span>
+<span id="tests-page-loft-L70">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(info.pi_w == <span class="nm">4</span> &amp;&amp; info.pi_h == <span class="nm">2</span>, <span class="st">"the grid step is the WIDEST tile, got {info.pi_w}x{info.pi_h}"</span>);</span>
+<span id="tests-page-loft-L71">  small = p.cells[<span class="st">"small"</span>];</span>
+<span id="tests-page-loft-L72">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(small.ce_x == <span class="nm">2</span> &amp;&amp; small.ce_w == <span class="nm">1</span> &amp;&amp; small.ce_h == <span class="nm">1</span>,</span>
+<span id="tests-page-loft-L73">         <span class="st">"the cell is the sprite's own size, not the step's"</span>);</span>
+<span id="tests-page-loft-L74">  px = blobs[<span class="st">"page/atlas"</span>].bl_bytes?;</span>
+<span id="tests-page-loft-L75">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call"><a href="stdlib-text-bytes-and-code-points.html">byte_at</a></span>(px, <span class="nm">4</span>, <span class="nm">2</span>, <span class="nm">0</span>, <span class="nm">1</span>) == <span class="nm">200</span>, <span class="st">"the small tile landed"</span>);</span>
+<span id="tests-page-loft-L76">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call"><a href="stdlib-text-bytes-and-code-points.html">byte_at</a></span>(px, <span class="nm">4</span>, <span class="nm">3</span>, <span class="nm">0</span>, <span class="nm">3</span>) == <span class="nm">0</span>, <span class="st">"and the rest of its cell stayed transparent"</span>);</span>
+<span id="tests-page-loft-L77">}</span>
+<span id="tests-page-loft-L78"></span>
+<span id="tests-page-loft-L79"><span class="kw">fn</span> <span class="fn-call">test_the_grid_squares_itself_when_no_column_count_is_given</span>() {</span>
+<span id="tests-page-loft-L80">  <span class="cm">// Three tiles: the smallest square-ish grid is 2 wide, so the third wraps.</span></span>
+<span id="tests-page-loft-L81">  p = <span class="fn-call">new_pack</span>();</span>
+<span id="tests-page-loft-L82">  blobs: <span class="ty">hash</span>&lt;<span class="en">Blob</span>[bl_key]&gt; = [];</span>
+<span id="tests-page-loft-L83">  _ = <span class="fn-call">page_grid</span>(p, blobs, <span class="st">"atlas"</span>, <span class="st">"page/atlas"</span>,</span>
+<span id="tests-page-loft-L84">                [<span class="en">Tile</span> { ti_key: <span class="st">"a"</span>, ti_w: <span class="nm">2</span>, ti_h: <span class="nm">2</span>, ti_px: <span class="fn-call">solid</span>(<span class="nm">2</span>, <span class="nm">2</span>, <span class="nm">200</span>, <span class="nm">10</span>, <span class="nm">10</span>, <span class="nm">255</span>) },</span>
+<span id="tests-page-loft-L85">                 <span class="en">Tile</span> { ti_key: <span class="st">"b"</span>, ti_w: <span class="nm">2</span>, ti_h: <span class="nm">2</span>, ti_px: <span class="fn-call">solid</span>(<span class="nm">2</span>, <span class="nm">2</span>, <span class="nm">10</span>, <span class="nm">200</span>, <span class="nm">10</span>, <span class="nm">255</span>) },</span>
+<span id="tests-page-loft-L86">                 <span class="en">Tile</span> { ti_key: <span class="st">"c"</span>, ti_w: <span class="nm">2</span>, ti_h: <span class="nm">2</span>, ti_px: <span class="fn-call">solid</span>(<span class="nm">2</span>, <span class="nm">2</span>, <span class="nm">10</span>, <span class="nm">10</span>, <span class="nm">200</span>, <span class="nm">255</span>) }]);</span>
+<span id="tests-page-loft-L87">  info = p.pages[<span class="st">"atlas"</span>];</span>
+<span id="tests-page-loft-L88">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(info.pi_w == <span class="nm">4</span> &amp;&amp; info.pi_h == <span class="nm">4</span>, <span class="st">"2x2 cells of 2x2: 4x4, got {info.pi_w}x{info.pi_h}"</span>);</span>
+<span id="tests-page-loft-L89">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(p.cells[<span class="st">"c"</span>].ce_x == <span class="nm">0</span> &amp;&amp; p.cells[<span class="st">"c"</span>].ce_y == <span class="nm">2</span>, <span class="st">"the third tile wraps to the next row"</span>);</span>
+<span id="tests-page-loft-L90">  px = blobs[<span class="st">"page/atlas"</span>].bl_bytes?;</span>
+<span id="tests-page-loft-L91">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call"><a href="stdlib-text-bytes-and-code-points.html">byte_at</a></span>(px, <span class="nm">4</span>, <span class="nm">0</span>, <span class="nm">2</span>, <span class="nm">2</span>) == <span class="nm">200</span>, <span class="st">"and its texels went with it"</span>);</span>
+<span id="tests-page-loft-L92">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call"><a href="stdlib-text-bytes-and-code-points.html">byte_at</a></span>(px, <span class="nm">4</span>, <span class="nm">2</span>, <span class="nm">2</span>, <span class="nm">3</span>) == <span class="nm">0</span>, <span class="st">"the unused fourth cell stays transparent"</span>);</span>
+<span id="tests-page-loft-L93">}</span>
+<span id="tests-page-loft-L94"></span>
+<span id="tests-page-loft-L95"><span class="kw">fn</span> <span class="fn-call">test_a_tile_that_lies_about_its_size_is_refused</span>() {</span>
+<span id="tests-page-loft-L96">  p = <span class="fn-call">new_pack</span>();</span>
+<span id="tests-page-loft-L97">  blobs: <span class="ty">hash</span>&lt;<span class="en">Blob</span>[bl_key]&gt; = [];</span>
+<span id="tests-page-loft-L98">  ok = <span class="fn-call">page_grid</span>(p, blobs, <span class="st">"atlas"</span>, <span class="st">"page/atlas"</span>,</span>
+<span id="tests-page-loft-L99">                 [<span class="en">Tile</span> { ti_key: <span class="st">"t"</span>, ti_w: <span class="nm">2</span>, ti_h: <span class="nm">2</span>, ti_px: [<span class="nm">1</span>, <span class="nm">2</span>, <span class="nm">3</span>] }], <span class="nm">1</span>);</span>
+<span id="tests-page-loft-L100">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!ok, <span class="st">"a truncated tile is refused"</span>);</span>
+<span id="tests-page-loft-L101">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(p.pages) == <span class="nm">0</span> &amp;&amp; <span class="bi"><a href="stdlib-text.html">len</a></span>(p.cells) == <span class="nm">0</span>, <span class="st">"and nothing is written"</span>);</span>
+<span id="tests-page-loft-L102">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">page_grid</span>(p, blobs, <span class="st">"atlas"</span>, <span class="st">"page/atlas"</span>, [], <span class="nm">1</span>) == <span class="kw">false</span>, <span class="st">"so is an empty list"</span>);</span>
+<span id="tests-page-loft-L103">}</span>
+<span id="tests-page-loft-L104"></span>
+<span id="tests-page-loft-L105"><span class="kw">fn</span> <span class="fn-call">test_a_proxy_is_derived_as_the_cell_lands</span>() {</span>
+<span id="tests-page-loft-L106">  p = <span class="fn-call">new_pack</span>();</span>
+<span id="tests-page-loft-L107">  blobs: <span class="ty">hash</span>&lt;<span class="en">Blob</span>[bl_key]&gt; = [];</span>
+<span id="tests-page-loft-L108">  _ = <span class="fn-call">page_grid</span>(p, blobs, <span class="st">"atlas"</span>, <span class="st">"page/atlas"</span>,</span>
+<span id="tests-page-loft-L109">                [<span class="en">Tile</span> { ti_key: <span class="st">"solid"</span>, ti_w: <span class="nm">4</span>, ti_h: <span class="nm">4</span>, ti_px: <span class="fn-call">solid</span>(<span class="nm">4</span>, <span class="nm">4</span>, <span class="nm">200</span>, <span class="nm">10</span>, <span class="nm">10</span>, <span class="nm">255</span>) },</span>
+<span id="tests-page-loft-L110">                 <span class="en">Tile</span> { ti_key: <span class="st">"clear"</span>, ti_w: <span class="nm">4</span>, ti_h: <span class="nm">4</span>, ti_px: <span class="fn-call">solid</span>(<span class="nm">4</span>, <span class="nm">4</span>, <span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">0</span>) }], <span class="nm">2</span>);</span>
+<span id="tests-page-loft-L111">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(p.cells[<span class="st">"solid"</span>] != <span class="kw">null</span> &amp;&amp; p.cells[<span class="st">"clear"</span>] != <span class="kw">null</span>, <span class="st">"both tiles have a cell"</span>);</span>
+<span id="tests-page-loft-L112">  solid_c = p.cells[<span class="st">"solid"</span>];</span>
+<span id="tests-page-loft-L113">  clear_c = p.cells[<span class="st">"clear"</span>];</span>
+<span id="tests-page-loft-L114">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(solid_c.ce_proxy?) &gt; <span class="nm">0</span>, <span class="st">"opaque art derives a proxy with no hand edit"</span>);</span>
+<span id="tests-page-loft-L115">  area = <span class="nm">0.0</span>;</span>
+<span id="tests-page-loft-L116">  <span class="kw">for</span> r <span class="kw">in</span> solid_c.ce_proxy? { area += r.rw * r.rh; }</span>
+<span id="tests-page-loft-L117">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(area == <span class="nm">16.0</span>, <span class="st">"a full 4x4 square is covered exactly once, got {area}"</span>);</span>
+<span id="tests-page-loft-L118">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(clear_c.ce_proxy?) == <span class="nm">0</span>,</span>
+<span id="tests-page-loft-L119">         <span class="st">"a transparent cell derives NOTHING — a box around it would collide with the air"</span>);</span>
+<span id="tests-page-loft-L120">}</span>
 </code></pre>
 <h2 id="tests-proxy-loft">tests/proxy.loft</h2>
 <pre class="src"><code><span id="tests-proxy-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>

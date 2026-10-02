@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>audio_bus API — Loft, a programming language for small browser games</title>
+  <meta name="description" content="The public API of the loft library audio_bus — every function, struct and enum it exports, with its documentation.">
+<link rel="canonical" href="https://loft-lang.org/loft/lib-audio_bus-api.html">
+<meta property="og:title" content="audio_bus API — Loft, a programming language for small browser games">
+<meta property="og:description" content="The public API of the loft library audio_bus — every function, struct and enum it exports, with its documentation.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://loft-lang.org/loft/lib-audio_bus-api.html">
+<meta property="og:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<meta property="og:site_name" content="Loft">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="audio_bus API — Loft, a programming language for small browser games">
+<meta name="twitter:description" content="The public API of the loft library audio_bus — every function, struct and enum it exports, with its documentation.">
+<meta name="twitter:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<link rel="stylesheet" href="style.css">
+<style>.playground-link{display:inline-block;margin:0.3em 0 0.8em;padding:4px 12px;background:#2563eb;color:#fff;border-radius:4px;text-decoration:none;font-size:0.85em}.playground-link:hover{filter:brightness(1.15)}@media print{.playground-link{display:none}}</style>
+</head>
+<body>
+<nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
+<h1>audio_bus API</h1>
+<article>
+<p><a href="lib-audio_bus.html">← audio_bus</a> · version 0.1.0</p>
+<p class="lib-legend">20 public items, in source order. Generated from the registry index, which re-derives them from the package source at publish time — so a signature here is the one that version actually ships.</p>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Bus</span> { bs_name: <span class="ty"><a href="stdlib-types.html">text</a></span>, bs_parent: <span class="ty"><a href="stdlib-types.html">text</a></span> = <span class="st">""</span>, bs_volume: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">1.0</span>, bs_before: <span class="ty"><a href="stdlib-types.html">float</a></span> = -<span class="nm">1.0</span> }</code></pre>
+<p>One level in the tree: a name, a level, and what it hangs under.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Voice</span> { vc_sink: <span class="ty"><a href="stdlib-types.html">integer</a></span>, vc_bus: <span class="ty"><a href="stdlib-types.html">text</a></span> = <span class="st">""</span>, vc_volume: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">1.0</span> }</code></pre>
+<p>One playing sound, and the bus it answers to.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Mixer</span> { buses: <span class="ty">hash</span>&lt;<span class="en">Bus</span>[bs_name]&gt;, voices: <span class="ty">hash</span>&lt;<span class="en">Voice</span>[vc_sink]&gt; }</code></pre>
+<p>The mixer: the bus tree, and every voice currently on it.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">mixer</span>() -&gt; <span class="en">Mixer</span></code></pre>
+<p>A mixer with nothing on it but the master bus.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">add</span>(m: <span class="en">Mixer</span>, name: <span class="ty"><a href="stdlib-types.html">text</a></span>, parent: <span class="ty"><a href="stdlib-types.html">text</a></span> = <span class="en">MASTER</span>, volume: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">1.0</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
+<p>Add a bus under <code>parent</code>, at <code>volume</code>.</p>
+<p>Answers false — changing nothing — when the name is already taken, when the parent does not exist, or when the name is empty. A mixer that silently accepts a second <code>&quot;music&quot;</code> has two of them and obeys neither.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">gain</span>(m: const <span class="en">Mixer</span>, name: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<p>The gain a sound on this bus is multiplied by: the bus's own level times every level above it.</p>
+<p>A name no bus has answers 0.0 rather than 1.0. Silence is the answer a caller can hear; a missing bus that plays at full volume is one they cannot.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">level</span>(m: const <span class="en">Mixer</span>, sink: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<p>What a voice's sink should be set to: the sound's own level times its bus.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">attach</span>(m: <span class="en">Mixer</span>, sink: <span class="ty"><a href="stdlib-types.html">integer</a></span>, bus: <span class="ty"><a href="stdlib-types.html">text</a></span>, volume: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">1.0</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
+<p>Put an already-playing sink on a bus at its own level.</p>
+<p>The seam this package is built around: <code>play</code> is <code>graphics::audio_play</code> followed by this, and a caller who plays a sound their own way — a procedural effect, a clip started before the mixer existed — gets the same bus.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">detach</span>(m: <span class="en">Mixer</span>, sink: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
+<p>Forget a sink without stopping it — it keeps whatever level it has.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">play</span>(m: <span class="en">Mixer</span>, bus: <span class="ty"><a href="stdlib-types.html">text</a></span>, clip: <span class="ty"><a href="stdlib-types.html">integer</a></span>, volume: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">1.0</span>, looping: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>, pan: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>, start: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<p>Play a clip on a bus. The arguments past <code>volume</code> are <code>graphics::audio_play</code>'s and mean exactly what they mean there.</p>
+<p>Answers the sink handle, or -1 when the sound did not start — in which case nothing is attached, so a mixer never carries a voice that is not playing.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">set_volume</span>(m: <span class="en">Mixer</span>, name: <span class="ty"><a href="stdlib-types.html">text</a></span>, volume: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
+<p>Set a bus's level, and move every sound under it.</p>
+<p>Answers false for a bus that does not exist. A level below 0 is clamped: a negative gain inverts a waveform rather than quietening it, which is not what any caller of a volume control means.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">volume</span>(m: const <span class="en">Mixer</span>, name: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<p>This bus's own level — not counting the buses above it.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">duck</span>(m: <span class="en">Mixer</span>, name: <span class="ty"><a href="stdlib-types.html">text</a></span>, to: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
+<p>Duck a bus to <code>to</code> — speech over music, a menu over a battle.</p>
+<p>The level it replaces is REMEMBERED, so <code>unduck</code> restores it exactly. Ducking an already-ducked bus moves it again and keeps the ORIGINAL level to come home to: a duck inside a duck must not make the first one's restore a guess.</p>
+<p>Answers false for a bus that does not exist.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">unduck</span>(m: <span class="en">Mixer</span>, name: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
+<p>Lift a duck, putting back the exact level it replaced.</p>
+<p>Answers false for a bus that does not exist or is not ducked — the second is worth an answer rather than a shrug, because an unduck that finds nothing to lift means a duck and its lift have come apart somewhere.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">ducked</span>(m: const <span class="en">Mixer</span>, name: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
+<p>Is this bus ducked right now?</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">pan</span>(m: const <span class="en">Mixer</span>, sink: <span class="ty"><a href="stdlib-types.html">integer</a></span>, position: <span class="ty"><a href="stdlib-types.html">float</a></span>)</code></pre>
+<p>Move one playing sound across the stereo field. The mixer keeps the voice list, so this is where a caller already is.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">stop</span>(m: <span class="en">Mixer</span>, sink: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
+<p>Stop one sound and forget it.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">stop_bus</span>(m: <span class="en">Mixer</span>, name: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<p>Stop every sound on a bus — and on the buses under it.</p>
+<p>Answers how many it stopped, because &quot;the scene is over, silence its sounds&quot; is a claim a caller may want to check rather than assume.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">stop_all</span>(m: <span class="en">Mixer</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<p>Stop everything, on every bus.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">under</span>(m: const <span class="en">Mixer</span>, name: <span class="ty"><a href="stdlib-types.html">text</a></span>, ancestor: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
+<p>Is <code>name</code> at or below <code>ancestor</code> in the tree?</p>
+</div>
+
+  </article>
+<script src="search-index.js"></script>
+<script src="search.js"></script>
+<script>
+(function(){
+var m={"Keywords":"keywords","Texts":"texts","Integers":"integers","Boolean":"boolean","Float":"float","Functions":"functions","Vector":"vector","Structs":"structs","Enums":"enums","Sorted":"sorted","Index":"index","Hash":"hash","File":"file","Lexer":"lexer","Parser":"parser","Libraries":"libraries","Store Locks":"store_locks","Parallel execution":"parallel_execution","Logging":"logging","Time":"time","Safety":"safety","JSON":"json","Generics":"generics","Closures":"closures","Coroutines":"coroutines","Tuples":"tuples","Match":"match","Formatting":"formatting"};
+var h=document.querySelector('h1');
+if(!h)return;
+var key=m[h.textContent];
+if(!key)return;
+var a=document.createElement('a');
+a.className='playground-link';
+a.href='playground.html?example='+key;
+a.textContent='\u25B6 Try in Playground';
+h.parentNode.insertBefore(a,h.nextSibling);
+})();
+</script>
+</body>
+</html>

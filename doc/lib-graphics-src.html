@@ -23,8 +23,8 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>graphics source</h1>
 <article>
-<p><a href="lib-graphics.html">← graphics</a> · <a href="lib-graphics-api.html">API reference</a> · version 0.9.4</p>
-<p class="lib-legend">16 file(s), 3756 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<p><a href="lib-graphics.html">← graphics</a> · <a href="lib-graphics-api.html">API reference</a> · version 0.9.6</p>
+<p class="lib-legend">17 file(s), 3771 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
 <table class="lib-table">
@@ -40,7 +40,7 @@
 <tr><td><code>get_pixel</code> <span class="search-kind">fn</span></td><td><a href="#src-graphics-loft-L129">129</a></td><td><a href="#tests-worked-examples-loft-L94">GFX-003</a></td><td><a href="#tests-canvas-loft-L35">35</a> <a href="#tests-canvas-loft-L36">36</a> <a href="#tests-canvas-loft-L37">37</a> <a href="#tests-canvas-loft-L38">38</a> <a href="#tests-canvas-loft-L77">77</a> <a href="#tests-canvas-loft-L78">78</a> … (80 total)</td></tr>
 <tr><td><code>set_pixel</code> <span class="search-kind">fn</span></td><td><a href="#src-graphics-loft-L145">145</a></td><td><a href="#tests-worked-examples-loft-L94">GFX-003</a></td><td><a href="#src-graphics-loft-L269">269</a> <a href="#src-graphics-loft-L294">294</a> <a href="#src-graphics-loft-L295">295</a> <a href="#src-graphics-loft-L296">296</a> <a href="#src-graphics-loft-L297">297</a> <a href="#src-graphics-loft-L298">298</a> … (24 total)</td></tr>
 <tr><td><code>clear</code> <span class="search-kind">fn</span></td><td><a href="#src-graphics-loft-L156">156</a></td><td>—</td><td><a href="#tests-canvas-loft-L44">44</a></td></tr>
-<tr><td><code>blend</code> <span class="search-kind">fn</span></td><td><a href="#src-graphics-loft-L165">165</a></td><td>—</td><td><a href="#src-graphics-loft-L185">185</a> <a href="#tests-canvas-loft-L52">52</a> <a href="#tests-canvas-loft-L59">59</a> <a href="#tests-canvas-loft-L66">66</a> <a href="#tests-canvas-loft-L68">68</a> <a href="#tests-canvas-loft-L69">69</a> … (9 total)</td></tr>
+<tr><td><code>blend</code> <span class="search-kind">fn</span></td><td><a href="#src-graphics-loft-L165">165</a></td><td>—</td><td><a href="#src-graphics-loft-L185">185</a> <a href="#tests-canvas-loft-L52">52</a> <a href="#tests-canvas-loft-L59">59</a> <a href="#tests-canvas-loft-L66">66</a> <a href="#tests-canvas-loft-L68">68</a> <a href="#tests-canvas-loft-L69">69</a> … (10 total)</td></tr>
 <tr><td><code>blend_pixel</code> <span class="search-kind">fn</span></td><td><a href="#src-graphics-loft-L180">180</a></td><td><a href="#tests-worked-examples-loft-L65">GFX-002</a></td><td><a href="#src-graphics-loft-L517">517</a> <a href="#src-graphics-loft-L518">518</a> <a href="#src-graphics-loft-L520">520</a> <a href="#src-graphics-loft-L521">521</a> <a href="#src-graphics-loft-L1460">1460</a> <a href="#tests-worked-examples-loft-L83">83</a> … (7 total)</td></tr>
 <tr><td><code>fill_rect</code> <span class="search-kind">fn</span></td><td><a href="#src-graphics-loft-L194">194</a></td><td><a href="#tests-worked-examples-loft-L65">GFX-002</a></td><td><a href="#tests-canvas-loft-L76">76</a> <a href="#tests-canvas-loft-L118">118</a> <a href="#tests-worked-examples-loft-L88">88</a> <a href="#tests-worked-examples-loft-L89">89</a></td></tr>
 <tr><td><code>hline</code> <span class="search-kind">fn</span></td><td><a href="#src-graphics-loft-L215">215</a></td><td><a href="#tests-worked-examples-loft-L122">GFX-004</a></td><td><a href="#src-graphics-loft-L250">250</a> <a href="#src-graphics-loft-L251">251</a> <a href="#src-graphics-loft-L319">319</a> <a href="#src-graphics-loft-L320">320</a> <a href="#src-graphics-loft-L321">321</a> <a href="#src-graphics-loft-L322">322</a> … (21 total)</td></tr>
@@ -89,8 +89,18 @@
 <tr><td><code>gl_set_uniform_vec2</code> <span class="search-kind">fn</span></td><td><a href="#src-graphics-loft-L1087">1087</a></td><td>—</td><td>none in this package</td></tr>
 <tr><td><code>gl_set_uniform_vec3</code> <span class="search-kind">fn</span></td><td><a href="#src-graphics-loft-L1091">1091</a></td><td>—</td><td><a href="#src-graphics-loft-L1710">1710</a> <a href="#src-render-loft-L254">254</a> <a href="#src-render-loft-L255">255</a> <a href="#src-render-loft-L256">256</a> <a href="#src-render-loft-L257">257</a> <a href="#src-render-loft-L259">259</a> … (7 total)</td></tr>
 <tr><td><code>gl_set_uniform_vec4</code> <span class="search-kind">fn</span></td><td><a href="#src-graphics-loft-L1095">1095</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>GL_DEPTH_TEST</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1101">1101</a></td><td>—</td><td><a href="#tests-public-constants-loft-L12">12</a></td></tr>
+<tr><td><code>GL_BLEND</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1102">1102</a></td><td>—</td><td><a href="#tests-public-constants-loft-L12">12</a></td></tr>
+<tr><td><code>GL_CULL_FACE</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1103">1103</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>GL_SCISSOR_TEST</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1104">1104</a></td><td>—</td><td>none in this package</td></tr>
 <tr><td><code>gl_enable</code> <span class="search-kind">fn</span></td><td><a href="#src-graphics-loft-L1107">1107</a></td><td>—</td><td>none in this package</td></tr>
 <tr><td><code>gl_disable</code> <span class="search-kind">fn</span></td><td><a href="#src-graphics-loft-L1111">1111</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>BLEND_ZERO</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1115">1115</a></td><td>—</td><td><a href="#tests-public-constants-loft-L12">12</a></td></tr>
+<tr><td><code>BLEND_ONE</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1116">1116</a></td><td>—</td><td><a href="#tests-public-constants-loft-L12">12</a></td></tr>
+<tr><td><code>BLEND_SRC_ALPHA</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1117">1117</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>BLEND_ONE_MINUS_SRC_ALPHA</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1118">1118</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>BLEND_DST_ALPHA</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1119">1119</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>BLEND_ONE_MINUS_DST_ALPHA</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1120">1120</a></td><td>—</td><td>none in this package</td></tr>
 <tr><td><code>gl_blend_func</code> <span class="search-kind">fn</span></td><td><a href="#src-graphics-loft-L1123">1123</a></td><td>—</td><td>none in this package</td></tr>
 <tr><td><code>gl_cull_face</code> <span class="search-kind">fn</span></td><td><a href="#src-graphics-loft-L1127">1127</a></td><td>—</td><td>none in this package</td></tr>
 <tr><td><code>gl_depth_mask</code> <span class="search-kind">fn</span></td><td><a href="#src-graphics-loft-L1131">1131</a></td><td>—</td><td>none in this package</td></tr>
@@ -106,15 +116,86 @@
 <tr><td><code>gl_generate_mipmap</code> <span class="search-kind">fn</span></td><td><a href="#src-graphics-loft-L1181">1181</a></td><td>—</td><td>none in this package</td></tr>
 <tr><td><code>gl_texture_subimage</code> <span class="search-kind">fn</span></td><td><a href="#src-graphics-loft-L1186">1186</a></td><td>—</td><td>none in this package</td></tr>
 <tr><td><code>gl_draw_fullscreen_quad</code> <span class="search-kind">fn</span></td><td><a href="#src-graphics-loft-L1191">1191</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>DRAW_TRIANGLES</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1197">1197</a></td><td>—</td><td><a href="#src-graphics-loft-L1028">1028</a> <a href="#tests-public-constants-loft-L13">13</a></td></tr>
+<tr><td><code>DRAW_LINES</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1198">1198</a></td><td>—</td><td><a href="#src-graphics-loft-L1028">1028</a> <a href="#tests-public-constants-loft-L13">13</a></td></tr>
+<tr><td><code>DRAW_POINTS</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1199">1199</a></td><td>—</td><td>none in this package</td></tr>
 <tr><td><code>gl_draw_mode</code> <span class="search-kind">fn</span></td><td><a href="#src-graphics-loft-L1202">1202</a></td><td>—</td><td><a href="#src-graphics-loft-L1061">1061</a></td></tr>
 <tr><td><code>gl_draw_elements</code> <span class="search-kind">fn</span></td><td><a href="#src-graphics-loft-L1206">1206</a></td><td>—</td><td>none in this package</td></tr>
 <tr><td><code>gl_line_width</code> <span class="search-kind">fn</span></td><td><a href="#src-graphics-loft-L1210">1210</a></td><td>—</td><td>none in this package</td></tr>
 <tr><td><code>gl_point_size</code> <span class="search-kind">fn</span></td><td><a href="#src-graphics-loft-L1214">1214</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>KEY_W</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1220">1220</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>KEY_A</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1221">1221</a></td><td>—</td><td><a href="#tests-public-constants-loft-L11">11</a></td></tr>
+<tr><td><code>KEY_S</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1222">1222</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>KEY_D</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1223">1223</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>KEY_Q</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1224">1224</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>KEY_E</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1225">1225</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>KEY_SPACE</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1226">1226</a></td><td>—</td><td><a href="#tests-public-constants-loft-L11">11</a></td></tr>
+<tr><td><code>KEY_ESCAPE</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1227">1227</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>KEY_UP</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1228">1228</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>KEY_DOWN</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1229">1229</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>KEY_LEFT</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1230">1230</a></td><td>—</td><td><a href="#tests-public-constants-loft-L11">11</a></td></tr>
+<tr><td><code>KEY_RIGHT</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1231">1231</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>KEY_SHIFT</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1232">1232</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>KEY_CTRL</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1233">1233</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>KEY_0</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1237">1237</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>KEY_1</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1238">1238</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>KEY_2</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1239">1239</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>KEY_3</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1240">1240</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>KEY_4</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1241">1241</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>KEY_5</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1242">1242</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>KEY_6</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1243">1243</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>KEY_7</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1244">1244</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>KEY_8</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1245">1245</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>KEY_9</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1246">1246</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>KEY_O</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1250">1250</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>KEY_R</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1251">1251</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>KEY_F</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1252">1252</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>KEY_Z</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1253">1253</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>KEY_Y</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1254">1254</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>KEY_LBRACKET</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1257">1257</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>KEY_RBRACKET</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1258">1258</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>KEY_TAB</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1261">1261</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>KEY_F1</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1266">1266</a></td><td>—</td><td><a href="#tests-public-constants-loft-L11">11</a></td></tr>
+<tr><td><code>KEY_F2</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1267">1267</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>KEY_F3</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1268">1268</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>KEY_F4</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1269">1269</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>KEY_F5</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1270">1270</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>KEY_F6</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1271">1271</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>KEY_F7</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1272">1272</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>KEY_F8</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1273">1273</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>KEY_F9</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1274">1274</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>KEY_F10</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1275">1275</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>KEY_F11</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1276">1276</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>KEY_F12</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1277">1277</a></td><td>—</td><td><a href="#tests-public-constants-loft-L11">11</a></td></tr>
 <tr><td><code>gl_key_pressed</code> <span class="search-kind">fn</span></td><td><a href="#src-graphics-loft-L1280">1280</a></td><td>—</td><td>none in this package</td></tr>
 <tr><td><code>gl_mouse_x</code> <span class="search-kind">fn</span></td><td><a href="#src-graphics-loft-L1284">1284</a></td><td>—</td><td>none in this package</td></tr>
 <tr><td><code>gl_mouse_y</code> <span class="search-kind">fn</span></td><td><a href="#src-graphics-loft-L1288">1288</a></td><td>—</td><td>none in this package</td></tr>
 <tr><td><code>gl_mouse_button</code> <span class="search-kind">fn</span></td><td><a href="#src-graphics-loft-L1292">1292</a></td><td>—</td><td>none in this package</td></tr>
 <tr><td><code>gl_mouse_wheel</code> <span class="search-kind">fn</span></td><td><a href="#src-graphics-loft-L1299">1299</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>EV_NONE</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1321">1321</a></td><td>—</td><td><a href="#tests-input-events-loft-L13">13</a> <a href="#tests-public-constants-loft-L14">14</a></td></tr>
+<tr><td><code>EV_KEY_DOWN</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1322">1322</a></td><td>—</td><td><a href="#tests-public-constants-loft-L14">14</a></td></tr>
+<tr><td><code>EV_KEY_UP</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1323">1323</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>EV_TEXT</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1324">1324</a></td><td>—</td><td><a href="#tests-input-events-loft-L21">21</a></td></tr>
+<tr><td><code>EV_MOUSE_DOWN</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1325">1325</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>EV_MOUSE_UP</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1326">1326</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>EV_MOUSE_MOVE</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1327">1327</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>EV_WHEEL</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1328">1328</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>EV_TOUCH_BEGIN</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1329">1329</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>EV_TOUCH_MOVE</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1330">1330</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>EV_TOUCH_END</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1331">1331</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>EV_RESIZE</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1332">1332</a></td><td>—</td><td><a href="#tests-input-events-loft-L22">22</a></td></tr>
+<tr><td><code>MOD_SHIFT</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1335">1335</a></td><td>—</td><td><a href="#tests-public-constants-loft-L14">14</a></td></tr>
+<tr><td><code>MOD_CTRL</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1336">1336</a></td><td>—</td><td><a href="#tests-input-events-loft-L23">23</a> <a href="#tests-public-constants-loft-L14">14</a></td></tr>
+<tr><td><code>MOD_ALT</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1337">1337</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>MOD_SUPER</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1338">1338</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>KEY_ENTER</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1341">1341</a></td><td>—</td><td><a href="#tests-input-events-loft-L25">25</a></td></tr>
+<tr><td><code>KEY_BACKSPACE</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1342">1342</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>KEY_DELETE</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1343">1343</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>KEY_INSERT</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1344">1344</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>KEY_HOME</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1345">1345</a></td><td>—</td><td><a href="#tests-input-events-loft-L24">24</a></td></tr>
+<tr><td><code>KEY_END</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1346">1346</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>KEY_PAGEUP</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1347">1347</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>KEY_PAGEDOWN</code> <span class="search-kind">const</span></td><td><a href="#src-graphics-loft-L1348">1348</a></td><td>—</td><td>none in this package</td></tr>
 <tr><td><code>gl_next_event</code> <span class="search-kind">fn</span></td><td><a href="#src-graphics-loft-L1352">1352</a></td><td>—</td><td><a href="#tests-input-events-loft-L13">13</a></td></tr>
 <tr><td><code>gl_event_key</code> <span class="search-kind">fn</span></td><td><a href="#src-graphics-loft-L1356">1356</a></td><td>—</td><td><a href="#tests-input-events-loft-L14">14</a></td></tr>
 <tr><td><code>gl_event_mods</code> <span class="search-kind">fn</span></td><td><a href="#src-graphics-loft-L1360">1360</a></td><td>—</td><td><a href="#tests-input-events-loft-L15">15</a></td></tr>
@@ -1270,10 +1351,10 @@
 <span id="src-graphics-loft-L1098"><span class="cm">// --- GL state ---</span></span>
 <span id="src-graphics-loft-L1099"></span>
 <span id="src-graphics-loft-L1100"><span class="cm">// Capability constants for gl_enable/gl_disable:</span></span>
-<span id="src-graphics-loft-L1101"><span class="en">GL_DEPTH_TEST</span> = <span class="nm">1</span>;</span>
-<span id="src-graphics-loft-L1102"><span class="en">GL_BLEND</span> = <span class="nm">2</span>;</span>
-<span id="src-graphics-loft-L1103"><span class="en">GL_CULL_FACE</span> = <span class="nm">3</span>;</span>
-<span id="src-graphics-loft-L1104"><span class="en">GL_SCISSOR_TEST</span> = <span class="nm">4</span>;</span>
+<span id="src-graphics-loft-L1101"><span class="kw">pub</span> const <span class="en">GL_DEPTH_TEST</span> = <span class="nm">1</span>;</span>
+<span id="src-graphics-loft-L1102"><span class="kw">pub</span> const <span class="en">GL_BLEND</span> = <span class="nm">2</span>;</span>
+<span id="src-graphics-loft-L1103"><span class="kw">pub</span> const <span class="en">GL_CULL_FACE</span> = <span class="nm">3</span>;</span>
+<span id="src-graphics-loft-L1104"><span class="kw">pub</span> const <span class="en">GL_SCISSOR_TEST</span> = <span class="nm">4</span>;</span>
 <span id="src-graphics-loft-L1105"></span>
 <span id="src-graphics-loft-L1106"><span class="cm">// Enable a GL capability (GL_DEPTH_TEST, GL_BLEND, GL_CULL_FACE, GL_SCISSOR_TEST).</span></span>
 <span id="src-graphics-loft-L1107"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">gl_enable</span>(cap: <span class="ty"><a href="stdlib-types.html">integer</a></span>);</span>
@@ -1284,12 +1365,12 @@
 <span id="src-graphics-loft-L1112">#native <span class="st">"loft_gl_disable"</span></span>
 <span id="src-graphics-loft-L1113"></span>
 <span id="src-graphics-loft-L1114"><span class="cm">// Blend factor constants for gl_blend_func:</span></span>
-<span id="src-graphics-loft-L1115"><span class="en">BLEND_ZERO</span> = <span class="nm">0</span>;</span>
-<span id="src-graphics-loft-L1116"><span class="en">BLEND_ONE</span> = <span class="nm">1</span>;</span>
-<span id="src-graphics-loft-L1117"><span class="en">BLEND_SRC_ALPHA</span> = <span class="nm">2</span>;</span>
-<span id="src-graphics-loft-L1118"><span class="en">BLEND_ONE_MINUS_SRC_ALPHA</span> = <span class="nm">3</span>;</span>
-<span id="src-graphics-loft-L1119"><span class="en">BLEND_DST_ALPHA</span> = <span class="nm">4</span>;</span>
-<span id="src-graphics-loft-L1120"><span class="en">BLEND_ONE_MINUS_DST_ALPHA</span> = <span class="nm">5</span>;</span>
+<span id="src-graphics-loft-L1115"><span class="kw">pub</span> const <span class="en">BLEND_ZERO</span> = <span class="nm">0</span>;</span>
+<span id="src-graphics-loft-L1116"><span class="kw">pub</span> const <span class="en">BLEND_ONE</span> = <span class="nm">1</span>;</span>
+<span id="src-graphics-loft-L1117"><span class="kw">pub</span> const <span class="en">BLEND_SRC_ALPHA</span> = <span class="nm">2</span>;</span>
+<span id="src-graphics-loft-L1118"><span class="kw">pub</span> const <span class="en">BLEND_ONE_MINUS_SRC_ALPHA</span> = <span class="nm">3</span>;</span>
+<span id="src-graphics-loft-L1119"><span class="kw">pub</span> const <span class="en">BLEND_DST_ALPHA</span> = <span class="nm">4</span>;</span>
+<span id="src-graphics-loft-L1120"><span class="kw">pub</span> const <span class="en">BLEND_ONE_MINUS_DST_ALPHA</span> = <span class="nm">5</span>;</span>
 <span id="src-graphics-loft-L1121"></span>
 <span id="src-graphics-loft-L1122"><span class="cm">// Set blend function (e.g. gl_blend_func(BLEND_SRC_ALPHA, BLEND_ONE_MINUS_SRC_ALPHA)).</span></span>
 <span id="src-graphics-loft-L1123"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">gl_blend_func</span>(src: <span class="ty"><a href="stdlib-types.html">integer</a></span>, dst: <span class="ty"><a href="stdlib-types.html">integer</a></span>);</span>
@@ -1366,9 +1447,9 @@
 <span id="src-graphics-loft-L1194"><span class="cm">// --- Draw modes ---</span></span>
 <span id="src-graphics-loft-L1195"></span>
 <span id="src-graphics-loft-L1196"><span class="cm">// Draw mode constants for gl_draw_mode and gl_draw_elements:</span></span>
-<span id="src-graphics-loft-L1197"><span class="en">DRAW_TRIANGLES</span> = <span class="nm">0</span>;</span>
-<span id="src-graphics-loft-L1198"><span class="en">DRAW_LINES</span> = <span class="nm">1</span>;</span>
-<span id="src-graphics-loft-L1199"><span class="en">DRAW_POINTS</span> = <span class="nm">2</span>;</span>
+<span id="src-graphics-loft-L1197"><span class="kw">pub</span> const <span class="en">DRAW_TRIANGLES</span> = <span class="nm">0</span>;</span>
+<span id="src-graphics-loft-L1198"><span class="kw">pub</span> const <span class="en">DRAW_LINES</span> = <span class="nm">1</span>;</span>
+<span id="src-graphics-loft-L1199"><span class="kw">pub</span> const <span class="en">DRAW_POINTS</span> = <span class="nm">2</span>;</span>
 <span id="src-graphics-loft-L1200"></span>
 <span id="src-graphics-loft-L1201"><span class="cm">// Draw a VAO with explicit mode (DRAW_TRIANGLES, DRAW_LINES, DRAW_POINTS).</span></span>
 <span id="src-graphics-loft-L1202"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">gl_draw_mode</span>(vao: <span class="ty"><a href="stdlib-types.html">integer</a></span>, vertex_count: <span class="ty"><a href="stdlib-types.html">integer</a></span>, mode: <span class="ty"><a href="stdlib-types.html">integer</a></span>);</span>
@@ -1389,64 +1470,64 @@
 <span id="src-graphics-loft-L1217"><span class="cm">// --- Input ---</span></span>
 <span id="src-graphics-loft-L1218"></span>
 <span id="src-graphics-loft-L1219"><span class="cm">// Key code constants for gl_key_pressed:</span></span>
-<span id="src-graphics-loft-L1220"><span class="en">KEY_W</span> = <span class="nm">119</span>;</span>
-<span id="src-graphics-loft-L1221"><span class="en">KEY_A</span> = <span class="nm">97</span>;</span>
-<span id="src-graphics-loft-L1222"><span class="en">KEY_S</span> = <span class="nm">115</span>;</span>
-<span id="src-graphics-loft-L1223"><span class="en">KEY_D</span> = <span class="nm">100</span>;</span>
-<span id="src-graphics-loft-L1224"><span class="en">KEY_Q</span> = <span class="nm">113</span>;</span>
-<span id="src-graphics-loft-L1225"><span class="en">KEY_E</span> = <span class="nm">101</span>;</span>
-<span id="src-graphics-loft-L1226"><span class="en">KEY_SPACE</span> = <span class="nm">32</span>;</span>
-<span id="src-graphics-loft-L1227"><span class="en">KEY_ESCAPE</span> = <span class="nm">27</span>;</span>
-<span id="src-graphics-loft-L1228"><span class="en">KEY_UP</span> = <span class="nm">128</span>;</span>
-<span id="src-graphics-loft-L1229"><span class="en">KEY_DOWN</span> = <span class="nm">129</span>;</span>
-<span id="src-graphics-loft-L1230"><span class="en">KEY_LEFT</span> = <span class="nm">130</span>;</span>
-<span id="src-graphics-loft-L1231"><span class="en">KEY_RIGHT</span> = <span class="nm">131</span>;</span>
-<span id="src-graphics-loft-L1232"><span class="en">KEY_SHIFT</span> = <span class="nm">132</span>;</span>
-<span id="src-graphics-loft-L1233"><span class="en">KEY_CTRL</span> = <span class="nm">133</span>;</span>
+<span id="src-graphics-loft-L1220"><span class="kw">pub</span> const <span class="en">KEY_W</span> = <span class="nm">119</span>;</span>
+<span id="src-graphics-loft-L1221"><span class="kw">pub</span> const <span class="en">KEY_A</span> = <span class="nm">97</span>;</span>
+<span id="src-graphics-loft-L1222"><span class="kw">pub</span> const <span class="en">KEY_S</span> = <span class="nm">115</span>;</span>
+<span id="src-graphics-loft-L1223"><span class="kw">pub</span> const <span class="en">KEY_D</span> = <span class="nm">100</span>;</span>
+<span id="src-graphics-loft-L1224"><span class="kw">pub</span> const <span class="en">KEY_Q</span> = <span class="nm">113</span>;</span>
+<span id="src-graphics-loft-L1225"><span class="kw">pub</span> const <span class="en">KEY_E</span> = <span class="nm">101</span>;</span>
+<span id="src-graphics-loft-L1226"><span class="kw">pub</span> const <span class="en">KEY_SPACE</span> = <span class="nm">32</span>;</span>
+<span id="src-graphics-loft-L1227"><span class="kw">pub</span> const <span class="en">KEY_ESCAPE</span> = <span class="nm">27</span>;</span>
+<span id="src-graphics-loft-L1228"><span class="kw">pub</span> const <span class="en">KEY_UP</span> = <span class="nm">128</span>;</span>
+<span id="src-graphics-loft-L1229"><span class="kw">pub</span> const <span class="en">KEY_DOWN</span> = <span class="nm">129</span>;</span>
+<span id="src-graphics-loft-L1230"><span class="kw">pub</span> const <span class="en">KEY_LEFT</span> = <span class="nm">130</span>;</span>
+<span id="src-graphics-loft-L1231"><span class="kw">pub</span> const <span class="en">KEY_RIGHT</span> = <span class="nm">131</span>;</span>
+<span id="src-graphics-loft-L1232"><span class="kw">pub</span> const <span class="en">KEY_SHIFT</span> = <span class="nm">132</span>;</span>
+<span id="src-graphics-loft-L1233"><span class="kw">pub</span> const <span class="en">KEY_CTRL</span> = <span class="nm">133</span>;</span>
 <span id="src-graphics-loft-L1234"></span>
 <span id="src-graphics-loft-L1235"><span class="cm">// Initiative 03 Phase 1: extra keys for the editor hotkey set.</span></span>
 <span id="src-graphics-loft-L1236"><span class="cm">// Digits route through ASCII (`gl_key_pressed(KEY_1)` etc).</span></span>
-<span id="src-graphics-loft-L1237"><span class="en">KEY_0</span> = <span class="nm">48</span>;</span>
-<span id="src-graphics-loft-L1238"><span class="en">KEY_1</span> = <span class="nm">49</span>;</span>
-<span id="src-graphics-loft-L1239"><span class="en">KEY_2</span> = <span class="nm">50</span>;</span>
-<span id="src-graphics-loft-L1240"><span class="en">KEY_3</span> = <span class="nm">51</span>;</span>
-<span id="src-graphics-loft-L1241"><span class="en">KEY_4</span> = <span class="nm">52</span>;</span>
-<span id="src-graphics-loft-L1242"><span class="en">KEY_5</span> = <span class="nm">53</span>;</span>
-<span id="src-graphics-loft-L1243"><span class="en">KEY_6</span> = <span class="nm">54</span>;</span>
-<span id="src-graphics-loft-L1244"><span class="en">KEY_7</span> = <span class="nm">55</span>;</span>
-<span id="src-graphics-loft-L1245"><span class="en">KEY_8</span> = <span class="nm">56</span>;</span>
-<span id="src-graphics-loft-L1246"><span class="en">KEY_9</span> = <span class="nm">57</span>;</span>
+<span id="src-graphics-loft-L1237"><span class="kw">pub</span> const <span class="en">KEY_0</span> = <span class="nm">48</span>;</span>
+<span id="src-graphics-loft-L1238"><span class="kw">pub</span> const <span class="en">KEY_1</span> = <span class="nm">49</span>;</span>
+<span id="src-graphics-loft-L1239"><span class="kw">pub</span> const <span class="en">KEY_2</span> = <span class="nm">50</span>;</span>
+<span id="src-graphics-loft-L1240"><span class="kw">pub</span> const <span class="en">KEY_3</span> = <span class="nm">51</span>;</span>
+<span id="src-graphics-loft-L1241"><span class="kw">pub</span> const <span class="en">KEY_4</span> = <span class="nm">52</span>;</span>
+<span id="src-graphics-loft-L1242"><span class="kw">pub</span> const <span class="en">KEY_5</span> = <span class="nm">53</span>;</span>
+<span id="src-graphics-loft-L1243"><span class="kw">pub</span> const <span class="en">KEY_6</span> = <span class="nm">54</span>;</span>
+<span id="src-graphics-loft-L1244"><span class="kw">pub</span> const <span class="en">KEY_7</span> = <span class="nm">55</span>;</span>
+<span id="src-graphics-loft-L1245"><span class="kw">pub</span> const <span class="en">KEY_8</span> = <span class="nm">56</span>;</span>
+<span id="src-graphics-loft-L1246"><span class="kw">pub</span> const <span class="en">KEY_9</span> = <span class="nm">57</span>;</span>
 <span id="src-graphics-loft-L1247"></span>
 <span id="src-graphics-loft-L1248"><span class="cm">// Common editor hotkey letters (lowercase ASCII; `gl_key_pressed` is</span></span>
 <span id="src-graphics-loft-L1249"><span class="cm">// case-insensitive — the native key_index lowercases).</span></span>
-<span id="src-graphics-loft-L1250"><span class="en">KEY_O</span> = <span class="nm">111</span>;  <span class="cm">// occlusion toggle</span></span>
-<span id="src-graphics-loft-L1251"><span class="en">KEY_R</span> = <span class="nm">114</span>;  <span class="cm">// raise-layer</span></span>
-<span id="src-graphics-loft-L1252"><span class="en">KEY_F</span> = <span class="nm">102</span>;  <span class="cm">// lower-layer</span></span>
-<span id="src-graphics-loft-L1253"><span class="en">KEY_Z</span> = <span class="nm">122</span>;  <span class="cm">// undo (with Ctrl)</span></span>
-<span id="src-graphics-loft-L1254"><span class="en">KEY_Y</span> = <span class="nm">121</span>;  <span class="cm">// redo (with Ctrl)</span></span>
+<span id="src-graphics-loft-L1250"><span class="kw">pub</span> const <span class="en">KEY_O</span> = <span class="nm">111</span>;  <span class="cm">// occlusion toggle</span></span>
+<span id="src-graphics-loft-L1251"><span class="kw">pub</span> const <span class="en">KEY_R</span> = <span class="nm">114</span>;  <span class="cm">// raise-layer</span></span>
+<span id="src-graphics-loft-L1252"><span class="kw">pub</span> const <span class="en">KEY_F</span> = <span class="nm">102</span>;  <span class="cm">// lower-layer</span></span>
+<span id="src-graphics-loft-L1253"><span class="kw">pub</span> const <span class="en">KEY_Z</span> = <span class="nm">122</span>;  <span class="cm">// undo (with Ctrl)</span></span>
+<span id="src-graphics-loft-L1254"><span class="kw">pub</span> const <span class="en">KEY_Y</span> = <span class="nm">121</span>;  <span class="cm">// redo (with Ctrl)</span></span>
 <span id="src-graphics-loft-L1255"></span>
 <span id="src-graphics-loft-L1256"><span class="cm">// Bracket keys for wall-direction cycling.</span></span>
-<span id="src-graphics-loft-L1257"><span class="en">KEY_LBRACKET</span> = <span class="nm">91</span>;   <span class="cm">// [</span></span>
-<span id="src-graphics-loft-L1258"><span class="en">KEY_RBRACKET</span> = <span class="nm">93</span>;   <span class="cm">// ]</span></span>
+<span id="src-graphics-loft-L1257"><span class="kw">pub</span> const <span class="en">KEY_LBRACKET</span> = <span class="nm">91</span>;   <span class="cm">// [</span></span>
+<span id="src-graphics-loft-L1258"><span class="kw">pub</span> const <span class="en">KEY_RBRACKET</span> = <span class="nm">93</span>;   <span class="cm">// ]</span></span>
 <span id="src-graphics-loft-L1259"></span>
 <span id="src-graphics-loft-L1260"><span class="cm">// Tab for camera-mode toggle.</span></span>
-<span id="src-graphics-loft-L1261"><span class="en">KEY_TAB</span> = <span class="nm">9</span>;</span>
+<span id="src-graphics-loft-L1261"><span class="kw">pub</span> const <span class="en">KEY_TAB</span> = <span class="nm">9</span>;</span>
 <span id="src-graphics-loft-L1262"></span>
 <span id="src-graphics-loft-L1263"><span class="cm">// F-key range for save / load / fullscreen-toggle.  Values match</span></span>
 <span id="src-graphics-loft-L1264"><span class="cm">// `lib/graphics/native/src/lib.rs::key_index` mapping of</span></span>
 <span id="src-graphics-loft-L1265"><span class="cm">// `NamedKey::F1..F12` → 135..146.</span></span>
-<span id="src-graphics-loft-L1266"><span class="en">KEY_F1</span>  = <span class="nm">135</span>;</span>
-<span id="src-graphics-loft-L1267"><span class="en">KEY_F2</span>  = <span class="nm">136</span>;</span>
-<span id="src-graphics-loft-L1268"><span class="en">KEY_F3</span>  = <span class="nm">137</span>;</span>
-<span id="src-graphics-loft-L1269"><span class="en">KEY_F4</span>  = <span class="nm">138</span>;</span>
-<span id="src-graphics-loft-L1270"><span class="en">KEY_F5</span>  = <span class="nm">139</span>;</span>
-<span id="src-graphics-loft-L1271"><span class="en">KEY_F6</span>  = <span class="nm">140</span>;</span>
-<span id="src-graphics-loft-L1272"><span class="en">KEY_F7</span>  = <span class="nm">141</span>;</span>
-<span id="src-graphics-loft-L1273"><span class="en">KEY_F8</span>  = <span class="nm">142</span>;</span>
-<span id="src-graphics-loft-L1274"><span class="en">KEY_F9</span>  = <span class="nm">143</span>;</span>
-<span id="src-graphics-loft-L1275"><span class="en">KEY_F10</span> = <span class="nm">144</span>;</span>
-<span id="src-graphics-loft-L1276"><span class="en">KEY_F11</span> = <span class="nm">145</span>;</span>
-<span id="src-graphics-loft-L1277"><span class="en">KEY_F12</span> = <span class="nm">146</span>;</span>
+<span id="src-graphics-loft-L1266"><span class="kw">pub</span> const <span class="en">KEY_F1</span>  = <span class="nm">135</span>;</span>
+<span id="src-graphics-loft-L1267"><span class="kw">pub</span> const <span class="en">KEY_F2</span>  = <span class="nm">136</span>;</span>
+<span id="src-graphics-loft-L1268"><span class="kw">pub</span> const <span class="en">KEY_F3</span>  = <span class="nm">137</span>;</span>
+<span id="src-graphics-loft-L1269"><span class="kw">pub</span> const <span class="en">KEY_F4</span>  = <span class="nm">138</span>;</span>
+<span id="src-graphics-loft-L1270"><span class="kw">pub</span> const <span class="en">KEY_F5</span>  = <span class="nm">139</span>;</span>
+<span id="src-graphics-loft-L1271"><span class="kw">pub</span> const <span class="en">KEY_F6</span>  = <span class="nm">140</span>;</span>
+<span id="src-graphics-loft-L1272"><span class="kw">pub</span> const <span class="en">KEY_F7</span>  = <span class="nm">141</span>;</span>
+<span id="src-graphics-loft-L1273"><span class="kw">pub</span> const <span class="en">KEY_F8</span>  = <span class="nm">142</span>;</span>
+<span id="src-graphics-loft-L1274"><span class="kw">pub</span> const <span class="en">KEY_F9</span>  = <span class="nm">143</span>;</span>
+<span id="src-graphics-loft-L1275"><span class="kw">pub</span> const <span class="en">KEY_F10</span> = <span class="nm">144</span>;</span>
+<span id="src-graphics-loft-L1276"><span class="kw">pub</span> const <span class="en">KEY_F11</span> = <span class="nm">145</span>;</span>
+<span id="src-graphics-loft-L1277"><span class="kw">pub</span> const <span class="en">KEY_F12</span> = <span class="nm">146</span>;</span>
 <span id="src-graphics-loft-L1278"></span>
 <span id="src-graphics-loft-L1279"><span class="cm">// Returns true if the key is currently pressed (use KEY_* constants).</span></span>
 <span id="src-graphics-loft-L1280"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">gl_key_pressed</span>(key_code: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span>;</span>
@@ -1490,34 +1571,34 @@
 <span id="src-graphics-loft-L1318"><span class="cm">//   }</span></span>
 <span id="src-graphics-loft-L1319"></span>
 <span id="src-graphics-loft-L1320"><span class="cm">// Event type tags returned by gl_next_event().</span></span>
-<span id="src-graphics-loft-L1321"><span class="en">EV_NONE</span> = <span class="nm">0</span>;</span>
-<span id="src-graphics-loft-L1322"><span class="en">EV_KEY_DOWN</span> = <span class="nm">1</span>;</span>
-<span id="src-graphics-loft-L1323"><span class="en">EV_KEY_UP</span> = <span class="nm">2</span>;</span>
-<span id="src-graphics-loft-L1324"><span class="en">EV_TEXT</span> = <span class="nm">3</span>;</span>
-<span id="src-graphics-loft-L1325"><span class="en">EV_MOUSE_DOWN</span> = <span class="nm">4</span>;</span>
-<span id="src-graphics-loft-L1326"><span class="en">EV_MOUSE_UP</span> = <span class="nm">5</span>;</span>
-<span id="src-graphics-loft-L1327"><span class="en">EV_MOUSE_MOVE</span> = <span class="nm">6</span>;</span>
-<span id="src-graphics-loft-L1328"><span class="en">EV_WHEEL</span> = <span class="nm">7</span>;</span>
-<span id="src-graphics-loft-L1329"><span class="en">EV_TOUCH_BEGIN</span> = <span class="nm">8</span>;</span>
-<span id="src-graphics-loft-L1330"><span class="en">EV_TOUCH_MOVE</span> = <span class="nm">9</span>;</span>
-<span id="src-graphics-loft-L1331"><span class="en">EV_TOUCH_END</span> = <span class="nm">10</span>;</span>
-<span id="src-graphics-loft-L1332"><span class="en">EV_RESIZE</span> = <span class="nm">11</span>;</span>
+<span id="src-graphics-loft-L1321"><span class="kw">pub</span> const <span class="en">EV_NONE</span> = <span class="nm">0</span>;</span>
+<span id="src-graphics-loft-L1322"><span class="kw">pub</span> const <span class="en">EV_KEY_DOWN</span> = <span class="nm">1</span>;</span>
+<span id="src-graphics-loft-L1323"><span class="kw">pub</span> const <span class="en">EV_KEY_UP</span> = <span class="nm">2</span>;</span>
+<span id="src-graphics-loft-L1324"><span class="kw">pub</span> const <span class="en">EV_TEXT</span> = <span class="nm">3</span>;</span>
+<span id="src-graphics-loft-L1325"><span class="kw">pub</span> const <span class="en">EV_MOUSE_DOWN</span> = <span class="nm">4</span>;</span>
+<span id="src-graphics-loft-L1326"><span class="kw">pub</span> const <span class="en">EV_MOUSE_UP</span> = <span class="nm">5</span>;</span>
+<span id="src-graphics-loft-L1327"><span class="kw">pub</span> const <span class="en">EV_MOUSE_MOVE</span> = <span class="nm">6</span>;</span>
+<span id="src-graphics-loft-L1328"><span class="kw">pub</span> const <span class="en">EV_WHEEL</span> = <span class="nm">7</span>;</span>
+<span id="src-graphics-loft-L1329"><span class="kw">pub</span> const <span class="en">EV_TOUCH_BEGIN</span> = <span class="nm">8</span>;</span>
+<span id="src-graphics-loft-L1330"><span class="kw">pub</span> const <span class="en">EV_TOUCH_MOVE</span> = <span class="nm">9</span>;</span>
+<span id="src-graphics-loft-L1331"><span class="kw">pub</span> const <span class="en">EV_TOUCH_END</span> = <span class="nm">10</span>;</span>
+<span id="src-graphics-loft-L1332"><span class="kw">pub</span> const <span class="en">EV_RESIZE</span> = <span class="nm">11</span>;</span>
 <span id="src-graphics-loft-L1333"></span>
 <span id="src-graphics-loft-L1334"><span class="cm">// Modifier bitmask for gl_event_mods().</span></span>
-<span id="src-graphics-loft-L1335"><span class="en">MOD_SHIFT</span> = <span class="nm">1</span>;</span>
-<span id="src-graphics-loft-L1336"><span class="en">MOD_CTRL</span> = <span class="nm">2</span>;</span>
-<span id="src-graphics-loft-L1337"><span class="en">MOD_ALT</span> = <span class="nm">4</span>;</span>
-<span id="src-graphics-loft-L1338"><span class="en">MOD_SUPER</span> = <span class="nm">8</span>;</span>
+<span id="src-graphics-loft-L1335"><span class="kw">pub</span> const <span class="en">MOD_SHIFT</span> = <span class="nm">1</span>;</span>
+<span id="src-graphics-loft-L1336"><span class="kw">pub</span> const <span class="en">MOD_CTRL</span> = <span class="nm">2</span>;</span>
+<span id="src-graphics-loft-L1337"><span class="kw">pub</span> const <span class="en">MOD_ALT</span> = <span class="nm">4</span>;</span>
+<span id="src-graphics-loft-L1338"><span class="kw">pub</span> const <span class="en">MOD_SUPER</span> = <span class="nm">8</span>;</span>
 <span id="src-graphics-loft-L1339"></span>
 <span id="src-graphics-loft-L1340"><span class="cm">// Named keys the event queue reports (extend the KEY_* set above).</span></span>
-<span id="src-graphics-loft-L1341"><span class="en">KEY_ENTER</span> = <span class="nm">13</span>;</span>
-<span id="src-graphics-loft-L1342"><span class="en">KEY_BACKSPACE</span> = <span class="nm">8</span>;</span>
-<span id="src-graphics-loft-L1343"><span class="en">KEY_DELETE</span> = <span class="nm">147</span>;</span>
-<span id="src-graphics-loft-L1344"><span class="en">KEY_INSERT</span> = <span class="nm">148</span>;</span>
-<span id="src-graphics-loft-L1345"><span class="en">KEY_HOME</span> = <span class="nm">149</span>;</span>
-<span id="src-graphics-loft-L1346"><span class="en">KEY_END</span> = <span class="nm">150</span>;</span>
-<span id="src-graphics-loft-L1347"><span class="en">KEY_PAGEUP</span> = <span class="nm">151</span>;</span>
-<span id="src-graphics-loft-L1348"><span class="en">KEY_PAGEDOWN</span> = <span class="nm">152</span>;</span>
+<span id="src-graphics-loft-L1341"><span class="kw">pub</span> const <span class="en">KEY_ENTER</span> = <span class="nm">13</span>;</span>
+<span id="src-graphics-loft-L1342"><span class="kw">pub</span> const <span class="en">KEY_BACKSPACE</span> = <span class="nm">8</span>;</span>
+<span id="src-graphics-loft-L1343"><span class="kw">pub</span> const <span class="en">KEY_DELETE</span> = <span class="nm">147</span>;</span>
+<span id="src-graphics-loft-L1344"><span class="kw">pub</span> const <span class="en">KEY_INSERT</span> = <span class="nm">148</span>;</span>
+<span id="src-graphics-loft-L1345"><span class="kw">pub</span> const <span class="en">KEY_HOME</span> = <span class="nm">149</span>;</span>
+<span id="src-graphics-loft-L1346"><span class="kw">pub</span> const <span class="en">KEY_END</span> = <span class="nm">150</span>;</span>
+<span id="src-graphics-loft-L1347"><span class="kw">pub</span> const <span class="en">KEY_PAGEUP</span> = <span class="nm">151</span>;</span>
+<span id="src-graphics-loft-L1348"><span class="kw">pub</span> const <span class="en">KEY_PAGEDOWN</span> = <span class="nm">152</span>;</span>
 <span id="src-graphics-loft-L1349"></span>
 <span id="src-graphics-loft-L1350"><span class="cm">// Pop the next queued input event and latch it; returns its EV_* tag, or</span></span>
 <span id="src-graphics-loft-L1351"><span class="cm">// EV_NONE when the queue is drained.  Call after gl_poll_events().</span></span>
@@ -3479,6 +3560,23 @@
 <span id="tests-polygon-loft-L113">  c.<span class="fn-call">fill_polygon</span>(two, <span class="nm">0xFFFFFFFF</span>);</span>
 <span id="tests-polygon-loft-L114">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">filled</span>(c) == <span class="nm">0</span>, <span class="st">"nothing drawn, not {filled(c)}"</span>);</span>
 <span id="tests-polygon-loft-L115">}</span>
+</code></pre>
+<h2 id="tests-public-constants-loft">tests/public_constants.loft</h2>
+<pre class="src"><code><span id="tests-public-constants-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
+<span id="tests-public-constants-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
+<span id="tests-public-constants-loft-L3"><span class="cm">//</span></span>
+<span id="tests-public-constants-loft-L4"><span class="cm">// The codes a caller passes to the `gl_*` calls and compares input against are PUBLIC: a</span></span>
+<span id="tests-public-constants-loft-L5"><span class="cm">// program that writes `use graphics::*;` reaches `KEY_SPACE`, `GL_BLEND`, `EV_KEY_DOWN` by name,</span></span>
+<span id="tests-public-constants-loft-L6"><span class="cm">// which is how `input`'s bindings are written.  A constant without `pub` is not exported, and a</span></span>
+<span id="tests-public-constants-loft-L7"><span class="cm">// glob import does not bring it in.</span></span>
+<span id="tests-public-constants-loft-L8"><span class="kw">use</span> graphics::*;</span>
+<span id="tests-public-constants-loft-L9"></span>
+<span id="tests-public-constants-loft-L10"><span class="kw">fn</span> <span class="fn-call">test_the_codes_are_reachable_by_a_glob_import</span>() {</span>
+<span id="tests-public-constants-loft-L11">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="en">KEY_SPACE</span> == <span class="nm">32</span> &amp;&amp; <span class="en">KEY_A</span> == <span class="nm">97</span> &amp;&amp; <span class="en">KEY_LEFT</span> == <span class="nm">130</span> &amp;&amp; <span class="en">KEY_F12</span> &gt; <span class="en">KEY_F1</span>, <span class="st">"key codes"</span>);</span>
+<span id="tests-public-constants-loft-L12">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="en">GL_DEPTH_TEST</span> != <span class="en">GL_BLEND</span> &amp;&amp; <span class="en">BLEND_ONE</span> != <span class="en">BLEND_ZERO</span>, <span class="st">"capabilities and blend factors"</span>);</span>
+<span id="tests-public-constants-loft-L13">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="en">DRAW_TRIANGLES</span> != <span class="en">DRAW_LINES</span>, <span class="st">"draw modes"</span>);</span>
+<span id="tests-public-constants-loft-L14">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="en">EV_NONE</span> != <span class="en">EV_KEY_DOWN</span> &amp;&amp; <span class="en">MOD_SHIFT</span> != <span class="en">MOD_CTRL</span>, <span class="st">"events and modifiers"</span>);</span>
+<span id="tests-public-constants-loft-L15">}</span>
 </code></pre>
 <h2 id="tests-scene-loft">tests/scene.loft</h2>
 <pre class="src"><code><span id="tests-scene-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>

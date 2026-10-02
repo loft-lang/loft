@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>drawing guide — Loft, a programming language for small browser games</title>
+  <meta name="description" content="Getting started with the loft library drawing — a runnable guide that is itself a loft program, so every example in it compiles.">
+<link rel="canonical" href="https://loft-lang.org/loft/lib-drawing-guide.html">
+<meta property="og:title" content="drawing guide — Loft, a programming language for small browser games">
+<meta property="og:description" content="Getting started with the loft library drawing — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://loft-lang.org/loft/lib-drawing-guide.html">
+<meta property="og:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<meta property="og:site_name" content="Loft">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="drawing guide — Loft, a programming language for small browser games">
+<meta name="twitter:description" content="Getting started with the loft library drawing — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta name="twitter:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<link rel="stylesheet" href="style.css">
+<style>.playground-link{display:inline-block;margin:0.3em 0 0.8em;padding:4px 12px;background:#2563eb;color:#fff;border-radius:4px;text-decoration:none;font-size:0.85em}.playground-link:hover{filter:brightness(1.15)}@media print{.playground-link{display:none}}</style>
+</head>
+<body>
+<nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
+<h1>drawing guide</h1>
+<article>
+<p><a href="lib-drawing.html">← drawing</a> · <a href="lib-drawing-api.html">API reference</a> · <a href="lib-drawing-src.html">source</a></p>
+<p><code>drawing</code> renders a <code>.draw</code> scene: a picture written as lines of text — a polygon, a circle, a tapered stroke, a gradient — with every coordinate a FRACTION of the paper. Text diffs, reviews, and can be written by something that cannot see; this renders it, pixel for pixel as the Python renderer it replaces does.</p>
+<p>It parses a scene into a <code>Sketch</code>, renders a <code>Sketch</code> onto a <code>graphics::Canvas</code>, and measures it: named elements get bounding boxes, and <code>check</code> lines state facts about those boxes that can be evaluated without looking at the picture.</p>
+<pre><code><span class="kw">use</span> drawing::*;
+<span class="kw">use</span> graphics::*;</code></pre>
+<pre><code><span class="kw">fn</span> <span class="fn-call">sword</span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {
+  `size <span class="nm">64</span>x64
+<span class="en">Background</span> transparent
+name blade
+<span class="en">Poly</span> (<span class="nm">0.48</span>,<span class="nm">0.10</span>) (<span class="nm">0.52</span>,<span class="nm">0.10</span>) (<span class="nm">0.52</span>,<span class="nm">0.70</span>) (<span class="nm">0.48</span>,<span class="nm">0.70</span>) rgb=<span class="nm">190</span>,<span class="nm">196</span>,<span class="nm">206</span>
+name pommel
+<span class="en">Circle</span> (<span class="nm">0.50</span>,<span class="nm">0.78</span>) r=<span class="nm">0.06</span> rgb=<span class="nm">120</span>,<span class="nm">90</span>,<span class="nm">50</span>
+name guard
+<span class="en">Poly</span> (<span class="nm">0.30</span>,<span class="nm">0.72</span>)@<span class="nm">3</span> (<span class="nm">0.70</span>,<span class="nm">0.72</span>)@<span class="nm">3</span> stroke=<span class="nm">86</span>,<span class="nm">62</span>,<span class="nm">38</span>
+check blade.cx ~ <span class="nm">0.5</span>
+check guard.w &gt; blade.w
+`
+}</code></pre>
+<pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {
+  sk = <span class="fn-call">parse_scene</span>(<span class="fn-call">sword</span>());
+  cv = <span class="fn-call">render</span>(sk);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"paper {sk.sw}x{sk.sh}, {len(sk.ops)} marks, canvas {cv.width}x{cv.height}"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(sk.ops) == <span class="nm">3</span> &amp;&amp; cv.width == <span class="nm">64</span>, <span class="st">"three marks on a 64-pixel paper"</span>);</code></pre>
+<p>The blade runs down the middle; the corner is left transparent.</p>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(graphics::<span class="fn-call">color_a</span>(cv.<span class="fn-call">get_pixel</span>(<span class="nm">32</span>, <span class="nm">20</span>)) == <span class="nm">255</span>, <span class="st">"the blade is inked"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(graphics::<span class="fn-call">color_a</span>(cv.<span class="fn-call">get_pixel</span>(<span class="nm">2</span>, <span class="nm">2</span>)) == <span class="nm">0</span>, <span class="st">"the background is transparent"</span>);</code></pre>
+<p>Every section below is a function, and <code>main</code> calls each one: a section nothing calls still compiles, but its assertions never run.</p>
+<pre><code>  <span class="fn-call">what_was_not_drawn</span>();
+  <span class="fn-call">measure_without_looking</span>();
+  <span class="fn-call">write_a_png</span>();
+}</code></pre>
+<p>That prints:</p>
+<pre><code>  paper 64x64, 3 marks, canvas 64x64
+</code></pre>
+<p>The grammar, in short: <code>size WxH</code> is the paper and the only pixel count in a scene; <code>Background transparent</code> for a sprite; <code>Poly</code> is the workhorse — filled when it names a fill (<code>rgb=</code>, <code>fill=</code>, <code>grad=</code>, <code>radial=</code>), a pen stroke when it does not, with <code>@N</code> for the pen width at a point and <code>~</code> for a point the line curves through; <code>Circle (cx,cy) r=R</code>; <code>Line (x,y) - (x,y)</code>. The README has the full table.</p>
+<h2 id="what-was-not-drawn">What was not drawn</h2>
+<p>A scene that is short of a mark says so. A line no command accepts lands in <code>Sketch.unparsed</code> with its line number — a typo must read as a syntax problem, not as a missing shape. A mark this release recognises and does not draw (<code>Petals</code>) lands in <code>Sketch.deferred</code>.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">what_was_not_drawn</span>() {
+  sk = <span class="fn-call">parse_scene</span>(<span class="st">"size 8x8\nCirlce (0.5,0.5) r=0.2 rgb=1,2,3\nPetals (0.5,0.5) n=6 r=0.1"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(sk.unparsed == [<span class="st">"line 2: Cirlce (0.5,0.5) r=0.2 rgb=1,2,3"</span>], <span class="st">"the typo, with its line"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(sk.deferred == [<span class="st">"line 3: Petals"</span>], <span class="st">"recognised, not drawn"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"missing : {len(sk.unparsed)} unparsed, {len(sk.deferred)} deferred"</span>);
+}</code></pre>
+<h2 id="measure-without-looking">Measure without looking</h2>
+<p><code>name</code> tags every mark after it with an element name, and each element gets a bounding box in paper fractions (<code>Elem.bx0 by0 bx1 by1</code>). A <code>check</code> line states a fact about those boxes — <code>blade.cx ~ 0.5</code>, <code>guard.w &gt; blade.w</code> — and <code>eval_checks</code> measures them; <code>scene_ok</code> says whether the scene parsed and every check held, and <code>metric_report</code> writes it all out the way the Python renderer's <code>stats.txt</code> does.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">measure_without_looking</span>() {
+  sk = <span class="fn-call">parse_scene</span>(<span class="fn-call">sword</span>());
+  results = <span class="fn-call">eval_checks</span>(sk);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(results) == <span class="nm">2</span> &amp;&amp; results[<span class="nm">0</span>].ok &amp;&amp; results[<span class="nm">1</span>].ok, <span class="st">"the blade is centred, the guard is wider"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">scene_ok</span>(sk, results), <span class="st">"parsed whole, and every check holds"</span>);
+  <span class="kw">for</span> e <span class="kw">in</span> sk.elems {
+    <span class="kw">if</span> e.ename == <span class="st">"blade"</span> { <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(e.bx0 == <span class="nm">0.48</span> &amp;&amp; e.bx1 == <span class="nm">0.52</span>, <span class="st">"the blade's box, as written"</span>); }
+  }
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"checks  : {len(results)} of {len(results)} hold"</span>);
+}</code></pre>
+<h2 id="write-a-png">Write a PNG</h2>
+<p><code>render_file(source_path, png_path)</code> parses a <code>.draw</code> file, renders it, writes the PNG and answers the <code>Sketch</code> — so the caller can still read <code>unparsed</code> and run the checks.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">write_a_png</span>() {
+  src = <span class="st">"guide-sword.draw"</span>;
+  out = <span class="st">"guide-sword.png"</span>;
+  f = <span class="bi"><a href="stdlib-files-and-directories.html">file</a></span>(src);
+  f.<span class="fn-call"><a href="stdlib-files-and-directories.html">write</a></span>(<span class="fn-call">sword</span>());
+  sk = <span class="fn-call">render_file</span>(src, out);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(sk.unparsed) == <span class="nm">0</span> &amp;&amp; <span class="bi"><a href="stdlib-files-and-directories.html">file</a></span>(out).size &gt; <span class="nm">0</span>, <span class="st">"drawn and written"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"png     : {out} written"</span>);
+  <span class="fn-call"><a href="stdlib-files-and-directories.html">delete</a></span>(src);
+  <span class="fn-call"><a href="stdlib-files-and-directories.html">delete</a></span>(out);
+}</code></pre>
+<h2 id="where-to-go-next">Where to go next</h2>
+<ul>
+<li><code>tests/worked-examples.loft</code> — <code>@DRW-001</code> … <code>@DRW-003</code>: coordinates are fractions of the paper, what is not drawn is listed, and a <code>name</code> tags every mark after it.</li>
+<li><code>graphics</code> — the <code>Canvas</code> a scene is rendered onto.</li>
+</ul>
+
+  </article>
+<script src="search-index.js"></script>
+<script src="search.js"></script>
+<script>
+(function(){
+var m={"Keywords":"keywords","Texts":"texts","Integers":"integers","Boolean":"boolean","Float":"float","Functions":"functions","Vector":"vector","Structs":"structs","Enums":"enums","Sorted":"sorted","Index":"index","Hash":"hash","File":"file","Lexer":"lexer","Parser":"parser","Libraries":"libraries","Store Locks":"store_locks","Parallel execution":"parallel_execution","Logging":"logging","Time":"time","Safety":"safety","JSON":"json","Generics":"generics","Closures":"closures","Coroutines":"coroutines","Tuples":"tuples","Match":"match","Formatting":"formatting"};
+var h=document.querySelector('h1');
+if(!h)return;
+var key=m[h.textContent];
+if(!key)return;
+var a=document.createElement('a');
+a.className='playground-link';
+a.href='playground.html?example='+key;
+a.textContent='\u25B6 Try in Playground';
+h.parentNode.insertBefore(a,h.nextSibling);
+})();
+</script>
+</body>
+</html>

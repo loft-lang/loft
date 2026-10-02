@@ -23,8 +23,8 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>hex_recover source</h1>
 <article>
-<p><a href="lib-hex_recover.html">← hex_recover</a> · <a href="lib-hex_recover-api.html">API reference</a> · version 0.1.3</p>
-<p class="lib-legend">5 file(s), 1416 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<p><a href="lib-hex_recover.html">← hex_recover</a> · <a href="lib-hex_recover-api.html">API reference</a> · version 0.1.4</p>
+<p class="lib-legend">5 file(s), 1402 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
 <table class="lib-table">
@@ -35,40 +35,40 @@
 <tr><td><code>digest_eq</code> <span class="search-kind">fn</span></td><td><a href="#src-formcensus-loft-L144">144</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L89">89</a> <a href="#tests-02-worked-examples-loft-L91">91</a> <a href="#tests-02-worked-examples-loft-L93">93</a> <a href="#tests-02-worked-examples-loft-L98">98</a> <a href="#tests-02-worked-examples-loft-L100">100</a> <a href="#tests-02-worked-examples-loft-L405">405</a> … (7 total)</td></tr>
 <tr><td><code>digest_text</code> <span class="search-kind">fn</span></td><td><a href="#src-formcensus-loft-L152">152</a></td><td>—</td><td><a href="#src-formcensus-loft-L239">239</a> <a href="#src-formcensus-loft-L255">255</a></td></tr>
 <tr><td><code>form_key</code> <span class="search-kind">fn</span></td><td><a href="#src-formcensus-loft-L166">166</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L167">167</a></td></tr>
-<tr><td><code>form_key_noturn</code> <span class="search-kind">fn</span></td><td><a href="#src-formcensus-loft-L177">177</a></td><td><a href="#tests-02-worked-examples-loft-L108">HXV-002</a></td><td><a href="#tests-02-worked-examples-loft-L168">168</a></td></tr>
-<tr><td><code>count_digest</code> <span class="search-kind">fn</span></td><td><a href="#src-formcensus-loft-L188">188</a></td><td><a href="#tests-02-worked-examples-loft-L108">HXV-002</a></td><td><a href="#tests-02-worked-examples-loft-L104">104</a> <a href="#tests-02-worked-examples-loft-L145">145</a></td></tr>
+<tr><td><code>form_key_noturn</code> <span class="search-kind">fn</span></td><td><a href="#src-formcensus-loft-L177">177</a></td><td><a href="#src-formfit-loft-L182">HXV-002</a></td><td><a href="#tests-02-worked-examples-loft-L168">168</a></td></tr>
+<tr><td><code>count_digest</code> <span class="search-kind">fn</span></td><td><a href="#src-formcensus-loft-L188">188</a></td><td><a href="#src-formfit-loft-L182">HXV-002</a></td><td><a href="#tests-02-worked-examples-loft-L104">104</a> <a href="#tests-02-worked-examples-loft-L145">145</a></td></tr>
 <tr><td><code>turns_cyclic_eq</code> <span class="search-kind">fn</span></td><td><a href="#src-formcensus-loft-L198">198</a></td><td><a href="#tests-02-worked-examples-loft-L358">HXV-006</a></td><td><a href="#src-formcensus-loft-L331">331</a> <a href="#tests-02-worked-examples-loft-L368">368</a> <a href="#tests-02-worked-examples-loft-L370">370</a> <a href="#tests-02-worked-examples-loft-L372">372</a> <a href="#tests-02-worked-examples-loft-L376">376</a> <a href="#tests-02-worked-examples-loft-L378">378</a> … (7 total)</td></tr>
 <tr><td><code>field_exact</code> <span class="search-kind">fn</span></td><td><a href="#src-formcensus-loft-L227">227</a></td><td><a href="#tests-02-worked-examples-loft-L63">HXV-001</a></td><td><a href="#src-formcensus-loft-L239">239</a> <a href="#tests-02-worked-examples-loft-L89">89</a> <a href="#tests-02-worked-examples-loft-L90">90</a></td></tr>
 <tr><td><code>field_exact_text</code> <span class="search-kind">fn</span></td><td><a href="#src-formcensus-loft-L239">239</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L83">83</a> <a href="#tests-02-worked-examples-loft-L84">84</a></td></tr>
-<tr><td><code>field_norm</code> <span class="search-kind">fn</span></td><td><a href="#src-formcensus-loft-L251">251</a></td><td><a href="#tests-02-worked-examples-loft-L63">HXV-001</a></td><td><a href="#src-formcensus-loft-L255">255</a> <a href="#src-formfit-loft-L151">151</a> <a href="#src-formfit-loft-L159">159</a> <a href="#src-formfit-loft-L439">439</a> <a href="#tests-02-worked-examples-loft-L91">91</a> <a href="#tests-02-worked-examples-loft-L92">92</a> … (12 total)</td></tr>
-<tr><td><code>field_norm_text</code> <span class="search-kind">fn</span></td><td><a href="#src-formcensus-loft-L255">255</a></td><td>—</td><td><a href="#src-formfit-loft-L213">213</a> <a href="#src-formfit-loft-L232">232</a> <a href="#src-formfit-loft-L252">252</a></td></tr>
+<tr><td><code>field_norm</code> <span class="search-kind">fn</span></td><td><a href="#src-formcensus-loft-L251">251</a></td><td><a href="#tests-02-worked-examples-loft-L63">HXV-001</a></td><td><a href="#src-formcensus-loft-L255">255</a> <a href="#src-formfit-loft-L141">141</a> <a href="#src-formfit-loft-L149">149</a> <a href="#src-formfit-loft-L425">425</a> <a href="#tests-02-worked-examples-loft-L91">91</a> <a href="#tests-02-worked-examples-loft-L92">92</a> … (12 total)</td></tr>
+<tr><td><code>field_norm_text</code> <span class="search-kind">fn</span></td><td><a href="#src-formcensus-loft-L255">255</a></td><td>—</td><td><a href="#src-formfit-loft-L200">200</a> <a href="#src-formfit-loft-L219">219</a> <a href="#src-formfit-loft-L239">239</a></td></tr>
 <tr><td><code>form_maxlen</code> <span class="search-kind">fn</span></td><td><a href="#src-formcensus-loft-L267">267</a></td><td>—</td><td><a href="#src-formcensus-loft-L312">312</a> <a href="#tests-02-worked-examples-loft-L499">499</a></td></tr>
-<tr><td><code>forms_upto</code> <span class="search-kind">fn</span></td><td><a href="#src-formcensus-loft-L276">276</a></td><td><a href="#tests-02-worked-examples-loft-L462">HXV-009</a></td><td><a href="#src-formcensus-loft-L308">308</a> <a href="#src-formfit-loft-L96">96</a> <a href="#tests-02-worked-examples-loft-L162">162</a> <a href="#tests-02-worked-examples-loft-L476">476</a> <a href="#tests-02-worked-examples-loft-L477">477</a> <a href="#tests-02-worked-examples-loft-L478">478</a></td></tr>
+<tr><td><code>forms_upto</code> <span class="search-kind">fn</span></td><td><a href="#src-formcensus-loft-L276">276</a></td><td><a href="#tests-02-worked-examples-loft-L462">HXV-009</a></td><td><a href="#src-formcensus-loft-L308">308</a> <a href="#src-formfit-loft-L86">86</a> <a href="#tests-02-worked-examples-loft-L162">162</a> <a href="#tests-02-worked-examples-loft-L476">476</a> <a href="#tests-02-worked-examples-loft-L477">477</a> <a href="#tests-02-worked-examples-loft-L478">478</a></td></tr>
 <tr><td><code>forms_at_level</code> <span class="search-kind">fn</span></td><td><a href="#src-formcensus-loft-L307">307</a></td><td><a href="#tests-02-worked-examples-loft-L462">HXV-009</a></td><td><a href="#tests-02-worked-examples-loft-L481">481</a> <a href="#tests-02-worked-examples-loft-L482">482</a> <a href="#tests-02-worked-examples-loft-L483">483</a> <a href="#tests-02-worked-examples-loft-L484">484</a> <a href="#tests-02-worked-examples-loft-L485">485</a> <a href="#tests-02-worked-examples-loft-L504">504</a> … (7 total)</td></tr>
 <tr><td><code>turns_reverse_eq</code> <span class="search-kind">fn</span></td><td><a href="#src-formcensus-loft-L325">325</a></td><td><a href="#tests-02-worked-examples-loft-L382">HXV-007</a></td><td><a href="#tests-02-worked-examples-loft-L402">402</a> <a href="#tests-02-worked-examples-loft-L411">411</a> <a href="#tests-02-worked-examples-loft-L413">413</a></td></tr>
 <tr><td><code>forms_sides</code> <span class="search-kind">fn</span></td><td><a href="#src-formcensus-loft-L350">350</a></td><td>—</td><td><a href="#src-formcensus-loft-L396">396</a></td></tr>
-<tr><td><code>forms_a3</code> <span class="search-kind">fn</span></td><td><a href="#src-formcensus-loft-L393">393</a></td><td>—</td><td><a href="#src-formfit-loft-L97">97</a></td></tr>
-<tr><td><code>fit_chunk</code> <span class="search-kind">fn</span></td><td><a href="#src-formfit-loft-L47">47</a></td><td><a href="#tests-02-worked-examples-loft-L187">HXV-003</a></td><td><a href="#src-formfit-loft-L157">157</a> <a href="#src-formfit-loft-L229">229</a> <a href="#src-formfit-loft-L437">437</a> <a href="#tests-02-worked-examples-loft-L143">143</a> <a href="#tests-02-worked-examples-loft-L259">259</a></td></tr>
-<tr><td><code>REGIME_R1</code> <span class="search-kind">const</span></td><td><a href="#src-formfit-loft-L71">71</a></td><td>—</td><td><a href="#src-formfit-loft-L75">75</a> <a href="#src-formfit-loft-L168">168</a> <a href="#src-formfit-loft-L180">180</a> <a href="#src-formfit-loft-L188">188</a> <a href="#src-formfit-loft-L254">254</a> <a href="#src-formfit-loft-L264">264</a> … (18 total)</td></tr>
-<tr><td><code>REGIME_R2</code> <span class="search-kind">const</span></td><td><a href="#src-formfit-loft-L72">72</a></td><td>—</td><td><a href="#src-formfit-loft-L75">75</a> <a href="#src-formfit-loft-L173">173</a> <a href="#src-formfit-loft-L401">401</a> <a href="#src-formfit-loft-L422">422</a> <a href="#src-formfit-loft-L433">433</a> <a href="#src-formfit-loft-L443">443</a> … (11 total)</td></tr>
-<tr><td><code>Rebuilt</code> <span class="search-kind">struct</span></td><td><a href="#src-formfit-loft-L74">74</a></td><td>—</td><td><a href="#src-formfit-loft-L147">147</a> <a href="#src-formfit-loft-L150">150</a> <a href="#src-formfit-loft-L168">168</a> <a href="#src-formfit-loft-L173">173</a> <a href="#src-formfit-loft-L251">251</a> <a href="#src-formfit-loft-L254">254</a> … (12 total)</td></tr>
-<tr><td><code>LEVEL</code> <span class="search-kind">const</span></td><td><a href="#src-formfit-loft-L87">87</a></td><td>—</td><td><a href="#src-formfit-loft-L96">96</a> <a href="#tests-02-worked-examples-loft-L128">128</a></td></tr>
-<tr><td><code>candidate_forms</code> <span class="search-kind">fn</span></td><td><a href="#src-formfit-loft-L95">95</a></td><td><a href="#tests-02-worked-examples-loft-L281">HXV-004</a></td><td><a href="#src-formfit-loft-L147">147</a> <a href="#tests-01-hex-recover-loft-L13">13</a> <a href="#tests-02-worked-examples-loft-L60">60</a> <a href="#tests-02-worked-examples-loft-L126">126</a> <a href="#tests-02-worked-examples-loft-L430">430</a></td></tr>
-<tr><td><code>level1_forms</code> <span class="search-kind">fn</span></td><td><a href="#src-formfit-loft-L103">103</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L504">504</a> <a href="#tests-02-worked-examples-loft-L505">505</a></td></tr>
-<tr><td><code>rebuild</code> <span class="search-kind">fn</span></td><td><a href="#src-formfit-loft-L147">147</a></td><td><a href="#tests-02-worked-examples-loft-L318">HXV-005</a></td><td><a href="#src-formfit-loft-L187">187</a> <a href="#tests-01-hex-recover-loft-L20">20</a> <a href="#tests-01-hex-recover-loft-L43">43</a> <a href="#tests-02-worked-examples-loft-L302">302</a></td></tr>
-<tr><td><code>rebuild_with</code> <span class="search-kind">fn</span></td><td><a href="#src-formfit-loft-L150">150</a></td><td>—</td><td><a href="#src-formfit-loft-L147">147</a> <a href="#src-formfit-loft-L179">179</a> <a href="#src-formfit-loft-L256">256</a> <a href="#tests-02-worked-examples-loft-L439">439</a></td></tr>
-<tr><td><code>rebuild_text_with</code> <span class="search-kind">fn</span></td><td><a href="#src-formfit-loft-L178">178</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L456">456</a> <a href="#tests-02-worked-examples-loft-L458">458</a></td></tr>
-<tr><td><code>rebuild_text</code> <span class="search-kind">fn</span></td><td><a href="#src-formfit-loft-L186">186</a></td><td>—</td><td><a href="#tests-01-hex-recover-loft-L33">33</a> <a href="#tests-02-worked-examples-loft-L307">307</a></td></tr>
-<tr><td><code>IdxEntry</code> <span class="search-kind">struct</span></td><td><a href="#src-formfit-loft-L212">212</a></td><td>—</td><td><a href="#src-formfit-loft-L218">218</a> <a href="#src-formfit-loft-L235">235</a></td></tr>
-<tr><td><code>RecoveryIndex</code> <span class="search-kind">struct</span></td><td><a href="#src-formfit-loft-L217">217</a></td><td>—</td><td><a href="#src-formfit-loft-L225">225</a> <a href="#src-formfit-loft-L226">226</a> <a href="#src-formfit-loft-L251">251</a> <a href="#src-formfit-loft-L261">261</a></td></tr>
-<tr><td><code>index_build</code> <span class="search-kind">fn</span></td><td><a href="#src-formfit-loft-L225">225</a></td><td><a href="#tests-02-worked-examples-loft-L108">HXV-002</a></td><td><a href="#tests-02-worked-examples-loft-L130">130</a> <a href="#tests-02-worked-examples-loft-L431">431</a></td></tr>
-<tr><td><code>rebuild_indexed</code> <span class="search-kind">fn</span></td><td><a href="#src-formfit-loft-L251">251</a></td><td><a href="#tests-02-worked-examples-loft-L417">HXV-008</a></td><td><a href="#src-formfit-loft-L263">263</a> <a href="#tests-02-worked-examples-loft-L438">438</a> <a href="#tests-02-worked-examples-loft-L447">447</a></td></tr>
-<tr><td><code>rebuild_indexed_text</code> <span class="search-kind">fn</span></td><td><a href="#src-formfit-loft-L261">261</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L457">457</a> <a href="#tests-02-worked-examples-loft-L459">459</a></td></tr>
-<tr><td><code>hull_keys</code> <span class="search-kind">fn</span></td><td><a href="#src-formfit-loft-L330">330</a></td><td>—</td><td><a href="#src-formfit-loft-L398">398</a></td></tr>
-<tr><td><code>side_heading</code> <span class="search-kind">fn</span></td><td><a href="#src-formfit-loft-L370">370</a></td><td>—</td><td><a href="#src-formfit-loft-L414">414</a></td></tr>
-<tr><td><code>side_len</code> <span class="search-kind">fn</span></td><td><a href="#src-formfit-loft-L387">387</a></td><td>—</td><td><a href="#src-formfit-loft-L418">418</a></td></tr>
-<tr><td><code>rebuild_construct</code> <span class="search-kind">fn</span></td><td><a href="#src-formfit-loft-L397">397</a></td><td><a href="#tests-02-worked-examples-loft-L281">HXV-004</a></td><td><a href="#src-formfit-loft-L449">449</a> <a href="#tests-02-worked-examples-loft-L217">217</a> <a href="#tests-02-worked-examples-loft-L223">223</a> <a href="#tests-02-worked-examples-loft-L230">230</a> <a href="#tests-02-worked-examples-loft-L238">238</a> <a href="#tests-02-worked-examples-loft-L246">246</a> … (13 total)</td></tr>
-<tr><td><code>rebuild_construct_text</code> <span class="search-kind">fn</span></td><td><a href="#src-formfit-loft-L448">448</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L314">314</a></td></tr>
+<tr><td><code>forms_a3</code> <span class="search-kind">fn</span></td><td><a href="#src-formcensus-loft-L393">393</a></td><td>—</td><td><a href="#src-formfit-loft-L87">87</a></td></tr>
+<tr><td><code>fit_chunk</code> <span class="search-kind">fn</span></td><td><a href="#src-formfit-loft-L38">38</a></td><td><a href="#tests-02-worked-examples-loft-L187">HXV-003</a></td><td><a href="#src-formfit-loft-L147">147</a> <a href="#src-formfit-loft-L216">216</a> <a href="#src-formfit-loft-L423">423</a> <a href="#tests-02-worked-examples-loft-L143">143</a> <a href="#tests-02-worked-examples-loft-L259">259</a></td></tr>
+<tr><td><code>REGIME_R1</code> <span class="search-kind">const</span></td><td><a href="#src-formfit-loft-L62">62</a></td><td>—</td><td><a href="#src-formfit-loft-L66">66</a> <a href="#src-formfit-loft-L158">158</a> <a href="#src-formfit-loft-L170">170</a> <a href="#src-formfit-loft-L178">178</a> <a href="#src-formfit-loft-L241">241</a> <a href="#src-formfit-loft-L251">251</a> … (18 total)</td></tr>
+<tr><td><code>REGIME_R2</code> <span class="search-kind">const</span></td><td><a href="#src-formfit-loft-L63">63</a></td><td>—</td><td><a href="#src-formfit-loft-L66">66</a> <a href="#src-formfit-loft-L163">163</a> <a href="#src-formfit-loft-L387">387</a> <a href="#src-formfit-loft-L408">408</a> <a href="#src-formfit-loft-L419">419</a> <a href="#src-formfit-loft-L429">429</a> … (11 total)</td></tr>
+<tr><td><code>Rebuilt</code> <span class="search-kind">struct</span></td><td><a href="#src-formfit-loft-L65">65</a></td><td>—</td><td><a href="#src-formfit-loft-L137">137</a> <a href="#src-formfit-loft-L140">140</a> <a href="#src-formfit-loft-L158">158</a> <a href="#src-formfit-loft-L163">163</a> <a href="#src-formfit-loft-L238">238</a> <a href="#src-formfit-loft-L241">241</a> … (12 total)</td></tr>
+<tr><td><code>LEVEL</code> <span class="search-kind">const</span></td><td><a href="#src-formfit-loft-L77">77</a></td><td>—</td><td><a href="#src-formfit-loft-L86">86</a> <a href="#tests-02-worked-examples-loft-L128">128</a></td></tr>
+<tr><td><code>candidate_forms</code> <span class="search-kind">fn</span></td><td><a href="#src-formfit-loft-L85">85</a></td><td><a href="#src-formfit-loft-L72">HXV-004</a></td><td><a href="#src-formfit-loft-L137">137</a> <a href="#tests-01-hex-recover-loft-L13">13</a> <a href="#tests-02-worked-examples-loft-L60">60</a> <a href="#tests-02-worked-examples-loft-L126">126</a> <a href="#tests-02-worked-examples-loft-L430">430</a></td></tr>
+<tr><td><code>level1_forms</code> <span class="search-kind">fn</span></td><td><a href="#src-formfit-loft-L93">93</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L504">504</a> <a href="#tests-02-worked-examples-loft-L505">505</a></td></tr>
+<tr><td><code>rebuild</code> <span class="search-kind">fn</span></td><td><a href="#src-formfit-loft-L137">137</a></td><td><a href="#tests-02-worked-examples-loft-L318">HXV-005</a></td><td><a href="#src-formfit-loft-L177">177</a> <a href="#tests-01-hex-recover-loft-L20">20</a> <a href="#tests-01-hex-recover-loft-L43">43</a> <a href="#tests-02-worked-examples-loft-L302">302</a></td></tr>
+<tr><td><code>rebuild_with</code> <span class="search-kind">fn</span></td><td><a href="#src-formfit-loft-L140">140</a></td><td>—</td><td><a href="#src-formfit-loft-L137">137</a> <a href="#src-formfit-loft-L169">169</a> <a href="#src-formfit-loft-L243">243</a> <a href="#tests-02-worked-examples-loft-L439">439</a></td></tr>
+<tr><td><code>rebuild_text_with</code> <span class="search-kind">fn</span></td><td><a href="#src-formfit-loft-L168">168</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L456">456</a> <a href="#tests-02-worked-examples-loft-L458">458</a></td></tr>
+<tr><td><code>rebuild_text</code> <span class="search-kind">fn</span></td><td><a href="#src-formfit-loft-L176">176</a></td><td>—</td><td><a href="#tests-01-hex-recover-loft-L33">33</a> <a href="#tests-02-worked-examples-loft-L307">307</a></td></tr>
+<tr><td><code>IdxEntry</code> <span class="search-kind">struct</span></td><td><a href="#src-formfit-loft-L199">199</a></td><td>—</td><td><a href="#src-formfit-loft-L205">205</a> <a href="#src-formfit-loft-L222">222</a></td></tr>
+<tr><td><code>RecoveryIndex</code> <span class="search-kind">struct</span></td><td><a href="#src-formfit-loft-L204">204</a></td><td>—</td><td><a href="#src-formfit-loft-L212">212</a> <a href="#src-formfit-loft-L213">213</a> <a href="#src-formfit-loft-L238">238</a> <a href="#src-formfit-loft-L248">248</a></td></tr>
+<tr><td><code>index_build</code> <span class="search-kind">fn</span></td><td><a href="#src-formfit-loft-L212">212</a></td><td><a href="#src-formfit-loft-L182">HXV-002</a></td><td><a href="#tests-02-worked-examples-loft-L130">130</a> <a href="#tests-02-worked-examples-loft-L431">431</a></td></tr>
+<tr><td><code>rebuild_indexed</code> <span class="search-kind">fn</span></td><td><a href="#src-formfit-loft-L238">238</a></td><td><a href="#tests-02-worked-examples-loft-L417">HXV-008</a></td><td><a href="#src-formfit-loft-L250">250</a> <a href="#tests-02-worked-examples-loft-L438">438</a> <a href="#tests-02-worked-examples-loft-L447">447</a></td></tr>
+<tr><td><code>rebuild_indexed_text</code> <span class="search-kind">fn</span></td><td><a href="#src-formfit-loft-L248">248</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L457">457</a> <a href="#tests-02-worked-examples-loft-L459">459</a></td></tr>
+<tr><td><code>hull_keys</code> <span class="search-kind">fn</span></td><td><a href="#src-formfit-loft-L316">316</a></td><td>—</td><td><a href="#src-formfit-loft-L384">384</a></td></tr>
+<tr><td><code>side_heading</code> <span class="search-kind">fn</span></td><td><a href="#src-formfit-loft-L356">356</a></td><td>—</td><td><a href="#src-formfit-loft-L400">400</a></td></tr>
+<tr><td><code>side_len</code> <span class="search-kind">fn</span></td><td><a href="#src-formfit-loft-L373">373</a></td><td>—</td><td><a href="#src-formfit-loft-L404">404</a></td></tr>
+<tr><td><code>rebuild_construct</code> <span class="search-kind">fn</span></td><td><a href="#src-formfit-loft-L383">383</a></td><td><a href="#src-formfit-loft-L72">HXV-004</a></td><td><a href="#src-formfit-loft-L435">435</a> <a href="#tests-02-worked-examples-loft-L217">217</a> <a href="#tests-02-worked-examples-loft-L223">223</a> <a href="#tests-02-worked-examples-loft-L230">230</a> <a href="#tests-02-worked-examples-loft-L238">238</a> <a href="#tests-02-worked-examples-loft-L246">246</a> … (13 total)</td></tr>
+<tr><td><code>rebuild_construct_text</code> <span class="search-kind">fn</span></td><td><a href="#src-formfit-loft-L434">434</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L314">314</a></td></tr>
 </table>
 <h2 id="src-formcensus-loft">src/formcensus.loft</h2>
 <pre class="src"><code><span id="src-formcensus-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -294,8 +294,8 @@
 <span id="src-formcensus-loft-L221"><span class="cm">//</span></span>
 <span id="src-formcensus-loft-L222"><span class="cm">// So the corpus `.f` uses THIS one: the field exactly as drawn, no orientation quotient and no</span></span>
 <span id="src-formcensus-loft-L223"><span class="cm">// translation quotient (every entry is drawn at the same anchor, so position is part of the</span></span>
-<span id="src-formcensus-loft-L224"><span class="cm">// answer). Using the census digest here reported 17 false law F failures on a 10-entry corpus</span></span>
-<span id="src-formcensus-loft-L225"><span class="cm">// before the distinction was drawn.</span></span>
+<span id="src-formcensus-loft-L224"><span class="cm">// answer). The census digest here would report a stencil and its turned copy as a law F</span></span>
+<span id="src-formcensus-loft-L225"><span class="cm">// failure when nothing is wrong.</span></span>
 <span id="src-formcensus-loft-L226"><span class="cm">// Example: @HXV-001</span></span>
 <span id="src-formcensus-loft-L227"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">field_exact</span>(cells: <span class="en">HexSet</span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; {</span>
 <span id="src-formcensus-loft-L228">  raw: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
@@ -494,437 +494,423 @@
 <span id="src-formfit-loft-L19"><span class="kw">use</span> hex_form::*;</span>
 <span id="src-formfit-loft-L20"><span class="kw">use</span> formcensus::*;</span>
 <span id="src-formfit-loft-L21"></span>
-<span id="src-formfit-loft-L22"><span class="cm">// ── THE WINDOW EVERY REDRAW GOES INTO — SIZED FROM THE FORM, NOT FROM A GUESS ─</span></span>
-<span id="src-formfit-loft-L23"><span class="cm">//</span></span>
-<span id="src-formfit-loft-L24"><span class="cm">// Recovery draws a candidate and compares it with the field. That redraw needs a chunk, and the</span></span>
-<span id="src-formfit-loft-L25"><span class="cm">// chunk used to be a constant 25x25 around the anchor -- "a compact window: every level-1 shape</span></span>
-<span id="src-formfit-loft-L26"><span class="cm">// is a handful of cells around the anchor", which was true of the enumeration and FALSE of the</span></span>
-<span id="src-formfit-loft-L27"><span class="cm">// thing that replaced it. `form_fill` clips to the chunk silently, so an oversized form redrew</span></span>
-<span id="src-formfit-loft-L28"><span class="cm">// SHORT and the comparison then reported the exact answer it had just computed as R2 content.</span></span>
-<span id="src-formfit-loft-L29"><span class="cm">// An equilateral triangle of side 13 came back "R2, residual 2" with `rb_form` exactly right;</span></span>
-<span id="src-formfit-loft-L30"><span class="cm">// at an odd (vertex-direction) heading the refusal started at side 7 -- an 85-cell shape refused</span></span>
-<span id="src-formfit-loft-L31"><span class="cm">// while a 105-cell one passed, because the limit was never a size, it was a DISTANCE from the</span></span>
-<span id="src-formfit-loft-L32"><span class="cm">// anchor and the two headings cover it at different rates.</span></span>
-<span id="src-formfit-loft-L33"><span class="cm">//</span></span>
-<span id="src-formfit-loft-L34"><span class="cm">// So the window is derived. `form_fill` sets exactly the cells whose lattice centre `(2q + (r&amp;1),</span></span>
-<span id="src-formfit-loft-L35"><span class="cm">// 3r)` lies on or inside the turtle polygon, and `form_poly_k`/`form_poly_m` give that polygon's</span></span>
-<span id="src-formfit-loft-L36"><span class="cm">// corners; its bounding box therefore bounds the drawing. Every `head_step` moves `m` by a</span></span>
-<span id="src-formfit-loft-L37"><span class="cm">// multiple of 3, so `r` is bounded exactly; `k` gives `q` within one, and a one-cell pad on every</span></span>
-<span id="src-formfit-loft-L38"><span class="cm">// side absorbs that. Costs nothing -- for the shipped candidate set the derived window is far</span></span>
-<span id="src-formfit-loft-L39"><span class="cm">// SMALLER than the old constant, so the census got faster as well as correct.</span></span>
-<span id="src-formfit-loft-L40"><span class="kw">fn</span> <span class="fn-call">fdiv</span>(a: <span class="ty"><a href="stdlib-types.html">integer</a></span>, b: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-formfit-loft-L41">  q = (a / b) ?? <span class="nm">0</span>;</span>
-<span id="src-formfit-loft-L42">  <span class="kw">if</span> a &lt; <span class="nm">0</span> &amp;&amp; q * b != a { <span class="kw">return</span> q - <span class="nm">1</span>; }</span>
-<span id="src-formfit-loft-L43">  q</span>
-<span id="src-formfit-loft-L44">}</span>
-<span id="src-formfit-loft-L45"></span>
-<span id="src-formfit-loft-L46"><span class="cm">// Example: @HXV-003</span></span>
-<span id="src-formfit-loft-L47"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">fit_chunk</span>(f: <span class="en">Form</span>) -&gt; <span class="en">HexSet</span> {</span>
-<span id="src-formfit-loft-L48">  vk = <span class="fn-call">form_poly_k</span>(f);</span>
-<span id="src-formfit-loft-L49">  vm = <span class="fn-call">form_poly_m</span>(f);</span>
-<span id="src-formfit-loft-L50">  n = <span class="bi"><a href="stdlib-text.html">len</a></span>(vk);</span>
-<span id="src-formfit-loft-L51">  <span class="kw">if</span> n == <span class="nm">0</span> { <span class="kw">return</span> <span class="fn-call">hexset_chunk</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">1</span>, <span class="nm">1</span>); }</span>
-<span id="src-formfit-loft-L52">  mink = vk[<span class="nm">0</span>] ?? <span class="nm">0</span>;</span>
-<span id="src-formfit-loft-L53">  maxk = mink;</span>
-<span id="src-formfit-loft-L54">  minm = vm[<span class="nm">0</span>] ?? <span class="nm">0</span>;</span>
-<span id="src-formfit-loft-L55">  maxm = minm;</span>
-<span id="src-formfit-loft-L56">  <span class="kw">for</span> bi <span class="kw">in</span> <span class="nm">0..</span>n {</span>
-<span id="src-formfit-loft-L57">    kk = vk[bi] ?? <span class="nm">0</span>;</span>
-<span id="src-formfit-loft-L58">    mm = vm[bi] ?? <span class="nm">0</span>;</span>
-<span id="src-formfit-loft-L59">    <span class="kw">if</span> kk &lt; mink { mink = kk; }</span>
-<span id="src-formfit-loft-L60">    <span class="kw">if</span> kk &gt; maxk { maxk = kk; }</span>
-<span id="src-formfit-loft-L61">    <span class="kw">if</span> mm &lt; minm { minm = mm; }</span>
-<span id="src-formfit-loft-L62">    <span class="kw">if</span> mm &gt; maxm { maxm = mm; }</span>
-<span id="src-formfit-loft-L63">  }</span>
-<span id="src-formfit-loft-L64">  r0 = <span class="fn-call">fdiv</span>(minm, <span class="nm">3</span>) - <span class="nm">1</span>;</span>
-<span id="src-formfit-loft-L65">  r1 = <span class="fn-call">fdiv</span>(maxm, <span class="nm">3</span>) + <span class="nm">1</span>;</span>
-<span id="src-formfit-loft-L66">  q0 = <span class="fn-call">fdiv</span>(mink - <span class="nm">1</span>, <span class="nm">2</span>) - <span class="nm">1</span>;</span>
-<span id="src-formfit-loft-L67">  q1 = <span class="fn-call">fdiv</span>(maxk, <span class="nm">2</span>) + <span class="nm">1</span>;</span>
-<span id="src-formfit-loft-L68">  <span class="fn-call">hexset_chunk</span>(q0, r0, q1 - q0 + <span class="nm">1</span>, r1 - r0 + <span class="nm">1</span>)</span>
-<span id="src-formfit-loft-L69">}</span>
-<span id="src-formfit-loft-L70"></span>
-<span id="src-formfit-loft-L71"><span class="kw">pub</span> const <span class="en">REGIME_R1</span> = <span class="nm">1</span>;</span>
-<span id="src-formfit-loft-L72"><span class="kw">pub</span> const <span class="en">REGIME_R2</span> = <span class="nm">2</span>;</span>
-<span id="src-formfit-loft-L73"></span>
-<span id="src-formfit-loft-L74"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Rebuilt</span> {</span>
-<span id="src-formfit-loft-L75">  rb_regime:  <span class="ty"><a href="stdlib-types.html">integer</a></span>,   <span class="cm">// REGIME_R1 (exact, unique) or REGIME_R2 (no grammar form draws this)</span></span>
-<span id="src-formfit-loft-L76">  rb_form:    <span class="en">Form</span>,      <span class="cm">// the recovered model — meaningful only in R1</span></span>
-<span id="src-formfit-loft-L77">  rb_rho:     <span class="ty"><a href="stdlib-types.html">integer</a></span>,   <span class="cm">// 0 in R1; the smallest unexplained-cell count in R2</span></span>
-<span id="src-formfit-loft-L78">  rb_matches: <span class="ty"><a href="stdlib-types.html">integer</a></span>,   <span class="cm">// how many candidates matched exactly; &gt;1 means the level is ambiguous</span></span>
-<span id="src-formfit-loft-L79">}</span>
-<span id="src-formfit-loft-L80"></span>
-<span id="src-formfit-loft-L81"><span class="cm">// ── the admitted set — the candidate space `rebuild` matches against ───────</span></span>
-<span id="src-formfit-loft-L82"><span class="cm">//</span></span>
-<span id="src-formfit-loft-L83"><span class="cm">// `LEVEL` is how far up the ladder recovery is claimed to work. It must be raised in step with the</span></span>
-<span id="src-formfit-loft-L84"><span class="cm">// corpus: a corpus entry whose form is above this level would find NO candidate and be reported as</span></span>
-<span id="src-formfit-loft-L85"><span class="cm">// R2 — a silent loss of an exact answer. `tests/trip.loft` covers every committed level, so that</span></span>
-<span id="src-formfit-loft-L86"><span class="cm">// mismatch fails the gate rather than passing quietly.</span></span>
-<span id="src-formfit-loft-L87"><span class="kw">pub</span> const <span class="en">LEVEL</span> = <span class="nm">2</span>;</span>
-<span id="src-formfit-loft-L88"></span>
-<span id="src-formfit-loft-L89"><span class="cm">// The candidate space: A1/A2 (3 sides, len &lt;= LEVEL) plus A3 (side counts 4..6 at len 1).</span></span>
-<span id="src-formfit-loft-L90"><span class="cm">//</span></span>
-<span id="src-formfit-loft-L91"><span class="cm">// ENUMERATING THIS IS THE EXPENSIVE PART, so callers that recover many fields must build it ONCE</span></span>
-<span id="src-formfit-loft-L92"><span class="cm">// and pass it to `rebuild_with`. `rebuild` re-enumerates on every call, which is fine for a single</span></span>
-<span id="src-formfit-loft-L93"><span class="cm">// lookup and quadratic waste over a corpus.</span></span>
-<span id="src-formfit-loft-L94"><span class="cm">// Example: @HXV-004</span></span>
-<span id="src-formfit-loft-L95"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">candidate_forms</span>() -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Form</span>&gt; {</span>
-<span id="src-formfit-loft-L96">  out = <span class="fn-call">forms_upto</span>(<span class="en">LEVEL</span>);</span>
-<span id="src-formfit-loft-L97">  a3 = <span class="fn-call">forms_a3</span>();</span>
-<span id="src-formfit-loft-L98">  <span class="kw">for</span> ai <span class="kw">in</span> <span class="nm">0..l</span><span class="fn-call">en</span>(a3) { out += [a3[ai] ?? <span class="fn-call">form_new</span>(<span class="nm">0</span>, [], [])]; }</span>
-<span id="src-formfit-loft-L99">  out</span>
-<span id="src-formfit-loft-L100">}</span>
-<span id="src-formfit-loft-L101"></span>
-<span id="src-formfit-loft-L102"><span class="cm">// Retained for the A1 gates: the level-1 enumeration on its own.</span></span>
-<span id="src-formfit-loft-L103"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">level1_forms</span>() -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Form</span>&gt; {</span>
-<span id="src-formfit-loft-L104">  out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Form</span>&gt; = [];</span>
-<span id="src-formfit-loft-L105">  texts: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt; = [];</span>
-<span id="src-formfit-loft-L106">  <span class="kw">for</span> eh <span class="kw">in</span> <span class="nm">0..12</span> {</span>
-<span id="src-formfit-loft-L107">    <span class="kw">for</span> ea <span class="kw">in</span> <span class="nm">1..12</span> {</span>
-<span id="src-formfit-loft-L108">      <span class="kw">for</span> eb <span class="kw">in</span> <span class="nm">1..12</span> {</span>
-<span id="src-formfit-loft-L109">        ec = <span class="nm">12</span> - ea - eb;</span>
-<span id="src-formfit-loft-L110">        <span class="kw">if</span> ec &gt;= <span class="nm">1</span> &amp;&amp; ec &lt;= <span class="nm">11</span> {</span>
-<span id="src-formfit-loft-L111">          ef = <span class="fn-call">form_new</span>(eh, [<span class="nm">1</span>, <span class="nm">1</span>, <span class="nm">1</span>], [ea, eb, ec]);</span>
-<span id="src-formfit-loft-L112">          <span class="kw">if</span> <span class="fn-call">form_closes</span>(ef) {</span>
-<span id="src-formfit-loft-L113">            cf = <span class="fn-call">form_canon</span>(ef);</span>
-<span id="src-formfit-loft-L114">            ct = <span class="fn-call">form_write</span>(cf, <span class="st">"a1"</span>);</span>
-<span id="src-formfit-loft-L115">            seen = <span class="kw">false</span>;</span>
-<span id="src-formfit-loft-L116">            <span class="kw">for</span> si <span class="kw">in</span> <span class="nm">0..l</span><span class="fn-call">en</span>(texts) { <span class="kw">if</span> (texts[si] ?? <span class="st">""</span>) == ct { seen = <span class="kw">true</span>; } }</span>
-<span id="src-formfit-loft-L117">            <span class="kw">if</span> !seen { texts += [ct]; out += [cf]; }</span>
-<span id="src-formfit-loft-L118">          }</span>
-<span id="src-formfit-loft-L119">        }</span>
-<span id="src-formfit-loft-L120">      }</span>
-<span id="src-formfit-loft-L121">    }</span>
-<span id="src-formfit-loft-L122">  }</span>
-<span id="src-formfit-loft-L123">  out</span>
-<span id="src-formfit-loft-L124">}</span>
-<span id="src-formfit-loft-L125"></span>
-<span id="src-formfit-loft-L126"><span class="cm">// How many keys are in exactly one of the two sorted lists — the symmetric difference. This is</span></span>
-<span id="src-formfit-loft-L127"><span class="cm">// the R2 residual: cells the best grammar form cannot account for. It is a COUNT, not a distance,</span></span>
-<span id="src-formfit-loft-L128"><span class="cm">// so no tolerance is implied by it.</span></span>
-<span id="src-formfit-loft-L129"><span class="kw">fn</span> <span class="fn-call">sym_diff</span>(a: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;, b: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-formfit-loft-L130">  n = <span class="nm">0</span>;</span>
-<span id="src-formfit-loft-L131">  <span class="kw">for</span> ai <span class="kw">in</span> <span class="nm">0..l</span><span class="fn-call">en</span>(a) {</span>
-<span id="src-formfit-loft-L132">    found = <span class="kw">false</span>;</span>
-<span id="src-formfit-loft-L133">    <span class="kw">for</span> aj <span class="kw">in</span> <span class="nm">0..l</span><span class="fn-call">en</span>(b) { <span class="kw">if</span> (a[ai] ?? <span class="nm">0</span>) == (b[aj] ?? <span class="nm">0</span>) { found = <span class="kw">true</span>; } }</span>
-<span id="src-formfit-loft-L134">    <span class="kw">if</span> !found { n = n + <span class="nm">1</span>; }</span>
-<span id="src-formfit-loft-L135">  }</span>
-<span id="src-formfit-loft-L136">  <span class="kw">for</span> bi <span class="kw">in</span> <span class="nm">0..l</span><span class="fn-call">en</span>(b) {</span>
-<span id="src-formfit-loft-L137">    found2 = <span class="kw">false</span>;</span>
-<span id="src-formfit-loft-L138">    <span class="kw">for</span> bj <span class="kw">in</span> <span class="nm">0..l</span><span class="fn-call">en</span>(a) { <span class="kw">if</span> (b[bi] ?? <span class="nm">0</span>) == (a[bj] ?? <span class="nm">0</span>) { found2 = <span class="kw">true</span>; } }</span>
-<span id="src-formfit-loft-L139">    <span class="kw">if</span> !found2 { n = n + <span class="nm">1</span>; }</span>
-<span id="src-formfit-loft-L140">  }</span>
-<span id="src-formfit-loft-L141">  n</span>
-<span id="src-formfit-loft-L142">}</span>
-<span id="src-formfit-loft-L143"></span>
-<span id="src-formfit-loft-L144"><span class="cm">// THE ROUTINE. Match the field against every admitted form, translation-normalised — WHERE it was</span></span>
-<span id="src-formfit-loft-L145"><span class="cm">// drawn is placement's business (the `place` element), not the stencil's.</span></span>
-<span id="src-formfit-loft-L146"><span class="cm">// Example: @HXV-005</span></span>
-<span id="src-formfit-loft-L147"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">rebuild</span>(cells: <span class="en">HexSet</span>) -&gt; <span class="en">Rebuilt</span> { <span class="fn-call">rebuild_with</span>(<span class="fn-call">candidate_forms</span>(), cells) }</span>
-<span id="src-formfit-loft-L148"></span>
-<span id="src-formfit-loft-L149"><span class="cm">// The core, with the candidate set supplied — build it once per gate run, not once per lookup.</span></span>
-<span id="src-formfit-loft-L150"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">rebuild_with</span>(cand: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Form</span>&gt;, cells: <span class="en">HexSet</span>) -&gt; <span class="en">Rebuilt</span> {</span>
-<span id="src-formfit-loft-L151">  want = <span class="fn-call">field_norm</span>(cells);</span>
-<span id="src-formfit-loft-L152">  nmatch = <span class="nm">0</span>;</span>
-<span id="src-formfit-loft-L153">  best = <span class="fn-call">form_new</span>(<span class="nm">0</span>, [], []);</span>
-<span id="src-formfit-loft-L154">  rho = -<span class="nm">1</span>;</span>
-<span id="src-formfit-loft-L155">  <span class="kw">for</span> ci <span class="kw">in</span> <span class="nm">0..l</span><span class="fn-call">en</span>(cand) {</span>
-<span id="src-formfit-loft-L156">    cf = cand[ci] ?? <span class="fn-call">form_new</span>(<span class="nm">0</span>, [], []);</span>
-<span id="src-formfit-loft-L157">    cc = <span class="fn-call">fit_chunk</span>(cf);</span>
-<span id="src-formfit-loft-L158">    <span class="fn-call">form_fill</span>(cf, <span class="nm">0</span>, <span class="nm">0</span>, cc);</span>
-<span id="src-formfit-loft-L159">    got = <span class="fn-call">field_norm</span>(cc);</span>
-<span id="src-formfit-loft-L160">    d = <span class="fn-call">sym_diff</span>(want, got);</span>
-<span id="src-formfit-loft-L161">    <span class="kw">if</span> d == <span class="nm">0</span> {</span>
-<span id="src-formfit-loft-L162">      nmatch = nmatch + <span class="nm">1</span>;</span>
-<span id="src-formfit-loft-L163">      best = cf;</span>
-<span id="src-formfit-loft-L164">    }</span>
-<span id="src-formfit-loft-L165">    <span class="kw">if</span> rho &lt; <span class="nm">0</span> || d &lt; rho { rho = d; }</span>
-<span id="src-formfit-loft-L166">  }</span>
-<span id="src-formfit-loft-L167">  <span class="kw">if</span> nmatch == <span class="nm">1</span> {</span>
-<span id="src-formfit-loft-L168">    <span class="kw">return</span> <span class="en">Rebuilt</span> { rb_regime: <span class="en">REGIME_R1</span>, rb_form: best, rb_rho: <span class="nm">0</span>, rb_matches: <span class="nm">1</span> };</span>
-<span id="src-formfit-loft-L169">  }</span>
-<span id="src-formfit-loft-L170">  <span class="cm">// No unique grammar form draws this field: it is R2 content, and the residual is reported</span></span>
-<span id="src-formfit-loft-L171">  <span class="cm">// rather than swallowed. `rb_matches &gt; 1` would mean law F failed at this level — the census</span></span>
-<span id="src-formfit-loft-L172">  <span class="cm">// says it does not, so the gate treats that as a hard error rather than an answer.</span></span>
-<span id="src-formfit-loft-L173">  <span class="en">Rebuilt</span> { rb_regime: <span class="en">REGIME_R2</span>, rb_form: best, rb_rho: rho, rb_matches: nmatch }</span>
-<span id="src-formfit-loft-L174">}</span>
-<span id="src-formfit-loft-L175"></span>
-<span id="src-formfit-loft-L176"><span class="cm">// The round trip in one call: field -&gt; model -&gt; canonical text. Empty when recovery is not R1,</span></span>
-<span id="src-formfit-loft-L177"><span class="cm">// so a caller cannot accidentally spell an R2 guess as if it were an authored stencil.</span></span>
-<span id="src-formfit-loft-L178"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">rebuild_text_with</span>(cand: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Form</span>&gt;, cells: <span class="en">HexSet</span>, name: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
-<span id="src-formfit-loft-L179">  r = <span class="fn-call">rebuild_with</span>(cand, cells);</span>
-<span id="src-formfit-loft-L180">  <span class="kw">if</span> r.rb_regime != <span class="en">REGIME_R1</span> { <span class="kw">return</span> <span class="st">""</span>; }</span>
-<span id="src-formfit-loft-L181">  <span class="fn-call">form_write</span>(r.rb_form, name)</span>
-<span id="src-formfit-loft-L182">}</span>
-<span id="src-formfit-loft-L183"></span>
-<span id="src-formfit-loft-L184"><span class="cm">// Recover a form from cells and write it as canonical text, or "" when the cells are not a</span></span>
-<span id="src-formfit-loft-L185"><span class="cm">// single clean form.  The empty answer is the refusal — check it before using the text.</span></span>
-<span id="src-formfit-loft-L186"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">rebuild_text</span>(cells: <span class="en">HexSet</span>, name: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
-<span id="src-formfit-loft-L187">  r = <span class="fn-call">rebuild</span>(cells);</span>
-<span id="src-formfit-loft-L188">  <span class="kw">if</span> r.rb_regime != <span class="en">REGIME_R1</span> { <span class="kw">return</span> <span class="st">""</span>; }</span>
-<span id="src-formfit-loft-L189">  <span class="fn-call">form_write</span>(r.rb_form, name)</span>
-<span id="src-formfit-loft-L190">}</span>
-<span id="src-formfit-loft-L191"></span>
-<span id="src-formfit-loft-L192"><span class="cm">// ── INDEXED RECOVERY — draw the candidates ONCE, then look up ──────────────</span></span>
-<span id="src-formfit-loft-L193"><span class="cm">//</span></span>
-<span id="src-formfit-loft-L194"><span class="cm">// `rebuild_with` re-DRAWS every candidate on every lookup: O(N) fills per field, O(N^2) over a</span></span>
-<span id="src-formfit-loft-L195"><span class="cm">// corpus — 14161 fills for the 119 entries we hold. Nothing about that is necessary. A candidate's</span></span>
-<span id="src-formfit-loft-L196"><span class="cm">// field never changes, so its digest can be computed once and put in a map keyed by the digest.</span></span>
-<span id="src-formfit-loft-L197"><span class="cm">// Recovery then becomes a single probe.</span></span>
-<span id="src-formfit-loft-L198"><span class="cm">//</span></span>
-<span id="src-formfit-loft-L199"><span class="cm">// WHAT THIS DOES AND DOES NOT BUY, stated plainly because the A3 write-up overstated it:</span></span>
-<span id="src-formfit-loft-L200"><span class="cm">//</span></span>
-<span id="src-formfit-loft-L201"><span class="cm">//   IT FIXES   the per-lookup cost — O(N) fills to build the index, O(1) per recovery afterwards.</span></span>
-<span id="src-formfit-loft-L202"><span class="cm">//   IT DOES NOT FIX   the cost of ENUMERATING the candidate space. Building the index still walks</span></span>
-<span id="src-formfit-loft-L203"><span class="cm">//                     every admissible form once, so the 4-sided house's class (~1.2M proposals,</span></span>
-<span id="src-formfit-loft-L204"><span class="cm">//                     `X43`) is exactly as far out of reach as before. Reaching THAT needs</span></span>
-<span id="src-formfit-loft-L205"><span class="cm">//                     CONSTRUCTIVE recovery — reading (h0, lens, turns) off the field's own</span></span>
-<span id="src-formfit-loft-L206"><span class="cm">//                     geometry — which is a different piece of work, not a faster table.</span></span>
-<span id="src-formfit-loft-L207"><span class="cm">//</span></span>
-<span id="src-formfit-loft-L208"><span class="cm">// LAW F IS CHECKED AT BUILD TIME, ONCE, INSTEAD OF ASSUMED PER LOOKUP. Two candidates sharing a</span></span>
-<span id="src-formfit-loft-L209"><span class="cm">// digest would silently overwrite each other in the map, so the build COUNTS such clashes and the</span></span>
-<span id="src-formfit-loft-L210"><span class="cm">// gate asserts zero. That is strictly better than the old per-lookup `rb_matches` count: it is</span></span>
-<span id="src-formfit-loft-L211"><span class="cm">// checked once, over the whole space, rather than only where a corpus entry happened to look.</span></span>
-<span id="src-formfit-loft-L212"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">IdxEntry</span> {</span>
-<span id="src-formfit-loft-L213">  ix_digest: <span class="ty"><a href="stdlib-types.html">text</a></span>,      <span class="cm">// `field_norm_text` of the form's drawn field — NOT named `key`</span></span>
-<span id="src-formfit-loft-L214">  ix_form:   <span class="en">Form</span>,</span>
-<span id="src-formfit-loft-L215">}</span>
-<span id="src-formfit-loft-L216"></span>
-<span id="src-formfit-loft-L217"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">RecoveryIndex</span> {</span>
-<span id="src-formfit-loft-L218">  ri_map:        <span class="ty">hash</span>&lt;<span class="en">IdxEntry</span>[ix_digest]&gt;,</span>
-<span id="src-formfit-loft-L219">  ri_count:      <span class="ty"><a href="stdlib-types.html">integer</a></span>,   <span class="cm">// entries indexed</span></span>
-<span id="src-formfit-loft-L220">  ri_collisions: <span class="ty"><a href="stdlib-types.html">integer</a></span>,   <span class="cm">// candidates whose digest was already taken — a law F failure</span></span>
-<span id="src-formfit-loft-L221">  ri_fills:      <span class="ty"><a href="stdlib-types.html">integer</a></span>,   <span class="cm">// draws performed to build it (the cost, reported not guessed)</span></span>
-<span id="src-formfit-loft-L222">}</span>
-<span id="src-formfit-loft-L223"></span>
-<span id="src-formfit-loft-L224"><span class="cm">// Example: @HXV-002</span></span>
-<span id="src-formfit-loft-L225"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">index_build</span>(cand: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Form</span>&gt;) -&gt; <span class="en">RecoveryIndex</span> {</span>
-<span id="src-formfit-loft-L226">  idx = <span class="en">RecoveryIndex</span> { ri_map: [], ri_count: <span class="nm">0</span>, ri_collisions: <span class="nm">0</span>, ri_fills: <span class="nm">0</span> };</span>
-<span id="src-formfit-loft-L227">  <span class="kw">for</span> ii <span class="kw">in</span> <span class="nm">0..l</span><span class="fn-call">en</span>(cand) {</span>
-<span id="src-formfit-loft-L228">    cf = cand[ii] ?? <span class="fn-call">form_new</span>(<span class="nm">0</span>, [], []);</span>
-<span id="src-formfit-loft-L229">    cc = <span class="fn-call">fit_chunk</span>(cf);</span>
-<span id="src-formfit-loft-L230">    <span class="fn-call">form_fill</span>(cf, <span class="nm">0</span>, <span class="nm">0</span>, cc);</span>
-<span id="src-formfit-loft-L231">    idx.ri_fills = idx.ri_fills + <span class="nm">1</span>;</span>
-<span id="src-formfit-loft-L232">    dg = <span class="fn-call">field_norm_text</span>(cc);</span>
-<span id="src-formfit-loft-L233">    prior = idx.ri_map[dg];</span>
-<span id="src-formfit-loft-L234">    <span class="kw">if</span> prior == <span class="kw">null</span> {</span>
-<span id="src-formfit-loft-L235">      idx.ri_map += [<span class="en">IdxEntry</span> { ix_digest: dg, ix_form: cf }];</span>
-<span id="src-formfit-loft-L236">      idx.ri_count = idx.ri_count + <span class="nm">1</span>;</span>
-<span id="src-formfit-loft-L237">    } <span class="kw">else</span> {</span>
-<span id="src-formfit-loft-L238">      idx.ri_collisions = idx.ri_collisions + <span class="nm">1</span>;</span>
-<span id="src-formfit-loft-L239">    }</span>
-<span id="src-formfit-loft-L240">  }</span>
-<span id="src-formfit-loft-L241">  idx</span>
-<span id="src-formfit-loft-L242">}</span>
-<span id="src-formfit-loft-L243"></span>
-<span id="src-formfit-loft-L244"><span class="cm">// THE FAST PATH: one probe. A hit is an exact R1 answer — the digest IS the field, compared in</span></span>
-<span id="src-formfit-loft-L245"><span class="cm">// full, so this is the same exactness the scan gave, not a heuristic narrowing.</span></span>
-<span id="src-formfit-loft-L246"><span class="cm">//</span></span>
-<span id="src-formfit-loft-L247"><span class="cm">// A MISS falls back to the scan, and only then, purely to compute the R2 residual. R2 is the</span></span>
-<span id="src-formfit-loft-L248"><span class="cm">// exceptional path (content no grammar form draws), so paying O(N) there costs nothing in</span></span>
-<span id="src-formfit-loft-L249"><span class="cm">// practice and keeps `rho &gt; 0` a real measurement rather than a placeholder.</span></span>
-<span id="src-formfit-loft-L250"><span class="cm">// Example: @HXV-008</span></span>
-<span id="src-formfit-loft-L251"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">rebuild_indexed</span>(idx: <span class="en">RecoveryIndex</span>, cand: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Form</span>&gt;, cells: <span class="en">HexSet</span>) -&gt; <span class="en">Rebuilt</span> {</span>
-<span id="src-formfit-loft-L252">  hit = idx.ri_map[<span class="fn-call">field_norm_text</span>(cells)];</span>
-<span id="src-formfit-loft-L253">  <span class="kw">if</span> hit != <span class="kw">null</span> {</span>
-<span id="src-formfit-loft-L254">    <span class="kw">return</span> <span class="en">Rebuilt</span> { rb_regime: <span class="en">REGIME_R1</span>, rb_form: hit.ix_form, rb_rho: <span class="nm">0</span>, rb_matches: <span class="nm">1</span> };</span>
-<span id="src-formfit-loft-L255">  }</span>
-<span id="src-formfit-loft-L256">  <span class="fn-call">rebuild_with</span>(cand, cells)</span>
-<span id="src-formfit-loft-L257">}</span>
-<span id="src-formfit-loft-L258"></span>
-<span id="src-formfit-loft-L259"><span class="cm">// The same, searching a prepared index and candidate set instead of enumerating: the shape</span></span>
-<span id="src-formfit-loft-L260"><span class="cm">// to use when many cells sets are recovered against one library.</span></span>
-<span id="src-formfit-loft-L261"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">rebuild_indexed_text</span>(idx: <span class="en">RecoveryIndex</span>, cand: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Form</span>&gt;,</span>
-<span id="src-formfit-loft-L262">                            cells: <span class="en">HexSet</span>, name: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
-<span id="src-formfit-loft-L263">  r = <span class="fn-call">rebuild_indexed</span>(idx, cand, cells);</span>
-<span id="src-formfit-loft-L264">  <span class="kw">if</span> r.rb_regime != <span class="en">REGIME_R1</span> { <span class="kw">return</span> <span class="st">""</span>; }</span>
-<span id="src-formfit-loft-L265">  <span class="fn-call">form_write</span>(r.rb_form, name)</span>
-<span id="src-formfit-loft-L266">}</span>
-<span id="src-formfit-loft-L267"></span>
-<span id="src-formfit-loft-L268"><span class="cm">// ── CONSTRUCTIVE RECOVERY — read the form off the field, no enumeration ────</span></span>
-<span id="src-formfit-loft-L269"><span class="cm">//</span></span>
-<span id="src-formfit-loft-L270"><span class="cm">// Indexed recovery removed the per-lookup cost but is BUILT BY the enumeration, so it left the</span></span>
-<span id="src-formfit-loft-L271"><span class="cm">// 4-sided house (~1.2M proposals, `X43`) exactly as far away. This does not enumerate at all: it</span></span>
-<span id="src-formfit-loft-L272"><span class="cm">// reads `(h0, lens, turns)` off the field's own geometry, in O(cells), independent of how large</span></span>
-<span id="src-formfit-loft-L273"><span class="cm">// the admissible space is.</span></span>
-<span id="src-formfit-loft-L274"><span class="cm">//</span></span>
-<span id="src-formfit-loft-L275"><span class="cm">// THE CONSTRUCTION, and why it is exact rather than a fit:</span></span>
-<span id="src-formfit-loft-L276"><span class="cm">//</span></span>
-<span id="src-formfit-loft-L277"><span class="cm">//   1. every admitted form is CONVEX.  Law J requires the turns to be positive and to sum to 12 —</span></span>
-<span id="src-formfit-loft-L278"><span class="cm">//      all exterior angles positive, exactly one revolution — which is the definition of a convex</span></span>
-<span id="src-formfit-loft-L279"><span class="cm">//      polygon.  (A4's non-convex forms need a negative turn, so they fall outside this and want</span></span>
-<span id="src-formfit-loft-L280"><span class="cm">//      boundary TRACING instead; stated as a limit, not discovered later.)</span></span>
-<span id="src-formfit-loft-L281"><span class="cm">//   2. the turtle walks CENTRE TO CENTRE, so every polygon vertex IS a hex centre (S3), and</span></span>
-<span id="src-formfit-loft-L282"><span class="cm">//      `form_fill` takes every hex on or inside.  For a convex polygon whose vertices are lattice</span></span>
-<span id="src-formfit-loft-L283"><span class="cm">//      points, the CONVEX HULL of the contained lattice points is the polygon itself — its corners</span></span>
-<span id="src-formfit-loft-L284"><span class="cm">//      are extreme points and cannot be hulled away.</span></span>
-<span id="src-formfit-loft-L285"><span class="cm">//   3. so: hull the filled cells in exact integer (k,m); the hull vertices ARE the turtle's</span></span>
-<span id="src-formfit-loft-L286"><span class="cm">//      corners, in order.  Collinear cells along a long side are interior to an edge and drop out,</span></span>
-<span id="src-formfit-loft-L287"><span class="cm">//      which is exactly right — they are not corners.</span></span>
-<span id="src-formfit-loft-L288"><span class="cm">//   4. each side vector is an exact integer multiple of one of the 12 heading steps, found by</span></span>
-<span id="src-formfit-loft-L289"><span class="cm">//      trying all 12.  No gcd reduction: `head_step(0)` is `(2,0)`, not `(1,0)`, so a primitive</span></span>
-<span id="src-formfit-loft-L290"><span class="cm">//      reduction would land off the table.</span></span>
-<span id="src-formfit-loft-L291"><span class="cm">//</span></span>
-<span id="src-formfit-loft-L292"><span class="cm">// THE HULL IS TAKEN IN (k,m), NOT IN WORLD COORDINATES, and that is safe: `(k,m) -&gt; (k*sqrt3/2,</span></span>
-<span id="src-formfit-loft-L293"><span class="cm">// m/2)` is linear with determinant `sqrt3/4 &gt; 0`, so it preserves convexity AND orientation. The</span></span>
-<span id="src-formfit-loft-L294"><span class="cm">// integer arithmetic is therefore exact — no floats enter the recovery at any point.</span></span>
-<span id="src-formfit-loft-L295"><span class="cm">//</span></span>
-<span id="src-formfit-loft-L296"><span class="cm">// AND IT STILL VERIFIES. The construction PROPOSES a form; one re-draw CONFIRMS it. That keeps</span></span>
-<span id="src-formfit-loft-L297"><span class="cm">// `ρ = 0` a measured fact rather than a claim, and sends anything that does not reproduce its own</span></span>
-<span id="src-formfit-loft-L298"><span class="cm">// field to R2 — where a hand-drawn blob belongs.</span></span>
-<span id="src-formfit-loft-L299">const <span class="en">PK_OFF</span> = <span class="nm">400</span>;</span>
-<span id="src-formfit-loft-L300">const <span class="en">PK_SPAN</span> = <span class="nm">1600</span>;</span>
-<span id="src-formfit-loft-L301"></span>
-<span id="src-formfit-loft-L302"><span class="kw">fn</span> <span class="fn-call">pk</span>(k: <span class="ty"><a href="stdlib-types.html">integer</a></span>, m: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> { (k + <span class="en">PK_OFF</span>) * <span class="en">PK_SPAN</span> + (m + <span class="en">PK_OFF</span>) }</span>
-<span id="src-formfit-loft-L303"><span class="kw">fn</span> <span class="fn-call">pk_k</span>(v: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> { ((v / <span class="en">PK_SPAN</span>) ?? <span class="nm">0</span>) - <span class="en">PK_OFF</span> }</span>
-<span id="src-formfit-loft-L304"><span class="kw">fn</span> <span class="fn-call">pk_m</span>(v: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> { ((v % <span class="en">PK_SPAN</span>) ?? <span class="nm">0</span>) - <span class="en">PK_OFF</span> }</span>
-<span id="src-formfit-loft-L305"></span>
-<span id="src-formfit-loft-L306"><span class="kw">fn</span> <span class="fn-call">sort_pk</span>(v: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; {</span>
-<span id="src-formfit-loft-L307">  out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
-<span id="src-formfit-loft-L308">  <span class="kw">for</span> si <span class="kw">in</span> <span class="nm">0..l</span><span class="fn-call">en</span>(v) {</span>
-<span id="src-formfit-loft-L309">    out += [v[si] ?? <span class="nm">0</span>];</span>
-<span id="src-formfit-loft-L310">    ps = <span class="bi"><a href="stdlib-text.html">len</a></span>(out) - <span class="nm">1</span>;</span>
-<span id="src-formfit-loft-L311">    while ps &gt; <span class="nm">0</span> &amp;&amp; (out[ps - <span class="nm">1</span>] ?? <span class="nm">0</span>) &gt; (out[ps] ?? <span class="nm">0</span>) {</span>
-<span id="src-formfit-loft-L312">      tmp = out[ps - <span class="nm">1</span>] ?? <span class="nm">0</span>;</span>
-<span id="src-formfit-loft-L313">      out[ps - <span class="nm">1</span>] = out[ps] ?? <span class="nm">0</span>;</span>
-<span id="src-formfit-loft-L314">      out[ps] = tmp;</span>
-<span id="src-formfit-loft-L315">      ps = ps - <span class="nm">1</span>;</span>
-<span id="src-formfit-loft-L316">    }</span>
-<span id="src-formfit-loft-L317">  }</span>
-<span id="src-formfit-loft-L318">  out</span>
-<span id="src-formfit-loft-L319">}</span>
-<span id="src-formfit-loft-L320"></span>
-<span id="src-formfit-loft-L321"><span class="cm">// Twice the signed area of the triangle o-&gt;a-&gt;b. Positive when b is left of o-&gt;a (CCW).</span></span>
-<span id="src-formfit-loft-L322"><span class="kw">fn</span> <span class="fn-call">cross3</span>(ok2: <span class="ty"><a href="stdlib-types.html">integer</a></span>, om: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ak: <span class="ty"><a href="stdlib-types.html">integer</a></span>, am: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-formfit-loft-L323">          bk: <span class="ty"><a href="stdlib-types.html">integer</a></span>, bm: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-formfit-loft-L324">  (ak - ok2) * (bm - om) - (am - om) * (bk - ok2)</span>
-<span id="src-formfit-loft-L325">}</span>
-<span id="src-formfit-loft-L326"></span>
-<span id="src-formfit-loft-L327"><span class="cm">// The convex hull of the filled cells, CCW, corners only — monotone chain in exact integers.</span></span>
-<span id="src-formfit-loft-L328"><span class="cm">// Collinear points are dropped (`&lt;= 0` pops them), which is what makes long sides come back as one</span></span>
-<span id="src-formfit-loft-L329"><span class="cm">// side instead of a run of tiny ones.</span></span>
-<span id="src-formfit-loft-L330"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">hull_keys</span>(cells: <span class="en">HexSet</span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; {</span>
-<span id="src-formfit-loft-L331">  pts: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
-<span id="src-formfit-loft-L332">  <span class="kw">for</span> hr <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(cells)..<span class="fn-call">hexset_r0</span>(cells) + <span class="fn-call">hexset_h</span>(cells) {</span>
-<span id="src-formfit-loft-L333">    <span class="kw">for</span> hq <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(cells)..<span class="fn-call">hexset_q0</span>(cells) + <span class="fn-call">hexset_w</span>(cells) {</span>
-<span id="src-formfit-loft-L334">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(cells, hq, hr) { pts += [<span class="fn-call">pk</span>(<span class="fn-call">lattice_k</span>(hq, hr), <span class="fn-call">lattice_m</span>(hq, hr))]; }</span>
-<span id="src-formfit-loft-L335">    }</span>
-<span id="src-formfit-loft-L336">  }</span>
-<span id="src-formfit-loft-L337">  sp = <span class="fn-call">sort_pk</span>(pts);</span>
-<span id="src-formfit-loft-L338">  n = <span class="bi"><a href="stdlib-text.html">len</a></span>(sp);</span>
-<span id="src-formfit-loft-L339">  out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
-<span id="src-formfit-loft-L340">  <span class="kw">if</span> n &lt; <span class="nm">3</span> { <span class="kw">return</span> sp; }</span>
-<span id="src-formfit-loft-L341">  <span class="cm">// lower hull, then upper hull</span></span>
-<span id="src-formfit-loft-L342">  st: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
-<span id="src-formfit-loft-L343">  top = <span class="nm">0</span>;</span>
-<span id="src-formfit-loft-L344">  <span class="kw">for</span> li <span class="kw">in</span> <span class="nm">0..</span>n {</span>
-<span id="src-formfit-loft-L345">    p = sp[li] ?? <span class="nm">0</span>;</span>
-<span id="src-formfit-loft-L346">    while top &gt;= <span class="nm">2</span></span>
-<span id="src-formfit-loft-L347">          &amp;&amp; <span class="fn-call">cross3</span>(<span class="fn-call">pk_k</span>(st[top - <span class="nm">2</span>] ?? <span class="nm">0</span>), <span class="fn-call">pk_m</span>(st[top - <span class="nm">2</span>] ?? <span class="nm">0</span>),</span>
-<span id="src-formfit-loft-L348">                    <span class="fn-call">pk_k</span>(st[top - <span class="nm">1</span>] ?? <span class="nm">0</span>), <span class="fn-call">pk_m</span>(st[top - <span class="nm">1</span>] ?? <span class="nm">0</span>),</span>
-<span id="src-formfit-loft-L349">                    <span class="fn-call">pk_k</span>(p), <span class="fn-call">pk_m</span>(p)) &lt;= <span class="nm">0</span> { top = top - <span class="nm">1</span>; }</span>
-<span id="src-formfit-loft-L350">    <span class="kw">if</span> top &lt; <span class="bi"><a href="stdlib-text.html">len</a></span>(st) { st[top] = p; } <span class="kw">else</span> { st += [p]; }</span>
-<span id="src-formfit-loft-L351">    top = top + <span class="nm">1</span>;</span>
-<span id="src-formfit-loft-L352">  }</span>
-<span id="src-formfit-loft-L353">  lower = top - <span class="nm">1</span>;</span>
-<span id="src-formfit-loft-L354">  <span class="kw">for</span> ui <span class="kw">in</span> <span class="nm">0..</span>n {</span>
-<span id="src-formfit-loft-L355">    p2 = sp[n - <span class="nm">1</span> - ui] ?? <span class="nm">0</span>;</span>
-<span id="src-formfit-loft-L356">    while top &gt;= lower + <span class="nm">2</span></span>
-<span id="src-formfit-loft-L357">          &amp;&amp; <span class="fn-call">cross3</span>(<span class="fn-call">pk_k</span>(st[top - <span class="nm">2</span>] ?? <span class="nm">0</span>), <span class="fn-call">pk_m</span>(st[top - <span class="nm">2</span>] ?? <span class="nm">0</span>),</span>
-<span id="src-formfit-loft-L358">                    <span class="fn-call">pk_k</span>(st[top - <span class="nm">1</span>] ?? <span class="nm">0</span>), <span class="fn-call">pk_m</span>(st[top - <span class="nm">1</span>] ?? <span class="nm">0</span>),</span>
-<span id="src-formfit-loft-L359">                    <span class="fn-call">pk_k</span>(p2), <span class="fn-call">pk_m</span>(p2)) &lt;= <span class="nm">0</span> { top = top - <span class="nm">1</span>; }</span>
-<span id="src-formfit-loft-L360">    <span class="kw">if</span> top &lt; <span class="bi"><a href="stdlib-text.html">len</a></span>(st) { st[top] = p2; } <span class="kw">else</span> { st += [p2]; }</span>
-<span id="src-formfit-loft-L361">    top = top + <span class="nm">1</span>;</span>
-<span id="src-formfit-loft-L362">  }</span>
-<span id="src-formfit-loft-L363">  <span class="kw">for</span> oi <span class="kw">in</span> <span class="nm">0..</span>top - <span class="nm">1</span> { out += [st[oi] ?? <span class="nm">0</span>]; }</span>
-<span id="src-formfit-loft-L364">  out</span>
-<span id="src-formfit-loft-L365">}</span>
-<span id="src-formfit-loft-L366"></span>
-<span id="src-formfit-loft-L367"><span class="cm">// Which heading, and how many steps, is the vector (dk, dm)?  Tries all 12 — a constant — because</span></span>
-<span id="src-formfit-loft-L368"><span class="cm">// the heading table's steps are not primitive vectors and a gcd reduction would miss them.</span></span>
-<span id="src-formfit-loft-L369"><span class="cm">// Returns the heading, or -1 when the vector is not a whole number of steps in any heading.</span></span>
-<span id="src-formfit-loft-L370"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">side_heading</span>(dk: <span class="ty"><a href="stdlib-types.html">integer</a></span>, dm: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-formfit-loft-L371">  <span class="kw">for</span> sh <span class="kw">in</span> <span class="nm">0..</span><span class="en">HEAD_N</span> {</span>
-<span id="src-formfit-loft-L372">    st = <span class="fn-call">head_step</span>(sh);</span>
-<span id="src-formfit-loft-L373">    <span class="kw">if</span> st.<span class="nm">0</span> == <span class="nm">0</span> {</span>
-<span id="src-formfit-loft-L374">      <span class="kw">if</span> dk == <span class="nm">0</span> &amp;&amp; st.<span class="nm">1</span> != <span class="nm">0</span> &amp;&amp; dm % st.<span class="nm">1</span> == <span class="nm">0</span> &amp;&amp; ((dm / st.<span class="nm">1</span>) ?? <span class="nm">0</span>) &gt; <span class="nm">0</span> { <span class="kw">return</span> sh; }</span>
-<span id="src-formfit-loft-L375">    } <span class="kw">else</span> {</span>
-<span id="src-formfit-loft-L376">      <span class="kw">if</span> dk % st.<span class="nm">0</span> == <span class="nm">0</span> {</span>
-<span id="src-formfit-loft-L377">        q = (dk / st.<span class="nm">0</span>) ?? <span class="nm">0</span>;</span>
-<span id="src-formfit-loft-L378">        <span class="kw">if</span> q &gt; <span class="nm">0</span> &amp;&amp; q * st.<span class="nm">1</span> == dm { <span class="kw">return</span> sh; }</span>
-<span id="src-formfit-loft-L379">      }</span>
-<span id="src-formfit-loft-L380">    }</span>
-<span id="src-formfit-loft-L381">  }</span>
-<span id="src-formfit-loft-L382">  -<span class="nm">1</span></span>
-<span id="src-formfit-loft-L383">}</span>
-<span id="src-formfit-loft-L384"></span>
-<span id="src-formfit-loft-L385"><span class="cm">// How many steps of heading `h` the offset (dk, dm) covers.  The measurement a rebuild</span></span>
-<span id="src-formfit-loft-L386"><span class="cm">// makes at every corner to turn geometry back into a side length.</span></span>
-<span id="src-formfit-loft-L387"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">side_len</span>(dk: <span class="ty"><a href="stdlib-types.html">integer</a></span>, dm: <span class="ty"><a href="stdlib-types.html">integer</a></span>, h: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-formfit-loft-L388">  st = <span class="fn-call">head_step</span>(h);</span>
-<span id="src-formfit-loft-L389">  <span class="kw">if</span> st.<span class="nm">0</span> != <span class="nm">0</span> { <span class="kw">return</span> (dk / st.<span class="nm">0</span>) ?? <span class="nm">0</span>; }</span>
-<span id="src-formfit-loft-L390">  <span class="kw">if</span> st.<span class="nm">1</span> != <span class="nm">0</span> { <span class="kw">return</span> (dm / st.<span class="nm">1</span>) ?? <span class="nm">0</span>; }</span>
-<span id="src-formfit-loft-L391">  <span class="nm">0</span></span>
-<span id="src-formfit-loft-L392">}</span>
-<span id="src-formfit-loft-L393"></span>
-<span id="src-formfit-loft-L394"><span class="cm">// THE ROUTINE: recover the form from the field, then verify by re-drawing it.</span></span>
-<span id="src-formfit-loft-L395"><span class="cm">// Example: @HXV-003</span></span>
-<span id="src-formfit-loft-L396"><span class="cm">// Example: @HXV-004</span></span>
-<span id="src-formfit-loft-L397"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">rebuild_construct</span>(cells: <span class="en">HexSet</span>) -&gt; <span class="en">Rebuilt</span> {</span>
-<span id="src-formfit-loft-L398">  hk = <span class="fn-call">hull_keys</span>(cells);</span>
-<span id="src-formfit-loft-L399">  nh = <span class="bi"><a href="stdlib-text.html">len</a></span>(hk);</span>
-<span id="src-formfit-loft-L400">  <span class="kw">if</span> nh &lt; <span class="nm">3</span> {</span>
-<span id="src-formfit-loft-L401">    <span class="kw">return</span> <span class="en">Rebuilt</span> { rb_regime: <span class="en">REGIME_R2</span>, rb_form: <span class="fn-call">form_new</span>(<span class="nm">0</span>, [], []),</span>
-<span id="src-formfit-loft-L402">                     rb_rho: <span class="fn-call">hexset_count</span>(cells), rb_matches: <span class="nm">0</span> };</span>
-<span id="src-formfit-loft-L403">  }</span>
-<span id="src-formfit-loft-L404">  lens: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
-<span id="src-formfit-loft-L405">  hs: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
-<span id="src-formfit-loft-L406">  bad = <span class="kw">false</span>;</span>
-<span id="src-formfit-loft-L407">  <span class="kw">for</span> ci <span class="kw">in</span> <span class="nm">0..</span>nh {</span>
-<span id="src-formfit-loft-L408">    ak = <span class="fn-call">pk_k</span>(hk[ci] ?? <span class="nm">0</span>);</span>
-<span id="src-formfit-loft-L409">    am = <span class="fn-call">pk_m</span>(hk[ci] ?? <span class="nm">0</span>);</span>
-<span id="src-formfit-loft-L410">    <span class="cm">// `% nh` types nullable (a zero divisor answers null); `nh &gt;= 3` is checked above,</span></span>
-<span id="src-formfit-loft-L411">    <span class="cm">// so `?? 0` names an unreachable index rather than a chosen one.</span></span>
-<span id="src-formfit-loft-L412">    bk = <span class="fn-call">pk_k</span>(hk[(ci + <span class="nm">1</span>) % nh ?? <span class="nm">0</span>] ?? <span class="nm">0</span>);</span>
-<span id="src-formfit-loft-L413">    bm = <span class="fn-call">pk_m</span>(hk[(ci + <span class="nm">1</span>) % nh ?? <span class="nm">0</span>] ?? <span class="nm">0</span>);</span>
-<span id="src-formfit-loft-L414">    sh = <span class="fn-call">side_heading</span>(bk - ak, bm - am);</span>
-<span id="src-formfit-loft-L415">    <span class="kw">if</span> sh &lt; <span class="nm">0</span> { bad = <span class="kw">true</span>; }</span>
-<span id="src-formfit-loft-L416">    <span class="kw">else</span> {</span>
-<span id="src-formfit-loft-L417">      hs += [sh];</span>
-<span id="src-formfit-loft-L418">      lens += [<span class="fn-call">side_len</span>(bk - ak, bm - am, sh)];</span>
-<span id="src-formfit-loft-L419">    }</span>
-<span id="src-formfit-loft-L420">  }</span>
-<span id="src-formfit-loft-L421">  <span class="kw">if</span> bad || <span class="bi"><a href="stdlib-text.html">len</a></span>(hs) != nh {</span>
-<span id="src-formfit-loft-L422">    <span class="kw">return</span> <span class="en">Rebuilt</span> { rb_regime: <span class="en">REGIME_R2</span>, rb_form: <span class="fn-call">form_new</span>(<span class="nm">0</span>, [], []),</span>
-<span id="src-formfit-loft-L423">                     rb_rho: <span class="fn-call">hexset_count</span>(cells), rb_matches: <span class="nm">0</span> };</span>
-<span id="src-formfit-loft-L424">  }</span>
-<span id="src-formfit-loft-L425">  turns: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
-<span id="src-formfit-loft-L426">  <span class="kw">for</span> ti <span class="kw">in</span> <span class="nm">0..</span>nh {</span>
-<span id="src-formfit-loft-L427">    d = <span class="fn-call">head_norm</span>((hs[(ti + <span class="nm">1</span>) % nh ?? <span class="nm">0</span>] ?? <span class="nm">0</span>) - (hs[ti] ?? <span class="nm">0</span>));</span>
-<span id="src-formfit-loft-L428">    <span class="kw">if</span> d == <span class="nm">0</span> { d = <span class="nm">12</span>; }</span>
-<span id="src-formfit-loft-L429">    turns += [d];</span>
-<span id="src-formfit-loft-L430">  }</span>
-<span id="src-formfit-loft-L431">  cf = <span class="fn-call">form_canon</span>(<span class="fn-call">form_new</span>(hs[<span class="nm">0</span>] ?? <span class="nm">0</span>, lens, turns));</span>
-<span id="src-formfit-loft-L432">  <span class="kw">if</span> !<span class="fn-call">form_closes</span>(cf) {</span>
-<span id="src-formfit-loft-L433">    <span class="kw">return</span> <span class="en">Rebuilt</span> { rb_regime: <span class="en">REGIME_R2</span>, rb_form: <span class="fn-call">form_new</span>(<span class="nm">0</span>, [], []),</span>
-<span id="src-formfit-loft-L434">                     rb_rho: <span class="fn-call">hexset_count</span>(cells), rb_matches: <span class="nm">0</span> };</span>
-<span id="src-formfit-loft-L435">  }</span>
-<span id="src-formfit-loft-L436">  <span class="cm">// VERIFY by re-drawing. The construction proposes; this confirms, so `rho = 0` stays measured.</span></span>
-<span id="src-formfit-loft-L437">  chk = <span class="fn-call">fit_chunk</span>(cf);</span>
-<span id="src-formfit-loft-L438">  <span class="fn-call">form_fill</span>(cf, <span class="nm">0</span>, <span class="nm">0</span>, chk);</span>
-<span id="src-formfit-loft-L439">  d2 = <span class="fn-call">sym_diff</span>(<span class="fn-call">field_norm</span>(cells), <span class="fn-call">field_norm</span>(chk));</span>
-<span id="src-formfit-loft-L440">  <span class="kw">if</span> d2 == <span class="nm">0</span> {</span>
-<span id="src-formfit-loft-L441">    <span class="kw">return</span> <span class="en">Rebuilt</span> { rb_regime: <span class="en">REGIME_R1</span>, rb_form: cf, rb_rho: <span class="nm">0</span>, rb_matches: <span class="nm">1</span> };</span>
-<span id="src-formfit-loft-L442">  }</span>
-<span id="src-formfit-loft-L443">  <span class="en">Rebuilt</span> { rb_regime: <span class="en">REGIME_R2</span>, rb_form: cf, rb_rho: d2, rb_matches: <span class="nm">0</span> }</span>
-<span id="src-formfit-loft-L444">}</span>
-<span id="src-formfit-loft-L445"></span>
-<span id="src-formfit-loft-L446"><span class="cm">// Recover by CONSTRUCTION rather than by search, as text.  Answers "" on refusal like its</span></span>
-<span id="src-formfit-loft-L447"><span class="cm">// siblings, so all three recovery routes are read the same way.</span></span>
-<span id="src-formfit-loft-L448"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">rebuild_construct_text</span>(cells: <span class="en">HexSet</span>, name: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
-<span id="src-formfit-loft-L449">  r = <span class="fn-call">rebuild_construct</span>(cells);</span>
-<span id="src-formfit-loft-L450">  <span class="kw">if</span> r.rb_regime != <span class="en">REGIME_R1</span> { <span class="kw">return</span> <span class="st">""</span>; }</span>
-<span id="src-formfit-loft-L451">  <span class="fn-call">form_write</span>(r.rb_form, name)</span>
-<span id="src-formfit-loft-L452">}</span>
+<span id="src-formfit-loft-L22"><span class="kw">fn</span> <span class="fn-call">fdiv</span>(a: <span class="ty"><a href="stdlib-types.html">integer</a></span>, b: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-formfit-loft-L23">  q = (a / b) ?? <span class="nm">0</span>;</span>
+<span id="src-formfit-loft-L24">  <span class="kw">if</span> a &lt; <span class="nm">0</span> &amp;&amp; q * b != a { <span class="kw">return</span> q - <span class="nm">1</span>; }</span>
+<span id="src-formfit-loft-L25">  q</span>
+<span id="src-formfit-loft-L26">}</span>
+<span id="src-formfit-loft-L27"></span>
+<span id="src-formfit-loft-L28"><span class="cm">// ── THE WINDOW EVERY REDRAW GOES INTO — SIZED FROM THE FORM, NOT FROM A GUESS ─</span></span>
+<span id="src-formfit-loft-L29"><span class="cm">//</span></span>
+<span id="src-formfit-loft-L30"><span class="cm">// Recovery draws a candidate and compares it with the field, so the redraw needs a chunk big</span></span>
+<span id="src-formfit-loft-L31"><span class="cm">// enough for the whole form: `form_fill` clips to its chunk silently, and a clipped redraw would</span></span>
+<span id="src-formfit-loft-L32"><span class="cm">// report an exact answer as R2.  The window is therefore derived from the form, never a constant.</span></span>
+<span id="src-formfit-loft-L33"><span class="cm">// `form_fill` sets exactly the cells whose lattice centre `(2q + (r&amp;1), 3r)` lies on or inside the</span></span>
+<span id="src-formfit-loft-L34"><span class="cm">// turtle polygon, and `form_poly_k`/`form_poly_m` give that polygon's corners, so their bounding</span></span>
+<span id="src-formfit-loft-L35"><span class="cm">// box bounds the drawing.  Every `head_step` moves `m` by a multiple of 3, so `r` is bounded</span></span>
+<span id="src-formfit-loft-L36"><span class="cm">// exactly; `k` gives `q` within one, and a one-cell pad on every side absorbs that.</span></span>
+<span id="src-formfit-loft-L37"><span class="cm">// Example: @HXV-003</span></span>
+<span id="src-formfit-loft-L38"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">fit_chunk</span>(f: <span class="en">Form</span>) -&gt; <span class="en">HexSet</span> {</span>
+<span id="src-formfit-loft-L39">  vk = <span class="fn-call">form_poly_k</span>(f);</span>
+<span id="src-formfit-loft-L40">  vm = <span class="fn-call">form_poly_m</span>(f);</span>
+<span id="src-formfit-loft-L41">  n = <span class="bi"><a href="stdlib-text.html">len</a></span>(vk);</span>
+<span id="src-formfit-loft-L42">  <span class="kw">if</span> n == <span class="nm">0</span> { <span class="kw">return</span> <span class="fn-call">hexset_chunk</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">1</span>, <span class="nm">1</span>); }</span>
+<span id="src-formfit-loft-L43">  mink = vk[<span class="nm">0</span>] ?? <span class="nm">0</span>;</span>
+<span id="src-formfit-loft-L44">  maxk = mink;</span>
+<span id="src-formfit-loft-L45">  minm = vm[<span class="nm">0</span>] ?? <span class="nm">0</span>;</span>
+<span id="src-formfit-loft-L46">  maxm = minm;</span>
+<span id="src-formfit-loft-L47">  <span class="kw">for</span> bi <span class="kw">in</span> <span class="nm">0..</span>n {</span>
+<span id="src-formfit-loft-L48">    kk = vk[bi] ?? <span class="nm">0</span>;</span>
+<span id="src-formfit-loft-L49">    mm = vm[bi] ?? <span class="nm">0</span>;</span>
+<span id="src-formfit-loft-L50">    <span class="kw">if</span> kk &lt; mink { mink = kk; }</span>
+<span id="src-formfit-loft-L51">    <span class="kw">if</span> kk &gt; maxk { maxk = kk; }</span>
+<span id="src-formfit-loft-L52">    <span class="kw">if</span> mm &lt; minm { minm = mm; }</span>
+<span id="src-formfit-loft-L53">    <span class="kw">if</span> mm &gt; maxm { maxm = mm; }</span>
+<span id="src-formfit-loft-L54">  }</span>
+<span id="src-formfit-loft-L55">  r0 = <span class="fn-call">fdiv</span>(minm, <span class="nm">3</span>) - <span class="nm">1</span>;</span>
+<span id="src-formfit-loft-L56">  r1 = <span class="fn-call">fdiv</span>(maxm, <span class="nm">3</span>) + <span class="nm">1</span>;</span>
+<span id="src-formfit-loft-L57">  q0 = <span class="fn-call">fdiv</span>(mink - <span class="nm">1</span>, <span class="nm">2</span>) - <span class="nm">1</span>;</span>
+<span id="src-formfit-loft-L58">  q1 = <span class="fn-call">fdiv</span>(maxk, <span class="nm">2</span>) + <span class="nm">1</span>;</span>
+<span id="src-formfit-loft-L59">  <span class="fn-call">hexset_chunk</span>(q0, r0, q1 - q0 + <span class="nm">1</span>, r1 - r0 + <span class="nm">1</span>)</span>
+<span id="src-formfit-loft-L60">}</span>
+<span id="src-formfit-loft-L61"></span>
+<span id="src-formfit-loft-L62"><span class="kw">pub</span> const <span class="en">REGIME_R1</span> = <span class="nm">1</span>;</span>
+<span id="src-formfit-loft-L63"><span class="kw">pub</span> const <span class="en">REGIME_R2</span> = <span class="nm">2</span>;</span>
+<span id="src-formfit-loft-L64"></span>
+<span id="src-formfit-loft-L65"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Rebuilt</span> {</span>
+<span id="src-formfit-loft-L66">  rb_regime:  <span class="ty"><a href="stdlib-types.html">integer</a></span>,   <span class="cm">// REGIME_R1 (exact, unique) or REGIME_R2 (no grammar form draws this)</span></span>
+<span id="src-formfit-loft-L67">  rb_form:    <span class="en">Form</span>,      <span class="cm">// the recovered model — meaningful only in R1</span></span>
+<span id="src-formfit-loft-L68">  rb_rho:     <span class="ty"><a href="stdlib-types.html">integer</a></span>,   <span class="cm">// 0 in R1; the smallest unexplained-cell count in R2</span></span>
+<span id="src-formfit-loft-L69">  rb_matches: <span class="ty"><a href="stdlib-types.html">integer</a></span>,   <span class="cm">// how many candidates matched exactly; &gt;1 means the level is ambiguous</span></span>
+<span id="src-formfit-loft-L70">}</span>
+<span id="src-formfit-loft-L71"></span>
+<span id="src-formfit-loft-L72"><span class="cm">// ── the admitted set — the candidate space `rebuild` matches against ───────</span></span>
+<span id="src-formfit-loft-L73"><span class="cm">//</span></span>
+<span id="src-formfit-loft-L74"><span class="cm">// `LEVEL` is how far up the ladder the enumeration reaches.  A field drawn from a form above it</span></span>
+<span id="src-formfit-loft-L75"><span class="cm">// finds NO candidate and `rebuild` reports it as R2 — "nothing in the admitted set draws this",</span></span>
+<span id="src-formfit-loft-L76"><span class="cm">// not "no stencil draws this".  `rebuild_construct` is the route for those (@HXV-004).</span></span>
+<span id="src-formfit-loft-L77"><span class="kw">pub</span> const <span class="en">LEVEL</span> = <span class="nm">2</span>;</span>
+<span id="src-formfit-loft-L78"></span>
+<span id="src-formfit-loft-L79"><span class="cm">// The candidate space: A1/A2 (3 sides, len &lt;= LEVEL) plus A3 (side counts 4..6 at len 1).</span></span>
+<span id="src-formfit-loft-L80"><span class="cm">//</span></span>
+<span id="src-formfit-loft-L81"><span class="cm">// ENUMERATING THIS IS THE EXPENSIVE PART, so callers that recover many fields must build it ONCE</span></span>
+<span id="src-formfit-loft-L82"><span class="cm">// and pass it to `rebuild_with`. `rebuild` re-enumerates on every call, which is fine for a single</span></span>
+<span id="src-formfit-loft-L83"><span class="cm">// lookup and quadratic waste over a corpus.</span></span>
+<span id="src-formfit-loft-L84"><span class="cm">// Example: @HXV-004</span></span>
+<span id="src-formfit-loft-L85"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">candidate_forms</span>() -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Form</span>&gt; {</span>
+<span id="src-formfit-loft-L86">  out = <span class="fn-call">forms_upto</span>(<span class="en">LEVEL</span>);</span>
+<span id="src-formfit-loft-L87">  a3 = <span class="fn-call">forms_a3</span>();</span>
+<span id="src-formfit-loft-L88">  <span class="kw">for</span> ai <span class="kw">in</span> <span class="nm">0..l</span><span class="fn-call">en</span>(a3) { out += [a3[ai] ?? <span class="fn-call">form_new</span>(<span class="nm">0</span>, [], [])]; }</span>
+<span id="src-formfit-loft-L89">  out</span>
+<span id="src-formfit-loft-L90">}</span>
+<span id="src-formfit-loft-L91"></span>
+<span id="src-formfit-loft-L92"><span class="cm">// Retained for the A1 gates: the level-1 enumeration on its own.</span></span>
+<span id="src-formfit-loft-L93"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">level1_forms</span>() -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Form</span>&gt; {</span>
+<span id="src-formfit-loft-L94">  out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Form</span>&gt; = [];</span>
+<span id="src-formfit-loft-L95">  texts: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt; = [];</span>
+<span id="src-formfit-loft-L96">  <span class="kw">for</span> eh <span class="kw">in</span> <span class="nm">0..12</span> {</span>
+<span id="src-formfit-loft-L97">    <span class="kw">for</span> ea <span class="kw">in</span> <span class="nm">1..12</span> {</span>
+<span id="src-formfit-loft-L98">      <span class="kw">for</span> eb <span class="kw">in</span> <span class="nm">1..12</span> {</span>
+<span id="src-formfit-loft-L99">        ec = <span class="nm">12</span> - ea - eb;</span>
+<span id="src-formfit-loft-L100">        <span class="kw">if</span> ec &gt;= <span class="nm">1</span> &amp;&amp; ec &lt;= <span class="nm">11</span> {</span>
+<span id="src-formfit-loft-L101">          ef = <span class="fn-call">form_new</span>(eh, [<span class="nm">1</span>, <span class="nm">1</span>, <span class="nm">1</span>], [ea, eb, ec]);</span>
+<span id="src-formfit-loft-L102">          <span class="kw">if</span> <span class="fn-call">form_closes</span>(ef) {</span>
+<span id="src-formfit-loft-L103">            cf = <span class="fn-call">form_canon</span>(ef);</span>
+<span id="src-formfit-loft-L104">            ct = <span class="fn-call">form_write</span>(cf, <span class="st">"a1"</span>);</span>
+<span id="src-formfit-loft-L105">            seen = <span class="kw">false</span>;</span>
+<span id="src-formfit-loft-L106">            <span class="kw">for</span> si <span class="kw">in</span> <span class="nm">0..l</span><span class="fn-call">en</span>(texts) { <span class="kw">if</span> (texts[si] ?? <span class="st">""</span>) == ct { seen = <span class="kw">true</span>; } }</span>
+<span id="src-formfit-loft-L107">            <span class="kw">if</span> !seen { texts += [ct]; out += [cf]; }</span>
+<span id="src-formfit-loft-L108">          }</span>
+<span id="src-formfit-loft-L109">        }</span>
+<span id="src-formfit-loft-L110">      }</span>
+<span id="src-formfit-loft-L111">    }</span>
+<span id="src-formfit-loft-L112">  }</span>
+<span id="src-formfit-loft-L113">  out</span>
+<span id="src-formfit-loft-L114">}</span>
+<span id="src-formfit-loft-L115"></span>
+<span id="src-formfit-loft-L116"><span class="cm">// How many keys are in exactly one of the two sorted lists — the symmetric difference. This is</span></span>
+<span id="src-formfit-loft-L117"><span class="cm">// the R2 residual: cells the best grammar form cannot account for. It is a COUNT, not a distance,</span></span>
+<span id="src-formfit-loft-L118"><span class="cm">// so no tolerance is implied by it.</span></span>
+<span id="src-formfit-loft-L119"><span class="kw">fn</span> <span class="fn-call">sym_diff</span>(a: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;, b: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-formfit-loft-L120">  n = <span class="nm">0</span>;</span>
+<span id="src-formfit-loft-L121">  <span class="kw">for</span> ai <span class="kw">in</span> <span class="nm">0..l</span><span class="fn-call">en</span>(a) {</span>
+<span id="src-formfit-loft-L122">    found = <span class="kw">false</span>;</span>
+<span id="src-formfit-loft-L123">    <span class="kw">for</span> aj <span class="kw">in</span> <span class="nm">0..l</span><span class="fn-call">en</span>(b) { <span class="kw">if</span> (a[ai] ?? <span class="nm">0</span>) == (b[aj] ?? <span class="nm">0</span>) { found = <span class="kw">true</span>; } }</span>
+<span id="src-formfit-loft-L124">    <span class="kw">if</span> !found { n = n + <span class="nm">1</span>; }</span>
+<span id="src-formfit-loft-L125">  }</span>
+<span id="src-formfit-loft-L126">  <span class="kw">for</span> bi <span class="kw">in</span> <span class="nm">0..l</span><span class="fn-call">en</span>(b) {</span>
+<span id="src-formfit-loft-L127">    found2 = <span class="kw">false</span>;</span>
+<span id="src-formfit-loft-L128">    <span class="kw">for</span> bj <span class="kw">in</span> <span class="nm">0..l</span><span class="fn-call">en</span>(a) { <span class="kw">if</span> (b[bi] ?? <span class="nm">0</span>) == (a[bj] ?? <span class="nm">0</span>) { found2 = <span class="kw">true</span>; } }</span>
+<span id="src-formfit-loft-L129">    <span class="kw">if</span> !found2 { n = n + <span class="nm">1</span>; }</span>
+<span id="src-formfit-loft-L130">  }</span>
+<span id="src-formfit-loft-L131">  n</span>
+<span id="src-formfit-loft-L132">}</span>
+<span id="src-formfit-loft-L133"></span>
+<span id="src-formfit-loft-L134"><span class="cm">// THE ROUTINE. Match the field against every admitted form, translation-normalised — WHERE it was</span></span>
+<span id="src-formfit-loft-L135"><span class="cm">// drawn is placement's business (the `place` element), not the stencil's.</span></span>
+<span id="src-formfit-loft-L136"><span class="cm">// Example: @HXV-005</span></span>
+<span id="src-formfit-loft-L137"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">rebuild</span>(cells: <span class="en">HexSet</span>) -&gt; <span class="en">Rebuilt</span> { <span class="fn-call">rebuild_with</span>(<span class="fn-call">candidate_forms</span>(), cells) }</span>
+<span id="src-formfit-loft-L138"></span>
+<span id="src-formfit-loft-L139"><span class="cm">// The core, with the candidate set supplied — build it once per gate run, not once per lookup.</span></span>
+<span id="src-formfit-loft-L140"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">rebuild_with</span>(cand: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Form</span>&gt;, cells: <span class="en">HexSet</span>) -&gt; <span class="en">Rebuilt</span> {</span>
+<span id="src-formfit-loft-L141">  want = <span class="fn-call">field_norm</span>(cells);</span>
+<span id="src-formfit-loft-L142">  nmatch = <span class="nm">0</span>;</span>
+<span id="src-formfit-loft-L143">  best = <span class="fn-call">form_new</span>(<span class="nm">0</span>, [], []);</span>
+<span id="src-formfit-loft-L144">  rho = -<span class="nm">1</span>;</span>
+<span id="src-formfit-loft-L145">  <span class="kw">for</span> ci <span class="kw">in</span> <span class="nm">0..l</span><span class="fn-call">en</span>(cand) {</span>
+<span id="src-formfit-loft-L146">    cf = cand[ci] ?? <span class="fn-call">form_new</span>(<span class="nm">0</span>, [], []);</span>
+<span id="src-formfit-loft-L147">    cc = <span class="fn-call">fit_chunk</span>(cf);</span>
+<span id="src-formfit-loft-L148">    <span class="fn-call">form_fill</span>(cf, <span class="nm">0</span>, <span class="nm">0</span>, cc);</span>
+<span id="src-formfit-loft-L149">    got = <span class="fn-call">field_norm</span>(cc);</span>
+<span id="src-formfit-loft-L150">    d = <span class="fn-call">sym_diff</span>(want, got);</span>
+<span id="src-formfit-loft-L151">    <span class="kw">if</span> d == <span class="nm">0</span> {</span>
+<span id="src-formfit-loft-L152">      nmatch = nmatch + <span class="nm">1</span>;</span>
+<span id="src-formfit-loft-L153">      best = cf;</span>
+<span id="src-formfit-loft-L154">    }</span>
+<span id="src-formfit-loft-L155">    <span class="kw">if</span> rho &lt; <span class="nm">0</span> || d &lt; rho { rho = d; }</span>
+<span id="src-formfit-loft-L156">  }</span>
+<span id="src-formfit-loft-L157">  <span class="kw">if</span> nmatch == <span class="nm">1</span> {</span>
+<span id="src-formfit-loft-L158">    <span class="kw">return</span> <span class="en">Rebuilt</span> { rb_regime: <span class="en">REGIME_R1</span>, rb_form: best, rb_rho: <span class="nm">0</span>, rb_matches: <span class="nm">1</span> };</span>
+<span id="src-formfit-loft-L159">  }</span>
+<span id="src-formfit-loft-L160">  <span class="cm">// No unique grammar form draws this field: it is R2 content, and the residual is reported</span></span>
+<span id="src-formfit-loft-L161">  <span class="cm">// rather than swallowed. `rb_matches &gt; 1` would mean law F failed at this level — the census</span></span>
+<span id="src-formfit-loft-L162">  <span class="cm">// says it does not, so the gate treats that as a hard error rather than an answer.</span></span>
+<span id="src-formfit-loft-L163">  <span class="en">Rebuilt</span> { rb_regime: <span class="en">REGIME_R2</span>, rb_form: best, rb_rho: rho, rb_matches: nmatch }</span>
+<span id="src-formfit-loft-L164">}</span>
+<span id="src-formfit-loft-L165"></span>
+<span id="src-formfit-loft-L166"><span class="cm">// The round trip in one call: field -&gt; model -&gt; canonical text. Empty when recovery is not R1,</span></span>
+<span id="src-formfit-loft-L167"><span class="cm">// so a caller cannot accidentally spell an R2 guess as if it were an authored stencil.</span></span>
+<span id="src-formfit-loft-L168"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">rebuild_text_with</span>(cand: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Form</span>&gt;, cells: <span class="en">HexSet</span>, name: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-formfit-loft-L169">  r = <span class="fn-call">rebuild_with</span>(cand, cells);</span>
+<span id="src-formfit-loft-L170">  <span class="kw">if</span> r.rb_regime != <span class="en">REGIME_R1</span> { <span class="kw">return</span> <span class="st">""</span>; }</span>
+<span id="src-formfit-loft-L171">  <span class="fn-call">form_write</span>(r.rb_form, name)</span>
+<span id="src-formfit-loft-L172">}</span>
+<span id="src-formfit-loft-L173"></span>
+<span id="src-formfit-loft-L174"><span class="cm">// Recover a form from cells and write it as canonical text, or "" when the cells are not a</span></span>
+<span id="src-formfit-loft-L175"><span class="cm">// single clean form.  The empty answer is the refusal — check it before using the text.</span></span>
+<span id="src-formfit-loft-L176"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">rebuild_text</span>(cells: <span class="en">HexSet</span>, name: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-formfit-loft-L177">  r = <span class="fn-call">rebuild</span>(cells);</span>
+<span id="src-formfit-loft-L178">  <span class="kw">if</span> r.rb_regime != <span class="en">REGIME_R1</span> { <span class="kw">return</span> <span class="st">""</span>; }</span>
+<span id="src-formfit-loft-L179">  <span class="fn-call">form_write</span>(r.rb_form, name)</span>
+<span id="src-formfit-loft-L180">}</span>
+<span id="src-formfit-loft-L181"></span>
+<span id="src-formfit-loft-L182"><span class="cm">// ── INDEXED RECOVERY — draw the candidates ONCE, then look up ──────────────</span></span>
+<span id="src-formfit-loft-L183"><span class="cm">//</span></span>
+<span id="src-formfit-loft-L184"><span class="cm">// `rebuild_with` re-DRAWS every candidate on every lookup: O(N) fills per field, O(N^2) over a</span></span>
+<span id="src-formfit-loft-L185"><span class="cm">// corpus.  A candidate's field never changes, so its digest can be computed once and put in a map</span></span>
+<span id="src-formfit-loft-L186"><span class="cm">// keyed by the digest; recovery then becomes a single probe.</span></span>
+<span id="src-formfit-loft-L187"><span class="cm">//</span></span>
+<span id="src-formfit-loft-L188"><span class="cm">// WHAT THIS DOES AND DOES NOT BUY:</span></span>
+<span id="src-formfit-loft-L189"><span class="cm">//</span></span>
+<span id="src-formfit-loft-L190"><span class="cm">//   IT FIXES   the per-lookup cost — O(N) fills to build the index, O(1) per recovery afterwards.</span></span>
+<span id="src-formfit-loft-L191"><span class="cm">//   IT DOES NOT FIX   the cost of ENUMERATING the candidate space. Building the index still walks</span></span>
+<span id="src-formfit-loft-L192"><span class="cm">//                     every admissible form once, so a form class too large to enumerate (the</span></span>
+<span id="src-formfit-loft-L193"><span class="cm">//                     4-sided house, ~1.2M proposals) stays out of reach.  Reaching it needs</span></span>
+<span id="src-formfit-loft-L194"><span class="cm">//                     CONSTRUCTIVE recovery — `rebuild_construct`, below.</span></span>
+<span id="src-formfit-loft-L195"><span class="cm">//</span></span>
+<span id="src-formfit-loft-L196"><span class="cm">// LAW F IS CHECKED AT BUILD TIME, ONCE, OVER THE WHOLE SPACE. Two candidates sharing a digest</span></span>
+<span id="src-formfit-loft-L197"><span class="cm">// would silently overwrite each other in the map, so the build COUNTS such clashes in</span></span>
+<span id="src-formfit-loft-L198"><span class="cm">// `ri_collisions`, and zero is the answer law F promises (@HXV-002).</span></span>
+<span id="src-formfit-loft-L199"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">IdxEntry</span> {</span>
+<span id="src-formfit-loft-L200">  ix_digest: <span class="ty"><a href="stdlib-types.html">text</a></span>,      <span class="cm">// `field_norm_text` of the form's drawn field — NOT named `key`</span></span>
+<span id="src-formfit-loft-L201">  ix_form:   <span class="en">Form</span>,</span>
+<span id="src-formfit-loft-L202">}</span>
+<span id="src-formfit-loft-L203"></span>
+<span id="src-formfit-loft-L204"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">RecoveryIndex</span> {</span>
+<span id="src-formfit-loft-L205">  ri_map:        <span class="ty">hash</span>&lt;<span class="en">IdxEntry</span>[ix_digest]&gt;,</span>
+<span id="src-formfit-loft-L206">  ri_count:      <span class="ty"><a href="stdlib-types.html">integer</a></span>,   <span class="cm">// entries indexed</span></span>
+<span id="src-formfit-loft-L207">  ri_collisions: <span class="ty"><a href="stdlib-types.html">integer</a></span>,   <span class="cm">// candidates whose digest was already taken — a law F failure</span></span>
+<span id="src-formfit-loft-L208">  ri_fills:      <span class="ty"><a href="stdlib-types.html">integer</a></span>,   <span class="cm">// draws performed to build it (the cost, reported not guessed)</span></span>
+<span id="src-formfit-loft-L209">}</span>
+<span id="src-formfit-loft-L210"></span>
+<span id="src-formfit-loft-L211"><span class="cm">// Example: @HXV-002</span></span>
+<span id="src-formfit-loft-L212"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">index_build</span>(cand: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Form</span>&gt;) -&gt; <span class="en">RecoveryIndex</span> {</span>
+<span id="src-formfit-loft-L213">  idx = <span class="en">RecoveryIndex</span> { ri_map: [], ri_count: <span class="nm">0</span>, ri_collisions: <span class="nm">0</span>, ri_fills: <span class="nm">0</span> };</span>
+<span id="src-formfit-loft-L214">  <span class="kw">for</span> ii <span class="kw">in</span> <span class="nm">0..l</span><span class="fn-call">en</span>(cand) {</span>
+<span id="src-formfit-loft-L215">    cf = cand[ii] ?? <span class="fn-call">form_new</span>(<span class="nm">0</span>, [], []);</span>
+<span id="src-formfit-loft-L216">    cc = <span class="fn-call">fit_chunk</span>(cf);</span>
+<span id="src-formfit-loft-L217">    <span class="fn-call">form_fill</span>(cf, <span class="nm">0</span>, <span class="nm">0</span>, cc);</span>
+<span id="src-formfit-loft-L218">    idx.ri_fills = idx.ri_fills + <span class="nm">1</span>;</span>
+<span id="src-formfit-loft-L219">    dg = <span class="fn-call">field_norm_text</span>(cc);</span>
+<span id="src-formfit-loft-L220">    prior = idx.ri_map[dg];</span>
+<span id="src-formfit-loft-L221">    <span class="kw">if</span> prior == <span class="kw">null</span> {</span>
+<span id="src-formfit-loft-L222">      idx.ri_map += [<span class="en">IdxEntry</span> { ix_digest: dg, ix_form: cf }];</span>
+<span id="src-formfit-loft-L223">      idx.ri_count = idx.ri_count + <span class="nm">1</span>;</span>
+<span id="src-formfit-loft-L224">    } <span class="kw">else</span> {</span>
+<span id="src-formfit-loft-L225">      idx.ri_collisions = idx.ri_collisions + <span class="nm">1</span>;</span>
+<span id="src-formfit-loft-L226">    }</span>
+<span id="src-formfit-loft-L227">  }</span>
+<span id="src-formfit-loft-L228">  idx</span>
+<span id="src-formfit-loft-L229">}</span>
+<span id="src-formfit-loft-L230"></span>
+<span id="src-formfit-loft-L231"><span class="cm">// THE FAST PATH: one probe. A hit is an exact R1 answer — the digest IS the field, compared in</span></span>
+<span id="src-formfit-loft-L232"><span class="cm">// full, so this is the same exactness the scan gave, not a heuristic narrowing.</span></span>
+<span id="src-formfit-loft-L233"><span class="cm">//</span></span>
+<span id="src-formfit-loft-L234"><span class="cm">// A MISS falls back to the scan, and only then, purely to compute the R2 residual. R2 is the</span></span>
+<span id="src-formfit-loft-L235"><span class="cm">// exceptional path (content no grammar form draws), so paying O(N) there costs nothing in</span></span>
+<span id="src-formfit-loft-L236"><span class="cm">// practice and keeps `rho &gt; 0` a real measurement rather than a placeholder.</span></span>
+<span id="src-formfit-loft-L237"><span class="cm">// Example: @HXV-008</span></span>
+<span id="src-formfit-loft-L238"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">rebuild_indexed</span>(idx: <span class="en">RecoveryIndex</span>, cand: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Form</span>&gt;, cells: <span class="en">HexSet</span>) -&gt; <span class="en">Rebuilt</span> {</span>
+<span id="src-formfit-loft-L239">  hit = idx.ri_map[<span class="fn-call">field_norm_text</span>(cells)];</span>
+<span id="src-formfit-loft-L240">  <span class="kw">if</span> hit != <span class="kw">null</span> {</span>
+<span id="src-formfit-loft-L241">    <span class="kw">return</span> <span class="en">Rebuilt</span> { rb_regime: <span class="en">REGIME_R1</span>, rb_form: hit.ix_form, rb_rho: <span class="nm">0</span>, rb_matches: <span class="nm">1</span> };</span>
+<span id="src-formfit-loft-L242">  }</span>
+<span id="src-formfit-loft-L243">  <span class="fn-call">rebuild_with</span>(cand, cells)</span>
+<span id="src-formfit-loft-L244">}</span>
+<span id="src-formfit-loft-L245"></span>
+<span id="src-formfit-loft-L246"><span class="cm">// The same, searching a prepared index and candidate set instead of enumerating: the shape</span></span>
+<span id="src-formfit-loft-L247"><span class="cm">// to use when many cells sets are recovered against one library.</span></span>
+<span id="src-formfit-loft-L248"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">rebuild_indexed_text</span>(idx: <span class="en">RecoveryIndex</span>, cand: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Form</span>&gt;,</span>
+<span id="src-formfit-loft-L249">                            cells: <span class="en">HexSet</span>, name: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-formfit-loft-L250">  r = <span class="fn-call">rebuild_indexed</span>(idx, cand, cells);</span>
+<span id="src-formfit-loft-L251">  <span class="kw">if</span> r.rb_regime != <span class="en">REGIME_R1</span> { <span class="kw">return</span> <span class="st">""</span>; }</span>
+<span id="src-formfit-loft-L252">  <span class="fn-call">form_write</span>(r.rb_form, name)</span>
+<span id="src-formfit-loft-L253">}</span>
+<span id="src-formfit-loft-L254"></span>
+<span id="src-formfit-loft-L255"><span class="cm">// ── CONSTRUCTIVE RECOVERY — read the form off the field, no enumeration ────</span></span>
+<span id="src-formfit-loft-L256"><span class="cm">//</span></span>
+<span id="src-formfit-loft-L257"><span class="cm">// Indexed recovery is BUILT BY the enumeration, so it reaches no further than `rebuild`.  This</span></span>
+<span id="src-formfit-loft-L258"><span class="cm">// does not enumerate at all: it reads `(h0, lens, turns)` off the field's own geometry, in</span></span>
+<span id="src-formfit-loft-L259"><span class="cm">// O(cells), independent of how large the admissible space is.</span></span>
+<span id="src-formfit-loft-L260"><span class="cm">//</span></span>
+<span id="src-formfit-loft-L261"><span class="cm">// THE CONSTRUCTION, and why it is exact rather than a fit:</span></span>
+<span id="src-formfit-loft-L262"><span class="cm">//</span></span>
+<span id="src-formfit-loft-L263"><span class="cm">//   1. every admitted form is CONVEX.  Law J requires the turns to be positive and to sum to 12 —</span></span>
+<span id="src-formfit-loft-L264"><span class="cm">//      all exterior angles positive, exactly one revolution — which is the definition of a convex</span></span>
+<span id="src-formfit-loft-L265"><span class="cm">//      polygon.  (A4's non-convex forms need a negative turn, so they fall outside this and want</span></span>
+<span id="src-formfit-loft-L266"><span class="cm">//      boundary TRACING instead; stated as a limit, not discovered later.)</span></span>
+<span id="src-formfit-loft-L267"><span class="cm">//   2. the turtle walks CENTRE TO CENTRE, so every polygon vertex IS a hex centre (S3), and</span></span>
+<span id="src-formfit-loft-L268"><span class="cm">//      `form_fill` takes every hex on or inside.  For a convex polygon whose vertices are lattice</span></span>
+<span id="src-formfit-loft-L269"><span class="cm">//      points, the CONVEX HULL of the contained lattice points is the polygon itself — its corners</span></span>
+<span id="src-formfit-loft-L270"><span class="cm">//      are extreme points and cannot be hulled away.</span></span>
+<span id="src-formfit-loft-L271"><span class="cm">//   3. so: hull the filled cells in exact integer (k,m); the hull vertices ARE the turtle's</span></span>
+<span id="src-formfit-loft-L272"><span class="cm">//      corners, in order.  Collinear cells along a long side are interior to an edge and drop out,</span></span>
+<span id="src-formfit-loft-L273"><span class="cm">//      which is exactly right — they are not corners.</span></span>
+<span id="src-formfit-loft-L274"><span class="cm">//   4. each side vector is an exact integer multiple of one of the 12 heading steps, found by</span></span>
+<span id="src-formfit-loft-L275"><span class="cm">//      trying all 12.  No gcd reduction: `head_step(0)` is `(2,0)`, not `(1,0)`, so a primitive</span></span>
+<span id="src-formfit-loft-L276"><span class="cm">//      reduction would land off the table.</span></span>
+<span id="src-formfit-loft-L277"><span class="cm">//</span></span>
+<span id="src-formfit-loft-L278"><span class="cm">// THE HULL IS TAKEN IN (k,m), NOT IN WORLD COORDINATES, and that is safe: `(k,m) -&gt; (k*sqrt3/2,</span></span>
+<span id="src-formfit-loft-L279"><span class="cm">// m/2)` is linear with determinant `sqrt3/4 &gt; 0`, so it preserves convexity AND orientation. The</span></span>
+<span id="src-formfit-loft-L280"><span class="cm">// integer arithmetic is therefore exact — no floats enter the recovery at any point.</span></span>
+<span id="src-formfit-loft-L281"><span class="cm">//</span></span>
+<span id="src-formfit-loft-L282"><span class="cm">// AND IT STILL VERIFIES. The construction PROPOSES a form; one re-draw CONFIRMS it. That keeps</span></span>
+<span id="src-formfit-loft-L283"><span class="cm">// `ρ = 0` a measured fact rather than a claim, and sends anything that does not reproduce its own</span></span>
+<span id="src-formfit-loft-L284"><span class="cm">// field to R2 — where a hand-drawn blob belongs.</span></span>
+<span id="src-formfit-loft-L285">const <span class="en">PK_OFF</span> = <span class="nm">400</span>;</span>
+<span id="src-formfit-loft-L286">const <span class="en">PK_SPAN</span> = <span class="nm">1600</span>;</span>
+<span id="src-formfit-loft-L287"></span>
+<span id="src-formfit-loft-L288"><span class="kw">fn</span> <span class="fn-call">pk</span>(k: <span class="ty"><a href="stdlib-types.html">integer</a></span>, m: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> { (k + <span class="en">PK_OFF</span>) * <span class="en">PK_SPAN</span> + (m + <span class="en">PK_OFF</span>) }</span>
+<span id="src-formfit-loft-L289"><span class="kw">fn</span> <span class="fn-call">pk_k</span>(v: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> { ((v / <span class="en">PK_SPAN</span>) ?? <span class="nm">0</span>) - <span class="en">PK_OFF</span> }</span>
+<span id="src-formfit-loft-L290"><span class="kw">fn</span> <span class="fn-call">pk_m</span>(v: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> { ((v % <span class="en">PK_SPAN</span>) ?? <span class="nm">0</span>) - <span class="en">PK_OFF</span> }</span>
+<span id="src-formfit-loft-L291"></span>
+<span id="src-formfit-loft-L292"><span class="kw">fn</span> <span class="fn-call">sort_pk</span>(v: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; {</span>
+<span id="src-formfit-loft-L293">  out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
+<span id="src-formfit-loft-L294">  <span class="kw">for</span> si <span class="kw">in</span> <span class="nm">0..l</span><span class="fn-call">en</span>(v) {</span>
+<span id="src-formfit-loft-L295">    out += [v[si] ?? <span class="nm">0</span>];</span>
+<span id="src-formfit-loft-L296">    ps = <span class="bi"><a href="stdlib-text.html">len</a></span>(out) - <span class="nm">1</span>;</span>
+<span id="src-formfit-loft-L297">    while ps &gt; <span class="nm">0</span> &amp;&amp; (out[ps - <span class="nm">1</span>] ?? <span class="nm">0</span>) &gt; (out[ps] ?? <span class="nm">0</span>) {</span>
+<span id="src-formfit-loft-L298">      tmp = out[ps - <span class="nm">1</span>] ?? <span class="nm">0</span>;</span>
+<span id="src-formfit-loft-L299">      out[ps - <span class="nm">1</span>] = out[ps] ?? <span class="nm">0</span>;</span>
+<span id="src-formfit-loft-L300">      out[ps] = tmp;</span>
+<span id="src-formfit-loft-L301">      ps = ps - <span class="nm">1</span>;</span>
+<span id="src-formfit-loft-L302">    }</span>
+<span id="src-formfit-loft-L303">  }</span>
+<span id="src-formfit-loft-L304">  out</span>
+<span id="src-formfit-loft-L305">}</span>
+<span id="src-formfit-loft-L306"></span>
+<span id="src-formfit-loft-L307"><span class="cm">// Twice the signed area of the triangle o-&gt;a-&gt;b. Positive when b is left of o-&gt;a (CCW).</span></span>
+<span id="src-formfit-loft-L308"><span class="kw">fn</span> <span class="fn-call">cross3</span>(ok2: <span class="ty"><a href="stdlib-types.html">integer</a></span>, om: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ak: <span class="ty"><a href="stdlib-types.html">integer</a></span>, am: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-formfit-loft-L309">          bk: <span class="ty"><a href="stdlib-types.html">integer</a></span>, bm: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-formfit-loft-L310">  (ak - ok2) * (bm - om) - (am - om) * (bk - ok2)</span>
+<span id="src-formfit-loft-L311">}</span>
+<span id="src-formfit-loft-L312"></span>
+<span id="src-formfit-loft-L313"><span class="cm">// The convex hull of the filled cells, CCW, corners only — monotone chain in exact integers.</span></span>
+<span id="src-formfit-loft-L314"><span class="cm">// Collinear points are dropped (`&lt;= 0` pops them), which is what makes long sides come back as one</span></span>
+<span id="src-formfit-loft-L315"><span class="cm">// side instead of a run of tiny ones.</span></span>
+<span id="src-formfit-loft-L316"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">hull_keys</span>(cells: <span class="en">HexSet</span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; {</span>
+<span id="src-formfit-loft-L317">  pts: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
+<span id="src-formfit-loft-L318">  <span class="kw">for</span> hr <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(cells)..<span class="fn-call">hexset_r0</span>(cells) + <span class="fn-call">hexset_h</span>(cells) {</span>
+<span id="src-formfit-loft-L319">    <span class="kw">for</span> hq <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(cells)..<span class="fn-call">hexset_q0</span>(cells) + <span class="fn-call">hexset_w</span>(cells) {</span>
+<span id="src-formfit-loft-L320">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(cells, hq, hr) { pts += [<span class="fn-call">pk</span>(<span class="fn-call">lattice_k</span>(hq, hr), <span class="fn-call">lattice_m</span>(hq, hr))]; }</span>
+<span id="src-formfit-loft-L321">    }</span>
+<span id="src-formfit-loft-L322">  }</span>
+<span id="src-formfit-loft-L323">  sp = <span class="fn-call">sort_pk</span>(pts);</span>
+<span id="src-formfit-loft-L324">  n = <span class="bi"><a href="stdlib-text.html">len</a></span>(sp);</span>
+<span id="src-formfit-loft-L325">  out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
+<span id="src-formfit-loft-L326">  <span class="kw">if</span> n &lt; <span class="nm">3</span> { <span class="kw">return</span> sp; }</span>
+<span id="src-formfit-loft-L327">  <span class="cm">// lower hull, then upper hull</span></span>
+<span id="src-formfit-loft-L328">  st: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
+<span id="src-formfit-loft-L329">  top = <span class="nm">0</span>;</span>
+<span id="src-formfit-loft-L330">  <span class="kw">for</span> li <span class="kw">in</span> <span class="nm">0..</span>n {</span>
+<span id="src-formfit-loft-L331">    p = sp[li] ?? <span class="nm">0</span>;</span>
+<span id="src-formfit-loft-L332">    while top &gt;= <span class="nm">2</span></span>
+<span id="src-formfit-loft-L333">          &amp;&amp; <span class="fn-call">cross3</span>(<span class="fn-call">pk_k</span>(st[top - <span class="nm">2</span>] ?? <span class="nm">0</span>), <span class="fn-call">pk_m</span>(st[top - <span class="nm">2</span>] ?? <span class="nm">0</span>),</span>
+<span id="src-formfit-loft-L334">                    <span class="fn-call">pk_k</span>(st[top - <span class="nm">1</span>] ?? <span class="nm">0</span>), <span class="fn-call">pk_m</span>(st[top - <span class="nm">1</span>] ?? <span class="nm">0</span>),</span>
+<span id="src-formfit-loft-L335">                    <span class="fn-call">pk_k</span>(p), <span class="fn-call">pk_m</span>(p)) &lt;= <span class="nm">0</span> { top = top - <span class="nm">1</span>; }</span>
+<span id="src-formfit-loft-L336">    <span class="kw">if</span> top &lt; <span class="bi"><a href="stdlib-text.html">len</a></span>(st) { st[top] = p; } <span class="kw">else</span> { st += [p]; }</span>
+<span id="src-formfit-loft-L337">    top = top + <span class="nm">1</span>;</span>
+<span id="src-formfit-loft-L338">  }</span>
+<span id="src-formfit-loft-L339">  lower = top - <span class="nm">1</span>;</span>
+<span id="src-formfit-loft-L340">  <span class="kw">for</span> ui <span class="kw">in</span> <span class="nm">0..</span>n {</span>
+<span id="src-formfit-loft-L341">    p2 = sp[n - <span class="nm">1</span> - ui] ?? <span class="nm">0</span>;</span>
+<span id="src-formfit-loft-L342">    while top &gt;= lower + <span class="nm">2</span></span>
+<span id="src-formfit-loft-L343">          &amp;&amp; <span class="fn-call">cross3</span>(<span class="fn-call">pk_k</span>(st[top - <span class="nm">2</span>] ?? <span class="nm">0</span>), <span class="fn-call">pk_m</span>(st[top - <span class="nm">2</span>] ?? <span class="nm">0</span>),</span>
+<span id="src-formfit-loft-L344">                    <span class="fn-call">pk_k</span>(st[top - <span class="nm">1</span>] ?? <span class="nm">0</span>), <span class="fn-call">pk_m</span>(st[top - <span class="nm">1</span>] ?? <span class="nm">0</span>),</span>
+<span id="src-formfit-loft-L345">                    <span class="fn-call">pk_k</span>(p2), <span class="fn-call">pk_m</span>(p2)) &lt;= <span class="nm">0</span> { top = top - <span class="nm">1</span>; }</span>
+<span id="src-formfit-loft-L346">    <span class="kw">if</span> top &lt; <span class="bi"><a href="stdlib-text.html">len</a></span>(st) { st[top] = p2; } <span class="kw">else</span> { st += [p2]; }</span>
+<span id="src-formfit-loft-L347">    top = top + <span class="nm">1</span>;</span>
+<span id="src-formfit-loft-L348">  }</span>
+<span id="src-formfit-loft-L349">  <span class="kw">for</span> oi <span class="kw">in</span> <span class="nm">0..</span>top - <span class="nm">1</span> { out += [st[oi] ?? <span class="nm">0</span>]; }</span>
+<span id="src-formfit-loft-L350">  out</span>
+<span id="src-formfit-loft-L351">}</span>
+<span id="src-formfit-loft-L352"></span>
+<span id="src-formfit-loft-L353"><span class="cm">// Which heading, and how many steps, is the vector (dk, dm)?  Tries all 12 — a constant — because</span></span>
+<span id="src-formfit-loft-L354"><span class="cm">// the heading table's steps are not primitive vectors and a gcd reduction would miss them.</span></span>
+<span id="src-formfit-loft-L355"><span class="cm">// Returns the heading, or -1 when the vector is not a whole number of steps in any heading.</span></span>
+<span id="src-formfit-loft-L356"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">side_heading</span>(dk: <span class="ty"><a href="stdlib-types.html">integer</a></span>, dm: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-formfit-loft-L357">  <span class="kw">for</span> sh <span class="kw">in</span> <span class="nm">0..</span><span class="en">HEAD_N</span> {</span>
+<span id="src-formfit-loft-L358">    st = <span class="fn-call">head_step</span>(sh);</span>
+<span id="src-formfit-loft-L359">    <span class="kw">if</span> st.<span class="nm">0</span> == <span class="nm">0</span> {</span>
+<span id="src-formfit-loft-L360">      <span class="kw">if</span> dk == <span class="nm">0</span> &amp;&amp; st.<span class="nm">1</span> != <span class="nm">0</span> &amp;&amp; dm % st.<span class="nm">1</span> == <span class="nm">0</span> &amp;&amp; ((dm / st.<span class="nm">1</span>) ?? <span class="nm">0</span>) &gt; <span class="nm">0</span> { <span class="kw">return</span> sh; }</span>
+<span id="src-formfit-loft-L361">    } <span class="kw">else</span> {</span>
+<span id="src-formfit-loft-L362">      <span class="kw">if</span> dk % st.<span class="nm">0</span> == <span class="nm">0</span> {</span>
+<span id="src-formfit-loft-L363">        q = (dk / st.<span class="nm">0</span>) ?? <span class="nm">0</span>;</span>
+<span id="src-formfit-loft-L364">        <span class="kw">if</span> q &gt; <span class="nm">0</span> &amp;&amp; q * st.<span class="nm">1</span> == dm { <span class="kw">return</span> sh; }</span>
+<span id="src-formfit-loft-L365">      }</span>
+<span id="src-formfit-loft-L366">    }</span>
+<span id="src-formfit-loft-L367">  }</span>
+<span id="src-formfit-loft-L368">  -<span class="nm">1</span></span>
+<span id="src-formfit-loft-L369">}</span>
+<span id="src-formfit-loft-L370"></span>
+<span id="src-formfit-loft-L371"><span class="cm">// How many steps of heading `h` the offset (dk, dm) covers.  The measurement a rebuild</span></span>
+<span id="src-formfit-loft-L372"><span class="cm">// makes at every corner to turn geometry back into a side length.</span></span>
+<span id="src-formfit-loft-L373"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">side_len</span>(dk: <span class="ty"><a href="stdlib-types.html">integer</a></span>, dm: <span class="ty"><a href="stdlib-types.html">integer</a></span>, h: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-formfit-loft-L374">  st = <span class="fn-call">head_step</span>(h);</span>
+<span id="src-formfit-loft-L375">  <span class="kw">if</span> st.<span class="nm">0</span> != <span class="nm">0</span> { <span class="kw">return</span> (dk / st.<span class="nm">0</span>) ?? <span class="nm">0</span>; }</span>
+<span id="src-formfit-loft-L376">  <span class="kw">if</span> st.<span class="nm">1</span> != <span class="nm">0</span> { <span class="kw">return</span> (dm / st.<span class="nm">1</span>) ?? <span class="nm">0</span>; }</span>
+<span id="src-formfit-loft-L377">  <span class="nm">0</span></span>
+<span id="src-formfit-loft-L378">}</span>
+<span id="src-formfit-loft-L379"></span>
+<span id="src-formfit-loft-L380"><span class="cm">// THE ROUTINE: recover the form from the field, then verify by re-drawing it.</span></span>
+<span id="src-formfit-loft-L381"><span class="cm">// Example: @HXV-003</span></span>
+<span id="src-formfit-loft-L382"><span class="cm">// Example: @HXV-004</span></span>
+<span id="src-formfit-loft-L383"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">rebuild_construct</span>(cells: <span class="en">HexSet</span>) -&gt; <span class="en">Rebuilt</span> {</span>
+<span id="src-formfit-loft-L384">  hk = <span class="fn-call">hull_keys</span>(cells);</span>
+<span id="src-formfit-loft-L385">  nh = <span class="bi"><a href="stdlib-text.html">len</a></span>(hk);</span>
+<span id="src-formfit-loft-L386">  <span class="kw">if</span> nh &lt; <span class="nm">3</span> {</span>
+<span id="src-formfit-loft-L387">    <span class="kw">return</span> <span class="en">Rebuilt</span> { rb_regime: <span class="en">REGIME_R2</span>, rb_form: <span class="fn-call">form_new</span>(<span class="nm">0</span>, [], []),</span>
+<span id="src-formfit-loft-L388">                     rb_rho: <span class="fn-call">hexset_count</span>(cells), rb_matches: <span class="nm">0</span> };</span>
+<span id="src-formfit-loft-L389">  }</span>
+<span id="src-formfit-loft-L390">  lens: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
+<span id="src-formfit-loft-L391">  hs: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
+<span id="src-formfit-loft-L392">  bad = <span class="kw">false</span>;</span>
+<span id="src-formfit-loft-L393">  <span class="kw">for</span> ci <span class="kw">in</span> <span class="nm">0..</span>nh {</span>
+<span id="src-formfit-loft-L394">    ak = <span class="fn-call">pk_k</span>(hk[ci] ?? <span class="nm">0</span>);</span>
+<span id="src-formfit-loft-L395">    am = <span class="fn-call">pk_m</span>(hk[ci] ?? <span class="nm">0</span>);</span>
+<span id="src-formfit-loft-L396">    <span class="cm">// `% nh` types nullable (a zero divisor answers null); `nh &gt;= 3` is checked above,</span></span>
+<span id="src-formfit-loft-L397">    <span class="cm">// so `?? 0` names an unreachable index rather than a chosen one.</span></span>
+<span id="src-formfit-loft-L398">    bk = <span class="fn-call">pk_k</span>(hk[(ci + <span class="nm">1</span>) % nh ?? <span class="nm">0</span>] ?? <span class="nm">0</span>);</span>
+<span id="src-formfit-loft-L399">    bm = <span class="fn-call">pk_m</span>(hk[(ci + <span class="nm">1</span>) % nh ?? <span class="nm">0</span>] ?? <span class="nm">0</span>);</span>
+<span id="src-formfit-loft-L400">    sh = <span class="fn-call">side_heading</span>(bk - ak, bm - am);</span>
+<span id="src-formfit-loft-L401">    <span class="kw">if</span> sh &lt; <span class="nm">0</span> { bad = <span class="kw">true</span>; }</span>
+<span id="src-formfit-loft-L402">    <span class="kw">else</span> {</span>
+<span id="src-formfit-loft-L403">      hs += [sh];</span>
+<span id="src-formfit-loft-L404">      lens += [<span class="fn-call">side_len</span>(bk - ak, bm - am, sh)];</span>
+<span id="src-formfit-loft-L405">    }</span>
+<span id="src-formfit-loft-L406">  }</span>
+<span id="src-formfit-loft-L407">  <span class="kw">if</span> bad || <span class="bi"><a href="stdlib-text.html">len</a></span>(hs) != nh {</span>
+<span id="src-formfit-loft-L408">    <span class="kw">return</span> <span class="en">Rebuilt</span> { rb_regime: <span class="en">REGIME_R2</span>, rb_form: <span class="fn-call">form_new</span>(<span class="nm">0</span>, [], []),</span>
+<span id="src-formfit-loft-L409">                     rb_rho: <span class="fn-call">hexset_count</span>(cells), rb_matches: <span class="nm">0</span> };</span>
+<span id="src-formfit-loft-L410">  }</span>
+<span id="src-formfit-loft-L411">  turns: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
+<span id="src-formfit-loft-L412">  <span class="kw">for</span> ti <span class="kw">in</span> <span class="nm">0..</span>nh {</span>
+<span id="src-formfit-loft-L413">    d = <span class="fn-call">head_norm</span>((hs[(ti + <span class="nm">1</span>) % nh ?? <span class="nm">0</span>] ?? <span class="nm">0</span>) - (hs[ti] ?? <span class="nm">0</span>));</span>
+<span id="src-formfit-loft-L414">    <span class="kw">if</span> d == <span class="nm">0</span> { d = <span class="nm">12</span>; }</span>
+<span id="src-formfit-loft-L415">    turns += [d];</span>
+<span id="src-formfit-loft-L416">  }</span>
+<span id="src-formfit-loft-L417">  cf = <span class="fn-call">form_canon</span>(<span class="fn-call">form_new</span>(hs[<span class="nm">0</span>] ?? <span class="nm">0</span>, lens, turns));</span>
+<span id="src-formfit-loft-L418">  <span class="kw">if</span> !<span class="fn-call">form_closes</span>(cf) {</span>
+<span id="src-formfit-loft-L419">    <span class="kw">return</span> <span class="en">Rebuilt</span> { rb_regime: <span class="en">REGIME_R2</span>, rb_form: <span class="fn-call">form_new</span>(<span class="nm">0</span>, [], []),</span>
+<span id="src-formfit-loft-L420">                     rb_rho: <span class="fn-call">hexset_count</span>(cells), rb_matches: <span class="nm">0</span> };</span>
+<span id="src-formfit-loft-L421">  }</span>
+<span id="src-formfit-loft-L422">  <span class="cm">// VERIFY by re-drawing. The construction proposes; this confirms, so `rho = 0` stays measured.</span></span>
+<span id="src-formfit-loft-L423">  chk = <span class="fn-call">fit_chunk</span>(cf);</span>
+<span id="src-formfit-loft-L424">  <span class="fn-call">form_fill</span>(cf, <span class="nm">0</span>, <span class="nm">0</span>, chk);</span>
+<span id="src-formfit-loft-L425">  d2 = <span class="fn-call">sym_diff</span>(<span class="fn-call">field_norm</span>(cells), <span class="fn-call">field_norm</span>(chk));</span>
+<span id="src-formfit-loft-L426">  <span class="kw">if</span> d2 == <span class="nm">0</span> {</span>
+<span id="src-formfit-loft-L427">    <span class="kw">return</span> <span class="en">Rebuilt</span> { rb_regime: <span class="en">REGIME_R1</span>, rb_form: cf, rb_rho: <span class="nm">0</span>, rb_matches: <span class="nm">1</span> };</span>
+<span id="src-formfit-loft-L428">  }</span>
+<span id="src-formfit-loft-L429">  <span class="en">Rebuilt</span> { rb_regime: <span class="en">REGIME_R2</span>, rb_form: cf, rb_rho: d2, rb_matches: <span class="nm">0</span> }</span>
+<span id="src-formfit-loft-L430">}</span>
+<span id="src-formfit-loft-L431"></span>
+<span id="src-formfit-loft-L432"><span class="cm">// Recover by CONSTRUCTION rather than by search, as text.  Answers "" on refusal like its</span></span>
+<span id="src-formfit-loft-L433"><span class="cm">// siblings, so all three recovery routes are read the same way.</span></span>
+<span id="src-formfit-loft-L434"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">rebuild_construct_text</span>(cells: <span class="en">HexSet</span>, name: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-formfit-loft-L435">  r = <span class="fn-call">rebuild_construct</span>(cells);</span>
+<span id="src-formfit-loft-L436">  <span class="kw">if</span> r.rb_regime != <span class="en">REGIME_R1</span> { <span class="kw">return</span> <span class="st">""</span>; }</span>
+<span id="src-formfit-loft-L437">  <span class="fn-call">form_write</span>(r.rb_form, name)</span>
+<span id="src-formfit-loft-L438">}</span>
 </code></pre>
 <h2 id="src-hex-recover-loft">src/hex_recover.loft</h2>
 <pre class="src"><code><span id="src-hex-recover-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>

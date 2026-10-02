@@ -23,10 +23,10 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>gridmesh API</h1>
 <article>
-<p><a href="lib-gridmesh.html">← gridmesh</a> · version 0.2.3</p>
+<p><a href="lib-gridmesh.html">← gridmesh</a> · version 0.2.4</p>
 <p class="lib-legend">32 public items, in source order. Generated from the registry index, which re-derives them from the package source at publish time — so a signature here is the one that version actually ships.</p>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">CellRef</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">CellRef</span> { ck: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ix: <span class="ty"><a href="stdlib-types.html">integer</a></span> }</code></pre>
 <p>A coord→cell-index reference, stored in the spatial-index hash keyed on the encoded coordinate <code>ck</code>.</p>
 </div>
 <div class="item">
@@ -34,8 +34,8 @@
 <p>Encode an offset coord into one integer key.  The hex world is small; ±2^20 per axis covers it with room to spare and stays within i64.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">build_index</span>(xs: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;, ys: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;) -&gt; <span class="ty">hash</span>&lt;<span class="en">CellRef</span>[ck]&gt;</code></pre>
-<p>Build the coord→cell-index spatial index for a placement-ordered cell list given as parallel (xs, ys).  O(N), built once and reusable across neighbour/on-axis queries.  (@P300 — assigning a hash-returning call's result to a local — was fixed 2026-05-21, so this helper replaces the old inline-build workaround the consumers used.)</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">build_index</span>(xs: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;, ys: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;) -&gt; <span class="ty">hash</span>&lt;<span class="en">CellRef</span>[ck]&gt;</code></pre>
+<p>Build the coord→cell-index spatial index for a placement-ordered cell list given as parallel (xs, ys).  O(N), built once and reusable across neighbour/on-axis queries.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">axial_dq</span>(d: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
@@ -54,15 +54,15 @@
 <p>The y half of the pair.  Row parity does not reach it — a step along an axis moves whole rows — which is why this ignores x where <code>step_x</code> cannot.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">idx_at</span>(cidx: <span class="ty">hash</span>&lt;<span class="en">CellRef</span>[ck]&gt;, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">idx_at</span>(cidx: const <span class="ty">hash</span>&lt;<span class="en">CellRef</span>[ck]&gt;, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
 <p>snap index of the cell at (x, y), or -1 if none.  (<code>cidx</code> not <code>index</code> — <code>index</code> is a reserved keyed-collection-type keyword in loft.)</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">nbr_count_idx</span>(cidx: <span class="ty">hash</span>&lt;<span class="en">CellRef</span>[ck]&gt;, cx: <span class="ty"><a href="stdlib-types.html">integer</a></span>, cy: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">nbr_count_idx</span>(cidx: const <span class="ty">hash</span>&lt;<span class="en">CellRef</span>[ck]&gt;, cx: <span class="ty"><a href="stdlib-types.html">integer</a></span>, cy: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
 <p>Index-backed filled-neighbour count (distance 1) — the 6 axis-1 cells.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">SegMesh</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">SegMesh</span> { kinds: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt;, x0s: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt;, y0s: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt;, z0s: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt;, x1s: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt;, y1s: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt;, z1s: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt;, colors: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt;, cell_ix: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; }</code></pre>
 <p>── B1: SegMesh accumulator ──────────────────────────────────────────</p>
 <p>Struct-of-arrays line-segment mesh for segment/ribbon consumers (the crystal rule).  Each segment is a 3D line (x0,y0,z0)→(x1,y1,z1) with a kind, a colour, and the OWNING cell index (<code>cell_ix</code>) — the latter lets a consumer attribute a segment back to its cell (e.g. GPU bloom-from- centre keyed by cell age) and lets the dirty-rebuild find-and-replace a cell's segments.  Coordinates are <code>single</code> (f32 — the GPU VBO format, no precision loss vs what is rendered) and kind/colour are <code>u8</code> (M1 narrowing: ~60 % less memory than the i64/f64 prototype).</p>
 </div>
@@ -71,19 +71,19 @@
 <p>An empty segment mesh: the nine parallel arrays <code>emit_segment</code> appends into. Flat and parallel rather than a vector of records, so a chunk rebuild concatenates (<code>seg_mesh_append</code>) instead of walking a structure.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">emit_segment</span>(m: <span class="en">SegMesh</span>, kind: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">emit_segment</span>(m: <span class="en">SegMesh</span>, kind: <span class="ty"><a href="stdlib-types.html">integer</a></span>, x0: <span class="ty"><a href="stdlib-types.html">float</a></span>, y0: <span class="ty"><a href="stdlib-types.html">float</a></span>, z0: <span class="ty"><a href="stdlib-types.html">float</a></span>, x1: <span class="ty"><a href="stdlib-types.html">float</a></span>, y1: <span class="ty"><a href="stdlib-types.html">float</a></span>, z1: <span class="ty"><a href="stdlib-types.html">float</a></span>, color: <span class="ty"><a href="stdlib-types.html">integer</a></span>, owner: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
 <p>Append one segment owned by cell <code>owner</code>.  Callers pass <code>float</code> coords and <code>integer</code> kind/colour; they are narrowed to the storage width here.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">seg_len</span>(m: <span class="en">SegMesh</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">seg_len</span>(m: const <span class="en">SegMesh</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
 <p>Number of segments in the mesh.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">seg_mesh_append</span>(dst: <span class="en">SegMesh</span>, src: <span class="en">SegMesh</span>)</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">seg_mesh_append</span>(dst: <span class="en">SegMesh</span>, src: const <span class="en">SegMesh</span>)</code></pre>
 <p>Append all of <code>src</code>'s segments onto <code>dst</code> (concatenate the nine parallel arrays).  Used to assemble a render-group mesh from its chunks' CACHED meshes and to concatenate chunk meshes into a full build — order-preserving, so the consumer can rely on a stable per-group draw order.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">ChunkKey</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">ChunkKey</span> { ck: <span class="ty"><a href="stdlib-types.html">integer</a></span>, cx: <span class="ty"><a href="stdlib-types.html">integer</a></span>, cy: <span class="ty"><a href="stdlib-types.html">integer</a></span> }</code></pre>
 <p>A chunk-space coordinate.  <code>ck = enc_coord(cx, cy)</code> is its identity for dedup in the dirty index.</p>
 </div>
 <div class="item">
@@ -91,11 +91,11 @@
 <p>The chunk owning offset coord (x, y) for a field with <code>shift</code> (chunk = 1&lt;&lt;shift cells per axis; shift 5 = the moros 32×32 chunk).</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">ChunkField</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">ChunkField</span> { layout: <span class="ty"><a href="stdlib-types.html">integer</a></span>, xs: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;, ys: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;, cidx: <span class="ty">hash</span>&lt;<span class="en">CellRef</span>[ck]&gt;, chunk_shift: <span class="ty"><a href="stdlib-types.html">integer</a></span>, halo_k: <span class="ty"><a href="stdlib-types.html">integer</a></span>, dirty: <span class="ty">hash</span>&lt;<span class="en">ChunkKey</span>[ck]&gt;, buckets: <span class="ty">hash</span>&lt;<span class="en">ChunkBucket</span>[ck]&gt; }</code></pre>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">field_new</span>(layout: <span class="ty"><a href="stdlib-types.html">integer</a></span>, xs: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;, ys: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,</code></pre>
-<p>Build a field from placement-ordered coords.  The dirty index starts empty; the spatial index (cidx) and the chunk-&gt;cell partition (buckets) are built once (O(N)) and maintained incrementally thereafter (field_add_cell), so a later collect_dirty_inputs is O(dirty), not O(N).</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">field_new</span>(layout: <span class="ty"><a href="stdlib-types.html">integer</a></span>, xs: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;, ys: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;, chunk_shift: <span class="ty"><a href="stdlib-types.html">integer</a></span>, halo_k: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">ChunkField</span></code></pre>
+<p>Build a field from placement-ordered coords.  <code>layout</code> is 0 (odd-row offset coordinates, the only layout); <code>chunk_shift</code> makes a chunk 1 &lt;&lt; chunk_shift cells a side; <code>halo_k</code> is how far across a border a rule may read.  The dirty index starts empty; the spatial index (cidx) and the chunk-&gt;cell partition (buckets) are built once (O(N)) and maintained incrementally thereafter (field_add_cell), so a later collect_dirty_inputs is O(dirty), not O(N).</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">field_add_cell</span>(f: <span class="en">ChunkField</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
@@ -111,34 +111,34 @@
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">clear_dirty</span>(f: <span class="en">ChunkField</span>)</code></pre>
-<p>Clear the dirty index after a rebuild (@P307 OpClearKeyed: in-place free).</p>
+<p>Clear the dirty index after a rebuild.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">dirty_count</span>(f: <span class="en">ChunkField</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">dirty_count</span>(f: const <span class="en">ChunkField</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
 <p>Number of chunks currently dirty (verification / O(dirty) sizing).</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">chunk_is_dirty</span>(f: <span class="en">ChunkField</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">chunk_is_dirty</span>(f: const <span class="en">ChunkField</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
 <p>Is the chunk owning (x, y) currently marked dirty?</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">ChunkInput</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">ChunkInput</span> { key: <span class="en">ChunkKey</span>, cell_ixs: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;, halo_ixs: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; }</code></pre>
 <p>── B3: ChunkInput + per-chunk gather ─────────────────────────────────</p>
 <p>What a per-cell RULE needs for ONE chunk: the indices of the cells it OWNS (emit geometry for these) + the ≤halo_k border-neighbour cells in OTHER chunks it may READ as context.  COMPACT — no payload, and NO copy of the shared spatial index (<code>cidx</code>).  The rule receives <code>cidx</code> SEPARATELY as a read-only ref (keyed params don't deep-copy) and <code>par</code> forwards it as a context arg, so the per-chunk working set stays small and cache-resident (copying the whole index per chunk would be O(N)).</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">all_inputs</span>(f: <span class="en">ChunkField</span>, halo_k: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">ChunkInput</span>&gt;</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">all_inputs</span>(f: const <span class="en">ChunkField</span>, halo_k: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">ChunkInput</span>&gt;</code></pre>
 <p>One ChunkInput per chunk that holds cells (the full-build work-list). Reads the wired-in <code>f.buckets</code> (no re-partition).</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">collect_dirty_inputs</span>(f: <span class="en">ChunkField</span>, halo_k: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">ChunkInput</span>&gt;</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">collect_dirty_inputs</span>(f: const <span class="en">ChunkField</span>, halo_k: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">ChunkInput</span>&gt;</code></pre>
 <p>One ChunkInput per DIRTY chunk (the incremental-rebuild work-list). Iterates ONLY the dirty set and looks up each dirty chunk's bucket — so the cost is O(dirty chunks × their cells), independent of total N.  A dirty chunk with no owned cells (a halo-marked empty neighbour) is skipped.  Clear the dirty index after rebuilding.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">GroupKey</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">GroupKey</span> { gk: <span class="ty"><a href="stdlib-types.html">integer</a></span>, gx: <span class="ty"><a href="stdlib-types.html">integer</a></span>, gy: <span class="ty"><a href="stdlib-types.html">integer</a></span> }</code></pre>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">GroupInput</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">GroupInput</span> { key: <span class="en">GroupKey</span>, chunk_cks: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; }</code></pre>
 <p>The chunk ck's a group contains that actually hold cells (the assemble work-list).  No mesh here — gridmesh partitions; the consumer owns meshes.</p>
 </div>
 <div class="item">
@@ -146,11 +146,11 @@
 <p>The group owning CHUNK coord (cx, cy): chunk-space divided by group_dim. Uses chunk_div so any group_dim works (not just powers of two) — a free dial.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">all_groups</span>(f: <span class="en">ChunkField</span>, group_dim: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">GroupInput</span>&gt;</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">all_groups</span>(f: const <span class="en">ChunkField</span>, group_dim: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">GroupInput</span>&gt;</code></pre>
 <p>One GroupInput per group that holds cells (the full-build work-list). O(chunks): each non-empty chunk dedups into its group's chunk list.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">collect_dirty_groups</span>(f: <span class="en">ChunkField</span>, group_dim: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">GroupInput</span>&gt;</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">collect_dirty_groups</span>(f: const <span class="en">ChunkField</span>, group_dim: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">GroupInput</span>&gt;</code></pre>
 <p>One GroupInput per DIRTY group (the incremental re-upload work-list). A group is dirty if any of its chunks is dirty; its chunk_cks lists ALL its member chunks that hold cells (so the consumer reassembles the group's VBO from those chunks' CACHED meshes — unchanged chunks copied, not rebuilt).</p>
 <p>FLAT COST: derives the dirty groups from f.dirty (O(dirty)), then for each enumerates its group_dim × group_dim member chunk coords analytically and probes f.buckets — O(dirty groups × group_dim²), independent of total N. (Never scans all chunks, which would make per-edit cost grow with N.)</p>
 </div>
