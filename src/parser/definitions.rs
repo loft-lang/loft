@@ -3264,7 +3264,7 @@ impl Parser {
                 // calls a `#c` function yet, and `native` is deliberately left
                 // empty so the Rust dispatch path does not pick it up.
                 self.parse_c_binding();
-            } else if id == Some("hot".to_string()) || id == Some("cold".to_string()) {
+            } else if matches!(id.as_deref(), Some("hot" | "cold")) {
                 // `#hot` / `#cold` — the dispatch priority of a standard-library operator: a hot
                 // one runs inline in the lean loop on its registers (`fill::dispatch_lean`), a
                 // cold one is rare.  The generator reads it; the language never does.
