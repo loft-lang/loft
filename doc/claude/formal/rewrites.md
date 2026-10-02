@@ -3471,6 +3471,16 @@ read, so moving `e` crosses no effect; the fresh local is read nowhere outside t
 A result that reads the local twice keeps it (substituting one read would leave the other
 reading the value before).  `LOFT_NO_SINGLE_USE=1`.
 
+**The statement clause** (`single_use::rewrite_program`, built 2026-10-02): outside an inlined
+body, a comprehension's element temporary `_comp_N` — assigned once, read once in the whole
+function, never captured — whose value is pure (operators over locals and literals,
+`same_read::pure`) is moved into the next statement's read when everything that statement
+evaluates before the read is pure too.  A store and a load per element go.  The purity clause is
+load-bearing: dropped, an element computed by a function that appends to a log moved as well —
+the pin caught it (2026-10-02).  `LOFT_TRACE_SINGLE_USE=1`.  Guards
+`tests/scripts/a-comprehension-element-goes-straight-into-its-push.loft`,
+`tests/single_use.rs`.
+
 ### A power-of-two scale folds into a literal divisor
 
 ```

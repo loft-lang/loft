@@ -25,13 +25,15 @@ fn trace() -> bool {
 }
 
 /// How often `v` reads and assigns `t`.
-fn uses(v: &Value, t: u16, reads: &mut usize, sets: &mut usize) {
-    match v {
-        Value::Var(n) if *n == t => *reads += 1,
-        Value::Set(n, _) if *n == t => *sets += 1,
+fn uses(node: &Value, tmp: u16, reads: &mut usize, sets: &mut usize) {
+    match node {
+        Value::Var(n) if *n == tmp => *reads += 1,
+        Value::Set(n, _) if *n == tmp => *sets += 1,
+        // Transparent: the wrapped node is counted as its child, below.
+        Value::Span(_) => {}
         _ => {}
     }
-    v.for_each_child(&mut |c| uses(c, t, reads, sets));
+    node.for_each_child(&mut |c| uses(c, tmp, reads, sets));
 }
 
 /// The value a single-expression block wraps, or the node itself.
@@ -83,42 +85,40 @@ fn rewrite_in(
     data: &Data,
     vars: &crate::variables::Function,
     code: &Value,
-    v: &mut Value,
+    node: &mut Value,
 ) -> usize {
-    let mut n = 0;
-    v.for_each_child_mut(&mut |c| n += rewrite_in(data, vars, code, c));
-    let b = match v {
+    let mut moved = 0;
+    node.for_each_child_mut(&mut |c| moved += rewrite_in(data, vars, code, c));
+    let block = match node {
         // A loop's body is a block of statements like any other (a comprehension's is).
         Value::Block(b) | Value::Loop(b) => b,
-        _ => return n,
+        _ => return moved,
     };
-    let mut i = 0;
-    while i + 1 < b.operators.len() {
-        let (t, value) = match &b.operators[i] {
-            Value::Set(t, e) => (*t, bare(e).clone()),
-            _ => {
-                i += 1;
-                continue;
-            }
+    let mut at = 0;
+    while at + 1 < block.operators.len() {
+        let Value::Set(tmp, e) = &block.operators[at] else {
+            at += 1;
+            continue;
         };
+        let (tmp, value) = (*tmp, bare(e).clone());
         let (mut reads, mut sets) = (0, 0);
-        uses(code, t, &mut reads, &mut sets);
+        uses(code, tmp, &mut reads, &mut sets);
         let admitted = reads == 1
             && sets == 1
-            && !vars.is_captured(t)
-            && vars.name(t).starts_with("_comp_")
+            && !vars.is_captured(tmp)
+            && vars.name(tmp).starts_with("_comp_")
             && pure(data, &value)
             && matches!(value.unspan(), Value::Call(..))
-            && read_after_pure(data, &b.operators[i + 1], t) == Some(true);
+            && read_after_pure(data, &block.operators[at + 1], tmp) == Some(true);
         if admitted {
-            b.operators.remove(i);
-            substitute(&mut b.operators[i], t, &mut Some(value));
-            n += 1;
+            block.operators.remove(at);
+            substitute(&mut block.operators[at], tmp, &mut Some(value));
+            moved += 1;
         } else {
-            i += 1;
+            at += 1;
         }
     }
-    n
+    moved
 }
 
 /// Move every admitted temporary into its read; answers how many.
