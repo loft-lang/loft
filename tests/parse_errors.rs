@@ -5807,3 +5807,14 @@ fn a_reserved_operator_bound_is_met_by_builtins_only() {
          types define at a_reserved_operator_bound_is_met_by_builtins_only:5:59",
     );
 }
+
+/// `@FR-Op-Mark` — a plain `minus` that takes OTHER operands says nothing about what `a - b`
+/// answers, so the cure leaves the result open rather than borrowing that method's (`time`
+/// 0.3.2's `minus(self: DateTime, span: Duration) -> DateTime` read as the answer of `dt - dt`).
+#[test]
+fn an_unmarked_method_for_other_operands_leaves_the_result_open() {
+    code!(
+        "value struct D { ms: integer }\nvalue struct U { ms: integer }\nfn minus(self: D, span: U) -> D { D { ms: self.ms - span.ms } }\nfn test() { a = D { ms: 3 }; b = D { ms: 1 }; c = a - b; assert(c.ms == 2, \"m\"); }"
+    )
+    .error("`D` has a method `minus`, but `-` reaches only one written with `operator`: declare it `operator minus(self: D, other: D) -> …` at an_unmarked_method_for_other_operands_leaves_the_result_open:4:57");
+}
