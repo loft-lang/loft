@@ -1,0 +1,10 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1856 — the entry pulls in the module that names these types before it declares
+// them (loft#801's shape), and that module names each from a user whose `pub` is the
+// opposite of the type's.  The declarations below alone say what is `pub`.
+pub use fwd1856_inner::*;
+
+pub struct F1856Pub { p_n: integer }
+struct F1856Hid { h_n: integer }
