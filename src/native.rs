@@ -6,7 +6,6 @@ use crate::database::Stores;
 use crate::keys::{DbRef, Str};
 use crate::logger::Severity;
 use crate::parallel::{WorkerProgram, run_parallel_text};
-use crate::platform::sep;
 use crate::state::{Call, State};
 use crate::vector;
 use std::sync::Arc;
@@ -1269,7 +1268,7 @@ fn n_mtime(stores: &mut Stores, stack: &mut DbRef) {
 /// then stats it.
 fn n_is_dir(stores: &mut Stores, stack: &mut DbRef) {
     let v_path = stores.get::<Str>(stack);
-    let new_value = crate::codegen_runtime::fs_is_dir(&stores.resolve_path(v_path.str()));
+    let new_value = stores.fs_is_dir_at(v_path.str());
     stores.put(stack, new_value);
 }
 
@@ -1277,7 +1276,7 @@ fn n_is_dir(stores: &mut Stores, stack: &mut DbRef) {
 /// `default/02_files.loft`.
 fn n_is_symlink(stores: &mut Stores, stack: &mut DbRef) {
     let v_path = stores.get::<Str>(stack);
-    let new_value = crate::codegen_runtime::fs_is_symlink(&stores.resolve_path(v_path.str()));
+    let new_value = stores.fs_is_symlink_at(v_path.str());
     stores.put(stack, new_value);
 }
 
@@ -1285,7 +1284,7 @@ fn n_is_symlink(stores: &mut Stores, stack: &mut DbRef) {
 /// `default/02_files.loft`.
 fn n_is_file(stores: &mut Stores, stack: &mut DbRef) {
     let v_path = stores.get::<Str>(stack);
-    let new_value = crate::codegen_runtime::fs_is_file(&stores.resolve_path(v_path.str()));
+    let new_value = stores.fs_is_file_at(v_path.str());
     stores.put(stack, new_value);
 }
 
@@ -1682,7 +1681,8 @@ fn n_program_directory_dest(stores: &mut Stores, stack: &mut DbRef) {
 // buffer instead of `stores.scratch`.  Routed by `is_text_dest_native`.
 fn n_source_dir_dest(stores: &mut Stores, stack: &mut DbRef) {
     let dest = stores.get::<DbRef>(stack);
-    let v = stores.source_dir.clone();
+    // `@FR-Path-Sep` — the directory is given in the portable form.
+    let v = crate::file_access::given(&stores.source_dir);
     stores
         .store_mut(&dest)
         .addr_mut::<String>(dest.rec, dest.pos)
@@ -3584,10 +3584,10 @@ fn populate_frame_variables(
     }
 }
 
-/// Return the platform path separator as a loft `character`.
-/// `'\\'` on Windows filesystems, `'/'` everywhere else.
+/// The separator of a loft path, as a loft `character`: `'/'` on every platform
+/// (`@FR-Path-Sep`).
 fn n_path_sep(stores: &mut Stores, stack: &mut DbRef) {
-    stores.put(stack, sep());
+    stores.put(stack, '/');
 }
 
 /// Return the error text from the last `Type.parse()` call.

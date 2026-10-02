@@ -483,7 +483,11 @@ impl Stores {
                 .get_str(store.get_u32_raw(file.rec, file.pos + 24))
                 .to_owned()
         };
-        let resolved = self.resolve_path(&raw);
+        // `@FR-Path-Refuse` — a refused path is absent.
+        let Some(resolved) = self.resolve_path(&raw) else {
+            fill_absent(self.store_mut(file), file);
+            return false;
+        };
         let store = self.store_mut(file);
         let path = std::path::Path::new(&resolved);
         fill_file(path, store, file)
@@ -534,7 +538,9 @@ impl Stores {
     #[cfg(not(host_fs))]
     pub fn get_dir(&mut self, file_path: &str, result: &DbRef) -> bool {
         // #255 / @PLN9: re-home a relative dir path against the program anchor.
-        let resolved = self.resolve_path(file_path);
+        let Some(resolved) = self.resolve_path(file_path) else {
+            return false;
+        };
         let path = std::path::Path::new(&resolved);
         if let Ok(iter) = std::fs::read_dir(path) {
             let vector = DbRef {
@@ -550,7 +556,7 @@ impl Stores {
                     // Through the shared helper, so a Unix filename that legitimately
                     // contains a backslash is not split into a fake two-segment path —
                     // this listing is data a loft program reads back.
-                    res.insert(crate::file_access::portable_str(name), entry);
+                    res.insert(crate::file_access::given(name), entry);
                 }
                 // A non-UTF-8 name degrades that ENTRY (skipped), never the
                 // listing: aborting here returned a silently truncated vector.
@@ -623,7 +629,9 @@ impl Stores {
     pub fn get_png(&mut self, file_path: &str, result: &DbRef) -> bool {
         // #255 / @PLN9: re-home against the program anchor.  Outside the project
         // reads as absent, like any other file (loft#708).
-        let resolved = self.resolve_path(file_path);
+        let Some(resolved) = self.resolve_path(file_path) else {
+            return false;
+        };
         let store = self.store_mut(result);
         if let Ok((img, width, height)) = crate::png_store::read(&resolved, store) {
             if let Some(name) = std::path::Path::new(&resolved).file_name() {
@@ -673,7 +681,10 @@ impl Stores {
                 let raw = s.get_str(s.get_u32_raw(file.rec, file.pos + 24)).to_owned();
                 self.resolve_path(&raw)
             };
-            let resolved_name = resolved;
+            // `@FR-Path-Refuse` — a refused path is not created.
+            let Some(resolved_name) = resolved else {
+                return false;
+            };
             let s = self.store_mut(file);
             let mut file_ref = s.get_i32_raw(file.rec, file.pos + 28);
             if file_ref == i32::MIN {
@@ -715,7 +726,9 @@ impl Stores {
         // #255 / @PLN9: re-home a relative dir path against the program anchor.
         // Outside the project reads as absent — the same NULL a missing
         // directory gives (loft#708).
-        let resolved = self.resolve_path(path);
+        let Some(resolved) = self.resolve_path(path) else {
+            return DbRef::NULL;
+        };
         // @PLN102 H4 — a MISSING / non-directory path lists as NULL (the null
         // vector), distinct from an EMPTY-but-present directory (a length-0 vector).
         #[cfg(host_fs)]
@@ -760,7 +773,9 @@ impl Stores {
         // #255 / @PLN9: re-home against the program anchor.  Outside the
         // project reads as absent — the same NULL a missing file gives
         // (loft#708).
-        let resolved = self.resolve_path(path);
+        let Some(resolved) = self.resolve_path(path) else {
+            return DbRef::NULL;
+        };
         // @PLN102 H4 — a MISSING / unreadable file reads as NULL (the null vector),
         // distinct from an EMPTY-but-present file (a length-0 vector).  `None` is the
         // absent case; `Some(v)` (possibly empty) is a real read.
@@ -797,7 +812,9 @@ impl Stores {
     pub fn fs_file_map(&mut self, path: &str) -> DbRef {
         #[cfg(all(feature = "mmap", not(host_fs)))]
         {
-            let resolved = self.resolve_path(path);
+            let Some(resolved) = self.resolve_path(path) else {
+                return DbRef::NULL;
+            };
             let Ok(file) = std::fs::File::open(std::path::Path::new(&resolved)) else {
                 return DbRef::NULL;
             };
@@ -830,7 +847,9 @@ impl Stores {
         // #255 / @PLN9: re-home against the program anchor.  A path `file()`
         // reports absent must not be creatable here (loft#708); `false` is the
         // documented failure answer.
-        let resolved = self.resolve_path(path);
+        let Some(resolved) = self.resolve_path(path) else {
+            return false;
+        };
         // Read the byte payload out of the `vector<u8>` (same layout
         // `text_from_bytes_native` reads): inner record at (bytes.rec,
         // bytes.pos), live length at offset 4, payload from offset 8.

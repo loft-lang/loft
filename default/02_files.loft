@@ -106,10 +106,10 @@ fn OpSizeFile(file: File) -> integer fs#read;
 #cold
 fn OpDelete(path: text) -> integer fs#update;
 #cold
-#rust"codegen_runtime::fs_delete(&s.database.resolve_path(@path))"
+#rust"s.database.fs_delete_at(@path)"
 fn OpMoveFile(from: text, to: text) -> integer fs#update;
 #cold
-#rust"codegen_runtime::fs_move(&s.database.resolve_path(@from), &s.database.resolve_path(@to))"
+#rust"s.database.fs_move_at(@from, @to)"
 fn OpTruncateFile(self: File, size: integer) -> boolean fs#update;
 #cold
 fn OpSyncFile(self: File) -> boolean fs#update;
@@ -145,13 +145,13 @@ fn OpCallRef(fn_var: const u16, arg_size: const u16);
 #rust"s.fn_call_ref(@fn_var, @arg_size);"
 fn OpMkdir(path: text) -> integer fs#update;
 #cold
-#rust"codegen_runtime::fs_mkdir(&s.database.resolve_path(@path))"
+#rust"s.database.fs_mkdir_at(@path)"
 fn OpMkdirAll(path: text) -> integer fs#update;
 #cold
-#rust"codegen_runtime::fs_mkdir_all(&s.database.resolve_path(@path))"
+#rust"s.database.fs_mkdir_all_at(@path)"
 fn OpRmdir(path: text) -> integer fs#update;
 #cold
-#rust"codegen_runtime::fs_rmdir(&s.database.resolve_path(@path))"
+#rust"s.database.fs_rmdir_at(@path)"
 /// Reads the entire file as a UTF-8 text value.
 /// Use for small configuration files or scripts.
 /// Example: @STD-010
@@ -248,9 +248,8 @@ pub fn split_text(self: text, separator: text) -> vector<text> {
 }
 #pure
 // --- Files and directories ---
-/// Returns the platform path separator character: '\' on Windows, '/' elsewhere.
-/// Detected once at startup from the runtime filesystem, and fixed for the
-/// lifetime of the process.
+/// The separator of a loft path: '/' on every platform.  A path a program hands loft may
+/// also use '\' (it reads as '/'), and every path loft hands back uses '/'.
 
 pub fn path_sep() -> character;
 #impure(host_io)
@@ -337,18 +336,18 @@ pub fn rmdir(path: text) -> FileResult fs#update {
 /// Returns true if `path` exists and is a directory.
 /// Use to branch on a path's kind before descending into / reading it.
 pub fn is_dir(path: text) -> boolean fs#read;
-#rust"codegen_runtime::fs_is_dir(&s.database.resolve_path(@path))"
+#rust"s.database.fs_is_dir_at(@path)"
 #impure(io)
 /// Returns true if `path` exists and is a regular file.
 /// Use to confirm a directory entry is a readable file before opening it.
 pub fn is_file(path: text) -> boolean fs#read;
-#rust"codegen_runtime::fs_is_file(&s.database.resolve_path(@path))"
+#rust"s.database.fs_is_file_at(@path)"
 #impure(io)
 /// Returns true if `path` itself is a symbolic link, whatever it points at —
 /// is_dir and is_file answer for the TARGET, so a walk that must not follow a
 /// link asks this first.  False on a browser host, which has no links.
 pub fn is_symlink(path: text) -> boolean fs#read;
-#rust"codegen_runtime::fs_is_symlink(&s.database.resolve_path(@path))"
+#rust"s.database.fs_is_symlink_at(@path)"
 #impure(io)
 /// Lists the entry NAMES of directory `path` (base names, not full paths),
 /// sorted.  A MISSING / non-directory path lists as NULL (distinct

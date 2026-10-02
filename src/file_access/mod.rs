@@ -210,6 +210,84 @@ pub fn is_under_canonical(path: &PathText, dir: &PathText) -> bool {
     }
 }
 
+/// A path a loft PROGRAM handed the runtime, as the host spelling to open — or the refusal
+/// to log (`@FR-Path-Refuse`).  [`PathText::program`] is the rule; this renders it.  An empty
+/// path is passed through: there is no name to judge, and it names nothing.
+///
+/// # Errors
+/// The refused name and why.
+pub fn program_path(raw: &str) -> Result<String, String> {
+    if raw.is_empty() {
+        return Ok(String::new());
+    }
+    PathText::program(raw).map(|p| p.native())
+}
+
+/// `@FR-Path-Case` — a name means exactly its spelling.  `Err` when a name on `full`'s way
+/// matches an entry of its directory only when case is ignored: on a case-folding file
+/// system (Windows, macOS) the OS would answer for that other entry, and on Linux the two
+/// would be two files where Windows holds one.
+///
+/// Cost: on Linux one `stat` when the path exists, one directory read when it does not; on
+/// a case-folding system one `canonicalize` (which answers the on-disk spelling).
+///
+/// # Errors
+/// The clash, naming both spellings.
+pub fn case_clash(full: &str) -> Result<(), String> {
+    let want = PathText::host(full);
+    // The longest prefix that exists, and the first name below it that does not.
+    let mut existing = want.clone();
+    let mut missing: Option<String> = None;
+    while !exists(&existing) {
+        match existing.parent() {
+            Some(up) => {
+                missing = existing.file_name().map(str::to_string);
+                existing = up;
+            }
+            None => return Ok(()),
+        }
+    }
+    let folding = cfg!(any(windows, target_os = "macos"));
+    if folding && let Some(on_disk) = canonical(&existing) {
+        // Compare the trailing names: a pair equal without case but not with it is a clash.
+        for (asked, real) in existing
+            .parts()
+            .iter()
+            .rev()
+            .zip(on_disk.parts().iter().rev())
+        {
+            if asked != real && asked.to_lowercase() == real.to_lowercase() {
+                return Err(format!("`{asked}` is spelled `{real}` on disk"));
+            }
+        }
+    }
+    if let Some(name) = missing
+        && let Ok(entries) = read_dir(&existing)
+    {
+        let lower = name.to_lowercase();
+        if let Some(other) = entries
+            .iter()
+            .filter_map(PathText::file_name)
+            .find(|e| *e != name && e.to_lowercase() == lower)
+        {
+            return Err(format!("`{name}` would be a second spelling of `{other}`"));
+        }
+    }
+    Ok(())
+}
+
+/// `@FR-Path-Sep` — a host path in the form loft GIVES a program: `/` only and no trailing
+/// separator (`C:/Users/x/Temp`, `/tmp`), so a program joining `"{dir}/{name}"` builds one
+/// spelling on every platform.  Empty stays empty (no directory to give).
+#[must_use]
+pub fn given(path: &str) -> String {
+    if path.is_empty() {
+        String::new()
+    } else {
+        PathText::host(path).portable()
+    }
+}
+
 /// Is a source `file` in the shipped standard library — any directory named `default`
 /// on its way?  See [`path::is_stdlib_source`].
 #[must_use]
@@ -350,6 +428,75 @@ mod tests {
         assert!(same_file(&dir, &c));
         assert_eq!(canonical(&dir.join("missing")), None);
         assert!(is_under_canonical(&dir, &dir));
+    }
+
+    #[test]
+    fn a_program_path_reads_both_separators_and_refuses_what_no_platform_takes() {
+        let host = |t: &str| PathText::host(t).native();
+        assert_eq!(program_path(r"data\x.txt").unwrap(), host("data/x.txt"));
+        assert_eq!(program_path("/tmp/a/../b.txt").unwrap(), host("/tmp/b.txt"));
+        assert!(program_path("./x").is_ok());
+        // An absolute path is the host's: a drive is a Windows host's, and `:` refuses it
+        // as a name on Unix.
+        assert_eq!(
+            program_path(r"C:\data\x.txt").is_ok(),
+            Flavor::HOST == Flavor::Windows
+        );
+        for bad in [
+            "a:b.txt",
+            "q?.txt",
+            "x*",
+            "a<b",
+            "p|q",
+            "say\"hi\"",
+            "trail.",
+            "space ",
+            "aux.txt",
+            "CON",
+            "nul.tar.gz",
+            "com1",
+            "LPT9.log",
+            "d/C:x",
+            "tab\there",
+            "x/C:/y",
+        ] {
+            assert!(program_path(bad).is_err(), "{bad} must be refused");
+        }
+        for good in [
+            "com0",
+            "console.txt",
+            "auxiliary",
+            "a.b.c",
+            ".hidden",
+            "..",
+            "a/./b",
+            "",
+        ] {
+            assert!(program_path(good).is_ok(), "{good} must be accepted");
+        }
+    }
+
+    #[test]
+    fn a_name_that_differs_only_in_case_clashes() {
+        let dir = scratch("case");
+        write(&dir.join("b.txt"), "b").unwrap();
+        create_dir_all(&dir.join("sub")).unwrap();
+        let at = |rel: &str| dir.join(rel).native();
+        assert!(case_clash(&at("b.txt")).is_ok(), "the exact spelling");
+        assert!(case_clash(&at("c.txt")).is_ok(), "a new name");
+        assert!(
+            case_clash(&at("B.txt")).is_err(),
+            "a second spelling of b.txt"
+        );
+        assert!(
+            case_clash(&at("SUB/x.txt")).is_err(),
+            "a directory's second spelling"
+        );
+        assert!(
+            case_clash(&at("sub/new/deeper.txt")).is_ok(),
+            "missing below an exact name"
+        );
+        remove_dir_all(&dir).unwrap();
     }
 
     #[test]
