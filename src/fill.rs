@@ -28,9 +28,7 @@ use crate::tree;
 use crate::vector;
 
 pub static OPERATORS: &[fn(&mut State)] = &[
-    goto::<false>,
     goto_word::<false>,
-    goto_false::<false>,
     goto_false_word::<false>,
     const_true::<false>,
     const_false::<false>,
@@ -66,6 +64,8 @@ pub static OPERATORS: &[fn(&mut State)] = &[
     int_v_c_put::<false>,
     cmp_int_v_v_jump::<false>,
     cmp_int_v_c_jump::<false>,
+    goto::<false>,
+    goto_false::<false>,
     call::<false>,
     op_return::<false>,
     free_stack::<false>,
@@ -374,9 +374,7 @@ pub static OPERATORS: &[fn(&mut State)] = &[
 /// [`OPERATORS`] with the direct stack path compiled in (`@FR-R-FastTable`): valid
 /// only while `State::fast_stack` holds, which is fixed for a run.
 pub static OPERATORS_FAST: &[fn(&mut State)] = &[
-    goto::<true>,
     goto_word::<true>,
-    goto_false::<true>,
     goto_false_word::<true>,
     const_true::<true>,
     const_false::<true>,
@@ -412,6 +410,8 @@ pub static OPERATORS_FAST: &[fn(&mut State)] = &[
     int_v_c_put::<true>,
     cmp_int_v_v_jump::<true>,
     cmp_int_v_c_jump::<true>,
+    goto::<true>,
+    goto_false::<true>,
     call::<true>,
     op_return::<true>,
     free_stack::<true>,
@@ -720,9 +720,7 @@ pub static OPERATORS_FAST: &[fn(&mut State)] = &[
 /// [`OPERATORS_FAST`] with the bytecode position and the stack top passed in and
 /// returned in registers ([`Regs`]), so no op reads back what the previous op stored.
 pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
-    goto_r,
     goto_word_r,
-    goto_false_r,
     goto_false_word_r,
     const_true_r,
     const_false_r,
@@ -758,6 +756,8 @@ pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
     int_v_c_put_r,
     cmp_int_v_v_jump_r,
     cmp_int_v_c_jump_r,
+    goto_r,
+    goto_false_r,
     call_r,
     op_return_r,
     free_stack_r,
@@ -1066,9 +1066,7 @@ pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
 /// The loft name of each [`OPERATORS`] slot, in slot order — the operator declarations
 /// of the `default/` this binary was generated from.
 pub const OPERATOR_NAMES: &[&str] = &[
-    "OpGoto",
     "OpGotoWord",
-    "OpGotoFalse",
     "OpGotoFalseWord",
     "OpConstTrue",
     "OpConstFalse",
@@ -1104,6 +1102,8 @@ pub const OPERATOR_NAMES: &[&str] = &[
     "OpIntVCPut",
     "OpCmpIntVVJump",
     "OpCmpIntVCJump",
+    "OpGoto",
+    "OpGotoFalse",
     "OpCall",
     "OpReturn",
     "OpFreeStack",
@@ -1412,10 +1412,10 @@ pub const OPERATOR_NAMES: &[&str] = &[
 /// How many operators are `#hot` (slots `0..OP_HOT`, all one-byte opcodes): the lean
 /// loop runs them inline.  `Data::op_code` numbers a declaration from this and
 /// [`OP_NORMAL`], the order the tables above are laid out in.
-pub const OP_HOT: u16 = 38;
+pub const OP_HOT: u16 = 36;
 /// How many operators are neither `#hot` nor `#cold` (the slots after the hot ones); the
 /// `#cold` operators follow them, into the two-byte opcodes.
-pub const OP_NORMAL: u16 = 216;
+pub const OP_NORMAL: u16 = 218;
 
 #[inline(always)]
 fn goto<const F: bool>(s: &mut State) {
@@ -1428,13 +1428,6 @@ fn goto_r(s: &mut State, r: Regs) -> Regs {
     s.regs_in(r);
     goto::<true>(s);
     s.regs_out()
-}
-
-#[inline(always)]
-fn goto_h(s: &mut Hot) {
-    let operands = s.operands(1);
-    let v_step = operands.get::<i8>(0);
-    s.code_pos = (s.code_pos as i32 + i32::from(v_step)) as u32;
 }
 
 #[inline(always)]
@@ -1471,16 +1464,6 @@ fn goto_false_r(s: &mut State, r: Regs) -> Regs {
     s.regs_in(r);
     goto_false::<true>(s);
     s.regs_out()
-}
-
-#[inline(always)]
-fn goto_false_h(s: &mut Hot) {
-    let operands = s.operands(1);
-    let v_step = operands.get::<i8>(0);
-    let v_if_false = s.get_stack::<u8>();
-    if v_if_false != 1 {
-        s.code_pos = (s.code_pos as i32 + i32::from(v_step)) as u32;
-    }
 }
 
 #[inline(always)]
@@ -7100,190 +7083,180 @@ pub(crate) fn dispatch_lean(s: &mut State, opcode: u16, r: Regs) -> Regs {
     match opcode {
         0 => {
             let mut h = Hot::new(s, r);
-            goto_h(&mut h);
+            goto_word_h(&mut h);
             h.finish()
         }
         1 => {
             let mut h = Hot::new(s, r);
-            goto_word_h(&mut h);
+            goto_false_word_h(&mut h);
             h.finish()
         }
         2 => {
             let mut h = Hot::new(s, r);
-            goto_false_h(&mut h);
+            const_true_h(&mut h);
             h.finish()
         }
         3 => {
             let mut h = Hot::new(s, r);
-            goto_false_word_h(&mut h);
+            const_false_h(&mut h);
             h.finish()
         }
         4 => {
             let mut h = Hot::new(s, r);
-            const_true_h(&mut h);
+            var_bool_h(&mut h);
             h.finish()
         }
         5 => {
             let mut h = Hot::new(s, r);
-            const_false_h(&mut h);
+            const_int_h(&mut h);
             h.finish()
         }
         6 => {
             let mut h = Hot::new(s, r);
-            var_bool_h(&mut h);
+            var_int_h(&mut h);
             h.finish()
         }
         7 => {
             let mut h = Hot::new(s, r);
-            const_int_h(&mut h);
+            put_int_h(&mut h);
             h.finish()
         }
         8 => {
             let mut h = Hot::new(s, r);
-            var_int_h(&mut h);
+            conv_float_from_int_h(&mut h);
             h.finish()
         }
         9 => {
             let mut h = Hot::new(s, r);
-            put_int_h(&mut h);
+            add_int_h(&mut h);
             h.finish()
         }
         10 => {
             let mut h = Hot::new(s, r);
-            conv_float_from_int_h(&mut h);
+            min_int_h(&mut h);
             h.finish()
         }
         11 => {
             let mut h = Hot::new(s, r);
-            add_int_h(&mut h);
+            mul_int_h(&mut h);
             h.finish()
         }
         12 => {
             let mut h = Hot::new(s, r);
-            min_int_h(&mut h);
+            div_int_h(&mut h);
             h.finish()
         }
         13 => {
             let mut h = Hot::new(s, r);
-            mul_int_h(&mut h);
+            rem_int_h(&mut h);
             h.finish()
         }
         14 => {
             let mut h = Hot::new(s, r);
-            div_int_h(&mut h);
+            land_int_h(&mut h);
             h.finish()
         }
         15 => {
             let mut h = Hot::new(s, r);
-            rem_int_h(&mut h);
+            eq_int_h(&mut h);
             h.finish()
         }
         16 => {
             let mut h = Hot::new(s, r);
-            land_int_h(&mut h);
+            lt_int_h(&mut h);
             h.finish()
         }
         17 => {
             let mut h = Hot::new(s, r);
-            eq_int_h(&mut h);
+            le_int_h(&mut h);
             h.finish()
         }
         18 => {
             let mut h = Hot::new(s, r);
-            lt_int_h(&mut h);
+            const_float_h(&mut h);
             h.finish()
         }
         19 => {
             let mut h = Hot::new(s, r);
-            le_int_h(&mut h);
+            var_float_h(&mut h);
             h.finish()
         }
         20 => {
             let mut h = Hot::new(s, r);
-            const_float_h(&mut h);
+            put_float_h(&mut h);
             h.finish()
         }
         21 => {
             let mut h = Hot::new(s, r);
-            var_float_h(&mut h);
+            conv_bool_from_float_h(&mut h);
             h.finish()
         }
         22 => {
             let mut h = Hot::new(s, r);
-            put_float_h(&mut h);
+            add_float_h(&mut h);
             h.finish()
         }
         23 => {
             let mut h = Hot::new(s, r);
-            conv_bool_from_float_h(&mut h);
+            min_float_h(&mut h);
             h.finish()
         }
         24 => {
             let mut h = Hot::new(s, r);
-            add_float_h(&mut h);
+            mul_float_h(&mut h);
             h.finish()
         }
         25 => {
             let mut h = Hot::new(s, r);
-            min_float_h(&mut h);
+            div_float_h(&mut h);
             h.finish()
         }
         26 => {
             let mut h = Hot::new(s, r);
-            mul_float_h(&mut h);
+            div_float_nullable_h(&mut h);
             h.finish()
         }
         27 => {
             let mut h = Hot::new(s, r);
-            div_float_h(&mut h);
+            lt_float_h(&mut h);
             h.finish()
         }
         28 => {
             let mut h = Hot::new(s, r);
-            div_float_nullable_h(&mut h);
+            int_v_v_h(&mut h);
             h.finish()
         }
         29 => {
             let mut h = Hot::new(s, r);
-            lt_float_h(&mut h);
+            int_v_c_h(&mut h);
             h.finish()
         }
         30 => {
             let mut h = Hot::new(s, r);
-            int_v_v_h(&mut h);
+            cmp_int_v_v_h(&mut h);
             h.finish()
         }
         31 => {
             let mut h = Hot::new(s, r);
-            int_v_c_h(&mut h);
+            cmp_int_v_c_h(&mut h);
             h.finish()
         }
         32 => {
             let mut h = Hot::new(s, r);
-            cmp_int_v_v_h(&mut h);
+            int_v_v_put_h(&mut h);
             h.finish()
         }
         33 => {
             let mut h = Hot::new(s, r);
-            cmp_int_v_c_h(&mut h);
+            int_v_c_put_h(&mut h);
             h.finish()
         }
         34 => {
             let mut h = Hot::new(s, r);
-            int_v_v_put_h(&mut h);
-            h.finish()
-        }
-        35 => {
-            let mut h = Hot::new(s, r);
-            int_v_c_put_h(&mut h);
-            h.finish()
-        }
-        36 => {
-            let mut h = Hot::new(s, r);
             cmp_int_v_v_jump_h(&mut h);
             h.finish()
         }
-        37 => {
+        35 => {
             let mut h = Hot::new(s, r);
             cmp_int_v_c_jump_h(&mut h);
             h.finish()

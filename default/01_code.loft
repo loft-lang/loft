@@ -123,7 +123,6 @@ pub interface Printable {
 
 // General operations
 fn OpGoto(step: const i8);
-#hot
 #rust"s.code_pos = (s.code_pos as i32 + i32::from(@step)) as u32;"
 // The wide jump forms carry a 32-bit displacement.  A 16-bit one silently
 // truncated past ~32 KB of function body: the loop's backward jump landed
@@ -136,7 +135,6 @@ fn OpGotoWord(step: const i32);
 #hot
 #rust"s.code_pos = (i64::from(s.code_pos) + i64::from(@step)) as u32;"
 fn OpGotoFalse(step: const i8, if_false: boolean);
-#hot
 #rust"if @if_false != 1 {{s.code_pos = (s.code_pos as i32 + i32::from(@step)) as u32;}}"
 fn OpGotoFalseWord(step: const i32, if_false: boolean);
 #hot
