@@ -100,6 +100,22 @@ A typo prints an error and the prompt comes back; everything you defined before
 is still there. A run-time error (such as a failed `assert`) is caught the same
 way — the session keeps going.
 
+## Finding what there is
+
+Five commands answer "what can I use?" without leaving the REPL, and without a network:
+they read the feature catalogue built into loft and the registry index already on your
+machine (`loft search` or `loft install` fetches it once).
+
+| Command | What it shows |
+|---|---|
+| `:features [word]` | Every language feature, grouped (values and types, collections, control flow, …). With a word, the features that mention it (`:features slice`). `:features inside` lists how loft itself is built. |
+| `:libs` | Every library in the registry, grouped by category, with its newest version, whether it is installed here, and its description. |
+| `:api <library> [word]` | Everything a library offers — each public function and type with its doc — or only the items whose signature contains `word`. |
+| `:ops <Type>` | What a type can be written with: each operator and the definition behind it, its `[ ]` forms, and the interfaces it meets. |
+| `:doc <name>` | One thing in full: a feature (`:doc @F2`, `:doc ??`, `:doc match`), a function, type or method (`:doc split`), a library function (`:doc time::from_ymd`), or a library (`:doc time`). `:doc <feature> run` runs the feature's example in a scratch session, so its definitions never meet yours. |
+
+The same text is on the web pages: both are rendered from one source.
+
 ## REPL commands
 
 Commands start with a colon:

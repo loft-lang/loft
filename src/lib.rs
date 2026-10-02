@@ -394,6 +394,7 @@ pub mod live_dispatch;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod live_reload;
 pub mod repl;
+pub mod repl_doc;
 pub mod rpc;
 pub mod script;
 pub mod serve;
