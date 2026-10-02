@@ -92,6 +92,7 @@ open plan.  Silent-wrong defects are issues, not plans: `gh issue list --label s
 | Plan | status | What it is |
 |---|---|---|
 | [@PLN181](https://github.com/loft-lang/plans/issues/181) | active | The standard library compiled like any other library: interpreted scripts call compiled loft bodies, kernels retire |
+| [@PLN184](https://github.com/loft-lang/plans/issues/184) | future | The compiler touches the file system only through `file_access`, refused by Clippy ([CODE.md § File access](CODE.md#file-access)) |
 | [@PLN148](https://github.com/loft-lang/plans/issues/148) | next | Better PHP end to end — a web client, an HTTPS server that renews its own certificate, and the libraries between them ([WEB_STACK.md](WEB_STACK.md)) |
 | [@PLN72](https://github.com/loft-lang/plans/issues/72) | future | Renderer backend boundary |
 | [@PLN43](https://github.com/loft-lang/plans/issues/43) | parked | loft store durability — three-tier opt-in mmap durability |
