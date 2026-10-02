@@ -22,10 +22,11 @@
 // `--native`, which has no dispatch loop.
 //
 // @falsified-at: none — it guards a rewrite no earlier build has, so no control fails it.
-//   Falsified instead by planted defects in `State::Hot`, each failing it on the default
-//   (inline) path and passing with `LOFT_NO_HOT=1`: a push that does not advance the stack
-//   top fails every test; a local read one slot high fails every test; the jump arms taking
-//   their target from the position BEFORE the operands fails `test_jumps`.
+//   Falsified instead by planted defects in `State::Hot`, each caught on the default (inline)
+//   path and passing with `LOFT_NO_HOT=1`: a push that does not advance the stack top ends the
+//   run in SIGSEGV at the first fused push; a local read one slot high never leaves a loop (the
+//   watchdog stops it); `raise_recoverable` called without handing the registers back to
+//   `State` fails `test_float` (the error is raised over a stale stack top).
 
 fn int_ops(a: integer, b: integer) -> text {
   sum = (a + 1) + (b + 2);
