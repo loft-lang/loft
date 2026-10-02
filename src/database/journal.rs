@@ -617,14 +617,16 @@ mod tests {
     /// bytes": there is no window in which a freed record's old contents are readable.
     /// (This falsified the first draft of the design, which assumed a freed record's
     /// bytes survived for undo.)  The record freed here is INTERIOR — a live record follows
-    /// it — so it becomes a tree node; one freed into the store's tail joins the wilderness
-    /// (`@FR-H-Wilderness`), which writes only its header and footer, and its old bytes
-    /// survive until the next claim takes them.  Neither is a window anyone may rely on.
+    /// it — and larger than `@FR-H-LazyFree`'s small blocks (`LAZY_MAX_WORDS`), so it becomes a
+    /// tree node at the delete.  A small block's delete is LAZY instead: it stays out of the
+    /// tree, its old bytes intact, until the sweep; and one freed into the store's tail joins
+    /// the wilderness (`@FR-H-Wilderness`), which writes only its header and footer.  Its bytes
+    /// survive until the next claim takes them.  None of these is a window anyone may rely on.
     #[test]
     fn freelist_repurposes_a_freed_blocks_body() {
-        let mut s = Store::new_in_use(64);
-        let rec = s.claim(4);
-        let _after = s.claim(4);
+        let mut s = Store::new_in_use(1024);
+        let rec = s.claim(80);
+        let _after = s.claim(80);
         s.set_u32_raw(rec, 4, 0xDEAD_BEEF); // where a vector's length lives
         s.set_u32_raw(rec, 8, 0x0BAD_F00D); // where element 0 lives
         s.delete(rec);

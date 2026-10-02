@@ -7308,7 +7308,13 @@ mod tests {
     /// did was a bounds check, and this is the claim that the field read's own check catches
     /// every failure it caught: a record past the store's end still refuses.
     #[test]
-    #[should_panic(expected = "Store access out of bounds")]
+    // A build with debug assertions refuses one step earlier, at the claims check; both
+    // messages are this refusal.
+    #[cfg_attr(debug_assertions, should_panic(expected = "Unknown record"))]
+    #[cfg_attr(
+        not(debug_assertions),
+        should_panic(expected = "Store access out of bounds")
+    )]
     fn a_raw_read_past_the_store_still_refuses() {
         let s = Store::new(16);
         let _ = s.get_u32_raw(1000, 4);
@@ -7316,7 +7322,7 @@ mod tests {
 
     #[test]
     fn a_claim_that_grows_another_store_is_allowed() {
-        let mut store = Store::new(16);
+        let mut store = Store::new_in_use(16);
         for _ in 0..64 {
             store.claim(8);
         }
