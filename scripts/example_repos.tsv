@@ -40,7 +40,7 @@ CRY	loft-libs-core	https://github.com/loft-lang/loft-libs-core	main
 RGX	loft-libs-core	https://github.com/loft-lang/loft-libs-core	main
 RND	loft-libs-core	https://github.com/loft-lang/loft-libs-core	main
 ZTX	loft-libs-core	https://github.com/loft-lang/loft-libs-core	main
-# loft-libs-graphics (graphics, gridmesh, shapes, imaging)
+# loft-libs-graphics (graphics, gridmesh, shapes, imaging, stage, text2d, tween, drawing)
 GFX	loft-libs-graphics	https://github.com/loft-lang/loft-libs-graphics	main
 STG	loft-libs-graphics	https://github.com/loft-lang/loft-libs-graphics	main
 T2D	loft-libs-graphics	https://github.com/loft-lang/loft-libs-graphics	main
@@ -48,6 +48,7 @@ TWN	loft-libs-graphics	https://github.com/loft-lang/loft-libs-graphics	main
 GRM	loft-libs-graphics	https://github.com/loft-lang/loft-libs-graphics	main
 IMG	loft-libs-graphics	https://github.com/loft-lang/loft-libs-graphics	main
 SHP	loft-libs-graphics	https://github.com/loft-lang/loft-libs-graphics	main
+DRW	loft-libs-graphics	https://github.com/loft-lang/loft-libs-graphics	main
 # loft-libs-net (game_protocol, server, web, ssh)
 GMP	loft-libs-net	https://github.com/loft-lang/loft-libs-net	main
 SRV	loft-libs-net	https://github.com/loft-lang/loft-libs-net	main
