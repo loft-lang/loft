@@ -912,3 +912,35 @@ byte vector variable is copied by index (pluginabi's bench); `(R-TextRun)` is cb
 the bench body today.  An `integer` or `float` run (`members[st + m] ?? 0` in Moros,
 `?? 0.0` in hex_fit) keeps its loop: its elements can hold the null the `??` replaces, so it
 needs an append that substitutes the default — the next clause, priced on those rows first.
+
+## `mat4_mul` and `check_request` re-profiled (2026-10-02) — what is left is store traffic
+
+**`mat4_mul`** (mesh3d, 23.0× Rust after `(H-SwapIn)` and `(R-RepeatRun)`).  A probe running
+only `mo_c = mat4_mul(mo_a, mo_c)` 10⁶ times: 213 ns a call, `n_mat4_mul`'s own code 33 % —
+the other two thirds is store work done on every call.  The caller hands the call a NULL
+return buffer each round (`__ref_5` is never assigned), so the callee creates a store, claims
+a 16-element vector, fills it; the caller then resets `mo_c`'s store (`OpDatabase`), exchanges
+the two, and frees the released one.  Priced by hand-editing the emitted Rust (same output,
+`taskset`, three interleaved runs each):
+
+| form | time | |
+|---|--:|---|
+| as emitted | 0.19 s | |
+| A: exchange without resetting `mo_c` first, free the released store | 0.15 s | −21 % |
+| C: keep the released store as the next round's buffer, reset it | 0.14 s | −26 % |
+| B: keep it, and the callee refills the vector the buffer already holds | **0.07 s** | **−63 %** |
+
+So the prize is B, double-buffering: no store created or freed per round, and the literal
+`Mat4 { m: [16 × 0.0] }` written into a buffer of the same type refilling its existing vector
+in place instead of zeroing the field (which orphans the old vector) and claiming a new one.
+Both halves are needed: C shows the store reuse alone buys a third of it.
+
+**`check_request`** (pluginabi, 22.6×).  87 % of a check is cbor's `read_value`, called twice
+per frame (`pa_decode_ok` reads only `.ok`, `pa_decode` the value).  By leaf, under
+`check_request`: the record allocator (claim, best fit, free list, prefill, delete) ~28 %; a
+heap `String` made and freed for every decoded text (`malloc`/`free`, `from_utf8`,
+`text_from_bytes_range`) ~11 %; store lookups (`store_mut`) 6.5 %; `holds_no_heap` 4.6 %
+(already the fast path that skips the release walk); the decoder's own code ~15 %.  The levers,
+largest first: the first decode builds a whole tree only to read `.ok` (about half the work,
+a demand-driven specialisation, not priced); the per-text `String` round trip (write the text
+into the store from the byte range directly, runtime, both backends); then the per-record claims.
