@@ -140,6 +140,8 @@ fn bind_statement(
 ) -> usize {
     // An assignment's value, a `return`'s, or the statement itself as a block's value.
     let expr: &mut Value = match stmt {
+        // A source position is transparent: the wrapped statement is the statement.
+        Value::Span(s) => return bind_statement(data, vars, scope, &mut s.1, before),
         Value::Set(_, e) | Value::Return(e) => e,
         Value::Call(..) => stmt,
         _ => return 0,
