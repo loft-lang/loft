@@ -33,383 +33,396 @@ fn init(cell: &std::cell::UnsafeCell<Stores>) {
     let t5: u16 = 5;
     let t6: u16 = 6;
     let _ = (t0, t1, t2, t3, t4, t5, t6); // suppress unused-let warnings for unreferenced base types
-    let t7 = db.enumerate("FieldValue");
-    let t8 = db.structure("__typevar_Self", 0);
-    let t9 = db.structure("__typevar_T", 0);
-    let t10 = db.structure("__typevar_T#2", 0);
-    let t11 = db.structure("__typevar_T#3", 0);
-    let t12 = db.structure("main_vector<__typevar_T>", 0);
-    let vec_vector = db.vector(t9);
-    db.field(t12, "vector", vec_vector);
-    db.set_field_nullable(t12, "vector", true);
-    let t13 = db.vector(t9);
-    let _ = t13; // may be unused
-    let t14 = db.structure("__typevar_U", 0);
-    let t15 = db.structure("__typevar_T#4", 0);
-    let t16 = db.structure("main_vector<__typevar_T#4>", 0);
-    let vec_vector = db.vector(t15);
-    db.field(t16, "vector", vec_vector);
-    db.set_field_nullable(t16, "vector", true);
-    let t17 = db.vector(t15);
-    let _ = t17; // may be unused
-    let t18 = db.structure("__typevar_AssertValue", 0);
-    let t19 = db.structure("FvBool", 1);
-    let byte_enum = db.byte(0, false);
-    db.field(t19, "enum", byte_enum);
-    db.set_field_nullable(t19, "enum", true);
-    db.field(t19, "v", t4);
-    let t20 = db.byte(0, false);
-    let _ = t20; // may be unused
-    let t21 = db.structure("FvInt", 2);
-    let byte_enum = db.byte(0, false);
-    db.field(t21, "enum", byte_enum);
-    db.set_field_nullable(t21, "enum", true);
-    db.field(t21, "v", 0);
-    let t22 = db.structure("FvLong", 3);
-    let byte_enum = db.byte(0, false);
-    db.field(t22, "enum", byte_enum);
-    db.set_field_nullable(t22, "enum", true);
-    db.field(t22, "v", 0);
-    let t23 = db.structure("FvFloat", 4);
-    let byte_enum = db.byte(0, false);
-    db.field(t23, "enum", byte_enum);
-    db.set_field_nullable(t23, "enum", true);
-    db.field(t23, "v", t3);
-    let t24 = db.structure("FvSingle", 5);
-    let byte_enum = db.byte(0, false);
-    db.field(t24, "enum", byte_enum);
-    db.set_field_nullable(t24, "enum", true);
-    db.field(t24, "v", t2);
-    let t25 = db.structure("FvChar", 6);
-    let byte_enum = db.byte(0, false);
-    db.field(t25, "enum", byte_enum);
-    db.set_field_nullable(t25, "enum", true);
-    db.field(t25, "v", t6);
-    let t26 = db.structure("FvText", 7);
-    let byte_enum = db.byte(0, false);
-    db.field(t26, "enum", byte_enum);
-    db.set_field_nullable(t26, "enum", true);
-    db.field(t26, "v", t5);
-    let t27 = db.structure("StructField", 0);
-    db.field(t27, "name", t5);
-    db.field(t27, "value", t7);
-    db.field(t27, "nullable", t4);
-    let t28 = db.vector(t11);
-    let _ = t28; // may be unused
-    let t29 = db.structure("main_vector<__typevar_T#3>", 0);
+    let t7 = db.vector(t0);
+    let _ = t7; // may be unused
+    let t8 = db.enumerate("Ordering");
+    let t9 = db.enumerate("FieldValue");
+    let t10 = db.structure("__typevar_Self", 0);
+    let t11 = db.structure("__typevar_T#1", 0);
+    let t12 = db.structure("__typevar_T#2", 0);
+    let t13 = db.structure("__typevar_T#3", 0);
+    let t14 = db.structure("main_vector<__typevar_T#1>", 0);
     let vec_vector = db.vector(t11);
-    db.field(t29, "vector", vec_vector);
-    db.set_field_nullable(t29, "vector", true);
-    let t30 = db.vector(t14);
-    let _ = t30; // may be unused
-    let t31 = db.structure("main_vector<__typevar_U>", 0);
-    let vec_vector = db.vector(t14);
-    db.field(t31, "vector", vec_vector);
-    db.set_field_nullable(t31, "vector", true);
-    let t32 = db.vector(t0);
-    let _ = t32; // may be unused
-    let t33 = db.vector(t10);
-    let _ = t33; // may be unused
-    let t34 = db.structure("main_vector<__typevar_T#2>", 0);
-    let vec_vector = db.vector(t10);
-    db.field(t34, "vector", vec_vector);
-    db.set_field_nullable(t34, "vector", true);
-    let t35 = db.structure("main_vector<integer>", 0);
+    db.field(t14, "vector", vec_vector);
+    db.set_field_nullable(t14, "vector", true);
+    let t15 = db.vector(t11);
+    let _ = t15; // may be unused
+    let t16 = db.structure("__typevar_K#1", 0);
+    let t17 = db.structure("main_vector<__typevar_K#1>", 0);
+    let vec_vector = db.vector(t16);
+    db.field(t17, "vector", vec_vector);
+    db.set_field_nullable(t17, "vector", true);
+    let t18 = db.vector(t16);
+    let _ = t18; // may be unused
+    let t19 = db.structure("main_vector<integer>", 0);
     let vec_vector = db.vector(t0);
-    db.field(t35, "vector", vec_vector);
-    db.set_field_nullable(t35, "vector", true);
-    let t36 = db.vector(t5);
-    let _ = t36; // may be unused
-    let t37 = db.enumerate("Format");
-    let t38 = db.enumerate("FileResult");
-    let t39 = db.structure("EnvVariable", 0);
-    db.field(t39, "name", t5);
-    db.field(t39, "value", t5);
-    let t40 = db.structure("File", 0);
-    db.field(t40, "path", t5);
-    db.field(t40, "size", 0);
-    db.field(t40, "format", t37);
-    let int_ref = db.int(-2147483647, true);
-    db.field(t40, "ref", int_ref);
-    db.set_field_nullable(t40, "ref", true);
-    db.field(t40, "current", 0);
-    db.field(t40, "next", 0);
-    let t41 = db.int(-2147483647, true);
+    db.field(t19, "vector", vec_vector);
+    db.set_field_nullable(t19, "vector", true);
+    let t20 = db.structure("main_vector<__typevar_T#3>", 0);
+    let vec_vector = db.vector(t13);
+    db.field(t20, "vector", vec_vector);
+    db.set_field_nullable(t20, "vector", true);
+    let t21 = db.vector(t13);
+    let _ = t21; // may be unused
+    let t22 = db.structure("__typevar_K#2", 0);
+    let t23 = db.structure("__typevar_U#1", 0);
+    let t24 = db.structure("__typevar_T#4", 0);
+    let t25 = db.structure("main_vector<__typevar_T#4>", 0);
+    let vec_vector = db.vector(t24);
+    db.field(t25, "vector", vec_vector);
+    db.set_field_nullable(t25, "vector", true);
+    let t26 = db.vector(t24);
+    let _ = t26; // may be unused
+    let t27 = db.structure("__typevar_AssertValue#1", 0);
+    let t28 = db.structure("FvBool", 1);
+    let byte_enum = db.byte(0, false);
+    db.field(t28, "enum", byte_enum);
+    db.set_field_nullable(t28, "enum", true);
+    db.field(t28, "v", t4);
+    let t29 = db.byte(0, false);
+    let _ = t29; // may be unused
+    let t30 = db.structure("FvInt", 2);
+    let byte_enum = db.byte(0, false);
+    db.field(t30, "enum", byte_enum);
+    db.set_field_nullable(t30, "enum", true);
+    db.field(t30, "v", 0);
+    let t31 = db.structure("FvLong", 3);
+    let byte_enum = db.byte(0, false);
+    db.field(t31, "enum", byte_enum);
+    db.set_field_nullable(t31, "enum", true);
+    db.field(t31, "v", 0);
+    let t32 = db.structure("FvFloat", 4);
+    let byte_enum = db.byte(0, false);
+    db.field(t32, "enum", byte_enum);
+    db.set_field_nullable(t32, "enum", true);
+    db.field(t32, "v", t3);
+    let t33 = db.structure("FvSingle", 5);
+    let byte_enum = db.byte(0, false);
+    db.field(t33, "enum", byte_enum);
+    db.set_field_nullable(t33, "enum", true);
+    db.field(t33, "v", t2);
+    let t34 = db.structure("FvChar", 6);
+    let byte_enum = db.byte(0, false);
+    db.field(t34, "enum", byte_enum);
+    db.set_field_nullable(t34, "enum", true);
+    db.field(t34, "v", t6);
+    let t35 = db.structure("FvText", 7);
+    let byte_enum = db.byte(0, false);
+    db.field(t35, "enum", byte_enum);
+    db.set_field_nullable(t35, "enum", true);
+    db.field(t35, "v", t5);
+    let t36 = db.structure("StructField", 0);
+    db.field(t36, "name", t5);
+    db.field(t36, "value", t9);
+    db.field(t36, "nullable", t4);
+    let t37 = db.vector(t23);
+    let _ = t37; // may be unused
+    let t38 = db.structure("main_vector<__typevar_U#1>", 0);
+    let vec_vector = db.vector(t23);
+    db.field(t38, "vector", vec_vector);
+    db.set_field_nullable(t38, "vector", true);
+    let t39 = db.vector(t12);
+    let _ = t39; // may be unused
+    let t40 = db.structure("main_vector<__typevar_T#2>", 0);
+    let vec_vector = db.vector(t12);
+    db.field(t40, "vector", vec_vector);
+    db.set_field_nullable(t40, "vector", true);
+    let t41 = db.vector(t5);
     let _ = t41; // may be unused
-    let t42 = db.structure("main_vector<text>", 0);
+    let t42 = db.enumerate("Format");
+    let t43 = db.enumerate("FileResult");
+    let t44 = db.structure("EnvVariable", 0);
+    db.field(t44, "name", t5);
+    db.field(t44, "value", t5);
+    let t45 = db.structure("File", 0);
+    db.field(t45, "path", t5);
+    db.field(t45, "size", 0);
+    db.field(t45, "format", t42);
+    let int_ref = db.int(-2147483647, true);
+    db.field(t45, "ref", int_ref);
+    db.set_field_nullable(t45, "ref", true);
+    db.field(t45, "current", 0);
+    db.field(t45, "next", 0);
+    let t46 = db.int(-2147483647, true);
+    let _ = t46; // may be unused
+    let t47 = db.structure("main_vector<text>", 0);
     let vec_vector = db.vector(t5);
-    db.field(t42, "vector", vec_vector);
-    db.set_field_nullable(t42, "vector", true);
-    let t43 = db.structure("main_vector<File>", 0);
-    let vec_vector = db.vector(t40);
-    db.field(t43, "vector", vec_vector);
-    db.set_field_nullable(t43, "vector", true);
-    let t44 = db.vector(t40);
-    let _ = t44; // may be unused
-    let t45 = db.enumerate("ArgValue");
-    let t46 = db.structure("NullVal", 1);
-    let byte_enum = db.byte(0, false);
-    db.field(t46, "enum", byte_enum);
-    db.set_field_nullable(t46, "enum", true);
-    let t47 = db.structure("BoolVal", 2);
-    let byte_enum = db.byte(0, false);
-    db.field(t47, "enum", byte_enum);
-    db.set_field_nullable(t47, "enum", true);
-    db.field(t47, "b", t4);
-    let t48 = db.structure("IntVal", 3);
-    let byte_enum = db.byte(0, false);
-    db.field(t48, "enum", byte_enum);
-    db.set_field_nullable(t48, "enum", true);
-    db.field(t48, "n", 0);
-    let t49 = db.structure("LongVal", 4);
-    let byte_enum = db.byte(0, false);
-    db.field(t49, "enum", byte_enum);
-    db.set_field_nullable(t49, "enum", true);
-    db.field(t49, "n", 0);
-    let t50 = db.structure("FloatVal", 5);
-    let byte_enum = db.byte(0, false);
-    db.field(t50, "enum", byte_enum);
-    db.set_field_nullable(t50, "enum", true);
-    db.field(t50, "f", t3);
-    let t51 = db.structure("SingleVal", 6);
+    db.field(t47, "vector", vec_vector);
+    db.set_field_nullable(t47, "vector", true);
+    let t48 = db.structure("main_vector<File>", 0);
+    let vec_vector = db.vector(t45);
+    db.field(t48, "vector", vec_vector);
+    db.set_field_nullable(t48, "vector", true);
+    let t49 = db.vector(t45);
+    let _ = t49; // may be unused
+    let t50 = db.enumerate("ArgValue");
+    let t51 = db.structure("NullVal", 1);
     let byte_enum = db.byte(0, false);
     db.field(t51, "enum", byte_enum);
     db.set_field_nullable(t51, "enum", true);
-    db.field(t51, "f", t2);
-    let t52 = db.structure("CharVal", 7);
+    let t52 = db.structure("BoolVal", 2);
     let byte_enum = db.byte(0, false);
     db.field(t52, "enum", byte_enum);
     db.set_field_nullable(t52, "enum", true);
-    db.field(t52, "c", t6);
-    let t53 = db.structure("TextVal", 8);
+    db.field(t52, "b", t4);
+    let t53 = db.structure("IntVal", 3);
     let byte_enum = db.byte(0, false);
     db.field(t53, "enum", byte_enum);
     db.set_field_nullable(t53, "enum", true);
-    db.field(t53, "t", t5);
-    let t54 = db.structure("RefVal", 9);
+    db.field(t53, "n", 0);
+    let t54 = db.structure("LongVal", 4);
     let byte_enum = db.byte(0, false);
     db.field(t54, "enum", byte_enum);
     db.set_field_nullable(t54, "enum", true);
-    db.field(t54, "store", 0);
-    db.field(t54, "rec", 0);
-    db.field(t54, "pos", 0);
-    let t55 = db.structure("FnVal", 10);
+    db.field(t54, "n", 0);
+    let t55 = db.structure("FloatVal", 5);
     let byte_enum = db.byte(0, false);
     db.field(t55, "enum", byte_enum);
     db.set_field_nullable(t55, "enum", true);
-    db.field(t55, "d_nr", 0);
-    let t56 = db.structure("OtherVal", 11);
+    db.field(t55, "f", t3);
+    let t56 = db.structure("SingleVal", 6);
     let byte_enum = db.byte(0, false);
     db.field(t56, "enum", byte_enum);
     db.set_field_nullable(t56, "enum", true);
-    db.field(t56, "description", t5);
-    let t57 = db.structure("ArgInfo", 0);
-    db.field(t57, "name", t5);
-    db.field(t57, "type_name", t5);
-    db.field(t57, "value", t45);
-    let t58 = db.structure("VarInfo", 0);
-    db.field(t58, "name", t5);
-    db.field(t58, "type_name", t5);
-    db.field(t58, "value", t45);
-    let t59 = db.structure("StackFrame", 0);
-    db.field(t59, "function", t5);
-    db.field(t59, "file", t5);
-    db.field(t59, "line", 0);
-    let vec_arguments = db.vector(t57);
-    db.field(t59, "arguments", vec_arguments);
-    let vec_variables = db.vector(t58);
-    db.field(t59, "variables", vec_variables);
-    let t60 = db.vector(t57);
-    let _ = t60; // may be unused
-    let t61 = db.vector(t58);
-    let _ = t61; // may be unused
-    let t62 = db.structure("main_vector<ArgInfo>", 0);
-    let vec_vector = db.vector(t57);
-    db.field(t62, "vector", vec_vector);
-    db.set_field_nullable(t62, "vector", true);
-    let t63 = db.structure("main_vector<VarInfo>", 0);
-    let vec_vector = db.vector(t58);
-    db.field(t63, "vector", vec_vector);
-    db.set_field_nullable(t63, "vector", true);
-    let t64 = db.enumerate("CoroutineStatus");
-    let t65 = db.enumerate("JsonValue");
-    let t66 = db.structure("JNull", 1);
+    db.field(t56, "f", t2);
+    let t57 = db.structure("CharVal", 7);
     let byte_enum = db.byte(0, false);
-    db.field(t66, "enum", byte_enum);
-    db.set_field_nullable(t66, "enum", true);
-    let t67 = db.structure("JBool", 2);
+    db.field(t57, "enum", byte_enum);
+    db.set_field_nullable(t57, "enum", true);
+    db.field(t57, "c", t6);
+    let t58 = db.structure("TextVal", 8);
     let byte_enum = db.byte(0, false);
-    db.field(t67, "enum", byte_enum);
-    db.set_field_nullable(t67, "enum", true);
-    db.field(t67, "value", t4);
-    let t68 = db.structure("JNumber", 3);
+    db.field(t58, "enum", byte_enum);
+    db.set_field_nullable(t58, "enum", true);
+    db.field(t58, "t", t5);
+    let t59 = db.structure("RefVal", 9);
     let byte_enum = db.byte(0, false);
-    db.field(t68, "enum", byte_enum);
-    db.set_field_nullable(t68, "enum", true);
-    db.field(t68, "value", t3);
-    let t69 = db.structure("JString", 4);
+    db.field(t59, "enum", byte_enum);
+    db.set_field_nullable(t59, "enum", true);
+    db.field(t59, "store", 0);
+    db.field(t59, "rec", 0);
+    db.field(t59, "pos", 0);
+    let t60 = db.structure("FnVal", 10);
     let byte_enum = db.byte(0, false);
-    db.field(t69, "enum", byte_enum);
-    db.set_field_nullable(t69, "enum", true);
-    db.field(t69, "value", t5);
-    let t70 = db.structure("JArray", 5);
+    db.field(t60, "enum", byte_enum);
+    db.set_field_nullable(t60, "enum", true);
+    db.field(t60, "d_nr", 0);
+    let t61 = db.structure("OtherVal", 11);
     let byte_enum = db.byte(0, false);
-    db.field(t70, "enum", byte_enum);
-    db.set_field_nullable(t70, "enum", true);
-    let vec_items = db.vector(t65);
-    db.field(t70, "items", vec_items);
-    let t71 = db.vector(t65);
-    let _ = t71; // may be unused
-    let t72 = db.structure("JObject", 6);
+    db.field(t61, "enum", byte_enum);
+    db.set_field_nullable(t61, "enum", true);
+    db.field(t61, "description", t5);
+    let t62 = db.structure("ArgInfo", 0);
+    db.field(t62, "name", t5);
+    db.field(t62, "type_name", t5);
+    db.field(t62, "value", t50);
+    let t63 = db.structure("VarInfo", 0);
+    db.field(t63, "name", t5);
+    db.field(t63, "type_name", t5);
+    db.field(t63, "value", t50);
+    let t64 = db.structure("StackFrame", 0);
+    db.field(t64, "function", t5);
+    db.field(t64, "file", t5);
+    db.field(t64, "line", 0);
+    let vec_arguments = db.vector(t62);
+    db.field(t64, "arguments", vec_arguments);
+    let vec_variables = db.vector(t63);
+    db.field(t64, "variables", vec_variables);
+    let t65 = db.vector(t62);
+    let _ = t65; // may be unused
+    let t66 = db.vector(t63);
+    let _ = t66; // may be unused
+    let t67 = db.structure("main_vector<ArgInfo>", 0);
+    let vec_vector = db.vector(t62);
+    db.field(t67, "vector", vec_vector);
+    db.set_field_nullable(t67, "vector", true);
+    let t68 = db.structure("main_vector<VarInfo>", 0);
+    let vec_vector = db.vector(t63);
+    db.field(t68, "vector", vec_vector);
+    db.set_field_nullable(t68, "vector", true);
+    let t69 = db.enumerate("CoroutineStatus");
+    let t70 = db.enumerate("JsonValue");
+    let t71 = db.structure("JNull", 1);
+    let byte_enum = db.byte(0, false);
+    db.field(t71, "enum", byte_enum);
+    db.set_field_nullable(t71, "enum", true);
+    let t72 = db.structure("JBool", 2);
     let byte_enum = db.byte(0, false);
     db.field(t72, "enum", byte_enum);
     db.set_field_nullable(t72, "enum", true);
-    let t73 = db.structure("JsonField", 0);
-    db.field(t73, "name", t5);
-    db.field(t73, "value", t65);
-    let vec_fields = db.vector(t73);
-    db.field(t72, "fields", vec_fields);
-    let t74 = db.vector(t73);
-    let _ = t74; // may be unused
-    let t75 = db.structure("JInteger", 7);
+    db.field(t72, "value", t4);
+    let t73 = db.structure("JNumber", 3);
+    let byte_enum = db.byte(0, false);
+    db.field(t73, "enum", byte_enum);
+    db.set_field_nullable(t73, "enum", true);
+    db.field(t73, "value", t3);
+    let t74 = db.structure("JString", 4);
+    let byte_enum = db.byte(0, false);
+    db.field(t74, "enum", byte_enum);
+    db.set_field_nullable(t74, "enum", true);
+    db.field(t74, "value", t5);
+    let t75 = db.structure("JArray", 5);
     let byte_enum = db.byte(0, false);
     db.field(t75, "enum", byte_enum);
     db.set_field_nullable(t75, "enum", true);
-    db.field(t75, "value", 0);
-    let t76 = db.structure("main_vector<JsonValue>", 0);
-    let vec_vector = db.vector(t65);
-    db.field(t76, "vector", vec_vector);
-    db.set_field_nullable(t76, "vector", true);
-    let t77 = db.structure("main_vector<JsonField>", 0);
-    let vec_vector = db.vector(t73);
-    db.field(t77, "vector", vec_vector);
-    db.set_field_nullable(t77, "vector", true);
-    let t78 = db.enumerate("TypeKind");
-    let t79 = db.enumerate("CollectionKind");
-    let t80 = db.structure("FieldInfo", 0);
-    db.field(t80, "name", t5);
-    db.field(t80, "type_name", t5);
-    db.field(t80, "position", 0);
-    db.field(t80, "kind", t78);
-    db.field(t80, "nullable", t4);
-    let t81 = db.structure("KeyInfo", 0);
-    db.field(t81, "name", t5);
-    db.field(t81, "position", 0);
-    db.field(t81, "ascending", t4);
-    let t82 = db.structure("VariantInfo", 0);
-    db.field(t82, "name", t5);
-    db.field(t82, "tag", 0);
-    let t83 = db.structure("TypeInfo", 0);
-    db.field(t83, "name", t5);
-    db.field(t83, "kind", t78);
-    db.field(t83, "size", 0);
-    let vec_fields = db.vector(t80);
-    db.field(t83, "fields", vec_fields);
-    let vec_variants = db.vector(t82);
-    db.field(t83, "variants", vec_variants);
-    db.field(t83, "element", t5);
-    db.field(t83, "collection", t79);
-    let vec_keys = db.vector(t81);
-    db.field(t83, "keys", vec_keys);
-    let t84 = db.vector(t80);
-    let _ = t84; // may be unused
-    let t85 = db.vector(t82);
-    let _ = t85; // may be unused
-    let t86 = db.vector(t81);
-    let _ = t86; // may be unused
-    let t87 = db.structure("ValueInfo", 0);
-    db.field(t87, "kind", t78);
-    db.field(t87, "is_null", t4);
-    db.field(t87, "i", 0);
-    db.field(t87, "f", t3);
-    db.field(t87, "t", t5);
-    let t88 = db.structure("main_vector<FieldInfo>", 0);
-    let vec_vector = db.vector(t80);
-    db.field(t88, "vector", vec_vector);
-    db.set_field_nullable(t88, "vector", true);
-    let t89 = db.structure("main_vector<VariantInfo>", 0);
-    let vec_vector = db.vector(t82);
-    db.field(t89, "vector", vec_vector);
-    db.set_field_nullable(t89, "vector", true);
-    let t90 = db.structure("main_vector<KeyInfo>", 0);
-    let vec_vector = db.vector(t81);
-    db.field(t90, "vector", vec_vector);
-    db.set_field_nullable(t90, "vector", true);
-    db.value(t7, "FvBool", t19);
-    db.value(t7, "FvInt", t21);
-    db.value(t7, "FvLong", t22);
-    db.value(t7, "FvFloat", t23);
-    db.value(t7, "FvSingle", t24);
-    db.value(t7, "FvChar", t25);
-    db.value(t7, "FvText", t26);
-    db.value(t37, "TextFile", u16::MAX);
-    db.value(t37, "LittleEndian", u16::MAX);
-    db.value(t37, "BigEndian", u16::MAX);
-    db.value(t37, "Directory", u16::MAX);
-    db.value(t37, "NotExists", u16::MAX);
-    db.value(t38, "Ok", u16::MAX);
-    db.value(t38, "NotFound", u16::MAX);
-    db.value(t38, "PermissionDenied", u16::MAX);
-    db.value(t38, "IsDirectory", u16::MAX);
-    db.value(t38, "NotEmpty", u16::MAX);
-    db.value(t38, "Other", u16::MAX);
-    db.value(t38, "ok", u16::MAX);
-    db.value(t45, "NullVal", t46);
-    db.value(t45, "BoolVal", t47);
-    db.value(t45, "IntVal", t48);
-    db.value(t45, "LongVal", t49);
-    db.value(t45, "FloatVal", t50);
-    db.value(t45, "SingleVal", t51);
-    db.value(t45, "CharVal", t52);
-    db.value(t45, "TextVal", t53);
-    db.value(t45, "RefVal", t54);
-    db.value(t45, "FnVal", t55);
-    db.value(t45, "OtherVal", t56);
-    db.value(t64, "Created", u16::MAX);
-    db.value(t64, "Suspended", u16::MAX);
-    db.value(t64, "Running", u16::MAX);
-    db.value(t64, "Exhausted", u16::MAX);
-    db.value(t65, "JNull", t66);
-    db.value(t65, "JBool", t67);
-    db.value(t65, "JNumber", t68);
-    db.value(t65, "JString", t69);
-    db.value(t65, "JArray", t70);
-    db.value(t65, "JObject", t72);
-    db.value(t65, "JInteger", t75);
-    db.value(t65, "field", u16::MAX);
-    db.value(t65, "item", u16::MAX);
-    db.value(t65, "len", u16::MAX);
-    db.value(t65, "as_text", u16::MAX);
-    db.value(t65, "as_number", u16::MAX);
-    db.value(t65, "as_long", u16::MAX);
-    db.value(t65, "as_bool", u16::MAX);
-    db.value(t65, "kind", u16::MAX);
-    db.value(t65, "keys", u16::MAX);
-    db.value(t65, "fields", u16::MAX);
-    db.value(t65, "has_field", u16::MAX);
-    db.value(t65, "to_json", u16::MAX);
-    db.value(t65, "to_json_pretty", u16::MAX);
-    db.value(t78, "IntegerKind", u16::MAX);
-    db.value(t78, "LongKind", u16::MAX);
-    db.value(t78, "SingleKind", u16::MAX);
-    db.value(t78, "FloatKind", u16::MAX);
-    db.value(t78, "BooleanKind", u16::MAX);
-    db.value(t78, "TextKind", u16::MAX);
-    db.value(t78, "CharacterKind", u16::MAX);
-    db.value(t78, "RecordKind", u16::MAX);
-    db.value(t78, "EnumKind", u16::MAX);
-    db.value(t78, "VariantKind", u16::MAX);
-    db.value(t78, "VectorKind", u16::MAX);
-    db.value(t78, "KeyedKind", u16::MAX);
-    db.value(t78, "RefKind", u16::MAX);
-    db.value(t78, "OtherKind", u16::MAX);
-    db.value(t79, "NotKeyed", u16::MAX);
-    db.value(t79, "KeyedHash", u16::MAX);
-    db.value(t79, "KeyedIndex", u16::MAX);
-    db.value(t79, "KeyedSorted", u16::MAX);
-    db.value(t79, "KeyedOrdered", u16::MAX);
-    db.value(t79, "KeyedRadix", u16::MAX);
-    db.value(t79, "KeyedTrie", u16::MAX);
+    let vec_items = db.vector(t70);
+    db.field(t75, "items", vec_items);
+    let t76 = db.vector(t70);
+    let _ = t76; // may be unused
+    let t77 = db.structure("JObject", 6);
+    let byte_enum = db.byte(0, false);
+    db.field(t77, "enum", byte_enum);
+    db.set_field_nullable(t77, "enum", true);
+    let t78 = db.structure("JsonField", 0);
+    db.field(t78, "name", t5);
+    db.field(t78, "value", t70);
+    let vec_fields = db.vector(t78);
+    db.field(t77, "fields", vec_fields);
+    let t79 = db.vector(t78);
+    let _ = t79; // may be unused
+    let t80 = db.structure("JInteger", 7);
+    let byte_enum = db.byte(0, false);
+    db.field(t80, "enum", byte_enum);
+    db.set_field_nullable(t80, "enum", true);
+    db.field(t80, "value", 0);
+    let t81 = db.structure("main_vector<JsonValue>", 0);
+    let vec_vector = db.vector(t70);
+    db.field(t81, "vector", vec_vector);
+    db.set_field_nullable(t81, "vector", true);
+    let t82 = db.structure("main_vector<JsonField>", 0);
+    let vec_vector = db.vector(t78);
+    db.field(t82, "vector", vec_vector);
+    db.set_field_nullable(t82, "vector", true);
+    let t83 = db.enumerate("TypeKind");
+    let t84 = db.enumerate("CollectionKind");
+    let t85 = db.structure("FieldInfo", 0);
+    db.field(t85, "name", t5);
+    db.field(t85, "type_name", t5);
+    db.field(t85, "position", 0);
+    db.field(t85, "kind", t83);
+    db.field(t85, "nullable", t4);
+    let t86 = db.structure("KeyInfo", 0);
+    db.field(t86, "name", t5);
+    db.field(t86, "position", 0);
+    db.field(t86, "ascending", t4);
+    let t87 = db.structure("VariantInfo", 0);
+    db.field(t87, "name", t5);
+    db.field(t87, "tag", 0);
+    let t88 = db.structure("TypeInfo", 0);
+    db.field(t88, "name", t5);
+    db.field(t88, "kind", t83);
+    db.field(t88, "size", 0);
+    let vec_fields = db.vector(t85);
+    db.field(t88, "fields", vec_fields);
+    let vec_variants = db.vector(t87);
+    db.field(t88, "variants", vec_variants);
+    db.field(t88, "element", t5);
+    db.field(t88, "collection", t84);
+    let vec_keys = db.vector(t86);
+    db.field(t88, "keys", vec_keys);
+    let t89 = db.vector(t85);
+    let _ = t89; // may be unused
+    let t90 = db.vector(t87);
+    let _ = t90; // may be unused
+    let t91 = db.vector(t86);
+    let _ = t91; // may be unused
+    let t92 = db.structure("ValueInfo", 0);
+    db.field(t92, "kind", t83);
+    db.field(t92, "is_null", t4);
+    db.field(t92, "i", 0);
+    db.field(t92, "f", t3);
+    db.field(t92, "t", t5);
+    let t93 = db.structure("main_vector<FieldInfo>", 0);
+    let vec_vector = db.vector(t85);
+    db.field(t93, "vector", vec_vector);
+    db.set_field_nullable(t93, "vector", true);
+    let t94 = db.structure("main_vector<VariantInfo>", 0);
+    let vec_vector = db.vector(t87);
+    db.field(t94, "vector", vec_vector);
+    db.set_field_nullable(t94, "vector", true);
+    let t95 = db.structure("main_vector<KeyInfo>", 0);
+    let vec_vector = db.vector(t86);
+    db.field(t95, "vector", vec_vector);
+    db.set_field_nullable(t95, "vector", true);
+    db.value(t8, "Less", u16::MAX);
+    db.value(t8, "Equal", u16::MAX);
+    db.value(t8, "Greater", u16::MAX);
+    db.value(t8, "then", u16::MAX);
+    db.value(t9, "FvBool", t28);
+    db.value(t9, "FvInt", t30);
+    db.value(t9, "FvLong", t31);
+    db.value(t9, "FvFloat", t32);
+    db.value(t9, "FvSingle", t33);
+    db.value(t9, "FvChar", t34);
+    db.value(t9, "FvText", t35);
+    db.value(t42, "TextFile", u16::MAX);
+    db.value(t42, "LittleEndian", u16::MAX);
+    db.value(t42, "BigEndian", u16::MAX);
+    db.value(t42, "Directory", u16::MAX);
+    db.value(t42, "NotExists", u16::MAX);
+    db.value(t43, "Ok", u16::MAX);
+    db.value(t43, "NotFound", u16::MAX);
+    db.value(t43, "PermissionDenied", u16::MAX);
+    db.value(t43, "IsDirectory", u16::MAX);
+    db.value(t43, "NotEmpty", u16::MAX);
+    db.value(t43, "Other", u16::MAX);
+    db.value(t43, "ok", u16::MAX);
+    db.value(t50, "NullVal", t51);
+    db.value(t50, "BoolVal", t52);
+    db.value(t50, "IntVal", t53);
+    db.value(t50, "LongVal", t54);
+    db.value(t50, "FloatVal", t55);
+    db.value(t50, "SingleVal", t56);
+    db.value(t50, "CharVal", t57);
+    db.value(t50, "TextVal", t58);
+    db.value(t50, "RefVal", t59);
+    db.value(t50, "FnVal", t60);
+    db.value(t50, "OtherVal", t61);
+    db.value(t69, "Created", u16::MAX);
+    db.value(t69, "Suspended", u16::MAX);
+    db.value(t69, "Running", u16::MAX);
+    db.value(t69, "Exhausted", u16::MAX);
+    db.value(t70, "JNull", t71);
+    db.value(t70, "JBool", t72);
+    db.value(t70, "JNumber", t73);
+    db.value(t70, "JString", t74);
+    db.value(t70, "JArray", t75);
+    db.value(t70, "JObject", t77);
+    db.value(t70, "JInteger", t80);
+    db.value(t70, "field", u16::MAX);
+    db.value(t70, "item", u16::MAX);
+    db.value(t70, "len", u16::MAX);
+    db.value(t70, "as_text", u16::MAX);
+    db.value(t70, "as_number", u16::MAX);
+    db.value(t70, "as_long", u16::MAX);
+    db.value(t70, "as_bool", u16::MAX);
+    db.value(t70, "kind", u16::MAX);
+    db.value(t70, "keys", u16::MAX);
+    db.value(t70, "fields", u16::MAX);
+    db.value(t70, "has_field", u16::MAX);
+    db.value(t70, "to_json", u16::MAX);
+    db.value(t70, "to_json_pretty", u16::MAX);
+    db.value(t83, "IntegerKind", u16::MAX);
+    db.value(t83, "LongKind", u16::MAX);
+    db.value(t83, "SingleKind", u16::MAX);
+    db.value(t83, "FloatKind", u16::MAX);
+    db.value(t83, "BooleanKind", u16::MAX);
+    db.value(t83, "TextKind", u16::MAX);
+    db.value(t83, "CharacterKind", u16::MAX);
+    db.value(t83, "RecordKind", u16::MAX);
+    db.value(t83, "EnumKind", u16::MAX);
+    db.value(t83, "VariantKind", u16::MAX);
+    db.value(t83, "VectorKind", u16::MAX);
+    db.value(t83, "KeyedKind", u16::MAX);
+    db.value(t83, "RefKind", u16::MAX);
+    db.value(t83, "OtherKind", u16::MAX);
+    db.value(t84, "NotKeyed", u16::MAX);
+    db.value(t84, "KeyedHash", u16::MAX);
+    db.value(t84, "KeyedIndex", u16::MAX);
+    db.value(t84, "KeyedSorted", u16::MAX);
+    db.value(t84, "KeyedOrdered", u16::MAX);
+    db.value(t84, "KeyedRadix", u16::MAX);
+    db.value(t84, "KeyedTrie", u16::MAX);
     db.verify_schema_ids(&[
         "integer",
         "long",
@@ -418,18 +431,27 @@ fn init(cell: &std::cell::UnsafeCell<Stores>) {
         "boolean",
         "text",
         "character",
+        "vector<integer>",
+        "Ordering",
         "FieldValue",
         "__typevar_Self",
-        "__typevar_T",
+        "__typevar_T#1",
         "__typevar_T#2",
         "__typevar_T#3",
-        "main_vector<__typevar_T>",
-        "vector<__typevar_T>",
-        "__typevar_U",
+        "main_vector<__typevar_T#1>",
+        "vector<__typevar_T#1>",
+        "__typevar_K#1",
+        "main_vector<__typevar_K#1>",
+        "vector<__typevar_K#1>",
+        "main_vector<integer>",
+        "main_vector<__typevar_T#3>",
+        "vector<__typevar_T#3>",
+        "__typevar_K#2",
+        "__typevar_U#1",
         "__typevar_T#4",
         "main_vector<__typevar_T#4>",
         "vector<__typevar_T#4>",
-        "__typevar_AssertValue",
+        "__typevar_AssertValue#1",
         "FvBool",
         "byte",
         "FvInt",
@@ -439,14 +461,10 @@ fn init(cell: &std::cell::UnsafeCell<Stores>) {
         "FvChar",
         "FvText",
         "StructField",
-        "vector<__typevar_T#3>",
-        "main_vector<__typevar_T#3>",
-        "vector<__typevar_U>",
-        "main_vector<__typevar_U>",
-        "vector<integer>",
+        "vector<__typevar_U#1>",
+        "main_vector<__typevar_U#1>",
         "vector<__typevar_T#2>",
         "main_vector<__typevar_T#2>",
-        "main_vector<integer>",
         "vector<text>",
         "Format",
         "FileResult",
@@ -513,11 +531,11 @@ fn i_parse_errors(cell: &std::cell::UnsafeCell<Stores>) -> String {
 }
 
 
-// loft:default/01_code.loft:768
+// loft:default/01_code.loft:774
 #[inline]
 fn t_7integer_min(cell: &std::cell::UnsafeCell<Stores>, mut var_self: i64, mut var_b: i64) -> i64 { //block_1: integer
   let stores: &mut Stores = unsafe { &mut *cell.get() };
-  // loft:default/01_code.loft:769
+  // loft:default/01_code.loft:775
   return if ((((var_self) as i64) <= ((var_b) as i64)) as u8) == 1 { //block_2: integer
     var_self
     } /*block_2: integer*/ else { //block_3: integer
@@ -525,11 +543,11 @@ fn t_7integer_min(cell: &std::cell::UnsafeCell<Stores>, mut var_self: i64, mut v
     } /*block_3: integer*/
   } /*block_1: integer*/
 
-// loft:default/01_code.loft:773
+// loft:default/01_code.loft:779
 #[inline]
 fn t_7integer_max(cell: &std::cell::UnsafeCell<Stores>, mut var_self: i64, mut var_b: i64) -> i64 { //block_1: integer
   let stores: &mut Stores = unsafe { &mut *cell.get() };
-  // loft:default/01_code.loft:774
+  // loft:default/01_code.loft:780
   return if ((((var_b) as i64) <= ((var_self) as i64)) as u8) == 1 { //block_2: integer
     var_self
     } /*block_2: integer*/ else { //block_3: integer
@@ -537,28 +555,28 @@ fn t_7integer_max(cell: &std::cell::UnsafeCell<Stores>, mut var_self: i64, mut v
     } /*block_3: integer*/
   } /*block_1: integer*/
 
-// loft:default/01_code.loft:778
+// loft:default/01_code.loft:784
 #[inline]
 fn t_7integer_clamp(cell: &std::cell::UnsafeCell<Stores>, mut var_self: i64, mut var_lo: i64, mut var_hi: i64) -> i64 { //block_1: integer
   let stores: &mut Stores = unsafe { &mut *cell.get() };
-  // loft:default/01_code.loft:779
+  // loft:default/01_code.loft:785
   let _pre_0 = t_7integer_max(cell, var_self, var_lo);
   return t_7integer_min(cell, _pre_0, var_hi)
   } /*block_1: integer*/
 
-// loft:default/01_code.loft:845
+// loft:default/01_code.loft:929
 #[inline]
 fn t_4text_len(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str) -> i64 { //block_1: integer
   let stores: &mut Stores = unsafe { &mut *cell.get() };
-  // loft:default/01_code.loft:846
+  // loft:default/01_code.loft:930
   return {{ let __t = (var_self); if __t == loft::state::STRING_NULL { 0 } else { __t.chars().count() as i64 } }}
   } /*block_1: integer*/
 
-// loft:default/01_code.loft:857
+// loft:default/01_code.loft:941
 #[inline]
 fn t_4text_size(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str) -> i64 { //block_1: integer
   let stores: &mut Stores = unsafe { &mut *cell.get() };
-  // loft:default/01_code.loft:858
+  // loft:default/01_code.loft:942
   return {{ let __t = (var_self); if __t == loft::state::STRING_NULL { 0 } else { __t.len() as i64 } }}
   } /*block_1: integer*/
 
@@ -603,7 +621,7 @@ fn t_4File_lines(cell: &std::cell::UnsafeCell<Stores>, mut var_self: DbRef, mut 
   if var___retbuf.rec != 0 { stores.clear_vector_release(&var___retbuf); };
   // loft:default/02_files.loft:183
   ();
-  let mut var_result: DbRef = { if var___retbuf.store_nr == u16::MAX || var___retbuf.rec == 0 { var___retbuf = OpDatabase(cell, var___retbuf, 42_i32); } else { stores.clear_vector_release(&var___retbuf); } var___retbuf };
+  let mut var_result: DbRef = { if var___retbuf.store_nr == u16::MAX || var___retbuf.rec == 0 { var___retbuf = OpDatabase(cell, var___retbuf, 47_i32); } else { stores.clear_vector_release(&var___retbuf); } var___retbuf };
   {{ let _v_val = (0_i64); {let db = (var___vdb_1); let v = if _v_val == i64::MIN { i32::MIN } else { _v_val as i32 }; if db.rec != 0 { stores.store_mut(&db).set_i32_raw(db.rec, db.pos + (0_i64) as u32, v); }} }};
   // loft:default/02_files.loft:185
   let mut var_c: String = "".to_string();
@@ -647,14 +665,14 @@ fn t_4File_lines(cell: &std::cell::UnsafeCell<Stores>, mut var_self: DbRef, mut 
           // loft:default/02_files.loft:191
           if ((var_prev_cr) as u8) == 1 { //block_11: void
             {vector::pre_alloc_vector(&(var_result), (1_i64) as u32, (4_i64) as u32, &mut stores.allocations);};
-            var__elm_1 = OpNewRecord(cell, var_result, 36_i32, 65535_i32);
+            var__elm_1 = OpNewRecord(cell, var_result, 41_i32, 65535_i32);
             {{let db = (var__elm_1); let s_val = (&*(OpGetTextSub(&var_c, var_p, ops::op_min_int((var_e), (1_i64))))).to_string(); if db.rec != 0 { let store = stores.store_mut(&db); let s_pos = store.set_str(&s_val); store.set_u32_raw(db.rec, db.pos + (0_i64) as u32, s_pos); }}};
-            OpFinishRecord(cell, var_result, var__elm_1, 36_i32, 65535_i32);
+            OpFinishRecord(cell, var_result, var__elm_1, 41_i32, 65535_i32);
             } /*block_11: void*/ else { //block_12: void
             {vector::pre_alloc_vector(&(var_result), (1_i64) as u32, (4_i64) as u32, &mut stores.allocations);};
-            var__elm_2 = OpNewRecord(cell, var_result, 36_i32, 65535_i32);
+            var__elm_2 = OpNewRecord(cell, var_result, 41_i32, 65535_i32);
             {{let db = (var__elm_2); let s_val = (&*(OpGetTextSub(&var_c, var_p, var_e))).to_string(); if db.rec != 0 { let store = stores.store_mut(&db); let s_pos = store.set_str(&s_val); store.set_u32_raw(db.rec, db.pos + (0_i64) as u32, s_pos); }}};
-            OpFinishRecord(cell, var_result, var__elm_2, 36_i32, 65535_i32);
+            OpFinishRecord(cell, var_result, var__elm_2, 41_i32, 65535_i32);
             } /*block_12: void*/;
           // loft:default/02_files.loft:192
           var_p = var_ch__next;
@@ -670,11 +688,11 @@ fn t_4File_lines(cell: &std::cell::UnsafeCell<Stores>, mut var_self: DbRef, mut 
   let mut var__elm_3: DbRef = DbRef::NULL;
   if ((((var_p) as i64) < ((t_4text_size(cell, &var_c)) as i64)) as u8) == 1 { //block_13: void
     {vector::pre_alloc_vector(&(var_result), (1_i64) as u32, (4_i64) as u32, &mut stores.allocations);};
-    var__elm_3 = OpNewRecord(cell, var_result, 36_i32, 65535_i32);
+    var__elm_3 = OpNewRecord(cell, var_result, 41_i32, 65535_i32);
     let _pre_4 = t_4text_size(cell, &var_c);
     let _pre_3 = OpGetTextSub(&var_c, var_p, _pre_4);
     {{let db = (var__elm_3); let s_val = (&*(_pre_3)).to_string(); if db.rec != 0 { let store = stores.store_mut(&db); let s_pos = store.set_str(&s_val); store.set_u32_raw(db.rec, db.pos + (0_i64) as u32, s_pos); }}};
-    OpFinishRecord(cell, var_result, var__elm_3, 36_i32, 65535_i32);
+    OpFinishRecord(cell, var_result, var__elm_3, 41_i32, 65535_i32);
     } /*block_13: void*/ else {()};
   // loft:default/02_files.loft:197
   { //one_buffer_vec_copy_14: vector<text>["__retbuf"]
@@ -695,7 +713,7 @@ fn t_4text_split(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, mut v
   if var___retbuf.rec != 0 { stores.clear_vector_release(&var___retbuf); };
   // loft:default/02_files.loft:207
   ();
-  let mut var_result: DbRef = { if var___retbuf.store_nr == u16::MAX || var___retbuf.rec == 0 { var___retbuf = OpDatabase(cell, var___retbuf, 42_i32); } else { stores.clear_vector_release(&var___retbuf); } var___retbuf };
+  let mut var_result: DbRef = { if var___retbuf.store_nr == u16::MAX || var___retbuf.rec == 0 { var___retbuf = OpDatabase(cell, var___retbuf, 47_i32); } else { stores.clear_vector_release(&var___retbuf); } var___retbuf };
   {{ let _v_val = (0_i64); {let db = (var___vdb_1); let v = if _v_val == i64::MIN { i32::MIN } else { _v_val as i32 }; if db.rec != 0 { stores.store_mut(&db).set_i32_raw(db.rec, db.pos + (0_i64) as u32, v); }} }};
   // loft:default/02_files.loft:208
   let mut var_p: i64 = 0_i64;
@@ -722,9 +740,9 @@ fn t_4text_split(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, mut v
         if (((({{ let _v_v1 = (ops::to_char(var_c)); if _v_v1 == char::from(0) { i64::MIN } else { i64::from(_v_v1 as u32) } }}) as i64) == (({{ let _v_v1 = (ops::to_char(var_separator)); if _v_v1 == char::from(0) { i64::MIN } else { i64::from(_v_v1 as u32) } }}) as i64)) as u8) == 1 { //block_8: void
           // loft:default/02_files.loft:211
           {vector::pre_alloc_vector(&(var_result), (1_i64) as u32, (4_i64) as u32, &mut stores.allocations);};
-          var__elm_1 = OpNewRecord(cell, var_result, 36_i32, 65535_i32);
+          var__elm_1 = OpNewRecord(cell, var_result, 41_i32, 65535_i32);
           {{let db = (var__elm_1); let s_val = (&*(OpGetTextSub(var_self, var_p, var_c__index))).to_string(); if db.rec != 0 { let store = stores.store_mut(&db); let s_pos = store.set_str(&s_val); store.set_u32_raw(db.rec, db.pos + (0_i64) as u32, s_pos); }}};
-          OpFinishRecord(cell, var_result, var__elm_1, 36_i32, 65535_i32);
+          OpFinishRecord(cell, var_result, var__elm_1, 41_i32, 65535_i32);
           // loft:default/02_files.loft:212
           var_p = var_c__next;
           } /*block_8: void*/ else {()};
@@ -737,11 +755,11 @@ fn t_4text_split(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, mut v
   let mut var__elm_2: DbRef = DbRef::NULL;
   if ((((0_i64) as i64) < ((t_4text_len(cell, var_self)) as i64)) as u8) == 1 { //block_9: void
     {vector::pre_alloc_vector(&(var_result), (1_i64) as u32, (4_i64) as u32, &mut stores.allocations);};
-    var__elm_2 = OpNewRecord(cell, var_result, 36_i32, 65535_i32);
+    var__elm_2 = OpNewRecord(cell, var_result, 41_i32, 65535_i32);
     let _pre_4 = t_4text_size(cell, var_self);
     let _pre_3 = OpGetTextSub(var_self, var_p, _pre_4);
     {{let db = (var__elm_2); let s_val = (&*(_pre_3)).to_string(); if db.rec != 0 { let store = stores.store_mut(&db); let s_pos = store.set_str(&s_val); store.set_u32_raw(db.rec, db.pos + (0_i64) as u32, s_pos); }}};
-    OpFinishRecord(cell, var_result, var__elm_2, 36_i32, 65535_i32);
+    OpFinishRecord(cell, var_result, var__elm_2, 41_i32, 65535_i32);
     } /*block_9: void*/ else {()};
   // loft:default/02_files.loft:219
   { //one_buffer_vec_copy_10: vector<text>["__retbuf"]
@@ -760,7 +778,7 @@ fn t_4text_split_text(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, 
   if var___retbuf.rec != 0 { stores.clear_vector_release(&var___retbuf); };
   // loft:default/02_files.loft:230
   ();
-  let mut var_out: DbRef = { if var___retbuf.store_nr == u16::MAX || var___retbuf.rec == 0 { var___retbuf = OpDatabase(cell, var___retbuf, 42_i32); } else { stores.clear_vector_release(&var___retbuf); } var___retbuf };
+  let mut var_out: DbRef = { if var___retbuf.store_nr == u16::MAX || var___retbuf.rec == 0 { var___retbuf = OpDatabase(cell, var___retbuf, 47_i32); } else { stores.clear_vector_release(&var___retbuf); } var___retbuf };
   {{ let _v_val = (0_i64); {let db = (var___vdb_1); let v = if _v_val == i64::MIN { i32::MIN } else { _v_val as i32 }; if db.rec != 0 { stores.store_mut(&db).set_i32_raw(db.rec, db.pos + (0_i64) as u32, v); }} }};
   // loft:default/02_files.loft:231
   let mut var_n: i64 = t_4text_size(cell, var_self);
@@ -778,9 +796,9 @@ fn t_4text_split_text(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, 
   if ((((var_sl) as i64) == ((0_i64) as i64)) as u8) == 1 { //block_3: never
     // loft:default/02_files.loft:235
     {vector::pre_alloc_vector(&(var_out), (1_i64) as u32, (4_i64) as u32, &mut stores.allocations);};
-    var__elm_1 = OpNewRecord(cell, var_out, 36_i32, 65535_i32);
+    var__elm_1 = OpNewRecord(cell, var_out, 41_i32, 65535_i32);
     {{let db = (var__elm_1); let s_val = (var_self).to_string(); if db.rec != 0 { let store = stores.store_mut(&db); let s_pos = store.set_str(&s_val); store.set_u32_raw(db.rec, db.pos + (0_i64) as u32, s_pos); }}};
-    OpFinishRecord(cell, var_out, var__elm_1, 36_i32, 65535_i32);
+    OpFinishRecord(cell, var_out, var__elm_1, 41_i32, 65535_i32);
     // loft:default/02_files.loft:235
     {stores.vector_replace(&(var___retbuf), &(var_out), (5_u16));};
           if var___vdb_1.store_nr != u16::MAX { OpFreeRef(cell,var___vdb_1, "var___vdb_1"); var___vdb_1.store_nr = u16::MAX; };
@@ -802,9 +820,9 @@ fn t_4text_split_text(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, 
       if ((ops::op_eq_text((&*(OpGetTextSub(var_self, var_i, ops::op_add_int((var_i), (var_sl))))), (var_separator))) as u8) == 1 { //block_7: void
         // loft:default/02_files.loft:241
         {vector::pre_alloc_vector(&(var_out), (1_i64) as u32, (4_i64) as u32, &mut stores.allocations);};
-        var__elm_2 = OpNewRecord(cell, var_out, 36_i32, 65535_i32);
+        var__elm_2 = OpNewRecord(cell, var_out, 41_i32, 65535_i32);
         {{let db = (var__elm_2); let s_val = (&*(OpGetTextSub(var_self, var_p, var_i))).to_string(); if db.rec != 0 { let store = stores.store_mut(&db); let s_pos = store.set_str(&s_val); store.set_u32_raw(db.rec, db.pos + (0_i64) as u32, s_pos); }}};
-        OpFinishRecord(cell, var_out, var__elm_2, 36_i32, 65535_i32);
+        OpFinishRecord(cell, var_out, var__elm_2, 41_i32, 65535_i32);
         // loft:default/02_files.loft:242
         var_p = ops::op_add_int((var_i), (var_sl));
         // loft:default/02_files.loft:243
@@ -816,9 +834,9 @@ fn t_4text_split_text(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, 
     } /*while_4*/;
   // loft:default/02_files.loft:246
   {vector::pre_alloc_vector(&(var_out), (1_i64) as u32, (4_i64) as u32, &mut stores.allocations);};
-  let mut var__elm_3: DbRef = OpNewRecord(cell, var_out, 36_i32, 65535_i32);
+  let mut var__elm_3: DbRef = OpNewRecord(cell, var_out, 41_i32, 65535_i32);
   {{let db = (var__elm_3); let s_val = (&*(OpGetTextSub(var_self, var_p, var_n))).to_string(); if db.rec != 0 { let store = stores.store_mut(&db); let s_pos = store.set_str(&s_val); store.set_u32_raw(db.rec, db.pos + (0_i64) as u32, s_pos); }}};
-  OpFinishRecord(cell, var_out, var__elm_3, 36_i32, 65535_i32);
+  OpFinishRecord(cell, var_out, var__elm_3, 41_i32, 65535_i32);
   // loft:default/02_files.loft:247
   { //one_buffer_vec_copy_9: vector<text>["__retbuf"]
     ();
@@ -1654,7 +1672,7 @@ pub extern "C" fn loft_shared_t_6vector_join(
     unsafe { (*ret).text_ptr = std::ptr::null(); (*ret).text_len = 0; }
 }
 
-pub extern "C" fn loft_type_layout_fp_v1() -> u64 { 12359305609880293784u64 }
+pub extern "C" fn loft_type_layout_fp_v1() -> u64 { 8210252831944374008u64 }
 
 /// `(function, bridge symbol, bridge)` for every compiled function, sorted by name.
 pub(crate) static BRIDGES: &[(&str, &str, super::Bridge)] = &[
@@ -1674,7 +1692,7 @@ pub(crate) static BRIDGES: &[(&str, &str, super::Bridge)] = &[
 ];
 
 /// The standard library's type table this was generated against: its length and fingerprint.
-pub(crate) const PREFIX_TYPES: usize = 91;
-pub(crate) const PREFIX_FINGERPRINT: u64 = 13236399144303146300;
+pub(crate) const PREFIX_TYPES: usize = 96;
+pub(crate) const PREFIX_FINGERPRINT: u64 = 11768752842490065367;
 /// The hash of the `default/*.loft` source these bodies were compiled from.
-pub(crate) const SOURCE_HASH: u64 = 11521286449498057851;
+pub(crate) const SOURCE_HASH: u64 = 3507919696765680348;
