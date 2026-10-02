@@ -16312,24 +16312,6 @@ impl Parser {
                     }
                 }
             }
-            // `@FR-E-Eq`, loft#1581 — `!=` DERIVES from the type's own `OpEq` at a concrete
-            // site, as it already does inside a `<T: Equatable>` body (loft#1144, above):
-            // `a != b` is `!(a == b)`, each operand evaluated once.  Asked only after a user
-            // `OpNe` came up empty, so a type that defines both keeps its own.  Without it the
-            // loop below matched `OpNeRef` — identity — and two equal values answered `a == b`
-            // and `a != b` both true.
-            if op == "!="
-                && list.len() == 2
-                && let Some(eq) = self.user_op_method("OpEq", types)
-                && eq != u32::MAX
-            {
-                let mut eq_code = Value::Null;
-                let tp = self.call_nr(&mut eq_code, eq, list, types, false, &[], None);
-                if tp != Type::Null {
-                    *code = self.cl("OpNot", &[eq_code]);
-                    return Type::Boolean;
-                }
-            }
             // `@FR-E-Eq`, @C91 — vectors, keyed collections and struct-enum values compare by
             // CONTENT (`Stores::eq_content`): a vector by length and then element by element,
             // a keyed collection by its records, an enum value by its variant and then fields.
