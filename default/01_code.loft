@@ -2123,6 +2123,85 @@ pub fn sort < T: Ordered > (self: vector<T>) {
 }
 #builtin
 
+/// Sort a vector in place by a key, ascending: `v.sort_by(fn(d: Date) -> integer { d.ms })`.
+/// The key is any `Ordered` value — a number or a `text` — so this is how a struct sorts
+/// (C132).  Stable, like `sort`: elements with equal keys keep their order.  `key` is called
+/// once per element.
+pub fn sort_by < T, K: Ordered > (self: vector<T>, key: fn(T) -> K) {
+  // Each key once, then `sort`'s bottom-up merge over the keys, carrying each key's element
+  // POSITION beside it; the elements move once, at the end.
+  n = len(self);
+  if n < 2 { return; }
+  keys: vector<K> = [];
+  for x in self { keys += [key(x)]; }
+  pos: vector<integer> = [];
+  for i in 0..n { pos += [i]; }
+  width = 1;
+  while width < n {
+    kd: vector<K> = [];
+    pd: vector<integer> = [];
+    lo = 0;
+    while lo < n {
+      mid = min(lo + width, n);
+      hi = min(lo + 2 * width, n);
+      i = lo;
+      j = mid;
+      while i < mid || j < hi {
+        if j >= hi || (i < mid && !(keys[j] < keys[i])) {
+          kd += keys[i..i + 1];
+          pd += pos[i..i + 1];
+          i += 1;
+        } else {
+          kd += keys[j..j + 1];
+          pd += pos[j..j + 1];
+          j += 1;
+        }
+      }
+      lo = hi;
+    }
+    keys = kd;
+    pos = pd;
+    width *= 2;
+  }
+  out: vector<T> = [];
+  for p in pos { out += self[p..p + 1]; }
+  clear(self);
+  self += out;
+}
+
+/// The element with the smallest key, or null when the vector is empty:
+/// `v.min_by(fn(d: Date) -> integer { d.ms })`.  Of several with that key, the FIRST.
+pub fn min_by < T, K: Ordered > (self: vector<T>, key: fn(T) -> K) -> T? {
+  at = -1;
+  keys: vector<K> = [];
+  for x in self {
+    keys += [key(x)];
+    if at < 0 || keys[x#index] < keys[at] { at = x#index; }
+  }
+  self[at]
+}
+
+/// The element with the largest key, or null when the vector is empty:
+/// `v.max_by(fn(d: Date) -> integer { d.ms })`.  Of several with that key, the FIRST.
+pub fn max_by < T, K: Ordered > (self: vector<T>, key: fn(T) -> K) -> T? {
+  at = -1;
+  keys: vector<K> = [];
+  for x in self {
+    keys += [key(x)];
+    if at < 0 || keys[at] < keys[x#index] { at = x#index; }
+  }
+  self[at]
+}
+
+/// The sum of a key over the elements: `v.sum_by(fn(o: Order) -> float { o.price })`.  The
+/// key is any `Addable` value; `init` is the identity to start from, and left out it is the
+/// key type's own zero (0, 0.0), so an empty vector sums to it.
+pub fn sum_by < T, K: Addable > (self: vector<T>, key: fn(T) -> K, init: K? = null) -> K {
+  result = init?;
+  for x in self { result = result + key(x) };
+  result
+}
+
 /// Keep the elements `f` answers true for, in order: `filter(v, f)` or `v.filter(f)`.
 pub fn filter < T > (self: vector<T>, f: fn(T) -> boolean) -> vector<T> {
   filter(self, f)

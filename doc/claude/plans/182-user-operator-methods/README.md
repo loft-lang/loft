@@ -178,15 +178,14 @@ is decided.
 
 ## Next
 
-Three items stay open, each with its home:
+Two items stay open, each with its home (Q11's `_by` functions shipped with
+`tests/scripts/a-key-function-sorts-and-picks-by-any-ordered-key.loft`):
 
 - **Q13 — P5b, the operator interfaces' re-spelling** (decided above).  Its first step is the
   one a measurement found missing: an interface member written `operator times` does not yet
   drive `a * b` inside a generic body.
 - **Q14 — (Op-Key)** lands WITH `operator equals` (RULES.md), never before it: until a type can
   redefine `==`, every key compares structurally and the rule has nothing to refuse.
-- **Q11 — `sort_by` / `min_by` / `max_by` / `sum_by`.**  [by-functions.patch](by-functions.patch)
-  is verified and not applied; C132's entry names them as not shipped.
 
 The reserved forms (`negate`, `divided_by`, `remainder`, `equals`, `at` / `set_at`, the slices,
 `power`, the bit operators) wait for a program that needs them (Q10).

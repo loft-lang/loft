@@ -1,0 +1,86 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN182 Q11, @C132 — `sort_by`, `min_by`, `max_by` and `sum_by` order and total a vector by a
+// KEY one call names, so a struct sorts by whatever this call needs without defining an order
+// on the type (`operator compare` gives a type ONE order).  The key is any `Ordered` value —
+// a number, a `text`, or a program's type with an `operator compare` — and `sum_by`'s any
+// `Addable`.  `sort_by` is stable; `min_by` / `max_by` answer the FIRST of tied keys and null
+// for an empty vector; `sum_by` starts from `init`, or the key type's zero.
+//
+// Axes this file MOVES: the key kind (integer · text · float · a type ordered by `operator
+// compare`), ties, the length (empty · one · several), and the element layout (inline · linked
+// — `Tk` has a keyed collection, so a `vector<Tk>` holds record ids).
+//
+// Every expected value is worked out by hand.
+
+struct Ev { day: integer, name: text, w: float }
+value struct Stamp { ms: integer }
+operator compare(self: Stamp, other: Stamp) -> Ordering { self.ms.compare(other.ms) }
+struct At { name: text, when: Stamp }
+struct Tk { id: integer, rank: integer }
+struct Reg { tks: hash<Tk[id]> }
+
+fn names(v: vector<Ev>) -> text {
+  s = "";
+  for e in v { s += e.name; }
+  s
+}
+
+fn main() {
+  evs = [
+    Ev { day: 3, name: "c", w: 1.5 },
+    Ev { day: 1, name: "a", w: 2.5 },
+    Ev { day: 2, name: "b", w: 0.5 },
+    Ev { day: 1, name: "z", w: 9.0 },
+  ];
+  // By an integer key, stable: the two day-1 events keep their order (a before z).
+  by_day = evs;
+  by_day.sort_by(fn(e: Ev) -> integer { e.day });
+  assert(names(by_day) == "azbc", "integer key, stable: {names(by_day)}");
+  // By a text key and by a float key.
+  by_name = evs;
+  by_name.sort_by(fn(e: Ev) -> text { e.name });
+  assert(names(by_name) == "abcz", "text key: {names(by_name)}");
+  by_w = evs;
+  by_w.sort_by(fn(e: Ev) -> float { e.w });
+  assert(names(by_w) == "bcaz", "float key: {names(by_w)}");
+  // Empty and one element.
+  none: vector<Ev> = [];
+  none.sort_by(fn(e: Ev) -> integer { e.day });
+  one = [Ev { day: 7, name: "q", w: 0.0 }];
+  one.sort_by(fn(e: Ev) -> integer { e.day });
+  assert(len(none) == 0 && names(one) == "q", "empty and one element");
+  // min_by / max_by: the first of tied keys; null for an empty vector.
+  lo = evs.min_by(fn(e: Ev) -> integer { e.day });
+  hi = evs.max_by(fn(e: Ev) -> integer { e.day });
+  assert(lo.name == "a" && hi.name == "c", "min_by / max_by: {lo.name} {hi.name}");
+  tied = [Ev { day: 5, name: "p", w: 0.0 }, Ev { day: 5, name: "r", w: 0.0 }];
+  assert(tied.max_by(fn(e: Ev) -> integer { e.day }).name == "p", "max_by, the first of a tie");
+  assert(!none.min_by(fn(e: Ev) -> integer { e.day }), "min_by of an empty vector is null");
+  // sum_by: 3 + 1 + 2 + 1 = 7; 1.5 + 2.5 + 0.5 + 9.0 = 13.5; from 100: 107; empty: 0.
+  assert(evs.sum_by(fn(e: Ev) -> integer { e.day }) == 7, "sum_by integer");
+  assert(evs.sum_by(fn(e: Ev) -> float { e.w }) == 13.5, "sum_by float");
+  assert(evs.sum_by(fn(e: Ev) -> integer { e.day }, 100) == 107, "sum_by from an init");
+  assert(none.sum_by(fn(e: Ev) -> integer { e.day }) == 0, "sum_by of an empty vector");
+  // A key of a program's type, ordered by its `operator compare`: 30, 10, 20 -> y z x.
+  ats = [
+    At { name: "x", when: Stamp { ms: 30 } },
+    At { name: "y", when: Stamp { ms: 10 } },
+    At { name: "z", when: Stamp { ms: 20 } },
+  ];
+  ats.sort_by(fn(a: At) -> Stamp { a.when });
+  s = "";
+  for a in ats { s += a.name; }
+  assert(s == "yzx", "a key ordered by operator compare: {s}");
+  assert(ats.max_by(fn(a: At) -> Stamp { a.when }).name == "x", "max_by over such a key");
+  // The linked layout: a keyed collection over `Tk` makes `vector<Tk>` hold record ids.
+  reg = Reg { tks: [Tk { id: 1, rank: 9 }] };
+  tks = [Tk { id: 2, rank: 5 }, Tk { id: 3, rank: 1 }, Tk { id: 4, rank: 3 }];
+  tks.sort_by(fn(t: Tk) -> integer { t.rank });
+  r = "";
+  for t in tks { r += "{t.id}"; }
+  assert(r == "342" && len(reg.tks) == 1, "linked layout: {r}");
+  assert(tks.min_by(fn(t: Tk) -> integer { t.rank }).id == 3, "min_by in the linked layout");
+  println("ok");
+}
