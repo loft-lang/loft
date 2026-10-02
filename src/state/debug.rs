@@ -1634,7 +1634,7 @@ impl State {
     pub(super) fn get_record_keys(&mut self, data: &Data, attr: &mut BTreeMap<usize, String>) {
         let db_tp = u16::from_str(&attr[&1][6..]).unwrap_or(0);
         let no_keys = u8::from_str(&attr[&2][8..]).unwrap_or(0) as usize;
-        let keys = self.database.get_keys(db_tp);
+        let keys = self.database.get_keys(db_tp).into_owned();
         for (idx, key) in keys.iter().enumerate() {
             if idx >= no_keys {
                 break;

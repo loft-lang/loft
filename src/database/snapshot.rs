@@ -485,6 +485,7 @@ fn type_from(p: &Parsed) -> Result<Type, SchemaDecodeError> {
     let name = as_str(field(p, "name")?)?;
     Ok(Type {
         nullable_wrapper: name.starts_with("__nullable<"),
+        key_contents: Vec::new(),
         name,
         parts: parts_from(field(p, "parts")?)?,
         keys,
