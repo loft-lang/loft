@@ -121,7 +121,7 @@ subject_paths() {
     (runtime)  echo '^src/state/|^src/parallel\.rs|^src/fill\.rs|^src/timeout\.rs|^src/native\.rs|^src/crash_report\.rs' ;;
     (store)    echo '^src/store\.rs|^src/vector\.rs|^src/store_budget\.rs|^src/database/|^src/keys\.rs|^src/hash\.rs|^src/tree\.rs|^src/siphash\.rs' ;;
     (wasm)     echo '^src/wasm|^src/html|^src/ffi_deliver\.rs' ;;
-    (packages) echo '^src/manifest\.rs|^src/registry|^src/cache\.rs|^src/api_|^src/tls\.rs' ;;
+    (packages) echo '^src/manifest\.rs|^src/registry|^src/cache\.rs|^src/api_|^src/tls\.rs|^src/process_run\.rs|^lib/process/' ;;
     (lsp)      echo '^src/lsp\.rs|^src/lsp/|^src/bin/loft-lsp\.rs' ;;
     (sql)      echo '^src/database/sql_|^src/database/lazy\.rs' ;;
     (docs)     echo '^doc/|^default/.*\.loft$|\.md$' ;;

@@ -59,7 +59,12 @@ pub(crate) fn run_collect(argv: &[String], input: &[u8]) -> Finished {
     };
     let spawned = Command::new(program)
         .args(rest)
-        .stdin(Stdio::piped())
+        // No input is an empty stdin: the child reads EOF at once, with no pipe to feed.
+        .stdin(if input.is_empty() {
+            Stdio::null()
+        } else {
+            Stdio::piped()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn();
@@ -73,9 +78,10 @@ pub(crate) fn run_collect(argv: &[String], input: &[u8]) -> Finished {
             };
         }
     };
-    // Both readers exist before a byte is written, so a child that answers while it is still
-    // being fed never blocks on a full pipe.
-    let out = child.stdout.take().map(drain);
+    // Every reader exists before a byte is written, so a child that answers while it is still
+    // being fed never blocks on a full pipe: stderr on a thread of its own, stdout on this
+    // one, below — the third thread a run would otherwise start costs as much as the read.
+    let out = child.stdout.take();
     let err = child.stderr.take().map(drain);
     let feed = child.stdin.take().map(|mut pipe| {
         let input = input.to_vec();
@@ -85,11 +91,14 @@ pub(crate) fn run_collect(argv: &[String], input: &[u8]) -> Finished {
             let _ = pipe.write_all(&input);
         })
     });
+    let mut stdout = Vec::new();
+    if let Some(mut pipe) = out {
+        let _ = pipe.read_to_end(&mut stdout);
+    }
     let status = child.wait();
     if let Some(f) = feed {
         let _ = f.join();
     }
-    let stdout = out.and_then(|h| h.join().ok()).unwrap_or_default();
     let mut stderr = err.and_then(|h| h.join().ok()).unwrap_or_default();
     let code = match status {
         Ok(s) => s.code().map_or_else(|| signal_code(s), i64::from),
@@ -177,7 +186,12 @@ mod tests {
     fn an_argv_decodes_word_for_word_or_not_at_all() {
         assert_eq!(
             decode_argv("3:git3:log0:4:a:b "),
-            Some(vec!["git".into(), "log".into(), String::new(), "a:b ".into()])
+            Some(vec![
+                "git".into(),
+                "log".into(),
+                String::new(),
+                "a:b ".into()
+            ])
         );
         assert_eq!(decode_argv(""), Some(vec![]));
         assert_eq!(decode_argv("3:gi"), None, "a word shorter than its length");
