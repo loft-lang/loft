@@ -255,7 +255,7 @@ as a STALE ROW rather than ignored.
 | `assets` | 2026-10 | `efd8ed7` | Guide and @PAK-001..003 written; README example did not compile under C98 and the v2026.8.0 hang note was obsolete; `blob_put`'s `+=` claim was stale (0.2.4). Found loft's text-key replace duplicating (fixed in loft) |
 | `glb` | 2026-10 | `63e6b03` | Guide written; README claimed camera nodes that are never written (0.1.4). A spot light now carries the `spot` object KHR_lights_punctual requires and its node's translation (0.1.5) |
 | `mesh3d` | 2026-10 | `efd8ed7` | Guide written; `mat4_scale` is per-axis, not uniform; the bare-import claim predated C98 (0.1.3) |
-| `drawing` | 2026-10 | `98b270f` | Guide and @DRW-001..003 written; the README's example did not compile under C98, and its rasteriser import order, `--native-wasm` and "Fronds / gradients / checks not drawn" claims were stale. The corpus claim re-measured: 34 of the crawler's 36 scenes byte-identical on both backends, the two others use `Lock` (0.3.2) |
+| `drawing` | 2026-10 | `1868d3c` | Guide and @DRW-001..003 written; the README's example did not compile under C98, and its rasteriser import order, `--native-wasm` and "Fronds / gradients / checks not drawn" claims were stale. 0.4.0's Brush/Lock rows read against the parser (`flip` defaults to 0); the corpus re-measured with the `Lock` brush: all 36 of the crawler's scenes byte-identical on both backends (0.4.0) |
 | `graphics` | 2026-10 | `98b270f` | README listed `mesh3d` and `glb` as sub-modules it does not pass on; every listed function exists, the wasm PNG and blend claims measured (0.9.5) |
 | `gridmesh` | 2026-10 | `98b270f` | Guide written; its read-only functions take `const`, so a rule holding the field `const` can call `idx_at`; plan history out of the comments (0.2.4). Found loft's false avoidable-copy advice on a field or parameter copy (fixed in loft) |
 | `imaging` | 2026-10 | `98b270f` | README only: `--native-wasm` builds and decodes as the interpreter does; @IMG-002 described as RGBA with alpha carried (0.4.2) |
@@ -263,6 +263,11 @@ as a STALE ROW rather than ignored.
 | `stage` | 2026-10 | `98b270f` | README read against the source: all 100 listed names exist, the test-backed claims each have their test; guide linked (0.18.6) |
 | `text2d` | 2026-10 | `98b270f` | Guide and @T2D-001..003 written; `write_text("")` answered -1 and a scale below 1 measured unlike it drew (0.4.3) |
 | `tween` | 2026-10 | `98b270f` | Guide and @TWN-001..003 written; the README's fixstep example did not compile under C98 (0.1.2). Found loft's misleading bare-variant import advice (fixed in loft) |
+| `fixstep` | 2026-10 | `658f0a0` | Guide written: a frame clock banking its remainder, a rate through a `Bank`, a cooldown firing once. The `--native-wasm` row was "not yet exercised"; measured, it answers as the interpreter does (0.1.3) |
+| `input` | 2026-10 | `658f0a0` | Guide written, driven headless through `input_tick_from_state`; the repo README listed `input` as "(planned)" (0.2.4) |
+| `game_protocol` | 2026-10 | `c3d22a8` | Guide written (JSON on the wire with `:j` and `GameEnvelope.parse`); the README promised framing and ack/retransmit the package does not have — it is message types and constructors (0.1.5) |
+| `ssh` | 2026-10 | `c3d22a8` | Guide written, runs with no sshd; the README's loop bounded `recv` bytes by `len` — the mistake @SSH-002 warns against (0.1.3) |
+| `web` | 2026-10 | `c3d22a8` | `byte_at`'s argument order was reversed in the README; the browser `fetch()` backend described as shipped, with what the browser does differently; `pack_u32_le` keeps the low 32 bits of a 64-bit `integer` (0.4.3) |
 
 Each pass's notes, row by row, are in [LIBRARY_DOC_REVIEW-history.md](LIBRARY_DOC_REVIEW-history.md).
 
