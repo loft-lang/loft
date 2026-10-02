@@ -15,6 +15,13 @@
 // local · an `if` statement's test), and the struct (one integer · a `text` beside one).  Each cell runs
 // fifty times, so a temp freed twice or never would show in the leak check.
 //
+// @falsified-at: ae75aa4a5 — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/1852-a-value-struct-compare-in-an-arm-inside-a-call-argument-compiles.patch — native exit 1 -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   CHANNEL: exit on native — rustc refuses the control's source (E0425, the `__veq` temps);
+//   the interpreter answers alike on both trees.
+//   HOLDS: every asserted value on --interpret; leak and panic equal on both trees.
+//
 // Every expected value is worked out by hand.
 
 value struct D { n: integer }
