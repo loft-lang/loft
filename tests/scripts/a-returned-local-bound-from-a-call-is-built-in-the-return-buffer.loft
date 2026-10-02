@@ -15,7 +15,10 @@
 // bytes 2]): head(4, 3) = [131], then [5], [24, 30], [66, 0, 7] — 7 bytes summing 131 + 5 +
 // 54 + 73 = 263.  text "ab": [98, 97, 98].  pick(true) = [1, 2, 9] → 12; pick(false) = [7].
 //
-// @falsified-by: tests/falsified/a-returned-local-bound-from-a-call-is-built-in-the-return-buffer.patch — CHANNEL and HOLDS below
+// @falsified-by: tests/falsified/a-returned-local-bound-from-a-call-is-built-in-the-return-buffer.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// CHANNEL: assertions on both backends — with the delivery's clear kept, the clear empties
+// the result the call just built in the return buffer.
+// HOLDS: the cells the rewrite declines (`borrowed`, `pick`).
 
 enum CV {
   CInt { value: integer },
