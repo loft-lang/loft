@@ -312,7 +312,7 @@ fn append_capacity(store: &Store, db: &DbRef, vec_rec: u32, size: u32) -> u32 {
 /// `None` for a vector with no record yet or a full one — and the caller then takes
 /// [`vector_append`], which handles both (and null).  Inlined into the typed appends: called,
 /// the slot came back through memory as three narrow stores the caller re-read as one wide
-/// load, a store-forward stall on every push (2026-10-01).
+/// load, a store-forward stall on every push.
 #[allow(clippy::inline_always)]
 #[inline(always)]
 pub(crate) fn append_slot_in_capacity(db: &DbRef, size: u32, store: &Store) -> Option<DbRef> {

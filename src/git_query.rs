@@ -7,7 +7,7 @@
 //! a subprocess primitive](../doc/claude/plans/119-out-of-process-libraries/README.md)
 //! declined one: `run(cmd, args)` hands back bytes every consumer re-parses.
 //! [@PLN179 strand 4](../doc/claude/plans/179-scripts-in-loft/README.md) adds
-//! `run` over a typed `Command` (2026-09-30); this module is the natives the
+//! `run` over a typed `Command`; this module is the natives the
 //! rewritten `lib/git` is twinned against before they retire.
 //!
 //! So an external command lives INSIDE a vetted library. This module is the

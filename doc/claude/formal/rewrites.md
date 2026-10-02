@@ -14,7 +14,7 @@ behaviour is unchanged.  ONE rule states one fact, whichever phase applies it: t
 (parser and scope pass — both backends run the result), the NATIVE generator
 (`src/generation/`), or the INTERPRETER's bytecode generator and runtime (`src/state/`).
 `(R-Phase)` names the three and the oracle each has; a rule says which phase applies it when
-it is not the native generator, the default for the rules written before 2026-10-01.
+it is not the native generator, the default for the rules that name no phase.
 The runtime-side units of the same arc (the per-allocation and per-record
 bookkeeping, the append path) are not rewrites and are not here; the IR lowerings
 both backends share (the fused scalar append, append in place) belong to the
@@ -3346,12 +3346,12 @@ stack-trace cells (`1753-…`, `55-stack-trace`, `117-deep-stack`, `1806-…`) a
 **In words.** Applied by: interpreter runtime (`execute_argv`'s lean loop, `State::lean_stop`).
 The five events cannot start between two plain ops — each needs a native call, a raise, a join
 or a `&mut State` method — so testing each after every op paid for nothing, and it was 15–24 %
-of a loop's time.  What it could break is an event that no longer reaches the loop: a fault that
+of a loop's time.  What it could break is an event that does not reach the loop: a fault that
 does not halt.  Effect (pinned layout): the `12_drawing` hash loop −21 %, `record_walk` −20 %,
 `push` −17 %, `index_read` / `index_write` −13 %, recursive fibonacci −5 %.  No switch: the
 per-op tests are not a form to keep.  Guards `tests/dispatch_stop.rs` (a native and an op raise
 inside a loop halt at once; `runtime_error` is stored only by its setter), `dispatch_reentry`
-(the frame yield), `runtime_errors`' loft#1053 cases (a `par` worker's fault, a `parallel`
+(the frame yield), `runtime_errors`' worker-fault cases (a `par` worker's fault, a `parallel`
 block's).  Not taken beside it: reading the op byte unchecked (−1 to −3 %), which drops the
 operand bound's guarantee.  The flag is an `AtomicBool` (a relaxed load is the same instruction as a plain
 one): the timeout's watchdog sets it at the deadline through a pointer the running loop
@@ -3404,7 +3404,7 @@ which runs the checked stack path.  Guards `tests/scripts/a-stack-that-grows-mid
 
 **In words.** Applied by: interpreter runtime (`crash_report::current_ctx`).  Allowed because
 the position is already written per op for the allocator, and the bytecode the loop runs is a
-field of the `State` that does not move while it runs.  Effect (pinned layout, 2026-10-01):
+field of the `State` that does not move while it runs.  Effect (pinned layout):
 −4.6 to −6.4 % instructions and −2.4 to +1.2 % cycles — the write was retired by the store
 buffer beside the op chain, not on it, the same latency-bound picture as removing a third of
 the stack derivations.  Kept for the instructions it frees, not for time it bought.  Guard
@@ -3426,7 +3426,7 @@ positions), and the last op is named after the run.
 **In words.** Applied by: interpreter runtime.  Allowed because nothing else writes the bytecode
 (`tests/code_base.rs` checks it over the source) and the cache lives in `State`, not in a loop
 local, so code written while a loop runs (a REPL input, a live reload, a debugger `eval`) is read
-as written.  Effect (pinned layout, against the same tree without it, 2026-10-01): the opcode
+as written.  Effect (pinned layout, against the same tree without it): the opcode
 fetch went from four dependent loads to two and instructions fell 1–2 %; time moved by +0.9 %
 at the geomean, inside the noise — the fetch chain was not the serial path, because the
 indirect call is predicted and the core runs ahead of it.  Kept for the shorter code.  Guard
@@ -3572,7 +3572,7 @@ the fast paths answer exactly what the full paths answer on the cases they take,
 the rest.  The short path is inlined whole: a helper that returns a `DbRef` (or an
 `Option<DbRef>`) through memory writes it as narrow fields, and the caller reads `rec` and
 `pos` back as one 8-byte load, which the store buffer cannot forward — a stall of a dozen
-cycles on every element (measured 2026-10-01: 22 M blocked loads in a 20 M-push loop, +8 %
+cycles on every element (measured: 22 M blocked loads in a 20 M-push loop, +8 %
 cycles, until both helpers were `#[inline(always)]` and the two append branches stopped
 meeting in one `Option`).  Effect (pinned layout, against R-CodeBase): matrix_mul −16 %,
 sort −16 %, index_write −13 %, a single-precision append loop −18 %.  Guard
@@ -3580,8 +3580,8 @@ sort −16 %, index_write −13 %, a single-precision append loop −18 %.  Guar
 
 ## A leaf's body in place of its call — four rules over one IR pass
 
-Built 2026-10-01 (`src/leaf_inline.rs`, after `(R-ValueRecord)` at the top of
-`byte_code_from`, so both backends see the result).  Found in the `12_drawing` hash loop, the
+Built in `src/leaf_inline.rs`, after `(R-ValueRecord)` at the top of
+`byte_code_from`, so both backends see the result.  Found in the `12_drawing` hash loop, the
 last routine above 100× its native time; each removes bytecode from the IR rather than cycles
 from an op.  The loop's body went from 45 ops an element to 25 (+2 for the loop): the
 inlined body, its literals folded, the second mask and the fallback gone, the last temporary
@@ -3613,7 +3613,7 @@ two operands a correct fold may not regroup (below).
 **In words.** Applies in: the IR phase, both backends (native already inlined through LLVM).
 **Regrouping is not exact**: every integer operator tests its result for the sentinel, so
 `(a ^ x) ^ b` and `(a ^ b) ^ x` disagree when an intermediate is `i64::MIN` — the fold takes
-`1 * 73856093` and `7 * 83492791`, not their xor across `i * 19349663`.  Coverage counts a function
+`1 * 73856093` and `7 * 83492791`, not their xor across `i * 19349663`.  Coverage counts a function <!-- doc-lint: ok -->
 entered by a call, so the test runner compiles with the calls kept — the value guards run the
 inlined form as programs, and `tests/function_coverage.rs` failed with the pass on before the
 flag existed.  The body's `Span` wrappers stay, and a fault's position comes from them, so a
@@ -3658,13 +3658,13 @@ read, so moving `e` crosses no effect; the fresh local is read nowhere outside t
 A result that reads the local twice keeps it (substituting one read would leave the other
 reading the value before).  `LOFT_NO_SINGLE_USE=1`.
 
-**The statement clause** (`single_use::rewrite_program`, built 2026-10-02): outside an inlined
+**The statement clause** (`single_use::rewrite_program`): outside an inlined
 body, a comprehension's element temporary `_comp_N` — assigned once, read once in the whole
 function, never captured — whose value is pure (operators over locals and literals,
 `same_read::pure`) is moved into the next statement's read when everything that statement
 evaluates before the read is pure too.  A store and a load per element go.  The purity clause is
 load-bearing: dropped, an element computed by a function that appends to a log moved as well —
-the pin caught it (2026-10-02).  `LOFT_TRACE_SINGLE_USE=1`.  Guards
+the pin caught it.  `LOFT_TRACE_SINGLE_USE=1`.  Guards
 `tests/scripts/a-comprehension-element-goes-straight-into-its-push.loft`,
 `tests/single_use.rs`.
 
@@ -3695,8 +3695,8 @@ sentinel; the scale fold's conditions).
 
 ## Proposed — the next eliminations, by reach
 
-Found 2026-10-01 measuring what still keeps six routines near 100× native; ordered by how
-many programs they reach, not by those six (owner, 2026-10-01: *improve all loft scripts as
+Found measuring what still keeps six routines near 100× native; ordered by how
+many programs they reach, not by those six (the owner: *improve all loft scripts as
 much as possible*).  Each carries **PROPOSED** until a site implements it; the two runtime
 rules are priced before they are built.
 
@@ -3716,7 +3716,7 @@ rules are priced before they are built.
 emits `OPERATORS` and `OPERATORS_FAST`, both `static`) and `State::op_table`, which the lean
 dispatch loop asks once.  Other loops dispatch `OPERATORS`, whose accessors decide at run time
 and are valid in every mode; ops that are `State` methods keep the runtime test.  Built
-2026-10-01: −4.7 % instructions, −5.2 % cycles at the geomean over 17 benches (pinned layout);
+Measured: −4.7 % instructions, −5.2 % cycles at the geomean over 17 benches (pinned layout);
 the bound measured by deleting the test was −8.2 %, the rest is the doubled operator code —
 `07_string_build` moved +4.9 % in cycles with −0.3 % in instructions.  Guards
 `tests/fast_table.rs` (under the stack census the operators still write through `put_stack`:
@@ -3778,7 +3778,7 @@ its own work buffer).  Native's held-base record address (`@FR-R-RecPtr`'s base 
 only the walk's own iterator, so it learned the counted form too (`hoist::element_binding`:
 the element binding at any index local — the clause checks the index against the held length
 itself); without it `entity_tick` ran +52 % and `record_walk` +28 % on native.  Built
-2026-10-02: the record walk −11 % instructions and −7.5 % cycles interpreted; on native
+Measured: the record walk −11 % instructions and −7.5 % cycles interpreted; on native
 `record_walk` −12.7 %, −2.0 % at the geomean over benches 14 and 16 (the routines that moved
 up hold no rewritten walk — emitted code placement).  `LOFT_NO_FORWARD_WALK=1`, `LOFT_TRACE_FORWARD_WALK=1`.  Guards
 `tests/scripts/a-walk-the-body-cannot-resize-is-a-counted-loop.loft` (counted walks and the
@@ -3800,7 +3800,7 @@ rewritten, read off the trace; the cells with the rewrite off).
 **In words.** Applied by: `in_range::rewrite_program`, in the IR phase (both backends).  Both
 conditions are load-bearing, each falsified with a silent `null`: reading another vector at the
 same index (`another_vector` read null for 15), and dropping the body check (`v.clear()` part-way
-read null for 10, 2026-10-02).  The record-only clause is enforced twice: by the read's shape (a
+read null for 10).  The record-only clause is enforced twice: by the read's shape (a
 scalar's read is a value read over the element, never the bare element read) and by the
 conversion test — the second is defensive, its plant passes.  Measured on `record_update` by
 the hand-written form: −20 % cycles.  `LOFT_NO_IN_RANGE=1`, `LOFT_TRACE_IN_RANGE=1`.  Guards
@@ -3854,7 +3854,7 @@ header), pin `tests/start_step.rs`.
 gains nothing measurable, LLVM already merged the reads).  Each `v[i]?` is the read plus a
 five-op discharge.  Both clauses are load-bearing, each falsified with a silent wrong answer:
 the default ignored made `(v[i] ?? 1) * 10 + (v[i] ?? 2)` read 11 for 12, and a user call
-taken as pure made `v[0]? + set_first(v) + v[0]?` read 198 for 103 (2026-10-02).  The first
+taken as pure made `v[0]? + set_first(v) + v[0]?` read 198 for 103.  The first
 version compared reads exactly and bound nothing: the two spellings carry different source
 positions.  Measured on `index_read` by the hand-written form: −31 % interpreted.
 `LOFT_NO_SAME_READ=1`, `LOFT_TRACE_SAME_READ=1`.  Guards
@@ -3873,7 +3873,7 @@ positions.  Measured on `index_read` by the hand-written form: −31 % interpret
 literal).  A tuple holding text or a record is not a tuple type to this check: the language
 makes it a record with a result buffer (`__tuple<integer,text>`), which the scalar-result check
 declines — so the all-scalars condition on a `Type::Tuple` is defensive, and the plant that
-admits any tuple passes (2026-10-02).  Built 2026-10-02: `bfs_flow`'s `nbr` inlined, −12.8 %
+admits any tuple passes.  Built: `bfs_flow`'s `nbr` inlined, −12.8 %
 instructions and −10.6 % cycles interpreted.  Guard cells in the leaf-inline file: an `if`-chain
 tuple read in both elements and in a loop, and a text-holding tuple that stays a call; the pin
 counts four inlined calls and the decline.
@@ -3899,7 +3899,7 @@ whose right-hand side names its target is lowered through a work buffer (`__work
 never reaches this shape, so the two cells that name `w` in the read and in the default stay
 green with each clause planted away, as does the single-use clause.  The rewrite itself is
 caught: the null test inverted reads `[]` for `[yy]`, the default dropped reads `[null]` for
-`[]` — both silent (2026-10-02).  Measured (pinned layout, one tree): `word_count` 88.5 →
+`[]` — both silent.  Measured (pinned layout, one tree): `word_count` 88.5 →
 64.3 ms together with `(R-KeyList)`, of which this rule −19 %; hashes unchanged.
 `LOFT_NO_DISCHARGE_INTO=1`, `LOFT_TRACE_DISCHARGE_INTO=1`.  Guards
 `tests/scripts/a-text-discharge-reads-straight-into-its-local.loft`, `tests/discharge_into.rs`.
@@ -3926,7 +3926,7 @@ type's key fields through `key_field` / `key_contents_for_field` and allocated t
 `hash_find` −20 %, `hash_update` −22 %, `hash_text_keys` −15 %, `hash_remove` −10 %, every hash
 unchanged.  The falsifier is **`LOFT_KEY_LIST_VERIFY=1`**: each cached read is re-derived from
 the type's parts and a disagreement stops the run naming the type.  Swept over all 2020
-`tests/scripts` and bench programs, eager and lazy: none (2026-10-02).  Planted a stale cache (every key cached
+`tests/scripts` and bench programs, eager and lazy: none.  Planted a stale cache (every key cached
 as text): without the verify the keyed bench panics deep in `allocation.rs`; with it, at the
 first lookup, `type 97 (hash<E[id]>) caches keys [5], its parts derive [0]`.
 

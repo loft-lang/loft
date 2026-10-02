@@ -38,7 +38,7 @@ that removes it — scratch nobody removes grows into hundreds of GB.
 **A session scratch on a RAM-backed `/tmp` is memory, not disk.**  A control worktree's
 `target/` or a probe directory's `.loft/` cache left there counts against the memory a gate's
 compile needs, and the system's out-of-memory daemon then kills cargo with nothing else running
-(measured 2026-10-01: two gates in a row, 4 GB of one session's scratch — a 2.4 GB control
+(measured: two gates in a row, 4 GB of one session's scratch — a 2.4 GB control
 build and 1.4 GB of program caches).  `df -h /tmp` before a gate; clear a scratch worktree's
 build with `cargo clean --manifest-path <worktree>/Cargo.toml` and remove scratch `.loft/`
 caches when the probes are done.  Build a scratch worktree OUTSIDE a RAM `/tmp` (under

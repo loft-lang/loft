@@ -1290,7 +1290,7 @@ impl Stores {
     /// ([`vector::append_slot_in_capacity`]); a new or full vector takes `vector_append`.  Each
     /// branch finishes the append itself: joined into one `Option<DbRef>` the two answers met
     /// in memory, written as narrow fields and re-read as one wide load — a store-forward
-    /// stall on every push (2026-10-01).
+    /// stall on every push.
     #[allow(clippy::inline_always)]
     #[inline(always)]
     fn append_with(&mut self, db: &DbRef, size: u32, write: impl Fn(&mut Store, &DbRef)) {
@@ -1316,7 +1316,7 @@ impl Stores {
     /// The store an append writes its element to — `store_mut`'s answer, with its
     /// `LOFT_STRICT_STORES` report behind a cold call so this inlines into every append op
     /// (`@FR-R-Cold`): `store_mut` whole, with the report's argument setup inline, fell out of
-    /// line in them and cost a push op a call per element (2026-10-01).
+    /// line in them and cost a push op a call per element.
     #[allow(clippy::inline_always)]
     #[inline(always)]
     fn append_store(&mut self, slot: &DbRef) -> &mut Store {
@@ -1348,7 +1348,7 @@ impl Stores {
     // another crate: without `#[inline]`, whether they are inlined there — and whether
     // `store_mut` is inlined into them — is rustc's call, and that call moves when this crate
     // grows elsewhere.  Forced since the two operator tables (`@FR-R-FastTable`) doubled their
-    // callers: `append_i64` ran as a call of its own, 17 % of a push loop (2026-10-02).
+    // callers: `append_i64` ran as a call of its own, 17 % of a push loop.
     #[allow(clippy::inline_always)]
     #[inline(always)]
     pub fn append_i64(&mut self, db: &DbRef, v: i64) {

@@ -3129,7 +3129,7 @@ impl State {
     pub fn code<T: Copy>(&mut self) -> T {
         // The bound stays checked in every build; only the report is out of line.  A formatted
         // `assert!` inside this generic, inlined into every operator, cost 13 % of the cycles of
-        // an interpreted vector loop (measured 2026-10-01): the panic's argument setup sat in
+        // an interpreted vector loop (measured): the panic's argument setup sat in
         // the hot path of each operand read.
         // `@FR-R-CodeBase` — through the cached base and length, not the `Arc`.
         if self.code_pos + (size_of::<T>() as u32) > self.code_len {
@@ -6829,9 +6829,9 @@ impl State {
     /// part — one unsigned compare, which a negative index fails too — and the rest (counting
     /// from the end, the two raises) is out of line.  Kept whole, the raises made the function
     /// too big for LLVM to inline reliably: an unrelated change to `State::code` flipped that
-    /// decision and cost `sort` 5 % of its cycles (measured 2026-10-01).  Forced since the two
+    /// decision and cost `sort` 5 % of its cycles.  Forced since the two
     /// operator tables (`@FR-R-FastTable`) doubled its callers and it fell out of line again —
-    /// 19.7 % of an element-write loop's cycles in a call of its own (2026-10-02).
+    /// 19.7 % of an element-write loop's cycles in a call of its own.
     #[must_use]
     #[allow(clippy::inline_always)]
     #[inline(always)]
