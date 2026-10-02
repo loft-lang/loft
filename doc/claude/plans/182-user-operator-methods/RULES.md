@@ -5,8 +5,9 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 # @PLN182 — draft rules: operator syntax on a user type
 
-**Status: DRAFT (P0); the order half is BUILT (P1).**  Op-Def, Op-Home, Op-Shape, Op-Mark,
-Op-Name, Op-Left, Op-Order, Op-Result and Op-Bound, for `compare`, are in force and live in
+**Status: DRAFT (P0); order and `+ - *` are BUILT (P1, P2).**  Op-Def, Op-Home, Op-Shape,
+Op-Mark, Op-Name, Op-Left, Op-Order, Op-Result, Op-Compound and Op-Bound, for `compare`,
+`plus`, `minus` and `times`, are in force and live in
 [formal/operators.md](../../formal/operators.md); the rest below are proposed.  Each moves into
 `doc/claude/formal/` (an `interfaces.md` section, `(Op-…)` tags) in the phase that implements it,
 with its guard; until then nothing in `src/` may cite them.  The plan: [README.md](README.md).

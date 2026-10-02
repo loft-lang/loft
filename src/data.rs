@@ -7605,18 +7605,26 @@ impl Data {
     }
 
     /// `@FR-Op-Bound` (@PLN182) — the `operator compare(self: C, other: C) -> Ordering` a
-    /// type `C` declares, which meets `Ordered` the way a built-in type's `<` does.  A plain
-    /// `fn compare` meets nothing (`@FR-Op-Mark`).
+    /// type `C` declares, which meets `Ordered` the way a built-in type's `<` does.
     #[must_use]
     pub fn operator_compare_for(&self, concrete: &Type) -> Option<u32> {
+        self.operator_member_for("compare", concrete)
+    }
+
+    /// `@FR-Op-Bound` — the `operator <form>(self: C, other: C)` a type `C` declares at the
+    /// signature a bound asks: `compare` answering `Ordering` (`Ordered`), and `plus` /
+    /// `minus` / `times` answering `C` (`Addable`, `Subtractable`, the `*` of `Numeric`).  A
+    /// plain `fn` of the name meets nothing (`@FR-Op-Mark`).
+    #[must_use]
+    pub fn operator_member_for(&self, form: &str, concrete: &Type) -> Option<u32> {
         let base = concrete.base().clone();
         if !matches!(base, Type::Reference(_, _) | Type::Enum(_, _, _)) {
             return None;
         }
-        // `compare` is an overload set (the stdlib's own members on the base types), and a
-        // type's `operator compare` may be several members of it, one per right-hand type.
-        let mut candidates = self.overload_routines("compare");
-        let found = self.find_fn(u16::MAX, "compare", &base);
+        // A form may be an overload set (several right-hand types), and `compare` always is
+        // one beside the stdlib's own members on the base types.
+        let mut candidates = self.overload_routines(form);
+        let found = self.find_fn(u16::MAX, form, &base);
         if found != u32::MAX && !candidates.contains(&found) {
             candidates.push(found);
         }
@@ -7624,8 +7632,25 @@ impl Data {
         candidates.into_iter().find(|&d| {
             self.def(d).operator_form
                 && self.params_fit(d, &[base.clone(), base.clone()])
-                && matches!(self.def(d).returned(), Type::Enum(e, false, _) if *e == ordering)
+                && if form == "compare" {
+                    matches!(self.def(d).returned(), Type::Enum(e, false, _) if *e == ordering)
+                } else {
+                    self.def(d).returned().base() == &base
+                }
         })
+    }
+
+    /// The `operator` form a bound's operator member names: `OpLt` → `compare`, `OpAdd` →
+    /// `plus`, a two-operand `OpMin` → `minus`, `OpMul` → `times`.
+    #[must_use]
+    pub fn operator_form_of_member(member: &str, arity: usize) -> Option<&'static str> {
+        match (member, arity) {
+            ("OpLt", 2) => Some("compare"),
+            ("OpAdd", 2) => Some("plus"),
+            ("OpMin", 2) => Some("minus"),
+            ("OpMul", 2) => Some("times"),
+            _ => None,
+        }
     }
 
     /// The stored discriminant of one `Ordering` variant (`Less`, `Equal`, `Greater`), read

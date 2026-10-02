@@ -565,7 +565,7 @@ holds. When you want a remainder that wraps into `[0, n)` (the sign of the *divi
 circular indexing), use `floor_mod`: `(-1).floor_mod(3) == 2`. Division or `%` by zero is a
 **null**, never a fault (C80) — discharge it with `?? default`.
 
-### Ordering your own type — `operator compare`
+### Operators on your own type — `operator compare`, `plus`, `minus`, `times`
 
 A type gets `<`, `<=`, `>` and `>=` from one method written with `operator` in place of `fn`:
 
@@ -585,9 +585,14 @@ fn test_a_date_is_ordered_by_its_operator_compare() {
 }
 ```
 
-Each form is one call of the LEFT operand's `compare`, operands in the order they are written.
-A `compare` declared with plain `fn` is an ordinary method, and `<` on that type is refused
-saying so.  `x.compare(y)` and `Ordering.then` are in the stdlib for every built-in ordered type,
+`operator plus`, `operator minus` and `operator times` give `+`, `-` and `*` the same way, and
+`a += b` is `a = a.plus(b)`.  The LEFT operand's type decides, chosen by the right operand's
+type among its definitions: `d - span` and `d - other_date` may be two `minus`, and `3 * w` is
+refused where `w * 3` is not.
+
+Each form is one call of the LEFT operand's method, operands in the order they are written.
+A method declared with plain `fn` is an ordinary method, and the operator on that type is
+refused saying so.  `x.compare(y)` and `Ordering.then` are in the stdlib for every built-in ordered type,
 so a field-by-field order is `self.a.compare(o.a).then(self.b.compare(o.b))`.  The rules:
 [formal/operators.md](formal/operators.md).
 

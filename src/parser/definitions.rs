@@ -2055,12 +2055,20 @@ impl Parser {
             .iter()
             .filter(|a| !a.name.starts_with("__"))
             .collect();
+        // The symbol the form is written with, and how its signature is spelled in a message.
+        let (symbol, other, answers) = match fn_name {
+            "compare" => ("<", "T", "Ordering"),
+            "plus" => ("+", "U", "V"),
+            "minus" => ("-", "U", "V"),
+            _ => ("*", "U", "V"),
+        };
         let Some(first) = visible.first().filter(|a| a.name == "self") else {
             diagnostic!(
                 self.lexer,
                 Level::Error,
-                "`operator compare` is a method: its first parameter is `self`, the type `<` is \
-                 written on — `operator compare(self: T, other: T) -> Ordering`"
+                "`operator {fn_name}` is a method: its first parameter is `self`, the type \
+                 `{symbol}` is written on — `operator {fn_name}(self: T, other: {other}) -> \
+                 {answers}`"
             );
             return;
         };
@@ -2076,9 +2084,14 @@ impl Parser {
             diagnostic!(
                 self.lexer,
                 Level::Error,
-                "`operator compare` defines `<` for a type of its own package, and `{}` is not \
-                 one; a built-in type already has its order",
-                first.typedef.source_name(&self.data)
+                "`operator {fn_name}` defines `{symbol}` for a type of its own package, and \
+                 `{}` is not one; a built-in type already has its {}",
+                first.typedef.source_name(&self.data),
+                if fn_name == "compare" {
+                    "order"
+                } else {
+                    "arithmetic"
+                }
             );
             return;
         };
@@ -2086,11 +2099,25 @@ impl Parser {
             diagnostic!(
                 self.lexer,
                 Level::Error,
-                "`operator compare` on `{}` can only be defined where `{}` is declared; call \
+                "`operator {fn_name}` on `{}` can only be defined where `{}` is declared; call \
                  an ordinary method by name instead",
                 self.data.def(own).name(),
                 self.data.def(own).name()
             );
+            return;
+        }
+        if fn_name != "compare" {
+            // `@FR-Op-Shape` — an arithmetic form takes `self` and the right operand, and
+            // answers a value.
+            if visible.len() != 2 || matches!(result, Type::Void) {
+                let t = self.data.def(own).name().to_string();
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "`operator {fn_name}` takes `self` and the right operand of `{symbol}`, and \
+                     answers the result: `operator {fn_name}(self: {t}, other: U) -> V`"
+                );
+            }
             return;
         }
         let ordering = self.data.def_nr("Ordering");
@@ -2112,9 +2139,6 @@ impl Parser {
     fn refuse_operator_name(&mut self, fn_name: &str) -> bool {
         // The table's names not built yet: the form each will back.
         const PLACED: &[(&str, &str)] = &[
-            ("plus", "`+`"),
-            ("minus", "`-`"),
-            ("times", "`*`"),
             ("divided_by", "`/`"),
             ("remainder", "`%`"),
             ("negate", "unary `-`"),
@@ -2151,12 +2175,13 @@ impl Parser {
             );
             return true;
         }
-        if fn_name != "compare" {
+        if !matches!(fn_name, "compare" | "plus" | "minus" | "times") {
             diagnostic!(
                 self.lexer,
                 Level::Error,
                 "`{fn_name}` is not an operator: `operator` takes the name of the form it backs \
-                 — `compare` for `<`, `<=`, `>` and `>=`; declare an ordinary method with `fn`"
+                 — `compare` for `<`, `<=`, `>` and `>=`, `plus` for `+`, `minus` for `-`, \
+                 `times` for `*`; declare an ordinary method with `fn`"
             );
             return true;
         }

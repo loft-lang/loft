@@ -31,6 +31,10 @@ redefine": rename yours, or use the stdlib's.
 of `fn` — `pub operator compare(self: Date, other: Date) -> Ordering { self.ms.compare(other.ms)
 }` — and the four comparisons, `sort()`, `min_of` and `max_of` all use it.
 
+**…and `+`, `-` and `*`.**  `operator plus`, `operator minus` and `operator times` give a type
+the three operators, `+=`, `-=` and `*=` with them, and `sum` over a vector of it.  A type may
+have several, one per right-hand type: a date minus a date, and a date minus a duration.
+
 ---
 
 ## 2026-10

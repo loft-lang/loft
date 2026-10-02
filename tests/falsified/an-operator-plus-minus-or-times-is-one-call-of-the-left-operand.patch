@@ -1,0 +1,408 @@
+diff --git a/src/data.rs b/src/data.rs
+index 8aee480fe..66c260e6e 100644
+--- a/src/data.rs
++++ b/src/data.rs
+@@ -7605,26 +7605,18 @@ impl Data {
+     }
+ 
+     /// `@FR-Op-Bound` (@PLN182) — the `operator compare(self: C, other: C) -> Ordering` a
+-    /// type `C` declares, which meets `Ordered` the way a built-in type's `<` does.
++    /// type `C` declares, which meets `Ordered` the way a built-in type's `<` does.  A plain
++    /// `fn compare` meets nothing (`@FR-Op-Mark`).
+     #[must_use]
+     pub fn operator_compare_for(&self, concrete: &Type) -> Option<u32> {
+-        self.operator_member_for("compare", concrete)
+-    }
+-
+-    /// `@FR-Op-Bound` — the `operator <form>(self: C, other: C)` a type `C` declares at the
+-    /// signature a bound asks: `compare` answering `Ordering` (`Ordered`), and `plus` /
+-    /// `minus` / `times` answering `C` (`Addable`, `Subtractable`, the `*` of `Numeric`).  A
+-    /// plain `fn` of the name meets nothing (`@FR-Op-Mark`).
+-    #[must_use]
+-    pub fn operator_member_for(&self, form: &str, concrete: &Type) -> Option<u32> {
+         let base = concrete.base().clone();
+         if !matches!(base, Type::Reference(_, _) | Type::Enum(_, _, _)) {
+             return None;
+         }
+-        // A form may be an overload set (several right-hand types), and `compare` always is
+-        // one beside the stdlib's own members on the base types.
+-        let mut candidates = self.overload_routines(form);
+-        let found = self.find_fn(u16::MAX, form, &base);
++        // `compare` is an overload set (the stdlib's own members on the base types), and a
++        // type's `operator compare` may be several members of it, one per right-hand type.
++        let mut candidates = self.overload_routines("compare");
++        let found = self.find_fn(u16::MAX, "compare", &base);
+         if found != u32::MAX && !candidates.contains(&found) {
+             candidates.push(found);
+         }
+@@ -7632,27 +7624,10 @@ impl Data {
+         candidates.into_iter().find(|&d| {
+             self.def(d).operator_form
+                 && self.params_fit(d, &[base.clone(), base.clone()])
+-                && if form == "compare" {
+-                    matches!(self.def(d).returned(), Type::Enum(e, false, _) if *e == ordering)
+-                } else {
+-                    self.def(d).returned().base() == &base
+-                }
++                && matches!(self.def(d).returned(), Type::Enum(e, false, _) if *e == ordering)
+         })
+     }
+ 
+-    /// The `operator` form a bound's operator member names: `OpLt` → `compare`, `OpAdd` →
+-    /// `plus`, a two-operand `OpMin` → `minus`, `OpMul` → `times`.
+-    #[must_use]
+-    pub fn operator_form_of_member(member: &str, arity: usize) -> Option<&'static str> {
+-        match (member, arity) {
+-            ("OpLt", 2) => Some("compare"),
+-            ("OpAdd", 2) => Some("plus"),
+-            ("OpMin", 2) => Some("minus"),
+-            ("OpMul", 2) => Some("times"),
+-            _ => None,
+-        }
+-    }
+-
+     /// The stored discriminant of one `Ordering` variant (`Less`, `Equal`, `Greater`), read
+     /// from the enum's own definition rather than assumed from its declaration order.
+     #[must_use]
+diff --git a/src/parser/definitions.rs b/src/parser/definitions.rs
+index 824675c04..3ca081ad5 100644
+--- a/src/parser/definitions.rs
++++ b/src/parser/definitions.rs
+@@ -2055,20 +2055,12 @@ impl Parser {
+             .iter()
+             .filter(|a| !a.name.starts_with("__"))
+             .collect();
+-        // The symbol the form is written with, and how its signature is spelled in a message.
+-        let (symbol, other, answers) = match fn_name {
+-            "compare" => ("<", "T", "Ordering"),
+-            "plus" => ("+", "U", "V"),
+-            "minus" => ("-", "U", "V"),
+-            _ => ("*", "U", "V"),
+-        };
+         let Some(first) = visible.first().filter(|a| a.name == "self") else {
+             diagnostic!(
+                 self.lexer,
+                 Level::Error,
+-                "`operator {fn_name}` is a method: its first parameter is `self`, the type \
+-                 `{symbol}` is written on — `operator {fn_name}(self: T, other: {other}) -> \
+-                 {answers}`"
++                "`operator compare` is a method: its first parameter is `self`, the type `<` is \
++                 written on — `operator compare(self: T, other: T) -> Ordering`"
+             );
+             return;
+         };
+@@ -2084,14 +2076,9 @@ impl Parser {
+             diagnostic!(
+                 self.lexer,
+                 Level::Error,
+-                "`operator {fn_name}` defines `{symbol}` for a type of its own package, and \
+-                 `{}` is not one; a built-in type already has its {}",
+-                first.typedef.source_name(&self.data),
+-                if fn_name == "compare" {
+-                    "order"
+-                } else {
+-                    "arithmetic"
+-                }
++                "`operator compare` defines `<` for a type of its own package, and `{}` is not \
++                 one; a built-in type already has its order",
++                first.typedef.source_name(&self.data)
+             );
+             return;
+         };
+@@ -2099,27 +2086,13 @@ impl Parser {
+             diagnostic!(
+                 self.lexer,
+                 Level::Error,
+-                "`operator {fn_name}` on `{}` can only be defined where `{}` is declared; call \
++                "`operator compare` on `{}` can only be defined where `{}` is declared; call \
+                  an ordinary method by name instead",
+                 self.data.def(own).name(),
+                 self.data.def(own).name()
+             );
+             return;
+         }
+-        if fn_name != "compare" {
+-            // `@FR-Op-Shape` — an arithmetic form takes `self` and the right operand, and
+-            // answers a value.
+-            if visible.len() != 2 || matches!(result, Type::Void) {
+-                let t = self.data.def(own).name().to_string();
+-                diagnostic!(
+-                    self.lexer,
+-                    Level::Error,
+-                    "`operator {fn_name}` takes `self` and the right operand of `{symbol}`, and \
+-                     answers the result: `operator {fn_name}(self: {t}, other: U) -> V`"
+-                );
+-            }
+-            return;
+-        }
+         let ordering = self.data.def_nr("Ordering");
+         let answers_ordering = matches!(result, Type::Enum(d, false, _) if *d == ordering);
+         if visible.len() != 2 || !answers_ordering {
+@@ -2139,6 +2112,9 @@ impl Parser {
+     fn refuse_operator_name(&mut self, fn_name: &str) -> bool {
+         // The table's names not built yet: the form each will back.
+         const PLACED: &[(&str, &str)] = &[
++            ("plus", "`+`"),
++            ("minus", "`-`"),
++            ("times", "`*`"),
+             ("divided_by", "`/`"),
+             ("remainder", "`%`"),
+             ("negate", "unary `-`"),
+@@ -2175,13 +2151,12 @@ impl Parser {
+             );
+             return true;
+         }
+-        if !matches!(fn_name, "compare" | "plus" | "minus" | "times") {
++        if fn_name != "compare" {
+             diagnostic!(
+                 self.lexer,
+                 Level::Error,
+                 "`{fn_name}` is not an operator: `operator` takes the name of the form it backs \
+-                 — `compare` for `<`, `<=`, `>` and `>=`, `plus` for `+`, `minus` for `-`, \
+-                 `times` for `*`; declare an ordinary method with `fn`"
++                 — `compare` for `<`, `<=`, `>` and `>=`; declare an ordinary method with `fn`"
+             );
+             return true;
+         }
+diff --git a/src/parser/mod.rs b/src/parser/mod.rs
+index 04c85ba28..9dc68cf52 100644
+--- a/src/parser/mod.rs
++++ b/src/parser/mod.rs
+@@ -10133,17 +10133,9 @@ impl Parser {
+             let Some(method_suffix) = Self::interface_method_name(&self.data, child_nr) else {
+                 continue;
+             };
+-            // `@FR-Op-Bound` — `op <` is met by the type's `operator compare`, `op +` by its
+-            // `operator plus`, a two-operand `op -` by `operator minus`, `op *` by `operator
+-            // times`; the monomorph's operator then calls it (`substitute_type_in_value`).
+-            if let Some(form) = Data::operator_form_of_member(
+-                &method_suffix,
+-                Self::visible_arity(&self.data, child_nr),
+-            ) && self
+-                .data
+-                .operator_member_for(form, &concrete_type)
+-                .is_some()
+-            {
++            // `@FR-Op-Bound` — `op <` is met by the type's `operator compare`, which the
++            // monomorph's `<` then reads (`substitute_type_in_value`).
++            if method_suffix == "OpLt" && self.data.operator_compare_for(&concrete_type).is_some() {
+                 continue;
+             }
+             // I9-prim: use find_fn which checks both the method-style convention
+@@ -11627,19 +11619,6 @@ impl Parser {
+                     .collect();
+                 // `@FR-Op-Bound` — `Ordered`'s `<` at a type whose order is its `operator
+                 // compare`: `a < b` is `a.compare(b) == Less`, one call (`@FR-Op-Order`).
+-                // `@FR-Op-Bound` — `Addable`'s `+`, `Subtractable`'s `-` and `Numeric`'s `*` at
+-                // such a type are its `operator plus` / `minus` / `times`, one call each.  The
+-                // stub is matched at its VISIBLE arity: a member answering a struct carries a
+-                // hidden return buffer, which the stub and the member both take, in place.
+-                if let Some(form) = ["OpAdd", "OpMin", "OpMul"]
+-                    .into_iter()
+-                    .find(|op| Data::is_bound_stub_for(data.def(d).name(), op, 2))
+-                    .and_then(|op| Data::operator_form_of_member(op, 2))
+-                    && let Some(m) = data.operator_member_for(form, concrete)
+-                    && data.def(m).attributes().len() == new_args.len()
+-                {
+-                    return Value::Call(m, new_args);
+-                }
+                 if new_args.len() == 2
+                     && Data::is_bound_stub_for(data.def(d).name(), "OpLt", 2)
+                     && let Some(cmp) = data.operator_compare_for(concrete)
+diff --git a/src/parser/operators.rs b/src/parser/operators.rs
+index edff050b3..9cee9e476 100644
+--- a/src/parser/operators.rs
++++ b/src/parser/operators.rs
+@@ -1163,47 +1163,31 @@ impl Parser {
+         )
+     }
+ 
+-    /// `@FR-Op-Back` (@PLN182) — the form an `operator` definition backs, the symbol it is
+-    /// written with, and the stdlib-operator name a type may still answer it through.
+-    const OPERATOR_FORMS: &'static [(&'static str, &'static str, &'static str)] = &[
+-        ("compare", "<", "OpLt"),
+-        ("plus", "+", "OpAdd"),
+-        ("minus", "-", "OpMin"),
+-        ("times", "*", "OpMul"),
+-    ];
+-
+-    /// The `operator compare` an order form on these operand types reaches
+-    /// ([`Self::operator_member`]).
+-    pub(crate) fn operator_compare(&mut self, types: &[Type]) -> Option<u32> {
+-        self.operator_member("compare", types)
+-    }
+-
+-    /// `@FR-Op-Back` (@PLN182) — the `operator <form>` a binary form on these operand types
+-    /// reaches: the LEFT operand's member of that name, chosen among its overloads by the
+-    /// right operand's type exactly as the method call `a.<form>(b)` would.  A plain `fn` of
+-    /// the name is an ordinary method and reaches nothing here (`@FR-Op-Mark`): where the type
+-    /// has one and no other way to answer the form, the refusal names it and the answer is
++    /// `@FR-Op-Back` (@PLN182) — the `operator compare` an order form on these operand types
++    /// reaches: the LEFT operand's `compare`, chosen among that name's overloads by the right
++    /// operand's type exactly as the method call `a.compare(b)` would.  A plain `fn compare`
++    /// is an ordinary method and reaches nothing here (`@FR-Op-Mark`): where the type has one
++    /// and no other way to answer `<`, the refusal names it and the answer is
+     /// `Some(u32::MAX)`, so the caller does not add a second, vaguer one.
+-    pub(crate) fn operator_member(&mut self, form: &str, types: &[Type]) -> Option<u32> {
+-        // `@FR-Op-Std` — the stdlib's own bodies reach the stdlib's operator definitions, never
+-        // a user's: nothing to look up while `default/` is parsed (each lookup builds a key).
+-        if self.default || types.len() != 2 || types.iter().any(Type::is_unknown) {
++    pub(crate) fn operator_compare(&mut self, types: &[Type]) -> Option<u32> {
++        if types.len() != 2 || types.iter().any(Type::is_unknown) {
+             return None;
+         }
+         let (Type::Reference(left, _) | Type::Enum(left, _, _)) = types[0].base() else {
+             return None;
+         };
+         let left = *left;
+-        // The left type's own key (`t_<len><T>_<form>`): its one definition, or — a type with
+-        // several of the name — the overload set under the bare name, chosen among by
+-        // `@FR-Disp-Select` as `a.<form>(b)` would choose.
+-        let key = self.data.find_op_method(u16::MAX, form, &types[0]);
++        // The left type's own `compare` key (`t_<len><T>_compare`): its one definition, or the
++        // dispatcher over its overloads, chosen among by `@FR-Disp-Select` as `a.compare(b)`
++        // would choose.
++        let key = self.data.find_op_method(u16::MAX, "compare", &types[0]);
+         if key == u32::MAX {
+             return None;
+         }
+-        let chosen = if self.data.has_overload_set(form) {
++        // A type with several `compare`s is an overload set under the bare name.
++        let chosen = if self.data.has_overload_set("compare") {
+             let routed = self.data.routed_types(types);
+-            match self.select_overload(u16::MAX, form, &routed) {
++            match self.select_overload(u16::MAX, "compare", &routed) {
+                 crate::parser::dispatch::Selection::One(d) => d,
+                 crate::parser::dispatch::Selection::Ambiguous(_) => return None,
+                 _ => key,
+@@ -1215,71 +1199,29 @@ impl Parser {
+         let own = self.data.visible_params(chosen).first().is_some_and(
+             |t| matches!(t.base(), Type::Reference(d, _) | Type::Enum(d, _, _) if *d == left),
+         );
+-        if !own || self.data.visible_params(chosen).len() != 2 {
++        if !own {
+             return None;
+         }
+         if self.data.def(chosen).operator_form() {
+             return Some(chosen);
+         }
+-        let (_, symbol, old) = Self::OPERATOR_FORMS.iter().find(|(f, _, _)| *f == form)?;
+         if self
+-            .user_op_method(old, types)
+-            .is_none_or(|d| d == u32::MAX)
++            .user_op_method("OpLt", types)
++            .is_none_or(|lt| lt == u32::MAX)
+         {
+             // Said on the pass that meets it: the operator search below refuses on pass 1 too.
+             let t = types[0].base().source_name(&self.data);
+-            let r = types[1].base().source_name(&self.data);
+-            // The unmarked method's own result: the declaration to write is that one, marked.
+-            let answers = self.data.def(chosen).returned().source_name(&self.data);
+             diagnostic!(
+                 self.lexer,
+                 Level::Error,
+-                "`{t}` has a method `{form}`, but `{symbol}` reaches only one written with \
+-                 `operator`: declare it `operator {form}(self: {t}, other: {r}) -> {answers}`"
++                "`{t}` has a method `compare`, but `<` reaches only one written with `operator`: \
++                 declare it `operator compare(self: {t}, other: {t}) -> Ordering`"
+             );
+             return Some(u32::MAX);
+         }
+         None
+     }
+ 
+-    /// The `operator` form an arithmetic symbol backs, for the forms built so far.
+-    fn arith_form(op: &str) -> Option<&'static str> {
+-        match op {
+-            "+" => Some("plus"),
+-            "-" => Some("minus"),
+-            "*" => Some("times"),
+-            _ => None,
+-        }
+-    }
+-
+-    /// `@FR-Op-Back` — `a + b`, `a - b`, `a * b` on a user type is ONE call of the left
+-    /// operand's `plus` / `minus` / `times`, its type and value the method's (`@FR-Op-Result`).
+-    pub(crate) fn arith_through_operator(
+-        &mut self,
+-        code: &mut Value,
+-        member: u32,
+-        right: Value,
+-        right_tp: Type,
+-        left_tp: Type,
+-    ) -> Type {
+-        if member == u32::MAX {
+-            return Type::Unknown(0); // refused, named by `operator_member`
+-        }
+-        let mut call = Value::Null;
+-        let left = code.clone();
+-        let tp = self.call_nr(
+-            &mut call,
+-            member,
+-            &[left, right],
+-            &[left_tp, right_tp],
+-            true,
+-            &[],
+-            None,
+-        );
+-        *code = call;
+-        tp
+-    }
+-
+     /// `@FR-Op-Order` — `a ⊕ b` for an order form ⊕ is ONE call of `a.compare(b)`, read against
+     /// the `Ordering` it answers: `<` is `Less`, `>` is `Greater`, `<=` is not `Greater`, `>=`
+     /// is not `Less`.
+@@ -1348,21 +1290,6 @@ impl Parser {
+         if op == "=" {
+             return (val.clone(), src_tp.clone());
+         }
+-        // `@FR-Op-Compound` — `a ⊕= b` is `a = a.m(b)` for ⊕'s `operator` method m; the place
+-        // is read once here and written by the caller.
+-        if let Some(form) = Self::arith_form(op)
+-            && let Some(m) = self.operator_member(form, &[f_type.clone(), src_tp.clone()])
+-        {
+-            let mut code = to.clone();
+-            let tp = self.arith_through_operator(
+-                &mut code,
+-                m,
+-                val.clone(),
+-                src_tp.clone(),
+-                f_type.clone(),
+-            );
+-            return (code, tp);
+-        }
+         let (name, operands, types) = if op == ">" {
+             (
+                 "Lt",
+@@ -5814,24 +5741,14 @@ impl Parser {
+             // untouched here, so overflow of two non-null values still types non-null.
+             // @FR-N-Prop: a nullable operand makes the result nullable — null PROPAGATES
+             // through a value-preserving scalar op rather than being laundered by it.
+-            // `@FR-Op-Back` — on a user type, `a ⊕ b` is the left operand's `operator` method
+-            // (`@FR-Op-Left`), and the form's type is the method's own (`@FR-Op-Result`): no
+-            // propagation wrap is added to it.
+-            let user_member = Self::arith_form(operator)
+-                .and_then(|form| self.operator_member(form, &[ctp.clone(), second_type.clone()]));
+-            let operand_nullable = user_member.is_none()
+-                && crate::keys::nprop_enabled()
++            let operand_nullable = crate::keys::nprop_enabled()
+                 && (matches!(*ctp, Type::Optional(_)) || matches!(second_type, Type::Optional(_)));
+-            *ctp = if let Some(m) = user_member {
+-                self.arith_through_operator(code, m, second_code, second_type, ctp.clone())
+-            } else {
+-                self.call_op(
+-                    code,
+-                    operator,
+-                    &[code.clone(), second_code],
+-                    &[ctp.clone(), second_type],
+-                )
+-            };
++            *ctp = self.call_op(
++                code,
++                operator,
++                &[code.clone(), second_code],
++                &[ctp.clone(), second_type],
++            );
+             // Tighten the result range — sound + conservative (never narrower than
+             // the operation guarantees), and only ever a tightening of call_op's
+             // range. `a & c` (c ≥ 0) ∈ [0, c]; `a % c` ∈ [-(|c|-1), |c|-1], or

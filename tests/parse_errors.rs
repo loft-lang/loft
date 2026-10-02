@@ -5736,13 +5736,13 @@ fn test() {
 #[test]
 fn operator_with_a_name_that_backs_nothing() {
     code!("struct P { v: integer }\npub operator frob(self: P, other: P) -> Ordering { self.v.compare(other.v) }\nfn test() { }")
-        .error("`frob` is not an operator: `operator` takes the name of the form it backs — `compare` for `<`, `<=`, `>` and `>=`; declare an ordinary method with `fn` at operator_with_a_name_that_backs_nothing:2:51");
+        .error("`frob` is not an operator: `operator` takes the name of the form it backs — `compare` for `<`, `<=`, `>` and `>=`, `plus` for `+`, `minus` for `-`, `times` for `*`; declare an ordinary method with `fn` at operator_with_a_name_that_backs_nothing:2:51");
 }
 
 #[test]
 fn operator_of_a_form_not_built_yet() {
-    code!("struct P { v: integer }\noperator plus(self: P, other: P) -> P { P { v: self.v + other.v } }\nfn test() { }")
-        .error("`operator plus` will back `+`, which a type cannot define yet; declare it with `fn` as an ordinary method for now at operator_of_a_form_not_built_yet:2:40");
+    code!("struct P { v: integer }\noperator negate(self: P) -> P { P { v: 0 - self.v } }\nfn test() { }")
+        .error("`operator negate` will back unary `-`, which a type cannot define yet; declare it with `fn` as an ordinary method for now at operator_of_a_form_not_built_yet:2:32");
 }
 
 #[test]
@@ -5767,4 +5767,28 @@ fn operator_compare_of_the_wrong_shape() {
 fn a_plain_compare_does_not_make_less_than_work() {
     code!("struct P { v: integer }\nfn compare(self: P, other: P) -> Ordering { self.v.compare(other.v) }\nfn test() { a = P { v: 1 }; b = P { v: 2 }; assert(a < b, \"lt\"); }")
         .error("`P` has a method `compare`, but `<` reaches only one written with `operator`: declare it `operator compare(self: P, other: P) -> Ordering` at a_plain_compare_does_not_make_less_than_work:3:58");
+}
+
+#[test]
+fn a_plain_plus_does_not_make_plus_work() {
+    code!("value struct Du { ms: integer }\nfn plus(self: Du, o: Du) -> Du { Du { ms: self.ms + o.ms } }\nfn test() { a = Du { ms: 1 }; b = a + a; assert(b.ms == 2, \"p\"); }")
+        .error("`Du` has a method `plus`, but `+` reaches only one written with `operator`: declare it `operator plus(self: Du, other: Du) -> Du` at a_plain_plus_does_not_make_plus_work:3:41");
+}
+
+#[test]
+fn operator_plus_without_self() {
+    code!("value struct Du { ms: integer }\noperator plus(a: Du, b: Du) -> Du { Du { ms: a.ms + b.ms } }\nfn test() { }")
+        .error("`operator plus` is a method: its first parameter is `self`, the type `+` is written on — `operator plus(self: T, other: U) -> V` at operator_plus_without_self:2:36");
+}
+
+#[test]
+fn operator_plus_of_the_wrong_shape() {
+    code!("value struct Du { ms: integer }\noperator plus(self: Du) -> Du { self }\nfn test() { }")
+        .error("`operator plus` takes `self` and the right operand of `+`, and answers the result: `operator plus(self: Du, other: U) -> V` at operator_plus_of_the_wrong_shape:2:32");
+}
+
+#[test]
+fn operator_times_on_a_built_in_type() {
+    code!("operator times(self: integer, k: text) -> integer { self + len(k) }\nfn test() { }")
+        .error("`operator times` defines `*` for a type of its own package, and `integer` is not one; a built-in type already has its arithmetic at operator_times_on_a_built_in_type:1:52");
 }

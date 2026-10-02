@@ -1163,31 +1163,47 @@ impl Parser {
         )
     }
 
-    /// `@FR-Op-Back` (@PLN182) — the `operator compare` an order form on these operand types
-    /// reaches: the LEFT operand's `compare`, chosen among that name's overloads by the right
-    /// operand's type exactly as the method call `a.compare(b)` would.  A plain `fn compare`
-    /// is an ordinary method and reaches nothing here (`@FR-Op-Mark`): where the type has one
-    /// and no other way to answer `<`, the refusal names it and the answer is
-    /// `Some(u32::MAX)`, so the caller does not add a second, vaguer one.
+    /// `@FR-Op-Back` (@PLN182) — the form an `operator` definition backs, the symbol it is
+    /// written with, and the stdlib-operator name a type may still answer it through.
+    const OPERATOR_FORMS: &'static [(&'static str, &'static str, &'static str)] = &[
+        ("compare", "<", "OpLt"),
+        ("plus", "+", "OpAdd"),
+        ("minus", "-", "OpMin"),
+        ("times", "*", "OpMul"),
+    ];
+
+    /// The `operator compare` an order form on these operand types reaches
+    /// ([`Self::operator_member`]).
     pub(crate) fn operator_compare(&mut self, types: &[Type]) -> Option<u32> {
-        if types.len() != 2 || types.iter().any(Type::is_unknown) {
+        self.operator_member("compare", types)
+    }
+
+    /// `@FR-Op-Back` (@PLN182) — the `operator <form>` a binary form on these operand types
+    /// reaches: the LEFT operand's member of that name, chosen among its overloads by the
+    /// right operand's type exactly as the method call `a.<form>(b)` would.  A plain `fn` of
+    /// the name is an ordinary method and reaches nothing here (`@FR-Op-Mark`): where the type
+    /// has one and no other way to answer the form, the refusal names it and the answer is
+    /// `Some(u32::MAX)`, so the caller does not add a second, vaguer one.
+    pub(crate) fn operator_member(&mut self, form: &str, types: &[Type]) -> Option<u32> {
+        // `@FR-Op-Std` — the stdlib's own bodies reach the stdlib's operator definitions, never
+        // a user's: nothing to look up while `default/` is parsed (each lookup builds a key).
+        if self.default || types.len() != 2 || types.iter().any(Type::is_unknown) {
             return None;
         }
         let (Type::Reference(left, _) | Type::Enum(left, _, _)) = types[0].base() else {
             return None;
         };
         let left = *left;
-        // The left type's own `compare` key (`t_<len><T>_compare`): its one definition, or the
-        // dispatcher over its overloads, chosen among by `@FR-Disp-Select` as `a.compare(b)`
-        // would choose.
-        let key = self.data.find_op_method(u16::MAX, "compare", &types[0]);
+        // The left type's own key (`t_<len><T>_<form>`): its one definition, or — a type with
+        // several of the name — the overload set under the bare name, chosen among by
+        // `@FR-Disp-Select` as `a.<form>(b)` would choose.
+        let key = self.data.find_op_method(u16::MAX, form, &types[0]);
         if key == u32::MAX {
             return None;
         }
-        // A type with several `compare`s is an overload set under the bare name.
-        let chosen = if self.data.has_overload_set("compare") {
+        let chosen = if self.data.has_overload_set(form) {
             let routed = self.data.routed_types(types);
-            match self.select_overload(u16::MAX, "compare", &routed) {
+            match self.select_overload(u16::MAX, form, &routed) {
                 crate::parser::dispatch::Selection::One(d) => d,
                 crate::parser::dispatch::Selection::Ambiguous(_) => return None,
                 _ => key,
@@ -1199,27 +1215,69 @@ impl Parser {
         let own = self.data.visible_params(chosen).first().is_some_and(
             |t| matches!(t.base(), Type::Reference(d, _) | Type::Enum(d, _, _) if *d == left),
         );
-        if !own {
+        if !own || self.data.visible_params(chosen).len() != 2 {
             return None;
         }
         if self.data.def(chosen).operator_form() {
             return Some(chosen);
         }
+        let (_, symbol, old) = Self::OPERATOR_FORMS.iter().find(|(f, _, _)| *f == form)?;
         if self
-            .user_op_method("OpLt", types)
-            .is_none_or(|lt| lt == u32::MAX)
+            .user_op_method(old, types)
+            .is_none_or(|d| d == u32::MAX)
         {
             // Said on the pass that meets it: the operator search below refuses on pass 1 too.
             let t = types[0].base().source_name(&self.data);
+            let r = types[1].base().source_name(&self.data);
+            // The unmarked method's own result: the declaration to write is that one, marked.
+            let answers = self.data.def(chosen).returned().source_name(&self.data);
             diagnostic!(
                 self.lexer,
                 Level::Error,
-                "`{t}` has a method `compare`, but `<` reaches only one written with `operator`: \
-                 declare it `operator compare(self: {t}, other: {t}) -> Ordering`"
+                "`{t}` has a method `{form}`, but `{symbol}` reaches only one written with \
+                 `operator`: declare it `operator {form}(self: {t}, other: {r}) -> {answers}`"
             );
             return Some(u32::MAX);
         }
         None
+    }
+
+    /// The `operator` form an arithmetic symbol backs, for the forms built so far.
+    fn arith_form(op: &str) -> Option<&'static str> {
+        match op {
+            "+" => Some("plus"),
+            "-" => Some("minus"),
+            "*" => Some("times"),
+            _ => None,
+        }
+    }
+
+    /// `@FR-Op-Back` — `a + b`, `a - b`, `a * b` on a user type is ONE call of the left
+    /// operand's `plus` / `minus` / `times`, its type and value the method's (`@FR-Op-Result`).
+    pub(crate) fn arith_through_operator(
+        &mut self,
+        code: &mut Value,
+        member: u32,
+        right: Value,
+        right_tp: Type,
+        left_tp: Type,
+    ) -> Type {
+        if member == u32::MAX {
+            return Type::Unknown(0); // refused, named by `operator_member`
+        }
+        let mut call = Value::Null;
+        let left = code.clone();
+        let tp = self.call_nr(
+            &mut call,
+            member,
+            &[left, right],
+            &[left_tp, right_tp],
+            true,
+            &[],
+            None,
+        );
+        *code = call;
+        tp
     }
 
     /// `@FR-Op-Order` — `a ⊕ b` for an order form ⊕ is ONE call of `a.compare(b)`, read against
@@ -1289,6 +1347,21 @@ impl Parser {
     ) -> (Value, Type) {
         if op == "=" {
             return (val.clone(), src_tp.clone());
+        }
+        // `@FR-Op-Compound` — `a ⊕= b` is `a = a.m(b)` for ⊕'s `operator` method m; the place
+        // is read once here and written by the caller.
+        if let Some(form) = Self::arith_form(op)
+            && let Some(m) = self.operator_member(form, &[f_type.clone(), src_tp.clone()])
+        {
+            let mut code = to.clone();
+            let tp = self.arith_through_operator(
+                &mut code,
+                m,
+                val.clone(),
+                src_tp.clone(),
+                f_type.clone(),
+            );
+            return (code, tp);
         }
         let (name, operands, types) = if op == ">" {
             (
@@ -5741,14 +5814,24 @@ impl Parser {
             // untouched here, so overflow of two non-null values still types non-null.
             // @FR-N-Prop: a nullable operand makes the result nullable — null PROPAGATES
             // through a value-preserving scalar op rather than being laundered by it.
-            let operand_nullable = crate::keys::nprop_enabled()
+            // `@FR-Op-Back` — on a user type, `a ⊕ b` is the left operand's `operator` method
+            // (`@FR-Op-Left`), and the form's type is the method's own (`@FR-Op-Result`): no
+            // propagation wrap is added to it.
+            let user_member = Self::arith_form(operator)
+                .and_then(|form| self.operator_member(form, &[ctp.clone(), second_type.clone()]));
+            let operand_nullable = user_member.is_none()
+                && crate::keys::nprop_enabled()
                 && (matches!(*ctp, Type::Optional(_)) || matches!(second_type, Type::Optional(_)));
-            *ctp = self.call_op(
-                code,
-                operator,
-                &[code.clone(), second_code],
-                &[ctp.clone(), second_type],
-            );
+            *ctp = if let Some(m) = user_member {
+                self.arith_through_operator(code, m, second_code, second_type, ctp.clone())
+            } else {
+                self.call_op(
+                    code,
+                    operator,
+                    &[code.clone(), second_code],
+                    &[ctp.clone(), second_type],
+                )
+            };
             // Tighten the result range — sound + conservative (never narrower than
             // the operation guarantees), and only ever a tightening of call_op's
             // range. `a & c` (c ≥ 0) ∈ [0, c]; `a % c` ∈ [-(|c|-1), |c|-1], or
