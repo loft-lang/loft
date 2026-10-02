@@ -459,6 +459,7 @@ The bytecode is a compact encoding of the `Call`/`Set`/`If`/`Loop` IR nodes. It 
 The default library is loaded before any user source. It is parsed with `default: true`, which:
 - Allows `OpXxx`-prefixed names (operator definitions).
 - Allows `#rust "..."` annotations that supply the Rust implementation string for the code generator (`src/generation/`).
+- Allows `#hot` / `#cold` on an operator: its dispatch priority.  A `#hot` operator takes a one-byte opcode and runs inline in the interpreter's lean loop, so its template may use only its operands, the stack accessors, `code_pos` and `raise_recoverable` (anything more fails to compile as hot); a `#cold` one is rare and takes a two-byte opcode.  Changing either is `make fill` (formal/rewrites.md `(R-HotInline)`, `(R-OpPriority)`).
 - Registers all built-in types, operators, and standard functions in `Data` and `Stores`.
 
 Files are loaded in alphabetical order:

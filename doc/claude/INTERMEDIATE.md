@@ -502,9 +502,14 @@ discover the declared operators, so what their bodies call must exist first.
 and dispatches `OPERATORS[255 + ext]`. `ext` is a `u8`, so the addressable
 range is `0..=510`: **511 opcodes**, not 256.
 
-The table is **not** near saturation: the interpreter's superinstructions
-(`PERFORMANCE.md` § Operand fusion) live in the escape range as two-byte
-opcodes, declared last so they renumber no earlier operator.
+The table is **not** near saturation, and which operators get the one-byte
+codes is chosen, not positional: an operator marked `#hot` in `default/` takes
+one of the first slots (the interpreter's superinstructions among them,
+`PERFORMANCE.md` § Operand fusion), one marked `#cold` one of the last, the
+rest the slots between, each class in declaration order
+(formal/rewrites.md `(R-OpPriority)`).  So adding an operator renumbers every
+later one of its class and all of the classes after it — `make fill`, then
+rebuild.
 
 **No number is quoted here on purpose.** The count lived in prose in five
 documents, was hand-copied between them, and every copy drifted: the "254 of

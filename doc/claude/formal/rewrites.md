@@ -3363,6 +3363,99 @@ indirect call is predicted and the core runs ahead of it.  Kept for the shorter 
 `tests/code_base.rs`: a REPL session defines 48 long functions after earlier runs (the buffer
 has to grow) and reads old and new results back.
 
+### The position and the stack top travel between ops in registers
+
+```
+  (R-RegisterTable)  the lean loop passes each operator the bytecode position and the stack
+                     top as arguments and takes them back as its result (`fill::OPERATORS_REG`,
+                     an entry `<op>_r` per operator).  The entry writes both into `State`
+                     (`State::regs_in`), runs the operator's direct-path body inlined, and
+                     returns what `State` then holds (`State::regs_out`), so `State` is in step
+                     after every operator and nothing that reads it between ops changes.
+```
+
+**In words.** Applied by: interpreter runtime, the lean loop with the direct stack path
+(`(R-FastTable)`); every other loop keeps the plain tables.  Allowed because the entry is the
+plain operator with two stores in front: inlined beside them (`s: &mut State` is unaliased), the
+body's reads of `code_pos` and `stack_pos` fold to the incoming registers, and the stores remain.
+What it removes is the store-then-load of the two fields from one op to the next, which put every
+op behind the previous op's write on the critical path.  Effect, against the plain table in the
+same binary: the dispatch-bound bench rows −11 to −20 %, a call-bound row unchanged.
+`LOFT_NO_REGISTER_TABLE=1` dispatches the plain table.  Guarded by every interpreted test, and
+by `tests/scripts/a-hot-operator-answers-the-same-inline-as-through-the-table.loft` with
+`LOFT_NO_HOT=1`, which runs every operator through these entries.
+
+### An op's operands are checked once
+
+```
+  (R-OperandSpan)  an operator whose operands all have a fixed width bounds-checks them
+                   ONCE against the bytecode's length and advances the position past them in
+                   one step (`State::operands`); each operand is read at its constant offset
+                   (`Operands::get`).  An operator with an operand of no fixed width reads each
+                   operand on its own (`State::code`), as before.
+```
+
+**In words.** Applied by the `fill.rs` generator (`create::generate_code_into`), so it holds for
+every table.  Allowed because the operands are contiguous and their widths are known when the
+operator is generated: one check over their sum fails exactly when one of the per-operand checks
+would have, and the position the body sees is the same.  What it removes is a compare, a branch
+and a `code_pos` store per operand — four of each in `OpIntVCPut` — and the stores mattered
+most: each one has to happen before a check that can panic, because an unwinding `State` is
+observable.  Effect: sum_loop's kernel 542 → 483 instructions an iteration, a call 656 → 604.
+Guarded by `tests/issues.rs::fill_rs_up_to_date` (the generator's output is the committed
+table) and by every interpreted test.
+
+### A hot operator runs inline, on the loop's own registers
+
+```
+  (R-HotInline)  an operator marked `#hot` in `default/` is generated a second time against
+                 `State::Hot`, whose position and stack top are LOCALS, and the lean loop runs
+                 it inline (`fill::dispatch_lean`, a `match` on the opcode).  `Hot` offers only
+                 the operands, the four stack accessors, the jump target and
+                 `raise_recoverable`, so a template that needs more does not compile as hot.
+                 `State` is brought up to the registers before anything else reads it: the
+                 next non-hot operator's entry (`(R-RegisterTable)`), the stop path, the
+                 loop's end, and inside `Hot::raise_recoverable`.
+```
+
+**In words.** Applied by the `fill.rs` generator and the lean loop (`State::lean_register_loop`,
+its own function so its register allocation is not shared with the rest of `execute_argv`).
+Allowed because a hot body is the same template as the table's body, written against an
+interface that has nothing else in it, and because the only readers of `State` between ops are
+the four named above.  What it removes is what `(R-RegisterTable)` cannot: `State`'s fields are
+reloaded after every write through the stack's raw pointer, which for all the compiler can prove
+may point into `State`, and a local is not; plus the call, its prologue and its return.  A
+stack-underflow or operand report is out of line (`stack_underflow`, `code_out_of_range`): a
+formatted `assert!` takes its argument's address and puts the whole view back in memory.
+Effect, against `LOFT_NO_HOT=1` in the same binary: the dispatch-bound bench rows −15 to −22 %,
+a call-bound row unchanged.  `LOFT_NO_HOT=1` runs every operator through the register table.
+Guard `tests/scripts/a-hot-operator-answers-the-same-inline-as-through-the-table.loft`, with its
+planted defects named in its header; the fused hot operators' own guard is
+`tests/scripts/an-integer-operator-over-locals-runs-as-one-op.loft`.
+
+### An operator's priority decides its opcode's width
+
+```
+  (R-OpPriority)  opcodes are numbered by priority: the `#hot` operators take the first
+                  slots, the unmarked ones the next, the `#cold` ones the last, each class in
+                  declaration order.  The generator lays every table out in that order and
+                  records the class sizes (`fill::OP_HOT`, `fill::OP_NORMAL`); `Data::op_code`
+                  numbers a declaration from its class and those sizes.  A slot below 255 is a
+                  one-byte opcode, so every hot operator has one; the generator refuses more
+                  than 255.
+```
+
+**In words.** Applied by the parser (`Data::op_code`, at the declaration, after its annotations)
+and the `fill.rs` generator (`create::operator_slots`).  Allowed because a number is only a slot
+in the tables, and both sides compute the same order from the same annotations: every route that
+parses `default/` (a directory, the embedded sources, the browser build) numbers it the same way.
+`#cold` is for an operator whose own work dwarfs one byte — file I/O, whole-collection passes,
+parsing, set-up — so that every unmarked operator still fits the one-byte range.  Effect:
+sum_loop's kernel 424 → 408 instructions an iteration, a call 582 → 555 (its fused operators
+lost their escape byte).  Guarded at every load by `stdlib_ops::verify`, which compares each
+slot's declared name with the binary's table and refuses the run on the first that differs, and
+by `tests/issues.rs::fill_rs_up_to_date`.
+
 ### An element in range is addressed in one straight path
 
 ```

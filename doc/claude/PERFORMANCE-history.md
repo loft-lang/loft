@@ -4125,3 +4125,14 @@ Suggested order when this work unpauses:
 
 Items are independent — order can shift based on which consumer
 (interpreter / native / wasm) needs the win first.
+
+## Dispatch loop: costs measured before the lean loop's current form
+
+Moved from PERFORMANCE.md § Dispatch loop.  Testing the five rare events (a runtime error, a
+frame yield, a `par` worker's fault, a debugger arming, the halt) after every op instead of one
+flag (`(R-DispatchStop)`) was 15–24 % of a loop's time.  The formatted `assert!` that an operand
+read (`State::code`) carried before its report moved out of line cost 5–7 % of a vector loop's
+cycles (2026-10-01).  The crash context, before it was derived from the registered position
+(`(R-DispatchPublish)`), was written per op; the function is not tracked, the report's `at:`
+line names it.
+
