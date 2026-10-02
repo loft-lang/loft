@@ -5644,7 +5644,7 @@ impl Output<'_> {
                 let user_fn = name.starts_with("n_") || name.starts_with("t_");
                 let opaque = user_fn
                     && !matches!(callee.code(), Value::Block(_))
-                    && (!crate::portable_path::is_stdlib_source(&callee.position.file)
+                    && (!crate::file_access::is_stdlib_source(&callee.position.file)
                         || callee
                             .attributes()
                             .iter()
@@ -9195,7 +9195,12 @@ extern crate loft;"
         // (e.g. wrong arg type, missing trait impl) map directly to
         // the .loft definition site.
         if !def.position().file.is_empty() {
-            writeln!(w, "// loft:{}:{}", def.position().file, def.position().line)?;
+            writeln!(
+                w,
+                "// loft:{}:{}",
+                crate::file_access::portable_str(&def.position().file),
+                def.position().line
+            )?;
         }
         let twin = self.twin.clone();
         write!(

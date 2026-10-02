@@ -327,7 +327,7 @@ impl Parser {
         // it binds and its bounds hold.
         d != u32::MAX
             && matches!(self.data.def_type(d), DefType::Function | DefType::Generic)
-            && !crate::portable_path::is_stdlib_source(&self.data.def(d).position().file)
+            && !crate::file_access::is_stdlib_source(&self.data.def(d).position().file)
             && self.definition_ranks(d, &routed).is_some()
     }
 
@@ -341,7 +341,7 @@ impl Parser {
         self.data.definitions.iter().any(|d| {
             matches!(d.def_type, DefType::Function | DefType::Generic)
                 && d.original_name().as_str() == name
-                && !crate::portable_path::is_stdlib_source(&d.position().file)
+                && !crate::file_access::is_stdlib_source(&d.position().file)
         })
     }
 
@@ -436,7 +436,7 @@ impl Parser {
     /// the stdlib's own files are never scanned.
     pub(crate) fn file_has_pending_fn(&mut self, name: &str) -> bool {
         let file = self.lexer.pos().file.clone();
-        if crate::portable_path::is_stdlib_source(&file) {
+        if crate::file_access::is_stdlib_source(&file) {
             return false;
         }
         if !self.declared_fn_names.contains_key(&*file) {
@@ -790,7 +790,7 @@ impl Parser {
     /// over a type parameter is the wrong shape (measured: the stdlib's `len(both: vector)`
     /// refused its own stub, *expected vector<T>, got vector<T>*).
     fn stub_admissible(&self, main: u32) -> bool {
-        if crate::portable_path::is_stdlib_source(&self.data.def(main).position().file) {
+        if crate::file_access::is_stdlib_source(&self.data.def(main).position().file) {
             return false;
         }
         if self.context == u32::MAX || self.data.def_type(self.context) == DefType::Generic {

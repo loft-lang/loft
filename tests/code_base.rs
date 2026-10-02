@@ -69,7 +69,7 @@ fn the_bytecode_is_written_only_by_its_writer() {
                         || code.contains(".bytecode = ")
                         || code.contains("bytecode.as_mut_ptr()")
                     {
-                        sites.push(format!("{}:{}", path.display(), n + 1));
+                        sites.push(format!("{}:{}", loft::file_access::portable(&path), n + 1));
                     }
                 }
             }

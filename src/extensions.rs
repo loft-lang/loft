@@ -191,7 +191,7 @@ fn load_one(path: &str) -> bool {
 
     static LOAD_LOCK: Mutex<Option<HashSet<String>>> = Mutex::new(None);
 
-    let canonical = crate::portable_path::plain_canonical_str(path);
+    let canonical = crate::file_access::plain_canonical_str(path);
 
     let mut guard = LOAD_LOCK
         .lock()
@@ -2193,8 +2193,8 @@ pub fn native_target_root(pkg_dir: &std::path::Path) -> std::path::PathBuf {
     #[cfg(feature = "registry")]
     {
         let registry_cache = crate::registry_index::cache_dir();
-        let registry_cache_canon = crate::portable_path::try_plain_canonical(&registry_cache);
-        let pkg_canon = crate::portable_path::try_plain_canonical(std::path::Path::new(pkg_dir));
+        let registry_cache_canon = crate::file_access::try_plain_canonical(&registry_cache);
+        let pkg_canon = crate::file_access::try_plain_canonical(std::path::Path::new(pkg_dir));
         let use_redirected = match (&registry_cache_canon, &pkg_canon) {
             (Some(rc), Some(pc)) => pc.starts_with(rc),
             _ => false,

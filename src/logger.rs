@@ -228,7 +228,7 @@ impl Logger {
     /// Unchanged when nothing to strip applies — a stdlib file, a library from elsewhere,
     /// or a path already relative. An absolute path is still better than a wrong one.
     ///
-    /// The separator is always `/`, on every platform, via [`crate::portable_path`]. A record
+    /// The separator is always `/`, on every platform, via [`crate::file_access`]. A record
     /// is shipped OFF the machine that wrote it, so the host's separator is not part of what
     /// the file is called; and the `[levels]` keys this value is matched against are written
     /// `sub/` in a config file that is checked in and shared, so a host-specific spelling
@@ -240,7 +240,7 @@ impl Logger {
                 .map_or(loft_file, |rest| rest.trim_start_matches(['/', '\\'])),
             None => loft_file,
         };
-        crate::portable_path::portable_str(relative)
+        crate::file_access::portable_str(relative)
     }
 
     /// Write a log record.  Applies rate limiting and level filtering.
@@ -542,7 +542,7 @@ fn source_base_for(main_loft_file: &str) -> Option<PathBuf> {
     }
     // Canonicalised, in the plain spelling a record's absolute path carries, so the strip
     // matches; a path that cannot be canonicalised is used as-is rather than dropped.
-    Some(crate::portable_path::plain_canonical(dir))
+    Some(crate::file_access::plain_canonical(dir))
 }
 
 fn parse_config_str(content: &str, conf_dir: &Path) -> RuntimeLogConfig {

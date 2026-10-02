@@ -352,7 +352,7 @@ impl Parser {
             if d.def_type != DefType::Function
                 || d.source != source
                 || d.synthetic.is_some()
-                || crate::portable_path::is_stdlib_source(&d.position.file)
+                || crate::file_access::is_stdlib_source(&d.position.file)
             {
                 continue;
             }
@@ -2149,7 +2149,7 @@ impl Parser {
         }
         .filter(|d| {
             self.default
-                || !crate::portable_path::is_stdlib_source(&self.data.def(*d).position().file)
+                || !crate::file_access::is_stdlib_source(&self.data.def(*d).position().file)
         });
         let Some(own) = own else {
             diagnostic!(

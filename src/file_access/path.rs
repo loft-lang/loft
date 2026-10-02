@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I90 — Shared utilities & data structures
 
 //! Path TEXT, parsed under an explicit [`Flavor`].
 //!
@@ -85,7 +86,9 @@ impl PathText {
             let unc_verbatim = rest
                 .strip_prefix(r"\\?\UNC\")
                 .or_else(|| rest.strip_prefix("//?/UNC/"));
-            let verbatim = rest.strip_prefix(r"\\?\").or_else(|| rest.strip_prefix("//?/"));
+            let verbatim = rest
+                .strip_prefix(r"\\?\")
+                .or_else(|| rest.strip_prefix("//?/"));
             let unc_body = if let Some(body) = unc_verbatim {
                 Some(body)
             } else if let Some(body) = verbatim {
@@ -290,7 +293,7 @@ impl PartialEq for PathText {
 /// a test, `<install>/share/loft/default/…` from an installed binary, and on Windows any
 /// mix of separators (`D:\a\loft/default\01_code.loft` when a `/` joined a Windows
 /// directory, which a text pattern missed and the stdlib's own operators were then judged
-/// a user's — loft#1859).  A user directory literally named `default` is misread as the
+/// a user's — loft#1860).  A user directory literally named `default` is misread as the
 /// stdlib; that is the price of a path-shaped answer.
 #[must_use]
 pub fn is_stdlib_source(file: &str, flavor: Flavor) -> bool {
@@ -316,7 +319,11 @@ mod tests {
         assert_eq!(a.portable(), "D:/a/loft/loft/default/01_code.loft");
         assert_eq!(a.native(), r"D:\a\loft\loft\default\01_code.loft");
         assert_eq!(a, w("D:/a/loft/loft/default/01_code.loft"));
-        assert_eq!(a, w(r"d:\A\LOFT\loft\Default\01_CODE.loft"), "case and drive case");
+        assert_eq!(
+            a,
+            w(r"d:\A\LOFT\loft\Default\01_CODE.loft"),
+            "case and drive case"
+        );
         assert!(a.is_absolute());
     }
 
@@ -337,7 +344,10 @@ mod tests {
         assert_eq!(w(r"\\?\C:\work\a.loft"), w(r"C:\work\a.loft"));
         assert_eq!(w(r"\\?\C:\work\a.loft").native(), r"C:\work\a.loft");
         assert_eq!(w(r"\\?\UNC\srv\share\a.loft"), w(r"\\srv\share\a.loft"));
-        assert_eq!(w(r"\\?\UNC\srv\share\a.loft").native(), r"\\srv\share\a.loft");
+        assert_eq!(
+            w(r"\\?\UNC\srv\share\a.loft").native(),
+            r"\\srv\share\a.loft"
+        );
         assert_eq!(w(r"\\srv\share\a.loft").portable(), "//srv/share/a.loft");
     }
 
@@ -350,7 +360,10 @@ mod tests {
         assert!(!u("pkg").starts_with(&u("pkg/src")));
         assert!(w(r"D:\a\loft\default\x.loft").starts_with(&w("D:/a/loft/")));
         assert!(!w(r"D:\a\x.loft").starts_with(&w(r"C:\a")), "another drive");
-        assert!(!u("/a/b").starts_with(&u("a")), "rooted and relative differ");
+        assert!(
+            !u("/a/b").starts_with(&u("a")),
+            "rooted and relative differ"
+        );
         assert_eq!(u("dir/"), u("dir"));
         assert_eq!(w(r"D:\a\loft\loft/"), w(r"D:\a\loft\loft"));
     }
@@ -366,7 +379,10 @@ mod tests {
 
     #[test]
     fn join_appends_or_replaces() {
-        assert_eq!(w(r"D:\a\loft\loft/").join("default").native(), r"D:\a\loft\loft\default");
+        assert_eq!(
+            w(r"D:\a\loft\loft/").join("default").native(),
+            r"D:\a\loft\loft\default"
+        );
         assert_eq!(u("/x").join("y/z.loft").portable(), "/x/y/z.loft");
         assert_eq!(u("/x").join("/abs").portable(), "/abs");
         assert_eq!(w(r"C:\x").join(r"D:\y").portable(), "D:/y");
@@ -387,15 +403,30 @@ mod tests {
     #[test]
     fn the_stdlib_is_recognised_however_it_was_loaded() {
         assert!(is_stdlib_source("default/01_code.loft", Unix));
-        assert!(is_stdlib_source("/usr/local/share/loft/default/01_code.loft", Unix));
+        assert!(is_stdlib_source(
+            "/usr/local/share/loft/default/01_code.loft",
+            Unix
+        ));
         assert!(is_stdlib_source(r"C:\loft\default\01_code.loft", Windows));
-        assert!(is_stdlib_source(r"D:\a\loft\loft/default\01_code.loft", Windows));
-        assert!(is_stdlib_source(r"D:/a/loft/loft\default/01_code.loft", Windows));
+        assert!(is_stdlib_source(
+            r"D:\a\loft\loft/default\01_code.loft",
+            Windows
+        ));
+        assert!(is_stdlib_source(
+            r"D:/a/loft/loft\default/01_code.loft",
+            Windows
+        ));
         assert!(is_stdlib_source(r"default\01_code.loft", Windows));
-        assert!(!is_stdlib_source(r"default\01_code.loft", Unix), "one Unix file name");
+        assert!(
+            !is_stdlib_source(r"default\01_code.loft", Unix),
+            "one Unix file name"
+        );
         assert!(!is_stdlib_source("src/main.loft", Unix));
         assert!(!is_stdlib_source("defaults/x.loft", Unix));
-        assert!(!is_stdlib_source("src/default", Unix), "a FILE named default");
+        assert!(
+            !is_stdlib_source("src/default", Unix),
+            "a FILE named default"
+        );
         assert!(!is_stdlib_source("", Unix));
     }
 }

@@ -1310,7 +1310,7 @@ fn collect_sources(dir: &std::path::Path) -> Vec<SourceFile> {
             let Ok(text) = fs::read_to_string(&path) else {
                 continue;
             };
-            let rel = loft::portable_path::portable(path.strip_prefix(dir).unwrap_or(&path));
+            let rel = loft::file_access::portable(path.strip_prefix(dir).unwrap_or(&path));
             let slug: String = rel
                 .chars()
                 .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })

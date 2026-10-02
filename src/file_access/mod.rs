@@ -57,59 +57,95 @@ fn run<T>(path: &PathText, op: impl FnOnce(&Path) -> io::Result<T>) -> io::Resul
 }
 
 /// The file's text.
+///
+/// # Errors
+/// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
 pub fn read_to_string(path: &PathText) -> io::Result<String> {
     run(path, |p| std::fs::read_to_string(p))
 }
 
 /// The file's bytes.
+///
+/// # Errors
+/// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
 pub fn read(path: &PathText) -> io::Result<Vec<u8>> {
     run(path, |p| std::fs::read(p))
 }
 
 /// Replace the file's content (creating it).
+///
+/// # Errors
+/// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
 pub fn write(path: &PathText, contents: impl AsRef<[u8]>) -> io::Result<()> {
     run(path, |p| std::fs::write(p, contents))
 }
 
 /// Create the directory and every missing parent.
+///
+/// # Errors
+/// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
 pub fn create_dir_all(path: &PathText) -> io::Result<()> {
     run(path, |p| std::fs::create_dir_all(p))
 }
 
+///
+/// # Errors
+/// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
 pub fn remove_file(path: &PathText) -> io::Result<()> {
     run(path, |p| std::fs::remove_file(p))
 }
 
 /// Remove the directory and everything in it.
+///
+/// # Errors
+/// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
 pub fn remove_dir_all(path: &PathText) -> io::Result<()> {
     run(path, |p| std::fs::remove_dir_all(p))
 }
 
+///
+/// # Errors
+/// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
 pub fn copy(from: &PathText, to: &PathText) -> io::Result<u64> {
     let dest = to.os()?;
     run(from, |p| std::fs::copy(p, &dest))
 }
 
+///
+/// # Errors
+/// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
 pub fn rename(from: &PathText, to: &PathText) -> io::Result<()> {
     let dest = to.os()?;
     run(from, |p| std::fs::rename(p, &dest))
 }
 
 /// Open the file for reading.
+///
+/// # Errors
+/// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
 pub fn open(path: &PathText) -> io::Result<std::fs::File> {
     run(path, |p| std::fs::File::open(p))
 }
 
 /// Create (or truncate) the file for writing.
+///
+/// # Errors
+/// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
 pub fn create(path: &PathText) -> io::Result<std::fs::File> {
     run(path, |p| std::fs::File::create(p))
 }
 
 /// Open the file with `options` (append, create-new, …).
+///
+/// # Errors
+/// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
 pub fn open_with(path: &PathText, options: &std::fs::OpenOptions) -> io::Result<std::fs::File> {
     run(path, |p| options.open(p))
 }
 
+///
+/// # Errors
+/// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
 pub fn metadata(path: &PathText) -> io::Result<std::fs::Metadata> {
     run(path, |p| std::fs::metadata(p))
 }
@@ -117,6 +153,9 @@ pub fn metadata(path: &PathText) -> io::Result<std::fs::Metadata> {
 /// The entries of a directory, SORTED: listing order is the file system's (hash order on
 /// one, name order on another), and nothing the compiler derives from a listing may
 /// depend on which machine produced it.
+///
+/// # Errors
+/// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
 pub fn read_dir(path: &PathText) -> io::Result<Vec<PathText>> {
     run(path, |p| {
         let mut out = Vec::new();
@@ -321,7 +360,10 @@ mod tests {
     #[test]
     fn a_verbatim_prefix_is_shed_and_nothing_else_is_touched() {
         assert_eq!(strip_verbatim(r"\\?\C:\work\a.loft"), r"C:\work\a.loft");
-        assert_eq!(strip_verbatim(r"\\?\UNC\srv\share\a.loft"), r"\\srv\share\a.loft");
+        assert_eq!(
+            strip_verbatim(r"\\?\UNC\srv\share\a.loft"),
+            r"\\srv\share\a.loft"
+        );
         assert_eq!(strip_verbatim("/home/u/a.loft"), "/home/u/a.loft");
     }
 }

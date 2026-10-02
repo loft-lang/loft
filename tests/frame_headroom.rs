@@ -23,7 +23,7 @@ fn a_frame_reaches_the_call_stack_only_through_push_frame() {
                 for (n, line) in text.lines().enumerate() {
                     let code = line.trim_start();
                     if !code.starts_with("//") && code.contains("call_stack.push(") {
-                        sites.push(format!("{}:{}", path.display(), n + 1));
+                        sites.push(format!("{}:{}", loft::file_access::portable(&path), n + 1));
                     }
                 }
             }

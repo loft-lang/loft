@@ -18659,7 +18659,7 @@ impl Parser {
     /// the lexer's is whatever the caller passed, the candidate's is built from a
     /// probe directory — so `src/x.loft` and an absolute form must compare equal.
     fn is_current_source(&self, f: &str) -> bool {
-        let canon = |p: &str| crate::portable_path::plain_canonical(std::path::Path::new(p));
+        let canon = |p: &str| crate::file_access::plain_canonical(std::path::Path::new(p));
         let cur = self.lexer.pos().file.clone();
         !cur.is_empty() && canon(&cur) == canon(f)
     }
@@ -18706,7 +18706,7 @@ impl Parser {
         let dep_root = Self::declared_path_dep_root(id, cur_dir);
         let blocked = |candidate: &str| {
             let cand = std::path::Path::new(candidate);
-            let cand = crate::portable_path::plain_canonical(cand);
+            let cand = crate::file_access::plain_canonical(cand);
             if dep_root.as_ref().is_some_and(|r| cand.starts_with(r)) {
                 return false;
             }
@@ -19149,9 +19149,9 @@ impl Parser {
     /// each behind the `registry` feature, as is the cache directory it reads.
     #[cfg(feature = "registry")]
     fn script_in_registry_cache(cur_script: &str) -> bool {
-        crate::portable_path::is_under_canonical(
-            std::path::Path::new(cur_script),
-            &crate::registry_index::cache_dir(),
+        crate::file_access::is_under_canonical(
+            &crate::file_access::PathText::host(cur_script),
+            &crate::file_access::PathText::from_os(&crate::registry_index::cache_dir()),
         )
     }
 
@@ -19283,7 +19283,7 @@ impl Parser {
             .collect()
     }
     fn source_loaded_from(&self, f: &str) -> Option<u16> {
-        let canonical = crate::portable_path::plain_canonical_str(f);
+        let canonical = crate::file_access::plain_canonical_str(f);
         // Every id that names this file, not just one of them: `use_paths` outlives a
         // single pass (it is the parser's, while `use_names` is reset between the two),
         // so it holds names from the previous pass that this pass has not re-bound yet.
@@ -19298,7 +19298,7 @@ impl Parser {
     }
 
     fn record_use_path(&mut self, id: &str, f: &str) {
-        let canonical = crate::portable_path::plain_canonical_str(f);
+        let canonical = crate::file_access::plain_canonical_str(f);
         self.use_paths.insert(id.to_string(), canonical);
     }
 
@@ -19418,7 +19418,7 @@ impl Parser {
         let Some(own) = self.own_module_file(id) else {
             return;
         };
-        let own_canonical = crate::portable_path::plain_canonical_str(&own);
+        let own_canonical = crate::file_access::plain_canonical_str(&own);
         let Some(loaded) = self.use_paths.get(id) else {
             return;
         };
@@ -19463,7 +19463,7 @@ impl Parser {
         // library that ships an overlapping basename today.
         let root_project = crate::resolution_scope::project_root(&self.database.source_dir);
         let inside = |file: &str, root: &std::path::Path| {
-            crate::portable_path::plain_canonical(std::path::Path::new(file)).starts_with(root)
+            crate::file_access::plain_canonical(std::path::Path::new(file)).starts_with(root)
         };
         let captured_by_root = root_project
             .as_ref()
@@ -19580,7 +19580,7 @@ impl Parser {
     /// script) is in no package and so shares one with nothing.
     fn same_package(a: &str, b: &str) -> bool {
         let root = |p: &str| -> Option<std::path::PathBuf> {
-            let mut dir = crate::portable_path::try_plain_canonical(std::path::Path::new(p))?;
+            let mut dir = crate::file_access::try_plain_canonical(std::path::Path::new(p))?;
             if dir.is_file() {
                 dir = dir.parent()?.to_path_buf();
             }
@@ -19609,7 +19609,7 @@ impl Parser {
         }
         let mut found = None;
         let start = if cur_dir.is_empty() { "." } else { cur_dir };
-        let mut search = crate::portable_path::try_plain_canonical(std::path::Path::new(start));
+        let mut search = crate::file_access::try_plain_canonical(std::path::Path::new(start));
         while let Some(dir) = search {
             let manifest_path = dir.join("loft.toml");
             if manifest_path.exists() {
@@ -19717,7 +19717,7 @@ impl Parser {
                         })
                     })?;
                 let root = search_dir.join(rel);
-                return Some(crate::portable_path::plain_canonical(&root));
+                return Some(crate::file_access::plain_canonical(&root));
             }
             search_dir = search_dir.parent()?.to_path_buf();
         }

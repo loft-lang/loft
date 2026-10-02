@@ -5106,7 +5106,7 @@ impl Definition {
     /// Declared in `default/` — the standard library.
     #[must_use]
     pub fn is_stdlib(&self) -> bool {
-        crate::portable_path::is_stdlib_source(&self.position.file)
+        crate::file_access::is_stdlib_source(&self.position.file)
     }
 
     #[must_use]
@@ -5117,7 +5117,7 @@ impl Definition {
         if !self.name.starts_with("n_") || self.name.starts_with("n___lambda_") {
             return false;
         }
-        if crate::portable_path::is_stdlib_source(&self.position.file) {
+        if crate::file_access::is_stdlib_source(&self.position.file) {
             return false;
         }
         // Only the AUTHOR's parameters count: `text_return` / `ref_return` add hidden buffers.
@@ -8724,8 +8724,8 @@ impl Data {
         let name = fn_name.strip_prefix("n_").unwrap_or(fn_name);
         let at = &self.def(winner).position;
         if self.def(winner).name.starts_with("n_")
-            && crate::portable_path::is_stdlib_source(&at.file)
-            && !crate::portable_path::is_stdlib_source(&lexer.pos().file)
+            && crate::file_access::is_stdlib_source(&at.file)
+            && !crate::file_access::is_stdlib_source(&lexer.pos().file)
         {
             format!(
                 "`{name}` is a standard-library function, and its name is reserved for it: a program cannot define its own `{name}` (the standard library's is at {at}); choose another name"
@@ -9464,7 +9464,7 @@ impl Data {
             // the first overload's pass-2 body then read *Unknown variable* for its own
             // parameter, and every program with three overloads lost its watcher
             // (measured, @PLN162 step 14).
-            && !crate::portable_path::is_stdlib_source(&lexer.pos().file)
+            && !crate::file_access::is_stdlib_source(&lexer.pos().file)
             && o_nr != u32::MAX
             && self.def(o_nr).def_type == DefType::Dynamic
             && self.def(o_nr).source == self.source
@@ -9486,7 +9486,7 @@ impl Data {
         } else if d_nr == u32::MAX
             && generic_members
             && crate::keys::method_in_set_enabled()
-            && !crate::portable_path::is_stdlib_source(&lexer.pos().file)
+            && !crate::file_access::is_stdlib_source(&lexer.pos().file)
             && (o_nr == u32::MAX
                 || (self.def(o_nr).def_type == DefType::Dynamic
                     && self.def(o_nr).source == self.source))

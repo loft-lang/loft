@@ -150,12 +150,12 @@ pub fn project_root(script_path: &str) -> Option<PathBuf> {
 /// [`project_root`] from a directory that is already in hand.
 ///
 /// Canonicalized first, so the walk does not terminate prematurely on a relative `./`
-/// prefix that loops on itself — in the PLAIN spelling (`portable_path::plain_canonical`),
+/// prefix that loops on itself — in the PLAIN spelling (`file_access::plain_canonical`),
 /// because the root is what a source position's absolute `file` is stripped against, and a
 /// verbatim `\\?\D:\…` root never prefix-matches the plain path the driver records.
 #[must_use]
 pub fn project_root_from(start: &Path) -> Option<PathBuf> {
-    let abs = crate::portable_path::plain_canonical(start);
+    let abs = crate::file_access::plain_canonical(start);
     let mut cur = abs.as_path();
     loop {
         if cur.join("loft.toml").exists() {
@@ -199,7 +199,7 @@ mod tests {
         let pkg_script = root.join("pkg/src/s.loft");
         assert_eq!(
             resolution_scope(&pkg_script.to_string_lossy()),
-            ResolutionScope::Package(crate::portable_path::plain_canonical(&root.join("pkg")))
+            ResolutionScope::Package(crate::file_access::plain_canonical(&root.join("pkg")))
         );
         assert_eq!(
             resolution_scope(&root.join("bare/s.loft").to_string_lossy()),
