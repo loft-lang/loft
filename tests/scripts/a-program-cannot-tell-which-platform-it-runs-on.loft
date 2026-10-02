@@ -20,6 +20,8 @@
 //   exists("…\\x.txt") finds x.txt.
 //   ARMED: nothing.
 //   HOLDS: tests 6 (move/delete after a read) and 7 (PATH) pass on Windows too; no panic.
+//   After the fix (832ee4ccd): 9 of 9 on both backends on Linux and on windows-latest
+//   (windows-probe run 37064377332).
 
 fn scratch(tag: text) -> text {
   d = "{temp_dir() ?? "/tmp"}/loft_platform_{tag}_{now()}_{ticks()}";

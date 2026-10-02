@@ -4733,11 +4733,11 @@ Walkable     fn children(self: T) -&gt; vector&lt;T&gt;
 <h2 id="stdlib-files-and-directories">Files and directories</h2>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-files-and-directories.html">path_sep</a></span>() -&gt; <span class="ty"><a href="stdlib-types.html">character</a></span></code></pre>
-<p>Returns the platform path separator character: '\' on Windows, '/' elsewhere. Detected once at startup from the runtime filesystem, and fixed for the lifetime of the process.</p>
+<p>The separator of a loft path: '/' on every platform.  A path a program hands loft may also use '\' (it reads as '/'), and every path loft hands back uses '/'.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-files-and-directories.html">file</a></span>(path: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="en"><a href="stdlib-file-system.html">File</a></span> fs#read</code></pre>
-<p>Use as the entry point for all file I/O. A relative path resolves against the program's own directory (or against the working directory under <code>#cwd</code>), so <code>../data.txt</code> names the file above the script — the same file an absolute path would name, and it answers the same either way.</p>
+<p>Use as the entry point for all file I/O. A relative path resolves against the program's own directory (or against the working directory under <code>#cwd</code>), so <code>../data.txt</code> names the file above the script — the same file an absolute path would name, and it answers the same either way. A path means the same on every platform: <code>/</code> and <code>\</code> both separate; a name no platform could hold (<code>a:b</code>, <code>q?</code>, <code>aux.txt</code>, a trailing dot or space) is refused everywhere; a name means its exact spelling, so <code>B.txt</code> beside <code>b.txt</code> is refused. A refused path answers like a missing one, and is logged once.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-files-and-directories.html">exists</a></span>(path: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> fs#read</code></pre>

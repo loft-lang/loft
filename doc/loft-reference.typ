@@ -8861,13 +8861,13 @@ Reads the file and splits it into lines. Strips trailing '\\r' so CRLF files (Wi
 pub fn path_sep() -> character
 ```
 
-Returns the platform path separator character: '\\' on Windows, '/' elsewhere. Detected once at startup from the runtime filesystem, and fixed for the lifetime of the process.
+The separator of a loft path: '/' on every platform.  A path a program hands loft may also use '\\' (it reads as '/'), and every path loft hands back uses '/'.
 
 ```rust
 pub fn file(path: text) -> File fs#read
 ```
 
-Use as the entry point for all file I/O. A relative path resolves against the program's own directory (or against the working directory under `\#cwd`), so `../data.txt` names the file above the script — the same file an absolute path would name, and it answers the same either way.
+Use as the entry point for all file I/O. A relative path resolves against the program's own directory (or against the working directory under `\#cwd`), so `../data.txt` names the file above the script — the same file an absolute path would name, and it answers the same either way. A path means the same on every platform: `/` and `\\` both separate; a name no platform could hold (`a:b`, `q?`, `aux.txt`, a trailing dot or space) is refused everywhere; a name means its exact spelling, so `B.txt` beside `b.txt` is refused. A refused path answers like a missing one, and is logged once.
 
 ```rust
 pub fn exists(path: text) -> boolean fs#read

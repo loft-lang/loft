@@ -223,6 +223,39 @@ pub fn program_path(raw: &str) -> Result<String, String> {
     PathText::program(raw).map(|p| p.native())
 }
 
+/// `@FR-Path-Refuse` — the one log line for a refused path, once per path per process: one
+/// program operation resolves its path more than once (`file(p).write(..)` does twice), and a
+/// refusal said three times reads as three problems.
+pub fn log_refusal_once(raw: &str, why: &str) {
+    static SAID: std::sync::Mutex<Option<std::collections::HashSet<String>>> =
+        std::sync::Mutex::new(None);
+    let first = SAID.lock().map_or(true, |mut said| {
+        said.get_or_insert_with(Default::default)
+            .insert(raw.to_string())
+    });
+    if first {
+        crate::loft_eprintln!("loft: the path `{raw}` is refused: {why}");
+    }
+}
+
+/// Open a resolved path for reading; a refused one (`None`) opens with [`path_refused`].
+///
+/// # Errors
+/// The OS's error, or the refusal.
+pub fn open_resolved(path: Option<&str>) -> std::io::Result<std::fs::File> {
+    path.ok_or_else(path_refused).and_then(std::fs::File::open)
+}
+
+/// `@FR-Path-Refuse` — the error a refused path opens with, so an open site's existing error
+/// branch answers for it; the refusal itself was logged by `Stores::resolve_path`.
+#[must_use]
+pub fn path_refused() -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::InvalidInput,
+        "the path is refused (formal/paths.md)",
+    )
+}
+
 /// `@FR-Path-Case` — a name means exactly its spelling.  `Err` when a name on `full`'s way
 /// matches an entry of its directory only when case is ignored: on a case-folding file
 /// system (Windows, macOS) the OS would answer for that other entry, and on Linux the two

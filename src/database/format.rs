@@ -722,12 +722,12 @@ impl Stores {
     /// `source_dir()` means by "no anchor".
     ///
     /// `Path::join` picks the platform separator, matching `resolve_path`.
-    fn dir_with_sub(base: String, sub: &str) -> String {
+    fn dir_with_sub(base: &str, sub: &str) -> String {
         // `@FR-Path-Sep` — a directory loft gives a program is in the portable form.
         if sub.is_empty() || base.is_empty() {
-            return crate::file_access::given(&base);
+            return crate::file_access::given(base);
         }
-        crate::file_access::given(&std::path::Path::new(&base).join(sub).to_string_lossy())
+        crate::file_access::given(&std::path::Path::new(base).join(sub).to_string_lossy())
     }
 
     /**
@@ -791,7 +791,7 @@ impl Stores {
         };
         #[cfg(feature = "wasm")]
         let base = crate::wasm::host_fs_cwd();
-        Self::dir_with_sub(base, sub)
+        Self::dir_with_sub(&base, sub)
     }
 
     /// Return the byte at position `idx` (0..len) as i64 0-255.
@@ -1012,7 +1012,7 @@ impl Stores {
         };
         #[cfg(feature = "wasm")]
         let base = crate::wasm::host_fs_user_dir();
-        Self::dir_with_sub(base, sub)
+        Self::dir_with_sub(&base, sub)
     }
 
     /// Native-codegen variant of `os_executable` that returns an owned `String`.
@@ -1041,7 +1041,7 @@ impl Stores {
         };
         #[cfg(feature = "wasm")]
         let base = crate::wasm::host_fs_program_dir();
-        Self::dir_with_sub(base, sub)
+        Self::dir_with_sub(&base, sub)
     }
 
     /// Native backend for `source_dir()` (`default/03_text.loft`'s

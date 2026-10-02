@@ -56,16 +56,6 @@ operation of both backends routes through — and `file_access::program_path`
 
 ## Deviations
 
-```
-  D-path-1  (Path-Sep)   On Windows `path_sep()` answers '\', and `temp_dir()` / `cache_dir()`
-                         answer `C:\…\` with backslashes and a trailing separator.
-  D-path-2  (Path-Name)  Every platform writes the names its OS takes: on Windows `a:b.txt`
-                         silently writes an NTFS alternate data stream; on Linux all of
-                         `aux.txt`, `a:b.txt`, `q?.txt`, `trail.` are written.
-  D-path-3  (Path-Case)  On Windows `exists("B.TXT")` finds `b.txt`, and writing `B.txt`
-                         overwrites `b.txt`.
-  D-path-4  (Path-Sep)   On Linux a `\` in a path is part of a name: `exists("d\\x.txt")` does not
-                         find `d/x.txt`, where Windows does.
-```
-
-**OPEN: 4.**
+**OPEN: 0.**  The four this chapter opened with — the Windows separator and directories,
+names one platform takes and another refuses, case folding, and `\` meaning two things — are
+closed; the record is in [paths-history.md](paths-history.md).
