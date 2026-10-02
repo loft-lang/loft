@@ -643,6 +643,11 @@ pub struct Stores {
     /// number inside its own store: `0` not asked yet, `1` yes, `2` no.  The schema does not
     /// change once a program runs, so the answer is computed once per type.
     pub(crate) swap_safe_types: Vec<u8>,
+    /// `@FR-R-RefillBuffer` — a store an exchange released, kept instead of freed: it holds
+    /// the previous value of the rebound variable, a root of its own `known_type` at `1@8`,
+    /// and nothing references it.  The next buffer of that type minted for a refilling callee
+    /// takes it (`take_spare`); a second release frees the one kept before.
+    pub(crate) spare_store: Option<u16>,
     /// When true, `free_named` overwrites the freed store's buffer with a
     /// poison pattern (`0xDEADBEEF` i32 words) so subsequent reads through a
     /// stale DbRef hit recognisable garbage instead of whatever bytes the
@@ -777,6 +782,7 @@ impl Clone for Stores {
             runtime_error: None,
             dispatch_stop: std::sync::atomic::AtomicBool::new(false),
             swap_safe_types: Vec::new(),
+            spare_store: None,
             // #255: `source_dir` is parse-time CONFIG (the main source file's
             // directory), not runtime state — it must survive `clone()` so the
             // `source_dir()` builtin works after the test runner / native paths
@@ -1548,6 +1554,7 @@ impl Stores {
             runtime_error: None,
             dispatch_stop: std::sync::atomic::AtomicBool::new(false),
             swap_safe_types: Vec::new(),
+            spare_store: None,
             source_dir: String::new(),
             // #255 / @PLN9: program-relative by default — a relative file path
             // re-homes against the program's own directory, so "program + assets"

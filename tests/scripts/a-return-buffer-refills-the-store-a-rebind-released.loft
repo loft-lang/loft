@@ -1,0 +1,128 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-RefillBuffer` — a callee whose return buffer is built by a literal that writes every
+// field refills the store a rebind released, instead of minting a new one.
+//
+// The rebind `x = f(…, x, …)` exchanges the result's store into `x` and releases the other
+// (`@FR-H-SwapRebind`).  On `--native` that store is kept, holding `x`'s previous value, and
+// the next mint of a buffer of the same type for a refilling callee takes it: the literal
+// writes every scalar again and empties each vector field in place before filling it
+// (`LOFT_NO_REFILL_BUFFER=1` frees it and mints).  What can go wrong is the previous value
+// showing through: a longer old vector, a field the literal did not write, a kept store of
+// another type, a value still read after the rebind.  Every cell checks values AND lengths.
+// Values hand-computed.
+
+struct M { m: vector<float> }
+
+struct Run { k: integer, xs: vector<integer> }
+
+struct Named { name: text, xs: vector<integer> }
+
+fn mul4(a: const M, b: const M) -> M {
+  r = M { m: [0.0, 0.0, 0.0, 0.0] };
+  for i in 0..4 { r.m[i] = (a.m[i] ?? 0.0) * (b.m[i] ?? 0.0); }
+  r
+}
+
+// f1: c = a * c three times from all-ones, a = [2, 3, 1, 0.5]
+fn f1() {
+  a = M { m: [2.0, 3.0, 1.0, 0.5] };
+  c = M { m: [1.0, 1.0, 1.0, 1.0] };
+  for _ in 0..3 { c = mul4(a, c); }
+  assert(len(c.m) == 4, "f1 len {len(c.m)}");
+  assert(c.m[0] == 8.0 && c.m[1] == 27.0 && c.m[2] == 1.0 && c.m[3] == 0.125, "f1 got {c.m}");
+}
+
+fn run(k: integer, prev: const Run) -> Run {
+  r = Run { k: k, xs: [] };
+  for i in 0..k { r.xs += [i * 10 + len(prev.xs)]; }
+  r
+}
+
+// f2: the vector's length moves each round — 5, 2, 4, 1 — and only the last round's survives:
+// round k builds [i*10 + len(prev)] for i < k
+fn f2() {
+  x = Run { k: 0, xs: [] };
+  for k in [5, 2, 4, 1] { x = run(k, x); }
+  assert(x.k == 1 && len(x.xs) == 1 && x.xs[0] == 4, "f2 got {x.k} {x.xs}");
+}
+
+fn twice(a: const M) -> M {
+  r = M { m: [0.0, 0.0] };
+  for i in 0..2 { r.m[i] = (a.m[i] ?? 0.0) * 2.0; }
+  r
+}
+
+// f3: two refilling types interleaved: the kept store of one is never the other's
+fn f3() {
+  c = M { m: [1.0, 1.0] };
+  x = Run { k: 0, xs: [] };
+  for k in 0..3 {
+    c = twice(c);
+    x = run(k + 1, x);
+  }
+  assert(len(c.m) == 2 && c.m[0] == 8.0 && c.m[1] == 8.0, "f3 c {c.m}");
+  assert(x.k == 3 && len(x.xs) == 3 && x.xs[2] == 22, "f3 x {x.k} {x.xs}");   // 20 + len 2
+}
+
+fn named(n: integer, prev: const Named) -> Named {
+  r = Named { name: "{prev.name}{n}", xs: [] };
+  for i in 0..n { r.xs += [i]; }
+  r
+}
+
+// f4: a text field is not refillable: the mint stays, the values are the same
+fn f4() {
+  x = Named { name: "", xs: [] };
+  for n in 1..4 { x = named(n, x); }
+  assert(x.name == "123" && len(x.xs) == 3 && x.xs[2] == 2, "f4 got {x.name} {x.xs}");
+}
+
+fn grow(prev: const Run) -> Run {
+  r = Run { k: prev.k + 1, xs: [] };
+  for v in prev.xs { r.xs += [v + 1]; }
+  r.xs += [prev.k];
+  r
+}
+
+// f5: built from the old value it replaces: [0] → [1, 1] → [2, 2, 2] → [3, 3, 3, 3]
+fn f5() {
+  x = Run { k: 0, xs: [] };
+  for _ in 0..4 { x = grow(x); }
+  assert(x.k == 4 && len(x.xs) == 4, "f5 got {x.k} {x.xs}");
+  assert(x.xs[0] == 3 && x.xs[1] == 3 && x.xs[2] == 3 && x.xs[3] == 3, "f5 items {x.xs}");
+}
+
+fn pick(c: boolean, n: integer) -> Run {
+  if c {
+    r = Run { k: n, xs: [n] };
+    return r;
+  }
+  Run { k: 0 - n, xs: [n, n] }
+}
+
+// f6: a buffer minted on two branches: both are complete literals
+fn f6() {
+  x = Run { k: 0, xs: [] };
+  t = 0;
+  for i in 0..6 {
+    x = pick(i % 2 == 0, i);
+    t += x.k * 10 + len(x.xs);
+  }
+  // k: 0, -1, 2, -3, 4, -5 → sum -3, times 10 = -30; lengths 1,2,1,2,1,2 → 9
+  assert(t == -21, "f6 got {t}");
+}
+
+// f7: the old value is read after the rebind through a copy taken before it
+fn f7() {
+  x = Run { k: 3, xs: [7, 8, 9] };
+  keep = x.xs[2];
+  x = run(2, x);
+  assert(keep == 9 && x.k == 2 && len(x.xs) == 2 && x.xs[1] == 13, "f7 got {keep} {x.xs}");
+}
+
+fn main() {
+  f1(); f2(); f3(); f4(); f5(); f6(); f7();
+  println("done");
+}

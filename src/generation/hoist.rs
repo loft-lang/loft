@@ -8591,7 +8591,143 @@ fn group_covers_type(
     fields.iter().all(|f| written.contains(&f.position))
 }
 
-/// @PLN157 § V-y (`@FR-R-CompleteWrite`) — the literal groups whose write set is
+/// `@FR-R-RefillBuffer` — what [`refill_buffers`] admitted for one function: its return
+/// buffer `var`, minted by `OpDatabaseRefill`, and the literal zeroes of that buffer's vector
+/// fields (by node address) that empty the vector in place instead.
+#[derive(Default)]
+pub struct RefillBuffers {
+    pub var: Option<u16>,
+    pub field_zeros: HashSet<usize>,
+}
+
+/// Can a refilled record of type `tp` be rewritten whole by a complete literal, leaving
+/// nothing of its previous value?  Every field owns no heap, or is a vector whose elements
+/// own none — the literal empties such a vector in place and fills it again.  A text, a
+/// keyed collection, a nested record that owns heap or anything else answers no: its old
+/// heap would outlive the write that replaced the handle.
+fn refillable(stores: &Stores, tp: u16) -> bool {
+    let Some(t) = stores.types.get(tp as usize) else {
+        return false;
+    };
+    let crate::database::Parts::Struct(fields) = &t.parts else {
+        return false;
+    };
+    !fields.is_empty()
+        && fields.iter().all(|f| {
+            !stores.owns_heap(f.content)
+                || matches!(stores.types.get(f.content as usize).map(|c| &c.parts),
+                    Some(crate::database::Parts::Vector(e)) if !stores.owns_heap(*e))
+        })
+}
+
+/// The `OpDatabase(b, tp)` a statement mints `b` with: the statement itself, or the arm of
+/// the return buffer's null-check prologue (`if <b present> {} else OpDatabase(b, tp)`).
+fn mint_of(stmt: &Value, b: u16, data: &Data) -> Option<u16> {
+    let call = |v: &Value| -> Option<u16> {
+        let Value::Call(d, args) = v.unspan() else {
+            return None;
+        };
+        if (*d as usize) >= data.definitions.len() || data.def(*d).name() != "OpDatabase" {
+            return None;
+        }
+        match (args.first().map(Value::unspan), args.get(1).map(Value::unspan)) {
+            (Some(Value::Var(v)), Some(Value::Int(tp))) if *v == b => u16::try_from(*tp).ok(),
+            _ => None,
+        }
+    };
+    if let Some(tp) = call(stmt) {
+        return Some(tp);
+    }
+    if let Value::If(_, t, f) = stmt.unspan() {
+        return call(f).or_else(|| call(t));
+    }
+    None
+}
+
+/// `@FR-R-RefillBuffer` — the function's hidden return buffer, when EVERY mint of it heads a
+/// literal group that writes every field ([`group_covers_type`]) of a [`refillable`] type.
+/// Such a buffer may arrive holding the previous value of a rebound variable (the kept store
+/// of `Stores::take_spare`) and still answer exactly the value a fresh mint would: the group
+/// writes every scalar, and each vector field's zero becomes an in-place emptying that the
+/// group's fill then refills.  A mint anywhere else — inside a call argument, a loop
+/// expression, a second shape — is not one this walk can see the group of, so it declines
+/// the whole function rather than refill a buffer some path leaves partly written.
+pub fn refill_buffers(data: &Data, stores: &Stores, def_nr: u32) -> RefillBuffers {
+    let mut out = RefillBuffers::default();
+    let Some(b) = retbuf_var(data, def_nr) else {
+        return out;
+    };
+    let body = data.def(def_nr).code();
+    let mut mints = 0usize;
+    body.any_node(&mut |n| {
+        if let Value::Call(d, args) = n
+            && (*d as usize) < data.definitions.len()
+            && data.def(*d).name() == "OpDatabase"
+            && matches!(args.first().map(Value::unspan), Some(Value::Var(v)) if *v == b)
+        {
+            mints += 1;
+        }
+        false
+    });
+    if mints == 0 {
+        return out;
+    }
+    let mut admitted = 0usize;
+    let mut ok = true;
+    let mut zeros: HashSet<usize> = HashSet::new();
+    body.any_node(&mut |n| {
+        if let Value::Block(bl) = n {
+            let ops = &bl.operators;
+            for (i, stmt) in ops.iter().enumerate() {
+                let Some(tp) = mint_of(stmt, b, data) else {
+                    continue;
+                };
+                admitted += 1;
+                if !refillable(stores, tp) || !group_covers_type(ops, i + 1, b, tp, data, stores) {
+                    ok = false;
+                    continue;
+                }
+                let crate::database::Parts::Struct(fields) = &stores.types[tp as usize].parts
+                else {
+                    ok = false;
+                    continue;
+                };
+                for g in ops.iter().skip(i + 1) {
+                    let Value::Call(d, args) = g.unspan() else {
+                        if matches!(g.unspan(), Value::Line(_)) {
+                            continue;
+                        }
+                        break;
+                    };
+                    if (*d as usize) >= data.definitions.len()
+                        || !data.def(*d).name().starts_with("OpSet")
+                    {
+                        break;
+                    }
+                    if data.def(*d).name() == "OpSetInt4"
+                        && let [a0, off, zero] = &args[..]
+                        && matches!(a0.unspan(), Value::Var(w) if *w == b)
+                        && let Value::Int(off) = off.unspan()
+                        && matches!(zero.unspan(), Value::Int(0))
+                        && fields.iter().any(|f| i32::from(f.position) == *off
+                            && matches!(stores.types.get(f.content as usize).map(|c| &c.parts),
+                                Some(crate::database::Parts::Vector(_))))
+                    {
+                        zeros.insert(std::ptr::from_ref(g.unspan()) as usize);
+                    }
+                }
+            }
+        }
+        false
+    });
+    if ok && admitted == mints {
+        out.var = Some(b);
+        out.field_zeros = zeros;
+    }
+    out
+}
+
+/// @PLN157 § V-y (`@FR-R-CompleteWrite`) — the literal groups whose write set is/// @PLN157 § V-y (`@FR-R-CompleteWrite`) — the literal groups whose write set is
 /// COMPLETE, so the default prefill writes nothing that survives: the parser's lowering
 /// writes every field explicitly (a named value, the declared default, the interned
 /// empty text, the null sentinel, `false`, the variant tag), and the emitter's proof is
