@@ -319,7 +319,11 @@ fn the_store_census_drops() {
         // 2026-09-30: a LIFTED call result adopts the callee's minted store as a named bind
         // does (`Scopes::lift_set`, `tests/lift_adopt.rs`): the copy's store per lifted
         // minted call goes — seven fewer pooled and four fewer unpooled, on each backend.
-        (183, 295, 159, 261),
+        // 2026-10-02: on native a rebind exchanges the result's store in without a reset
+        // (`@FR-H-SwapRebind`) and a complete-literal callee refills the store it released
+        // (`@FR-R-RefillBuffer`): 159/261 → 104/210 on native, the interpreter unchanged;
+        // `LOFT_NO_REFILL_BUFFER=1` gives back the old pair.
+        (183, 295, 104, 210),
         "mints (interpret on, off, native on, off)"
     );
 }

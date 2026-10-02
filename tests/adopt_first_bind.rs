@@ -200,6 +200,8 @@ fn the_store_census_drops_by_one_per_adopting_bind() {
     // interpreter, 91 → 85 on native; the OFF arms unchanged.  2026-10-02: a native rebind that
     // exchanges the result's store in resets nothing first (`@FR-H-SwapRebind`), so its
     // `OpDatabase` line goes in both native arms: 85/127 → 75/117, the interpreter unchanged.
+    // And a complete-literal callee refills the store such a rebind released
+    // (`@FR-R-RefillBuffer`): 75/117 → 65/107 (`LOFT_NO_REFILL_BUFFER=1` gives back the old pair).
     let (i_on, i_off) = (
         store_mints("--interpret", &[]),
         store_mints("--interpret", OFF),
@@ -214,5 +216,5 @@ fn the_store_census_drops_by_one_per_adopting_bind() {
         n_on < n_off,
         "native: {n_on} mints with adoption, {n_off} without"
     );
-    assert_eq!((n_on, n_off), (75, 117), "native mints (on, off)");
+    assert_eq!((n_on, n_off), (65, 107), "native mints (on, off)");
 }
