@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I73 — Native function registry (the natives behind lib/process)
 
 // @PLN179 strand 4b — the natives behind `lib/process`.
 //! Running a program for a loft script, under the rule that **a stream is never left without
