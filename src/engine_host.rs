@@ -145,7 +145,7 @@ fn http_fetch_impl(method: String, url: String, body: String, headers: String) -
     let id = HTTP_NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     #[cfg(feature = "registry")]
     std::thread::spawn(move || {
-        let agent = ureq::AgentBuilder::new().timeout(HTTP_TIMEOUT).build();
+        let agent = crate::tls::agent_builder().timeout(HTTP_TIMEOUT).build();
         let mut req = agent.request(&method, &url);
         for line in headers.lines() {
             if let Some((name, value)) = line.split_once(':') {
