@@ -4638,14 +4638,8 @@ impl Parser {
             && !self.is_header_type_var(tp_nr)
             && !self.refused_header_vars.iter().any(|n| n == type_name)
         {
-            let spelled = crate::data::Data::type_var_spelling(type_name);
-            diagnostic!(
-                self.lexer,
-                Level::Error,
-                "`{spelled}` is not a type here — a type variable is a type only inside the \
-                 definition whose header declares it; declare it on this one \
-                 (`fn f<{spelled}>(x: {spelled})`) or name a type"
-            );
+            let msg = Self::type_var_out_of_scope(crate::data::Data::type_var_spelling(type_name));
+            diagnostic!(self.lexer, Level::Error, "{msg}");
         }
         let dt = self.data.def_type(tp_nr);
         // `@FR-G-Scope` — an interface is a BOUND on a type variable, never a value type.  It

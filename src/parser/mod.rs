@@ -3756,6 +3756,10 @@ impl Parser {
                 &self.data.resolved_libraries(),
             ) {
                 msg
+            } else if self.data.is_type_var_spelling(&stub_name) {
+                // `D-Scope` / @FR-G-Gen-Scope — a header's variable holds no name, so a
+                // spelling outside every header that declares it reaches here as undefined.
+                Self::type_var_out_of_scope(&stub_name)
             } else if let Some(s) = self.data.suggest_type_name(&stub_name) {
                 format!("Undefined type {stub_name} — did you mean '{s}'?")
             } else {
@@ -7130,6 +7134,16 @@ impl Parser {
                 );
             }
         }
+    }
+
+    /// The refusal for a type variable named outside the definition whose header declares
+    /// it (`D-Scope`, @FR-G-Gen-Scope) — one wording for every site that finds one.
+    pub(crate) fn type_var_out_of_scope(spelled: &str) -> String {
+        format!(
+            "`{spelled}` is not a type here — a type variable is a type only inside the \
+             definition whose header declares it; declare it on this one \
+             (`fn f<{spelled}>(x: {spelled})`) or name a type"
+        )
     }
 
     /// Resolve a NAME the source wrote, giving the enclosing generic header first refusal.
