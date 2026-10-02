@@ -976,7 +976,8 @@ impl Stores {
     /// released slot holds what the copy would have released.  Answers whether it did so;
     /// on `false` the caller copies.
     ///
-    /// Declined — the caller copies — when either record is not its store's root (`1@8`),
+    /// Declined — the caller copies — when either record is not its store's root (`1@8` and
+    /// of the store's own root type: a first field shares the root's address),
     /// the destination store holds more than its root (an owned field the copy would release
     /// first), either store is pinned to its slot ([`Store::content_swappable`]), a lazy
     /// binding, a live scratch or a constant names a store, or the type's tree holds a
@@ -990,7 +991,14 @@ impl Stores {
         if ds == ts || ds >= self.allocations.len() || ts >= self.allocations.len() {
             return false;
         }
-        if (data.rec, data.pos) != (1, 8) || (to.rec, to.pos) != (1, 8) {
+        // At `1@8` AND of the copied type: a record's FIRST field shares its root's address
+        // (`h.p` of `h: Hold { p: Vert, … }` is `#h@1,8`), and only the root's own type —
+        // the one `OpDatabase` stamped on the store — says the copy is of the whole record.
+        if (data.rec, data.pos) != (1, 8)
+            || (to.rec, to.pos) != (1, 8)
+            || self.allocations[ds].known_type != tp
+            || self.allocations[ts].known_type != tp
+        {
             return false;
         }
         if self.is_stack_store(data.store_nr) || self.is_stack_store(to.store_nr) {

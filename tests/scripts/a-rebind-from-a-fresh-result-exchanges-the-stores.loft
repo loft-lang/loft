@@ -154,7 +154,18 @@ fn s12() {
   assert((x.m[0] ?? 0.0) == 2.0 && (x.m[3] ?? 0.0) == 5.0, "s12 got {x.m}");
 }
 
+// a record's FIRST field shares its root's address: a fresh result copied into it is no whole
+// store, and the second field survives
+struct Pair { p: M, q: M }
+fn s13() {
+  a = M { m: [2.0, 0.0, 0.0, 2.0] };
+  h = Pair { p: M { m: [1.0, 0.0, 0.0, 1.0] }, q: M { m: [5.0, 6.0, 7.0, 8.0] } };
+  for _ in 0..3 { h.p = mul(a, h.p); }
+  assert((h.p.m[0] ?? 0.0) == 8.0 && len(h.q.m) == 4 && (h.q.m[0] ?? 0.0) == 5.0 && (h.q.m[3] ?? 0.0) == 8.0,
+         "s13 got {h.p.m} {h.q.m}");
+}
+
 fn main() {
-  s1(); s2(); s3(); s4(); s5(); s8(); s9(); s11(); s12();
+  s1(); s2(); s3(); s4(); s5(); s8(); s9(); s11(); s12(); s13();
   println("done");
 }
