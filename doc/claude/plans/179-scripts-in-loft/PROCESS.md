@@ -68,7 +68,7 @@ panic) drops the cursor, and the drop ends the child (`SIGTERM`, then the kill-a
 stderr nobody reads is bounded by an option (`Streams.Collect | Inherit | Discard`), and
 `Inherit` is the one that passes a tool's own progress through to the person watching.
 `c.bytes()` is the same cursor over chunks for binary output (`git show` of an image), and
-`run(c, input: text)` feeds stdin from a value.  A capability group `process#run` keeps a
+`run(c, input: text)` feeds stdin from a value.  A capability group `process#update` (running a program acts on the world; the right vocabulary is read, update, append) keeps a
 sandboxed script from running anything ungranted (SANDBOX.md S1).
 
 **Gate, before any port calls it** — the probes that can fail, on both backends: (1) a child

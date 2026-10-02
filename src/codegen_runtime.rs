@@ -151,6 +151,7 @@ pub const CODEGEN_RUNTIME_FNS: &[RuntimeFn] = &[
     // calls the SAME in-binary kernel the interpreter uses — one
     // implementation, two calling conventions.
     RuntimeFn { name: "n_git_query",                  abi: Abi::Cell },
+    RuntimeFn { name: "n_process_run",                abi: Abi::Cell },
     RuntimeFn { name: "n_kernel_listen",              abi: Abi::Cell },
     RuntimeFn { name: "n_kernel_pump",                abi: Abi::Cell },
     RuntimeFn { name: "n_kernel_next_event",          abi: Abi::Cell },
@@ -221,6 +222,8 @@ pub const CODEGEN_RUNTIME_FNS: &[RuntimeFn] = &[
 pub use crate::engine_host::typed::*;
 // @PLN119 arc F — `lib/git`'s single native, so a COMPILED program can ask git too.
 pub use crate::git_query::typed::*;
+// @PLN179 strand 4b — `lib/process`'s run, so a COMPILED script runs programs too.
+pub use crate::process_run::typed::*;
 // @PLN18 08-S2 — the live-flip surface (typed twin in live_dispatch).
 pub use crate::live_dispatch::n_live_flip;
 // @PLN18 08-S4 — the background-rebuild surface.
