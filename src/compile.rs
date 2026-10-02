@@ -85,6 +85,8 @@ pub fn byte_code_from(
         crate::in_range::rewrite_program(data);
         // `@FR-R-SingleUse`'s statement clause — a comprehension's element temporary.
         crate::single_use::rewrite_program(data);
+        // `@FR-R-DischargeInto` — a text discharge read straight into the local it assigns.
+        crate::discharge_into::rewrite_program(data);
     }
     // @PLN165 D10 — an instance's literal names its template (`Stores::shown`).
     for d in 0..data.definitions() {
