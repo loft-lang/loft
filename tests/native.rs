@@ -622,8 +622,9 @@ fn compile_native_job(
         "-C".to_string(),
         "opt-level=0".to_string(),
     ];
-    // Layer 1: strip the linked binary (~36MB → ~1MB; the bulk is debug info
-    // from libloft.rlib + std, useless to a run-and-check test).  Opt out with
+    // Layer 1: strip the linked binary's debug info from libloft.rlib + std, useless to a
+    // run-and-check test.  A stripped binary is still 12–14 MB — loft's runtime at
+    // opt-level 0 — so a full corpus needs about 22 GB of scratch.  Opt out with
     // LOFT_NATIVE_KEEP_SYMBOLS=1 when debugging a native crash (the generated
     // .rs is always kept for recompilation).
     if loft::platform::native_strip_symbols() {
