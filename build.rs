@@ -216,4 +216,52 @@ fn main() {
     println!("cargo:rerun-if-env-changed=CARGO_ENCODED_RUSTFLAGS");
     // …and when rustc itself changes, so LOFT_BUILD_RUSTC stays accurate.
     println!("cargo:rerun-if-env-changed=RUSTC");
+    warn_stale_compiled_stdlib();
+}
+
+/// @PLN181 — say so, on every build, when the compiled standard library was compiled from a
+/// different `default/*.loft` than the one this binary will load.  The binary then declines
+/// the whole compiled library at start-up and interprets those functions: correct, silently
+/// 5-23x slower on text routines, and nothing else reports it (`scripts/compiled_stdlib_fresh.py`
+/// has the why and the other three places that ask).  The hash is `compiled_stdlib::source_hash`
+/// re-derived: SHA-256 over each file's name and bytes in name order, each part prefixed by its
+/// length as 8 little-endian bytes, the first 8 bytes of the digest.
+fn warn_stale_compiled_stdlib() {
+    use sha2::{Digest, Sha256};
+    let Ok(generated) = std::fs::read_to_string("src/compiled_stdlib_gen.rs") else {
+        return;
+    };
+    let recorded = generated
+        .split("SOURCE_HASH: u64 = ")
+        .nth(1)
+        .and_then(|rest| rest.split(';').next())
+        .and_then(|n| n.trim().parse::<u64>().ok());
+    let Ok(entries) = std::fs::read_dir("default") else {
+        return;
+    };
+    let mut files: Vec<(String, Vec<u8>)> = entries
+        .flatten()
+        .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("loft"))
+        .filter_map(|e| {
+            let name = e.file_name().to_str()?.to_string();
+            Some((name, std::fs::read(e.path()).ok()?))
+        })
+        .collect();
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut h = Sha256::new();
+    for (name, content) in &files {
+        for part in [name.as_bytes(), content.as_slice()] {
+            h.update((part.len() as u64).to_le_bytes());
+            h.update(part);
+        }
+    }
+    let d = h.finalize();
+    let current = u64::from_le_bytes([d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7]]);
+    if recorded != Some(current) {
+        println!(
+            "cargo:warning=the compiled standard library is STALE (src/compiled_stdlib_gen.rs was \
+             compiled from a different default/*.loft): this binary interprets every compiled \
+             stdlib function, 5-23x slower on text routines.  Run: make compiled-stdlib"
+        );
+    }
 }

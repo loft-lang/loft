@@ -20,6 +20,8 @@
 #                `ir_walker_audit.py`, compared exactly as doc_hygiene's
 #                `quality_*_table_matches_the_audit` compare them         ~6 s
 #   doc drift    `scripts/check_doc_drift.sh -q`                           ~30 s
+#   stdlib       `scripts/compiled_stdlib_fresh.py` — the compiled stdlib
+#                was compiled from default/ as it is now                   <1 s
 #   full only    `cargo nextest run --release` over doc_hygiene and
 #                frontend_counts — seconds of tests, minutes of compiling
 #                when the release test binaries are stale
@@ -73,6 +75,7 @@ echo "gate pre-flight (CI_NO_PREFLIGHT=1 skips it):"
 step fmt cargo fmt -- --check
 step "audit rows" audit_rows
 step "doc drift" scripts/check_doc_drift.sh -q
+step stdlib python3 scripts/compiled_stdlib_fresh.py
 if [ "${CI_PREFLIGHT:-}" = full ]; then
   step "hygiene+fe" cargo nextest run --release -E 'binary(doc_hygiene) + binary(frontend_counts)'
 fi

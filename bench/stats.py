@@ -459,6 +459,29 @@ def threads_of(bench, pkg_dir):
     return 1
 
 
+def require_compiled_stdlib(loft):
+    """Refuse to time an interpreter whose compiled standard library is declined (@PLN181).
+
+    The binary bakes the stdlib's compiled bodies against a hash of `default/*.loft`; run
+    against a different `default/` (a stale `src/compiled_stdlib_gen.rs`, or a binary built
+    before the stdlib moved) it declines them all and interprets — correct, and 5-23x slower on
+    text routines.  Measured 2026-10-02, that read as a +2213 % "regression" of an unrelated
+    change.  The binary itself says how many it dispatched (`LOFT_TIMING=1`); none is a refusal
+    here, not a number in the table."""
+    probe = os.path.join(ROOT, "target", "stdlib_probe.loft")
+    os.makedirs(os.path.dirname(probe), exist_ok=True)
+    with open(probe, "w") as f:
+        f.write('fn main() { println("x"); }\n')
+    out = subprocess.run([loft, "--interpret", probe], cwd=ROOT, capture_output=True, text=True,
+                         env={**os.environ, "LOFT_TIMING": "1"}, timeout=120)
+    m = re.search(r"compiled stdlib: (\d+) function", out.stderr)
+    if not m or int(m.group(1)) == 0:
+        fail(f"{loft} declines its compiled standard library here: it was not compiled from this "
+             "tree's default/*.loft, so the interpreter lane would time the slow path.  Run "
+             "`make compiled-stdlib` and rebuild that binary (or pass --allow-declined-stdlib to "
+             "measure the declined state on purpose).")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--only", default="", help="comma-separated bench numbers or names")
@@ -493,6 +516,8 @@ def main():
     ap.add_argument("--show-samples", action="store_true", help="print every sample under its row")
     ap.add_argument("--loft", default=os.environ.get("LOFT_BIN", os.path.join(ROOT, "target/release/loft")))
     ap.add_argument("--lib-dir", default=os.environ.get("LOFT_LIB_DIR", os.path.join(ROOT, "target/release")))
+    ap.add_argument("--allow-declined-stdlib", action="store_true",
+                    help="measure the interpreter even when its compiled stdlib is declined")
     a = ap.parse_args()
     # The janitor runs beside the builds this starts, detached (RUN_BOUNDS.md § Scratch hygiene).
     subprocess.run([os.path.join(ROOT, "scripts", "disk_janitor.sh"), "--background"], check=False)
@@ -503,6 +528,8 @@ def main():
         fail(f"unknown lane(s): {', '.join(sorted(unknown))}")
     if not os.access(a.loft, os.X_OK):
         fail(f"no loft binary at {a.loft} (cargo build --release)")
+    if "interp" in lanes and not a.allow_declined_stdlib:
+        require_compiled_stdlib(a.loft)
     benches = sorted(b for b in os.listdir(HERE)
                      if b[:2].isdigit() and os.path.exists(os.path.join(HERE, b, "bench.loft")))
     if a.only:
