@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I79 — Documentation generator (the renderer its pages, the REPL and the IDE share)
 
 //! @PLN183 P1 — one renderer for documentation, three back-ends.
 //!

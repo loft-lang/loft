@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I77 — Registry / manifest / lockfile resolution (the TLS trust every HTTPS request uses)
 
 //! The one TLS client configuration every HTTPS request loft makes uses.
 //!
