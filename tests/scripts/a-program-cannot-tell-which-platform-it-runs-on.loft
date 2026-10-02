@@ -1,0 +1,106 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN184 — a loft program must not be able to tell which platform it runs on.  Every
+// assertion below states the PLATFORM-NEUTRAL answer, which is what Linux answers today;
+// on Windows each one is a place loft could leak the host into a program, so the Windows
+// corpus leg is where this file goes red.  Each test names the leak it watches.
+//
+// The contract the assertions spell (proposed by @PLN184, owner to confirm per row):
+//   - a path a program is GIVEN by loft uses `/` only, and `/` is the only separator a
+//     program WRITES — a `\` is a file-name character, as on Unix;
+//   - a path names a file by its exact spelling: `A.TXT` is not `a.txt`;
+//   - the same program writes, deletes and moves the same files on every platform.
+
+fn scratch(tag: text) -> text {
+  d = "{temp_dir() ?? "/tmp"}/loft_platform_{tag}_{now()}_{ticks()}";
+  mkdir_all(d);
+  d
+}
+
+fn clean(d: text) {
+  for n in list_dir(d) ?? [] { delete("{d}/{n}"); }
+  rmdir(d);
+}
+
+// Leak 1: the separator a program would build paths with.
+fn test_the_separator_is_a_slash() {
+  assert(path_sep() == '/', "path_sep() answers {path_sep()}");
+}
+
+// Leak 3: a directory loft hands the program.
+fn test_given_directories_carry_no_backslash() {
+  t = temp_dir() ?? "";
+  assert(!t.contains("\\"), "temp_dir() is {t}");
+  c = cache_dir() ?? "";
+  assert(!c.contains("\\"), "cache_dir() is {c}");
+}
+
+// Leak 2: the paths a directory listing hands back.
+fn test_a_listing_hands_back_slash_paths() {
+  d = scratch("list");
+  file("{d}/b.txt").write("b");
+  file("{d}/a.txt").write("a");
+  paths = [];
+  for f in file(d).files() { paths += [f.path]; }
+  assert(len(paths) == 2, "two entries: {paths}");
+  assert(paths[0] == "{d}/a.txt" && paths[1] == "{d}/b.txt", "sorted, joined with /: {paths}");
+  clean(d);
+}
+
+// Leak 4: names that differ only in case are two files.
+fn test_case_is_part_of_the_name() {
+  d = scratch("case");
+  file("{d}/b.txt").write("lower");
+  assert(!exists("{d}/B.TXT"), "B.TXT is not b.txt");
+  file("{d}/B.txt").write("upper");
+  assert("{list_dir(d) ?? []}" == "[\"B.txt\",\"b.txt\"]", "two files: {list_dir(d) ?? []}");
+  assert((file("{d}/b.txt").content() ?? "") == "lower", "b.txt kept its own content");
+  clean(d);
+}
+
+// Leak 5: names one platform refuses.  The answer today is Linux's (written); whether
+// loft should instead refuse them everywhere is @PLN184's open question — either way the
+// answer must be the same on every platform.
+fn test_a_name_is_written_the_same_everywhere() {
+  d = scratch("names");
+  for n in ["aux.txt", "a:b.txt", "q?.txt", "trail."] {
+    assert(file("{d}/{n}").write("x").ok(), "{n} is written");
+  }
+  assert(len(list_dir(d) ?? []) == 4, "four files: {list_dir(d) ?? []}");
+  clean(d);
+}
+
+// Leak 6: a file the program has read from can still be moved and deleted (Windows
+// refuses both while a handle is open), and `move` refuses an existing target on every
+// platform (its contract: FileResult.Other).
+fn test_a_read_file_can_be_moved_and_deleted() {
+  d = scratch("held");
+  write_bytes("{d}/held.bin", [48 as u8, 49 as u8, 50 as u8, 51 as u8]);
+  h = file("{d}/held.bin");
+  h#format = LittleEndian;
+  x = h#read(4) as i32;
+  // "0123" little-endian: 0x33323130.
+  assert(x == 858927408, "read four bytes: {x}");
+  assert(move("{d}/held.bin", "{d}/moved.bin").ok(), "moved after a read");
+  file("{d}/target.bin").write("t");
+  assert(move("{d}/moved.bin", "{d}/target.bin") == FileResult.Other, "an existing target is refused");
+  assert(delete("{d}/moved.bin").ok(), "deleted after a read");
+  clean(d);
+}
+
+// Leak 9: a backslash is not a separator in a loft path.
+fn test_a_backslash_is_not_a_separator() {
+  d = scratch("sep");
+  file("{d}/x.txt").write("x");
+  assert(exists("{d}/x.txt"), "the slash path");
+  assert(!exists("{d}\\x.txt"), "the backslash spelling names another file");
+  clean(d);
+}
+
+// Leak 7: the environment's names as a program reads them.
+fn test_the_path_variable_is_spelled_path() {
+  n = 0;
+  for e in env_variables() { if e.name == "PATH" { n += 1; } }
+  assert(n == 1, "env_variables() spells it PATH once: {n}");
+}
