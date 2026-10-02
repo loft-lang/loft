@@ -997,7 +997,45 @@ impl Stores {
         crate::keys::swap_rebind_enabled() && self.swap_stores_in(data, to, tp, false)
     }
 
+    /// `@FR-H-SwapIn`'s keyed clause — `OpReplaceKeyed`'s free-source form (`h = build(…)`,
+    /// a keyed LOCAL rebound from a callee that minted its collection) is the same
+    /// exchange as [`Self::try_swap_rebind`]: a keyed local is a `DbRef` to a dedicated store
+    /// with its collection header at `1@8`, so the source's whole store IS the value the deep
+    /// copy would rebuild, and the destination's old collection moves into the released slot
+    /// with the rest of its store.  A keyed collection's own pointers are record numbers
+    /// inside its store (`Parts::Hash` / `Sorted` / `Index` / …), so they survive the
+    /// exchange; what must not be stored is a `DbRef` in the ELEMENT tree, which could name
+    /// the source slot itself.  Every other condition is the exchange's own.
+    pub(crate) fn try_swap_keyed(&mut self, src: &DbRef, dest: &DbRef, tp: u16) -> bool {
+        crate::keys::swap_rebind_enabled() && self.swap_stores_in_as(src, dest, tp, false, true)
+    }
+
     fn swap_stores_in(&mut self, data: &DbRef, to: &DbRef, tp: u16, reset_dest: bool) -> bool {
+        self.swap_stores_in_as(data, to, tp, reset_dest, false)
+    }
+
+    /// The element type of a keyed collection type, whose own pointers are store-local.
+    fn keyed_element(&self, tp: u16) -> Option<u16> {
+        use crate::database::Parts;
+        match &self.types.get(tp as usize)?.parts {
+            Parts::Sorted(e, _)
+            | Parts::Ordered(e, _)
+            | Parts::Hash(e, _)
+            | Parts::Index(e, _, _)
+            | Parts::Radix(e, _)
+            | Parts::Trie(e, _) => Some(*e),
+            _ => None,
+        }
+    }
+
+    fn swap_stores_in_as(
+        &mut self,
+        data: &DbRef,
+        to: &DbRef,
+        tp: u16,
+        reset_dest: bool,
+        keyed: bool,
+    ) -> bool {
         if !crate::keys::store_swap_enabled() {
             return false;
         }
@@ -1035,7 +1073,12 @@ impl Stores {
             return false;
         }
         let known = self.swap_safe_types.get(tp as usize).copied().unwrap_or(0);
-        let safe = if known == 0 {
+        let safe = if keyed {
+            match self.keyed_element(tp) {
+                Some(e) => self.tree_holds_no_stored_refs(e, &mut Vec::new()),
+                None => false,
+            }
+        } else if known == 0 {
             let safe = self.tree_holds_no_stored_refs(tp, &mut Vec::new());
             if self.swap_safe_types.len() <= tp as usize {
                 self.swap_safe_types.resize(tp as usize + 1, 0);
@@ -1060,7 +1103,10 @@ impl Stores {
             );
         }
         // A `par` worker's stores are merged back at the join, so a worker keeps none.
-        if reset_dest || self.disable_slot_reuse || !crate::keys::refill_buffer_enabled() {
+        // A keyed rebind's released slot holds the OLD collection, which no buffer refill
+        // takes up (`spare_store` is a record buffer's): parked, it was still live at exit.
+        if reset_dest || keyed || self.disable_slot_reuse || !crate::keys::refill_buffer_enabled()
+        {
             self.free(data);
         } else {
             self.park_spare(data.store_nr);

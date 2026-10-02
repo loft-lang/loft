@@ -1,0 +1,75 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A KEYED LOCAL REBOUND FROM A CALL TAKES THE CALLEE'S STORE ONLY WHEN IT IS GIVEN UP
+// (`@FR-H-SwapIn`'s keyed clause, `@FR-B-Copy`).  `h = build(…)` exchanges the two stores'
+// contents instead of rebuilding every element and bucket, when the callee minted the
+// collection.  A callee that hands back its PARAMETER, a join with a variable arm, a
+// `a = add(a, x)` that writes the destination itself, each keyed kind, a null answer, and an
+// element holding a stored reference must each answer what a deep copy answers.
+//
+// Expected values by hand: keep's values are 100..104 (510), so `id(keep)` is a copy of 510
+// and keep still sums 510; the join loop ends on mk(3, 20) = 20+21+22 = 63, len 3; add()
+// leaves v = 3, 6, 9, 12 (30) in four entries; mks(4) holds k 4,3,2,1 with v 0..3, so k = 1
+// has v 3; mki(5) holds k 0,2,4,6,8 with v 0..4, so k = 8 has v 4; the reference cells sum
+// es[0..4].v = 0+11+22+33 = 66.
+
+struct E { k: integer, v: integer }
+struct N { k: integer, other: reference<E> }
+fn mk(n: integer, base: integer) -> hash<E[k]> {
+  h: hash<E[k]> = [];
+  for i in 0..n { h += [E { k: i, v: base + i }]; }
+  h
+}
+fn id(x: hash<E[k]>) -> hash<E[k]> { x }
+fn add(a: hash<E[k]>, x: integer) -> hash<E[k]> { a += [E { k: x, v: x * 3 }]; a }
+fn mks(n: integer) -> sorted<E[k]> {
+  s: sorted<E[k]> = [];
+  for i in 0..n { s += [E { k: n - i, v: i }]; }
+  s
+}
+fn mki(n: integer) -> index<E[k]> {
+  s: index<E[k]> = [];
+  for i in 0..n { s += [E { k: i * 2, v: i }]; }
+  s
+}
+fn maybe(n: integer) -> hash<E[k]>? { if n < 0 { null } else { mk(n, 7) } }
+fn mkn(n: integer, es: vector<E>) -> hash<N[k]> {
+  h: hash<N[k]> = [];
+  for i in 0..n { h += [N { k: i, other: es[i] }]; }
+  h
+}
+fn sumh(h: hash<E[k]>) -> integer { t = 0; for e in h { t += e.v; } t }
+
+fn main() {
+  keep = mk(5, 100);
+  c1 = mk(1, 0);
+  assert(sumh(c1) == 0, "c1 starts empty of value");
+  c1 = id(keep);
+  assert(sumh(keep) == 510 && sumh(c1) == 510, "a callee handing back its parameter is copied");
+  c2 = mk(2, 0);
+  for r in 0..3 { c2 = if r == 1 { keep } else { mk(3, r * 10) }; }
+  assert(sumh(c2) == 63 && len(c2) == 3 && sumh(keep) == 510, "a join with a variable arm");
+  a = mk(0, 0);
+  for x in 1..5 { a = add(a, x); }
+  assert(sumh(a) == 30 && len(a) == 4, "a rebind that writes the destination itself");
+  s = mks(1);
+  for r in 2..5 { s = mks(r); }
+  assert((s[1]?.v ?? -1) == 3 && len(s) == 4, "sorted");
+  ix = mki(1);
+  for r in 2..6 { ix = mki(r); }
+  assert((ix[8]?.v ?? -1) == 4 && len(ix) == 5, "index");
+  m = maybe(3);
+  assert(len(m ?? mk(0, 0)) == 3, "a present nullable");
+  m = maybe(-1);
+  assert(m == null, "an absent nullable");
+  m = maybe(2);
+  assert(len(m ?? mk(0, 0)) == 2, "present again");
+  es: vector<E> = [];
+  for i in 0..5 { es += [E { k: i, v: i * 11 }]; }
+  hn = mkn(1, es);
+  for r in 2..5 { hn = mkn(r, es); }
+  t = 0;
+  for n in hn { t += n.other.v; }
+  assert(t == 66 && len(hn) == 4, "an element holding a stored reference");
+}
