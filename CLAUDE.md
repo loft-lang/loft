@@ -331,9 +331,14 @@ src/main.rs            CLI; loads default/ then user file
    local `git merge`).
 2. **Push proactively — it's a SAFETY rule.** Once a change settles (compiles / tests green), commit
    + push to the feature branch so it isn't lost. Separate from opening a PR.
-3. **Never create a branch, open, or merge a PR without an explicit user ask** ("create PR",
-   "merge", "switch branch"). "fix X" / "push" / "retry" are NOT such asks; a prior ask doesn't carry
+3. **Never create a branch or open a loft PR without an explicit user ask** ("create PR",
+   "switch branch"). "fix X" / "push" / "retry" are NOT such asks; a prior ask doesn't carry
    over. If a protected branch blocks a commit, surface it and ask — don't invent a branch.
+   ⚠ **A MERGE never waits for the owner** (owner, 2026-10-02): once a PR is open, arm
+   `gh pr merge --auto --squash` — the required checks ARE the merge rule.  **A library PR
+   does not wait either:** every `loft-libs-*` `main` requires a PR (admins included), so a
+   library change is a branch + a PR + auto-merge, opened without asking; publish only from
+   the merged `main`.
    ⚠ **Nor is "the work looks finished" an ask.** A PR is opened when the work reaches a stable
    point — a closed arc, a clean endpoint — and **the owner is the one who determines that**, not
    the agent that judges its own branch ready. Keep committing and pushing to the branch; wait to

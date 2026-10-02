@@ -145,8 +145,11 @@ and the library work done there was being crowded out by that suite.  So:
 - a consumer that needs something the library does not do **reports the gap** (an issue in the
   library's repo, or a message), and the loft stream builds it — in the library, for every
   consumer;
-- the loft stream edits the `loft-libs-*` repos directly and republishes them (the
-  **loft-ship skill**); the consumer APPLICATIONS stay read-only to it;
+- the loft stream edits the `loft-libs-*` repos and republishes them (the **loft-ship
+  skill**) — through a PR per change, since every library `main` requires one (admins
+  included): push a branch, `gh pr create`, `gh pr merge --auto --squash`, and publish from the
+  merged `main`.  No owner wait: the required `ci / <pkg>` checks are the merge rule.  The
+  consumer APPLICATIONS stay read-only to it;
 - a library is developed and tested on its **testbed** (next section), never inside a consumer's
   tree and never against a consumer's suite.
 
