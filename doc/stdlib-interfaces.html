@@ -24,51 +24,51 @@
 <h1>Interfaces</h1>
 <article>
 <div class="item">
-<pre><code>pub interface Ordered {
-  operator compare(self: Self, other: Self) -&gt; Ordering
+<pre><code><span class="kw">pub</span> interface <span class="en"><a href="stdlib-interfaces.html">Ordered</a></span> {
+  <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">compare</span>(self: <span class="en">Self</span>, other: <span class="en">Self</span>) -&gt; <span class="en"><a href="stdlib-types.html">Ordering</a></span>
 }</code></pre>
-<p>Standard interfaces for bounded generic functions. A type satisfies an interface by defining the `operator` method or the method it names — a built-in type by the stdlib's own, a program's type by its own (`formal/operators.md`). Types that support the `&lt;` comparison operator. Satisfied by integer, single, float, text, and any type defining `operator compare`.</p>
-<p>`boolean` is NOT among them, deliberately: it satisfies Equatable below and has no ordering, so `false &lt; true` is a refusal rather than a convention the language picks for you.  A program that wants it says so — `(a as integer) &lt; (b as integer)`.  The same line bounds how null is ordered: that applies to the ordered types only, and a boolean null still compares with `==` like every other scalar.</p>
-<p>ONE method is all a type has to define: inside a generic bounded by this, `&lt;`, `&lt;=`, `&gt;` and `&gt;=` all read it, each evaluating its operands exactly once.</p>
+<p>Standard interfaces for bounded generic functions. A type satisfies an interface by defining the <code>operator</code> method or the method it names — a built-in type by the stdlib's own, a program's type by its own (<code>formal/operators.md</code>). Types that support the <code>&lt;</code> comparison operator. Satisfied by integer, single, float, text, and any type defining <code>operator compare</code>.</p>
+<p><code>boolean</code> is NOT among them, deliberately: it satisfies Equatable below and has no ordering, so <code>false &lt; true</code> is a refusal rather than a convention the language picks for you.  A program that wants it says so — <code>(a as integer) &lt; (b as integer)</code>.  The same line bounds how null is ordered: that applies to the ordered types only, and a boolean null still compares with <code>==</code> like every other scalar.</p>
+<p>ONE method is all a type has to define: inside a generic bounded by this, <code>&lt;</code>, <code>&lt;=</code>, <code>&gt;</code> and <code>&gt;=</code> all read it, each evaluating its operands exactly once.</p>
 </div>
 <div class="item">
-<pre><code>pub interface Equatable {
+<pre><code><span class="kw">pub</span> interface <span class="en"><a href="stdlib-interfaces.html">Equatable</a></span> {
 }</code></pre>
-<p>Types that support the `==` equality operator: every type, compared by content at every depth (@C91).  `==` is always structural and no type redefines it, so this declares nothing; a deep comparison of a type's own is a named method.  A tuple compares element by element, as its concrete `==` does.</p>
-<p>`!=` derives from it (`a != b` is `!(a == b)`).</p>
+<p>Types that support the <code>==</code> equality operator: every type, compared by content at every depth (@C91).  <code>==</code> is always structural and no type redefines it, so this declares nothing; a deep comparison of a type's own is a named method.  A tuple compares element by element, as its concrete <code>==</code> does.</p>
+<p><code>!=</code> derives from it (<code>a != b</code> is <code>!(a == b)</code>).</p>
 </div>
 <div class="item">
-<pre><code>pub interface Addable {
-  operator plus(self: Self, other: Self) -&gt; Self
+<pre><code><span class="kw">pub</span> interface <span class="en"><a href="stdlib-interfaces.html">Addable</a></span> {
+  <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">plus</span>(self: <span class="en">Self</span>, other: <span class="en">Self</span>) -&gt; <span class="en">Self</span>
 }</code></pre>
-<p>Types that support the `+` addition operator, returning the same type. Satisfied by integer, single, float, and any type defining `operator plus`.</p>
+<p>Types that support the <code>+</code> addition operator, returning the same type. Satisfied by integer, single, float, and any type defining <code>operator plus</code>.</p>
 </div>
 <div class="item">
-<pre><code>pub interface Numeric {
-  operator times(self: Self, other: Self) -&gt; Self
-  operator negate(self: Self) -&gt; Self
+<pre><code><span class="kw">pub</span> interface <span class="en"><a href="stdlib-interfaces.html">Numeric</a></span> {
+  <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">times</span>(self: <span class="en">Self</span>, other: <span class="en">Self</span>) -&gt; <span class="en">Self</span>
+  <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">negate</span>(self: <span class="en">Self</span>) -&gt; <span class="en">Self</span>
 }</code></pre>
-<p>Types that support `*` and `-` (unary negation). Separate from `Addable` so a generic can ask for the fewest operators it needs. Satisfied by integer, single, float, and any type defining `operator times` and `operator negate`.</p>
-<p>Binary subtraction is `Subtractable` below and deliberately NOT here.  One interface CAN declare both arities of `-`, but adding a requirement to `Numeric` would take satisfaction away from every type that meets it, which a compatible release may not do.</p>
+<p>Types that support <code>*</code> and <code>-</code> (unary negation). Separate from <code>Addable</code> so a generic can ask for the fewest operators it needs. Satisfied by integer, single, float, and any type defining <code>operator times</code> and <code>operator negate</code>.</p>
+<p>Binary subtraction is <code>Subtractable</code> below and deliberately NOT here.  One interface CAN declare both arities of <code>-</code>, but adding a requirement to <code>Numeric</code> would take satisfaction away from every type that meets it, which a compatible release may not do.</p>
 </div>
 <div class="item">
-<pre><code>pub interface Subtractable {
-  operator minus(self: Self, other: Self) -&gt; Self
+<pre><code><span class="kw">pub</span> interface <span class="en"><a href="stdlib-interfaces.html">Subtractable</a></span> {
+  <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">minus</span>(self: <span class="en">Self</span>, other: <span class="en">Self</span>) -&gt; <span class="en">Self</span>
 }</code></pre>
-<p>Types that support binary `-` (subtraction), returning the same type. Satisfied by integer, single, float, and any type defining `operator minus`.</p>
-<p>A bound of its own rather than a third requirement on `Numeric`, so `&lt;T: Numeric + Subtractable&gt;` gets negation and subtraction together from two interfaces.  The built-in number types satisfy both.</p>
+<p>Types that support binary <code>-</code> (subtraction), returning the same type. Satisfied by integer, single, float, and any type defining <code>operator minus</code>.</p>
+<p>A bound of its own rather than a third requirement on <code>Numeric</code>, so <code>&lt;T: Numeric + Subtractable&gt;</code> gets negation and subtraction together from two interfaces.  The built-in number types satisfy both.</p>
 </div>
 <div class="item">
-<pre><code>pub interface Scalable {
-  fn scale(self: Self, factor: integer) -&gt; integer
+<pre><code><span class="kw">pub</span> interface <span class="en"><a href="stdlib-interfaces.html">Scalable</a></span> {
+  <span class="kw">fn</span> <span class="fn-call">scale</span>(self: <span class="en">Self</span>, factor: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>
 }</code></pre>
-<p>Types that support integer scaling via a `scale` method. Uses a method (not `operator times`): inside a `&lt;T: Numeric + …&gt;` body, `*` already means Numeric's `Self * Self`, so `x * 2` there is refused (&quot;operator '*' requires a concrete type&quot;) even when another bound declares `operator times(self: Self, f: integer)`. Two SEPARATE generics may each bound their own `T` by an interface declaring the same method differently — a header binds its own type variable. User types satisfy Scalable by defining `fn scale(self: T, factor: integer) -&gt; integer`.</p>
+<p>Types that support integer scaling via a <code>scale</code> method. Uses a method (not <code>operator times</code>): inside a <code>&lt;T: Numeric + …&gt;</code> body, <code>*</code> already means Numeric's <code>Self * Self</code>, so <code>x * 2</code> there is refused (&quot;operator '*' requires a concrete type&quot;) even when another bound declares <code>operator times(self: Self, f: integer)</code>. Two SEPARATE generics may each bound their own <code>T</code> by an interface declaring the same method differently — a header binds its own type variable. User types satisfy Scalable by defining <code>fn scale(self: T, factor: integer) -&gt; integer</code>.</p>
 </div>
 <div class="item">
-<pre><code>pub interface Printable {
-  operator to_text(self: Self) -&gt; text
+<pre><code><span class="kw">pub</span> interface <span class="en"><a href="stdlib-interfaces.html">Printable</a></span> {
+  <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">to_text</span>(self: <span class="en">Self</span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>
 }</code></pre>
-<p>Types that can be converted to text via a `to_text` method. User types satisfy Printable by defining `operator to_text(self: T) -&gt; text`.</p>
+<p>Types that can be converted to text via a <code>to_text</code> method. User types satisfy Printable by defining <code>operator to_text(self: T) -&gt; text</code>.</p>
 </div>
 
   </article>

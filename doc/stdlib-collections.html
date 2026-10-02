@@ -25,24 +25,24 @@
 <article>
 <div class="section-desc"><p>Operations on vector&lt;T&gt; — the primary ordered collection type. Vectors are grown by appending with += and elements are accessed by index. A vector or struct passed to a function is passed by reference: the callee's appends and element writes reach the caller.  Binding one to a new local (`w = v`) copies it.</p></div>
 <div class="item">
-<pre><code>pub fn len(self: const vector) -&gt; integer</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(self: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
 <p>Number of elements in the vector. Use in loop bounds: for i in 0..v.len().</p>
 </div>
 <div class="item">
-<pre><code>pub fn len(self: const sorted) -&gt; integer</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(self: const <span class="ty"><a href="stdlib-collections.html">sorted</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
 <p>Number of elements in a sorted collection.</p>
 </div>
 <div class="item">
-<pre><code>pub fn clear(self: vector)</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-collections.html">clear</a></span>(self: <span class="ty"><a href="stdlib-collections.html">vector</a></span>)</code></pre>
 <p>Remove all elements from the vector, setting its length to 0.</p>
 </div>
 <div class="item">
-<pre><code>pub fn len(self: const hash) -&gt; integer</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(self: const <span class="ty">hash</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
 <p>Number of elements in a hash collection.</p>
 </div>
 <div class="item">
-<pre><code>pub fn size(self: const hash) -&gt; integer</code></pre>
-<p>The byte footprint of a hash: its full bucket table, holes included.  The table is the hash's own allocation — `elms` slots, each a 4-byte record-id (an empty slot is a hole and still counts, because open addressing's spare capacity IS the format).  Allocation-local: the entry records live in separate allocations and are not counted.  Grows in steps as the table rehashes (it is rebuilt at half full).  0 for an empty (unallocated) hash.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-text.html">size</a></span>(self: const <span class="ty">hash</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<p>The byte footprint of a hash: its full bucket table, holes included.  The table is the hash's own allocation — <code>elms</code> slots, each a 4-byte record-id (an empty slot is a hole and still counts, because open addressing's spare capacity IS the format).  Allocation-local: the entry records live in separate allocations and are not counted.  Grows in steps as the table rehashes (it is rebuilt at half full).  0 for an empty (unallocated) hash.</p>
 </div>
 
   </article>

@@ -25,71 +25,71 @@
 <article>
 <div class="section-desc"><p>Functions for working with text (UTF-8 strings) and character values.</p></div>
 <div class="item">
-<pre><code>pub fn len(self: text) -&gt; integer</code></pre>
-<p>Number of characters (Unicode code points) in the text — the human count, as in every mainstream language. For a byte length (bounds checks, the limit of byte-positioned indexing / slicing) use `size`.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<p>Number of characters (Unicode code points) in the text — the human count, as in every mainstream language. For a byte length (bounds checks, the limit of byte-positioned indexing / slicing) use <code>size</code>.</p>
 </div>
 <div class="item">
-<pre><code>pub fn size(self: text) -&gt; integer</code></pre>
-<p>Number of bytes in the text. This is the bound for byte-positioned operations: `s[i]`, slices `s[a..b]`, and `find`/`rfind` all use byte offsets. For the human character count use `len`.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-text.html">size</a></span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<p>Number of bytes in the text. This is the bound for byte-positioned operations: <code>s[i]</code>, slices <code>s[a..b]</code>, and <code>find</code>/<code>rfind</code> all use byte offsets. For the human character count use <code>len</code>.</p>
 </div>
 <div class="item">
-<pre><code>pub fn len(self: character) -&gt; integer</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(self: <span class="ty"><a href="stdlib-types.html">character</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
 <p>Byte length of the character's UTF-8 encoding (1–4).</p>
 </div>
 <div class="item">
-<pre><code>pub operator compare(self: text, other: text) -&gt; Ordering</code></pre>
-<p>Where `self` stands against `other`, in the order `&lt;` uses: by bytes, as `&lt;` compares text.</p>
+<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">compare</span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>, other: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="en"><a href="stdlib-types.html">Ordering</a></span></code></pre>
+<p>Where <code>self</code> stands against <code>other</code>, in the order <code>&lt;</code> uses: by bytes, as <code>&lt;</code> compares text.</p>
 </div>
 <div class="item">
-<pre><code>pub operator compare(self: character, other: character) -&gt; Ordering</code></pre>
-<p>Where `self` stands against `other`, by code point, in the order `&lt;` uses.</p>
+<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">compare</span>(self: <span class="ty"><a href="stdlib-types.html">character</a></span>, other: <span class="ty"><a href="stdlib-types.html">character</a></span>) -&gt; <span class="en"><a href="stdlib-types.html">Ordering</a></span></code></pre>
+<p>Where <code>self</code> stands against <code>other</code>, by code point, in the order <code>&lt;</code> uses.</p>
 </div>
 <div class="item">
-<pre><code>pub fn split(self: text, separator: character) -&gt; vector&lt;text&gt;</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-text.html">split</a></span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>, separator: <span class="ty"><a href="stdlib-types.html">character</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt;</code></pre>
 <p>Splits self on every occurrence of separator and returns the parts as a vector. Use to parse CSV lines or space-separated tokens.</p>
 </div>
 <div class="item">
-<pre><code>pub fn split_text(self: text, separator: text) -&gt; vector&lt;text&gt;</code></pre>
-<p>Split on a multi-character text separator.  `&quot;a, b, c&quot;.split_text(&quot;, &quot;)` returns `[&quot;a&quot;, &quot;b&quot;, &quot;c&quot;]`.  Edge cases: - empty self → empty result - empty separator → returns `[self]` unchanged (no infinite-split) - separator never matches → returns `[self]` - separator at start / end → produces empty boundary entries</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-text.html">split_text</a></span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>, separator: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt;</code></pre>
+<p>Split on a multi-character text separator.  <code>&quot;a, b, c&quot;.split_text(&quot;, &quot;)</code> returns <code>[&quot;a&quot;, &quot;b&quot;, &quot;c&quot;]</code>.  Edge cases: - empty self → empty result - empty separator → returns <code>[self]</code> unchanged (no infinite-split) - separator never matches → returns <code>[self]</code> - separator at start / end → produces empty boundary entries</p>
 </div>
 <div class="item">
-<pre><code>pub fn starts_with_at(self: text, pos: integer, prefix: text) -&gt; boolean</code></pre>
-<p>Functions for searching, transforming, and classifying text and character values. Character classification functions return true only if every character in the text satisfies the condition. The single-character variants test one code point. Returns true if self contains `prefix` starting at byte position `pos`.  Sugar over `self[pos..pos + prefix.size()] == prefix` for the common &quot;is this token at this offset?&quot; pattern in scanners / parsers.  Returns false (not an error) when pos + prefix.size() exceeds self.size() — same shape as `starts_with` for the &quot;prefix too long for input&quot; case.</p>
-<p>Faster than comparing characters one at a time for a known prefix at `pos`.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-text.html">starts_with_at</a></span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>, pos: <span class="ty"><a href="stdlib-types.html">integer</a></span>, prefix: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
+<p>Functions for searching, transforming, and classifying text and character values. Character classification functions return true only if every character in the text satisfies the condition. The single-character variants test one code point. Returns true if self contains <code>prefix</code> starting at byte position <code>pos</code>.  Sugar over <code>self[pos..pos + prefix.size()] == prefix</code> for the common &quot;is this token at this offset?&quot; pattern in scanners / parsers.  Returns false (not an error) when pos + prefix.size() exceeds self.size() — same shape as <code>starts_with</code> for the &quot;prefix too long for input&quot; case.</p>
+<p>Faster than comparing characters one at a time for a known prefix at <code>pos</code>.</p>
 </div>
 <div class="item">
-<pre><code>pub fn char_slice(self: text, from: integer, to: integer) -&gt; text</code></pre>
-<p>The characters of `self` from `from` up to (not including) `to` — a slice that counts CHARACTERS where `self[a..b]` counts BYTES.</p>
-<p>⚠ **This is the cure for the commonest text bug in this stack.**  `len(text)` counts characters while `self[a..b]` slices bytes, and loft snaps a byte cut outward to a character boundary — so a count computed from `len` and applied as a byte range fits FEWER characters than it measured.  The failure is not mojibake but something quieter: the text comes back SHORT, silently, and only when it is not ASCII, so every ASCII test stays green.  `&quot;héllo&quot;[0..4]` is `&quot;hél&quot;`; `&quot;héllo&quot;.char_slice(0, 4)` is `&quot;héll&quot;`.</p>
-<p>Use it wherever a character COUNT becomes a cut: fitting a label to a width, wrapping a line, a caret or a selection in a text field, truncating with an ellipsis.  Reach for `self[a..b]` only when the numbers came from a byte source — `find`, `size`, `byte_at`.</p>
-<p>Negative bounds count from the end, as a byte slice's do (`char_slice(-2, n)` is the last two characters); both ends clamp, and a reversed or empty range answers `&quot;&quot;` rather than failing.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-text.html">char_slice</a></span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>, from: <span class="ty"><a href="stdlib-types.html">integer</a></span>, to: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span></code></pre>
+<p>The characters of <code>self</code> from <code>from</code> up to (not including) <code>to</code> — a slice that counts CHARACTERS where <code>self[a..b]</code> counts BYTES.</p>
+<p>⚠ **This is the cure for the commonest text bug in this stack.**  <code>len(text)</code> counts characters while <code>self[a..b]</code> slices bytes, and loft snaps a byte cut outward to a character boundary — so a count computed from <code>len</code> and applied as a byte range fits FEWER characters than it measured.  The failure is not mojibake but something quieter: the text comes back SHORT, silently, and only when it is not ASCII, so every ASCII test stays green.  <code>&quot;héllo&quot;[0..4]</code> is <code>&quot;hél&quot;</code>; <code>&quot;héllo&quot;.char_slice(0, 4)</code> is <code>&quot;héll&quot;</code>.</p>
+<p>Use it wherever a character COUNT becomes a cut: fitting a label to a width, wrapping a line, a caret or a selection in a text field, truncating with an ellipsis.  Reach for <code>self[a..b]</code> only when the numbers came from a byte source — <code>find</code>, <code>size</code>, <code>byte_at</code>.</p>
+<p>Negative bounds count from the end, as a byte slice's do (<code>char_slice(-2, n)</code> is the last two characters); both ends clamp, and a reversed or empty range answers <code>&quot;&quot;</code> rather than failing.</p>
 </div>
 <div class="item">
-<pre><code>pub fn trim(self: text) -&gt; text[self]</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-text.html">trim</a></span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>[self]</code></pre>
 <p>Removes leading and trailing whitespace. Use when processing user input or file content.</p>
 </div>
 <div class="item">
-<pre><code>pub fn trim_start(self: text) -&gt; text[self]</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-text.html">trim_start</a></span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>[self]</code></pre>
 <p>Removes leading whitespace only.</p>
 </div>
 <div class="item">
-<pre><code>pub fn trim_end(self: text) -&gt; text[self]</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-text.html">trim_end</a></span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>[self]</code></pre>
 <p>Removes trailing whitespace only.</p>
 </div>
 <div class="item">
-<pre><code>pub fn find(self: text, value: text) -&gt; integer?</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-text.html">find</a></span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>, value: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>?</code></pre>
 <p>Returns the byte index of the first occurrence of value, or null if not found. Use to locate substrings before slicing.  Nullable: null when value is absent (the type is honest about the not-found case).</p>
 </div>
 <div class="item">
-<pre><code>pub fn rfind(self: text, value: text) -&gt; integer?</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-text.html">rfind</a></span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>, value: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>?</code></pre>
 <p>Returns the byte index of the last occurrence of value, or null if not found. Use to find file extensions or the last path separator.  Nullable: null when value is absent (the type is honest about not-found).</p>
 </div>
 <div class="item">
-<pre><code>pub fn contains(self: text, value: text) -&gt; boolean</code></pre>
-<p>Returns true if value appears anywhere in self. `s.contains(v)` is `s.find(v) != null`: `find` answers the position, `contains` only whether there is one — the clearer spelling for a membership test.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-text.html">contains</a></span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>, value: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
+<p>Returns true if value appears anywhere in self. <code>s.contains(v)</code> is <code>s.find(v) != null</code>: <code>find</code> answers the position, <code>contains</code> only whether there is one — the clearer spelling for a membership test.</p>
 </div>
 <div class="item">
-<pre><code>pub fn replace(self: text, value: text, with: text) -&gt; text</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-text.html">replace</a></span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>, value: <span class="ty"><a href="stdlib-types.html">text</a></span>, with: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span></code></pre>
 <p>Returns a copy of self with every occurrence of value replaced by with.</p>
 </div>
 

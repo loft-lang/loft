@@ -24,35 +24,35 @@
 <h1>Environment</h1>
 <article>
 <div class="item">
-<pre><code>pub fn env_variables() -&gt; vector&lt;EnvVariable&gt; env#read</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-environment.html">env_variables</a></span>() -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en"><a href="stdlib-file-system.html">EnvVariable</a></span>&gt; env#read</code></pre>
 <p>Returns all environment variables as a vector of EnvVariable records (fields: name, value). Use to inspect or forward the full environment.</p>
 </div>
 <div class="item">
-<pre><code>pub fn env_variable(name: text) -&gt; text env#read</code></pre>
-<p>Returns the value of the environment variable `name`, or `null` when it is not set. A variable set to the empty string answers `&quot;&quot;`, so `== null` tells the two apart. Use to read configuration from the shell environment.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-environment.html">env_variable</a></span>(name: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> env#read</code></pre>
+<p>Returns the value of the environment variable <code>name</code>, or <code>null</code> when it is not set. A variable set to the empty string answers <code>&quot;&quot;</code>, so <code>== null</code> tells the two apart. Use to read configuration from the shell environment.</p>
 </div>
 <div class="item">
-<pre><code>pub fn arguments() -&gt; vector&lt;text&gt;</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-environment.html">arguments</a></span>() -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt;</code></pre>
 <p>Functions for interacting with the host operating system. Returns the script-level arguments passed after the script path. Does not include the loft binary name or loft CLI flags.</p>
 </div>
 <div class="item">
-<pre><code>pub fn ymd_days_ago(days: integer) -&gt; text</code></pre>
-<p>Returns the UTC calendar date `days` days before today as `YYYY-MM-DD`. Use for cutoff dates in time-window filters; negative `days` clamps to today.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-environment.html">ymd_days_ago</a></span>(days: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span></code></pre>
+<p>Returns the UTC calendar date <code>days</code> days before today as <code>YYYY-MM-DD</code>. Use for cutoff dates in time-window filters; negative <code>days</code> clamps to today.</p>
 </div>
 <div class="item">
-<pre><code>pub fn directory(v: text = &quot;&quot;) -&gt; text</code></pre>
-<p>Returns the current working directory, optionally with v appended as a subpath. loft sets the working directory to the program's own directory, so this is that directory — unless the file declares `#cwd`, which keeps the directory the program was launched from.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-environment.html">directory</a></span>(v: <span class="ty"><a href="stdlib-types.html">text</a></span> = <span class="st">""</span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span></code></pre>
+<p>Returns the current working directory, optionally with v appended as a subpath. loft sets the working directory to the program's own directory, so this is that directory — unless the file declares <code>#cwd</code>, which keeps the directory the program was launched from.</p>
 </div>
 <div class="item">
-<pre><code>pub fn user_directory(v: text = &quot;&quot;) -&gt; text</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-environment.html">user_directory</a></span>(v: <span class="ty"><a href="stdlib-types.html">text</a></span> = <span class="st">""</span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span></code></pre>
 <p>Returns the current user's home directory, optionally with v appended. Use for storing user-specific data or configuration.</p>
 </div>
 <div class="item">
-<pre><code>pub fn program_directory(v: text = &quot;&quot;) -&gt; text</code></pre>
-<p>Returns the directory containing the running executable, optionally with v appended. Use to locate assets shipped beside a compiled program.  Under the interpreter the executable is the `loft` binary itself, and a `--native` run executes from a temporary build directory, so neither names the script's directory — use `source_dir()` for that.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-environment.html">program_directory</a></span>(v: <span class="ty"><a href="stdlib-types.html">text</a></span> = <span class="st">""</span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span></code></pre>
+<p>Returns the directory containing the running executable, optionally with v appended. Use to locate assets shipped beside a compiled program.  Under the interpreter the executable is the <code>loft</code> binary itself, and a <code>--native</code> run executes from a temporary build directory, so neither names the script's directory — use <code>source_dir()</code> for that.</p>
 </div>
 <div class="item">
-<pre><code>pub fn source_dir() -&gt; text</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-environment.html">source_dir</a></span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span></code></pre>
 <p>Returns the directory containing the main source file being executed. Use to locate data files relative to the script, regardless of working directory.</p>
 </div>
 

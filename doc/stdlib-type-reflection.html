@@ -24,177 +24,177 @@
 <h1>Type reflection</h1>
 <article>
 <div class="item">
-<pre><code>pub enum TypeKind {
-  IntegerKind,
-  LongKind,
-  SingleKind,
-  FloatKind,
-  BooleanKind,
-  TextKind,
-  CharacterKind,
-  /// A struct — its fields are in `fields`.
-  RecordKind,
-  /// An enum — its variants are in `variants`.
-  EnumKind,
-  /// One variant of a struct-enum; it has fields of its own.
-  VariantKind,
-  /// A vector — `element` names what it holds.
-  VectorKind,
-  /// A keyed collection (hash / index / sorted / ordered / radix / trie; a
-  /// `spatial` reports as radix) — walked by cursor rather than by layout, so it
-  /// has no fields of its own. Which of the six it is, and on which fields, are
-  /// in `collection` and `keys`.
-  KeyedKind,
-  /// A stored reference to another record.
-  RefKind,
-  /// A kind this loft version has no name for. Never guessed at.
-  OtherKind,
+<pre><code><span class="kw">pub</span> <span class="kw">enum</span> <span class="en"><a href="stdlib-type-reflection.html">TypeKind</a></span> {
+  <span class="en">IntegerKind</span>,
+  <span class="en">LongKind</span>,
+  <span class="en">SingleKind</span>,
+  <span class="en">FloatKind</span>,
+  <span class="en">BooleanKind</span>,
+  <span class="en">TextKind</span>,
+  <span class="en">CharacterKind</span>,
+  <span class="cm">/// A struct — its fields are in `fields`.</span>
+  <span class="en">RecordKind</span>,
+  <span class="cm">/// An enum — its variants are in `variants`.</span>
+  <span class="en">EnumKind</span>,
+  <span class="cm">/// One variant of a struct-enum; it has fields of its own.</span>
+  <span class="en">VariantKind</span>,
+  <span class="cm">/// A vector — `element` names what it holds.</span>
+  <span class="en">VectorKind</span>,
+  <span class="cm">/// A keyed collection (hash / index / sorted / ordered / radix / trie; a</span>
+  <span class="cm">/// `spatial` reports as radix) — walked by cursor rather than by layout, so it</span>
+  <span class="cm">/// has no fields of its own. Which of the six it is, and on which fields, are</span>
+  <span class="cm">/// in `collection` and `keys`.</span>
+  <span class="en">KeyedKind</span>,
+  <span class="cm">/// A stored reference to another record.</span>
+  <span class="en">RefKind</span>,
+  <span class="cm">/// A kind this loft version has no name for. Never guessed at.</span>
+  <span class="en">OtherKind</span>,
 }</code></pre>
 <p>What a type IS — the discriminant a caller matches on before reading the fields that only some kinds have.</p>
-<p>These are STORAGE kinds, because storage is what the descriptor records. A narrow `i32` field reports `IntegerKind`; the declared width is visible in `size`, not in a separate kind.</p>
+<p>These are STORAGE kinds, because storage is what the descriptor records. A narrow <code>i32</code> field reports <code>IntegerKind</code>; the declared width is visible in <code>size</code>, not in a separate kind.</p>
 </div>
 <div class="item">
-<pre><code>pub struct FieldInfo {
-  name: text,
-  /// The field type's name, as the store records it.
-  type_name: text,
-  /// Byte offset of the field within its record.
-  position: integer,
-  kind: TypeKind,
-  /// Was the field DECLARED nullable (`text?` rather than `text`)?
-  ///
-  /// Not a layout fact — a nullable field occupies the same bytes and spells an
-  /// absent value with a sentinel — so nothing in the stored bytes implies it,
-  /// and it reaches you only because the compiler records it. It is what a
-  /// generated `CREATE TABLE` needs for `NOT NULL`.
-  nullable: boolean,
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en"><a href="stdlib-type-reflection.html">FieldInfo</a></span> {
+  name: <span class="ty"><a href="stdlib-types.html">text</a></span>,
+  <span class="cm">/// The field type's name, as the store records it.</span>
+  type_name: <span class="ty"><a href="stdlib-types.html">text</a></span>,
+  <span class="cm">/// Byte offset of the field within its record.</span>
+  position: <span class="ty"><a href="stdlib-types.html">integer</a></span>,
+  kind: <span class="en"><a href="stdlib-type-reflection.html">TypeKind</a></span>,
+  <span class="cm">/// Was the field DECLARED nullable (`text?` rather than `text`)?</span>
+  <span class="cm">///</span>
+  <span class="cm">/// Not a layout fact — a nullable field occupies the same bytes and spells an</span>
+  <span class="cm">/// absent value with a sentinel — so nothing in the stored bytes implies it,</span>
+  <span class="cm">/// and it reaches you only because the compiler records it. It is what a</span>
+  <span class="cm">/// generated `CREATE TABLE` needs for `NOT NULL`.</span>
+  nullable: <span class="ty"><a href="stdlib-types.html">boolean</a></span>,
 }</code></pre>
 <p>One field of a record or of a struct-enum variant.</p>
 </div>
 <div class="item">
-<pre><code>pub enum CollectionKind {
-  /// Not a keyed collection. Every other kind of type answers this, so a
-  /// caller can read `collection` without matching `kind` first.
-  NotKeyed,
-  KeyedHash,
-  KeyedIndex,
-  KeyedSorted,
-  KeyedOrdered,
-  KeyedRadix,
-  KeyedTrie,
+<pre><code><span class="kw">pub</span> <span class="kw">enum</span> <span class="en"><a href="stdlib-type-reflection.html">CollectionKind</a></span> {
+  <span class="cm">/// Not a keyed collection. Every other kind of type answers this, so a</span>
+  <span class="cm">/// caller can read `collection` without matching `kind` first.</span>
+  <span class="en">NotKeyed</span>,
+  <span class="en">KeyedHash</span>,
+  <span class="en">KeyedIndex</span>,
+  <span class="en">KeyedSorted</span>,
+  <span class="en">KeyedOrdered</span>,
+  <span class="en">KeyedRadix</span>,
+  <span class="en">KeyedTrie</span>,
 }</code></pre>
 <p>WHICH keyed collection a type is — the shape of its lookup.</p>
-<p>`KeyedKind` says a type is walked by cursor; this says what by. The distinction decides what a query over it can be: a `hash` answers equality only, `sorted` / `ordered` / `index` also answer a range in their declared direction, a `radix` is a Morton-order structure that no SQL shape means the same thing as, and a `trie` answers equality, byte order, and a PREFIX — which is `LIKE 'x%'` and nothing narrower.</p>
+<p><code>KeyedKind</code> says a type is walked by cursor; this says what by. The distinction decides what a query over it can be: a <code>hash</code> answers equality only, <code>sorted</code> / <code>ordered</code> / <code>index</code> also answer a range in their declared direction, a <code>radix</code> is a Morton-order structure that no SQL shape means the same thing as, and a <code>trie</code> answers equality, byte order, and a PREFIX — which is <code>LIKE 'x%'</code> and nothing narrower.</p>
 </div>
 <div class="item">
-<pre><code>pub struct KeyInfo {
-  name: text,
-  /// Byte offset of this field within the ELEMENT record — the same number the
-  /// element type's `FieldInfo.position` carries, so a caller joins the two by
-  /// VALUE rather than by matching names. A name is a display fact; the
-  /// position is what the collection actually keys on.
-  position: integer,
-  /// Does the collection order this key ascending?
-  ///
-  /// `true` for a kind that has no order of its own (`hash`, `radix`), and for a
-  /// `trie`, whose single key IS ordered ascending by byte. Only a kind that can
-  /// be declared descending ever answers `false`. Match `collection` first where the
-  /// difference between &quot;ascending&quot; and &quot;unordered&quot; matters.
-  ascending: boolean,
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en"><a href="stdlib-type-reflection.html">KeyInfo</a></span> {
+  name: <span class="ty"><a href="stdlib-types.html">text</a></span>,
+  <span class="cm">/// Byte offset of this field within the ELEMENT record — the same number the</span>
+  <span class="cm">/// element type's `FieldInfo.position` carries, so a caller joins the two by</span>
+  <span class="cm">/// VALUE rather than by matching names. A name is a display fact; the</span>
+  <span class="cm">/// position is what the collection actually keys on.</span>
+  position: <span class="ty"><a href="stdlib-types.html">integer</a></span>,
+  <span class="cm">/// Does the collection order this key ascending?</span>
+  <span class="cm">///</span>
+  <span class="cm">/// `true` for a kind that has no order of its own (`hash`, `radix`), and for a</span>
+  <span class="cm">/// `trie`, whose single key IS ordered ascending by byte. Only a kind that can</span>
+  <span class="cm">/// be declared descending ever answers `false`. Match `collection` first where the</span>
+  <span class="cm">/// difference between "ascending" and "unordered" matters.</span>
+  ascending: <span class="ty"><a href="stdlib-types.html">boolean</a></span>,
 }</code></pre>
 <p>One key field of a keyed collection.</p>
 </div>
 <div class="item">
-<pre><code>pub struct VariantInfo {
-  name: text,
-  /// The discriminant this variant is stored as. Never 0 — 0 means absent.
-  tag: integer,
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en"><a href="stdlib-type-reflection.html">VariantInfo</a></span> {
+  name: <span class="ty"><a href="stdlib-types.html">text</a></span>,
+  <span class="cm">/// The discriminant this variant is stored as. Never 0 — 0 means absent.</span>
+  tag: <span class="ty"><a href="stdlib-types.html">integer</a></span>,
 }</code></pre>
 <p>One variant of an enum.</p>
 </div>
 <div class="item">
-<pre><code>pub struct TypeInfo {
-  name: text,
-  kind: TypeKind,
-  /// Bytes one record of this type occupies; 0 for a type with no record.
-  size: integer,
-  const fields: vector&lt;FieldInfo&gt;,
-  const variants: vector&lt;VariantInfo&gt;,
-  /// For a vector or a keyed collection, the element type's name.
-  element: text,
-  /// For a keyed collection, which of the six it is; `NotKeyed` otherwise.
-  collection: CollectionKind,
-  /// The key fields of a keyed collection, in KEY ORDER — the order a composite
-  /// lookup binds them in, which is why it is a vector and not a set.
-  ///
-  /// Empty for every type that is not keyed, and empty for the one keyed shape
-  /// whose keys are not its element's own fields: a `__nullable&lt;S&gt;` element
-  /// keys through its `Some` payload. Empty rather than partial is deliberate —
-  /// a query built from half a composite key is a WRONG query, not a narrower
-  /// one, so a key list is delivered whole or not at all.
-  const keys: vector&lt;KeyInfo&gt;,
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en"><a href="stdlib-type-reflection.html">TypeInfo</a></span> {
+  name: <span class="ty"><a href="stdlib-types.html">text</a></span>,
+  kind: <span class="en"><a href="stdlib-type-reflection.html">TypeKind</a></span>,
+  <span class="cm">/// Bytes one record of this type occupies; 0 for a type with no record.</span>
+  size: <span class="ty"><a href="stdlib-types.html">integer</a></span>,
+  const fields: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en"><a href="stdlib-type-reflection.html">FieldInfo</a></span>&gt;,
+  const variants: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en"><a href="stdlib-type-reflection.html">VariantInfo</a></span>&gt;,
+  <span class="cm">/// For a vector or a keyed collection, the element type's name.</span>
+  element: <span class="ty"><a href="stdlib-types.html">text</a></span>,
+  <span class="cm">/// For a keyed collection, which of the six it is; `NotKeyed` otherwise.</span>
+  collection: <span class="en"><a href="stdlib-type-reflection.html">CollectionKind</a></span>,
+  <span class="cm">/// The key fields of a keyed collection, in KEY ORDER — the order a composite</span>
+  <span class="cm">/// lookup binds them in, which is why it is a vector and not a set.</span>
+  <span class="cm">///</span>
+  <span class="cm">/// Empty for every type that is not keyed, and empty for the one keyed shape</span>
+  <span class="cm">/// whose keys are not its element's own fields: a `__nullable&lt;S&gt;` element</span>
+  <span class="cm">/// keys through its `Some` payload. Empty rather than partial is deliberate —</span>
+  <span class="cm">/// a query built from half a composite key is a WRONG query, not a narrower</span>
+  <span class="cm">/// one, so a key list is delivered whole or not at all.</span>
+  const keys: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en"><a href="stdlib-type-reflection.html">KeyInfo</a></span>&gt;,
 }</code></pre>
 <p>The declared shape of one type.</p>
-<p>`fields` is empty for everything but a record and a struct-enum variant; `variants` for everything but an enum; `element` is `&quot;&quot;` unless the type holds one. Empty is the honest answer for a kind that has no such thing — a caller matches `kind` first.</p>
+<p><code>fields</code> is empty for everything but a record and a struct-enum variant; <code>variants</code> for everything but an enum; <code>element</code> is <code>&quot;&quot;</code> unless the type holds one. Empty is the honest answer for a kind that has no such thing — a caller matches <code>kind</code> first.</p>
 </div>
 <div class="item">
-<pre><code>pub fn reflect_type(kt: integer) -&gt; TypeInfo</code></pre>
-<p>The declared shape of `value`'s type.</p>
-<p>**The argument is read for its TYPE and is not evaluated** — the same contract C's `sizeof` has, and for the same reason: nothing about the answer depends on the value. Pass a variable, a field or a parameter; an expression with a side effect will not have it.</p>
-<p>```loft t = type_of(row); println(&quot;{t.name}:&quot;); for f in t.fields { println(&quot;  {f.name}: {f.type_name} @{f.position}&quot;) } ```</p>
-<p>**Not inside a generic.** A generic body is parsed ONCE against its type variable, so `type_of(v)` there answers a type-variable placeholder (`__typevar_T…`) — the same reason `&quot;{v:j}&quot;` in a generic body renders `{}`. Call it where the concrete type is known.</p>
-<p>Describes a TYPE. To read what a VALUE holds at one of these positions, use `field_value`. Reflection offers no way to WRITE a value by field.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-type-reflection.html">reflect_type</a></span>(kt: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en"><a href="stdlib-type-reflection.html">TypeInfo</a></span></code></pre>
+<p>The declared shape of <code>value</code>'s type.</p>
+<p>**The argument is read for its TYPE and is not evaluated** — the same contract C's <code>sizeof</code> has, and for the same reason: nothing about the answer depends on the value. Pass a variable, a field or a parameter; an expression with a side effect will not have it.</p>
+<p><code></code><code>loft t = type_of(row); println(&quot;{t.name}:&quot;); for f in t.fields { println(&quot;  {f.name}: {f.type_name} @{f.position}&quot;) } </code><code></code></p>
+<p>**Not inside a generic.** A generic body is parsed ONCE against its type variable, so <code>type_of(v)</code> there answers a type-variable placeholder (<code>__typevar_T…</code>) — the same reason <code>&quot;{v:j}&quot;</code> in a generic body renders <code>{}</code>. Call it where the concrete type is known.</p>
+<p>Describes a TYPE. To read what a VALUE holds at one of these positions, use <code>field_value</code>. Reflection offers no way to WRITE a value by field.</p>
 </div>
 <div class="item">
-<pre><code>pub fn type_named(name: text) -&gt; TypeInfo?</code></pre>
-<p>The declared shape of the type called `name`, or `null` if this program has no such type — reflection with no value in hand.</p>
-<p>This is what an ORM or a schema check needs: the name arrives from a config file, a database catalogue or a command line, so there is nothing to call `type_of` on.</p>
-<p>```loft t = type_named(&quot;Row&quot;); if t == null { println(&quot;no such type&quot;) } else { println(&quot;{t.name}&quot;) } ```</p>
-<p>**`TypeInfo?`, and null means the name is not a type here.** A type that does not exist has no shape, and saying so in the type is what makes a caller handle it rather than read a plausible-looking empty answer.</p>
-<p>A name is matched exactly as the store records it, which is the loft type name — `Point`, `text`, `vector&lt;Point&gt;`.  A composite name such as `vector&lt;Point&gt;` exists only when the program uses that type somewhere; a program that never does answers `null` for it.</p>
-<p>Unlike `type_of`, no parser intercept: the name is a RUNTIME value, so the lookup is a runtime one. It works on `--native` because the generated `init()` replays the type registrations — names included — and `Stores::name` is a total lookup that answers &quot;absent&quot; rather than minting a type for a typo.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-type-reflection.html">type_named</a></span>(name: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="en"><a href="stdlib-type-reflection.html">TypeInfo</a></span>?</code></pre>
+<p>The declared shape of the type called <code>name</code>, or <code>null</code> if this program has no such type — reflection with no value in hand.</p>
+<p>This is what an ORM or a schema check needs: the name arrives from a config file, a database catalogue or a command line, so there is nothing to call <code>type_of</code> on.</p>
+<p><code></code><code>loft t = type_named(&quot;Row&quot;); if t == null { println(&quot;no such type&quot;) } else { println(&quot;{t.name}&quot;) } </code><code></code></p>
+<p>**<code>TypeInfo?</code>, and null means the name is not a type here.** A type that does not exist has no shape, and saying so in the type is what makes a caller handle it rather than read a plausible-looking empty answer.</p>
+<p>A name is matched exactly as the store records it, which is the loft type name — <code>Point</code>, <code>text</code>, <code>vector&lt;Point&gt;</code>.  A composite name such as <code>vector&lt;Point&gt;</code> exists only when the program uses that type somewhere; a program that never does answers <code>null</code> for it.</p>
+<p>Unlike <code>type_of</code>, no parser intercept: the name is a RUNTIME value, so the lookup is a runtime one. It works on <code>--native</code> because the generated <code>init()</code> replays the type registrations — names included — and <code>Stores::name</code> is a total lookup that answers &quot;absent&quot; rather than minting a type for a typo.</p>
 </div>
 <div class="item">
-<pre><code>pub struct ValueInfo {
-  /// What the type's own descriptor says lives at that position — never what
-  /// the caller expected to find there.
-  kind: TypeKind,
-  /// The SCALAR at that position holds loft's NULL.
-  ///
-  /// Separate from the payload because a null is not a value a payload can
-  /// spell: `0`, `&quot;&quot;` and `false` are ordinary answers a field can genuinely
-  /// hold, and an ORM that could not tell them from SQL NULL would write the
-  /// wrong row. Test this before reading `i` / `f` / `t`.
-  ///
-  /// `false` for a `kind` that has no scalar reading and for `OtherKind` — a
-  /// field that was never read is not a field that read as null, and those are
-  /// three answers rather than two.
-  is_null: boolean,
-  i: integer,
-  f: float,
-  t: text,
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en"><a href="stdlib-type-reflection.html">ValueInfo</a></span> {
+  <span class="cm">/// What the type's own descriptor says lives at that position — never what</span>
+  <span class="cm">/// the caller expected to find there.</span>
+  kind: <span class="en"><a href="stdlib-type-reflection.html">TypeKind</a></span>,
+  <span class="cm">/// The SCALAR at that position holds loft's NULL.</span>
+  <span class="cm">///</span>
+  <span class="cm">/// Separate from the payload because a null is not a value a payload can</span>
+  <span class="cm">/// spell: `0`, `""` and `false` are ordinary answers a field can genuinely</span>
+  <span class="cm">/// hold, and an ORM that could not tell them from SQL NULL would write the</span>
+  <span class="cm">/// wrong row. Test this before reading `i` / `f` / `t`.</span>
+  <span class="cm">///</span>
+  <span class="cm">/// `false` for a `kind` that has no scalar reading and for `OtherKind` — a</span>
+  <span class="cm">/// field that was never read is not a field that read as null, and those are</span>
+  <span class="cm">/// three answers rather than two.</span>
+  is_null: <span class="ty"><a href="stdlib-types.html">boolean</a></span>,
+  i: <span class="ty"><a href="stdlib-types.html">integer</a></span>,
+  f: <span class="ty"><a href="stdlib-types.html">float</a></span>,
+  t: <span class="ty"><a href="stdlib-types.html">text</a></span>,
 }</code></pre>
 <p>One field's VALUE, read out of a record at the position reflection reported.</p>
-<p>`kind` says which payload carries the answer, so a caller matches it once rather than asking a different question per type:</p>
-<p>| `kind` | read | |---|---| | `IntegerKind` · `LongKind` | `i` | | `BooleanKind` | `i` — 1 or 0 | | `CharacterKind` | `i` — the code point | | `FloatKind` · `SingleKind` | `f` | | `TextKind` | `t` | | `RecordKind` · `VectorKind` · `KeyedKind` · `RefKind` | nothing — no scalar reading | | `OtherKind` | nothing — see `field_value` |</p>
-<p>A boolean and a character ride in `i` for the reason a bound SQL value does: one integer path is one thing to get right, and the `kind` beside it is what keeps them apart.</p>
+<p><code>kind</code> says which payload carries the answer, so a caller matches it once rather than asking a different question per type:</p>
+<p>| <code>kind</code> | read | |---|---| | <code>IntegerKind</code> · <code>LongKind</code> | <code>i</code> | | <code>BooleanKind</code> | <code>i</code> — 1 or 0 | | <code>CharacterKind</code> | <code>i</code> — the code point | | <code>FloatKind</code> · <code>SingleKind</code> | <code>f</code> | | <code>TextKind</code> | <code>t</code> | | <code>RecordKind</code> · <code>VectorKind</code> · <code>KeyedKind</code> · <code>RefKind</code> | nothing — no scalar reading | | <code>OtherKind</code> | nothing — see <code>field_value</code> |</p>
+<p>A boolean and a character ride in <code>i</code> for the reason a bound SQL value does: one integer path is one thing to get right, and the <code>kind</code> beside it is what keeps them apart.</p>
 </div>
 <div class="item">
-<pre><code>pub fn reflect_field(value: const TypeInfo, position: integer, kt: integer) -&gt; ValueInfo</code></pre>
-<p>The value `value` holds at byte `position` — the VALUE half of reflection.</p>
-<p>`type_of` says a record has a `text` at byte 16; this reads it. Together they are what a generic serialiser, an ORM write or a diff needs, and neither half is enough alone:</p>
-<p>```loft t = type_of(row); for f in t.fields { v = field_value(row, f.position); if v.is_null { println(&quot;{f.name}=null&quot;) } else { println(&quot;{f.name}={v.t}&quot;) } } ```</p>
-<p>**The position is CHECKED against the type's own descriptor, never trusted.** A number that does not begin a field — a hand-made offset, a stale one, a position from a different type — answers `OtherKind`. A field whose type has no scalar reading (a nested record, a vector, a keyed collection, a stored reference) answers its own kind with no payload. So there is no offset a caller can pass that reads bytes belonging to something else, which is what makes this ordinary loft rather than a pointer.</p>
-<p>`kind` is the DESCRIPTOR's answer, not the caller's: passing the position of an `integer` field does not make the reading an integer, it makes it whatever that field is. That is why the kind is reported rather than requested.</p>
-<p>**REFUSED inside a generic**, and refused rather than merely unsupported. A generic body is parsed once against its type variable, so there is no concrete type to read positions out of — the same limit `type_of` has. Left to answer, every call there reports `OtherKind`, which for an ORM's write half is an EMPTY ROW rather than an error: the write succeeds and the columns are missing. So it is a compile error naming the type variable. Call it one frame out, where the type is known, and pass the values in.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-type-reflection.html">reflect_field</a></span>(value: const <span class="en"><a href="stdlib-type-reflection.html">TypeInfo</a></span>, position: <span class="ty"><a href="stdlib-types.html">integer</a></span>, kt: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en"><a href="stdlib-type-reflection.html">ValueInfo</a></span></code></pre>
+<p>The value <code>value</code> holds at byte <code>position</code> — the VALUE half of reflection.</p>
+<p><code>type_of</code> says a record has a <code>text</code> at byte 16; this reads it. Together they are what a generic serialiser, an ORM write or a diff needs, and neither half is enough alone:</p>
+<p><code></code><code>loft t = type_of(row); for f in t.fields { v = field_value(row, f.position); if v.is_null { println(&quot;{f.name}=null&quot;) } else { println(&quot;{f.name}={v.t}&quot;) } } </code><code></code></p>
+<p>**The position is CHECKED against the type's own descriptor, never trusted.** A number that does not begin a field — a hand-made offset, a stale one, a position from a different type — answers <code>OtherKind</code>. A field whose type has no scalar reading (a nested record, a vector, a keyed collection, a stored reference) answers its own kind with no payload. So there is no offset a caller can pass that reads bytes belonging to something else, which is what makes this ordinary loft rather than a pointer.</p>
+<p><code>kind</code> is the DESCRIPTOR's answer, not the caller's: passing the position of an <code>integer</code> field does not make the reading an integer, it makes it whatever that field is. That is why the kind is reported rather than requested.</p>
+<p>**REFUSED inside a generic**, and refused rather than merely unsupported. A generic body is parsed once against its type variable, so there is no concrete type to read positions out of — the same limit <code>type_of</code> has. Left to answer, every call there reports <code>OtherKind</code>, which for an ORM's write half is an EMPTY ROW rather than an error: the write succeeds and the columns are missing. So it is a compile error naming the type variable. Call it one frame out, where the type is known, and pass the values in.</p>
 </div>
 <div class="item">
-<pre><code>pub fn reflect_field_path(value: const TypeInfo, path: const vector&lt;integer&gt;, kt: integer) -&gt; ValueInfo</code></pre>
-<p>The value at the end of a PATH of positions — `field_value(x, [8, 0])`.</p>
-<p>`type_of` reports a nested record's fields at positions relative to THAT record, so one number cannot name `origin.x` — and reflection hands back no handle to a nested record to call `field_value` on again. A path closes that: each element is a position in the record the previous element landed in.</p>
-<p>**The offsets must not be added up by the caller.** `field_value(doc, 8 + 0)` asks for a field BEGINNING at byte 8 of `Doc`, which is `origin` itself — the check that makes this ordinary loft rather than a pointer is that a position must begin a field of the type it is read against. So the walk happens inside, one descriptor step per element, each checked the same way.</p>
-<p>```loft // Doc.origin @8, Point.y @8 v = field_value(doc, [8, 8]);   // doc.origin.y ```</p>
-<p>Every step but the last must land on an INLINE record. A step onto a scalar, a vector, a keyed collection or a stored reference answers `OtherKind` and reads nothing: a stored reference names a record with its own identity, and following it would be a pointer chase rather than a field read. An empty path answers `OtherKind` for the same reason a bad position does — nothing names a field there.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-type-reflection.html">reflect_field_path</a></span>(value: const <span class="en"><a href="stdlib-type-reflection.html">TypeInfo</a></span>, path: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;, kt: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en"><a href="stdlib-type-reflection.html">ValueInfo</a></span></code></pre>
+<p>The value at the end of a PATH of positions — <code>field_value(x, [8, 0])</code>.</p>
+<p><code>type_of</code> reports a nested record's fields at positions relative to THAT record, so one number cannot name <code>origin.x</code> — and reflection hands back no handle to a nested record to call <code>field_value</code> on again. A path closes that: each element is a position in the record the previous element landed in.</p>
+<p>**The offsets must not be added up by the caller.** <code>field_value(doc, 8 + 0)</code> asks for a field BEGINNING at byte 8 of <code>Doc</code>, which is <code>origin</code> itself — the check that makes this ordinary loft rather than a pointer is that a position must begin a field of the type it is read against. So the walk happens inside, one descriptor step per element, each checked the same way.</p>
+<p><code></code><code>loft // Doc.origin @8, Point.y @8 v = field_value(doc, [8, 8]);   // doc.origin.y </code><code></code></p>
+<p>Every step but the last must land on an INLINE record. A step onto a scalar, a vector, a keyed collection or a stored reference answers <code>OtherKind</code> and reads nothing: a stored reference names a record with its own identity, and following it would be a pointer chase rather than a field read. An empty path answers <code>OtherKind</code> for the same reason a bad position does — nothing names a field there.</p>
 <p>A one-element path is the single-position form, and answers identically.</p>
 </div>
 

@@ -24,51 +24,51 @@
 <h1>Stack traces</h1>
 <article>
 <div class="item">
-<pre><code>pub enum ArgValue {
-  NullVal,
-  BoolVal { b: boolean },
-  IntVal { n: integer },
-  LongVal { n: integer },
-  FloatVal { f: float },
-  SingleVal { f: single },
-  CharVal { c: character },
-  TextVal { t: text },
-  RefVal { store: integer, rec: integer, pos: integer },
-  FnVal { d_nr: integer },
-  OtherVal { description: text },
+<pre><code><span class="kw">pub</span> <span class="kw">enum</span> <span class="en"><a href="stdlib-stack-traces.html">ArgValue</a></span> {
+  <span class="en">NullVal</span>,
+  <span class="en">BoolVal</span> { b: <span class="ty"><a href="stdlib-types.html">boolean</a></span> },
+  <span class="en">IntVal</span> { n: <span class="ty"><a href="stdlib-types.html">integer</a></span> },
+  <span class="en">LongVal</span> { n: <span class="ty"><a href="stdlib-types.html">integer</a></span> },
+  <span class="en">FloatVal</span> { f: <span class="ty"><a href="stdlib-types.html">float</a></span> },
+  <span class="en">SingleVal</span> { f: <span class="ty"><a href="stdlib-types.html">single</a></span> },
+  <span class="en">CharVal</span> { c: <span class="ty"><a href="stdlib-types.html">character</a></span> },
+  <span class="en">TextVal</span> { t: <span class="ty"><a href="stdlib-types.html">text</a></span> },
+  <span class="en">RefVal</span> { store: <span class="ty"><a href="stdlib-types.html">integer</a></span>, rec: <span class="ty"><a href="stdlib-types.html">integer</a></span>, pos: <span class="ty"><a href="stdlib-types.html">integer</a></span> },
+  <span class="en">FnVal</span> { d_nr: <span class="ty"><a href="stdlib-types.html">integer</a></span> },
+  <span class="en">OtherVal</span> { description: <span class="ty"><a href="stdlib-types.html">text</a></span> },
 }</code></pre>
 <p>Typed union of inspectable argument/variable values. Each variant wraps one primitive type so that match expressions can recover the concrete value from a StackFrame's argument list.</p>
 </div>
 <div class="item">
-<pre><code>pub struct ArgInfo {
-  name: text,
-  type_name: text,
-  value: ArgValue,
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en"><a href="stdlib-stack-traces.html">ArgInfo</a></span> {
+  name: <span class="ty"><a href="stdlib-types.html">text</a></span>,
+  type_name: <span class="ty"><a href="stdlib-types.html">text</a></span>,
+  value: <span class="en"><a href="stdlib-stack-traces.html">ArgValue</a></span>,
 }</code></pre>
 <p>One function argument in a stack frame.</p>
 </div>
 <div class="item">
-<pre><code>pub struct VarInfo {
-  name: text,
-  type_name: text,
-  value: ArgValue,
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en"><a href="stdlib-stack-traces.html">VarInfo</a></span> {
+  name: <span class="ty"><a href="stdlib-types.html">text</a></span>,
+  type_name: <span class="ty"><a href="stdlib-types.html">text</a></span>,
+  value: <span class="en"><a href="stdlib-stack-traces.html">ArgValue</a></span>,
 }</code></pre>
-<p>One local variable or parameter in a stack frame (see `stack_trace`).</p>
+<p>One local variable or parameter in a stack frame (see <code>stack_trace</code>).</p>
 </div>
 <div class="item">
-<pre><code>pub struct StackFrame {
-  function: text,
-  file: text,
-  line: integer,
-  arguments: vector&lt;ArgInfo&gt;,
-  variables: vector&lt;VarInfo&gt;,
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en"><a href="stdlib-stack-traces.html">StackFrame</a></span> {
+  function: <span class="ty"><a href="stdlib-types.html">text</a></span>,
+  <span class="bi"><a href="stdlib-files-and-directories.html">file</a></span>: <span class="ty"><a href="stdlib-types.html">text</a></span>,
+  line: <span class="ty"><a href="stdlib-types.html">integer</a></span>,
+  arguments: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en"><a href="stdlib-stack-traces.html">ArgInfo</a></span>&gt;,
+  variables: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en"><a href="stdlib-stack-traces.html">VarInfo</a></span>&gt;,
 }</code></pre>
 <p>One call frame in the stack trace.</p>
 </div>
 <div class="item">
-<pre><code>pub fn stack_trace() -&gt; vector&lt;StackFrame&gt;</code></pre>
-<p>Return the current call stack as a vector of frames, outermost first. Each frame's `variables` holds its parameters and live locals, `arguments` the parameters alone (typed via `ArgValue`).  Use this to inspect not only the current function's variables but also the variables of any function further up the call stack.  Under `--native` both lists are empty: a compiled frame has no reader for its locals (STACKTRACE.md § Known Limitations, ST-6).</p>
-<p>```loft fn debug_dump() { for frame in stack_trace() { println(&quot;{frame.function}:{frame.line}&quot;); for v in frame.variables { println(&quot;  {v.name} = {v.value}&quot;); } } } ```</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-stack-traces.html">stack_trace</a></span>() -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en"><a href="stdlib-stack-traces.html">StackFrame</a></span>&gt;</code></pre>
+<p>Return the current call stack as a vector of frames, outermost first. Each frame's <code>variables</code> holds its parameters and live locals, <code>arguments</code> the parameters alone (typed via <code>ArgValue</code>).  Use this to inspect not only the current function's variables but also the variables of any function further up the call stack.  Under <code>--native</code> both lists are empty: a compiled frame has no reader for its locals (STACKTRACE.md § Known Limitations, ST-6).</p>
+<p><code></code><code>loft fn debug_dump() { for frame in stack_trace() { println(&quot;{frame.function}:{frame.line}&quot;); for v in frame.variables { println(&quot;  {v.name} = {v.value}&quot;); } } } </code><code></code></p>
 </div>
 
   </article>

@@ -89,7 +89,7 @@ fn main() -> std::io::Result<()> {
     let topic_info = gather_topic_info();
 
     for section in &sections {
-        generate_stdlib_section(section, &stdlib_info, &topic_info)?;
+        generate_stdlib_section(section, &stdlib_info, &topic_info, &link_map)?;
     }
 
     generate_stdlib_toc(&sections, &stdlib_info, &topic_info)?;
@@ -517,6 +517,7 @@ fn generate_stdlib_section(
     section: &SectionFull,
     stdlib_info: &[StdlibSection],
     topic_info: &[(String, String)],
+    link_map: &HashMap<String, String>,
 ) -> std::io::Result<()> {
     let stem = format!("stdlib-{}", section.id);
     let nav = build_nav(topic_info, stdlib_info, &stem);
@@ -530,12 +531,15 @@ fn generate_stdlib_section(
             }
             body.push_str("</div>\n");
         } else {
-            body.push_str("<div class=\"item\">\n");
-            body.push_str(&format!("<pre><code>{}</code></pre>\n", esc(sig)));
-            for p in &paras {
-                body.push_str(&format!("<p>{}</p>\n", esc(p)));
-            }
-            body.push_str("</div>\n");
+            // @PLN183 — the one item renderer: spans as code, the signature highlighted and
+            // linked, as the library API pages show theirs.
+            body.push_str(&loft::doc_render::item_html(
+                &loft::doc_render::Item {
+                    sig,
+                    doc: &doc_lines.join("\n"),
+                },
+                link_map,
+            ));
         }
     }
     // `stdlib_info` carries the hand-written one-line description for this
@@ -2001,12 +2005,13 @@ fn generate_print_page(
                     content.push_str(&format!("<p class=\"section-desc\">{}</p>\n", esc(p)));
                 }
             } else {
-                content.push_str("<div class=\"item\">\n");
-                content.push_str(&format!("<pre><code>{}</code></pre>\n", esc(sig)));
-                for p in &paras {
-                    content.push_str(&format!("<p>{}</p>\n", esc(p)));
-                }
-                content.push_str("</div>\n");
+                content.push_str(&loft::doc_render::item_html(
+                    &loft::doc_render::Item {
+                        sig,
+                        doc: &doc_lines.join("\n"),
+                    },
+                    link_map,
+                ));
             }
         }
     }

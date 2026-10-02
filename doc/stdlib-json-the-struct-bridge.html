@@ -24,17 +24,17 @@
 <h1>JSON: the struct bridge</h1>
 <article>
 <div class="item">
-<pre><code>pub fn struct_from_jsonvalue(v: const JsonValue, struct_kt: integer) -&gt; JsonValue</code></pre>
-<p>Internal walker — populate a struct of the given `struct_kt` (known-type number) from a JsonValue.  Compile-time codegen for `Struct.parse(JsonValue)` emits exactly one call to this function regardless of struct shape; the runtime walker uses `stores.types[struct_kt].parts` to dispatch on each field's declared type (primitive, nested struct, JsonValue passthrough, or vector). Path-qualified schema-side diagnostics on type mismatches go to `json_errors()`.  Users should not call this directly — write `MyStruct.parse(value)` instead.</p>
-<p>Return type is declared as `JsonValue` here purely because it shares the same DbRef byte layout as the actual `reference[T]` the walker produces — the compile-time codegen at `parse_type_parse` overrides the type to `reference[T]` for the caller while the stack accounting remains correct.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-json-the-struct-bridge.html">struct_from_jsonvalue</a></span>(v: const <span class="en"><a href="stdlib-json.html">JsonValue</a></span>, struct_kt: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en"><a href="stdlib-json.html">JsonValue</a></span></code></pre>
+<p>Internal walker — populate a struct of the given <code>struct_kt</code> (known-type number) from a JsonValue.  Compile-time codegen for <code>Struct.parse(JsonValue)</code> emits exactly one call to this function regardless of struct shape; the runtime walker uses <code>stores.types[struct_kt].parts</code> to dispatch on each field's declared type (primitive, nested struct, JsonValue passthrough, or vector). Path-qualified schema-side diagnostics on type mismatches go to <code>json_errors()</code>.  Users should not call this directly — write <code>MyStruct.parse(value)</code> instead.</p>
+<p>Return type is declared as <code>JsonValue</code> here purely because it shares the same DbRef byte layout as the actual <code>reference[T]</code> the walker produces — the compile-time codegen at <code>parse_type_parse</code> overrides the type to <code>reference[T]</code> for the caller while the stack accounting remains correct.</p>
 </div>
 <div class="item">
-<pre><code>pub fn struct_to_json(self_ref: const JsonValue, struct_kt: integer) -&gt; text</code></pre>
-<p>Serialise any user struct to canonical JSON (RFC 8259) — what `instance.to_json()` calls.  Text fields are escaped (`&quot;` / `\` / control bytes); nested structs and vectors recurse; a `JsonValue`-typed field renders its subtree as it is.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-json-the-struct-bridge.html">struct_to_json</a></span>(self_ref: const <span class="en"><a href="stdlib-json.html">JsonValue</a></span>, struct_kt: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span></code></pre>
+<p>Serialise any user struct to canonical JSON (RFC 8259) — what <code>instance.to_json()</code> calls.  Text fields are escaped (<code>&quot;</code> / <code>\</code> / control bytes); nested structs and vectors recurse; a <code>JsonValue</code>-typed field renders its subtree as it is.</p>
 </div>
 <div class="item">
-<pre><code>pub fn struct_to_json_pretty(self_ref: const JsonValue, struct_kt: integer) -&gt; text</code></pre>
-<p>As `struct_to_json` but produces a pretty (2-space-indent, one element per line) form.  Same field-type matrix.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-json-the-struct-bridge.html">struct_to_json_pretty</a></span>(self_ref: const <span class="en"><a href="stdlib-json.html">JsonValue</a></span>, struct_kt: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span></code></pre>
+<p>As <code>struct_to_json</code> but produces a pretty (2-space-indent, one element per line) form.  Same field-type matrix.</p>
 </div>
 
   </article>

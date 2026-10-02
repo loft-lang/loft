@@ -170,3 +170,84 @@ fn an_entrys_example_is_the_program_its_example_test_runs() {
         "only {checked} examples compared — is tests/docs/features/ there?"
     );
 }
+
+/// The visible text of `html`: tags removed, the four entities read back, whitespace collapsed.
+fn visible(html: &str) -> String {
+    let mut out = String::new();
+    let mut in_tag = false;
+    for c in html.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' if in_tag => in_tag = false,
+            _ if !in_tag => out.push(c),
+            _ => {}
+        }
+    }
+    collapse(
+        &out.replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", "\"")
+            .replace("&amp;", "&"),
+    )
+}
+
+fn collapse(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// The HTML and the terminal text show a reader the SAME words: markup may change (a span
+/// becomes `<code>`, a signature is highlighted and linked) and the text may not.  Measured
+/// over every `///`-documented declaration of the stdlib — the corpus the reference pages
+/// render — with the backticks the terminal keeps discounted.  A renderer change that alters
+/// what one surface says, and not the other, goes red here.
+#[test]
+fn every_back_end_shows_the_same_words() {
+    let mut items: Vec<(String, String)> = Vec::new();
+    let mut files: Vec<_> = std::fs::read_dir("default")
+        .expect("default/")
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "loft"))
+        .collect();
+    files.sort();
+    for f in files {
+        let src = std::fs::read_to_string(&f).expect("a stdlib file");
+        let mut doc: Vec<&str> = Vec::new();
+        for line in src.lines() {
+            if let Some(d) = line.trim_start().strip_prefix("///") {
+                doc.push(d.strip_prefix(' ').unwrap_or(d));
+            } else {
+                if !doc.is_empty() && line.starts_with("pub ") {
+                    items.push((
+                        line.trim_end().trim_end_matches('{').trim_end().to_string(),
+                        doc.join("\n"),
+                    ));
+                }
+                doc.clear();
+            }
+        }
+    }
+    assert!(
+        items.len() > 200,
+        "only {} documented items found in default/ (255 when written)",
+        items.len()
+    );
+    let mut bad = Vec::new();
+    for (sig, doc) in &items {
+        let item = Item { sig, doc };
+        let html = visible(&doc_render::item_html(
+            &item,
+            &HashMap::<String, String>::new(),
+        ));
+        let text = collapse(&doc_render::item_text(&item, 10_000).replace('`', ""));
+        if html.replace('`', "") != text {
+            bad.push(format!("{sig}\n  html: {html}\n  text: {text}"));
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "{} item(s) differ:\n{}",
+        bad.len(),
+        bad.join("\n")
+    );
+}

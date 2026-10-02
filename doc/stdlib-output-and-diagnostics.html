@@ -24,51 +24,51 @@
 <h1>Output and Diagnostics</h1>
 <article>
 <div class="item">
-<pre><code>pub fn assert(test: boolean, message: text, file: text, line: integer)</code></pre>
-<p>Panics with message if test is false. Use to verify invariants during development. In production mode (--production), logs an error instead of aborting. The file and line are injected by the compiler; do not pass them manually. Safe to call from `par` workers: failures write to the log/stderr sink, which the host serialises across threads.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(test: <span class="ty"><a href="stdlib-types.html">boolean</a></span>, message: <span class="ty"><a href="stdlib-types.html">text</a></span>, <span class="bi"><a href="stdlib-files-and-directories.html">file</a></span>: <span class="ty"><a href="stdlib-types.html">text</a></span>, line: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
+<p>Panics with message if test is false. Use to verify invariants during development. In production mode (--production), logs an error instead of aborting. The file and line are injected by the compiler; do not pass them manually. Safe to call from <code>par</code> workers: failures write to the log/stderr sink, which the host serialises across threads.</p>
 </div>
 <div class="item">
-<pre><code>pub fn panic(message: text, file: text, line: integer)</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">panic</a></span>(message: <span class="ty"><a href="stdlib-types.html">text</a></span>, <span class="bi"><a href="stdlib-files-and-directories.html">file</a></span>: <span class="ty"><a href="stdlib-types.html">text</a></span>, line: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
 <p>Immediately terminates execution with message. Use for unrecoverable error states. In production mode (--production), logs a fatal entry and execution continues. The file and line are injected by the compiler; do not pass them manually.</p>
 </div>
 <div class="item">
-<pre><code>pub fn log_info(message: text, file: text, line: integer)</code></pre>
-<p>Write a structured log record at the chosen severity. The file and line are injected by the compiler; do not pass them manually. Safe to call from `par` workers: the host serialises log writes across threads.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">log_info</a></span>(message: <span class="ty"><a href="stdlib-types.html">text</a></span>, <span class="bi"><a href="stdlib-files-and-directories.html">file</a></span>: <span class="ty"><a href="stdlib-types.html">text</a></span>, line: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
+<p>Write a structured log record at the chosen severity. The file and line are injected by the compiler; do not pass them manually. Safe to call from <code>par</code> workers: the host serialises log writes across threads.</p>
 </div>
 <div class="item">
-<pre><code>pub fn log_warn(message: text, file: text, line: integer)</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">log_warn</a></span>(message: <span class="ty"><a href="stdlib-types.html">text</a></span>, <span class="bi"><a href="stdlib-files-and-directories.html">file</a></span>: <span class="ty"><a href="stdlib-types.html">text</a></span>, line: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
 <p>Like log_info, at warning severity.</p>
 </div>
 <div class="item">
-<pre><code>pub fn log_error(message: text, file: text, line: integer)</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">log_error</a></span>(message: <span class="ty"><a href="stdlib-types.html">text</a></span>, <span class="bi"><a href="stdlib-files-and-directories.html">file</a></span>: <span class="ty"><a href="stdlib-types.html">text</a></span>, line: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
 <p>Like log_info, at error severity.</p>
 </div>
 <div class="item">
-<pre><code>pub fn log_fatal(message: text, file: text, line: integer)</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">log_fatal</a></span>(message: <span class="ty"><a href="stdlib-types.html">text</a></span>, <span class="bi"><a href="stdlib-files-and-directories.html">file</a></span>: <span class="ty"><a href="stdlib-types.html">text</a></span>, line: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
 <p>Like log_info, at fatal severity.</p>
 </div>
 <div class="item">
-<pre><code>pub fn print(v1: text)</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">print</a></span>(v1: <span class="ty"><a href="stdlib-types.html">text</a></span>)</code></pre>
 <p>Writes v to standard output without a newline. Use for progress output and building up a line incrementally.</p>
 </div>
 <div class="item">
-<pre><code>pub fn println(v1: text)</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(v1: <span class="ty"><a href="stdlib-types.html">text</a></span>)</code></pre>
 <p>Writes v followed by a newline. The standard choice for line-oriented output.</p>
 </div>
 <div class="item">
-<pre><code>pub fn eprint(v1: text)</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">eprint</a></span>(v1: <span class="ty"><a href="stdlib-types.html">text</a></span>)</code></pre>
 <p>Writes v to standard ERROR without a newline. Companion to print() — use to separate human-readable status / progress / summary lines from machine-readable stdout (JSON, structured data piped to downstream consumers).</p>
 </div>
 <div class="item">
-<pre><code>pub fn eprintln(v1: text)</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">eprintln</a></span>(v1: <span class="ty"><a href="stdlib-types.html">text</a></span>)</code></pre>
 <p>Writes v followed by a newline to standard ERROR.</p>
 </div>
 <div class="item">
-<pre><code>pub fn len(self: const spatial) -&gt; integer</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(self: const spatial) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
 <p>Number of elements in a spatial (radix / Morton tree) collection.</p>
 </div>
 <div class="item">
-<pre><code>pub fn len(self: const trie) -&gt; integer</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(self: const trie) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
 <p>Number of elements in the trie.</p>
 </div>
 

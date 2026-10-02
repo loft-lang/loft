@@ -24,33 +24,33 @@
 <h1>JSON</h1>
 <article>
 <div class="item">
-<pre><code>pub enum JsonValue {
-  JNull,
-  JBool { value: boolean },
-  JNumber { value: float },
-  JString { value: text },
-  JArray { items: vector&lt;JsonValue&gt; },
-  JObject { fields: vector&lt;JsonField&gt; },
-  JInteger { value: integer },
+<pre><code><span class="kw">pub</span> <span class="kw">enum</span> <span class="en"><a href="stdlib-json.html">JsonValue</a></span> {
+  <span class="en">JNull</span>,
+  <span class="en">JBool</span> { value: <span class="ty"><a href="stdlib-types.html">boolean</a></span> },
+  <span class="en">JNumber</span> { value: <span class="ty"><a href="stdlib-types.html">float</a></span> },
+  <span class="en">JString</span> { value: <span class="ty"><a href="stdlib-types.html">text</a></span> },
+  <span class="en">JArray</span> { items: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en"><a href="stdlib-json.html">JsonValue</a></span>&gt; },
+  <span class="en">JObject</span> { fields: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en"><a href="stdlib-json.html">JsonField</a></span>&gt; },
+  <span class="en">JInteger</span> { value: <span class="ty"><a href="stdlib-types.html">integer</a></span> },
 }</code></pre>
-<p>Typed union of JSON values.  The discriminant (1..7) picks the active variant; variant data lives in the variant's fields. Matches the RFC 8259 kinds, plus `JInteger` for an integer-shaped number preserved to an exact `integer` (i64).</p>
-<p>`JInteger` MUST stay the LAST variant: the store discriminant it gets (7) is hard-coded as `JV_DISCR_INT` in `src/native.rs`, and the existing variants' discriminants (1–6) must not shift.</p>
+<p>Typed union of JSON values.  The discriminant (1..7) picks the active variant; variant data lives in the variant's fields. Matches the RFC 8259 kinds, plus <code>JInteger</code> for an integer-shaped number preserved to an exact <code>integer</code> (i64).</p>
+<p><code>JInteger</code> MUST stay the LAST variant: the store discriminant it gets (7) is hard-coded as <code>JV_DISCR_INT</code> in <code>src/native.rs</code>, and the existing variants' discriminants (1–6) must not shift.</p>
 </div>
 <div class="item">
-<pre><code>pub struct JsonField {
-  name: text,
-  value: JsonValue,
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en"><a href="stdlib-json.html">JsonField</a></span> {
+  name: <span class="ty"><a href="stdlib-types.html">text</a></span>,
+  value: <span class="en"><a href="stdlib-json.html">JsonValue</a></span>,
 }</code></pre>
-<p>One field of a `JObject`.  A `JObject` keeps its fields as a `vector&lt;JsonField&gt;` in source order, so a lookup by name is a linear scan — fine for the object sizes typical in configuration / API responses.</p>
+<p>One field of a <code>JObject</code>.  A <code>JObject</code> keeps its fields as a <code>vector&lt;JsonField&gt;</code> in source order, so a lookup by name is a linear scan — fine for the object sizes typical in configuration / API responses.</p>
 </div>
 <div class="item">
-<pre><code>pub fn json_parse(raw: text) -&gt; JsonValue</code></pre>
-<p>Parse JSON text into a `JsonValue` tree.  Malformed input returns `JNull`; the error trail is accessible via `json_errors()`.  Every variant materialises (primitives, arrays, objects, nested containers); the entire tree lives in one store and frees as one unit when the root `DbRef` leaves scope.</p>
-<p>```loft match json_parse(raw) { JObject { fields } =&gt; for f in fields { handle(f) }, JArray  { items }  =&gt; for v in items  { handle(v) }, JNull              =&gt; println(&quot;parse error: {json_errors()}&quot;), _                  =&gt; println(&quot;unexpected root kind&quot;), } ```</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-json.html">json_parse</a></span>(raw: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="en"><a href="stdlib-json.html">JsonValue</a></span></code></pre>
+<p>Parse JSON text into a <code>JsonValue</code> tree.  Malformed input returns <code>JNull</code>; the error trail is accessible via <code>json_errors()</code>.  Every variant materialises (primitives, arrays, objects, nested containers); the entire tree lives in one store and frees as one unit when the root <code>DbRef</code> leaves scope.</p>
+<p><code></code><code>loft match json_parse(raw) { JObject { fields } =&gt; for f in fields { handle(f) }, JArray  { items }  =&gt; for v in items  { handle(v) }, JNull              =&gt; println(&quot;parse error: {json_errors()}&quot;), _                  =&gt; println(&quot;unexpected root kind&quot;), } </code><code></code></p>
 </div>
 <div class="item">
-<pre><code>pub fn json_errors() -&gt; text</code></pre>
-<p>Return a pipe-separated trail of JSON parse errors from the most recent `json_parse` call.  Empty when the parse succeeded.  Each entry carries an RFC 6901 path, a `line:col` location, and a context snippet.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-json.html">json_errors</a></span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span></code></pre>
+<p>Return a pipe-separated trail of JSON parse errors from the most recent <code>json_parse</code> call.  Empty when the parse succeeded.  Each entry carries an RFC 6901 path, a <code>line:col</code> location, and a context snippet.</p>
 </div>
 
   </article>

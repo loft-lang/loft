@@ -24,13 +24,13 @@
 <h1>Assertions that report both sides</h1>
 <article>
 <div class="item">
-<pre><code>pub fn assert_eq &lt; AssertValue: Equatable + Printable &gt; (got: AssertValue, want: AssertValue, what: text, file: text, line: integer)</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> assert_eq &lt; <span class="en">AssertValue</span>: <span class="en"><a href="stdlib-interfaces.html">Equatable</a></span> + <span class="en"><a href="stdlib-interfaces.html">Printable</a></span> &gt; (got: <span class="en">AssertValue</span>, want: <span class="en">AssertValue</span>, what: <span class="ty"><a href="stdlib-types.html">text</a></span>, <span class="bi"><a href="stdlib-files-and-directories.html">file</a></span>: <span class="ty"><a href="stdlib-types.html">text</a></span>, line: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
 <p>Assert that two values are equal, naming BOTH of them when they are not.</p>
-<p>`assert(got == want, &quot;…&quot;)` puts the expected value in the CONDITION, so a failure says what was got and leaves the reader to recover what was wanted by reading the expression. This says both.  Works on any type that is `Equatable` (op ==) and `Printable` (to_text) — every built-in scalar, and a user type defining both.</p>
-<p>Failure behaves exactly as `assert` does, because it IS `assert`: the run aborts (and in `--production` logs an error instead), and the reported position is the CALLER's, not this function's.  The file and line are injected by the compiler; do not pass them manually.</p>
+<p><code>assert(got == want, &quot;…&quot;)</code> puts the expected value in the CONDITION, so a failure says what was got and leaves the reader to recover what was wanted by reading the expression. This says both.  Works on any type that is <code>Equatable</code> (op ==) and <code>Printable</code> (to_text) — every built-in scalar, and a user type defining both.</p>
+<p>Failure behaves exactly as <code>assert</code> does, because it IS <code>assert</code>: the run aborts (and in <code>--production</code> logs an error instead), and the reported position is the CALLER's, not this function's.  The file and line are injected by the compiler; do not pass them manually.</p>
 </div>
 <div class="item">
-<pre><code>pub fn assert_ne &lt; AssertValue: Equatable + Printable &gt; (got: AssertValue, want: AssertValue, what: text, file: text, line: integer)</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> assert_ne &lt; <span class="en">AssertValue</span>: <span class="en"><a href="stdlib-interfaces.html">Equatable</a></span> + <span class="en"><a href="stdlib-interfaces.html">Printable</a></span> &gt; (got: <span class="en">AssertValue</span>, want: <span class="en">AssertValue</span>, what: <span class="ty"><a href="stdlib-types.html">text</a></span>, <span class="bi"><a href="stdlib-files-and-directories.html">file</a></span>: <span class="ty"><a href="stdlib-types.html">text</a></span>, line: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
 <p>Assert that two values DIFFER, naming the value both sides share when they do not. The mirror of assert_eq; same bounds, same failure behaviour, same position injection.</p>
 </div>
 
