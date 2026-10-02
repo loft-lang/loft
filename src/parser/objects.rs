@@ -4175,6 +4175,15 @@ impl Parser {
         // no longer moves the end (`loop-source-written`).  A slice clamps and binds its own
         // bounds below.
         if *data == Value::Null {
+            // `@FR-I-RangeNull` — a bound that is `null` where it is WRITTEN can never yield a
+            // round, so it is refused here rather than lowered: the loop it spells never runs.
+            if matches!(expr.unspan(), Value::Null) || matches!(till.unspan(), Value::Null) {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "a range bound is `null`, so this loop never runs"
+                );
+            }
             for bound in [&*expr, &till] {
                 self.record_source_places(bound);
             }
@@ -4194,6 +4203,55 @@ impl Parser {
             if !matches!(till.unspan(), Value::Int(_) | Value::Long(_)) {
                 let hi = self.create_unique("range_end", &till_tp);
                 iter_prelude.push(v_set(hi, std::mem::replace(&mut till, Value::Var(hi))));
+            }
+            // `@FR-I-RangeNull` — a bound only known at run time that turns out `null` makes
+            // the range EMPTY.  Without this a null start never advances (`null + 1` is null,
+            // and `null` orders below every end) and the loop runs forever — or, on native,
+            // counts up from the null sentinel.  A null END already gives zero rounds under
+            // the order, so only a start that is not a literal needs the guard, and it runs
+            // ONCE, before the first round: a null bound resets the pair to `1` and `0`, which
+            // is empty in every form (`a..b`, `a..=b`, `a..`, and each reversed).  A literal
+            // end below the type's maximum keeps its literal — the start is moved past it
+            // instead — so a counted loop keeps its literal-end lowering.
+            if let Value::Var(lo) = *expr.unspan() {
+                let lit = |tp: &Type, n: i64| -> Value {
+                    match tp.base() {
+                        Type::Integer(spec) if spec.max > i64::from(i32::MAX) => Value::Long(n),
+                        _ => Value::Int(i32::try_from(n).unwrap_or(i32::MAX)),
+                    }
+                };
+                let past_end = match till.unspan() {
+                    Value::Int(t) => Some(i64::from(*t) + i64::from(incl)),
+                    _ => None,
+                };
+                if let Some(past) = past_end {
+                    let start_null = self.single_op("!", Value::Var(lo), in_type.clone());
+                    iter_prelude.push(v_if(
+                        start_null,
+                        v_set(lo, lit(&in_type, past)),
+                        Value::Null,
+                    ));
+                } else {
+                    if !matches!(till.unspan(), Value::Var(_)) {
+                        let hi = self.create_unique("range_end", &till_tp);
+                        iter_prelude.push(v_set(hi, std::mem::replace(&mut till, Value::Var(hi))));
+                    }
+                    if let Value::Var(hi) = *till.unspan() {
+                        for bound in [lo, hi] {
+                            let tp = if bound == lo { &in_type } else { &till_tp };
+                            let is_null = self.single_op("!", Value::Var(bound), tp.clone());
+                            iter_prelude.push(v_if(
+                                is_null,
+                                v_block(
+                                    vec![v_set(lo, lit(&in_type, 1)), v_set(hi, lit(&till_tp, 0))],
+                                    Type::Void,
+                                    "empty range",
+                                ),
+                                Value::Null,
+                            ));
+                        }
+                    }
+                }
             }
         }
         // loft#384: a vector slice (`data` present, not a pure `0..n` range) must
