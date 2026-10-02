@@ -531,6 +531,18 @@ does not belong on a PR, however cheap it is.**
 | **on demand only** | `ci-probe` (where CI time goes) and `gate-probe` (re-runs the debug-assertions sweep and the browser UI gate on a real 4-vCPU runner, each beside a cell proving it can still FAIL). Measurement, never gates, never on a PR | `workflow_dispatch`, or push to the `ci-probe` / `gate-probe` branch |
 | **on demand — the release evidence** | `release-gate` — every row above that is a nightly (`ci.yml` full matrix incl. Windows + round-trip + oracle, `miri.yml` all gates, `revalidate-libs`, `browser-threads`, `repro-build`; `registry-validation` is deliberately not a leg, since the registry is never release-coupled and a package's own defect turned the gate red twice) called as reusable workflows against ONE commit, ending in one `verdict` job that is red if any leg is not `success` — advisory PR jobs included, and a leg red for a reason outside the candidate WAIVED on the record (`make release-checklist ARGS="--waive <leg> --note '…'"`). `make release-gate` dispatches and waits; `make release-checklist` reads the run for HEAD's sha. Never on a PR, never scheduled, never tags (§ The schedule is not a clock) | `workflow_dispatch`, or push to the `release-gate-probe` branch |
 
+### The test step runs in two passes
+
+`make ci` and `ci.yml`'s Test step run nextest twice.  The MAIN pass (`--profile ci`) runs
+everything but the starvation victims, with the rustc-storm makers — `native`, `n2_cdylib`,
+`n3_parity`, `n3_use_native`, the drop gate's native cells — in the six-slot `heavy-wide` group
+and `html_wasm` in `html-wasm-wide`.  The SECOND pass (`--profile ci-victims`) runs the
+networked tests a storm starves — `multiplayer_v2`, `multiplayer_v3`, `wasm_debug_relay` —
+one at a time, after every storm has ended.  `scripts/ci_test_filter.py victims` prints that
+set from `.config/nextest.toml`, so the Makefile, the workflow and nextest select one list.
+The second pass writes its junit to `target/nextest/ci-victims/`; the duration and speed gates
+read the main pass's.  The `default` profile keeps the single serial group for local runs.
+
 ## The schedule is not a clock — the release gate (2026-09-04)
 
 The schedule gives no evidence about a merge (a scheduled run starts when GitHub gets to it, on whatever `main` is then; the legs that run only in the nightly are where a merge is found red).  The measurements are in the history companion.  One more:
