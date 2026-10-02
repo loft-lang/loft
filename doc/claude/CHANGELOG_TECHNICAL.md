@@ -24,6 +24,37 @@ run removes `LOFT_NO_CACHE` so an exported switch cannot silence it.  The off sw
 `loft --help` (under `cache`), DEBUG.md and RUNNING_TESTS.md.  Guard:
 `arc_e_program_cache::a_development_build_caches_unless_told_not_to`.
 ### `(H-LazyFree)`: a store's deletes go untracked until one sweep at the growth bound, and a struct-enum field answers `holds_no_heap` by its variant (2026-09-30)
+### `(H-SwapIn)` and `(R-RepeatRun)` — a rebind exchanges stores instead of copying, and a spelled-out run of one constant is one fill (2026-10-02)
+
+**`(H-SwapIn)`** (`Stores::try_swap_in`, called by both backends' `OpCopyRecord`): the rebind
+`x = f(…, x, …)` from a callee that minted its result reset x's store, deep-copied the result's
+tree into it and freed the callee's store.  Where both records are their store's root — at
+`1@8` AND of the store's own root type, because a record's first field shares that address —
+the destination holds nothing else, the type keeps its pointers inside its store, and neither
+store is pinned to its slot, the two stores' contents are exchanged and the released slot
+freed.  The first form keyed on the address alone and replaced a whole `Hold` when its first
+field `h.p` was rebound on the interpreter (`1647-a-moved-call-result…` M7, `a-small-record-is-
+forwarded…`); the root-type test closes it and cell s13 falsifies it.  A free protection
+refuses only the released side (the interpreter brackets the destination during the call).
+The interpreter reports no copy for an exchange.  `LOFT_NO_STORE_SWAP=1`, read at run time.
+
+**`(R-RepeatRun)`** (`src/repeat_run.rs`, scope pass): four or more pushes of one literal into
+one target are `OpPreAllocVector` + one template push + `OpAppendCopy`, the lowering `[c; n]`
+already had.  `LOFT_NO_REPEAT_RUN=1`.  Fires in mesh3d, drawing, text2d, graphics, stage, glb
+and hex_body (the census).  The front-end allocation pin is unchanged with it on and off.
+
+Beside them, `tests/native.rs` compiles each corpus script on an 8 MiB thread, the CLI's own
+stack: a 100-term nested sum's front-end recursion overflows a 2 MiB test thread on aarch64.
+
+Measured on mesh3d's `mat4_mul` (`--native-release`, one core, interleaved): the exchange
+29.7 → 26.9 ms an op (−9.5 %, one binary, the switch as the OFF arm), the repeat fill 27.3 →
+23.1 ms (−15 %); same result hash throughout.  Guards s1–s13 and r1–r11, both backends, both
+switches, every store falsifier; sabotages: the released slot kept (s12 exhausts the store
+table), the root-type test struck (s13 loses the second field on `--interpret`), the fill
+handed `count - 1` (r1 reads 15 elements).  Subjects store, runtime, scopes and codegen green
+(the codegen shards and 15 store tests first failed on a full disk and on rlibs `make
+disk-headroom` swept, green rerun after `cargo test --release --no-run`).
+
 ### `(R-ByteCopy)`'s vector clause and `(R-TextRun)` — a decoder's byte strings are one copy, its texts no object at all (2026-10-02)
 
 **The vector clause** (`src/byte_copy.rs`): `for k in lo..hi { buf += [v[off + k] ?? d] }` —

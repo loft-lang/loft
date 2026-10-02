@@ -1798,6 +1798,27 @@ guards `tests/scripts/a-byte-wise-text-copy-is-one-append.loft` and
 `tests/scripts/a-byte-range-of-a-vector-copied-one-at-a-time-is-one-append.loft`, pin
 `tests/byte_copy.rs`).
 
+### A run of one constant is one repeat fill
+
+```
+  (R-RepeatRun)  four or more consecutive pushes of the SAME literal into the SAME target —
+                 `[c, c, c, c, …]` spelled out, the target a local or a field path over one
+                 with literal operands, the element at least four bytes (`float`,
+                 `integer`, `single`, `i32`), the literal compared by its bits — are the
+                 repeat literal `[c; n]`: the reservation `OpPreAllocVector(target, n,
+                 size)` (which claims n elements for an ABSENT vector and leaves one that
+                 exists alone), one push of the template, and `OpAppendCopy(target, n, tp)`,
+                 which copies the vector's LAST element — the template — `n - 1` more
+                 times.  Elements appended before the run stay where they were.  A shorter
+                 run, a narrower element, a computed value or target keep the pushes.
+```
+
+**In words.**  A matrix or a buffer zeroed by its literal is spelled with every element, and
+each push paid a capacity test and a length bump, and a fresh vector grew partway.  The
+repeat literal already fills by doubling block copies; this gives the spelled-out form the
+same lowering.  **BUILT** (`src/repeat_run.rs`, scope pass, `LOFT_NO_REPEAT_RUN`; guard
+`tests/scripts/a-run-of-one-constant-is-one-repeat-fill.loft`, pin `tests/repeat_run.rs`).
+
 ### A byte run read once as text is never built
 
 ```

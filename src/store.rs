@@ -2563,7 +2563,7 @@ impl Store {
             && !self.stack_buffer
             && !self.pinned
             && (!released || self.free_protect_depth == 0)
-            && self.file.is_none()
+            && !self.is_file_backed()
             && self.foreign.is_none()
             && self.recording.is_none()
             && self.durable_meta_path.is_none()

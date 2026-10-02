@@ -46,7 +46,7 @@ pub fn rewrite(data: &mut Data, database: &mut crate::database::Stores, d_nr: u3
     if !crate::keys::repeat_run_enabled() || data.def_type(d_nr) != DefType::Function {
         return;
     }
-    let pushes: Vec<u32> = PUSHES.iter().map(|(n, _)| data.def_nr(n)).collect();
+    let pushes: [u32; 4] = PUSHES.map(|(n, _)| data.def_nr(n));
     let mut code = std::mem::replace(&mut data.definitions[d_nr as usize].code, Value::Null);
     if code.any_node(&mut |n| matches!(n, Value::Call(d, _) if pushes.contains(d))) {
         let cx = Cx {
@@ -69,7 +69,7 @@ pub fn rewrite(data: &mut Data, database: &mut crate::database::Stores, d_nr: u3
 struct Cx<'a> {
     data: &'a Data,
     d_nr: u32,
-    pushes: Vec<u32>,
+    pushes: [u32; 4],
     get_field: u32,
     append_copy: u32,
     pre_alloc: u32,

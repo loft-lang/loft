@@ -424,7 +424,35 @@ parameter (via `&`) is host, a genuinely-copied one is script-owned.
                  within its first rungs, so the working set never doubles.  Below the
                  bound a claim the wilderness cannot hold grows the store, or takes an
                  untracked block the chain walk meets on its way to growing.
+  (H-SwapIn)     the deep copy of a store's ROOT record into the root of another store
+                 that holds nothing else, the source store given up after it (the copy's
+                 free-source form — the rebind `x = f(…, x, …)` from a callee that minted
+                 its result), is an EXCHANGE of the two stores' contents followed by the
+                 release of the slot that ends up holding the destination's empty root.
+                 A root is a record at `1@8` OF THE STORE'S OWN ROOT TYPE — a record's
+                 first field shares its root's address, and only the type says the copy is
+                 of the whole record.  Each slot keeps its number, so every reference to
+                 the destination reads the source's records as it would read their copy,
+                 and the released slot holds what the copy would have released.  Exact
+                 only when the copied type keeps every pointer as a record number inside
+                 its own store (scalars, texts, enums, inline structs and enum values,
+                 vectors of those): a stored reference names a slot and keeps the copy, as
+                 do the keyed collections, arrays and child records.  A store pinned to its
+                 slot — a file, foreign bytes, a recording, a lock, a borrow, a constant,
+                 a lazy binding, the interpreter's stack — keeps the copy; a free
+                 protection refuses only the side the exchange releases.
 ```
+
+**`H-SwapIn` is the copy's own answer, delivered without the copy.** The copy it replaces
+resets the destination to an empty root, rebuilds the source's tree inside it, and releases
+the source store; the exchange ends in the same two states — the destination's slot holding
+that tree, the released slot gone — and skips the rebuild.  Its conditions are the copy's
+facts made checkable: "the destination holds nothing else" is `holds_only_root`, "the source
+is given up" is the free-source flag the caller set, "nothing outside the tree points into it"
+is the type walk.  `LOFT_NO_STORE_SWAP=1` keeps the copy; `LOFT_TRACE_STORE_SWAP=1` names
+each exchange.  Site: `Stores::try_swap_in`, called by both backends' `OpCopyRecord`.  Guard
+`tests/scripts/a-rebind-from-a-fresh-result-exchanges-the-stores.loft`, pin
+`tests/store_swap.rs`.
 
 **`H-RootExtent` is what makes `H-ClearRelease`'s release affordable.** The release has to
 reach everything the cleared elements own, and it can do that two ways: walk the elements and

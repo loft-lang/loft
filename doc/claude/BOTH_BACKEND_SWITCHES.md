@@ -239,6 +239,19 @@ copy and read once by `text_from_bytes` is read in place by `text_from_byte_rang
 switch is also the first bisect step for a wrong text out of a decoder.
 `LOFT_TRACE_BYTE_COPY=1` names each site admitted and each kept (`[byte-copy]`, `[text-run]`).
 
+**`LOFT_NO_REPEAT_RUN=1`** (`@FR-R-RepeatRun`, default-ON, scope pass, BOTH backends) keeps a
+literal that spells one constant four or more times (`[0.0, 0.0, 0.0, 0.0, …]`) as one push per
+element — with it off, the run is a reservation, one template push and one doubling fill, as
+`[0.0; n]` lowers — and is the first bisect step for a wrong element out of such a literal.
+`LOFT_TRACE_REPEAT_RUN=1` names each run admitted.
+
+**`LOFT_NO_STORE_SWAP=1`** (`@FR-H-SwapIn`, default-ON, runtime, BOTH backends) keeps the deep
+copy of a rebind `x = f(…, x, …)` from a callee that minted its result — with it off, the two
+stores' contents are exchanged and the released slot freed, where both records are their
+store's root of the copied type and the type keeps its pointers inside its store — and is the
+first bisect step for a wrong record after such a rebind.  Read at run time, so one binary
+serves both arms.  `LOFT_TRACE_STORE_SWAP=1` names each exchange.
+
 **`LOFT_NO_REBIND_OWN_BUFFER=1`** (`@FR-R-Rebind`'s own-buffer clause, default-ON, scope
 pass, BOTH backends) keeps `(R-Rebind)` to plain locals: a builder's `d = step(d, …)`, where
 `d` is the frame's own promoted return buffer, copies the step's result into `d` again (zttext
