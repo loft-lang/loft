@@ -92,6 +92,10 @@ pub struct VerdictRow {
     /// only these; the var-buffer / return-buffer copies (a separate elision/`__retbuf` class,
     /// which is where the stdlib's copies land) stay in the developer dump.
     pub survival: bool,
+    /// The copied value is a FIELD of `source` (`src.f`), not `source` itself.  Its fate
+    /// cannot decide the copy: ending `source`'s life moves nothing out of it, so such a copy
+    /// is forced as written, and the type it copies is not `source`'s.
+    pub projection: bool,
 }
 
 fn def_nrs(data: &Data, names: &[&str]) -> HashSet<u32> {
@@ -317,6 +321,12 @@ enum Ctx {
 }
 
 /// The base variable of a `src` / `src.f` expression, if any.
+/// Is `node` a projection of a variable (`v.f`), as opposed to the variable itself?  The
+/// counterpart of [`base_var`], which answers the same base for both.
+fn is_projection_of_var(node: &Value) -> bool {
+    !matches!(node.unspan(), Value::Var(_))
+}
+
 fn base_var(node: &Value, get_field: u32) -> Option<u16> {
     match node.unspan() {
         Value::Var(s) => Some(*s),
@@ -679,18 +689,34 @@ struct Uses {
     /// thing at the USE.
     last_use_loc: HashMap<u16, Option<Position>>,
     /// @PLN90 — field-target appends `OpAppendVector(OpGetField(rec, fld), src)`:
-    /// `(base record var, source base var, copy-site-end pos, loop-survives, source location)`.
+    /// `(base record var, source base var, copy-site-end pos, loop-survives, source location,
+    /// source is a projection)`.
     /// This is the struct/enum-construction copy (`S { f: src }`) and `x.field += src` — the
     /// source is deep-copied into the field, which the var-buffer copy idiom above never sees.
     /// The position (taken AFTER the args are walked) + `loop_survives` (item 4: the source
     /// outlives the enclosing loop) drive the survival split; the location (item 2) is for the
     /// report.
-    construct_copy: Vec<(Option<u16>, Option<u16>, usize, bool, Option<Position>)>,
+    construct_copy: Vec<(
+        Option<u16>,
+        Option<u16>,
+        usize,
+        bool,
+        Option<Position>,
+        bool,
+    )>,
     /// @PLN90 — `OpCopyRecord` deep-copies: `(dest base var, SOURCE base var, copy-site-end pos,
-    /// loop-survives, source location)`. A record copy (`v[i] = e`, a `?? E{…}` default element,
+    /// loop-survives, source location, source is a projection)`. A record copy (`v[i] = e`, a
+    /// `?? E{…}` default element,
     /// a struct copy) — not append-based, so the branches above miss it. The same-var no-op
     /// alias is excluded when recorded.
-    record_copy: Vec<(Option<u16>, Option<u16>, usize, bool, Option<Position>)>,
+    record_copy: Vec<(
+        Option<u16>,
+        Option<u16>,
+        usize,
+        bool,
+        Option<Position>,
+        bool,
+    )>,
     /// Vars that appeared in a non-reader position (⇒ not borrow-eligible). The
     /// copy-fill `OpAppendVector(v, src.f)` is *excluded* — it is the copy machinery,
     /// not a user mutation of `v`.
@@ -936,7 +962,7 @@ impl Uses {
                     {
                         let rec = args.first().and_then(|t| base_var(t, self.get_field));
                         let src = args.get(1).and_then(|s| base_var(s, self.get_field));
-                        Some((rec, src))
+                        Some((rec, src, args.get(1).is_some_and(is_projection_of_var)))
                     } else {
                         None
                     };
@@ -947,7 +973,7 @@ impl Uses {
                     // use of the source AFTER this copy (⇒ the source survives). The copy op
                     // carries no span, so borrow the nearest enclosing one (item 2). `loop_surv`
                     // (item 4) = the source outlives the enclosing loop (copied every iteration).
-                    if let Some((rec, src)) = cc {
+                    if let Some((rec, src, projection)) = cc {
                         let loop_surv = self.loop_survives(src);
                         self.construct_copy.push((
                             rec,
@@ -955,6 +981,7 @@ impl Uses {
                             self.pos,
                             loop_surv,
                             self.cur_pos.clone(),
+                            projection,
                         ));
                     }
                 }
@@ -979,6 +1006,7 @@ impl Uses {
                 // same-var no-op alias (`OpCopyRecord(x, x)` — the runtime short-circuits it).
                 // The dest's write is recorded by the general write-mark at the top of `visit`.
                 let src = args.first().and_then(|a| base_var(a, self.get_field));
+                let projection = args.first().is_some_and(is_projection_of_var);
                 let dest = args.get(1).and_then(|a| base_var(a, self.get_field));
                 let record = !(dest.is_some() && dest == src);
                 let c = if self.value_readers.contains(d) {
@@ -995,8 +1023,14 @@ impl Uses {
                 // (item 4) = the source outlives the enclosing loop (copied every iteration).
                 if record && !self.in_yield {
                     let loop_surv = self.loop_survives(src);
-                    self.record_copy
-                        .push((dest, src, self.pos, loop_surv, self.cur_pos.clone()));
+                    self.record_copy.push((
+                        dest,
+                        src,
+                        self.pos,
+                        loop_surv,
+                        self.cur_pos.clone(),
+                        projection,
+                    ));
                 }
             }
             Value::Call(d, args) => {
@@ -1333,6 +1367,7 @@ fn analyze_fn_survival(
                     loc: None,
                     source_last_use: None,
                     survival: false,
+                    projection: false,
                 });
             }
             continue; // not a single-source local copy — not ours to elide
@@ -1463,6 +1498,7 @@ fn analyze_fn_survival(
             loc: None,
             source_last_use: None,
             survival: false,
+            projection: false,
         });
     }
 
@@ -1478,7 +1514,7 @@ fn analyze_fn_survival(
         // Flag OFF → the original phase-1 classification verbatim (byte-identical). Flag ON →
         // the bound-vs-unbound survival split.
         let (class, reason) = if survival_on {
-            survival_class(src, copy_end, loop_surv, &u, function, data)
+            survival_class(src, entry.5, copy_end, loop_surv, &u, function, data)
         } else {
             (
                 CopyClass::Implicit,
@@ -1495,6 +1531,7 @@ fn analyze_fn_survival(
             loc: entry.4.clone(),
             source_last_use: src.and_then(|s| u.last_use_loc.get(&s).cloned().flatten()),
             survival: true,
+            projection: entry.5,
         });
     }
 
@@ -1507,7 +1544,7 @@ fn analyze_fn_survival(
         // Flag OFF → the original phase-1 classification verbatim (byte-identical). Flag ON →
         // the bound-vs-unbound survival split.
         let (class, reason) = if survival_on {
-            survival_class(src, copy_end, loop_surv, &u, function, data)
+            survival_class(src, entry.5, copy_end, loop_surv, &u, function, data)
         } else {
             (CopyClass::Implicit, "record deep-copy (OpCopyRecord)")
         };
@@ -1521,6 +1558,7 @@ fn analyze_fn_survival(
             loc: entry.4.clone(),
             source_last_use: src.and_then(|s| u.last_use_loc.get(&s).cloned().flatten()),
             survival: true,
+            projection: entry.5,
         });
     }
 
@@ -1531,6 +1569,9 @@ fn analyze_fn_survival(
     let mut move_plans: Vec<MovePlan> = Vec::new();
     if crate::keys::move_elide_enabled() {
         for entry in &u.construct_copy {
+            if entry.5 {
+                continue; // a field of a record: nothing to move out of it
+            }
             if let Some(s) = move_elidable_source(entry.1, entry.2, entry.3, &u, function) {
                 move_plans.push(MovePlan {
                     container: entry.0.unwrap_or(u16::MAX),
@@ -1542,6 +1583,9 @@ fn analyze_fn_survival(
             }
         }
         for entry in &u.record_copy {
+            if entry.5 {
+                continue; // a field of a record: nothing to move out of it
+            }
             if let Some(s) = move_elidable_source(entry.1, entry.2, entry.3, &u, function) {
                 move_plans.push(MovePlan {
                     container: entry.0.unwrap_or(u16::MAX),
@@ -1627,6 +1671,7 @@ fn copy_allocates_nothing(data: &Data, tp: &Type) -> bool {
 /// phase-1 classification verbatim at the call site, so the default dump stays byte-identical.
 fn survival_class(
     src: Option<u16>,
+    projection: bool,
     copy_end: usize,
     loop_surv: bool,
     u: &Uses,
@@ -1639,6 +1684,15 @@ fn survival_class(
             "born-owned: literal / freshly-built source — no live structure duplicated",
         );
     };
+    // A FIELD of `s` is copied, so `s`'s fate cannot decide this copy: ending `s`'s life moves
+    // nothing out of it (the emitted copy is the same either way), and a field cannot be
+    // borrowed into another owner.  Forced as written.
+    if projection {
+        return (
+            CopyClass::Forced,
+            "a field of a record is copied — the record keeps its own, so no move can take it",
+        );
+    }
     // The copy's OWN read of the source is at a position <= copy_end, so a use strictly after
     // loft#1190 — a source that allocates NOTHING when duplicated is `Implicit` whatever its
     // fate.  The `Avoidable` class is the borrow worklist, and there is no borrow to reach for
@@ -8132,6 +8186,11 @@ pub fn report_copies(data: &Data) {
             );
             let ty = if r.source == u16::MAX {
                 "a structure".to_string()
+            } else if r.projection {
+                format!(
+                    "a field of {}",
+                    data.display_type_name(def.variables.tp(r.source))
+                )
             } else {
                 data.display_type_name(def.variables.tp(r.source))
             };

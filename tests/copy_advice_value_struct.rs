@@ -206,3 +206,75 @@ fn a_second_loops_variable_is_advised_by_its_written_name_interpret() {
 fn a_second_loops_variable_is_advised_by_its_written_name_native() {
     assert_written_loop_names("--native");
 }
+
+/// A copy of a FIELD (`dst.ks += src.ks`, `H { v: o.ks }`, `xs[0] = o.inner`) is decided by
+/// nothing about the record it was read from: ending `o`'s life moves nothing out of it, and the
+/// emitted copy is the same op whether `o` is used again or not.  The advice read the copy as one
+/// of the whole record — "copy of M — `src` is still used after this point, so it could not be
+/// moved" — which names a type nobody copied and a cure that changes nothing.  A copy of a whole
+/// variable that survives (`H { v: ks }` with `ks` read after) is the control: it still advises.
+const PROJECTIONS: &str = r#"
+struct M { ks: vector<integer>, vs: vector<integer> }
+struct H { v: vector<integer> }
+struct In { a: vector<integer> }
+struct O { inner: In, n: integer }
+fn app(dst: M, src: const M) {
+  dst.ks += src.ks;
+  dst.vs += src.vs;
+}
+fn main() {
+  a = M { ks: [1], vs: [2] };
+  b = M { ks: [3, 4], vs: [5] };
+  app(a, b);
+  o = M { ks: [6, 7, 8], vs: [] };
+  h = H { v: o.ks };
+  r = O { inner: In { a: [9] }, n: 2 };
+  xs: vector<In> = [In { a: [] }];
+  xs[0] = r.inner;
+  ks = [10, 11];
+  k = H { v: ks };
+  print("{len(a.ks)} {len(a.vs)} {len(h.v)} {len(o.ks)} {len(xs[0].a)} {r.n} {len(k.v)} {len(ks)}\n");
+}
+"#;
+
+fn assert_projection_copies(backend: &str) {
+    let dir = std::env::temp_dir().join(format!(
+        "loft_projection_copy_advice_{}",
+        backend.trim_matches('-')
+    ));
+    std::fs::create_dir_all(&dir).expect("scratch dir");
+    let path = dir.join("projection_copies.loft");
+    std::fs::write(&path, PROJECTIONS).expect("write program");
+    let (stdout, diag, code) = run(backend, &path);
+    assert_eq!(
+        code,
+        Some(0),
+        "[{backend}] the program must run\n{stdout}\n---\n{diag}"
+    );
+    // a.ks = [1, 3, 4], a.vs = [2, 5], h.v = o.ks = 3 long, xs[0].a = [9], r.n = 2, k.v = ks = 2.
+    assert!(
+        stdout.contains("3 2 3 3 1 2 2 2"),
+        "[{backend}] the program must answer its values\n{stdout}"
+    );
+    for unwanted in ["copy of M", "copy of O"] {
+        assert!(
+            !diag.contains(unwanted),
+            "[{backend}] `{unwanted}`: a field was copied, and no move of its record avoids that\n{diag}"
+        );
+    }
+    let n = diag.matches("advice[avoidable-copy]").count();
+    assert!(
+        n == 1 && diag.contains("copy of vector<integer> — `ks` is still used after this point"),
+        "[{backend}] want exactly the whole-variable control advised, got {n}\n{diag}"
+    );
+}
+
+#[test]
+fn a_copied_field_is_not_advised_as_its_record_interpret() {
+    assert_projection_copies("--interpret");
+}
+
+#[test]
+fn a_copied_field_is_not_advised_as_its_record_native() {
+    assert_projection_copies("--native");
+}
