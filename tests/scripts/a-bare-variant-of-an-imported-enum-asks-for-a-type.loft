@@ -9,6 +9,15 @@
 // is in `enumlib`, which nothing this file imports passes on: … `use enumlib::*;`") would tell
 // the author to write the line they already wrote.  The import advice stays for an enum that
 // is NOT visible: c98-a-bare-variant-through-a-bare-use-names-the-import.loft.
+//
+// @falsified-at: fa5cf8185 — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 1/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 1/2 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/a-bare-variant-of-an-imported-enum-asks-for-a-type.patch — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 1/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 1/2 (the suite's verdict, not a count of matches)
+//   CHANNEL: the expectations — on the control each pin meets the import advice ("its enum
+//   Status — it is in `enumlib`, which nothing this file imports passes on").
+//   WITNESS: that sentence, naming `use enumlib::*;` as the cure in a file that wrote it.
+//   ARMED: nothing.
+//   HOLDS: the program never runs on either tree (every cell is a refusal), so leak, panic and
+//   value cannot move; only which message each pin meets does.
 use enumlib::*;
 
 // @EXPECT_ERROR: bare variant 'Yay' has no type here — qualify it as 'Status.Yay', or give the target an enum type

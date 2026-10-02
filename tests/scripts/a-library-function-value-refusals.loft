@@ -11,6 +11,8 @@
 // @falsified-by: tests/falsified/a-library-function-value-refusals.patch — interpret exit 1 -> 0, interpret expectations FAIL/3 -> 3/3 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/3 -> 3/3 (the suite's verdict, not a count of matches)
 //   CHANNEL: the expectations — on the control each pin meets "Unknown variable 'fnvaluelib'" / "missing argument".
 //   ARMED: nothing.
+//   HOLDS: the program never runs on either tree (every cell is a refusal), so leak, panic and
+//   value cannot move; only which message each pin meets does.
 use fnvaluelib;
 
 fn apply(f: fn(integer) -> integer, x: integer) -> integer { f(x) }
