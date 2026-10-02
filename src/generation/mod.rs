@@ -4437,9 +4437,17 @@ impl Output<'_> {
         let inputs = self.callee_inputs_of(def_nr)?;
         let mut args = Vec::with_capacity(inputs.scalars.len() + inputs.headers.len());
         for (p, fld, getter) in &inputs.scalars {
-            let Some(Value::Var(c)) = vals.get(*p as usize).map(Value::unspan) else {
-                return None;
+            // A plain variable, or a sub-record path over one (`atlas.a_cv`), whose key is
+            // the root and the field's summed offset — the key the loop hoisted it under.
+            let arg = vals.get(*p as usize)?;
+            let (c, fld) = match arg.unspan() {
+                Value::Var(c) => (*c, *fld),
+                _ => {
+                    let vars = self.data.def(self.def_nr).variables();
+                    hoist::path_scalar(self.data, vars, arg, *fld)?.0
+                }
             };
+            let (c, fld) = (&c, &fld);
             if let Some(held) = self.active_scalar_hoist(&(*c, *fld)) {
                 args.push(held.to_owned());
                 continue;
