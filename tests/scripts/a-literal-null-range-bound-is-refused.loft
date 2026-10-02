@@ -5,6 +5,10 @@
 // compile time.  Before, a literal null start was an internal compiler error on both backends
 // ("Incorrect var x#index[65535]"), and a literal null end compiled into a loop that never ran.
 // The run-time half is `a-null-range-bound-runs-no-round.loft`.
+//
+// @falsified-at: a90114f53 — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/a-literal-null-range-bound-is-refused.patch — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
+//   HOLDS: leak, panic and free-refusal are equal on both trees.
 
 // @EXPECT_ERROR: a range bound is `null`, so this loop never runs
 fn main() {

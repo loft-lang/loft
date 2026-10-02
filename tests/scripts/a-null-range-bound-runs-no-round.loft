@@ -14,6 +14,10 @@
 //
 // The literal spelling (`null..3`) is refused at compile time:
 // `a-literal-null-range-bound-is-refused.loft`.
+//
+// @falsified-at: a90114f53 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-null-range-bound-runs-no-round.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   HOLDS: leak, panic and free-refusal are equal on both trees.
 
 fn rounds(seen: text) -> integer { len(seen) }
 
