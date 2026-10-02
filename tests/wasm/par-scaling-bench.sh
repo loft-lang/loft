@@ -9,7 +9,9 @@
 # fallback) for the record.
 #
 # Calibration (env): POOLS (default "1 2 4 8", ascending, first entry = the
-# single-worker reference), SPEEDUP_AT (4), MIN_SPEEDUP_PCT (250).  Those
+# single-worker reference), SPEEDUP_AT (4), MIN_SPEEDUP_PCT (250), and the work
+# size SCALING_WORK (falls back to WORK, then 2000000: one worker must compute for
+# seconds, or the pool's fixed cost decides the curve instead of `par`).  Those
 # defaults describe this 24-core dev box; the CI workflow lowers them to what a
 # 4-vCPU runner can actually deliver rather than switching the gate off — see
 # .github/workflows/browser-threads.yml.
@@ -18,7 +20,7 @@ set -u
 cd "$(dirname "$0")/../.."
 . tests/wasm/gate-lib.sh
 PORT="${PORT:-8768}"; ROOT=tests/wasm; REPORT="$(mktemp)"
-WORK="${WORK:-200000}"; ELEMS="${ELEMS:-48}"
+WORK="${SCALING_WORK:-${WORK:-2000000}}"; ELEMS="${ELEMS:-48}"
 POOLS="${POOLS:-1 2 4 8}"; SPEEDUP_AT="${SPEEDUP_AT:-4}"; MIN_SPEEDUP_PCT="${MIN_SPEEDUP_PCT:-250}"
 BASE="${POOLS%% *}"
 CHROME="$(command -v chromium || command -v chromium-browser || command -v google-chrome || echo chromium)"
