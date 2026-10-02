@@ -3686,6 +3686,55 @@ instructions and −10.6 % cycles interpreted.  Guard cells in the leaf-inline f
 tuple read in both elements and in a loop, and a text-holding tuple that stays a call; the pin
 counts four inlined calls and the decline.
 
+### A text discharge that assigns a local is read straight into it
+
+```
+  (R-DischargeInto)  A statement `w = r ?? d` over a TEXT read, lowered to
+                     `{t = r; if t is not null then w = t else w = d}` and `free t`, is
+                     `{w = r; if w is null then w = d}` when `w` appears in neither `r` nor
+                     `d`, and `t` is named nowhere but its assignment, the test, the moving
+                     arm and its free.
+```
+
+**In words.** Applied by: `discharge_into::rewrite_program`, in the IR phase (both backends).
+A text local owns its bytes, so the temporary cost the interpreter a second allocation and copy
+per bind; native already held both as `&str`, and its locals stay borrowed (`tests/text_borrow.rs`
+asks the locals of both emissions).  Why the three conditions: assigning a text CLEARS the
+target before its value is evaluated, so a read naming `w` would see it emptied; the default now
+runs after `w` holds the read rather than its old value; and a temporary named anywhere else
+would lose its value.  All three are DEFENSIVE against today's parser, measured: an assignment
+whose right-hand side names its target is lowered through a work buffer (`__work_p2_N`) and
+never reaches this shape, so the two cells that name `w` in the read and in the default stay
+green with each clause planted away, as does the single-use clause.  The rewrite itself is
+caught: the null test inverted reads `[]` for `[yy]`, the default dropped reads `[null]` for
+`[]` — both silent (2026-10-02).  Measured (pinned layout, one tree): `word_count` 88.5 →
+64.3 ms together with `(R-KeyList)`, of which this rule −19 %; hashes unchanged.
+`LOFT_NO_DISCHARGE_INTO=1`, `LOFT_TRACE_DISCHARGE_INTO=1`.  Guards
+`tests/scripts/a-text-discharge-reads-straight-into-its-local.loft`, `tests/discharge_into.rs`.
+
+### A keyed type's key list is a fact of its schema
+
+```
+  (R-KeyList)    The key content types a keyed operation pops — `Stores::get_keys(tp)` — are
+                 derived once per type, when its key descriptors are (`determine_keys_for`),
+                 and read from the type afterwards.  An empty cache is "not derived yet" and
+                 is computed on the spot: the cache may lag the schema, never disagree with
+                 it.  A lookup copies the kinds onto its own stack (eight inline) before it
+                 pops the key.
+```
+
+**In words.** Applied by: `Stores::get_keys`, `Stores::compute_key_contents`,
+`Stores::determine_keys_for`, `State::stack_keys` (the interpreter; native passes its key as a
+`Content` slice and never asked).  Before it, every `OpGetRecord` / `OpSetKeyed` re-walked the
+type's key fields through `key_field` / `key_contents_for_field` and allocated the list, about
+7 % of `word_count`'s profile.  Measured (pinned layout, one tree, with `(R-DischargeInto)`):
+`hash_find` −20 %, `hash_update` −22 %, `hash_text_keys` −15 %, `hash_remove` −10 %, every hash
+unchanged.  The falsifier is **`LOFT_KEY_LIST_VERIFY=1`**: each cached read is re-derived from
+the type's parts and a disagreement stops the run naming the type.  Swept over all 2020
+`tests/scripts` and bench programs: none (2026-10-02).  Planted a stale cache (every key cached
+as text): without the verify the keyed bench panics deep in `allocation.rs`; with it, at the
+first lookup, `type 97 (hash<E[id]>) caches keys [5], its parts derive [0]`.
+
 ## Validating the emitted routines against their assumptions
 
 Every rule above is an ASSUMPTION the emitted Rust makes about the loop it sits in, and the

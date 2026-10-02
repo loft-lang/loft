@@ -372,6 +372,9 @@ impl Stores {
     /// [`Self::determine_keys_for`] and read here instead of being re-derived per lookup.
     /// A type the end-of-parse sweep has not reached yet (an empty cache) is computed on the
     /// spot, so the cache can lag the schema but never answer differently from it.
+    ///
+    /// # Panics
+    /// Under `LOFT_KEY_LIST_VERIFY=1`, when the cached list disagrees with the type's parts.
     #[must_use]
     pub fn get_keys(&self, db: u16) -> std::borrow::Cow<'_, [u16]> {
         let cached = &self.types[db as usize].key_contents;
@@ -1350,6 +1353,12 @@ impl Stores {
     }
 }
 
+/// `LOFT_KEY_LIST_VERIFY=1` — `@FR-R-KeyList`'s falsifier: every cached key list is re-derived
+/// from its type's parts on each read and a disagreement stops the run, naming the type.
+fn key_list_verify() -> bool {
+    crate::env_once!(std::env::var("LOFT_KEY_LIST_VERIFY").is_ok_and(|v| v != "0"))
+}
+
 #[cfg(test)]
 mod tests {
     use crate::database::Stores;
@@ -1385,10 +1394,4 @@ mod tests {
         };
         stores.remove(&data, &rec, 0);
     }
-}
-
-/// `LOFT_KEY_LIST_VERIFY=1` — `@FR-R-KeyList`'s falsifier: every cached key list is re-derived
-/// from its type's parts on each read and a disagreement stops the run, naming the type.
-fn key_list_verify() -> bool {
-    crate::env_once!(std::env::var("LOFT_KEY_LIST_VERIFY").is_ok_and(|v| v != "0"))
 }

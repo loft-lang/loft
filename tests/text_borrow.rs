@@ -223,7 +223,11 @@ fn a_parameters_text_is_borrowed_while_the_frame_writes_only_stores_it_minted() 
     // The temps are asked of the emission that still HAS them: `@FR-R-DischargeInto` reads a
     // statement's discharge straight into its local, so with it on a temp binding `w` is gone
     // and the local carries the borrow alone (the locals are asked of both emissions below).
-    let kept = emit_cells(STORE_CELLS, "store_kept", &[("LOFT_NO_DISCHARGE_INTO", "1")]);
+    let kept = emit_cells(
+        STORE_CELLS,
+        "store_kept",
+        &[("LOFT_NO_DISCHARGE_INTO", "1")],
+    );
     for (name, temps, _) in STORE_BORROWS {
         let b = body(&kept, name);
         for t in temps {

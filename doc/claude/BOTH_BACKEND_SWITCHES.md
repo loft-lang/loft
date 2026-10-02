@@ -311,6 +311,22 @@ is the first bisect step for a wrong answer out of a small scalar function on ei
 reduction each; **`LOFT_TRACE_INLINE_LEAF=1`** names every inlined call, every declined leaf
 and every reduction, per function.
 
+**The IR-phase eliminations (default-ON, both backends, at the top of `byte_code_from` after
+the leaf inliner):** each removes work the IR shows is redundant, and each has its switch and
+its trace.  **`LOFT_NO_FORWARD_WALK=1`** keeps `for x in v` an iterator where the body cannot
+resize `v` (`@FR-R-ForwardWalk`); **`LOFT_NO_SAME_READ=1`** keeps both of two equal discharged
+reads in one statement (`@FR-R-SameRead`); **`LOFT_NO_IN_RANGE=1`** keeps the discharge of a
+record element its loop proves in range (`@FR-R-InRange`); **`LOFT_NO_SINGLE_USE=1`** also keeps
+a comprehension's element temporary (`@FR-R-SingleUse`'s statement clause);
+**`LOFT_NO_DISCHARGE_INTO=1`** keeps the temporary of a text discharge that assigns a local
+(`@FR-R-DischargeInto`).  The `LOFT_TRACE_*` of the same name lists what each rewrote, per
+function.  For a wrong answer out of a loop or a `??`, these are the bisect steps, one at a
+time.
+
+**The key list a keyed lookup pops is cached per type (`@FR-R-KeyList`, interpreter):**
+**`LOFT_KEY_LIST_VERIFY=1`** re-derives every cached list from its type on each read and stops
+the run on a disagreement, naming the type — the falsifier for a wrong-width key pop.
+
 **Append in place (@PLN157 § V-d, default-ON, both backends, parse time):** a vector-literal
 element that is a call to a loft-defined builder — `v += [mk(…)]`, the builder writing a
 fresh literal into its hidden buffer on every exit and its return adopted raw — is handed
