@@ -7,7 +7,7 @@ use crate::database::{Parts, ShowDb};
 use crate::keys::{Content, DbRef, Key};
 use crate::{hash, tree, vector};
 #[cfg(not(host_fs))]
-use std::fs::{File, OpenOptions};
+use std::fs::OpenOptions;
 #[cfg(not(host_fs))]
 use std::io::{Read, Seek, SeekFrom, Write};
 
@@ -260,7 +260,7 @@ impl State {
                 // `f.set_file_size(0)` (or `f#size = 0`).
                 match file_name
                     .as_deref()
-                    .ok_or_else(crate::codegen_runtime::path_refused)
+                    .ok_or_else(crate::file_access::path_refused)
                     .and_then(|n| {
                         OpenOptions::new()
                             .read(true)
@@ -474,11 +474,7 @@ impl State {
             let store = self.database.store_mut(&file);
             let mut file_ref = store.get_i32_raw(file.rec, file.pos + 28);
             if file_ref == i32::MIN {
-                match resolved_name
-                    .as_deref()
-                    .ok_or_else(crate::codegen_runtime::path_refused)
-                    .and_then(File::open)
-                {
+                match crate::file_access::open_resolved(resolved_name.as_deref()) {
                     Ok(mut f) => {
                         // apply stored seek position on first open.
                         if next_pos != 0 {
@@ -691,7 +687,7 @@ impl State {
             }
             let ok = path
                 .as_deref()
-                .ok_or_else(crate::codegen_runtime::path_refused)
+                .ok_or_else(crate::file_access::path_refused)
                 .and_then(|p| OpenOptions::new().write(true).open(p))
                 .and_then(|f| f.set_len(size as u64))
                 .is_ok();

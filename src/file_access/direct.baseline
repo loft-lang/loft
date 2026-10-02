@@ -67,7 +67,7 @@
 83 src/self_update.rs
 1 src/serve.rs
 22 src/startup_cache.rs
-6 src/state/io.rs
+5 src/state/io.rs
 22 src/store.rs
 1 src/store_census.rs
 13 src/test_runner.rs

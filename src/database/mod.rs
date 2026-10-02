@@ -1622,7 +1622,7 @@ impl Stores {
         let norm = match crate::file_access::program_path(raw) {
             Ok(norm) => norm,
             Err(why) => {
-                crate::loft_eprintln!("loft: the path `{raw}` is refused: {why}");
+                crate::file_access::log_refusal_once(raw, &why);
                 return None;
             }
         };
@@ -1638,7 +1638,7 @@ impl Stores {
                 .into_owned()
         };
         if let Err(why) = crate::file_access::case_clash(&full) {
-            crate::loft_eprintln!("loft: the path `{raw}` is refused: {why}");
+            crate::file_access::log_refusal_once(raw, &why);
             return None;
         }
         Some(full)

@@ -5500,16 +5500,6 @@ pub fn fs_is_file(path: &str) -> bool {
     }
 }
 
-/// `@FR-Path-Refuse` — the error a refused path opens with, so an open site's existing error
-/// branch answers for it; the refusal itself was logged by `Stores::resolve_path`.
-#[must_use]
-pub fn path_refused() -> std::io::Error {
-    std::io::Error::new(
-        std::io::ErrorKind::InvalidInput,
-        "the path is refused (formal/paths.md)",
-    )
-}
-
 // The path-taking operations as a PROGRAM reaches them, in both backends: the program's
 // path goes through `Stores::resolve_path` (formal/paths.md), and a refused path answers the
 // operation's own failure — `FS_OTHER` for a change, `false` for a question
