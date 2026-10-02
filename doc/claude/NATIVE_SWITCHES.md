@@ -515,6 +515,14 @@ buffers (their `no_mark()` tail was forwarded by `parse_fronds`).  It is the fir
 step for a wrong field, a leak or a null-store panic at a `return g(…)` of a record-returning
 function on native.
 
+**`LOFT_NO_SWAP_REBIND=1`** (`@FR-H-SwapRebind`, default-ON, runtime) keeps the reset of a
+record variable's store before a rebind from a fresh call result — with it off, the result's
+store is exchanged into the variable as it stands and the old value leaves with the released
+store — and is the first bisect step for a wrong record after such a rebind on `--native`.
+Read where the rebind is emitted (the reset-and-copy pair instead of `OpRebindRecord`) and by
+`OpRebindRecord` at run time, so either is the off arm.  `LOFT_TRACE_STORE_SWAP=1` names each
+exchange.
+
 ## Element-first builds, complete writes and return buffers
 
 **`LOFT_NO_ELEMENT_FIRST=1`** (@PLN157 § V-z) makes a record-literal's vector field

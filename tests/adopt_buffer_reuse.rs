@@ -21,7 +21,10 @@ fn cells() -> PathBuf {
 
 fn loft() -> Command {
     let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    // The tests run in parallel on one source file, and its program cache is shared: an
+    // `introspect` that read another process's half-written entry listed a truncated program.
     cmd.env("LOFT_TIMEOUT", "120")
+        .env("LOFT_NO_CACHE", "1")
         .env_remove("LOFT_NO_ADOPT_BUFFER_REUSE")
         .env_remove("LOFT_NO_ADOPT_FIRST_BIND");
     cmd
@@ -176,7 +179,8 @@ fn a_bind_after_an_if_pre_init_adopts() {
         "r28 native: the plain assignment"
     );
     assert!(
-        !r28.contains("OpCopyRecord(cell,_src, var_mf"),
+        !r28.contains("OpCopyRecord(cell,_src, var_mf")
+            && !r28.contains("var_mf = OpRebindRecord(cell,"),
         "r28 native: no copy into `mf`"
     );
     // r22: bound inside the `if` alone — the arm's own local (`@FR-B-Scope`, loft#1600), so the
@@ -187,7 +191,8 @@ fn a_bind_after_an_if_pre_init_adopts() {
         "r22 native: the plain assignment, declared in the arm"
     );
     assert!(
-        !r22.contains("OpCopyRecord(cell,_src, var_mf"),
+        !r22.contains("OpCopyRecord(cell,_src, var_mf")
+            && !r22.contains("var_mf = OpRebindRecord(cell,"),
         "r22 native: no copy into `mf`"
     );
     // A value-record scanner keeps its result in registers beside the entry witness.

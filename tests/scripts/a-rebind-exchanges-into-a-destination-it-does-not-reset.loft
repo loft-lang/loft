@@ -10,7 +10,17 @@
 // `LOFT_NO_SWAP_REBIND=1` keeps the reset).  What can go wrong is the old value surviving into
 // the new one — a longer old vector, an old text — or an exchange where the result is not the
 // call's to give: a parameter handed back, a captured record, a type whose stores name each
-// other.  Every cell checks the value AND the length.  Values hand-computed.
+// other.  Every cell checks the value AND the length.  Values hand-computed;
+// `tests/swap_rebind.rs` pins that every cell's rebind is emitted through the exchange and
+// that both arms leave no store behind.
+//
+// @falsified-at: none — the rule has no earlier build to catch, so the receipt is planted
+//   defects (2026-10-02), on --native: the exchange reported without being made fails r1 (the
+//   chain reads [1,1,1,1], the old value); the released store kept instead of freed leaves
+//   "2 stores not freed" (Bag x10, M x3), which the pin fails on.  Ignoring the fn-ref
+//   borrowed marker is INERT: a borrowed result lives in the closure's store, whose root is the
+//   closure record, so the exchange's own root-type test declines it first.
+//   CHANNEL: an assertion (r1) and the native leak report (the pin).
 
 struct M { m: vector<float> }
 
