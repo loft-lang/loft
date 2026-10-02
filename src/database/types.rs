@@ -1155,6 +1155,10 @@ impl Stores {
     /// Idempotent: it clears and recomputes, so the end-of-parse sweep still produces the
     /// identical table whether or not a bake site ran it earlier.
     pub(crate) fn determine_keys_for(&mut self, t_nr: usize) {
+        // `@FR-R-KeyList` — the content types a lookup pops, cached with the descriptors.
+        #[expect(clippy::cast_possible_truncation, reason = "type numbers are u16")]
+        let contents = self.compute_key_contents(t_nr as u16);
+        self.types[t_nr].key_contents = contents;
         match self.types[t_nr].parts.clone() {
             // Hash and Radix both key on a bare `Vec<u16>` of ascending field
             // numbers.  Radix's key positions are what the Morton oracle reads
@@ -3445,6 +3449,9 @@ pub struct Type {
     pub(super) nullable_wrapper: bool,
     pub parts: Parts,
     pub keys: Vec<crate::keys::Key>,
+    /// The key content types a keyed operation pops (`Stores::get_keys`), cached by
+    /// `determine_keys_for`; empty until then, which `get_keys` reads as "compute it".
+    pub(super) key_contents: Vec<u16>,
     pub(super) parents: std::collections::BTreeSet<u16>,
     pub(super) complex: bool,
     pub(super) linked: bool,
@@ -3505,6 +3512,9 @@ impl Type {
             nullable_wrapper,
             parts,
             keys,
+            // A reloaded schema caches nothing yet: `get_keys` computes until
+            // `determine_keys_for` runs (`@FR-R-KeyList`).
+            key_contents: Vec::new(),
             parents: std::collections::BTreeSet::new(),
             complex,
             linked,
@@ -3526,6 +3536,7 @@ impl Type {
         Type {
             name: name.to_string(),
             nullable_wrapper: name.starts_with("__nullable<"),
+            key_contents: Vec::new(),
             parts,
             keys: Vec::new(),
             parents: std::collections::BTreeSet::new(),
@@ -3543,6 +3554,7 @@ impl Type {
         Type {
             name: name.to_string(),
             nullable_wrapper: name.starts_with("__nullable<"),
+            key_contents: Vec::new(),
             parts,
             keys: Vec::new(),
             parents: std::collections::BTreeSet::new(),
