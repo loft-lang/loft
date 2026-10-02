@@ -342,6 +342,7 @@ pub mod copy_view;
 pub mod exit_vector;
 pub mod forward_walk;
 pub mod in_range;
+pub mod single_use;
 pub mod leaf_inline;
 pub mod loop_kernels;
 pub(crate) mod net;

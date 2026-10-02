@@ -81,7 +81,7 @@ fn plain_read(data: &Data, v: &Value) -> bool {
 
 /// Can evaluating `v` change what a plain read answers?  Every call must be a pure
 /// operator; any other node that is not a value is refused.
-fn pure(data: &Data, v: &Value) -> bool {
+pub(crate) fn pure(data: &Data, v: &Value) -> bool {
     match v {
         Value::Span(s) => pure(data, &s.1),
         Value::Var(_)
