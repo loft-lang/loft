@@ -384,6 +384,7 @@ than it gets credit for. Measured on the current tree, not recalled:
 |---|---|---|
 | render in `"{x}"` | **yes** | `fn to_text(self: T) -> text` (@PLN99) |
 | order (`< <= > >=`) | **yes** | `operator compare(self: T, other: T) -> Ordering` (formal/operators.md) |
+| `+ - *` | **yes** | `operator plus` / `minus` / `times`, `a += b` included (formal/operators.md) |
 | arithmetic / comparison | **yes** | `fn OpAdd(self: T, other: U) -> V`, `OpEq`, `OpLt`, … — retiring for the `operator` forms (@PLN182) |
 | `for x in <value>` | **yes** | a `next(self) -> τ?` on the type — a struct iterates like a collection |
 | bounded generics | **yes** | structural satisfaction, no `impl` block |

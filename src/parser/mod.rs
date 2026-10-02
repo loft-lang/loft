@@ -10133,9 +10133,17 @@ impl Parser {
             let Some(method_suffix) = Self::interface_method_name(&self.data, child_nr) else {
                 continue;
             };
-            // `@FR-Op-Bound` — `op <` is met by the type's `operator compare`, which the
-            // monomorph's `<` then reads (`substitute_type_in_value`).
-            if method_suffix == "OpLt" && self.data.operator_compare_for(&concrete_type).is_some() {
+            // `@FR-Op-Bound` — `op <` is met by the type's `operator compare`, `op +` by its
+            // `operator plus`, a two-operand `op -` by `operator minus`, `op *` by `operator
+            // times`; the monomorph's operator then calls it (`substitute_type_in_value`).
+            if let Some(form) = Data::operator_form_of_member(
+                &method_suffix,
+                Self::visible_arity(&self.data, child_nr),
+            ) && self
+                .data
+                .operator_member_for(form, &concrete_type)
+                .is_some()
+            {
                 continue;
             }
             // I9-prim: use find_fn which checks both the method-style convention
@@ -11619,6 +11627,19 @@ impl Parser {
                     .collect();
                 // `@FR-Op-Bound` — `Ordered`'s `<` at a type whose order is its `operator
                 // compare`: `a < b` is `a.compare(b) == Less`, one call (`@FR-Op-Order`).
+                // `@FR-Op-Bound` — `Addable`'s `+`, `Subtractable`'s `-` and `Numeric`'s `*` at
+                // such a type are its `operator plus` / `minus` / `times`, one call each.  The
+                // stub is matched at its VISIBLE arity: a member answering a struct carries a
+                // hidden return buffer, which the stub and the member both take, in place.
+                if let Some(form) = ["OpAdd", "OpMin", "OpMul"]
+                    .into_iter()
+                    .find(|op| Data::is_bound_stub_for(data.def(d).name(), op, 2))
+                    .and_then(|op| Data::operator_form_of_member(op, 2))
+                    && let Some(m) = data.operator_member_for(form, concrete)
+                    && data.def(m).attributes().len() == new_args.len()
+                {
+                    return Value::Call(m, new_args);
+                }
                 if new_args.len() == 2
                     && Data::is_bound_stub_for(data.def(d).name(), "OpLt", 2)
                     && let Some(cmp) = data.operator_compare_for(concrete)
