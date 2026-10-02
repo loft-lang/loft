@@ -669,7 +669,8 @@ are set once per loop), dispatch, the frame yield, and the halt checks.  The **f
 carries every per-op instrument — the debugger and profiler (`debug_check`), live reload, the
 stack census, the stack shadow, allocation paths, the UAF scans — and takes over the moment one
 is armed, including a debugger attaching mid-run.  Measured: the full loop's
-bookkeeping was 62 of an op's 152 instructions on a vector-writing loop.
+bookkeeping was 62 of an op's 152 instructions on a vector-writing loop.  `LOFT_NO_LEAN_LOOP=1`
+takes the full loop for a plain run — the A/B switch for what the lean loop buys.
 
 ### Stack and variable access (`src/state/mod.rs`)
 
@@ -682,6 +683,8 @@ grows the buffer and the record together — and cost 43 % of the interpreter's 
 loop.  The checked path (`*_checked`, out of line) runs whenever an instrument that watches
 stack accesses is armed — `verify_on`, `LOFT_STACK_CENSUS`, `LOFT_UAF_GEN`,
 `LOFT_STRICT_STORES`, the `stack_align_guard` feature — and in every debug-assertions build.
+`LOFT_NO_FAST_STACK=1` takes the checked path on purpose: the A/B switch for what the direct
+path buys, and the first bisect step for a wrong answer only the interpreter gives.
 
 ### Operand fusion — superinstructions
 

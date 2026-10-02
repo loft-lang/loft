@@ -66,13 +66,17 @@ pub struct CallFrame {
 /// May the interpreter stack take its direct path (`State::fast_stack`)?  Not while any
 /// instrument that watches stack accesses is armed, and not in a debug-assertions build,
 /// whose checked path carries the `DbRef` bounds sentinels that build exists for.
+///
+/// `LOFT_NO_FAST_STACK=1` turns it off on purpose: the A/B switch that measures what the
+/// direct path buys, and the first bisect step for an interpreter-only wrong answer.
 fn fast_stack_allowed() -> bool {
     !(cfg!(debug_assertions)
         || cfg!(feature = "stack_align_guard")
         || crate::stack_verify::enabled()
         || crate::stack_census::enabled()
         || crate::keys::uaf_gen_enabled()
-        || crate::keys::strict_stores())
+        || crate::keys::strict_stores()
+        || std::env::var_os("LOFT_NO_FAST_STACK").is_some())
 }
 
 /// Reserved store number for coroutine `DbRef` encoding (CO1.1).
@@ -6531,7 +6535,9 @@ impl State {
         // dispatch, the frame yield and the halt.  Measured, the full loop's
         // per-op bookkeeping was 62 instructions of an op's 152 on a vector-writing loop.
         // A debugger that attaches mid-run sets `debug`, and the full loop takes over.
-        let lean_loop = !(reload_on
+        // `LOFT_NO_LEAN_LOOP=1` takes the full loop on purpose — fast_stack_allowed's twin.
+        let lean_loop = !(crate::env_once!(std::env::var_os("LOFT_NO_LEAN_LOOP").is_some())
+            || reload_on
             || census_on
             || verify_on
             || alloc_paths_on
