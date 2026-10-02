@@ -9251,6 +9251,19 @@ fn main() {
     } else if platform::timing_enabled() && native_mode && native_emit.is_none() {
         eprintln!("LOFT_TIMING native_source_key=off");
     }
+    // A live tier keeps the program OPEN (`Data::open_world`), which the whole-program
+    // rewrites read — so it is part of what a cached image was closed under (loft#1858).
+    let ships_live_tier = if html_out.is_some() {
+        debug_name.is_some() && !lean
+    } else if native_mode
+        || native_wasm.is_some()
+        || native_emit.is_some()
+        || native_android.is_some()
+    {
+        !(lean || native_release)
+    } else {
+        false
+    };
     let mut warm_store: Option<(loft::database::Stores, loft::keys::DbRef)> = None;
     // #358 — a warm hit returns the def-table index where user definitions
     // start; the cold path derives it from the post-stdlib def count below.
@@ -9259,13 +9272,18 @@ fn main() {
             &mut p,
             &abs_file,
             &default_str,
-            &loft::startup_cache::native_lib_context(html_out.is_some()),
+            &loft::startup_cache::native_lib_context(html_out.is_some(), ships_live_tier),
             &mut warm_store,
         )
     } else {
         None
     };
     let program_warm = warm_user_start.is_some();
+    // The image is a CLOSED program (`compile::close_program`): its rewrites ran before it was
+    // taken, and must not run again over a table that no longer carries what they read.
+    if program_warm {
+        p.data.program_closed = true;
+    }
     // A warm bundle REPLACES the parse.  When the user has armed a compiler
     // diagnostic, that silence is indistinguishable from "the code path never ran" —
     // it cost a full debugging session reading a stale parse while `eprintln`s in the
@@ -9391,9 +9409,13 @@ fn main() {
             std::thread::sleep(std::time::Duration::from_millis(ms));
         }
         scopes_ms = t.elapsed().as_secs_f64() * 1000.0;
-        let t = std::time::Instant::now();
-        loft::use_analysis::post_scope_lints(&p.data, &mut p.diagnostics, &abs_file);
-        lints_ms = t.elapsed().as_secs_f64() * 1000.0;
+        // A warm load replays the cold run's diagnostics, these lints' among them; running
+        // them again reported each warning twice (loft#1858).
+        if !program_warm {
+            let t = std::time::Instant::now();
+            loft::use_analysis::post_scope_lints(&p.data, &mut p.diagnostics, &abs_file);
+            lints_ms = t.elapsed().as_secs_f64() * 1000.0;
+        }
     }
     // The front end by phase.  `front_end` is measured on its own clock from the start of
     // `parse_default`, so the four phases summing to it is the check that none is missed or
@@ -9755,6 +9777,12 @@ fn main() {
                 p.lib_dirs
             );
         }
+        // Close the program before taking its image, under the openness this run compiles
+        // it with: the image is then what codegen compiles, cold or warm (loft#1858).
+        if ships_live_tier {
+            p.data.open_world = true;
+        }
+        compile::close_program(&mut p.data, &mut p.database);
         loft::startup_cache::save_program(
             &p,
             &abs_file,
@@ -9763,7 +9791,7 @@ fn main() {
             start_def,
             &placed_libs,
             &loft::startup_cache::AutoNative {
-                ctx: &loft::startup_cache::native_lib_context(html_out.is_some()),
+                ctx: &loft::startup_cache::native_lib_context(html_out.is_some(), ships_live_tier),
                 libs: &auto_native_libs,
             },
         );
@@ -9816,17 +9844,6 @@ fn main() {
     // (html_debug_one_shared_heap_compiled_and_interpreted_agree_on_wasm).  Each path's
     // live-tier decision is the one its `Output::emit_live` makes below; `--interpret`,
     // `--lean` and `--native-release` ship none and keep the pass.
-    let ships_live_tier = if html_out.is_some() {
-        debug_name.is_some() && !lean
-    } else if native_mode
-        || native_wasm.is_some()
-        || native_emit.is_some()
-        || native_android.is_some()
-    {
-        !(lean || native_release)
-    } else {
-        false
-    };
     if ships_live_tier {
         p.data.open_world = true;
     }

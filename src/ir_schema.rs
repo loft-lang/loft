@@ -1140,7 +1140,7 @@ fn write_variables(out: &mut String, f: &crate::variables::Function) {
         write_type(out, v.type_def);
         let _ = write!(
             out,
-            ",\"stack_pos\":{},\"uses\":{},\"argument\":{},\"stack_allocated\":{},\"skip_free\":{},\"captured\":{},\"caller_hidden_buf\":{},\"view_elided\":{},\"lazy_buffer\":{},\"deferred_first_bind\":{},\"linked_narrow\":{},\"store_text_link\":{},\"user_named\":{},\"user_appended\":{},\"copy_bound\":{},\"owner_witness\":{}}}",
+            ",\"stack_pos\":{},\"uses\":{},\"argument\":{},\"stack_allocated\":{},\"skip_free\":{},\"captured\":{},\"caller_hidden_buf\":{},\"view_elided\":{},\"lazy_buffer\":{},\"deferred_first_bind\":{},\"linked_narrow\":{},\"store_text_link\":{},\"user_named\":{},\"user_appended\":{},\"copy_bound\":{},\"buffer_witnessed\":{},\"owner_witness\":{},\"rebind_orig\":{},\"scope\":{}}}",
             v.stack_pos,
             v.uses,
             v.argument,
@@ -1156,7 +1156,10 @@ fn write_variables(out: &mut String, f: &crate::variables::Function) {
             v.user_named,
             v.user_appended,
             v.copy_bound,
-            v.owner_witness
+            v.buffer_witnessed,
+            v.owner_witness,
+            v.rebind_orig,
+            v.scope
         );
     }
     out.push_str("],\"names\":[");
@@ -1310,7 +1313,10 @@ fn variables_from_parsed(
             user_named: as_bool(field(it, "user_named")?)?,
             user_appended: as_bool(field(it, "user_appended")?)?,
             copy_bound: as_bool(field(it, "copy_bound")?)?,
+            buffer_witnessed: as_bool(field(it, "buffer_witnessed")?)?,
             owner_witness: as_u16(field(it, "owner_witness")?)?,
+            rebind_orig: as_u16(field(it, "rebind_orig")?)?,
+            scope: as_u16(field(it, "scope")?)?,
         });
     }
     let names_arr = field(p, "names")?;

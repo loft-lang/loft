@@ -6035,6 +6035,7 @@ impl Clone for OpSetCache {
 }
 
 #[allow(dead_code)]
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Clone)]
 /// The immutable data of a parsed loft program
 pub struct Data {
@@ -6045,6 +6046,12 @@ pub struct Data {
     /// closed program: a later parse would type a call by the rewritten signature, and a
     /// caller outside loft would read a record the function no longer returns.
     pub open_world: bool,
+    /// The whole-program rewrites (`compile::close_program`) have run on this `Data`.  They
+    /// read facts the scope pass leaves on each function that the program cache's image does
+    /// not carry (scopes, loops, intervals), so a program is closed BEFORE its image is taken
+    /// and a warm load marks the decoded `Data` closed rather than closing it a second time
+    /// from a degraded table (loft#1858).
+    pub program_closed: bool,
     /// The run this program is compiled for OBSERVES function entries — `loft test`'s
     /// coverage, which counts a function covered when a call enters it.  A rewrite that
     /// removes calls (`leaf_inline::rewrite_program`, `@FR-R-InlineLeaf`) leaves them alone
@@ -6909,6 +6916,7 @@ impl Data {
         Data {
             definitions: Vec::new(),
             open_world: false,
+            program_closed: false,
             observes_entries: false,
             lazy_drivers: LazyDriverCache::default(),
             def_names: DefIndex::default(),

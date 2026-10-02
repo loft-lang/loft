@@ -89,7 +89,11 @@ use sha2::{Digest, Sha256};
 ///
 /// 17 — `Definition` carries `operator` (stride 184 → 185, @PLN182): a warm stdlib without it
 /// reads an `operator` definition as a plain method, which no operator form reaches.
-const CACHE_FORMAT_VERSION: u8 = 17;
+///
+/// 18 — `Variable` carries `buffer_witnessed`, `rebind_orig` and `scope` (stride 45 → 62), and
+/// the image is the CLOSED program (loft#1858): a warm load without `rebind_orig` freed the
+/// store a caller handed a rebound parameter.
+const CACHE_FORMAT_VERSION: u8 = 18;
 
 /// Loft crate version — a release bump invalidates every cache.
 const LOFT_VERSION: &str = env!("CARGO_PKG_VERSION");
