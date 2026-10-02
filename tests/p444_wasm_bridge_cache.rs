@@ -91,7 +91,7 @@ fn wasm_bridge_state_survives_warm_program_cache() {
         cold.data.definitions(),
         &placed,
         &loft::startup_cache::AutoNative {
-            ctx: &loft::startup_cache::native_lib_context(false),
+            ctx: &loft::startup_cache::native_lib_context(false, false),
             libs: &[],
         },
     );
@@ -103,7 +103,7 @@ fn wasm_bridge_state_survives_warm_program_cache() {
         &mut warm,
         &script_abs,
         "default",
-        &loft::startup_cache::native_lib_context(false),
+        &loft::startup_cache::native_lib_context(false, false),
         &mut store,
     );
     assert!(

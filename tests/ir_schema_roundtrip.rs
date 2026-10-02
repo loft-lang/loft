@@ -23,11 +23,10 @@
 //! debug symbols + each variable's final `stack_pos` (the fields codegen
 //! reads).  Re-encode equality therefore also covers the variable table.
 //!
-//! What this does NOT prove (later step):
+//! What this does NOT prove:
 //!   * S3 equivalence — that a decoded `Data` recompiles to byte-identical
-//!     bytecode.  This test is codec self-consistency on real data, not
-//!     end-to-end snapshot correctness.  (Deferred — manual readable-output
-//!     inspection is the current verification path.)
+//!     bytecode.  This test is codec self-consistency on real data; the
+//!     equivalence is `ir_read`'s `a_decoded_program_compiles_to_the_bytecode_of_its_parse`.
 
 mod common;
 

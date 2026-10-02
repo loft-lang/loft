@@ -393,12 +393,13 @@ pub struct AutoNative<'a> {
 /// skips a `[wasm.bridge]` library's cdylib).  Persisted in the manifest and compared on a
 /// warm load, so a bundle is only replayed under the context that marked it.
 #[must_use]
-pub fn native_lib_context(html: bool) -> String {
+pub fn native_lib_context(html: bool, open_world: bool) -> String {
     format!(
-        "nolibs={} forcefail={} html={}",
+        "nolibs={} forcefail={} html={} open={}",
         u8::from(std::env::var_os("LOFT_NO_NATIVE_LIBS").is_some()),
         u8::from(std::env::var_os("LOFT_FORCE_NATIVE_BUILD_FAIL").is_some()),
-        u8::from(html)
+        u8::from(html),
+        u8::from(open_world)
     )
 }
 
