@@ -547,11 +547,36 @@ pub fn record_env_skips(suite: &str, reason: &str, skips: &[(String, String)]) {
 #[allow(dead_code)]
 static DEFAULT_PARSED: OnceLock<(Data, Stores)> = OnceLock::new();
 
-/// Parse the default library once per test binary and cache the result.
-/// Each test clones the schema cheaply instead of re-parsing three files.
+#[allow(dead_code)]
+static DEFAULT_FROM_SOURCE: OnceLock<(Data, Stores)> = OnceLock::new();
+
+/// The standard library a test starts from, once per process: warm-loaded from the startup
+/// cache's stdlib bundle when one is current, else parsed and saved for the next process.
+///
+/// Under nextest every test is its own process, so a parse here is paid per TEST (~50 ms,
+/// most of what a typical `code!` test costs).  The bundle's key covers the stdlib's content,
+/// this binary's build and the semantics switches (`cache::stdlib_cache_key`), so an edited
+/// `default/` or another build lands at a fresh key and is parsed; `save_bundle` publishes by
+/// rename, so concurrent tests never read a partial file.  `LOFT_NO_CACHE` turns it off.
 #[allow(dead_code)]
 pub fn cached_default() -> (Data, Stores) {
     let (data, db) = DEFAULT_PARSED.get_or_init(|| {
+        let mut p = Parser::new();
+        if loft::startup_cache::warm_load_stdlib(&mut p, "default") {
+            return (p.data, p.database);
+        }
+        p.parse_dir("default", true, false).unwrap();
+        loft::startup_cache::save_stdlib_cache(&p, "default");
+        (p.data, p.database)
+    });
+    (data.clone(), db.clone())
+}
+
+/// The standard library PARSED from source, never read back from a bundle — for a test of
+/// the bundle codec itself, whose oracle must not be the codec's own output.
+#[allow(dead_code)]
+pub fn parsed_default() -> (Data, Stores) {
+    let (data, db) = DEFAULT_FROM_SOURCE.get_or_init(|| {
         let mut p = Parser::new();
         p.parse_dir("default", true, false).unwrap();
         (p.data, p.database)
