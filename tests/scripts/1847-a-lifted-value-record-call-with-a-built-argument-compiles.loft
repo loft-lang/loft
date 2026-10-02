@@ -1,0 +1,57 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1847 — on --native, a call to a function whose struct result is returned as a value
+// (`@FR-R-ValueRecord`: no return buffer, the fields as a tuple) did not compile when an
+// argument built a record (a struct literal, a call minting one) and the call was lifted into
+// a temporary — the right side of `&&` or `||`, an `if` condition — or bound directly.  The
+// path that hoists store-building arguments spelled every IR argument itself, the return
+// buffer included, where the ordinary call emitter drops it: "this function takes 3 arguments
+// but 4 arguments were supplied".  An admitted callee now goes through the ordinary emitter.
+// The interpreter answered every cell; `LOFT_NO_VALUE_RECORD=1` hid it.
+//
+// Cells: the method, plain and operator spellings × `&&`, `||` and `if` with a struct-literal
+// argument, parenthesised and bare, on a `value struct` and a plain `struct` result; a direct
+// bind of such a call with a literal, a minting call, a vector literal and a formatted text as
+// the built argument.
+//
+// @falsified-by: tests/falsified/1847-a-lifted-value-record-call-with-a-built-argument-compiles.patch — native exit 1 -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   CHANNEL: exit on native — the control's generated Rust does not compile (E0061).
+//   ARMED: nothing.
+//   WITNESS: "this function takes 3 arguments but 4 arguments were supplied".
+//   HOLDS: every asserted value on both trees for the interpreter, and on this tree for native.
+value struct V { ms: integer }
+fn g(self: V, o: V) -> V { V { ms: self.ms - o.ms } }
+pub operator minus(self: V, o: V) -> V { V { ms: self.ms - o.ms } }
+
+struct P { ms: integer }
+fn gp(self: P, o: P) -> P { P { ms: self.ms - o.ms } }
+fn mk(v: integer) -> P { P { ms: v } }
+fn h(self: P, v: vector<integer>) -> P { P { ms: self.ms - len(v) } }
+fn k(self: P, s: text) -> P { P { ms: self.ms - len(s) } }
+
+fn main() {
+  t = V { ms: 10 };
+  p = P { ms: 10 };
+  assert(true && (t.g(V { ms: 2 })).ms == 8, "method, &&");
+  assert(false || (t.g(V { ms: 2 })).ms == 8, "method, ||");
+  a = false;
+  if (t.g(V { ms: 2 })).ms == 8 { a = true; }
+  assert(a, "method, if");
+  assert(true && g(t, V { ms: 2 }).ms == 8, "plain, &&, bare");
+  assert(false || g(t, V { ms: 2 }).ms == 8, "plain, ||, bare");
+  b = false;
+  if g(t, V { ms: 2 }).ms == 8 { b = true; }
+  assert(b, "plain, if, bare");
+  assert(true && (t - V { ms: 2 }).ms == 8, "operator, &&");
+  assert(false || (t - V { ms: 2 }).ms == 8, "operator, ||");
+  assert(true && gp(p, P { ms: 2 }).ms == 8 && (p.gp(P { ms: 3 })).ms == 7, "a plain struct");
+  r1 = gp(p, P { ms: 2 });
+  r2 = gp(p, mk(3));
+  r3 = h(p, [1, 2, 3, 4]);
+  n = 5;
+  r4 = k(p, "ab{n}");
+  assert(r1.ms == 8 && r2.ms == 7 && r3.ms == 6 && r4.ms == 7, "direct binds: {r1.ms} {r2.ms} {r3.ms} {r4.ms}");
+  assert(true && gp(p, mk(3)).ms == 7 && h(p, [1, 2]).ms == 8 && k(p, "x{n}").ms == 8, "built arguments, lifted");
+  println("ok");
+}
