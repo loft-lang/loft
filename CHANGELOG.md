@@ -49,7 +49,7 @@ line each:
   `OpRem` → `operator divided_by` / `remainder`; the bit operators → a named method (a type
   cannot define them yet).
 
-A library that defined any of these needs a new release; `time` 0.4.0 and `server` 0.7.2 are
+A library that defined any of these needs a new release; `time` 0.4.0 and `server` 0.7.3 are
 written this way.
 
 **An interface names the method that meets it.**  `op <` in an interface body is refused: write
