@@ -115,14 +115,17 @@ callable and one rule for the whole table beats an exception for two; `time`'s c
 twice; and a generic body bounded by `Addable` may write `a.plus(b)` as readily as `a + b`.  The
 cost is two spellings of one operation, which `next` / `to_text` already have.
 
-**Q13 — how is an interface member spelled?  Recommended: as the definition that meets it**
-(Op-Iface), for the owner.  `interface Printable { operator to_text(self: Self) -> text }` is met
-only by an `operator to_text`; `fn size(self: Self)` only by a plain `fn size`.  The operator
-interfaces follow: `Ordered` declares `operator compare(self: Self, other: Self) -> Ordering`,
-`Addable` `operator plus(…)`, and the stdlib meets them for the built-in types with `operator`
-definitions of its own (P1 adds `compare` on them anyway).  So every bound is met one way, by a
-built-in type and a user type alike, and the symbol member `op ⊕` retires with `fn Op…` — 6 uses
-in the stdlib, 8 outside it.  `Equatable` keeps no member to define: every type meets it (Op-Eq).
+**Q13 — how is an interface member spelled?  DECIDED (owner): "harmonize the spelling via
+operator interfaces."**  An interface member is spelled as the definition that meets it
+(Op-Iface): `Ordered` declares `operator compare(self: Self, other: Self) -> Ordering`,
+`Addable` `operator plus(…)`, `Subtractable` `operator minus(…)`, `Printable` `operator
+to_text(…)`, and the stdlib meets them for the built-in types with `operator` definitions of
+its own, so `integer` meets `Ordered` the way a user's `Date` does while the compiler keeps
+its built-in `<` / `+` code underneath (checked by the native-ratio lanes alone and the
+rewrite census).  The symbol member `op ⊕` retires with `fn Op…`, its old spelling refused
+naming the cure — 6 uses in the stdlib, 8 outside it.  A member whose form is still reserved
+(`Numeric`'s unary `-`, `Equatable`'s `==`, the tests' `op /` and `op %`) is with the
+orchestrator before a choice is made.  Built as P5b.
 
 **Q14 — a key field whose type has `operator equals`.  Recommended: (a), refuse it at the
 declaration** (Op-Key), for the owner.  Measured on today's tree with a user `fn OpEq` standing in
@@ -177,12 +180,9 @@ is decided.
 
 Three items stay open, each with its home:
 
-- **Q13 — the operator interfaces' re-spelling.**  `Printable` declares `operator to_text`;
-  `Ordered`, `Addable`, `Subtractable` and `Numeric` still declare `op ⊕` members, which a
-  program's type meets with its `operator` method (`(Op-Bound)`).  Re-spelling them as
-  `operator compare(self: Self, other: Self) -> Ordering` and so on is open, and so is the
-  consequence a measurement found: an interface member written `operator times` does not yet
-  drive `a * b` inside a generic body, so a user interface must spell `op *` for that.
+- **Q13 — P5b, the operator interfaces' re-spelling** (decided above).  Its first step is the
+  one a measurement found missing: an interface member written `operator times` does not yet
+  drive `a * b` inside a generic body.
 - **Q14 — (Op-Key)** lands WITH `operator equals` (RULES.md), never before it: until a type can
   redefine `==`, every key compares structurally and the rule has nothing to refuse.
 - **Q11 — `sort_by` / `min_by` / `max_by` / `sum_by`.**  [by-functions.patch](by-functions.patch)
