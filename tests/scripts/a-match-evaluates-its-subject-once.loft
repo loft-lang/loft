@@ -7,6 +7,10 @@
 // call ran once for the variant test and again for each field read: a lexer's `match next(lx)`
 // tested the first token's variant and read the second token's payload, and the lexer moved
 // twice.  Every cell counts the calls beside the value.  Values hand-computed.
+//
+// @falsified-at: 04893819 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-match-evaluates-its-subject-once.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   HOLDS: leak, panic and free-refusal are equal on both trees.
 
 enum Tok { Num { v: integer }, Word { w: text }, End }
 

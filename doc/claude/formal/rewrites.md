@@ -3867,6 +3867,41 @@ a step at the bottom costs the jump it saves.  `LOFT_NO_START_STEP=1` keeps the 
 `tests/scripts/a-computed-range-start-steps-one-counter.loft` (its planted defects named in its
 header), pin `tests/start_step.rs`.
 
+### An effect-free call made twice is made once
+
+```
+  (R-PureReuse)  A function is EFFECT-FREE when its result is its only effect: every
+                 operator in its body reads, computes, or writes into a store the
+                 function itself made (a write whose target is rooted at a parameter,
+                 the function's own return buffer excepted, declines it); every function
+                 it calls is effect-free (a fixed point over the call graph); and it
+                 calls no function value, yields nothing and names no native outside a
+                 short list of known value-only ones.  A PROJECTION WRAPPER is a function
+                 whose body is one call of an effect-free function on its parameters
+                 followed by a read of the result: `d = f(…); return d.k`, or
+                 `d = f(…); v = d.k; return v`.  In one block, two calls of projection
+                 wrappers of the same `f` on the same argument variables — the first in a
+                 position its statement always evaluates (the statement, an `if`'s test,
+                 an assignment's value, a call's arguments), nothing between them
+                 writing a store, calling a function with effects or rebinding an
+                 argument — are `f` called once into a fresh local before the first
+                 statement, and each wrapper call is its read of that local.
+```
+
+**In words.** Applies in: the IR phase, at the start of the scope pass, both backends, so the
+local it binds is owned and freed as any local the author wrote.  Allowed because an
+effect-free call on unchanged arguments answers the same value each time and its only effect
+is that value: the second call is the first call's value, read the second way.  The
+wrapper's own copy of the field it handed back becomes a read of the local in place, which is
+what the copy was of.  What it removes is the second call and everything it builds: a request
+check that asked `pa_decode_ok(frame)` and then `pa_decode(frame)` decoded the frame twice.
+The list of value-only natives is short on purpose — the `#impure` annotations do not mark every
+effect (`print`, `file` and `env_variable` carry none) — so an unknown operator declines, which
+costs the reuse and never an effect.  Effect, per `check_request` on the library as written,
+native: 4 stores, 30 claims and 10 deletes → 3, 17 and 5, and −43 % time.  Switch
+`LOFT_NO_PURE_REUSE=1`, trace `LOFT_TRACE_PURE_REUSE=1`.  Site: `pure_reuse.rs`.  Guard
+`tests/scripts/a-pure-call-made-twice-is-computed-once.loft`, pin `tests/pure_reuse.rs`.
+
 ### Two equal reads in one statement are one read
 
 ```

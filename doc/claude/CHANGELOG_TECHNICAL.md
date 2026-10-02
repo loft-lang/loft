@@ -10,6 +10,31 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### `check_request` makes half the stores: `(R-PureReuse)`, and a `match` evaluates its subject once (2026-10-02)
+
+**`(R-PureReuse)`** (`src/pure_reuse.rs`, the start of the scope pass, both backends): a
+call of an effect-free function made twice in one block on arguments nothing writes in
+between is made once into a fresh local, and each use reads it.  Effect-free is a fixed point
+over the call graph: reads, arithmetic, writes into stores the function made (never a
+parameter's), calls of effect-free functions, and a short list of value-only natives — the
+`#impure` annotations miss `print`, `file` and `env_variable`, so an unknown operator declines.
+It sees the calls through PROJECTION WRAPPERS (`d = f(b); return d.k`), which is how
+pluginabi's `check_request` asked the same frame twice (`pa_decode_ok`, then `pa_decode`).
+`LOFT_NO_PURE_REUSE=1`, `LOFT_TRACE_PURE_REUSE=1`.
+
+**`(M-Match)`, deviation D-match-16** (`Parser::parse_match_inner`): a struct-enum or struct
+subject that is not a place was spliced into every arm test and field binding, so a call ran
+once for the variant and once per field read.  `match next(lx) { Num { v } => … }` tested one
+token and read the next one's payload — silently, on both backends and on main.  The subject is
+now bound once unless it is a variable or a field or element of one.  The binding had been held
+back for a strict free order that `(H-FreeAny)` lifted.
+
+Per `check_request` on the library as written, native, census: 4 stores, 30 claims, 10 deletes →
+**2, 16, 5**, and 46.9 → 24.5 ms for 20 000 checks (−48 %).  The remaining stores are the decoded
+tree and `pa_get`'s copy of the value it finds, which is the return's ownership, not a
+duplicate.  Guards: the reuse cells p1–p7 and the match cells c1–c10, both backends, plants and
+the falsify receipt named in their headers; pin `tests/pure_reuse.rs`.
+
 ### `(R-RefillBuffer)` — a return buffer refills the store a rebind released (2026-10-02)
 
 A builder called in a loop, `c = mul(a, c)`, minted its result's store every call, claimed
