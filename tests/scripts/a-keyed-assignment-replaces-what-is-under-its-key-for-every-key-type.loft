@@ -17,6 +17,12 @@
 // under one key {1, 2, 5} x churn {none, an unrelated insert-and-remove between the writes,
 // which recycles arena slots}.  Each asserts the length AND a walk AND the lookup AND that a
 // neighbouring key survives.
+//
+// @falsified-at: e07f178da — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-keyed-assignment-replaces-what-is-under-its-key-for-every-key-type.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the assertions, on both backends (the first hash-text cell reads len 3).
+//   ARMED: nothing; LOFT_STRICT_STORES=1 is clean on this tree.
+//   HOLDS: every integer-key cell and every sorted / index cell, on both trees.
 struct KI { k: integer, v: integer }
 struct KT { k: text, v: integer }
 struct K2 { a: text, b: integer, v: integer }
