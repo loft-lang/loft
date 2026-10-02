@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>zttext guide — Loft, a programming language for small browser games</title>
+  <meta name="description" content="Getting started with the loft library zttext — a runnable guide that is itself a loft program, so every example in it compiles.">
+<link rel="canonical" href="https://loft-lang.org/loft/lib-zttext-guide.html">
+<meta property="og:title" content="zttext guide — Loft, a programming language for small browser games">
+<meta property="og:description" content="Getting started with the loft library zttext — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://loft-lang.org/loft/lib-zttext-guide.html">
+<meta property="og:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<meta property="og:site_name" content="Loft">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="zttext guide — Loft, a programming language for small browser games">
+<meta name="twitter:description" content="Getting started with the loft library zttext — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta name="twitter:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<link rel="stylesheet" href="style.css">
+<style>.playground-link{display:inline-block;margin:0.3em 0 0.8em;padding:4px 12px;background:#2563eb;color:#fff;border-radius:4px;text-decoration:none;font-size:0.85em}.playground-link:hover{filter:brightness(1.15)}@media print{.playground-link{display:none}}</style>
+</head>
+<body>
+<nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
+<h1>zttext guide</h1>
+<article>
+<p><a href="lib-zttext.html">← zttext</a> · <a href="lib-zttext-api.html">API reference</a> · <a href="lib-zttext-src.html">source</a></p>
+<p><code>zttext</code> is a text ENGINE: a document you edit (a piece table over an append-only buffer), transactions you can undo, and a layout that turns the document into positioned boxes you can hit-test — a caret, a selection, the word under a double-click. Everything is plain loft, and measurement is an argument, so the same document lays out to the same boxes on every backend.</p>
+<p>It does not draw. A box is a rectangle plus the characters it holds; painting it is the job of whatever surface you have — <code>text2d</code> draws text on a <code>graphics</code> canvas, a browser page draws it in the DOM. It does not parse markup either: for Markdown to HTML, use <code>markdown</code>. And it carries no fonts: <code>mono_measure</code> is a deterministic stand-in, and a real surface passes its own measurer.</p>
+<pre><code><span class="kw">use</span> zttext::*;</code></pre>
+<pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {
+  d = <span class="fn-call">doc_from_text</span>(<span class="st">"hello world"</span>, <span class="nm">0</span>);
+  d = <span class="fn-call">insert_text</span>(d, <span class="nm">5</span>, <span class="st">","</span>, <span class="nm">0</span>);
+  boxes = <span class="fn-call">flow_layout</span>(d, default_resolver, mono_measure, <span class="nm">8.0</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">print</a></span>(<span class="fn-call">render_dump</span>(boxes, d));</code></pre>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">materialise</span>(d) == <span class="st">"hello, world"</span>, <span class="st">"the edit is in the document you bound"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(boxes.boxes) == <span class="nm">3</span> &amp;&amp; <span class="fn-call">boxset_height</span>(boxes) == <span class="nm">2.0</span>, <span class="st">"two lines at width 8"</span>);</code></pre>
+<p>Every section below is a function, and <code>main</code> calls each one: a section nothing calls still compiles, but its assertions never run.</p>
+<pre><code>  <span class="fn-call">an_edit_is_a_value</span>();
+  <span class="fn-call">edits_undo_as_transactions</span>();
+  <span class="fn-call">layout_is_yours_to_measure</span>();
+  <span class="fn-call">the_boxes_answer_the_pointer</span>();
+}</code></pre>
+<p>That prints one line per box — <code>[x,y,w,h] chars style 'text'</code>:</p>
+<pre><code>  [0.0,0.0,5.0,1.0] 0..5 s=0 'hello'
+  [5.0,0.0,1.0,1.0] 5..6 s=0 ','
+  [0.0,1.0,5.0,1.0] 7..12 s=0 'world'
+</code></pre>
+<p><code>hello, world</code> is 12 wide under <code>mono_measure</code> (one unit per character), the column is 8, so the line breaks at the space and the space itself is dropped. The comma is its own box because it was inserted as its own piece; the boxes carry the character span they cover, which is what every interaction below is built on.</p>
+<h2 id="the-one-that-bites-an-edit-returns-the-document">The one that bites: an edit RETURNS the document</h2>
+<p><code>insert_text</code>, <code>delete_range</code> and <code>set_style</code> do not change the document you pass. They answer a new one and leave the old one alone. So <code>insert_text(d, 0, "x", 0);</code> as a statement compiles, runs, and throws the edit away — an editor where typing does nothing, with nothing reported. Bind the result, every time. What you get for it: the previous state is still a live value, so history is just a list of documents.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">an_edit_is_a_value</span>() {
+  base = <span class="fn-call">doc_from_text</span>(<span class="st">"hello"</span>, <span class="nm">0</span>);
+  <span class="fn-call">insert_text</span>(base, <span class="nm">0</span>, <span class="st">"XYZ"</span>, <span class="nm">0</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">materialise</span>(base) == <span class="st">"hello"</span>, <span class="st">"a discarded edit is lost"</span>);</code></pre>
+<pre><code>  edited = <span class="fn-call">insert_text</span>(base, <span class="nm">5</span>, <span class="st">"!"</span>, <span class="nm">0</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">materialise</span>(edited) == <span class="st">"hello!"</span> &amp;&amp; <span class="fn-call">materialise</span>(base) == <span class="st">"hello"</span>, <span class="st">"two live documents"</span>);
+  history = [base, edited];
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(history) == <span class="nm">2</span>, <span class="st">"history is a vector of values"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"value   : an edit answers a NEW document; bind it"</span>);
+}</code></pre>
+<h2 id="transactions-and-undo-against-the-state-before">Transactions, and undo against the state BEFORE</h2>
+<p><code>txn_of</code> bundles operations — <code>Ins</code>, <code>Del</code>, <code>Sty</code> — into one transaction, the unit of undo, and <code>apply</code> runs it. <code>invert(pre, txn)</code> builds its undo, and it needs the document as it was BEFORE the transaction: the inverse of a deletion is an insertion of what was there, which only the earlier state knows. The undo restores per-character styles too, so undoing a deletion over formatted text brings the formatting back.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">edits_undo_as_transactions</span>() {
+  styled = <span class="fn-call">set_style</span>(<span class="fn-call">doc_from_text</span>(<span class="st">"hello, world"</span>, <span class="nm">0</span>), <span class="nm">0</span>, <span class="nm">5</span>, <span class="nm">3</span>);
+  t = <span class="fn-call">txn_of</span>([<span class="en">Del</span> { from: <span class="nm">5</span>, to: <span class="nm">6</span> }]);
+  after = <span class="fn-call">apply</span>(styled, t);
+  back = <span class="fn-call">apply</span>(after, <span class="fn-call">invert</span>(styled, t));</code></pre>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">materialise</span>(after) == <span class="st">"hello world"</span>, <span class="st">"the comma is gone"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">materialise</span>(back) == <span class="st">"hello, world"</span>, <span class="st">"undo puts it back"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"{char_styles(back)}"</span> == <span class="st">"[3,3,3,3,3,0,0,0,0,0,0,0]"</span>, <span class="st">"with the style on 'hello'"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"undo    : invert against the state BEFORE the edit"</span>);
+}</code></pre>
+<h2 id="layout-takes-the-measurer-as-an-argument">Layout takes the measurer as an argument</h2>
+<p><code>flow_layout(doc, resolve, measure, width)</code> asks for a <code>resolve</code> (style id → <code>Style</code>) and a <code>measure</code> (text and <code>Style</code> → width). It never calls a font engine, which is why a layout is the same on the interpreter, natively and in a browser: the ports decide, and you hand them in. <code>default_resolver</code> and <code>mono_measure</code> are the deterministic pair to start and test with; a real surface passes functions of its own with the same signatures. <code>flow_layout_full</code> answers the lines too, and <code>line_assignment</code> just the lines.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">layout_is_yours_to_measure</span>() {
+  d = <span class="fn-call">doc_from_text</span>(<span class="st">"alpha beta gamma delta"</span>, <span class="nm">0</span>);
+  narrow = <span class="fn-call">flow_layout</span>(d, default_resolver, mono_measure, <span class="nm">12.0</span>);
+  wide = <span class="fn-call">flow_layout</span>(d, default_resolver, mono_measure, <span class="nm">40.0</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">boxset_height</span>(narrow) == <span class="nm">2.0</span>, <span class="st">"two lines in a column of 12"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">boxset_height</span>(wide) == <span class="nm">1.0</span>, <span class="st">"one line in a column of 40"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(<span class="fn-call">line_assignment</span>(d, default_resolver, mono_measure, <span class="nm">12.0</span>)) == <span class="nm">2</span>, <span class="st">"the lines agree"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"layout  : the same document, the measurer and width decide the lines"</span>);
+}</code></pre>
+<h2 id="the-boxes-answer-the-pointer">The boxes answer the pointer</h2>
+<p>A box knows the characters it covers, so the questions an editor asks are answered from the boxes alone: <code>anchor_at</code> turns a point into a character position (a click), <code>caret_at</code> turns a position into the rectangle to draw the cursor in, <code>sel</code> lists the boxes a range covers, and <code>word_at</code> answers the word a double-click selects.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">the_boxes_answer_the_pointer</span>() {
+  d = <span class="fn-call">doc_from_text</span>(<span class="st">"hello, world"</span>, <span class="nm">0</span>);
+  boxes = <span class="fn-call">flow_layout</span>(d, default_resolver, mono_measure, <span class="nm">8.0</span>);</code></pre>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">anchor_at</span>(boxes, d, <span class="nm">2.4</span>, <span class="nm">0.5</span>, default_resolver, mono_measure) == <span class="nm">2</span>, <span class="st">"a click between 'he' and 'llo'"</span>);
+  c = <span class="fn-call">caret_at</span>(boxes, d, <span class="nm">7</span>, default_resolver, mono_measure);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(c.x == <span class="nm">0.0</span> &amp;&amp; c.y == <span class="nm">1.0</span> &amp;&amp; c.w == <span class="nm">0.0</span>, <span class="st">"position 7 starts the second line"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"{sel(boxes, 3, 9)}"</span> == <span class="st">"[0,1]"</span>, <span class="st">"a range across the break covers the box on each line"</span>);
+  w = <span class="fn-call">word_at</span>(d, <span class="nm">8</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(w.<span class="nm">0</span> == <span class="nm">7</span> &amp;&amp; w.<span class="nm">1</span> == <span class="nm">12</span>, <span class="st">"the word under position 8 is 'world'"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"pointer : click, caret, selection and word, all from the boxes"</span>);
+}</code></pre>
+<h2 id="where-to-go-next">Where to go next</h2>
+<ul>
+<li><code>README.md</code> — the layers and their entry points, and the four contracts above in brief.</li>
+<li><code>tests/worked-examples.loft</code> — <code>@ZTX-001</code> … <code>@ZTX-004</code>, those contracts as running tests.</li>
+<li><code>tests/zttext.loft</code> — every invariant the engine keeps, including pagination (<code>paginate</code>, <code>layout_page</code>), columns and floating images (<code>layout_page_columns</code>), incremental relayout (<code>patch</code>) and justification.</li>
+</ul>
+
+  </article>
+<script src="search-index.js"></script>
+<script src="search.js"></script>
+<script>
+(function(){
+var m={"Keywords":"keywords","Texts":"texts","Integers":"integers","Boolean":"boolean","Float":"float","Functions":"functions","Vector":"vector","Structs":"structs","Enums":"enums","Sorted":"sorted","Index":"index","Hash":"hash","File":"file","Lexer":"lexer","Parser":"parser","Libraries":"libraries","Store Locks":"store_locks","Parallel execution":"parallel_execution","Logging":"logging","Time":"time","Safety":"safety","JSON":"json","Generics":"generics","Closures":"closures","Coroutines":"coroutines","Tuples":"tuples","Match":"match","Formatting":"formatting"};
+var h=document.querySelector('h1');
+if(!h)return;
+var key=m[h.textContent];
+if(!key)return;
+var a=document.createElement('a');
+a.className='playground-link';
+a.href='playground.html?example='+key;
+a.textContent='\u25B6 Try in Playground';
+h.parentNode.insertBefore(a,h.nextSibling);
+})();
+</script>
+</body>
+</html>

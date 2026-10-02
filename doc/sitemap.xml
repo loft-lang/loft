@@ -53,6 +53,7 @@
   <url><loc>https://loft-lang.org/loft/lib-arguments-src.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-arguments.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-assets-api.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/lib-assets-guide.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-assets-src.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-assets.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-cbor-api.html</loc></url>
@@ -73,6 +74,7 @@
   <url><loc>https://loft-lang.org/loft/lib-game_protocol-src.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-game_protocol.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-glb-api.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/lib-glb-guide.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-glb-src.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-glb.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-graphics-api.html</loc></url>
@@ -149,6 +151,7 @@
   <url><loc>https://loft-lang.org/loft/lib-markdown-src.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-markdown.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-mesh3d-api.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/lib-mesh3d-guide.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-mesh3d-src.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-mesh3d.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-pluginabi-api.html</loc></url>
@@ -191,6 +194,7 @@
   <url><loc>https://loft-lang.org/loft/lib-web-src.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-web.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-zttext-api.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/lib-zttext-guide.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-zttext-src.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-zttext.html</loc></url>
   <url><loc>https://loft-lang.org/loft/libraries.html</loc></url>

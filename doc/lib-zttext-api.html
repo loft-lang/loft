@@ -23,22 +23,22 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>zttext API</h1>
 <article>
-<p><a href="lib-zttext.html">← zttext</a> · version 0.1.2</p>
+<p><a href="lib-zttext.html">← zttext</a> · version 0.1.3</p>
 <p class="lib-legend">84 public items, in source order. Generated from the registry index, which re-derives them from the package source at publish time — so a signature here is the one that version actually ships.</p>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">zttext_version</span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span></code></pre>
-<p>The library's own version marker — a scaffold anchor so the parity harness (interpret == native == native-wasm) exists before any engine logic lands.</p>
+<p>The version of this source — the <code>version</code> in its <code>loft.toml</code>, bumped with it.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Piece</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Piece</span> { start: <span class="ty"><a href="stdlib-types.html">integer</a></span>, count: <span class="ty"><a href="stdlib-types.html">integer</a></span>, style: <span class="ty"><a href="stdlib-types.html">integer</a></span> }</code></pre>
 <p>A piece p = ⟨o, ℓ, s⟩ references the buffer span B[start, start+count) with style-id <code>style</code>. Pieces are immutable value objects: an edit REBUILDS the piece sequence, it never mutates a piece or swaps vector slots in place.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Doc</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Doc</span> { buf: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">character</a></span>&gt;, pieces: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Piece</span>&gt; }</code></pre>
 <p>The content model. <code>buf</code> is the append-only buffer B ∈ Σ* (a vector&lt;character&gt;, so offsets are characters); <code>pieces</code> is the piece sequence D = ⟨p₁…pₙ⟩. The materialised text ⌊D⌋ is the concatenation of each piece's buffer span. (Bundling B with D keeps the engine's surface small; the buffer is treated as append-only within an edit.)</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Run</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Run</span> { str: <span class="ty"><a href="stdlib-types.html">text</a></span>, style: <span class="ty"><a href="stdlib-types.html">integer</a></span> }</code></pre>
 <p>A styled run: a maximal same-style character span. <code>slice_runs</code> returns these; they are what an inverse Ins/Sty re-creates so undo restores styles, not just text.</p>
 </div>
 <div class="item">
@@ -90,11 +90,11 @@
 <p>per-character style vector over the whole doc (χ_D as a concrete list) — the reference against which piece-blindness (I2) and undo are checked.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">enum</span> <span class="en">Op</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">enum</span> <span class="en">Op</span> { <span class="en">Ins</span> { at: <span class="ty"><a href="stdlib-types.html">integer</a></span>, str: <span class="ty"><a href="stdlib-types.html">text</a></span>, style: <span class="ty"><a href="stdlib-types.html">integer</a></span> }, <span class="en">Del</span> { from: <span class="ty"><a href="stdlib-types.html">integer</a></span>, to: <span class="ty"><a href="stdlib-types.html">integer</a></span> }, <span class="en">Sty</span> { from: <span class="ty"><a href="stdlib-types.html">integer</a></span>, to: <span class="ty"><a href="stdlib-types.html">integer</a></span>, style: <span class="ty"><a href="stdlib-types.html">integer</a></span> } }</code></pre>
 <p>The primitive edit operations (notation §8): ins(a,t,σ) · del(a,b) · sty(a,b,σ).</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Txn</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Txn</span> { ops: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Op</span>&gt; }</code></pre>
 <p>A transaction τ — an atomic, ordered composition of primitive ops; the unit of undo.</p>
 </div>
 <div class="item">
@@ -118,7 +118,7 @@
 <p>invert(D, τ) → τ⁻¹ such that apply(apply(D,τ), τ⁻¹) ≈ D (same text + same per-char styles). Each op's inverse is computed against its pre-state; the groups are emitted in reverse op order (prepend each new group), since τ⁻¹ undoes the last op first.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Style</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Style</span> { size: <span class="ty"><a href="stdlib-types.html">float</a></span>, weight: <span class="ty"><a href="stdlib-types.html">integer</a></span>, italic: <span class="ty"><a href="stdlib-types.html">boolean</a></span>, dir: <span class="ty"><a href="stdlib-types.html">integer</a></span> }</code></pre>
 <p>A concrete style σ ∈ 𝕊. For the fake monospace measurer only <code>size</code> (per-character advance) matters; <code>weight</code>/<code>italic</code>/<code>dir</code> (0 = LTR, 1 = RTL) round out the shape the real backends will fill in. Layout reads styles ONLY through a StyleResolver, so a surface restyles by swapping the resolver.</p>
 </div>
 <div class="item">
@@ -138,30 +138,31 @@
 <p>The fake box height of a run in style <code>st</code>. Real backends give ascent+descent; the fake uses square cells (height = size) so line stacking is deterministic and hand-checkable.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Rect</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Rect</span> { x: <span class="ty"><a href="stdlib-types.html">float</a></span>, y: <span class="ty"><a href="stdlib-types.html">float</a></span>, w: <span class="ty"><a href="stdlib-types.html">float</a></span>, h: <span class="ty"><a href="stdlib-types.html">float</a></span> }</code></pre>
 <p>The render IR (notation §4). A Rect is a plane rectangle; a Box β = ⟨rect, κ, style⟩ carries the LOGICAL content-ref κ = [ks, ke) (character span in ⌊D⌋) and a single style. The rect's position is the VISUAL order; κ is the LOGICAL order — both explicit in every box, which is the whole BiDi story (a selection is κ-intersection, geometry-free).</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Box</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Box</span> { rect: <span class="en">Rect</span>, ks: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ke: <span class="ty"><a href="stdlib-types.html">integer</a></span>, style: <span class="ty"><a href="stdlib-types.html">integer</a></span>, hyphen: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span> }</code></pre>
 <p><code>hyphen</code> marks a synthetic line-end hyphen glyph (from a discretionary break, S4.7): it renders &quot;-&quot; rather than its κ text, and κ points at the soft-hyphen it stands in for.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">BoxSet</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">BoxSet</span> { boxes: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Box</span>&gt; }</code></pre>
+<p>The boxes of a laid-out text: one <code>Box</code> per glyph run, in layout order.  What <code>flow_layout</code> returns.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">LaidLine</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">LaidLine</span> { cs: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ce: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">float</a></span>, h: <span class="ty"><a href="stdlib-types.html">float</a></span>, para_end: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>, right: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span> }</code></pre>
 <p>A laid-out visual line: the logical char span [cs,ce) its boxes cover, its top y and its height. <code>para_end</code> is true when this is a paragraph's LAST line (ended at a hard break or the doc end) — it is left ragged (justify skips it). <code>right</code> is the line's available right edge (the column edge, or an image's edge for a line beside one) — the target justify fills to. Carried by a Layout so incremental reflow can find the lines an edit touches (M3).</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">PlacedImage</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">PlacedImage</span> { x: <span class="ty"><a href="stdlib-types.html">float</a></span>, y: <span class="ty"><a href="stdlib-types.html">float</a></span>, w: <span class="ty"><a href="stdlib-types.html">float</a></span>, h: <span class="ty"><a href="stdlib-types.html">float</a></span>, id: <span class="ty"><a href="stdlib-types.html">integer</a></span> }</code></pre>
 <p>A placed image on the page: its rectangle + the image reference <code>id</code> (a file_record id at the app layer). It is BOTH a rendered element AND an exclusion region the text steers around.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Layout</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Layout</span> { boxes: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Box</span>&gt;, lines: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">LaidLine</span>&gt;, images: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">PlacedImage</span>&gt; }</code></pre>
 <p>A full layout result: the text boxes (the render IR), per-line metadata (the seam incremental reflow needs), and the placed images (rendered separately; text never overlaps them). <code>flow_layout</code> returns just the BoxSet; <code>flow_layout_full</code> returns this.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Token</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Token</span> { word: <span class="ty"><a href="stdlib-types.html">boolean</a></span>, ts: <span class="ty"><a href="stdlib-types.html">integer</a></span>, te: <span class="ty"><a href="stdlib-types.html">integer</a></span>, disc: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>, brk: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span> }</code></pre>
 <p>A token in the stream: a word (non-space run), glue (a space run), a discretionary break (<code>disc</code>, a soft hyphen), or a paragraph break (<code>brk</code>, a newline run). <code>word</code>/<code>disc</code>/<code>brk</code> are the kind flags; all false → glue. Glue is the breakable inter-word space; disc is a zero-width in-WORD break (S4.7); brk is a HARD break that ends the line and starts a new paragraph (a paragraph's last line is ragged, and gets paragraph spacing after it).</p>
 </div>
 <div class="item">
@@ -185,7 +186,7 @@
 <p>ν(t) — the measured advance of a token: the sum over its style-runs of μ(run, ρ(style)). (A token may cross a style boundary; each run measures under its own resolved style.)</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Line</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Line</span> { first: <span class="ty"><a href="stdlib-types.html">integer</a></span>, last_excl: <span class="ty"><a href="stdlib-types.html">integer</a></span> }</code></pre>
 <p>A laid-out line: the half-open token range [first, last_excl). Trailing glue at a break is NOT included (notation §6: &quot;trailing glue on a line is dropped&quot;).</p>
 </div>
 <div class="item">
@@ -197,7 +198,7 @@
 <p>Break ONE line greedily starting at token <code>from</code> → (last_excl, next_tok, hyphen_disc, para_break): the line covers tokens [from, last_excl); the next line starts at <code>next_tok</code>; hyphen_disc is the token index of a soft hyphen the line broke a word at (a trailing hyphen glyph), else -1; para_break is true when the line ended at a HARD paragraph break (which is consumed — <code>next_tok</code> is past it). The per-line step both the full layout and the patch reuse.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">PlacedLine</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">PlacedLine</span> { boxes: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Box</span>&gt;, line: <span class="en">LaidLine</span> }</code></pre>
 <p>A placed line: its boxes plus its LaidLine metadata.</p>
 </div>
 <div class="item">
@@ -269,7 +270,7 @@
 <p>dirty(D, D′) → (lo, hi_old, hi_new): the minimal changed span, computed by diffing the STYLED string (char AND style per position) — common prefix <code>lo</code>, common suffix trimmed. old[lo,hi_old) was replaced by new[lo,hi_new); the net char change is hi_new - hi_old. Diffing the observable styled string (not τ's op structure) gives the tightest range and makes patch independent of HOW the edit was expressed.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">PatchResult</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">PatchResult</span> { layout: <span class="en">Layout</span>, recomputed: <span class="ty"><a href="stdlib-types.html">integer</a></span>, reused: <span class="ty"><a href="stdlib-types.html">integer</a></span> }</code></pre>
 <p>The result of an incremental relayout: the new Layout, plus how many boxes were RECOMPUTED (the tail) vs REUSED from the old layout (the prefix). The counts are the bounded-work evidence M5 asserts; the layout is what M3's differential checks against a full relayout.</p>
 </div>
 <div class="item">
@@ -290,7 +291,7 @@
 <p>map a caret through a whole transaction (op by op, left to right).</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Page</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Page</span> { first_line: <span class="ty"><a href="stdlib-types.html">integer</a></span>, last_excl: <span class="ty"><a href="stdlib-types.html">integer</a></span>, first_char: <span class="ty"><a href="stdlib-types.html">integer</a></span>, top_y: <span class="ty"><a href="stdlib-types.html">float</a></span> }</code></pre>
 <p>A page: the line range [first_line, last_excl) it holds, plus the char and y at which it starts (its π entry — enough to lay the page out from scratch without the pages before it).</p>
 </div>
 <div class="item">
@@ -326,7 +327,7 @@
 <p>Coalesce up to <code>budget</code> adjacent piece pairs that reference a CONTIGUOUS buffer span with the SAME style (edits fragment the piece vector; those fragments often become mergeable again). Bounded per call (≤ budget merges) so it is interruptible — run it repeatedly in idle time. ⌊D⌋ is unchanged (a pure storage-layer coalesce), which is probe P3.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">PageGeom</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">PageGeom</span> { width: <span class="ty"><a href="stdlib-types.html">float</a></span>, height: <span class="ty"><a href="stdlib-types.html">float</a></span>, margin_left: <span class="ty"><a href="stdlib-types.html">float</a></span>, margin_right: <span class="ty"><a href="stdlib-types.html">float</a></span>, margin_top: <span class="ty"><a href="stdlib-types.html">float</a></span>, margin_bottom: <span class="ty"><a href="stdlib-types.html">float</a></span>, columns: <span class="ty"><a href="stdlib-types.html">integer</a></span>, gutter: <span class="ty"><a href="stdlib-types.html">float</a></span>, para_gap: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span> }</code></pre>
 <p>Page geometry: the physical page, its margins, and its column grid. Column width is derived so <code>columns</code> equal columns plus <code>gutter</code> gaps exactly fill the content box.</p>
 </div>
 <div class="item">
@@ -342,7 +343,7 @@
 <p>Lay text out over a multi-column page grid in ABSOLUTE canvas coordinates (pages stacked downward, columns side by side within a page). Lines are broken at the column width and stacked down a column; when a line would overflow the column, flow moves to the next column, then to column 0 of the next page. Reuses next_line + place_line, so styles, per-run boxes, and discretionary hyphenation all carry over unchanged; the produced boxes feed Sel / hit-test / render directly. (Incremental multi-column reflow is a follow-on; an edit currently re-runs this full flow, which is fine at document scale.)</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">FlowImage</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">FlowImage</span> { at: <span class="ty"><a href="stdlib-types.html">integer</a></span>, mode: <span class="ty"><a href="stdlib-types.html">integer</a></span>, w: <span class="ty"><a href="stdlib-types.html">float</a></span>, h: <span class="ty"><a href="stdlib-types.html">float</a></span>, id: <span class="ty"><a href="stdlib-types.html">integer</a></span> }</code></pre>
 <p>An in-text (flow) image anchored at content char <code>at</code>, with a placement mode and size. mode: IMG_LEFT → float left, text wraps right; IMG_FULL → full-width block, text below; IMG_RIGHT → float right, text wraps left. Placed at the flow position when reached.</p>
 </div>
 <div class="item">
