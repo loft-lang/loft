@@ -687,13 +687,14 @@ fn generate_libraries_page<S: std::hash::BuildHasher>(
         generate_library_guides(index, stdlib_sections, topic_info, link_map)?;
     println!(
         "Generated {guides} library guides ({no_guide} package(s) ship none yet, \
-         {guide_uncached} not in the local registry cache and say so)"
+         {guide_uncached} not in the local registry cache: a committed page is kept, \
+         `make doc` fetches the package)"
     );
     let (src_pages, uncached) =
         generate_library_source_pages(index, stdlib_sections, topic_info, link_map)?;
     println!(
         "Generated {src_pages} library source browsers ({uncached} package(s) not in the \
-         local registry cache and say so)"
+         local registry cache: a committed page is kept, `make doc` fetches the package)"
     );
     Ok(index.packages.len())
 }
@@ -764,6 +765,11 @@ fn generate_library_cards(
                     "none yet \u{2014} the API reference and the source below are what there is"
                         .to_string()
                 }
+                // A guide page kept from a box that had the package is still the guide.
+                GuideSource::Uncached if committed_library_page(name, "guide") => format!(
+                    "<a href=\"lib-{0}-guide.html\">getting started with {0}</a>",
+                    esc(name)
+                ),
                 GuideSource::Uncached => format!(
                     "not known \u{2014} <code>{}</code> is not in this build's registry cache",
                     esc(name)
@@ -1160,6 +1166,16 @@ fn guide_source(name: &str, semver: &str) -> GuideSource {
     }
 }
 
+/// Is there a committed `doc/lib-<name>-<page>.html` to keep?  loft#1850 — a library's
+/// guide and source pages are a function of the REGISTRY (its index and the packages it
+/// serves), not of this tree, and a box whose cache lacks the indexed version can only write a
+/// "not on this build box" page.  Overwriting a committed page with that turned the published
+/// site into a record of the committing box's cache, so such a page is KEPT instead, and only a
+/// box that has the package rewrites it — `make doc` fetches every indexed version first.
+fn committed_library_page(name: &str, page: &str) -> bool {
+    std::path::Path::new(&format!("doc/lib-{name}-{page}.html")).is_file()
+}
+
 /// The `@TITLE:` a topic file declares, used only to head one guide among several.
 fn topic_title(source: &str) -> Option<String> {
     source.lines().find_map(|l| {
@@ -1209,6 +1225,10 @@ fn generate_library_source_pages<S: std::hash::BuildHasher>(
         };
         let dir = loft::registry_index::extract_dir(name, &v.semver);
         let files = collect_sources(&dir);
+        if files.is_empty() && committed_library_page(name, "src") {
+            uncached += 1;
+            continue; // kept as committed — see `committed_library_page`
+        }
 
         let mut body = String::new();
         let _ = writeln!(
