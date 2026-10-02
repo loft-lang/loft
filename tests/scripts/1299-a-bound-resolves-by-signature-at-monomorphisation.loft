@@ -4,7 +4,7 @@
 // loft#1274 settled that a bound is satisfied by a SIGNATURE and not by a name, and fixed the
 // USE site.  The MONOMORPHISATION site still resolved by name:
 //
-//     interface Subtractive { op - (self: Self, other: Self) -> Self }
+//     interface Subtractive { operator minus(self: Self, other: Self) -> Self }
 //     fn diff<T: Subtractive>(a: T, b: T) -> T { a - b }
 //     diff(10, 3)   ->   -10          // want 7
 //
@@ -48,10 +48,10 @@
 //   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
 //   both. The native side was not scored in this sweep.
 
-interface Sub1299 { op - (self: Self, other: Self) -> Self }
-interface Mul1299 { op * (self: Self, other: Self) -> Self }
-interface Add1299 { op + (self: Self, other: Self) -> Self }
-interface Lt1299  { op < (self: Self, other: Self) -> boolean }
+interface Sub1299 { operator minus(self: Self, other: Self) -> Self }
+interface Mul1299 { operator times(self: Self, other: Self) -> Self }
+interface Add1299 { operator plus(self: Self, other: Self) -> Self }
+interface Lt1299  { operator compare(self: Self, other: Self) -> Ordering }
 
 struct M1299 { v: integer }
 operator minus(self: M1299, other: M1299) -> M1299 { M1299 { v: self.v - other.v } }

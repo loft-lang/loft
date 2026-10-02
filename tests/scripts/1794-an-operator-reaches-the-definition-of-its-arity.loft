@@ -32,13 +32,11 @@
 //   HOLDS: the binary-only type `W` and the builtin `sub(5, 2)` / `neg(4)` answer the same on
 //   both trees; clean under LOFT_POISON=1 with LOFT_STRICT_STORES=1 here.
 
-// C132 — the definitions are `operator minus` (and `plus`, `times`).  A program's type cannot
-// define the UNARY `-` (`negate` is a reserved name, @PLN182 Q10), so the unary and the
-// both-arities cells are absent until it can; `-a` on such a type is refused naming what to
-// write (`tests/parse_errors.rs::an_operator_at_an_arity_its_type_lacks_is_refused`).  What
-// remains is the binary half across every other axis above, and the unary over a builtin.
+// C132 — the definitions are `operator` methods: the binary `-` is `operator minus` and the
+// unary one `operator negate` (@PLN182 P5b), so both arities stay two definitions of a type.
 
 struct V { x: integer }
+operator negate(self: V) -> V { V { x: -self.x } }
 operator minus(self: V, o: V) -> V { V { x: self.x - o.x } }
 operator plus(self: V, o: V) -> V { V { x: self.x + o.x } }
 operator times(self: V, o: V) -> V { V { x: self.x * o.x } }
@@ -47,9 +45,11 @@ struct W { x: integer }
 operator minus(self: W, o: W) -> W { W { x: self.x - o.x } }
 
 struct S { t: text }
+operator negate(self: S) -> S { S { t: "-{self.t}" } }
 operator minus(self: S, o: S) -> S { S { t: "{self.t}-{o.t}" } }
 
 struct N { x: integer }
+operator negate(self: N) -> integer { 0 - self.x }
 operator minus(self: N, o: N) -> integer { self.x - o.x }
 
 fn sub<T: Subtractable>(a: T, b: T) -> T { a - b }
@@ -59,19 +59,26 @@ fn main() {
   a = V { x: 3 };
   b = V { x: 1 };
   c = a - b;
+  d = -a;
   e = a - b - b;
-  g = a + (a - b) * b;
+  f = -(a - b);
+  g = a + -b;
   assert(c.x == 2, "binary: {c.x}");
+  assert(d.x == -3, "unary: {d.x}");
   assert(e.x == 1, "chained binary: {e.x}");
-  assert(g.x == 5, "binary inside another operator: {g.x}");
+  assert(f.x == -2, "unary over binary: {f.x}");
+  assert(g.x == 2, "unary inside another operator: {g.x}");
   w = W { x: 9 } - W { x: 4 };
   assert(w.x == 5, "binary-only type: {w.x}");
   s = S { t: "p" } - S { t: "q" };
-  assert(s.t == "p-q", "text payload: {s.t}");
+  ns = -S { t: "p" };
+  assert(s.t == "p-q" && ns.t == "-p", "text payload: {s.t} {ns.t}");
   n = N { x: 7 } - N { x: 2 };
-  assert(n == 5, "integer result: {n}");
+  nn = -N { x: 7 };
+  assert(n == 5 && nn == -7, "integer result: {n} {nn}");
   gs = sub(a, b);
-  assert(gs.x == 2, "through a bound: {gs.x}");
+  gn = neg(a);
+  assert(gs.x == 2 && gn.x == -3, "through a bound: {gs.x} {gn.x}");
   assert(sub(5, 2) == 3 && neg(4) == -4, "the bound over integer");
   vs = [V { x: 10 }, V { x: 4 }];
   t = vs[0] - vs[1];

@@ -1,8 +1,7 @@
 diff --git a/src/parser/operators.rs b/src/parser/operators.rs
-index 9533a95c1..73c8d415c 100644
 --- a/src/parser/operators.rs
 +++ b/src/parser/operators.rs
-@@ -1322,7 +1322,7 @@ impl Parser {
+@@ -1387,7 +1387,7 @@
      /// The `operator` form an arithmetic symbol backs, for the forms built so far.
      fn arith_form(op: &str) -> Option<&'static str> {
          match op {
@@ -10,4 +9,4 @@ index 9533a95c1..73c8d415c 100644
 +            "+" => Some("minus"),
              "-" => Some("minus"),
              "*" => Some("times"),
-             _ => None,
+             "/" => Some("divided_by"),

@@ -89,17 +89,17 @@ fn test_same_scope_capture_works() {
 //
 // So do NOT restore the `??` here when loft#1642 lands — it is refused by design.
 fn test_a_plain_fn_ref_is_what_a_collection_holds() {
-  fs: vector<fn(integer) -> integer> = [double, negate];
+  fs: vector<fn(integer) -> integer> = [double, flip_sign];
   got: vector<integer> = [];
   for f in fs { got += [apply(f, 4)]; }
   assert(len(got) == 2, "two functions in the vector");
   assert((got[0] ?? 0) == 8, "the first is `double`");
-  assert((got[1] ?? 0) == -4, "the second is `negate`");
+  assert((got[1] ?? 0) == -4, "the second is `flip_sign`");
   assert(apply(fs[0], 4) == 8, "and a bare index reaches one directly");
 }
 
 fn double(v: integer) -> integer { v * 2 }
-fn negate(v: integer) -> integer { -v }
+fn flip_sign(v: integer) -> integer { -v }
 
 // The cells, run in order (a script runs nothing by itself).
 test_capture_is_copy_at_definition();

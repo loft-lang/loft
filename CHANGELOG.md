@@ -36,19 +36,32 @@ line each:
   (`self.ms.compare(other.ms)`), which gives all four.
 - `fn OpAdd` / `OpMin` (two operands) / `OpMul` → `operator plus` / `minus` / `times`, same
   parameters.
-- `fn OpEq` / `OpNe` → delete them: `==` and `!=` compare the fields of every type.  If yours
-  compared something else, call it by name.
+- `fn OpEq` / `OpNe` → delete them: `==` and `!=` compare the fields of every type, always,
+  and no type redefines them.  If yours compared something else, keep it as a named method
+  (`same_second(self, other)`) and call that.
 - `fn OpConvTFromS(v: S) -> T` → `operator to_t(self: S) -> T`, with `T`'s name in snake case
   (`OpConvDateTimeFromText` → `operator to_date_time(self: text) -> DateTime`).
 - `fn to_text(self: T…)` and `fn next(self: T)` → the same with `operator` in place of `fn`;
   `"{x}"` and `for e in x` reach only those.
 - `fn OpIndex` → a named method, called as `x.at(i)`: `[…]` belongs to the built-in
   collections, and `x[i]` on your type is refused naming that.
-- the unary `-` (`fn OpMin(self: T)`), `/`, `%` and the bit operators → a named method; a type
-  cannot define them yet, so `Numeric` is met by the built-in numbers only.
+- the unary `-` (`fn OpMin(self: T)`) → `operator negate(self: T) -> V`; `fn OpDiv` /
+  `OpRem` → `operator divided_by` / `remainder`; the bit operators → a named method (a type
+  cannot define them yet).
 
 A library that defined any of these needs a new release; `time` 0.4.0 and `server` 0.7.2 are
 written this way.
+
+**An interface names the method that meets it.**  `op <` in an interface body is refused: write
+`operator compare(self: Self, other: Self) -> Ordering`, and likewise `operator plus`, `minus`,
+`times`, `divided_by`, `remainder` and `negate` for `+`, `-`, `*`, `/`, `%` and a unary `-`.
+`op ==` needs nothing: `Equatable` declares no member, since every type meets it.  The stdlib's
+`Ordered`, `Addable`, `Subtractable` and `Numeric` are spelled so.
+
+**`integer`, `single` and `float` have methods `plus`, `minus`, `times`, `negate`, `divided_by`
+and `remainder`** (and every ordered built-in a `compare`), the `operator` definitions by which
+they meet those interfaces.  A program defining its own function of one of those names whose
+first parameter is such a number is refused with "Cannot redefine": rename it.
 
 ### New
 
@@ -59,6 +72,10 @@ of `fn` — `pub operator compare(self: Date, other: Date) -> Ordering { self.ms
 **…and `+`, `-` and `*`.**  `operator plus`, `operator minus` and `operator times` give a type
 the three operators, `+=`, `-=` and `*=` with them, and `sum` over a vector of it.  A type may
 have several, one per right-hand type: a date minus a date, and a date minus a duration.
+
+**…and `/`, `%` and a unary `-`.**  `operator divided_by`, `remainder` and `negate` give a type
+`/`, `%` and `-x`; `/=` and `%=` come with them.  `==` is not among them: it compares the fields
+of every type, always, so `operator equals` is refused naming a named method as the cure.
 
 **…and `as`.**  `operator to_date_time(self: text) -> DateTime` makes `"2026-07-08" as DateTime`
 work; the name after `to_` is the target type in snake case.  A conversion INTO your type may

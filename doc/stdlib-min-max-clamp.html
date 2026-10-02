@@ -60,28 +60,92 @@
 <p>Clamps v into the inclusive range [lo, hi]. Returns null if any argument is null.</p>
 </div>
 <div class="item">
-<pre><code>pub enum Ordering {
-  Less,
-  Equal,
-  Greater
-}</code></pre>
-<p>Where one value stands against another: what `compare` answers.  An enum rather than a signed number, so a comparison cannot be written as a subtraction that overflows.</p>
-</div>
-<div class="item">
 <pre><code>pub fn then(self: Ordering, next: Ordering) -&gt; Ordering</code></pre>
 <p>This answer, or `next` when this one is `Equal`: compares by several fields in turn, `a.year.compare(b.year).then(a.month.compare(b.month))`.</p>
 </div>
 <div class="item">
-<pre><code>pub fn compare(self: integer, other: integer) -&gt; Ordering</code></pre>
+<pre><code>pub operator compare(self: integer, other: integer) -&gt; Ordering</code></pre>
 <p>Where `self` stands against `other` — `Less`, `Equal` or `Greater` — in the order `&lt;` uses.</p>
 </div>
 <div class="item">
-<pre><code>pub fn compare(self: single, other: single) -&gt; Ordering</code></pre>
+<pre><code>pub operator compare(self: single, other: single) -&gt; Ordering</code></pre>
 <p>Where `self` stands against `other`, in the order `&lt;` uses.</p>
 </div>
 <div class="item">
-<pre><code>pub fn compare(self: float, other: float) -&gt; Ordering</code></pre>
+<pre><code>pub operator compare(self: float, other: float) -&gt; Ordering</code></pre>
 <p>Where `self` stands against `other`, in the order `&lt;` uses.</p>
+</div>
+<div class="item">
+<pre><code>pub operator plus(self: integer, other: integer) -&gt; integer</code></pre>
+<p>`+` as the method `Addable` names: `a.plus(b)` is `a + b`.</p>
+</div>
+<div class="item">
+<pre><code>pub operator minus(self: integer, other: integer) -&gt; integer</code></pre>
+<p>`-` as the method `Subtractable` names: `a.minus(b)` is `a - b`.</p>
+</div>
+<div class="item">
+<pre><code>pub operator times(self: integer, other: integer) -&gt; integer</code></pre>
+<p>`*` as the method `Numeric` names: `a.times(b)` is `a * b`.</p>
+</div>
+<div class="item">
+<pre><code>pub operator negate(self: integer) -&gt; integer</code></pre>
+<p>The unary `-` as the method `Numeric` names: `a.negate()` is `-a`.</p>
+</div>
+<div class="item">
+<pre><code>pub operator divided_by(self: integer, other: integer) -&gt; integer?</code></pre>
+<p>`/` as a method: `a.divided_by(b)` is `a / b`, null on a zero divisor.</p>
+</div>
+<div class="item">
+<pre><code>pub operator remainder(self: integer, other: integer) -&gt; integer?</code></pre>
+<p>`%` as a method: `a.remainder(b)` is `a % b`, null on a zero divisor.</p>
+</div>
+<div class="item">
+<pre><code>pub operator plus(self: single, other: single) -&gt; single</code></pre>
+<p>`+` as the method `Addable` names: `a.plus(b)` is `a + b`.</p>
+</div>
+<div class="item">
+<pre><code>pub operator minus(self: single, other: single) -&gt; single</code></pre>
+<p>`-` as the method `Subtractable` names: `a.minus(b)` is `a - b`.</p>
+</div>
+<div class="item">
+<pre><code>pub operator times(self: single, other: single) -&gt; single</code></pre>
+<p>`*` as the method `Numeric` names: `a.times(b)` is `a * b`.</p>
+</div>
+<div class="item">
+<pre><code>pub operator negate(self: single) -&gt; single</code></pre>
+<p>The unary `-` as the method `Numeric` names: `a.negate()` is `-a`.</p>
+</div>
+<div class="item">
+<pre><code>pub operator divided_by(self: single, other: single) -&gt; single?</code></pre>
+<p>`/` as a method: `a.divided_by(b)` is `a / b`, null on a zero divisor.</p>
+</div>
+<div class="item">
+<pre><code>pub operator remainder(self: single, other: single) -&gt; single?</code></pre>
+<p>`%` as a method: `a.remainder(b)` is `a % b`, null on a zero divisor.</p>
+</div>
+<div class="item">
+<pre><code>pub operator plus(self: float, other: float) -&gt; float</code></pre>
+<p>`+` as the method `Addable` names: `a.plus(b)` is `a + b`.</p>
+</div>
+<div class="item">
+<pre><code>pub operator minus(self: float, other: float) -&gt; float</code></pre>
+<p>`-` as the method `Subtractable` names: `a.minus(b)` is `a - b`.</p>
+</div>
+<div class="item">
+<pre><code>pub operator times(self: float, other: float) -&gt; float</code></pre>
+<p>`*` as the method `Numeric` names: `a.times(b)` is `a * b`.</p>
+</div>
+<div class="item">
+<pre><code>pub operator negate(self: float) -&gt; float</code></pre>
+<p>The unary `-` as the method `Numeric` names: `a.negate()` is `-a`.</p>
+</div>
+<div class="item">
+<pre><code>pub operator divided_by(self: float, other: float) -&gt; float?</code></pre>
+<p>`/` as a method: `a.divided_by(b)` is `a / b`, null on a zero divisor.</p>
+</div>
+<div class="item">
+<pre><code>pub operator remainder(self: float, other: float) -&gt; float?</code></pre>
+<p>`%` as a method: `a.remainder(b)` is `a % b`, null on a zero divisor.</p>
 </div>
 <div class="item">
 <pre><code>pub fn approx(self: float, b: float, eps: float) -&gt; boolean</code></pre>

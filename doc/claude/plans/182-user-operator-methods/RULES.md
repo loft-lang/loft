@@ -106,20 +106,10 @@ the definition is reached by syntax, and nothing is spelled `Op`.
                discharged exactly as the receiver or argument of the same call would be.
                The language adds no fault (C80).
 
-  (Op-Eq)      `==` / `!=` on a user type is (E-Eq), structural, unless the type has an `operator
-               equals(self: τ, other: τ) -> boolean`: then `a == b` is `a.equals(b)` and `a != b`
-               is `!a.equals(b)`, one call each.  (E-Eq)'s structural comparison of a value that
-               HOLDS a τ uses τ's `equals` for that field, as it uses each field's own `==`.
-               `compare` and `equals` are independent: `compare` answering `Equal` does not make
-               `==` true, and the page says so.
-
-  (Op-Key)     [lands WITH `operator equals`, Q14] a keyed collection (`hash`, `sorted`, `index`,
-               `spatial`, `trie`) whose key field's
-               type has an `operator equals` — itself, or any type it holds by value, at any depth
-               — is refused at its DECLARATION.  The key's hash and order are structural, and
-               (E-Eq-Key) requires them to agree with `==`; a user `equals` would make them
-               disagree (README Q3, the matrix).  The cure the refusal names: key on a field whose
-               type keeps structural `==`.
+  (Op-Eq)      `==` / `!=` are (E-Eq), structural, on every type at every depth; no type defines
+               them, and `operator equals` is refused naming a named method as the cure (@C134,
+               README Q3).  `compare` answering `Equal` does not make `==` true.  No key rule
+               follows: every key compares structurally (Q14 closed).
 
   (Op-Conv)    `x as T` on a user type calls `x.to_t()`, where `t` is T's name in snake case
                (`DateTime` → `date_time`, `HttpRequest` → `http_request`, an all-capital run is one
@@ -182,8 +172,7 @@ the definition is reached by syntax, and nothing is spelled `Op`.
 | keyed `for` slice | Op-KeyRange | placed, refused |
 | spatial slices | Op-Spatial | refused |
 | `** & \| ^ ~ << >>` | Op-Bits | placed, refused |
-| `== !=` | Op-Eq | structural; `operator equals` placed |
-| a key field with `equals` | Op-Key | with `operator equals` |
+| `== !=` | Op-Eq | structural, always; `operator equals` refused (@C134) |
 | `x as T` | Op-Conv | yes |
 | `!` | Op-Not | presence |
 | bounds | Op-Bound | with P1/P2/P3 |
@@ -196,6 +185,7 @@ the definition is reached by syntax, and nothing is spelled `Op`.
 **The subset (owner, Q10: "we implement what is in use at least for now").**  Built in P1–P2:
 `compare`, `plus`, `minus`, `times`, the `to_<type>` conversions, `next` and `to_text` — what
 `time`, `server` and the stdlib define today.  Every other row is PLACED: designed here, reserved,
-and refused with the page's `--explain` line — `equals` (with Op-Key), `negate`, `divided_by`,
-`remainder`, `at` / `set_at`, the slices, `**` and the bit operators.  `OpIndex` retires in P5
+and refused with the page's `--explain` line — `at` / `set_at`, the slices, `**` and the bit
+operators.  `negate`, `divided_by` and `remainder` were built in P5b; `equals` is refused for
+good (@C134).  `OpIndex` retires in P5
 with no shipped replacement.

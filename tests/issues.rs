@@ -3443,13 +3443,13 @@ fn p123_vector_in_loop() {
 #[test]
 fn p126_negative_tail_expression() {
     code!(
-        "fn negate(n: integer) -> integer {
+        "fn flip_sign(n: integer) -> integer {
     if n > 0 { return 0 - n; }
     n
 }
 fn test() {
-    assert(negate(5) == -5, \"negate positive\");
-    assert(negate(-3) == -3, \"negate negative\");
+    assert(flip_sign(5) == -5, \"negate positive\");
+    assert(flip_sign(-3) == -3, \"negate negative\");
 }"
     )
     .result(Value::Null);

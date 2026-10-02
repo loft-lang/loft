@@ -37,11 +37,11 @@
 <p>Byte length of the character's UTF-8 encoding (1–4).</p>
 </div>
 <div class="item">
-<pre><code>pub fn compare(self: text, other: text) -&gt; Ordering</code></pre>
+<pre><code>pub operator compare(self: text, other: text) -&gt; Ordering</code></pre>
 <p>Where `self` stands against `other`, in the order `&lt;` uses: by bytes, as `&lt;` compares text.</p>
 </div>
 <div class="item">
-<pre><code>pub fn compare(self: character, other: character) -&gt; Ordering</code></pre>
+<pre><code>pub operator compare(self: character, other: character) -&gt; Ordering</code></pre>
 <p>Where `self` stands against `other`, by code point, in the order `&lt;` uses.</p>
 </div>
 <div class="item">

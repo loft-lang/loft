@@ -48,8 +48,8 @@ operator minus(self: Money1275, other: Money1275) -> Money1275 {
 
 // A user-declared interface asking for both arities — loft#1275's own reproducer.
 interface SubNeg1275 {
-  op - (self: Self, other: Self) -> Self
-  op - (self: Self) -> Self
+  operator minus(self: Self, other: Self) -> Self
+  operator negate(self: Self) -> Self
 }
 
 fn diff1275<T: Subtractable>(a: T, b: T) -> T { a - b }

@@ -460,9 +460,10 @@ these methods `pub` to use them across a `use` boundary.  The full rules:
 [formal/operators.md](formal/operators.md).
 
 - **Operators** — `operator compare(self: T, other: T) -> Ordering` gives `a < b`, `<=`, `>`,
-  `>=` (one call, `a.compare(b) == Less` and so on); `operator plus` / `minus` / `times` give
-  `+`, `-`, `*`, and `a += b` with them.  They dispatch **directly**, not only inside
-  `<T: Ordered>`.  `==` and `!=` compare the fields of every type and are not redefined.
+  `>=` (one call, `a.compare(b) == Less` and so on); `operator plus` / `minus` / `times` /
+  `divided_by` / `remainder` give `+`, `-`, `*`, `/`, `%`, and `a += b` with them;
+  `operator negate` gives `-x`.  `==` and `!=` always compare the fields (@C134).  They
+  dispatch **directly**, not only inside `<T: Ordered>`.
   **One operator may be overloaded on its second operand's type** — `operator minus(self: T, o:
   T)` beside `operator minus(self: T, o: integer)`, in either order: `a - b` reaches the one
   the call `a.minus(b)` would, the exact type preferred over a conversion ((F-Recv),

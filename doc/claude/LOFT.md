@@ -565,7 +565,7 @@ holds. When you want a remainder that wraps into `[0, n)` (the sign of the *divi
 circular indexing), use `floor_mod`: `(-1).floor_mod(3) == 2`. Division or `%` by zero is a
 **null**, never a fault (C80) — discharge it with `?? default`.
 
-### Operators on your own type — `operator compare`, `plus`, `minus`, `times`, `to_<type>`
+### Operators on your own type — `operator compare`, `plus`, `minus`, `times`, …
 
 A type gets `<`, `<=`, `>` and `>=` from one method written with `operator` in place of `fn`:
 
@@ -585,17 +585,20 @@ fn test_a_date_is_ordered_by_its_operator_compare() {
 }
 ```
 
-`operator plus`, `operator minus` and `operator times` give `+`, `-` and `*` the same way, and
-`a += b` is `a = a.plus(b)`.  The LEFT operand's type decides, chosen by the right operand's
+`operator plus`, `minus`, `times`, `divided_by` and `remainder` give `+`, `-`, `*`, `/` and `%`
+the same way, `operator negate` the unary `-x`, and `a += b` is `a = a.plus(b)`.  The LEFT operand's type decides, chosen by the right operand's
 type among its definitions: `d - span` and `d - other_date` may be two `minus`, and `3 * w` is
 refused where `w * 3` is not.
 
 `x as T` calls `operator to_t(self: S) -> T`, the target's name in snake case
 (`operator to_date_time(self: text) -> DateTime` parses a date text `as DateTime`); a conversion
 INTO your type may take a foreign `self`.  `operator to_text` and `operator next` give `"{x}"`
-and `for e in x` the same way.  `==` and `!=` compare the fields of every type, `[…]` belongs to
-the built-in collections (a type reads through a named method, `x.at(i)`), and the forms not
-listed here — `/`, `%`, the unary `-` — a type cannot define yet.
+and `for e in x` the same way.  `==` and `!=` compare the fields of every type, always — no type
+redefines them, and a comparison of a type's own is a named method; `!x` is the presence test
+on every type.
+`[…]` belongs to the built-in collections (a type reads through a named method, `x.at(i)`), and
+`**` and the bit operators a type cannot define yet.  An interface names the same methods:
+`interface Ordered { operator compare(self: Self, other: Self) -> Ordering }`.
 
 Each form is one call of the LEFT operand's method, operands in the order they are written.
 A method declared with plain `fn` is an ordinary method, and the operator on that type is

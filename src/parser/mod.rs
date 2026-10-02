@@ -10115,6 +10115,23 @@ impl Parser {
         }
     }
 
+    /// Is `child_nr` (named `member`) the symbolic alias of an `operator` member of the same
+    /// interface — `OpLt` beside `operator compare`, `OpMin` at one operand beside `operator
+    /// negate`?  Read from the interface's own members, so it holds for an interface loaded
+    /// from the startup cache as for one parsed now.
+    fn is_operator_alias(&self, iface_nr: u32, child_nr: u32, member: &str) -> bool {
+        let arity = Self::visible_arity(&self.data, child_nr);
+        let Some(form) = Data::operator_form_of_member(member, arity) else {
+            return false;
+        };
+        self.data.children_of(iface_nr).any(|c| {
+            c != child_nr
+                && self.data.def(c).operator_form()
+                && Self::visible_arity(&self.data, c) == arity
+                && Self::interface_method_name(&self.data, c).as_deref() == Some(form)
+        })
+    }
+
     /// The source symbol of an interface's operator member, for a message: `OpMin` at arity 1
     /// is the unary `-`.
     fn member_symbol(member: &str, arity: usize) -> String {
@@ -10138,7 +10155,22 @@ impl Parser {
     fn missing_member(&self, method_suffix: &str, child_nr: u32, concrete: &Type) -> String {
         let arity = Self::visible_arity(&self.data, child_nr);
         let t = concrete.source_name(&self.data);
-        let form = Data::operator_form_of_member(method_suffix, arity);
+        // A member written `operator` IS its form; a symbolic one names it.
+        let form = if self.data.def(child_nr).operator_form() {
+            [
+                "compare",
+                "plus",
+                "minus",
+                "times",
+                "divided_by",
+                "remainder",
+                "negate",
+            ]
+            .into_iter()
+            .find(|f| *f == method_suffix)
+        } else {
+            Data::operator_form_of_member(method_suffix, arity)
+        };
         let present = form
             .map(|f| self.data.find_op_method(u16::MAX, f, concrete))
             .filter(|d| *d != u32::MAX && self.data.def(*d).operator_form());
@@ -10157,10 +10189,31 @@ impl Parser {
             }
         }
         match form {
-            Some("compare") => {
-                format!("missing `operator compare(self: {t}, other: {t}) -> Ordering`")
+            // The member's own signature, `Self` replaced: what the type has to define.
+            Some(form) => {
+                let params = self.bound_params_at(child_nr, concrete);
+                let names: Vec<String> = (0..self.data.def(child_nr).attributes().len())
+                    .filter(|a| !self.data.def(child_nr).attributes()[*a].hidden)
+                    .map(|a| self.data.attr_name(child_nr, a))
+                    .collect();
+                let list: Vec<String> = names
+                    .iter()
+                    .zip(&params)
+                    .map(|(n, p)| format!("{n}: {}", p.source_name(&self.data)))
+                    .collect();
+                let self_nr = self.data.def_nr("Self");
+                let ret = Self::substitute_type(
+                    self.data.def(child_nr).returned().clone(),
+                    self_nr,
+                    concrete,
+                );
+                let ret = if form == "compare" {
+                    "Ordering".to_string()
+                } else {
+                    ret.source_name(&self.data)
+                };
+                format!("missing `operator {form}({}) -> {ret}`", list.join(", "))
             }
-            Some(form) => format!("missing `operator {form}(self: {t}, other: {t}) -> {t}`"),
             None if method_suffix.starts_with("Op") => format!(
                 "it needs {}, which only the built-in types define",
                 Self::member_symbol(method_suffix, arity)
@@ -10175,9 +10228,22 @@ impl Parser {
     /// Self, k: float)` by `operator times(self: C, k: float)`; the monomorph's operator then
     /// calls it (`substitute_type_in_value`).
     fn operator_meets_member(&self, method_suffix: &str, child_nr: u32, concrete: &Type) -> bool {
-        let Some(form) =
-            Data::operator_form_of_member(method_suffix, Self::visible_arity(&self.data, child_nr))
-        else {
+        let arity = Self::visible_arity(&self.data, child_nr);
+        let form = if self.data.def(child_nr).operator_form() {
+            Data::operator_form_of_member(method_suffix, arity).or(match method_suffix {
+                "compare" => Some("compare"),
+                "plus" => Some("plus"),
+                "minus" => Some("minus"),
+                "times" => Some("times"),
+                "divided_by" => Some("divided_by"),
+                "remainder" => Some("remainder"),
+                "negate" => Some("negate"),
+                _ => None,
+            })
+        } else {
+            Data::operator_form_of_member(method_suffix, arity)
+        };
+        let Some(form) = form else {
             return false;
         };
         let params = self.bound_params_at(child_nr, concrete);
@@ -10211,6 +10277,11 @@ impl Parser {
             let Some(method_suffix) = Self::interface_method_name(&self.data, child_nr) else {
                 continue;
             };
+            // The symbolic alias an `operator` member brings (`OpLt` beside `compare`) is the
+            // generic body's handle, not a second requirement: the member decides.
+            if self.is_operator_alias(iface_nr, child_nr, &method_suffix) {
+                continue;
+            }
             // `@FR-Op-Bound` — an operator member met by the type's `operator` method.
             if self.operator_meets_member(&method_suffix, child_nr, &concrete_type) {
                 continue;
@@ -11722,10 +11793,17 @@ impl Parser {
                 // such a type are its `operator plus` / `minus` / `times`, one call each.  The
                 // stub is matched at its VISIBLE arity: a member answering a struct carries a
                 // hidden return buffer, which the stub and the member both take, in place.
-                if let Some(form) = ["OpAdd", "OpMin", "OpMul"]
-                    .into_iter()
-                    .find(|op| Data::is_bound_stub_for(data.def(d).name(), op, 2))
-                    .and_then(|op| Data::operator_form_of_member(op, 2))
+                if let Some(form) = [
+                    ("OpAdd", 2),
+                    ("OpMin", 2),
+                    ("OpMul", 2),
+                    ("OpDiv", 2),
+                    ("OpRem", 2),
+                    ("OpMin", 1),
+                ]
+                .into_iter()
+                .find(|(op, n)| Data::is_bound_stub_for(data.def(d).name(), op, *n))
+                .and_then(|(op, n)| Data::operator_form_of_member(op, n))
                     && let Some(m) = data.operator_member_with(
                         form,
                         &data
@@ -16481,7 +16559,8 @@ impl Parser {
         let (Type::Reference(d, _) | Type::Enum(d, _, _)) = left.base() else {
             return String::new();
         };
-        if self.data.def(*d).is_stdlib() {
+        // A type variable is not a type a program declares an operator on: its cure is a bound.
+        if self.data.def(*d).is_stdlib() || self.data.is_type_var_placeholder(*d) {
             return String::new();
         }
         let t = types[0].base().source_name(&self.data);
@@ -16495,9 +16574,15 @@ impl Parser {
             ("+" | "+=", 2) => format!("; declare `operator plus(self: {t}, other: {u}) -> …`"),
             ("-" | "-=", 2) => format!("; declare `operator minus(self: {t}, other: {u}) -> …`"),
             ("*" | "*=", 2) => format!("; declare `operator times(self: {t}, other: {u}) -> …`"),
+            ("/" | "/=", 2) => {
+                format!("; declare `operator divided_by(self: {t}, other: {u}) -> …`")
+            }
+            ("%" | "%=", 2) => {
+                format!("; declare `operator remainder(self: {t}, other: {u}) -> …`")
+            }
+            ("-", 1) => format!("; declare `operator negate(self: {t}) -> …`"),
             // The reserved forms (@PLN182 Q10): a type will define these, and cannot yet.
-            ("/" | "/=" | "%" | "%=" | "**" | "&" | "|" | "^" | "<<" | ">>", 2)
-            | ("-" | "~", 1) => {
+            ("**" | "&" | "|" | "^" | "<<" | ">>", 2) | ("~", 1) => {
                 format!("; `{t}` cannot define '{spelled}' yet — call a named method")
             }
             _ => String::new(),

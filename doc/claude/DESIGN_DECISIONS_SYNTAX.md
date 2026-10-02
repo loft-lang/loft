@@ -220,18 +220,41 @@ binds no operator, is no operator template, and satisfies no operator interface 
 `Addable`, …): it is an ordinary function, callable by its name, and its definition says so
 (a warning for `OpEq` / `OpNe` / `OpNot`, an advice otherwise).  An operator on a user type is
 the designed spelling this entry asked for — an `operator` method (`operator compare`, `plus`,
-`minus`, `times`, `to_<type>`, `next`, `to_text`; @PLN182, formal/operators.md) — and `[…]`
-stays the built-in collections'.  A user type keeps structural `==` (C91), its keyed
+`minus`, `times`, `divided_by`, `remainder`, `negate`, `to_<type>`, `next`, `to_text`; @PLN182,
+formal/operators.md) — `==` stays structural (C134), and `[…]` stays the built-in collections'.  A user type keeps structural `==` (C91), its keyed
 collections and named methods, and the key-based stdlib functions `sort_by`, `min_by`,
 `max_by` and `sum_by` (@PLN182 Q11) order and total it by any key one call names.  **Why.** `fn Op<Name>` is the compiler's
 operator table, designed for the stdlib: its names do not say the symbol (`OpMin` is `-`), three
 comparisons derive from `OpLt` unseen, and an operator that calls user code is a place the reader
 does not see what runs (CONTROL.md).  The user path produced six defects in one cycle.
 
-**Revisit when.** A form a type cannot define yet (`/`, `%`, the unary `-`, `==`, `[…]`) is
-needed by a real program — through its reserved `operator` name, never `fn Op…`.  Decided
+**Revisit when.** A form a type cannot define yet (`**`, the bit operators, `[…]`) is needed by
+a real program — through its reserved `operator` name, never `fn Op…`.  Decided
 2026-10-01 — [record](DESIGN_DECISIONS-history.md#c132--operators-are-defined-by-the-stdlib-only-a-user-fn-op-is-an-ordinary-function).
 **Guard:** `a-fn-named-for-an-operator-is-an-ordinary-function.loft` (no operator reaches a
 `fn Op…`), `1580` / `1581` (`==` / `!=` stay field-wise beside one), `996-opindex-composite-subscript.loft`
 (`[…]` refused), `1826b-a-template-member-alone-does-not-satisfy-a-bound.loft` (the template half).
 **Catalogue:** @F26 (bounded generics) · @F37 (operators) · `formal/operators.md` (Op-Std) · loft#1833 (the work).
+
+## C134 — `==` is always structural; no type defines its own
+
+**Decision.** `==` and `!=` compare what two values hold, on every type at every depth, and no
+program redefines them: `operator equals` is refused at its definition, naming the cure — a
+named method for a comparison of the type's own (`same_second(self, other)`).  A plain `fn
+equals` is an ordinary method.  `Equatable` declares nothing, and every type meets it.  **Why.**
+The Go/Java choice, in the owner's words: "we allow everybody to write their own deep compares
+but the `==` in loft stays reliable."  A user `==` is an unchecked contract — nothing makes it an
+equivalence, keeps it agreeing with a key's hash and order, or bounds what it runs — and it
+reaches every structural comparison that holds the type (a field, a vector, a keyed lookup), so
+`==`'s cost and answer would stop being readable from the line.  With it structural, a key
+stays found by its structure and no key rule is needed.
+
+**Revisit when.** A real program needs `==` to mean something its structure does not — and then
+as a question about that program's type, not by reopening user `==`.  Decided 2026-10-02 (owner,
+via the @PLN182 P5b question).
+**Guard:** `tests/parse_errors.rs` (`operator_equals_is_refused`),
+`negate-divided-by-and-remainder-are-operator-methods.loft` (structural `==` at a program's type,
+in a held field and through `Equatable`), `1580` / `1581` (a function named `OpEq` changes
+nothing).
+**Catalogue:** @F37 (operators) · `formal/operators.md` (Op-Eq) · @C91 (every type is
+`Equatable`).

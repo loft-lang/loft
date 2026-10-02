@@ -681,9 +681,9 @@ Full design: [INTERFACES.md](INTERFACES.md).
 **Standard library interfaces** (declared in `default/01_code.loft`):
 
 ```loft
-pub interface Ordered   { op < (self: Self, other: Self) -> boolean }
-pub interface Equatable { op == (self: Self, other: Self) -> boolean }
-pub interface Addable   { op + (self: Self, other: Self) -> Self }
+pub interface Ordered   { operator compare(self: Self, other: Self) -> Ordering }
+pub interface Equatable { }    // every type: `==` is structural (C134)
+pub interface Addable   { operator plus(self: Self, other: Self) -> Self }
 pub interface Printable { operator to_text(self: Self) -> text }
 ```
 

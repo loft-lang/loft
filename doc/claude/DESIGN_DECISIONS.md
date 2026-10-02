@@ -53,6 +53,7 @@ Every entry, by the subject it decides.  Ids are one flat sequence across the su
 
 ## Syntax, names and calls — [DESIGN_DECISIONS_SYNTAX.md](DESIGN_DECISIONS_SYNTAX.md)
 - [C132](DESIGN_DECISIONS_SYNTAX.md#c132--operators-are-defined-by-the-stdlib-only-a-user-fn-op-is-an-ordinary-function) — operators are defined by the stdlib only; a user `fn Op…` is an ordinary function
+- [C134](DESIGN_DECISIONS_SYNTAX.md#c134---is-always-structural-no-type-defines-its-own) — `==` is always structural; no type defines its own
 
 - [C62](DESIGN_DECISIONS_SYNTAX.md#c62--no-type-annotations-in-x-shorthand-lambdas) — No type annotations in `|x|` shorthand lambdas
 - [C63](DESIGN_DECISIONS_SYNTAX.md#c63--no-nested-fn-definitions-inside-fn-bodies) — No nested `fn` definitions inside fn bodies

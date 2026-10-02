@@ -623,13 +623,12 @@ fn an_operator_no_overload_takes_is_refused() {
 fn an_operator_at_an_arity_its_type_lacks_is_refused() {
     // loft#1794, C132 — a form is reached at its own arity only.  `a - b` on a type whose
     // `minus` is a receiver-only plain method names the binary `operator minus` to declare,
-    // and `-c` on a type with a binary `operator minus` is the unary form, which a program's
-    // type cannot define yet (@PLN182 Q10).
+    // and `-c` on a type with only a binary `operator minus` names `operator negate`.
     code!(
         "struct Un { x: integer }\nfn minus(self: Un) -> Un { Un { x: 0 - self.x } }\nstruct Bi { x: integer }\noperator minus(self: Bi, o: Bi) -> Bi { Bi { x: self.x - o.x } }\nfn test() { a = Un { x: 3 }; b = Un { x: 1 }; d = a - b; c = Bi { x: 2 }; e = -c; }"
     )
     .error("No matching operator '-' on 'Un' and 'Un'; declare `operator minus(self: Un, other: Un) -> …` at an_operator_at_an_arity_its_type_lacks_is_refused:5:56")
-    .error("No matching operator '-' on 'Bi'; `Bi` cannot define '-' yet — call a named method at an_operator_at_an_arity_its_type_lacks_is_refused:5:81");
+    .error("No matching operator '-' on 'Bi'; declare `operator negate(self: Bi) -> …` at an_operator_at_an_arity_its_type_lacks_is_refused:5:81");
 }
 
 #[test]
@@ -1790,20 +1789,23 @@ fn interface_duplicate_name_rejected() {
 
 // ── I3.1 — op-sugar in interface bodies ──────────────────────────────────────
 
-/// I3.1: `op < (self: Self, other: Self) -> boolean` in an interface body is
-/// syntactic sugar for a method named `OpLt` and must parse without error.
+/// C132, Q13 (@PLN182): an interface names the definition that meets it, so the symbol
+/// spelling `op >=` is refused, naming the `operator` member to write.
 #[test]
-fn interface_op_sugar_lt_parses() {
-    code!("interface Rankable { op >= (self: Self, other: Self) -> boolean }\nfn test() {}");
+fn interface_op_sugar_is_refused_naming_the_operator_member() {
+    code!("interface Rankable { op >= (self: Self, other: Self) -> boolean }\nfn test() {}")
+        .error("an interface names the definition that meets it: `op >=` is spelled `operator compare(self: Self, other: Self) -> Ordering` at interface_op_sugar_is_refused_naming_the_operator_member:1:29");
 }
 
-/// I3.1: a multi-operator interface with `op +` and `op ==` desugars correctly.
+/// …and a reserved operator (`&`, `^`) has no `operator` form a type can define yet.
 #[test]
-fn interface_op_sugar_multi_parses() {
+fn interface_op_sugar_for_a_reserved_operator_is_refused() {
     code!(
         "interface Combinable { op & (self: Self, other: Self) -> Self\n\
                                 op ^ (self: Self, other: Self) -> Self }\nfn test() {}"
-    );
+    )
+    .error("an interface names the definition that meets it: `op &` is spelled a method a type can define; this operator is reserved at interface_op_sugar_for_a_reserved_operator_is_refused:1:30")
+    .error("an interface names the definition that meets it: `op ^` is spelled a method a type can define; this operator is reserved at interface_op_sugar_for_a_reserved_operator_is_refused:2:7");
 }
 
 // ── I4 — <T: Bound> bound syntax ─────────────────────────────────────────────
@@ -4501,8 +4503,8 @@ fn one_bound_set_cannot_require_two_signatures_of_one_method() {
 #[test]
 fn one_interface_may_declare_both_arities_of_minus() {
     code!(
-        "interface SubNeg { op - (self: Self, other: Self) -> Self\n\
-         op - (self: Self) -> Self }\n\
+        "interface SubNeg { operator minus(self: Self, other: Self) -> Self\n\
+         operator negate(self: Self) -> Self }\n\
          fn both<T: SubNeg>(a: T, b: T) -> T { -(a - b) }"
     )
     .expr("both(10, 3)")
@@ -4807,7 +4809,7 @@ fn a_user_type_missing_the_operator_is_refused_at_the_call() {
 /// A bound is satisfied by a SIGNATURE, not by a name (loft#1274).
 ///
 /// `formal/interfaces.md` (G-Sat) says a type satisfies an interface when a function with the
-/// interface's signature is visible — and `Numeric` declares `op - (self: Self) -> Self`, the
+/// interface's signature is visible — and `Numeric` declares `operator negate(self: Self) -> Self`, the
 /// UNARY negation. A binary `a - b` in a `<T: Numeric>` body desugars to the same `OpMin`, so
 /// a name-only test said the bound covered it: the call bound one operand too many, dropped
 /// `b`, and computed `-a` on both backends with no diagnostic. The float case answered an
@@ -5694,13 +5696,13 @@ fn test() {
 #[test]
 fn operator_with_a_name_that_backs_nothing() {
     code!("struct P { v: integer }\npub operator frob(self: P, other: P) -> Ordering { self.v.compare(other.v) }\nfn test() { }")
-        .error("`frob` is not an operator: `operator` takes the name of the form it backs — `compare` for `<`, `<=`, `>` and `>=`, `plus` for `+`, `minus` for `-`, `times` for `*`, `next` for `for e in x`, `to_text` for `\"{x}\"`; declare an ordinary method with `fn` at operator_with_a_name_that_backs_nothing:2:51");
+        .error("`frob` is not an operator: `operator` takes the name of the form it backs — `compare` for `<`, `<=`, `>` and `>=`, `plus` for `+`, `minus` for `-`, `times` for `*`, `divided_by` for `/`, `remainder` for `%`, `negate` for a unary `-`, `next` for `for e in x`, `to_text` for `\"{x}\"`; declare an ordinary method with `fn` at operator_with_a_name_that_backs_nothing:2:51");
 }
 
 #[test]
 fn operator_of_a_form_not_built_yet() {
-    code!("struct P { v: integer }\noperator negate(self: P) -> P { P { v: 0 - self.v } }\nfn test() { }")
-        .error("`operator negate` will back unary `-`, which a type cannot define yet; declare it with `fn` as an ordinary method for now at operator_of_a_form_not_built_yet:2:32");
+    code!("struct P { v: integer }\noperator power(self: P, e: integer) -> P { P { v: self.v * e } }\nfn test() { }")
+        .error("`operator power` will back `**`, which a type cannot define yet; declare it with `fn` as an ordinary method for now at operator_of_a_form_not_built_yet:2:43");
 }
 
 /// `@FR-Op-Shape` — `operator compare` answers an `Ordering`, never a nullable one: the shape
@@ -5795,24 +5797,26 @@ fn operator_conversion_between_two_foreign_types() {
         .error("`operator to_integer` converts `text` to `integer`, and neither is a type of this package: a conversion is defined with the type it converts from or into at operator_conversion_between_two_foreign_types:1:45");
 }
 
-/// @PLN182 Q10 — `/` is a form a program's type cannot define yet, so an interface member
-/// `op /` is met by the built-in numbers only; a function named `OpDiv` meets nothing.
+/// @PLN182 P5b — `Divisible`'s `operator divided_by` member is met by a type's `operator
+/// divided_by` at the member's signature; a function named `OpDiv` meets nothing, and the
+/// refusal quotes the member to write.
 #[test]
-fn a_reserved_operator_bound_is_met_by_builtins_only() {
+fn a_divided_by_member_is_met_by_an_operator_method_only() {
     code!(
-        "interface Divisible { op / (self: Self, divisor: integer) -> integer }
+        "interface Divisible { operator divided_by(self: Self, divisor: integer) -> integer }
          struct Score { value: integer }
          fn OpDiv(self: Score, divisor: integer) -> integer { self.value / divisor ?? 0 }
          fn halve<T: Divisible>(v: T, n: integer) -> integer { v / n ?? 0 }
          fn test() { assert(halve(Score { value: 42 }, 6) == 7, \"h\"); }"
     )
     .advice(
-        "`fn OpDiv` is an ordinary function and does not define its operator, which a type \
-         cannot define yet: call it by name at a_reserved_operator_bound_is_met_by_builtins_only:3:62",
+        "`fn OpDiv` is an ordinary function and does not define `/`: write `operator \
+         divided_by(self: T, other: U) -> V` at a_divided_by_member_is_met_by_an_operator_method_only:3:62",
     )
     .error(
-        "'Score' does not satisfy interface 'Divisible': it needs `/`, which only the built-in \
-         types define at a_reserved_operator_bound_is_met_by_builtins_only:5:59",
+        "'Score' does not satisfy interface 'Divisible': missing `operator divided_by(self: \
+         Score, divisor: integer) -> integer` at \
+         a_divided_by_member_is_met_by_an_operator_method_only:5:59",
     );
 }
 
@@ -5825,4 +5829,14 @@ fn an_unmarked_method_for_other_operands_leaves_the_result_open() {
         "value struct D { ms: integer }\nvalue struct U { ms: integer }\nfn minus(self: D, span: U) -> D { D { ms: self.ms - span.ms } }\nfn test() { a = D { ms: 3 }; b = D { ms: 1 }; c = a - b; assert(c.ms == 2, \"m\"); }"
     )
     .error("`D` has a method `minus`, but `-` reaches only one written with `operator`: declare it `operator minus(self: D, other: D) -> …` at an_unmarked_method_for_other_operands_leaves_the_result_open:4:57");
+}
+
+/// @C134 — `==` is always structural, for every type at every depth: there is no `operator
+/// equals`, and the refusal names the cure — a named method.
+#[test]
+fn operator_equals_is_refused() {
+    code!(
+        "value struct D { n: integer }\noperator equals(self: D, other: D) -> boolean { self.n % 10 == other.n % 10 }\nfn test() { }"
+    )
+    .error("`==` is always structural, for every type: there is no `operator equals` — write a named method (`same_second(self, other)`) and call it at operator_equals_is_refused:2:48");
 }
