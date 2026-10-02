@@ -14153,7 +14153,7 @@ mod store_free_sentinel {
     fn every_scalar_only_native_op_is_classified() {
         let mut p = crate::parser::Parser::new();
         p.parse_dir("default", true, false).unwrap();
-        let scalar = |tp: &Type| is_scalar(tp) || matches!(tp, Type::Void);
+        let scalar = |tp: &Type| is_scalar(tp) || matches!(tp.base(), Type::Void);
         let mut unclassified: Vec<String> = Vec::new();
         for def in &p.data.definitions {
             if !def.name().starts_with("Op") || !matches!(def.code(), Value::Null) {
