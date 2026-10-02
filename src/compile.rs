@@ -79,6 +79,8 @@ pub fn byte_code_from(
         crate::leaf_inline::rewrite_program(data);
         // `@FR-R-ForwardWalk` — a vector walk the body cannot resize as a counted loop.
         crate::forward_walk::rewrite_program(data);
+        // `@FR-R-SameRead` — a discharged read a statement spells twice, read once.
+        crate::same_read::rewrite_program(data);
     }
     // @PLN165 D10 — an instance's literal names its template (`Stores::shown`).
     for d in 0..data.definitions() {

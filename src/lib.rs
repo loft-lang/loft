@@ -355,6 +355,7 @@ pub mod resolution;
 pub mod resolution_scope;
 pub mod return_field;
 pub mod rewrite_census;
+pub mod same_read;
 pub mod scopes;
 pub mod siphash;
 pub mod slot_alias;

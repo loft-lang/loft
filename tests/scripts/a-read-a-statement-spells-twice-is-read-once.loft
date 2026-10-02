@@ -1,0 +1,68 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A discharged read a statement spells twice is read once, and answers what the two reads
+// answer.  `@FR-R-SameRead`.
+//
+// `v[i]?` lowers to a read and a five-op null discharge.  When a statement spells the same read
+// twice and nothing in it can change what the read answers, the read is bound once before the
+// statement.  So the cells put both kinds side by side: the same element read twice (bound),
+// out of range twice (the default, bound), and the cases that must keep two reads — two
+// different indexes, two different defaults, the reads in the two arms of an `if`, and a call
+// between the reads that writes the element.  `tests/same_read.rs` pins which statement binds.
+// Every expected value is computed by hand.
+//
+// @falsified-at: none — it guards a rewrite no earlier build has; planted defects, see
+//   tests/same_read.rs.
+
+fn twice(v: const vector<integer>, i: integer) -> integer {
+  (v[i]? + 1) * (v[i]? + 2)
+}
+
+fn twice_float(f: const vector<float>, i: integer) -> float {
+  f[i]? * f[i]? + 1.0
+}
+
+fn two_indexes(v: const vector<integer>, i: integer, j: integer) -> integer {
+  v[i]? * 10 + v[j]?
+}
+
+fn two_defaults(v: const vector<integer>, i: integer) -> integer {
+  (v[i] ?? 1) * 10 + (v[i] ?? 2)
+}
+
+fn in_arms(v: const vector<integer>, i: integer, c: boolean) -> integer {
+  if c { v[i]? + 1 } else { v[i]? + 2 }
+}
+
+fn set_first(v: &vector<integer>) -> integer {
+  v[0] = 99;
+  0
+}
+
+fn written_between(v: &vector<integer>) -> integer {
+  v[0]? + set_first(v) + v[0]?
+}
+
+fn test_reads_that_bind() {
+  v = [3, 5, 7];
+  assert(twice(v, 1) == 42, "twice {twice(v, 1)}");
+  assert(twice(v, 9) == 2, "out of range twice {twice(v, 9)}");
+  f = [1.5, 2.5];
+  assert(twice_float(f, 1) == 7.25, "float {twice_float(f, 1)}");
+}
+
+fn test_reads_that_stay_two() {
+  v = [3, 5, 7];
+  assert(two_indexes(v, 0, 2) == 37, "two indexes {two_indexes(v, 0, 2)}");
+  assert(two_defaults(v, 9) == 12, "two defaults {two_defaults(v, 9)}");
+  assert(in_arms(v, 2, true) == 8 && in_arms(v, 2, false) == 9, "arms");
+  w = [4, 6];
+  assert(written_between(w) == 103, "written between {written_between(w)}");
+}
+
+fn main() {
+  test_reads_that_bind();
+  test_reads_that_stay_two();
+  println("ok");
+}
