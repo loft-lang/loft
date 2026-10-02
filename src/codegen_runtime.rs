@@ -1151,6 +1151,42 @@ pub fn i_json_errors(stores: &mut Stores) -> String {
 /// Deep-copy a database record: copies the raw bytes and duplicates
 /// all owned sub-structures (text fields, vectors, etc.).
 /// Bytecode equivalent: `State::copy_record` in `src/state/io.rs:697`.
+/// The rebind `x = f(…)` of a record from a call result: the destination's reset followed
+/// by the copy (`OpDatabase` + [`OpCopyRecord`]), with the reset left out when the result's
+/// store can be exchanged into `to` as it stands (`@FR-H-SwapRebind`,
+/// `Stores::try_swap_rebind`).  `to` is the variable's current value and `tp`'s flag bits are
+/// [`OpCopyRecord`]'s.  The exchange needs the source given up (`COPY_FREE_SOURCE`) and not a
+/// store the last fn-ref call borrowed; anything else takes the reset-and-copy path, which
+/// is the sequence this replaces.
+pub fn OpRebindRecord(
+    cell: &std::cell::UnsafeCell<Stores>,
+    to: DbRef,
+    src: DbRef,
+    tp: i32,
+) -> DbRef {
+    let raw = tp as u16;
+    if raw & crate::keys::COPY_FREE_SOURCE != 0
+        && src != to
+        && src.store_nr != u16::MAX
+        && to.store_nr != u16::MAX
+        && !FNREF_BORROWED.with(|b| b.get().is_some_and(|r| r.store_nr == src.store_nr))
+    {
+        let stores: &mut Stores = unsafe { &mut *cell.get() };
+        if stores.try_swap_rebind(&src, &to, raw & crate::keys::COPY_TP_MASK) {
+            // The copy this replaces consumes the marker whatever it named.
+            cr_take_fnref_borrowed(src.store_nr);
+            return DbRef {
+                store_nr: to.store_nr,
+                rec: 1,
+                pos: 8,
+            };
+        }
+    }
+    let dst = OpDatabase(cell, to, i32::from(raw & crate::keys::COPY_TP_MASK));
+    OpCopyRecord(cell, src, dst, tp);
+    dst
+}
+
 pub fn OpCopyRecord(cell: &std::cell::UnsafeCell<Stores>, data: DbRef, to: DbRef, tp: i32) {
     let stores: &mut Stores = unsafe { &mut *cell.get() };
     // @PLAN51 Cluster II — true alias copy is a no-op.  Same rationale

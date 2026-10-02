@@ -1306,11 +1306,19 @@ impl Output<'_> {
                  {{ OpFreeRef(cell, _dst, \"{name}(displaced)\"); }} "
             ));
             let target = copy_target("_dst", first_bind);
+            // `@FR-H-SwapRebind` — the copy arm as one runtime call that exchanges the result's
+            // store into the destination without resetting it first, when it can.
+            let copy = if crate::keys::swap_rebind_enabled() {
+                format!("var_{name} = OpRebindRecord(cell, {target}, _src, {tp_with_free}_i32);")
+            } else {
+                format!(
+                    "var_{name} = OpDatabase(cell, {target}, {tp_nr}_i32); \
+                     OpCopyRecord(cell,_src, var_{name}, {tp_with_free}_i32);"
+                )
+            };
             write!(
                 w,
-                "; if {adopt} {{ {disp}var_{name} = _src; }} \
-                 else {{ var_{name} = OpDatabase(cell, {target}, {tp_nr}_i32); \
-                 OpCopyRecord(cell,_src, var_{name}, {tp_with_free}_i32); }}{unprotect} }}"
+                "; if {adopt} {{ {disp}var_{name} = _src; }} else {{ {copy} }}{unprotect} }}"
             )?;
             // @PLN130 — a MAY-copy site: the emitted code branches on store identity at
             // runtime and copies on the non-adopting arm.  Recorded regardless, because the

@@ -984,6 +984,20 @@ impl Stores {
     /// stored reference (a `reference<T>`, a keyed collection's pointers), whose store number
     /// would still name the old slot.
     pub(crate) fn try_swap_in(&mut self, data: &DbRef, to: &DbRef, tp: u16) -> bool {
+        self.swap_stores_in(data, to, tp, true)
+    }
+
+    /// `@FR-H-SwapRebind` — [`Self::try_swap_in`] for a destination that still holds the
+    /// variable's previous value, not yet reset: the rebind `x = f(…)` whose reset the
+    /// exchange makes redundant.  The old tree moves into the released slot with the rest
+    /// of the destination store and is freed with it, which is what the reset would have
+    /// released, so the destination's other content is not a reason to decline; every
+    /// other condition is the exchange's own.
+    pub(crate) fn try_swap_rebind(&mut self, data: &DbRef, to: &DbRef, tp: u16) -> bool {
+        crate::keys::swap_rebind_enabled() && self.swap_stores_in(data, to, tp, false)
+    }
+
+    fn swap_stores_in(&mut self, data: &DbRef, to: &DbRef, tp: u16, reset_dest: bool) -> bool {
         if !crate::keys::store_swap_enabled() {
             return false;
         }
@@ -1006,7 +1020,7 @@ impl Stores {
         }
         if !self.allocations[ds].content_swappable(true)
             || !self.allocations[ts].content_swappable(false)
-            || !self.allocations[ts].holds_only_root()
+            || (reset_dest && !self.allocations[ts].holds_only_root())
         {
             return false;
         }
