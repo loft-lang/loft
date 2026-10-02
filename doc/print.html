@@ -2394,7 +2394,7 @@ Walkable   — the method `children() -&gt; vector&lt;Self&gt;`.  The standard l
   gen_x == gen_y
 }
 <span class="kw">fn</span> described&lt;<span class="en">T</span>: <span class="en"><a href="stdlib-interfaces.html">Printable</a></span>&gt;(gen_x: <span class="en">T</span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {
-  gen_x.<span class="fn-call"><a href="stdlib-field-iteration-support-types.html">to_text</a></span>()
+  gen_x.<span class="fn-call">to_text</span>()
 }
 <span class="kw">fn</span> <span class="fn-call">test_bounded</span>() {
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">gen_max</span>(<span class="nm">3</span>, <span class="nm">7</span>) == <span class="nm">7</span>, <span class="st">"max int"</span>);
@@ -2420,28 +2420,21 @@ Walkable   — the method `children() -&gt; vector&lt;Self&gt;`.  The standard l
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">clamped_add</span>(<span class="nm">1.0</span>, <span class="nm">2.0</span>, <span class="nm">2.5</span>) == <span class="nm">2.5</span>, <span class="st">"float clamped"</span>);
 }</code></pre>
 <h2 id="your-own-types-under-a-bound">Your own types under a bound</h2>
-<p>The built-in bounds are not only for built-in types, and this is what they are for: a struct satisfies one by DEFINING the operation, with no declaration that it does. The names are the operators' own, not the symbols:</p>
-<pre><code>Ordered    fn OpLt(self: T, other: T) -&gt; boolean      (`&lt;`)
-Equatable  fn OpEq(self: T, other: T) -&gt; boolean      (`==`)
-Addable    fn OpAdd(self: T, other: T) -&gt; T           (`+`)
-Numeric    fn OpMul(self: T, other: T) -&gt; T           (`*`)
-           fn OpMin(self: T) -&gt; T                     (unary `-`)
-Subtractable fn OpMin(self: T, other: T) -&gt; T        (binary `-`)
-Scalable   fn scale(self: T, factor: integer) -&gt; integer
-Printable  fn to_text(self: T) -&gt; text
-Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
+<p>The built-in bounds are not only for built-in types, and this is what they are for: a struct satisfies one by DEFINING the operation, with no declaration that it does.  An operator is an <code>operator</code> method — written with the keyword <code>operator</code> where a function has <code>fn</code> — named for what it does:</p>
+<pre><code>Ordered      operator compare(self: T, other: T) -&gt; Ordering   (`&lt;` `&lt;=` `&gt;` `&gt;=`)
+Addable      operator plus(self: T, other: T) -&gt; T            (`+`)
+Subtractable operator minus(self: T, other: T) -&gt; T           (binary `-`)
+Scalable     fn scale(self: T, factor: integer) -&gt; integer
+Printable    operator to_text(self: T) -&gt; text
+Walkable     fn children(self: T) -&gt; vector&lt;T&gt;
 </code></pre>
-<p><code>Equatable</code> is the exception: every type satisfies it, because <code>==</code> compares what two values hold — a struct field by field.  Define <code>OpEq</code> only when equality should mean something else.</p>
-<p>The same definition serves the bare operator: once <code>Money</code> has <code>OpLt</code>, both <code>a &lt; b</code> and <code>&lt;T: Ordered&gt;</code> work on it. Miss one and the error names it — "<code>Money</code> does not satisfy interface <code>Ordered</code>: missing OpLt" — at the CALL site, because that is where the concrete type is known.</p>
+<p><code>compare</code> answers <code>Less</code>, <code>Equal</code> or <code>Greater</code>; every built-in ordered type has one, so <code>self.cents.compare(other.cents)</code> is the whole body for one field. <code>Equatable</code> is met by every type, because <code>==</code> compares what two values hold — a struct field by field.  <code>Numeric</code> (<code>*</code> and the unary <code>-</code>) is met by the built-in numbers only: a type cannot define the unary <code>-</code> yet.</p>
+<p>The same definition serves the bare operator: once <code>Money</code> has <code>compare</code>, both <code>a &lt; b</code> and <code>&lt;T: Ordered&gt;</code> work on it.  Miss one and the error names it — "<code>Money</code> does not satisfy interface <code>Ordered</code>: missing <code>operator compare(self: Money, other: Money) -&gt; Ordering</code>" — at the CALL site, because that is where the concrete type is known.</p>
 <pre><code><span class="kw">struct</span> <span class="en">Money</span> { cents: <span class="ty"><a href="stdlib-types.html">integer</a></span> }
-<span class="kw">fn</span> <span class="en">OpLt</span>(self: <span class="en">Money</span>, other: <span class="en">Money</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> { self.cents &lt; other.cents }
-<span class="kw">fn</span> <span class="en">OpEq</span>(self: <span class="en">Money</span>, other: <span class="en">Money</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> { self.cents == other.cents }
-<span class="kw">fn</span> <span class="en">OpAdd</span>(self: <span class="en">Money</span>, other: <span class="en">Money</span>) -&gt; <span class="en">Money</span> { <span class="en">Money</span> { cents: self.cents + other.cents } }
-<span class="kw">fn</span> <span class="fn-call"><a href="stdlib-field-iteration-support-types.html">to_text</a></span>(self: <span class="en">Money</span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> { <span class="st">"{self.cents}c"</span> }</code></pre>
-<p>Both arities of <code>-</code>, so <code>Money</code> satisfies <code>Subtractable</code> and, with <code>OpMul</code>, <code>Numeric</code>.</p>
-<pre><code><span class="kw">fn</span> <span class="en">OpMin</span>(self: <span class="en">Money</span>, other: <span class="en">Money</span>) -&gt; <span class="en">Money</span> { <span class="en">Money</span> { cents: self.cents - other.cents } }
-<span class="kw">fn</span> <span class="en">OpMin</span>(self: <span class="en">Money</span>) -&gt; <span class="en">Money</span> { <span class="en">Money</span> { cents: <span class="nm">0</span> - self.cents } }
-<span class="kw">fn</span> <span class="en">OpMul</span>(self: <span class="en">Money</span>, other: <span class="en">Money</span>) -&gt; <span class="en">Money</span> { <span class="en">Money</span> { cents: self.cents * other.cents } }
+<span class="kw"><a href="stdlib-field-iteration-support-types.html">operator</a></span> <span class="fn-call"><a href="stdlib-min-max-clamp.html">compare</a></span>(self: <span class="en">Money</span>, other: <span class="en">Money</span>) -&gt; <span class="en"><a href="stdlib-min-max-clamp.html">Ordering</a></span> { self.cents.<span class="fn-call"><a href="stdlib-min-max-clamp.html">compare</a></span>(other.cents) }
+<span class="kw"><a href="stdlib-field-iteration-support-types.html">operator</a></span> <span class="fn-call">plus</span>(self: <span class="en">Money</span>, other: <span class="en">Money</span>) -&gt; <span class="en">Money</span> { <span class="en">Money</span> { cents: self.cents + other.cents } }
+<span class="kw"><a href="stdlib-field-iteration-support-types.html">operator</a></span> <span class="fn-call">minus</span>(self: <span class="en">Money</span>, other: <span class="en">Money</span>) -&gt; <span class="en">Money</span> { <span class="en">Money</span> { cents: self.cents - other.cents } }
+<span class="kw"><a href="stdlib-field-iteration-support-types.html">operator</a></span> <span class="fn-call">to_text</span>(self: <span class="en">Money</span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> { <span class="st">"{self.cents}c"</span> }
 <span class="kw">fn</span> <span class="fn-call">test_user_type_bounds</span>() {
   cheap = <span class="en">Money</span> { cents: <span class="nm">300</span> };
   dear = <span class="en">Money</span> { cents: <span class="nm">700</span> };
@@ -2449,13 +2442,12 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(best.cents == <span class="nm">700</span>, <span class="st">"Ordered on a user type: {best.cents}"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(cheap &lt; dear, <span class="st">"…and the bare operator, from the same definition"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">same</span>(cheap, <span class="en">Money</span> { cents: <span class="nm">300</span> }), <span class="st">"Equatable on a user type"</span>);
-  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">same</span>(<span class="en">Tile</span> { height: <span class="nm">1</span>, name: <span class="st">"t"</span> }, <span class="en">Tile</span> { height: <span class="nm">1</span>, name: <span class="st">"t"</span> }), <span class="st">"…and on one that defines no OpEq"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">same</span>(<span class="en">Tile</span> { height: <span class="nm">1</span>, name: <span class="st">"t"</span> }, <span class="en">Tile</span> { height: <span class="nm">1</span>, name: <span class="st">"t"</span> }), <span class="st">"…and on one that defines no operator"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="fn-call">same</span>(<span class="en">Tile</span> { height: <span class="nm">1</span>, name: <span class="st">"t"</span> }, <span class="en">Tile</span> { height: <span class="nm">2</span>, name: <span class="st">"t"</span> }), <span class="st">"…comparing every field"</span>);
   total = <span class="fn-call">clamped_add</span>(cheap, cheap, <span class="en">Money</span> { cents: <span class="nm">1000</span> });
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(total.cents == <span class="nm">600</span>, <span class="st">"Addable on a user type: {total.cents}"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">described</span>(dear) == <span class="st">"700c"</span>, <span class="st">"Printable on a user type: {described(dear)}"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">gen_diff</span>(dear, cheap).cents == <span class="nm">400</span>, <span class="st">"Subtractable on a user type"</span>);
-  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">gen_negdiff</span>(dear, cheap).cents == -<span class="nm">400</span>, <span class="st">"Numeric + Subtractable on a user type"</span>);
 }
 <span class="kw">struct</span> <span class="en">Crate</span> { label: <span class="ty"><a href="stdlib-types.html">text</a></span>, kids: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Crate</span>&gt; }
 <span class="kw">fn</span> <span class="fn-call">children</span>(self: <span class="en">Crate</span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Crate</span>&gt; { self.kids }
@@ -2485,7 +2477,7 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <h2 id="two-type-variables-and-a-callback">Two type variables and a callback</h2>
 <p>A generic may declare several variables, and one no argument binds may be bound by a callback's RESULT: <code>map_grid</code> below turns a <code>Grid&lt;T&gt;</code> into a <code>Grid&lt;U&gt;</code>, and the short lambda's body decides what <code>U</code> is — <code>|t| { t.height }</code> makes it an <code>integer</code>.  A generic beside a concrete function of the same name is one overload set: the concrete <code>show</code> takes a <code>Grid&lt;Tile&gt;</code>, the bounded generic every other <code>Grid</code> it can print.</p>
 <pre><code><span class="kw">struct</span> <span class="en">Tile</span> { height: <span class="ty"><a href="stdlib-types.html">integer</a></span>, name: <span class="ty"><a href="stdlib-types.html">text</a></span> }
-<span class="kw">fn</span> <span class="fn-call"><a href="stdlib-field-iteration-support-types.html">to_text</a></span>(self: <span class="en">Tile</span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> { self.name }
+<span class="kw"><a href="stdlib-field-iteration-support-types.html">operator</a></span> <span class="fn-call">to_text</span>(self: <span class="en">Tile</span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> { self.name }
 <span class="kw">struct</span> <span class="en">Grid</span>&lt;<span class="en">T</span>&gt; { w: <span class="ty"><a href="stdlib-types.html">integer</a></span>, cells: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">T</span>&gt; }
 <span class="kw">fn</span> map_grid&lt;<span class="en">T</span>, <span class="en">U</span>&gt;(g: <span class="en">Grid</span>&lt;<span class="en">T</span>&gt;, f: <span class="kw">fn</span>(<span class="en">T</span>) -&gt; <span class="en">U</span>) -&gt; <span class="en">Grid</span>&lt;<span class="en">U</span>&gt; {
   out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">U</span>&gt; = [];
@@ -3357,7 +3349,7 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <li><strong>@F29</strong> — Pattern matching — enum/scalar/tuple, guards, or-patterns, exhaustiveness</li>
 <li><strong>@F30</strong> — <code>is</code> variant check (+ field capture)</li>
 <li><strong>@F31</strong> — <code>break</code> / <code>continue</code> + labelled forms</li>
-<li><strong>@F32</strong> — Custom iterators via <code>fn next(self) -&gt; T?</code></li>
+<li><strong>@F32</strong> — Custom iterators via <code>operator next(self) -&gt; T?</code></li>
 <li><strong>@F33</strong> — <code>par(...)</code> parallel for-loop</li>
 <li><strong>@F34</strong> — Coroutines / generators — <code>yield</code>, <code>yield from</code></li>
 <li><strong>@F35</strong> — String literals — <code>{expr}</code> interpolation + backtick multiline</li>
@@ -3406,7 +3398,7 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <li><strong>@F111</strong> — <code>for f in s#fields</code> — a compile-time loop over a struct's scalar fields</li>
 <li><strong>@F112</strong> — <code>store_release()</code> — say a record is finished, and stop holding it in memory</li>
 <li><strong>@F113</strong> — Associated types — an interface names a companion type</li>
-<li><strong>@F114</strong> — <code>x[i]</code> on a library type — <code>OpIndex</code> dispatch</li>
+<li><strong>@F114</strong> — A library type reads an element through a named method — <code>[…]</code> is the built-in collections'</li>
 <li><strong>@F115</strong> — <code>OpDrop</code> — a type runs code when its scope lets it die</li>
 <li><strong>@F118</strong> — Time (now / ticks)</li>
 <li><strong>@F119</strong> — Store locks (#lock)</li>
@@ -4040,7 +4032,7 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <pre><code>pub interface Ordered {
   op &lt; (self: Self, other: Self) -&gt; boolean
 }</code></pre>
-<p>Standard interfaces for bounded generic functions. A type satisfies an interface by defining the required operator or method. Types that support the `&lt;` comparison operator. Satisfied by integer, single, float, text, and any user type defining OpLt.</p>
+<p>Standard interfaces for bounded generic functions. A type satisfies an interface by defining the required operator or method. Types that support the `&lt;` comparison operator. Satisfied by integer, single, float, text, and any type defining `operator compare`.</p>
 <p>`boolean` is NOT among them, deliberately: it satisfies Equatable below and has no ordering, so `false &lt; true` is a refusal rather than a convention the language picks for you.  A program that wants it says so — `(a as integer) &lt; (b as integer)`.  The same line bounds how null is ordered: that applies to the ordered types only, and a boolean null still compares with `==` like every other scalar.</p>
 <p>ONE method is all a type has to define: inside a generic bounded by this, `&gt;`, `&lt;=` and `&gt;=` all derive from `&lt;` — `a &gt; b` is `b &lt; a`, `a &lt;= b` is `!(b &lt; a)`, `a &gt;= b` is `!(a &lt; b)`.  Each evaluates its operands exactly once.</p>
 </div>
@@ -4048,29 +4040,29 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <pre><code>pub interface Equatable {
   op == (self: Self, other: Self) -&gt; boolean
 }</code></pre>
-<p>Types that support the `==` equality operator: every type (@C91), by its own OpEq or by content. A tuple compares element by element, as its concrete `==` does.</p>
-<p>`!=` derives from it (`a != b` is `!(a == b)`), so a type defining `op ==` gets both.</p>
+<p>Types that support the `==` equality operator: every type (@C91), compared by content. A tuple compares element by element, as its concrete `==` does.</p>
+<p>`!=` derives from it (`a != b` is `!(a == b)`).</p>
 </div>
 <div class="item">
 <pre><code>pub interface Addable {
   op + (self: Self, other: Self) -&gt; Self
 }</code></pre>
-<p>Types that support the `+` addition operator, returning the same type. Satisfied by integer, single, float, and user types defining OpAdd.</p>
+<p>Types that support the `+` addition operator, returning the same type. Satisfied by integer, single, float, and any type defining `operator plus`.</p>
 </div>
 <div class="item">
 <pre><code>pub interface Numeric {
   op * (self: Self, other: Self) -&gt; Self
   op - (self: Self) -&gt; Self
 }</code></pre>
-<p>Types that support `*` and `-` (unary negation). Separate from `Addable` so a generic can ask for the fewest operators it needs. Satisfied by integer, single, float, and user types defining OpMul and OpMin.</p>
-<p>Binary subtraction is `Subtractable` below and deliberately NOT here.  One interface CAN declare both arities of `-`, but adding a requirement to `Numeric` would take satisfaction away from every user type that provides `OpMul` and unary `OpMin` today, which a compatible release may not do.</p>
+<p>Types that support `*` and `-` (unary negation). Separate from `Addable` so a generic can ask for the fewest operators it needs. Satisfied by integer, single and float: a program's type has no unary `-` to define yet.</p>
+<p>Binary subtraction is `Subtractable` below and deliberately NOT here.  One interface CAN declare both arities of `-`, but adding a requirement to `Numeric` would take satisfaction away from every type that meets it, which a compatible release may not do.</p>
 </div>
 <div class="item">
 <pre><code>pub interface Subtractable {
   op - (self: Self, other: Self) -&gt; Self
 }</code></pre>
-<p>Types that support binary `-` (subtraction), returning the same type. Satisfied by integer, single, float, and user types defining a two-operand OpMin.</p>
-<p>A bound of its own rather than a third requirement on `Numeric`: a bound set may declare one name at two arities (`-` means `OpMin` either way, told apart by its operand count), so `&lt;T: Numeric + Subtractable&gt;` gets negation and subtraction together from two interfaces that each name `OpMin`.  The built-in number types satisfy both, and so does a user type that defines `OpMin` at both arities, in either order — as pinned by `tests/scripts/1811-a-method-overload-set-is-one-set-in-either-declaration-order.loft`.</p>
+<p>Types that support binary `-` (subtraction), returning the same type. Satisfied by integer, single, float, and any type defining `operator minus`.</p>
+<p>A bound of its own rather than a third requirement on `Numeric`: a bound set may declare one name at two arities (`-` means `OpMin` either way, told apart by its operand count), so `&lt;T: Numeric + Subtractable&gt;` gets negation and subtraction together from two interfaces that each name `OpMin`.  The built-in number types satisfy both.</p>
 </div>
 <div class="item">
 <pre><code>pub interface Scalable {
@@ -4080,9 +4072,9 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 </div>
 <div class="item">
 <pre><code>pub interface Printable {
-  fn to_text(self: Self) -&gt; text
+  operator to_text(self: Self) -&gt; text
 }</code></pre>
-<p>Types that can be converted to text via a `to_text` method. User types satisfy Printable by defining `fn to_text(self: T) -&gt; text`.</p>
+<p>Types that can be converted to text via a `to_text` method. User types satisfy Printable by defining `operator to_text(self: T) -&gt; text`.</p>
 </div>
 <h2 id="stdlib-math">Math</h2>
 <p class="section-desc">Functions for numeric computation. All trigonometric functions work in radians. Both single and float variants exist for every floating-point function — choose single for speed, float for precision.</p>
@@ -4557,27 +4549,27 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <p>Represents a single struct field during compile-time iteration.</p>
 </div>
 <div class="item">
-<pre><code>pub fn to_text(self: integer) -&gt; text</code></pre>
+<pre><code>pub operator to_text(self: integer) -&gt; text</code></pre>
 <p>Converts an integer to its decimal text. Built-in types define `to_text` so they satisfy the `Printable` interface (used by `print`, format strings, …).</p>
 </div>
 <div class="item">
-<pre><code>pub fn to_text(self: float) -&gt; text</code></pre>
+<pre><code>pub operator to_text(self: float) -&gt; text</code></pre>
 <p>Converts a float to its text representation.</p>
 </div>
 <div class="item">
-<pre><code>pub fn to_text(self: single) -&gt; text</code></pre>
+<pre><code>pub operator to_text(self: single) -&gt; text</code></pre>
 <p>Converts a single-precision float to its text representation.</p>
 </div>
 <div class="item">
-<pre><code>pub fn to_text(self: boolean) -&gt; text</code></pre>
+<pre><code>pub operator to_text(self: boolean) -&gt; text</code></pre>
 <p>Converts a boolean to &quot;true&quot; or &quot;false&quot;.</p>
 </div>
 <div class="item">
-<pre><code>pub fn to_text(self: character) -&gt; text</code></pre>
+<pre><code>pub operator to_text(self: character) -&gt; text</code></pre>
 <p>Converts a character to a one-character text.</p>
 </div>
 <div class="item">
-<pre><code>pub fn to_text(self: text) -&gt; text</code></pre>
+<pre><code>pub operator to_text(self: text) -&gt; text</code></pre>
 <p>Returns the text unchanged — the identity case, so `text` satisfies `Printable` too.</p>
 </div>
 <h2 id="stdlib-file-system">File System</h2>

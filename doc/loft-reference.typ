@@ -5374,38 +5374,27 @@ fn test_combined_bounds() {
 
 === Your own types under a bound
 
-The built-in bounds are not only for built-in types, and this is what they are for: a struct satisfies one by DEFINING the operation, with no declaration that it does. The names are the operators' own, not the symbols:
+The built-in bounds are not only for built-in types, and this is what they are for: a struct satisfies one by DEFINING the operation, with no declaration that it does.  An operator is an `operator` method — written with the keyword `operator` where a function has `fn` — named for what it does:
 
 ```
-Ordered    fn OpLt(self: T, other: T) -> boolean      (`<`)
-Equatable  fn OpEq(self: T, other: T) -> boolean      (`==`)
-Addable    fn OpAdd(self: T, other: T) -> T           (`+`)
-Numeric    fn OpMul(self: T, other: T) -> T           (`*`)
-           fn OpMin(self: T) -> T                     (unary `-`)
-Subtractable fn OpMin(self: T, other: T) -> T        (binary `-`)
-Scalable   fn scale(self: T, factor: integer) -> integer
-Printable  fn to_text(self: T) -> text
-Walkable   fn children(self: T) -> vector<T>
+Ordered      operator compare(self: T, other: T) -> Ordering   (`<` `<=` `>` `>=`)
+Addable      operator plus(self: T, other: T) -> T            (`+`)
+Subtractable operator minus(self: T, other: T) -> T           (binary `-`)
+Scalable     fn scale(self: T, factor: integer) -> integer
+Printable    operator to_text(self: T) -> text
+Walkable     fn children(self: T) -> vector<T>
 ```
 
-`Equatable` is the exception: every type satisfies it, because `==` compares what two values hold — a struct field by field.  Define `OpEq` only when equality should mean something else.
+`compare` answers `Less`, `Equal` or `Greater`; every built-in ordered type has one, so `self.cents.compare(other.cents)` is the whole body for one field. `Equatable` is met by every type, because `==` compares what two values hold — a struct field by field.  `Numeric` (`\*` and the unary `-`) is met by the built-in numbers only: a type cannot define the unary `-` yet.
 
-The same definition serves the bare operator: once `Money` has `OpLt`, both `a \< b` and `\<T: Ordered\>` work on it. Miss one and the error names it — "'Money' does not satisfy interface 'Ordered': missing OpLt" — at the CALL site, because that is where the concrete type is known.
+The same definition serves the bare operator: once `Money` has `compare`, both `a \< b` and `\<T: Ordered\>` work on it.  Miss one and the error names it — "'Money' does not satisfy interface 'Ordered': missing `operator compare(self: Money, other: Money) -\> Ordering`" — at the CALL site, because that is where the concrete type is known.
 
 ```rust
 struct Money { cents: integer }
-fn OpLt(self: Money, other: Money) -> boolean { self.cents < other.cents }
-fn OpEq(self: Money, other: Money) -> boolean { self.cents == other.cents }
-fn OpAdd(self: Money, other: Money) -> Money { Money { cents: self.cents + other.cents } }
-fn to_text(self: Money) -> text { "{self.cents}c" }
-```
-
-Both arities of `-`, so `Money` satisfies `Subtractable` and, with `OpMul`, `Numeric`.
-
-```rust
-fn OpMin(self: Money, other: Money) -> Money { Money { cents: self.cents - other.cents } }
-fn OpMin(self: Money) -> Money { Money { cents: 0 - self.cents } }
-fn OpMul(self: Money, other: Money) -> Money { Money { cents: self.cents * other.cents } }
+operator compare(self: Money, other: Money) -> Ordering { self.cents.compare(other.cents) }
+operator plus(self: Money, other: Money) -> Money { Money { cents: self.cents + other.cents } }
+operator minus(self: Money, other: Money) -> Money { Money { cents: self.cents - other.cents } }
+operator to_text(self: Money) -> text { "{self.cents}c" }
 fn test_user_type_bounds() {
   cheap = Money { cents: 300 };
   dear = Money { cents: 700 };
@@ -5413,13 +5402,12 @@ fn test_user_type_bounds() {
   assert(best.cents == 700, "Ordered on a user type: {best.cents}");
   assert(cheap < dear, "…and the bare operator, from the same definition");
   assert(same(cheap, Money { cents: 300 }), "Equatable on a user type");
-  assert(same(Tile { height: 1, name: "t" }, Tile { height: 1, name: "t" }), "…and on one that defines no OpEq");
+  assert(same(Tile { height: 1, name: "t" }, Tile { height: 1, name: "t" }), "…and on one that defines no operator");
   assert(!same(Tile { height: 1, name: "t" }, Tile { height: 2, name: "t" }), "…comparing every field");
   total = clamped_add(cheap, cheap, Money { cents: 1000 });
   assert(total.cents == 600, "Addable on a user type: {total.cents}");
   assert(described(dear) == "700c", "Printable on a user type: {described(dear)}");
   assert(gen_diff(dear, cheap).cents == 400, "Subtractable on a user type");
-  assert(gen_negdiff(dear, cheap).cents == -400, "Numeric + Subtractable on a user type");
 }
 struct Crate { label: text, kids: vector<Crate> }
 fn children(self: Crate) -> vector<Crate> { self.kids }
@@ -5463,7 +5451,7 @@ A generic may declare several variables, and one no argument binds may be bound 
 
 ```rust
 struct Tile { height: integer, name: text }
-fn to_text(self: Tile) -> text { self.name }
+operator to_text(self: Tile) -> text { self.name }
 struct Grid<T> { w: integer, cells: vector<T> }
 fn map_grid<T, U>(g: Grid<T>, f: fn(T) -> U) -> Grid<U> {
   out: vector<U> = [];
@@ -7015,7 +7003,7 @@ The catalogue is generated from the `loft-lang/features` issue tracker, which is
 - \*\*\@F29\*\* — Pattern matching — enum/scalar/tuple, guards, or-patterns, exhaustiveness
 - \*\*\@F30\*\* — `is` variant check (+ field capture)
 - \*\*\@F31\*\* — `break` / `continue` + labelled forms
-- \*\*\@F32\*\* — Custom iterators via `fn next(self) -\> T?`
+- \*\*\@F32\*\* — Custom iterators via `operator next(self) -\> T?`
 - \*\*\@F33\*\* — `par(...)` parallel for-loop
 - \*\*\@F34\*\* — Coroutines / generators — `yield`, `yield from`
 - \*\*\@F35\*\* — String literals — `{expr}` interpolation + backtick multiline
@@ -7064,7 +7052,7 @@ The catalogue is generated from the `loft-lang/features` issue tracker, which is
 - \*\*\@F111\*\* — `for f in s\#fields` — a compile-time loop over a struct's scalar fields
 - \*\*\@F112\*\* — `store\_release()` — say a record is finished, and stop holding it in memory
 - \*\*\@F113\*\* — Associated types — an interface names a companion type
-- \*\*\@F114\*\* — `x\[i\]` on a library type — `OpIndex` dispatch
+- \*\*\@F114\*\* — A library type reads an element through a named method — `\[…\]` is the built-in collections'
 - \*\*\@F115\*\* — `OpDrop` — a type runs code when its scope lets it die
 - \*\*\@F118\*\* — Time (now / ticks)
 - \*\*\@F119\*\* — Store locks (\#lock)
@@ -7858,7 +7846,7 @@ pub interface Ordered {
 }
 ```
 
-Standard interfaces for bounded generic functions. A type satisfies an interface by defining the required operator or method. Types that support the `\<` comparison operator. Satisfied by integer, single, float, text, and any user type defining OpLt.
+Standard interfaces for bounded generic functions. A type satisfies an interface by defining the required operator or method. Types that support the `\<` comparison operator. Satisfied by integer, single, float, text, and any type defining `operator compare`.
 `boolean` is NOT among them, deliberately: it satisfies Equatable below and has no ordering, so `false \< true` is a refusal rather than a convention the language picks for you.  A program that wants it says so — `(a as integer) \< (b as integer)`.  The same line bounds how null is ordered: that applies to the ordered types only, and a boolean null still compares with `==` like every other scalar.
 ONE method is all a type has to define: inside a generic bounded by this, `\>`, `\<=` and `\>=` all derive from `\<` — `a \> b` is `b \< a`, `a \<= b` is `!(b \< a)`, `a \>= b` is `!(a \< b)`.  Each evaluates its operands exactly once.
 
@@ -7868,8 +7856,8 @@ pub interface Equatable {
 }
 ```
 
-Types that support the `==` equality operator: every type (\@C91), by its own OpEq or by content. A tuple compares element by element, as its concrete `==` does.
-`!=` derives from it (`a != b` is `!(a == b)`), so a type defining `op ==` gets both.
+Types that support the `==` equality operator: every type (\@C91), compared by content. A tuple compares element by element, as its concrete `==` does.
+`!=` derives from it (`a != b` is `!(a == b)`).
 
 ```rust
 pub interface Addable {
@@ -7877,7 +7865,7 @@ pub interface Addable {
 }
 ```
 
-Types that support the `+` addition operator, returning the same type. Satisfied by integer, single, float, and user types defining OpAdd.
+Types that support the `+` addition operator, returning the same type. Satisfied by integer, single, float, and any type defining `operator plus`.
 
 ```rust
 pub interface Numeric {
@@ -7886,8 +7874,8 @@ pub interface Numeric {
 }
 ```
 
-Types that support `\*` and `-` (unary negation). Separate from `Addable` so a generic can ask for the fewest operators it needs. Satisfied by integer, single, float, and user types defining OpMul and OpMin.
-Binary subtraction is `Subtractable` below and deliberately NOT here.  One interface CAN declare both arities of `-`, but adding a requirement to `Numeric` would take satisfaction away from every user type that provides `OpMul` and unary `OpMin` today, which a compatible release may not do.
+Types that support `\*` and `-` (unary negation). Separate from `Addable` so a generic can ask for the fewest operators it needs. Satisfied by integer, single and float: a program's type has no unary `-` to define yet.
+Binary subtraction is `Subtractable` below and deliberately NOT here.  One interface CAN declare both arities of `-`, but adding a requirement to `Numeric` would take satisfaction away from every type that meets it, which a compatible release may not do.
 
 ```rust
 pub interface Subtractable {
@@ -7895,8 +7883,8 @@ pub interface Subtractable {
 }
 ```
 
-Types that support binary `-` (subtraction), returning the same type. Satisfied by integer, single, float, and user types defining a two-operand OpMin.
-A bound of its own rather than a third requirement on `Numeric`: a bound set may declare one name at two arities (`-` means `OpMin` either way, told apart by its operand count), so `\<T: Numeric + Subtractable\>` gets negation and subtraction together from two interfaces that each name `OpMin`.  The built-in number types satisfy both, and so does a user type that defines `OpMin` at both arities, in either order — as pinned by `tests/scripts/1811-a-method-overload-set-is-one-set-in-either-declaration-order.loft`.
+Types that support binary `-` (subtraction), returning the same type. Satisfied by integer, single, float, and any type defining `operator minus`.
+A bound of its own rather than a third requirement on `Numeric`: a bound set may declare one name at two arities (`-` means `OpMin` either way, told apart by its operand count), so `\<T: Numeric + Subtractable\>` gets negation and subtraction together from two interfaces that each name `OpMin`.  The built-in number types satisfy both.
 
 ```rust
 pub interface Scalable {
@@ -7908,11 +7896,11 @@ Types that support integer scaling via a `scale` method. Uses a method (not `op 
 
 ```rust
 pub interface Printable {
-  fn to_text(self: Self) -> text
+  operator to_text(self: Self) -> text
 }
 ```
 
-Types that can be converted to text via a `to\_text` method. User types satisfy Printable by defining `fn to\_text(self: T) -\> text`.
+Types that can be converted to text via a `to\_text` method. User types satisfy Printable by defining `operator to\_text(self: T) -\> text`.
 
 == Math
 
@@ -8611,37 +8599,37 @@ pub struct StructField {
 Represents a single struct field during compile-time iteration.
 
 ```rust
-pub fn to_text(self: integer) -> text
+pub operator to_text(self: integer) -> text
 ```
 
 Converts an integer to its decimal text. Built-in types define `to\_text` so they satisfy the `Printable` interface (used by `print`, format strings, …).
 
 ```rust
-pub fn to_text(self: float) -> text
+pub operator to_text(self: float) -> text
 ```
 
 Converts a float to its text representation.
 
 ```rust
-pub fn to_text(self: single) -> text
+pub operator to_text(self: single) -> text
 ```
 
 Converts a single-precision float to its text representation.
 
 ```rust
-pub fn to_text(self: boolean) -> text
+pub operator to_text(self: boolean) -> text
 ```
 
 Converts a boolean to "true" or "false".
 
 ```rust
-pub fn to_text(self: character) -> text
+pub operator to_text(self: character) -> text
 ```
 
 Converts a character to a one-character text.
 
 ```rust
-pub fn to_text(self: text) -> text
+pub operator to_text(self: text) -> text
 ```
 
 Returns the text unchanged — the identity case, so `text` satisfies `Printable` too.

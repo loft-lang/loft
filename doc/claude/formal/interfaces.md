@@ -33,7 +33,8 @@ generic header; a **bound** `T: I₁ + … + Iₖ` constrains it. `C ⊨ I` read
               declares I as the set {m₁ … mₙ} of method SIGNATURES.  Each method's first
               parameter is `self: Self` (Self = the implementing type, filled in per instance);
               the interface has NO bodies.  An operator method may use sugar
-              `op <tok> (self: Self, …) -> R`, which names the method `OpCamelCase` (e.g. `<` ⟶ OpLt).
+              `op <tok> (self: Self, …) -> R`, met by the type's `operator` method (`<` ⟶
+              `operator compare`, formal/operators.md (Op-Bound)).
 ```
 
 **In words.** An interface is a named list of method shapes a type must provide — for example
@@ -253,20 +254,18 @@ The record, and every closed deviation, are in the companion
   so the two cannot disagree about which definition a signature names.  Oracle:
   `tests/scripts/1275-a-bound-offers-both-arities-of-minus.loft`.
 - **The parameter LIST is part of the signature (`G-Sat`)** — a member of the right arity whose
-  parameters are other types does not satisfy the bound: `fn OpMin(self: W, o: integer)` alone
-  leaves `W` short of `Subtractable`, refused as *"'OpMin' takes 'integer' where the interface
-  declares 'W'"*.  Each parameter is compared by its type definition after `[Self ↦ C]`; a
+  parameters are other types does not satisfy the bound: `operator minus(self: W, o: integer)`
+  alone leaves `W` short of `Subtractable`, refused as *"'minus' takes 'integer' where the
+  interface declares 'W'"*.  Each parameter is compared by its type definition after `[Self ↦ C]`; a
   nullable parameter takes its dense type, a variant and its enum take each other, and a
   parameter typed by the interface's own associated type, or by a type variable, asks nothing.
   Where the name carries an overload set, the member that takes the list is the one satisfying
-  it and the one the monomorph binds (`Data::overload_with_params` answers both).  An `OpEq`
-  that does not take `(Self, Self)` is not the type's own `==`, so `(G-Sat-Eq)` admits the type
-  by content, as the concrete `a == b` compares it.  Oracle:
+  it and the one the monomorph binds (`Data::operator_member_with` answers both).  `==` is the
+  content comparison for every type (`(G-Sat-Eq)`), as the concrete `a == b` is.  Oracle:
   `tests/scripts/1818-a-bound-is-satisfied-only-by-a-member-that-takes-its-parameters.loft`.
-- **A template member is not a concrete function (`G-Sat`)** — `fn OpAdd<U>(self: W, o: U)` alone
-  leaves `W` short of `Addable`, refused as *"'OpAdd' is a template, and a bound takes a
-  concrete 'OpAdd' of its signature"*, `==` included (the type HAS an `OpEq`, so content would
-  answer differently from the concrete site).  A concrete member of the set beside the template
+- **A template member is not a concrete function (`G-Sat`)** — `operator plus<U>(self: W, o: U)`
+  alone leaves `W` short of `Addable`, refused as *"'plus' is a template, and a bound takes a
+  concrete 'plus' of its signature"*.  A concrete member of the set beside the template
   satisfies and is what the monomorph binds, in either declaration order.  At a CONCRETE site
   the operator reaches the template as its call spelling does, instantiated at the operand
   types (`F-Recv`).  Oracles: `tests/scripts/1826-an-operator-reaches-a-template-member-as-its-call-does.loft`,

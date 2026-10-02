@@ -113,7 +113,8 @@ the definition is reached by syntax, and nothing is spelled `Op`.
                `compare` and `equals` are independent: `compare` answering `Equal` does not make
                `==` true, and the page says so.
 
-  (Op-Key)     a keyed collection (`hash`, `sorted`, `index`, `spatial`, `trie`) whose key field's
+  (Op-Key)     [lands WITH `operator equals`, Q14] a keyed collection (`hash`, `sorted`, `index`,
+               `spatial`, `trie`) whose key field's
                type has an `operator equals` — itself, or any type it holds by value, at any depth
                — is refused at its DECLARATION.  The key's hash and order are structural, and
                (E-Eq-Key) requires them to agree with `==`; a user `equals` would make them

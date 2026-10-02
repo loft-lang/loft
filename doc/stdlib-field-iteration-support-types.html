@@ -54,27 +54,27 @@
 <p>Represents a single struct field during compile-time iteration.</p>
 </div>
 <div class="item">
-<pre><code>pub fn to_text(self: integer) -&gt; text</code></pre>
+<pre><code>pub operator to_text(self: integer) -&gt; text</code></pre>
 <p>Converts an integer to its decimal text. Built-in types define `to_text` so they satisfy the `Printable` interface (used by `print`, format strings, …).</p>
 </div>
 <div class="item">
-<pre><code>pub fn to_text(self: float) -&gt; text</code></pre>
+<pre><code>pub operator to_text(self: float) -&gt; text</code></pre>
 <p>Converts a float to its text representation.</p>
 </div>
 <div class="item">
-<pre><code>pub fn to_text(self: single) -&gt; text</code></pre>
+<pre><code>pub operator to_text(self: single) -&gt; text</code></pre>
 <p>Converts a single-precision float to its text representation.</p>
 </div>
 <div class="item">
-<pre><code>pub fn to_text(self: boolean) -&gt; text</code></pre>
+<pre><code>pub operator to_text(self: boolean) -&gt; text</code></pre>
 <p>Converts a boolean to &quot;true&quot; or &quot;false&quot;.</p>
 </div>
 <div class="item">
-<pre><code>pub fn to_text(self: character) -&gt; text</code></pre>
+<pre><code>pub operator to_text(self: character) -&gt; text</code></pre>
 <p>Converts a character to a one-character text.</p>
 </div>
 <div class="item">
-<pre><code>pub fn to_text(self: text) -&gt; text</code></pre>
+<pre><code>pub operator to_text(self: text) -&gt; text</code></pre>
 <p>Returns the text unchanged — the identity case, so `text` satisfies `Printable` too.</p>
 </div>
 

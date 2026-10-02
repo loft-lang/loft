@@ -59,7 +59,7 @@
 <li><strong>@F29</strong> — Pattern matching — enum/scalar/tuple, guards, or-patterns, exhaustiveness</li>
 <li><strong>@F30</strong> — <code>is</code> variant check (+ field capture)</li>
 <li><strong>@F31</strong> — <code>break</code> / <code>continue</code> + labelled forms</li>
-<li><strong>@F32</strong> — Custom iterators via <code>fn next(self) -&gt; T?</code></li>
+<li><strong>@F32</strong> — Custom iterators via <code>operator next(self) -&gt; T?</code></li>
 <li><strong>@F33</strong> — <code>par(...)</code> parallel for-loop</li>
 <li><strong>@F34</strong> — Coroutines / generators — <code>yield</code>, <code>yield from</code></li>
 <li><strong>@F35</strong> — String literals — <code>{expr}</code> interpolation + backtick multiline</li>
@@ -108,7 +108,7 @@
 <li><strong>@F111</strong> — <code>for f in s#fields</code> — a compile-time loop over a struct's scalar fields</li>
 <li><strong>@F112</strong> — <code>store_release()</code> — say a record is finished, and stop holding it in memory</li>
 <li><strong>@F113</strong> — Associated types — an interface names a companion type</li>
-<li><strong>@F114</strong> — <code>x[i]</code> on a library type — <code>OpIndex</code> dispatch</li>
+<li><strong>@F114</strong> — A library type reads an element through a named method — <code>[…]</code> is the built-in collections'</li>
 <li><strong>@F115</strong> — <code>OpDrop</code> — a type runs code when its scope lets it die</li>
 <li><strong>@F118</strong> — Time (now / ticks)</li>
 <li><strong>@F119</strong> — Store locks (#lock)</li>
@@ -224,7 +224,7 @@
 // - **@F29** — Pattern matching — enum/scalar/tuple, guards, or-patterns, exhaustiveness
 // - **@F30** — `is` variant check (+ field capture)
 // - **@F31** — `break` / `continue` + labelled forms
-// - **@F32** — Custom iterators via `fn next(self) -&gt; T?`
+// - **@F32** — Custom iterators via `operator next(self) -&gt; T?`
 // - **@F33** — `par(...)` parallel for-loop
 // - **@F34** — Coroutines / generators — `yield`, `yield from`
 // - **@F35** — String literals — `{expr}` interpolation + backtick multiline
@@ -273,7 +273,7 @@
 // - **@F111** — `for f in s#fields` — a compile-time loop over a struct's scalar fields
 // - **@F112** — `store_release()` — say a record is finished, and stop holding it in memory
 // - **@F113** — Associated types — an interface names a companion type
-// - **@F114** — `x[i]` on a library type — `OpIndex` dispatch
+// - **@F114** — A library type reads an element through a named method — `[…]` is the built-in collections'
 // - **@F115** — `OpDrop` — a type runs code when its scope lets it die
 // - **@F118** — Time (now / ticks)
 // - **@F119** — Store locks (#lock)
