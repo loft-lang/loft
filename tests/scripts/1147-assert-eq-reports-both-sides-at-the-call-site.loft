@@ -22,13 +22,13 @@
 // that merely passes proves the dispatch, the bound and the monomorphisation; the message and
 // the halt are proven where a failure can be observed.
 //
+// (Measured on the `fn Op…` spelling: @C132 re-spelled the cells to `operator` methods, same values.)
 // @falsified-at: 38d7afbf — interpret exit 1 -> 0, native exit 1 -> 0
 //   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees.
 //   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
 //   those is clean on both. The native side was not scored in this sweep.
 
 struct Aq1147P { aq_px: integer }
-fn OpEq(self: Aq1147P, other: Aq1147P) -> boolean { self.aq_px == other.aq_px }
 operator to_text(self: Aq1147P) -> text { "P({self.aq_px})" }
 
 fn main() {
@@ -39,7 +39,7 @@ fn main() {
   assert_eq(1.5f + 1.0f, 2.5f, "single");
   assert_eq(1 < 2, true, "boolean");
 
-  // ---- a user type, through its own OpEq and to_text ----
+  // ---- a user type, compared by its fields, shown through its to_text ----
   assert_eq(Aq1147P { aq_px: 3 }, Aq1147P { aq_px: 3 }, "user type by VALUE");
 
   // ---- the label is optional ----

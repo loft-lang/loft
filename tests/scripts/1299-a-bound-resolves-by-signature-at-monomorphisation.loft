@@ -39,6 +39,7 @@
 // does — a generic header binds its own type variable, so the two live on separate stubs
 // (loft#1300, guarded in `1300-a-generic-header-binds-its-own-type-variable.loft`).
 //
+// (Measured on the `fn Op…` spelling: @C132 re-spelled the cells to `operator` methods, same values.)
 // @falsified-at: 52e3c0ac — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
 //   native exit 1 -> 0, native 1 assertion failures -> 0.
 //   ⚠ That control is on no public ref, so this receipt records a falsification that
@@ -53,7 +54,7 @@ interface Add1299 { op + (self: Self, other: Self) -> Self }
 interface Lt1299  { op < (self: Self, other: Self) -> boolean }
 
 struct M1299 { v: integer }
-fn OpMin(self: M1299, other: M1299) -> M1299 { M1299 { v: self.v - other.v } }
+operator minus(self: M1299, other: M1299) -> M1299 { M1299 { v: self.v - other.v } }
 
 fn sub1299<T: Sub1299>(a: T, b: T) -> T { a - b }
 fn mul1299<T: Mul1299>(a: T, b: T) -> T { a * b }
@@ -67,7 +68,7 @@ fn a_binary_minus_under_a_bound_subtracts() {
   assert(sub1299(10.5f, 0.5f) == 10.0f, "single: {sub1299(10.5f, 0.5f)}");
 
   // A STRUCT receiver was already correct — resolving by name landed on the author's own
-  // `OpMin` because it is the only one visible for `M1299`. It must stay correct, and it is
+  // `operator minus` because it is the only one visible for `M1299`. It must stay correct, and it is
   // the row the first attempt at this fix regressed.
   assert(sub1299(M1299 { v: 10 }, M1299 { v: 3 }).v == 7, "struct receiver");
 }

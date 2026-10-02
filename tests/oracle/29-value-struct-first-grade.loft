@@ -10,9 +10,7 @@
 // Arms are kept uniform (all interpolated) to steer clear of the still-open #534 residual
 // (a match-`&str` fn mixed with a String arm in a 3-arm hook); add that shape once #534 lands.
 value struct D { ms: integer }
-fn OpEq(self: D, other: D) -> boolean { self.ms == other.ms }
-fn OpLt(self: D, other: D) -> boolean { self.ms < other.ms }
-fn OpGt(self: D, other: D) -> boolean { self.ms > other.ms }
+operator compare(self: D, other: D) -> Ordering { self.ms.compare(other.ms) }
 fn mk(n: integer) -> D { D { ms: n } }
 operator to_text(self: D, spec: text) -> text {
   if spec == "hex" { "{self.ms:#x}" }

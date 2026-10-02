@@ -4,14 +4,11 @@
 // A TEMPLATE MEMBER ALONE DOES NOT SATISFY A BOUND (loft#1826, @FR-G-Sat).  `(G-Sat)` asks
 // for a CONCRETE function of the bound's signature, and the monomorph binds the bound's call
 // to a definition with no step that would instantiate a template.  A type whose only `OpAdd`
-// is `fn OpAdd<U>(self: W, o: U)` satisfied `Addable`, and the template itself reached the
-// bytecode: an internal compiler error on both backends.  It is refused naming the template.
-// `==` is refused the same way rather than compared by content (G-Sat-Eq), because the type
-// HAS an `OpEq`, which the concrete `a == b` instantiates; content in the generic would
-// answer differently from the concrete site.  The accepting half is
-// `1826-an-operator-reaches-a-template-member-as-its-call-does.loft`.
-// @C132 — a user `fn Op…` is no operator template: this file keeps that half of the decision
-// today; the rest (a user `fn Op…` binds no operator at all) lands with loft#1833.
+// is a template — `fn OpAdd<U>(self: W, o: U)`, now `operator plus<U>(self: W, o: U)` — satisfied
+// `Addable`, and the template itself reached the bytecode: an internal compiler error on both
+// backends.  It is refused naming the template.  The accepting half is
+// `1826-an-operator-reaches-a-template-member-as-its-call-does.loft`.  C132: `==` compares
+// the fields of every type, so `same(a, a)` is content equality and is not refused.
 //
 // @falsified-at: f143377a8 — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 1/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 1/2 (the suite's verdict, not a count of matches)
 // @falsified-by: tests/falsified/1826b-a-template-member-alone-does-not-satisfy-a-bound.patch — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 1/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 1/2 (the suite's verdict, not a count of matches)
@@ -21,14 +18,12 @@
 //   HOLDS: leak and panic are equal on both trees.
 
 struct W { x: integer }
-fn OpAdd<U>(self: W, _o: U) -> W { W { x: self.x + 1 } }
-fn OpEq<U>(self: W, _o: U) -> boolean { self.x == 7 }
-fn plus<T: Addable>(a: T, b: T) -> T { a + b }
+operator plus<U>(self: W, _o: U) -> W { W { x: self.x + 1 } }
+fn added<T: Addable>(a: T, b: T) -> T { a + b }
 fn same<T: Equatable>(a: T, b: T) -> boolean { a == b }
 
-// @EXPECT_ERROR: 'W' does not satisfy interface 'Addable': 'OpAdd' is a template, and a bound takes a concrete 'OpAdd' of its signature; declare one for 'W'
-// @EXPECT_ERROR: 'W' does not satisfy interface 'Equatable': 'OpEq' is a template, and a bound takes a concrete 'OpEq' of its signature; declare one for 'W'
+// @EXPECT_ERROR: 'W' does not satisfy interface 'Addable': 'plus' is a template, and a bound takes a concrete 'plus' of its signature; declare one for 'W'
 fn refused() {
   a = W { x: 7 };
-  assert(plus(a, a).x == 8 && same(a, a), "unreachable");
+  assert(added(a, a).x == 8 && same(a, a), "unreachable");
 }

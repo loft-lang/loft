@@ -1,71 +1,40 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// loft#996 — `OpIndex` sugar reached only `x[i]`.  @F114 says a type defining it "is
-// subscripted like a built-in collection" and names A MATRIX as the motivating case, and
-// a matrix wants `m[r, c]` — which answered `error: Expect token ]` at the comma.
+// loft#996 — `m[r, c]` on a program's type is ONE refusal, never a syntax-error cascade at the
+// comma.  The file once guarded the other side: a user `fn OpIndex` gave a type `x[i]`, and
+// `m[r, c]` answered `Expect token ]` at the comma until the indices were read as arguments.
+// C132 (@PLN182 Q10) retired that: `[…]` belongs to the built-in collections, and a function
+// named `OpIndex` is an ordinary function, callable by its name.  What stays is the parse
+// half — every index of a subscript is read, so the program sees one refusal naming the type
+// and the cure, at one, two and three indices, with an index expression inside.
 //
-// The dispatch half was never the problem: a two-index declaration is accepted and
-// `OpIndex(m, 1, 2)` works.  Only its own syntax could not reach it, so an author could
-// write the method the feature exists for, call it by hand, and never subscript with it.
+// @falsified-at: none — re-spelled for C132; the defect it was written for (the comma
+//   cascade) is the one the refusal path below must not bring back, and `make falsify` of
+//   the rewrite is recorded with the C132 commit.
 //
-// The indices are passed as ARGUMENTS, which is what the accepted declaration already
-// means — so the arity and type checks stay in the ordinary call path and report against
-// the signature the author wrote.
-//
-// The SLICE half (`x[a..b]`) is not here because it is not a parse: every built-in kind
-// lowers its own slice to a dedicated runtime call and there is no range VALUE in the
-// language for a method to take, so it needs a range type or an `OpSlice` of its own.
-// What it must not do is stay `Expect token ]`; the refusal and its message are pinned in
-// `tests/parse_errors.rs::opindex_slice_says_what_to_write`.
+// @EXPECT_ERROR: `M996` cannot be indexed: `[…]` belongs to the built-in collections
+// @EXPECT_ERROR: `R996` cannot be indexed: `[…]` belongs to the built-in collections
+// @EXPECT_ERROR: `T996` cannot be indexed: `[…]` belongs to the built-in collections
+// @EXPECT_ERROR: `M996` cannot be indexed: `[…]` belongs to the built-in collections
 
 struct M996 {
   data: vector<integer>,
   w:    integer,
 }
-
 fn OpIndex(self: M996, r: integer, c: integer) -> integer {
   return self.data[r * self.w + c] ?? 0;
 }
-
 struct R996 { data: vector<integer> }
-
-fn OpIndex(self: R996, i: integer) -> integer {
-  return self.data[i] ?? 0;
-}
-
 struct T996 { data: vector<integer> }
 
-fn OpIndex(self: T996, a: integer, b: integer, c: integer) -> integer {
-  return self.data[a + b + c] ?? 0;
-}
-
-/// The reported shape: two indices, and the sugar must agree with the explicit call.
-fn test_996_two_indices() {
+fn refused() {
   m = M996 { data: [1, 2, 3, 4, 5, 6], w: 3 };
-  assert(OpIndex(m, 1, 2) == 6, "explicit call: {OpIndex(m, 1, 2)}");
-  assert(m[1, 2] == 6, "sugar: {m[1, 2]}");
-  assert(m[0, 0] == 1, "first cell: {m[0, 0]}");
-  assert(m[1, 0] == 4, "row 1: {m[1, 0]}");
-}
-
-/// One index still reaches the one-index method — the axis is the COMMA, not the type.
-fn test_996_one_index_unchanged() {
   r = R996 { data: [7, 8, 9] };
-  assert(r[0] == 7, "single index: {r[0]}");
-  assert(r[2] == 9, "single index: {r[2]}");
-}
-
-/// Three, because "two" is not the rule — the declaration's arity is.
-fn test_996_three_indices() {
   t = T996 { data: [10, 20, 30, 40, 50, 60, 70] };
-  assert(t[1, 2, 3] == 70, "three indices: {t[1, 2, 3]}");
-}
-
-/// An index expression, not just a literal — each one parses as a full expression.
-fn test_996_index_expressions() {
-  m = M996 { data: [1, 2, 3, 4, 5, 6], w: 3 };
   one = 1;
-  assert(m[one, one + 1] == 6, "computed indices: {m[one, one + 1]}");
-  assert(m[m[0, 0] - 1, 2] == 3, "nested subscript as an index: {m[m[0, 0] - 1, 2]}");
+  assert(m[1, 2] == 6, "two indices");
+  assert(r[0] == 7, "one index");
+  assert(t[1, 2, 3] == 70, "three indices");
+  assert(m[one, one + 1] == 6, "index expressions");
 }

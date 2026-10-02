@@ -94,7 +94,7 @@ canonical; these pages are its generated shadow. Regenerate with
 | [@F111](F111.md) | `for f in s#fields` — a compile-time loop over a struct's scalar fields |
 | [@F112](F112.md) | `store_release()` — say a record is finished, and stop holding it in memory |
 | [@F113](F113.md) | Associated types — an interface names a companion type |
-| [@F114](F114.md) | `x[i]` on a library type — `OpIndex` dispatch |
+| [@F114](F114.md) | A library type reads an element through a named method — `[…]` is the built-in collections' |
 | [@F115](F115.md) | `OpDrop` — a type runs code when its scope lets it die |
 | [@F118](F118.md) | Time (now / ticks) |
 | [@F119](F119.md) | Store locks (#lock) |

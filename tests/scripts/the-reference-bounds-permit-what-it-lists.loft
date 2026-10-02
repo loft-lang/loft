@@ -20,10 +20,11 @@
 // every refusal is matched rather than only the first, loft#1261).
 //
 // The other half the chapter never showed is a USER type under a bound, which is what the
-// interfaces exist for.  The spelling that satisfies one is the operator's own name —
-// `OpLt`, `OpAdd`, `OpMul`, `OpMin`, `OpEq` — and it appeared in no chapter and in no
-// example of INTERFACES.md, whose own illustrations used a `less_than` method that the
-// built-in `Ordered` does not accept.
+// interfaces exist for.  What satisfies one is the type's `operator` method — `compare` for
+// `Ordered`, `plus` for `Addable` — and `Equatable` is met by every type, `==` comparing the
+// fields (C132).  `Numeric` asks for a unary `-`, and `negate` is a reserved operator name no
+// type can define yet, so `Numeric` is met by the built-in numbers only: its user-type cells
+// are absent until `operator negate` lands (@PLN182 Q10).
 //
 // @falsified-at: none — a LOCK.  Every cell passes on the build this was written against;
 //   what was wrong is the page.  The value is directional: a bound quietly GAINING an
@@ -32,11 +33,8 @@
 //   narrowed to match it.
 
 struct Cash { cents: integer }
-fn OpLt(self: Cash, other: Cash) -> boolean { self.cents < other.cents }
-fn OpEq(self: Cash, other: Cash) -> boolean { self.cents == other.cents }
-fn OpAdd(self: Cash, other: Cash) -> Cash { Cash { cents: self.cents + other.cents } }
-fn OpMul(self: Cash, other: Cash) -> Cash { Cash { cents: self.cents * other.cents } }
-fn OpMin(self: Cash) -> Cash { Cash { cents: -self.cents } }
+operator compare(self: Cash, other: Cash) -> Ordering { self.cents.compare(other.cents) }
+operator plus(self: Cash, other: Cash) -> Cash { Cash { cents: self.cents + other.cents } }
 fn scale(self: Cash, factor: integer) -> integer { self.cents * factor }
 operator to_text(self: Cash) -> text { "{self.cents}c" }
 
@@ -92,7 +90,7 @@ fn each_bound_permits_exactly_its_own_operations() {
 
 // …and the same table on a type the program declares itself, which is the case the chapter
 // never showed and the reason the interfaces exist.
-fn a_user_type_satisfies_a_bound_by_defining_the_operator_function() {
+fn a_user_type_satisfies_a_bound_by_defining_the_operator_method() {
   small = Cash { cents: 300 };
   big = Cash { cents: 700 };
   assert(gb_gt(big, small), "Ordered on a user type");
@@ -102,24 +100,20 @@ fn a_user_type_satisfies_a_bound_by_defining_the_operator_function() {
   // Bound rather than read inline: loft#1273 retains one record per call otherwise.
   sum = gb_add(small, small);
   assert(sum.cents == 600, "Addable on a user type: {sum.cents}");
-  prod = gb_mul(Cash { cents: 3 }, Cash { cents: 4 });
-  assert(prod.cents == 12, "Numeric `*` on a user type: {prod.cents}");
-  neg = gb_neg(small);
-  assert(neg.cents == -300, "Numeric unary `-` on a user type: {neg.cents}");
   assert(gb_scale(Cash { cents: 5 }) == 15, "Scalable on a user type");
   assert(gb_text(big) == "700c", "Printable on a user type: {gb_text(big)}");
 }
 
-// One definition, two callers: the operator function a bound looks for is the SAME one the
+// One definition, two callers: the operator method a bound looks for is the SAME one the
 // bare operator dispatches to, so satisfying a bound is not a separate stub.
 fn one_definition_serves_the_bound_and_the_bare_operator() {
   small = Cash { cents: 300 };
   big = Cash { cents: 700 };
-  assert(small < big, "the bare `<` uses the same `OpLt` the bound asks for");
+  assert(small < big, "the bare `<` uses the same `compare` the bound asks for");
   assert(big > small, "…and its derived form");
-  assert(small == Cash { cents: 300 }, "the bare `==` uses the same `OpEq`");
+  assert(small == Cash { cents: 300 }, "the bare `==` compares the fields, as the bound does");
   joined = small + big;
-  assert(joined.cents == 1000, "the bare `+` uses the same `OpAdd`: {joined.cents}");
+  assert(joined.cents == 1000, "the bare `+` uses the same `plus`: {joined.cents}");
 }
 
 // A CONSTANT index is trusted by the type system and is not trusted by the heap: `v[0]`

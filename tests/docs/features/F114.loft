@@ -6,8 +6,8 @@ struct Ring {
     start: integer,
 }
 
-// `x[i]` on a Ring is whatever this says it is.
-fn OpIndex(self: Ring, i: integer) -> integer {
+// A ring's element read is whatever this says it is.
+fn at(self: Ring, i: integer) -> integer {
     n = len(self.data);
     if n == 0 { return 0; }
     return self.data[(self.start + i) % n] ?? 0;
@@ -15,5 +15,5 @@ fn OpIndex(self: Ring, i: integer) -> integer {
 
 fn main() {
     r = Ring { data: [10, 20, 30], start: 1 };
-    println("{r[0]} {r[1]} {r[2]}");    // 20 30 10
+    println("{r.at(0)} {r.at(1)} {r.at(2)}");    // 20 30 10
 }

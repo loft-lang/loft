@@ -195,6 +195,8 @@ web/src/web.loft
 #     is the gated list.)
 # Take these upstream and re-pin when those packages next cut a release; until then
 # the fixture is the newer artifact and the tag is the stale one.
+#   * C132 (@PLN182) retired a program's `fn Op…`: `time/src/time.loft` declares its
+#     operators and conversions as `operator` definitions, as time 0.4.0 does.
 web/tests/pack.loft
 time/src/time.loft
 # --- loft#1302 env_variable answers null when unset -------------------------------

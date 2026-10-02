@@ -599,43 +599,37 @@ fn nullable_receiver_implements_its_variant() {
 #[test]
 fn a_compound_operator_no_overload_takes_is_refused() {
     // loft#1819 — a compound assignment resolves its operator on the place's type and the
-    // right side's OWN type, so a right side no overload takes is refused naming both, and
-    // naming the operator as written.  Before, the right side was typed as the place's type:
-    // *"No matching operator 'Min' on 'V' and 'V'"*.
+    // right side's OWN type, so a right side no overload takes is refused naming both, the
+    // operator as written, and the `operator` method that would take it.
     code!(
-        "struct V { x: integer }\nfn OpMin(self: V, o: integer) -> V { V { x: self.x - o } }\nfn test() { a = V { x: 5 }; a -= \"t\"; assert(a.x == 5, \"u\"); }"
+        "struct V { x: integer }\noperator minus(self: V, o: integer) -> V { V { x: self.x - o } }\nfn test() { a = V { x: 5 }; a -= \"t\"; assert(a.x == 5, \"u\"); }"
     )
-    .error("No matching operator '-=' on 'V' and 'text' at a_compound_operator_no_overload_takes_is_refused:3:37");
+    .error("No matching operator '-=' on 'V' and 'text'; declare `operator minus(self: V, other: text) -> …` at a_compound_operator_no_overload_takes_is_refused:3:37");
 }
 
 #[test]
 fn an_operator_no_overload_takes_is_refused() {
     // loft#1817 — an operator reaches every member of its overload set (`@FR-F-Recv`), and a
     // second operand NO member takes is still refused naming both operand types, in either
-    // declaration order.  The refusal is the incumbent's own mismatch, reached once the set's
-    // selection finds no applicable member.
+    // declaration order.
     code!(
-        "struct V { x: integer }\nfn OpMin(self: V, o: V) -> V { V { x: self.x - o.x } }\nfn OpMin(self: V, o: integer) -> V { V { x: self.x - o } }\nstruct W { x: integer }\nfn OpMin(self: W, o: integer) -> W { W { x: self.x - o } }\nfn OpMin(self: W, o: W) -> W { W { x: self.x - o.x } }\nfn test() { a = V { x: 1 }; b = a - \"t\"; c = W { x: 1 }; d = c - \"t\"; }"
+        "struct V { x: integer }\noperator minus(self: V, o: V) -> V { V { x: self.x - o.x } }\noperator minus(self: V, o: integer) -> V { V { x: self.x - o } }\nstruct W { x: integer }\noperator minus(self: W, o: integer) -> W { W { x: self.x - o } }\noperator minus(self: W, o: W) -> W { W { x: self.x - o.x } }\nfn test() { a = V { x: 1 }; b = a - \"t\"; c = W { x: 1 }; d = c - \"t\"; }"
     )
-    .error("No matching operator '-' on 'V' and 'text' at an_operator_no_overload_takes_is_refused:7:40")
-    .error("No matching operator '-' on 'W' and 'text' at an_operator_no_overload_takes_is_refused:7:69");
+    .error("No matching operator '-' on 'V' and 'text'; declare `operator minus(self: V, other: text) -> …` at an_operator_no_overload_takes_is_refused:7:40")
+    .error("No matching operator '-' on 'W' and 'text'; declare `operator minus(self: W, other: text) -> …` at an_operator_no_overload_takes_is_refused:7:69");
 }
 
 #[test]
 fn an_operator_at_an_arity_its_type_lacks_is_refused() {
-    // loft#1794 — a user type defining `-` at ONE arity is refused at the other, naming the
-    // operator the author wrote (loft#1807).  Before, the operator lookup took the receiver
-    // slot's method whatever its arity: `a - b` over a unary-only `OpMin` called it with one
-    // operand too many and answered `-a` in silence, and `-a` over a binary-only one was
-    // refused as a missing argument of `OpMin`.
-    //
-    // Measured against ec35ee1de: FAILS there — no error for `a - b` (it compiled and ran),
-    // and *"missing argument for parameter 'o' of `OpMin`"* for `-c`.
+    // loft#1794, C132 — a form is reached at its own arity only.  `a - b` on a type whose
+    // `minus` is a receiver-only plain method names the binary `operator minus` to declare,
+    // and `-c` on a type with a binary `operator minus` is the unary form, which a program's
+    // type cannot define yet (@PLN182 Q10).
     code!(
-        "struct Un { x: integer }\nfn OpMin(self: Un) -> Un { Un { x: 0 - self.x } }\nstruct Bi { x: integer }\nfn OpMin(self: Bi, o: Bi) -> Bi { Bi { x: self.x - o.x } }\nfn test() { a = Un { x: 3 }; b = Un { x: 1 }; d = a - b; c = Bi { x: 2 }; e = -c; }"
+        "struct Un { x: integer }\nfn minus(self: Un) -> Un { Un { x: 0 - self.x } }\nstruct Bi { x: integer }\noperator minus(self: Bi, o: Bi) -> Bi { Bi { x: self.x - o.x } }\nfn test() { a = Un { x: 3 }; b = Un { x: 1 }; d = a - b; c = Bi { x: 2 }; e = -c; }"
     )
-    .error("No matching operator '-' on 'Un' and 'Un' at an_operator_at_an_arity_its_type_lacks_is_refused:5:56")
-    .error("No matching operator '-' on 'Bi' at an_operator_at_an_arity_its_type_lacks_is_refused:5:81");
+    .error("No matching operator '-' on 'Un' and 'Un'; declare `operator minus(self: Un, other: Un) -> …` at an_operator_at_an_arity_its_type_lacks_is_refused:5:56")
+    .error("No matching operator '-' on 'Bi'; `Bi` cannot define '-' yet — call a named method at an_operator_at_an_arity_its_type_lacks_is_refused:5:81");
 }
 
 #[test]
@@ -1679,20 +1673,9 @@ fn outside_a_loop_keeps_its_own_message() {
         .error("Cannot continue outside a loop at outside_a_loop_keeps_its_own_message:1:29");
 }
 
-/// loft#996 — a SLICE on a library type says what to write, instead of `Expect token ]`.
-///
-/// The composite `x[a, b]` now dispatches to `OpIndex` (its indices are arguments, which
-/// is what the accepted declaration already means). The slice cannot: every built-in kind
-/// lowers its own to a dedicated runtime call, and there is no range VALUE in the language
-/// for a user method to receive — so `x[a..b]` needs a range type or an `OpSlice` of its
-/// own, which is a language addition and not a parse. What it must not stay is
-/// `Expect token ]` pointing at the `..`, beside the two messages this feature already
-/// gets right.
-///
-/// ONE error, which is the second half of the fix: the refusal consumes the rest of the
-/// bracket so the caller's `]` still matches. Returning with `..2` unread cascaded on
-/// pass 1, and a pass-1 abort silences every pass-2 diagnostic — the first version of this
-/// reported nothing at all and left `Expect token ]` standing.
+/// loft#996, C132 — a SLICE on a program's type is ONE refusal, never `Expect token ]` at the
+/// `..`: the refusal reads the rest of the bracket so the caller's `]` still matches.  A
+/// function named `OpIndex` beside it is an ordinary function and changes nothing.
 #[test]
 fn opindex_slice_says_what_to_write() {
     code!(
@@ -1701,28 +1684,9 @@ fn OpIndex(self: Ring996, i: integer) -> integer { return self.data[i] ?? 0; }
 fn test() { r = Ring996 { data: [7, 8, 9] }; _x = r[0..2]; }"
     )
     .error(
-        "`Ring996` defines `OpIndex`, which takes INDEX arguments — there is no range value to hand it, so `x[a..b]` has nothing to dispatch to; write the bounds as indices (`x[a, b]`, if `OpIndex` declares two) or give the type a method that slices (`x.slice(a, b)`) at opindex_slice_says_what_to_write:3:56",
-    );
-}
-
-/// The arity mismatch the comma form makes reachable, and the name it uses.
-///
-/// A one-index `OpIndex` given two now earns the ordinary call diagnostic, reported
-/// against the signature the author wrote. It used to name the STORAGE symbol —
-/// `t_4Ring996_OpIndex`, which appears in no source file — and two fixtures in this suite
-/// record that as a defect of its own (`tests/lib/dupmethod_a/…`,
-/// `tests/scripts/850-…`). `Data::user_facing_name` renders the method as `Type.name`,
-/// keeping the receiver visible because that is exactly what is ambiguous where these
-/// messages fire.
-#[test]
-fn opindex_wrong_arity_names_the_method_not_the_symbol() {
-    code!(
-        "struct Ring996 { data: vector<integer> }
-fn OpIndex(self: Ring996, i: integer) -> integer { return self.data[i] ?? 0; }
-fn test() { r = Ring996 { data: [7, 8, 9] }; _x = r[0, 1]; }"
-    )
-    .error(
-        "Too many parameters for Ring996.OpIndex at opindex_wrong_arity_names_the_method_not_the_symbol:3:58",
+        "`Ring996` cannot be indexed: `[…]` belongs to the built-in collections — give \
+         `Ring996` a method that reads an element, and call it at \
+         opindex_slice_says_what_to_write:3:56",
     );
 }
 
@@ -1886,7 +1850,7 @@ fn satisfaction_check_fails_missing_method() {
          fn pick_first<T: Ordered>(a: T, _b: T) -> T { a }
          fn test() { pick_first(Thing{x:1}, Thing{x:2}) }"
     )
-    .error("'Thing' does not satisfy interface 'Ordered': missing OpLt at satisfaction_check_fails_missing_method:3:57");
+    .error("'Thing' does not satisfy interface 'Ordered': missing `operator compare(self: Thing, other: Thing) -> Ordering` at satisfaction_check_fails_missing_method:3:57");
 }
 
 /// @PLN125 A2a: an implementor whose method returns a DIFFERENT named type than
@@ -2007,12 +1971,8 @@ fn associated_type_name_must_be_camel_case() {
     );
 }
 
-/// @PLN125 arc C: a type that has not defined `OpIndex` names the line to add.
-///
-/// The old answer was the keyed-collection message, which sent a reader chasing
-/// a `hash<Row[id]>` constructor that has nothing to do with subscripting their
-/// struct. Now that a library type CAN be indexed, "it did not define `OpIndex`"
-/// is the actual cause and the fix is one signature.
+/// C132 (@PLN182 Q10): `[…]` belongs to the built-in collections, and a program's type is
+/// refused naming the cure — a method that reads an element.
 #[test]
 fn indexing_a_type_without_op_index_names_the_method() {
     code!(
@@ -2020,45 +1980,44 @@ fn indexing_a_type_without_op_index_names_the_method() {
          fn test() { p = Plain { v: 1 }; p[0] }"
     )
     .error(
-        "`Plain` cannot be indexed — define `fn OpIndex(self: Plain, i: integer) -> \u{3c4}` \
-         to give it `x[i]` at indexing_a_type_without_op_index_names_the_method:2:45",
+        "`Plain` cannot be indexed: `[…]` belongs to the built-in collections — give `Plain` \
+         a method that reads an element, and call it at \
+         indexing_a_type_without_op_index_names_the_method:2:45",
     );
 }
 
-/// @PLN125 arc C: inside a generic, only the BOUNDS may be relied on — so an
-/// unbounded type variable cannot be subscripted even when every type it is ever
-/// instantiated with defines `OpIndex`.
-///
-/// This is a refusal that has to be enforced rather than fall out: a bound stub
-/// is named for the HOLDER (`t_1I_OpIndex`), and holder names are shared across
-/// generics, so a sibling `fn a<I: Indexable>` in the same program mints exactly
-/// the name an unbounded `fn b<I>` would find. Without the check `b` compiled and
-/// worked, promising nothing and delivering it.
+/// C132 (@PLN182 Q10): a type variable is subscripted no more than a program's type is —
+/// `[…]` belongs to the built-in collections, and the cure is a bound with a reading method.
 #[test]
 fn indexing_an_unbounded_type_variable_is_refused() {
     code!(
-        "interface Indexable { op [] (self: Self, i: integer) -> integer }
-         struct Bits { words: vector<integer> }
-         fn OpIndex(self: Bits, i: integer) -> integer { self.words[i] ?? 0 }
-         fn good<I: Indexable>(x: I) -> integer { x[0] }
-         fn bad<I>(x: I) -> integer { x[0] }
-         fn test() { good(Bits{words:[7]}) + bad(Bits{words:[7]}) }"
+        "fn bad<I>(x: I) -> integer { x[0] }
+         fn test() { bad([7]) }"
     )
     .error(
-        "generic type I: `[\u{2026}]` needs a bound that declares it — add \
-         `op [] (self: Self, i: integer) -> \u{3c4}` to an interface and bound `I` by it \
-         at indexing_an_unbounded_type_variable_is_refused:5:42",
+        "generic type I: `[\u{2026}]` belongs to the built-in collections — bound `I` by an \
+         interface with a method that reads an element, and call it \
+         at indexing_an_unbounded_type_variable_is_refused:1:33",
     );
 }
 
-/// @PLN125 arc C: `OpIndex` READS. `x[i] = …` is refused, and the message says so
-/// in the author's terms.
-///
-/// A writing counterpart is a separate decision — it needs its own method, and a
-/// decision about whether `x[i] += 1` may then read-modify-write — so this is a
-/// refusal rather than a gap left silent. Before it, the assignment path reported
-/// "Cannot assign to attribute on type 't_4Bits_OpIndex'", naming an internal
-/// symbol the author never wrote.
+/// C132 (@PLN182 Q10): no type defines `[…]`, so an interface requiring it could be met by
+/// nothing; it is refused where it is written, naming the member to require instead.
+#[test]
+fn an_interface_cannot_require_a_subscript() {
+    code!(
+        "interface Indexable { op [] (self: Self, i: integer) -> integer }
+         fn test() { }"
+    )
+    .error(
+        "an interface cannot require `[\u{2026}]`: it belongs to the built-in collections, and \
+         no type defines it — require a method that reads an element (`fn at(self: Self, i: \
+         integer) -> \u{3c4}`) at an_interface_cannot_require_a_subscript:1:30",
+    );
+}
+
+/// C132: `x[i] = …` on a program's type is the one subscript refusal, and the place is not
+/// the receiver — `b[0] = 9` is never read as `b = 9`, which retyped `b`.
 #[test]
 fn assigning_through_op_index_is_refused() {
     code!(
@@ -2067,9 +2026,8 @@ fn assigning_through_op_index_is_refused() {
          fn test() { b = Bits { words: [1,2] }; b[0] = 9; }"
     )
     .error(
-        "`Bits` defines `OpIndex`, which READS — `x[i] = \u{2026}` has nothing to write \
-         through; give the type a method that sets (`x.set(i, \u{2026})`) at \
-         assigning_through_op_index_is_refused:3:58",
+        "`Bits` cannot be indexed: `[…]` belongs to the built-in collections — give `Bits` a \
+         method that reads an element, and call it at assigning_through_op_index_is_refused:3:52",
     );
 }
 
@@ -4839,7 +4797,7 @@ fn a_user_type_missing_the_operator_is_refused_at_the_call() {
          fn test() { r = biggest(Pri{value: 3}, Pri{value: 7}); }"
     )
     .error(
-        "'Pri' does not satisfy interface 'Ordered': missing OpLt at \
+        "'Pri' does not satisfy interface 'Ordered': missing `operator compare(self: Pri, other: Pri) -> Ordering` at \
          a_user_type_missing_the_operator_is_refused_at_the_call:3:54",
     )
     .warning(
@@ -5162,13 +5120,13 @@ fn insert_refuses_an_implicit_narrowing() {
 #[test]
 fn sort_refuses_an_element_that_is_not_ordered() {
     code!("struct Q { x: integer }\nfn test() { q = [Q { x: 2 }, Q { x: 1 }]; q.sort(); assert(len(q) == 2, \"\"); }")
-        .error("'Q' does not satisfy interface 'Ordered': missing OpLt at sort_refuses_an_element_that_is_not_ordered:2:51");
+        .error("'Q' does not satisfy interface 'Ordered': missing `operator compare(self: Q, other: Q) -> Ordering` at sort_refuses_an_element_that_is_not_ordered:2:51");
 }
 
 #[test]
 fn sort_in_a_generic_needs_the_bound() {
     code!("fn g<T>(v: vector<T>) { sort(v) }\nfn test() { g([2, 1]); }")
-        .error("'T' does not satisfy interface 'Ordered': missing OpLt at sort_in_a_generic_needs_the_bound:1:33");
+        .error("'T' does not satisfy interface 'Ordered': missing `operator compare(self: T, other: T) -> Ordering` at sort_in_a_generic_needs_the_bound:1:33");
 }
 
 /// @PLN165 E5 — a `#builtin` method's callback is typed by the special form's hint, in both
@@ -5827,4 +5785,25 @@ fn operator_conversion_with_a_second_parameter() {
 fn operator_conversion_between_two_foreign_types() {
     code!("operator to_integer(self: text) -> integer { len(self) }\nfn test() { }")
         .error("`operator to_integer` converts `text` to `integer`, and neither is a type of this package: a conversion is defined with the type it converts from or into at operator_conversion_between_two_foreign_types:1:45");
+}
+
+/// @PLN182 Q10 — `/` is a form a program's type cannot define yet, so an interface member
+/// `op /` is met by the built-in numbers only; a function named `OpDiv` meets nothing.
+#[test]
+fn a_reserved_operator_bound_is_met_by_builtins_only() {
+    code!(
+        "interface Divisible { op / (self: Self, divisor: integer) -> integer }
+         struct Score { value: integer }
+         fn OpDiv(self: Score, divisor: integer) -> integer { self.value / divisor ?? 0 }
+         fn halve<T: Divisible>(v: T, n: integer) -> integer { v / n ?? 0 }
+         fn test() { assert(halve(Score { value: 42 }, 6) == 7, \"h\"); }"
+    )
+    .advice(
+        "`fn OpDiv` is an ordinary function and does not define its operator, which a type \
+         cannot define yet: call it by name at a_reserved_operator_bound_is_met_by_builtins_only:3:62",
+    )
+    .error(
+        "'Score' does not satisfy interface 'Divisible': it needs `/`, which only the built-in \
+         types define at a_reserved_operator_bound_is_met_by_builtins_only:5:59",
+    );
 }

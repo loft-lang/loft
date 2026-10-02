@@ -5083,6 +5083,12 @@ impl Definition {
     /// `test_*` naming rule and says so in as many words: *"a generated entry point that runs a
     /// different SET than the interpreter is a backend divergence the suite reads as a wrong
     /// answer."*  This is that sentence applied to the two TEST harnesses.
+    /// Declared in `default/` — the standard library.
+    #[must_use]
+    pub fn is_stdlib(&self) -> bool {
+        crate::portable_path::is_stdlib_source(&self.position.file)
+    }
+
     #[must_use]
     pub fn is_corpus_entry_point(&self) -> bool {
         if !matches!(self.def_type, DefType::Function) {
@@ -6118,6 +6124,10 @@ pub struct Data {
     /// aliased via a DbRef, non-null. A thin marker (a set, not a Definition field — those
     /// serialize) consulted by the few value-semantics chokepoints.
     pub value_structs: HashSet<u32>,
+    /// `@FR-Op-Conv` — whether the program declares any function named `to_<type>`, an
+    /// `operator` or not; `x as T` asks for one only then, so a program without conversions
+    /// pays nothing at its casts.
+    pub user_operator_conversions: bool,
     /// @PLN165 D7 — generic structs refused at their declaration for an irregular self-mention
     /// (`D-Regular`): `instance_def` mints none of them, so closing their fields cannot descend
     /// forever.  A refused program does not run, so this needs no place in the image.
@@ -6873,6 +6883,7 @@ impl Data {
             adopted_stubs: Vec::new(),
             source: STD_SOURCE,
             value_structs: HashSet::new(),
+            user_operator_conversions: false,
             refused_type_templates: HashSet::new(),
             type_var_bound_keys: HashMap::new(),
             used_definitions: HashSet::new(),
@@ -7618,9 +7629,26 @@ impl Data {
     #[must_use]
     pub fn operator_member_for(&self, form: &str, concrete: &Type) -> Option<u32> {
         let base = concrete.base().clone();
-        if !matches!(base, Type::Reference(_, _) | Type::Enum(_, _, _)) {
+        self.operator_member_with(form, &[base.clone(), base.clone()], Some(&base))
+    }
+
+    /// [`Self::operator_member_for`] at the signature an interface member declares, `Self`
+    /// already replaced: `params[0]` is the type, the rest what the member takes
+    /// (`op * (self: Self, factor: float)`), and `result` what it answers — `None` leaves
+    /// the result unasked.  `compare` always answers `Ordering`.
+    #[must_use]
+    pub fn operator_member_with(
+        &self,
+        form: &str,
+        params: &[Type],
+        result: Option<&Type>,
+    ) -> Option<u32> {
+        let first = params.first()?;
+        let shape = first.base();
+        if !matches!(shape, Type::Reference(_, _) | Type::Enum(_, _, _)) {
             return None;
         }
+        let base = shape.clone();
         // A form may be an overload set (several right-hand types), and `compare` always is
         // one beside the stdlib's own members on the base types.
         let mut candidates = self.overload_routines(form);
@@ -7629,13 +7657,17 @@ impl Data {
             candidates.push(found);
         }
         let ordering = self.def_nr("Ordering");
+        // `@FR-G-Sat` — a bound is met by a CONCRETE member of its signature; a template member
+        // (`operator plus<U>`) is reached by the operator, never bound (loft#1826).
         candidates.into_iter().find(|&d| {
             self.def(d).operator_form
-                && self.params_fit(d, &[base.clone(), base.clone()])
+                && self.def(d).def_type != DefType::Generic
+                && self.params_fit(d, params)
                 && if form == "compare" {
                     matches!(self.def(d).returned(), Type::Enum(e, false, _) if *e == ordering)
                 } else {
-                    self.def(d).returned().base() == &base
+                    // By the type alone: a method handing back `self` carries a dep on it.
+                    result.is_none_or(|r| self.def(d).returned().base().is_same(r.base()))
                 }
         })
     }
@@ -7647,7 +7679,8 @@ impl Data {
     /// instance, a narrowed integer and any other type have none.
     #[must_use]
     pub fn conversion_name(&self, tp: &Type) -> Option<String> {
-        match tp {
+        // `x as T?` converts to T: the nullability bit names no other conversion.
+        match tp.base() {
             // `IntegerSpec::source_name` is the one home for "this spells `integer`": both
             // templates do, and a narrow alias (`u8`, `i32`) carries a forced size of its own.
             Type::Integer(spec)
@@ -7669,6 +7702,12 @@ impl Data {
             }
             _ => None,
         }
+    }
+
+    /// `DateTime` → `date_time`, `HTTPRequest` → `http_request`, `Vec2` → `vec2`.
+    #[must_use]
+    pub fn snake_case_name(name: &str) -> String {
+        Self::snake_case(name)
     }
 
     /// `DateTime` → `date_time`, `HTTPRequest` → `http_request`, `Vec2` → `vec2`.
@@ -7703,6 +7742,15 @@ impl Data {
             ("OpMul", 2) => Some("times"),
             _ => None,
         }
+    }
+
+    /// `@FR-Op-Std`, @C132 (@PLN182 P5) — whether the `Op…` definition `d` backs an operator:
+    /// only the stdlib's do.  A program's or a library's `fn OpAdd` / `OpLt` / `OpIndex` /
+    /// `OpConv…` is an ordinary function — callable by its name, reached by no operator, `[]`
+    /// or `as`, and meeting no bound.
+    #[must_use]
+    pub fn backs_operator(&self, d: u32) -> bool {
+        d != u32::MAX && self.def(d).is_stdlib()
     }
 
     /// The stored discriminant of one `Ordering` variant (`Less`, `Equal`, `Greater`), read

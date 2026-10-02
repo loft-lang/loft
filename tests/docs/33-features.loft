@@ -102,7 +102,7 @@
 // - **@F111** — `for f in s#fields` — a compile-time loop over a struct's scalar fields
 // - **@F112** — `store_release()` — say a record is finished, and stop holding it in memory
 // - **@F113** — Associated types — an interface names a companion type
-// - **@F114** — `x[i]` on a library type — `OpIndex` dispatch
+// - **@F114** — A library type reads an element through a named method — `[…]` is the built-in collections'
 // - **@F115** — `OpDrop` — a type runs code when its scope lets it die
 // - **@F118** — Time (now / ticks)
 // - **@F119** — Store locks (#lock)

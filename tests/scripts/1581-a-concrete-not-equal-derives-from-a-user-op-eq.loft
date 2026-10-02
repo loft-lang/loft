@@ -4,11 +4,17 @@
 // complement of `==` for every type, a type's own `OpEq` included.  Inside a `<T: Equatable>`
 // body it was; at a concrete site `a != b` fell through to the built-in reference comparison, so
 // for two equal values `a == b` and `a != b` were both true.  It is now `!(a == b)` through the
-// type's `OpEq`, each operand evaluated once, and a type's own `OpNe` still wins.
+// type's `OpEq`, each operand evaluated once.
 //
-// Every expected value is worked out by hand.  The last four cells are controls that were right
-// before: a type with its own `OpNe`, a struct with no `OpEq` (identity), a null test, and the
-// generic spelling.
+// C132 retired the user `OpEq` / `OpNe`: a function of that name is ordinary, `==` compares the
+// fields for every type and `!=` is its complement, and each definition draws the warning that
+// says so.  The cells now pin that: `g2`'s x-only `OpEq` and `c1`'s always-true `OpNe` change
+// nothing.  Every expected value is worked out by hand.  The last three cells are controls: a
+// struct with no `OpEq`, a null test, and the generic spelling.
+// @EXPECT_WARNING: `fn OpEq` is an ordinary function and is not called by `==` or `!=`
+// @EXPECT_WARNING: `fn OpEq` is an ordinary function and is not called by `==` or `!=`
+// @EXPECT_WARNING: `fn OpEq` is an ordinary function and is not called by `==` or `!=`
+// @EXPECT_WARNING: `fn OpNe` is an ordinary function and is not called by `==` or `!=`
 //
 // @falsified-at: 3cc05bd5e — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0,
 //   native 1 assertion failures -> 0
@@ -27,7 +33,7 @@ value struct W2 { x: integer, y: integer }
 fn OpEq(self: W2, o: W2) -> boolean { self.x == o.x }
 struct V3 { x: integer }
 fn OpEq(self: V3, o: V3) -> boolean { self.x == o.x }
-fn OpNe(self: V3, o: V3) -> boolean { true }
+fn OpNe(self: V3, o: V3) -> boolean { self.x == self.x || o.x == o.x }
 struct Plain { x: integer }
 
 fn ok(nm: text, got: text, want: text) {
@@ -44,7 +50,8 @@ fn g1() -> text {
   d = V2 { x: 3, y: 2 };
   "{a != b} {a != d} {a == b}"
 }
-/// g2 — a value struct with an `OpEq` that reads `x` alone: `y` differs, and they are equal.
+/// g2 — a value struct with an `OpEq` that reads `x` alone: it is not called, so `y` differing
+/// makes them unequal.
 fn g2() -> text {
   a = W2 { x: 1, y: 2 };
   b = W2 { x: 1, y: 9 };
@@ -57,7 +64,7 @@ fn g3() -> text {
   r = counted(5, log) != counted(5, log);
   "{r} {len(log)}"
 }
-/// c1 — control: a type's own `OpNe` wins over the derivation.
+/// c1 — a function named `OpNe` answering `true` is not called either.
 fn c1() -> text {
   a = V3 { x: 1 };
   b = V3 { x: 1 };
@@ -86,9 +93,9 @@ fn c4() -> text {
 
 fn main() {
   ok("g1 struct with OpEq     ", g1(), "false true true");
-  ok("g2 value struct with it ", g2(), "false true");
+  ok("g2 value struct with it ", g2(), "true true");
   ok("g3 operands run once    ", g3(), "false 2");
-  ok("c1 own OpNe wins        ", c1(), "true true");
+  ok("c1 OpNe is a function   ", c1(), "false true");
   ok("c2 no OpEq: content     ", c2(), "false false true true true");
   ok("c3 null test            ", c3(), "false true");
   ok("c4 generic              ", c4(), "false");
