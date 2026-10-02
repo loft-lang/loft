@@ -168,6 +168,8 @@ fn pure(data: &Data, v: &Value, assigned: &mut HashSet<u16>, nodes: &mut usize) 
                 && pure(data, t, assigned, nodes)
                 && pure(data, e, assigned, nodes)
         }
+        // A tuple literal of pure elements: the tuple clause's result.
+        Value::Tuple(items) => items.iter().all(|i| pure(data, i, assigned, nodes)),
         Value::Block(b) => {
             let body: Vec<&Value> = b
                 .operators
@@ -203,7 +205,10 @@ fn admit(data: &Data, d: u32) -> Result<Leaf, &'static str> {
     let Value::Block(b) = def.code() else {
         return Err("no loft body");
     };
-    if !scalar(&def.returned) {
+    // `@FR-R-InlineLeaf`'s tuple clause: a result that is a tuple of scalars, built by
+    // tuple literals, travels as the inlined block's value like a scalar does.
+    let tuple_of_scalars = matches!(&def.returned, Type::Tuple(es) if es.iter().all(scalar));
+    if !scalar(&def.returned) && !tuple_of_scalars {
         return Err("a non-scalar result");
     }
     let fv = &def.variables;
@@ -279,6 +284,7 @@ fn remap(v: &Value, map: &HashMap<u16, Value>, scope: u16) -> Value {
             Box::new(remap(t, map, scope)),
             Box::new(remap(e, map, scope)),
         ),
+        Value::Tuple(items) => Value::Tuple(items.iter().map(|i| remap(i, map, scope)).collect()),
         Value::Block(b) => Value::Block(Box::new(Block {
             name: b.name,
             operators: b

@@ -36,6 +36,8 @@ const FIRES: &[(&str, usize, usize, usize, usize)] = &[
     ("n_test_a_fallback_over_a_possible_null_stays", 4, 2, 0, 2),
     ("n_test_scales_that_do_not_fold", 6, 0, 0, 0),
     ("n_test_arguments_evaluate_in_order", 1, 0, 0, 0),
+    // The tuple clause: `step`'s four calls; `named` holds text and stays a call.
+    ("n_test_a_tuple_result", 4, 0, 0, 0),
 ];
 
 const SWITCHES: [&str; 4] = [
@@ -92,6 +94,11 @@ fn each_rule_fires_where_the_cells_say_and_nowhere_else() {
         err.lines()
             .any(|l| l.starts_with("inline-leaf: n_tally declined:")),
         "a leaf with a reference parameter is declined:\n{err}"
+    );
+    assert!(
+        err.lines()
+            .any(|l| l.starts_with("inline-leaf: n_named declined: a non-scalar result")),
+        "a tuple holding text is declined:\n{err}"
     );
 }
 
