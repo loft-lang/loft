@@ -8,6 +8,9 @@
 // the stdlib's own source — a REPL session, the test harness — are guarded by
 // `issues::p158_trailing_comma_enum_variant` and
 // `issues::a_declaration_spelled_like_a_stdlib_type_variable_compiles_in_source_0`.
+//
+// @falsified-at: ecd11af3f — interpret exit 134 -> 0, native exit 134 -> 0
+// @falsified-by: tests/falsified/a-type-variable-reserves-no-name.patch — interpret exit 134 -> 0, native exit 134 -> 0
 
 // ── generic FIRST, the enum after: `Q` means the variable inside, the enum outside ──
 fn pick<Q>(a: Q, b: Q) -> Q { if false { b } else { a } }
