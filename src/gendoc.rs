@@ -1028,17 +1028,15 @@ fn generate_library_api_pages<S: std::hash::BuildHasher>(
                 v.api.len()
             );
             for item in &v.api {
-                // The same wrapper the stdlib section pages use for a documented entry —
-                // one structure for "a signature and its doc", so a style applied later
-                // reaches both rather than only the half that was written second.
-                body.push_str("<div class=\"item\">\n");
-                let _ = writeln!(
-                    body,
-                    "<pre><code>{}</code></pre>",
-                    loft::documentation::highlight_loft(&item.sig, link_map)
-                );
-                body.push_str(&doc_paragraphs(&item.doc));
-                body.push_str("</div>\n");
+                // @PLN183 — the one renderer the REPL and the language server show an item
+                // through, so the three cannot drift.
+                body.push_str(&loft::doc_render::item_html(
+                    &loft::doc_render::Item {
+                        sig: &item.sig,
+                        doc: &item.doc,
+                    },
+                    link_map,
+                ));
             }
         }
 
@@ -1572,58 +1570,6 @@ fn numbered_source<S: std::hash::BuildHasher>(
         let _ = writeln!(out, "<span id=\"{}-L{}\">{line}</span>", f.slug, i + 1);
     }
     out.push_str("</code></pre>\n");
-    out
-}
-
-/// A doc comment from the registry, as HTML paragraphs.
-///
-/// The stored form is plain text: paragraphs separated by a blank line, wrapped with hard
-/// newlines inside a paragraph, and backtick spans for code. Rejoining the wrapped lines
-/// matters — kept as-is the text renders with the author's terminal width baked in, which
-/// is not a line break they chose for a browser.
-fn doc_paragraphs(doc: &str) -> String {
-    // Citations are dropped by LINE before the split, because a citation is appended to
-    // the prose paragraph above it rather than given one of its own.
-    let doc = without_example_citations(&doc.lines().collect::<Vec<_>>()).join("\n");
-    let mut out = String::new();
-    for para in doc.split("\n\n") {
-        let joined = para
-            .lines()
-            .map(str::trim_end)
-            .filter(|l| !l.is_empty())
-            .collect::<Vec<_>>()
-            .join(" ");
-        if joined.is_empty() {
-            continue;
-        }
-        let _ = writeln!(out, "<p>{}</p>", inline_code(&joined));
-    }
-    out
-}
-
-/// Escape one paragraph, turning `` `spans` `` into `<code>`.
-///
-/// An unclosed backtick is left as a literal character rather than swallowing the rest of
-/// the paragraph into a code span — a doc comment is prose someone typed, and the failure
-/// mode of guessing is that the sentence disappears.
-fn inline_code(text: &str) -> String {
-    let mut out = String::new();
-    let mut rest = text;
-    while let Some(open) = rest.find('`') {
-        let (before, after) = rest.split_at(open);
-        out.push_str(&esc(before));
-        match after[1..].find('`') {
-            Some(close) => {
-                let _ = write!(out, "<code>{}</code>", esc(&after[1..=close]));
-                rest = &after[close + 2..];
-            }
-            None => {
-                out.push_str(&esc(after));
-                return out;
-            }
-        }
-    }
-    out.push_str(&esc(rest));
     out
 }
 

@@ -2016,11 +2016,10 @@ fn render_api_section_body(section: &PkgApiSection) -> String {
         if !shown.is_empty() {
             writeln!(body, "<pre><code>{}</code></pre>", html_escape(&shown)).expect("");
         }
-        if !item.doc.is_empty() {
-            body.push_str("<p>");
-            body.push_str(&item.doc.join(" "));
-            body.push_str("</p>\n");
-        }
+        // @PLN183 — the shared paragraph renderer: escaped, `spans` as code, citations
+        // dropped.  The lines were joined into one raw `<p>`, so a doc saying `vector<T>`
+        // reached the browser as an unknown `<T>` tag and the reader saw "vector".
+        body.push_str(&crate::doc_render::paragraphs_html(&item.doc.join("\n")));
         body.push_str("</div>\n");
     }
     body

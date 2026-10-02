@@ -84,6 +84,23 @@ Home · Language: vs Rust · Keywords · … · Library: Types · Math · … [s
 
 ---
 
+## One renderer for a documented item
+
+`src/doc_render.rs` is the one place "a signature and its doc comment", and a feature
+entry's Markdown body, become text.  It owns the reader-visible rules — a paragraph is
+blank-line separated with its lines joined; a worked-example citation line is bookkeeping and
+dropped; `` `spans` `` are code, and an unclosed backtick stays a backtick — and writes them
+three ways: HTML (`item_html`, `blocks_html`), Markdown (`item_markdown`, `blocks_markdown`) for
+a hover or the IDE overview, and terminal text (`item_text`, `blocks_text`) for the REPL.  The
+library API pages and `loft doc`'s API pages go through it; the stdlib section pages and the
+print sheet still have their own item loop, which neither renders inline code nor highlights
+the signature.  `tests/doc_render.rs` pins the rules once for all three back-ends.
+
+`src/doc_catalogue.rs` embeds `index/features.json`, so the REPL and the language server read
+the feature catalogue — each entry's group, keys, summary and runnable example — with no
+network and no checkout of this repository.  An entry's example is the first `loft` fence,
+the same program `tests/docs/features/<tag>.loft` runs.
+
 ## Syntax highlighting classes
 
 | Class | Meaning |
