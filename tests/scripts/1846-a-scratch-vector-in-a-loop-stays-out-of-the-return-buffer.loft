@@ -19,6 +19,12 @@
 // (a struct, an enum variant as the cbor library's), and the iteration count.  Each result
 // is read, handed to a consumer that allocates vectors of its own, and read again.
 // Controls: one iteration, and the scratch hoisted out of the loop.
+//
+// @falsified-at: a80e26737 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0; native INERT (expected for a backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/1846-a-scratch-vector-in-a-loop-stays-out-of-the-return-buffer.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0; native INERT (expected for a backend-divergence guard — only one side can move)
+//   CHANNEL: the assertions on the interpreter (the first cell past one iteration fails).
+//   ARMED: nothing; `LOFT_STRICT_STORES=1` names the use-after-free on the control.
+//   HOLDS: every value on --native, on both trees.
 
 struct It { value: text }
 struct Out { items: vector<It> }
