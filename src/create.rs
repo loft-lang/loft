@@ -426,6 +426,7 @@ pub static OPERATORS: &[fn(&mut State)] = &["
         into,
         "\n/// The lean loop's dispatch: a `#hot` operator runs inline on the loop's registers\n\
          /// ([`Hot`]), every other one through [`OPERATORS_REG`].\n\
+         #[expect(\n    clippy::too_many_lines,\n    reason = \"one arm per #hot operator: the table IS the dispatch, and splitting it adds a call the inline arms exist to avoid\"\n)]\n\
          #[inline(always)]\n\
          pub(crate) fn dispatch_lean(s: &mut State, opcode: u16, r: Regs) -> Regs {{\n    match opcode {{"
     )?;
