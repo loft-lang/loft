@@ -7,15 +7,17 @@
 // A worker frame ran the plain checked loop (`run_to_return`) and scanned every definition to
 // name the function it entered, for each element: `par(…, 1)` cost 1.9× the same loop without
 // `par`.  Both are the main run's own machinery now.  Every cell answers the same with
-// `LOFT_NO_WORKER_LEAN=1`, and that A/B is the falsifier together with the pin
-// (`tests/worker_lean.rs`, which also asks that a failing worker names its own function).
-// Values hand-computed.
+// `LOFT_NO_WORKER_LEAN=1`; the fault path the lean loop takes over is guarded by
+// `runtime_errors::i1056_a_par_worker_fault_names_the_workers_own_frames`.  Values
+// hand-computed.
 //
 // @falsified-at: none — the rule has no earlier build to catch, so the receipt is a SABOTAGE
-//   (2026-10-02): with `State::worker_d_nr` answering its remembered definition for any
-//   position, w2 fails under `LOFT_HEADROOM_VERIFY=1` — the second loop's worker enters with
-//   the first worker's frame room — and the pin's failing worker is named as the first one.
-//   CHANNEL: the frame-room verifier and the fault report.
+//   (2026-10-02): with the worker loop ignoring its stop flag, three tests fail on --interpret —
+//   `runtime_errors::i1056_a_par_worker_fault_names_the_workers_own_frames` and placement_parity's
+//   two library-fault cells: the worker runs on past its fault.  A sabotage of the remembered
+//   lookup (answering its stored definition for any position) is INERT: every `par` loop builds
+//   its workers' States afresh, so a worker State only ever enters one function.
+//   CHANNEL: the fault report (frames and exit) on --interpret.
 
 struct Item { value: integer }
 
