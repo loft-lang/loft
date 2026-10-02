@@ -1272,6 +1272,18 @@ pub fn loop_rotate_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_LOOP_ROTATE"))
 }
 
+/// A struct rebind from a fresh call result exchanges stores WITHOUT resetting the
+/// destination first on `--native` (`@FR-H-SwapRebind`, `codegen_runtime::OpRebindRecord`):
+/// the old value leaves with the released store — **DEFAULT ON**.  Opt OUT with
+/// `LOFT_NO_SWAP_REBIND` (read at run time): every such rebind resets the destination and
+/// copies or exchanges as before, the before-half of the A/B and the first bisect step for a
+/// wrong record after such a rebind on `--native`.
+#[must_use]
+pub fn swap_rebind_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_SWAP_REBIND"))
+}
+
 /// A counted range whose start is not a literal steps ONE counter on the interpreter: the
 /// index is seeded from the start and the rotated loop enters past its step, so the copy
 /// from the second counter is not emitted — **DEFAULT ON** (`@FR-R-StartStep`).  Opt OUT
