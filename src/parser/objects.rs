@@ -4228,9 +4228,13 @@ impl Parser {
                     Value::Int(t) => Some(i64::from(*t) + i64::from(incl)),
                     _ => None,
                 };
+                // The guard is ONE statement, a block named `Range null guard`, so a rewrite
+                // that matches this prelude by its shape (`compact::match_loop`) can step over
+                // it rather than decline the loop.
+                let mut guard = Vec::new();
                 if let Some(past) = past_end {
                     let start_null = self.single_op("!", Value::Var(lo), in_type.clone());
-                    iter_prelude.push(v_if(
+                    guard.push(v_if(
                         start_null,
                         v_set(lo, lit(&in_type, past)),
                         Value::Null,
@@ -4244,7 +4248,7 @@ impl Parser {
                         for bound in [lo, hi] {
                             let tp = if bound == lo { &in_type } else { &till_tp };
                             let is_null = self.single_op("!", Value::Var(bound), tp.clone());
-                            iter_prelude.push(v_if(
+                            guard.push(v_if(
                                 is_null,
                                 v_block(
                                     vec![v_set(lo, lit(&in_type, 1)), v_set(hi, lit(&till_tp, 0))],
@@ -4256,6 +4260,7 @@ impl Parser {
                         }
                     }
                 }
+                iter_prelude.push(v_block(guard, Type::Void, crate::data::RANGE_NULL_GUARD));
             }
         }
         // loft#384: a vector slice (`data` present, not a pure `0..n` range) must

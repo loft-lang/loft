@@ -312,7 +312,15 @@ fn is_bound(v: &Value, place: &Value, forbidden: &[u16], ops: &Ops) -> bool {
 /// The parser's exclusive-range iteration, either prelude; answers `(i, lo, hi, body)`.
 pub(crate) fn match_loop<'a>(v: &'a Value, ops: &Ops) -> Option<(u16, Value, Value, &'a Block)> {
     let bl = block(v, "For block")?;
-    let s = &bl.operators;
+    // `(I-RangeNull)`'s guard is one named block in a computed-start prelude; it only resets a
+    // null bound, so the loop's shape is the rest of the prelude.  An admitted rebuild keeps
+    // it: its own null test on `lo` falls back to the statements as written, guard included.
+    let kept: Vec<&'a Value> = bl
+        .operators
+        .iter()
+        .filter(|op| block(op, crate::data::RANGE_NULL_GUARD).is_none())
+        .collect();
+    let s = kept.as_slice();
     // Literal start: `[_range_end = hi;] i#index = start - 1; loop { … }` — the end a
     // variable of the prelude, or a literal spelled in the compare itself.
     let (end, hi, rest) = match s.len() {

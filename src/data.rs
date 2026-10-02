@@ -6666,6 +6666,10 @@ pub fn v_set(var: u16, value: Value) -> Value {
     Value::Set(var, Box::new(value))
 }
 
+/// The name of the one-statement block `(I-RangeNull)`'s guard occupies in a counted range's
+/// prelude: a rewrite that matches that prelude by shape steps over a block of this name.
+pub const RANGE_NULL_GUARD: &str = "Range null guard";
+
 #[must_use]
 pub fn v_block(operators: Vec<Value>, result: Type, name: &'static str) -> Value {
     Value::Block(Box::new(Block {
