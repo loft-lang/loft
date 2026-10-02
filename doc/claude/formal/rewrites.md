@@ -3716,22 +3716,25 @@ caught: the null test inverted reads `[]` for `[yy]`, the default dropped reads 
 
 ```
   (R-KeyList)    The key content types a keyed operation pops — `Stores::get_keys(tp)` — are
-                 derived once per type, when its key descriptors are (`determine_keys_for`),
-                 and read from the type afterwards.  An empty cache is "not derived yet" and
-                 is computed on the spot: the cache may lag the schema, never disagree with
-                 it.  A lookup copies the kinds onto its own stack (eight inline) before it
-                 pops the key.
+                 derived once per type, on the first lookup that asks, and read from the type
+                 afterwards.  Deriving the type's key descriptors again (`determine_keys_for`)
+                 resets the list, so it never outlives the descriptors it is derived beside.
+                 A lookup copies the kinds onto its own stack (eight inline) before it pops
+                 the key.
 ```
 
 **In words.** Applied by: `Stores::get_keys`, `Stores::compute_key_contents`,
 `Stores::determine_keys_for`, `State::stack_keys` (the interpreter; native passes its key as a
-`Content` slice and never asked).  Before it, every `OpGetRecord` / `OpSetKeyed` re-walked the
+`Content` slice and never asked).  LAZY on purpose: derived eagerly in `determine_keys_for`, it
+cost the front end 171 allocations on the tiny program (`tests/frontend_counts.rs` caught it),
+for types most programs never look up.  A `OnceLock` per type, like `TypeFacts`, and ignored by
+the schema's equality for the same reason: a reloaded schema has not derived it yet.  Before it, every `OpGetRecord` / `OpSetKeyed` re-walked the
 type's key fields through `key_field` / `key_contents_for_field` and allocated the list, about
 7 % of `word_count`'s profile.  Measured (pinned layout, one tree, with `(R-DischargeInto)`):
 `hash_find` −20 %, `hash_update` −22 %, `hash_text_keys` −15 %, `hash_remove` −10 %, every hash
 unchanged.  The falsifier is **`LOFT_KEY_LIST_VERIFY=1`**: each cached read is re-derived from
 the type's parts and a disagreement stops the run naming the type.  Swept over all 2020
-`tests/scripts` and bench programs: none (2026-10-02).  Planted a stale cache (every key cached
+`tests/scripts` and bench programs, eager and lazy: none (2026-10-02).  Planted a stale cache (every key cached
 as text): without the verify the keyed bench panics deep in `allocation.rs`; with it, at the
 first lookup, `type 97 (hash<E[id]>) caches keys [5], its parts derive [0]`.
 

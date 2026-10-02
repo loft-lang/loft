@@ -368,19 +368,18 @@ impl Stores {
 
     /// The key content types of `db`, as many as a keyed operation pops off the stack.
     ///
-    /// `@FR-R-KeyList`: a fact of the schema, computed once per type by
-    /// [`Self::determine_keys_for`] and read here instead of being re-derived per lookup.
-    /// A type the end-of-parse sweep has not reached yet (an empty cache) is computed on the
-    /// spot, so the cache can lag the schema but never answer differently from it.
+    /// `@FR-R-KeyList`: a fact of the schema, derived on the first lookup of the type and read
+    /// from it afterwards instead of being re-derived per lookup.  Re-deriving the type's key
+    /// descriptors ([`Self::determine_keys_for`]) resets it, so it never outlives them.
     ///
     /// # Panics
     /// Under `LOFT_KEY_LIST_VERIFY=1`, when the cached list disagrees with the type's parts.
     #[must_use]
-    pub fn get_keys(&self, db: u16) -> std::borrow::Cow<'_, [u16]> {
-        let cached = &self.types[db as usize].key_contents;
-        if cached.is_empty() {
-            return std::borrow::Cow::Owned(self.compute_key_contents(db));
-        }
+    pub fn get_keys(&self, db: u16) -> &[u16] {
+        let cached = self.types[db as usize]
+            .key_contents
+            .0
+            .get_or_init(|| self.compute_key_contents(db));
         if key_list_verify() {
             let computed = self.compute_key_contents(db);
             assert!(
@@ -389,7 +388,7 @@ impl Stores {
                 self.types[db as usize].name
             );
         }
-        std::borrow::Cow::Borrowed(cached)
+        cached
     }
 
     /// The key content types of `db`, derived from its parts: what [`Self::get_keys`] caches.

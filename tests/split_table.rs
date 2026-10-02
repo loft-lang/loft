@@ -189,17 +189,27 @@ fn a_discharged_element_read_borrows_its_slice() {
             && !indexed.contains("var___ncc_1: String"),
         "indexed: the `?` temp borrows the slice and the block yields it"
     );
-    // `parts[i] ?? d` into a local: the temp is the slice; the arm copies it into the
-    // local, which owns its text.
+    // `parts[i] ?? d` into a local.  `@FR-R-DischargeInto` reads the slice straight into the
+    // local, which owns its text: ONE copy, and no temp.  The temps below are asked of the
+    // emission that still has them (`LOFT_NO_DISCHARGE_INTO=1`).
+    let kept = emit("discharge_kept", &[("LOFT_NO_DISCHARGE_INTO", "1")]);
     let at = body(&rust, "n_at");
     assert!(
-        at.contains("let var___ncc_1: &str = ")
-            && at.contains("(var___ncc_1).to_string()")
-            && !at.contains("var___ncc_1.clone()"),
+        !at.contains("var___ncc_1")
+            && count(at, "(loft::codegen_runtime::split_table_get(&__st_") == 1
+            && count(at, ".to_string()") == 3
+            && !at.contains(".clone()"),
+        "at: the slice is read straight into the local, one copy:\n{at}"
+    );
+    let at_kept = body(&kept, "n_at");
+    assert!(
+        at_kept.contains("let var___ncc_1: &str = ")
+            && at_kept.contains("(var___ncc_1).to_string()")
+            && !at_kept.contains("var___ncc_1.clone()"),
         "at: the `??` temp borrows the slice, the local takes a copy"
     );
     // A discharge of a VECTOR's element (no table) keeps the owned temp.
-    let s17 = body(&rust, "n_s17");
+    let s17 = body(&kept, "n_s17");
     assert!(
         s17.contains("var___ncc_1: String = ") && !s17.contains("var___ncc_1: &str"),
         "s17: a discharge of a real vector's element still copies"
