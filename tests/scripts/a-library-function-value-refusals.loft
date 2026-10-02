@@ -6,6 +6,11 @@
 // refused as its bare spelling is, a method names its receivers, and a name the library does
 // not have says so — none of them calls the LIBRARY an unknown variable.
 // `a-library-function-is-a-value-under-its-qualified-name.loft` holds the cells that work.
+//
+// @falsified-at: 6399e2ad9 — interpret exit 1 -> 0, interpret expectations FAIL/3 -> 3/3 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/3 -> 3/3 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/a-library-function-value-refusals.patch — interpret exit 1 -> 0, interpret expectations FAIL/3 -> 3/3 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/3 -> 3/3 (the suite's verdict, not a count of matches)
+//   CHANNEL: the expectations — on the control each pin meets "Unknown variable 'fnvaluelib'" / "missing argument".
+//   ARMED: nothing.
 use fnvaluelib;
 
 fn apply(f: fn(integer) -> integer, x: integer) -> integer { f(x) }

@@ -12,6 +12,12 @@
 // text-returning function (its hidden return buffer), a local function of the same name beside
 // the qualified one (each answers its own), an alias import, and a constant beside them.
 // `a-library-function-value-refusals.loft` holds the three refusals.
+//
+// @falsified-at: 6399e2ad9 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-library-function-is-a-value-under-its-qualified-name.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the control refuses the program ("Unknown variable 'fnvaluelib'").
+//   ARMED: nothing.
+//   HOLDS: every assertion here; the values were hand-computed (16 + 108 for the same-named pair).
 use fnvaluelib;
 use fnvaluelib as fv;
 
