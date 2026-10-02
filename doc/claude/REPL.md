@@ -379,7 +379,15 @@ When you bind a name to a value, the REPL runs the right-hand side **once** and
 snapshots the value — for **every** type (numbers, text, structs, vectors,
 enums) — so a side effect (printing, reading input) in the binding happens a
 single time, however often you read the name later (`name = read_line()` prompts
-once).
+once).  A typed binding (`x: float = 1`) keeps the type it declares.
+
+An input that changes a bound variable **in place** — `x += 1`, `s.a = 9`,
+`w.sort()`, `w[0] = 7`, a call that takes it by `&` — is kept the same way: it
+runs once, and each variable it changed is snapshotted again, so the next input
+reads the new value and a side effect in it does not repeat.  An input that
+only reads a variable records nothing.  A value with no literal form (a bare
+`hash`) cannot be snapshotted, so an input that writes one is kept as source
+and replayed instead; a side effect in that input repeats on a later read.
 
 ### The session store — values live in a store, not in replayed source
 

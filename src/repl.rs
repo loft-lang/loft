@@ -417,6 +417,40 @@ fn may_write(input: &str) -> bool {
     })
 }
 
+/// Does `input` visibly write `var`: an assignment to it (`v = …`, `v += …`), a method call
+/// on it (`v.clear()`), or a write into it (`v[k] = …`, `v.f = …`)?  The fallback test for a
+/// value with no literal form, where the before and after cannot be compared (loft#1853).
+fn writes_var(input: &str, var: &str) -> bool {
+    let b = input.as_bytes();
+    let mut from = 0;
+    while let Some(off) = input[from..].find(var) {
+        let at = from + off;
+        from = at + var.len();
+        let ident = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
+        if (at > 0 && (ident(b[at - 1]) || b[at - 1] == b'.'))
+            || b.get(from).is_some_and(|&c| ident(c))
+        {
+            continue;
+        }
+        let rest = input[from..].trim_start();
+        if rest.starts_with('.') || rest.starts_with('[') || may_write_head(rest) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Does `rest` begin with an assignment operator (`=`, `+=`, `<<=`, …, not `==`)?
+fn may_write_head(rest: &str) -> bool {
+    let op = rest.split_once('=').map_or("", |(head, _)| head);
+    !rest.starts_with("==")
+        && rest.contains('=')
+        && op.len() <= 2
+        && op.chars().all(|c| "+-*/%&|^<>".contains(c))
+        && !matches!(op, "<" | ">" | "!")
+        && rest.as_bytes().get(op.len() + 1) != Some(&b'=')
+}
+
 /// True when `method` is a member a user can call as `recv.method(...)`: a plain
 /// identifier that is neither a compiler-internal (`__…`) nor an operator
 /// overload — operator methods register as `Op<Name>` (`Op` + an uppercase
@@ -3630,16 +3664,24 @@ impl ReplSession {
             self.record_input(input); // a def changes session state — persist it
             return Eval::Ran;
         }
-        if let Some(var) = Self::binding_name(input) {
+        if let Some((var, declared)) = Self::binding_parts(input) {
             // REPL.X value-snapshot — run the RHS once, capture the value, and
             // store the binding as a literal (`name = 42`) so re-running `body`
             // on every later observe does NOT repeat a side effect.
             let rhs = input.split_once('=').map_or("", |(_, r)| r.trim());
+            // A declared type is the RHS's type: the capture runs it as that type.
+            let captured = declared.as_ref().map_or_else(
+                || rhs.to_string(),
+                |ty| format!("{{\n__typed: {ty} = {rhs};\n__typed\n}}"),
+            );
             if !rhs.is_empty() {
-                match self.capture_binding(rhs, false) {
+                match self.capture_binding(&captured, false) {
                     Capture::Done(lit) => {
                         let materialized = self.pending_materialized.take();
-                        if self.commit_snapshot(&var, &lit, materialized) {
+                        let var_typed = declared
+                            .as_ref()
+                            .map_or_else(|| var.clone(), |ty| format!("{var}: {ty}"));
+                        if self.commit_snapshot_as(&var, &var_typed, &lit, materialized) {
                             return Eval::Ran;
                         }
                         // (rare) the rendered literal didn't recompile — fall through.
@@ -3856,7 +3898,19 @@ impl ReplSession {
         lit: &str,
         materialized: Option<SessionValue>,
     ) -> bool {
-        let snap = format!("{var} = {lit}");
+        self.commit_snapshot_as(var, var, lit, materialized)
+    }
+
+    /// [`commit_snapshot`](Self::commit_snapshot) with the binding's left side spelled
+    /// `head` — `x`, or `x: float` for a typed binding's first snapshot.
+    fn commit_snapshot_as(
+        &mut self,
+        var: &str,
+        head: &str,
+        lit: &str,
+        materialized: Option<SessionValue>,
+    ) -> bool {
+        let snap = format!("{head} = {lit}");
         let bound = format!("{}{snap};\n", self.body);
         if self.compile_generation(&bound, false, false).is_err() {
             if let Some(v) = materialized {
@@ -3877,13 +3931,68 @@ impl ReplSession {
 
     /// The literal `var` was last bound to in `body`, when its latest binding is a snapshot.
     fn current_snapshot(&self, var: &str) -> Option<&str> {
-        let prefix = format!("{var} = ");
         self.body
             .lines()
             .rev()
             .find(|l| Self::binding_name(l).as_deref() == Some(var))
-            .and_then(|l| l.strip_prefix(&prefix))
-            .map(|r| r.strip_suffix(';').unwrap_or(r))
+            .and_then(|l| l.split_once(" = "))
+            .map(|(_, r)| r.strip_suffix(';').unwrap_or(r))
+    }
+
+    /// Keep `input` in the session as SOURCE: appended to `body`, replayed by every later
+    /// generation, persisted.  `execute` runs it now as well (it has not run yet); a side
+    /// effect in it then repeats on a later replay, which is the trade the binding path makes
+    /// for a value it cannot snapshot.  The session store no longer holds the current value
+    /// of the variables it `names`, so their records go and a read of them replays.
+    fn keep_as_source(
+        &mut self,
+        input: &str,
+        execute: bool,
+        names: &[String],
+    ) -> Result<Option<String>, Vec<DiagEntry>> {
+        let bound = format!("{}{input};\n", self.body);
+        match self.compile_generation(&bound, execute, execute) {
+            Ok(()) => {
+                self.body = bound;
+                for n in names {
+                    if let Some(old) = self.env.remove(n) {
+                        self.free_session_value(&old);
+                    }
+                }
+                self.record_input(input);
+                Ok(None)
+            }
+            Err(diags) => Err(self.map_input_lines(diags)),
+        }
+    }
+
+    /// Re-bind each variable whose captured literal moved — as a binding is — and release the
+    /// record of each that did not (an input that only read it).
+    fn rebind_moved(&mut self, snaps: Vec<(String, String, Option<SessionValue>)>) {
+        for (n, lit, materialized) in snaps {
+            if self.current_snapshot(&n) == Some(lit.as_str()) {
+                if let Some(v) = materialized {
+                    self.free_session_value(&v);
+                }
+                continue;
+            }
+            self.commit_snapshot(&n, &lit, materialized);
+        }
+    }
+
+    /// The input names a variable no capture can carry (a bare `hash` has no literal form) and
+    /// has not run: kept as source when it visibly writes one of `names` ([`writes_var`]),
+    /// otherwise left to the observing path (`None`), which shows its value and records
+    /// nothing.
+    fn unsnapshotable(
+        &mut self,
+        input: &str,
+        names: &[String],
+    ) -> Option<Result<Option<String>, Vec<DiagEntry>>> {
+        names
+            .iter()
+            .any(|n| writes_var(input, n))
+            .then(|| self.keep_as_source(input, true, names))
     }
 
     /// loft#1853 — an input that may change session variables IN PLACE (`x += 1`, `s.a = 9`,
@@ -3912,8 +4021,10 @@ impl ReplSession {
         }
         let mut fields = Vec::with_capacity(names.len() + 1);
         for (i, n) in names.iter().enumerate() {
-            let tp = base_type_name(&self.infer_type(n)?);
-            fields.push(format!("f{i}: {tp}"));
+            let Some(tp) = self.infer_type(n) else {
+                return self.unsnapshotable(input, &names);
+            };
+            fields.push(format!("f{i}: {}", base_type_name(&tp)));
         }
         let value_tp = self
             .infer_type(input)
@@ -3931,7 +4042,7 @@ impl ReplSession {
             .any(|e| e.level >= Level::Error)
         {
             self.rewind(sp);
-            return None;
+            return self.unsnapshotable(input, &names);
         }
         let build: Vec<String> = names
             .iter()
@@ -3954,7 +4065,7 @@ impl ReplSession {
             }
             Capture::Skip => {
                 self.rewind(sp);
-                return None;
+                return self.unsnapshotable(input, &names);
             }
         };
         if let Some(v) = self.pending_materialized.take() {
@@ -3965,9 +4076,12 @@ impl ReplSession {
         let saved = std::mem::take(&mut self.body);
         self.body = format!("{saved}__repl_cap = {record};\n");
         let mut snaps = Vec::with_capacity(names.len());
+        let mut unsnapped = Vec::new();
         for (i, n) in names.iter().enumerate() {
             if let Capture::Done(lit) = self.capture_binding(&format!("__repl_cap.f{i}"), false) {
                 snaps.push((n.clone(), lit, self.pending_materialized.take()));
+            } else {
+                unsnapped.push(n.as_str());
             }
         }
         let value = if value_tp.is_some()
@@ -3982,15 +4096,20 @@ impl ReplSession {
         };
         self.body = saved;
         self.rewind(sp);
-        for (n, lit, materialized) in snaps {
-            if self.current_snapshot(&n) == Some(lit.as_str()) {
+        if unsnapped.iter().any(|n| writes_var(input, n)) {
+            // A variable with no literal form (a bare `hash`) that the input writes: it
+            // already ran, so it is kept as SOURCE, replayed by every later generation — the
+            // binding path's own fallback.  No snapshot is committed, or the replay would
+            // apply it twice.  An input that only reads such a variable (`len(h)`) is an
+            // observe and records nothing.
+            for (_, _, materialized) in snaps {
                 if let Some(v) = materialized {
                     self.free_session_value(&v);
                 }
-                continue;
             }
-            self.commit_snapshot(&n, &lit, materialized);
+            return Some(self.keep_as_source(input, false, &names).map(|_| value));
         }
+        self.rebind_moved(snaps);
         Some(Ok(value))
     }
 
@@ -4952,11 +5071,40 @@ impl ReplSession {
         names
     }
 
-    /// If `input` is a simple binding `<name> = <expr>` (not `==`/`+=`/…),
-    /// return the bound name.  The caller echoes it as a trailing read so the
-    /// variable keeps a stack slot in this and every later generation (an
-    /// unused binding would otherwise have its slot elided).
+    /// If `input` is a simple binding `<name> = <expr>` or `<name>: <type> = <expr>` (not
+    /// `==`/`+=`/…), return the bound name.  The caller echoes it as a trailing read so the
+    /// variable keeps a stack slot in this and every later generation (an unused binding
+    /// would otherwise have its slot elided).
     fn binding_name(input: &str) -> Option<String> {
+        Self::binding_parts(input).map(|(name, _)| name)
+    }
+
+    /// The bound name of a binding, and the type it declares when it is written
+    /// `<name>: <type> = <expr>`.  A typed binding keeps its type in the snapshot, so
+    /// `x: float = 1` stays a `float` rather than becoming the `1` its literal reads as.
+    fn binding_parts(input: &str) -> Option<(String, Option<String>)> {
+        let t = input.trim_start();
+        let name: String = t
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect();
+        let rest = t[name.len()..].trim_start();
+        if let Some(after) = rest.strip_prefix(':')
+            && !after.starts_with(':')
+            && let Some((ty, rhs)) = after.split_once('=')
+            && !rhs.starts_with('=')
+            && !ty.trim().is_empty()
+            && name
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        {
+            return Some((name, Some(ty.trim().to_string())));
+        }
+        Self::untyped_binding_name(input).map(|n| (n, None))
+    }
+
+    fn untyped_binding_name(input: &str) -> Option<String> {
         let t = input.trim_start();
         let name: String = t
             .chars()
