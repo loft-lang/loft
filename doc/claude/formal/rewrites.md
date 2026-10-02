@@ -3604,7 +3604,11 @@ rewritten, read off the trace; the cells with the rewrite off).
 merges two locals that are equal wherever one is read, so every comparison sees the values it
 sees today, a null start included.  Measured on `dot_product` by the hand-written form: −11 %.
 The guard owes a `continue`, a body writing the loop variable, a null start, a start past the
-end, and a start at `i64::MIN + 1`.
+end, and a start at `i64::MIN + 1`.  **Deferred (2026-10-02):** the cheap form — the literal
+range's `index = start - 1` — is not exact, because `start - 1` of `i64::MIN + 1` is the null
+sentinel, which the step then propagates; the exact form (the step after the body, a `continue`
+re-pointed to it) costs nearly the two ops it saves, and native gains nothing (the hand-written
+pair ran equal).  Taken up after the rules of wider reach.
 
 ### Two equal reads in one statement are one read
 
