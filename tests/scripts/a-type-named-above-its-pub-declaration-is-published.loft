@@ -9,6 +9,14 @@
 // declaration below must still publish it, by the qualifier and by the glob import alike.
 // The refusals that must hold the other way are in
 // a-type-named-above-its-private-declaration-stays-private.loft.
+//
+// @falsified-at: be004e56c — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-type-named-above-its-pub-declaration-is-published.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: the exit — on the control each type a private function names first stays
+//   private, so the program's reaches are refused and nothing compiles.
+//   WITNESS: "`FwdPubS` is not `pub` in `fwdlib`" for a struct declared `pub`.
+//   ARMED: nothing.
+//   HOLDS: on this tree every assertion passes on both backends, with no leak and no panic.
 use fwdlib;
 use fwdlib::*;
 
