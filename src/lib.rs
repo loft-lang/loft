@@ -398,6 +398,8 @@ pub mod rpc;
 pub mod script;
 pub mod serve;
 pub mod startup_cache;
+#[cfg(any(feature = "registry", feature = "remote-store"))]
+pub(crate) mod tls;
 pub mod wasm_debug;
 // @PLAN12 phase 3.5a (2026-05-24) — re-export `extensions::native_call`
 // at the crate root so generated native code can write

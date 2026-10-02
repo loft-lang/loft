@@ -206,7 +206,7 @@ pub(crate) fn fetch_text(url: &str) -> Option<String> {
     not(all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm")))
 ))]
 fn agent() -> ureq::Agent {
-    ureq::AgentBuilder::new()
+    crate::tls::agent_builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()
 }

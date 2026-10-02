@@ -81,6 +81,11 @@ of every type, always, so `operator equals` is refused naming a named method as 
 work; the name after `to_` is the target type in snake case.  A conversion INTO your type may
 take a foreign `self` (`text`, `integer`), so only your package can define it.
 
+**loft trusts the certificates your machine trusts** (system store, `SSL_CERT_FILE`), so it
+works behind a TLS-inspecting proxy.  Installing a package, fetching a remote store or calling a
+web service checks a server against the bundled roots and the machine's own store, as curl and
+git do.
+
 ---
 
 ## 2026-10
