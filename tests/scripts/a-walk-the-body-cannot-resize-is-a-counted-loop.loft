@@ -1,0 +1,119 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A forward walk over a vector the body cannot resize runs as a counted loop and answers what
+// the walk answers.  `@FR-R-ForwardWalk`.
+//
+// `for x in v` re-reads the length every round and tests `x#index < 0`, because an `#remove`
+// in the body shrinks the vector and steps the index back.  When the body can neither resize
+// the vector nor reach it through another name, the length is read once and the walk is the
+// counted range's loop.  So the cells put both kinds side by side: walks that become counted
+// (scalars, records, the `#index` read in the body, `continue` and `break`, an empty vector,
+// appends to ANOTHER vector, a nested walk) and walks that must keep re-reading — an
+// `#remove` in the body, and a `const` parameter walked while the body appends to a `&`
+// parameter that the caller passed the same vector as.  `tests/forward_walk.rs` pins which
+// is which.  Every expected value is computed by hand.
+//
+// @falsified-at: none — it guards a rewrite no earlier build has; planted defects, see
+//   tests/forward_walk.rs.
+
+struct P {
+  x: float,
+  id: integer
+}
+
+fn sum_walk(v: const vector<integer>) -> integer {
+  t = 0;
+  for x in v {
+    t += x;
+  }
+  t
+}
+
+fn record_walk(v: const vector<P>) -> float {
+  t = 0.0;
+  for p in v {
+    t += p.x * 2.0 + p.id as float;
+  }
+  t
+}
+
+fn index_walk(v: const vector<integer>) -> integer {
+  t = 0;
+  for x in v {
+    t += x * x#index;
+  }
+  t
+}
+
+fn continue_break_walk(v: const vector<integer>) -> integer {
+  t = 0;
+  for x in v {
+    if x > 7 { break; }
+    if x % 2 == 0 { continue; }
+    t += x;
+  }
+  t
+}
+
+fn into_another(v: const vector<integer>) -> integer {
+  out: vector<integer> = [];
+  for x in v {
+    out += [x * 2];
+  }
+  sum_walk(out) * 100 + len(out)
+}
+
+fn nested_walk(a: const vector<integer>, b: const vector<integer>) -> integer {
+  t = 0;
+  for x in a {
+    for y in b {
+      t += x * y;
+    }
+  }
+  t
+}
+
+fn remove_walk() -> integer {
+  v = [1, 2, 3, 4, 5, 6];
+  for x in v {
+    if x % 2 == 0 { x#remove; }
+  }
+  sum_walk(v) * 10 + len(v)
+}
+
+fn both(a: const vector<integer>, b: &vector<integer>) -> integer {
+  n = 0;
+  for x in a {
+    if n < 3 { b += [x]; }
+    n += 1;
+  }
+  n
+}
+
+fn test_walks_that_count() {
+  v = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+  assert(sum_walk(v) == 55, "sum {sum_walk(v)}");
+  ps: vector<P> = [];
+  for i in 0..500 { ps += [P { x: i as float * 0.5, id: i % 7 }]; }
+  assert(record_walk(ps) == 126244.0, "records {record_walk(ps)}");
+  assert(index_walk([10, 20, 30]) == 80, "index {index_walk([10, 20, 30])}");
+  assert(continue_break_walk(v) == 16, "continue and break {continue_break_walk(v)}");
+  e: vector<integer> = [];
+  assert(sum_walk(e) == 0, "empty {sum_walk(e)}");
+  assert(into_another(v) == 11010, "into another {into_another(v)}");
+  assert(nested_walk([1, 2, 3], [4, 5]) == 54, "nested {nested_walk([1, 2, 3], [4, 5])}");
+}
+
+fn test_walks_that_must_keep_reading_the_length() {
+  assert(remove_walk() == 93, "remove {remove_walk()}");
+  w = [1, 2];
+  n = both(w, w);
+  assert(n == 5 && len(w) == 5, "one vector as both parameters {n} {len(w)}");
+}
+
+fn main() {
+  test_walks_that_count();
+  test_walks_that_must_keep_reading_the_length();
+  println("ok");
+}
