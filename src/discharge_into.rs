@@ -52,84 +52,87 @@ fn count(v: &Value, var: u16, n: &mut usize) {
 }
 
 /// The parts of `{t = read; if conv(t) then w = t else w = d}`: `t`, `w`, the read, `d`.
-fn discharge_into<'a>(ops: &Ops, v: &'a Value) -> Option<(u16, u16, &'a Value, &'a Value)> {
-    let Value::Block(b) = v.unspan() else {
+fn discharge_into<'a>(ops: &Ops, node_v: &'a Value) -> Option<(u16, u16, &'a Value, &'a Value)> {
+    let Value::Block(blk) = node_v.unspan() else {
         return None;
     };
-    if b.name != "ncc" {
+    if blk.name != "ncc" {
         return None;
     }
-    let st: Vec<&Value> = b
+    let st: Vec<&Value> = blk
         .operators
         .iter()
         .filter(|o| !matches!(o, Value::Line(_)))
         .collect();
-    let [Value::Set(t, read), Value::If(test, then_arm, else_arm)] = st.as_slice() else {
+    let [Value::Set(tmp, read), Value::If(test, then_arm, else_arm)] = st.as_slice() else {
         return None;
     };
     let Value::Call(conv, cargs) = test.unspan() else {
         return None;
     };
-    let Value::Set(w, moved) = then_arm.unspan() else {
+    let Value::Set(target, moved) = then_arm.unspan() else {
         return None;
     };
-    let Value::Set(w2, d) = else_arm.unspan() else {
+    let Value::Set(target2, dflt) = else_arm.unspan() else {
         return None;
     };
     (*conv == ops.conv_bool_from_text
         && cargs.len() == 1
-        && matches!(cargs[0].unspan(), Value::Var(x) if x == t)
-        && matches!(moved.unspan(), Value::Var(x) if x == t)
-        && w == w2
-        && w != t
-        && !mentions(read, *w)
-        && !mentions(d, *w))
-    .then_some((*t, *w, &**read, &**d))
+        && matches!(cargs[0].unspan(), Value::Var(x) if x == tmp)
+        && matches!(moved.unspan(), Value::Var(x) if x == tmp)
+        && target == target2
+        && target != tmp
+        && !mentions(read, *target)
+        && !mentions(dflt, *target))
+    .then_some((*tmp, *target, &**read, &**dflt))
 }
 
-/// Is `v` the statement `free t`?
-fn frees(ops: &Ops, v: &Value, t: u16) -> bool {
-    matches!(v.unspan(), Value::Call(f, a) if *f == ops.free_text && a.len() == 1
-        && matches!(a[0].unspan(), Value::Var(x) if *x == t))
+/// Is `node_v` the statement `free t`?
+fn frees(ops: &Ops, node_v: &Value, tmp: u16) -> bool {
+    matches!(node_v.unspan(), Value::Call(f, a) if *f == ops.free_text && a.len() == 1
+        && matches!(a[0].unspan(), Value::Var(x) if *x == tmp))
 }
 
 fn rewrite_in(ops: &Ops, code: &Value, node: &mut Value) -> usize {
     let mut n = 0;
     node.for_each_child_mut(&mut |c| n += rewrite_in(ops, code, c));
     let block = match node {
-        Value::Block(b) | Value::Loop(b) => b,
+        Value::Block(blk) | Value::Loop(blk) => blk,
         _ => return n,
     };
     let mut at = 0;
     while at < block.operators.len() {
         let found = discharge_into(ops, &block.operators[at])
-            .map(|(t, w, read, d)| (t, w, read.clone(), d.clone()));
-        let Some((t, w, read, d)) = found else {
+            .map(|(tmp, target, read, dflt)| (tmp, target, read.clone(), dflt.clone()));
+        let Some((tmp, target, read, dflt)) = found else {
             at += 1;
             continue;
         };
         // The free of the temporary is the next statement that names it.
         let free_at = (at + 1..block.operators.len())
-            .find(|&k| mentions(&block.operators[k], t))
-            .filter(|&k| frees(ops, &block.operators[k], t));
+            .find(|&k| mentions(&block.operators[k], tmp))
+            .filter(|&k| frees(ops, &block.operators[k], tmp));
         // Its assignment, the test, the moving arm and the free: nothing else may name it.
-        let Some(free_at) = free_at.filter(|_| uses(code, t) == 4) else {
+        let Some(free_at) = free_at.filter(|_| uses(code, tmp) == 4) else {
             at += 1;
             continue;
         };
         block.operators.remove(free_at);
-        let Value::Block(b) = block.operators[at].unspan_mut() else {
+        let Value::Block(blk) = block.operators[at].unspan_mut() else {
             unreachable!("matched as a block above");
         };
         let is_null = Value::Call(
             ops.not,
-            vec![Value::Call(ops.conv_bool_from_text, vec![Value::Var(w)])],
+            vec![Value::Call(
+                ops.conv_bool_from_text,
+                vec![Value::Var(target)],
+            )],
         );
-        b.operators = vec![
-            Value::Set(w, Box::new(read)),
+        blk.operators = vec![
+            Value::Set(target, Box::new(read)),
             Value::If(
                 Box::new(is_null),
-                Box::new(Value::Set(w, Box::new(d))),
+                Box::new(Value::Set(target, Box::new(dflt))),
                 Box::new(Value::Null),
             ),
         ];

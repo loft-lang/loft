@@ -12,8 +12,9 @@
 // indexed by `len(w)` and a default built from `w`, which must keep their temporaries
 // (`tests/discharge_into.rs` pins which functions are rewritten).  Every value by hand.
 //
-// @falsified-at: none — it guards a rewrite no earlier build has; planted defects, see
-//   tests/discharge_into.rs.
+// @falsified-at: none — it guards a rewrite no earlier build has.  Falsified by planted defects,
+//   2026-10-02: the null test inverted (`[]` for `[yy]`) and the default dropped (`[null]` for
+//   `[]`), both silent.  The two target cells are defensive: the parser routes them elsewhere.
 
 fn bind(v: const vector<text>, i: integer) -> text {
   w = v[i] ?? "";

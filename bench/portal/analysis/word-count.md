@@ -5,7 +5,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 # `word_count` — why the interpreter is 5× Python on it
 
-**Analysed and priced 2026-10-02, nothing built** (branch `laptop-superinstructions`, head
+**Analysed and priced 2026-10-02; levers 1 and 2 BUILT the same day** (§ Built) (branch `laptop-superinstructions`, head
 `9e169fd36`, every interpreter rule of the eliminations arc in).  `bench/08_word_count` is the
 one row of the original suite (01–08) where Python is still far ahead.  On the others the
 interpreter is 1.1–1.8× Python's time, and on `sum_loop` it is 1.25× faster.  The full-suite
@@ -96,3 +96,31 @@ refactor before it is a rewrite, so it is not priced here.
 Together they take the row from about 87 to about 60 ms: from 5.2× Python to about 3.5×.
 What is left after that is the hash (structural) and the owning text local (§ T1's refactor).
 Native's own lever is the typed text-key lookup, in `keyed.md`.
+
+## Built (2026-10-02)
+
+Both levers, as formal rules (`formal/rewrites.md`), measured on the pinned layout from one
+tree, interpreter, every hash unchanged, native within ±1 %:
+
+| routine | before | after | |
+|---|---:|---:|---:|
+| `word_count` | 88.5 ms | **64.3 ms** | −27 % |
+| `hash_find` | 1.46 ms | 1.17 ms | −20 % |
+| `hash_update` | 0.74 ms | 0.57 ms | −22 % |
+| `hash_text_keys` | 1.63 ms | 1.39 ms | −15 % |
+| `hash_remove` | 2.23 ms | 2.00 ms | −10 % |
+| `grouped_fill_find` | 1.77 ms | 1.65 ms | −7 % |
+
+* **Lever 1 is `(R-DischargeInto)`** (`src/discharge_into.rs`): the temporary goes, `w` holds
+  the read and is tested itself.  −19 % on `word_count` alone, close to the −24 % priced (the
+  price had dropped the test as well).  Its target clauses turned out DEFENSIVE: the parser
+  already lowers an assignment that names its target through a work buffer.
+* **Lever 2 is `(R-KeyList)`** (`Stores::get_keys`): priced at ~7 % from the profile, it
+  measured −15 to −22 % on the keyed lookups, so the per-call walk cost more than its own
+  frames showed.  Falsifier `LOFT_KEY_LIST_VERIFY=1`; a sweep of 2020 programs found no
+  disagreement.
+
+`word_count` is now about 3.8× Python (64 ms against 17 ms), down from 5.2×.  What is left is
+§ 2's hash per lookup (structural), § 3's owning text local, and native's typed text-key
+lookup.
+
