@@ -1308,6 +1308,11 @@ pub fn OpReplaceKeyed(cell: &std::cell::UnsafeCell<Stores>, src: DbRef, dest: Db
     if src == dest {
         return;
     }
+    // `@FR-H-SwapIn`'s keyed clause — a given-up source is the stores exchanged; the twin of
+    // the call in `State::replace_keyed`.
+    if free_source && stores.try_swap_keyed(&src, &dest, tp) {
+        return;
+    }
     stores.remove_claims(&dest, tp);
     stores.copy_claims(&src, &dest, tp);
     // @P317 — LOFT_LOG=copy_check (native): warn on nested-length divergence.

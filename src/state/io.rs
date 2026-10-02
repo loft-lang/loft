@@ -2026,6 +2026,13 @@ impl State {
         if src == dest {
             return;
         }
+        // `@FR-H-SwapIn`'s keyed clause — a source the bind gives up (`h = build(…)`) is the
+        // value the copy would rebuild, and its whole store is that value: the two stores
+        // exchange contents and the slot left holding the old collection is released, where
+        // the copy rebuilt every element and bucket and then freed the source.
+        if free_source && self.database.try_swap_keyed(&src, &dest, tp) {
+            return;
+        }
         self.database.remove_claims(&dest, tp);
         self.database.copy_claims(&src, &dest, tp);
         if self.database.copy_check_enabled() {
