@@ -937,7 +937,7 @@ guards-check:  ## @PLN175 — fail when a library guard was added or removed sin
 features-fetch:  ## Refresh index/features.json from the loft-lang/features tracker (network; gh + jq)
 	@gh issue list -R $(FEATURES_REPO) --state all --limit 200 \
 	    --json number,title,labels,body \
-	  | jq 'sort_by(.number) | map({number, title, kind: ((.labels|map(.name)|map(select(startswith("kind:")))|.[0]) // "kind:unknown" | sub("^kind:";"")), body})' \
+	  | jq 'sort_by(.number) | map({number, title, kind: ((.labels|map(.name)|map(select(startswith("kind:")))|.[0]) // "kind:unknown" | sub("^kind:";"")), group: (.labels|map(.name)|map(select(startswith("group:"))|sub("^group:";""))|join(",")), keys: ([.body|scan("<!-- keys: ([^>]*?) -->")]|.[0][0] // ""|split(" ")|map(select(length>0))), body})' \
 	  > index/features.json
 	@echo "index/features.json: $$(jq length index/features.json) issues"
 
@@ -962,6 +962,15 @@ features-check: features-gen  ## Drift guard: fail if the committed shadow is st
 	    exit 1; \
 	fi
 	@echo "features shadow in sync with index/features.json."
+	@# @PLN183 — the overview groups and the lookup keys the issues carry: every entry in
+	@# exactly one `group:` (a `group:` label on its issue), and no key claimed by two entries.
+	@bad=$$(jq -r '.[] | select((.group // "") == "" or (.group|test(","))) | "  #\(.number) \(.title): group \"\(.group // "")\""' index/features.json); \
+	dup=$$(jq -r '[.[] | .number as $$n | (.keys // [])[] | {k: ., n: $$n}] | group_by(.k) | map(select(length > 1)) | .[] | "  key \(.[0].k): #\(map(.n|tostring)|join(", #"))"' index/features.json); \
+	if [ -n "$$bad$$dup" ]; then \
+	    echo "ERROR: an entry needs exactly one group: label, and a key one owner (edit the issues, then make features-fetch):"; \
+	    [ -n "$$bad" ] && echo "$$bad"; [ -n "$$dup" ] && echo "$$dup"; \
+	    exit 1; \
+	fi
 
 examples-index:  ## Regenerate examples-index.tsv (worked-example tag -> file:line -> blob link)
 	@bash scripts/check_doc_drift.sh write-examples-index

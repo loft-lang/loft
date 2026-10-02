@@ -11,4 +11,7 @@ fn main() {
     greet = fn(name: text) -> text { "{greeting}, {name}" };
     greeting = "Bye";
     println(greet("world"));               // Hello, world
+    // The short form `|x| …` takes its parameter types from where it is used.
+    squares = map([1, 2, 3], |x| { x * x });
+    println("{squares}");                  // [1,4,9]
 }

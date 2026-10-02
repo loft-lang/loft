@@ -1,4 +1,4 @@
-# group	title	entry — the proposed `group:` of every @F/@I entry (probe 1)
+# group	title	entry — the `group:` label each loft-lang/features issue carries (probe 1)
 values	Values and types	F3
 values	Values and types	F4
 values	Values and types	F5
@@ -19,6 +19,7 @@ absence	Absence and arithmetic safety	F38
 absence	Absence and arithmetic safety	F96
 operators	Operators	F37
 operators	Operators	F114
+operators	Operators	F124
 collections	Collections	F6
 collections	Collections	F7
 collections	Collections	F8
@@ -52,6 +53,7 @@ text	Text	F35
 text	Text	F36
 text	Text	F94
 text	Text	F105
+text	Text	F125
 data	Files, stores and data	F40
 data	Files, stores and data	F42
 data	Files, stores and data	F93
@@ -72,8 +74,6 @@ modules	Modules, libraries and packages	F47
 modules	Modules, libraries and packages	F55
 modules	Modules, libraries and packages	F92
 modules	Modules, libraries and packages	F101
-modules	Modules, libraries and packages	F120
-modules	Modules, libraries and packages	F121
 tools	Tools: run, test, debug, build	F48
 tools	Tools: run, test, debug, build	F49
 tools	Tools: run, test, debug, build	F50
@@ -87,6 +87,8 @@ tools	Tools: run, test, debug, build	F100
 tools	Tools: run, test, debug, build	F102
 tools	Tools: run, test, debug, build	F103
 tools	Tools: run, test, debug, build	F110
+inside	Inside loft (maintainers)	F120
+inside	Inside loft (maintainers)	F121
 inside	Inside loft (maintainers)	I57
 inside	Inside loft (maintainers)	I58
 inside	Inside loft (maintainers)	I59

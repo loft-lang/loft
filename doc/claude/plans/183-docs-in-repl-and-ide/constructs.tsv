@@ -4,8 +4,8 @@ a ?? b	??	F2	ok	the `??` token
 x?	retries?	F96	ok	a postfix `?` on an expression
 x as integer	 as 	F5	ok	the `as` token
 fn f(v: &integer)	: &	F21	ok	`&` before a parameter's type
-|x| x * 2	|x|	F22	body-gap	a lambda literal
-fn(integer) -> integer	fn(	F23	body-gap	`fn(` in a type position
+|x| x * 2	|x|	F22	ok	a lambda literal
+fn(integer) -> integer	fn(	F23	ok	`fn(` in a type position
 <T: Ordered>	<T:	F26	ok	a bound in a type-variable header
 match v { … }	match 	F29	ok	the `match` keyword
 if s is Circle { … }	 is 	F30	ok	the `is` token
@@ -13,17 +13,17 @@ break 'outer	break	F31	ok	`break` with a label
 for i in 0..n	in 1..	F28	ok	a range after `in`
 v[i]  (vector)	v[0]	F6	ok	`[ ]` on a vector-typed operand
 h["k"]  (hash)	["	F7	ok	`[ ]` on a hash-typed operand
-v[1..3]  (vector slice)	[1..	F6	body-gap	`[ ]` with a range on a vector
-s[1..3]  (text slice)	[1..	—	no-entry	`[ ]` with a range on a text — no entry covers it
+v[1..3]  (vector slice)	[1..	F6	ok	`[ ]` with a range on a vector
+s[1..3]  (text slice)	s[0..	F125	ok	`[ ]` with a range on a text — no entry covers it
 par(…)	par(	F33	ok	the `par` call form
 yield x	yield	F34	ok	the `yield` keyword
 "{x:>5}"	:>	F36	ok	a format spec in an interpolation hole
 a ** b	 ** 	F37	ok	the `**` token
 use time::*	use 	F47	ok	a `use` line
-operator compare(self: P, …)	operator compare	—	no-entry	the `operator` keyword — @PLN182 has no entry
+operator compare(self: P, …)	operator compare	F124	ok	the `operator` keyword — @PLN182 has no entry
 value struct P { … }	value struct	F95	ok	the `value struct` keyword pair
 for f in s#fields	#fields	F111	ok	`#fields` after a struct value
 type Id = integer	type 	F46	ok	a `type … =` declaration
-x += 1	+=	F37	body-gap	a compound assignment
+x += 1	+=	F37	ok	a compound assignment
 sizeof(P)	sizeof	F45	ok	the `sizeof` call
 fn f(n: const integer)	const 	F18	ok	`const` before a parameter's type
