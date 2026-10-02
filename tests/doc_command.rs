@@ -126,6 +126,47 @@ fn a_package_directory_documents_its_own_api() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// A doc comment is TEXT on the API page: its `<` and `&` are shown, not read as markup, and a
+/// `` `span` `` is code.  The page joined the comment's lines into one raw `<p>`, so
+/// `vector<T>` reached the browser as an unknown `<T>` tag and the reader saw "vector".
+#[test]
+fn a_doc_comment_is_shown_as_text_on_the_api_page() {
+    let root = tmp_root("pkgesc");
+    let pkg = root.join("esclib");
+    std::fs::create_dir_all(pkg.join("src")).expect("mkdir pkg");
+    std::fs::write(
+        pkg.join("loft.toml"),
+        "[package]\nname = \"esclib\"\nversion = \"0.1.0\"\n",
+    )
+    .expect("write manifest");
+    std::fs::write(
+        pkg.join("src/esclib.loft"),
+        "// Answers a vector<T> & a <b>bold</b> claim, via `first(v)`.\n\
+         pub fn first_of(x: integer) -> integer { x }\n",
+    )
+    .expect("write src");
+    let out = Command::new(loft_bin())
+        .current_dir(&root)
+        .arg("doc")
+        .arg(&pkg)
+        .output()
+        .expect("run loft doc");
+    assert!(out.status.success(), "loft doc failed");
+    let api: String = std::fs::read_dir(pkg.join("doc"))
+        .expect("read doc")
+        .filter_map(Result::ok)
+        .filter(|e| e.file_name().to_string_lossy().starts_with("api-"))
+        .filter_map(|e| std::fs::read_to_string(e.path()).ok())
+        .collect();
+    assert!(
+        api.contains(
+            "vector&lt;T&gt; &amp; a &lt;b&gt;bold&lt;/b&gt; claim, via <code>first(v)</code>"
+        ),
+        "the doc must be escaped text with its span as code; got:\n{api}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// `-o <dir>` puts the output exactly where it is told — the escape hatch for the
 /// case where neither "beside the source" nor the doc cache is what is wanted.
 #[test]
