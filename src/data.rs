@@ -9025,6 +9025,17 @@ impl Data {
     /// same question is answerable there: the lowest-numbered holder of this SPELLING whose
     /// bounds match.
     #[must_use]
+    /// Does some generic header declare a type variable spelled `spelling`?  An undefined
+    /// type of that spelling is then a variable named outside its header, and its message
+    /// says so (`Parser::type_var_out_of_scope`).
+    #[must_use]
+    pub fn is_type_var_spelling(&self, spelling: &str) -> bool {
+        self.type_var_bound_keys.keys().any(|d| {
+            (*d as usize) < self.definitions.len()
+                && Self::type_var_spelling(self.definitions[*d as usize].name()) == spelling
+        })
+    }
+
     pub fn holder_for_spelling(&self, spelling: &str, bounds_key: &str) -> Option<u32> {
         self.type_var_bound_keys
             .iter()
