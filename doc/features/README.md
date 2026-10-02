@@ -45,7 +45,7 @@ canonical; these pages are its generated shadow. Regenerate with
 | [@F29](F29.md) | Pattern matching — enum/scalar/tuple, guards, or-patterns, exhaustiveness |
 | [@F30](F30.md) | `is` variant check (+ field capture) |
 | [@F31](F31.md) | `break` / `continue` + labelled forms |
-| [@F32](F32.md) | Custom iterators via `fn next(self) -> T?` |
+| [@F32](F32.md) | Custom iterators via `operator next(self) -> T?` |
 | [@F33](F33.md) | `par(...)` parallel for-loop |
 | [@F34](F34.md) | Coroutines / generators — `yield`, `yield from` |
 | [@F35](F35.md) | String literals — `{expr}` interpolation + backtick multiline |

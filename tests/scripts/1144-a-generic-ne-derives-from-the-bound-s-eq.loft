@@ -31,7 +31,7 @@
 
 struct Ne1144P { ne_px: integer }
 fn OpEq(self: Ne1144P, other: Ne1144P) -> boolean { self.ne_px == other.ne_px }
-fn to_text(self: Ne1144P) -> text { "P({self.ne_px})" }
+operator to_text(self: Ne1144P) -> text { "P({self.ne_px})" }
 
 fn ne1144_g<T: Equatable>(ne_a: T, ne_b: T) -> boolean { ne_a != ne_b }
 fn ne1144_eq<T: Equatable>(ne_a: T, ne_b: T) -> boolean { ne_a == ne_b }

@@ -2060,6 +2060,8 @@ impl Parser {
             "compare" => ("<", "T", "Ordering"),
             "plus" => ("+", "U", "V"),
             "minus" => ("-", "U", "V"),
+            "next" => ("for", "U", "E?"),
+            "to_text" => ("\"{x}\"", "text", "text"),
             _ => ("*", "U", "V"),
         };
         let Some(first) = visible.first().filter(|a| a.name == "self") else {
@@ -2072,6 +2074,15 @@ impl Parser {
             );
             return;
         };
+        if matches!(fn_name, "next" | "to_text") {
+            self.check_unary_operator_shape(fn_name, &visible, result);
+            if self.default {
+                return; // `@FR-Op-Std` — the stdlib marks its own, on built-in types too
+            }
+        }
+        if self.default {
+            return;
+        }
         let own = match first.typedef.base() {
             Type::Reference(d, _) | Type::Enum(d, _, _) => Some(*d),
             _ => None,
@@ -2106,6 +2117,9 @@ impl Parser {
             );
             return;
         }
+        if matches!(fn_name, "next" | "to_text") {
+            return; // shape checked above
+        }
         if fn_name != "compare" {
             // `@FR-Op-Shape` — an arithmetic form takes `self` and the right operand, and
             // answers a value.
@@ -2133,6 +2147,37 @@ impl Parser {
         }
     }
 
+    /// `@FR-Op-Shape` for the forms a single value reaches: `next(self) -> E?` drives `for e
+    /// in x`, and `to_text(self) -> text` or `to_text(self, spec: text) -> text` drives
+    /// `"{x}"` and `"{x:spec}"`.
+    fn check_unary_operator_shape(
+        &mut self,
+        fn_name: &str,
+        visible: &[&crate::data::Argument],
+        result: &Type,
+    ) {
+        let ok = if fn_name == "next" {
+            visible.len() == 1 && !matches!(result, Type::Void)
+        } else {
+            matches!(result.base(), Type::Text(_))
+                && (visible.len() == 1
+                    || (visible.len() == 2 && matches!(visible[1].typedef.base(), Type::Text(_))))
+        };
+        if !ok {
+            let want = if fn_name == "next" {
+                "`operator next(self: T) -> E?`, answering null when the walk is done"
+            } else {
+                "`operator to_text(self: T) -> text`, or `operator to_text(self: T, spec: text) \
+                 -> text` for `\"{x:spec}\"`"
+            };
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`operator {fn_name}` has the wrong shape: {want}"
+            );
+        }
+    }
+
     /// `@FR-Op-Def`'s name half: a form of the table not built yet is refused by name, saying
     /// what it will back, and a name that is no form at all is refused as one.  Answers whether
     /// it refused.
@@ -2154,8 +2199,6 @@ impl Parser {
             ("bit_not", "`~`"),
             ("shift_left", "`<<`"),
             ("shift_right", "`>>`"),
-            ("next", "`for e in x`"),
-            ("to_text", "`\"{x}\"`"),
         ];
         if let Some((_, form)) = PLACED.iter().find(|(n, _)| *n == fn_name) {
             diagnostic!(
@@ -2166,7 +2209,7 @@ impl Parser {
             );
             return true;
         }
-        if fn_name.starts_with("to_") {
+        if fn_name.starts_with("to_") && fn_name != "to_text" {
             diagnostic!(
                 self.lexer,
                 Level::Error,
@@ -2175,13 +2218,17 @@ impl Parser {
             );
             return true;
         }
-        if !matches!(fn_name, "compare" | "plus" | "minus" | "times") {
+        if !matches!(
+            fn_name,
+            "compare" | "plus" | "minus" | "times" | "next" | "to_text"
+        ) {
             diagnostic!(
                 self.lexer,
                 Level::Error,
                 "`{fn_name}` is not an operator: `operator` takes the name of the form it backs \
                  — `compare` for `<`, `<=`, `>` and `>=`, `plus` for `+`, `minus` for `-`, \
-                 `times` for `*`; declare an ordinary method with `fn`"
+                 `times` for `*`, `next` for `for e in x`, `to_text` for `\"{{x}}\"`; declare \
+                 an ordinary method with `fn`"
             );
             return true;
         }
@@ -6217,6 +6264,9 @@ impl Parser {
                 self.lexer.has_token(";");
                 continue;
             }
+            // `@FR-Op-Iface` (@PLN182) — a member written `operator` is met only by an
+            // `operator` definition of the type.
+            let mut member_is_operator = false;
             // I3.1: `op <token> (params) -> type` desugars to an `OpCamelCase` method stub.
             let method_name = if self.lexer.has_keyword("op") {
                 if let crate::lexer::LexItem::Token(tok) = self.lexer.peek().has.clone() {
@@ -6243,7 +6293,9 @@ impl Parser {
                     continue;
                 }
             } else {
-                if !self.lexer.has_token("fn") {
+                if self.lexer.has_token("operator") {
+                    member_is_operator = true;
+                } else if !self.lexer.has_token("fn") {
                     if !self.first_pass {
                         diagnostic!(self.lexer, Level::Error, "Expected 'fn' in interface body");
                     }
@@ -6302,6 +6354,7 @@ impl Parser {
                             a.constant;
                     }
                     self.data.set_parent(stub_nr, d_nr);
+                    self.data.definitions[stub_nr as usize].operator_form = member_is_operator;
                     // loft#734 — a method with NO `->` returns Void, and the stub
                     // has to say so. Leaving it unset kept the definition's
                     // default `Unknown`, which the native generator renders as

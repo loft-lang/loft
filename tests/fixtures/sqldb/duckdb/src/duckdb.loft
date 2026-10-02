@@ -80,7 +80,7 @@ pub struct DuckRows { h: integer, row: integer, rows: integer, w: integer, good:
 pub fn ok(self: DuckRows) -> boolean { return self.good; }
 
 // The index starts one behind, so the first call moves it to row 0.
-pub fn next(self: DuckRows) -> boolean {
+pub operator next(self: DuckRows) -> boolean {
   if self.h == 0 { return false }
   self.row += 1;
   if self.row < self.rows { return true }

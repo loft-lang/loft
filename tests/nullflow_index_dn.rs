@@ -66,7 +66,7 @@ const UNTRUSTED_INDEX: &str = "fn main(){ v=[10,20,30,40]; w=[1,1]; sum: integer
 // binds a present value → `total + x` must not nullify. Counter(3) yields 0,1,2 → total 3.
 const CUSTOM_ITER: &str = "struct Counter { current: integer, limit: integer }\n\
      fn new_counter(limit: integer) -> Counter { Counter { current: 0, limit: limit } }\n\
-     fn next(self: Counter) -> integer? { val = self.current; self.current = val + 1;\n\
+     operator next(self: Counter) -> integer? { val = self.current; self.current = val + 1;\n\
          if val >= self.limit { return null; } val }\n\
      fn main(){ c = new_counter(3); total = 0; for x in c { total = total + x; }\n\
          print(\"r={total}\\n\"); }\n";

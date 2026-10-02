@@ -530,7 +530,7 @@ pub fn OpNe(self: Duration, other: Duration) -> boolean {
 // ── custom formatting (the per-type to_text hook) ──
 // "" / "datetime" -> YYYY-MM-DD HH:MM · "date" -> YYYY-MM-DD · "time" -> HH:MM
 // "seconds" -> HH:MM:SS · "iso" -> …THH:MM:SSZ · "wday" -> Mon · "month" -> May
-pub fn to_text(self: DateTime, spec: text) -> text {
+pub operator to_text(self: DateTime, spec: text) -> text {
   // The if-chain is bound to `r` and returned, NOT left as the tail expression:
   // a tail `if` inside a format-hook `to_text(self, spec)` mis-selects its branch
   // on both backends (a loft format-hook bug — repro filed upstream). Binding the
@@ -549,7 +549,7 @@ pub fn to_text(self: DateTime, spec: text) -> text {
   r
 }
 // A Duration renders as [-]H:MM:SS (hours may exceed 24).
-pub fn to_text(self: Duration, spec: text) -> text {
+pub operator to_text(self: Duration, spec: text) -> text {
   neg = self.ms < 0;
   tot = if neg { 0 - self.ms } else { self.ms };
   ss = (tot / MS_PER_SECOND) % 60;

@@ -836,7 +836,7 @@ fn two_libraries_bounded_generics_leave_a_consumer_s_own_type_alone() {
          use holderb::*;\n\
          struct T { z: integer }\n\
          fn OpEq(self: T, other: T) -> boolean { self.z == other.z }\n\
-         fn to_text(self: T) -> text { \"T<{self.z}>\" }\n\
+         operator to_text(self: T) -> text { \"T<{self.z}>\" }\n\
          fn main() {\n\
          t1 = T { z: 1 };\n\
          t2 = T { z: 2 };\n\

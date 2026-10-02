@@ -34,7 +34,7 @@ fn OpMin(self: V) -> V { V { x: 0 - self.x } }
 fn OpMul(self: V, o: V) -> V { V { x: self.x * o.x } }
 fn OpLt(self: V, o: V) -> boolean { self.x < o.x }
 fn scale(self: V, factor: integer) -> integer { self.x * factor }
-fn to_text(self: V) -> text { "V{self.x}" }
+operator to_text(self: V) -> text { "V{self.x}" }
 
 // A nullable parameter takes a dense argument (`(N-Intro)`).
 value struct P { x: integer }

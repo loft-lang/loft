@@ -90,7 +90,7 @@ fn OpEq(self: Duration, other: Duration) -> boolean {
 fn OpNe(self: Duration, other: Duration) -> boolean {
   self.ms != other.ms
 }
-fn to_text(self: Duration) -> text {
+operator to_text(self: Duration) -> text {
   "{self.ms}ms"
 }
 
@@ -121,7 +121,7 @@ fn OpAdd(self: DateTime, other: Duration) -> DateTime {
 }
 
 // --- custom format: bare {d} = ISO; {d:date}, {d:time} ---
-fn to_text(self: DateTime, spec: text) -> text {
+operator to_text(self: DateTime, spec: text) -> text {
   days = self.ms / 86400000;
   rest = self.ms - days * 86400000;
   (yy, mo, dd) = civil_from_days(days);

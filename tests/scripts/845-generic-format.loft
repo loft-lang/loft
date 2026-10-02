@@ -45,7 +45,7 @@ struct P {
   b: text,
 }
 
-fn to_text(self: P) -> text { return "P({self.a},{self.b})"; }
+operator to_text(self: P) -> text { return "P({self.a},{self.b})"; }
 
 // ── a bare T, with the bound that makes it renderable ────────────────────────
 

@@ -42,7 +42,7 @@ pub struct PgRows { res: integer, at: integer, n: integer, w: integer, good: boo
 
 pub fn ok(self: PgRows) -> boolean { return self.good; }
 
-pub fn next(self: PgRows) -> boolean {
+pub operator next(self: PgRows) -> boolean {
   if self.res == 0 { return false }
   self.at += 1;
   if self.at < self.n { return true }

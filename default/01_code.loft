@@ -116,9 +116,9 @@ pub interface Scalable {
 }
 
 /// Types that can be converted to text via a `to_text` method.
-/// User types satisfy Printable by defining `fn to_text(self: T) -> text`.
+/// User types satisfy Printable by defining `operator to_text(self: T) -> text`.
 pub interface Printable {
-  fn to_text(self: Self) -> text
+  operator to_text(self: Self) -> text
 }
 
 // General operations
@@ -2264,28 +2264,28 @@ pub struct StructField {
 
 /// Converts an integer to its decimal text. Built-in types define `to_text` so
 /// they satisfy the `Printable` interface (used by `print`, format strings, …).
-pub fn to_text(self: integer) -> text {
+pub operator to_text(self: integer) -> text {
   // These built-in impls sit after every OpFormat* / OpAppend* declaration above so
   // format-string interpolation in the bodies resolves to the relevant built-in.
   "{self}"
 }
 /// Converts a float to its text representation.
-pub fn to_text(self: float) -> text {
+pub operator to_text(self: float) -> text {
   "{self}"
 }
 /// Converts a single-precision float to its text representation.
-pub fn to_text(self: single) -> text {
+pub operator to_text(self: single) -> text {
   "{self}"
 }
 /// Converts a boolean to "true" or "false".
-pub fn to_text(self: boolean) -> text {
+pub operator to_text(self: boolean) -> text {
   "{self}"
 }
 /// Converts a character to a one-character text.
-pub fn to_text(self: character) -> text {
+pub operator to_text(self: character) -> text {
   "{self}"
 }
 /// Returns the text unchanged — the identity case, so `text` satisfies `Printable` too.
-pub fn to_text(self: text) -> text {
+pub operator to_text(self: text) -> text {
   self
 }

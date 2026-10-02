@@ -38,7 +38,7 @@ fn OpAdd(self: Cash, other: Cash) -> Cash { Cash { cents: self.cents + other.cen
 fn OpMul(self: Cash, other: Cash) -> Cash { Cash { cents: self.cents * other.cents } }
 fn OpMin(self: Cash) -> Cash { Cash { cents: -self.cents } }
 fn scale(self: Cash, factor: integer) -> integer { self.cents * factor }
-fn to_text(self: Cash) -> text { "{self.cents}c" }
+operator to_text(self: Cash) -> text { "{self.cents}c" }
 
 // `Ordered` declares only `<`; the other three comparisons DERIVE from it, so a type that
 // defines one operator gets four.

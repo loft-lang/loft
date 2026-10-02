@@ -5,7 +5,7 @@
 // string is written doubled.  The wrong spelling is in format-braces-refused.loft.
 
 struct Rgb { r: integer, g: integer, b: integer }
-fn to_text(self: Rgb) -> text { "{{r:{self.r},g:{self.g},b:{self.b}}}" }
+operator to_text(self: Rgb) -> text { "{{r:{self.r},g:{self.g},b:{self.b}}}" }
 
 fn test_a_doubled_brace_is_a_literal_brace() {
   p = Rgb { r: 128, g: 0, b: 64 };

@@ -23,6 +23,10 @@ SPDX-License-Identifier: LGPL-3.0-or-later
                a + b                         a.plus(b)             operator plus(self: τ, other: U) -> V
                a - b                         a.minus(b)            operator minus(self: τ, other: U) -> V
                a * b                         a.times(b)            operator times(self: τ, other: U) -> V
+               for e in x                    x.next()              operator next(self: τ) -> E?
+               "{x}", "{x:spec}"             x.to_text(), x.to_text(spec)
+                                                                   operator to_text(self: τ) -> text,
+                                                                   operator to_text(self: τ, spec: text) -> text
 
   (Op-Def)     an `operator` definition is checked where it is written, and refused there
                unless its name is a form in (Op-Back) — a form of the table not built yet is
@@ -34,7 +38,9 @@ SPDX-License-Identifier: LGPL-3.0-or-later
                the definition; on a built-in type it is refused.
 
   (Op-Shape)   `compare` takes `self` and one more parameter and answers `Ordering`; `plus`,
-               `minus` and `times` take `self` and one more parameter and answer a value.
+               `minus` and `times` take `self` and one more parameter and answer a value; `next` takes
+               `self` alone and answers the item, null when the walk is done; `to_text` takes
+               `self`, or `self` and `spec: text`, and answers `text`.
 
   (Op-Mark)    only an `operator` definition backs a form.  A plain `fn` of the same name is
                an ordinary method; a use of the form on a type that has only such a method,
@@ -60,7 +66,15 @@ SPDX-License-Identifier: LGPL-3.0-or-later
                variable, a field, an element — with the place read once.
 
   (Op-Std)     a type declared in `default/` keeps the stdlib's operator definitions, and the
-               stdlib's own bodies reach no user `operator` definition.
+               stdlib's own bodies reach no user `operator` definition.  The stdlib marks its own
+               `operator to_text` on the built-in types; (Op-Home) binds the programs.
+
+  (Op-Fold)    `for e in x` reaches only an `operator next`, and `"{x}"` only an `operator
+               to_text`; a plain `fn next` / `fn to_text` is an ordinary method, and the form on
+               a type with only such a method is refused naming it.
+
+  (Op-Iface)   an interface member written `operator` (`Printable`'s `operator to_text`) is met
+               only by an `operator` definition; a member written `fn` by a plain method.
 
   (Op-Bound)   `Ordered`'s `op <` is met by `operator compare(self: C, other: C) -> Ordering`,
                `Addable`'s `op +` by `operator plus(self: C, other: C) -> C`, `Subtractable`'s
@@ -88,6 +102,8 @@ saying so.
 | Op-Back (arithmetic), Op-Compound | `Parser::operator_member`, `arith_through_operator`, the arithmetic and compound sites (`parser/operators.rs`) | `tests/scripts/an-operator-plus-minus-or-times-is-one-call-of-the-left-operand.loft`, `tests/parse_errors.rs` (`operator_plus_*`, `a_plain_plus_does_not_make_plus_work`) |
 | Op-Bound | `Data::operator_member_for`, `Parser::satisfaction_failures`, `substitute_type_in_value` | both scripts (`sort`, `min_of`, `max_of`, `sum`, user generics) |
 | Op-Name | the definition is an ordinary method | the same script |
+| Op-Fold | the `next` lookups (`parser/collections.rs`, `parser/control.rs`) and the format route (`try_bound_to_text_call`, the spec reader in `parser/objects.rs`) | `tests/scripts/a-programs-own-iterator-works-like-a-built-in-one.loft` and the format guards, migrated; refusals in `tests/parse_errors.rs` |
+| Op-Iface | the interface body (`parser/definitions.rs`), `Parser::satisfaction_failures` | `tests/scripts/845-generic-format.loft` (Printable through a user type) |
 | Op-Std | `Parser::operator_member` (no lookup while `default/` is parsed) | `tests/frontend_counts.rs` (the cold stdlib parse holds its pin) |
 
 ## Deviations

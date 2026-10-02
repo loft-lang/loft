@@ -10246,6 +10246,15 @@ impl Parser {
                 out.push(msg);
             } else if found == u32::MAX {
                 out.push(format!("missing {method_suffix}"));
+            } else if self.data.def(child_nr).operator_form()
+                && !self.data.def(found).operator_form()
+            {
+                // `@FR-Op-Iface` — a member written `operator` is met only by an `operator`
+                // definition; a plain `fn` of the name is an ordinary method.
+                out.push(format!(
+                    "`{method_suffix}` is a plain `fn`, and the interface asks for `operator \
+                     {method_suffix}`"
+                ));
             } else if let Some(msg) =
                 self.return_type_mismatch(child_nr, found, concrete_nr, &method_suffix)
             {

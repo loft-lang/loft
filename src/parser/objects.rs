@@ -3161,9 +3161,11 @@ impl Parser {
             let custom_fmt = if let Type::Reference(fd, _) = &tp {
                 self.data.def_type(*fd) == DefType::Struct && {
                     let nm = self.data.def(*fd).name().to_string();
-                    self.data
-                        .def_nr(&crate::data::Data::mangle_method(&nm, "to_text"))
-                        != u32::MAX
+                    let m = self
+                        .data
+                        .def_nr(&crate::data::Data::mangle_method(&nm, "to_text"));
+                    // Only an `operator to_text` owns the spec (`@FR-Op-Mark`).
+                    m != u32::MAX && self.data.def(m).operator_form()
                 }
             } else {
                 false
