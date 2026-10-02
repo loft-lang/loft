@@ -5089,9 +5089,54 @@ pub struct PushLoop<'a> {
 /// write reaching the path, a range end that is not a simple invariant.  The fallback is
 /// `None` — the loop runs as it did, which costs the reserve and never a value.
 #[must_use]
-#[expect(clippy::too_many_lines, reason = "inherited")]
 pub fn push_loop<'a>(lp: &'a Block, data: &Data) -> Option<PushLoop<'a>> {
-    let trace = std::env::var("LOFT_TRACE_PUSH_FILL").is_ok();
+    push_loop_on(lp, data, None)
+}
+
+/// `@FR-R-PushFill`'s several-paths clause — a counted loop whose top-level pushes reach
+/// MORE than one path (`for _ in 0..n { m += [0 as u8]; sf += [0 as i32]; }`): the reserve
+/// form holds per path, each judged by [`push_loop`]'s own rules with the other paths'
+/// pushes read as plain statements.  `None` unless there are two or more paths and every
+/// one qualifies.  No fill and no window: each is one path's form.
+#[must_use]
+pub fn push_loop_paths<'a>(lp: &'a Block, data: &Data) -> Option<Vec<PushLoop<'a>>> {
+    let body = push_loop_body(lp)?;
+    let mut paths: Vec<PathKey> = Vec::new();
+    for s in &body {
+        if let Value::Call(d, args) = s.unspan()
+            && (*d as usize) < data.definitions.len()
+            && FUSABLE_PUSHES.iter().any(|(n, _, _)| *n == data.def(*d).name())
+            && let Some((vec_arg, _, _)) = push_operands(data.def(*d).name(), args)
+            && let Some(p) = vector_path(data, vec_arg)
+            && !paths.contains(&p)
+        {
+            paths.push(p);
+        }
+    }
+    if paths.len() < 2 {
+        return None;
+    }
+    // Two pushes rooted at one variable may name one vector by two spellings; distinct
+    // roots name distinct locals, and only a path's own pushes are counted against it.
+    let roots: HashSet<u16> = paths.iter().map(|p| p.0).collect();
+    if roots.len() != paths.len() {
+        return None;
+    }
+    paths
+        .iter()
+        .map(|p| push_loop_on(lp, data, Some(p)))
+        .collect::<Option<Vec<_>>>()
+        .map(|mut v| {
+            for p in &mut v {
+                p.fill = None;
+            }
+            v
+        })
+}
+
+#[expect(clippy::too_many_lines, reason = "inherited")]
+fn push_loop_on<'a>(lp: &'a Block, data: &Data, only: Option<&PathKey>) -> Option<PushLoop<'a>> {
+    let trace = std::env::var("LOFT_TRACE_PUSH_FILL").is_ok() && only.is_none();
     let decline = |why: &str| -> Option<PushLoop<'a>> {
         if trace {
             eprintln!("push-fill: loop {} declined — {why}", lp.scope);
@@ -5133,6 +5178,7 @@ pub fn push_loop<'a>(lp: &'a Block, data: &Data) -> Option<PushLoop<'a>> {
             && let Some((rt, w)) = push_kind(d)
             && let Some((vec_arg, bias, val)) = push_operands(data.def(*d).name(), args)
             && let Some(p) = vector_path(data, vec_arg)
+            && only.is_none_or(|o| *o == p)
         {
             biased |= bias.is_some();
             match &path {
