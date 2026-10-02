@@ -11,6 +11,13 @@
 // argument (a literal · a local · a call), and the position (inside `assert(… && …)` · a
 // plain `&&` bound to a local).
 //
+// @falsified-at: 8cece94bf — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/a-lifted-call-passes-a-value-record-parameter-as-its-tuple.patch — native exit 1 -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   CHANNEL: exit on native — rustc refuses the control's source (E0308, `(i64,)` expected,
+//   `DbRef` found); the interpreter answers alike on both trees.
+//   HOLDS: every asserted value on --interpret; leak and panic equal on both trees.
+//
 // Every expected value is worked out by hand.
 
 value struct M { c: integer }
