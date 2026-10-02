@@ -3428,8 +3428,10 @@ impl Output<'_> {
                     .field_zeros
                     .contains(&(std::ptr::from_ref(v.unspan()) as usize))
                 && let Value::Call(_, args) = v.unspan()
-                && let (Some(Value::Var(b)), Some(Value::Int(off))) =
-                    (args.first().map(Value::unspan), args.get(1).map(Value::unspan))
+                && let (Some(Value::Var(b)), Some(Value::Int(off))) = (
+                    args.first().map(Value::unspan),
+                    args.get(1).map(Value::unspan),
+                )
             {
                 let name = sanitize(self.data.def(self.def_nr).variables().name(*b));
                 self.indent(w)?;

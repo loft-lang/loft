@@ -1072,7 +1072,11 @@ impl Stores {
     /// one kept before is freed, so at most one is held.
     fn park_spare(&mut self, store_nr: u16) {
         if let Some(old) = self.spare_store.replace(store_nr) {
-            self.free(&DbRef { store_nr: old, rec: 1, pos: 8 });
+            self.free(&DbRef {
+                store_nr: old,
+                rec: 1,
+                pos: 8,
+            });
         }
     }
 
@@ -1084,7 +1088,11 @@ impl Stores {
             return None;
         }
         self.spare_store = None;
-        Some(DbRef { store_nr: s, rec: 1, pos: 8 })
+        Some(DbRef {
+            store_nr: s,
+            rec: 1,
+            pos: 8,
+        })
     }
 
     /// Does a record of type `tp` keep every pointer it holds as a record number INSIDE its

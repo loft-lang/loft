@@ -523,6 +523,13 @@ Read where the rebind is emitted (the reset-and-copy pair instead of `OpRebindRe
 `OpRebindRecord` at run time, so either is the off arm.  `LOFT_TRACE_STORE_SWAP=1` names each
 exchange.
 
+**`LOFT_NO_REFILL_BUFFER=1`** (`@FR-R-RefillBuffer`, default-ON) frees the store a rebind
+exchange released and mints every return buffer — with it off, a callee whose buffer is built
+by a complete literal of a refillable type takes that store, holding the rebound variable's
+previous value, and empties its vector fields in place.  The first bisect step for a wrong
+record built into a return buffer on `--native`.  Read where the buffer is emitted and at run
+time.
+
 ## Element-first builds, complete writes and return buffers
 
 **`LOFT_NO_ELEMENT_FIRST=1`** (@PLN157 § V-z) makes a record-literal's vector field

@@ -8630,7 +8630,10 @@ fn mint_of(stmt: &Value, b: u16, data: &Data) -> Option<u16> {
         if (*d as usize) >= data.definitions.len() || data.def(*d).name() != "OpDatabase" {
             return None;
         }
-        match (args.first().map(Value::unspan), args.get(1).map(Value::unspan)) {
+        match (
+            args.first().map(Value::unspan),
+            args.get(1).map(Value::unspan),
+        ) {
             (Some(Value::Var(v)), Some(Value::Int(tp))) if *v == b => u16::try_from(*tp).ok(),
             _ => None,
         }
@@ -8709,9 +8712,13 @@ pub fn refill_buffers(data: &Data, stores: &Stores, def_nr: u32) -> RefillBuffer
                         && matches!(a0.unspan(), Value::Var(w) if *w == b)
                         && let Value::Int(off) = off.unspan()
                         && matches!(zero.unspan(), Value::Int(0))
-                        && fields.iter().any(|f| i32::from(f.position) == *off
-                            && matches!(stores.types.get(f.content as usize).map(|c| &c.parts),
-                                Some(crate::database::Parts::Vector(_))))
+                        && fields.iter().any(|f| {
+                            i32::from(f.position) == *off
+                                && matches!(
+                                    stores.types.get(f.content as usize).map(|c| &c.parts),
+                                    Some(crate::database::Parts::Vector(_))
+                                )
+                        })
                     {
                         zeros.insert(std::ptr::from_ref(g.unspan()) as usize);
                     }
