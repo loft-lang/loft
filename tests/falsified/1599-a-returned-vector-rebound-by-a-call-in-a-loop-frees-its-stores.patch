@@ -1,8 +1,8 @@
-diff --git b/src/parser/control.rs a/src/parser/control.rs
-index 45b4673a3..a23085743 100644
---- b/src/parser/control.rs
-+++ a/src/parser/control.rs
-@@ -13128,38 +13128,6 @@ impl Parser {
+diff --git a/src/parser/control.rs b/src/parser/control.rs
+index 88f8b11b0..4dd4d8bd9 100644
+--- a/src/parser/control.rs
++++ b/src/parser/control.rs
+@@ -14402,38 +14402,6 @@ impl Parser {
      /// hidden buffer argument, so a verdict that differed would move the ABI between them.
      /// `match` lowers to nested `If`, so one shape covers both spellings.  (loft#1081,
      /// D-own-8 in `formal/ownership.md`.)
@@ -38,14 +38,14 @@ index 45b4673a3..a23085743 100644
 -        l.iter().any(|op| walk(op, v, false, self))
 -    }
 -
-     fn var_bound_to_branch(l: &[Value], v: u16) -> bool {
-         fn rhs_is_branch(node: &Value) -> bool {
-             match node.unspan() {
-@@ -15853,7 +15821,6 @@ impl Parser {
+     /// Is the vector local `v` bound, ANYWHERE in the body, from a call that cannot be handed a
+     /// buffer at all — one returning a vector with no `__ref_N` among its arguments, which is a
+     /// native (`arguments()`, `s.split(',')`, `j.keys()`) handing back a FRESH store?  The
+@@ -17590,7 +17558,6 @@ impl Parser {
          // has nothing to abandon there.
          let bound_to_vector_join = matches!(ctx.ret.ret_promo_base(), Type::Vector(_, _))
              && (Self::var_bound_to_branch(body, v)
 -                || self.var_call_rebound_nested(body, v)
+                 || self.var_bound_from_fresh_call(body, v)
                  || self
                      .branch_sunk_vectors
-                     .contains(&(self.context, n.to_string())));
