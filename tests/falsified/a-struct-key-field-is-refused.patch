@@ -1,0 +1,111 @@
+diff --git b/src/parser/definitions.rs a/src/parser/definitions.rs
+index db0163ff5..9783f8975 100644
+--- b/src/parser/definitions.rs
++++ a/src/parser/definitions.rs
+@@ -118,71 +118,6 @@ impl Parser {
+         }
+     }
+ 
+-    /// @FR-Col-Key (loft#1845) — a key field of a `hash` / `sorted` / `index` has an
+-    /// immutable VALUE type, refused at the declaration otherwise: "structs are mutable and
+-    /// keys are not" (owner).  Pass 2 only, for `check_key_is_text`'s reason.
+-    fn check_key_is_value(&mut self, content: u32, field: &str, kind: &str) {
+-        if self.first_pass {
+-            return;
+-        }
+-        let el = crate::typedef::key_bearing_def(&self.data, content);
+-        let a_nr = self.data.attr(el, field);
+-        if a_nr == usize::MAX {
+-            return; // an unknown field name is reported by the layout pass
+-        }
+-        let tp = self.data.attr_type(el, a_nr);
+-        let Some(part) = self.mutable_key_part(&tp) else {
+-            return;
+-        };
+-        let shown = self.key_type_name(&tp);
+-        let whole = if part == shown {
+-            String::new()
+-        } else {
+-            format!(" (its `{part}` part)")
+-        };
+-        diagnostic!(
+-            self.lexer,
+-            Level::Error,
+-            "the key field `{field}` of `{kind}<{rec}[…]>` is `{shown}`{whole}, and a key must be \
+-             an immutable value — structs are mutable and keys are not.\n  fix: key on a scalar \
+-             field the record carries — `{kind}<{rec}[ms]>` looked up by `d.ms` rather than by \
+-             `d`; a key may be a scalar, a plain enum, a tuple of those, or `?` of one — and \
+-             `?` of a refused type is refused with it (`Dt?` is a struct)",
+-            rec = self.data.def(content).name()
+-        );
+-    }
+-
+-    /// The part of a key type that is not an immutable value, or `None` when the whole of it
+-    /// is one: a scalar, a plain enum (a discriminant with no fields), a tuple whose members
+-    /// all are, or `?` of one.  Every other type — a struct or value struct, an enum variant
+-    /// with fields, a vector or another collection, a reference, a function — is a record or a
+-    /// container whose content can change under a key, so the fallback answers it; a type
+-    /// still `Unknown` in pass 2 has its own report and is not judged here.
+-    fn mutable_key_part(&self, tp: &Type) -> Option<String> {
+-        match tp {
+-            Type::Optional(inner) => self.mutable_key_part(inner),
+-            Type::Integer(_)
+-            | Type::Boolean
+-            | Type::Float
+-            | Type::Single
+-            | Type::Character
+-            | Type::Text(_)
+-            | Type::Enum(_, false, _)
+-            | Type::Unknown(_) => None,
+-            Type::Tuple(members) => members.iter().find_map(|m| self.mutable_key_part(m)),
+-            other => Some(self.key_type_name(other)),
+-        }
+-    }
+-
+-    /// A key type as the author wrote it: a nullable struct is `S?`, never the synthetic
+-    /// `__nullable<S>` the field rewrite stores it as.
+-    fn key_type_name(&self, tp: &Type) -> String {
+-        self.data.nullable_struct_payload(tp).map_or_else(
+-            || tp.source_name(&self.data),
+-            |d| format!("{}?", self.data.def(d).name()),
+-        )
+-    }
+-
+     /// Consume an optional `not null` annotation, warning that it is deprecated.
+     /// Returns `true` when it was present.
+     ///
+@@ -4599,11 +4534,11 @@ impl Parser {
+                         // single-payload-refactor.md § "DESIGN DECISION (2026-06-20)".)
+                         self.has_deprecated_not_null();
+                         self.parse_fields(true, &mut fields);
+-                        let content = self.data.type_def_nr(&tp);
+-                        for (k, _) in &fields {
+-                            self.check_key_is_value(content, k, "index");
+-                        }
+-                        Type::Index(content, fields, crate::data::Deps::none())
++                        Type::Index(
++                            self.data.type_def_nr(&tp),
++                            fields,
++                            crate::data::Deps::none(),
++                        )
+                     }
+                     "hash" => {
+                         // Dense (implicitly `not null`) — see the `index` arm.
+@@ -4612,7 +4547,6 @@ impl Parser {
+                         self.data.set_referenced(sub_nr, on_d, Value::Null);
+                         let mut f = Vec::new();
+                         for (field, _) in fields {
+-                            self.check_key_is_value(sub_nr, &field, "hash");
+                             f.push(field);
+                         }
+                         Type::Hash(sub_nr, f, crate::data::Deps::none())
+@@ -4675,9 +4609,6 @@ impl Parser {
+                         // Dense (implicitly `not null`) — see the `index` arm.
+                         self.has_deprecated_not_null();
+                         self.parse_fields(true, &mut fields);
+-                        for (k, _) in &fields {
+-                            self.check_key_is_value(sub_nr, k, "sorted");
+-                        }
+                         Type::Sorted(sub_nr, fields, crate::data::Deps::none())
+                     }
+                     "trie" => {

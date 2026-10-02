@@ -72,6 +72,29 @@ kind test read a `text?` as "not a text", which let it take a spatial AXIS' plac
 iterating its records, and answering null for a point just inserted — loft#799's failure reached
 through the `?` (loft#1429).
 
+```
+  (Col-Key)     a key field of hash / sorted / index has an IMMUTABLE VALUE type: a scalar
+                (integer, float, single, text, character, boolean), a plain enum (a
+                discriminant with no fields), a tuple whose members are all of these — or `?`
+                of one.  A struct, a value struct, an enum variant with fields, a vector or any
+                collection is REFUSED at the declaration, naming the field; a tuple is refused
+                naming its first such member; `?` of a refused type is refused with it (`Dt?`),
+                and a multi-key with one such field is refused at that field.
+```
+**Why: structs are mutable and keys are not** (owner).  A key decides where a
+record sits — its bucket, its place in the order — and a key whose content can change under it
+would have to move the record it keys, which nothing does.  So the rule is permanent, not a
+form reserved for later.  The cure the refusal names is the shape every working program already
+has: key on a scalar field the record carries (`hash<Event[ms]>`, looked up by `d.ms`).  The
+plain enum, the tuple and the payload enum are applications of that reason (loft3, within the
+owner's rule): a plain enum is a value with no fields, a tuple of values is a value, and a variant
+with fields is a record.
+
+*Anchors:* `Parser::check_key_is_value` / `mutable_key_part` (`src/parser/definitions.rs`),
+asked from the `hash`, `sorted` and `index` arms of the type parser;
+`tests/scripts/a-key-field-is-an-immutable-value.loft` and
+`…-a-struct-key-field-is-refused.loft`.
+
 *Anchors:* `Type::{Vector,Hash,Sorted,Index,Radix,Trie}` (src/data.rs); DATABASE.md:693,:704; spatial
 surface tests/scripts/48-spatial-construct-free.loft; trie `Parts::Trie` (database/mod.rs:194) + @PLN134. **To decide when writing:** which formers
 live here vs in types.md's former list (recommend: types.md gains the one-line formers; collections.md
