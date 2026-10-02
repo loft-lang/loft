@@ -4821,7 +4821,8 @@ impl Output<'_> {
         if self.base_rec_ptr_disabled {
             return None;
         }
-        let it = hoist::iteration_head(stmt, self.data)?;
+        let it = hoist::iteration_head(stmt, self.data)
+            .or_else(|| hoist::element_binding(stmt, self.data))?;
         let path = hoist::vector_path(self.data, it.vector)?;
         let header = self.active_vec_header(&path)?.to_owned();
         let base = self.active_vec_base(&path)?.to_owned();

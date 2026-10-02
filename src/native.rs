@@ -1825,6 +1825,7 @@ fn n_parallel_for_light(_stores: &mut Stores, _stack: &mut DbRef) {
 /// 10 (drop materialised vector) extends this contract: any par call
 /// whose result is consumed single-pass without random access lowers
 /// here.
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn n_parallel_discard(stores: &mut Stores, stack: &mut DbRef) {
     // Same stack layout / pop order as n_parallel_for.
     let n_extra = stores.get::<i64>(stack) as usize;

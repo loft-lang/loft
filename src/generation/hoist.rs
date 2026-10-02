@@ -3331,9 +3331,27 @@ pub struct VectorIteration<'a> {
 #[must_use]
 pub fn iteration_head<'a>(stmt: &'a Value, data: &Data) -> Option<VectorIteration<'a>> {
     let (loop_var, index, read) = iteration_step(stmt, data)?;
-    // The element, possibly behind `OpGetField(element, const off, _)` wrappers: each adds a
-    // constant to the element's position and leaves its record alone (a struct-enum
-    // element is bound through one at offset 0).
+    element_read(loop_var, read, data).filter(|it| it.index == index)
+}
+
+/// `@FR-R-RecPtr`'s base clause, the counted form `@FR-R-ForwardWalk` leaves: the binding
+/// `e = <element read>` of an element at an index local — a walk rewritten as a counted
+/// loop reads its element as the body's first statement, indexed by the range's counter.
+/// The caller checks the index against the held header's length itself, so any index local
+/// is sound here.
+#[must_use]
+pub fn element_binding<'a>(stmt: &'a Value, data: &Data) -> Option<VectorIteration<'a>> {
+    let Value::Set(loop_var, read) = stmt.unspan() else {
+        return None;
+    };
+    element_read(*loop_var, read, data)
+}
+
+/// The element read of a vector walk: `OpGetVectorNullable(vec, size, idx)`, possibly behind
+/// `OpGetField(element, const off, _)` wrappers — each adds a constant to the element's
+/// position and leaves its record alone (a struct-enum element is bound through one at
+/// offset 0).
+fn element_read<'a>(loop_var: u16, read: &'a Value, data: &Data) -> Option<VectorIteration<'a>> {
     let mut read: &Value = read;
     let mut offset: i64 = 0;
     while let Value::Call(gd, gargs) = read.unspan()
@@ -3351,16 +3369,18 @@ pub fn iteration_head<'a>(stmt: &'a Value, data: &Data) -> Option<VectorIteratio
     if (*rd as usize) >= data.definitions.len()
         || data.def(*rd).name() != "OpGetVectorNullable"
         || rargs.len() != 3
-        || !matches!(rargs[2].unspan(), Value::Var(c) if *c == index)
     {
         return None;
     }
+    let Value::Var(index) = rargs[2].unspan() else {
+        return None;
+    };
     let Value::Int(size) = rargs[1].unspan() else {
         return None;
     };
     Some(VectorIteration {
         loop_var,
-        index,
+        index: *index,
         vector: &rargs[0],
         size: u32::try_from(*size).ok()?,
         offset: u32::try_from(offset).ok()?,
