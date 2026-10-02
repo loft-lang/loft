@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>glb guide — Loft, a programming language for small browser games</title>
+  <meta name="description" content="Getting started with the loft library glb — a runnable guide that is itself a loft program, so every example in it compiles.">
+<link rel="canonical" href="https://loft-lang.org/loft/lib-glb-guide.html">
+<meta property="og:title" content="glb guide — Loft, a programming language for small browser games">
+<meta property="og:description" content="Getting started with the loft library glb — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://loft-lang.org/loft/lib-glb-guide.html">
+<meta property="og:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<meta property="og:site_name" content="Loft">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="glb guide — Loft, a programming language for small browser games">
+<meta name="twitter:description" content="Getting started with the loft library glb — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta name="twitter:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<link rel="stylesheet" href="style.css">
+<style>.playground-link{display:inline-block;margin:0.3em 0 0.8em;padding:4px 12px;background:#2563eb;color:#fff;border-radius:4px;text-decoration:none;font-size:0.85em}.playground-link:hover{filter:brightness(1.15)}@media print{.playground-link{display:none}}</style>
+</head>
+<body>
+<nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
+<h1>glb guide</h1>
+<article>
+<p><a href="lib-glb.html">← glb</a> · <a href="lib-glb-api.html">API reference</a> · <a href="lib-glb-src.html">source</a></p>
+<p><code>glb</code> writes a <code>mesh3d</code> <code>Mesh</code> or <code>Scene</code> as a glTF 2.0 binary (<code>.glb</code>) that Blender, three.js and gltf-validator open: positions, normals and texture coordinates, indexed triangles, PBR materials, node transforms and punctual lights.</p>
+<p>It only writes. It does not read a <code>.glb</code> back, draw anything, or convert other formats — and it writes no cameras: a <code>Scene</code><code>s cameras stay in the scene. The types it writes are `mesh3d`'s; drawing them is `graphics`</code> job.</p>
+<pre><code><span class="kw">use</span> mesh3d::*;
+<span class="kw">use</span> glb::*;</code></pre>
+<pre><code><span class="kw">fn</span> <span class="fn-call">out_path</span>(name: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> { <span class="st">"{temp_dir() ?? "</span>.<span class="st">"}/loft_glb_guide_{name}.glb"</span> }</code></pre>
+<p>The three header words every GLB starts with: magic, version, total length.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">header</span>(path: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>) {
+  f = <span class="bi"><a href="stdlib-files-and-directories.html">file</a></span>(path);
+  f#format = <span class="en">LittleEndian</span>;
+  magic = (f#<span class="fn-call">read</span>(<span class="nm">4</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>;
+  version = (f#<span class="fn-call">read</span>(<span class="nm">4</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>;
+  total = (f#<span class="fn-call">read</span>(<span class="nm">4</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>;
+  (magic, version, total)
+}</code></pre>
+<pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {
+  path = <span class="fn-call">out_path</span>(<span class="st">"cube"</span>);
+  glb::<span class="fn-call">save_glb</span>(<span class="fn-call">cube</span>(), path);
+  h = <span class="fn-call">header</span>(path);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"cube    : {file(path).size} bytes, version {h.1}"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(h.<span class="nm">0</span> == <span class="nm">0x46546C67</span>, <span class="st">"the file starts with 'glTF'"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(h.<span class="nm">2</span> == <span class="bi"><a href="stdlib-files-and-directories.html">file</a></span>(path).size, <span class="st">"and its header states its own size"</span>);
+  _ = <span class="fn-call"><a href="stdlib-files-and-directories.html">delete</a></span>(path);</code></pre>
+<p>Every section below is a function, and <code>main</code> calls each one: a section nothing calls still compiles, but its assertions never run.</p>
+<pre><code>  <span class="fn-call">the_save_answers_nothing</span>();
+  <span class="fn-call">a_scene_carries_what_a_mesh_cannot</span>();
+}</code></pre>
+<p>That prints:</p>
+<pre><code>  cube    : 1788 bytes, version 2
+</code></pre>
+<h2 id="the-one-that-bites-the-save-answers-nothing">The one that bites: the save answers nothing</h2>
+<p><code>save_glb(mesh, path)</code> and <code>save_scene_glb(scene, path)</code> are statements: no boolean, no error, no null. The only evidence a save happened is the file — so a program that needs to know looks at it, as <code>main</code> does above: it exists, it starts with <code>glTF</code>, and the length in its header is its real size. A save truncates first, so saving one path twice replaces the file rather than growing it.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">the_save_answers_nothing</span>() {
+  path = <span class="fn-call">out_path</span>(<span class="st">"twice"</span>);
+  glb::<span class="fn-call">save_glb</span>(<span class="fn-call">cube</span>(), path);
+  once = <span class="bi"><a href="stdlib-files-and-directories.html">file</a></span>(path).size;
+  glb::<span class="fn-call">save_glb</span>(<span class="fn-call">cube</span>(), path);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-files-and-directories.html">file</a></span>(path).size == once, <span class="st">"a second save replaced the file"</span>);
+  _ = <span class="fn-call"><a href="stdlib-files-and-directories.html">delete</a></span>(path);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"save    : no answer, so check the file; a re-save replaces it"</span>);
+}</code></pre>
+<h2 id="a-scene-carries-what-a-mesh-cannot">A scene carries what a mesh cannot</h2>
+<p><code>save_glb</code> writes one mesh and nothing else: no material, no transform, no light — the object arrives grey, at the origin, unlit. <code>save_scene_glb</code> is the door that carries them: every mesh, every material, every node with its transform, and the lights through the KHR_lights_punctual extension.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">a_scene_carries_what_a_mesh_cannot</span>() {
+  sc = <span class="fn-call">scene</span>(<span class="st">"hall"</span>);
+  box = sc.<span class="fn-call">add_mesh</span>(<span class="fn-call">cube</span>());
+  brass = sc.<span class="fn-call">add_material</span>(<span class="fn-call">material_color</span>(<span class="st">"brass"</span>, <span class="nm">0.8</span>, <span class="nm">0.6</span>, <span class="nm">0.2</span>));
+  sc.<span class="fn-call">add_node</span>(<span class="fn-call">node_at</span>(<span class="st">"crate"</span>, box, brass, <span class="fn-call">mat4_translate</span>(<span class="nm">0.0</span>, <span class="nm">1.0</span>, <span class="nm">0.0</span>)));
+  sc.<span class="fn-call">add_light</span>(<span class="fn-call">directional_light</span>(<span class="st">"sun"</span>, <span class="nm">1.0</span>, <span class="nm">1.0</span>, <span class="nm">0.9</span>, <span class="nm">3.0</span>, <span class="fn-call">vec3</span>(<span class="nm">0.0</span>, -<span class="nm">1.0</span>, <span class="nm">0.0</span>)));
+  path = <span class="fn-call">out_path</span>(<span class="st">"scene"</span>);
+  glb::<span class="fn-call">save_scene_glb</span>(sc, path);
+  f = <span class="bi"><a href="stdlib-files-and-directories.html">file</a></span>(path);
+  f#format = <span class="en">LittleEndian</span>;
+  _ = f#<span class="fn-call">read</span>(<span class="nm">12</span>);
+  json_len = (f#<span class="fn-call">read</span>(<span class="nm">4</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>;
+  _ = f#<span class="fn-call">read</span>(<span class="nm">4</span>);
+  json = f#<span class="fn-call">read</span>(json_len) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">text</a></span>;
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(json.<span class="fn-call"><a href="stdlib-text.html">contains</a></span>(<span class="st">"\"</span>brass\<span class="st">""</span>), <span class="st">"the material is in the file"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(json.<span class="fn-call"><a href="stdlib-text.html">contains</a></span>(<span class="st">"KHR_lights_punctual"</span>) &amp;&amp; json.<span class="fn-call"><a href="stdlib-text.html">contains</a></span>(<span class="st">"\"</span>sun\<span class="st">""</span>), <span class="st">"and the light"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(json.<span class="fn-call"><a href="stdlib-text.html">contains</a></span>(<span class="st">"\"</span>matrix\<span class="st">""</span>), <span class="st">"and the node's transform"</span>);
+  _ = <span class="fn-call"><a href="stdlib-files-and-directories.html">delete</a></span>(path);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"scene   : materials, transforms and lights travel with save_scene_glb"</span>);
+}</code></pre>
+<h2 id="where-to-go-next">Where to go next</h2>
+<ul>
+<li><code>README.md</code> — the four contracts a signature does not carry, each linked to its test.</li>
+<li><code>tests/worked-examples.loft</code> — <code>@GLB-001</code> … <code>@GLB-004</code>, including the out-of-range index and the empty mesh that both write a well-formed container around an invalid glTF.</li>
+</ul>
+
+  </article>
+<script src="search-index.js"></script>
+<script src="search.js"></script>
+<script>
+(function(){
+var m={"Keywords":"keywords","Texts":"texts","Integers":"integers","Boolean":"boolean","Float":"float","Functions":"functions","Vector":"vector","Structs":"structs","Enums":"enums","Sorted":"sorted","Index":"index","Hash":"hash","File":"file","Lexer":"lexer","Parser":"parser","Libraries":"libraries","Store Locks":"store_locks","Parallel execution":"parallel_execution","Logging":"logging","Time":"time","Safety":"safety","JSON":"json","Generics":"generics","Closures":"closures","Coroutines":"coroutines","Tuples":"tuples","Match":"match","Formatting":"formatting"};
+var h=document.querySelector('h1');
+if(!h)return;
+var key=m[h.textContent];
+if(!key)return;
+var a=document.createElement('a');
+a.className='playground-link';
+a.href='playground.html?example='+key;
+a.textContent='\u25B6 Try in Playground';
+h.parentNode.insertBefore(a,h.nextSibling);
+})();
+</script>
+</body>
+</html>

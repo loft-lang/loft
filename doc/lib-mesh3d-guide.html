@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mesh3d guide — Loft, a programming language for small browser games</title>
+  <meta name="description" content="Getting started with the loft library mesh3d — a runnable guide that is itself a loft program, so every example in it compiles.">
+<link rel="canonical" href="https://loft-lang.org/loft/lib-mesh3d-guide.html">
+<meta property="og:title" content="mesh3d guide — Loft, a programming language for small browser games">
+<meta property="og:description" content="Getting started with the loft library mesh3d — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://loft-lang.org/loft/lib-mesh3d-guide.html">
+<meta property="og:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<meta property="og:site_name" content="Loft">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="mesh3d guide — Loft, a programming language for small browser games">
+<meta name="twitter:description" content="Getting started with the loft library mesh3d — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta name="twitter:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<link rel="stylesheet" href="style.css">
+<style>.playground-link{display:inline-block;margin:0.3em 0 0.8em;padding:4px 12px;background:#2563eb;color:#fff;border-radius:4px;text-decoration:none;font-size:0.85em}.playground-link:hover{filter:brightness(1.15)}@media print{.playground-link{display:none}}</style>
+</head>
+<body>
+<nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
+<h1>mesh3d guide</h1>
+<article>
+<p><a href="lib-mesh3d.html">← mesh3d</a> · <a href="lib-mesh3d-api.html">API reference</a> · <a href="lib-mesh3d-src.html">source</a></p>
+<p><code>mesh3d</code> is 3D geometry as plain data: <code>Vec2</code> / <code>Vec3</code> / <code>Vec4</code> and a column-major <code>Mat4</code> with the operations a renderer needs, a <code>Mesh</code> of vertices and triangles that index them, and a <code>Scene</code> that pairs meshes and materials through nodes with transforms.</p>
+<p>It touches no GPU and writes no files. <code>graphics</code> draws a mesh, <code>glb</code> writes a scene to a <code>.glb</code> that Blender or three.js open, and both read the types defined here — which is why they live in a package of their own.</p>
+<pre><code><span class="kw">use</span> mesh3d::*;</code></pre>
+<pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {
+  floats = <span class="fn-call">mesh_to_floats</span>(<span class="fn-call">cube</span>());
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"cube    : {len(floats)} floats for GL, {len(cube().triangles)} triangles"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(floats) == <span class="nm">216</span>, <span class="st">"12 triangles x 3 vertices x 6 floats (position, normal)"</span>);</code></pre>
+<p>Every section below is a function, and <code>main</code> calls each one: a section nothing calls still compiles, but its assertions never run.</p>
+<pre><code>  <span class="fn-call">composition_order</span>();
+  <span class="fn-call">a_mesh_is_built_by_index</span>();
+  <span class="fn-call">a_scene_shares_by_index</span>();
+  <span class="fn-call">the_camera_field_is_in_degrees</span>();
+}</code></pre>
+<p>That prints:</p>
+<pre><code>  cube    : 216 floats for GL, 12 triangles
+</code></pre>
+<p><code>mesh_to_floats</code> expands every triangle into its three vertices, position then normal, so the buffer goes to a GL upload as it is. <code>mesh_to_floats_uv</code> adds the two texture coordinates, eight floats per vertex.</p>
+<h2 id="the-one-that-bites-mat4-mul-a-b-applies-b-first">The one that bites: <code>mat4_mul(a, b)</code> applies <code>b</code> first</h2>
+<p>Matrices are column-major, as OpenGL and glTF store them, and a product applies its RIGHT operand first. So <code>mat4_mul(mat4_translate(…), mat4_scale(…))</code> SCALES and then translates — the usual order for placing an object — and swapping the operands moves the object by a scaled distance instead.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">composition_order</span>() {
+  scale_then_move = <span class="fn-call">mat4_mul</span>(<span class="fn-call">mat4_translate</span>(<span class="nm">0.0</span>, <span class="nm">1.0</span>, <span class="nm">0.0</span>), <span class="fn-call">mat4_scale</span>(<span class="nm">2.0</span>, <span class="nm">2.0</span>, <span class="nm">2.0</span>));
+  move_then_scale = <span class="fn-call">mat4_mul</span>(<span class="fn-call">mat4_scale</span>(<span class="nm">2.0</span>, <span class="nm">2.0</span>, <span class="nm">2.0</span>), <span class="fn-call">mat4_translate</span>(<span class="nm">0.0</span>, <span class="nm">1.0</span>, <span class="nm">0.0</span>));
+  p = <span class="fn-call">mat4_transform</span>(scale_then_move, <span class="fn-call">vec3</span>(<span class="nm">1.0</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>));
+  q = <span class="fn-call">mat4_transform</span>(move_then_scale, <span class="fn-call">vec3</span>(<span class="nm">1.0</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>));
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(p.x == <span class="nm">2.0</span> &amp;&amp; p.y == <span class="nm">1.0</span>, <span class="st">"scaled to 2, then lifted by 1"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(q.x == <span class="nm">2.0</span> &amp;&amp; q.y == <span class="nm">2.0</span>, <span class="st">"lifted by 1, then the lift scaled too"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"order   : mat4_mul(a, b) applies b first"</span>);
+}</code></pre>
+<h2 id="a-mesh-is-built-by-index">A mesh is built by index</h2>
+<p><code>add_vertex</code> answers the index of the vertex it added, and <code>add_triangle</code> takes three of those indices. A vertex two faces share is added once and named twice — and the indices are not checked, so an index past the last vertex is a mesh some consumer will misread.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">a_mesh_is_built_by_index</span>() {
+  m = <span class="fn-call">mesh</span>(<span class="st">"quad"</span>);
+  up = <span class="fn-call">vec3</span>(<span class="nm">0.0</span>, <span class="nm">1.0</span>, <span class="nm">0.0</span>);
+  a = m.<span class="fn-call">add_vertex</span>(<span class="fn-call">vertex</span>(<span class="fn-call">vec3</span>(<span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>), up, <span class="fn-call">vec2</span>(<span class="nm">0.0</span>, <span class="nm">0.0</span>)));
+  b = m.<span class="fn-call">add_vertex</span>(<span class="fn-call">vertex</span>(<span class="fn-call">vec3</span>(<span class="nm">1.0</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>), up, <span class="fn-call">vec2</span>(<span class="nm">1.0</span>, <span class="nm">0.0</span>)));
+  c = m.<span class="fn-call">add_vertex</span>(<span class="fn-call">vertex</span>(<span class="fn-call">vec3</span>(<span class="nm">1.0</span>, <span class="nm">0.0</span>, <span class="nm">1.0</span>), up, <span class="fn-call">vec2</span>(<span class="nm">1.0</span>, <span class="nm">1.0</span>)));
+  d = m.<span class="fn-call">add_vertex</span>(<span class="fn-call">vertex</span>(<span class="fn-call">vec3</span>(<span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">1.0</span>), up, <span class="fn-call">vec2</span>(<span class="nm">0.0</span>, <span class="nm">1.0</span>)));
+  m.<span class="fn-call">add_triangle</span>(a, b, c);
+  m.<span class="fn-call">add_triangle</span>(a, c, d);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(m.vertices) == <span class="nm">4</span> &amp;&amp; <span class="bi"><a href="stdlib-text.html">len</a></span>(m.triangles) == <span class="nm">2</span>, <span class="st">"four vertices, two triangles sharing two"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(<span class="fn-call">mesh_to_floats_uv</span>(m)) == <span class="nm">48</span>, <span class="st">"but the GL buffer expands them: 6 vertices x 8 floats"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"mesh    : 4 vertices, 2 triangles, 48 floats with UVs"</span>);
+}</code></pre>
+<h2 id="a-scene-shares-by-index">A scene shares by index</h2>
+<p>A scene holds three index spaces — meshes, materials, nodes — and every <code>add_*</code> answers the index the rest of the scene names that thing by. A node pairs one mesh and one material with a transform, so two crates are two nodes naming the same mesh, never two copies of it.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">a_scene_shares_by_index</span>() {
+  sc = <span class="fn-call">scene</span>(<span class="st">"hall"</span>);
+  box = sc.<span class="fn-call">add_mesh</span>(<span class="fn-call">cube</span>());
+  brass = sc.<span class="fn-call">add_material</span>(<span class="fn-call">material_color</span>(<span class="st">"brass"</span>, <span class="nm">0.8</span>, <span class="nm">0.6</span>, <span class="nm">0.2</span>));
+  sc.<span class="fn-call">add_node</span>(<span class="fn-call">node_at</span>(<span class="st">"crate a"</span>, box, brass, <span class="fn-call">mat4_translate</span>(-<span class="nm">1.0</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>)));
+  sc.<span class="fn-call">add_node</span>(<span class="fn-call">node_at</span>(<span class="st">"crate b"</span>, box, brass, <span class="fn-call">mat4_translate</span>(<span class="nm">1.0</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>)));
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(sc.meshes) == <span class="nm">1</span> &amp;&amp; <span class="bi"><a href="stdlib-text.html">len</a></span>(sc.nodes) == <span class="nm">2</span>, <span class="st">"one mesh, placed twice"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"scene   : one mesh, two nodes naming it"</span>);
+}</code></pre>
+<h2 id="the-camera-s-field-is-in-degrees">The camera's field is in degrees</h2>
+<p><code>camera</code> stores its vertical field of view in DEGREES (60 by default), while <code>mat4_perspective</code> takes RADIANS — and nothing between them converts. A camera is data here: the code that builds the projection owns the conversion.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">the_camera_field_is_in_degrees</span>() {
+  cam = <span class="fn-call">camera</span>(<span class="st">"main"</span>);
+  proj = <span class="fn-call">mat4_perspective</span>(cam.fov * <span class="en"><a href="stdlib-math.html">PI</a></span> / <span class="nm">180.0</span>, <span class="nm">16.0</span> / <span class="nm">9.0</span>, cam.near, cam.far);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(cam.fov == <span class="nm">60.0</span>, <span class="st">"degrees"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(proj.m[<span class="nm">0</span>] &gt; <span class="nm">0.9</span> &amp;&amp; proj.m[<span class="nm">0</span>] &lt; <span class="nm">1.0</span>, <span class="st">"a 60 degree field over 16:9 gives about 0.97"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"camera  : fov in degrees, perspective in radians"</span>);
+}</code></pre>
+<h2 id="where-to-go-next">Where to go next</h2>
+<ul>
+<li><code>tests/worked-examples.loft</code> — <code>@MSH-001</code> … <code>@MSH-005</code>: building a mesh, flattening it for GL, planes and quads, composing transforms, and the zero-length normal.</li>
+<li><code>glb</code> — writing a scene to a <code>.glb</code> file; <code>graphics</code> — drawing a mesh.</li>
+</ul>
+
+  </article>
+<script src="search-index.js"></script>
+<script src="search.js"></script>
+<script>
+(function(){
+var m={"Keywords":"keywords","Texts":"texts","Integers":"integers","Boolean":"boolean","Float":"float","Functions":"functions","Vector":"vector","Structs":"structs","Enums":"enums","Sorted":"sorted","Index":"index","Hash":"hash","File":"file","Lexer":"lexer","Parser":"parser","Libraries":"libraries","Store Locks":"store_locks","Parallel execution":"parallel_execution","Logging":"logging","Time":"time","Safety":"safety","JSON":"json","Generics":"generics","Closures":"closures","Coroutines":"coroutines","Tuples":"tuples","Match":"match","Formatting":"formatting"};
+var h=document.querySelector('h1');
+if(!h)return;
+var key=m[h.textContent];
+if(!key)return;
+var a=document.createElement('a');
+a.className='playground-link';
+a.href='playground.html?example='+key;
+a.textContent='\u25B6 Try in Playground';
+h.parentNode.insertBefore(a,h.nextSibling);
+})();
+</script>
+</body>
+</html>
