@@ -328,8 +328,7 @@ pub(crate) fn match_loop<'a>(v: &'a Value, ops: &Ops) -> Option<(u16, Value, Val
             Value::Set(end, hi) => (Some(*end), hi.unspan().clone(), &s[1..]),
             _ => return None,
         },
-        2 => (None, Value::Null, &s[..]),
-        _ => (None, Value::Null, &s[..]),
+        _ => (None, Value::Null, s),
     };
     if (s.len() == 2 || s.len() == 3)
         && let Value::Set(index, init) = rest[0].unspan()

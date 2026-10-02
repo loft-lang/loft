@@ -319,7 +319,7 @@ pub static OPERATORS: &[fn(&mut State)] = &["
             .def(d_nr)
             .attributes
             .iter()
-            .filter(|a| !(a.name.starts_with('_') || res.is_empty()) && !a.mutable)
+            .filter(|a| !(a.name.starts_with('_') || res.is_empty() || a.mutable))
             .map(|a| {
                 (
                     a.name.as_str(),

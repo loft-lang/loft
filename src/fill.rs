@@ -7078,6 +7078,10 @@ fn vec_end_jump_r(s: &mut State, r: Regs) -> Regs {
 
 /// The lean loop's dispatch: a `#hot` operator runs inline on the loop's registers
 /// ([`Hot`]), every other one through [`OPERATORS_REG`].
+#[expect(
+    clippy::too_many_lines,
+    reason = "one arm per #hot operator: the table IS the dispatch, and splitting it adds a call the inline arms exist to avoid"
+)]
 #[inline(always)]
 pub(crate) fn dispatch_lean(s: &mut State, opcode: u16, r: Regs) -> Regs {
     match opcode {
