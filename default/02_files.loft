@@ -89,20 +89,31 @@ pub struct File {
 }
 
 fn OpGetFile(file: File) -> boolean fs#read;
+#cold
 #rust"stores.get_file(&@file)"
 fn OpGetDir(path: text, result: vector<File>) -> boolean fs#read;
+#cold
 #rust"stores.get_dir(@path, &@result)"
 fn OpGetFileText(file: File, content: &text) fs#read;
+#cold
 fn OpWriteFile(file: File, val: reference, db_tp: const u16) fs#update;
+#cold
 fn OpReadFile(file: File, val: reference, bytes: integer, db_tp: const u16) fs#read;
+#cold
 fn OpSeekFile(file: File, pos: integer) fs#read;
+#cold
 fn OpSizeFile(file: File) -> integer fs#read;
+#cold
 fn OpDelete(path: text) -> integer fs#update;
+#cold
 #rust"codegen_runtime::fs_delete(&s.database.resolve_path(@path))"
 fn OpMoveFile(from: text, to: text) -> integer fs#update;
+#cold
 #rust"codegen_runtime::fs_move(&s.database.resolve_path(@from), &s.database.resolve_path(@to))"
 fn OpTruncateFile(self: File, size: integer) -> boolean fs#update;
+#cold
 fn OpSyncFile(self: File) -> boolean fs#update;
+#cold
 // @PLN105 Phase 1 — deliver a live value's descriptor handle to the host.
 // LOOPBACK host (both backends): reconstruct the value via its layout descriptor
 // (@PLN105 Phase 0) + print a deterministic line, so interpret == native. The value
@@ -111,6 +122,7 @@ fn OpSyncFile(self: File) -> boolean fs#update;
 // lowered in the parser's `dispatch_call`, which fills `db_tp` from the value's
 // static type.
 fn OpDeliver(tag: integer, val: reference, db_tp: const u16) fs#update;
+#cold
 #rust"stores.deliver_reconstruct(@tag, @val, @db_tp);"
 // @PLN105 Phase 3 — expose/release: a LONG-LIVED deliver whose borrow spans frames.
 // `expose(tag, value)` hands the host the same descriptor handle as `deliver` but PINS
@@ -118,8 +130,10 @@ fn OpDeliver(tag: integer, val: reference, db_tp: const u16) fs#update;
 // frames, until `release(tag, value)` unpins it. Browser-only surface; both lowered in
 // `dispatch_call` (which fills `db_tp`). On non-browser targets they just lock / unlock.
 fn OpExpose(tag: integer, val: reference, db_tp: const u16) fs#update;
+#cold
 #rust"stores.expose_value(@tag, @val, @db_tp);"
 fn OpRelease(tag: integer, val: reference, db_tp: const u16) fs#update;
+#cold
 #rust"stores.release_value(@tag, @val, @db_tp);"
 // Dynamic dispatch through a runtime function reference (fn-ref variable).
 // Placed here — after all file-I/O operators — so that it receives op_code 252 without
@@ -130,10 +144,13 @@ fn OpRelease(tag: integer, val: reference, db_tp: const u16) fs#update;
 fn OpCallRef(fn_var: const u16, arg_size: const u16);
 #rust"s.fn_call_ref(@fn_var, @arg_size);"
 fn OpMkdir(path: text) -> integer fs#update;
+#cold
 #rust"codegen_runtime::fs_mkdir(&s.database.resolve_path(@path))"
 fn OpMkdirAll(path: text) -> integer fs#update;
+#cold
 #rust"codegen_runtime::fs_mkdir_all(&s.database.resolve_path(@path))"
 fn OpRmdir(path: text) -> integer fs#update;
+#cold
 #rust"codegen_runtime::fs_rmdir(&s.database.resolve_path(@path))"
 /// Reads the entire file as a UTF-8 text value.
 /// Use for small configuration files or scripts.
@@ -1103,12 +1120,15 @@ pub fn store_memory() -> text;
 
 // reverse(v) and sort(v) are compiler special-cased in parse_call.
 fn OpReverseVector(r: vector, size: const u16);
+#cold
 #rust"vector::reverse_vector(&@r, u32::from(@size), &mut s.database.allocations);"
 fn OpSortVector(r: vector, db_tp: const u16);
+#cold
 #rust"{{ let t = @db_tp; if stores.is_text_type(t) {{ vector::sort_text_vector(&@r, &mut stores.allocations); }} else {{ let elem_size = stores.size(t); let is_float = t == 2 || t == 3; vector::sort_vector(&@r, elem_size, is_float, &mut stores.allocations); }} }}"
 
 // CO1.2: Coroutine opcodes
 fn OpCoroutineCreate(d_nr: const integer, args_size: const u16, to: const integer);
+#cold
 #rust"s.coroutine_create(@d_nr as u32, u32::from(@args_size), @to as u32);"
 // `value_size` is packed: the byte size in the low byte, the channel tag above it
 // (`coroutine_layout::next_operands`).  The null a finished generator answers reads the tag.
@@ -1117,6 +1137,7 @@ fn OpCoroutineNext(value_size: const u16);
 
 // CO1.3a: Coroutine return — exhaust frame, push null, return to consumer
 fn OpCoroutineReturn(value_size: const u16);
+#cold
 #rust"s.coroutine_return(u32::from(@value_size));"
 
 // CO1.3b: Yield — suspend generator, return value to consumer
@@ -1125,6 +1146,7 @@ fn OpCoroutineYield(value_size: const u16);
 
 // CO1.6: Coroutine stdlib opcodes
 fn OpCoroutineExhausted(gen: reference) -> boolean;
+#cold
 #rust"s.coroutine_exhausted(&@gen)"
 
 // A5.6-1: Push 20-byte fn-ref slot (d_nr + closure DbRef) from frame variable at pos.
@@ -1170,6 +1192,7 @@ fn OpBindFnRefResult(src: reference, pos: const u16, tp: const u16);
 // (`(G-Hold)`, loft#1708): the frame is released when its last holder releases it.  Answers
 // the handle.  Declared last, so it renumbers no earlier operator.
 fn OpCoroutineRetain(gen: reference) -> reference;
+#cold
 #rust"s.coroutine_retain(@gen)"
 // Interpreter superinstructions: an integer operator whose operands are frame locals
 // (`V`) or a literal (`C`), read in place instead of pushed first, optionally stored
@@ -1180,23 +1203,31 @@ fn OpCoroutineRetain(gen: reference) -> reference;
 // and `dst` as `OpPutInt`'s would be after the result's push.  Declared last, so they
 // renumber no earlier operator.
 fn OpIntVV(kind: const u8, a: const u16, b: const u16) -> integer;
+#hot
 #rust"ops::fused_int(@kind, s.get_var::<i64>(@a), s.get_var::<i64>(@b))"
 fn OpIntVC(kind: const u8, a: const u16, c: const integer) -> integer;
+#hot
 #rust"ops::fused_int(@kind, s.get_var::<i64>(@a), @c)"
 fn OpCmpIntVV(kind: const u8, a: const u16, b: const u16) -> boolean;
+#hot
 #rust"ops::fused_cmp(@kind, s.get_var::<i64>(@a), s.get_var::<i64>(@b))"
 fn OpCmpIntVC(kind: const u8, a: const u16, c: const integer) -> boolean;
+#hot
 #rust"ops::fused_cmp(@kind, s.get_var::<i64>(@a), @c)"
 fn OpIntVVPut(kind: const u8, dst: const u16, a: const u16, b: const u16);
+#hot
 #rust"{{ let r = ops::fused_int(@kind, s.get_var::<i64>(@a), s.get_var::<i64>(@b)); s.put_var(@dst, r); }}"
 fn OpIntVCPut(kind: const u8, dst: const u16, a: const u16, c: const integer);
+#hot
 #rust"{{ let r = ops::fused_int(@kind, s.get_var::<i64>(@a), @c); s.put_var(@dst, r); }}"
 // A fused comparison that jumps when it is FALSE — an `if` or loop test in one op instead of
 // the comparison plus `OpGotoFalseWord`.  `step` comes LAST, so it is measured from the end of
 // the instruction exactly as `OpGotoFalseWord`'s is, and `gen_if`'s back-patch serves both.
 fn OpCmpIntVVJump(kind: const u8, a: const u16, b: const u16, step: const i32);
+#hot
 #rust"if !ops::fused_cmp(@kind, s.get_var::<i64>(@a), s.get_var::<i64>(@b)) {{ s.code_pos = (i64::from(s.code_pos) + i64::from(@step)) as u32; }}"
 fn OpCmpIntVCJump(kind: const u8, a: const u16, c: const integer, step: const i32);
+#hot
 #rust"if !ops::fused_cmp(@kind, s.get_var::<i64>(@a), @c) {{ s.code_pos = (i64::from(s.code_pos) + i64::from(@step)) as u32; }}"
 // One step of `for c in T`: the parser's five-statement `for text next` block as one op
 // (`State::text_walk_step`).  `arg` is 1 when T is an argument (a borrowed `Str` slot) and 0

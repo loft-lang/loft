@@ -45,6 +45,166 @@ fn dev_soft_halt_enabled() -> bool {
 
 pub const STRING_NULL: &str = "\0";
 
+/// The bytecode position and the stack top, carried in registers from one operator to the
+/// next by the lean loop's register table (`fill::OPERATORS_REG`) instead of through
+/// `State`'s fields: each operator receives them as arguments and returns them, so no op
+/// waits on the previous op's store of `code_pos` / `stack_pos` to read them back.
+#[derive(Clone, Copy)]
+pub struct Regs {
+    pub pc: u32,
+    pub sp: u32,
+}
+
+/// A `#hot` operator's view of the machine (`fill::dispatch_lean`).  The bytecode position and
+/// the stack top are LOCALS here: `State`'s two fields are reloaded after every write through
+/// the stack's raw pointer (which may, for all the compiler can prove, point into `State`), and
+/// these are not, so they stay in registers across the operator and from one hot operator to
+/// the next.  The view offers exactly what a hot body may use — its operands, the four stack
+/// accessors, the jump target `code_pos`, and `raise_recoverable`, which hands the registers
+/// back to `State` first — so a template that reaches for anything else does not compile as
+/// `#hot`.
+pub struct Hot<'a> {
+    s: &'a mut State,
+    pub code_pos: u32,
+    pub stack_pos: u32,
+    base: *mut u8,
+    code: *const u8,
+    code_len: u32,
+    high: u32,
+}
+
+#[allow(clippy::inline_always)]
+impl<'a> Hot<'a> {
+    #[inline(always)]
+    pub(crate) fn new(s: &'a mut State, r: Regs) -> Self {
+        Hot {
+            base: s.stack_base,
+            code: s.code_base,
+            code_len: s.code_len,
+            high: s.stack_high,
+            code_pos: r.pc,
+            stack_pos: r.sp,
+            s,
+        }
+    }
+
+    /// The registers the operator ended on; `State` keeps the stack's high-water mark.
+    #[inline(always)]
+    pub(crate) fn finish(self) -> Regs {
+        self.s.stack_high = self.high;
+        Regs {
+            pc: self.code_pos,
+            sp: self.stack_pos,
+        }
+    }
+
+    /// [`State::operands`] on the registers.
+    #[inline(always)]
+    pub fn operands(&mut self, len: u32) -> Operands {
+        if self.code_pos + len > self.code_len {
+            code_out_of_range(self.code_pos, len as usize, self.code_len as usize);
+        }
+        // SAFETY: `code_pos + len` lies inside the bytecode, checked above.
+        let at = unsafe { self.code.add(self.code_pos as usize) };
+        self.code_pos += len;
+        Operands { at, len }
+    }
+
+    /// [`State::get_stack_m`]'s direct path on the registers.
+    #[inline(always)]
+    pub fn get_stack<T: 'static + Copy>(&mut self) -> T {
+        if (size_of::<T>() as u32) >= self.stack_pos {
+            stack_underflow(self.stack_pos, size_of::<T>() as u32);
+        }
+        self.stack_pos -= crate::variables::aligned_stack_step(size_of::<T>() as u32);
+        // SAFETY: below the stack top, so inside the stack record (`@FR-R-StackBase`).
+        unsafe {
+            self.base
+                .add(self.stack_pos as usize)
+                .cast::<T>()
+                .read_unaligned()
+        }
+    }
+
+    /// [`State::put_stack_m`]'s direct path on the registers.
+    #[inline(always)]
+    pub fn put_stack<T: 'static>(&mut self, val: T) {
+        // SAFETY: inside the room `push_frame` ensured (`@FR-R-FrameHeadroom`); aligned.
+        unsafe { *self.base.add(self.stack_pos as usize).cast::<T>() = val };
+        self.stack_pos += crate::variables::aligned_stack_step(size_of::<T>() as u32);
+        if self.stack_pos > self.high {
+            self.high = self.stack_pos;
+        }
+    }
+
+    /// [`State::get_var_m`]'s direct path on the registers.
+    #[inline(always)]
+    pub fn get_var<T: 'static + Copy>(&mut self, pos: u16) -> T {
+        // SAFETY: inside the frame, which lies inside the stack record.
+        unsafe {
+            self.base
+                .add((self.stack_pos - u32::from(pos)) as usize)
+                .cast::<T>()
+                .read_unaligned()
+        }
+    }
+
+    /// [`State::put_var_m`]'s direct path on the registers.
+    #[inline(always)]
+    pub fn put_var<T: 'static>(&mut self, pos: u16, value: T) {
+        let step = crate::variables::aligned_stack_step(size_of::<T>() as u32);
+        // SAFETY: a frame slot, inside the stack record and aligned.
+        unsafe {
+            *self
+                .base
+                .add((self.stack_pos + step - u32::from(pos)) as usize)
+                .cast::<T>() = value;
+        }
+    }
+
+    /// [`State::raise_recoverable`], with `State` brought up to the registers first and the
+    /// registers taken back after, as the register table does around a whole operator.
+    #[inline(always)]
+    pub fn raise_recoverable(&mut self, kind: crate::runtime_error::RuntimeErrorKind) {
+        self.s.stack_high = self.high;
+        self.s.regs_in(Regs {
+            pc: self.code_pos,
+            sp: self.stack_pos,
+        });
+        self.s.raise_recoverable(kind);
+        let r = self.s.regs_out();
+        self.code_pos = r.pc;
+        self.stack_pos = r.sp;
+        self.high = self.s.stack_high;
+    }
+}
+
+/// An op's fixed-width operands, bounds-checked once by [`State::operands`].
+#[derive(Clone, Copy)]
+pub struct Operands {
+    at: *const u8,
+    len: u32,
+}
+
+impl Operands {
+    /// The operand of type `T` at byte `off` of the op's operands.  The generator passes
+    /// constant offsets inside the length it asked for, so the check below folds away.
+    ///
+    /// # Panics
+    /// When `off` and `T` reach past the operands.
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
+    #[must_use]
+    pub fn get<T: Copy>(self, off: u32) -> T {
+        assert!(
+            off + size_of::<T>() as u32 <= self.len,
+            "operand beyond its op"
+        );
+        // SAFETY: inside the `len` bytes `State::operands` checked against the bytecode.
+        unsafe { self.at.add(off as usize).cast::<T>().read_unaligned() }
+    }
+}
+
 /// What the lean dispatch loop does once its one exit test fired (`@FR-R-DispatchStop`).
 enum LeanStop {
     /// Nothing ends the loop: carry on with the next op.
@@ -2935,6 +3095,25 @@ impl State {
         self.code_pos += value.len() as u32;
     }
 
+    /// The fixed-width operands of the op being executed: `len` bytes from `code_pos`, bounds
+    /// checked ONCE for all of them, with `code_pos` advanced past them in one step.  The
+    /// generator emits this wherever every operand of an op has a fixed width, which is every
+    /// operator today; [`Operands::get`] then reads each one at its constant offset.
+    ///
+    /// # Panics
+    /// When the operands reach past the bytecode — as [`Self::code`] does for one operand.
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
+    pub fn operands(&mut self, len: u32) -> Operands {
+        if self.code_pos + len > self.code_len {
+            code_out_of_range(self.code_pos, len as usize, self.code_len as usize);
+        }
+        // SAFETY: `code_pos + len` lies inside the bytecode, checked above.
+        let at = unsafe { self.code_base.add(self.code_pos as usize) };
+        self.code_pos += len;
+        Operands { at, len }
+    }
+
     /** Get a value from the byte-code increasing the position to after this value
     # Panics
     When the position is outside the byte-code
@@ -2982,12 +3161,11 @@ impl State {
         if !F {
             return self.get_stack();
         }
-        assert!(
-            (size_of::<T>() as u32) < self.stack_pos,
-            "No elements left on the stack {} < {}",
-            self.stack_pos,
-            size_of::<T>() as u32
-        );
+        // The report is out of line, as `State::code`'s: a formatted `assert!` takes the
+        // field's address, which keeps it in memory across the whole operator.
+        if (size_of::<T>() as u32) >= self.stack_pos {
+            stack_underflow(self.stack_pos, size_of::<T>() as u32);
+        }
         self.stack_pos -= self.stack_step(size_of::<T>() as u32);
         // SAFETY: below `stack_pos`, so inside the stack record (see `fast_stack`).
         unsafe { self.stack_slot(self.stack_pos).cast::<T>().read_unaligned() }
@@ -3050,12 +3228,11 @@ impl State {
     #[allow(clippy::inline_always)]
     #[inline(always)]
     pub fn get_stack<T: 'static + Copy>(&mut self) -> T {
-        assert!(
-            (size_of::<T>() as u32) < self.stack_pos,
-            "No elements left on the stack {} < {}",
-            self.stack_pos,
-            size_of::<T>() as u32
-        );
+        // The report is out of line, as `State::code`'s: a formatted `assert!` takes the
+        // field's address, which keeps it in memory across the whole operator.
+        if (size_of::<T>() as u32) >= self.stack_pos {
+            stack_underflow(self.stack_pos, size_of::<T>() as u32);
+        }
         self.stack_pos -= self.stack_step(size_of::<T>() as u32);
         if self.fast_stack {
             // SAFETY: below `stack_pos`, so inside the stack record (see `fast_stack`).
@@ -6214,12 +6391,28 @@ impl State {
             .collect()
     }
 
-    /// `@FR-R-DispatchStop` — the lean loop's one flag is set: do what the per-op tests did,
-    /// in their order, then re-derive the flag from the events themselves.  It is a cache,
-    /// never cleared past an event still pending: a halted run keeps it for every loop it
-    /// returns to, and an attached debugger keeps it while it is attached.
-    #[cold]
-    #[inline(never)]
+    /// Enter an operator of the register table: `State`'s copy of the position and the stack
+    /// top is written from the registers, so the operator body — and anything it calls — sees
+    /// the machine exactly as the plain table leaves it.  Inlined beside the body, the body's
+    /// reads of the two fields fold to the register values; the writes remain, which keeps
+    /// `State` in step after every op for whatever inspects it between ops.
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
+    pub(crate) fn regs_in(&mut self, r: Regs) {
+        self.code_pos = r.pc;
+        self.stack_pos = r.sp;
+    }
+
+    /// Leave an operator of the register table: the position and stack top it ended on.
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
+    pub(crate) fn regs_out(&self) -> Regs {
+        Regs {
+            pc: self.code_pos,
+            sp: self.stack_pos,
+        }
+    }
+
     /// `@FR-R-FastTable` — the operator table for this run: the stack access mode is fixed
     /// when the `State` is built (`fast_stack`), so the table is chosen once, the direct path
     /// compiled into every op or the checked one.  The fast table is never handed to a run
@@ -6230,6 +6423,70 @@ impl State {
         } else {
             OPERATORS
         }
+    }
+
+    /// The lean loop over the register table: the position and the stack top travel between
+    /// ops in registers (`Regs`).  With `HOT`, a `#hot` operator runs inline on them
+    /// (`fill::dispatch_lean`) and leaves `State`'s copy behind, so `State` is brought up to
+    /// the registers before anything else reads it — the stop path, and the loop's end.  Every
+    /// other operator writes them into `State` itself on entry (`State::regs_in`).  Answers
+    /// whether a frame yield hands control back to the host.
+    #[inline(never)]
+    fn lean_register_loop<const HOT: bool>(&mut self, bytecode_len: u32) -> bool {
+        let reg_ops = crate::fill::OPERATORS_REG;
+        let mut r = self.regs_out();
+        while r.pc < bytecode_len {
+            self.database.alloc_pc = r.pc;
+            if r.pc + 1 > self.code_len {
+                code_out_of_range(r.pc, 1, self.code_len as usize);
+            }
+            // SAFETY: `r.pc` is inside the bytecode, checked above.
+            let op = unsafe { *self.code_base.add(r.pc as usize) };
+            r.pc += 1;
+            let opcode = if op == 255 {
+                if r.pc + 1 > self.code_len {
+                    code_out_of_range(r.pc, 1, self.code_len as usize);
+                }
+                // SAFETY: as above, for the escape's second byte.
+                let ext = unsafe { *self.code_base.add(r.pc as usize) };
+                r.pc += 1;
+                255 + u16::from(ext)
+            } else {
+                u16::from(op)
+            };
+            r = if HOT {
+                crate::fill::dispatch_lean(self, opcode, r)
+            } else {
+                reg_ops[usize::from(opcode)](self, r)
+            };
+            if self
+                .database
+                .dispatch_stop
+                .load(std::sync::atomic::Ordering::Relaxed)
+            {
+                self.regs_in(r);
+                match self.lean_stop() {
+                    LeanStop::Continue => r = self.regs_out(),
+                    LeanStop::Return => return true,
+                    LeanStop::Leave => return false,
+                }
+            }
+        }
+        self.regs_in(r);
+        false
+    }
+
+    /// `LOFT_NO_HOT=1` — the lean loop dispatches every operator through the register table,
+    /// none inline (the A/B switch of `#hot`).
+    fn no_hot() -> bool {
+        crate::env_once!(std::env::var("LOFT_NO_HOT").is_ok_and(|v| v != "0"))
+    }
+
+    /// `LOFT_NO_REGISTER_TABLE=1` — the lean loop dispatches the plain table, the position
+    /// and the stack top going through `State` between ops (the A/B switch of the register
+    /// table).
+    fn no_register_table() -> bool {
+        crate::env_once!(std::env::var("LOFT_NO_REGISTER_TABLE").is_ok_and(|v| v != "0"))
     }
 
     /// `LOFT_HEADROOM_VERIFY=1` — `@FR-R-FrameHeadroom`'s falsifier: the lean loop stops after
@@ -6261,6 +6518,12 @@ impl State {
         );
     }
 
+    /// `@FR-R-DispatchStop` — the lean loop's one flag is set: do what the per-op tests did,
+    /// in their order, then re-derive the flag from the events themselves.  It is a cache,
+    /// never cleared past an event still pending: a halted run keeps it for every loop it
+    /// returns to, and an attached debugger keeps it while it is attached.
+    #[cold]
+    #[inline(never)]
     fn lean_stop(&mut self) -> LeanStop {
         if Self::headroom_verify() {
             self.verify_frame_room();
@@ -6889,25 +7152,36 @@ impl State {
                 std::ptr::addr_of!(self.code_base),
                 std::ptr::addr_of!(self.code_len),
             );
-            while self.code_pos < bytecode_len {
-                let op_pos_rt = self.code_pos;
-                self.database.alloc_pc = op_pos_rt;
-                let op = self.code::<u8>();
-                let opcode = if op == 255 {
-                    255 + u16::from(self.code::<u8>())
+            if self.fast_stack && !Self::no_register_table() {
+                let yielded = if Self::no_hot() {
+                    self.lean_register_loop::<false>(bytecode_len)
                 } else {
-                    u16::from(op)
+                    self.lean_register_loop::<true>(bytecode_len)
                 };
-                ops[usize::from(opcode)](self);
-                if self
-                    .database
-                    .dispatch_stop
-                    .load(std::sync::atomic::Ordering::Relaxed)
-                {
-                    match self.lean_stop() {
-                        LeanStop::Continue => {}
-                        LeanStop::Return => return,
-                        LeanStop::Leave => break,
+                if yielded {
+                    return;
+                }
+            } else {
+                while self.code_pos < bytecode_len {
+                    let op_pos_rt = self.code_pos;
+                    self.database.alloc_pc = op_pos_rt;
+                    let op = self.code::<u8>();
+                    let opcode = if op == 255 {
+                        255 + u16::from(self.code::<u8>())
+                    } else {
+                        u16::from(op)
+                    };
+                    ops[usize::from(opcode)](self);
+                    if self
+                        .database
+                        .dispatch_stop
+                        .load(std::sync::atomic::Ordering::Relaxed)
+                    {
+                        match self.lean_stop() {
+                            LeanStop::Continue => {}
+                            LeanStop::Return => return,
+                            LeanStop::Leave => break,
+                        }
                     }
                 }
             }
@@ -8953,6 +9227,13 @@ pub fn size_ref() -> u32 {
 
 /// The report of [`State::code`] reading past the generated code — out of line, so the check in
 /// every operand read stays one compare and a branch.
+/// A pop below the stack's floor — out of line for the reason `code_out_of_range` is.
+#[cold]
+#[inline(never)]
+fn stack_underflow(pos: u32, size: u32) -> ! {
+    panic!("No elements left on the stack {pos} < {size}");
+}
+
 #[cold]
 #[inline(never)]
 fn code_out_of_range(pos: u32, size: usize, len: usize) -> ! {

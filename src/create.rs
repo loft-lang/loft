@@ -19,7 +19,8 @@
 //! to `stores.*` / `*_runtime` via [`crate::generation`]'s
 //! `substitute_template_body`.
 
-use crate::data::{Context, Data, Type};
+use crate::data::{Context, Data, OP_HOT, OP_NORMAL, Type};
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::Write;
 
@@ -149,6 +150,41 @@ pub fn generate_code_to(data: &Data, path: &str) -> std::io::Result<String> {
     std::fs::read_to_string(path)
 }
 
+/// The operators in slot order: the `#hot` ones first, then those with no priority, then the
+/// `#cold` ones, each class in declaration order — the numbering `Data::op_code` gives them
+/// from the two class sizes returned beside it.  A one-byte opcode is a slot below 255, so
+/// every hot operator gets one, and the cold ones are what moves into the two-byte escape.
+///
+/// # Panics
+/// When more than 255 operators are `#hot`.
+fn operator_slots(data: &Data) -> (Vec<u32>, usize, usize) {
+    let ops: Vec<u32> = (0..data.definitions())
+        .filter(|&d_nr| data.def(d_nr).is_operator())
+        .collect();
+    let class = |d_nr: u32| data.def(d_nr).op_priority;
+    let mut slots = ops.clone();
+    slots.sort_by_key(|&d_nr| class(d_nr));
+    let hot_count = ops.iter().filter(|&&d_nr| class(d_nr) == OP_HOT).count();
+    let normal_count = ops.iter().filter(|&&d_nr| class(d_nr) == OP_NORMAL).count();
+    assert!(
+        hot_count <= 255,
+        "{hot_count} operators are #hot; at most 255 one-byte opcodes exist"
+    );
+    (slots, hot_count, normal_count)
+}
+
+/// The byte width of an operand of Rust type `tp` in the bytecode stream, or `None` when it
+/// has none fixed.
+fn fixed_width(tp: &str) -> Option<u32> {
+    match tp {
+        "u8" | "i8" => Some(1),
+        "u16" | "i16" => Some(2),
+        "u32" | "i32" | "f32" => Some(4),
+        "u64" | "i64" | "f64" => Some(8),
+        _ => None,
+    }
+}
+
 /// `@FR-R-FastTable` — an operator body with its stack accessors spelled for the access mode
 /// `F` of the generic it is generated into (`State::get_stack_m` and its siblings).
 fn respell_stack_accessors(body: &[u8]) -> String {
@@ -167,6 +203,11 @@ fn respell_stack_accessors(body: &[u8]) -> String {
     reason = "one pass over the operators: the table, the names, and each body"
 )]
 pub fn generate_code_into(data: &Data, into: &mut dyn Write) -> std::io::Result<()> {
+    let (slots, hot_count, normal_count) = operator_slots(data);
+    let mut slot_of: HashMap<u32, u16> = HashMap::new();
+    for (slot, &d_nr) in slots.iter().enumerate() {
+        slot_of.insert(d_nr, slot as u16);
+    }
     writeln!(
         into,
         "// @generated — DO NOT EDIT BY HAND.
@@ -187,23 +228,25 @@ pub fn generate_code_into(data: &Data, into: &mut dyn Write) -> std::io::Result<
 // `s.<method>` calls below are rewritten to their `stores.*` / `*_runtime`
 // equivalents by `src/generation/calls.rs::substitute_template_body`.
 #![allow(clippy::cast_possible_wrap)]
+#![allow(clippy::inline_always)]
 #![allow(unused_parens)]
 
 use crate::codegen_runtime;
 use crate::hash;
 use crate::keys::{{DbRef, Str}};
 use crate::ops;
-use crate::state::State;
+use crate::state::{{Hot, Regs, State}};
 use crate::tree;
 use crate::vector;
 
 pub static OPERATORS: &[fn(&mut State)] = &["
     )?;
-    for d_nr in 0..data.definitions() {
-        let n = &data.def(d_nr).name;
-        if data.def(d_nr).is_operator() {
-            writeln!(into, "    {}::<false>,", operator_name(n))?;
-        }
+    for &d_nr in &slots {
+        writeln!(
+            into,
+            "    {}::<false>,",
+            operator_name(&data.def(d_nr).name)
+        )?;
     }
     writeln!(into, "];")?;
     // `@FR-R-FastTable` — the same operators with the stack access mode fixed to the direct
@@ -214,11 +257,20 @@ pub static OPERATORS: &[fn(&mut State)] = &["
          /// only while `State::fast_stack` holds, which is fixed for a run.\n\
          pub static OPERATORS_FAST: &[fn(&mut State)] = &["
     )?;
-    for d_nr in 0..data.definitions() {
-        let n = &data.def(d_nr).name;
-        if data.def(d_nr).is_operator() {
-            writeln!(into, "    {}::<true>,", operator_name(n))?;
-        }
+    for &d_nr in &slots {
+        writeln!(into, "    {}::<true>,", operator_name(&data.def(d_nr).name))?;
+    }
+    writeln!(into, "];")?;
+    // The same direct-path operators with the position and the stack top passed in registers
+    // (`State::regs_in` / `regs_out`), dispatched by the lean loop.
+    writeln!(
+        into,
+        "\n/// [`OPERATORS_FAST`] with the bytecode position and the stack top passed in and\n\
+         /// returned in registers ([`Regs`]), so no op reads back what the previous op stored.\n\
+         pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &["
+    )?;
+    for &d_nr in &slots {
+        writeln!(into, "    {}_r,", operator_name(&data.def(d_nr).name))?;
     }
     writeln!(into, "];")?;
     // The loft name of every slot above, in the same order: what a stdlib parsed at run
@@ -231,13 +283,23 @@ pub static OPERATORS: &[fn(&mut State)] = &["
          /// of the `default/` this binary was generated from.\n\
          pub const OPERATOR_NAMES: &[&str] = &["
     )?;
-    for d_nr in 0..data.definitions() {
-        let n = &data.def(d_nr).name;
-        if data.def(d_nr).is_operator() {
-            writeln!(into, "    \"{n}\",")?;
-        }
+    for &d_nr in &slots {
+        writeln!(into, "    \"{}\",", data.def(d_nr).name)?;
     }
     writeln!(into, "];")?;
+    // The class sizes `Data::op_code` numbers a declaration from: `#hot` operators take the
+    // first slots, `#cold` ones the last, the rest between, each class in declaration order.
+    writeln!(
+        into,
+        "\n/// How many operators are `#hot` (slots `0..OP_HOT`, all one-byte opcodes): the lean\n\
+         /// loop runs them inline.  `Data::op_code` numbers a declaration from this and\n\
+         /// [`OP_NORMAL`], the order the tables above are laid out in.\n\
+         pub const OP_HOT: u16 = {hot_count};\n\
+         /// How many operators are neither `#hot` nor `#cold` (the slots after the hot ones); the\n\
+         /// `#cold` operators follow them, into the two-byte opcodes.\n\
+         pub const OP_NORMAL: u16 = {normal_count};"
+    )?;
+    let mut hot_arms: Vec<(u16, String)> = Vec::new();
     for d_nr in 0..data.definitions() {
         let n = &data.def(d_nr).name;
         if !data.def(d_nr).is_operator() {
@@ -247,17 +309,39 @@ pub static OPERATORS: &[fn(&mut State)] = &["
         // Each op body is written to a buffer first: its stack accessors are respelled with
         // the access mode `F` (`@FR-R-FastTable`, `State::get_stack_m` and its siblings).
         let outer: &mut dyn Write = &mut *into;
-        let mut body: Vec<u8> = Vec::new();
-        let into: &mut dyn Write = &mut body;
-        writeln!(into, "\nfn {name}<const F: bool>(s: &mut State) {{")?;
+        let mut inner: Vec<u8> = Vec::new();
+        let into: &mut dyn Write = &mut inner;
         let mut res = data.def(d_nr).rust.clone();
-        for a in &data.def(d_nr).attributes {
-            if a.name.starts_with('_') || res.is_empty() {
-                continue;
+        // The operands (the non-mutable attributes), each at its offset in the stream.  When
+        // every one has a fixed width they are bounds-checked and stepped over ONCE
+        // (`State::operands`); otherwise each is read on its own, as `State::code` does.
+        let operands: Vec<(&str, String)> = data
+            .def(d_nr)
+            .attributes
+            .iter()
+            .filter(|a| !(a.name.starts_with('_') || res.is_empty()) && !a.mutable)
+            .map(|a| {
+                (
+                    a.name.as_str(),
+                    data.rust_type(&a.typedef, &Context::Argument),
+                )
+            })
+            .collect();
+        let widths: Option<Vec<u32>> = operands.iter().map(|(_, tp)| fixed_width(tp)).collect();
+        match widths {
+            Some(widths) if !operands.is_empty() => {
+                let total: u32 = widths.iter().sum();
+                writeln!(into, "    let operands = s.operands({total});")?;
+                let mut off = 0;
+                for ((name, tp), w) in operands.iter().zip(&widths) {
+                    writeln!(into, "    let v_{name} = operands.get::<{tp}>({off});")?;
+                    off += w;
+                }
             }
-            let tp = data.rust_type(&a.typedef, &Context::Argument);
-            if !a.mutable {
-                writeln!(into, "    let v_{} = s.code::<{tp}>();", a.name)?;
+            _ => {
+                for (name, tp) in &operands {
+                    writeln!(into, "    let v_{name} = s.code::<{tp}>();")?;
+                }
             }
         }
         for a in data.def(d_nr).attributes.iter().rev() {
@@ -309,8 +393,51 @@ pub static OPERATORS: &[fn(&mut State)] = &["
             writeln!(into, "    let new_value = {res};")?;
             writeln!(into, "    s.put_stack(new_value);")?;
         }
-        writeln!(into, "}}")?;
+        let mut body: Vec<u8> = Vec::new();
+        // Inlined into its register-table entry (`{name}_r`), which is what lets the body's
+        // reads of `code_pos` / `stack_pos` fold to the registers; the tables take the address.
+        writeln!(
+            body,
+            "\n#[inline(always)]\nfn {name}<const F: bool>(s: &mut State) {{"
+        )?;
+        body.extend_from_slice(&inner);
+        writeln!(body, "}}")?;
+        // The register-table entry: the registers written into `State`, the direct-path body
+        // inlined, the registers read back.
+        writeln!(
+            body,
+            "\nfn {name}_r(s: &mut State, r: Regs) -> Regs {{\n    s.regs_in(r);\n    {name}::<true>(s);\n    s.regs_out()\n}}"
+        )?;
         outer.write_all(respell_stack_accessors(&body).as_bytes())?;
+        // `#hot`: the same body again, on the lean loop's registers (`State::Hot`), which offers
+        // only what such a body may use — a template that needs more does not compile as hot.
+        if data.def(d_nr).op_priority == OP_HOT {
+            let mut hot: Vec<u8> = Vec::new();
+            writeln!(hot, "\n#[inline(always)]\nfn {name}_h(s: &mut Hot) {{")?;
+            hot.extend_from_slice(&inner);
+            writeln!(hot, "}}")?;
+            outer.write_all(&hot)?;
+            hot_arms.push((slot_of[&d_nr], name.clone()));
+        }
     }
+    // The lean loop's dispatch: each `#hot` operator inline on the loop's registers, every
+    // other one through the register table.
+    writeln!(
+        into,
+        "\n/// The lean loop's dispatch: a `#hot` operator runs inline on the loop's registers\n\
+         /// ([`Hot`]), every other one through [`OPERATORS_REG`].\n\
+         #[inline(always)]\n\
+         pub(crate) fn dispatch_lean(s: &mut State, opcode: u16, r: Regs) -> Regs {{\n    match opcode {{"
+    )?;
+    for (code, name) in &hot_arms {
+        writeln!(
+            into,
+            "        {code} => {{\n            let mut h = Hot::new(s, r);\n            {name}_h(&mut h);\n            h.finish()\n        }}"
+        )?;
+    }
+    writeln!(
+        into,
+        "        _ => OPERATORS_REG[usize::from(opcode)](s, r),\n    }}\n}}"
+    )?;
     Ok(())
 }

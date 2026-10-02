@@ -123,6 +123,7 @@ pub interface Printable {
 
 // General operations
 fn OpGoto(step: const i8);
+#hot
 #rust"s.code_pos = (s.code_pos as i32 + i32::from(@step)) as u32;"
 // The wide jump forms carry a 32-bit displacement.  A 16-bit one silently
 // truncated past ~32 KB of function body: the loop's backward jump landed
@@ -132,10 +133,13 @@ fn OpGoto(step: const i8);
 // displacement the same way.  32 bits covers the whole `code_pos` space, so the
 // truncation cannot recur rather than moving to a larger threshold.
 fn OpGotoWord(step: const i32);
+#hot
 #rust"s.code_pos = (i64::from(s.code_pos) + i64::from(@step)) as u32;"
 fn OpGotoFalse(step: const i8, if_false: boolean);
+#hot
 #rust"if @if_false != 1 {{s.code_pos = (s.code_pos as i32 + i32::from(@step)) as u32;}}"
 fn OpGotoFalseWord(step: const i32, if_false: boolean);
+#hot
 #rust"if @if_false != 1 {{s.code_pos = (i64::from(s.code_pos) + i64::from(@step)) as u32;}}"
 fn OpCall(d_nr: const integer, args_size: const u16, to: const integer);
 #rust"s.fn_call(@d_nr as u32, @args_size, @to);"
@@ -147,12 +151,16 @@ fn OpReserveFrame(size: const u16);
 #rust"s.reserve_frame(@size);"
 // Boolean operations
 fn OpConstTrue() -> boolean;
+#hot
 #rust"true"
 fn OpConstFalse() -> boolean;
+#hot
 #rust"false"
 fn OpCastTextFromBool(v1: boolean) -> text;
+#cold
 #rust"if @v1 == 1 {{\"true\"}} else if @v1 == 255 {{\"null\"}} else {{\"false\"}}"
 fn OpVarBool(pos: const u16) -> boolean;
+#hot
 #rust"s.get_var::<u8>(@pos)"
 fn OpPutBool(var: const u16, value: boolean);
 #rust"s.put_var(@var, @value);"
@@ -195,18 +203,22 @@ fn OpNot(v1: boolean) -> boolean;
 // `-9223372036854775808` as a value outside the range, which is not a number the program
 // ever computed.
 fn OpRangeDefault(val: integer, lo: const integer, hi: const integer, dflt: const integer) -> integer;
+#cold
 #rust"{{ let _rv = @val; if _rv == i64::MIN {{ if @dflt == i64::MIN {{ _rv }} else {{ @dflt }} }} else if _rv >= @lo && _rv <= @hi {{ _rv }} else {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::RangeDefaulted {{ value: _rv, lo: @lo, hi: @hi }}); @dflt }} }}"
 fn OpConstInt(val: const integer) -> integer;
+#hot
 #rust"@val"
 fn OpConstShort(val: const i16) -> integer;
 #rust"i64::from(@val)"
 fn OpConstTiny(val: const i8) -> integer;
 #rust"i64::from(@val)"
 fn OpVarInt(pos: const u16) -> integer;
+#hot
 #rust"s.get_var::<i64>(@pos)"
 fn OpVarCharacter(pos: const u16) -> character;
 #rust"s.get_var::<char>(@pos)"
 fn OpPutInt(pos: const u16, value: integer);
+#hot
 #rust"s.put_var(@pos, @value);"
 // @PLN167 — a LINKED narrow integer local holds its type's FIELD encoding in its 8-byte
 // frame slot (`data::NarrowSlot`); these read and write it through `crate::narrow`, the
@@ -222,16 +234,21 @@ fn OpConvIntFromNull() -> integer;
 fn OpConvBoolFromNull() -> boolean;
 #rust"255u8"
 fn OpConvCharacterFromNull() -> character;
+#cold
 #rust"char::from(0)"
 fn OpConvCharacterFromInt(v1: integer) -> character;
 #rust"if @v1 == i64::MIN {{ char::from(0) }} else if let Some(c) = char::from_u32((@v1) as u32) {{ c }} else {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::CastOutOfRange); char::from(0) }}"
 fn OpConstLongText(start: const integer, size: const integer) -> text;
+#cold
 #rust"s.string_from_texts(@start, @size);"
 fn OpCastIntFromText(v1: text) -> integer;
+#cold
 #rust"match @v1.parse::<i64>() {{ Ok(v) if v == i64::MIN => {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::CastOutOfRange); i64::MIN }}, Ok(v) => v, Err(_) => i64::MIN }}"
 fn OpCastSingleFromText(v1: text) -> single;
+#cold
 #rust"@v1.parse().unwrap_or(f32::NAN)"
 fn OpCastFloatFromText(v1: text) -> float;
+#cold
 #rust"@v1.parse().unwrap_or(f64::NAN)"
 fn OpAbsInt(v1: integer) -> integer;
 #rust"ops::op_abs_int(@v1)"
@@ -246,20 +263,26 @@ fn OpMinSingleInt(v1: integer) -> integer;
 fn OpBitNotSingleInt(v1: integer) -> integer;
 #rust"!@v1"
 fn OpConvFloatFromInt(v1: integer) -> float;
+#hot
 #rust"ops::op_conv_float_from_int(@v1)"
 fn OpConvSingleFromInt(v1: integer) -> single;
 #rust"ops::op_conv_single_from_int(@v1)"
 fn OpConvBoolFromInt(v1: integer) -> boolean;
 #rust"ops::op_conv_bool_from_int(@v1)"
 fn OpAddInt(v1: integer, v2: integer) -> integer;
+#hot
 #rust"ops::op_add_int(@v1, @v2)"
 fn OpMinInt(v1: integer, v2: integer) -> integer;
+#hot
 #rust"ops::op_min_int(@v1, @v2)"
 fn OpMulInt(v1: integer, v2: integer) -> integer;
+#hot
 #rust"ops::op_mul_int(@v1, @v2)"
 fn OpDivInt(v1: integer, v2: integer) -> integer;
+#hot
 #rust"if @v2 == 0 {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::DivideByZero); i64::MIN }} else {{ ops::op_div_int(@v1, @v2) }}"
 fn OpRemInt(v1: integer, v2: integer) -> integer;
+#hot
 #rust"if @v2 == 0 {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::DivideByZero); i64::MIN }} else {{ ops::op_rem_int(@v1, @v2) }}"
 // C54.G-hybrid — nullable integer arithmetic.  Emitted only when the op's
 // result is the immediate LHS of `??` so `??` can discharge the null.
@@ -275,6 +298,7 @@ fn OpDivIntNullable(v1: integer, v2: integer) -> integer;
 fn OpRemIntNullable(v1: integer, v2: integer) -> integer;
 #rust"{{ let r = ops::op_rem_int_nullable(@v1, @v2); ops::note_format_fault(2, r == i64::MIN && @v1 != i64::MIN && @v2 != i64::MIN); r }}"
 fn OpLandInt(v1: integer, v2: integer) -> integer;
+#hot
 #rust"ops::op_logical_and_int(@v1, @v2)"
 fn OpLorInt(v1: integer, v2: integer) -> integer;
 #rust"ops::op_logical_or_int(@v1, @v2)"
@@ -285,12 +309,15 @@ fn OpSLeftInt(v1: integer, v2: integer) -> integer;
 fn OpSRightInt(v1: integer, v2: integer) -> integer;
 #rust"if @v1 == i64::MIN || @v2 == i64::MIN {{ i64::MIN }} else if !(0..64).contains(&@v2) {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::ShiftOutOfRange); i64::MIN }} else {{ ops::op_shift_right_int(@v1, @v2) }}"
 fn OpEqInt(v1: integer, v2: integer) -> boolean;
+#hot
 #rust"@v1 == @v2"
 fn OpNeInt(v1: integer, v2: integer) -> boolean;
 #rust"@v1 != @v2"
 fn OpLtInt(v1: integer, v2: integer) -> boolean;
+#hot
 #rust"@v1 < @v2"
 fn OpLeInt(v1: integer, v2: integer) -> boolean;
+#hot
 #rust"@v1 <= @v2"
 // Post-2c round 10d: OpConstLong/OpVarLong/OpPutLong/OpConvLongFromNull
 // / OpCastIntFromLong were duplicates of their OpXxxInt counterparts
@@ -335,6 +362,7 @@ fn OpVarSingle(pos: const u16) -> single;
 fn OpPutSingle(pos: const u16, value: single);
 #rust"s.put_var(@pos, @value);"
 fn OpConvSingleFromNull() -> single;
+#cold
 #rust"f32::NAN"
 fn OpAbsSingle(v1: single) -> single;
 #rust"@v1.abs()"
@@ -369,12 +397,16 @@ fn OpMulSingle(v1: single, v2: single) -> single;
 fn OpDivSingle(v1: single, v2: single) -> single;
 #rust"{{ if @v2 == 0.0 {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::DivideByZero); }} @v1 / @v2 }}"
 fn OpRemSingle(v1: single, v2: single) -> single;
+#cold
 #rust"{{ if @v2 == 0.0 {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::DivideByZero); }} @v1 % @v2 }}"
 fn OpDivSingleNullable(v1: single, v2: single) -> single;
+#cold
 #rust"{{ let r = @v1 / @v2; ops::note_format_fault(1, r.is_nan() && !@v1.is_nan() && !@v2.is_nan()); r }}"
 fn OpRemSingleNullable(v1: single, v2: single) -> single;
+#cold
 #rust"{{ let r = @v1 % @v2; ops::note_format_fault(2, r.is_nan() && !@v1.is_nan() && !@v2.is_nan()); r }}"
 fn OpMathFuncSingle(fn_id: const i8, v1: single) -> single;
+#cold
 #rust"match @fn_id {{ 0 => @v1.cos(), 1 => @v1.sin(), 2 => @v1.tan(), 3 => @v1.acos(), 4 => @v1.asin(), 5 => @v1.atan(), 6 => @v1.ceil(), 7 => @v1.floor(), 8 => @v1.round(), 9 => @v1.sqrt(), _ => f32::NAN }}"
 /// Cosine. Use for circular motion: x = r * cos(angle).
 pub fn cos(self: single) -> single {
@@ -441,6 +473,7 @@ pub fn sqrt(self: single) -> single? {
 // `log` in base 10 or 2 takes the dedicated routine: `x.log(b)` is a ratio of natural
 // logarithms, which can miss an exact power by one unit in the last place (loft#1799).
 fn OpMathFunc2Single(fn_id: const i8, v1: single, v2: single) -> single;
+#cold
 #rust"match @fn_id {{ 0 => @v1.atan2(@v2), 1 => {{ let __b = @v2; if __b.to_bits() == 10.0_f32.to_bits() {{ @v1.log10() }} else if __b.to_bits() == 2.0_f32.to_bits() {{ @v1.log2() }} else {{ @v1.log(__b) }} }}, _ => f32::NAN }}"
 /// Arc tangent of y/x as `y.atan2(x)`, preserving the correct quadrant: `atan2(1.0, 0.0)` is PI/2.
 /// Use instead of atan when you have separate x/y components.
@@ -457,6 +490,7 @@ pub fn log(self: single, v2: single) -> single? {
 #pure
 
 fn OpPowSingle(v1: single, v2: single) -> single;
+#cold
 #rust"@v1.powf(@v2)"
 /// Raises the value to the power given second: `pow(2.0, 10.0)` is 1024. Null when the answer
 /// is not a real number (`pow(-8.0, 0.5)`).
@@ -484,6 +518,7 @@ fn OpLtSingle(v1: single, v2: single) -> boolean;
 fn OpLeSingle(v1: single, v2: single) -> boolean;
 #rust"@v1.is_nan() || (!@v2.is_nan() && @v1 <= @v2)"
 fn OpFormatSingle(pos: const u16, val: single, width: integer, precision: integer, token: const u8, plus: const boolean, dir: const i8);
+#cold
 fn OpFormatStackSingle(
   pos: const u16,
   val: single,
@@ -493,13 +528,17 @@ fn OpFormatStackSingle(
   plus: const boolean,
   dir: const i8
 );
+#cold
 // Double-precision (64-bit) floating-point math.
 // Choose float over single when precision matters.
 fn OpConstFloat(val: const float) -> float;
+#hot
 #rust"@val"
 fn OpVarFloat(pos: const u16) -> float;
+#hot
 #rust"s.get_var::<f64>(@pos)"
 fn OpPutFloat(pos: const u16, value: float);
+#hot
 #rust"s.put_var(@pos, @value);"
 fn OpConvFloatFromNull() -> float;
 #rust"f64::NAN"
@@ -512,10 +551,12 @@ pub fn abs(self: float) -> float {
 #pure
 
 fn OpMathPiFloat() -> float;
+#cold
 #rust"std::f64::consts::PI"
 /// The ratio of a circle's circumference to its diameter (3.14159...).
 pub PI = OpMathPiFloat();
 fn OpMathEFloat() -> float;
+#cold
 #rust"std::f64::consts::E"
 /// Euler's number, the base of natural logarithms (2.71828...).
 pub E = OpMathEFloat();
@@ -667,12 +708,16 @@ fn OpCastSingleFromFloat(v1: float) -> single;
 fn OpCastIntFromFloat(v1: float) -> integer;
 #rust"if @v1.is_nan() {{ i64::MIN }} else if !(-9_223_372_036_854_775_808.0..9_223_372_036_854_775_808.0).contains(&@v1) {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::CastOutOfRange); i64::MIN }} else {{ let r = ops::op_cast_int_from_float(@v1); if r == i64::MIN {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::CastOutOfRange); i64::MIN }} else {{ r }} }}"
 fn OpConvBoolFromFloat(v1: float) -> boolean;
+#hot
 #rust"!@v1.is_nan()"
 fn OpAddFloat(v1: float, v2: float) -> float;
+#hot
 #rust"@v1 + @v2"
 fn OpMinFloat(v1: float, v2: float) -> float;
+#hot
 #rust"@v1 - @v2"
 fn OpMulFloat(v1: float, v2: float) -> float;
+#hot
 #rust"@v1 * @v2"
 // C80 / E-Report: an unguarded zero divisor CONTINUES and logs a Warn — it never
 // traps, so the spreadsheet model still degrades one value and lets the rest of the
@@ -691,13 +736,16 @@ fn OpMulFloat(v1: float, v2: float) -> float;
 // The `*Nullable` peers are now behaviourally identical to these and are dead weight —
 // a separable cleanup, exactly as the integer split already is (formal/ROADMAP D-op-4).
 fn OpDivFloat(v1: float, v2: float) -> float;
+#hot
 #rust"{{ if @v2 == 0.0 {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::DivideByZero); }} @v1 / @v2 }}"
 fn OpRemFloat(v1: float, v2: float) -> float;
 #rust"{{ if @v2 == 0.0 {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::DivideByZero); }} @v1 % @v2 }}"
 // IEEE-behaviour peers — emitted only when defended.
 fn OpDivFloatNullable(v1: float, v2: float) -> float;
+#hot
 #rust"{{ let r = @v1 / @v2; ops::note_format_fault(1, r.is_nan() && !@v1.is_nan() && !@v2.is_nan()); r }}"
 fn OpRemFloatNullable(v1: float, v2: float) -> float;
+#cold
 #rust"{{ let r = @v1 % @v2; ops::note_format_fault(2, r.is_nan() && !@v1.is_nan() && !@v2.is_nan()); r }}"
 fn OpEqFloat(v1: float, v2: float) -> boolean;
 #rust"(@v1.is_nan() && @v2.is_nan()) || (@v1 <= @v2 && @v2 <= @v1)"
@@ -706,6 +754,7 @@ fn OpNeFloat(v1: float, v2: float) -> boolean;
 // Null sorts first, spelled as one null test and one compare over operands bound first —
 // see `OpLtSingle`.
 fn OpLtFloat(v1: float, v2: float) -> boolean;
+#hot
 #rust"{{ let _a = @v1; let _b = @v2; #[allow(clippy::neg_cmp_op_on_partial_ord)] let _lt = !_b.is_nan() && !(_a >= _b); _lt }}"
 fn OpLeFloat(v1: float, v2: float) -> boolean;
 #rust"@v1.is_nan() || (!@v2.is_nan() && @v1 <= @v2)"
@@ -802,6 +851,7 @@ pub fn len(self: text) -> integer {
 
 // @FR-L-Null-Text — as `OpLengthText`: the absent text holds no bytes a program can index.
 fn OpSizeText(v1: text) -> integer;
+#cold
 #rust"{{ let __t = @v1; if __t == crate::state::STRING_NULL {{ 0 }} else {{ __t.len() as i64 }} }}"
 /// Number of bytes in the text. This is the bound for byte-positioned
 /// operations: `s[i]`, slices `s[a..b]`, and `find`/`rfind` all use byte offsets.
@@ -877,23 +927,30 @@ fn OpPutEnum(pos: const u16, value: enumerate);
 fn OpConvBoolFromEnum(v1: enumerate) -> boolean;
 #rust"@v1 != 255 && @v1 != 0"
 fn OpCastTextFromEnum(v1: enumerate, enum_tp: const u16) -> text;
+#cold
 #rust"Str::new(s.database.enum_val(@enum_tp, @v1))"
 fn OpCastEnumFromText(v1: text, enum_tp: const u16) -> enumerate;
+#cold
 #rust"s.database.to_enum(@enum_tp, @v1)"
 fn OpConvIntFromEnum(v1: enumerate) -> integer;
 #rust"if @v1 == 255 {{ i64::MIN }} else {{ i64::from(@v1) }}"
 fn OpCastEnumFromInt(v1: integer) -> enumerate;
+#cold
 #rust"if @v1 == i64::MIN {{ 255 }} else {{ @v1 as u8 }}"
 fn OpConvEnumFromNull() -> enumerate;
+#cold
 #rust"255u8"
 // A reference to a record, this can 'live' inside an array
 // Might this be a reference to a record field? As It might be a reference to a single value inside an array.
 // This allows a vector to be a reference to a field.
 type reference size(12);
 fn OpDatabase(pos: const u16, db_tp: const u16);
+#cold
 // db_format: bit0 = pretty, bit1 = json
 fn OpFormatDatabase(pos: const u16, val: reference, db_tp: const u16, db_format: const u8);
+#cold
 fn OpFormatStackDatabase(pos: const u16, val: reference, db_tp: const u16, db_format: const u8);
+#cold
 fn OpConvBoolFromRef(val: reference) -> boolean;
 #rust"@val.rec != 0"
 fn OpConvRefFromNull() -> reference;
@@ -918,7 +975,9 @@ fn OpFreeRef(v1: reference);
 // OpFreeRefTag verifies it on free, catching wrong-store / cross-owner frees that
 // `free_named` would otherwise silently no-op.  Interpreter-only.
 fn OpStoreTag(v1: reference, tag: const u16);
+#cold
 fn OpFreeRefTag(v1: reference, tag: const u16);
+#cold
 // Free `placeholder` only when its store differs from `witness`.
 // Emitted for `__ref_N` work-refs that were passed to a user-fn call
 // whose Reference result is still live at the scope where the placeholder
@@ -957,6 +1016,7 @@ fn OpFreeRefUnlessEntry(placeholder: reference, witness: reference, entry: refer
 fn OpFreeScratch(scratch: reference);
 #rust"s.database.free_iteration_scratch(&@scratch);"
 fn OpSizeofRef(val: reference) -> integer;
+#cold
 fn OpVarRef(pos: const u16) -> reference;
 #rust"{{let r = s.get_var::<DbRef>(@pos); stores.valid(&r); r}}"
 fn OpPutRef(pos: const u16, value: reference);
@@ -968,8 +1028,10 @@ fn OpNeRef(v1: reference, v2: reference) -> boolean;
 // `@FR-E-Eq`, @C91 — CONTENT equality of two stored values of type `tp`: the one runtime home is
 // `Stores::eq_content` (src/database/equality.rs), which both backends call.
 fn OpEqContent(v1: reference, v2: reference, tp: const u16) -> boolean;
+#cold
 #rust"stores.eq_content(&@v1, &@v2, @tp)"
 fn OpNeContent(v1: reference, v2: reference, tp: const u16) -> boolean;
+#cold
 #rust"!stores.eq_content(&@v1, &@v2, @tp)"
 // Can be used to get another record within the same database
 fn OpGetRef(v1: reference, fld: const u16) -> reference[v1];
@@ -1133,6 +1195,7 @@ fn OpVarVector(pos: const u16) -> vector;
 // the IR stable across label-string changes (Stores::set_format_fault
 // owns the id → label mapping).  See doc/claude/plans/07-error-messages.
 fn OpTagFault(kind: const u8);
+#cold
 // loft#1169 — ARMS the hole; the op that actually faults records the cause.  `kind`
 // is kept in the signature so the IR is unchanged and the emitter needs no edit.
 #rust"{{ let _ = @kind; ops::arm_format_fault(); }}"
@@ -1174,6 +1237,7 @@ pub fn len(self: const vector) -> integer {
 // referenced allocations.  The parser fills `stride` from the element type
 // (`vector_elem_iter_stride`), so there is no loft-level wrapper.
 fn OpSizeVector(r: vector, stride: const u16) -> integer;
+#cold
 #rust"i64::from(vector::length_vector(&@r, &s.database.allocations)) * i64::from(@stride)"
 
 // The byte footprint of a struct value: its packed record size, a
@@ -1183,6 +1247,7 @@ fn OpSizeVector(r: vector, stride: const u16) -> integer;
 // recursion into referenced records.  `r` is evaluated (so `size(make())` runs
 // its argument) but only its type matters; the parser fills `sz` = record size.
 fn OpSizeStruct(r: reference, sz: const u16) -> integer;
+#cold
 #rust"{{ let _ = @r; i64::from(@sz) }}"
 
 // The byte footprint of a scalar value: its storage width — a
@@ -1192,12 +1257,14 @@ fn OpSizeStruct(r: reference, sz: const u16) -> integer;
 // const `sz`.  Every scalar occupies one 8-byte eval-stack slot, so the op reads
 // that slot to consume any scalar; the value is discarded.
 fn OpSizeScalar(v: integer, sz: const u16) -> integer;
+#cold
 #rust"{{ let _ = @v; i64::from(@sz) }}"
 
 // sorted<T[key]> shares vector's length-prefixed allocation layout
 // (length word at offset 4 of the backing record), so the runtime
 // helper is identical — only the parser-side type tag differs.
 fn OpLengthSorted(r: sorted) -> integer;
+#cold
 #rust"i64::from(vector::length_vector(&@r, &s.database.allocations))"
 /// Number of elements in a sorted collection.
 pub fn len(self: const sorted) -> integer {
@@ -1260,6 +1327,7 @@ fn OpGetVectorNullable(r: vector, size: const u16, index: integer) -> reference[
 fn OpVectorRefNullable(r: vector, index: integer) -> reference[r];
 #rust"{{ let el = vector::get_vector(&@r, 4, @index, &s.database.allocations); ops::note_format_fault(3, el.rec == 0 && @index != i64::MIN && !@r.is_null()); stores.get_ref(&el, 0) }}"
 fn OpCastVectorFromText(val: text, db_tp: const u16) -> vector;
+#cold
 #rust"s.db_from_text(@val, @db_tp)"
 // Plan-06 phase 5a: collection-mutation opcodes are #impure(parent_write).
 // par-safety analyser rejects calls to these from worker fns when the
@@ -1269,6 +1337,7 @@ fn OpCastVectorFromText(val: text, db_tp: const u16) -> vector;
 // whatever the element measures, and the record a slot names has to be freed.
 // `remove_vector_at` is the one place that decides which layout this is.
 fn OpRemoveVector(r: vector, tp: const u16, index: integer) -> boolean;
+#cold
 #rust"s.database.remove_vector_at(&@r, @tp, @index)"
 #impure(parent_write)
 // `@FR-R-Compact` — the vector becomes the elements it held at [lo, hi), in place: every
@@ -1278,6 +1347,7 @@ fn OpRemoveVector(r: vector, tp: const u16, index: integer) -> boolean;
 // answer it always had (a `?`-discharged read past the end pads with the type's default).
 // `tp` is the ELEMENT type, as for OpRemoveVector: `keep_vector_range` decides the layout.
 fn OpKeepVectorRange(r: vector, tp: const u16, lo: integer, hi: integer);
+#cold
 #rust"s.database.keep_vector_range(&@r, @tp, @lo, @hi)"
 #impure(parent_write)
 // Append the bytes [lo, hi) of a text to a byte vector as ONE copy — what
@@ -1288,6 +1358,7 @@ fn OpAppendTextBytes(r: vector, t: text, lo: integer, hi: integer);
 #impure(parent_write)
 // Insert space into a vector, no data written
 fn OpInsertVector(r: vector, size: const u16, index: integer, db_tp: const u16) -> reference[r];
+#cold
 #impure(parent_write)
 // Claim space for a new record for the given structure
 fn OpNewRecord(data: reference, parent_tp: const u16, fld: const u16) -> reference[data];
@@ -1311,6 +1382,7 @@ fn OpSliceView(r: vector, src: vector, lo: integer, hi: integer, tp: const u16);
 // whole when the answer is a foreign store (a library's buffer, no copy), the element copy
 // otherwise (the #409/#410 delivery, unchanged).
 fn OpAdoptVector(r: vector, src: vector, tp: const u16);
+#cold
 #rust"s.database.vector_adopt(&@r, &@src, @tp);"
 // @PLN157 § V-m — ONE fused scalar append (`OpPush<Kind>` — `OpAppendCharacter` is the text op): `v += [x]` on a plain vector of this kind
 // was OpPreAllocVector · OpNewRecord · OpSet<Kind> · OpFinishRecord, five runtime calls
@@ -1352,6 +1424,7 @@ fn OpPushByte(r: vector, min: const i32, val: integer);
 // return machinery can deliver `return out` into the buffer without the
 // `clear + append` self-copy that emptied an aliasing vector.
 fn OpReplaceVector(r: vector, other: vector, tp: const u16);
+#cold
 #rust"s.database.vector_replace(&@r, &@other, @tp);"
 #impure(parent_write)
 // P213: claim a fresh record in `field`'s Store, deep-copy `src`'s
@@ -1373,6 +1446,7 @@ fn OpRefFromChildRec(field: reference) -> reference[field];
 // Get a record from a structure. This operator also reads a dynamic key from stack (not shown here)
 fn OpGetRecord(data: reference, db_tp: const u16, no_keys: const u8) -> reference[data];
 fn OpValidate(data: reference, db_tp: const u16);
+#cold
 // These types should eventually become unnecessary because of the unified internal database API
 type hash size(4);
 fn OpHashAdd(data: reference, rec: reference, tp: const u16);
@@ -1380,6 +1454,7 @@ fn OpHashAdd(data: reference, rec: reference, tp: const u16);
 fn OpHashFind(data: reference, tp: const u16) -> reference[data];
 #pure
 fn OpHashRemove(data: reference, rec: reference, tp: const u16);
+#cold
 #impure(parent_write)
 // C60 Step 3a-part2: iterate a hash in ascending key order.
 // Returns a fresh vector<reference<T>> with the hash's records sorted
@@ -1448,8 +1523,10 @@ pub fn len(self: const hash) -> integer {
 // @PLN135 arc C: the `reserve(h, n)` builtin for a hash.  `db_tp` is the collection's
 // own type, which is what names the key fields the pre-sized table has to re-bucket.
 fn OpReserveHash(r: hash, count: integer, db_tp: const u16);
+#cold
 #rust"s.database.reserve_hash(&@r, @count, @db_tp);"
 fn OpSizeHash(r: hash) -> integer;
+#cold
 #rust"i64::from(hash::table_bytes(&@r, &s.database.allocations))"
 /// The byte footprint of a hash: its full bucket table, holes
 /// included.  The table is the hash's own allocation — `elms` slots, each a
@@ -1467,6 +1544,7 @@ pub fn size(self: const hash) -> integer {
 // the parser fills this constant when generating `len(ix)` for
 // `ix: index<T[key]>` — see parser/mod.rs `call()` special-case.
 fn OpLengthIndex(r: index, fields: const u16) -> integer;
+#cold
 #rust"i64::from(tree::count(&@r, @fields, &s.database.allocations))"
 
 fn OpEqBool(v1: boolean, v2: boolean) -> boolean;
@@ -1475,6 +1553,7 @@ fn OpNeBool(v1: boolean, v2: boolean) -> boolean;
 #rust"@v1 != @v2"
 // --- Output and Diagnostics ---
 fn OpPanic(message: text);
+#cold
 #rust"panic!(\"{{}}\", @message);"
 /// Panics with message if test is false. Use to verify invariants during development.
 /// In production mode (--production), logs an error instead of aborting.
@@ -1503,6 +1582,7 @@ pub fn log_error(message: text, file: text, line: integer);
 pub fn log_fatal(message: text, file: text, line: integer);
 #impure(host_io)
 fn OpPrint(v1: text);
+#cold
 #rust"#[cfg(all(target_arch = \"wasm32\", not(target_os = \"wasi\"), not(feature = \"wasm\")))]\ncrate::loft_host_print(@v1.as_ptr(), @v1.len());\n#[cfg(all(not(feature = \"wasm\"), not(target_arch = \"wasm32\")))]\nif !crate::rpc::print_or_capture(@v1) {{ crate::codegen_runtime::host_print(@v1); }}\n#[cfg(all(not(feature = \"wasm\"), target_arch = \"wasm32\", target_os = \"wasi\"))]\ncrate::codegen_runtime::host_print(@v1);\n#[cfg(feature = \"wasm\")]\ncrate::wasm::output_push(@v1);"
 /// Writes v to standard output without a newline.
 /// Use for progress output and building up a line incrementally.
@@ -1542,16 +1622,19 @@ fn OpIterate(
 ) -> integer;
 fn OpStep(state_var: const u16, data: reference, on: const u8, arg: const u16) -> reference[data];
 fn OpRemove(state_var: const u16, data: reference, on: const u8, tp: const u16);
+#cold
 // Release what the `tp` record at `data` owns — its vectors, texts and nested records —
 // and leave the record itself in place with those fields empty.  A return buffer the
 // caller offered is refilled by the callee's literal, and the literal overwrites every
 // field it writes; this is what the previous occupant's heap is released by first
 // (`@FR-H-ClearRelease`, the record clause).
 fn OpClear(data: reference, tp: const u16);
+#cold
 #rust"stores.remove_claims(&@data, @tp);"
 #impure(parent_write)
 fn OpAppendCopy(data: reference, count: integer, tp: const u16);
 fn OpCopyRecord(data: reference, to: reference, tp: const u16);
+#cold
 // @PLN164 B2 (`@FR-R-Place`) — claim a `tp` record inside `host`'s store, prefilled as
 // `OpDatabase` prefills a fresh buffer: the return buffer of a call whose result has ONE
 // owning destination, a field of a record living in that store.  A null host answers a
@@ -1601,6 +1684,7 @@ fn OpCopyRefOrNull(src: reference, pos: const u16, tp: const u16);
 // Interpreter-only — the native backend does the same inline in `generation::dispatch`.
 fn OpBindOrCopy(witness: reference, src: reference, pos: const u16, tp: const u16);
 fn OpReplaceKeyed(src: reference, dest: reference, tp: const u16);
+#cold
 // @P307 — clear a keyed-collection STRUCT FIELD (`s.h = []`).  `remove_claims`
 // frees the element records + bucket/tree array and zeroes the field's claim
 // pointer, leaving an empty collection a later `+= [..]` re-initialises.  The
@@ -1611,6 +1695,7 @@ fn OpReplaceKeyed(src: reference, dest: reference, tp: const u16);
 // group, whose records belong to a sibling: the release then drops this route
 // (the table / slot list / tree root) and leaves the records to their owner.
 fn OpClearKeyed(dest: reference, tp: const u16);
+#cold
 #rust"s.database.remove_claims_keyed(&@dest, @tp);"
 // loft#1152 — index every record the vector `primary` holds into the linked-group
 // member `view` (collection type `tp`).  A whole-vector write (`s.v = rows()`,
@@ -1640,6 +1725,7 @@ fn OpLinkRecord(data: reference, rec: reference, parent_tp: const u16, fld: cons
 // with the DESTINATION's kind through `OpReplaceKeyed` and `+=` emitted nothing at all.
 // `tp`'s `0x8000` bit frees the source store after the copy, as it does for OpReplaceKeyed.
 fn OpFillKeyed(parent: reference, src: reference, tp: const u16, parent_tp: const u16, field: const u16);
+#cold
 #rust"s.database.fill_keyed_from_vector(&@parent, &@src, @tp, @parent_tp, @field);"
 // `coll[key] = value` insert-or-replace into a keyed collection.  loft#1716
 // (`Col-Assign`): the subscript's `no_keys` values trail the parameters as `OpGetRecord`'s
@@ -1660,6 +1746,7 @@ type trie;
 // the tree's cached length word (O(1)), mirroring `len` on a hash.  Declared
 // after `type spatial` so the parameter type resolves.
 fn OpLengthSpatial(r: spatial) -> integer;
+#cold
 #rust"i64::from(codegen_runtime::spatial_len(&@r, &s.database.allocations))"
 /// Number of elements in a spatial (radix / Morton tree) collection.
 pub fn len(self: const spatial) -> integer {
@@ -1669,6 +1756,7 @@ pub fn len(self: const spatial) -> integer {
 // Number of elements in a trie.  Same cached length word as `len(spatial)` —
 // the tree is shared, only the key oracle above it differs.
 fn OpLengthTrie(r: trie) -> integer;
+#cold
 #rust"i64::from(codegen_runtime::trie_len(&@r, &s.database.allocations))"
 /// Number of elements in the trie.
 pub fn len(self: const trie) -> integer {
@@ -1740,6 +1828,7 @@ fn OpDropFnRef(fn_var: const u16);
 // a rebind that hands the same closure back (`f = keep(f)`) displaces nothing, so the release
 // of the displaced value that follows must find nothing to release (loft#1609).
 fn OpFnRefDetachShared(old: const u16, new: const u16);
+#cold
 // The closure half of the fn-ref at `fn_var`, as a reference: the record a closure's captures
 // live in, or the null sentinel for a fn-ref with none.  What the store-identity tests of a
 // frame's closure holders compare (@FR-L-CapKeep, loft#1636).
@@ -1979,15 +2068,20 @@ fn parallel_buf_get_fn(idx: integer) -> fn(integer) -> integer;
 fn parallel_buf_drop_fn();
 // A15: parallel {} structured concurrency opcodes (replaced dead si_* superinstructions)
 fn OpParallelBegin(n_arms: const u8);
+#cold
 fn OpParallelArm(offset: const u16);
+#cold
 fn OpParallelJoin();
+#cold
 // O8.1a: Pre-allocate vector capacity so subsequent OpNewRecord calls never resize.
 fn OpPreAllocVector(r: vector, capacity: const u16, elem_size: const u16);
+#cold
 #rust"vector::pre_alloc_vector(&@r, u32::from(@capacity), u32::from(@elem_size), &mut s.database.allocations);"
 // loft#710: the `reserve(v, n)` builtin.  Unlike OpPreAllocVector the count is a
 // RUNTIME value (a generator rarely knows its counts at compile time, and a const
 // u16 caps at 65535), and it grows a vector that already has a record.
 fn OpReserveVector(r: vector, count: integer, elem_size: const u16);
+#cold
 #rust"vector::reserve_vector(&@r, @count, u32::from(@elem_size), &mut s.database.allocations);"
 // --- Vector aggregates ---
 /// Smallest element in a vector, or null when the vector is empty (the type is
