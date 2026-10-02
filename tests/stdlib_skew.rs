@@ -57,14 +57,20 @@ fn run_with(stdlib_parent: &Path) -> (bool, String, String) {
     )
 }
 
-/// The `OpGotoWord` declaration and its `#rust` line, as a template for an injected pair.
+/// The `OpGotoWord` declaration and its `#rust` line, as a template for an injected pair, and
+/// the index of the line the pair ENDS on.  Its `#hot` marker is left out: a hot operator is
+/// numbered among the hot slots, which come first, so a hot probe would land inside that block
+/// instead of where the test puts it.
 fn goto_word_pair(code: &str) -> (usize, String) {
     let lines: Vec<&str> = code.lines().collect();
     let at = lines
         .iter()
         .position(|l| l.starts_with("fn OpGotoWord("))
         .expect("OpGotoWord declared");
-    (at, format!("{}\n{}", lines[at], lines[at + 1]))
+    let body = (at + 1..lines.len())
+        .find(|&i| lines[i].starts_with("#rust"))
+        .expect("OpGotoWord's #rust line");
+    (body, format!("{}\n{}", lines[at], lines[body]))
 }
 
 #[test]
@@ -83,18 +89,27 @@ fn an_operator_declared_mid_table_is_refused_by_slot_and_name() {
     let code = fs::read_to_string(&file).unwrap();
     let (at, pair) = goto_word_pair(&code);
     let mut lines: Vec<String> = code.lines().map(str::to_string).collect();
-    // Right after the OpGotoWord pair: slot 2, where the binary carries OpGotoFalse.
-    lines.insert(at + 2, pair.replace("OpGotoWord", "OpSkewProbe"));
+    // Right after the OpGotoWord pair.  The probe is an ordinary (not `#hot`) operator, and
+    // those are numbered in declaration order after the hot block, so it takes the slot after
+    // the last ordinary operator declared above it — `OpGoto` — and displaces whatever the
+    // binary's table carries there.  Both are read from that table, so a renumbered table
+    // moves the expectation with it.
+    lines.insert(at + 1, pair.replace("OpGotoWord", "OpSkewProbe"));
     fs::write(&file, lines.join("\n") + "\n").unwrap();
+    let names = loft::fill::OPERATOR_NAMES;
+    let slot = names
+        .iter()
+        .position(|n| *n == "OpGoto")
+        .expect("OpGoto in the operator table")
+        + 1;
     let (ok, out, err) = run_with(&base);
     assert!(!ok, "a shifted stdlib ran:\n{out}");
     assert!(err.contains("does not match this loft binary"), "{err}");
-    assert!(
-        err.contains(
-            "operator slot 2 declares `OpSkewProbe` where the binary carries `OpGotoFalse`"
-        ),
-        "{err}"
+    let want = format!(
+        "operator slot {slot} declares `OpSkewProbe` where the binary carries `{}`",
+        names[slot]
     );
+    assert!(err.contains(&want), "expected `{want}` in:\n{err}");
     assert!(
         !err.contains("was not found under the compiler path"),
         "{err}"
@@ -106,12 +121,27 @@ fn an_operator_declared_mid_table_is_refused_by_slot_and_name() {
 #[test]
 fn an_operator_past_the_table_names_make_fill() {
     let base = copy_stdlib("appended");
-    let file = base.join("default").join("02_files.loft");
+    // The LAST file the stdlib loads (they load in name order), so the probe is declared after
+    // every operator the table holds — any earlier file is followed by later declarations.
+    let mut files: Vec<PathBuf> = fs::read_dir(base.join("default"))
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|e| e == "loft"))
+        .collect();
+    files.sort();
+    let file = files.pop().expect("a stdlib file");
     let mut code = fs::read_to_string(&file).unwrap();
     let (_, pair) =
         goto_word_pair(&fs::read_to_string(base.join("default").join("01_code.loft")).unwrap());
     code.push('\n');
-    code.push_str(&pair.replace("OpGotoWord", "OpSkewTail"));
+    // `#cold`: operators are numbered hot, then ordinary, then cold, so only a cold one
+    // declared last lies past the whole table — an ordinary one would take the first cold
+    // slot and be read as a mismatch there instead.
+    let (decl, body) = pair.split_once('\n').expect("declaration and body");
+    code.push_str(&format!(
+        "{}\n#cold\n{body}",
+        decl.replace("OpGotoWord", "OpSkewTail")
+    ));
     code.push('\n');
     fs::write(&file, code).unwrap();
     let (ok, out, err) = run_with(&base);

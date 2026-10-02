@@ -58,10 +58,25 @@ fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
 }
 
 /// Per emitted function: `(next counters bound, null tests)`.
+///
+/// A null test inside the range's `Range null guard` block is not counted: that guard
+/// (`(I-RangeNull)`) runs ONCE, before the loop, to turn a null bound into an empty range —
+/// the claim here is about the ITERATOR, which must pay none per round.
 fn counts(rust: &str) -> HashMap<String, (usize, usize)> {
     let mut map: HashMap<String, (usize, usize)> = HashMap::new();
     let mut current = String::new();
+    let mut in_guard = false;
     for line in rust.lines() {
+        if line.contains("//Range null guard_") {
+            in_guard = true;
+        }
+        if line.contains("/*Range null guard_") {
+            in_guard = false;
+            continue;
+        }
+        if in_guard {
+            continue;
+        }
         if let Some(rest) = line.strip_prefix("fn ")
             && let Some(paren) = rest.find('(')
         {
