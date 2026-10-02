@@ -372,19 +372,22 @@ impl Scopes<'_> {
                     // store.  Re-register it at the current scope for `get_free_vars`,
                     // and run the same hand-off marking a lifted call-result gets so an
                     // argument the callee MOVES from does not drop twice.
-                    let a56_owned = if is_a56_hoisted {
-                        match &ops[0] {
-                            Value::Set(v, _) => Some(*v),
-                            _ => None,
-                        }
+                    let a56_owned: Vec<u16> = if is_a56_hoisted {
+                        ops[..n - 1]
+                            .iter()
+                            .filter_map(|op| match op {
+                                Value::Set(v, _) => Some(*v),
+                                _ => None,
+                            })
+                            .collect()
                     } else {
-                        None
+                        Vec::new()
                     };
                     let mut it = ops.into_iter();
                     for _ in 0..n - 1 {
                         preamble.push(it.next().unwrap());
                     }
-                    if let Some(v) = a56_owned {
+                    for v in a56_owned {
                         self.var_scope.insert(v, self.scope);
                         self.mark_lift_handoff(v, arg_idx, transfer_copy, moved_arg);
                     }
@@ -764,11 +767,14 @@ impl Scopes<'_> {
             .is_some_and(|sc| *sc == self.scope || self.stack.contains(sc))
     }
 
-    /// The A5.6 hoistable preamble: `Insert([Set(v, Null), value])` whose `v` OWNS a
-    /// heap store.  It is the shape the `Value::Block` arm returns for a value block
-    /// that yields an owned temp — a `#reading file` read, a `??` join — and
-    /// [`Self::scan_args`] lifts that `Set` into the enclosing statement list so the
-    /// slot's `first_def` lives OUTSIDE the argument expression.
+    /// The A5.6 hoistable preamble: `Insert([Set(v₁, Null), …, Set(vₙ, Null), value])` where
+    /// every `vᵢ` OWNS a heap store.  One `Set` is the shape the `Value::Block` arm returns
+    /// for a value block that yields an owned temp — a `#reading file` read, a `??` join;
+    /// several are the pre-inits `scan_if` emits for the owned temps an `if` arm defines (a
+    /// value-struct `==` in an `&&` arm binds one `__veq` per operand).  [`Self::scan_args`]
+    /// lifts every `Set` into the enclosing statement list so each slot's `first_def` lives
+    /// OUTSIDE the argument expression; a `Set` left inside it puts `ConvRefFromNull` on the
+    /// eval stack between two arguments (`leak_check::check_arg_ref_allocs`).
     ///
     /// One home for the question, because two places ask it: `scan_args`, which does
     /// the hoisting, and the `Value::Span` arm of [`Self::scan`], which must drop a
@@ -779,9 +785,11 @@ impl Scopes<'_> {
     /// literally as a `let` statement inside an argument list — rustc "expected
     /// expression, found `let` statement" — and which nothing then freed (loft#899).
     pub(super) fn is_null_init_preamble(ops: &[Value], function: &Function) -> bool {
-        ops.len() == 2
-            && matches!(&ops[0], Value::Set(v, val)
-                if matches!(val.as_ref(), Value::Null) && function.tp(*v).is_heap_owned())
+        ops.len() >= 2
+            && ops[..ops.len() - 1].iter().all(|op| {
+                matches!(op, Value::Set(v, val)
+                    if matches!(val.as_ref(), Value::Null) && function.tp(*v).is_heap_owned())
+            })
     }
 
     /// True when `v` writes the work-ref that a `&`-argument's `OpCreateStack` then
