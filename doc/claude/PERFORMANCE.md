@@ -671,6 +671,16 @@ history is the density of the commits, which is why `--record` exists.
 > dispatched, and 0 means declined: the program's type table does not start with the standard
 > library's, or `default/*.loft` is not the source they were compiled from (an edited stdlib
 > runs its current loft bodies until `make compiled-stdlib`).
+>
+> That decline is correct and SILENT — 5–23× slower on text routines, and on 2026-10-02 a
+> commit that edited `default/` without regenerating read as a +2213 % "regression" of the next
+> change measured.  So staleness is asked at every point that can act on it, all through one
+> check (`scripts/compiled_stdlib_fresh.py`, the runtime's source hash re-derived): **the build**
+> prints a cargo warning naming `make compiled-stdlib`; **the gate pre-flight** refuses;
+> **`find_problems --changed`** runs `tests/compiled_stdlib.rs` for any `default/` edit; and
+> **`bench/stats.py`** asks the binary under test (`LOFT_TIMING=1`) and refuses an interpreter lane
+> whose compiled stdlib is declined, a binary built before the stdlib moved included
+> (`--allow-declined-stdlib` measures that state on purpose).
 
 ### Validating a codegen change — the single-file Rust-emit harness
 
