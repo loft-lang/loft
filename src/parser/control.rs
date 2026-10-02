@@ -6348,15 +6348,10 @@ impl Parser {
                         self.data.def(e_nr).name()
                     );
                 }
-                // Skip this arm gracefully.
-                if self.lexer.peek_token("{") {
-                    self.lexer.token("{");
-                    while !self.lexer.peek_token("}") && !self.lexer.peek_token(";") {
-                        self.lexer.has_identifier();
-                        self.lexer.has_token(",");
-                    }
-                    self.lexer.token("}");
-                }
+                // Skip this arm gracefully: its `{ … }` field pattern whole, whatever tokens
+                // it holds — a loop consuming only names and commas never advanced past
+                // anything else (`=>`, `:`, a literal), and hung the parser.
+                self.skip_braced();
                 self.expect_match_arm_arrow();
                 let mut arm_code = Value::Null;
                 self.expression(&mut arm_code);
