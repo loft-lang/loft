@@ -25,22 +25,22 @@
 <article>
 <div class="section-desc"><p>Where this machine keeps temporary files and loft's per-user cache — each answering null on a target with no filesystem (the browser).  The host input and output channels live here too.</p></div>
 <div class="item">
-<pre><code>pub fn temp_dir() -&gt; text?env#read</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-system-directories.html">temp_dir</a></span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>?env#read</code></pre>
 <p>Returns the system temporary directory, or null on a target with no filesystem (the browser). Prefer this over reading TMPDIR / TEMP / TMP directly: those differ by platform (Unix uses TMPDIR, Windows TEMP/TMP) and this also applies the OS fallback (e.g. /tmp) when none is set.</p>
 </div>
 <div class="item">
-<pre><code>pub fn cache_dir() -&gt; text?env#read</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-system-directories.html">cache_dir</a></span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>?env#read</code></pre>
 <p>Returns loft's per-user cache directory ($XDG_CACHE_HOME/loft, else $HOME/.cache/loft) — the same root the engine caches into — or null on a target with no filesystem (the browser).</p>
 </div>
 <div class="item">
-<pre><code>pub fn host_input(wait_ms: integer = -1) -&gt; text</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-system-directories.html">host_input</a></span>(wait_ms: <span class="ty"><a href="stdlib-types.html">integer</a></span> = -<span class="nm">1</span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span></code></pre>
 <p>Reads pending host input as one text; empty when there is none.  The source is per-target: stdin on native and --native-wasm (WASI); the JS host's input QUEUE on --html — seed it with globalThis.loftInput before loft_start, and push live messages any time with globalThis.loftPush(msg) (e.g. fetch() completions).  Use for a headless compute module or a polled input loop — the inbound mirror of host_output.  The engine only moves opaque bytes; the program parses them.</p>
 <p>wait_ms says how long to wait for input that has not arrived yet.  The default -1 reads the WHOLE stream, waiting for stdin to end; 0 takes what is already there and returns at once; a positive value waits that many milliseconds for the first byte.  Ask with a bound whenever the answer might be that nobody is listening: an absent host never closes stdin, so the default form waits forever for a reply that is not coming.</p>
 <p>host_output(&quot;MODE?&quot;); mode = host_input(200);        // &quot;&quot; =&gt; no host, run locally</p>
 <p>On --html every read already polls (a page cannot wait for a message its own thread has to deliver), and on --native-wasm, which has no threads, a bounded read falls back to waiting for the whole stream.</p>
 </div>
 <div class="item">
-<pre><code>pub fn host_output(msg: text)</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-system-directories.html">host_output</a></span>(msg: <span class="ty"><a href="stdlib-types.html">text</a></span>)</code></pre>
 <p>Sends one STRUCTURED message to the host shell — the outbound mirror of host_input, distinct from user-facing print.  Per target: a line on stderr (native and WASI — the invoking process can script it); the page's globalThis.loftOutput(msg) handler on --html.  The browser pattern for loft-initiated work: host_output a request (e.g. &quot;fetch &lt;url&gt;&quot;), the JS shell acts on it, and pushes the completion back via loftPush for host_input to pop — JS owns the network, loft stays pure compute.</p>
 </div>
 

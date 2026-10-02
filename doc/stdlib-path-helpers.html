@@ -24,28 +24,28 @@
 <h1>Path helpers</h1>
 <article>
 <div class="item">
-<pre><code>pub fn starts_with(self: text, value: text) -&gt; boolean</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-path-helpers.html">starts_with</a></span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>, value: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
 <p>Returns true if self begins with value. Use for prefix matching (e.g., protocol detection).</p>
 </div>
 <div class="item">
-<pre><code>pub fn ends_with(self: text, value: text) -&gt; boolean</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-path-helpers.html">ends_with</a></span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>, value: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
 <p>Returns true if self ends with value. Use for suffix matching (e.g., file extension checks).</p>
 </div>
 <div class="item">
-<pre><code>pub fn dir(self: text) -&gt; text</code></pre>
-<p>Directory part of a path — strips the trailing `/&lt;segment&gt;`. Paths are plain slash-separated text: a `\` is not a separator here, on any platform. &quot;doc/claude/PROBLEMS.md&quot;.dir() → &quot;doc/claude&quot; &quot;CLAUDE.md&quot;.dir()              → &quot;&quot;   (no `/`) &quot;/etc/passwd&quot;.dir()            → &quot;/etc&quot; &quot;&quot;.dir()                        → &quot;&quot;</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-path-helpers.html">dir</a></span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span></code></pre>
+<p>Directory part of a path — strips the trailing <code>/&lt;segment&gt;</code>. Paths are plain slash-separated text: a <code>\</code> is not a separator here, on any platform. &quot;doc/claude/PROBLEMS.md&quot;.dir() → &quot;doc/claude&quot; &quot;CLAUDE.md&quot;.dir()              → &quot;&quot;   (no <code>/</code>) &quot;/etc/passwd&quot;.dir()            → &quot;/etc&quot; &quot;&quot;.dir()                        → &quot;&quot;</p>
 </div>
 <div class="item">
-<pre><code>pub fn basename(self: text) -&gt; text</code></pre>
-<p>Last segment of a path — the part after the trailing `/`. &quot;doc/claude/PROBLEMS.md&quot;.basename() → &quot;PROBLEMS.md&quot; &quot;CLAUDE.md&quot;.basename()              → &quot;CLAUDE.md&quot; &quot;/foo/&quot;.basename()                   → &quot;&quot;    (trailing slash) &quot;&quot;.basename()                        → &quot;&quot;</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-path-helpers.html">basename</a></span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span></code></pre>
+<p>Last segment of a path — the part after the trailing <code>/</code>. &quot;doc/claude/PROBLEMS.md&quot;.basename() → &quot;PROBLEMS.md&quot; &quot;CLAUDE.md&quot;.basename()              → &quot;CLAUDE.md&quot; &quot;/foo/&quot;.basename()                   → &quot;&quot;    (trailing slash) &quot;&quot;.basename()                        → &quot;&quot;</p>
 </div>
 <div class="item">
-<pre><code>pub fn join(self: text, other: text) -&gt; text</code></pre>
-<p>Join two paths — `self/other` with a single `/` separator. Special cases: - other starts with `/` (absolute) → return other unchanged - self is empty                     → return other - self ends with `/`                → no extra separator inserted</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-path-helpers.html">join</a></span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>, other: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span></code></pre>
+<p>Join two paths — <code>self/other</code> with a single <code>/</code> separator. Special cases: - other starts with <code>/</code> (absolute) → return other unchanged - self is empty                     → return other - self ends with <code>/</code>                → no extra separator inserted</p>
 </div>
 <div class="item">
-<pre><code>pub fn resolve(self: text, target: text) -&gt; text</code></pre>
-<p>Resolve `target` against `self` (where self is a base directory). Strips leading `./` repeatedly; each `../` segment trims the last component from `self`.  Mirrors scan.loft's `resolve_link_path`. &quot;doc/claude&quot;.resolve(&quot;../README.md&quot;)     → &quot;doc/README.md&quot; &quot;doc/claude&quot;.resolve(&quot;./PROBLEMS.md&quot;)    → &quot;doc/claude/PROBLEMS.md&quot; &quot;a/b/c&quot;.resolve(&quot;../../x&quot;)               → &quot;a/x&quot; &quot;&quot;.resolve(&quot;foo&quot;)                        → &quot;foo&quot;</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-path-helpers.html">resolve</a></span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>, target: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span></code></pre>
+<p>Resolve <code>target</code> against <code>self</code> (where self is a base directory). Strips leading <code>./</code> repeatedly; each <code>../</code> segment trims the last component from <code>self</code>.  Mirrors scan.loft's <code>resolve_link_path</code>. &quot;doc/claude&quot;.resolve(&quot;../README.md&quot;)     → &quot;doc/README.md&quot; &quot;doc/claude&quot;.resolve(&quot;./PROBLEMS.md&quot;)    → &quot;doc/claude/PROBLEMS.md&quot; &quot;a/b/c&quot;.resolve(&quot;../../x&quot;)               → &quot;a/x&quot; &quot;&quot;.resolve(&quot;foo&quot;)                        → &quot;foo&quot;</p>
 </div>
 
   </article>

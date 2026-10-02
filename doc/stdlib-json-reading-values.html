@@ -24,50 +24,50 @@
 <h1>JSON: reading values</h1>
 <article>
 <div class="item">
-<pre><code>pub fn field(self: const JsonValue, name: text) -&gt; JsonValue[self]</code></pre>
-<p>JObject indexer — returns the value at `name`, or `JNull` when `self` isn't a JObject or the key is missing.  Chained access like `root.field(&quot;a&quot;).field(&quot;b&quot;)` is safe — every intermediate missing produces `JNull`, never a trap.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-json-reading-values.html">field</a></span>(self: const <span class="en"><a href="stdlib-json.html">JsonValue</a></span>, name: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="en"><a href="stdlib-json.html">JsonValue</a></span>[self]</code></pre>
+<p>JObject indexer — returns the value at <code>name</code>, or <code>JNull</code> when <code>self</code> isn't a JObject or the key is missing.  Chained access like <code>root.field(&quot;a&quot;).field(&quot;b&quot;)</code> is safe — every intermediate missing produces <code>JNull</code>, never a trap.</p>
 </div>
 <div class="item">
-<pre><code>pub fn item(self: const JsonValue, index: integer) -&gt; JsonValue[self]</code></pre>
-<p>JArray indexer — returns the element at `index`, or `JNull` when `self` isn't a JArray or the index is out of bounds.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-json-reading-values.html">item</a></span>(self: const <span class="en"><a href="stdlib-json.html">JsonValue</a></span>, <span class="ty">index</span>: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en"><a href="stdlib-json.html">JsonValue</a></span>[self]</code></pre>
+<p>JArray indexer — returns the element at <code>index</code>, or <code>JNull</code> when <code>self</code> isn't a JArray or the index is out of bounds.</p>
 </div>
 <div class="item">
-<pre><code>pub fn len(self: const JsonValue) -&gt; integer</code></pre>
-<p>Length of a JArray's items vector or a JObject's fields vector. Returns `null` for any other variant.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(self: const <span class="en"><a href="stdlib-json.html">JsonValue</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<p>Length of a JArray's items vector or a JObject's fields vector. Returns <code>null</code> for any other variant.</p>
 </div>
 <div class="item">
-<pre><code>pub fn as_text(self: const JsonValue) -&gt; text</code></pre>
-<p>Typed extractor — returns `null` on kind mismatch.</p>
-<p>The null is NOT the empty text, and only `??` tells the two apart: on a mismatch `s == &quot;&quot;` is false and `len(s)` is 1, while a field that really holds `&quot;&quot;` compares equal and measures 0.  Reach for `as_text(...) ?? fallback`, never `== &quot;&quot;`.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-json-reading-values.html">as_text</a></span>(self: const <span class="en"><a href="stdlib-json.html">JsonValue</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span></code></pre>
+<p>Typed extractor — returns <code>null</code> on kind mismatch.</p>
+<p>The null is NOT the empty text, and only <code>??</code> tells the two apart: on a mismatch <code>s == &quot;&quot;</code> is false and <code>len(s)</code> is 1, while a field that really holds <code>&quot;&quot;</code> compares equal and measures 0.  Reach for <code>as_text(...) ?? fallback</code>, never <code>== &quot;&quot;</code>.</p>
 </div>
 <div class="item">
-<pre><code>pub fn as_number(self: const JsonValue) -&gt; float</code></pre>
-<p>Typed extractor — returns `null` on kind mismatch.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-json-reading-values.html">as_number</a></span>(self: const <span class="en"><a href="stdlib-json.html">JsonValue</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<p>Typed extractor — returns <code>null</code> on kind mismatch.</p>
 </div>
 <div class="item">
-<pre><code>pub fn as_long(self: const JsonValue) -&gt; integer</code></pre>
-<p>Typed extractor — returns `null` on kind mismatch.  A `JInteger` answers its exact value; a `JNumber` is truncated toward zero.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-json-reading-values.html">as_long</a></span>(self: const <span class="en"><a href="stdlib-json.html">JsonValue</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<p>Typed extractor — returns <code>null</code> on kind mismatch.  A <code>JInteger</code> answers its exact value; a <code>JNumber</code> is truncated toward zero.</p>
 </div>
 <div class="item">
-<pre><code>pub fn as_bool(self: const JsonValue) -&gt; boolean?</code></pre>
-<p>Typed extractor — returns `null` on kind mismatch.</p>
-<p>Declared `boolean?`, so a mismatch — an absent field, the string `&quot;true&quot;`, the number `1` — is `null` and never reads as a field that really says `false`.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-json-reading-values.html">as_bool</a></span>(self: const <span class="en"><a href="stdlib-json.html">JsonValue</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span>?</code></pre>
+<p>Typed extractor — returns <code>null</code> on kind mismatch.</p>
+<p>Declared <code>boolean?</code>, so a mismatch — an absent field, the string <code>&quot;true&quot;</code>, the number <code>1</code> — is <code>null</code> and never reads as a field that really says <code>false</code>.</p>
 </div>
 <div class="item">
-<pre><code>pub fn kind(self: const JsonValue) -&gt; text</code></pre>
-<p>Returns the variant name as text: `&quot;JNull&quot;`, `&quot;JBool&quot;`, `&quot;JNumber&quot;`, `&quot;JString&quot;`, `&quot;JArray&quot;`, `&quot;JObject&quot;` or `&quot;JInteger&quot;`.  Cheap: reads the discriminant byte, formats a literal.  Useful for logs and conditional branches that don't want to commit to a full pattern match.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-json-reading-values.html">kind</a></span>(self: const <span class="en"><a href="stdlib-json.html">JsonValue</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span></code></pre>
+<p>Returns the variant name as text: <code>&quot;JNull&quot;</code>, <code>&quot;JBool&quot;</code>, <code>&quot;JNumber&quot;</code>, <code>&quot;JString&quot;</code>, <code>&quot;JArray&quot;</code>, <code>&quot;JObject&quot;</code> or <code>&quot;JInteger&quot;</code>.  Cheap: reads the discriminant byte, formats a literal.  Useful for logs and conditional branches that don't want to commit to a full pattern match.</p>
 </div>
 <div class="item">
-<pre><code>pub fn keys(self: const JsonValue) -&gt; vector&lt;text&gt;</code></pre>
-<p>Returns the field-name list of a `JObject` in insertion order, or an empty vector for any other variant. Safe idiom: `for k in v.keys() { ... }` works on any JsonValue because non-objects yield an empty walk.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-json-reading-values.html">keys</a></span>(self: const <span class="en"><a href="stdlib-json.html">JsonValue</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt;</code></pre>
+<p>Returns the field-name list of a <code>JObject</code> in insertion order, or an empty vector for any other variant. Safe idiom: <code>for k in v.keys() { ... }</code> works on any JsonValue because non-objects yield an empty walk.</p>
 </div>
 <div class="item">
-<pre><code>pub fn fields(self: const JsonValue) -&gt; vector&lt;JsonField&gt;</code></pre>
-<p>Returns the (name, value) entries of a `JObject` in insertion order so callers can iterate as `for entry in fields(v) { … entry.name … entry.value … }`. Values deep-copy (primitives + nested containers — full tree). Empty vector for any other variant.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-json-reading-values.html">fields</a></span>(self: const <span class="en"><a href="stdlib-json.html">JsonValue</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en"><a href="stdlib-json.html">JsonField</a></span>&gt;</code></pre>
+<p>Returns the (name, value) entries of a <code>JObject</code> in insertion order so callers can iterate as <code>for entry in fields(v) { … entry.name … entry.value … }</code>. Values deep-copy (primitives + nested containers — full tree). Empty vector for any other variant.</p>
 </div>
 <div class="item">
-<pre><code>pub fn has_field(self: const JsonValue, name: text) -&gt; boolean</code></pre>
-<p>Returns true iff `self` is a `JObject` variant carrying a field named `name`.  All other variants (including `JNull` on a parse error) return false, so the common pattern `if v.has_field(&quot;users&quot;) { … }` is safe to write on any JsonValue without first destructuring. Distinguishes &quot;absent&quot; from &quot;present-but-null&quot; — a field whose value is `JNull` still returns `true`.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-json-reading-values.html">has_field</a></span>(self: const <span class="en"><a href="stdlib-json.html">JsonValue</a></span>, name: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
+<p>Returns true iff <code>self</code> is a <code>JObject</code> variant carrying a field named <code>name</code>.  All other variants (including <code>JNull</code> on a parse error) return false, so the common pattern <code>if v.has_field(&quot;users&quot;) { … }</code> is safe to write on any JsonValue without first destructuring. Distinguishes &quot;absent&quot; from &quot;present-but-null&quot; — a field whose value is <code>JNull</code> still returns <code>true</code>.</p>
 </div>
 
   </article>

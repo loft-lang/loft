@@ -24,58 +24,58 @@
 <h1>Field iteration support types</h1>
 <article>
 <div class="item">
-<pre><code>pub enum FieldValue {
-  FvBool { v: boolean },
-  FvInt { v: integer },
-  FvLong { v: integer },
-  FvFloat { v: float },
-  FvSingle { v: single },
-  FvChar { v: character },
-  FvText { v: text },
+<pre><code><span class="kw">pub</span> <span class="kw">enum</span> <span class="en"><a href="stdlib-field-iteration-support-types.html">FieldValue</a></span> {
+  <span class="en">FvBool</span> { v: <span class="ty"><a href="stdlib-types.html">boolean</a></span> },
+  <span class="en">FvInt</span> { v: <span class="ty"><a href="stdlib-types.html">integer</a></span> },
+  <span class="en">FvLong</span> { v: <span class="ty"><a href="stdlib-types.html">integer</a></span> },
+  <span class="en">FvFloat</span> { v: <span class="ty"><a href="stdlib-types.html">float</a></span> },
+  <span class="en">FvSingle</span> { v: <span class="ty"><a href="stdlib-types.html">single</a></span> },
+  <span class="en">FvChar</span> { v: <span class="ty"><a href="stdlib-types.html">character</a></span> },
+  <span class="en">FvText</span> { v: <span class="ty"><a href="stdlib-types.html">text</a></span> },
 }</code></pre>
 <p>Wraps a field value in a type-discriminated enum for compile-time field iteration.</p>
 </div>
 <div class="item">
-<pre><code>pub struct StructField {
-  name: text,
-  value: FieldValue,
-  // Was the field DECLARED nullable (`text?` rather than `text`)?
-  //
-  // The payload variants above are typed non-null, and `τ?` shares `τ`'s
-  // runtime layout — a nullable field spells absence with a SENTINEL
-  // rather than a wrapper. So a null field's value arrives inside `FvText` /
-  // `FvInt` / … as that sentinel, and this flag is what says so; without it a
-  // reader would have to discover the possibility by being surprised.
-  //
-  // Mirrors `FieldInfo.nullable` from `type_of` (07_reflect.loft) on purpose:
-  // the two field lists describe the same declaration and must agree.
-  nullable: boolean,
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en"><a href="stdlib-field-iteration-support-types.html">StructField</a></span> {
+  name: <span class="ty"><a href="stdlib-types.html">text</a></span>,
+  value: <span class="en"><a href="stdlib-field-iteration-support-types.html">FieldValue</a></span>,
+  <span class="cm">// Was the field DECLARED nullable (`text?` rather than `text`)?</span>
+  <span class="cm">//</span>
+  <span class="cm">// The payload variants above are typed non-null, and `τ?` shares `τ`'s</span>
+  <span class="cm">// runtime layout — a nullable field spells absence with a SENTINEL</span>
+  <span class="cm">// rather than a wrapper. So a null field's value arrives inside `FvText` /</span>
+  <span class="cm">// `FvInt` / … as that sentinel, and this flag is what says so; without it a</span>
+  <span class="cm">// reader would have to discover the possibility by being surprised.</span>
+  <span class="cm">//</span>
+  <span class="cm">// Mirrors `FieldInfo.nullable` from `type_of` (07_reflect.loft) on purpose:</span>
+  <span class="cm">// the two field lists describe the same declaration and must agree.</span>
+  nullable: <span class="ty"><a href="stdlib-types.html">boolean</a></span>,
 }</code></pre>
 <p>Represents a single struct field during compile-time iteration.</p>
 </div>
 <div class="item">
-<pre><code>pub operator to_text(self: integer) -&gt; text</code></pre>
-<p>Converts an integer to its decimal text. Built-in types define `to_text` so they satisfy the `Printable` interface (used by `print`, format strings, …).</p>
+<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">to_text</span>(self: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span></code></pre>
+<p>Converts an integer to its decimal text. Built-in types define <code>to_text</code> so they satisfy the <code>Printable</code> interface (used by <code>print</code>, format strings, …).</p>
 </div>
 <div class="item">
-<pre><code>pub operator to_text(self: float) -&gt; text</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">to_text</span>(self: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span></code></pre>
 <p>Converts a float to its text representation.</p>
 </div>
 <div class="item">
-<pre><code>pub operator to_text(self: single) -&gt; text</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">to_text</span>(self: <span class="ty"><a href="stdlib-types.html">single</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span></code></pre>
 <p>Converts a single-precision float to its text representation.</p>
 </div>
 <div class="item">
-<pre><code>pub operator to_text(self: boolean) -&gt; text</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">to_text</span>(self: <span class="ty"><a href="stdlib-types.html">boolean</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span></code></pre>
 <p>Converts a boolean to &quot;true&quot; or &quot;false&quot;.</p>
 </div>
 <div class="item">
-<pre><code>pub operator to_text(self: character) -&gt; text</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">to_text</span>(self: <span class="ty"><a href="stdlib-types.html">character</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span></code></pre>
 <p>Converts a character to a one-character text.</p>
 </div>
 <div class="item">
-<pre><code>pub operator to_text(self: text) -&gt; text</code></pre>
-<p>Returns the text unchanged — the identity case, so `text` satisfies `Printable` too.</p>
+<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">to_text</span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span></code></pre>
+<p>Returns the text unchanged — the identity case, so <code>text</code> satisfies <code>Printable</code> too.</p>
 </div>
 
   </article>

@@ -25,62 +25,62 @@
 <article>
 <div class="section-desc"><p>Types and functions for reading and writing files. A File value is obtained via file() and carries the path, format, and an internal reference. Capability groups — the fs/env split a sandbox profile grants via `fs#read` / `fs#update` / `env#read`; the functions below link in their signature.</p></div>
 <div class="item">
-<pre><code>pub struct EnvVariable {
-  name: text,
-  value: text,
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en"><a href="stdlib-file-system.html">EnvVariable</a></span> {
+  name: <span class="ty"><a href="stdlib-types.html">text</a></span>,
+  value: <span class="ty"><a href="stdlib-types.html">text</a></span>,
 }</code></pre>
-<p>One entry of the process environment, as `env_variables()` answers them: the variable's name and its value, both as plain text.</p>
+<p>One entry of the process environment, as <code>env_variables()</code> answers them: the variable's name and its value, both as plain text.</p>
 </div>
 <div class="item">
-<pre><code>pub enum Format {
-  TextFile,
-  LittleEndian,
-  BigEndian,
-  Directory,
-  NotExists,
+<pre><code><span class="kw">pub</span> <span class="kw">enum</span> <span class="en"><a href="stdlib-file-system.html">Format</a></span> {
+  <span class="en">TextFile</span>,
+  <span class="en">LittleEndian</span>,
+  <span class="en">BigEndian</span>,
+  <span class="en">Directory</span>,
+  <span class="en">NotExists</span>,
 }</code></pre>
 <p>Describes how a file is opened. TextFile: read or write as UTF-8 text (default). LittleEndian: binary mode, least-significant byte first. BigEndian: binary mode, most-significant byte first. Directory: represents a directory path. NotExists: no file or directory exist.</p>
 </div>
 <div class="item">
-<pre><code>pub enum FileResult {
-  Ok,
-  NotFound,
-  PermissionDenied,
-  IsDirectory,
-  NotEmpty,
-  Other,
+<pre><code><span class="kw">pub</span> <span class="kw">enum</span> <span class="en"><a href="stdlib-file-system.html">FileResult</a></span> {
+  <span class="en">Ok</span>,
+  <span class="en">NotFound</span>,
+  <span class="en">PermissionDenied</span>,
+  <span class="en">IsDirectory</span>,
+  <span class="en">NotEmpty</span>,
+  <span class="en">Other</span>,
 }</code></pre>
 <p>Result of a filesystem-mutating operation (delete, move, mkdir). Use ok() to get a simple boolean, or match on specific variants for detailed error handling.  Every variant can actually be produced: Ok on success, NotFound for a missing / out-of-project path, PermissionDenied when the OS refuses access, IsDirectory when a file op targets a directory (e.g. deleting a directory with delete()), NotEmpty when rmdir() is given a directory that still holds entries, and Other for anything else. (--native and --interpret classify from the OS error; the wasm host reports only Ok / Other, and NotFound still comes from the loft-level existence check.)</p>
 </div>
 <div class="item">
-<pre><code>pub fn ok(self: FileResult) -&gt; boolean</code></pre>
-<p>True when the result is `FileResult.Ok`. Use to test a file op for success.</p>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-file-system.html">ok</a></span>(self: <span class="en"><a href="stdlib-file-system.html">FileResult</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
+<p>True when the result is <code>FileResult.Ok</code>. Use to test a file op for success.</p>
 </div>
 <div class="item">
-<pre><code>pub struct File {
-  path: text,
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en"><a href="stdlib-file-system.html">File</a></span> {
+  path: <span class="ty"><a href="stdlib-types.html">text</a></span>,
 
-  size: integer,
+  size: <span class="ty"><a href="stdlib-types.html">integer</a></span>,
 
-  // A fresh File reads as `NotExists` until `file()` has determined the real format for
-  // the path, so this default is a placeholder rather than a claim about the path — it is
-  // overwritten before any read.
-  format: Format = NotExists,
+  <span class="cm">// A fresh File reads as `NotExists` until `file()` has determined the real format for</span>
+  <span class="cm">// the path, so this default is a placeholder rather than a claim about the path — it is</span>
+  <span class="cm">// overwritten before any read.</span>
+  format: <span class="en"><a href="stdlib-file-system.html">Format</a></span> = <span class="en">NotExists</span>,
 
-  ref: i32?,
+  ref: <span class="ty"><a href="stdlib-types.html">i32</a></span>?,
 
-  current: integer,
+  current: <span class="ty"><a href="stdlib-types.html">integer</a></span>,
 
-  next: integer,
+  next: <span class="ty"><a href="stdlib-types.html">integer</a></span>,
 }</code></pre>
 <p>A handle to a filesystem entry. Fields: path (full path), size (file size in bytes), format (open mode), current (byte position after last read), next (byte position to read next).</p>
 </div>
 <div class="item">
-<pre><code>pub fn content(self: const File) -&gt; text?fs#read</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-file-system.html">content</a></span>(self: const <span class="en"><a href="stdlib-file-system.html">File</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>?fs#read</code></pre>
 <p>Reads the entire file as a UTF-8 text value. Use for small configuration files or scripts.</p>
 </div>
 <div class="item">
-<pre><code>pub fn lines(self: const File) -&gt; vector&lt;text&gt; fs#read</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-file-system.html">lines</a></span>(self: const <span class="en"><a href="stdlib-file-system.html">File</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt; fs#read</code></pre>
 <p>Reads the file and splits it into lines. Strips trailing '\r' so CRLF files (Windows) and LF files (Unix) produce identical results. Use when processing line-by-line (logs, CSV, etc.).</p>
 </div>
 
