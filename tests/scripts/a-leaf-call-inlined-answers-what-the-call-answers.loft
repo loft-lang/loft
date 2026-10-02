@@ -23,7 +23,8 @@
 //   - a scale by 3 (no power of two) and by a divisor whose half is subnormal;
 //   - argument evaluation order, with arguments that write;
 //   - a tuple result of scalars built by an `if` chain, both elements read, in a loop; and a
-//     tuple holding text, which stays a call.
+//     tuple holding text, which stays a call (the language makes it a record with a result
+//     buffer, `__tuple<integer,text>`, so it never reaches the tuple clause).
 //
 // Expected values are computed by hand (Python over the same integer and IEEE rules).
 //
