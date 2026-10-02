@@ -1253,8 +1253,14 @@ impl Parser {
             // Said on the pass that meets it: the operator search below refuses on pass 1 too.
             let t = types[0].base().source_name(&self.data);
             let r = types[1].base().source_name(&self.data);
-            // The unmarked method's own result: the declaration to write is that one, marked.
-            let answers = self.data.def(chosen).returned().source_name(&self.data);
+            // The unmarked method's own result when it takes these operands: the declaration
+            // to write is that one, marked.  One that takes other operands says nothing about
+            // what `a ⊕ b` should answer.
+            let answers = if self.data.params_fit(chosen, types) {
+                self.data.def(chosen).returned().source_name(&self.data)
+            } else {
+                "…".to_string()
+            };
             diagnostic!(
                 self.lexer,
                 Level::Error,
