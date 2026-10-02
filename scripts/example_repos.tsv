@@ -60,6 +60,7 @@ TIM	loft-libs-game	https://github.com/loft-lang/loft-libs-game	main
 # loft-libs-assets (glb, mesh3d)
 GLB	loft-libs-assets	https://github.com/loft-lang/loft-libs-assets	main
 MSH	loft-libs-assets	https://github.com/loft-lang/loft-libs-assets	main
+PAK	loft-libs-assets	https://github.com/loft-lang/loft-libs-assets	main
 # loft-libs-plugins (pluginabi)
 PAB	loft-libs-plugins	https://github.com/loft-lang/loft-libs-plugins	main
 # loft-libs-world (hex_body, hex_draw, hex_edge, hex_fit, hex_form, hex_grid, hex_place, hex_recover, hex_roof, hex_shape, hex_terrain, hex_way, hex_world)
