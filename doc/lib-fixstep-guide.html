@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>fixstep guide — Loft, a programming language for small browser games</title>
+  <meta name="description" content="Getting started with the loft library fixstep — a runnable guide that is itself a loft program, so every example in it compiles.">
+<link rel="canonical" href="https://loft-lang.org/loft/lib-fixstep-guide.html">
+<meta property="og:title" content="fixstep guide — Loft, a programming language for small browser games">
+<meta property="og:description" content="Getting started with the loft library fixstep — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://loft-lang.org/loft/lib-fixstep-guide.html">
+<meta property="og:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<meta property="og:site_name" content="Loft">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="fixstep guide — Loft, a programming language for small browser games">
+<meta name="twitter:description" content="Getting started with the loft library fixstep — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta name="twitter:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<link rel="stylesheet" href="style.css">
+<style>.playground-link{display:inline-block;margin:0.3em 0 0.8em;padding:4px 12px;background:#2563eb;color:#fff;border-radius:4px;text-decoration:none;font-size:0.85em}.playground-link:hover{filter:brightness(1.15)}@media print{.playground-link{display:none}}</style>
+</head>
+<body>
+<nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
+<h1>fixstep guide</h1>
+<article>
+<p><a href="lib-fixstep.html">← fixstep</a> · <a href="lib-fixstep-api.html">API reference</a> · <a href="lib-fixstep-src.html">source</a></p>
+<p><code>fixstep</code> owns the arithmetic of a fixed simulation step: how many steps a frame's elapsed time buys, how far between two steps the present is, how much ground a rate covers, and when a one-shot cooldown fires.  It keeps every duration as an exact INTEGER count of one base unit, so nothing drifts and nothing is lost to rounding; floating point appears only where something is drawn.  What a step DOES is yours — this never calls your code, it answers "how many".</p>
+<pre><code><span class="kw">use</span> fixstep::*;</code></pre>
+<p>60 steps a second, in the base unit <code>CLOCK_UNITS_PER_SECOND</code> (3 000 000 to the second, so 24, 25, 30, 50, 60 and 120 Hz are all whole numbers of units).</p>
+<pre><code><span class="en">STEP</span> = <span class="nm">50000</span>;</code></pre>
+<pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {
+  clk = <span class="fn-call">clock_new</span>(<span class="en">STEP</span>);</code></pre>
+<p>A frame of 1/30 s is 100 000 units: two whole steps.</p>
+<pre><code>  n = <span class="fn-call">clock_advance</span>(clk, <span class="nm">100000</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"a 1/30 s frame buys {n} steps"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="en">STEP</span> == <span class="en">CLOCK_UNITS_PER_SECOND</span> / <span class="nm">60</span> &amp;&amp; n == <span class="nm">2</span>, <span class="st">"two 60 Hz steps in a 30 Hz frame"</span>);</code></pre>
+<p>Every section below is a function, and <code>main</code> calls each one: a section nothing calls still compiles, but its assertions never run.</p>
+<pre><code>  <span class="fn-call">the_remainder_is_banked</span>();
+  <span class="fn-call">a_rate_covers_exact_ground</span>();
+  <span class="fn-call">a_cooldown_fires_once</span>();
+  <span class="fn-call">easing_is_for_drawing</span>();
+}</code></pre>
+<p>That prints:</p>
+<pre><code>  a 1/30 s frame buys 2 steps
+</code></pre>
+<h2 id="the-remainder-is-banked">The remainder is banked</h2>
+<p>A frame rarely holds a whole number of steps.  <code>clock_advance</code> runs the steps it can and BANKS the rest for the next frame, so a 70 000-unit frame runs one step and keeps 20 000. <code>clock_alpha</code> says how far into the next step the present is — 0.4 here — which is what a renderer interpolates with; it is always below 1.0.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">the_remainder_is_banked</span>() {
+  clk = <span class="fn-call">clock_new</span>(<span class="en">STEP</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">clock_advance</span>(clk, <span class="nm">70000</span>) == <span class="nm">1</span>, <span class="st">"one whole step"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">clock_banked</span>(clk) == <span class="nm">20000</span> &amp;&amp; <span class="fn-call">clock_alpha</span>(clk) == <span class="nm">0.4</span>, <span class="st">"20 000 kept, 0.4 of a step"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">clock_advance</span>(clk, <span class="nm">30000</span>) == <span class="nm">1</span>, <span class="st">"the bank and this frame make the next step"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"bank    : 70 000 units -&gt; 1 step, alpha 0.4; 30 000 more -&gt; 1 step"</span>);
+}</code></pre>
+<h2 id="a-rate-covers-exact-ground">A rate covers exact ground</h2>
+<p>A mover at 1.5 cells a second, ticked at 60 Hz, covers 0.025 of a cell per step — never a whole cell, so a mover that truncated would never move.  A <code>Bank</code> accumulates the progress as an integer and releases WHOLE units as they complete; the remainder stays banked, so over two seconds the mover covers exactly 3 cells, and after one it has 1 with half a cell banked.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">a_rate_covers_exact_ground</span>() {
+  b = <span class="fn-call">bank_new</span>();
+  rate = <span class="fn-call">bank_rate</span>(<span class="nm">1.5</span>);
+  moved = <span class="nm">0</span>;
+  <span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..60</span> { moved += <span class="fn-call">bank_gain</span>(b, rate, <span class="en">STEP</span>, <span class="en">BANK_WHOLE</span>); }
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(moved == <span class="nm">1</span> &amp;&amp; <span class="fn-call">bank_fraction</span>(b, <span class="en">BANK_WHOLE</span>) == <span class="nm">0.5</span>, <span class="st">"one second: 1 cell, half banked"</span>);
+  <span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..60</span> { moved += <span class="fn-call">bank_gain</span>(b, rate, <span class="en">STEP</span>, <span class="en">BANK_WHOLE</span>); }
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(moved == <span class="nm">3</span>, <span class="st">"two seconds: exactly 3 cells"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"rate    : 1.5 cells/s for 2 s -&gt; {moved} cells"</span>);
+}</code></pre>
+<h2 id="a-cooldown-fires-once">A cooldown fires once</h2>
+<p>A <code>Timer</code> is a one-shot: arm it with a duration, spend each tick's time into it, and <code>timer_spend</code> answers true on exactly the tick it completes — and then it is stopped, so it never fires again until it is armed again.  A 0.25 s cooldown at 60 Hz fires on the 15th tick.  (A <code>Bank</code> would carry its remainder into the next arming and fire on its own; the README's table says which type each job wants.)</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">a_cooldown_fires_once</span>() {
+  t = <span class="fn-call">timer_armed</span>(<span class="fn-call">clock_units_from_seconds</span>(<span class="nm">0.25</span>));
+  fired_at = <span class="nm">0</span>;
+  <span class="kw">for</span> tick <span class="kw">in</span> <span class="nm">1..21</span> {
+    <span class="kw">if</span> <span class="fn-call">timer_spend</span>(t, <span class="en">STEP</span>) {
+      <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(fired_at == <span class="nm">0</span>, <span class="st">"only once"</span>);
+      fired_at = tick;
+    }
+  }
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(fired_at == <span class="nm">15</span> &amp;&amp; !<span class="fn-call">timer_running</span>(t), <span class="st">"on the 15th tick, then stopped"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"timer   : a 0.25 s cooldown fires on tick {fired_at}"</span>);
+}</code></pre>
+<h2 id="easing-is-for-drawing">Easing is for drawing</h2>
+<p><code>approach(now, want, k, dt)</code> moves a drawn value — a camera, a gauge — toward its target by the fraction <code>k</code> closes per second, independent of the frame rate.  It is the one part of the package in floating point, because it only ever feeds a picture; a frame with no time in it (a paused game) does not move it at all.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">easing_is_for_drawing</span>() {
+  v = <span class="fn-call">approach</span>(<span class="nm">0.0</span>, <span class="nm">10.0</span>, <span class="nm">2.0</span>, <span class="nm">0.5</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-math.html">abs</a></span>(v - <span class="nm">10.0</span> * (<span class="nm">1.0</span> - <span class="fn-call"><a href="stdlib-exp-ln-log2-log10.html">exp</a></span>(-<span class="nm">1.0</span>))) &lt; <span class="nm">0.000000001</span>, <span class="st">"10 * (1 - e^-1)"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">approach</span>(<span class="nm">3.0</span>, <span class="nm">10.0</span>, <span class="nm">2.0</span>, <span class="nm">0.0</span>) == <span class="nm">3.0</span>, <span class="st">"a paused frame does not creep"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"ease    : half a second at k=2 covers {v:.4} of 10"</span>);
+}</code></pre>
+<h2 id="where-to-go-next">Where to go next</h2>
+<ul>
+<li><code>tests/01-doors.loft</code> — one worked example per door, <code>@FIX-001</code> … <code>@FIX-013</code>: a frame loop, a script that steps by count, a server pump, rollback, slow motion, a slow clock driven by a fast one, and the easing of an angle the short way round.</li>
+</ul>
+
+  </article>
+<script src="search-index.js"></script>
+<script src="search.js"></script>
+<script>
+(function(){
+var m={"Keywords":"keywords","Texts":"texts","Integers":"integers","Boolean":"boolean","Float":"float","Functions":"functions","Vector":"vector","Structs":"structs","Enums":"enums","Sorted":"sorted","Index":"index","Hash":"hash","File":"file","Lexer":"lexer","Parser":"parser","Libraries":"libraries","Store Locks":"store_locks","Parallel execution":"parallel_execution","Logging":"logging","Time":"time","Safety":"safety","JSON":"json","Generics":"generics","Closures":"closures","Coroutines":"coroutines","Tuples":"tuples","Match":"match","Formatting":"formatting"};
+var h=document.querySelector('h1');
+if(!h)return;
+var key=m[h.textContent];
+if(!key)return;
+var a=document.createElement('a');
+a.className='playground-link';
+a.href='playground.html?example='+key;
+a.textContent='\u25B6 Try in Playground';
+h.parentNode.insertBefore(a,h.nextSibling);
+})();
+</script>
+</body>
+</html>

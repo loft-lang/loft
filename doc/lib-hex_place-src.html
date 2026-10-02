@@ -23,17 +23,17 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>hex_place source</h1>
 <article>
-<p><a href="lib-hex_place.html">← hex_place</a> · <a href="lib-hex_place-api.html">API reference</a> · version 0.1.1</p>
-<p class="lib-legend">6 file(s), 676 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<p><a href="lib-hex_place.html">← hex_place</a> · <a href="lib-hex_place-api.html">API reference</a> · version 0.1.2</p>
+<p class="lib-legend">6 file(s), 674 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
 <table class="lib-table">
 <tr><th>Item</th><th>Defined</th><th>Worked example</th><th>Call sites</th></tr>
-<tr><td><code>field_union</code> <span class="search-kind">fn</span></td><td><a href="#src-hexcombine-loft-L35">35</a></td><td>—</td><td><a href="#src-hexcombine-loft-L59">59</a></td></tr>
-<tr><td><code>combine_cut</code> <span class="search-kind">fn</span></td><td><a href="#src-hexcombine-loft-L58">58</a></td><td><a href="#tests-02-worked-examples-loft-L69">HXP-002</a></td><td><a href="#tests-01-hex-place-loft-L42">42</a> <a href="#tests-02-worked-examples-loft-L53">53</a> <a href="#tests-02-worked-examples-loft-L54">54</a> <a href="#tests-02-worked-examples-loft-L61">61</a> <a href="#tests-02-worked-examples-loft-L85">85</a> <a href="#tests-02-worked-examples-loft-L86">86</a> … (7 total)</td></tr>
-<tr><td><code>combine_cut_level</code> <span class="search-kind">fn</span></td><td><a href="#src-hexcombine-loft-L107">107</a></td><td><a href="#tests-02-worked-examples-loft-L103">HXP-003</a></td><td><a href="#tests-02-worked-examples-loft-L119">119</a></td></tr>
-<tr><td><code>kappa_at_level</code> <span class="search-kind">fn</span></td><td><a href="#src-hexcombine-loft-L148">148</a></td><td><a href="#tests-02-worked-examples-loft-L103">HXP-003</a></td><td><a href="#tests-02-worked-examples-loft-L125">125</a> <a href="#tests-02-worked-examples-loft-L126">126</a> <a href="#tests-02-worked-examples-loft-L129">129</a></td></tr>
-<tr><td><code>shared_marked</code> <span class="search-kind">fn</span></td><td><a href="#src-hexcombine-loft-L161">161</a></td><td><a href="#tests-02-worked-examples-loft-L32">HXP-001</a></td><td><a href="#tests-01-hex-place-loft-L43">43</a> <a href="#tests-02-worked-examples-loft-L56">56</a> <a href="#tests-02-worked-examples-loft-L62">62</a></td></tr>
+<tr><td><code>field_union</code> <span class="search-kind">fn</span></td><td><a href="#src-hexcombine-loft-L34">34</a></td><td>—</td><td><a href="#src-hexcombine-loft-L58">58</a></td></tr>
+<tr><td><code>combine_cut</code> <span class="search-kind">fn</span></td><td><a href="#src-hexcombine-loft-L57">57</a></td><td><a href="#tests-02-worked-examples-loft-L69">HXP-002</a></td><td><a href="#tests-01-hex-place-loft-L42">42</a> <a href="#tests-02-worked-examples-loft-L53">53</a> <a href="#tests-02-worked-examples-loft-L54">54</a> <a href="#tests-02-worked-examples-loft-L61">61</a> <a href="#tests-02-worked-examples-loft-L85">85</a> <a href="#tests-02-worked-examples-loft-L86">86</a> … (7 total)</td></tr>
+<tr><td><code>combine_cut_level</code> <span class="search-kind">fn</span></td><td><a href="#src-hexcombine-loft-L106">106</a></td><td><a href="#tests-02-worked-examples-loft-L103">HXP-003</a></td><td><a href="#tests-02-worked-examples-loft-L119">119</a></td></tr>
+<tr><td><code>kappa_at_level</code> <span class="search-kind">fn</span></td><td><a href="#src-hexcombine-loft-L147">147</a></td><td><a href="#tests-02-worked-examples-loft-L103">HXP-003</a></td><td><a href="#tests-02-worked-examples-loft-L125">125</a> <a href="#tests-02-worked-examples-loft-L126">126</a> <a href="#tests-02-worked-examples-loft-L129">129</a></td></tr>
+<tr><td><code>shared_marked</code> <span class="search-kind">fn</span></td><td><a href="#src-hexcombine-loft-L160">160</a></td><td><a href="#tests-02-worked-examples-loft-L32">HXP-001</a></td><td><a href="#tests-01-hex-place-loft-L43">43</a> <a href="#tests-02-worked-examples-loft-L56">56</a> <a href="#tests-02-worked-examples-loft-L62">62</a></td></tr>
 <tr><td><code>Pose</code> <span class="search-kind">struct</span></td><td><a href="#src-hexframe-loft-L25">25</a></td><td>—</td><td><a href="#src-hexframe-loft-L34">34</a> <a href="#src-hexframe-loft-L35">35</a> <a href="#src-hexframe-loft-L40">40</a> <a href="#src-hexframe-loft-L44">44</a> <a href="#src-hexframe-loft-L49">49</a> <a href="#src-hexframe-loft-L54">54</a> … (8 total)</td></tr>
 <tr><td><code>pose_new</code> <span class="search-kind">fn</span></td><td><a href="#src-hexframe-loft-L34">34</a></td><td>—</td><td><a href="#tests-01-hex-place-loft-L25">25</a> <a href="#tests-02-worked-examples-loft-L180">180</a></td></tr>
 <tr><td><code>pose_inv_x</code> <span class="search-kind">fn</span></td><td><a href="#src-hexframe-loft-L40">40</a></td><td>—</td><td><a href="#src-hexframe-loft-L67">67</a> <a href="#src-hexframe-loft-L82">82</a> <a href="#tests-01-hex-place-loft-L30">30</a></td></tr>
@@ -44,12 +44,12 @@
 <tr><td><code>disk_hit</code> <span class="search-kind">fn</span></td><td><a href="#src-hexframe-loft-L81">81</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L198">198</a></td></tr>
 <tr><td><code>arb_solid</code> <span class="search-kind">fn</span></td><td><a href="#src-hexframe-loft-L98">98</a></td><td><a href="#tests-02-worked-examples-loft-L201">HXP-006</a></td><td><a href="#tests-01-hex-place-loft-L49">49</a> <a href="#tests-01-hex-place-loft-L50">50</a> <a href="#tests-01-hex-place-loft-L51">51</a> <a href="#tests-02-worked-examples-loft-L213">213</a> <a href="#tests-02-worked-examples-loft-L214">214</a> <a href="#tests-02-worked-examples-loft-L215">215</a></td></tr>
 <tr><td><code>arb_owner</code> <span class="search-kind">fn</span></td><td><a href="#src-hexframe-loft-L105">105</a></td><td><a href="#tests-02-worked-examples-loft-L201">HXP-006</a></td><td><a href="#tests-02-worked-examples-loft-L218">218</a> <a href="#tests-02-worked-examples-loft-L219">219</a> <a href="#tests-02-worked-examples-loft-L222">222</a> <a href="#tests-02-worked-examples-loft-L223">223</a> <a href="#tests-02-worked-examples-loft-L226">226</a></td></tr>
-<tr><td><code>SEAT_LOW</code> <span class="search-kind">const</span></td><td><a href="#src-hexseat-loft-L32">32</a></td><td>—</td><td><a href="#src-hexseat-loft-L57">57</a> <a href="#tests-02-worked-examples-loft-L149">149</a></td></tr>
-<tr><td><code>SEAT_MEAN</code> <span class="search-kind">const</span></td><td><a href="#src-hexseat-loft-L33">33</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L150">150</a></td></tr>
-<tr><td><code>SEAT_HIGH</code> <span class="search-kind">const</span></td><td><a href="#src-hexseat-loft-L34">34</a></td><td>—</td><td><a href="#src-hexseat-loft-L58">58</a> <a href="#tests-02-worked-examples-loft-L151">151</a></td></tr>
-<tr><td><code>seat_height</code> <span class="search-kind">fn</span></td><td><a href="#src-hexseat-loft-L39">39</a></td><td><a href="#tests-02-worked-examples-loft-L132">HXP-004</a></td><td><a href="#tests-02-worked-examples-loft-L149">149</a> <a href="#tests-02-worked-examples-loft-L150">150</a> <a href="#tests-02-worked-examples-loft-L151">151</a></td></tr>
-<tr><td><code>seat_residual</code> <span class="search-kind">fn</span></td><td><a href="#src-hexseat-loft-L67">67</a></td><td><a href="#tests-02-worked-examples-loft-L132">HXP-004</a></td><td><a href="#tests-02-worked-examples-loft-L154">154</a> <a href="#tests-02-worked-examples-loft-L155">155</a></td></tr>
-<tr><td><code>seat_write</code> <span class="search-kind">fn</span></td><td><a href="#src-hexseat-loft-L86">86</a></td><td><a href="#tests-02-worked-examples-loft-L132">HXP-004</a></td><td><a href="#tests-02-worked-examples-loft-L159">159</a></td></tr>
+<tr><td><code>SEAT_LOW</code> <span class="search-kind">const</span></td><td><a href="#src-hexseat-loft-L31">31</a></td><td>—</td><td><a href="#src-hexseat-loft-L56">56</a> <a href="#tests-02-worked-examples-loft-L149">149</a></td></tr>
+<tr><td><code>SEAT_MEAN</code> <span class="search-kind">const</span></td><td><a href="#src-hexseat-loft-L32">32</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L150">150</a></td></tr>
+<tr><td><code>SEAT_HIGH</code> <span class="search-kind">const</span></td><td><a href="#src-hexseat-loft-L33">33</a></td><td>—</td><td><a href="#src-hexseat-loft-L57">57</a> <a href="#tests-02-worked-examples-loft-L151">151</a></td></tr>
+<tr><td><code>seat_height</code> <span class="search-kind">fn</span></td><td><a href="#src-hexseat-loft-L38">38</a></td><td><a href="#tests-02-worked-examples-loft-L132">HXP-004</a></td><td><a href="#tests-02-worked-examples-loft-L149">149</a> <a href="#tests-02-worked-examples-loft-L150">150</a> <a href="#tests-02-worked-examples-loft-L151">151</a></td></tr>
+<tr><td><code>seat_residual</code> <span class="search-kind">fn</span></td><td><a href="#src-hexseat-loft-L66">66</a></td><td><a href="#tests-02-worked-examples-loft-L132">HXP-004</a></td><td><a href="#tests-02-worked-examples-loft-L154">154</a> <a href="#tests-02-worked-examples-loft-L155">155</a></td></tr>
+<tr><td><code>seat_write</code> <span class="search-kind">fn</span></td><td><a href="#src-hexseat-loft-L85">85</a></td><td><a href="#tests-02-worked-examples-loft-L132">HXP-004</a></td><td><a href="#tests-02-worked-examples-loft-L159">159</a></td></tr>
 </table>
 <h2 id="src-hex-place-loft">src/hex_place.loft</h2>
 <pre class="src"><code><span id="src-hex-place-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -70,177 +70,176 @@
 <span id="src-hexcombine-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
 <span id="src-hexcombine-loft-L3"><span class="cm">// hexcombine — TWO STENCILS ADJACENT: WHO OWNS THE SHARED EDGE? (rung A8, the combination rung).</span></span>
 <span id="src-hexcombine-loft-L4"><span class="cm">//</span></span>
-<span id="src-hexcombine-loft-L5"><span class="cm">// The rung the single-object census cannot see: where things that work ALONE stop working TOGETHER.</span></span>
-<span id="src-hexcombine-loft-L6"><span class="cm">// crawler settled the mechanism (EXTRACTION.md, `cut_arb` in its `hexway.loft`) and it is re-</span></span>
-<span id="src-hexcombine-loft-L7"><span class="cm">// measured here, float-free.  The design in one line:</span></span>
-<span id="src-hexcombine-loft-L8"><span class="cm">//</span></span>
-<span id="src-hexcombine-loft-L9"><span class="cm">//   "MARK EVERY PART, THEN CUT ONCE."</span></span>
-<span id="src-hexcombine-loft-L10"><span class="cm">//</span></span>
-<span id="src-hexcombine-loft-L11"><span class="cm">// Do NOT draw each stencil's walls and overlay them.  Union the footprints first, then cut the</span></span>
-<span id="src-hexcombine-loft-L12"><span class="cm">// boundary of the UNION once, tagging each boundary edge with the material of the source stencil</span></span>
-<span id="src-hexcombine-loft-L13"><span class="cm">// its cell came from.  Two consequences, both the point of the rung:</span></span>
-<span id="src-hexcombine-loft-L14"><span class="cm">//</span></span>
-<span id="src-hexcombine-loft-L15"><span class="cm">//   ORDER-FREE BY CONSTRUCTION.  The result reads only the finished union and the fixed source</span></span>
-<span id="src-hexcombine-loft-L16"><span class="cm">//   map — never which stencil was stamped when — so `combine_cut(a, b) == combine_cut(b, a)`.  The</span></span>
-<span id="src-hexcombine-loft-L17"><span class="cm">//   naive per-body overlay is last-writer, hence order-DEPENDENT: it works for one stencil and</span></span>
-<span id="src-hexcombine-loft-L18"><span class="cm">//   breaks for two.  (This is `X4` / law K₂: same-level overlap arbitrates deterministically and</span></span>
-<span id="src-hexcombine-loft-L19"><span class="cm">//   order-freely.)</span></span>
-<span id="src-hexcombine-loft-L20"><span class="cm">//</span></span>
-<span id="src-hexcombine-loft-L21"><span class="cm">//   THE SHARED EDGE FUSES.  Between two adjacent stencils the shared edge is INTERIOR to the union,</span></span>
-<span id="src-hexcombine-loft-L22"><span class="cm">//   so cutting the union's boundary never marks it — nobody owns it, and there is no seam wall.</span></span>
-<span id="src-hexcombine-loft-L23"><span class="cm">//   Two adjacent stencils become one fabric (crawler's FORMS.md, DESIGN §8.0.1: "seated fabric may</span></span>
-<span id="src-hexcombine-loft-L24"><span class="cm">//   merge").  Which two parts were authored is not recoverable from the fabric, and by law P1 need</span></span>
-<span id="src-hexcombine-loft-L25"><span class="cm">//   not be — `rebuild` returns the canonical representative.</span></span>
-<span id="src-hexcombine-loft-L26"><span class="cm">//</span></span>
-<span id="src-hexcombine-loft-L27"><span class="cm">// Exact and float-free: the "nearest source" of a boundary edge is simply its own bordering cell's</span></span>
-<span id="src-hexcombine-loft-L28"><span class="cm">// stencil, so no distance and no float enter.  This is the κ ≤ 2 case; N stencils are the same</span></span>
-<span id="src-hexcombine-loft-L29"><span class="cm">// construction (union all, cut once, nearest source).  Different LEVELS never contend at all</span></span>
-<span id="src-hexcombine-loft-L30"><span class="cm">// (crawler's bridge guarantee) — that axis waits on the layer machinery and is not gated here.</span></span>
-<span id="src-hexcombine-loft-L31"><span class="kw">use</span> hex_field::*;</span>
-<span id="src-hexcombine-loft-L32"><span class="kw">use</span> hex_form::*;</span>
-<span id="src-hexcombine-loft-L33"></span>
-<span id="src-hexcombine-loft-L34"><span class="cm">// The union footprint of two stencils sharing `a`'s chunk — a fresh HexSet, `a ∪ b`.</span></span>
-<span id="src-hexcombine-loft-L35"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">field_union</span>(a: <span class="en">HexSet</span>, b: <span class="en">HexSet</span>) -&gt; <span class="en">HexSet</span> {</span>
-<span id="src-hexcombine-loft-L36">  u = <span class="fn-call">hexset_chunk</span>(<span class="fn-call">hexset_q0</span>(a), <span class="fn-call">hexset_r0</span>(a), <span class="fn-call">hexset_w</span>(a), <span class="fn-call">hexset_h</span>(a));</span>
-<span id="src-hexcombine-loft-L37">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(a)..<span class="fn-call">hexset_r0</span>(a) + <span class="fn-call">hexset_h</span>(a) {</span>
-<span id="src-hexcombine-loft-L38">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(a)..<span class="fn-call">hexset_q0</span>(a) + <span class="fn-call">hexset_w</span>(a) {</span>
-<span id="src-hexcombine-loft-L39">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(a, q, r) || <span class="fn-call">hexset_get</span>(b, q, r) { <span class="fn-call">hexset_set</span>(u, q, r, <span class="kw">true</span>); }</span>
-<span id="src-hexcombine-loft-L40">    }</span>
-<span id="src-hexcombine-loft-L41">  }</span>
-<span id="src-hexcombine-loft-L42">  u</span>
-<span id="src-hexcombine-loft-L43">}</span>
-<span id="src-hexcombine-loft-L44"></span>
-<span id="src-hexcombine-loft-L45"><span class="cm">// Combine two same-level stencils: union the footprints, cut the boundary of the union ONCE, and</span></span>
-<span id="src-hexcombine-loft-L46"><span class="cm">// tag each boundary edge with the material of the source stencil its bordering cell came from.</span></span>
-<span id="src-hexcombine-loft-L47"><span class="cm">// Order-free by construction (reads the finished union + source map, never stamp order); the shared</span></span>
-<span id="src-hexcombine-loft-L48"><span class="cm">// interior edge is never cut, so adjacent stencils fuse.  Returns the number of edges cut.</span></span>
-<span id="src-hexcombine-loft-L49"><span class="cm">//</span></span>
-<span id="src-hexcombine-loft-L50"><span class="cm">// The tie-break is INTRINSIC, not positional: a cell in BOTH stencils (an overlap) takes the LOWER</span></span>
-<span id="src-hexcombine-loft-L51"><span class="cm">// material id, so `combine_cut(a,b) == combine_cut(b,a)` for overlapping stencils too, not only</span></span>
-<span id="src-hexcombine-loft-L52"><span class="cm">// disjoint ones — otherwise "order-free" would quietly hold only for the adjacency case gated here.</span></span>
-<span id="src-hexcombine-loft-L53"><span class="cm">// (crawler's full `cut_arb` breaks the same tie by nearest SURFACE then lower id; with no surfaces</span></span>
-<span id="src-hexcombine-loft-L54"><span class="cm">// in play the lower id is the whole rule.  Overlap itself is a separate, ungated A8 axis.)</span></span>
-<span id="src-hexcombine-loft-L55"><span class="cm">//</span></span>
-<span id="src-hexcombine-loft-L56"><span class="cm">// Example: @HXP-001</span></span>
-<span id="src-hexcombine-loft-L57"><span class="cm">// Example: @HXP-002</span></span>
-<span id="src-hexcombine-loft-L58"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">combine_cut</span>(a: <span class="en">HexSet</span>, ma: <span class="ty"><a href="stdlib-types.html">integer</a></span>, b: <span class="en">HexSet</span>, mb: <span class="ty"><a href="stdlib-types.html">integer</a></span>, e: <span class="en">EdgeSet</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-hexcombine-loft-L59">  u = <span class="fn-call">field_union</span>(a, b);</span>
-<span id="src-hexcombine-loft-L60">  n = <span class="nm">0</span>;</span>
-<span id="src-hexcombine-loft-L61">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(u)..<span class="fn-call">hexset_r0</span>(u) + <span class="fn-call">hexset_h</span>(u) {</span>
-<span id="src-hexcombine-loft-L62">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(u)..<span class="fn-call">hexset_q0</span>(u) + <span class="fn-call">hexset_w</span>(u) {</span>
-<span id="src-hexcombine-loft-L63">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(u, q, r) {</span>
-<span id="src-hexcombine-loft-L64">        <span class="kw">for</span> d <span class="kw">in</span> <span class="nm">0..6</span> {</span>
-<span id="src-hexcombine-loft-L65">          nq = <span class="fn-call">nb_q</span>(q, r, d);</span>
-<span id="src-hexcombine-loft-L66">          nr = <span class="fn-call">nb_r</span>(q, r, d);</span>
-<span id="src-hexcombine-loft-L67">          <span class="kw">if</span> !<span class="fn-call">hexset_get</span>(u, nq, nr) {</span>
-<span id="src-hexcombine-loft-L68">            ina = <span class="fn-call">hexset_get</span>(a, q, r);</span>
-<span id="src-hexcombine-loft-L69">            inb = <span class="fn-call">hexset_get</span>(b, q, r);</span>
-<span id="src-hexcombine-loft-L70">            m = ma;</span>
-<span id="src-hexcombine-loft-L71">            <span class="kw">if</span> inb &amp;&amp; !ina { m = mb; }</span>
-<span id="src-hexcombine-loft-L72">            <span class="kw">if</span> ina &amp;&amp; inb &amp;&amp; mb &lt; ma { m = mb; }   <span class="cm">// overlap: lower id, order-free</span></span>
-<span id="src-hexcombine-loft-L73">            <span class="fn-call">edge_set_mat</span>(e, q, r, nq, nr, m);</span>
-<span id="src-hexcombine-loft-L74">            n = n + <span class="nm">1</span>;</span>
-<span id="src-hexcombine-loft-L75">          }</span>
-<span id="src-hexcombine-loft-L76">        }</span>
-<span id="src-hexcombine-loft-L77">      }</span>
-<span id="src-hexcombine-loft-L78">    }</span>
-<span id="src-hexcombine-loft-L79">  }</span>
-<span id="src-hexcombine-loft-L80">  n</span>
-<span id="src-hexcombine-loft-L81">}</span>
-<span id="src-hexcombine-loft-L82"></span>
-<span id="src-hexcombine-loft-L83"><span class="cm">// ── LEVELS — THE BRIDGE GUARANTEE ──────────────────────────────────────────</span></span>
-<span id="src-hexcombine-loft-L84"><span class="cm">//</span></span>
-<span id="src-hexcombine-loft-L85"><span class="cm">// A **level** is the topological *sheet* a thing sits on — exactly OSM's `layer` tag, and the</span></span>
-<span id="src-hexcombine-loft-L86"><span class="cm">// `layer*` axis the foxel already has at the top of its schema (`ROUNDTRIP` §2.4; moros's `cy`).</span></span>
-<span id="src-hexcombine-loft-L87"><span class="cm">// crawler settled what it buys (`bridgetest.loft`), and the sharpest statement of it is a contrast:</span></span>
-<span id="src-hexcombine-loft-L88"><span class="cm">//</span></span>
-<span id="src-hexcombine-loft-L89"><span class="cm">//   &gt; the SAME two ways, at the same level, are a level crossing; at different levels, a bridge.</span></span>
-<span id="src-hexcombine-loft-L90"><span class="cm">//   &gt; Nothing about the ways changes — only the sheet.</span></span>
-<span id="src-hexcombine-loft-L91"><span class="cm">//</span></span>
-<span id="src-hexcombine-loft-L92"><span class="cm">// **A LEVEL IS NOT A HEIGHT.** The actual `z` comes from the surface/feature interval; the level is</span></span>
-<span id="src-hexcombine-loft-L93"><span class="cm">// a discrete sheet index and nothing else. Two things can share a `z` on different levels, or sit</span></span>
-<span id="src-hexcombine-loft-L94"><span class="cm">// at different `z` on the same one.</span></span>
-<span id="src-hexcombine-loft-L95"><span class="cm">//</span></span>
-<span id="src-hexcombine-loft-L96"><span class="cm">// The load-bearing consequence, and why this is not just bookkeeping: **different levels never</span></span>
-<span id="src-hexcombine-loft-L97"><span class="cm">// contend.** So the level is a **filter applied BEFORE the cut**, not an arbitration rule after it —</span></span>
-<span id="src-hexcombine-loft-L98"><span class="cm">// it does work the contention degree `κ` would otherwise have to do (`X4`, and `DESIGN` §6.1). Most</span></span>
-<span id="src-hexcombine-loft-L99"><span class="cm">// of a world exists only at level 0, where this costs exactly nothing.</span></span>
-<span id="src-hexcombine-loft-L100"></span>
-<span id="src-hexcombine-loft-L101"><span class="cm">// Combine two stencils **as seen at level `at`**: only those whose own level matches take part, and</span></span>
-<span id="src-hexcombine-loft-L102"><span class="cm">// the survivors are then cut exactly as `combine_cut` does.  Two stencils on different levels can</span></span>
-<span id="src-hexcombine-loft-L103"><span class="cm">// therefore never fuse, never arbitrate and never contend — at either level, one of them simply is</span></span>
-<span id="src-hexcombine-loft-L104"><span class="cm">// not there.  Returns the number of edges cut at this level.</span></span>
-<span id="src-hexcombine-loft-L105"><span class="cm">//</span></span>
-<span id="src-hexcombine-loft-L106"><span class="cm">// Example: @HXP-003</span></span>
-<span id="src-hexcombine-loft-L107"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">combine_cut_level</span>(a: <span class="en">HexSet</span>, la: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ma: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-hexcombine-loft-L108">                         b: <span class="en">HexSet</span>, lb: <span class="ty"><a href="stdlib-types.html">integer</a></span>, mb: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-hexcombine-loft-L109">                         at: <span class="ty"><a href="stdlib-types.html">integer</a></span>, e: <span class="en">EdgeSet</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-hexcombine-loft-L110">  ina = la == at;</span>
-<span id="src-hexcombine-loft-L111">  inb = lb == at;</span>
-<span id="src-hexcombine-loft-L112">  u = <span class="fn-call">hexset_chunk</span>(<span class="fn-call">hexset_q0</span>(a), <span class="fn-call">hexset_r0</span>(a), <span class="fn-call">hexset_w</span>(a), <span class="fn-call">hexset_h</span>(a));</span>
-<span id="src-hexcombine-loft-L113">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(a)..<span class="fn-call">hexset_r0</span>(a) + <span class="fn-call">hexset_h</span>(a) {</span>
-<span id="src-hexcombine-loft-L114">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(a)..<span class="fn-call">hexset_q0</span>(a) + <span class="fn-call">hexset_w</span>(a) {</span>
-<span id="src-hexcombine-loft-L115">      <span class="kw">if</span> (ina &amp;&amp; <span class="fn-call">hexset_get</span>(a, q, r)) || (inb &amp;&amp; <span class="fn-call">hexset_get</span>(b, q, r)) {</span>
-<span id="src-hexcombine-loft-L116">        <span class="fn-call">hexset_set</span>(u, q, r, <span class="kw">true</span>);</span>
-<span id="src-hexcombine-loft-L117">      }</span>
-<span id="src-hexcombine-loft-L118">    }</span>
-<span id="src-hexcombine-loft-L119">  }</span>
-<span id="src-hexcombine-loft-L120">  n = <span class="nm">0</span>;</span>
-<span id="src-hexcombine-loft-L121">  <span class="kw">for</span> r2 <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(u)..<span class="fn-call">hexset_r0</span>(u) + <span class="fn-call">hexset_h</span>(u) {</span>
-<span id="src-hexcombine-loft-L122">    <span class="kw">for</span> q2 <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(u)..<span class="fn-call">hexset_q0</span>(u) + <span class="fn-call">hexset_w</span>(u) {</span>
-<span id="src-hexcombine-loft-L123">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(u, q2, r2) {</span>
-<span id="src-hexcombine-loft-L124">        <span class="kw">for</span> d <span class="kw">in</span> <span class="nm">0..6</span> {</span>
-<span id="src-hexcombine-loft-L125">          nq = <span class="fn-call">nb_q</span>(q2, r2, d);</span>
-<span id="src-hexcombine-loft-L126">          nr = <span class="fn-call">nb_r</span>(q2, r2, d);</span>
-<span id="src-hexcombine-loft-L127">          <span class="kw">if</span> !<span class="fn-call">hexset_get</span>(u, nq, nr) {</span>
-<span id="src-hexcombine-loft-L128">            inaa = ina &amp;&amp; <span class="fn-call">hexset_get</span>(a, q2, r2);</span>
-<span id="src-hexcombine-loft-L129">            inbb = inb &amp;&amp; <span class="fn-call">hexset_get</span>(b, q2, r2);</span>
-<span id="src-hexcombine-loft-L130">            m = ma;</span>
-<span id="src-hexcombine-loft-L131">            <span class="kw">if</span> inbb &amp;&amp; !inaa { m = mb; }</span>
-<span id="src-hexcombine-loft-L132">            <span class="kw">if</span> inaa &amp;&amp; inbb &amp;&amp; mb &lt; ma { m = mb; }   <span class="cm">// overlap: lower id, order-free (X52)</span></span>
-<span id="src-hexcombine-loft-L133">            <span class="fn-call">edge_set_mat</span>(e, q2, r2, nq, nr, m);</span>
-<span id="src-hexcombine-loft-L134">            n = n + <span class="nm">1</span>;</span>
-<span id="src-hexcombine-loft-L135">          }</span>
-<span id="src-hexcombine-loft-L136">        }</span>
-<span id="src-hexcombine-loft-L137">      }</span>
-<span id="src-hexcombine-loft-L138">    }</span>
-<span id="src-hexcombine-loft-L139">  }</span>
-<span id="src-hexcombine-loft-L140">  n</span>
-<span id="src-hexcombine-loft-L141">}</span>
-<span id="src-hexcombine-loft-L142"></span>
-<span id="src-hexcombine-loft-L143"><span class="cm">// The contention degree at one cell, counted **per level**: how many of the two stencils claim it</span></span>
-<span id="src-hexcombine-loft-L144"><span class="cm">// *at level `at`*.  This is `κ` (`X53`) made level-aware — two stencils that overlap in `(q,r)` but</span></span>
-<span id="src-hexcombine-loft-L145"><span class="cm">// sit on different sheets give `κ = 1` at each level, never `κ = 2` at either.</span></span>
-<span id="src-hexcombine-loft-L146"><span class="cm">//</span></span>
-<span id="src-hexcombine-loft-L147"><span class="cm">// Example: @HXP-003</span></span>
-<span id="src-hexcombine-loft-L148"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">kappa_at_level</span>(a: <span class="en">HexSet</span>, la: <span class="ty"><a href="stdlib-types.html">integer</a></span>, b: <span class="en">HexSet</span>, lb: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-hexcombine-loft-L149">                      at: <span class="ty"><a href="stdlib-types.html">integer</a></span>, q: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-hexcombine-loft-L150">  k = <span class="nm">0</span>;</span>
-<span id="src-hexcombine-loft-L151">  <span class="kw">if</span> la == at &amp;&amp; <span class="fn-call">hexset_get</span>(a, q, r) { k = k + <span class="nm">1</span>; }</span>
-<span id="src-hexcombine-loft-L152">  <span class="kw">if</span> lb == at &amp;&amp; <span class="fn-call">hexset_get</span>(b, q, r) { k = k + <span class="nm">1</span>; }</span>
-<span id="src-hexcombine-loft-L153">  k</span>
-<span id="src-hexcombine-loft-L154">}</span>
-<span id="src-hexcombine-loft-L155"></span>
-<span id="src-hexcombine-loft-L156"><span class="cm">// How many marked edges separate an `a`-cell from a `b`-cell — the "shared wall" run.  Zero after</span></span>
-<span id="src-hexcombine-loft-L157"><span class="cm">// `combine_cut` (the seam fuses); non-zero after a per-body overlay (a spurious seam wall).  This</span></span>
-<span id="src-hexcombine-loft-L158"><span class="cm">// is the measurable form of "who owns the shared edge?": nobody, if the parts were combined right.</span></span>
-<span id="src-hexcombine-loft-L159"><span class="cm">//</span></span>
-<span id="src-hexcombine-loft-L160"><span class="cm">// Example: @HXP-001</span></span>
-<span id="src-hexcombine-loft-L161"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">shared_marked</span>(a: <span class="en">HexSet</span>, b: <span class="en">HexSet</span>, e: <span class="en">EdgeSet</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-hexcombine-loft-L162">  n = <span class="nm">0</span>;</span>
-<span id="src-hexcombine-loft-L163">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(a)..<span class="fn-call">hexset_r0</span>(a) + <span class="fn-call">hexset_h</span>(a) {</span>
-<span id="src-hexcombine-loft-L164">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(a)..<span class="fn-call">hexset_q0</span>(a) + <span class="fn-call">hexset_w</span>(a) {</span>
-<span id="src-hexcombine-loft-L165">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(a, q, r) {</span>
-<span id="src-hexcombine-loft-L166">        <span class="kw">for</span> d <span class="kw">in</span> <span class="nm">0..6</span> {</span>
-<span id="src-hexcombine-loft-L167">          nq = <span class="fn-call">nb_q</span>(q, r, d);</span>
-<span id="src-hexcombine-loft-L168">          nr = <span class="fn-call">nb_r</span>(q, r, d);</span>
-<span id="src-hexcombine-loft-L169">          <span class="kw">if</span> <span class="fn-call">hexset_get</span>(b, nq, nr) &amp;&amp; <span class="fn-call">edge_mat</span>(e, q, r, nq, nr) != <span class="nm">0</span> { n = n + <span class="nm">1</span>; }</span>
-<span id="src-hexcombine-loft-L170">        }</span>
-<span id="src-hexcombine-loft-L171">      }</span>
-<span id="src-hexcombine-loft-L172">    }</span>
-<span id="src-hexcombine-loft-L173">  }</span>
-<span id="src-hexcombine-loft-L174">  n</span>
-<span id="src-hexcombine-loft-L175">}</span>
+<span id="src-hexcombine-loft-L5"><span class="cm">// Where things that work ALONE stop working TOGETHER.  The mechanism is crawler's `cut_arb`,</span></span>
+<span id="src-hexcombine-loft-L6"><span class="cm">// float-free.  The design in one line:</span></span>
+<span id="src-hexcombine-loft-L7"><span class="cm">//</span></span>
+<span id="src-hexcombine-loft-L8"><span class="cm">//   "MARK EVERY PART, THEN CUT ONCE."</span></span>
+<span id="src-hexcombine-loft-L9"><span class="cm">//</span></span>
+<span id="src-hexcombine-loft-L10"><span class="cm">// Do NOT draw each stencil's walls and overlay them.  Union the footprints first, then cut the</span></span>
+<span id="src-hexcombine-loft-L11"><span class="cm">// boundary of the UNION once, tagging each boundary edge with the material of the source stencil</span></span>
+<span id="src-hexcombine-loft-L12"><span class="cm">// its cell came from.  Two consequences, both the point of the rung:</span></span>
+<span id="src-hexcombine-loft-L13"><span class="cm">//</span></span>
+<span id="src-hexcombine-loft-L14"><span class="cm">//   ORDER-FREE BY CONSTRUCTION.  The result reads only the finished union and the fixed source</span></span>
+<span id="src-hexcombine-loft-L15"><span class="cm">//   map — never which stencil was stamped when — so `combine_cut(a, b) == combine_cut(b, a)`.  The</span></span>
+<span id="src-hexcombine-loft-L16"><span class="cm">//   naive per-body overlay is last-writer, hence order-DEPENDENT: it works for one stencil and</span></span>
+<span id="src-hexcombine-loft-L17"><span class="cm">//   breaks for two.  (This is `X4` / law K₂: same-level overlap arbitrates deterministically and</span></span>
+<span id="src-hexcombine-loft-L18"><span class="cm">//   order-freely.)</span></span>
+<span id="src-hexcombine-loft-L19"><span class="cm">//</span></span>
+<span id="src-hexcombine-loft-L20"><span class="cm">//   THE SHARED EDGE FUSES.  Between two adjacent stencils the shared edge is INTERIOR to the union,</span></span>
+<span id="src-hexcombine-loft-L21"><span class="cm">//   so cutting the union's boundary never marks it — nobody owns it, and there is no seam wall.</span></span>
+<span id="src-hexcombine-loft-L22"><span class="cm">//   Two adjacent stencils become one fabric (crawler's FORMS.md, DESIGN §8.0.1: "seated fabric may</span></span>
+<span id="src-hexcombine-loft-L23"><span class="cm">//   merge").  Which two parts were authored is not recoverable from the fabric, and by law P1 need</span></span>
+<span id="src-hexcombine-loft-L24"><span class="cm">//   not be — `rebuild` returns the canonical representative.</span></span>
+<span id="src-hexcombine-loft-L25"><span class="cm">//</span></span>
+<span id="src-hexcombine-loft-L26"><span class="cm">// Exact and float-free: the "nearest source" of a boundary edge is simply its own bordering cell's</span></span>
+<span id="src-hexcombine-loft-L27"><span class="cm">// stencil, so no distance and no float enter.  This is the κ ≤ 2 case; N stencils are the same</span></span>
+<span id="src-hexcombine-loft-L28"><span class="cm">// construction (union all, cut once, nearest source).  Different LEVELS never contend at all</span></span>
+<span id="src-hexcombine-loft-L29"><span class="cm">// (crawler's bridge guarantee) — that axis waits on the layer machinery and is not gated here.</span></span>
+<span id="src-hexcombine-loft-L30"><span class="kw">use</span> hex_field::*;</span>
+<span id="src-hexcombine-loft-L31"><span class="kw">use</span> hex_form::*;</span>
+<span id="src-hexcombine-loft-L32"></span>
+<span id="src-hexcombine-loft-L33"><span class="cm">// The union footprint of two stencils sharing `a`'s chunk — a fresh HexSet, `a ∪ b`.</span></span>
+<span id="src-hexcombine-loft-L34"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">field_union</span>(a: <span class="en">HexSet</span>, b: <span class="en">HexSet</span>) -&gt; <span class="en">HexSet</span> {</span>
+<span id="src-hexcombine-loft-L35">  u = <span class="fn-call">hexset_chunk</span>(<span class="fn-call">hexset_q0</span>(a), <span class="fn-call">hexset_r0</span>(a), <span class="fn-call">hexset_w</span>(a), <span class="fn-call">hexset_h</span>(a));</span>
+<span id="src-hexcombine-loft-L36">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(a)..<span class="fn-call">hexset_r0</span>(a) + <span class="fn-call">hexset_h</span>(a) {</span>
+<span id="src-hexcombine-loft-L37">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(a)..<span class="fn-call">hexset_q0</span>(a) + <span class="fn-call">hexset_w</span>(a) {</span>
+<span id="src-hexcombine-loft-L38">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(a, q, r) || <span class="fn-call">hexset_get</span>(b, q, r) { <span class="fn-call">hexset_set</span>(u, q, r, <span class="kw">true</span>); }</span>
+<span id="src-hexcombine-loft-L39">    }</span>
+<span id="src-hexcombine-loft-L40">  }</span>
+<span id="src-hexcombine-loft-L41">  u</span>
+<span id="src-hexcombine-loft-L42">}</span>
+<span id="src-hexcombine-loft-L43"></span>
+<span id="src-hexcombine-loft-L44"><span class="cm">// Combine two same-level stencils: union the footprints, cut the boundary of the union ONCE, and</span></span>
+<span id="src-hexcombine-loft-L45"><span class="cm">// tag each boundary edge with the material of the source stencil its bordering cell came from.</span></span>
+<span id="src-hexcombine-loft-L46"><span class="cm">// Order-free by construction (reads the finished union + source map, never stamp order); the shared</span></span>
+<span id="src-hexcombine-loft-L47"><span class="cm">// interior edge is never cut, so adjacent stencils fuse.  Returns the number of edges cut.</span></span>
+<span id="src-hexcombine-loft-L48"><span class="cm">//</span></span>
+<span id="src-hexcombine-loft-L49"><span class="cm">// The tie-break is INTRINSIC, not positional: a cell in BOTH stencils (an overlap) takes the LOWER</span></span>
+<span id="src-hexcombine-loft-L50"><span class="cm">// material id, so `combine_cut(a,b) == combine_cut(b,a)` for overlapping stencils too, not only</span></span>
+<span id="src-hexcombine-loft-L51"><span class="cm">// disjoint ones — otherwise "order-free" would quietly hold only for the adjacency case gated here.</span></span>
+<span id="src-hexcombine-loft-L52"><span class="cm">// (crawler's full `cut_arb` breaks the same tie by nearest SURFACE then lower id; with no surfaces</span></span>
+<span id="src-hexcombine-loft-L53"><span class="cm">// in play the lower id is the whole rule.  Overlap itself is a separate, ungated A8 axis.)</span></span>
+<span id="src-hexcombine-loft-L54"><span class="cm">//</span></span>
+<span id="src-hexcombine-loft-L55"><span class="cm">// Example: @HXP-001</span></span>
+<span id="src-hexcombine-loft-L56"><span class="cm">// Example: @HXP-002</span></span>
+<span id="src-hexcombine-loft-L57"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">combine_cut</span>(a: <span class="en">HexSet</span>, ma: <span class="ty"><a href="stdlib-types.html">integer</a></span>, b: <span class="en">HexSet</span>, mb: <span class="ty"><a href="stdlib-types.html">integer</a></span>, e: <span class="en">EdgeSet</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-hexcombine-loft-L58">  u = <span class="fn-call">field_union</span>(a, b);</span>
+<span id="src-hexcombine-loft-L59">  n = <span class="nm">0</span>;</span>
+<span id="src-hexcombine-loft-L60">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(u)..<span class="fn-call">hexset_r0</span>(u) + <span class="fn-call">hexset_h</span>(u) {</span>
+<span id="src-hexcombine-loft-L61">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(u)..<span class="fn-call">hexset_q0</span>(u) + <span class="fn-call">hexset_w</span>(u) {</span>
+<span id="src-hexcombine-loft-L62">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(u, q, r) {</span>
+<span id="src-hexcombine-loft-L63">        <span class="kw">for</span> d <span class="kw">in</span> <span class="nm">0..6</span> {</span>
+<span id="src-hexcombine-loft-L64">          nq = <span class="fn-call">nb_q</span>(q, r, d);</span>
+<span id="src-hexcombine-loft-L65">          nr = <span class="fn-call">nb_r</span>(q, r, d);</span>
+<span id="src-hexcombine-loft-L66">          <span class="kw">if</span> !<span class="fn-call">hexset_get</span>(u, nq, nr) {</span>
+<span id="src-hexcombine-loft-L67">            ina = <span class="fn-call">hexset_get</span>(a, q, r);</span>
+<span id="src-hexcombine-loft-L68">            inb = <span class="fn-call">hexset_get</span>(b, q, r);</span>
+<span id="src-hexcombine-loft-L69">            m = ma;</span>
+<span id="src-hexcombine-loft-L70">            <span class="kw">if</span> inb &amp;&amp; !ina { m = mb; }</span>
+<span id="src-hexcombine-loft-L71">            <span class="kw">if</span> ina &amp;&amp; inb &amp;&amp; mb &lt; ma { m = mb; }   <span class="cm">// overlap: lower id, order-free</span></span>
+<span id="src-hexcombine-loft-L72">            <span class="fn-call">edge_set_mat</span>(e, q, r, nq, nr, m);</span>
+<span id="src-hexcombine-loft-L73">            n = n + <span class="nm">1</span>;</span>
+<span id="src-hexcombine-loft-L74">          }</span>
+<span id="src-hexcombine-loft-L75">        }</span>
+<span id="src-hexcombine-loft-L76">      }</span>
+<span id="src-hexcombine-loft-L77">    }</span>
+<span id="src-hexcombine-loft-L78">  }</span>
+<span id="src-hexcombine-loft-L79">  n</span>
+<span id="src-hexcombine-loft-L80">}</span>
+<span id="src-hexcombine-loft-L81"></span>
+<span id="src-hexcombine-loft-L82"><span class="cm">// ── LEVELS — THE BRIDGE GUARANTEE ──────────────────────────────────────────</span></span>
+<span id="src-hexcombine-loft-L83"><span class="cm">//</span></span>
+<span id="src-hexcombine-loft-L84"><span class="cm">// A **level** is the topological *sheet* a thing sits on — exactly OSM's `layer` tag, and the</span></span>
+<span id="src-hexcombine-loft-L85"><span class="cm">// `layer*` axis the foxel already has at the top of its schema (`ROUNDTRIP` §2.4; moros's `cy`).</span></span>
+<span id="src-hexcombine-loft-L86"><span class="cm">// crawler settled what it buys (`bridgetest.loft`), and the sharpest statement of it is a contrast:</span></span>
+<span id="src-hexcombine-loft-L87"><span class="cm">//</span></span>
+<span id="src-hexcombine-loft-L88"><span class="cm">//   &gt; the SAME two ways, at the same level, are a level crossing; at different levels, a bridge.</span></span>
+<span id="src-hexcombine-loft-L89"><span class="cm">//   &gt; Nothing about the ways changes — only the sheet.</span></span>
+<span id="src-hexcombine-loft-L90"><span class="cm">//</span></span>
+<span id="src-hexcombine-loft-L91"><span class="cm">// **A LEVEL IS NOT A HEIGHT.** The actual `z` comes from the surface/feature interval; the level is</span></span>
+<span id="src-hexcombine-loft-L92"><span class="cm">// a discrete sheet index and nothing else. Two things can share a `z` on different levels, or sit</span></span>
+<span id="src-hexcombine-loft-L93"><span class="cm">// at different `z` on the same one.</span></span>
+<span id="src-hexcombine-loft-L94"><span class="cm">//</span></span>
+<span id="src-hexcombine-loft-L95"><span class="cm">// The load-bearing consequence, and why this is not just bookkeeping: **different levels never</span></span>
+<span id="src-hexcombine-loft-L96"><span class="cm">// contend.** So the level is a **filter applied BEFORE the cut**, not an arbitration rule after it —</span></span>
+<span id="src-hexcombine-loft-L97"><span class="cm">// it does work the contention degree `κ` would otherwise have to do (`X4`, and `DESIGN` §6.1). Most</span></span>
+<span id="src-hexcombine-loft-L98"><span class="cm">// of a world exists only at level 0, where this costs exactly nothing.</span></span>
+<span id="src-hexcombine-loft-L99"></span>
+<span id="src-hexcombine-loft-L100"><span class="cm">// Combine two stencils **as seen at level `at`**: only those whose own level matches take part, and</span></span>
+<span id="src-hexcombine-loft-L101"><span class="cm">// the survivors are then cut exactly as `combine_cut` does.  Two stencils on different levels can</span></span>
+<span id="src-hexcombine-loft-L102"><span class="cm">// therefore never fuse, never arbitrate and never contend — at either level, one of them simply is</span></span>
+<span id="src-hexcombine-loft-L103"><span class="cm">// not there.  Returns the number of edges cut at this level.</span></span>
+<span id="src-hexcombine-loft-L104"><span class="cm">//</span></span>
+<span id="src-hexcombine-loft-L105"><span class="cm">// Example: @HXP-003</span></span>
+<span id="src-hexcombine-loft-L106"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">combine_cut_level</span>(a: <span class="en">HexSet</span>, la: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ma: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-hexcombine-loft-L107">                         b: <span class="en">HexSet</span>, lb: <span class="ty"><a href="stdlib-types.html">integer</a></span>, mb: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-hexcombine-loft-L108">                         at: <span class="ty"><a href="stdlib-types.html">integer</a></span>, e: <span class="en">EdgeSet</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-hexcombine-loft-L109">  ina = la == at;</span>
+<span id="src-hexcombine-loft-L110">  inb = lb == at;</span>
+<span id="src-hexcombine-loft-L111">  u = <span class="fn-call">hexset_chunk</span>(<span class="fn-call">hexset_q0</span>(a), <span class="fn-call">hexset_r0</span>(a), <span class="fn-call">hexset_w</span>(a), <span class="fn-call">hexset_h</span>(a));</span>
+<span id="src-hexcombine-loft-L112">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(a)..<span class="fn-call">hexset_r0</span>(a) + <span class="fn-call">hexset_h</span>(a) {</span>
+<span id="src-hexcombine-loft-L113">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(a)..<span class="fn-call">hexset_q0</span>(a) + <span class="fn-call">hexset_w</span>(a) {</span>
+<span id="src-hexcombine-loft-L114">      <span class="kw">if</span> (ina &amp;&amp; <span class="fn-call">hexset_get</span>(a, q, r)) || (inb &amp;&amp; <span class="fn-call">hexset_get</span>(b, q, r)) {</span>
+<span id="src-hexcombine-loft-L115">        <span class="fn-call">hexset_set</span>(u, q, r, <span class="kw">true</span>);</span>
+<span id="src-hexcombine-loft-L116">      }</span>
+<span id="src-hexcombine-loft-L117">    }</span>
+<span id="src-hexcombine-loft-L118">  }</span>
+<span id="src-hexcombine-loft-L119">  n = <span class="nm">0</span>;</span>
+<span id="src-hexcombine-loft-L120">  <span class="kw">for</span> r2 <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(u)..<span class="fn-call">hexset_r0</span>(u) + <span class="fn-call">hexset_h</span>(u) {</span>
+<span id="src-hexcombine-loft-L121">    <span class="kw">for</span> q2 <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(u)..<span class="fn-call">hexset_q0</span>(u) + <span class="fn-call">hexset_w</span>(u) {</span>
+<span id="src-hexcombine-loft-L122">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(u, q2, r2) {</span>
+<span id="src-hexcombine-loft-L123">        <span class="kw">for</span> d <span class="kw">in</span> <span class="nm">0..6</span> {</span>
+<span id="src-hexcombine-loft-L124">          nq = <span class="fn-call">nb_q</span>(q2, r2, d);</span>
+<span id="src-hexcombine-loft-L125">          nr = <span class="fn-call">nb_r</span>(q2, r2, d);</span>
+<span id="src-hexcombine-loft-L126">          <span class="kw">if</span> !<span class="fn-call">hexset_get</span>(u, nq, nr) {</span>
+<span id="src-hexcombine-loft-L127">            inaa = ina &amp;&amp; <span class="fn-call">hexset_get</span>(a, q2, r2);</span>
+<span id="src-hexcombine-loft-L128">            inbb = inb &amp;&amp; <span class="fn-call">hexset_get</span>(b, q2, r2);</span>
+<span id="src-hexcombine-loft-L129">            m = ma;</span>
+<span id="src-hexcombine-loft-L130">            <span class="kw">if</span> inbb &amp;&amp; !inaa { m = mb; }</span>
+<span id="src-hexcombine-loft-L131">            <span class="kw">if</span> inaa &amp;&amp; inbb &amp;&amp; mb &lt; ma { m = mb; }   <span class="cm">// overlap: lower id, order-free (X52)</span></span>
+<span id="src-hexcombine-loft-L132">            <span class="fn-call">edge_set_mat</span>(e, q2, r2, nq, nr, m);</span>
+<span id="src-hexcombine-loft-L133">            n = n + <span class="nm">1</span>;</span>
+<span id="src-hexcombine-loft-L134">          }</span>
+<span id="src-hexcombine-loft-L135">        }</span>
+<span id="src-hexcombine-loft-L136">      }</span>
+<span id="src-hexcombine-loft-L137">    }</span>
+<span id="src-hexcombine-loft-L138">  }</span>
+<span id="src-hexcombine-loft-L139">  n</span>
+<span id="src-hexcombine-loft-L140">}</span>
+<span id="src-hexcombine-loft-L141"></span>
+<span id="src-hexcombine-loft-L142"><span class="cm">// The contention degree at one cell, counted **per level**: how many of the two stencils claim it</span></span>
+<span id="src-hexcombine-loft-L143"><span class="cm">// *at level `at`*.  This is `κ` (`X53`) made level-aware — two stencils that overlap in `(q,r)` but</span></span>
+<span id="src-hexcombine-loft-L144"><span class="cm">// sit on different sheets give `κ = 1` at each level, never `κ = 2` at either.</span></span>
+<span id="src-hexcombine-loft-L145"><span class="cm">//</span></span>
+<span id="src-hexcombine-loft-L146"><span class="cm">// Example: @HXP-003</span></span>
+<span id="src-hexcombine-loft-L147"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">kappa_at_level</span>(a: <span class="en">HexSet</span>, la: <span class="ty"><a href="stdlib-types.html">integer</a></span>, b: <span class="en">HexSet</span>, lb: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-hexcombine-loft-L148">                      at: <span class="ty"><a href="stdlib-types.html">integer</a></span>, q: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-hexcombine-loft-L149">  k = <span class="nm">0</span>;</span>
+<span id="src-hexcombine-loft-L150">  <span class="kw">if</span> la == at &amp;&amp; <span class="fn-call">hexset_get</span>(a, q, r) { k = k + <span class="nm">1</span>; }</span>
+<span id="src-hexcombine-loft-L151">  <span class="kw">if</span> lb == at &amp;&amp; <span class="fn-call">hexset_get</span>(b, q, r) { k = k + <span class="nm">1</span>; }</span>
+<span id="src-hexcombine-loft-L152">  k</span>
+<span id="src-hexcombine-loft-L153">}</span>
+<span id="src-hexcombine-loft-L154"></span>
+<span id="src-hexcombine-loft-L155"><span class="cm">// How many marked edges separate an `a`-cell from a `b`-cell — the "shared wall" run.  Zero after</span></span>
+<span id="src-hexcombine-loft-L156"><span class="cm">// `combine_cut` (the seam fuses); non-zero after a per-body overlay (a spurious seam wall).  This</span></span>
+<span id="src-hexcombine-loft-L157"><span class="cm">// is the measurable form of "who owns the shared edge?": nobody, if the parts were combined right.</span></span>
+<span id="src-hexcombine-loft-L158"><span class="cm">//</span></span>
+<span id="src-hexcombine-loft-L159"><span class="cm">// Example: @HXP-001</span></span>
+<span id="src-hexcombine-loft-L160"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">shared_marked</span>(a: <span class="en">HexSet</span>, b: <span class="en">HexSet</span>, e: <span class="en">EdgeSet</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-hexcombine-loft-L161">  n = <span class="nm">0</span>;</span>
+<span id="src-hexcombine-loft-L162">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(a)..<span class="fn-call">hexset_r0</span>(a) + <span class="fn-call">hexset_h</span>(a) {</span>
+<span id="src-hexcombine-loft-L163">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(a)..<span class="fn-call">hexset_q0</span>(a) + <span class="fn-call">hexset_w</span>(a) {</span>
+<span id="src-hexcombine-loft-L164">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(a, q, r) {</span>
+<span id="src-hexcombine-loft-L165">        <span class="kw">for</span> d <span class="kw">in</span> <span class="nm">0..6</span> {</span>
+<span id="src-hexcombine-loft-L166">          nq = <span class="fn-call">nb_q</span>(q, r, d);</span>
+<span id="src-hexcombine-loft-L167">          nr = <span class="fn-call">nb_r</span>(q, r, d);</span>
+<span id="src-hexcombine-loft-L168">          <span class="kw">if</span> <span class="fn-call">hexset_get</span>(b, nq, nr) &amp;&amp; <span class="fn-call">edge_mat</span>(e, q, r, nq, nr) != <span class="nm">0</span> { n = n + <span class="nm">1</span>; }</span>
+<span id="src-hexcombine-loft-L169">        }</span>
+<span id="src-hexcombine-loft-L170">      }</span>
+<span id="src-hexcombine-loft-L171">    }</span>
+<span id="src-hexcombine-loft-L172">  }</span>
+<span id="src-hexcombine-loft-L173">  n</span>
+<span id="src-hexcombine-loft-L174">}</span>
 </code></pre>
 <h2 id="src-hexframe-loft">src/hexframe.loft</h2>
 <pre class="src"><code><span id="src-hexframe-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -360,101 +359,100 @@
 <h2 id="src-hexseat-loft">src/hexseat.loft</h2>
 <pre class="src"><code><span id="src-hexseat-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
 <span id="src-hexseat-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
-<span id="src-hexseat-loft-L3"><span class="cm">// hexseat — SEATING A STENCIL ON TERRAIN (rung A8, `OD-4`'s open half).</span></span>
+<span id="src-hexseat-loft-L3"><span class="cm">// hexseat — SEATING A STENCIL ON TERRAIN.</span></span>
 <span id="src-hexseat-loft-L4"><span class="cm">//</span></span>
-<span id="src-hexseat-loft-L5"><span class="cm">// `OD-4` came in two halves and only one was ever closed.  **Storage is settled**: terrain is the</span></span>
-<span id="src-hexseat-loft-L6"><span class="cm">// foxel's `height` slot — *"same slot as roofs; the two were always one question"* (`DESIGN` §10).</span></span>
-<span id="src-hexseat-loft-L7"><span class="cm">// What stayed open is **seating**: a stencil is authored flat in its own local frame, and the ground</span></span>
-<span id="src-hexseat-loft-L8"><span class="cm">// it is placed on is not flat.  `SPEC` **G5** already names the shape of the answer — *"a building …</span></span>
-<span id="src-hexseat-loft-L9"><span class="cm">// **seated on terrain**, residual flagged"*.</span></span>
-<span id="src-hexseat-loft-L10"><span class="cm">//</span></span>
-<span id="src-hexseat-loft-L11"><span class="cm">// THE CONSTRUCTION, AND WHY IT COSTS THE ROUND TRIP NOTHING:</span></span>
-<span id="src-hexseat-loft-L12"><span class="cm">//</span></span>
-<span id="src-hexseat-loft-L13"><span class="cm">//   **Seating writes the `height` slot.  It does not touch cells or edges.**</span></span>
-<span id="src-hexseat-loft-L14"><span class="cm">//</span></span>
-<span id="src-hexseat-loft-L15"><span class="cm">// So a stencil's footprint is byte-identical on flat ground and on a slope, and `rebuild` — which</span></span>
-<span id="src-hexseat-loft-L16"><span class="cm">// reads the CELLS — recovers the same text either way.  Terrain and stencil occupy **orthogonal</span></span>
-<span id="src-hexseat-loft-L17"><span class="cm">// slots** in the foxel, so they compose without interacting at all.</span></span>
-<span id="src-hexseat-loft-L18"><span class="cm">//</span></span>
-<span id="src-hexseat-loft-L19"><span class="cm">// That is the third time this shape of answer has come up, and it is worth naming: a **door** is a</span></span>
-<span id="src-hexseat-loft-L20"><span class="cm">// material, not a hole (`X51`); a **level** is a filter before the cut, not an arbitration after it</span></span>
-<span id="src-hexseat-loft-L21"><span class="cm">// (`X58`); **terrain** is a height, not a change of footprint.  Each time the round trip survives</span></span>
-<span id="src-hexseat-loft-L22"><span class="cm">// because the new thing lands in a slot the recovery does not read.</span></span>
-<span id="src-hexseat-loft-L23"><span class="cm">//</span></span>
-<span id="src-hexseat-loft-L24"><span class="cm">// WHAT THE SLOPE DOES COST is a **residual**: a stencil seated at ONE height cannot match ground</span></span>
-<span id="src-hexseat-loft-L25"><span class="cm">// that varies under it.  That residual is real, it is a function of the seat policy, and by `G5` it</span></span>
-<span id="src-hexseat-loft-L26"><span class="cm">// must be **returned and flagged — never silently absorbed**.  Which height to seat at (lowest,</span></span>
-<span id="src-hexseat-loft-L27"><span class="cm">// mean, highest) is a **policy**; it changes the residual and changes nothing about recoverability —</span></span>
-<span id="src-hexseat-loft-L28"><span class="cm">// the same split `A6` found between `Sep` (recoverability) and `X7` (a choice policy).</span></span>
-<span id="src-hexseat-loft-L29"><span class="kw">use</span> hex_field::*;</span>
-<span id="src-hexseat-loft-L30"><span class="kw">use</span> hex_form::*;</span>
-<span id="src-hexseat-loft-L31"></span>
-<span id="src-hexseat-loft-L32"><span class="kw">pub</span> const <span class="en">SEAT_LOW</span>  = <span class="nm">0</span>;    <span class="cm">// seat at the lowest ground under the footprint — the building perches</span></span>
-<span id="src-hexseat-loft-L33"><span class="kw">pub</span> const <span class="en">SEAT_MEAN</span> = <span class="nm">1</span>;    <span class="cm">// seat at the mean — the residual is smallest, split above and below</span></span>
-<span id="src-hexseat-loft-L34"><span class="kw">pub</span> const <span class="en">SEAT_HIGH</span> = <span class="nm">2</span>;    <span class="cm">// seat at the highest — the building is buried into the slope</span></span>
-<span id="src-hexseat-loft-L35"></span>
-<span id="src-hexseat-loft-L36"><span class="cm">// The height to seat at, under `policy`.  A pure read of the terrain under the footprint.</span></span>
-<span id="src-hexseat-loft-L37"><span class="cm">//</span></span>
-<span id="src-hexseat-loft-L38"><span class="cm">// Example: @HXP-004</span></span>
-<span id="src-hexseat-loft-L39"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">seat_height</span>(cells: <span class="en">HexSet</span>, terr: <span class="en">Heights</span>, policy: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
-<span id="src-hexseat-loft-L40">  lo = <span class="nm">0.0</span>;</span>
-<span id="src-hexseat-loft-L41">  hi = <span class="nm">0.0</span>;</span>
-<span id="src-hexseat-loft-L42">  sum = <span class="nm">0.0</span>;</span>
-<span id="src-hexseat-loft-L43">  n = <span class="nm">0</span>;</span>
-<span id="src-hexseat-loft-L44">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(cells)..<span class="fn-call">hexset_r0</span>(cells) + <span class="fn-call">hexset_h</span>(cells) {</span>
-<span id="src-hexseat-loft-L45">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(cells)..<span class="fn-call">hexset_q0</span>(cells) + <span class="fn-call">hexset_w</span>(cells) {</span>
-<span id="src-hexseat-loft-L46">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(cells, q, r) {</span>
-<span id="src-hexseat-loft-L47">        z = <span class="fn-call">height_get</span>(terr, q, r);</span>
-<span id="src-hexseat-loft-L48">        <span class="kw">if</span> n == <span class="nm">0</span> { lo = z; hi = z; }</span>
-<span id="src-hexseat-loft-L49">        <span class="kw">if</span> z &lt; lo { lo = z; }</span>
-<span id="src-hexseat-loft-L50">        <span class="kw">if</span> z &gt; hi { hi = z; }</span>
-<span id="src-hexseat-loft-L51">        sum = sum + z;</span>
-<span id="src-hexseat-loft-L52">        n = n + <span class="nm">1</span>;</span>
-<span id="src-hexseat-loft-L53">      }</span>
-<span id="src-hexseat-loft-L54">    }</span>
-<span id="src-hexseat-loft-L55">  }</span>
-<span id="src-hexseat-loft-L56">  <span class="kw">if</span> n == <span class="nm">0</span> { <span class="kw">return</span> <span class="nm">0.0</span>; }</span>
-<span id="src-hexseat-loft-L57">  <span class="kw">if</span> policy == <span class="en">SEAT_LOW</span> { <span class="kw">return</span> lo; }</span>
-<span id="src-hexseat-loft-L58">  <span class="kw">if</span> policy == <span class="en">SEAT_HIGH</span> { <span class="kw">return</span> hi; }</span>
-<span id="src-hexseat-loft-L59">  (sum / (n <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>)) ?? <span class="nm">0.0</span></span>
-<span id="src-hexseat-loft-L60">}</span>
-<span id="src-hexseat-loft-L61"></span>
-<span id="src-hexseat-loft-L62"><span class="cm">// THE RESIDUAL, and it is returned rather than swallowed (`G5`): the largest gap between the seat</span></span>
-<span id="src-hexseat-loft-L63"><span class="cm">// height and the ground under any footprint cell.  Zero on flat ground; on a slope it is the</span></span>
-<span id="src-hexseat-loft-L64"><span class="cm">// cut-and-fill the placement owes, and the editor must show it.</span></span>
-<span id="src-hexseat-loft-L65"><span class="cm">//</span></span>
-<span id="src-hexseat-loft-L66"><span class="cm">// Example: @HXP-004</span></span>
-<span id="src-hexseat-loft-L67"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">seat_residual</span>(cells: <span class="en">HexSet</span>, terr: <span class="en">Heights</span>, z: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
-<span id="src-hexseat-loft-L68">  worst = <span class="nm">0.0</span>;</span>
-<span id="src-hexseat-loft-L69">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(cells)..<span class="fn-call">hexset_r0</span>(cells) + <span class="fn-call">hexset_h</span>(cells) {</span>
-<span id="src-hexseat-loft-L70">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(cells)..<span class="fn-call">hexset_q0</span>(cells) + <span class="fn-call">hexset_w</span>(cells) {</span>
-<span id="src-hexseat-loft-L71">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(cells, q, r) {</span>
-<span id="src-hexseat-loft-L72">        d = <span class="fn-call">height_get</span>(terr, q, r) - z;</span>
-<span id="src-hexseat-loft-L73">        <span class="kw">if</span> d &lt; <span class="nm">0.0</span> { d = <span class="nm">0.0</span> - d; }</span>
-<span id="src-hexseat-loft-L74">        <span class="kw">if</span> d &gt; worst { worst = d; }</span>
-<span id="src-hexseat-loft-L75">      }</span>
-<span id="src-hexseat-loft-L76">    }</span>
-<span id="src-hexseat-loft-L77">  }</span>
-<span id="src-hexseat-loft-L78">  worst</span>
-<span id="src-hexseat-loft-L79">}</span>
-<span id="src-hexseat-loft-L80"></span>
-<span id="src-hexseat-loft-L81"><span class="cm">// SEAT THE STENCIL: write the seat height into the `height` slot for every footprint cell.  Cells</span></span>
-<span id="src-hexseat-loft-L82"><span class="cm">// and edges are untouched — that is the whole point, and it is what keeps `rebuild` exact.  Returns</span></span>
-<span id="src-hexseat-loft-L83"><span class="cm">// the number of cells whose height was written.</span></span>
-<span id="src-hexseat-loft-L84"><span class="cm">//</span></span>
-<span id="src-hexseat-loft-L85"><span class="cm">// Example: @HXP-004</span></span>
-<span id="src-hexseat-loft-L86"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">seat_write</span>(cells: <span class="en">HexSet</span>, terr: <span class="en">Heights</span>, z: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-hexseat-loft-L87">  n = <span class="nm">0</span>;</span>
-<span id="src-hexseat-loft-L88">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(cells)..<span class="fn-call">hexset_r0</span>(cells) + <span class="fn-call">hexset_h</span>(cells) {</span>
-<span id="src-hexseat-loft-L89">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(cells)..<span class="fn-call">hexset_q0</span>(cells) + <span class="fn-call">hexset_w</span>(cells) {</span>
-<span id="src-hexseat-loft-L90">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(cells, q, r) {</span>
-<span id="src-hexseat-loft-L91">        <span class="fn-call">height_set</span>(terr, q, r, z);</span>
-<span id="src-hexseat-loft-L92">        n = n + <span class="nm">1</span>;</span>
-<span id="src-hexseat-loft-L93">      }</span>
-<span id="src-hexseat-loft-L94">    }</span>
-<span id="src-hexseat-loft-L95">  }</span>
-<span id="src-hexseat-loft-L96">  n</span>
-<span id="src-hexseat-loft-L97">}</span>
+<span id="src-hexseat-loft-L5"><span class="cm">// Terrain is stored in the `height` slot, the same slot as roofs.  Seating is the question of</span></span>
+<span id="src-hexseat-loft-L6"><span class="cm">// where a stencil goes on it: a stencil is authored flat in its own local frame, and the ground</span></span>
+<span id="src-hexseat-loft-L7"><span class="cm">// it is placed on is not flat.  The answer is *"a building … **seated on terrain**, residual</span></span>
+<span id="src-hexseat-loft-L8"><span class="cm">// flagged"* (`SPEC` **G5**).</span></span>
+<span id="src-hexseat-loft-L9"><span class="cm">//</span></span>
+<span id="src-hexseat-loft-L10"><span class="cm">// THE CONSTRUCTION, AND WHY IT COSTS THE ROUND TRIP NOTHING:</span></span>
+<span id="src-hexseat-loft-L11"><span class="cm">//</span></span>
+<span id="src-hexseat-loft-L12"><span class="cm">//   **Seating writes the `height` slot.  It does not touch cells or edges.**</span></span>
+<span id="src-hexseat-loft-L13"><span class="cm">//</span></span>
+<span id="src-hexseat-loft-L14"><span class="cm">// So a stencil's footprint is byte-identical on flat ground and on a slope, and `rebuild` — which</span></span>
+<span id="src-hexseat-loft-L15"><span class="cm">// reads the CELLS — recovers the same text either way.  Terrain and stencil occupy **orthogonal</span></span>
+<span id="src-hexseat-loft-L16"><span class="cm">// slots** in the foxel, so they compose without interacting at all.</span></span>
+<span id="src-hexseat-loft-L17"><span class="cm">//</span></span>
+<span id="src-hexseat-loft-L18"><span class="cm">// The same shape of answer recurs across the family: a **door** is a</span></span>
+<span id="src-hexseat-loft-L19"><span class="cm">// material, not a hole (`X51`); a **level** is a filter before the cut, not an arbitration after it</span></span>
+<span id="src-hexseat-loft-L20"><span class="cm">// (`X58`); **terrain** is a height, not a change of footprint.  Each time the round trip survives</span></span>
+<span id="src-hexseat-loft-L21"><span class="cm">// because the new thing lands in a slot the recovery does not read.</span></span>
+<span id="src-hexseat-loft-L22"><span class="cm">//</span></span>
+<span id="src-hexseat-loft-L23"><span class="cm">// WHAT THE SLOPE DOES COST is a **residual**: a stencil seated at ONE height cannot match ground</span></span>
+<span id="src-hexseat-loft-L24"><span class="cm">// that varies under it.  That residual is real, it is a function of the seat policy, and by `G5` it</span></span>
+<span id="src-hexseat-loft-L25"><span class="cm">// must be **returned and flagged — never silently absorbed**.  Which height to seat at (lowest,</span></span>
+<span id="src-hexseat-loft-L26"><span class="cm">// mean, highest) is a **policy**; it changes the residual and changes nothing about recoverability —</span></span>
+<span id="src-hexseat-loft-L27"><span class="cm">// the same split `A6` found between `Sep` (recoverability) and `X7` (a choice policy).</span></span>
+<span id="src-hexseat-loft-L28"><span class="kw">use</span> hex_field::*;</span>
+<span id="src-hexseat-loft-L29"><span class="kw">use</span> hex_form::*;</span>
+<span id="src-hexseat-loft-L30"></span>
+<span id="src-hexseat-loft-L31"><span class="kw">pub</span> const <span class="en">SEAT_LOW</span>  = <span class="nm">0</span>;    <span class="cm">// seat at the lowest ground under the footprint — the building perches</span></span>
+<span id="src-hexseat-loft-L32"><span class="kw">pub</span> const <span class="en">SEAT_MEAN</span> = <span class="nm">1</span>;    <span class="cm">// seat at the mean — the residual is smallest, split above and below</span></span>
+<span id="src-hexseat-loft-L33"><span class="kw">pub</span> const <span class="en">SEAT_HIGH</span> = <span class="nm">2</span>;    <span class="cm">// seat at the highest — the building is buried into the slope</span></span>
+<span id="src-hexseat-loft-L34"></span>
+<span id="src-hexseat-loft-L35"><span class="cm">// The height to seat at, under `policy`.  A pure read of the terrain under the footprint.</span></span>
+<span id="src-hexseat-loft-L36"><span class="cm">//</span></span>
+<span id="src-hexseat-loft-L37"><span class="cm">// Example: @HXP-004</span></span>
+<span id="src-hexseat-loft-L38"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">seat_height</span>(cells: <span class="en">HexSet</span>, terr: <span class="en">Heights</span>, policy: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="src-hexseat-loft-L39">  lo = <span class="nm">0.0</span>;</span>
+<span id="src-hexseat-loft-L40">  hi = <span class="nm">0.0</span>;</span>
+<span id="src-hexseat-loft-L41">  sum = <span class="nm">0.0</span>;</span>
+<span id="src-hexseat-loft-L42">  n = <span class="nm">0</span>;</span>
+<span id="src-hexseat-loft-L43">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(cells)..<span class="fn-call">hexset_r0</span>(cells) + <span class="fn-call">hexset_h</span>(cells) {</span>
+<span id="src-hexseat-loft-L44">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(cells)..<span class="fn-call">hexset_q0</span>(cells) + <span class="fn-call">hexset_w</span>(cells) {</span>
+<span id="src-hexseat-loft-L45">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(cells, q, r) {</span>
+<span id="src-hexseat-loft-L46">        z = <span class="fn-call">height_get</span>(terr, q, r);</span>
+<span id="src-hexseat-loft-L47">        <span class="kw">if</span> n == <span class="nm">0</span> { lo = z; hi = z; }</span>
+<span id="src-hexseat-loft-L48">        <span class="kw">if</span> z &lt; lo { lo = z; }</span>
+<span id="src-hexseat-loft-L49">        <span class="kw">if</span> z &gt; hi { hi = z; }</span>
+<span id="src-hexseat-loft-L50">        sum = sum + z;</span>
+<span id="src-hexseat-loft-L51">        n = n + <span class="nm">1</span>;</span>
+<span id="src-hexseat-loft-L52">      }</span>
+<span id="src-hexseat-loft-L53">    }</span>
+<span id="src-hexseat-loft-L54">  }</span>
+<span id="src-hexseat-loft-L55">  <span class="kw">if</span> n == <span class="nm">0</span> { <span class="kw">return</span> <span class="nm">0.0</span>; }</span>
+<span id="src-hexseat-loft-L56">  <span class="kw">if</span> policy == <span class="en">SEAT_LOW</span> { <span class="kw">return</span> lo; }</span>
+<span id="src-hexseat-loft-L57">  <span class="kw">if</span> policy == <span class="en">SEAT_HIGH</span> { <span class="kw">return</span> hi; }</span>
+<span id="src-hexseat-loft-L58">  (sum / (n <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>)) ?? <span class="nm">0.0</span></span>
+<span id="src-hexseat-loft-L59">}</span>
+<span id="src-hexseat-loft-L60"></span>
+<span id="src-hexseat-loft-L61"><span class="cm">// THE RESIDUAL, and it is returned rather than swallowed (`G5`): the largest gap between the seat</span></span>
+<span id="src-hexseat-loft-L62"><span class="cm">// height and the ground under any footprint cell.  Zero on flat ground; on a slope it is the</span></span>
+<span id="src-hexseat-loft-L63"><span class="cm">// cut-and-fill the placement owes, and the editor must show it.</span></span>
+<span id="src-hexseat-loft-L64"><span class="cm">//</span></span>
+<span id="src-hexseat-loft-L65"><span class="cm">// Example: @HXP-004</span></span>
+<span id="src-hexseat-loft-L66"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">seat_residual</span>(cells: <span class="en">HexSet</span>, terr: <span class="en">Heights</span>, z: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="src-hexseat-loft-L67">  worst = <span class="nm">0.0</span>;</span>
+<span id="src-hexseat-loft-L68">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(cells)..<span class="fn-call">hexset_r0</span>(cells) + <span class="fn-call">hexset_h</span>(cells) {</span>
+<span id="src-hexseat-loft-L69">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(cells)..<span class="fn-call">hexset_q0</span>(cells) + <span class="fn-call">hexset_w</span>(cells) {</span>
+<span id="src-hexseat-loft-L70">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(cells, q, r) {</span>
+<span id="src-hexseat-loft-L71">        d = <span class="fn-call">height_get</span>(terr, q, r) - z;</span>
+<span id="src-hexseat-loft-L72">        <span class="kw">if</span> d &lt; <span class="nm">0.0</span> { d = <span class="nm">0.0</span> - d; }</span>
+<span id="src-hexseat-loft-L73">        <span class="kw">if</span> d &gt; worst { worst = d; }</span>
+<span id="src-hexseat-loft-L74">      }</span>
+<span id="src-hexseat-loft-L75">    }</span>
+<span id="src-hexseat-loft-L76">  }</span>
+<span id="src-hexseat-loft-L77">  worst</span>
+<span id="src-hexseat-loft-L78">}</span>
+<span id="src-hexseat-loft-L79"></span>
+<span id="src-hexseat-loft-L80"><span class="cm">// SEAT THE STENCIL: write the seat height into the `height` slot for every footprint cell.  Cells</span></span>
+<span id="src-hexseat-loft-L81"><span class="cm">// and edges are untouched — that is the whole point, and it is what keeps `rebuild` exact.  Returns</span></span>
+<span id="src-hexseat-loft-L82"><span class="cm">// the number of cells whose height was written.</span></span>
+<span id="src-hexseat-loft-L83"><span class="cm">//</span></span>
+<span id="src-hexseat-loft-L84"><span class="cm">// Example: @HXP-004</span></span>
+<span id="src-hexseat-loft-L85"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">seat_write</span>(cells: <span class="en">HexSet</span>, terr: <span class="en">Heights</span>, z: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-hexseat-loft-L86">  n = <span class="nm">0</span>;</span>
+<span id="src-hexseat-loft-L87">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(cells)..<span class="fn-call">hexset_r0</span>(cells) + <span class="fn-call">hexset_h</span>(cells) {</span>
+<span id="src-hexseat-loft-L88">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(cells)..<span class="fn-call">hexset_q0</span>(cells) + <span class="fn-call">hexset_w</span>(cells) {</span>
+<span id="src-hexseat-loft-L89">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(cells, q, r) {</span>
+<span id="src-hexseat-loft-L90">        <span class="fn-call">height_set</span>(terr, q, r, z);</span>
+<span id="src-hexseat-loft-L91">        n = n + <span class="nm">1</span>;</span>
+<span id="src-hexseat-loft-L92">      }</span>
+<span id="src-hexseat-loft-L93">    }</span>
+<span id="src-hexseat-loft-L94">  }</span>
+<span id="src-hexseat-loft-L95">  n</span>
+<span id="src-hexseat-loft-L96">}</span>
 </code></pre>
 <h2 id="tests-01-hex-place-loft">tests/01-hex-place.loft</h2>
 <pre class="src"><code><span id="tests-01-hex-place-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>

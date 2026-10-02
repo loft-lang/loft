@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>time guide — Loft, a programming language for small browser games</title>
+  <meta name="description" content="Getting started with the loft library time — a runnable guide that is itself a loft program, so every example in it compiles.">
+<link rel="canonical" href="https://loft-lang.org/loft/lib-time-guide.html">
+<meta property="og:title" content="time guide — Loft, a programming language for small browser games">
+<meta property="og:description" content="Getting started with the loft library time — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://loft-lang.org/loft/lib-time-guide.html">
+<meta property="og:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<meta property="og:site_name" content="Loft">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="time guide — Loft, a programming language for small browser games">
+<meta name="twitter:description" content="Getting started with the loft library time — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta name="twitter:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<link rel="stylesheet" href="style.css">
+<style>.playground-link{display:inline-block;margin:0.3em 0 0.8em;padding:4px 12px;background:#2563eb;color:#fff;border-radius:4px;text-decoration:none;font-size:0.85em}.playground-link:hover{filter:brightness(1.15)}@media print{.playground-link{display:none}}</style>
+</head>
+<body>
+<nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
+<h1>time guide</h1>
+<article>
+<p><a href="lib-time.html">← time</a> · <a href="lib-time-api.html">API reference</a> · <a href="lib-time-src.html">source</a></p>
+<p><code>time</code> does calendar arithmetic on a point in time held as a plain <code>integer</code>: milliseconds since the Unix epoch, the same unit <code>now()</code> answers. All of it is UTC and proleptic Gregorian, computed in pure loft, so the interpreter, <code>--native</code> and WebAssembly give identical results — the same model as JavaScript's <code>Date</code>.</p>
+<p>It is not a timezone library. There is no tz database and no daylight-saving handling; local time is a FIXED offset in minutes that you supply. It is not a clock either — <code>now()</code> is in the language, and this package is what you do with what it gives you. And it is not a stopwatch: a <code>Duration</code> here is a span between two calendar instants, not a frame timer.</p>
+<p>Install it once, then import it:</p>
+<pre><code>loft install time
+</code></pre>
+<h2 id="the-smallest-thing-that-does-something">The smallest thing that does something</h2>
+<p>Parse an ISO date, read a field off it, print it back:</p>
+<pre><code><span class="kw">use</span> time::*;</code></pre>
+<pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {
+  d = time::<span class="fn-call">parse</span>(<span class="st">"2026-05-25"</span>) ?? <span class="nm">0</span>;
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"{time::format_date(d)} is a {time::weekday_name(d)}"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(time::<span class="fn-call">year</span>(d) == <span class="nm">2026</span>, <span class="st">"year"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(time::<span class="fn-call">weekday_name</span>(d) == <span class="st">"Mon"</span>, <span class="st">"weekday name"</span>);</code></pre>
+<p>Every section below is a function and <code>main</code> calls each one. A section <code>main</code> does not call still COMPILES — so a renamed API would still be caught while its assertions, the half that checks the example is RIGHT rather than merely spelled correctly, silently never run.</p>
+<pre><code>  <span class="fn-call">fields_and_formats</span>();
+  <span class="fn-call">arithmetic</span>();
+  <span class="fn-call">weeks_and_local_days</span>();
+  <span class="fn-call">value_types</span>();
+  <span class="fn-call">the_surprise</span>();
+}</code></pre>
+<p>That prints:</p>
+<pre><code>  2026-05-25 is a Mon
+</code></pre>
+<h2 id="two-layers-and-which-one-to-reach-for">Two layers, and which one to reach for</h2>
+<p>The <code>integer</code> layer came first and is still current: every function takes and answers epoch milliseconds. It is the right one when the value is already an integer — straight out of <code>now()</code>, out of a save file, out of a database column.</p>
+<p>The <code>DateTime</code> / <code>Duration</code> layer is a pair of <code>value struct</code>s over that same integer. They cost nothing (a <code>vector&lt;DateTime&gt;</code> is the size of a <code>vector&lt;integer&gt;</code>) and they are a DISTINCT type, which is the point: <code>dt + 5</code> is a compile error, and only <code>dt + hours(2)</code> steps a time. Reach for it when the value travels — through your own structs and function signatures — because that is where an unlabelled <code>integer</code> gets added to the wrong thing.</p>
+<h2 id="reading-fields-and-printing-them">Reading fields, and printing them</h2>
+<p><code>parse</code> reads "YYYY-MM-DD", optionally with a time. It answers <code>integer?</code> — nullable, because the text may not be readable — while every accessor takes a non-null <code>integer</code>, so discharge it once at the binding with <code>?? 0</code> rather than at each call. Accessors are UTC. <code>weekday</code> is <strong>0 = Monday</strong> through 6 = Sunday — the ISO origin, not the Sunday-first one JavaScript uses, which is the one place this package's "same model as <code>Date</code>" stops being true.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">fields_and_formats</span>() {
+  d = time::<span class="fn-call">parse</span>(<span class="st">"2026-05-25"</span>) ?? <span class="nm">0</span>;
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(time::<span class="fn-call">month</span>(d) == <span class="nm">5</span> &amp;&amp; time::<span class="fn-call">day</span>(d) == <span class="nm">25</span>, <span class="st">"month and day"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(time::<span class="fn-call">weekday</span>(d) == <span class="nm">0</span>, <span class="st">"2026-05-25 is a Monday, and Monday is 0"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(time::<span class="fn-call">month_name</span>(d) == <span class="st">"May"</span>, <span class="st">"month name"</span>);</code></pre>
+<pre><code>  t = time::<span class="fn-call">parse</span>(<span class="st">"2026-05-25 14:30:07"</span>) ?? <span class="nm">0</span>;
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(time::<span class="fn-call">hour</span>(t) == <span class="nm">14</span> &amp;&amp; time::<span class="fn-call">minute</span>(t) == <span class="nm">30</span> &amp;&amp; time::<span class="fn-call">second</span>(t) == <span class="nm">7</span>, <span class="st">"time fields"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(time::<span class="fn-call">parse</span>(<span class="st">"2026-05-25T14:30:07Z"</span>) == t, <span class="st">"the ISO T/Z form is the same instant"</span>);</code></pre>
+<p>Malformed input parses to null, so it is testable with <code>!</code>.</p>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!time::<span class="fn-call">parse</span>(<span class="st">"not-a-date"</span>), <span class="st">"garbage is null"</span>);</code></pre>
+<p>Five formatters, each answering a fixed shape.</p>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(time::<span class="fn-call">format_date</span>(t) == <span class="st">"2026-05-25"</span>, <span class="st">"format_date"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(time::<span class="fn-call">format_time</span>(t) == <span class="st">"14:30"</span>, <span class="st">"format_time"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(time::<span class="fn-call">format_seconds</span>(t) == <span class="st">"14:30:07"</span>, <span class="st">"format_seconds"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(time::<span class="fn-call">format_datetime</span>(t) == <span class="st">"2026-05-25 14:30"</span>, <span class="st">"format_datetime"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(time::<span class="fn-call">format_iso</span>(t) == <span class="st">"2026-05-25T14:30:07Z"</span>, <span class="st">"format_iso"</span>);
+}</code></pre>
+<h2 id="stepping-and-measuring">Stepping and measuring</h2>
+<p>Stepping never desynchronises across a leap year or a month boundary, because the calendar conversion is exact rather than an approximation in days.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">arithmetic</span>() {
+  jan1 = time::<span class="fn-call">parse</span>(<span class="st">"2026-01-01"</span>) ?? <span class="nm">0</span>;
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(time::<span class="fn-call">format_date</span>(time::<span class="fn-call">add_weeks</span>(jan1, <span class="nm">1</span>)) == <span class="st">"2026-01-08"</span>, <span class="st">"add_weeks"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(time::<span class="fn-call">format_date</span>(time::<span class="fn-call">add_days</span>(jan1, <span class="nm">365</span>)) == <span class="st">"2027-01-01"</span>, <span class="st">"add_days"</span>);</code></pre>
+<pre><code>  feb28 = time::<span class="fn-call">parse</span>(<span class="st">"2024-02-28"</span>) ?? <span class="nm">0</span>;
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(time::<span class="fn-call">format_date</span>(time::<span class="fn-call">add_days</span>(feb28, <span class="nm">1</span>)) == <span class="st">"2024-02-29"</span>, <span class="st">"into a leap day"</span>);</code></pre>
+<pre><code>  dec31 = time::<span class="fn-call">parse</span>(<span class="st">"2026-12-31"</span>) ?? <span class="nm">0</span>;
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(time::<span class="fn-call">days_between</span>(jan1, dec31) == <span class="nm">364</span>, <span class="st">"days_between"</span>);</code></pre>
+<pre><code>  hourly = time::<span class="fn-call">seconds_between</span>(time::<span class="fn-call">parse</span>(<span class="st">"2026-01-01 00:00:00"</span>) ?? <span class="nm">0</span>,
+                                 time::<span class="fn-call">parse</span>(<span class="st">"2026-01-01 01:00:00"</span>) ?? <span class="nm">0</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hourly == <span class="nm">3600</span>, <span class="st">"seconds_between"</span>);
+}</code></pre>
+<h2 id="week-boundaries-iso-weeks-and-a-local-day">Week boundaries, ISO weeks, and a local day</h2>
+<p><code>start_of_week</code> snaps back to Monday 00:00. ISO week numbering has its own year: the first days of January can belong to the last week of the PREVIOUS ISO year, so <code>iso_year</code> is not <code>year</code> and reading one for the other is a once-a-year bug.</p>
+<p>A local day is a fixed offset in minutes — enough to bucket events by the day a player saw them, and deliberately not enough to pretend it knows about DST.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">weeks_and_local_days</span>() {
+  wed = time::<span class="fn-call">parse</span>(<span class="st">"2026-05-27"</span>) ?? <span class="nm">0</span>;
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(time::<span class="fn-call">format_date</span>(time::<span class="fn-call">start_of_week</span>(wed)) == <span class="st">"2026-05-25"</span>, <span class="st">"Monday of that week"</span>);</code></pre>
+<p>2026-01-01 is a Thursday, so it is week 1 of ISO year 2026.</p>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(time::<span class="fn-call">iso_year</span>(time::<span class="fn-call">parse</span>(<span class="st">"2026-01-01"</span>) ?? <span class="nm">0</span>) == <span class="nm">2026</span>, <span class="st">"iso_year"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(time::<span class="fn-call">iso_week</span>(time::<span class="fn-call">parse</span>(<span class="st">"2026-01-01"</span>) ?? <span class="nm">0</span>) == <span class="nm">1</span>, <span class="st">"iso_week"</span>);</code></pre>
+<p>2021-01-01 is a Friday, so it is still week 53 of ISO year 2020.</p>
+<pre><code>  jan1_2021 = time::<span class="fn-call">parse</span>(<span class="st">"2021-01-01"</span>) ?? <span class="nm">0</span>;
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(time::<span class="fn-call">year</span>(jan1_2021) == <span class="nm">2021</span>, <span class="st">"the calendar year is 2021"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(time::<span class="fn-call">iso_year</span>(jan1_2021) == <span class="nm">2020</span>, <span class="st">"but the ISO year is 2020"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(time::<span class="fn-call">iso_week</span>(jan1_2021) == <span class="nm">53</span>, <span class="st">"week 53"</span>);</code></pre>
+<p>23:30 UTC at +120 minutes is 01:30 on the next local day.  <code>parse</code> answers <code>integer?</code>, and <code>to_local</code> takes a non-null <code>integer</code>, so discharge it once with <code>?? 0</code> rather than at each call.</p>
+<pre><code>  t = time::<span class="fn-call">parse</span>(<span class="st">"2026-05-25 23:30:00"</span>) ?? <span class="nm">0</span>;
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(time::<span class="fn-call">format_datetime</span>(time::<span class="fn-call">to_local</span>(t, <span class="nm">120</span>)) == <span class="st">"2026-05-26 01:30"</span>, <span class="st">"to_local"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(time::<span class="fn-call">format_date</span>(time::<span class="fn-call">local_day</span>(t, <span class="nm">120</span>)) == <span class="st">"2026-05-26"</span>, <span class="st">"local_day"</span>);
+}</code></pre>
+<h2 id="the-value-types">The value types</h2>
+<p><code>date</code> and <code>datetime</code> build a <code>DateTime</code>; the <code>Duration</code> constructors are named for their unit. Subtraction of two times answers a <code>Duration</code>, adding one steps a time, and all six comparisons work. Formatting goes through a spec after the colon: <code>{dt}</code> · <code>{dt:date}</code> · <code>{dt:time}</code> · <code>{dt:seconds}</code> · <code>{dt:iso}</code> · <code>{dt:wday}</code> · <code>{dt:month}</code>, and a <code>Duration</code> renders as <code>[-]H:MM:SS</code>.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">value_types</span>() {
+  start = time::<span class="fn-call">datetime</span>(<span class="nm">2026</span>, <span class="nm">7</span>, <span class="nm">8</span>, <span class="nm">12</span>, <span class="nm">0</span>, <span class="nm">0</span>);
+  finish = time::<span class="fn-call">datetime</span>(<span class="nm">2026</span>, <span class="nm">7</span>, <span class="nm">8</span>, <span class="nm">13</span>, <span class="nm">30</span>, <span class="nm">0</span>);</code></pre>
+<pre><code>  span = finish - start;
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(span.<span class="fn-call">total_minutes</span>() == <span class="nm">90</span>, <span class="st">"a difference is a Duration"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"{span}"</span> == <span class="st">"1:30:00"</span>, <span class="st">"and renders as H:MM:SS"</span>);</code></pre>
+<pre><code>  later = start + time::<span class="fn-call">hours</span>(<span class="nm">2</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(later.<span class="fn-call">hour</span>() == <span class="nm">14</span>, <span class="st">"typed stepping"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(start &lt; finish &amp;&amp; finish &gt; start &amp;&amp; start != finish, <span class="st">"the comparisons"</span>);</code></pre>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"{start:date}"</span> == <span class="st">"2026-07-08"</span>, <span class="st">"the date spec"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"{start:iso}"</span> == <span class="st">"2026-07-08T12:00:00Z"</span>, <span class="st">"the iso spec"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"{start:wday}"</span> == <span class="st">"Wed"</span>, <span class="st">"the weekday spec"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"{start}"</span> == <span class="st">"2026-07-08 12:00"</span>, <span class="st">"and the default"</span>);</code></pre>
+<p>They are zero-cost, so a DateTime is an ordinary vector element.</p>
+<pre><code>  schedule = [start, later, finish];
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(schedule) == <span class="nm">3</span>, <span class="st">"a vector&lt;DateTime&gt; costs what a vector&lt;integer&gt; costs"</span>);
+}</code></pre>
+<h2 id="the-one-that-surprises-people">The one that surprises people</h2>
+<p><strong>`parse` does not validate a date. It normalises one.</strong> Month 13 is January of the next year, day 45 of January is the 14th of February, and the answer comes back NON-NULL — so a null check tells you the text was readable, not that the date was real. <code>2026-13-45</code> is a perfectly good way to spell 2027-02-14 here, which is exactly what you do not want from a user-typed field.</p>
+<p>The second half compounds it. A <code>value struct</code> has no null, so <code>"..." as DateTime</code> cannot both answer a <code>DateTime</code> and report failure — on text it cannot read at all it answers the EPOCH. Silently 1970-01-01, and every comparison downstream computed against it.</p>
+<p>So the two failure modes are different and neither one raises: unreadable text becomes 1970 through the cast, and readable nonsense becomes a real date that is not the one anybody meant. Range-check the fields yourself when they came from outside, and keep the null check at the integer layer for the rest.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">the_surprise</span>() {</code></pre>
+<p>Readable nonsense: not null, and not the date anyone typed.</p>
+<pre><code>  rolled = time::<span class="fn-call">parse</span>(<span class="st">"2026-13-45"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(rolled, <span class="st">"out-of-range fields do NOT parse to null"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(time::<span class="fn-call">format_date</span>(rolled ?? <span class="nm">0</span>) == <span class="st">"2027-02-14"</span>,
+         <span class="st">"month 13 rolls into 2027, then day 45 of January rolls into February"</span>);</code></pre>
+<p>Unreadable text: null at the integer layer...</p>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!time::<span class="fn-call">parse</span>(<span class="st">"not-a-date"</span>), <span class="st">"unreadable text is null here"</span>);</code></pre>
+<p>...and the epoch through the cast, because a value struct has nowhere to put the failure.</p>
+<pre><code>  lost = <span class="st">"not-a-date"</span> <span class="kw">as</span> <span class="en">DateTime</span>;
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(lost.<span class="fn-call">year</span>() == <span class="nm">1970</span>, <span class="st">"the cast answers the epoch instead of failing"</span>);</code></pre>
+<p>The shape that catches both: check for null, then check the fields you were given actually came back.</p>
+<pre><code>  text_in = <span class="st">"2026-13-45"</span>;
+  ms = time::<span class="fn-call">parse</span>(text_in);
+  ok = <span class="kw">if</span> !ms { <span class="kw">false</span> } <span class="kw">else</span> { time::<span class="fn-call">month</span>(ms ?? <span class="nm">0</span>) == <span class="nm">13</span> };
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!ok, <span class="st">"13 never survives as a month, so the round-trip check rejects it"</span>);</code></pre>
+<p>On input that is genuinely a date, the ergonomic path is the ergonomic path.</p>
+<pre><code>  good = <span class="st">"2026-07-08T12:00:00Z"</span> <span class="kw">as</span> <span class="en">DateTime</span>;
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(good.<span class="fn-call">year</span>() == <span class="nm">2026</span> &amp;&amp; good.<span class="fn-call">month</span>() == <span class="nm">7</span> &amp;&amp; good.<span class="fn-call">day</span>() == <span class="nm">8</span>, <span class="st">"a good date converts directly"</span>);
+}</code></pre>
+<h2 id="where-to-go-next">Where to go next</h2>
+<p>The API reference lists every signature with its contract. The package's own tests are the best-explained calls in it — <code>tests/01-basics.loft</code> walks the integer-epoch layer across a whole year, its leap-year boundaries and several local offsets, and <code>tests/02-datetime.loft</code> does the same for the value types, with every golden hand-computed and checked identical on both backends.</p>
+
+  </article>
+<script src="search-index.js"></script>
+<script src="search.js"></script>
+<script>
+(function(){
+var m={"Keywords":"keywords","Texts":"texts","Integers":"integers","Boolean":"boolean","Float":"float","Functions":"functions","Vector":"vector","Structs":"structs","Enums":"enums","Sorted":"sorted","Index":"index","Hash":"hash","File":"file","Lexer":"lexer","Parser":"parser","Libraries":"libraries","Store Locks":"store_locks","Parallel execution":"parallel_execution","Logging":"logging","Time":"time","Safety":"safety","JSON":"json","Generics":"generics","Closures":"closures","Coroutines":"coroutines","Tuples":"tuples","Match":"match","Formatting":"formatting"};
+var h=document.querySelector('h1');
+if(!h)return;
+var key=m[h.textContent];
+if(!key)return;
+var a=document.createElement('a');
+a.className='playground-link';
+a.href='playground.html?example='+key;
+a.textContent='\u25B6 Try in Playground';
+h.parentNode.insertBefore(a,h.nextSibling);
+})();
+</script>
+</body>
+</html>

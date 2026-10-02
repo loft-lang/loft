@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>hex_roof guide — Loft, a programming language for small browser games</title>
+  <meta name="description" content="Getting started with the loft library hex_roof — a runnable guide that is itself a loft program, so every example in it compiles.">
+<link rel="canonical" href="https://loft-lang.org/loft/lib-hex_roof-guide.html">
+<meta property="og:title" content="hex_roof guide — Loft, a programming language for small browser games">
+<meta property="og:description" content="Getting started with the loft library hex_roof — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://loft-lang.org/loft/lib-hex_roof-guide.html">
+<meta property="og:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<meta property="og:site_name" content="Loft">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="hex_roof guide — Loft, a programming language for small browser games">
+<meta name="twitter:description" content="Getting started with the loft library hex_roof — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta name="twitter:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<link rel="stylesheet" href="style.css">
+<style>.playground-link{display:inline-block;margin:0.3em 0 0.8em;padding:4px 12px;background:#2563eb;color:#fff;border-radius:4px;text-decoration:none;font-size:0.85em}.playground-link:hover{filter:brightness(1.15)}@media print{.playground-link{display:none}}</style>
+</head>
+<body>
+<nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
+<h1>hex_roof guide</h1>
+<article>
+<p><a href="lib-hex_roof.html">← hex_roof</a> · <a href="lib-hex_roof-api.html">API reference</a> · <a href="lib-hex_roof-src.html">source</a></p>
+<p><code>hex_roof</code> writes roofs, vaults and arches as a HEIGHT per cell — a <code>hex_field::Heights</code> over a <code>HexSet</code> footprint.  Every profile is one formula, <code>peak - slope * d</code>, and only the distance <code>d</code> changes: to a point for a cone, to a line for a gable, to a short segment for a hip, to the nearest eave for <code>roof_hip</code>.  Going the other way, <code>roof_match</code> reads a height field back as an exact surface, so a renderer draws a real cone rather than a staircase of hexes.</p>
+<p>It is not the footprint or its outline — that is <code>hex_field</code>.  It is not the ridge line either: a ridge is a <code>hex_way::Track</code>.  Reach for <code>hex_roof</code> when cells need a height that follows a roof form.</p>
+<p>World units: a cell (q, r) is centred at <code>(lattice_k(q, r) · √3/2, lattice_m(q, r) / 2)</code>, so neighbouring centres are √3 apart.</p>
+<pre><code><span class="kw">use</span> hex_roof::*;
+<span class="kw">use</span> hex_field::*;
+<span class="kw">use</span> hex_way::*;</code></pre>
+<pre><code>const <span class="en">SQ3</span> = <span class="nm">1.7320508075688772</span>;</code></pre>
+<pre><code><span class="kw">fn</span> <span class="fn-call">near</span>(a: <span class="ty"><a href="stdlib-types.html">float</a></span>, b: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> { <span class="bi"><a href="stdlib-math.html">abs</a></span>(a - b) &lt; <span class="nm">0.000001</span> }</code></pre>
+<p>A cell and its six neighbours, in a 5 x 5 window around the origin.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">hexagon</span>() -&gt; <span class="en">HexSet</span> {
+  s = <span class="fn-call">hexset_new</span>(<span class="nm">2</span>);
+  <span class="fn-call">hexset_set</span>(s, <span class="nm">0</span>, <span class="nm">0</span>, <span class="kw">true</span>);
+  <span class="kw">for</span> d <span class="kw">in</span> <span class="nm">0..6</span> { <span class="fn-call">hexset_set</span>(s, <span class="fn-call">nb_q</span>(<span class="nm">0</span>, <span class="nm">0</span>, d), <span class="fn-call">nb_r</span>(<span class="nm">0</span>, <span class="nm">0</span>, d), <span class="kw">true</span>); }
+  s
+}</code></pre>
+<pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {
+  s = <span class="fn-call">hexagon</span>();
+  f = <span class="fn-call">heights_new</span>(-<span class="nm">2</span>, -<span class="nm">2</span>, <span class="nm">5</span>, <span class="nm">5</span>);
+  <span class="fn-call">roof_cone</span>(s, f, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">4.0</span>, <span class="nm">1.0</span>, <span class="nm">100.0</span>);      <span class="cm">// apex 4 over the origin, slope 1</span>
+  fit = <span class="fn-call">roof_match</span>(s, f, <span class="nm">0.001</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"apex {height_get(f, 0, 0)}, eave {height_get(f, 1, 0):.4}; recovered as kind {fit.rf_kind}, apex {fit.rf_z:.4}, slope {fit.rf_slope:.4}"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">height_get</span>(f, <span class="nm">0</span>, <span class="nm">0</span>) == <span class="nm">4.0</span> &amp;&amp; <span class="fn-call">near</span>(<span class="fn-call">height_get</span>(f, <span class="nm">1</span>, <span class="nm">0</span>), <span class="nm">4.0</span> - <span class="en">SQ3</span>), <span class="st">"√3 from the apex"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(fit.rf_kind == <span class="en">ROOF_CONE</span> &amp;&amp; <span class="fn-call">near</span>(fit.rf_z, <span class="nm">4.0</span>) &amp;&amp; <span class="fn-call">near</span>(fit.rf_slope, <span class="nm">1.0</span>), <span class="st">"the cone back"</span>);</code></pre>
+<p>Every section below is a function, and <code>main</code> calls each one: a section nothing calls still compiles, but its assertions never run.</p>
+<pre><code>  <span class="fn-call">draw_the_surface</span>();
+  <span class="fn-call">a_hip_is_a_shorter_ridge</span>();
+  <span class="fn-call">a_roof_must_drain</span>();
+}</code></pre>
+<p>That prints:</p>
+<pre><code>  apex 4, eave 2.2679; recovered as kind 2, apex 4.0000, slope 1.0000
+</code></pre>
+<p>(kind 2 is <code>ROOF_CONE</code>.)</p>
+<h2 id="draw-the-surface-not-the-cells">Draw the surface, not the cells</h2>
+<p>The heights are storage: one number per cell.  <code>roof_eval(fit, x, y)</code> evaluates the recovered surface anywhere, so the roof is exact at any resolution.  When no shape fits within the tolerance, <code>roof_match</code> answers <code>ROOF_UNKNOWN</code> and <code>roof_eval</code> draws nothing — it never passes off the least-bad shape as a recovery.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">draw_the_surface</span>() {
+  s = <span class="fn-call">hexagon</span>();
+  f = <span class="fn-call">heights_new</span>(-<span class="nm">2</span>, -<span class="nm">2</span>, <span class="nm">5</span>, <span class="nm">5</span>);
+  <span class="fn-call">roof_cone</span>(s, f, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">4.0</span>, <span class="nm">1.0</span>, <span class="nm">100.0</span>);
+  fit = <span class="fn-call">roof_match</span>(s, f, <span class="nm">0.001</span>);
+  between = <span class="fn-call">roof_eval</span>(fit, <span class="en">SQ3</span> / <span class="nm">2.0</span>, <span class="nm">0.0</span>);      <span class="cm">// half way to the east neighbour</span>
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">near</span>(between, <span class="nm">4.0</span> - <span class="en">SQ3</span> / <span class="nm">2.0</span>), <span class="st">"on the cone, between two cell centres"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"surface : half way between two cells the roof is {between:.4}"</span>);
+}</code></pre>
+<h2 id="a-hip-is-a-shorter-ridge">A hip is a shorter ridge</h2>
+<p><code>roof_ridge(s, f, track, peak, slope, dmax)</code> measures <code>d</code> to a <code>Track</code>.  A ridge the full length of the roof is a gable: the ends stay at full height to the end wall.  Shorten the ridge and past its ends the distance runs to the tip instead, so the ends slope in — a hip, from the same call.  <code>dmax</code> clamps the distance; 100 here means "never".</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">a_hip_is_a_shorter_ridge</span>() {
+  s = <span class="fn-call">hexset_new</span>(<span class="nm">4</span>);
+  <span class="kw">for</span> r <span class="kw">in</span> -<span class="nm">1..2</span> { <span class="kw">for</span> q <span class="kw">in</span> -<span class="nm">3..4</span> { <span class="fn-call">hexset_set</span>(s, q, r, <span class="kw">true</span>); } }   <span class="cm">// 7 cells by 3 rows</span>
+  full = <span class="fn-call">track_new</span>();
+  <span class="fn-call">track_straight</span>(full, -<span class="nm">3.0</span> * <span class="en">SQ3</span>, <span class="nm">0.0</span>, <span class="nm">3.0</span> * <span class="en">SQ3</span>, <span class="nm">0.0</span>);
+  short = <span class="fn-call">track_new</span>();
+  <span class="fn-call">track_straight</span>(short, <span class="nm">0.0</span> - <span class="en">SQ3</span>, <span class="nm">0.0</span>, <span class="en">SQ3</span>, <span class="nm">0.0</span>);
+  gable = <span class="fn-call">heights_new</span>(-<span class="nm">4</span>, -<span class="nm">4</span>, <span class="nm">9</span>, <span class="nm">9</span>);
+  <span class="fn-call">roof_ridge</span>(s, gable, full, <span class="nm">5.0</span>, <span class="nm">1.0</span>, <span class="nm">100.0</span>);
+  hip = <span class="fn-call">heights_new</span>(-<span class="nm">4</span>, -<span class="nm">4</span>, <span class="nm">9</span>, <span class="nm">9</span>);
+  <span class="fn-call">roof_ridge</span>(s, hip, short, <span class="nm">5.0</span>, <span class="nm">1.0</span>, <span class="nm">100.0</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">height_get</span>(gable, <span class="nm">0</span>, <span class="nm">0</span>) == <span class="nm">5.0</span> &amp;&amp; <span class="fn-call">height_get</span>(hip, <span class="nm">0</span>, <span class="nm">0</span>) == <span class="nm">5.0</span>, <span class="st">"both on their ridge"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">height_get</span>(gable, <span class="nm">3</span>, <span class="nm">0</span>) == <span class="nm">5.0</span>, <span class="st">"the gable carries the ridge to the end wall"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">near</span>(<span class="fn-call">height_get</span>(hip, <span class="nm">3</span>, <span class="nm">0</span>), <span class="nm">5.0</span> - <span class="nm">2.0</span> * <span class="en">SQ3</span>), <span class="st">"the hip is 2√3 past its ridge's end"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">roof_ponds</span>(s, gable) == <span class="nm">0</span> &amp;&amp; <span class="fn-call">roof_ponds</span>(s, hip) == <span class="nm">0</span>, <span class="st">"both drain"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"ridge   : end cell of the gable {height_get(gable, 3, 0)}, of the hip {height_get(hip, 3, 0):.4}"</span>);
+}</code></pre>
+<h2 id="a-roof-must-drain">A roof must drain</h2>
+<p><code>roof_ponds</code> counts INTERIOR cells — all six neighbours in the footprint — with no lower neighbour: water collects there and never leaves.  A roof that drains has none.  Boundary cells are not counted, because they drain off the eave.</p>
+<p><code>roof_hip(s, f, eave, per_ring)</code> is the roof that drains on any footprint: the boundary is ring 0 at eave height, and each ring inward rises by <code>per_ring</code>.  Its eave is level by construction, which <code>eave_spread</code> (the spread of the boundary heights) confirms.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">a_roof_must_drain</span>() {
+  s = <span class="fn-call">hexagon</span>();
+  f = <span class="fn-call">heights_new</span>(-<span class="nm">2</span>, -<span class="nm">2</span>, <span class="nm">5</span>, <span class="nm">5</span>);
+  top = <span class="fn-call">roof_hip</span>(s, f, <span class="nm">3.0</span>, <span class="nm">1.0</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(top == <span class="nm">1</span> &amp;&amp; <span class="fn-call">height_get</span>(f, <span class="nm">0</span>, <span class="nm">0</span>) == <span class="nm">4.0</span>, <span class="st">"one ring inside the eave"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">eave_spread</span>(s, f) == <span class="nm">0.0</span> &amp;&amp; <span class="fn-call">roof_ponds</span>(s, f) == <span class="nm">0</span>, <span class="st">"a level eave, and it drains"</span>);</code></pre>
+<pre><code>  <span class="fn-call">height_set</span>(f, <span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">2.0</span>);            <span class="cm">// dent the middle below the eave</span>
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">roof_ponds</span>(s, f) == <span class="nm">1</span>, <span class="st">"the centre now holds water"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"drain   : hip rings {top}, ponds 0; dented, ponds {roof_ponds(s, f)}"</span>);
+}</code></pre>
+<h2 id="where-to-go-next">Where to go next</h2>
+<ul>
+<li><code>tests/02-worked-examples.loft</code> — <code>@HXR-001</code> … <code>@HXR-006</code>: the hip as a gable, why a cone on a drawn footprint cannot get both the eave and the drainage right, the centre in world units, groin against cloister (<code>vault_groin</code> / <code>vault_cloister</code>), ponding on the boundary, and drawing the recovered surface.</li>
+<li><code>vault_arc</code> and <code>dome</code> are the curved profiles: the soffit of an arch, and a point source with a circular profile.</li>
+</ul>
+
+  </article>
+<script src="search-index.js"></script>
+<script src="search.js"></script>
+<script>
+(function(){
+var m={"Keywords":"keywords","Texts":"texts","Integers":"integers","Boolean":"boolean","Float":"float","Functions":"functions","Vector":"vector","Structs":"structs","Enums":"enums","Sorted":"sorted","Index":"index","Hash":"hash","File":"file","Lexer":"lexer","Parser":"parser","Libraries":"libraries","Store Locks":"store_locks","Parallel execution":"parallel_execution","Logging":"logging","Time":"time","Safety":"safety","JSON":"json","Generics":"generics","Closures":"closures","Coroutines":"coroutines","Tuples":"tuples","Match":"match","Formatting":"formatting"};
+var h=document.querySelector('h1');
+if(!h)return;
+var key=m[h.textContent];
+if(!key)return;
+var a=document.createElement('a');
+a.className='playground-link';
+a.href='playground.html?example='+key;
+a.textContent='\u25B6 Try in Playground';
+h.parentNode.insertBefore(a,h.nextSibling);
+})();
+</script>
+</body>
+</html>

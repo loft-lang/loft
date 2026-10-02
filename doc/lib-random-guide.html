@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>random guide — Loft, a programming language for small browser games</title>
+  <meta name="description" content="Getting started with the loft library random — a runnable guide that is itself a loft program, so every example in it compiles.">
+<link rel="canonical" href="https://loft-lang.org/loft/lib-random-guide.html">
+<meta property="og:title" content="random guide — Loft, a programming language for small browser games">
+<meta property="og:description" content="Getting started with the loft library random — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://loft-lang.org/loft/lib-random-guide.html">
+<meta property="og:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<meta property="og:site_name" content="Loft">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="random guide — Loft, a programming language for small browser games">
+<meta name="twitter:description" content="Getting started with the loft library random — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta name="twitter:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<link rel="stylesheet" href="style.css">
+<style>.playground-link{display:inline-block;margin:0.3em 0 0.8em;padding:4px 12px;background:#2563eb;color:#fff;border-radius:4px;text-decoration:none;font-size:0.85em}.playground-link:hover{filter:brightness(1.15)}@media print{.playground-link{display:none}}</style>
+</head>
+<body>
+<nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
+<h1>random guide</h1>
+<article>
+<p><a href="lib-random.html">← random</a> · <a href="lib-random-api.html">API reference</a> · <a href="lib-random-src.html">source</a></p>
+<p><code>random</code> gives a loft program pseudo-random integers and random orderings, in two tiers: <code>rand</code> / <code>rand_seed</code> / <code>rand_indices</code> draw from one generator the whole process shares, and a <code>RandStream</code> is an independent stream you own and carry as a plain struct. Choosing between them is the whole decision, and the last section is about what happens when you choose wrong.</p>
+<p>It is not a source of cryptographic randomness. A key, a nonce or a salt must come from the operating system, which is <code>crypto::random_bytes(n)</code> — the generators here are fast and reproducible, and reproducible is exactly what a secret must never be. It is not a noise or procedural-texture library either: it hands you numbers, not fields.</p>
+<p>Install it once, then import it:</p>
+<pre><code>loft install random
+</code></pre>
+<h2 id="the-smallest-thing-that-does-something">The smallest thing that does something</h2>
+<p>Seed the shared generator, then roll a die:</p>
+<pre><code><span class="kw">use</span> random::*;</code></pre>
+<pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {
+  <span class="fn-call">rand_seed</span>(<span class="nm">42</span>);
+  roll = <span class="fn-call">rand</span>(<span class="nm">1</span>, <span class="nm">6</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"rolled {roll}"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(roll &gt;= <span class="nm">1</span> &amp;&amp; roll &lt;= <span class="nm">6</span>, <span class="st">"a die roll is 1..6, got {roll}"</span>);</code></pre>
+<p>Every section below is a function and <code>main</code> calls each one. A section <code>main</code> does not call still COMPILES — so a renamed API would still be caught while its assertions, the half that checks the example is RIGHT rather than merely spelled correctly, silently never run.</p>
+<pre><code>  <span class="fn-call">reproducing</span>();
+  <span class="fn-call">shuffling</span>();
+  <span class="fn-call">owning_a_stream</span>();
+  <span class="fn-call">the_surprise</span>();
+}</code></pre>
+<p>That prints:</p>
+<pre><code>  rolled 2
+</code></pre>
+<h2 id="reproducing-a-run">Reproducing a run</h2>
+<p>The generator starts from a fixed default seed, so a program that never calls <code>rand_seed</code> still produces the same numbers on every run. Seed it explicitly when the sequence has to be pinned to something you recorded — a test, or a level a player can share.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">reproducing</span>() {
+  <span class="fn-call">rand_seed</span>(<span class="nm">0</span>);
+  a = <span class="fn-call">rand</span>(<span class="nm">0</span>, <span class="nm">999</span>);
+  <span class="fn-call">rand_seed</span>(<span class="nm">0</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">rand</span>(<span class="nm">0</span>, <span class="nm">999</span>) == a, <span class="st">"the same seed reproduces the sequence"</span>);</code></pre>
+<p><code>rand</code> answers null rather than crashing when the range is empty, so an inverted range is something you can test for with <code>!</code>.</p>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="fn-call">rand</span>(<span class="nm">10</span>, <span class="nm">5</span>), <span class="st">"an inverted range is null, not an error"</span>);
+}</code></pre>
+<h2 id="random-ordering-and-sampling-without-replacement">Random ordering, and sampling without replacement</h2>
+<p><code>rand_indices(n)</code> answers <code>0, 1, ..., n-1</code> in a random order — a permutation, not a sample with repeats. It is the one to reach for when you want to visit a collection in random order, because it shuffles INDICES and leaves the collection itself alone.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">shuffling</span>() {
+  <span class="fn-call">rand_seed</span>(<span class="nm">7</span>);
+  order = <span class="fn-call">rand_indices</span>(<span class="nm">5</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(order) == <span class="nm">5</span>, <span class="st">"rand_indices(5) has five entries"</span>);</code></pre>
+<p>Every value 0..4 appears exactly once. Mark each position as seen to prove it.</p>
+<pre><code>  seen = [<span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..5</span> { <span class="kw">false</span> }];
+  <span class="kw">for</span> idx <span class="kw">in</span> order {
+    seen[idx] = <span class="kw">true</span>
+  }
+  all_seen = <span class="kw">true</span>;
+  <span class="kw">for</span> s <span class="kw">in</span> seen {
+    <span class="kw">if</span> !s {
+      all_seen = <span class="kw">false</span>
+    }
+  }
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(all_seen, <span class="st">"a permutation covers every position exactly once"</span>);</code></pre>
+<p>Take the first k entries of a shuffled index vector to pick k distinct items.</p>
+<pre><code>  items = [<span class="st">"apple"</span>, <span class="st">"banana"</span>, <span class="st">"cherry"</span>, <span class="st">"date"</span>, <span class="st">"elderberry"</span>];
+  <span class="fn-call">rand_seed</span>(<span class="nm">1</span>);
+  indices = <span class="fn-call">rand_indices</span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(items));</code></pre>
+<p>On null-flow, because this trips people once: indexing a vector by a VARIABLE (<code>indices[i]</code>) answers a nullable element — <code>text?</code> — since the compiler cannot prove the index is in range. Appending a <code>text?</code> to the non-null <code>picked</code> would change its type, so supply a fallback with <code>?? ""</code>. The value is never actually null here.</p>
+<pre><code>  picked = <span class="st">""</span>;
+  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..3</span> {
+    <span class="kw">if</span> i &gt; <span class="nm">0</span> {
+      picked += <span class="st">", "</span>
+    }
+    picked += items[indices[i]] ?? <span class="st">""</span>
+  }
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(picked) &gt; <span class="nm">0</span>, <span class="st">"three distinct fruits in a random order: {picked}"</span>);</code></pre>
+<p>The same guard for numbers — <code>?? 0</code> when accumulating through a variable index.</p>
+<pre><code>  values = [<span class="nm">10</span>, <span class="nm">20</span>, <span class="nm">30</span>, <span class="nm">40</span>, <span class="nm">50</span>];
+  total = <span class="nm">0</span>;
+  <span class="kw">for</span> i <span class="kw">in</span> order {
+    total += values[i] ?? <span class="nm">0</span>
+  }
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(total == <span class="nm">150</span>, <span class="st">"each value summed exactly once: {total}"</span>);
+}</code></pre>
+<h2 id="a-stream-you-own">A stream you own</h2>
+<p>The moment reproducibility is a REQUIREMENT rather than a convenience, stop using the shared generator. <code>seed_stream(seed)</code> answers a <code>RandStream</code>: an independent, deterministic stream that is a plain struct, so it saves, replays and travels with the rest of your state. <code>r.get(lo, hi)</code> and <code>r.indices(n)</code> are the stream's own versions of <code>rand</code> and <code>rand_indices</code>, with the same contracts.</p>
+<p>Two streams in one program never disturb each other, which is what lets a game keep level generation and combat on separate streams: a change to one cannot shift the other's numbers.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">owning_a_stream</span>() {
+  world = <span class="fn-call">seed_stream</span>(<span class="nm">2026</span>);
+  combat = <span class="fn-call">seed_stream</span>(<span class="nm">7</span>);</code></pre>
+<pre><code>  layout = world.<span class="fn-call">get</span>(<span class="nm">1</span>, <span class="nm">100</span>) ?? <span class="nm">0</span>;
+  attack = combat.<span class="fn-call">get</span>(<span class="nm">1</span>, <span class="nm">20</span>) ?? <span class="nm">0</span>;      <span class="cm">// does not disturb `world`</span>
+  layout2 = world.<span class="fn-call">get</span>(<span class="nm">1</span>, <span class="nm">100</span>) ?? <span class="nm">0</span>;
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(layout &gt;= <span class="nm">1</span> &amp;&amp; layout &lt;= <span class="nm">100</span>, <span class="st">"in range: {layout}"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(layout2 &gt;= <span class="nm">1</span> &amp;&amp; layout2 &lt;= <span class="nm">100</span>, <span class="st">"in range: {layout2}"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(attack &gt;= <span class="nm">1</span> &amp;&amp; attack &lt;= <span class="nm">20</span>, <span class="st">"in range: {attack}"</span>);</code></pre>
+<p>Equal seeds give equal streams, so a recorded seed is a recorded run.</p>
+<pre><code>  replay = <span class="fn-call">seed_stream</span>(<span class="nm">2026</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(replay.<span class="fn-call">get</span>(<span class="nm">1</span>, <span class="nm">100</span>) == layout, <span class="st">"a stream replays exactly"</span>);</code></pre>
+<p>And a shuffled deck, from this stream alone.</p>
+<pre><code>  deck = combat.<span class="fn-call">indices</span>(<span class="nm">52</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(deck) == <span class="nm">52</span>, <span class="st">"a full deck"</span>);
+}</code></pre>
+<h2 id="the-one-that-surprises-people">The one that surprises people</h2>
+<p>A <code>RandStream</code> behaves in two opposite ways depending on how it moves, and the type is <code>RandStream</code> in both cases:</p>
+<pre><code>- **Assigning one COPIES it.** `r2 = r1` forks — both replay the same
+  sequence from that point. That is how you checkpoint a stream before a
+  speculative run, and also how you end up with two "different" streams
+  handing out identical numbers.
+- **Passing one to a function LINKS it.** A struct parameter is a store link,
+  so the callee's draw advances YOUR stream. That is what makes `r.get(...)`
+  work as a method at all, and it means a helper that draws is spending your
+  sequence, not its own.
+</code></pre>
+<pre><code><span class="kw">fn</span> <span class="fn-call">draw_one</span>(r: <span class="en">RandStream</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {
+  r.<span class="fn-call">get</span>(<span class="nm">0</span>, <span class="nm">1000000</span>) ?? <span class="nm">0</span>
+}</code></pre>
+<pre><code><span class="kw">fn</span> <span class="fn-call">the_surprise</span>() {
+  r1 = <span class="fn-call">seed_stream</span>(<span class="nm">9</span>);
+  r2 = r1;                        <span class="cm">// a COPY, taken before any draw</span>
+  a1 = r1.<span class="fn-call">get</span>(<span class="nm">0</span>, <span class="nm">1000000</span>) ?? <span class="nm">0</span>;
+  b1 = r2.<span class="fn-call">get</span>(<span class="nm">0</span>, <span class="nm">1000000</span>) ?? <span class="nm">0</span>;
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(b1 == a1, <span class="st">"the fork replays from where it was taken"</span>);
+  a2 = r1.<span class="fn-call">get</span>(<span class="nm">0</span>, <span class="nm">1000000</span>) ?? <span class="nm">0</span>;
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(a2 != a1, <span class="st">"while the original has moved on"</span>);</code></pre>
+<p>A parameter is the other way round: the callee draws from the caller's stream.</p>
+<pre><code>  caller = <span class="fn-call">seed_stream</span>(<span class="nm">9</span>);
+  oracle = <span class="fn-call">seed_stream</span>(<span class="nm">9</span>);
+  expect_first = oracle.<span class="fn-call">get</span>(<span class="nm">0</span>, <span class="nm">1000000</span>) ?? <span class="nm">0</span>;
+  expect_second = oracle.<span class="fn-call">get</span>(<span class="nm">0</span>, <span class="nm">1000000</span>) ?? <span class="nm">0</span>;
+  inside = <span class="fn-call">draw_one</span>(caller);
+  after = caller.<span class="fn-call">get</span>(<span class="nm">0</span>, <span class="nm">1000000</span>) ?? <span class="nm">0</span>;
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(inside == expect_first, <span class="st">"the callee drew the caller's next value"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(after == expect_second, <span class="st">"and the caller's stream advanced with it"</span>);</code></pre>
+<p>The same asymmetry is why <code>rand_seed</code> is weaker than it looks: it fixes what the shared GENERATOR produces, not what you receive. One <code>rand()</code> from anywhere else in the process shifts everything after it. A stream has no "anywhere else".</p>
+<pre><code>}</code></pre>
+<h2 id="where-to-go-next">Where to go next</h2>
+<p>The API reference lists every signature with its contract. The package's own tests are the best-explained calls in it — <code>tests/worked-examples.loft</code> carries <code>@RND-001</code> (why a seeded global sequence is not yours), <code>@RND-002</code> (the fork / link asymmetry above) and <code>@RND-003</code> (a shuffle of n costs exactly n-1 draws, so inserting one shifts the rest by a known amount).</p>
+
+  </article>
+<script src="search-index.js"></script>
+<script src="search.js"></script>
+<script>
+(function(){
+var m={"Keywords":"keywords","Texts":"texts","Integers":"integers","Boolean":"boolean","Float":"float","Functions":"functions","Vector":"vector","Structs":"structs","Enums":"enums","Sorted":"sorted","Index":"index","Hash":"hash","File":"file","Lexer":"lexer","Parser":"parser","Libraries":"libraries","Store Locks":"store_locks","Parallel execution":"parallel_execution","Logging":"logging","Time":"time","Safety":"safety","JSON":"json","Generics":"generics","Closures":"closures","Coroutines":"coroutines","Tuples":"tuples","Match":"match","Formatting":"formatting"};
+var h=document.querySelector('h1');
+if(!h)return;
+var key=m[h.textContent];
+if(!key)return;
+var a=document.createElement('a');
+a.className='playground-link';
+a.href='playground.html?example='+key;
+a.textContent='\u25B6 Try in Playground';
+h.parentNode.insertBefore(a,h.nextSibling);
+})();
+</script>
+</body>
+</html>

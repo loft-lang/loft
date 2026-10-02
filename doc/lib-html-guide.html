@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>html guide — Loft, a programming language for small browser games</title>
+  <meta name="description" content="Getting started with the loft library html — a runnable guide that is itself a loft program, so every example in it compiles.">
+<link rel="canonical" href="https://loft-lang.org/loft/lib-html-guide.html">
+<meta property="og:title" content="html guide — Loft, a programming language for small browser games">
+<meta property="og:description" content="Getting started with the loft library html — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://loft-lang.org/loft/lib-html-guide.html">
+<meta property="og:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<meta property="og:site_name" content="Loft">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="html guide — Loft, a programming language for small browser games">
+<meta name="twitter:description" content="Getting started with the loft library html — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta name="twitter:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<link rel="stylesheet" href="style.css">
+<style>.playground-link{display:inline-block;margin:0.3em 0 0.8em;padding:4px 12px;background:#2563eb;color:#fff;border-radius:4px;text-decoration:none;font-size:0.85em}.playground-link:hover{filter:brightness(1.15)}@media print{.playground-link{display:none}}</style>
+</head>
+<body>
+<nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
+<h1>html guide</h1>
+<article>
+<p><a href="lib-html.html">← html</a> · <a href="lib-html-api.html">API reference</a> · <a href="lib-html-src.html">source</a></p>
+<p><code>html</code> is one function. It escapes the five characters that can break out of an HTML element body or an attribute value, so text you did not write can be interpolated into markup without becoming markup.</p>
+<p>It is not a markdown renderer — that is <code>markdown</code>, which turns a document into HTML. It is not a sanitiser either: it does not filter markup or strip scripts. It makes attacker-supplied TEXT safe to place in markup, which is a different and much stronger guarantee than making attacker-supplied MARKUP safe. If you need to accept a subset of HTML from a user, this is not it.</p>
+<h2 id="the-whole-library">The whole library</h2>
+<p><code>escape_html</code> is a method on <code>text</code>, so it reads in the direction the data flows:</p>
+<pre><code><span class="kw">use</span> html;</code></pre>
+<pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {
+  raw = <span class="st">"Tom &amp; Jerry's &lt;b&gt;\"</span>show\<span class="st">"&lt;/b&gt;"</span>;
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"&lt;p&gt;{raw.escape_html()}&lt;/p&gt;"</span>);</code></pre>
+<p>Each section below is a function and <code>main</code> calls it — a section <code>main</code> does not call still compiles, and silently never runs its assertions.</p>
+<pre><code>  <span class="fn-call">the_five</span>();
+  <span class="fn-call">where_to_use_it</span>();
+  <span class="fn-call">the_apostrophe</span>();
+}</code></pre>
+<p>That prints:</p>
+<pre><code>  &lt;p&gt;Tom &amp;amp; Jerry&amp;#x27;s &amp;lt;b&amp;gt;&amp;quot;show&amp;quot;&amp;lt;/b&amp;gt;&lt;/p&gt;
+</code></pre>
+<h2 id="the-five-characters">The five characters</h2>
+<p><code>&amp;</code> becomes <code>&amp;amp;</code>, <code>&lt;</code> becomes <code>&amp;lt;</code>, <code>&gt;</code> becomes <code>&amp;gt;</code>, <code>"</code> becomes <code>&amp;quot;</code> and <code>'</code> becomes <code>&amp;#x27;</code>.</p>
+<p><code>&amp;</code> is escaped first, so the entities the others produce are never escaped a second time — an ampersand-last implementation turns <code>&lt;</code> into <code>&amp;amp;lt;</code> and the reader sees the entity rather than the character.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">the_five</span>() {
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"&amp;"</span>.<span class="fn-call">escape_html</span>() == <span class="st">"&amp;amp;"</span>, <span class="st">"ampersand"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"&lt;"</span>.<span class="fn-call">escape_html</span>() == <span class="st">"&amp;lt;"</span>, <span class="st">"less-than"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"&gt;"</span>.<span class="fn-call">escape_html</span>() == <span class="st">"&amp;gt;"</span>, <span class="st">"greater-than"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"\"</span><span class="st">".escape_html() == "</span>&amp;quot;<span class="st">", "</span>double quote<span class="st">");</span>
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"'"</span>.<span class="fn-call">escape_html</span>() == <span class="st">"&amp;#x27;"</span>, <span class="st">"apostrophe"</span>);</code></pre>
+<p>The ordering property, stated as a test: one pass, no double-escaping.</p>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"&lt;a&gt;"</span>.<span class="fn-call">escape_html</span>() == <span class="st">"&amp;lt;a&amp;gt;"</span>, <span class="st">"no entity is escaped twice"</span>);</code></pre>
+<p>Text that needs nothing comes back unchanged.</p>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"plain text"</span>.<span class="fn-call">escape_html</span>() == <span class="st">"plain text"</span>, <span class="st">"untouched when it can be"</span>);
+}</code></pre>
+<h2 id="where-it-belongs">Where it belongs</h2>
+<p>Every place text you did not write reaches HTML output. That is the element body AND the attribute value, in either quoting style — a <code>&lt;p&gt;</code> needs it as much as an <code>&lt;a title='...'&gt;</code> does, which is what the apostrophe is for.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">where_to_use_it</span>() {
+  wu_name = <span class="st">"O'Brien &amp; Sons"</span>;
+  wu_safe = wu_name.<span class="fn-call">escape_html</span>();
+  wu_body = <span class="st">"&lt;p&gt;{wu_safe}&lt;/p&gt;"</span>;
+  wu_attr = <span class="st">"&lt;a title='{wu_safe}'&gt;x&lt;/a&gt;"</span>;</code></pre>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!wu_body.<span class="fn-call"><a href="stdlib-text.html">contains</a></span>(<span class="st">"&amp;amp;amp;"</span>), <span class="st">"the body is escaped once, not twice"</span>);</code></pre>
+<p>The property that matters for the attribute: no raw apostrophe survives, so nothing in the value can close the quote the markup opened.</p>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!wu_safe.<span class="fn-call"><a href="stdlib-text.html">contains</a></span>(<span class="st">"'"</span>), <span class="st">"no raw apostrophe reaches the attribute value"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(wu_attr.<span class="fn-call"><a href="stdlib-text.html">contains</a></span>(<span class="st">"&amp;#x27;"</span>), <span class="st">"it is an entity instead"</span>);
+}</code></pre>
+<p>It does not escape for other contexts. Text going into a URL, a JavaScript string or a CSS value needs that context's own escaping; HTML entities protect none of them.</p>
+<h2 id="the-one-that-surprises-people">The one that surprises people</h2>
+<p>The <code>markdown</code> package exports <code>html_escape</code>, which looks like this function with its words swapped. It is not quite: <code>markdown::html_escape</code> escapes four characters and leaves the apostrophe alone.</p>
+<p>That is fine for the element bodies the renderer puts text into, and unsafe in a single-quoted attribute value. When you are writing markup yourself, reach for this package.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">the_apostrophe</span>() {
+  ap_raw = <span class="st">"Jerry's"</span>;
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(ap_raw.<span class="fn-call">escape_html</span>() == <span class="st">"Jerry&amp;#x27;s"</span>, <span class="st">"html escapes it"</span>);
+}</code></pre>
+<h2 id="where-to-go-next">Where to go next</h2>
+<p>There is nothing else here — one function, <code>#pure</code>, no dependencies and no state, so it behaves identically on the interpreter, <code>--native</code>, wasm and in the browser. <code>tests/01-escape.loft</code> in the package is the fuller set of cases.</p>
+
+  </article>
+<script src="search-index.js"></script>
+<script src="search.js"></script>
+<script>
+(function(){
+var m={"Keywords":"keywords","Texts":"texts","Integers":"integers","Boolean":"boolean","Float":"float","Functions":"functions","Vector":"vector","Structs":"structs","Enums":"enums","Sorted":"sorted","Index":"index","Hash":"hash","File":"file","Lexer":"lexer","Parser":"parser","Libraries":"libraries","Store Locks":"store_locks","Parallel execution":"parallel_execution","Logging":"logging","Time":"time","Safety":"safety","JSON":"json","Generics":"generics","Closures":"closures","Coroutines":"coroutines","Tuples":"tuples","Match":"match","Formatting":"formatting"};
+var h=document.querySelector('h1');
+if(!h)return;
+var key=m[h.textContent];
+if(!key)return;
+var a=document.createElement('a');
+a.className='playground-link';
+a.href='playground.html?example='+key;
+a.textContent='\u25B6 Try in Playground';
+h.parentNode.insertBefore(a,h.nextSibling);
+})();
+</script>
+</body>
+</html>

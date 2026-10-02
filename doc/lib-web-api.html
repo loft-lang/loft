@@ -23,10 +23,10 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>web API</h1>
 <article>
-<p><a href="lib-web.html">← web</a> · version 0.4.2</p>
+<p><a href="lib-web.html">← web</a> · version 0.4.3</p>
 <p class="lib-legend">34 public items, in source order. Generated from the registry index, which re-derives them from the package source at publish time — so a signature here is the one that version actually ships.</p>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">HttpResponse</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">HttpResponse</span> { status: <span class="ty"><a href="stdlib-types.html">integer</a></span>, body: <span class="ty"><a href="stdlib-types.html">text</a></span>, headers: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt; }</code></pre>
 <p>The result of an HTTP request.</p>
 </div>
 <div class="item">
@@ -67,7 +67,7 @@
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">http_get_range</span>(url: <span class="ty"><a href="stdlib-types.html">text</a></span>, offset: <span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="bi"><a href="stdlib-text.html">len</a></span>: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">HttpResponse</span></code></pre>
-<p>Read the byte range [offset, offset+len) of a remote file via a Range request. Returns status 206 (Partial Content) with the raw bytes in <code>body</code> when the server honours ranges; a server that ignores Range returns 200 with the full body. Read the bytes with <code>byte_at(response.body, i)</code>.</p>
+<p>Read the byte range [offset, offset+len) of a remote file via a Range request. Returns status 206 (Partial Content) with the raw bytes in <code>body</code> when the server honours ranges; a server that ignores Range returns 200 with the full body. Read the bytes with <code>byte_at(i, response.body)</code>.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">http_get_range_h</span>(url: <span class="ty"><a href="stdlib-types.html">text</a></span>, offset: <span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="bi"><a href="stdlib-text.html">len</a></span>: <span class="ty"><a href="stdlib-types.html">integer</a></span>, headers: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt;) -&gt; <span class="en">HttpResponse</span></code></pre>
@@ -78,13 +78,14 @@
 <p>Resolve a URL's total byte size without downloading it. Tries a HEAD request (Content-Length); if the server omits the length on HEAD (some CDNs — e.g. github-raw — only report it on GET), falls back to a 1-byte range read and takes the total from the Content-Range header. Returns -1 if size is unavailable.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">WsHandler</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">WsHandler</span> { id: <span class="ty"><a href="stdlib-types.html">integer</a></span> }</code></pre>
+<p>An open WebSocket session, from <code>ws_handler</code>.  It is a slot number on the native side; the connection behind it reconnects on its own.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">ws_handler</span>(url: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="en">WsHandler</span>?</code></pre>
 <p>Open a WebSocket session.  Returns null only if the URL is malformed; transient connection failures (server not yet up, network blip) are absorbed by the auto-reconnect loop in the Rust layer, so this call always returns a usable handle for any well-formed <code>ws://...</code> or <code>wss://...</code> URL.</p>
-<p><code>wss://</code> (TLS) works on BOTH targets: the browser uses the platform WebSocket (which has always spoken wss), and since web 0.3.2 the native client dials TLS through rustls with certificate validation ON by default (default port 443).  For a self-signed dev endpoint, set <code>LOFT_WS_INSECURE_SKIP_VERIFY=1</code> in the native process — an explicit opt-out, never a URL option, so it cannot be baked into a deployed config by accident.</p>
-<p>⚠ The return is <code>WsHandler?</code> and not <code>WsHandler</code>, because null is the whole point of the call: it is the one distinction this function exists to make. It used to be declared non-null, which meant the compiler called the <code>== null</code> test the contract asks for redundant — the signature denied the only thing it had to say.</p>
+<p><code>wss://</code> (TLS) works on BOTH targets: the browser uses the platform WebSocket, and the native client dials TLS through rustls with certificate validation ON by default (default port 443).  For a self-signed dev endpoint, set <code>LOFT_WS_INSECURE_SKIP_VERIFY=1</code> in the native process — an explicit opt-out, never a URL option, so it cannot be baked into a deployed config by accident.</p>
+<p>⚠ The return is <code>WsHandler?</code> because null is the one distinction this call exists to make: test it with <code>== null</code>.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">send</span>(self: <span class="en">WsHandler</span>, msg: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
@@ -92,7 +93,7 @@
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">send_binary</span>(self: <span class="en">WsHandler</span>, msg: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
-<p>Send <code>msg</code> as a binary WebSocket frame (opcode 2).  Loft <code>text</code> is a byte buffer — pack u8/u16/i32/etc. into it via <code>to_bytes</code> style code, then ship it.  Returns true on success; false means the connection is currently in backoff / reconnecting.</p>
+<p>Send <code>msg</code> as a binary WebSocket frame (opcode 2).  Loft <code>text</code> is a byte buffer — build it with <code>pack_reset</code> / <code>pack_u8</code> / … / <code>pack_take</code>, then ship it.  Returns true on success; false means the connection is currently in backoff / reconnecting.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">last_opcode</span>(self: <span class="en">WsHandler</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
@@ -112,7 +113,7 @@
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">sleep_ms</span>(ms: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
-<p>Block the calling thread for <code>ms</code> milliseconds.  Convenience for tests and pacing loops; non-positive values are a no-op.  Not available on the WASM target — the host event loop is the equivalent.</p>
+<p>Block the calling thread for <code>ms</code> milliseconds.  Convenience for tests and pacing loops; non-positive values are a no-op.  In the browser it returns at once — the host event loop paces there, so call <code>frame_yield</code> instead.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">pack_reset</span>()</code></pre>
@@ -120,15 +121,15 @@
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">pack_u8</span>(b: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
-<p>Append a single byte to the pack buffer.  <code>b</code> is masked to 8 bits.</p>
+<p>Append a single byte to the pack buffer: the low 8 bits of <code>b</code>.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">pack_u16_le</span>(v: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
-<p>Append a 2-byte little-endian unsigned value.</p>
+<p>Append the low 16 bits of <code>v</code>, little-endian.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">pack_u32_le</span>(v: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
-<p>Append a 4-byte little-endian unsigned value.  Loft <code>integer</code> is i32 — bit-cast to u32 to preserve the LE byte pattern across the sign boundary.</p>
+<p>Append the low 32 bits of <code>v</code>, little-endian — so -1 packs as FF FF FF FF, the same bytes as 0xFFFFFFFF.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">pack_take</span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span></code></pre>
@@ -136,13 +137,15 @@
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-text-bytes-and-code-points.html">byte_at</a></span>(idx: <span class="ty"><a href="stdlib-types.html">integer</a></span>, t: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
-<p>Read the byte at <code>idx</code> of the text payload.  Out-of-range (negative or past the end) returns -1.  Use to decode binary frames received via <code>try_recv</code> / <code>pump</code>.  Argument order is (idx, t) — the C-ABI auto-marshal in src/extensions.rs supports (I32, Text) -&gt; I32 but not (Text, I32) -&gt; I32.</p>
+<p>Read the byte at <code>idx</code> of the text payload.  Out-of-range (negative or past the end) returns -1.  Use to decode binary frames received via <code>try_recv</code> / <code>pump</code>.  Argument order is (idx, t), unlike the (text, index) order elsewhere.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">WsGroupEvent</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">WsGroupEvent</span> { handle: <span class="ty"><a href="stdlib-types.html">integer</a></span>, message: <span class="ty"><a href="stdlib-types.html">text</a></span> }</code></pre>
+<p>What one <code>poll</code> found: the handler slot that had a message and the message, or <code>handle == -1</code> and &quot;&quot; when none had.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">WsGroup</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">WsGroup</span> { _dummy: <span class="ty"><a href="stdlib-types.html">integer</a></span> }</code></pre>
+<p>A set of handlers to receive from in one scan; see above.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">ws_group</span>() -&gt; <span class="en">WsGroup</span></code></pre>
@@ -158,7 +161,7 @@
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">frame_yield</span>()</code></pre>
-<p>Yield one frame to the host event loop (@PLN84 ZT-C); native no-op, browser asyncify suspend (loft_web.ws_yield).  Call once per WS poll iteration so the browser event loop can deliver WebSocket messages.</p>
+<p>Yield one frame to the host event loop: a no-op natively, and in the browser the suspend point that lets the event loop run.  Call once per WS poll iteration so the browser event loop can deliver WebSocket messages.</p>
 </div>
 
   </article>
