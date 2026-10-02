@@ -772,6 +772,58 @@ pub fn view_field(data: &Data, base: &Value, fld: &Value) -> Option<(u16, i64)> 
     Some((root, offs.iter().sum::<i64>() + i64::from(*fld)))
 }
 
+/// `@FR-R-Inputs`' path clause — a callee's scalar input at offset `fld` of its record
+/// parameter, when the caller's argument is a SUB-RECORD path (`atlas.a_cv` handed to
+/// `get_pixel(self: Canvas, …)`): the hoist key — the root variable and the field's SUMMED
+/// offset from the root's first byte, the bytes the read loads — and every `(record type,
+/// offset)` a write could reach the field by.  The key alone is not enough to evict on: a
+/// write through a view of the sub-record (`c = atlas.a_cv; c.width = …`) is typed by the
+/// SUB-record, so the field is stale after a write at the root's type and summed offset or
+/// at any sub-record's type and the offset within it.  A bare variable is not a path here
+/// (its one pair is the plain key); a chain whose root is no plain struct answers `None`.
+#[must_use]
+pub fn path_scalar(
+    data: &Data,
+    vars: &crate::variables::Function,
+    arg: &Value,
+    fld: i64,
+) -> Option<(ScalarKey, Vec<(u16, i64)>)> {
+    let mut chain: Vec<(i64, u16)> = Vec::new();
+    let mut cur = arg.unspan();
+    loop {
+        match cur {
+            Value::Var(_) => break,
+            Value::Call(d, args)
+                if args.len() == 3
+                    && (*d as usize) < data.definitions.len()
+                    && data.def(*d).name() == "OpGetField" =>
+            {
+                let (Value::Int(off), Value::Int(tp)) = (args[1].unspan(), args[2].unspan()) else {
+                    return None;
+                };
+                chain.push((i64::from(*off), u16::try_from(*tp).ok()?));
+                cur = args[0].unspan();
+            }
+            _ => return None,
+        }
+    }
+    let Value::Var(root) = cur else { return None };
+    if chain.is_empty() {
+        return None;
+    }
+    let root_tp = plain_record_type(data, vars.tp(*root))?;
+    // `chain` runs from the argument inward to the root; each sub-record's offset of the
+    // field is `fld` plus the offsets of the sub-records nested inside it.
+    let mut evict: Vec<(u16, i64)> = Vec::with_capacity(chain.len() + 1);
+    let mut within = fld;
+    for (off, tp) in &chain {
+        evict.push((*tp, within));
+        within += off;
+    }
+    evict.push((root_tp, within));
+    Some(((*root, within), evict))
+}
+
 /// A SUB-RECORD of a record variable, as an `OpGetField` chain names one: the root
 /// variable, the summed byte offset the sub-record starts at, and its schema type (the
 /// last `OpGetField`'s content).  `v.pos` on a record carried as a tuple is this: the
@@ -1087,8 +1139,10 @@ pub fn hoistable(
     };
     let vars = data.def(def_nr).variables();
     let rebound = rebound_vars(body, data, vars);
-    // (key, record type, the call) in first-appearance order.
-    let mut found: Vec<(ScalarKey, u16, Value)> = Vec::new();
+    // (key, the (record type, offset) pairs a write evicts it by, the call) in
+    // first-appearance order.  A bare variable's field has one pair; a field reached through
+    // a sub-record path has one per record on the path ([`path_scalar`]).
+    let mut found: Vec<(ScalarKey, Vec<(u16, i64)>, Value)> = Vec::new();
     if tiers.scalars {
         for op in &body.operators {
             op.any_node(&mut |n| {
@@ -1099,7 +1153,7 @@ pub fn hoistable(
                     && let Some(tp) = plain_record_type(data, vars.tp(key.0))
                     && !found.iter().any(|(k, _, _)| *k == key)
                 {
-                    found.push((key, tp, n.clone()));
+                    found.push((key, vec![(tp, key.1)], n.clone()));
                 }
                 false
             });
@@ -1128,12 +1182,24 @@ pub fn hoistable(
                     }
                     if tiers.scalars {
                         for (pf, fld, getter) in &fi.scalars {
-                            if let Some(Value::Var(c)) = args.get(*pf as usize).map(Value::unspan)
+                            let Some(arg) = args.get(*pf as usize) else {
+                                continue;
+                            };
+                            if let Value::Var(c) = arg.unspan()
                                 && !rebound.contains(c)
                                 && let Some(tp) = plain_record_type(data, vars.tp(*c))
                                 && !found.iter().any(|(k, _, _)| *k == (*c, *fld))
                             {
-                                found.push(((*c, *fld), tp, substitute_root(getter, *pf, *c)));
+                                found.push((
+                                    (*c, *fld),
+                                    vec![(tp, *fld)],
+                                    substitute_root(getter, *pf, *c),
+                                ));
+                            } else if let Some((key, evict)) = path_scalar(data, vars, arg, *fld)
+                                && !rebound.contains(&key.0)
+                                && !found.iter().any(|(k, _, _)| *k == key)
+                            {
+                                found.push((key, evict, substitute_path(getter, *pf, arg)));
                             }
                         }
                     }
@@ -1347,7 +1413,7 @@ pub fn hoistable(
     }
     out.scalars = found
         .into_iter()
-        .filter(|(key, tp, _)| !written.evicts(*tp, key.1))
+        .filter(|(_, evict, _)| !evict.iter().any(|(tp, off)| written.evicts(*tp, *off)))
         .map(|(key, _, call)| (key, call))
         .collect();
     out

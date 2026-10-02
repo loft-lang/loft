@@ -1,0 +1,94 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A TWIN CALL'S SCALAR INPUT THROUGH A FIELD PATH IS STALE AFTER EVERY WRITE THAT REACHES IT
+// (`@FR-R-Inputs`, `@FR-R-Scalar`).  `atlas.a_cv.get_pixel(x, y)` hands a sub-record to a
+// callee whose twin takes `width` and `height` as values; the loop reads them ONCE, keyed on
+// the root and the field's summed offset.  Each cell below writes `width` mid-loop by a
+// different route — the path itself, a view of the sub-record, a callee, a two-level path, a
+// whole replacement, a parameter that aliases the sub-record — so a hoisted value that
+// survives the write answers 4 where the program answers 2.  The read-only cells (127) are
+// the loops the hoist must still take.
+//
+// Expected values by hand: data[i] = i*7 % 5 on an 8x8 canvas; get_pixel(5, 1) reads index
+// 13 = 1 while width is 8 and answers 0 once width is 4, so 1 + 1 + 0 + 0 = 2.  The sum over
+// a 10x10 walk counts only the 64 in range: 12 cycles of 0+2+4+1+3 and then 0+2+4+1 = 127.
+
+struct Canvas { width: integer, height: integer, data: vector<integer> }
+fn get_pixel(self: const Canvas, gx: integer, gy: integer) -> integer {
+  if gx < 0 or gx >= self.width or gy < 0 or gy >= self.height {
+    0
+  } else {
+    gp_idx = gy * self.width + gx;
+    gp_d = &self.data;
+    if gp_idx < len(gp_d) { gp_d[gp_idx] ?? 0 } else { 0 }
+  }
+}
+fn shrink(c: Canvas) { c.width = 4; }
+struct Atlas { a_pad: integer, a_cv: Canvas, a_scale: integer }
+struct Outer { o_pad: integer, inner: Atlas }
+
+fn by_path(atlas: Atlas) -> integer {
+  t = 0;
+  for i in 0..4 { t += atlas.a_cv.get_pixel(5, 1); if i == 1 { atlas.a_cv.width = 4; } }
+  t
+}
+fn by_view(atlas: Atlas) -> integer {
+  t = 0;
+  for i in 0..4 { t += atlas.a_cv.get_pixel(5, 1); if i == 1 { c = atlas.a_cv; c.width = 4; } }
+  t
+}
+fn by_callee(atlas: Atlas) -> integer {
+  t = 0;
+  for i in 0..4 { t += atlas.a_cv.get_pixel(5, 1); if i == 1 { shrink(atlas.a_cv); } }
+  t
+}
+fn by_nested_path(o: Outer) -> integer {
+  t = 0;
+  for i in 0..4 { t += o.inner.a_cv.get_pixel(5, 1); if i == 1 { o.inner.a_cv.width = 4; } }
+  t
+}
+fn by_replacement(atlas: Atlas, d2: vector<integer>) -> integer {
+  t = 0;
+  for i in 0..4 {
+    t += atlas.a_cv.get_pixel(5, 1);
+    if i == 1 { atlas.a_cv = Canvas { width: 4, height: 8, data: d2 }; }
+  }
+  t
+}
+fn by_alias(atlas: Atlas, other: Canvas) -> integer {
+  t = 0;
+  for i in 0..4 { t += atlas.a_cv.get_pixel(5, 1); if i == 1 { other.width = 4; } }
+  t
+}
+fn read_nested(o: const Outer) -> integer {
+  t = 0;
+  for py in 0..10 { for px in 0..10 { t += o.inner.a_cv.get_pixel(px, py); } }
+  t
+}
+fn read_path(atlas: const Atlas) -> integer {
+  t = 0;
+  for py in 0..10 { for px in 0..10 { t += atlas.a_cv.get_pixel(px, py); } }
+  t
+}
+fn mk() -> Atlas {
+  d: vector<integer> = [];
+  for i in 0..64 { d += [i * 7 % 5]; }
+  Atlas { a_pad: 9, a_cv: Canvas { width: 8, height: 8, data: d }, a_scale: 1 }
+}
+
+fn main() {
+  d2: vector<integer> = [];
+  for _ in 0..64 { d2 += [3]; }
+  assert(by_path(mk()) == 2, "a write through the path");
+  assert(by_view(mk()) == 2, "a write through a view of the sub-record");
+  assert(by_callee(mk()) == 2, "a callee writing the sub-record");
+  o = Outer { o_pad: 5, inner: mk() };
+  assert(read_nested(o) == 127, "a read-only two-level path");
+  assert(by_nested_path(o) == 2, "a write through a two-level path");
+  assert(by_replacement(mk(), d2) == 2, "the sub-record replaced whole");
+  a = mk();
+  assert(by_alias(a, a.a_cv) == 2, "a parameter that aliases the sub-record");
+  assert(read_path(mk()) == 127, "a read-only path");
+  assert(len(d2) == 64, "d2 untouched");
+}
