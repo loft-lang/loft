@@ -77,6 +77,8 @@ pub fn byte_code_from(
         // `@FR-R-InlineLeaf` (with `R-MaskRange`, `R-SingleUse`, `R-ScaleFold` inside the
         // inlined bodies) — after the value records, so a leaf it inlines is final.
         crate::leaf_inline::rewrite_program(data);
+        // `@FR-R-ForwardWalk` — a vector walk the body cannot resize as a counted loop.
+        crate::forward_walk::rewrite_program(data);
     }
     // @PLN165 D10 — an instance's literal names its template (`Stores::shown`).
     for d in 0..data.definitions() {
