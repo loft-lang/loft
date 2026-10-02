@@ -1162,6 +1162,24 @@ impl State {
             && let Some(first) = lp.operators().iter().next()
             && let Some(r) = rotation(&first.to_owned_value())
         {
+            let r = match start_step(&r).filter(|_| crate::keys::start_step_enabled()) {
+                Some(s) => {
+                    let holds = self.start_step_holds(&lp, &s, stack);
+                    if crate::keys::trace_start_step()
+                        && let Some((lv, _)) = s.store
+                    {
+                        let f = &stack.function;
+                        let verdict = if holds {
+                            "steps one counter"
+                        } else {
+                            "declined — the body names a counter"
+                        };
+                        eprintln!("start-step: {} {} {verdict}", f.name, f.name(lv));
+                    }
+                    if holds { s } else { r }
+                }
+                None => r,
+            };
             return self.gen_rotated_loop(lp, &r, stack);
         }
         stack.add_loop(self.code_pos);
@@ -1200,6 +1218,9 @@ impl State {
             .range(..=self.code_pos)
             .next_back()
             .map(|(_, &l)| l);
+        if let Some((ix, nxt)) = r.seed {
+            self.generate(&Value::Set(ix, Box::new(Value::Var(nxt))), stack, false);
+        }
         stack.add_loop(self.code_pos);
         stack.set_rotated();
         let entry_op = self.code_pos;
@@ -1223,7 +1244,9 @@ impl State {
             self.generate_node(v, stack, false);
         }
         self.clear_stack(stack, 0);
-        self.code_put(entry, (self.code_pos - entry - 4) as i32);
+        if r.seed.is_none() {
+            self.code_put(entry, (self.code_pos - entry - 4) as i32);
+        }
         if let Some(l) = loop_line {
             self.line_numbers.insert(self.code_pos, l);
         }
@@ -1231,11 +1254,30 @@ impl State {
         for p in &r.pre {
             self.generate(p, stack, false);
         }
+        // A seeded counter enters past its step: the first round tests the start itself.
+        if r.seed.is_some() {
+            self.code_put(entry, (self.code_pos - entry - 4) as i32);
+        }
         let step = self.gen_if_test(IrNode::Native(&r.test), stack);
         self.code_put(step, (i64::from(body) - i64::from(self.code_pos)) as i32);
         self.clear_stack(stack, 0);
         stack.end_loop(self);
         Type::Void
+    }
+
+    /// [`start_step`]'s conditions on the rest of the loop: nothing after the iterator names
+    /// `next`, and the index is the loop variable's own slot (`(R-LoopSlot)`, which already
+    /// proved the body neither writes it nor takes its address) or is not named at all.
+    fn start_step_holds(&self, lp: &IrBlock, s: &Rotation, stack: &Stack) -> bool {
+        let (Some((ix, nxt)), Some((lv, _))) = (s.seed, s.store) else {
+            return false;
+        };
+        let pos = stack.function.stack(lv);
+        let shared = pos != u16::MAX && pos == stack.function.stack(ix);
+        lp.operators().iter().skip(1).all(|n| {
+            let v = n.to_owned_value();
+            !v.reads_var(nxt) && (shared || !v.reads_var(ix))
+        })
     }
 
     pub(super) fn gen_break(&mut self, loop_nr: u16, stack: &mut Stack) -> Type {
@@ -6896,6 +6938,9 @@ pub(super) struct Rotation {
     test: Value,
     post: Vec<Value>,
     store: Option<(u16, u16)>,
+    /// `(index, next)` for [`start_step`]: the index is seeded from `next` before the loop and
+    /// the entry jump lands past `pre`, so the first round runs no step.
+    seed: Option<(u16, u16)>,
 }
 
 /// `if c { break }` of the innermost loop — the break bare or alone in a block — answering `c`.
@@ -6924,6 +6969,7 @@ pub(super) fn rotation(first: &Value) -> Option<Rotation> {
             test: c.clone(),
             post: Vec::new(),
             store: None,
+            seed: None,
         });
     }
     let Value::Set(lv, val) = first.unspan() else {
@@ -6952,5 +6998,66 @@ pub(super) fn rotation(first: &Value) -> Option<Rotation> {
         test: exit_test(&ops[k])?.clone(),
         post: ops[k + 1..].to_vec(),
         store: Some((*lv, *ix)),
+        seed: None,
+    })
+}
+
+/// `@FR-R-StartStep` — a computed start's two counters as one.  The iterator `{if c(next)
+/// break; index = next; next = next + 1; index}` keeps `next` one ahead of `index` after every
+/// round and equal to the start before the first, so with `index` seeded from `next` the test
+/// may read `index` after stepping IT, and the first round skips the step.  Every compare sees
+/// the value it saw: the step cannot overflow (the round ran because `index < end`), and a
+/// null start stays null under both steps.  `None` for any other iterator — an inclusive or
+/// reverse range, a filter, a literal start — which keeps the two-counter form: a missed
+/// match costs the copy the loop already pays.  The rest of the loop is checked by
+/// [`State::start_step_holds`].
+fn start_step(r: &Rotation) -> Option<Rotation> {
+    let (_, ix) = r.store?;
+    if !r.pre.is_empty() || r.seed.is_some() {
+        return None;
+    }
+    let [copy, step] = r.post.as_slice() else {
+        return None;
+    };
+    let Value::Set(cix, cval) = copy.unspan() else {
+        return None;
+    };
+    let Value::Var(nxt) = cval.unspan() else {
+        return None;
+    };
+    let Value::Set(snxt, sval) = step.unspan() else {
+        return None;
+    };
+    let Value::Call(add, sargs) = sval.unspan() else {
+        return None;
+    };
+    if *cix != ix
+        || snxt != nxt
+        || *nxt == ix
+        || !matches!(sargs.as_slice(), [a, Value::Int(1)] if matches!(a.unspan(), Value::Var(x) if x == nxt))
+    {
+        return None;
+    }
+    let Value::Call(cmp, targs) = r.test.unspan() else {
+        return None;
+    };
+    let [end, last] = targs.as_slice() else {
+        return None;
+    };
+    if !matches!(last.unspan(), Value::Var(x) if x == nxt)
+        || end.reads_var(*nxt)
+        || end.reads_var(ix)
+    {
+        return None;
+    }
+    Some(Rotation {
+        pre: vec![Value::Set(
+            ix,
+            Box::new(Value::Call(*add, vec![Value::Var(ix), Value::Int(1)])),
+        )],
+        test: Value::Call(*cmp, vec![end.clone(), Value::Var(ix)]),
+        post: Vec::new(),
+        store: r.store,
+        seed: Some((ix, *nxt)),
     })
 }

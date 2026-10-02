@@ -1,0 +1,128 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A counted range whose start is not a literal steps ONE counter on the interpreter.
+// `@FR-R-StartStep`.
+//
+// Such a range runs two counters, `next` one ahead of the index, so that a start at the type's
+// minimum never needs `start - 1`.  The bytecode generator seeds the index from the start and
+// enters the rotated loop past its step, so the first round tests the start itself and each
+// later round steps the index and tests it (`start_step`, `LOFT_NO_START_STEP=1` keeps both
+// counters).  What can go wrong is the round count and the value a round sees: a `continue`
+// that skips the step, a first round that steps before testing, a body that writes the loop
+// variable, an index read in the body, a start at the minimum or an end at the maximum.  Every
+// cell counts its rounds beside its value.  `--native` never sees the layout.  Values
+// hand-computed.
+
+fn range_sum(a: integer, b: integer) -> integer {
+  t = 0;
+  for i in a..b { t += i; }
+  t
+}
+
+fn rounds(a: integer, b: integer) -> integer {
+  n = 0;
+  for _ in a..b { n += 1; }
+  n
+}
+
+// s2: a `continue` must still step: 1 + 3 + 5 + 7 + 9 = 25 over 9 rounds
+fn odd_sum(a: integer, b: integer) -> (integer, integer) {
+  t = 0;
+  n = 0;
+  for i in a..b {
+    n += 1;
+    if i % 2 == 0 { continue; }
+    t += i;
+  }
+  (t, n)
+}
+
+// s6: the index read in the body is the round's own value
+fn index_sum(a: integer, b: integer) -> integer {
+  t = 0;
+  for i in a..b { t += i#index * 10 + i; }
+  t
+}
+
+// s7: a body that writes its loop variable changes the variable, not the loop
+fn written(a: integer, b: integer) -> (integer, integer) {
+  t = 0;
+  n = 0;
+  for i in a..b {
+    i += 100;
+    t += i;
+    n += 1;
+  }
+  (t, n)
+}
+
+// s12: a written loop variable has its own slot, and a body that also names the index keeps
+// both counters (declined): the index is 0, 1, 2 whatever `i` becomes
+fn written_and_index(a: integer, b: integer) -> integer {
+  t = 0;
+  for i in a..b {
+    i += 7;
+    t += i#index * 100 + i;
+  }
+  t
+}
+
+// s8: nested computed starts: 4 + 3 + 2 + 1 = 10 inner rounds for 0..4
+fn triangle(a: integer, b: integer) -> integer {
+  n = 0;
+  for i in a..b {
+    for _ in i..b { n += 1; }
+  }
+  n
+}
+
+// s9: the first i from 2 with i * i > 50 is 8
+fn first_square(a: integer) -> integer {
+  f = 0;
+  for i in a..100 {
+    if i * i > 50 {
+      f = i;
+      break;
+    }
+  }
+  f
+}
+
+// s5 / s11: the first and last value of the range
+fn ends(a: integer, b: integer) -> (integer, integer) {
+  f = 0;
+  l = 0;
+  k = 0;
+  for i in a..b {
+    if k == 0 { f = i; }
+    l = i;
+    k += 1;
+  }
+  (f, l)
+}
+
+fn main() {
+  assert(range_sum(3, 10) == 42, "s1 got {range_sum(3, 10)}");                 // 3 + … + 9
+  assert(rounds(3, 10) == 7, "s1 rounds {rounds(3, 10)}");
+  (t2, n2) = odd_sum(1, 10);
+  assert(t2 == 25 && n2 == 9, "s2 got {t2} {n2}");
+  assert(rounds(10, 3) == 0 && range_sum(10, 3) == 0, "s3 got {rounds(10, 3)}");
+  assert(rounds(5, 5) == 0, "s4 got {rounds(5, 5)}");
+  m = -9223372036854775807;                                        // the minimum above null
+  assert(rounds(m, m + 3) == 3, "s5 rounds {rounds(m, m + 3)}");
+  (f5, l5) = ends(m, m + 3);
+  assert(f5 == m && l5 == m + 2, "s5 got {f5} {l5}");
+  assert(index_sum(2, 5) == 99, "s6 got {index_sum(2, 5)}");       // 22 + 33 + 44
+  (t7, n7) = written(0, 3);
+  assert(t7 == 303 && n7 == 3, "s7 got {t7} {n7}");                // 100 + 101 + 102
+  assert(triangle(0, 4) == 10, "s8 got {triangle(0, 4)}");
+  assert(first_square(2) == 8, "s9 got {first_square(2)}");
+  assert(range_sum(-3, 2) == -5, "s10 got {range_sum(-3, 2)}");                // -3 - 2 - 1 + 0 + 1
+  x = 9223372036854775807;                                         // the maximum
+  assert(rounds(x - 2, x) == 2, "s11 rounds {rounds(x - 2, x)}");
+  (f11, l11) = ends(x - 2, x);
+  assert(f11 == x - 2 && l11 == x - 1, "s11 got {f11} {l11}");
+  assert(written_and_index(0, 3) == 324, "s12 got {written_and_index(0, 3)}"); // 7 + 108 + 209
+  println("done");
+}

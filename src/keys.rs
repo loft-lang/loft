@@ -1272,6 +1272,25 @@ pub fn loop_rotate_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_LOOP_ROTATE"))
 }
 
+/// A counted range whose start is not a literal steps ONE counter on the interpreter: the
+/// index is seeded from the start and the rotated loop enters past its step, so the copy
+/// from the second counter is not emitted — **DEFAULT ON** (`@FR-R-StartStep`).  Opt OUT
+/// with `LOFT_NO_START_STEP` (read at bytecode generation): the before-half of the A/B and
+/// the first bisect step for a wrong value out of such a loop on the interpreter.
+#[must_use]
+pub fn start_step_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_START_STEP"))
+}
+
+/// `LOFT_TRACE_START_STEP=1` — name each counted loop with a computed start that steps one
+/// counter on the interpreter, and each one declined.
+#[must_use]
+pub fn trace_start_step() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_TRACE_START_STEP"))
+}
+
 /// `LOFT_TRACE_LOOP_VAR_ALIAS=1` — name each counted loop whose variable shares its range
 /// index's slot, and each one declined with the reason.
 #[must_use]
