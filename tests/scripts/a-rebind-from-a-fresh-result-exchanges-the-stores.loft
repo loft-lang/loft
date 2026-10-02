@@ -1,0 +1,159 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-H-SwapIn` — the rebind `x = f(…, x, …)` of a record from a callee that minted its
+// result exchanges the two stores' contents instead of copying the tree.
+//
+// The rebind resets x's store to an empty root and deep-copies the callee's fresh store into
+// it, then releases the callee's store; where both records are their store's root, the
+// destination holds nothing else and the type keeps every pointer as a record number inside
+// its own store, the runtime swaps the two stores' contents and releases the slot that ends up
+// holding the empty root.  Every value below is the copy's: each cell answers the same with
+// `LOFT_NO_STORE_SWAP=1`, and that A/B is the falsifier together with the swap census
+// (`tests/store_swap.rs`).  Values hand-computed.
+//
+// @falsified-at: none — the rule has no earlier build to catch, so the receipt is a SABOTAGE
+//   (2026-10-02): with `Store::swap_contents` leaving `claims` unswapped, s1 fails on both
+//   backends — the destination keeps the reset root's claim map over the moved records and
+//   the next claim lands on a live element.
+//   CHANNEL: the VALUE channel (an assertion) on both backends.
+//   HOLDS: leak, panic and free-refusal are equal on both trees and clean here.
+
+struct M { m: vector<float> }
+
+struct Named { label: text, tags: vector<text>, n: integer }
+
+struct Node { id: integer }
+
+struct Linked { to: reference<Node>, w: integer }
+
+enum Shape { Dot, Disc { r: float, name: text } }
+
+struct Inner { xs: vector<integer> }
+
+struct Outer { parts: vector<Inner>, k: integer }
+
+// the bench's product: each step reads x and builds a fresh result
+fn mul(a: const M, b: const M) -> M {
+  r = M { m: [0.0, 0.0, 0.0, 0.0] };
+  for c in 0..2 {
+    for w in 0..2 {
+      s = 0.0;
+      for k in 0..2 { s += a.m[k * 2 + w] * b.m[c * 2 + k]; }
+      r.m[c * 2 + w] = s;
+    }
+  }
+  r
+}
+
+fn step_named(x: const Named, i: integer) -> Named {
+  Named { label: "{x.label}+", tags: [x.label, "t{i}"], n: x.n + i }
+}
+
+fn step_shape(x: const Shape, i: integer) -> Shape {
+  match x {
+    Dot => Disc { r: 1.0, name: "d{i}" },
+    Disc { r, name } => Disc { r: r * 2.0, name: "{name}{i}" },
+  }
+}
+
+fn step_outer(x: const Outer) -> Outer {
+  o = Outer { parts: [], k: x.k + 1 };
+  for p in x.parts { o.parts += [Inner { xs: [len(p.xs), x.k] }]; }
+  o.parts += [Inner { xs: [x.k] }];
+  o
+}
+
+fn step_linked(x: const Linked, n: reference<Node>) -> Linked { Linked { to: n, w: x.w + n.id } }
+
+fn powers(steps: integer) -> M {
+  a = M { m: [1.0, 1.0, 1.0, 0.0] };   // the Fibonacci matrix
+  x = M { m: [1.0, 0.0, 0.0, 1.0] };
+  for _ in 0..steps { x = mul(a, x); }
+  x
+}
+
+// the bench's shape: x is the frame's own return buffer
+fn s1() {
+  p = powers(10);
+  // [[1,1],[1,0]]^10 = [[89,55],[55,34]], column-major
+  assert((p.m[0] ?? 0.0) == 89.0 && (p.m[1] ?? 0.0) == 55.0 && (p.m[2] ?? 0.0) == 55.0 && (p.m[3] ?? 0.0) == 34.0,
+         "s1 got {p.m}");
+}
+
+// a plain local that is read after the loop, not returned
+fn s2() {
+  a = M { m: [2.0, 0.0, 0.0, 3.0] };
+  x = M { m: [1.0, 0.0, 0.0, 1.0] };
+  for _ in 0..5 { x = mul(a, x); }
+  assert((x.m[0] ?? 0.0) == 32.0 && (x.m[3] ?? 0.0) == 243.0 && len(x.m) == 4, "s2 got {x.m}");
+}
+
+// texts and a vector of texts ride along
+fn s3() {
+  x = Named { label: "a", tags: [], n: 0 };
+  for i in 1..4 { x = step_named(x, i); }
+  assert(x.label == "a+++" && x.n == 6 && len(x.tags) == 2 && (x.tags[0] ?? "") == "a++" && (x.tags[1] ?? "") == "t3",
+         "s3 got {x.label} {x.n} {x.tags}");
+}
+
+// a stored reference keeps the copy: its store number names a slot
+fn s4() {
+  pool: vector<Node> = [Node { id: 7 }, Node { id: 11 }];
+  x = Linked { to: pool[0], w: 0 };
+  for i in 0..4 { x = step_linked(x, pool[i % 2]?); }
+  assert(x.w == 36 && x.to.id == 11, "s4 got {x.w} {x.to.id}");
+}
+
+// a struct-enum value
+fn s5() {
+  x = Shape.Dot;
+  for i in 0..3 { x = step_shape(x, i); }
+  match x {
+    Disc { r, name } => assert(r == 4.0 && name == "d012", "s5 got {r} {name}"),
+    _ => assert(false, "s5 got a dot"),
+  }
+}
+
+// a copy taken before the rebinds is not touched by them
+fn s8() {
+  a = M { m: [2.0, 0.0, 0.0, 2.0] };
+  x = M { m: [1.0, 0.0, 0.0, 1.0] };
+  y = x;
+  for _ in 0..3 { x = mul(a, x); }
+  assert((y.m[0] ?? 0.0) == 1.0 && (x.m[0] ?? 0.0) == 8.0, "s8 got {y.m} {x.m}");
+}
+
+// a vector of records that own vectors
+fn s9() {
+  x = Outer { parts: [], k: 0 };
+  for _ in 0..3 { x = step_outer(x); }
+  // k: 3; parts: from k=2's three-part x? built step by step:
+  //   step 1 (k 0): parts [ [0] ]            k 1
+  //   step 2 (k 1): parts [ [1,1], [1] ]     k 2
+  //   step 3 (k 2): parts [ [2,2], [1,2], [2] ] k 3
+  assert(x.k == 3 && len(x.parts) == 3, "s9 shape {x.k} {len(x.parts)}");
+  assert((x.parts[0].xs[0] ?? 0) == 2 && (x.parts[1].xs[0] ?? 0) == 1 && (x.parts[2].xs[0] ?? 0) == 2, "s9 got parts");
+}
+
+// a field rebind: the destination is no store root, so the copy stays
+struct Holder { mat: M, tag: integer }
+fn s11() {
+  a = M { m: [3.0, 0.0, 0.0, 1.0] };
+  h = Holder { mat: M { m: [1.0, 0.0, 0.0, 1.0] }, tag: 5 };
+  for _ in 0..2 { h.mat = mul(a, h.mat); }
+  assert((h.mat.m[0] ?? 0.0) == 9.0 && h.tag == 5, "s11 got {h.mat.m} {h.tag}");
+}
+
+// many rebinds: nothing accumulates
+fn s12() {
+  a = M { m: [1.0, 0.0, 0.0, 1.0] };
+  x = M { m: [2.0, 0.0, 0.0, 5.0] };
+  for _ in 0..100000 { x = mul(a, x); }
+  assert((x.m[0] ?? 0.0) == 2.0 && (x.m[3] ?? 0.0) == 5.0, "s12 got {x.m}");
+}
+
+fn main() {
+  s1(); s2(); s3(); s4(); s5(); s8(); s9(); s11(); s12();
+  println("done");
+}

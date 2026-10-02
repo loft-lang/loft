@@ -1811,6 +1811,11 @@ impl State {
             }
         }
         let code_pos = self.code_pos;
+        // `@FR-H-SwapIn` — a given-up source copied into a reset root is the stores exchanged.
+        if free_source && self.database.try_swap_in(&data, &to, tp) {
+            self.database.allocations[to.store_nr as usize].last_op_at = code_pos;
+            return;
+        }
         let size = u32::from(self.database.size(tp));
         // free any nested vectors/strings already owned by the destination
         // before overwriting it, to prevent double-free and leaks when a struct

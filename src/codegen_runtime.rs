@@ -1203,6 +1203,16 @@ pub fn OpCopyRecord(cell: &std::cell::UnsafeCell<Stores>, data: DbRef, to: DbRef
             to.pos,
         );
     }
+    // @PLN150 — a store the most recent fn-ref call BORROWED rather than minted is not the
+    // callee's to give away, so the source-free is declined for it.  The interpreter reaches
+    // the same rule in `State::copy_ref_or_null`; measured without this,
+    // `b.p = fwd(s, 1)` over `fn fwd(f, v) -> P { r = f(v); r }` freed the CALLER'S capture on
+    // `--native` alone — the field destination of the shape loft#1185 closed for a local.
+    let borrowed = cr_take_fnref_borrowed(data.store_nr) && free_source;
+    // `@FR-H-SwapIn` — a given-up source copied into a reset root is the stores exchanged.
+    if free_source && !borrowed && stores.try_swap_in(&data, &to, tp) {
+        return;
+    }
     if !fresh_dest {
         stores.remove_claims(&to, tp);
     }
@@ -1212,12 +1222,6 @@ pub fn OpCopyRecord(cell: &std::cell::UnsafeCell<Stores>, data: DbRef, to: DbRef
     if stores.copy_check_enabled() {
         stores.report_copy_mismatches(&data, &to, tp, "OpCopyRecord");
     }
-    // @PLN150 — a store the most recent fn-ref call BORROWED rather than minted is not the
-    // callee's to give away, so the source-free is declined for it.  The interpreter reaches
-    // the same rule in `State::copy_ref_or_null`; measured without this,
-    // `b.p = fwd(s, 1)` over `fn fwd(f, v) -> P { r = f(v); r }` freed the CALLER'S capture on
-    // `--native` alone — the field destination of the shape loft#1185 closed for a local.
-    let borrowed = cr_take_fnref_borrowed(data.store_nr) && free_source;
     if free_source
         && !borrowed
         && data.store_nr != to.store_nr

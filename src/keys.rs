@@ -1526,6 +1526,22 @@ pub fn vec_copy_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_VEC_COPY"))
 }
 
+/// `@FR-H-SwapIn` — the rebind copy of a callee's minted result into a just-reset root is an
+/// exchange of the two stores' contents — **DEFAULT ON**.  `LOFT_NO_STORE_SWAP` keeps the deep
+/// copy: the first bisect step for a wrong record after `x = f(…, x, …)` on either backend.
+#[must_use]
+pub fn store_swap_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_STORE_SWAP"))
+}
+
+/// `LOFT_TRACE_STORE_SWAP=1` — name each store exchange `@FR-H-SwapIn` makes.
+#[must_use]
+pub fn trace_store_swap() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_TRACE_STORE_SWAP"))
+}
+
 /// `LOFT_TRACE_VEC_COPY=1` — name each element-wise vector copy made one append and each kept.
 pub fn trace_vec_copy() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();

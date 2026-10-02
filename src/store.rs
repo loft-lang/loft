@@ -2550,6 +2550,58 @@ impl Store {
         self.free_protect_depth > 0
     }
 
+    /// `@FR-H-SwapIn` — may this store's CONTENT be exchanged with another's: an ordinary
+    /// in-memory store nothing pins to its slot (no file, no foreign bytes, no recording,
+    /// no lock, no borrow, no free protection, not the interpreter's stack).
+    pub(crate) fn content_swappable(&self) -> bool {
+        !self.free
+            && !self.read_only
+            && !self.user_locked
+            && !self.borrowed
+            && !self.stack_buffer
+            && !self.pinned
+            && self.free_protect_depth == 0
+            && self.file.is_none()
+            && self.foreign.is_none()
+            && self.recording.is_none()
+            && self.durable_meta_path.is_none()
+            && self.file_path.is_none()
+            && self.tag == 0
+    }
+
+    /// Does this store hold exactly one live record, its root at record 1 — the shape a
+    /// reset store has right after `OpDatabase` claimed its root?
+    pub(crate) fn holds_only_root(&self) -> bool {
+        self.claims.live == 1 && self.claims.contains(1)
+    }
+
+    /// `@FR-H-SwapIn` — exchange the CONTENT of two stores (their memory, claims, free
+    /// tree and lazy phase, and the root's type) while each keeps its SLOT identity (its
+    /// number, serial and debug stamps), so every reference to either slot now reads the
+    /// other's records.  Both generations move past either, so no vector header cached
+    /// against the old content can validate against the new.  The caller has checked
+    /// [`Store::content_swappable`] on both.
+    pub(crate) fn swap_contents(a: &mut Store, b: &mut Store) {
+        std::mem::swap(&mut a.ptr, &mut b.ptr);
+        std::mem::swap(&mut a.claims, &mut b.claims);
+        std::mem::swap(&mut a.size, &mut b.size);
+        std::mem::swap(&mut a.released_bytes, &mut b.released_bytes);
+        std::mem::swap(&mut a.claimed_end, &mut b.claimed_end);
+        std::mem::swap(&mut a.free_root, &mut b.free_root);
+        std::mem::swap(&mut a.wild, &mut b.wild);
+        std::mem::swap(&mut a.wilderness, &mut b.wilderness);
+        std::mem::swap(&mut a.carve, &mut b.carve);
+        std::mem::swap(&mut a.needs_coalesce, &mut b.needs_coalesce);
+        std::mem::swap(&mut a.lazy, &mut b.lazy);
+        std::mem::swap(&mut a.dead_words, &mut b.dead_words);
+        std::mem::swap(&mut a.lazy_free, &mut b.lazy_free);
+        std::mem::swap(&mut a.known_type, &mut b.known_type);
+        std::mem::swap(&mut a.init_shadow, &mut b.init_shadow);
+        let generation = a.generation.max(b.generation).wrapping_add(1);
+        a.generation = generation;
+        b.generation = generation;
+    }
+
     /// Has this store been freed?
     ///
     /// A freed store keeps its buffer until its slot is reused, so reading a record
