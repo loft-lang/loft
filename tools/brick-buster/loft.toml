@@ -18,7 +18,7 @@ entry   = "25-brick-buster.loft"
 [dependencies]
 graphics = ">=0.9.6"
 shapes   = ">=0.3"
-assets   = ">=0.1"
+assets   = ">=0.3.0"
 
 # The sprite atlas is DRAWN once here, not on every launch.  `pack_atlas.loft`
 # sits beside the game so `assets/bb` names the same two files for the packer
