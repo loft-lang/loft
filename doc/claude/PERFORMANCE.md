@@ -77,9 +77,9 @@ Both backends, in this order.  Each step's detail lives where it points; the ord
    (the canonical one) into that form.  Where both backends gain, in the IR phase — a native
    rule moved there ([§ Why the interpreter is optimised at
    all](#why-the-interpreter-is-optimised-at-all)); a runtime lever before a generator rewrite
-   ([§ Wide before deep](#wide-before-deep)).  **Never a new combined opcode or a kernel
-   standing in for the pattern**: it speeds one spelling and nothing next to it
-   ([KERNELS.md](KERNELS.md)).  Only proven situations
+   ([§ Wide before deep](#wide-before-deep)).  **No combined opcode or kernel built for one
+   row**: it speeds one spelling and nothing next to it ([KERNELS.md](KERNELS.md)); an
+   operator comes after the IR work, from broad evidence (formal/performance.md `(Perf-Order)`).  Only proven situations
    ([C120](DESIGN_DECISIONS_VALUES.md)), the contract is semantics, not representation
    ([C122](DESIGN_DECISIONS_PLATFORM.md)), remove the object rather than complicate the memory
    model ([C125](DESIGN_DECISIONS_OWNERSHIP.md)).
@@ -722,8 +722,8 @@ consequences:
   rule relied on.  @PLN180's first materialisation step turned three forwarding functions back
   into record returns on native, and the fix was to support the forward in the IR.
 - Interpreter-only machinery (the lean loop, the operand fusion already built) comes second to
-  moving a native rule into the IR, and no NEW combined opcode is the answer to a hot spot
-  (owner, 2026-10-01): it is a kernel in disguise, fast for one operand shape only.  The
+  moving a native rule into the IR, and no NEW combined opcode is the answer to ONE hot spot:
+  it is a kernel in disguise, fast for one operand shape (`(Perf-Order)`).  The
   method is [§ How to optimise](#how-to-optimise--the-checklist).
 
 The bar is measured, not felt: the per-routine ratio of the OPTIMISED interpreter to OPTIMISED

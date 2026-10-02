@@ -24,6 +24,24 @@ run removes `LOFT_NO_CACHE` so an exported switch cannot silence it.  The off sw
 `loft --help` (under `cache`), DEBUG.md and RUNNING_TESTS.md.  Guard:
 `arc_e_program_cache::a_development_build_caches_unless_told_not_to`.
 ### `(H-LazyFree)`: a store's deletes go untracked until one sweep at the growth bound, and a struct-enum field answers `holds_no_heap` by its variant (2026-09-30)
+### `(R-StartStep)` — a computed range start steps one counter on the interpreter (2026-10-02)
+
+`for i in a..b` with `a` not a literal iterates with two counters, `next` one ahead of the
+index, so a start at `i64::MIN + 1` never needs `a - 1` (the null sentinel).  The bytecode
+generator now seeds the index from `next` before the rotated loop, steps the index at the test
+and enters past the step, where nothing after the iterator names `next` and the index is the
+loop variable's own slot or is not named.  The IR keeps both counters, so `--native` and every
+IR rewrite are unchanged.  `LOFT_NO_START_STEP=1`, `LOFT_TRACE_START_STEP=1`.
+
+Measured on `09_matrix_mul/dot_product` (`--interpret`, release, one core): 16 → 14 operators
+a round, 128–135 → 109–118 ms an op (−15 %), same hash.  Guard s1–s12 identical under the
+switch, `LOFT_NO_LOOP_ROTATE` and `LOFT_NO_LOOP_VAR_ALIAS`, and on `--native`; plants: the entry
+on the step (s1), `continue` past the step (s2 never ends), the seed dropped (s1 never ends).
+
+Recorded beside it: `(Perf-Order)` in formal/performance.md, the owner's ruling that the IR
+work comes before new interpreter operators, which are designed from broad evidence, with the
+scripts written in loft weighed above the bench routines.
+
 ### `(R-WorkerLean)` — a `par` worker runs on the lean loop (2026-10-02)
 
 A `par` worker's frame (`State::run_to_return`) ran the checked loop and found the function it

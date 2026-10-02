@@ -3806,27 +3806,32 @@ the hand-written form: −20 % cycles.  `LOFT_NO_IN_RANGE=1`, `LOFT_TRACE_IN_RAN
 `tests/scripts/a-record-element-its-loop-proves-in-range-reads-plainly.loft` and
 `tests/in_range.rs`.
 
-### A computed range start is one counter, stepped at the bottom
+### A computed range start is one counter, stepped at the test
 
 ```
-  (R-StartStep)  PROPOSED.  A range `s..e` whose start is not a literal (bound once to
-                 `_range_start`, `@FR-I-Range`) lowers to one counter, `i#index =
-                 _range_start; loop { if e <= i#index break; body; i#index += 1 }`, a
-                 `continue` jumping to the step.  Today's form keeps two counters (`_next`
-                 and `i#index`) that hold the same value wherever `i#index` is read, plus a
-                 copy into the loop variable each round, because the literal form's
-                 `start - 1` folds only for a literal.
+  (R-StartStep)  A range `s..e` whose start is not a literal (bound once to
+                 `_range_start`, `@FR-I-Range`) iterates with two counters, `next` one
+                 ahead of `i#index`: `{if e <= next break; i#index = next; next += 1;
+                 i#index}`.  Where the loop rotates (`(R-Rotate)`) and nothing after the
+                 iterator names `next` — nor `i#index`, unless `i` shares its slot
+                 (`(R-LoopSlot)`) — the interpreter seeds `i#index = next` before the
+                 loop, steps `i#index` at the test, and enters PAST the step: the first
+                 round tests the start itself.  A `continue` jumps to the step.
 ```
 
-**In words.** Applies in: the IR phase, both backends; every range with a computed start.  It
-merges two locals that are equal wherever one is read, so every comparison sees the values it
-sees today, a null start included.  Measured on `dot_product` by the hand-written form: −11 %.
-The guard owes a `continue`, a body writing the loop variable, a null start, a start past the
-end, and a start at `i64::MIN + 1`.  **Deferred (2026-10-02):** the cheap form — the literal
-range's `index = start - 1` — is not exact, because `start - 1` of `i64::MIN + 1` is the null
-sentinel, which the step then propagates; the exact form (the step after the body, a `continue`
-re-pointed to it) costs nearly the two ops it saves, and native gains nothing (the hand-written
-pair ran equal).  Taken up after the rules of wider reach.
+**In words.** Applies in: the interpreter's bytecode generator (`start_step`,
+`gen_rotated_loop`); the IR keeps both counters, so `--native` and every IR rewrite that reads
+a range's shape see the form they always saw.  Allowed because after every round `next` equals
+`i#index + 1`, and before the first it equals the start, so the test reads the same value it
+read through `next`.  The step cannot overflow, since the round ran because `i#index < e`, and
+a null start stays null under both steps.  An inclusive, reverse or filtered range keeps the two
+counters.  What it removes is the copy from `next` into the index each round: `dot_product` 16
+→ 14 operators a round, −15 % on the interpreter, with the same result.  The seeding is what an
+IR form could not do: there, `start - 1` is the null sentinel for a start at `i64::MIN + 1`, and
+a step at the bottom costs the jump it saves.  `LOFT_NO_START_STEP=1` keeps the copy;
+`LOFT_TRACE_START_STEP=1` names each loop taken or declined.  Guard
+`tests/scripts/a-computed-range-start-steps-one-counter.loft` (its planted defects named in its
+header), pin `tests/start_step.rs`.
 
 ### Two equal reads in one statement are one read
 

@@ -12,7 +12,15 @@
 // that skips the step, a first round that steps before testing, a body that writes the loop
 // variable, an index read in the body, a start at the minimum or an end at the maximum.  Every
 // cell counts its rounds beside its value.  `--native` never sees the layout.  Values
-// hand-computed.
+// hand-computed; `tests/start_step.rs` pins which loops take the form.
+//
+// @falsified-at: none — it guards a layout no earlier build has, so the receipt is planted
+//   defects (2026-10-02), each on --interpret: the entry landing on the step (the first round
+//   steps before it tests) fails s1 (39 for 42); the `continue`s patched past the step never
+//   end `odd_sum` (timeout, s2); the seed dropped never ends `range_sum` (timeout, s1).  The
+//   check on the rest of the loop struck is INERT: a body reading the index reads the right
+//   value either way, and no spelling writes it.
+//   CHANNEL: assert and timeout on --interpret.
 
 fn range_sum(a: integer, b: integer) -> integer {
   t = 0;
