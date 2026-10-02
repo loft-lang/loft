@@ -3627,10 +3627,6 @@ fn the_generated_pages_match_their_sources() {
     }
     let run = Command::new(env!("CARGO_BIN_EXE_gendoc"))
         .current_dir(&copy)
-        // This comparison skips `doc/lib-*.html` (`registry_derived`), so a box without the
-        // registry cache — every CI runner — must still render the rest: the stub refusal
-        // guards a doc BUILD, not this copy.
-        .env("LOFT_DOC_ALLOW_UNCACHED", "1")
         .output()
         .expect("run gendoc");
     assert!(
