@@ -1,0 +1,138 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A function that returns a record built around a local vector, and keeps a SCRATCH vector
+// local inside a loop, answers the record it built — on both backends (`(R-ExitVector)`,
+// loft#1846).
+//
+// `(R-ExitVector)` claims a local vector's wrapper in the return buffer's store when the
+// wrapper is minted ONCE, so the exit literal can take the vector by a handle move.  The
+// per-iteration scratch vector's mint sits inside the loop and runs every iteration, and it
+// was admitted all the same: its wrapper was claimed in the caller's buffer store, and the
+// re-bind on the next iteration released it as the owner of a store — freeing the store the
+// result was being built in.  The interpreter then answered an empty or a non-`CArray`
+// value once the loop ran twice; `--native` stayed right.  A mint inside a loop is now no
+// candidate; the returned `items` vector itself is still claimed and moved.
+//
+// The cells vary the loop (a range, a `while`, a walk over a vector, a nested loop), the
+// scratch element type (`u8`, `integer`), whether the scratch is read, the result's shape
+// (a struct, an enum variant as the cbor library's), and the iteration count.  Each result
+// is read, handed to a consumer that allocates vectors of its own, and read again.
+// Controls: one iteration, and the scratch hoisted out of the loop.
+
+struct It { value: text }
+struct Out { items: vector<It> }
+enum Val {
+  VNone,
+  VText { value: text },
+  VArray { items: vector<Val> },
+}
+
+fn consume(o: Out) -> integer {
+  buf: vector<u8> = [];
+  for i in 0..len(o.items) { t: vector<u8> = []; t += [7 as u8, 8 as u8]; buf += t; }
+  len(buf)
+}
+
+fn ranged(n: integer) -> Out {
+  items: vector<It> = [];
+  for i in 0..n {
+    b: vector<u8> = [];
+    for j in 0..2 { b += [((97 + i + j) & 255) as u8]; }
+    items += [It { value: "r{len(b)}" }];
+  }
+  Out { items: items }
+}
+
+fn walked(src: vector<integer>) -> Out {
+  items: vector<It> = [];
+  for s in src {
+    b: vector<integer> = [];
+    b += [s, s, s];
+    items += [It { value: "w{len(b)}" }];
+  }
+  Out { items: items }
+}
+
+fn whiled(n: integer) -> Out {
+  items: vector<It> = [];
+  i = 0;
+  while i < n {
+    b: vector<u8> = [];
+    b += [1 as u8];
+    items += [It { value: "h{i}" }];
+    i += 1;
+  }
+  Out { items: items }
+}
+
+fn nested(n: integer) -> Out {
+  items: vector<It> = [];
+  for i in 0..n {
+    for k in 0..2 {
+      b: vector<u8> = [];
+      b += [(k & 255) as u8];
+      items += [It { value: "n{i}{k}" }];
+    }
+  }
+  Out { items: items }
+}
+
+fn hoisted(n: integer) -> Out {
+  items: vector<It> = [];
+  b: vector<u8> = [];
+  for i in 0..n {
+    b = [];
+    b += [1 as u8, 2 as u8];
+    items += [It { value: "o{len(b)}" }];
+  }
+  Out { items: items }
+}
+
+fn count(v: Val) -> integer { match v { VArray { items } => len(items), _ => -1 } }
+
+fn varray(n: integer) -> Val {
+  items: vector<Val> = [];
+  for i in 0..n {
+    b: vector<u8> = [];
+    for j in 0..2 { b += [((97 + i + j) & 255) as u8]; }
+    items += [VText { value: "ab{len(b)}" }];
+  }
+  VArray { items: items }
+}
+
+fn vbytes(v: Val) -> integer {
+  match v {
+    VArray { items } => {
+      buf: vector<u8> = [];
+      for i in 0..len(items) { buf += [1 as u8]; buf += [(vbytes(items[i]) & 255) as u8]; }
+      len(buf)
+    },
+    VText { value } => { buf: vector<u8> = []; buf += [(len(value) & 255) as u8]; len(buf) },
+    _ => 0,
+  }
+}
+
+fn check(o: Out, n: integer, last: text, what: text) {
+  assert(len(o.items) == n, "{what}: {len(o.items)} items, want {n}");
+  assert(consume(o) == 2 * n, "{what}: the consumer read {consume(o)}, want {2 * n}");
+  assert(len(o.items) == n, "{what}: {len(o.items)} items after the consumer, want {n}");
+  assert(o.items[n - 1].value == last, "{what}: last item {o.items[n - 1].value}, want {last}");
+}
+
+fn main() {
+  check(ranged(1), 1, "r2", "a range, one iteration (control)");
+  check(ranged(2), 2, "r2", "a range, two iterations");
+  check(ranged(5), 5, "r2", "a range, five iterations");
+  check(walked([4, 5, 6]), 3, "w3", "a walk over a vector, integer scratch");
+  check(whiled(3), 3, "h2", "a while loop");
+  check(nested(2), 4, "n11", "a nested loop");
+  check(hoisted(3), 3, "o2", "the scratch hoisted out of the loop (control)");
+  // The cbor shape: an enum variant around the vector, read twice across a consumer.
+  v = varray(2);
+  assert(count(v) == 2, "enum: count {count(v)}, want 2");
+  assert(vbytes(v) == 4, "enum: the consumer read {vbytes(v)}, want 4");
+  assert(count(v) == 2, "enum: count {count(v)} after the consumer, want 2");
+  assert(vbytes(varray(3)) == 6, "enum, straight into the consumer: {vbytes(varray(3))}, want 6");
+  println("1846 ok");
+}
