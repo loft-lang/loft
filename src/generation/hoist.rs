@@ -3187,6 +3187,76 @@ pub fn push_operands<'a>(
     }
 }
 
+/// `@FR-R-PushFill`'s repeat-literal clause — the lowering of `[c, c, …, c]` / `[c; n]` into a
+/// vector: `{ OpPreAllocVector(p, n, w); OpPush<K>(p, c) }` then `OpAppendCopy(p, n, tp)`, the
+/// template pushed once and copied `n - 1` times.  When `c` is a literal of an unbiased
+/// scalar kind, the two statements are ONE fill of `n` copies at the vector's tail (the same
+/// elements, the same final length); the fill's own refusals (a count that is not positive,
+/// a null vector) fall back to the two statements as they stand.  Answers the vector, the
+/// count, the value, its Rust type and width.
+pub struct RepeatLiteral<'a> {
+    pub vector: &'a Value,
+    pub count: i64,
+    pub val: &'a Value,
+    pub rust_type: &'static str,
+    pub size: u32,
+}
+
+/// Recognise [`RepeatLiteral`] in statement `first` followed by statement `second`.
+#[must_use]
+pub fn repeat_literal<'a>(
+    first: &'a Value,
+    second: &'a Value,
+    data: &Data,
+) -> Option<RepeatLiteral<'a>> {
+    let Value::Insert(ops) = first.unspan() else {
+        return None;
+    };
+    let [pre, push] = &ops[..] else { return None };
+    let named = |v: &'a Value, n: &str| -> Option<&'a [Value]> {
+        match v.unspan() {
+            Value::Call(d, a) if (*d as usize) < data.definitions.len() && data.def(*d).name() == n => {
+                Some(a)
+            }
+            _ => None,
+        }
+    };
+    let [p0, Value::Int(n0), Value::Int(w)] = named(pre, "OpPreAllocVector")? else {
+        return None;
+    };
+    let Value::Call(pd, pargs) = push.unspan() else {
+        return None;
+    };
+    let pname = data.def(*pd).name();
+    let (rust_type, size) = match pname {
+        "OpPushInt" => ("i64", 8),
+        "OpPushFloat" => ("f64", 8),
+        "OpPushSingle" => ("f32", 4),
+        _ => return None,
+    };
+    let [p1, val] = &pargs[..] else { return None };
+    if !matches!(
+        val.unspan(),
+        Value::Int(_) | Value::Long(_) | Value::Float(_) | Value::Single(_)
+    ) {
+        return None;
+    }
+    let [p2, Value::Int(n2), _] = named(second, "OpAppendCopy")? else {
+        return None;
+    };
+    if *n0 != *n2 || i64::from(*w) != i64::from(size) || p0 != p1 || p0 != p2 {
+        return None;
+    }
+    vector_path(data, p0)?;
+    Some(RepeatLiteral {
+        vector: p0,
+        count: i64::from(*n0),
+        val,
+        rust_type,
+        size,
+    })
+}
+
 /// A push the emitter can route through a hoisted [`crate::vector::PushHeader`].
 pub struct FusedPush<'a> {
     /// The pushed path's key.
