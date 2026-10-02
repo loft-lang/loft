@@ -788,9 +788,13 @@ LIB_SECTION = re.compile(r"`use\s+([a-z_][a-z0-9_]*)\s*;`")
 
 
 def stdlib_names():
-    """Every function, struct, enum, interface and type name `default/*.loft` declares."""
+    """Every function, operator, struct, enum, interface and type name `default/*.loft` declares.
+
+    `operator` declares a method as surely as `fn` does (@PLN182: the stdlib's `compare`,
+    `plus`, … on its base types are `operator` definitions), so a signature row naming one is
+    kept."""
     names = set()
-    decl = re.compile(r"^\s*(?:pub\s+)?(?:fn|struct|enum|interface|type|value struct)\s+"
+    decl = re.compile(r"^\s*(?:pub\s+)?(?:fn|operator|struct|enum|interface|type|value struct)\s+"
                       r"([A-Za-z_][A-Za-z0-9_]*)", re.M)
     const = re.compile(r"^\s*(?:pub\s+)?(?:const\s+)?([A-Z][A-Z0-9_]+)\s*=", re.M)
     for path in glob.glob(os.path.join(ROOT, "default", "*.loft")):
