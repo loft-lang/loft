@@ -1,8 +1,7 @@
-diff --git b/src/parser/objects.rs a/src/parser/objects.rs
-index 9b20c4bdd..2fdc05241 100644
---- b/src/parser/objects.rs
-+++ a/src/parser/objects.rs
-@@ -1041,77 +1041,6 @@ impl Parser {
+diff --git a/src/parser/objects.rs b/src/parser/objects.rs
+--- a/src/parser/objects.rs
++++ b/src/parser/objects.rs
+@@ -1048,77 +1048,6 @@
              let dnr = self.data.source_nr(source, &nm);
              self.data.def_used(dnr);
              t = self.data.def(dnr).returned().clone();
@@ -79,4 +78,4 @@ index 9b20c4bdd..2fdc05241 100644
 -            }
          } else if self.data.def_nr(name) != u32::MAX
              && !self.at_binding_name()
-             // A default-file `<T>` placeholder is invisible here (loft#1049): it is an
+             && !matches!(

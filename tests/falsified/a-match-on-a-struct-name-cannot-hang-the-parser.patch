@@ -1,0 +1,24 @@
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index d1aff3aef..686db32f4 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -6348,10 +6348,15 @@ impl Parser {
+                         self.data.def(e_nr).name()
+                     );
+                 }
+-                // Skip this arm gracefully: its `{ … }` field pattern whole, whatever tokens
+-                // it holds — a loop consuming only names and commas never advanced past
+-                // anything else (`=>`, `:`, a literal), and hung the parser.
+-                self.skip_braced();
++                // Skip this arm gracefully.
++                if self.lexer.peek_token("{") {
++                    self.lexer.token("{");
++                    while !self.lexer.peek_token("}") && !self.lexer.peek_token(";") {
++                        self.lexer.has_identifier();
++                        self.lexer.has_token(",");
++                    }
++                    self.lexer.token("}");
++                }
+                 self.expect_match_arm_arrow();
+                 let mut arm_code = Value::Null;
+                 self.expression(&mut arm_code);

@@ -10,7 +10,13 @@
 // `issues::a_declaration_spelled_like_a_stdlib_type_variable_compiles_in_source_0`.
 //
 // @falsified-at: ecd11af3f — interpret exit 134 -> 0, native exit 134 -> 0
-// @falsified-by: tests/falsified/a-type-variable-reserves-no-name.patch — interpret exit 134 -> 0, native exit 134 -> 0
+// @falsified-by: tests/falsified/a-type-variable-reserves-no-name.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit — the control refuses the program, this tree runs it.  At ecd11af3f the
+//     control hung instead (exit 134): its `match Q.Qb` reached the arm-skip loop
+//     a-match-on-a-struct-name-cannot-hang-the-parser.loft guards; that loop is fixed.
+//   ARMED: nothing.
+//   WITNESS: on the control, "enum 'Q' conflicts with a struct of the same name".
+//   HOLDS: every cell compiles and runs on both backends.
 
 // ── generic FIRST, the enum after: `Q` means the variable inside, the enum outside ──
 fn pick<Q>(a: Q, b: Q) -> Q { if false { b } else { a } }
