@@ -79,11 +79,18 @@ fn substitute(v: &mut Value, t: u16, e: &mut Option<Value>) {
     v.for_each_child_mut(&mut |c| substitute(c, t, e));
 }
 
-fn rewrite_in(data: &Data, vars: &crate::variables::Function, code: &Value, v: &mut Value) -> usize {
+fn rewrite_in(
+    data: &Data,
+    vars: &crate::variables::Function,
+    code: &Value,
+    v: &mut Value,
+) -> usize {
     let mut n = 0;
     v.for_each_child_mut(&mut |c| n += rewrite_in(data, vars, code, c));
-    let Value::Block(b) = v else {
-        return n;
+    let b = match v {
+        // A loop's body is a block of statements like any other (a comprehension's is).
+        Value::Block(b) | Value::Loop(b) => b,
+        _ => return n,
     };
     let mut i = 0;
     while i + 1 < b.operators.len() {
