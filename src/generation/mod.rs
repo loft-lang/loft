@@ -963,6 +963,9 @@ pub struct Output<'a> {
     /// whose write set covers every field ([`hoist::complete_writes`]): their
     /// `OpDatabase`/`OpNewRecord` emit the no-prefill twin.
     pub complete_writes: hoist::CompleteWrites,
+    /// `@FR-R-RefillBuffer` — the current function's return buffer when it refills a kept
+    /// store ([`hoist::refill_buffers`]), and the vector-field zeroes that empty in place.
+    pub refill: hoist::RefillBuffers,
     /// `LOFT_NO_COMPLETE_WRITE=1` — every record keeps its default prefill, as before
     /// @PLN157 § V-y; the bisect step for a wrong default/sentinel in a literal-built
     /// record on native.
@@ -2274,6 +2277,7 @@ impl<'a> Output<'a> {
             invariant_lits: hoist::LitHoist::default(),
             literal_hoist_disabled: std::env::var("LOFT_NO_LITERAL_HOIST").is_ok_and(|v| v != "0"),
             complete_writes: hoist::CompleteWrites::default(),
+            refill: hoist::RefillBuffers::default(),
             complete_write_disabled: std::env::var("LOFT_NO_COMPLETE_WRITE")
                 .is_ok_and(|v| v != "0"),
             value_records: hoist::ValueRecords::default(),
@@ -2623,6 +2627,11 @@ impl Output<'_> {
             hoist::CompleteWrites::default()
         } else {
             hoist::complete_writes(self.data, self.stores, def_nr)
+        };
+        self.refill = if crate::keys::refill_buffer_enabled() {
+            hoist::refill_buffers(self.data, self.stores, def_nr)
+        } else {
+            hoist::RefillBuffers::default()
         };
         self.move_pairs = if self.move_append_disabled {
             BTreeMap::new()

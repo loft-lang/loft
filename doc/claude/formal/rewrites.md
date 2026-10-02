@@ -591,6 +591,39 @@ emission in `emit.rs` (prelude and postlude), `output_block` (the two dropped st
 `ops::misc_ops` (the kept-record mint).  Cells `tests/scripts/157-loop-record.loft` l1–l15,
 pins `tests/loop_record.rs`.
 
+### A return buffer refills the store a rebind released
+
+```
+  (R-RefillBuffer) on `--native`, the store `(H-SwapRebind)` releases — holding the
+                 rebound variable's previous value, a root of its own type that
+                 nothing references — is KEPT instead of freed (one at a time; a
+                 second release frees the first).  A function's hidden return buffer
+                 whose every mint is the buffer's null-check prologue or a bare
+                 `OpDatabase`, each heading a literal group that writes every field
+                 (`(R-CompleteWrite)`'s coverage) of a REFILLABLE type — every field
+                 owns no heap, or is a vector whose elements own none — mints with
+                 `OpDatabaseRefill`: a null buffer takes the kept store of the same
+                 type as it stands, and the group's zero of each vector field empties
+                 that vector in place (`clear_vector`) for the fill that follows.
+                 Every other mint is fresh and the empty is a no-op on it.  A text, a
+                 keyed collection, a nested record that owns heap, a mint the walk
+                 cannot see the group of, and a `par` worker's stores decline.
+```
+
+**In words.** The `(R-LoopRecord)` shape across a call.  A builder called in a loop,
+`c = mul(a, c)`, minted a store for its result every call, claimed its vector and filled
+it; the rebind then exchanged it into `c` and freed the store holding `c`'s old value.  The
+two stores now take turns: the one released is the next call's buffer.  It is exact because
+the literal is complete — every scalar is written again — and a refillable type's only heap
+is vectors the group empties and refills, so nothing of the old value survives and nothing
+old is left unreachable in the store.  A kept store is the runtime's, not a leak, and is
+skipped by the exit census.  Effect on mesh3d's `mat4_mul` loop: priced by hand at −52 %
+of the call.  Switch `LOFT_NO_REFILL_BUFFER=1`, read where the buffer is emitted and at run
+time.  Sites: `hoist::refill_buffers`, `ops::misc_ops` (the mint), the block loop in
+`emit.rs` (the vector-field empty), `Stores::take_spare` / `park_spare`.  Guard
+`tests/scripts/a-return-buffer-refills-the-store-a-rebind-released.loft`, pin
+`tests/refill_buffer.rs`.
+
 ### An in-place scalar set disturbs no header
 
 ```

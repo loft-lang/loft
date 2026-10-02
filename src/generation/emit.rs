@@ -3419,6 +3419,26 @@ impl Output<'_> {
             {
                 continue;
             }
+            // `@FR-R-RefillBuffer` — a refilling buffer's vector-field zero empties the vector
+            // in place: a fresh mint holds no vector there (a no-op), a kept store holds the
+            // previous value's, whose record the group's fill then reuses.
+            if !self.refill.field_zeros.is_empty()
+                && self
+                    .refill
+                    .field_zeros
+                    .contains(&(std::ptr::from_ref(v.unspan()) as usize))
+                && let Value::Call(_, args) = v.unspan()
+                && let (Some(Value::Var(b)), Some(Value::Int(off))) =
+                    (args.first().map(Value::unspan), args.get(1).map(Value::unspan))
+            {
+                let name = sanitize(self.data.def(self.def_nr).variables().name(*b));
+                self.indent(w)?;
+                writeln!(
+                    w,
+                    "{{ let _rf = var_{name}; vector::clear_vector(&DbRef {{ store_nr: _rf.store_nr, rec: _rf.rec, pos: _rf.pos + {off}_u32 }}, &mut stores.allocations); }} //@FR-R-RefillBuffer"
+                )?;
+                continue;
+            }
             let lit_guard = match v.unspan() {
                 Value::Set(var, _)
                     if self.invariant_lits.wrapped.contains(var)

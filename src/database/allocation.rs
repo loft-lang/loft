@@ -1059,8 +1059,32 @@ impl Stores {
                 data.store_nr
             );
         }
-        self.free(data);
+        // A `par` worker's stores are merged back at the join, so a worker keeps none.
+        if reset_dest || self.disable_slot_reuse || !crate::keys::refill_buffer_enabled() {
+            self.free(data);
+        } else {
+            self.park_spare(data.store_nr);
+        }
         true
+    }
+
+    /// `@FR-R-RefillBuffer` — keep the store a rebind exchange released (`spare_store`); the
+    /// one kept before is freed, so at most one is held.
+    fn park_spare(&mut self, store_nr: u16) {
+        if let Some(old) = self.spare_store.replace(store_nr) {
+            self.free(&DbRef { store_nr: old, rec: 1, pos: 8 });
+        }
+    }
+
+    /// `@FR-R-RefillBuffer` — the kept store, when it holds a root of type `tp`: handed out
+    /// as is, its previous value still in it, for a callee whose literal writes every field.
+    pub(crate) fn take_spare(&mut self, tp: u16) -> Option<DbRef> {
+        let s = self.spare_store?;
+        if self.allocations[s as usize].known_type != tp {
+            return None;
+        }
+        self.spare_store = None;
+        Some(DbRef { store_nr: s, rec: 1, pos: 8 })
     }
 
     /// Does a record of type `tp` keep every pointer it holds as a record number INSIDE its
@@ -1725,6 +1749,10 @@ impl Stores {
                 continue; // stack store — always alive
             }
             if s.is_locked() || self.const_refs.iter().any(|cr| cr.store_nr == s_nr as u16) {
+                continue;
+            }
+            // The kept store of `@FR-R-RefillBuffer` is the runtime's, not a leaked value.
+            if self.spare_store == Some(s_nr as u16) {
                 continue;
             }
             if !s.free {
@@ -2681,6 +2709,7 @@ impl Stores {
             runtime_error: None,
             dispatch_stop: std::sync::atomic::AtomicBool::new(false),
             swap_safe_types: Vec::new(),
+            spare_store: None,
             // #255 / @PLN9: a parallel worker's file ops must resolve paths the
             // same way as the main thread — carry the anchor + mode.
             source_dir: self.source_dir.clone(),

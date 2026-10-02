@@ -1284,6 +1284,18 @@ pub fn swap_rebind_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_SWAP_REBIND"))
 }
 
+/// A callee whose return buffer is built by a literal that writes every field, of a type whose
+/// heap is only vectors of no-heap elements, refills the store a rebind exchange released
+/// instead of minting a new one on `--native` (`@FR-R-RefillBuffer`) — **DEFAULT ON**.  Opt OUT
+/// with `LOFT_NO_REFILL_BUFFER` (read where the buffer is emitted and at run time): the
+/// released store is freed and every buffer is minted, the before-half of the A/B and the
+/// first bisect step for a wrong record built into a return buffer on `--native`.
+#[must_use]
+pub fn refill_buffer_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_REFILL_BUFFER"))
+}
+
 /// A counted range whose start is not a literal steps ONE counter on the interpreter: the
 /// index is seeded from the start and the rotated loop enters past its step, so the copy
 /// from the second counter is not emitted — **DEFAULT ON** (`@FR-R-StartStep`).  Opt OUT

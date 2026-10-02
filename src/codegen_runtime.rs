@@ -352,6 +352,20 @@ pub fn OpDatabase(cell: &std::cell::UnsafeCell<Stores>, db: DbRef, db_tp: i32) -
     op_database_inner(cell, db, db_tp, true)
 }
 
+/// `@FR-R-RefillBuffer` — the mint of a refilling callee's return buffer: a null buffer
+/// takes the kept store of the same type (its previous value still in it — the literal that
+/// follows writes every field, and empties each vector field in place); otherwise the
+/// no-prefill mint, which the same complete literal makes exact.
+pub fn OpDatabaseRefill(cell: &std::cell::UnsafeCell<Stores>, db: DbRef, db_tp: i32) -> DbRef {
+    if db.store_nr == u16::MAX && crate::keys::refill_buffer_enabled() {
+        let stores: &mut Stores = unsafe { &mut *cell.get() };
+        if let Some(r) = stores.take_spare(db_tp as u16) {
+            return r;
+        }
+    }
+    op_database_inner(cell, db, db_tp, false)
+}
+
 /// @PLN157 § V-y (`@FR-R-CompleteWrite`) — [`OpDatabase`] minus the default prefill: the
 /// emitter proved this site's literal group writes EVERY field of the type (declared
 /// defaults, sentinels and the variant tag included — the parser's lowering is complete
