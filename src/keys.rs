@@ -1690,6 +1690,13 @@ pub fn api_advice_enabled() -> bool {
 /// exit literal keeps its wrapper store and the literal keeps deep-copying it — the
 /// before-half of `(R-ExitVector)`'s A/B, and the first bisect step for a wrong or empty
 /// vector field out of a callee that built it in a local.
+/// `LOFT_NO_FORWARD_RESULT=1` — `(R-ForwardResult)` off: a returned local bound from a call
+/// keeps its own buffer and the copy into the return buffer.
+pub fn forward_result_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_FORWARD_RESULT"))
+}
+
 pub fn exit_vector_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| !env_set("LOFT_NO_EXIT_VECTOR"))

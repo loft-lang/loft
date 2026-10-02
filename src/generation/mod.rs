@@ -792,6 +792,12 @@ pub struct Output<'a> {
     /// `LOFT_NO_PARAM_RECORD_PTR=1` — `@FR-R-RecPtr`'s parameter clause off: a record
     /// parameter's field accesses resolve the store each, as before the clause.
     pub param_record_ptr_disabled: bool,
+    /// Header local → the local holding its vector's `DbRef`, bound beside it at a loop
+    /// prelude.  Keyed by the header's NAME, which is unique per hoist, so no frame has to
+    /// be pushed and popped in step with `vec_headers`.
+    pub header_dbrefs: HashMap<String, String>,
+    /// `LOFT_NO_HEADER_DBREF=1` — rebuild the vector's `DbRef` at every fused read.
+    pub header_dbref_disabled: bool,
     /// `LOFT_NO_BASE_RECPTR=1` — a record view bound from an element of a vector whose BASE
     /// the loop holds resolves the store for its address again (`@FR-R-RecPtr`'s base
     /// clause off).
@@ -2235,6 +2241,8 @@ impl<'a> Output<'a> {
             base_rec_ptr_disabled: std::env::var("LOFT_NO_BASE_RECPTR").is_ok_and(|v| v != "0"),
             param_record_ptr_disabled: std::env::var("LOFT_NO_PARAM_RECORD_PTR")
                 .is_ok_and(|v| v != "0"),
+            header_dbrefs: HashMap::new(),
+            header_dbref_disabled: std::env::var("LOFT_NO_HEADER_DBREF").is_ok_and(|v| v != "0"),
             recptr_trace: std::env::var("LOFT_TRACE_RECPTR").is_ok(),
             scalar_hoists: Vec::new(),
             scalar_write_cache: HashMap::new(),
@@ -2576,6 +2584,7 @@ impl Output<'_> {
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn start_fn(&mut self, def_nr: u32) {
         self.def_nr = def_nr;
+        self.header_dbrefs.clear();
         self.indent = 0;
         self.placed_locals = hoist::placed_locals(self.data.def(def_nr).code(), self.data);
         // @PLN157 § V-j — the function's paired move-appends, before anything emits.
@@ -4120,6 +4129,14 @@ impl Output<'_> {
             lines.push(format!(
                 "let {name} = vector::vec_header(&({operand}), &stores.allocations);"
             ));
+            // The vector's own `DbRef`, which a fused read hands its cold path by reference:
+            // bound once here, where the path is evaluated once, instead of rebuilt on the
+            // stack at every read (`header_dbrefs`).
+            if !self.header_dbref_disabled {
+                let vd = format!("__vd_{}", self.hoist_counter);
+                lines.push(format!("let {vd}: DbRef = {operand};"));
+                self.header_dbrefs.insert(name.clone(), vd);
+            }
             // @PLN157 § V-ak (`@FR-R-Base`) — in a growth-free loop the header's vector
             // cannot move, so its element base is derived once beside it.
             if base_paths.contains(&path) {

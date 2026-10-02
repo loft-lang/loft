@@ -4102,6 +4102,19 @@ impl Stores {
                 if !borrowed && self.holds_no_heap(rec, tp) {
                     return;
                 }
+                // A record's own children are its fields, inline: the walk below would
+                // build a `Vec` of them (one per record released) only to recurse into each.
+                // Recursing field by field releases the same edges in the same order, and a
+                // field that owns no heap is passed over without a call.
+                if !borrowed
+                    && matches!(
+                        self.types[tp as usize].parts,
+                        Parts::Struct(_) | Parts::EnumValue(_, _)
+                    )
+                {
+                    self.remove_struct_claims(rec, tp);
+                    return;
+                }
                 let walk = self.owned_walk(rec, tp, borrowed);
                 for c in walk.children {
                     // @PLN102 heap-free audit — an `owning_elem == Some(0)` slot is an
@@ -4129,6 +4142,41 @@ impl Stores {
                     self.store_mut(rec).set_u32_raw(rec.rec, rec.pos, 0);
                 }
             }
+        }
+    }
+
+    /// [`Self::remove_claims_mode`] for a `Struct` / `EnumValue` record: each field that owns
+    /// heap released in field order, as `owned_walk`'s struct arm lists them — the same
+    /// bounds guard on a field past the store's end, the same secondary-view marker.
+    fn remove_struct_claims(&mut self, rec: &DbRef, tp: u16) {
+        let fields_of = |types: &[crate::database::Type], i: usize| match &types[tp as usize].parts {
+            Parts::Struct(f) | Parts::EnumValue(_, f) => f.get(i).map(|f| {
+                (
+                    f.position,
+                    f.content,
+                    f.other_indexes.first() == Some(&u16::MAX),
+                )
+            }),
+            _ => None,
+        };
+        let capacity_bytes = u64::from(self.store(rec).capacity_words()) * 8;
+        let mut i = 0;
+        while let Some((position, content, view)) = fields_of(&self.types, i) {
+            i += 1;
+            let pos = rec.pos + u32::from(position);
+            if u64::from(pos) >= capacity_bytes {
+                self.refuse_owned_edge(rec, tp, pos, "struct field");
+                break;
+            }
+            if !view && !self.type_owns_heap(content) {
+                continue;
+            }
+            let child = DbRef {
+                store_nr: rec.store_nr,
+                rec: rec.rec,
+                pos,
+            };
+            self.remove_claims_mode(&child, content, view);
         }
     }
 

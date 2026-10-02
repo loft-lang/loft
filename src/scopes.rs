@@ -747,6 +747,9 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
         // `(R-ExitVector)` — a local vector returned inside the exit literal is built in the
         // return buffer's store: decided on the same IR, after the placements it may host.
         crate::exit_vector::rewrite(data, d_nr);
+        // `(R-ForwardResult)` — a returned local bound from a call is built in the return
+        // buffer: the call is handed the buffer the delivery copied into.
+        crate::forward_result::rewrite(data, d_nr);
         // `(R-ReturnField)` — the returned field of an owned local is the local's store handed
         // over at the field's position: decided on the same settled IR, after the exit vector
         // a decoder's tree may have been built in.
