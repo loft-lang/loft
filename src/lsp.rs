@@ -198,7 +198,19 @@ pub fn symbol_at(text: &str, name: &str, stdlib_dir: &str, line: u32, col: u32) 
 #[must_use]
 pub fn lookup(symbol: &str, text: &str, name: &str, stdlib_dir: &str) -> Vec<Hover> {
     let p = parse_lsp_buffer(text, name, stdlib_dir);
-    let data = &p.data;
+    lookup_in(&p.data, symbol, text, name, stdlib_dir)
+}
+
+/// [`lookup`] over definitions already parsed — the REPL's session, which holds the
+/// program the user is writing and must not be re-parsed to answer `:doc`.
+#[must_use]
+pub fn lookup_in(
+    data: &Data,
+    symbol: &str,
+    text: &str,
+    name: &str,
+    stdlib_dir: &str,
+) -> Vec<Hover> {
     let mut out: Vec<Hover> = Vec::new();
     let mut seen: Vec<u32> = Vec::new();
     let take = |d: u32, out: &mut Vec<Hover>, seen: &mut Vec<u32>| {

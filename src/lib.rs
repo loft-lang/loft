@@ -410,6 +410,7 @@ pub mod live_dispatch;
 pub mod live_reload;
 pub mod process_run;
 pub mod repl;
+pub mod repl_doc;
 pub mod rpc;
 pub mod script;
 pub mod serve;

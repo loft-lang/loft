@@ -589,6 +589,29 @@ impl CachedPairError {
     }
 }
 
+/// The registry index already on this machine, verified against its signature — never
+/// fetched.  The REPL's `:libs` and `:api` read it (@PLN183): a documentation lookup answers
+/// offline, and an index that does not verify is not shown, as `loft install` would not use it.
+///
+/// # Errors
+/// A sentence for the reader: no index has been fetched yet, or the one here does not verify.
+pub fn cached_index() -> Result<registry_index::RegistryIndex, String> {
+    let (idx_path, sig_path, _) = registry_index::index_paths();
+    if !idx_path.is_file() {
+        return Err(
+            "no registry index on this machine yet — `loft search <word>` or \
+                    `loft install <library>` fetches it"
+                .to_string(),
+        );
+    }
+    let content = read_cached_index_verified(&idx_path, &sig_path, &InstallOptions::default())
+        .map_err(|e| match e {
+            CachedPairError::Io(e) => format!("the registry index could not be read: {e}"),
+            CachedPairError::Verify(msg) => msg,
+        })?;
+    registry_index::parse_index(&String::from_utf8_lossy(&content))
+}
+
 /// Read the cached index against the cached signature, treating a refresh landing
 /// underneath as what it is rather than as a bad signature.
 ///

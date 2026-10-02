@@ -10261,7 +10261,7 @@ impl Parser {
             .is_some()
     }
 
-    fn satisfaction_failures(&self, iface_nr: u32, concrete_nr: u32) -> Vec<String> {
+    pub(crate) fn satisfaction_failures(&self, iface_nr: u32, concrete_nr: u32) -> Vec<String> {
         let concrete_name = self.data.def(concrete_nr).name().to_string();
         let concrete_type = self.data.def(concrete_nr).returned().clone();
         // A struct-enum VARIANT's `returned` is its parent ENUM, so a method declared on the

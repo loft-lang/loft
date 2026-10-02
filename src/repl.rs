@@ -486,10 +486,57 @@ fn methods_for_type(data: &crate::data::Data, type_name: &str) -> Vec<String> {
     out
 }
 
+/// The registry index already on this machine, verified — never fetched (@PLN183).
+#[cfg(feature = "registry")]
+fn cached_index() -> Result<crate::registry_index::RegistryIndex, String> {
+    crate::install::cached_index()
+}
+
+/// What `:libs` and `:api` say in a loft built without the package registry.
+#[cfg(not(feature = "registry"))]
+const NO_REGISTRY: &str = "this loft is built without the package registry";
+
+/// `:doc <entry> run` (@PLN183) — run a catalogue entry's example in a SCRATCH session: the
+/// example defines its own `struct`s and `fn`s, which would collide with the user's names in
+/// theirs.  The example is the one `tests/docs/features/<tag>.loft` runs, so it is known to.
+fn run_example<W: Write>(
+    ctx: &ResolutionContext,
+    query: &str,
+    chrome: &mut W,
+) -> std::io::Result<()> {
+    let entries = crate::repl_doc::find_entries(query);
+    let [entry] = entries.as_slice() else {
+        writeln!(
+            chrome,
+            "`{query}` names {} catalogue entries — name one by its tag (`:doc @F2 run`)",
+            entries.len()
+        )?;
+        return Ok(());
+    };
+    let Some(example) = entry.example() else {
+        writeln!(chrome, "@{} has no example to run", entry.tag)?;
+        return Ok(());
+    };
+    let mut scratch = ReplSession::open(ctx)?;
+    if let Err(diags) = scratch.load_program_str(&example, &format!("@{}", entry.tag)) {
+        for d in diags {
+            writeln!(chrome, "{}", d.to_string_compact())?;
+        }
+        return Ok(());
+    }
+    if let Eval::Error(diags) = scratch.eval("main()") {
+        for d in diags {
+            writeln!(chrome, "{}", d.to_string_compact())?;
+        }
+    }
+    Ok(())
+}
+
 /// The `:`-commands Tab completion offers when the line starts with `:`.
 #[cfg(not(target_arch = "wasm32"))]
-const REPL_COMMANDS: [&str; 10] = [
+const REPL_COMMANDS: [&str; 15] = [
     "quit", "help", "reset", "fns", "vars", "type", "break", "bytecode", "rust", "slots",
+    "features", "libs", "api", "ops", "doc",
 ];
 
 /// The completion model the live completer matches against, rebuilt by the
@@ -758,8 +805,57 @@ fn process_line<W: Write>(
                 chrome,
                 "commands: :quit  :help  :reset  :fns  :vars  :type <expr>  \
                  :break <fn>[:<line>] [if <cond>]  :trace <fn> <expr>,…  \
-                 :bytecode [fn]  :rust [fn]  :slots [fn]"
+                 :bytecode [fn]  :rust [fn]  :slots [fn]\n\
+                 what there is: :features [word]  :libs  :api <library> [word]  :ops <Type>  \
+                 :doc <name> [run]"
             )?,
+            // @PLN183 — the overview, then the lookups.
+            "features" => print!(
+                "{}",
+                crate::repl_doc::features(&filter.join(" "), crate::repl_doc::WIDTH)
+            ),
+            #[cfg(not(feature = "registry"))]
+            "libs" | "api" => writeln!(chrome, "{NO_REGISTRY}")?,
+            #[cfg(feature = "registry")]
+            "libs" => {
+                let index = cached_index();
+                let installed: Vec<(String, String)> = crate::registry_index::installed_packages()
+                    .into_iter()
+                    .map(|(n, v, _)| (n, v))
+                    .collect();
+                print!(
+                    "{}",
+                    crate::repl_doc::libs(
+                        index.as_ref().map_err(String::as_str),
+                        &installed,
+                        crate::repl_doc::WIDTH
+                    )
+                );
+            }
+            #[cfg(feature = "registry")]
+            "api" => {
+                let index = cached_index();
+                let lib = filter.first().map_or("", String::as_str);
+                let word = filter.get(1).map_or("", String::as_str);
+                print!(
+                    "{}",
+                    crate::repl_doc::api(
+                        index.as_ref().map_err(String::as_str),
+                        lib,
+                        word,
+                        crate::repl_doc::WIDTH
+                    )
+                );
+            }
+            "ops" => print!(
+                "{}",
+                session.ops_text(filter.first().map_or("", String::as_str))
+            ),
+            "doc" if filter.last().is_some_and(|w| w == "run") && filter.len() > 1 => {
+                let query = filter[..filter.len() - 1].join(" ");
+                run_example(ctx, &query, chrome)?;
+            }
+            "doc" => print!("{}", session.doc_text(&filter.join(" "), &ctx.stdlib_dir)),
             "reset" => {
                 // Re-open with the SAME resolution inputs.  Rebuilding from
                 // `stdlib_dir` alone silently un-libbed a session that was working —
@@ -5147,6 +5243,177 @@ impl ReplSession {
             ..Options::new()
         };
         let _ = crate::introspect::emit_all(&mut self.parser.data, &mut state, end_def, &opts);
+    }
+
+    /// `:ops <Type>` (@PLN183) — what a type can be written with: each operator and the
+    /// definition behind it (@PLN182's `operator` methods, the stdlib's own for a built-in
+    /// type), the `[ ]` forms it supports, and the interfaces it meets.  Text, for the REPL.
+    #[must_use]
+    pub fn ops_text(&self, ty: &str) -> String {
+        use std::fmt::Write as _;
+        let data = &self.parser.data;
+        let ty_nr = data.def_nr(ty);
+        if ty.is_empty() || ty_nr == u32::MAX {
+            return format!(
+                "no type `{ty}` in scope — `:ops integer`, `:ops text`, `:ops <YourType>`\n"
+            );
+        }
+        let mut out = format!("{ty}\n");
+        let prefix = format!("t_{}{ty}_", ty.len());
+        let mut rows: Vec<(String, String)> = Vec::new();
+        for d in 0..data.definitions() {
+            let def = data.def(d);
+            if !def.operator_form || def.def_type != DefType::Function {
+                continue;
+            }
+            let Some(rest) = def.name.strip_prefix(&prefix) else {
+                continue;
+            };
+            let form = rest.split('#').next().unwrap_or(rest);
+            let symbol = match form {
+                "compare" => "<  <=  >  >=".to_string(),
+                "plus" => "+  +=".to_string(),
+                "minus" => "-  -=".to_string(),
+                "times" => "*  *=".to_string(),
+                "divided_by" => "/  /=".to_string(),
+                "remainder" => "%  %=".to_string(),
+                "negate" => "-x".to_string(),
+                "next" => "for e in x".to_string(),
+                "to_text" => "\"{x}\"".to_string(),
+                f => f
+                    .strip_prefix("to_")
+                    .map_or_else(|| f.to_string(), |t| format!("x as {t}")),
+            };
+            let sig = format!(
+                "operator {form}{}",
+                crate::api_surface::signature_of(data, d, "fn")
+            );
+            if !rows.iter().any(|(_, s)| *s == sig) {
+                rows.push((symbol, sig));
+            }
+        }
+        let _ = writeln!(out, "  operators");
+        for (symbol, sig) in &rows {
+            let _ = writeln!(out, "    {symbol:<14} {sig}");
+        }
+        let _ = writeln!(
+            out,
+            "    {:<14} compare by value — a record field by field; no type redefines them",
+            "==  !="
+        );
+        let index_forms = match ty {
+            "vector" => "v[i] an element · v[a..b] a slice",
+            "text" => "s[i] one character · s[a..b] a slice (byte offsets)",
+            "hash" | "sorted" | "index" | "spatial" | "trie" => "c[key] the record with that key",
+            _ if matches!(data.def(ty_nr).def_type, DefType::Struct | DefType::Enum)
+                && !data.def(ty_nr).is_stdlib() =>
+            {
+                "none — a type of its own reads an element through a named method (@F114)"
+            }
+            _ => "none",
+        };
+        let _ = writeln!(out, "  [ ]\n    {index_forms}");
+        let mut met = Vec::new();
+        for d in 0..data.definitions() {
+            let def = data.def(d);
+            if def.def_type == DefType::Interface
+                && !def.name.starts_with("__")
+                && self.parser.satisfaction_failures(d, ty_nr).is_empty()
+            {
+                met.push(def.name.clone());
+            }
+        }
+        met.sort();
+        met.dedup();
+        let _ = writeln!(
+            out,
+            "  meets\n    {}",
+            if met.is_empty() {
+                "no interface".to_string()
+            } else {
+                met.join(", ")
+            }
+        );
+        out
+    }
+
+    /// `:doc <name>` (@PLN183) — a feature (`@F2`, `??`, `match`), then a function, type or
+    /// method in scope (its signature and doc, read where it is defined — the hover's own
+    /// route), then a library function (`time::now`) or a library from the registry index
+    /// already on this machine.
+    #[must_use]
+    pub fn doc_text(&self, query: &str, stdlib_dir: &str) -> String {
+        use std::fmt::Write as _;
+        let width = crate::repl_doc::WIDTH;
+        let entries = crate::repl_doc::find_entries(query);
+        if !entries.is_empty() {
+            return entries
+                .iter()
+                .map(|e| crate::repl_doc::entry_text(e, width))
+                .collect::<Vec<_>>()
+                .join("\n");
+        }
+        let (lib, name) = query.split_once("::").map_or(("", query), |(l, n)| (l, n));
+        if lib.is_empty() {
+            let hovers = crate::lsp::lookup_in(&self.parser.data, name, "", "<repl>", stdlib_dir);
+            if !hovers.is_empty() {
+                let mut out = String::new();
+                for h in hovers {
+                    out.push_str(&crate::doc_render::item_text(
+                        &crate::doc_render::Item {
+                            sig: &h.signature,
+                            doc: &h.doc.join("\n"),
+                        },
+                        width,
+                    ));
+                    let _ = writeln!(out, "  — {}:{}\n", h.def_file, h.def_line);
+                }
+                return out;
+            }
+        }
+        #[cfg(feature = "registry")]
+        if let Ok(idx) = cached_index() {
+            let idx = &idx;
+            if !lib.is_empty() {
+                let probe = format!("fn {name}(");
+                if let Some(v) = idx
+                    .packages
+                    .get(lib)
+                    .and_then(|p| crate::registry_index::find_best_version(p, "*", false))
+                {
+                    let hits: Vec<_> = v.api.iter().filter(|i| i.sig.contains(&probe)).collect();
+                    if !hits.is_empty() {
+                        return hits
+                            .iter()
+                            .map(|i| {
+                                crate::doc_render::item_text(
+                                    &crate::doc_render::Item {
+                                        sig: &i.sig,
+                                        doc: &i.doc,
+                                    },
+                                    width,
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                    }
+                }
+            } else if let Some(pkg) = idx.packages.get(name)
+                && let Some(v) = crate::registry_index::find_best_version(pkg, "*", false)
+            {
+                let mut out = format!("{name} {} — library\n", v.semver);
+                if let Some(desc) = pkg.description.as_deref() {
+                    out.push_str(&crate::doc_render::wrap(desc, width, "  "));
+                }
+                let _ = writeln!(
+                    out,
+                    "  {} public item(s) · `:api {name}` lists them · `loft install {name}` fetches it",
+                    v.api.len()
+                );
+                return out;
+            }
+        }
+        format!("nothing named `{query}` — `:features` and `:libs` list what there is\n")
     }
 
     /// Print the user-defined functions entered this session (name + return
