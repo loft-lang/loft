@@ -2287,3 +2287,51 @@ fn a_mutation_is_persisted_and_an_observe_is_not() {
     assert_eq!(b.eval_value("w").expect("w").as_deref(), Some("[1,3,9]"));
     let _ = std::fs::remove_file(&path);
 }
+
+/// A typed binding (`x: float = 1`) is a binding: the session keeps it, at the type it
+/// declares, and an in-place mutation of it after that is kept too (loft#1853's follow-up —
+/// the REPL recognised only `name = …`, so `x: integer = 5` ran and was forgotten).
+#[test]
+fn a_typed_binding_is_kept_at_its_declared_type() {
+    let mut s = session();
+    for line in [
+        "x: float = 1",
+        "x += 0.5",
+        "v: vector<integer> = []",
+        "v += [4]",
+    ] {
+        assert!(matches!(s.eval(line), Eval::Ran), "`{line}`");
+    }
+    assert_eq!(s.eval_value("x").expect("x").as_deref(), Some("1.5"));
+    assert_eq!(s.eval_value("v").expect("v").as_deref(), Some("[4]"));
+    assert!(matches!(s.eval("v.clear()"), Eval::Ran));
+    assert_eq!(s.eval_value("len(v)").expect("len").as_deref(), Some("0"));
+}
+
+/// A value with no literal form (a bare `hash`) cannot be snapshotted: the input that writes
+/// it is kept as source and replayed, and an input that only reads it records nothing.
+#[test]
+fn a_hash_session_variable_keeps_its_changes() {
+    let path = tmp_session("i1853h");
+    let _ = std::fs::remove_file(&path);
+    let mut s = session();
+    s.enable_persistence(&path).expect("enable persistence");
+    for line in [
+        "struct Ent { k: text, v: integer }",
+        "h: hash<Ent[k]> = []",
+        "h += [Ent { k: \"a\", v: 1 }]",
+        "x = 1",
+        "x += len(h)",
+        "h += [Ent { k: \"b\", v: 2 }]",
+    ] {
+        assert!(matches!(s.eval(line), Eval::Ran), "`{line}`");
+    }
+    let before = std::fs::read_to_string(&path).expect("session file");
+    assert_eq!(s.eval_value("len(h)").expect("len").as_deref(), Some("2"));
+    assert_eq!(s.eval_value("x").expect("x").as_deref(), Some("2"));
+    assert_eq!(
+        std::fs::read_to_string(&path).expect("session file"),
+        before
+    );
+    let _ = std::fs::remove_file(&path);
+}
