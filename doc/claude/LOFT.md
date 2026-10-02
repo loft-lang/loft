@@ -569,13 +569,20 @@ circular indexing), use `floor_mod`: `(-1).floor_mod(3) == 2`. Division or `%` b
 
 A type gets `<`, `<=`, `>` and `>=` from one method written with `operator` in place of `fn`:
 
+<!-- from tests/reference/operator-compare.loft -->
 ```loft
 value struct Date { ms: integer }
 pub operator compare(self: Date, other: Date) -> Ordering { self.ms.compare(other.ms) }
 
-d1 < d2       // d1.compare(d2) == Less
-d1 >= d2      // d1.compare(d2) != Less
-dates.sort()  // and every generic bounded by `Ordered`
+fn test_a_date_is_ordered_by_its_operator_compare() {
+  d1 = Date { ms: 1 };
+  d2 = Date { ms: 2 };
+  assert(d1 < d2, "d1.compare(d2) == Less");
+  assert(!(d1 >= d2), "d1.compare(d2) != Less");
+  dates = [d2, d1];
+  dates.sort();                // and every generic bounded by `Ordered`
+  assert(dates[0] == d1, "sorted by compare");
+}
 ```
 
 Each form is one call of the LEFT operand's `compare`, operands in the order they are written.
