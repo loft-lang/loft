@@ -1340,8 +1340,18 @@ _libraries_in_tree() {
 # `lib/git` under `tools/`.  Keying on the index therefore reported the three best-covered
 # in-tree libraries as carrying no examples at all.  The citation is the half that lives
 # beside the `pub fn`, so it is the half that answers "does this library cite examples?".
+#
+# A published library is read at its clone's `origin/main`, the ref the guide count reads:
+# the clone's WORKING TREE is whatever branch someone last left checked out, and read there
+# it named four libraries as owing a verdict whose citations had already merged.  With $2
+# (the clone) the source is read from that ref; without it, or with no such ref, from disk.
 _libraries_citations() {
-  grep -rhoa '// Example: @[A-Z][A-Z][A-Z]-[0-9][0-9][0-9]' "$1" --include='*.loft' 2>/dev/null | wc -l
+  local re='// Example: @[A-Z][A-Z][A-Z]-[0-9][0-9][0-9]'
+  if [ -n "${2:-}" ] && git -C "$2" rev-parse -q --verify origin/main >/dev/null 2>&1; then
+    git -C "$2" grep -h -o -a -e "$re" origin/main -- "${1#"$2"/}/*.loft" 2>/dev/null | wc -l
+  else
+    grep -rhoa "$re" "$1" --include='*.loft' 2>/dev/null | wc -l
+  fi
 }
 
 # Print one grouped line of the missing report, wrapping a long member list under a hanging
@@ -1468,7 +1478,8 @@ check_libraries_progress() {
     if [ "$kind" = "in-tree" ]; then tree="$dir"; row="$EXAMPLES_EXEMPT_FILE"
     else tree="$LIBRARIES_SIBLINGS/$group/$dir"; row="$LIBRARIES_SIBLINGS/$group/$EXAMPLES_EXEMPT_FILE"; fi
     if [ ! -e "$tree" ]; then n_blindpath=$((n_blindpath + 1)); continue; fi
-    cites=$(_libraries_citations "$tree")
+    if [ "$kind" = "in-tree" ]; then cites=$(_libraries_citations "$tree")
+    else cites=$(_libraries_citations "$tree" "$LIBRARIES_SIBLINGS/$group"); fi
     [ "${cites:-0}" -gt 0 ] && continue
     row=$(awk -F'\t' -v p="$dir" '$1 !~ /^#/ && $1 == p {print; exit}' "$row" 2>/dev/null)
     if [ -z "$row" ]; then
