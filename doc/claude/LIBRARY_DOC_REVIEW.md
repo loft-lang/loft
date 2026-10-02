@@ -282,6 +282,7 @@ as a STALE ROW rather than ignored.
 | `hex_terrain` | 2026-10 | `c9ddda6` | Guide written; the README example was refused under C98 (0.1.5) |
 | `hex_way` | 2026-10 | `c9ddda6` | Guide written; the README listed six of seven examples and half the surface (0.1.3) |
 | `hex_world` | 2026-10 | `c9ddda6` | Guide written; the README named two consumers that do not use it. Ships `src/overland.loft` and `src/wall.loft`, which fail `--check` and nothing reaches — left for the owner to remove (0.2.2) |
+| `pluginabi` | 2026-10 | `b4dcdb4` | Guide written (a counter plugin and its host over frames); both README examples were refused under C98, the loft#1491 leak note was obsolete (clean under `LOFT_STORES=warn`), and the header's example spelled the error code `unknown_op` (0.1.5) |
 
 Each pass's notes, row by row, are in [LIBRARY_DOC_REVIEW-history.md](LIBRARY_DOC_REVIEW-history.md).
 
