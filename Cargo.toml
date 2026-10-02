@@ -107,6 +107,10 @@ emit-repro   = []
 # `make interp-gap` builds a separate census binary with it; the op counts need no feature.
 op-census    = []
 
+[build-dependencies]
+# build.rs re-derives the compiled stdlib's source hash to warn when it is stale (@PLN181).
+sha2 = { version = "0.10" }
+
 [dependencies]
 rand_core          = { version = "0.9", optional = true }
 rand_pcg           = { version = "0.9", optional = true }
