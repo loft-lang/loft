@@ -17,7 +17,7 @@
 // (`v = d.a; return v` — pluginabi's `pa_decode`); r9 a struct-enum field out of its wrapper;
 // r10 a LIFTED root (`return mk(n).b`); r11 a literal exit beside a field exit; r12 the root
 // bound in a loop from a pooled buffer and returned from inside it; r13 a nested record.
-// `LOFT_ALLOC_REPORT=1 loft --interpret <this> r9` counts the stores: r9 4 → 2 per call;
+// `LOFT_ALLOC_REPORT=1 loft --interpret <this> r9` counts the stores: r9 2 → 1 per call;
 // `LOFT_COPY_DUMP=1 … r1` the copies: 1 → 0 per call.  `tests/return_field.rs` pins the IR
 // shape, both censuses and the switch (`LOFT_NO_RETURN_FIELD=1` restores the copy).
 //

@@ -1309,6 +1309,7 @@ impl Output<'_> {
             // `@FR-H-SwapRebind` — the copy arm as one runtime call that exchanges the result's
             // store into the destination without resetting it first, when it can.
             let copy = if crate::keys::swap_rebind_enabled() {
+                crate::rewrite_census::fired("H-SwapRebind", 1);
                 format!("var_{name} = OpRebindRecord(cell, {target}, _src, {tp_with_free}_i32);")
             } else {
                 format!(
