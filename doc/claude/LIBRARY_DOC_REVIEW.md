@@ -139,6 +139,13 @@ current body: do the description, each parameter's meaning, the return contract,
 and any inline example still match what the code does **now**? Doc edits are XS —
 **fix drift on the spot**.
 
+Then the README and the guide, the same way: **run every example in them**, and measure
+every claim that names a target, a number or a limitation. The defect met most is an
+example written as `use lib;` followed by a bare name — a bare `use` brings in only the
+`lib::` qualifier (C98), so it does not compile; the cure is `use lib::*;`. The next is a
+limitation the code has since outgrown: "does not build on `--native-wasm`", "is not
+drawn", "import it in this order". A limitation is a claim — run it before keeping it.
+
 ### 3. Fill the highest-value coverage gap (examples)
 
 From the *uncited* public functions, pick the ones a reader "knows exists but
@@ -246,8 +253,16 @@ as a STALE ROW rather than ignored.
 | `regex` | 2026-10 | `06aa45e` | `regex_find`'s supersession named the wrong `search`; roadmap's FFI-gap cause was stale (0.4.2) |
 | `zttext` | 2026-10 | `06aa45e` | Guide written and falsified; `zttext_version()` answers the manifest; design pointers name where the notation lives (0.1.3) |
 | `assets` | 2026-10 | `efd8ed7` | Guide and @PAK-001..003 written; README example did not compile under C98 and the v2026.8.0 hang note was obsolete; `blob_put`'s `+=` claim was stale (0.2.4). Found loft's text-key replace duplicating (fixed in loft) |
-| `glb` | 2026-10 | `efd8ed7` | Guide written; README claimed camera nodes that are never written (0.1.4). A spot light is written with no `spot` object — unchecked against KHR_lights_punctual |
+| `glb` | 2026-10 | `63e6b03` | Guide written; README claimed camera nodes that are never written (0.1.4). A spot light now carries the `spot` object KHR_lights_punctual requires and its node's translation (0.1.5) |
 | `mesh3d` | 2026-10 | `efd8ed7` | Guide written; `mat4_scale` is per-axis, not uniform; the bare-import claim predated C98 (0.1.3) |
+| `drawing` | 2026-10 | `98b270f` | Guide and @DRW-001..003 written; the README's example did not compile under C98, and its rasteriser import order, `--native-wasm` and "Fronds / gradients / checks not drawn" claims were stale. The corpus claim re-measured: 34 of the crawler's 36 scenes byte-identical on both backends, the two others use `Lock` (0.3.2) |
+| `graphics` | 2026-10 | `98b270f` | README listed `mesh3d` and `glb` as sub-modules it does not pass on; every listed function exists, the wasm PNG and blend claims measured (0.9.5) |
+| `gridmesh` | 2026-10 | `98b270f` | Guide written; its read-only functions take `const`, so a rule holding the field `const` can call `idx_at`; plan history out of the comments (0.2.4). Found loft's false avoidable-copy advice on a field or parameter copy (fixed in loft) |
+| `imaging` | 2026-10 | `98b270f` | README only: `--native-wasm` builds and decodes as the interpreter does; @IMG-002 described as RGBA with alpha carried (0.4.2) |
+| `shapes` | 2026-10 | `98b270f` | Guide written; a depth is the distance out, not the part inside (0.5.2) |
+| `stage` | 2026-10 | `98b270f` | README read against the source: all 100 listed names exist, the test-backed claims each have their test; guide linked (0.18.6) |
+| `text2d` | 2026-10 | `98b270f` | Guide and @T2D-001..003 written; `write_text("")` answered -1 and a scale below 1 measured unlike it drew (0.4.3) |
+| `tween` | 2026-10 | `98b270f` | Guide and @TWN-001..003 written; the README's fixstep example did not compile under C98 (0.1.2). Found loft's misleading bare-variant import advice (fixed in loft) |
 
 Each pass's notes, row by row, are in [LIBRARY_DOC_REVIEW-history.md](LIBRARY_DOC_REVIEW-history.md).
 
