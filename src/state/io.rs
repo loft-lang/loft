@@ -138,16 +138,14 @@ impl State {
             };
             if v_ptr != 0 {
                 let length = self.database.allocations[store_nr as usize].get_u32_raw(v_ptr, 4);
-                let elem_size = u32::from(self.database.size(elem_tp));
-                for i in 0..length {
-                    let elem = DbRef {
-                        store_nr,
-                        rec: v_ptr,
-                        pos: 8 + elem_size * i,
-                    };
-                    self.database
-                        .read_data(&elem, elem_tp, little_endian, &mut data);
-                }
+                self.database.write_vector_payload(
+                    store_nr,
+                    v_ptr,
+                    length,
+                    elem_tp,
+                    little_endian,
+                    &mut data,
+                );
             }
         } else if matches!(
             &self.database.types[db_tp as usize].parts,

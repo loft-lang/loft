@@ -75,6 +75,45 @@ impl Stores {
         }
     }
 
+    /// Append the `length` elements of the vector record `v_rec` (store `store_nr`) to
+    /// `data` in file form — the one walk every vector write takes, a whole vector written
+    /// by either backend and a vector field inside a record alike.  Elements whose stored
+    /// bytes ARE their file bytes ([`Self::raw_file_width`], in the host's byte order) go out
+    /// as one copy of the payload; every other element through [`Self::read_data`].
+    pub fn write_vector_payload(
+        &self,
+        store_nr: u16,
+        v_rec: u32,
+        length: u32,
+        elem_tp: u16,
+        little_endian: bool,
+        data: &mut Vec<u8>,
+    ) {
+        if v_rec == 0 || length == 0 {
+            return;
+        }
+        let elem_size = u32::from(self.size(elem_tp));
+        if little_endian == cfg!(target_endian = "little")
+            && crate::keys::slice_write_enabled()
+            && self.raw_file_width(elem_tp) == Some(elem_size)
+        {
+            let bytes = self.allocations[store_nr as usize].bytes_of(v_rec);
+            let want = (length as usize) * (elem_size as usize);
+            if bytes.len() >= want {
+                data.extend_from_slice(&bytes[..want]);
+                return;
+            }
+        }
+        for i in 0..length {
+            let elem = DbRef {
+                store_nr,
+                rec: v_rec,
+                pos: 8 + elem_size * i,
+            };
+            self.read_data(&elem, elem_tp, little_endian, data);
+        }
+    }
+
     /// # Panics
     /// If `tp` refers to a type that is not implemented for file reading.
     #[expect(clippy::too_many_lines, reason = "inherited")]
@@ -217,33 +256,7 @@ impl Stores {
                         let store = &self.allocations[r.store_nr as usize];
                         store.get_u32_raw(v_rec, 4)
                     };
-                    let elem_size = u32::from(self.size(elem_tp));
-                    // Elements whose stored bytes ARE their file bytes go out as one copy
-                    // of the vector's payload: what the per-element walk below writes,
-                    // without a dispatch (and, for a sized integer, a type-row clone) per
-                    // element.
-                    if length > 0
-                        && little_endian == cfg!(target_endian = "little")
-                        && crate::keys::slice_write_enabled()
-                        && self.raw_file_width(elem_tp) == Some(elem_size)
-                    {
-                        let store = &self.allocations[r.store_nr as usize];
-                        let bytes = store.bytes_of(v_rec);
-                        let want = (length as usize) * (elem_size as usize);
-                        if bytes.len() >= want {
-                            data.extend_from_slice(&bytes[..want]);
-                            return;
-                        }
-                    }
-                    let store_nr = r.store_nr;
-                    for i in 0..length {
-                        let elem = DbRef {
-                            store_nr,
-                            rec: v_rec,
-                            pos: 8 + elem_size * i,
-                        };
-                        self.read_data(&elem, elem_tp, little_endian, data);
-                    }
+                    self.write_vector_payload(r.store_nr, v_rec, length, elem_tp, little_endian, data);
                 }
                 Parts::Array(elem_tp) => {
                     let store_nr = r.store_nr;
