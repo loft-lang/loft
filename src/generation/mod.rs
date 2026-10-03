@@ -6749,13 +6749,8 @@ extern crate loft;"
                 // Linux/macOS only ever produce `/` separators so the
                 // original check happened to work; Windows surfaced
                 // the gap in PR #212 CI.
-                let normalised: String = pos_file
-                    .chars()
-                    .map(|c| if c == '\\' { '/' } else { c })
-                    .collect();
-                if pos_file.is_empty()
-                    || normalised.contains("/default/")
-                    || normalised.contains("/lib/")
+                let path = crate::file_access::PathText::host(pos_file);
+                if pos_file.is_empty() || path.has_component("default") || path.has_component("lib")
                 {
                     continue;
                 }

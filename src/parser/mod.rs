@@ -3806,7 +3806,7 @@ impl Parser {
                 .data
                 .native_packages
                 .iter()
-                .filter(|(_, pkg_dir)| file.starts_with(pkg_dir.as_str()))
+                .filter(|(_, pkg_dir)| crate::file_access::is_under(&file, pkg_dir))
                 .max_by_key(|(_, pkg_dir)| pkg_dir.len())
             {
                 binds.push((sym, crate_name.replace('-', "_")));
@@ -20708,7 +20708,7 @@ impl Parser {
                     if !candidates.iter().any(|c| c == def.name()) {
                         continue;
                     }
-                    if !def.position().file.starts_with(&pkg_dir) {
+                    if !crate::file_access::is_under(&def.position().file, &pkg_dir) {
                         continue;
                     }
                     rust_symbol.clone_into(&mut self.data.definitions[d_nr as usize].native);
@@ -20725,7 +20725,7 @@ impl Parser {
                 if sym.is_empty() {
                     continue;
                 }
-                if !def.position().file.starts_with(&pkg_dir) {
+                if !crate::file_access::is_under(&def.position().file, &pkg_dir) {
                     continue;
                 }
                 if self.data.native_symbol_crates.contains_key(sym) {
@@ -20939,7 +20939,7 @@ impl Parser {
                 let name = m
                     .name
                     .clone()
-                    .unwrap_or_else(|| pkg_dir.rsplit('/').next().unwrap_or(pkg_dir).to_string());
+                    .unwrap_or_else(|| crate::file_access::name_of(pkg_dir));
                 if !self
                     .pending_placed_libs
                     .iter()
@@ -20984,7 +20984,7 @@ impl Parser {
                 .data
                 .c_libraries
                 .iter()
-                .any(|c| c.name == lib && c.pkg_dir == pkg_dir)
+                .any(|c| c.name == lib && crate::file_access::same_path(&c.pkg_dir, pkg_dir))
             {
                 self.data.c_libraries.push(crate::data::CLibrary {
                     name: lib,
@@ -21070,7 +21070,7 @@ impl Parser {
                     if !candidates.iter().any(|c| c == def.name()) {
                         continue;
                     }
-                    if !def.position().file.starts_with(pkg_dir) {
+                    if !crate::file_access::is_under(&def.position().file, pkg_dir) {
                         continue;
                     }
                     rust_symbol.clone_into(&mut self.data.definitions[d_nr as usize].native);
@@ -21094,7 +21094,7 @@ impl Parser {
                 if sym.is_empty() {
                     continue;
                 }
-                if !def.position().file.starts_with(pkg_dir) {
+                if !crate::file_access::is_under(&def.position().file, pkg_dir) {
                     continue;
                 }
                 if self.data.native_symbol_crates.contains_key(sym) {
@@ -23117,7 +23117,8 @@ mod p269_native_backfill_tests {
         let imaging_syms: Vec<String> = (0..p.data.definitions())
             .map(|d| p.data.def(d))
             .filter(|def| {
-                !def.native().is_empty() && def.position().file.starts_with(imaging_dir.as_str())
+                !def.native().is_empty()
+                    && crate::file_access::is_under(&def.position().file, &imaging_dir)
             })
             .map(|def| def.native().to_string())
             .collect();

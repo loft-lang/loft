@@ -169,7 +169,7 @@ pub fn install(path: &str, stdlib_dir: &str, lib_dirs: &[String], running: &crat
             continue;
         }
         let canon = crate::file_access::plain_canonical_str(f);
-        if canon.starts_with(&stdlib_prefix) {
+        if crate::file_access::is_under(&canon, &stdlib_prefix) {
             continue;
         }
         if files.iter().any(|w| *w.path == **f) {
