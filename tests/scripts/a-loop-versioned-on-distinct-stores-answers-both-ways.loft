@@ -13,7 +13,11 @@
 // texture, 63 long.  Into the parameter's own field the texture is the same, and three
 // rounds of it sum 46584.
 //
-// @falsified-by: tests/falsified/a-loop-versioned-on-distinct-stores-answers-both-ways.patch — CHANNEL and HOLDS below
+// @falsified-at: none — no road this suite knows hands a return buffer that lives in a
+// parameter's store (`s.out = tex(s)` takes a buffer of its own), so the plain copy's test
+// arm is not reached by a store that IS shared; forcing the held copy (`true || …`) is
+// INERT here.  The cells pin both copies' values; the shared-store case is the test's to
+// answer at run time, which is why the clause tests rather than assumes.
 
 struct Sim { lw: integer, lh: integer, qmin: integer, rmin: integer, vis: vector<integer>, seen: vector<integer>, out: vector<integer> }
 fn state(s: Sim, q: integer, r: integer) -> integer {
