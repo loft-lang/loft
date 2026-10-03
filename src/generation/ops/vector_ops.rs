@@ -109,6 +109,9 @@ impl OpEmitter for FusedElementReadEmitter {
             return write!(ctx.w, "var_{name}.{idx}");
         }
 
+        if emit_byte_read(ctx, args)? {
+            return Ok(());
+        }
         let Some(fused) = ctx.output.fused_element_read(ctx.def_fn.name(), args) else {
             if emit_join_read(ctx, args)? {
                 return Ok(());
@@ -182,6 +185,62 @@ impl OpEmitter for FusedElementReadEmitter {
         }
         Ok(())
     }
+}
+
+/// `@FR-R-Base`'s byte clause — `OpGetByte(v[i], fld, min)`, a `vector<u8>` (or `i8`) element
+/// read, where the loop holds `v`'s header and element base: one bounds test and one byte
+/// load plus the bias, where the template resolved the store per read.  `OpGetByte` re-bases
+/// the stored byte by `min` and answers `i64::MIN` for an absent element, so it stayed out of
+/// the typed fused reads; here the in-range arm adds `min` itself, and EVERY other index — past
+/// the end, or negative (which addresses from the end) — takes the template whole, bound to
+/// the index evaluated once.  Answers whether it emitted.
+fn emit_byte_read(ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<bool> {
+    if ctx.def_fn.name() != "OpGetByte" || ctx.output.byte_read_disabled {
+        return Ok(false);
+    }
+    let [inner, fld, min] = args else {
+        return Ok(false);
+    };
+    let (Value::Int(fld_v), Value::Int(min_v)) = (fld.unspan(), min.unspan()) else {
+        return Ok(false);
+    };
+    let Value::Call(elem_op, elem_args) = inner.unspan() else {
+        return Ok(false);
+    };
+    if !super::super::hoist::is_element_address(ctx.output.data, *elem_op) {
+        return Ok(false);
+    }
+    let [vector, size, index] = &elem_args[..] else {
+        return Ok(false);
+    };
+    let Value::Int(size_v) = size.unspan() else {
+        return Ok(false);
+    };
+    let Some(path) = super::super::hoist::vector_path(ctx.output.data, vector) else {
+        return Ok(false);
+    };
+    let (Some(header), Some(base)) = (
+        ctx.output.active_vec_header(&path).map(str::to_owned),
+        ctx.output.active_vec_base(&path).map(str::to_owned),
+    ) else {
+        return Ok(false);
+    };
+    write!(ctx.w, "{{ let __bi: i64 = ")?;
+    ctx.emit(index)?;
+    write!(
+        ctx.w,
+        "; if (__bi as u64) < u64::from({header}.len) {{ i64::from(unsafe {{ {base}.add(__bi as usize * {size_v}usize + {fld_v}usize).read() }}) + ({min_v}_i64) }} else {{ "
+    )?;
+    // The template, over the index already evaluated.
+    let mut fallback = args.to_vec();
+    if let Value::Call(op, a) = inner.unspan() {
+        let mut a = a.clone();
+        a[2] = Value::RawExpr("__bi".to_string());
+        fallback[0] = Value::Call(*op, a);
+    }
+    super::default::DefaultEmitter.emit(ctx, &fallback)?;
+    write!(ctx.w, " }} }} /*@FR-R-Base byte read*/")?;
+    Ok(true)
 }
 
 /// `@FR-R-Base`'s join clause — `v[i]?.f` where the loop holds `v`'s header and element

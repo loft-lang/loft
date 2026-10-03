@@ -812,6 +812,8 @@ pub struct Output<'a> {
     pub in_distinct_copy: bool,
     /// `LOFT_NO_HEADER_DBREF=1` — rebuild the vector's `DbRef` at every fused read.
     pub header_dbref_disabled: bool,
+    /// `LOFT_NO_BYTE_READ=1` — a `vector<u8>` element read keeps its template.
+    pub byte_read_disabled: bool,
     /// `LOFT_NO_TEXT_SET_BORROW=1` — every `OpSetText` copies its value first, as before.
     pub text_set_copy_kept: bool,
     /// `LOFT_NO_BASE_RECPTR=1` — a record view bound from an element of a vector whose BASE
@@ -2265,6 +2267,7 @@ impl<'a> Output<'a> {
             in_distinct_copy: false,
             header_dbref_disabled: std::env::var("LOFT_NO_HEADER_DBREF").is_ok_and(|v| v != "0"),
             text_set_copy_kept: std::env::var("LOFT_NO_TEXT_SET_BORROW").is_ok_and(|v| v != "0"),
+            byte_read_disabled: std::env::var("LOFT_NO_BYTE_READ").is_ok_and(|v| v != "0"),
             recptr_trace: std::env::var("LOFT_TRACE_RECPTR").is_ok(),
             scalar_hoists: Vec::new(),
             scalar_write_cache: HashMap::new(),
