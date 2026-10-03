@@ -334,6 +334,70 @@ pub fn is_under(file: &str, dir: &str) -> bool {
     PathText::host(file).starts_with(&PathText::host(dir))
 }
 
+// The name operations the compiler asks of a host path, shaped like `std::path`'s so a call
+// site keeps its types, and answered by `PathText` under the host's flavor — so each answer
+// is the one the Windows rules give when the compiler runs there, and those rules are unit
+// tests on every host.  Paths here are host paths the OS or the user gave; a loft PROGRAM's
+// paths go through `PathText::program` instead.
+
+/// The last name (`std`: `Path::file_name`).
+#[must_use]
+pub fn file_name(path: &Path) -> Option<String> {
+    PathText::from_os(path).file_name().map(str::to_string)
+}
+
+/// The last name without its extension (`std`: `Path::file_stem`).
+#[must_use]
+pub fn file_stem(path: &Path) -> Option<String> {
+    PathText::from_os(path).file_stem().map(str::to_string)
+}
+
+/// The last name's extension, without its dot (`std`: `Path::extension`).
+#[must_use]
+pub fn extension(path: &Path) -> Option<String> {
+    PathText::from_os(path).extension().map(str::to_string)
+}
+
+/// Does the last name carry extension `ext` — compared under the flavor's case rule, so
+/// `x.DLL` is a `dll` on Windows?
+#[must_use]
+pub fn has_extension(path: &Path, ext: &str) -> bool {
+    let p = PathText::from_os(path);
+    p.extension().is_some_and(|e| match p.flavor() {
+        Flavor::Unix => e == ext,
+        Flavor::Windows => e.eq_ignore_ascii_case(ext),
+    })
+}
+
+/// The path without its last name (`std`: `Path::parent`), `None` at a root.
+#[must_use]
+pub fn parent(path: &Path) -> Option<PathBuf> {
+    PathText::from_os(path)
+        .parent()
+        .map(|p| PathBuf::from(p.native_or_empty()))
+}
+
+/// `path` below `base` as a relative path (`std`: `Path::strip_prefix`), `None` when it
+/// is not inside — by component, under the flavor's case rule.
+#[must_use]
+pub fn relative(path: &Path, base: &Path) -> Option<PathBuf> {
+    PathText::from_os(path)
+        .relative_to(&PathText::from_os(base))
+        .map(|p| PathBuf::from(p.native_or_empty()))
+}
+
+/// The path with its extension replaced (`std`: `Path::with_extension`).
+#[must_use]
+pub fn with_extension(path: &Path, ext: &str) -> PathBuf {
+    PathBuf::from(PathText::from_os(path).with_extension(ext).native())
+}
+
+/// Does the path start at a root (`std`: `Path::is_absolute`)?
+#[must_use]
+pub fn is_absolute(path: &Path) -> bool {
+    PathText::from_os(path).is_absolute()
+}
+
 /// Do two spellings of a host path name the same place — by components, a trailing
 /// separator meaning nothing and, on Windows, `/` and `\` and case agreeing?  Text only: the
 /// file system is not asked (see [`same_file`] for that).

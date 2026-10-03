@@ -202,11 +202,15 @@ impl PathText {
         self.flavor
     }
 
-    /// The path starts at a root (`/a`, `C:\a`, `\\srv\share\a`) rather than at a
-    /// current directory.
+    /// The path names one place whatever the current directory is: `/a` on Unix, `C:\a` or
+    /// `\\srv\share\a` on Windows.  A Windows `\a` is NOT absolute — it is the root of the
+    /// CURRENT drive — as `std` also answers.
     #[must_use]
     pub fn is_absolute(&self) -> bool {
-        self.rooted
+        match self.flavor {
+            Flavor::Unix => self.rooted,
+            Flavor::Windows => self.rooted && !self.prefix.is_empty(),
+        }
     }
 
     /// The components after the prefix and root.
@@ -237,6 +241,59 @@ impl PathText {
         let mut p = self.clone();
         p.parts.pop();
         Some(p)
+    }
+
+    /// The last name without its extension (`b` for `a/b.tar.gz` is `b.tar`, as `std` does).
+    #[must_use]
+    pub fn file_stem(&self) -> Option<&str> {
+        let name = self.file_name()?;
+        match name.rfind('.') {
+            Some(dot) if dot > 0 => Some(&name[..dot]),
+            _ => Some(name),
+        }
+    }
+
+    /// The path with its last name's extension replaced by `ext` (removed when `ext` is
+    /// empty); unchanged when there is no last name.
+    #[must_use]
+    pub fn with_extension(&self, ext: &str) -> PathText {
+        let mut p = self.clone();
+        if let Some(stem) = self.file_stem().map(str::to_string)
+            && let Some(last) = p.parts.last_mut()
+        {
+            *last = if ext.is_empty() {
+                stem
+            } else {
+                format!("{stem}.{ext}")
+            };
+        }
+        p
+    }
+
+    /// `self` below `base`, as a relative path — `None` when `self` is not inside `base`
+    /// (by component, under the flavor's case rule).
+    #[must_use]
+    pub fn relative_to(&self, base: &PathText) -> Option<PathText> {
+        if !self.starts_with(base) {
+            return None;
+        }
+        Some(PathText {
+            flavor: self.flavor,
+            prefix: String::new(),
+            rooted: false,
+            parts: self.parts[base.parts.len()..].to_vec(),
+        })
+    }
+
+    /// The native spelling as `std` would hand it over: an empty relative path is `""`
+    /// (where [`PathText::native`] renders `.`), so `parent("a")` stays `""`.
+    #[must_use]
+    pub fn native_or_empty(&self) -> String {
+        if self.prefix.is_empty() && !self.rooted && self.parts.is_empty() {
+            String::new()
+        } else {
+            self.native()
+        }
     }
 
     /// `self` followed by `rel`; an absolute `rel` replaces `self`, as joining does on
@@ -454,6 +511,28 @@ mod tests {
         assert_eq!(u("/../x").portable(), "/x", "nothing is above the root");
         assert_eq!(u("a/..").portable(), ".");
         assert_eq!(w(r"C:\a\..\b").portable(), "C:/b");
+    }
+
+    #[test]
+    fn stems_extensions_and_relative_paths() {
+        assert_eq!(u("a/b.tar.gz").file_stem(), Some("b.tar"));
+        assert_eq!(u("a/.hidden").file_stem(), Some(".hidden"));
+        assert_eq!(u("a/b").file_stem(), Some("b"));
+        assert_eq!(u("a/b.loft").with_extension("rs").portable(), "a/b.rs");
+        assert_eq!(u("a/b.loft").with_extension("").portable(), "a/b");
+        assert_eq!(
+            w(r"C:\x\y.LOFT").with_extension("store").native(),
+            r"C:\x\y.store"
+        );
+        let rel = w(r"C:\Pkg\src\a.loft").relative_to(&w("c:/pkg")).unwrap();
+        assert_eq!(rel.portable(), "src/a.loft");
+        assert!(rel.parts() == ["src", "a.loft"] && !rel.is_absolute());
+        assert!(u("/x/pkg2/a").relative_to(&u("/x/pkg")).is_none());
+        assert_eq!(u("a").parent().unwrap().native_or_empty(), "");
+        assert!(w(r"C:\a").is_absolute() && w(r"\\srv\share\a").is_absolute());
+        assert!(!w(r"\a").is_absolute(), "the current drive's root");
+        assert!(u("/a").is_absolute() && !u("a").is_absolute());
+        assert_eq!(u("/").parent().map(|p| p.portable()), None);
     }
 
     #[test]
