@@ -17,7 +17,7 @@
 // right neighbour overflows (absent, 0) and the third column overflows whole, so 2 + 2 = 4.
 // `c` sits exactly on the bound (2^20, guarded), `d` one past it (plain); both read their
 // cells as `a` does.  `count_down` and `count_writes` pin the recursive helper and a field
-// written in the loop.
+// written in the loop.  rec(3)·2 + rec(2) = 6 + 2 = 8.
 //
 // @falsified-by: tests/falsified/a-helper-runs-plain-only-where-the-callers-guard-bounds-its-arguments.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
 // CHANNEL: native assertions — with the guard forced true, grid `o` runs the plain copy and
@@ -85,7 +85,16 @@ fn mk(q0: integer, r0: integer, w: integer, h: integer) -> Grid {
   for i in 0..(w * h) { g.cells += [((i * 7) % 5) as u8 ?? 0]; }
   g
 }
+// A recursive helper whose result feeds arithmetic: ranging its result analyses its body with
+// the argument's range, which meets the same call again one value lower — that analysis
+// must stop, not recurse until the compiler's stack overflows (it did, on cbor's encoder).
+fn rec(n: integer) -> integer {
+  if n <= 0 { return 0; }
+  m = rec(n - 1);
+  m + 1
+}
 fn main() {
+  assert(rec(3) * 2 + rec(2) == 8, "a recursive helper ranged in context");
   a = mk(3, -2, 4, 3);
   o = mk(9223372036854775806, 0, 3, 1);
   assert(count_cells(a) == 55, "the neighbour reads, guarded");
