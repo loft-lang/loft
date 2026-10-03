@@ -1,0 +1,75 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A REPEATED HASH KEY TAKES THE BUCKET IT DISPLACES (@FR-Col-Insert, @FR-Col-Group-Dup).  A
+// `hash` insert whose key is already present puts the new record in the bucket the old one
+// held, instead of unlinking the old one (with the back-shift of the entries probed past
+// it) and walking the table again to file the new one.  The table must read exactly as the
+// remove-then-add left it: the latest insert wins, the length does not move, every OTHER
+// key is still found — including keys whose probe walk passes the replaced bucket — the
+// displaced record's text is released, and in a group the displaced record stays in the
+// vector member and leaves every keyed one.
+//
+// Axes this file MOVES:  the replaced key's place on a probe chain (a full table of 40 keys
+//                        over a small table, so chains cross the replaced buckets), the
+//                        number of replacements of ONE key (1 and 200), whether the hash is
+//                        LONE or a member of a group with a vector (it only unlinks there)
+//                        or with another keyed member only (it releases there).
+// Axes it HOLDS FIXED:   an integer key; a record that owns one text.
+//
+// Expected values by hand: keys 0..39 hold v = k, sum 780.  Replacing the 14 keys 0, 3, …,
+// 39 with v = 10·k takes 3·(0+1+…+13) = 273 out and 2730 in: 780 − 273 + 2730 = 3237.  Key
+// 5 replaced 200 times ends on name "c199", v 5 + 199 = 204, and the sum moves by 204 − 5
+// to 3436.
+//
+// @falsified-by: PENDING
+
+struct E { k: integer, v: integer, nm: text }
+struct Lone { h: hash<E[k]> }
+struct F { fk: integer, fname: text }
+struct WithVec { fs: vector<F>, by_k: hash<F[fk]> }
+struct G { gk: integer, gn: text }
+struct AllKeyed { gh: hash<G[gk]>, gs: sorted<G[gk]> }
+
+fn total(l: Lone) -> integer { t = 0; for e in l.h { t += e.v; } t }
+
+fn main() {
+  l = Lone { };
+  for k in 0..40 { l.h += [E { k: k, v: k, nm: "a{k}" }]; }
+  assert(len(l.h) == 40 && total(l) == 780, "filled: len={len(l.h)} sum={total(l)}");
+
+  for k in 0..40 {
+    if k % 3 == 0 { l.h += [E { k: k, v: 10 * k, nm: "b{k}" }]; }
+  }
+  assert(len(l.h) == 40, "a replacement keeps the length: {len(l.h)}");
+  assert(total(l) == 3237, "the latest insert wins: sum={total(l)}");
+  for k in 0..40 {
+    want = if k % 3 == 0 { 10 * k } else { k };
+    nm = if k % 3 == 0 { "b{k}" } else { "a{k}" };
+    assert(l.h[k].k == k && l.h[k].v == want && l.h[k].nm == nm,
+      "key {k} found after the replacements: v={l.h[k].v} nm={l.h[k].nm}");
+  }
+
+  for i in 0..200 { l.h += [E { k: 5, v: 5 + i, nm: "c{i}" }]; }
+  assert(len(l.h) == 40 && l.h[5].nm == "c199" && l.h[5].v == 204,
+    "one key replaced 200 times: len={len(l.h)} nm={l.h[5].nm} v={l.h[5].v}");
+  assert(total(l) == 3436, "and every other key kept: sum={total(l)}");
+  assert(l.h[4].nm == "a4" && l.h[6].nm == "b6", "the neighbours of key 5");
+
+  // A group with a vector member: the hash only unlinks, the vector keeps the older record.
+  w = WithVec { };
+  w.fs += [F { fk: 7, fname: "first" }];
+  w.fs += [F { fk: 7, fname: "dup" }];
+  w.fs += [F { fk: 8, fname: "eight" }];
+  assert(len(w.fs) == 3 && len(w.by_k) == 2 && w.by_k[7].fname == "dup" && w.by_k[8].fname == "eight",
+    "group with a vector: fs={len(w.fs)} by_k={len(w.by_k)} 7={w.by_k[7].fname}");
+  assert(w.fs[0].fname == "first" && w.fs[1].fname == "dup", "the vector keeps both records");
+
+  // A group of keyed members only: the displaced record is held nowhere and is released.
+  a = AllKeyed { };
+  for i in 0..50 { a.gh += [G { gk: i % 4, gn: "g{i}" }]; }
+  assert(len(a.gh) == 4 && len(a.gs) == 4, "all-keyed group: gh={len(a.gh)} gs={len(a.gs)}");
+  assert(a.gh[0].gn == "g48" && a.gh[1].gn == "g49" && a.gh[2].gn == "g46" && a.gh[3].gn == "g47",
+    "the latest of each key: {a.gh[0].gn} {a.gh[1].gn} {a.gh[2].gn} {a.gh[3].gn}");
+  assert(a.gs[2].gn == "g46", "and the sorted member agrees: {a.gs[2].gn}");
+}

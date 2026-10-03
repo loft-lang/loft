@@ -935,7 +935,7 @@ impl Stores {
         let walked = match probed {
             hash::Probed::Unknown => return,
             hash::Probed::Free { .. } => None,
-            hash::Probed::Present(e) => Some((e.rec, e.pos)),
+            hash::Probed::Present { entry: e, .. } => Some((e.rec, e.pos)),
         };
         assert!(
             walked == looked,
@@ -1034,7 +1034,40 @@ impl Stores {
                         &mut self.allocations,
                         &self.types[tp as usize].keys,
                     ),
-                    hash::Probed::Present(existing) => {
+                    hash::Probed::Present {
+                        entry: existing,
+                        bucket,
+                        index,
+                    } if keys::keyed_replace_enabled() => {
+                        // The new record takes the displaced entry's bucket: the unlink,
+                        // its back-shift and the second walk of `hash::add` all left the
+                        // table exactly as this one write does.  The displaced entry is
+                        // released as `displace_keyed` releases it — claims first, then
+                        // its slot, and only by the collection that owns it.
+                        self.forget_in_scratches(data, &existing);
+                        let gone = hash::replace_at(data, bucket, index, &mut self.allocations);
+                        if !secondary {
+                            self.remove_claims(&existing, c);
+                            self.free_hash_entry(data, &existing, gone);
+                        }
+                        if keys::keyed_verify() {
+                            let key = keys::get_key(
+                                rec,
+                                &self.allocations,
+                                &self.types[tp as usize].keys,
+                            );
+                            let found = self.find(data, tp, &key);
+                            assert!(
+                                (found.rec, found.pos) == (rec.rec, rec.pos),
+                                "LOFT_KEYED_VERIFY: the replaced bucket answers {found:?} \
+                                 where the insert filed {rec:?}"
+                            );
+                        }
+                        displaced = Some(existing);
+                    }
+                    hash::Probed::Present {
+                        entry: existing, ..
+                    } => {
                         self.displace_keyed(data, &existing, tp, c, secondary);
                         displaced = Some(existing);
                         hash::add(

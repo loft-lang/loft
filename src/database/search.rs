@@ -861,7 +861,7 @@ impl Stores {
     /// where there is one, and by looking the entry up (`hash::free_entry`) where the table
     /// did not hold it — which keeps an entry that was allocated but never filed from
     /// leaking, as before.
-    fn free_hash_entry(&mut self, data: &DbRef, rec: &DbRef, slot: u32) {
+    pub(crate) fn free_hash_entry(&mut self, data: &DbRef, rec: &DbRef, slot: u32) {
         if slot == 0 {
             hash::free_entry(data, rec, &mut self.allocations);
         } else {
