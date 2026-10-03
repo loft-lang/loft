@@ -670,6 +670,9 @@ pub struct ByteRead<'a> {
     /// `OpGetBoolean` rather than `OpGetByte`: the stored byte is the answer as it stands
     /// (0, 1, or 255 for null), with no bias, and an absent element answers 255.
     pub boolean: bool,
+    /// `OpGetCharacter`: the stored `u32` decoded as the template decodes it
+    /// (`char::from_u32(..).unwrap_or('\0')`), and `'\0'` for an absent element.
+    pub character: bool,
     pub header: String,
     pub base: String,
 }
@@ -5798,14 +5801,17 @@ impl Output<'_> {
     #[must_use]
     pub fn fused_byte_read<'a>(&self, getter: &str, args: &'a [Value]) -> Option<ByteRead<'a>> {
         let boolean = getter == "OpGetBoolean";
-        if !(boolean || getter == "OpGetByte") || self.byte_read_disabled || self.elem_fuse_disabled
+        let character = getter == "OpGetCharacter";
+        if !(boolean || character || getter == "OpGetByte")
+            || self.byte_read_disabled
+            || self.elem_fuse_disabled
         {
             return None;
         }
-        // `OpGetByte(e, fld, min)`, `OpGetBoolean(e, fld)`.
+        // `OpGetByte(e, fld, min)`, `OpGetBoolean(e, fld)`, `OpGetCharacter(e, fld)`.
         let (inner, fld, min) = match args {
-            [inner, fld, min] if !boolean => (inner, fld, min.unspan()),
-            [inner, fld] if boolean => (inner, fld, &Value::Int(0)),
+            [inner, fld, min] if !boolean && !character => (inner, fld, min.unspan()),
+            [inner, fld] if boolean || character => (inner, fld, &Value::Int(0)),
             _ => return None,
         };
         let (Value::Int(fld), Value::Int(min)) = (fld.unspan(), min) else {
@@ -5834,6 +5840,7 @@ impl Output<'_> {
             fld: *fld,
             min: *min,
             boolean,
+            character,
             header,
             base,
         })

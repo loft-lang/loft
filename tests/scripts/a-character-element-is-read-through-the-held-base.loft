@@ -1,0 +1,64 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A CHARACTER ELEMENT IS READ THROUGH THE HELD BASE (`@FR-R-Base`'s byte clause, character
+// form).  Inside a loop that writes no store, `v[i]` of a `vector<character>` reads the stored
+// code point through the header and element base the loop holds — one bounds test and one
+// four-byte load, decoded as the template decodes it — where the template resolved the store
+// per read.  The answer must be the template's: the character in range, whatever its UTF-8
+// width; a negative index counting from the end; and an index past the end the absent
+// character, which a `?` discharges to its default and a text append skips.
+//
+// Axes this file MOVES:  the code point's UTF-8 width (1: 'a', 2: 'é', 3: '€', 4: '😀'),
+//                        the index (in range, negative, past the end), the read's use
+//                        (appended to a text, compared, discharged with `?`), the length
+//                        (0, 1, 6).
+// Axes it HOLDS FIXED:   a `vector<character>` parameter read in a counted loop.
+//
+// Expected values by hand, over ['a', 'é', '€', '😀', 'b', 'z']:
+//   copy(v, 1, 3) = "é€😀"; copy(v, 0, 6) = "aé€😀bz"; copy(v, 4, 4) — 4..8 reads 'b', 'z'
+//   and two absent ones, which the append skips: "bz".
+//   count of 'b' or 'z' read from the end (k − 6) = 2;  a past-the-end read is the absent
+//   character, which formats as the empty text, so of the reads at k + 3 for k in 0..6 three
+//   are present (indices 3, 4, 5: '😀', 'b', 'z') and three absent (6, 7, 8).
+//
+// @falsified-by: PENDING
+
+fn copy(v: vector<character>, start: integer, count: integer) -> text {
+  out = "";
+  for j in start..(start + count) { ch = v[j]?; out += "{ch}"; }
+  out
+}
+
+fn from_end(v: vector<character>) -> integer {
+  n = len(v);
+  hits = 0;
+  for k in 0..n { c = v[k - n]?; if c == 'b' || c == 'z' { hits += 1; } }
+  hits
+}
+
+fn past_end(v: vector<character>) -> integer {
+  present = 0;
+  for k in 0..len(v) { c = v[k + 3]?; if "{c}" != "" { present += 1; } }
+  present
+}
+
+fn main() {
+  v: vector<character> = ['a', 'é', '€', '😀', 'b', 'z'];
+  a = copy(v, 1, 3);
+  assert(a == "é€😀" && len(a) == 3, "widths 2, 3, 4: {a}");
+  b = copy(v, 0, 6);
+  assert(b == "aé€😀bz", "all six: {b}");
+  c = copy(v, 4, 4);
+  assert(c == "bz", "past the end is skipped: {c}");
+  e = from_end(v);
+  assert(e == 2, "from the end: {e}");
+  z = past_end(v);
+  assert(z == 3, "three present, three absent past the end: {z}");
+  one: vector<character> = ['😀'];
+  o = copy(one, 0, 1);
+  assert(o == "😀", "one element: {o}");
+  none: vector<character> = [];
+  n = copy(none, 0, 2);
+  assert(n == "", "empty: {n}");
+}

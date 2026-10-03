@@ -201,6 +201,29 @@ fn emit_byte_read(ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<bool>
     let (header, base, size, fld, min) = (b.header, b.base, b.size, b.fld, b.min);
     write!(ctx.w, "{{ let __bi: i64 = ")?;
     ctx.emit(b.index)?;
+    if b.character && !ctx.output.hoist_verify {
+        // `OpGetCharacter`: the stored `u32`, decoded as the template decodes it, in loft's
+        // `i32` form of a character (the `as u32 as i32` every character template takes),
+        // and `0` (`'\0'`) for an absent element — the template's `rec == 0` arm.
+        return write!(
+            ctx.w,
+            "; let __bl = i64::from({header}.len); let __bf = if __bi < 0 {{ __bi + __bl }} else {{ __bi }}; if __bf >= 0 && __bf < __bl {{ char::from_u32(unsafe {{ ({base}.add(__bf as usize * {size}usize + {fld}usize) as *const u32).read_unaligned() }}).unwrap_or(char::from(0)) as u32 as i32 }} else {{ 0_i32 }} }} /*@FR-R-Base byte read*/"
+        )
+        .map(|()| true);
+    }
+    if b.character {
+        write!(
+            ctx.w,
+            "; if (__bi as u64) < u64::from({header}.len) {{ char::from_u32(unsafe {{ ({base}.add(__bi as usize * {size}usize + {fld}usize) as *const u32).read_unaligned() }}).unwrap_or(char::from(0)) as u32 as i32 }} else {{ "
+        )?;
+        let mut elem = b.elem_args.to_vec();
+        elem[2] = Value::RawExpr("__bi".to_string());
+        let mut fallback = args.to_vec();
+        fallback[0] = Value::Call(b.elem_op, elem);
+        super::default::DefaultEmitter.emit(ctx, &fallback)?;
+        write!(ctx.w, " }} }} /*@FR-R-Base byte read*/")?;
+        return Ok(true);
+    }
     if b.boolean && !ctx.output.hoist_verify {
         // `OpGetBoolean`: the stored byte as it stands (0, 1, 255 for null), and 255 for an
         // absent element — the template's `rec == 0` arm.
