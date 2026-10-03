@@ -315,6 +315,14 @@ Four shapes that read as correct and are not, each measured in this repo's own s
   for the next pattern instead of stopping using patterns, which is the actual lesson: use the
   recorded pid.
 
+  **When there is no pid and no artefact, use `scripts/pgrep_others.sh <regex>`** (`--wait
+  [--timeout S]`, `--count`, `--here` for this checkout only).  It excludes by process TREE —
+  itself, every ancestor, its own children — so no pattern spelling can make it match the
+  shell that called it.  The trap is platform-dependent, which is why it hides: BSD `pgrep`
+  (macOS) leaves out its ancestors by default, `procps` `pgrep` (Linux, CI) matches them — a
+  loop that exits on a Mac spins forever on the box it is written for.  The script answers
+  the same on both.
+
 - ⚠ **`git merge-base --is-ancestor <sha> HEAD` is not the test for "do I have this CHANGE".**
   It answers about COMMITS, and the moment any checkout cherry-picks, the same change exists
   under a different sha and every ancestry test reads MISSING for the rest of time.  The test
