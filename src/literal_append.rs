@@ -166,7 +166,9 @@ fn admit(all: &[Value], data: &Data, vars: &crate::variables::Function) -> Optio
     if !matches!(init.unspan(), Value::Null)
         || vars.is_argument(l)
         || vars.is_captured(l)
-        || !matches!(vars.tp(l), Type::Reference(_, _))
+        // A nullable local is not a literal's plain record (`@FR-N-Shape`): declined, said so.
+        || matches!(vars.tp(l), Type::Optional(_))
+        || !matches!(vars.tp(l).base(), Type::Reference(_, _))
     {
         return None;
     }
