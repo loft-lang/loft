@@ -67,6 +67,9 @@ WINDOW_CLOSE = re.compile(r"stores\.push_window_close::<\w+>\(&mut (__ph_\d+), (
 # a record-view holder (R-RecPtr) for the rest of its block.
 BIND_RECPTR_WINDOW = re.compile(r"^\s*let (__pa_\d+): \*const u8 = unsafe \{ (__pw_\d+)\.base\.add\(\2\.len as usize \* \d+\) \}; //@FR-R-PushFill windowed mint address for (\S+)")
 SCALAR_KEY = re.compile(r"let db = \((var_\w+)\);.*db\.pos \+ \((\d+)_i64\)")
+# The vector's own DbRef bound beside a loop header (`header_dbrefs`): the same path P, read
+# by a fused element read in place of P itself.
+BIND_DBREF = re.compile(r"^\s*let (__vd_\d+): DbRef = (.*);$")
 FN_HEAD = re.compile(r"^fn (\w+)\((.*)\)")
 USE_ELEM = re.compile(r"(get_elem_hoisted|vec_set_hoisted_or_raise_runtime|get_elem_at|vec_set_at)::<[^>]*>\(&([\w.]+), (?:(__vb_\d+), )?&\((.*?)\), \(\d+_i64\) as u32")
 USE_PUSH = re.compile(r"push_hoisted::<[^>]*>\(&mut (__ph_\d+), &\((.*?)\), \d+, __pv\)")
@@ -93,6 +96,7 @@ def audit(text, quiet=False):
     fn = None
     depth = 0
     holders = []  # live holders, innermost last
+    dbrefs = {}  # `__vd_N` -> the path it was bound from
     for nr, raw in enumerate(text.splitlines(), 1):
         line = STRING.sub('""', raw)
         m = FN_HEAD.match(line)
@@ -100,6 +104,7 @@ def audit(text, quiet=False):
             fn = m.group(1)
             depth = 0
             holders = []
+            dbrefs = {}
             # a twin's inputs are holders for the whole body, path unknown
             # (a base input `__ib_k` is the twin clause of R-Base: a holder like the rest)
             for param in re.findall(r"(__i[shb]_\d+): ", m.group(2)):
@@ -128,6 +133,10 @@ def audit(text, quiet=False):
         mp = BIND_PUSH.match(line)
         mv = BIND_VIEW.match(line)
         ms = BIND_SCALAR.match(line)
+        md = BIND_DBREF.match(code.rstrip())
+        if md:
+            dbrefs[md.group(1)] = md.group(2)
+            continue
         mrb = BIND_RECPTR_BASE.match(line)
         if mrb:
             hdr, base = live(mrb.group(2)), live(mrb.group(3))
@@ -211,6 +220,7 @@ def audit(text, quiet=False):
                 if live(ptr) is None:
                     violations.append(f"{fn}:{nr}: R-RecPtr — rec_{kind} through {ptr}, which is not live here")
             for kind, name, base, path in USE_ELEM.findall(code):
+                path = dbrefs.get(path, path)
                 if base and live(base) is None:
                     violations.append(f"{fn}:{nr}: R-Base — {kind} through {base}, which is not live here")
                 h = live(name)
