@@ -19,7 +19,10 @@
 // cells as `a` does.  `count_down` and `count_writes` pin the recursive helper and a field
 // written in the loop.
 //
-// @falsified-by: tests/falsified/a-helper-runs-plain-only-where-the-callers-guard-bounds-its-arguments.patch — CHANNEL and HOLDS below
+// @falsified-by: tests/falsified/a-helper-runs-plain-only-where-the-callers-guard-bounds-its-arguments.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+// CHANNEL: native assertions — with the guard forced true, grid `o` runs the plain copy and
+// its overflowing coordinates wrap instead of reading absent.
+// HOLDS: every grid inside the bound, and the interpreter (no ranged calls).
 
 struct Grid { q0: integer, r0: integer, w: integer, h: integer, cells: vector<u8> }
 fn nb(q: integer, d: integer) -> integer {
