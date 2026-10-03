@@ -34,7 +34,7 @@ with `bench/stats.py --routine …` on the same macOS host as the baseline row.
 | graphics `draw_bezier` | 9.94× | **7.36×** (graphics 0.9.8, measured from its branch) | a vector keeps its own slice in place (`OpKeepRange`, `LOFT_NO_KEEP_RANGE`), and the library's @P390 workaround (`t = v[0..n]; v = t`) gives way to `v = v[0..n]`: −26 % against −29 % priced by hand |
 | 15_stdlib_keyed `sorted_fill_walk` | 10.0× | **1.26×** | its twin made like-for-like (F13 declined) |
 | pluginabi `check_request` | 12.8× | 12.7× | F14; F6's text half, F9's prefill clause not built |
-| hex_field `doc_read` | 15.6× | 12.9× | F2, F12; the twin row is still suspect (§ Measurement) |
+| hex_field `doc_read` | 15.6× | **9.41×** | F2, F12; a scalar `f#read` is a write of the File record only, so the section loops' scalar hoists admit (4.35 → 3.25 ms).  A leaner `OpReadFile` prices at −15 % more (hand-priced, not built); loop 17 (line 947) still declines on a non-scalar stack reference |
 | cbor `decode` | 12.9× | 12.8× | F6's text half, F9's prefill clause not built |
 | zttext `flow_layout_full` | 14.7× | 14.3× | F14; F10 not built |
 | hex_field `edgeset_count` | 18.1× | **1.91×** | F5: the ranged calls (`LOFT_NO_RANGED_CALLS` → 15.8×) with the byte read (`LOFT_NO_BYTE_READ` → 11.8×) |
