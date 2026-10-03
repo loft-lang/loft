@@ -802,6 +802,14 @@ pub struct Output<'a> {
     /// LLVM to weigh against inlining the twin where it IS hot (hex_field's setup calls
     /// moved `eg_index__inv` off the `edgeset_count` path's inline budget, −30 %).
     pub param_rec_ptrs: HashSet<u16>,
+    /// `@FR-R-Alias`'s versioned clause — the (parameter, return buffer) pairs the loop copy
+    /// being emitted runs under, proved apart by the test in front of it.
+    pub assumed_distinct: Vec<(u16, u16)>,
+    /// `LOFT_NO_DISTINCT_VERSION=1` — no loop is emitted twice on a store-distinct test.
+    pub distinct_version_disabled: bool,
+    /// Set while the PLAIN copy of a loop (or a loop the clause declined) is emitted, so the
+    /// loop arm is not asked again for the same loop.  Nested loops inside it are asked anew.
+    pub in_distinct_copy: bool,
     /// `LOFT_NO_HEADER_DBREF=1` — rebuild the vector's `DbRef` at every fused read.
     pub header_dbref_disabled: bool,
     /// `LOFT_NO_TEXT_SET_BORROW=1` — every `OpSetText` copies its value first, as before.
@@ -2251,6 +2259,10 @@ impl<'a> Output<'a> {
                 .is_ok_and(|v| v != "0"),
             header_dbrefs: HashMap::new(),
             param_rec_ptrs: HashSet::new(),
+            assumed_distinct: Vec::new(),
+            distinct_version_disabled: std::env::var("LOFT_NO_DISTINCT_VERSION")
+                .is_ok_and(|v| v != "0"),
+            in_distinct_copy: false,
             header_dbref_disabled: std::env::var("LOFT_NO_HEADER_DBREF").is_ok_and(|v| v != "0"),
             text_set_copy_kept: std::env::var("LOFT_NO_TEXT_SET_BORROW").is_ok_and(|v| v != "0"),
             recptr_trace: std::env::var("LOFT_TRACE_RECPTR").is_ok(),
@@ -3950,6 +3962,105 @@ impl Output<'_> {
             .find_map(|j| self.vec_headers[j].get(path).cloned())
     }
 
+    /// `@FR-R-Alias`'s versioned clause — when `lp` pushes into this function's return buffer
+    /// and keeps fewer headers than it would if each parameter's store were apart from the
+    /// buffer's (`StoreFacts::distinct` cannot prove that statically: a caller may hand a
+    /// field of the record it passes), answer the pairs to test at run time.  The loop is
+    /// then emitted twice: under the test with those pairs assumed, and as before.  `None`
+    /// for a loop that gains nothing, cannot be copied (a `yield`, a `par`, a fn-ref call),
+    /// declares a loop record the copies would have to share, or sits in a generator.
+    pub(super) fn distinct_version(&mut self, lp: &crate::data::Block) -> Option<Vec<(u16, u16)>> {
+        if self.distinct_version_disabled
+            || self.hoist_disabled
+            || self.distinct_growth_disabled
+            || self.in_coroutine_body
+            || !self.assumed_distinct.is_empty()
+            || self.loop_records.values().any(|r| r.loop_scope == lp.scope)
+            || lp.operators.iter().any(|op| {
+                op.any_node(&mut |n| {
+                    matches!(
+                        n,
+                        Value::Yield(_) | Value::Parallel(_) | Value::CallRef(_, _)
+                    )
+                })
+            })
+        {
+            return None;
+        }
+        let rb = hoist::retbuf_var(self.data, self.def_nr)?;
+        let vars = self.data.def(self.def_nr).variables();
+        let params: Vec<u16> = (0..vars.count())
+            .filter(|&v| vars.is_argument(v) && v != rb && crate::data::is_dbref(vars.tp(v).base()))
+            .collect();
+        if params.is_empty() {
+            return None;
+        }
+        let plain = self.compute_loop_hoist(lp);
+        if plain
+            .pushes
+            .iter()
+            .chain(plain.mint_pushes.iter())
+            .all(|(p, _)| p.0 != rb)
+            && !plain.movers.contains(&rb)
+        {
+            return None;
+        }
+        self.assumed_distinct = params.iter().map(|&p| (p, rb)).collect();
+        let versioned = self.compute_loop_hoist(lp);
+        self.assumed_distinct.clear();
+        let gained: Vec<u16> = versioned
+            .vectors
+            .iter()
+            .map(|(p, _)| p.0)
+            .filter(|r| params.contains(r) && !plain.vectors.iter().any(|(q, _)| q.0 == *r))
+            .collect();
+        if gained.is_empty() {
+            return None;
+        }
+        let mut pairs: Vec<(u16, u16)> = Vec::new();
+        for r in gained {
+            if !pairs.contains(&(r, rb)) {
+                pairs.push((r, rb));
+            }
+        }
+        Some(pairs)
+    }
+
+    /// The hoist verdict for loop `lp`, under the pairs [`Self::assumed_distinct`] holds.
+    fn compute_loop_hoist(&mut self, lp: &crate::data::Block) -> hoist::LoopHoist {
+        if self.hoist_disabled {
+            return hoist::LoopHoist::default();
+        }
+        hoist::hoistable(
+            lp,
+            self.data,
+            self.stores,
+            self.def_nr,
+            &mut self.hoist_cache,
+            &mut self.scalar_write_cache,
+            hoist::HoistTiers {
+                in_place: !self.write_hoist_disabled,
+                scalars: !self.scalar_hoist_disabled,
+                push: !self.push_hoist_disabled,
+                mint: !self.mint_hoist_disabled,
+                record_push: !self.record_push_disabled,
+                heap_push: !self.heap_record_push_disabled,
+                rebound_movers: !self.rebound_mover_disabled,
+            },
+            (!self.callee_inputs_disabled).then_some(&mut self.input_cache),
+            Some(&self.hoist_owned),
+            (!self.distinct_growth_disabled)
+                .then_some(hoist::StoreFacts {
+                    vars: self.data.def(self.def_nr).variables(),
+                    placed: &self.placed_locals,
+                    adopted: self.ret_adopt.as_ref().map(|a| (a.v, a.vdb)),
+                    owned: Some(&self.hoist_owned),
+                    assumed: &self.assumed_distinct,
+                })
+                .as_ref(),
+        )
+    }
+
     #[expect(clippy::too_many_lines, reason = "inherited")]
     fn begin_vector_hoist(
         &mut self,
@@ -3973,37 +4084,7 @@ impl Output<'_> {
         } else {
             hoist::nest_read_paths(lp, self.data)
         };
-        let hoisted = if self.hoist_disabled {
-            hoist::LoopHoist::default()
-        } else {
-            hoist::hoistable(
-                lp,
-                self.data,
-                self.stores,
-                self.def_nr,
-                &mut self.hoist_cache,
-                &mut self.scalar_write_cache,
-                hoist::HoistTiers {
-                    in_place: !self.write_hoist_disabled,
-                    scalars: !self.scalar_hoist_disabled,
-                    push: !self.push_hoist_disabled,
-                    mint: !self.mint_hoist_disabled,
-                    record_push: !self.record_push_disabled,
-                    heap_push: !self.heap_record_push_disabled,
-                    rebound_movers: !self.rebound_mover_disabled,
-                },
-                (!self.callee_inputs_disabled).then_some(&mut self.input_cache),
-                Some(&self.hoist_owned),
-                (!self.distinct_growth_disabled)
-                    .then_some(hoist::StoreFacts {
-                        vars: self.data.def(self.def_nr).variables(),
-                        placed: &self.placed_locals,
-                        adopted: self.ret_adopt.as_ref().map(|a| (a.v, a.vdb)),
-                        owned: Some(&self.hoist_owned),
-                    })
-                    .as_ref(),
-            )
-        };
+        let hoisted = self.compute_loop_hoist(lp);
         let hoist::LoopHoist {
             vectors: candidates,
             scalars,
@@ -4024,6 +4105,7 @@ impl Output<'_> {
                 placed: &self.placed_locals,
                 adopted: self.ret_adopt.as_ref().map(|a| (a.v, a.vdb)),
                 owned: Some(&self.hoist_owned),
+                assumed: &self.assumed_distinct,
             };
             let apart: HashSet<hoist::PathKey> = candidates
                 .iter()
@@ -4759,6 +4841,7 @@ impl Output<'_> {
                     placed: &self.placed_locals,
                     adopted: self.ret_adopt.as_ref().map(|a| (a.v, a.vdb)),
                     owned: Some(&self.hoist_owned),
+                    assumed: &self.assumed_distinct,
                 })
                 .as_ref(),
             Some(&self.hoist_owned),
@@ -4904,6 +4987,7 @@ impl Output<'_> {
                         placed: &self.placed_locals,
                         adopted: self.ret_adopt.as_ref().map(|a| (a.v, a.vdb)),
                         owned: Some(&self.hoist_owned),
+                        assumed: &self.assumed_distinct,
                     })
                     .as_ref(),
                 Some(&self.hoist_owned),

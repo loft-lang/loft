@@ -731,7 +731,51 @@ impl Output<'_> {
         };
         match code {
             Value::Block(bl) => self.output_block(w, IrBlock::Native(bl), false, false)?,
+            Value::Loop(lp) if self.assumed_distinct.is_empty() && !self.in_distinct_copy => {
+                if let Some(pairs) = self.distinct_version(lp) {
+                    // `@FR-R-Alias`'s versioned clause — the copy that holds the parameters'
+                    // headers runs only when their stores are apart from the return buffer's.
+                    let vars = self.data.def(self.def_nr).variables();
+                    let test = pairs
+                        .iter()
+                        .map(|&(p, rb)| {
+                            format!(
+                                "var_{}.store_nr != var_{}.store_nr",
+                                super::sanitize(vars.name(rb)),
+                                super::sanitize(vars.name(p))
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" && ");
+                    writeln!(w, "if {test} {{ //@FR-R-Alias versioned on distinct stores")?;
+                    let declared_before = self.declared.clone();
+                    self.assumed_distinct = pairs;
+                    self.indent(w)?;
+                    self.output_code_inner(w, code)?;
+                    self.assumed_distinct.clear();
+                    self.declared = declared_before;
+                    writeln!(w)?;
+                    self.indent(w)?;
+                    writeln!(w, "}} else {{")?;
+                    self.in_distinct_copy = true;
+                    self.indent(w)?;
+                    let r = self.output_code_inner(w, code);
+                    self.in_distinct_copy = false;
+                    r?;
+                    writeln!(w)?;
+                    self.indent(w)?;
+                    write!(w, "}}")?;
+                    crate::rewrite_census::fired("R-AliasVersion", 1);
+                } else {
+                    self.in_distinct_copy = true;
+                    let r = self.output_code_inner(w, code);
+                    self.in_distinct_copy = false;
+                    r?;
+                }
+            }
             Value::Loop(lp) => {
+                // A loop nested inside this one is asked anew (`distinct_version`).
+                self.in_distinct_copy = false;
                 let hoisted = self.begin_vector_hoist(w, lp)?;
                 // `@FR-R-LoopRecord` — a record local declared inside this loop is declared
                 // here instead, so its store survives the iteration: the per-pass mint takes
