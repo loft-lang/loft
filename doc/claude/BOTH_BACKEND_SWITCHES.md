@@ -524,6 +524,13 @@ the first bisect step for a lost or doubled entry, or a leak, after a repeated k
 order) goes out as one copy of its payload (`Stores::write_vector_payload`, the one walk both
 backends and a vector field inside a record share) — and is the first bisect step for wrong bytes
 in a binary file written from a vector.
+**`LOFT_NO_KEEP_RANGE=1`** makes `v = v[lo..hi]` over a scalar element kind (lowered to
+`OpKeepRange`) copy the kept span out, clear the vector and append the span again — with it
+off, the span moves to the front of the vector's own record and the length is set
+(`Stores::vector_keep_range`; a foreign view or a locked store always takes the copy form,
+since neither may be written) — and is the first bisect step for a wrong element or length
+after a vector is assigned its own slice.  `LOFT_NO_SLICE_COPY=1` keeps the parse-time
+per-element form for every slice, this one included.
 **`LOFT_KEYED_VERIFY=1`** is the falsifier for both: every pre-resolved comparison, every
 exact lookup and every one-probe insert is checked against the general form as it is made,
 and a disagreement panics naming both answers — run the keyed cells or the script corpus
