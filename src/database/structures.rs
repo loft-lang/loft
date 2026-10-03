@@ -1599,6 +1599,10 @@ impl Stores {
     /// again here, as [`Self::vector_slice`] does.  A vector whose store may not be written —
     /// a FOREIGN view, a locked store — takes the copy form instead: the span copied out, the
     /// vector cleared as `OpClearVector` clears it (a view is released), the span appended.
+    ///
+    /// # Panics
+    /// When `known` is an element kind that owns records — the parser never emits
+    /// `OpKeepRange` for one.
     pub fn vector_keep_range(&mut self, db: &DbRef, lo: i64, hi: i64, known: u16) {
         if db.is_null() || db.rec == 0 || db.pos == 0 {
             return;

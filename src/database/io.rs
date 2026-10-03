@@ -256,7 +256,14 @@ impl Stores {
                         let store = &self.allocations[r.store_nr as usize];
                         store.get_u32_raw(v_rec, 4)
                     };
-                    self.write_vector_payload(r.store_nr, v_rec, length, elem_tp, little_endian, data);
+                    self.write_vector_payload(
+                        r.store_nr,
+                        v_rec,
+                        length,
+                        elem_tp,
+                        little_endian,
+                        data,
+                    );
                 }
                 Parts::Array(elem_tp) => {
                     let store_nr = r.store_nr;

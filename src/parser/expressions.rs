@@ -4948,7 +4948,12 @@ use a separate collection or add after the loop"
                 let row = Value::Int(self.append_elem_tp(&elm_tp));
                 let keep = self.cl(
                     "OpKeepRange",
-                    &[Value::Var(var_nr), Value::Var(lo_var), Value::Var(hi_var), row],
+                    &[
+                        Value::Var(var_nr),
+                        Value::Var(lo_var),
+                        Value::Var(hi_var),
+                        row,
+                    ],
                 );
                 *code = Value::Insert(vec![*init, keep]);
                 return Type::Void;
