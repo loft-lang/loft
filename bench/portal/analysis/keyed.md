@@ -325,7 +325,7 @@ chunk directory → entry) behind a division, where hashbrown reads one control 
 | — | a typed keyed APPEND (L6's other half) | ~300 of 2,100 instructions an insert |
 | — | the arena's bookkeeping on insert (`arena::alloc` 176, `index_of` 93, the zeroing `memset` 90) | ~17 % of an insert; `index_of` disappears if the mint hands its index to the finish |
 | — | the table rebuild re-hashing every entry from its record (`keys::hash`, ~1.4 per insert amortised) | ~11 % of an insert; hashbrown pays this too |
-| — | `sorted`'s insert | a gap buffer or a chunked layout; the `memmove` is 50 % of the row |
+| — | `sorted`'s insert | **declined (owner)**: `sorted` keeps its contiguous layout — slow random inserts are its known cost, and a program that needs them fast uses `index` |
 | — | `index` as a red-black tree of store records | `put` + `balance` are 45 % of the row; a B-tree of inline keys is the structural answer |
 | — | text keys | the key is COPIED into the record per insert and hashed through the byte-slice `write`; the twin borrows `&str` |
 

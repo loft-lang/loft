@@ -27,7 +27,7 @@ with `bench/stats.py --routine …` on the same macOS host as the baseline row.
 | gridmesh `build_index` | 13.4× | **6.34×** | F8 (`LOFT_NO_STORE_SWAP`) |
 | mesh3d `mat4_mul` | 13.2× | **8.93×** | F11's first two shaves (`LOFT_NO_HEADER_DBREF`) |
 | cbor `encode_bytes` | 14.3× | **9.49×** | F7 (`LOFT_NO_FORWARD_RESULT`), F14 |
-| 15_stdlib_keyed `sorted_fill_walk` | 10.0× | 10.0× | — (F13 not built) |
+| 15_stdlib_keyed `sorted_fill_walk` | 10.0× | 10.0× | — (F13 declined, see F13) |
 | pluginabi `check_request` | 12.8× | 12.6× | F14; F6's text half, F9's prefill clause not built |
 | hex_field `doc_read` | 15.6× | 12.7× | F2, F12; the twin row is still suspect (§ Measurement) |
 | cbor `decode` | 12.9× | 12.9× | F6's text half, F9's prefill clause not built |
@@ -42,8 +42,9 @@ Not built yet, and why each is more than a site edit:
 - **F6's text half** — `(R-RefillBuffer)` over a type with text fields needs a text write that
   reuses the old claim when it fits and releases it when it does not; `refillable()` refuses
   such types today because the old text would leak.
-- **F9's prefill clause**, **F10**, **F11's float-sum clause**, **F13** (a new runtime op: an
-  unsorted append and one stable sort with keep-last dedup at loop exit).
+- **F9's prefill clause**, **F10**, **F11's float-sum clause**.
+
+Declined: **F13** — `sorted` is not re-implemented for random inserts (§ F13).
 
 Found on the way: F3 first regressed `edgeset_count` to 23.7×.  Bisected at the Rust level
 (`hand_price.sh`, which now links on macOS), the cause was COLD setup functions calling
@@ -198,13 +199,20 @@ zttext's `flow_layout_full`:
 element at a time: `push_loop` declines "the pushes reach two paths", and a byte push is
 kept out of the fill form.  `doc_read` −9 %.
 
-### F13. A sorted fill that nothing reads is appended and sorted once — M (runtime)
+### F13. DECLINED — `sorted` is not re-implemented for random inserts
 
 Every insert into `sorted<…>` binary-searches and memmoves the tail (`sorted_finish`,
 `src/vector.rs`): 98.7 MB moved per op in `15_stdlib_keyed`'s `sorted_fill_walk`, where the
-twin's `BTreeMap` insert is O(log n).  Appending and doing one stable sort with keep-last
-dedup at loop exit prices 1.6 → 0.21 ms (−87 %, 1.2×).  The structural lever beside it is
-`keyed.md`'s gap-buffer or chunked layout.
+twin's `BTreeMap` insert is O(log n).  A deferred sort (append, one stable sort at loop exit)
+priced −87 %, and a gap-buffer or chunked layout was the structural alternative.
+
+Neither is built, by the owner's decision: `sorted` keeps its contiguous layout, which is
+what makes it the right collection for in-order reads and appends, and slow random inserts
+are its known cost.  A program that needs random inserts to be fast uses `index` — the
+keyed collection built for that.  So this row measures a documented trade-off, not a
+defect; what remains open is the MEASUREMENT: its twin is a `BTreeMap`, which is `index`'s
+counterpart, where `sorted`'s like-for-like twin is a `Vec` kept sorted by binary-search
+insert (bench README rule 1).
 
 ### F14. Text reaches a store field without intermediate `String`s — S
 
@@ -243,7 +251,7 @@ own ratio where the two hosts disagree, § Measurement).
 | 17_consumer `emit_to_material` | 12.7× | F9 | ~6.4× (3.8× on the VM) |
 | fixstep `timer_spend` | 12.1× | F3 | ~4.7× (2.5× inlined) |
 | game_protocol `msg_ping` | 10.1× | F6 | ~1.7× |
-| 15_stdlib_keyed `sorted_fill_walk` | 10.0× | F13 | ~1.2× |
+| 15_stdlib_keyed `sorted_fill_walk` | 10.0× | — (F13 declined) | — |
 
 `decode` and `check_request` are the two that F1–F14 leave near the bar; destination-passing
 is their next lever.
