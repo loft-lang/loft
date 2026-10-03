@@ -79,7 +79,7 @@ pub fn benefits(data: &Data, d: u32, depth: u8) -> bool {
 /// The variables written anywhere in `code` outside the block `skip` (by address).
 fn sets_outside(code: &Value, skip: *const Block, out: &mut HashSet<u16>) {
     if let Value::Block(b) | Value::Loop(b) = code
-        && std::ptr::eq(&**b, skip)
+        && std::ptr::eq(std::ptr::from_ref::<Block>(b), skip)
     {
         return;
     }
@@ -124,55 +124,7 @@ impl super::Output<'_> {
                 fields.push((key, getter.clone()));
             }
         }
-        // The block's PRELUDE reads too — a non-literal range end is taken into a local
-        // before the loop (`@FR-I-Range`).  Seeding the field is sound only where the seed
-        // stays true: the read runs right after the guard (the prelude calls no user
-        // function that could write it first), and inside the loop the field is either
-        // hoisted (invariant) or not read at all.
-        let at_loop = bl
-            .operators
-            .iter()
-            .position(|op| matches!(op.unspan(), Value::Loop(_)))?;
-        let prelude = &bl.operators[..at_loop];
-        let calls_user = prelude.iter().any(|op| {
-            op.any_node(&mut |n| {
-                matches!(n, Value::Call(c, _) if (*c as usize) < self.data.definitions.len()
-                    && self.data.def(*c).is_loft_defined())
-            })
-        });
-        if !calls_user {
-            let mut extra: Vec<((u16, i64), Value)> = Vec::new();
-            for op in prelude {
-                op.walk(&mut |n| {
-                    if let Value::Call(g, args) = n
-                        && self.data.def(*g).name() == "OpGetInt"
-                        && let (Some(Value::Var(v)), Some(Value::Int(off))) = (
-                            args.first().map(Value::unspan),
-                            args.get(1).map(Value::unspan),
-                        )
-                    {
-                        let key = (*v, i64::from(*off));
-                        if !fields.iter().any(|(k, _)| *k == key)
-                            && !extra.iter().any(|(k, _)| *k == key)
-                        {
-                            extra.push((key, n.clone()));
-                        }
-                    }
-                });
-            }
-            for (key, getter) in extra {
-                let read_in_loop = lp.operators.iter().any(|op| {
-                    op.any_node(&mut |n| {
-                        matches!(n, Value::Call(g, a) if self.data.def(*g).name() == "OpGetInt"
-                            && matches!(a.first().map(Value::unspan), Some(Value::Var(v)) if *v == key.0)
-                            && matches!(a.get(1).map(Value::unspan), Some(Value::Int(o)) if i64::from(*o) == key.1))
-                    })
-                });
-                if !read_in_loop {
-                    fields.push((key, getter));
-                }
-            }
-        }
+        self.prelude_fields(bl, &lp, &mut fields);
         let trace = std::env::var("LOFT_TRACE_RANGED_CALL").is_ok();
         if fields.is_empty() {
             if trace {
@@ -239,6 +191,64 @@ impl super::Output<'_> {
             test.push(format!("({read}).unsigned_abs() <= {G}u64"));
         }
         Some((test.join(" && "), merged))
+    }
+
+    /// The block's PRELUDE reads too — a non-literal range end is taken into a local before
+    /// the loop (`@FR-I-Range`).  Seeding the field is sound only where the seed stays true:
+    /// the read runs right after the guard (the prelude calls no user function that could
+    /// write it first), and inside the loop the field is either hoisted (invariant, already
+    /// in `fields`) or not read at all.
+    fn prelude_fields(&self, bl: &Block, lp: &Block, fields: &mut Vec<((u16, i64), Value)>) {
+        let Some(at_loop) = bl
+            .operators
+            .iter()
+            .position(|op| matches!(op.unspan(), Value::Loop(_)))
+        else {
+            return;
+        };
+        let prelude = &bl.operators[..at_loop];
+        let calls_user = prelude.iter().any(|op| {
+            op.any_node(&mut |n| {
+                matches!(n, Value::Call(c, _) if (*c as usize) < self.data.definitions.len()
+                    && self.data.def(*c).is_loft_defined())
+            })
+        });
+        if calls_user {
+            return;
+        }
+        let read_of = |n: &Value| -> Option<(u16, i64)> {
+            if let Value::Call(g, args) = n
+                && self.data.def(*g).name() == "OpGetInt"
+                && let (Some(Value::Var(v)), Some(Value::Int(off))) = (
+                    args.first().map(Value::unspan),
+                    args.get(1).map(Value::unspan),
+                )
+            {
+                Some((*v, i64::from(*off)))
+            } else {
+                None
+            }
+        };
+        let mut extra: Vec<((u16, i64), Value)> = Vec::new();
+        for op in prelude {
+            op.walk(&mut |n| {
+                if let Some(key) = read_of(n)
+                    && !fields.iter().any(|(k, _)| *k == key)
+                    && !extra.iter().any(|(k, _)| *k == key)
+                {
+                    extra.push((key, n.clone()));
+                }
+            });
+        }
+        for (key, getter) in extra {
+            let read_in_loop = lp
+                .operators
+                .iter()
+                .any(|op| op.any_node(&mut |n| read_of(n) == Some(key)));
+            if !read_in_loop {
+                fields.push((key, getter));
+            }
+        }
     }
 
     /// Are `d`'s integer arguments `args` all proven within `[-L, L]` under `facts` — at

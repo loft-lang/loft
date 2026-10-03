@@ -659,10 +659,6 @@ pub fn ckpt_filter_from_env() -> Option<String> {
     (!filter.is_empty()).then(|| filter.to_string())
 }
 
-/// Use this to drive Rust code generation from a compiled loft program.
-/// It bundles the read-only compile-time data with the mutable emission state
-/// so that individual emits functions don't need to pass both separately.
-#[allow(clippy::struct_excessive_bools)]
 /// `@FR-R-Base`'s byte clause, as [`Output::fused_byte_read`] answers it.
 pub struct ByteRead<'a> {
     pub elem_op: u32,
@@ -675,6 +671,10 @@ pub struct ByteRead<'a> {
     pub base: String,
 }
 
+/// Use this to drive Rust code generation from a compiled loft program.
+/// It bundles the read-only compile-time data with the mutable emission state
+/// so that individual emits functions don't need to pass both separately.
+#[allow(clippy::struct_excessive_bools)]
 pub struct Output<'a> {
     pub data: &'a Data,
     pub stores: &'a Stores,
