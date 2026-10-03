@@ -1041,16 +1041,22 @@ impl StoreFacts<'_> {
     /// Do `a`'s and `b`'s records provably live in different stores?
     #[must_use]
     pub fn distinct(&self, a: u16, b: u16) -> bool {
-        if self
-            .assumed
-            .iter()
-            .any(|&(x, y)| (x == a && y == b) || (x == b && y == a))
-        {
+        let assumed = |a: u16, b: u16| {
+            self.assumed
+                .iter()
+                .any(|&(x, y)| (x == a && y == b) || (x == b && y == a))
+        };
+        if assumed(a, b) {
             return true;
         }
         let (Some(ta), Some(tb)) = (self.terminal(a), self.terminal(b)) else {
             return false;
         };
+        // A run-time test proved the two ROOTS apart: a view of a parameter's element lives
+        // in that parameter's store, so it is apart from whatever the parameter is apart from.
+        if assumed(ta, tb) {
+            return true;
+        }
         ta != tb && (self.fresh(ta) || self.fresh(tb))
     }
 }

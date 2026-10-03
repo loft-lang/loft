@@ -1,0 +1,95 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A PARAMETER ELEMENT VIEW KEEPS ITS ADDRESS BESIDE A GROWING RESULT (`@FR-R-Alias`'s
+// versioned clause with `@FR-R-RecPtr`).  A loop that reads the fields of `pts[i]?` — a view
+// of a parameter's element — while it appends to the function's own result runs a copy in
+// which each view's fields are read through its address, under a run-time test that the
+// result's store is not the parameter's.  When the test fails (the caller handed a result
+// buffer in the parameter's own store) the loop runs as before.  Both answers must be the
+// plain loop's: every crossing, in order, for points read many times each.
+//
+// Axes this file MOVES:  the result buffer (a local's own, the field of the record that also
+//                        holds the points), the grown vector (the function's result; a
+//                        second PARAMETER in the points' own store, which no test proves apart), the number of crossings
+//                        (0, 2, 4), each view read several times per pass, the result grown
+//                        past its first capacity.
+// Axes it HOLDS FIXED:   a `const vector<P>` parameter; integer fields.
+//
+// Expected values by hand: the square (0,0) (10,0) (10,10) (0,10) crosses y = 5 at x = 0
+// and 10 → [0, 10]; the bow (0,0) (8,8) (8,0) (0,8) crosses y = 4 at x = 0, 4, 4, 8 (its
+// two diagonals meet at (4,4), and each side) → [0, 4, 4, 8]; y = 20 crosses nothing.
+// Over the square, the scanlines y = 0..9 each give [0, 10]: 10 rows, Σ = 100.
+// tally over the square: Σ (px·1000 + py) = 0 + 10000 + 10010 + 10 = 20020, and 4 · 300 = 1200
+// appends.
+//
+// @falsified-by: PENDING
+
+struct P { px: integer, py: integer }
+struct Shape { pts: vector<P>, xs: vector<integer> }
+
+fn crossings(pts: const vector<P>, y: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  n = len(pts);
+  for i in 0..n {
+    a = pts[i]?;
+    b = pts[(i + 1) % n ?? 0]?;
+    lo = if a.py < b.py { a.py } else { b.py };
+    hi = if a.py < b.py { b.py } else { a.py };
+    if lo == hi || y < lo || y >= hi { continue }
+    t = if a.py < b.py { a } else { b };
+    u = if a.py < b.py { b } else { a };
+    out += [t.px + ((u.px - t.px) * (y - t.py) / (u.py - t.py) ?? 0)];
+  }
+  for i in 1..len(out) {
+    v = out[i]?;
+    j = i;
+    while j > 0 && out[j - 1]? > v { out[j] = out[j - 1]?; j -= 1; }
+    out[j] = v;
+  }
+  out
+}
+
+// Two PARAMETERS a caller may hand from one record: growing `out` can move the store `pts`
+// lives in, so the views of `pts` must not keep an address across the growth — nothing proves
+// these two stores apart.
+fn tally(pts: const vector<P>, out: vector<integer>) -> integer {
+  s = 0;
+  for i in 0..len(pts) {
+    a = pts[i]?;
+    for _ in 0..300 { out += [a.px]; }
+    s += a.px * 1000 + a.py;
+  }
+  s
+}
+
+fn show(v: vector<integer>) -> text {
+  t = "";
+  for x in v { t += "{x},"; }
+  t
+}
+
+fn main() {
+  square: vector<P> = [P { px: 0, py: 0 }, P { px: 10, py: 0 }, P { px: 10, py: 10 }, P { px: 0, py: 10 }];
+  bow: vector<P> = [P { px: 0, py: 0 }, P { px: 8, py: 8 }, P { px: 8, py: 0 }, P { px: 0, py: 8 }];
+  s = crossings(square, 5);
+  assert(show(s) == "0,10,", "square at 5: {show(s)}");
+  b = crossings(bow, 4);
+  assert(show(b) == "0,4,4,8,", "bow at 4: {show(b)}");
+  e = crossings(square, 20);
+  assert(len(e) == 0, "nothing at 20: {len(e)}");
+  total = 0;
+  for y in 0..10 { for x in crossings(square, y) { total += x; } }
+  assert(total == 100, "every scanline: {total}");
+  // The result's buffer in the points' own store: the record holds both.
+  sh = Shape { pts: bow, xs: [] };
+  sh.xs = crossings(sh.pts, 4);
+  assert(show(sh.xs) == "0,4,4,8,", "into the same record: {show(sh.xs)}");
+  sh.xs = crossings(sh.pts, 2);
+  assert(show(sh.xs) == "0,2,6,8,", "again, other scanline: {show(sh.xs)}");
+  // Both vectors of one record, the second grown by 1200 elements while the first is read.
+  rec = Shape { pts: square, xs: [] };
+  t = tally(rec.pts, rec.xs);
+  assert(t == 20020, "views read across a growth of the same store: {t}");
+  assert(len(rec.xs) == 1200, "every append landed: {len(rec.xs)}");
+}

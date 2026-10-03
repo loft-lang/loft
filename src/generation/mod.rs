@@ -4060,7 +4060,7 @@ impl Output<'_> {
         // holds (the function clause, an outer loop) would gain the copy no more than an
         // element base, which measured LESS than the duplicated loop costs (graphics'
         // `polygon_crossings`, +8 % on `fill_polygon`).
-        let gained: Vec<u16> = versioned
+        let mut gained: Vec<u16> = versioned
             .vectors
             .iter()
             .filter(|(p, _)| {
@@ -4070,6 +4070,15 @@ impl Output<'_> {
             })
             .map(|(p, _)| p.0)
             .collect();
+        // `@FR-R-RecPtr` under the same assumption: a record VIEW of a parameter's element,
+        // read field by field in the loop, takes its address only when the buffer's growth is
+        // proven to leave the parameter's store alone — a gain of its own, which the header
+        // count above does not see (graphics' `polygon_crossings`: 18 store reads per edge).
+        for p in self.record_ptr_gains(lp, &params, rb) {
+            if !gained.contains(&p) {
+                gained.push(p);
+            }
+        }
         if gained.is_empty() {
             return None;
         }
@@ -4080,6 +4089,82 @@ impl Output<'_> {
             }
         }
         Some(pairs)
+    }
+
+    /// The parameters of `params` with an element VIEW bound in `lp` that `@FR-R-RecPtr`
+    /// declines as things stand and admits once each parameter's store is assumed apart from
+    /// the return buffer `rb`.
+    fn record_ptr_gains(&mut self, lp: &crate::data::Block, params: &[u16], rb: u16) -> Vec<u16> {
+        if self.record_ptr_disabled || self.distinct_growth_disabled {
+            return Vec::new();
+        }
+        let vars = self.data.def(self.def_nr).variables();
+        let root = |v: u16| -> Option<u16> {
+            let mut cur = v;
+            for _ in 0..16 {
+                if params.contains(&cur) {
+                    return Some(cur);
+                }
+                let deps: Vec<u16> = vars.tp(cur).depend().to_vec();
+                let [d] = deps[..] else {
+                    return None;
+                };
+                cur = d;
+            }
+            None
+        };
+        // Every block inside the loop, with each statement that binds a view of a parameter.
+        let mut sites: Vec<(Vec<Value>, usize, u16)> = Vec::new();
+        let body = Value::Loop(Box::new(lp.clone()));
+        body.any_node(&mut |n| {
+            if let Value::Block(bl) = n {
+                for (i, st) in bl.operators.iter().enumerate() {
+                    if let Value::Set(r, _) = st.unspan()
+                        && let Some(p) = root(*r)
+                        && *r != p
+                    {
+                        sites.push((bl.operators.clone(), i, p));
+                    }
+                }
+            }
+            false
+        });
+        let mut out = Vec::new();
+        for (stmts, at, p) in sites {
+            if out.contains(&p) {
+                continue;
+            }
+            let pairs: Vec<(u16, u16)> = params.iter().map(|&q| (q, rb)).collect();
+            let verdict = |this: &mut Self, assumed: &[(u16, u16)]| {
+                let twin_params = this.twin_params_of(&stmts[at + 1..], match stmts[at].unspan() {
+                    Value::Set(r, _) => *r,
+                    _ => u16::MAX,
+                });
+                hoist::record_view_ptr(
+                    &stmts,
+                    at,
+                    this.data,
+                    this.stores,
+                    this.def_nr,
+                    &mut this.hoist_cache,
+                    !this.write_hoist_disabled,
+                    &twin_params,
+                    Some(&hoist::StoreFacts {
+                        vars: this.data.def(this.def_nr).variables(),
+                        placed: &this.placed_locals,
+                        adopted: this.ret_adopt.as_ref().map(|a| (a.v, a.vdb)),
+                        owned: Some(&this.hoist_owned),
+                        assumed,
+                    }),
+                    Some(&this.hoist_owned),
+                )
+                .is_ok()
+            };
+            if !verdict(self, &[]) && verdict(self, &pairs) {
+                out.push(p);
+            }
+        }
+        out
     }
 
     /// The hoist verdict for loop `lp`, under the pairs [`Self::assumed_distinct`] holds.
