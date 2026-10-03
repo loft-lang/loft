@@ -1,13 +1,13 @@
 diff --git a/src/generation/ops/vector_ops.rs b/src/generation/ops/vector_ops.rs
-index 746d6415b..9f20d9240 100644
+index c25c3934a..04567c65b 100644
 --- a/src/generation/ops/vector_ops.rs
 +++ b/src/generation/ops/vector_ops.rs
-@@ -229,7 +229,7 @@ fn emit_byte_read(ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<bool>
-     ctx.emit(index)?;
-     write!(
-         ctx.w,
--        "; if (__bi as u64) < u64::from({header}.len) {{ i64::from(unsafe {{ {base}.add(__bi as usize * {size_v}usize + {fld_v}usize).read() }}) + ({min_v}_i64) }} else {{ "
-+        "; if (__bi as u64) < u64::from({header}.len) {{ i64::from(unsafe {{ {base}.add(__bi as usize * {size_v}usize + {fld_v}usize).read() }}) }} else {{ "
-     )?;
-     // The template, over the index already evaluated.
-     let mut fallback = args.to_vec();
+@@ -209,7 +209,7 @@ fn emit_byte_read(ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<bool>
+         // helpers around this read fold (hex_field's `edgeset_count`).
+         return write!(
+             ctx.w,
+-            "; let __bl = i64::from({header}.len); let __bf = if __bi < 0 {{ __bi + __bl }} else {{ __bi }}; if __bf >= 0 && __bf < __bl {{ i64::from(unsafe {{ {base}.add(__bf as usize * {size}usize + {fld}usize).read() }}) + ({min}_i64) }} else {{ i64::MIN }} }} /*@FR-R-Base byte read*/"
++            "; let __bl = i64::from({header}.len); let __bf = if __bi < 0 {{ __bi + __bl }} else {{ __bi }}; if __bf >= 0 && __bf < __bl {{ i64::from(unsafe {{ {base}.add(__bf as usize * {size}usize + {fld}usize).read() }}) }} else {{ i64::MIN }} }} /*@FR-R-Base byte read*/"
+         )
+         .map(|()| true);
+     }
