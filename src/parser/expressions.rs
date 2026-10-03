@@ -4933,6 +4933,26 @@ use a separate collection or add after the loop"
             && !self.first_pass
             && ir_mentions_var(code, var_nr)
         {
+            // A slice of THIS vector over a scalar element kind keeps its range in place
+            // (`OpKeepRange`): the clamped bounds the prelude computes, then one move inside
+            // the vector's own record — no temporary, no release, no copy back.  The same
+            // admission as the block-copy form (`slice_copy_form`); every other element
+            // kind, and `LOFT_NO_SLICE_COPY=1`, keeps the temporary below.
+            if crate::env_once!(std::env::var_os("LOFT_NO_SLICE_COPY").is_none())
+                && crate::data::is_scalar(&elm_tp)
+                && !self.is_type_var_element(&elm_tp)
+                && let Value::Iter(_, init, _, _) = code.clone()
+                && let Some((subject, lo_var, hi_var)) = self.slice_plan(&init)
+                && matches!(subject.unspan(), Value::Var(v) if *v == var_nr)
+            {
+                let row = Value::Int(self.append_elem_tp(&elm_tp));
+                let keep = self.cl(
+                    "OpKeepRange",
+                    &[Value::Var(var_nr), Value::Var(lo_var), Value::Var(hi_var), row],
+                );
+                *code = Value::Insert(vec![*init, keep]);
+                return Type::Void;
+            }
             let iter_tp = Type::Iterator(Box::new(elm_tp.clone()), Box::new(Type::Null));
             let vec_tp = Type::Vector(Box::new(elm_tp.clone()), Deps::none());
             let tmp = self.create_unique("__p390_tmp", &vec_tp);
