@@ -9554,9 +9554,8 @@ fn main() {
     // `OpStaticCall` to a missing bridge → the compile.rs panic stub.  Under
     // `--native` these functions compile into the whole-program binary anyway, so
     // excluding them from the cdylib loop costs nothing there.
-    let entry_path = std::path::Path::new(&abs_file);
     for pkg_dir in &pending_native {
-        if entry_path.starts_with(pkg_dir) {
+        if file_access::is_under(&abs_file, pkg_dir) {
             continue;
         }
         // #453 — for an `--html` build a `[wasm.bridge]` library builds its WASM
@@ -9571,7 +9570,7 @@ fn main() {
             && p.data
                 .wasm_bridge_packages
                 .iter()
-                .any(|(_, dir)| dir == pkg_dir)
+                .any(|(_, dir)| file_access::same_path(dir, pkg_dir))
         {
             continue;
         }

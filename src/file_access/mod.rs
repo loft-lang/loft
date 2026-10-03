@@ -334,6 +334,23 @@ pub fn is_under(file: &str, dir: &str) -> bool {
     PathText::host(file).starts_with(&PathText::host(dir))
 }
 
+/// Do two spellings of a host path name the same place — by components, a trailing
+/// separator meaning nothing and, on Windows, `/` and `\` and case agreeing?  Text only: the
+/// file system is not asked (see [`same_file`] for that).
+#[must_use]
+pub fn same_path(a: &str, b: &str) -> bool {
+    PathText::host(a) == PathText::host(b)
+}
+
+/// The last name of a host path — `server` for `C:\libs\server` and for `/libs/server/` —
+/// or the text itself when it has none.
+#[must_use]
+pub fn name_of(path: &str) -> String {
+    PathText::host(path)
+        .file_name()
+        .map_or_else(|| path.to_string(), str::to_string)
+}
+
 /// Render a host path with `/` separators, and otherwise exactly as given — a display
 /// spelling, not a parse: `./x` stays `./x`.  On Unix a `\` is a filename character and
 /// is left alone; only the host's own separator is replaced.
@@ -530,6 +547,28 @@ mod tests {
             "missing below an exact name"
         );
         remove_dir_all(&dir).unwrap();
+    }
+
+    /// The answers the compiler's package and library sites now take from here instead of
+    /// text `starts_with` / `==` / `rsplit('/')`.
+    #[test]
+    fn package_questions_are_answered_by_component() {
+        assert!(is_under("/libs/server/src/a.loft", "/libs/server"));
+        assert!(is_under("/libs/server/src/a.loft", "/libs/server/"));
+        assert!(
+            !is_under("/libs/server2/src/a.loft", "/libs/server"),
+            "pkg does not claim pkg2"
+        );
+        assert!(same_path("/libs/server/", "/libs/server"));
+        assert!(same_path("/libs/./server", "/libs/server"));
+        assert!(!same_path("/libs/server", "/libs/server2"));
+        assert_eq!(name_of("/libs/server/"), "server");
+        assert_eq!(name_of("server"), "server");
+        assert_eq!(name_of(""), "");
+        // The Windows spellings, through the same component model.
+        let w = |t: &str| PathText::parse(t, Flavor::Windows);
+        assert!(w(r"C:\libs\server\src\a.loft").starts_with(&w("c:/LIBS/server")));
+        assert_eq!(w(r"C:\libs\server\").file_name(), Some("server"));
     }
 
     #[test]
