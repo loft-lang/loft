@@ -2426,8 +2426,8 @@ impl FileVal for String {
 impl FileVal for DbRef {
     /// Serialise a vector (or struct/simple) `DbRef` into bytes for binary file output.
     ///
-    /// For `Parts::Vector(elem_tp)` the method iterates every element and delegates to
-    /// `Stores::read_data`; for all other types it calls `read_data` on `self` directly.
+    /// For `Parts::Vector(elem_tp)` the method hands the payload to
+    /// `Stores::write_vector_payload`; for all other types it calls `read_data` on `self`.
     fn file_to_bytes(&self, stores: &Stores, db_tp: i32, little_endian: bool) -> Vec<u8> {
         use crate::database::Parts;
         let mut data = Vec::new();
@@ -2437,15 +2437,14 @@ impl FileVal for DbRef {
                 let v_rec = store.get_u32_raw(self.rec, self.pos);
                 if v_rec != 0 {
                     let length = store.get_u32_raw(v_rec, 4);
-                    let elem_size = u32::from(stores.size(elem_tp));
-                    for i in 0..length {
-                        let elem = DbRef {
-                            store_nr: self.store_nr,
-                            rec: v_rec,
-                            pos: 8 + elem_size * i,
-                        };
-                        stores.read_data(&elem, elem_tp, little_endian, &mut data);
-                    }
+                    stores.write_vector_payload(
+                        self.store_nr,
+                        v_rec,
+                        length,
+                        elem_tp,
+                        little_endian,
+                        &mut data,
+                    );
                 }
             } else {
                 stores.read_data(self, db_tp as u16, little_endian, &mut data);
