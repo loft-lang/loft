@@ -1,9 +1,9 @@
 diff --git a/src/generation/emit.rs b/src/generation/emit.rs
-index ec5cb267e..15dabfad2 100644
+index 6a526591e..908f86166 100644
 --- a/src/generation/emit.rs
 +++ b/src/generation/emit.rs
-@@ -3541,7 +3541,7 @@ impl Output<'_> {
-                 self.indent(w)?;
+@@ -3544,7 +3544,7 @@ impl Output<'_> {
+                 // group owes here too.
                  writeln!(
                      w,
 -                    "{{ let _rf = var_{name}; vector::clear_vector(&DbRef {{ store_nr: _rf.store_nr, rec: _rf.rec, pos: _rf.pos + {off}_u32 }}, &mut stores.allocations); }} //@FR-R-RefillBuffer"
@@ -12,11 +12,11 @@ index ec5cb267e..15dabfad2 100644
                  continue;
              }
 diff --git a/src/generation/text.rs b/src/generation/text.rs
-index 6d955e3a9..e3e746b65 100644
+index 4629808f5..f14988a83 100644
 --- a/src/generation/text.rs
 +++ b/src/generation/text.rs
-@@ -41,7 +41,7 @@ impl Output<'_> {
-             if self.refill.var == Some(*nr) && !self.refill_keep_disabled {
+@@ -42,7 +42,7 @@ impl Output<'_> {
+             {
                  write!(
                      w,
 -                    "if {v_nr}.rec != 0 {{ vector::clear_vector(&{v_nr}, &mut stores.allocations); }}"
