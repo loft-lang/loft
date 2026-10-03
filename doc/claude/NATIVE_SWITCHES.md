@@ -358,12 +358,14 @@ the store left (`edgeset_count` 11.8× → 1.9× with the ranged calls below; `s
 out of a vector element inside a loop on native.  `LOFT_HOIST_VERIFY=1` keeps the template as
 the fallback arm instead, so a verify run compares the fast arm against it.
 **`LOFT_NO_RANGED_CALLS=1`** (`(R-RangedCall)`, default-ON, generation time, `--native` only)
-emits no `__rg` variant of any function — with it off, a function whose integer arithmetic is
-checked at three or more sites and whose parameters the call site proves in `[-2^30, 2^30]`
-gets a variant compiled with plain arithmetic, and those calls go to it (`edgeset_count`
-15.8× → 1.9× with the byte read above) — and is the first bisect step for a wrong integer, or a
-missing overflow error, out of a call on native.  `LOFT_TRACE_RANGED_CALL=1` names each
-decline.
+emits every counted loop once and no `__rg` variant of any function — with it off, a loop that
+hoists integer record fields runs a second copy under a once-per-entry guard `|x| <= 2^20`, and
+a call in that copy whose integer arguments are proven within `[-2^30, 2^30]` goes to the
+callee's ranged variant, compiled with plain arithmetic where (R-Range) proves it cannot
+overflow (`edgeset_count` 15.8× → 1.9× with the byte read above).  It is the first bisect step
+for a wrong integer, or a missing overflow error, out of a call inside a loop on native;
+`LOFT_TRACE_RANGED_CALL=1` names each copy, variant and decline, and `LOFT_HOIST_VERIFY=1`
+checks every plain operator.
 **`LOFT_NO_INVARIANT_HOIST=1`** (@PLN157 § V-ao, `@FR-R-Invariant`, default-ON, generation
 time) makes every invariant integer chain evaluate at every use again — with it off, a
 chain of `+ - * neg & | ^` over literals and variables a loop neither rebinds nor lets
