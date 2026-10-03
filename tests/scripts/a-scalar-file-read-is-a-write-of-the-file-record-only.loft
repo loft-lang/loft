@@ -19,7 +19,7 @@
 // Σ i32 = 100·6 − 28 = 572; Σ floats = 3 + 1.5 = 4.5.  Reading the 12 bytes with `f#next`
 // after each: positions 1..12, Σ = 78; cursor_sum answers 78·1000 + 210.
 //
-// @falsified-by: PENDING
+// @falsified-by: tests/falsified/a-scalar-file-read-is-a-write-of-the-file-record-only.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
 
 struct Doc { bytes: vector<integer>, ints: vector<integer>, reals: vector<float> }
 
