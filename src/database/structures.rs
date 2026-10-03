@@ -1576,6 +1576,11 @@ impl Stores {
             let from = lo as usize * size as usize;
             store.bytes_of(o_rec)[from..from + n as usize * size as usize].to_vec()
         };
+        self.append_span(db, &span, n, size);
+    }
+
+    /// Append `n` elements of `size` bytes, held as raw bytes in `span`, to the vector `db`.
+    fn append_span(&mut self, db: &DbRef, span: &[u8], n: u32, size: u32) {
         let new_db = vector::vector_append(db, size, &mut self.allocations);
         let append_pos = new_db.pos;
         self.vector_set_size(db, n, size);
@@ -1584,7 +1589,45 @@ impl Stores {
         // `vector_append` answers the byte position of the new slot from the record's
         // start; `buffer` starts at the payload (+8).
         let at = (append_pos - 8) as usize;
-        store.buffer(dest_rec)[at..at + span.len()].copy_from_slice(&span);
+        store.buffer(dest_rec)[at..at + span.len()].copy_from_slice(span);
+    }
+
+    /// `r = r[lo..hi]` for a SCALAR element kind (`OpKeepRange`): the vector keeps that range
+    /// IN PLACE — the kept span moves to the front of its own record and the length is set —
+    /// where the self-slice copied the span into a temporary, released `r` and copied it back
+    /// (@P390's alias break).  The bounds arrive clamped by the slice prelude and are clamped
+    /// again here, as [`Self::vector_slice`] does.  A vector whose store may not be written —
+    /// a FOREIGN view, a locked store — takes the copy form instead: the span copied out, the
+    /// vector cleared as `OpClearVector` clears it (a view is released), the span appended.
+    pub fn vector_keep_range(&mut self, db: &DbRef, lo: i64, hi: i64, known: u16) {
+        if db.is_null() || db.rec == 0 || db.pos == 0 {
+            return;
+        }
+        assert!(
+            !self.is_linked(known) && !self.type_owns_heap(known),
+            "vector_keep_range: element type {known} owns records; the slice loop is its form"
+        );
+        let length = i64::from(vector::length_vector(db, &self.allocations));
+        let lo = lo.clamp(0, length);
+        let hi = hi.clamp(lo, length);
+        let n = u32::try_from(hi - lo).unwrap_or(0);
+        let size = u32::from(self.size(known));
+        let (from, to) = (lo as usize * size as usize, hi as usize * size as usize);
+        let store = keys::mut_store(db, &mut self.allocations);
+        let v_rec = store.collection_rec(db.rec, db.pos);
+        if v_rec == 0 {
+            return;
+        }
+        if store.is_foreign() || store.read_only || !crate::keys::keep_range_enabled() {
+            let span = store.bytes_of(v_rec)[from..to].to_vec();
+            self.clear_vector_release(db);
+            if n > 0 {
+                self.append_span(db, &span, n, size);
+            }
+            return;
+        }
+        store.buffer(v_rec).copy_within(from..to, 0);
+        store.set_u32_raw(v_rec, 4, n);
     }
 
     /// @PLN174 F4b — `r = src[lo..hi]` bound to a local that owns its backing store (a

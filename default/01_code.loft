@@ -1471,6 +1471,11 @@ fn OpSliceVector(r: vector, src: vector, lo: integer, hi: integer, tp: const u16
 // span when `src` is a foreign store (read-only bytes, no copy), the block copy otherwise.
 fn OpSliceView(r: vector, src: vector, lo: integer, hi: integer, tp: const u16);
 #rust"s.database.vector_slice_view(&@r, &@src, @lo, @hi, @tp);"
+// `r = r[lo..hi]` for a SCALAR element kind: `r` keeps that range in place — the span moves
+// to the front of its own record and the length is set — where the self-slice copied the
+// span out, released `r` and copied it back.  The bounds arrive clamped by the slice prelude.
+fn OpKeepRange(r: vector, lo: integer, hi: integer, tp: const u16);
+#rust"s.database.vector_keep_range(&@r, @lo, @hi, @tp);"
 // @PLN174 F5 — a local takes a `#native` call's vector answer as its own: a VIEW of the
 // whole when the answer is a foreign store (a library's buffer, no copy), the element copy
 // otherwise (the #409/#410 delivery, unchanged).

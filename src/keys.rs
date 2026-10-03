@@ -3207,6 +3207,15 @@ pub fn slice_write_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_SLICE_WRITE"))
 }
 
+/// `LOFT_NO_KEEP_RANGE=1` — the first bisect step for a wrong element or length after
+/// `v = v[lo..hi]`: the vector keeps the range by the copy form again (span copied out,
+/// vector cleared, span appended) instead of moving it to the front of its own record.
+#[must_use]
+pub fn keep_range_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_KEEP_RANGE"))
+}
+
 /// `LOFT_KEYED_VERIFY=1` — the falsifier for the keyed fast paths: every pre-resolved
 /// comparison is checked against the general comparator, every exact `index` lookup
 /// against the boundary descent, and every one-probe `hash` insert against the slot and
