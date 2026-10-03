@@ -378,6 +378,15 @@ fn call_range<F: RangeFacts + ?Sized>(
     if let Some(hit) = CALL_MEMO.with(|m| m.borrow().get(&memo_key).copied()) {
         return hit;
     }
+    // `range_vars` re-enters `range` at depth 0, so `depth` cannot bound this recursion:
+    // an explicit nesting count does, and the memo entry is marked IN PROGRESS (unranged)
+    // before the analysis, so a recursive callee meets itself as unranged instead of
+    // analysing itself again (cbor's `encode` crashed the compiler on the stack).
+    if LONG_DEPTH.with(std::cell::Cell::get) >= CALL_DEPTH {
+        return None;
+    }
+    CALL_MEMO.with(|m| m.borrow_mut().insert(memo_key.clone(), None));
+    LONG_DEPTH.with(|d| d.set(d.get() + 1));
     // The longer body: its own facts under the parameters' seeds.
     let code = def.code();
     let callee_nn = super::non_sentinel::non_sentinel_vars(data, code);
@@ -418,12 +427,15 @@ fn call_range<F: RangeFacts + ?Sized>(
             },
         }
     }
+    LONG_DEPTH.with(|d| d.set(d.get() - 1));
     let answer = if ok { out } else { None };
     CALL_MEMO.with(|m| m.borrow_mut().insert(memo_key, answer));
     answer
 }
 
 thread_local! {
+    /// How many longer-body analyses `call_range` is nested in right now.
+    static LONG_DEPTH: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
     /// `call_range`'s memo for longer bodies: (callee definition address, argument ranges).
     static CALL_MEMO: std::cell::RefCell<HashMap<(usize, Vec<Option<Range>>), Option<Range>>> =
         std::cell::RefCell::new(HashMap::new());
