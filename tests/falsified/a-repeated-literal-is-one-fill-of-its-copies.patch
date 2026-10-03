@@ -1,0 +1,13 @@
+diff --git a/src/generation/emit.rs b/src/generation/emit.rs
+index bf9926709..fe45a30a8 100644
+--- a/src/generation/emit.rs
++++ b/src/generation/emit.rs
+@@ -3189,7 +3189,7 @@ impl Output<'_> {
+                 writeln!(
+                     w,
+                     "if !{{ let mut __rl = vector::push_header(&({vec}), &stores.allocations); stores.push_fill::<{ty}, false>(&mut __rl, &({vec}), {}_u32, {}_i64, ({val}) as {ty}) }} {{ //@FR-R-PushFill repeat literal",
+-                    rl.size, rl.count
++                    rl.size, rl.count - 1
+                 )?;
+                 self.indent += 1;
+                 for s in [v, next] {
