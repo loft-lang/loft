@@ -367,6 +367,13 @@ overflow (`edgeset_count` 15.8× → 1.9× with the byte read above).  It is the
 for a wrong integer, or a missing overflow error, out of a call inside a loop on native;
 `LOFT_TRACE_RANGED_CALL=1` names each copy, variant and decline, and `LOFT_HOIST_VERIFY=1`
 checks every plain operator.
+**`LOFT_NO_DISTINCT_VERSION=1`** (`(R-Alias)`'s versioned clause, default-ON, generation time,
+`--native` only) emits every loop once — with it off, a loop that grows the function's return
+buffer while it reads a parameter also runs a copy under a run-time test that the two stores
+differ, keeping the parameter's headers and its element views' record addresses there
+(`fill_polygon` 8.1× → 5.4×) — and is the first bisect step for a wrong value read from a
+parameter inside a loop that appends to the result on native.  `LOFT_TRACE_RECPTR=1` names
+each address the copy binds.
 **`LOFT_NO_INVARIANT_HOIST=1`** (@PLN157 § V-ao, `@FR-R-Invariant`, default-ON, generation
 time) makes every invariant integer chain evaluate at every use again — with it off, a
 chain of `+ - * neg & | ^` over literals and variables a loop neither rebinds nor lets
