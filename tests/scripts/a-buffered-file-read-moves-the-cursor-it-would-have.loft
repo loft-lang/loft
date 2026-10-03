@@ -19,7 +19,7 @@
 // 26·16 777 216 = 437 852 183.
 // After seeking back to 1000: byte 1000 % 251 = 247.  The last byte, 69 999 % 251 = 221.
 //
-// @falsified-by: PENDING
+// @falsified-by: tests/falsified/a-buffered-file-read-moves-the-cursor-it-would-have.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
 
 fn main() {
   name = "test_loft_buffered_read.bin";
