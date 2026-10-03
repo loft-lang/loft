@@ -2431,6 +2431,29 @@ pub fn param_view_ptr(
     Ok(p)
 }
 
+/// How many fusable scalar field reads and writes of record `r` — either spelling of the
+/// field ([`view_field`]) — stand in `stmts`.
+#[must_use]
+pub fn scalar_field_uses(stmts: &[Value], r: u16, data: &Data) -> usize {
+    let mut n = 0;
+    for op in stmts {
+        op.walk(&mut |c| {
+            if let Value::Call(g, args) = c
+                && (*g as usize) < data.definitions.len()
+                && args.len() >= 2
+            {
+                let name = data.def(*g).name();
+                if (scalar_kind(name).is_some() || setter_kind(name).is_some())
+                    && view_field(data, &args[0], &args[1]).is_some_and(|(v, _)| v == r)
+                {
+                    n += 1;
+                }
+            }
+        });
+    }
+    n
+}
+
 /// `@FR-R-RecPtr`'s MINT clause — does statement `at` of `stmts` mint a plain-record
 /// element (`e = OpNewRecord(…)`) whose ADDRESS may serve the group's writes, from the mint
 /// up to its own `OpFinishRecord(…, e, …)`?
