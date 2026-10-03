@@ -8947,7 +8947,8 @@ fn refillable(stores: &Stores, tp: u16) -> bool {
 /// that empties it that way leaves nothing of the previous value behind.  A text needs no
 /// pointer outside the store, so the content stays swappable (`content_swappable`).
 fn heap_element_wrapper(stores: &Stores, tp: u16) -> bool {
-    let Some(crate::database::Parts::Struct(fields)) = stores.types.get(tp as usize).map(|t| &t.parts)
+    let Some(crate::database::Parts::Struct(fields)) =
+        stores.types.get(tp as usize).map(|t| &t.parts)
     else {
         return false;
     };
@@ -8962,7 +8963,8 @@ fn heap_element_wrapper(stores: &Stores, tp: u16) -> bool {
     if !stores.owns_heap(*e) {
         return false;
     }
-    let Some(crate::database::Parts::Struct(efields)) = stores.types.get(*e as usize).map(|c| &c.parts)
+    let Some(crate::database::Parts::Struct(efields)) =
+        stores.types.get(*e as usize).map(|c| &c.parts)
     else {
         return false;
     };

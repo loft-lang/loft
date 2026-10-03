@@ -4105,7 +4105,7 @@ impl Output<'_> {
                 if params.contains(&cur) {
                     return Some(cur);
                 }
-                let deps: Vec<u16> = vars.tp(cur).depend().to_vec();
+                let deps: Vec<u16> = vars.tp(cur).depend().clone();
                 let [d] = deps[..] else {
                     return None;
                 };
@@ -4136,10 +4136,13 @@ impl Output<'_> {
             }
             let pairs: Vec<(u16, u16)> = params.iter().map(|&q| (q, rb)).collect();
             let verdict = |this: &mut Self, assumed: &[(u16, u16)]| {
-                let twin_params = this.twin_params_of(&stmts[at + 1..], match stmts[at].unspan() {
-                    Value::Set(r, _) => *r,
-                    _ => u16::MAX,
-                });
+                let twin_params = this.twin_params_of(
+                    &stmts[at + 1..],
+                    match stmts[at].unspan() {
+                        Value::Set(r, _) => *r,
+                        _ => u16::MAX,
+                    },
+                );
                 hoist::record_view_ptr(
                     &stmts,
                     at,
