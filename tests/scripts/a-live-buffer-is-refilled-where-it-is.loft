@@ -13,7 +13,7 @@
 // 5 → 70, 2 → 7, 9 → 252; head(2, n) prefixes [64 + n] below 24; head(2, 30) is [88, 30], head(2, 300) [89, 1, 44].  rec(k) holds n = k and
 // v = [k, k + 1, …, 2k − 1]: rec(4) sums 4+5+6+7 = 22, rec(2) 2+3 = 5.
 //
-// @falsified-by: tests/falsified/a-live-buffer-is-refilled-where-it-is.patch — CHANNEL and HOLDS below
+// @falsified-by: tests/falsified/a-live-buffer-is-refilled-where-it-is.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
 
 struct R { n: integer, v: vector<integer> }
 // cbor's header shape: one arm per argument width, which takes the refilling buffer form.
