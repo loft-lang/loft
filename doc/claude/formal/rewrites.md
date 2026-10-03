@@ -2071,6 +2071,40 @@ handed `head` the return buffer.  Switch `LOFT_NO_FORWARD_RESULT`;
 read it.  Guard
 `tests/scripts/a-returned-local-bound-from-a-call-is-built-in-the-return-buffer.loft`.
 
+### A helper's arithmetic is plain where its caller bounded the arguments
+
+```
+  (R-RangedCall) a counted `For` block whose loop hoists integer record fields — each
+                 invariant over the loop by the hoist's write set, or read only in the
+                 block's prelude, which calls no user function — is emitted twice: under
+                 a run-time guard `|x| <= G` for each such field (G = 2^20) with those
+                 field reads RANGED `[-G, G]`, and as before.  Inside the guarded copy a
+                 local's derived range is kept only when every assignment of it in the
+                 whole function lies in the block and it never escapes by reference.  A
+                 call there — or inside a ranged variant — whose every integer argument
+                 and every twin scalar input is proven within `[-L, L]` (L = 2^30) calls
+                 the callee's RANGED VARIANT: the same body with its integer parameters
+                 (each one the body never assigns) and its scalar inputs ranged `[-L, L]`,
+                 where (R-Range) then decides every operator by interval arithmetic.  A
+                 longer callee's RESULT is ranged in context: its body analysed with the
+                 parameters carrying the arguments' ranges, the union of every exit's.  The
+                 copy runs only when it calls a variant of a callee doing checked integer
+                 arithmetic; a `yield`, a `par` or a fn-ref call declines it.
+```
+
+**In words.** The checked operators' null and overflow branches are what keep a chain of
+small grid helpers (`nb_q`, `eg_index`, `eg_dir_from`) from folding: hex_field's
+`edgeset_count` was 18× its Rust twin.  `(R-Range)` cannot range a parameter or a field by
+shape (C80), so the bound comes from the caller, tested once per loop entry, and flows
+into the helpers through variants.  With the byte read of `(R-Base)` the chain is free of
+store calls and LLVM folds it: `edgeset_count` 18.2× → 1.9×.  Switch
+`LOFT_NO_RANGED_CALLS`; `LOFT_TRACE_RANGED_CALL=1` names each copy, variant and decline;
+`LOFT_HOIST_VERIFY=1` checks every plain operator.  Sites: `ranged_call.rs`
+(`range_guard_for`, `ranged_call`, `variant_ranges`), `range.rs` (`Ranges`, the seeded
+`range_vars`, `call_range`), the `For`-block arm in `emit.rs`, the variant loop in
+`output_functions`.  Guard
+`tests/scripts/a-helper-runs-plain-only-where-the-callers-guard-bounds-its-arguments.loft`.
+
 ### A filling loop is one slice fill
 
 ```
