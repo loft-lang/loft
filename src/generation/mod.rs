@@ -662,6 +662,18 @@ pub fn ckpt_filter_from_env() -> Option<String> {
 /// It bundles the read-only compile-time data with the mutable emission state
 /// so that individual emits functions don't need to pass both separately.
 #[allow(clippy::struct_excessive_bools)]
+/// `@FR-R-Base`'s byte clause, as [`Output::fused_byte_read`] answers it.
+pub struct ByteRead<'a> {
+    pub elem_op: u32,
+    pub elem_args: &'a [Value],
+    pub index: &'a Value,
+    pub size: i32,
+    pub fld: i32,
+    pub min: i32,
+    pub header: String,
+    pub base: String,
+}
+
 pub struct Output<'a> {
     pub data: &'a Data,
     pub stores: &'a Stores,
@@ -5745,6 +5757,49 @@ impl Output<'_> {
         let fused = hoist::fused_element_read(self.data, getter, args)?;
         self.active_vec_header(&fused.path)?;
         Some(fused)
+    }
+
+    /// `@FR-R-Base`'s byte clause — `OpGetByte(v[i], fld, min)` read through the held header
+    /// and base: the shape qualifies and the loop holds BOTH for the path.  Answers the
+    /// element address call (whose index the fast path binds once), the field and the bias,
+    /// with the holders' names.  Asked by the pre-eval collector and the emitter both, so the
+    /// collector never lifts an element address the fused read then leaves unused.
+    #[must_use]
+    pub fn fused_byte_read<'a>(&self, getter: &str, args: &'a [Value]) -> Option<ByteRead<'a>> {
+        if getter != "OpGetByte" || self.byte_read_disabled || self.elem_fuse_disabled {
+            return None;
+        }
+        let [inner, fld, min] = args else {
+            return None;
+        };
+        let (Value::Int(fld), Value::Int(min)) = (fld.unspan(), min.unspan()) else {
+            return None;
+        };
+        let Value::Call(elem_op, elem_args) = inner.unspan() else {
+            return None;
+        };
+        if !hoist::is_element_address(self.data, *elem_op) {
+            return None;
+        }
+        let [vector, size, index] = &elem_args[..] else {
+            return None;
+        };
+        let Value::Int(size) = size.unspan() else {
+            return None;
+        };
+        let path = hoist::vector_path(self.data, vector)?;
+        let header = self.active_vec_header(&path)?.to_owned();
+        let base = self.active_vec_base(&path)?.to_owned();
+        Some(ByteRead {
+            elem_op: *elem_op,
+            elem_args,
+            index,
+            size: *size,
+            fld: *fld,
+            min: *min,
+            header,
+            base,
+        })
     }
 
     /// `@FR-R-Base`'s join clause — `v[i]?.f` as one range test and one load: the shape

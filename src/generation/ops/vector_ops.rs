@@ -195,49 +195,21 @@ impl OpEmitter for FusedElementReadEmitter {
 /// the end, or negative (which addresses from the end) — takes the template whole, bound to
 /// the index evaluated once.  Answers whether it emitted.
 fn emit_byte_read(ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<bool> {
-    if ctx.def_fn.name() != "OpGetByte" || ctx.output.byte_read_disabled {
-        return Ok(false);
-    }
-    let [inner, fld, min] = args else {
+    let Some(b) = ctx.output.fused_byte_read(ctx.def_fn.name(), args) else {
         return Ok(false);
     };
-    let (Value::Int(fld_v), Value::Int(min_v)) = (fld.unspan(), min.unspan()) else {
-        return Ok(false);
-    };
-    let Value::Call(elem_op, elem_args) = inner.unspan() else {
-        return Ok(false);
-    };
-    if !super::super::hoist::is_element_address(ctx.output.data, *elem_op) {
-        return Ok(false);
-    }
-    let [vector, size, index] = &elem_args[..] else {
-        return Ok(false);
-    };
-    let Value::Int(size_v) = size.unspan() else {
-        return Ok(false);
-    };
-    let Some(path) = super::super::hoist::vector_path(ctx.output.data, vector) else {
-        return Ok(false);
-    };
-    let (Some(header), Some(base)) = (
-        ctx.output.active_vec_header(&path).map(str::to_owned),
-        ctx.output.active_vec_base(&path).map(str::to_owned),
-    ) else {
-        return Ok(false);
-    };
+    let (header, base, size, fld, min) = (b.header, b.base, b.size, b.fld, b.min);
     write!(ctx.w, "{{ let __bi: i64 = ")?;
-    ctx.emit(index)?;
+    ctx.emit(b.index)?;
     write!(
         ctx.w,
-        "; if (__bi as u64) < u64::from({header}.len) {{ i64::from(unsafe {{ {base}.add(__bi as usize * {size_v}usize + {fld_v}usize).read() }}) + ({min_v}_i64) }} else {{ "
+        "; if (__bi as u64) < u64::from({header}.len) {{ i64::from(unsafe {{ {base}.add(__bi as usize * {size}usize + {fld}usize).read() }}) + ({min}_i64) }} else {{ "
     )?;
     // The template, over the index already evaluated.
+    let mut elem = b.elem_args.to_vec();
+    elem[2] = Value::RawExpr("__bi".to_string());
     let mut fallback = args.to_vec();
-    if let Value::Call(op, a) = inner.unspan() {
-        let mut a = a.clone();
-        a[2] = Value::RawExpr("__bi".to_string());
-        fallback[0] = Value::Call(*op, a);
-    }
+    fallback[0] = Value::Call(b.elem_op, elem);
     super::default::DefaultEmitter.emit(ctx, &fallback)?;
     write!(ctx.w, " }} }} /*@FR-R-Base byte read*/")?;
     Ok(true)
