@@ -10,10 +10,10 @@
 // plain loop's: every crossing, in order, for points read many times each.
 //
 // Axes this file MOVES:  the result buffer (a local's own, the field of the record that also
-//                        holds the points), the grown vector (the function's result; a
-//                        second PARAMETER in the points' own store, which no test proves apart), the number of crossings
-//                        (0, 2, 4), each view read several times per pass, the result grown
-//                        past its first capacity.
+//                        holds the points), the grown vector (the function's result; a second
+//                        PARAMETER in the points' own store, which no test proves apart), the
+//                        number of crossings (0, 2, 4), each view read several times per pass,
+//                        the result grown past its first capacity.
 // Axes it HOLDS FIXED:   a `const vector<P>` parameter; integer fields.
 //
 // Expected values by hand: the square (0,0) (10,0) (10,10) (0,10) crosses y = 5 at x = 0
@@ -23,7 +23,7 @@
 // tally over the square: Σ (px·1000 + py) = 0 + 10000 + 10010 + 10 = 20020, and 4 · 300 = 1200
 // appends.
 //
-// @falsified-by: PENDING
+// @falsified-by: tests/falsified/a-parameter-element-view-keeps-its-address-beside-a-growing-result.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
 
 struct P { px: integer, py: integer }
 struct Shape { pts: vector<P>, xs: vector<integer> }

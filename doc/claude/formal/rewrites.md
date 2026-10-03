@@ -200,6 +200,14 @@ push.  Sites: `Stores::push_hoisted` (bump, write-back, re-derive), `hoist::Writ
                  apart from every mover's (R-Base's growth clause — a `for` walk's
                  hidden vector over an owned local, a `&` view of one) cannot name a
                  pushed vector either, and is kept.
+                 VERSIONED: a loop whose movers grow the function's return buffer while
+                 it reads a PARAMETER runs a second copy under a run-time test that the
+                 buffer's store is not the parameter's; inside that copy the pair is
+                 apart, and so is every view rooted in the parameter (its element views
+                 included), so the parameter's headers and those views' record addresses
+                 (R-RecPtr) are kept.  The original loop runs when the test fails.  The
+                 copy is emitted only when it gains a header no enclosing frame holds or
+                 a record address the plain loop declines.
 ```
 
 **In words.** The ownership facts are the ONE spelling (`@FR-O-Proxy`, the `__vdb`
@@ -207,7 +215,12 @@ witness, `is_argument`, `is_captured`, the hidden return-buffer attribute); this
 them and no rewrite re-derives them.  A rewrite that fails it declines the WHOLE loop — a
 mover left to its template would move a record a kept holder still describes.  Today only a
 push moves; the rule is written for the next mover too.  Sites: `hoist::owned_local`,
-`hoist::retbuf_var`, `hoist::StoreFacts`, the admission block in `hoist::hoistable`.
+`hoist::retbuf_var`, `hoist::StoreFacts`, the admission block in `hoist::hoistable`.  The
+versioned clause: `Output::distinct_version` and `Output::record_ptr_gains` decide the copy,
+`StoreFacts::distinct` reads its assumed pairs at the roots of both sides; switch
+`LOFT_NO_DISTINCT_VERSION`; guards
+`tests/scripts/a-parameter-element-view-keeps-its-address-beside-a-growing-result.loft`
+(graphics' `polygon_crossings`: 8.1× → 5.4× of its twin).
 
 ### A vector reached by a pure path has one header for a loop that cannot move it
 
