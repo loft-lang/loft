@@ -26,7 +26,9 @@ with `bench/stats.py --routine …` on the same macOS host as the baseline row.
 | 17_consumer `emit_to_material` | 12.7× | **6.06×** | F9's build-in-element half (`LOFT_NO_LITERAL_APPEND`) |
 | gridmesh `build_index` | 13.4× | **6.34×** | F8 (`LOFT_NO_STORE_SWAP`) |
 | mesh3d `mat4_mul` | 13.2× | **8.93×** | F11's first two shaves (`LOFT_NO_HEADER_DBREF`) |
-| cbor `encode_bytes` | 14.3× | **9.49×** | F7 (`LOFT_NO_FORWARD_RESULT`), F14 |
+| cbor `encode_bytes` | 14.3× | **5.63×** | F7 (`LOFT_NO_FORWARD_RESULT`), F14, the live refill (`LOFT_NO_REFILL_KEEP`) |
+| 18_consumer_crawler `build_walls` | 9.0× | **4.56×** | the bench keys on the two integers, as crawler now does (owner: the text key was the program's defect) |
+| gridmesh `field_add_cell` | 9.67× | **7.20×** | a repeated hash key takes the bucket it displaces (`LOFT_NO_KEYED_REPLACE`): −27 % of the time, short of the −42 % priced — re-analyse before the next fix |
 | 15_stdlib_keyed `sorted_fill_walk` | 10.0× | **1.26×** | its twin made like-for-like (F13 declined) |
 | pluginabi `check_request` | 12.8× | 12.6× | F14; F6's text half, F9's prefill clause not built |
 | hex_field `doc_read` | 15.6× | 12.7× | F2, F12; the twin row is still suspect (§ Measurement) |
