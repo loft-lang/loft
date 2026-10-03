@@ -347,6 +347,23 @@ a declared field default makes non-zero — `LOFT_HOIST_VERIFY=1` cannot see a m
 arm, the interpreter can.  ⚠ Built at TWO sites through one recogniser
 (`hoist::fused_join_read`): the pre-eval collector lifts every `Block` argument, so an
 emitter arm it does not know about never fires — and only a pin shows that, no value does.
+**`LOFT_NO_BYTE_READ=1`** (`@FR-R-Base`'s byte clause, default-ON, generation time, `--native`
+only) makes `v[i].f` for a ONE-BYTE field — `OpGetByte` (a `u8` / `i8`, re-based by its `min`)
+and `OpGetBoolean` (stored 0 / 1 / 255 for null) — resolve the store per read again — with it
+off, in a loop that holds the vector's header and element base the read is one range test and
+one byte load, a negative index addressing from the end and every index outside the range
+answering the template's absent value (`i64::MIN`, a boolean's 255) inline, with no call into
+the store left (`edgeset_count` 11.8× → 1.9× with the ranged calls below; `surface_fitted_spread`
+−34 % for the boolean form) — and is the first bisect step for a wrong byte or truth value read
+out of a vector element inside a loop on native.  `LOFT_HOIST_VERIFY=1` keeps the template as
+the fallback arm instead, so a verify run compares the fast arm against it.
+**`LOFT_NO_RANGED_CALLS=1`** (`(R-RangedCall)`, default-ON, generation time, `--native` only)
+emits no `__rg` variant of any function — with it off, a function whose integer arithmetic is
+checked at three or more sites and whose parameters the call site proves in `[-2^30, 2^30]`
+gets a variant compiled with plain arithmetic, and those calls go to it (`edgeset_count`
+15.8× → 1.9× with the byte read above) — and is the first bisect step for a wrong integer, or a
+missing overflow error, out of a call on native.  `LOFT_TRACE_RANGED_CALL=1` names each
+decline.
 **`LOFT_NO_INVARIANT_HOIST=1`** (@PLN157 § V-ao, `@FR-R-Invariant`, default-ON, generation
 time) makes every invariant integer chain evaluate at every use again — with it off, a
 chain of `+ - * neg & | ^` over literals and variables a loop neither rebinds nor lets
