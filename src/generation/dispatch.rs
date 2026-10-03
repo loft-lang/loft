@@ -1192,11 +1192,13 @@ impl Output<'_> {
                 // the call itself, so it asks the same question `user_fn_call_body` does.
                 let twin_args = self.twin_call_inputs(fn_nr, args);
                 crate::rewrite_census::fired("R-Inputs", usize::from(twin_args.is_some()));
+                let ranged = self.ranged_call(fn_nr, args, twin_args.is_some());
                 write!(
                     w,
-                    "{}{}(cell",
+                    "{}{}{}(cell",
                     self.fn_ident(callee),
-                    if twin_args.is_some() { "__inv" } else { "" }
+                    if twin_args.is_some() { "__inv" } else { "" },
+                    if ranged { "__rg" } else { "" }
                 )?;
                 // Emit each arg through the shared `emit_call_arg` helper so the
                 // ABI-B call applies the same per-parameter coercions (boolean→u8,
