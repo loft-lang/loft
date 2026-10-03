@@ -824,7 +824,9 @@ pub fn rewrite_program(data: &mut Data) -> usize {
                 &code,
                 &nn,
                 &std::collections::BTreeMap::new(),
-            );
+                &crate::generation::range::Ranges::default(),
+            )
+            .vars;
             let mut r = Reduce {
                 data,
                 ops: &ops,

@@ -730,6 +730,34 @@ impl Output<'_> {
             }
         };
         match code {
+            // `@FR-R-RangedCall`'s guarded copy — a counted `For` block whose hoisted integer
+            // fields bound every call it makes: the copy under the guard runs with those
+            // fields ranged (and calls ranged variants), the plain block is the `else` arm.
+            Value::Block(bl) if bl.name == "For block" && !self.in_range_copy => {
+                if let Some((test, facts)) = self.range_guard_for(bl) {
+                    let declared_before = self.declared.clone();
+                    writeln!(w, "if {test} {{ //@FR-R-RangedCall guarded copy")?;
+                    self.in_range_copy = true;
+                    self.range_override.push(std::rc::Rc::new(facts));
+                    self.indent(w)?;
+                    let r = self.output_block(w, IrBlock::Native(bl), false, false);
+                    self.range_override.pop();
+                    self.declared = declared_before;
+                    r?;
+                    writeln!(w)?;
+                    self.indent(w)?;
+                    writeln!(w, "}} else {{")?;
+                    self.indent(w)?;
+                    let r = self.output_block(w, IrBlock::Native(bl), false, false);
+                    self.in_range_copy = false;
+                    r?;
+                    writeln!(w)?;
+                    self.indent(w)?;
+                    write!(w, "}}")?;
+                } else {
+                    self.output_block(w, IrBlock::Native(bl), false, false)?;
+                }
+            }
             Value::Block(bl) => self.output_block(w, IrBlock::Native(bl), false, false)?,
             Value::Loop(lp) if self.assumed_distinct.is_empty() && !self.in_distinct_copy => {
                 if let Some(pairs) = self.distinct_version(lp) {

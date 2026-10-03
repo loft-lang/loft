@@ -18,6 +18,7 @@ pub mod non_sentinel;
 pub(crate) mod ops;
 mod pre_eval;
 pub mod range;
+mod ranged_call;
 mod text;
 
 /// One hoisted binding produced by `collect_pre_evals`:
@@ -817,6 +818,20 @@ pub struct Output<'a> {
     /// `@FR-R-Alias`'s versioned clause — the (parameter, return buffer) pairs the loop copy
     /// being emitted runs under, proved apart by the test in front of it.
     pub assumed_distinct: Vec<(u16, u16)>,
+    /// `@FR-R-RangedCall` — the facts the code being emitted runs under, replacing the
+    /// function's own: a ranged variant's (its parameters and scalar inputs seeded), or a
+    /// guarded `For` copy's (the guarded fields seeded).  A stack: a copy inside a variant
+    /// pushes over it.
+    pub range_override: Vec<std::rc::Rc<range::Ranges>>,
+    /// Set while a guarded `For` copy (or the plain arm beside it) is emitted, so the block
+    /// is not asked again.
+    pub in_range_copy: bool,
+    /// `@FR-R-RangedCall` — the ranged variants calls have asked for, `(function, twin)`,
+    /// and the ones already emitted.
+    pub rg_requests: Vec<(u32, bool)>,
+    pub rg_emitted: HashSet<(u32, bool)>,
+    /// Set while a ranged variant's body is emitted: its name takes `__rg`.
+    pub emitting_ranged: bool,
     /// `LOFT_NO_DISTINCT_VERSION=1` — no loop is emitted twice on a store-distinct test.
     pub distinct_version_disabled: bool,
     /// Set while the PLAIN copy of a loop (or a loop the clause declined) is emitted, so the
@@ -1156,7 +1171,7 @@ pub struct Output<'a> {
     nn_cache: HashMap<u32, std::rc::Rc<HashMap<u16, bool>>>,
     /// `@FR-R-Range` — the per-definition range facts ([`range::range_vars`]), computed on
     /// the first integer op a function emits and cached beside the non-sentinel ones.
-    range_cache: HashMap<u32, std::rc::Rc<HashMap<u16, range::Range>>>,
+    range_cache: HashMap<u32, std::rc::Rc<range::Ranges>>,
     /// `LOFT_NO_TYPED_KEYED=1` — a lookup in a `hash` with one integer key is emitted as the
     /// general `OpGetRecord` again instead of `OpGetHashLong` (`@FR-R-TypedKeyed`); the
     /// bisect step for a wrong or missing record out of such a lookup on native.
@@ -2274,6 +2289,11 @@ impl<'a> Output<'a> {
             header_dbrefs: HashMap::new(),
             param_rec_ptrs: HashSet::new(),
             assumed_distinct: Vec::new(),
+            range_override: Vec::new(),
+            in_range_copy: false,
+            rg_requests: Vec::new(),
+            rg_emitted: HashSet::new(),
+            emitting_ranged: false,
             distinct_version_disabled: std::env::var("LOFT_NO_DISTINCT_VERSION")
                 .is_ok_and(|v| v != "0"),
             in_distinct_copy: false,
@@ -5874,6 +5894,9 @@ impl Output<'_> {
             return None;
         }
         let nn = self.nn_facts();
+        if let Some(over) = self.range_override.last().cloned() {
+            return range::op_range(self.data, &nn, &*over, name, args, 0);
+        }
         let rv = if let Some(v) = self.range_cache.get(&self.def_nr) {
             v.clone()
         } else {
@@ -5883,11 +5906,44 @@ impl Output<'_> {
                 self.data.def(self.def_nr).code(),
                 &nn,
                 &self.char_walks,
+                &range::Ranges::default(),
             ));
             self.range_cache.insert(self.def_nr, map.clone());
             map
         };
-        range::op_range(self.data, &nn, &rv, name, args, 0)
+        range::op_range(self.data, &nn, &*rv, name, args, 0)
+    }
+
+    /// The facts the code being emitted runs under: the innermost override, or the
+    /// function's own (computed once).
+    fn current_ranges(&mut self) -> std::rc::Rc<range::Ranges> {
+        if let Some(over) = self.range_override.last() {
+            return over.clone();
+        }
+        if let Some(v) = self.range_cache.get(&self.def_nr) {
+            return v.clone();
+        }
+        let nn = self.nn_facts();
+        let map = std::rc::Rc::new(range::range_vars(
+            self.data,
+            self.data.def(self.def_nr).variables(),
+            self.data.def(self.def_nr).code(),
+            &nn,
+            &self.char_walks,
+            &range::Ranges::default(),
+        ));
+        self.range_cache.insert(self.def_nr, map.clone());
+        map
+    }
+
+    /// The range of value `v` under the current facts.
+    pub fn value_range(&mut self, v: &Value) -> Option<range::Range> {
+        if self.range_arith_disabled || self.range_suspended > 0 {
+            return None;
+        }
+        let nn = self.nn_facts();
+        let rv = self.current_ranges();
+        range::range(self.data, &nn, &*rv, v, 0)
     }
 
     /// Emit the CHECKED form of an operator for a verify comparison: the range arm is held
@@ -8819,6 +8875,39 @@ extern crate loft;"
                 self.twin = None;
             }
         }
+        // `@FR-R-RangedCall` — the ranged variants the calls asked for, each emitted under its
+        // seeded facts; a variant's own calls may ask for more, so until none is left.
+        while let Some(at) = self
+            .rg_requests
+            .iter()
+            .position(|r| !self.rg_emitted.contains(r))
+        {
+            let (dnr, twin) = self.rg_requests[at];
+            self.rg_emitted.insert((dnr, twin));
+            if std::env::var("LOFT_TRACE_RANGED_CALL").is_ok() {
+                eprintln!(
+                    "ranged-call: emits {}{}__rg",
+                    self.data.def(dnr).name(),
+                    if twin { "__inv" } else { "" }
+                );
+            }
+            let facts = self.variant_ranges(dnr, twin);
+            self.twin = if twin {
+                self.callee_inputs_of(dnr)
+            } else {
+                None
+            };
+            if twin && self.twin.is_none() {
+                continue;
+            }
+            self.range_override.push(std::rc::Rc::new(facts));
+            self.emitting_ranged = true;
+            let r = self.output_function(w, dnr, program_store.as_ref());
+            self.emitting_ranged = false;
+            self.range_override.pop();
+            self.twin = None;
+            r?;
+        }
         Ok(())
     }
 
@@ -9547,10 +9636,11 @@ extern crate loft;"
         let twin = self.twin.clone();
         write!(
             w,
-            "{}fn {}{}(cell: &std::cell::UnsafeCell<Stores>",
+            "{}fn {}{}{}(cell: &std::cell::UnsafeCell<Stores>",
             self.fn_inline_attr(def),
             self.fn_ident(def),
-            if twin.is_some() { "__inv" } else { "" }
+            if twin.is_some() { "__inv" } else { "" },
+            if self.emitting_ranged { "__rg" } else { "" }
         )?;
         // @PLN157 § V-aa (`@FR-R-ValueRecord`) — an admitted function returns its
         // record's fields in registers, so it needs no return BUFFER to write them into.

@@ -210,11 +210,18 @@ impl Output<'_> {
         if forward.is_some() {
             write!(w, "{{ let __vt = ")?;
         }
+        // `@FR-R-RangedCall` — the ranged variant, when every integer argument is proven
+        // within its bound.  Not for a forward site, which spells its own call shape.
+        let ranged = forward.is_none()
+            && (self.current_call_def as usize) < self.data.definitions.len()
+            && std::ptr::eq(self.data.def(self.current_call_def), def_fn)
+            && self.ranged_call(self.current_call_def, vals, twin_args.is_some());
         write!(
             w,
-            "{}{}(",
+            "{}{}{}(",
             self.fn_ident(def_fn),
-            if twin_args.is_some() { "__inv" } else { "" }
+            if twin_args.is_some() { "__inv" } else { "" },
+            if ranged { "__rg" } else { "" }
         )?;
         let mut first_arg = true;
         if matches!(abi, crate::codegen_runtime::Abi::Cell) {
