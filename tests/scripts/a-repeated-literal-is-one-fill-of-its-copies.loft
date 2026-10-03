@@ -11,7 +11,9 @@
 // len 16); [7, 7, 7] sums 21; the singles sum 2.5 × 4 = 10; [1, 2] + [9, 9] is [1, 2, 9, 9],
 // 21; [5] is one element.
 //
-// @falsified-by: tests/falsified/a-repeated-literal-is-one-fill-of-its-copies.patch — CHANNEL and HOLDS below
+// @falsified-by: tests/falsified/a-repeated-literal-is-one-fill-of-its-copies.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+// CHANNEL: native assertions — a fill one copy short leaves zeros16 15 long.
+// HOLDS: the interpreter (no fill) and the short literals, which lower as separate pushes.
 
 struct Mat { m: vector<float> }
 fn zeros16() -> Mat {
