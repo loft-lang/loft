@@ -23,7 +23,7 @@
 //   runs(2, 1): 100 + 20 = 120;   runs(5, 0): 0;   runs(9, 4): 1000 + 90..93 (366) = 1366
 //   the loop: k in 0..400 of runs(k % 10, k % 6), Σ over every call (by the formula below).
 //
-// @falsified-by: PENDING
+// @falsified-by: tests/falsified/a-buffer-of-text-records-is-refilled-where-it-is.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
 
 struct R { s: text, n: integer }
 
@@ -54,9 +54,9 @@ fn expect(k: integer, n: integer) -> integer {
 // that strand one to five texts each reach four digits; the released form stays below 100.
 fn record_digits(report: text) -> integer {
   marker = "records ";
-  pos = report.find(marker);
+  pos = report.find(marker) ?? -1;
   assert(pos >= 0, "records marker present");
-  rest = report[pos + len(marker)..len(report)];
+  rest = report[pos + len(marker)..];
   digits = 0;
   for c in rest { if c.is_numeric() { digits += 1; } else { break; } }
   digits
