@@ -393,8 +393,10 @@ pub enum Probed {
     /// the slot value that names the record.
     Free { bucket: u32, index: u32 },
     /// Another entry already carries the record's key: the one an insert displaces
-    /// (@FR-Col-Insert — latest insert wins).
-    Present(DbRef),
+    /// (@FR-Col-Insert — latest insert wins).  It sits in the bucket at byte offset
+    /// `bucket`, and `index` is the slot value that names the inserted record — so the
+    /// insert can take that bucket over ([`replace_at`]).
+    Present { entry: DbRef, bucket: u32, index: u32 },
     /// Nothing established: no table yet, or the record is already filed in it.  The
     /// caller takes the two-walk form, which owns both answers.
     Unknown,
@@ -443,7 +445,11 @@ pub fn probe_for_insert(hash: &DbRef, rec: &DbRef, stores: &[Store], keys: &[Key
             None => keys::compare(rec, &entry, stores, keys) == Ordering::Equal,
         };
         if same {
-            return Probed::Present(entry);
+            return Probed::Present {
+                entry,
+                bucket: BUCKET0 + at * SLOT_BYTES,
+                index: own,
+            };
         }
         at += 1;
         if at >= count {
@@ -487,6 +493,22 @@ pub fn add_at(
     let store = keys::mut_store(rec, stores);
     store.set_u32_raw(claim, bucket, index);
     store.set_u32_raw(claim, LEN_FLD, length + 1);
+}
+
+/// Put the record slot value `index` in the bucket at byte offset `bucket`, where
+/// [`probe_for_insert`] found an entry with the same key, and answer the value it held.
+///
+/// The record carries the displaced entry's key, so its home bucket and its probe chain are
+/// the displaced entry's: a lookup walks the same buckets and stops here, and no other
+/// entry's chain passes through anything that changed.  The count stays what it was — one
+/// entry out, one in — so the table never grows here.  That is the whole of what [`remove`]
+/// and [`add`] together did to the table, without the back-shift and the second walk.
+pub fn replace_at(hash: &DbRef, bucket: u32, index: u32, stores: &mut [Store]) -> u32 {
+    let claim = keys::store(hash, stores).collection_rec(hash.rec, hash.pos);
+    let store = keys::mut_store(hash, stores);
+    let gone = store.get_u32_raw(claim, bucket);
+    store.set_u32_raw(claim, bucket, index);
+    gone
 }
 
 /// Give `hash` a bucket table large enough to hold `count` entries without rehashing,

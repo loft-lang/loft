@@ -3188,6 +3188,16 @@ pub fn one_probe_insert_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_ONE_PROBE_INSERT"))
 }
 
+/// `LOFT_NO_KEYED_REPLACE=1` — the first bisect step for a lost or doubled entry, or a
+/// leak, after a `hash` insert of a key already present: the insert unlinks the displaced
+/// entry and files the new one with a second walk again, instead of overwriting the
+/// displaced entry's bucket (`hash::replace_at`).
+#[must_use]
+pub fn keyed_replace_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_KEYED_REPLACE"))
+}
+
 /// `LOFT_KEYED_VERIFY=1` — the falsifier for the keyed fast paths: every pre-resolved
 /// comparison is checked against the general comparator, every exact `index` lookup
 /// against the boundary descent, and every one-probe `hash` insert against the slot and
