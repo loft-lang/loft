@@ -81,6 +81,22 @@ decodes twice and zero-copy (aligned: 0.176 ms, ≈18×, not 12×); `doc_read`'s
 suspect on macOS (0.355 ms standalone matches the portal); `build_walls` compared a text key
 with an integer key, now both key on the integers; `save_glb`'s noise is the twin's disk write.
 
+## Re-analysis of the rows above 8×, from profiles of the current code
+
+Each row profiled with macOS `sample` over its own window (or its bench function's subtree),
+from the emitted Rust built as the release tier builds it; shares are of that routine's
+samples.  Ratios are native ÷ Rust from the band run before this analysis.
+
+| routine | now | where the time goes | the lever |
+|---|--:|---|---|
+| cbor `decode` | 12.9× | `read_value` itself 30 %; per child value: the placed `Decoded` buffer is walked by `remove_claims` before each reuse (12 %, most of it `holds_no_heap` confirming there is nothing to release), the child is relocated into its element by `move_field_out` (11 %), the element record minted (`record_new`, `vector_append`, 8 %), exit frees (`OpFreeRef` 4 %) | skip the claim walk of a buffer whose heap field was moved out; build the child in its element (destination passing) — the Rust twin moves one pointer |
+| pluginabi `check_request` | 12.7× | 83 % is the same `decode`; on top, every text value is a heap `String` (`text_from_bytes`) copied into the store by `set_str` (claims, `memset`, `malloc`/`free` ≈ 15 %); `pa_text` 13.5 %, `pa_get` 8.4 % (lookups that copy the found value) | the `decode` levers; a text built from bytes straight into its store slot |
+| zttext `flow_layout_full` | 12.7× | `buf_slice_text` 13 %: `buf[j]?` per character goes through `get_vector_hoisted` + `get_u32_raw`, though the loop holds the header and base — the fused reads cover bytes and scalar fields, not `character` elements; a store minted and freed per `resolve` call (`default_style()` returns a literal, ≈ 10 % with its claims and `memset`); `slice_runs`' entry reset re-claims its capacity (≈ 5 %); `place_line`'s vector reads unhoisted (3 %) | a fused `character` element read (S); `default_style()` built in the caller's buffer — a literal-returning call forwarded (M) |
+| graphics `draw_bezier` | 10.0× (7.36× from 0.9.8) | profiled at 0.9.8: 30 % is the eight stack reads per pop through `get_vector` / `length_vector` — the loop appends to the same vectors, so no header is held; the rest is the body (the line drawing inlined) | a header re-taken after each append rather than declined for the loop (`(R-Header)` with a growth refresh) |
+| hex_field `doc_read` | 9.6× | the per-cell `f#read` path is ≈ 55 %: `OpReadFile` (17 %), `LoftFile::read` (18 %), `file_handle_read` (8 %), the cursor writes (`store_mut` 7 %), `file_from_bytes` (3 %), copies (5 %); `edgeset_new` 13 %; the three setters 17 % | a scalar read that keeps only the cursor (priced −15 % before the hoist, now a larger share); a fixed-width section read as one span |
+| mesh3d `mat4_mul` | 8.9× | the 16-zero literal built per call (`push_fill`, 17 %); the caller's `mo_c = mat4_mul(mo_a, mo_c)` rebinds by swapping whole stores (`OpRebindRecord` → `swap_stores_in_as`, 16 %); `vec_header` per inner loop entry (≈ 10 %); the multiply itself 44 % | the result built in the caller's record (the literal refilled in place, F11's first shave); the header held for the whole call |
+| graphics `fill_polygon` | 8.1× | `polygon_crossings` 67 %: every edge reads `pc_a.py` / `pc_b.py` six times each through `stores.store(&db).get_int` on a held element view — 18 store accesses per edge where the twin reads two copied structs; `hline` 21 % | an element view's fields read through its address once (the record-address rewrite, extended from parameters to `v[i]?` views) |
+
 ## The fixes
 
 Ordered by what each buys per unit of work.  "Size" is the build effort, XS to M.
