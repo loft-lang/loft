@@ -14,7 +14,11 @@
 // so the vector is [99, 1] — a value that ran after the element's mint would reorder it.
 // `named` keeps the text "t2" last.
 //
-// @falsified-by: tests/falsified/a-record-literal-appended-from-a-local-is-built-in-its-element.patch — CHANNEL and HOLDS below
+// @falsified-at: none — the two conditions a patch could drop are both already met by the IR
+// the parser hands the pass: a value that calls (`bump(m)`) is evaluated into a temp BEFORE
+// the literal's mint, so a setter only ever sees a variable; and a local read after its
+// append (`reuse`) has no free beside its finish, so its run never matches.  Patching either
+// check away was measured INERT.  The cells pin the values of each shape.
 
 struct Triangle { a: integer, b: integer, c: integer }
 struct Mesh { name: text, triangles: vector<Triangle> }
