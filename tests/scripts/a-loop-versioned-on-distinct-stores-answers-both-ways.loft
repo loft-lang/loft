@@ -1,0 +1,59 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A LOOP VERSIONED ON DISTINCT STORES ANSWERS THE SAME BOTH WAYS (`@FR-R-Alias`'s versioned
+// clause).  A loop that pushes into its return buffer and reads a parameter's vectors through
+// a twin call is emitted twice: under `retbuf.store_nr != s.store_nr` with the parameter's
+// headers held, and as before.  The test picks the held copy for a caller's fresh buffer and
+// the plain one for a buffer that is a FIELD of the parameter's own record — where a push can
+// move the vectors a held header names.
+//
+// Expected values by hand: on the 9 × 7 grid, 13 cells have idx % 5 == 0 (255·3+1 = 766),
+// 16 more have idx % 3 == 0 (115·3+1 = 346) and 34 neither (1): 9958 + 5536 + 34 = 15528 a
+// texture, 63 long.  Into the parameter's own field the texture is the same, and three
+// rounds of it sum 46584.
+//
+// @falsified-by: tests/falsified/a-loop-versioned-on-distinct-stores-answers-both-ways.patch — CHANNEL and HOLDS below
+
+struct Sim { lw: integer, lh: integer, qmin: integer, rmin: integer, vis: vector<integer>, seen: vector<integer>, out: vector<integer> }
+fn state(s: Sim, q: integer, r: integer) -> integer {
+  gq = q - s.qmin;
+  gr = r - s.rmin;
+  if gq < 0 || gq >= s.lw || gr < 0 || gr >= s.lh { return 0; }
+  idx = gr * s.lw + gq;
+  vis = s.vis;
+  v = vis[idx] ?? 0;
+  if v != 0 { return 2; }
+  seen = s.seen;
+  sn = seen[idx] ?? 0;
+  if sn != 0 { return 1; }
+  0
+}
+fn tex(s: Sim) -> vector<integer> {
+  pix: vector<integer> = [];
+  for gr in 0..s.lh {
+    for gq in 0..s.lw {
+      st = state(s, s.qmin + gq, s.rmin + gr);
+      b = 0;
+      if st == 2 { b = 255; } else if st == 1 { b = 115; }
+      pix += [b * 3 + 1];
+    }
+  }
+  pix
+}
+fn total(v: vector<integer>) -> integer { t = 0; for x in v { t += x; } t }
+fn main() {
+  s = Sim { lw: 9, lh: 7, qmin: 2, rmin: 3, vis: [], seen: [], out: [] };
+  for i in 0..63 {
+    if i % 5 == 0 { s.vis += [1]; } else { s.vis += [0]; }
+    if i % 3 == 0 { s.seen += [1]; } else { s.seen += [0]; }
+  }
+  t = 0;
+  for _ in 0..3 { p = tex(s); t += total(p); assert(len(p) == 63, "a fresh buffer: 63 cells"); }
+  assert(t == 46584, "a fresh buffer: the held copy");
+  for _ in 0..3 {
+    s.out = tex(s);
+    assert(len(s.out) == 63 && total(s.out) == 15528, "the parameter's own field: the plain copy");
+  }
+  assert(total(s.vis) == 13 && total(s.seen) == 21, "the parameter's vectors are untouched");
+}

@@ -984,6 +984,10 @@ pub struct StoreFacts<'a> {
     /// `RetAdopt`'s result local and its witness, when the function adopts its buffer.
     pub adopted: Option<(u16, u16)>,
     pub owned: Option<&'a HoistOwned>,
+    /// Pairs of variables whose stores a RUNTIME test has proved apart for the code being
+    /// emitted: `@FR-R-Alias`'s versioned clause, the loop copy that runs only when
+    /// `retbuf.store_nr != p.store_nr` held at its entry.
+    pub assumed: &'a [(u16, u16)],
 }
 
 impl StoreFacts<'_> {
@@ -1037,6 +1041,13 @@ impl StoreFacts<'_> {
     /// Do `a`'s and `b`'s records provably live in different stores?
     #[must_use]
     pub fn distinct(&self, a: u16, b: u16) -> bool {
+        if self
+            .assumed
+            .iter()
+            .any(|&(x, y)| (x == a && y == b) || (x == b && y == a))
+        {
+            return true;
+        }
         let (Some(ta), Some(tb)) = (self.terminal(a), self.terminal(b)) else {
             return false;
         };
@@ -1499,7 +1510,7 @@ fn work_buffer_arg(data: &Data, def_nr: u32, r: u16) -> bool {
 }
 
 /// The variable of `def_nr`'s hidden return buffer, when it has one.
-fn retbuf_var(data: &Data, def_nr: u32) -> Option<u16> {
+pub fn retbuf_var(data: &Data, def_nr: u32) -> Option<u16> {
     let def = data.def(def_nr);
     let attr = def.hidden_return_buffer_attr()?;
     let v = def.variables().var(&def.attributes()[attr].name);
