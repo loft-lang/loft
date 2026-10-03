@@ -513,6 +513,11 @@ lookup out of a `sorted`, `ordered` or `index`.  **`LOFT_NO_ONE_PROBE_INSERT=1`*
 `hash` insert look its duplicate up and then file the entry as two hash-and-probe walks again
 — with it off, one walk answers both (`hash::probe_for_insert`; a 5,000-key fill −37 %) — and
 is the first bisect step for a lost, duplicated or unfindable `hash` entry.
+**`LOFT_NO_KEYED_REPLACE=1`** makes a `hash` insert of a key already present unlink the
+displaced entry (with the back-shift of the entries probed past it) and file the new one with
+a second walk again — with it off, the new record takes the displaced entry's bucket in one
+write (`hash::replace_at`; the key's probe chain is the same, the count does not move) — and is
+the first bisect step for a lost or doubled entry, or a leak, after a repeated key.
 **`LOFT_KEYED_VERIFY=1`** is the falsifier for both: every pre-resolved comparison, every
 exact lookup and every one-probe insert is checked against the general form as it is made,
 and a disagreement panics naming both answers — run the keyed cells or the script corpus

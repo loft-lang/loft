@@ -22,7 +22,7 @@
 // 5 replaced 200 times ends on name "c199", v 5 + 199 = 204, and the sum moves by 204 − 5
 // to 3436.
 //
-// @falsified-by: PENDING
+// @falsified-by: tests/falsified/a-repeated-hash-key-takes-the-bucket-it-displaces.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
 
 struct E { k: integer, v: integer, nm: text }
 struct Lone { h: hash<E[k]> }
