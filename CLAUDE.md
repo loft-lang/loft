@@ -190,7 +190,9 @@ make view                                # branch-aware doc/code viewer; binds L
 shell's own command line contains the text it searches for (and `pkill -f` by name has killed a
 sibling checkout's run).  Wait on the recorded PID (`scripts/ci-run.sh status`, the pid
 `find_problems.sh --bg` prints) or on the output FILE (`[ -s <out> ]`, its mtime); a `[m]ake`
-bracket or `pgrep -x` only moves the failure.  Agents repeated this mistake many times after it was
+bracket or `pgrep -x` only moves the failure.  With neither pid nor file to hand,
+**`scripts/pgrep_others.sh <regex>`** (`--wait`, `--count`, `--here`) is `pgrep -f` that cannot
+match its own caller.  Agents repeated this mistake many times after it was
 documented: [CODE.md § shell](doc/claude/CODE.md) has the measurements.
 
 **Bound ad-hoc runs** (loft is unbounded by default; tests already arm a 300s watchdog). Especially
