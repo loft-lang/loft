@@ -370,7 +370,9 @@ pub fn OpDatabaseRefill(cell: &std::cell::UnsafeCell<Stores>, db: DbRef, db_tp: 
     // where the wipe below threw the store's content away and the group claimed it again.
     if db.store_nr != u16::MAX && crate::keys::refill_buffer_enabled() {
         let stores: &mut Stores = unsafe { &mut *cell.get() };
-        if stores.refill_keeps(&db, db_tp as u16) {
+        let k = stores.refill_keeps(&db, db_tp as u16);
+        if std::env::var_os("LOFT_DBG_REFILL").is_some() { eprintln!("refill tp={db_tp} db=({},{},{}) kt={} keep={k}", db.store_nr, db.rec, db.pos, stores.allocations[db.store_nr as usize].known_type); }
+        if k {
             return db;
         }
     }
