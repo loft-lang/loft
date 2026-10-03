@@ -10,7 +10,9 @@
 // Expected values by hand: four rounds of six triangles over base 7k sum 666·42 + 4·231 =
 // 28896.  `grow` appends 40 records, each reading the FIRST element's `a` (5) plus its index,
 // so they sum 40·5 + 780 = 980 beside the first's 5, 985.  `reuse` reads `tri.b` after the
-// append, the six b values 1..6: 21.  `named` keeps the text "t2" last.
+// append, the six b values 1..6: 21.  `order`'s value appends [99] and answers the length 1,
+// so the vector is [99, 1] — a value that ran after the element's mint would reorder it.
+// `named` keeps the text "t2" last.
 //
 // @falsified-by: tests/falsified/a-record-literal-appended-from-a-local-is-built-in-its-element.patch — CHANNEL and HOLDS below
 
@@ -45,6 +47,14 @@ fn named(v: vector<Named>) {
     v += [x];
   }
 }
+fn bump(m: Mesh) -> integer {
+  m.triangles += [Triangle { a: 99, b: 0, c: 0 }];
+  len(m.triangles)
+}
+fn order(m: Mesh) {
+  tri = Triangle { a: bump(m), b: 1, c: 2 };
+  m.triangles += [tri];
+}
 fn main() {
   m = Mesh { name: "x", triangles: [] };
   for k in 0..4 { emit(m, k * 7); }
@@ -58,6 +68,9 @@ fn main() {
   assert(len(g.triangles) == 41 && s == 985, "a value reading the vector it is appended to");
   r = Mesh { name: "r", triangles: [] };
   assert(reuse(r) == 21 && len(r.triangles) == 6, "a local read after its append");
+  o = Mesh { name: "o", triangles: [] };
+  order(o);
+  assert(len(o.triangles) == 2 && o.triangles[0].a == 99 && o.triangles[1].a == 1, "a value that appends to the same vector runs first");
   nv: vector<Named> = [];
   named(nv);
   assert(len(nv) == 3 && nv[2].n == "t2" && nv[1].k == 1, "a literal with a text field");
