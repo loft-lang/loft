@@ -3198,6 +3198,15 @@ pub fn keyed_replace_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_KEYED_REPLACE"))
 }
 
+/// `LOFT_NO_SLICE_WRITE=1` — the first bisect step for wrong bytes in a file written from
+/// a vector: every element is written through `Stores::read_data` one by one again,
+/// instead of the payload going out as one copy when its stored bytes are its file bytes.
+#[must_use]
+pub fn slice_write_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_SLICE_WRITE"))
+}
+
 /// `LOFT_KEYED_VERIFY=1` — the falsifier for the keyed fast paths: every pre-resolved
 /// comparison is checked against the general comparator, every exact `index` lookup
 /// against the boundary descent, and every one-probe `hash` insert against the slot and

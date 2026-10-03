@@ -1,0 +1,99 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A VECTOR IS WRITTEN TO A FILE AS ITS STORED BYTES.  `f += v` for a vector whose elements
+// are stored exactly as they are written — `single`, `float`, `integer`, a 4-byte sized
+// integer, in the host's (little-endian) byte order — copies the vector's payload in one
+// go instead of writing element by element.  The file must hold what the per-element walk
+// writes: every element, in order, at its width, in the byte order the file asks for.
+//
+// Axes this file MOVES:  the element type (single, float, integer, i32 — the copy — and
+//                        u16, a record — the walk), the byte order (LittleEndian takes the
+//                        copy, BigEndian the walk), the length (0, 1, 3), and a vector
+//                        written after other values (the copy appends at the file's end).
+// Axes it HOLDS FIXED:   a vector field of a local record or a local vector, written whole.
+//
+// Expected values by hand: 0x01020304 as i32 little-endian is the bytes 4, 3, 2, 1 and
+// big-endian 1, 2, 3, 4.  The file of section A holds 4 (the leading i32) + 3·4 (singles)
+// + 3·4 (i32s) + 2·8 (floats) + 2·8 (integers) + 0 (the empty vector) = 60 bytes.
+//
+// @falsified-by: PENDING
+
+struct P { a: i32, b: u16 }
+
+fn main() {
+  name = "test_loft_vector_slice.bin";
+  delete(name);
+  sv: vector<single> = [1.5f, -2.25f, 1024.0f];
+  iv: vector<i32> = [0x01020304 as i32, -2 as i32, 7 as i32];
+  fv: vector<float> = [3.5, -0.125];
+  nv: vector<integer> = [7, -1];
+  ev: vector<i32> = [];
+  {
+    f = file(name);
+    f#format = LittleEndian;
+    f += 99 as i32;
+    f += sv;
+    f += iv;
+    f += fv;
+    f += nv;
+    f += ev;
+  }
+  {
+    f = file(name);
+    f#format = LittleEndian;
+    lead = f#read as i32;
+    s0 = f#read as single; s1 = f#read as single; s2 = f#read as single;
+    b0 = f#read as u8; b1 = f#read as u8; b2 = f#read as u8; b3 = f#read as u8;
+    i1 = f#read as i32; i2 = f#read as i32;
+    f0 = f#read as float; f1 = f#read as float;
+    n0 = f#read as integer; n1 = f#read as integer;
+    assert(lead == 99, "the leading value: {lead}");
+    assert(s0 == 1.5f && s1 == -2.25f && s2 == 1024.0f, "singles: {s0} {s1} {s2}");
+    assert(b0 == 4 && b1 == 3 && b2 == 2 && b3 == 1, "little-endian i32 bytes: {b0} {b1} {b2} {b3}");
+    assert(i1 == -2 && i2 == 7, "i32s: {i1} {i2}");
+    assert(f0 == 3.5 && f1 == -0.125, "floats: {f0} {f1}");
+    assert(n0 == 7 && n1 == -1, "integers: {n0} {n1}");
+    assert(f#size == 60, "file length: {f#size}");
+  }
+  delete(name);
+
+  // Big-endian: the walk, byte order swapped per element.
+  {
+    f = file(name);
+    f#format = BigEndian;
+    f += iv;
+  }
+  {
+    f = file(name);
+    f#format = LittleEndian;
+    c0 = f#read as u8; c1 = f#read as u8; c2 = f#read as u8; c3 = f#read as u8;
+    assert(c0 == 1 && c1 == 2 && c2 == 3 && c3 == 4, "big-endian i32 bytes: {c0} {c1} {c2} {c3}");
+    assert(f#size == 12, "big-endian file length: {f#size}");
+  }
+  delete(name);
+
+  // Types the copy must not take: an offset-stored u16 and a record.
+  uv: vector<u16> = [1 as u16, 65535 as u16];
+  pv: vector<P> = [P { a: 5 as i32, b: 6 as u16 }];
+  one: vector<single> = [0.5f];
+  {
+    f = file(name);
+    f#format = LittleEndian;
+    f += uv;
+    f += pv;
+    f += one;
+  }
+  {
+    f = file(name);
+    f#format = LittleEndian;
+    u0 = f#read as u16; u1 = f#read as u16;
+    pa = f#read as i32; pb = f#read as u16;
+    o0 = f#read as single;
+    assert(u0 == 1 && u1 == 65535, "u16s: {u0} {u1}");
+    assert(pa == 5 && pb == 6, "record: {pa} {pb}");
+    assert(o0 == 0.5f, "one single: {o0}");
+    assert(f#size == 4 + 6 + 4, "mixed file length: {f#size}");
+  }
+  delete(name);
+}

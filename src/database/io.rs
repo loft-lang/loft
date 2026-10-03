@@ -58,6 +58,23 @@ fn fill_file(path: &std::path::Path, store: &mut Store, file: &DbRef) -> bool {
 }
 
 impl Stores {
+    /// The width of a value of type `tp` when [`Self::read_data`] writes exactly the bytes
+    /// the store holds for it, in the host's byte order — a plain 8-byte `integer`, `long`
+    /// or `float`, a 4-byte `single` or `character`, and a 4-byte sized integer read raw.
+    /// `None` for every type whose file form differs from its stored form: a byte or short
+    /// stored with an offset, a boolean, text, a record, a collection.
+    fn raw_file_width(&self, tp: u16) -> Option<u32> {
+        match tp {
+            0 | 1 | 3 => Some(8),
+            2 | 6 => Some(4),
+            4 | 5 => None,
+            _ => match &self.types[tp as usize].parts {
+                Parts::Int(_, _) | Parts::IntRaw(_, _) => Some(4),
+                _ => None,
+            },
+        }
+    }
+
     /// # Panics
     /// If `tp` refers to a type that is not implemented for file reading.
     #[expect(clippy::too_many_lines, reason = "inherited")]
@@ -201,6 +218,23 @@ impl Stores {
                         store.get_u32_raw(v_rec, 4)
                     };
                     let elem_size = u32::from(self.size(elem_tp));
+                    // Elements whose stored bytes ARE their file bytes go out as one copy
+                    // of the vector's payload: what the per-element walk below writes,
+                    // without a dispatch (and, for a sized integer, a type-row clone) per
+                    // element.
+                    if length > 0
+                        && little_endian == cfg!(target_endian = "little")
+                        && crate::keys::slice_write_enabled()
+                        && self.raw_file_width(elem_tp) == Some(elem_size)
+                    {
+                        let store = &self.allocations[r.store_nr as usize];
+                        let bytes = store.bytes_of(v_rec);
+                        let want = (length as usize) * (elem_size as usize);
+                        if bytes.len() >= want {
+                            data.extend_from_slice(&bytes[..want]);
+                            return;
+                        }
+                    }
                     let store_nr = r.store_nr;
                     for i in 0..length {
                         let elem = DbRef {
