@@ -321,7 +321,12 @@ fn an_interpret_run_between_two_native_runs_never_serves_the_old_binary() {
     warm_to_a_hit(&root, &script, "sum=30");
     std::fs::write(&script, PROG_100).expect("edit");
     let i = run_with(&root, &script, &["--interpret"], &[]);
-    assert!(i.ok && i.stdout.contains("sum=100"), "{}{}", i.stdout, i.stderr);
+    assert!(
+        i.ok && i.stdout.contains("sum=100"),
+        "{}{}",
+        i.stdout,
+        i.stderr
+    );
     let r = run(&root, &script);
     assert!(
         r.ok && r.stdout.contains("sum=100"),

@@ -1105,8 +1105,7 @@ impl Stores {
         // A `par` worker's stores are merged back at the join, so a worker keeps none.
         // A keyed rebind's released slot holds the OLD collection, which no buffer refill
         // takes up (`spare_store` is a record buffer's): parked, it was still live at exit.
-        if reset_dest || keyed || self.disable_slot_reuse || !crate::keys::refill_buffer_enabled()
-        {
+        if reset_dest || keyed || self.disable_slot_reuse || !crate::keys::refill_buffer_enabled() {
             self.free(data);
         } else {
             self.park_spare(data.store_nr);
@@ -4149,7 +4148,8 @@ impl Stores {
     /// heap released in field order, as `owned_walk`'s struct arm lists them — the same
     /// bounds guard on a field past the store's end, the same secondary-view marker.
     fn remove_struct_claims(&mut self, rec: &DbRef, tp: u16) {
-        let fields_of = |types: &[crate::database::Type], i: usize| match &types[tp as usize].parts {
+        let fields_of = |types: &[crate::database::Type], i: usize| match &types[tp as usize].parts
+        {
             Parts::Struct(f) | Parts::EnumValue(_, f) => f.get(i).map(|f| {
                 (
                     f.position,
