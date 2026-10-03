@@ -1,0 +1,72 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A SCALAR FILE READ IS A WRITE OF THE FILE RECORD ONLY (`@FR-R-InPlace`'s read clause,
+// typed for the scalar hoist).  `v = f#read as T` for a scalar T writes the local and the
+// File record's own fields — its cursor, its handle on first use — and no record of any other
+// type.  A loop that reads a file and stores each value through a setter into another record's
+// vector may therefore hoist that record's paths; a loop that reads the File's OWN fields
+// (`f#next`) after each read must see them move.
+//
+// Axes this file MOVES:  the scalar width read (u8, i32, float), the destination (a vector
+//                        field of a record reached through a setter call, the guarded
+//                        shape; a plain local sum), and what the loop reads of the File
+//                        itself (nothing; `f#next` every pass — the control).
+// Axes it HOLDS FIXED:   little-endian; one file per function; the reads in one loop.
+//
+// Expected values by hand: the file holds 12 bytes b_k = 3k + 1 (k = 0..11), then 4 i32s
+// 100·k − 7 (k = 0..3), then 3 floats k + 0.5 (k = 0..2).  Σ b_k = 3·66 + 12 = 210;
+// Σ i32 = 100·6 − 28 = 572; Σ floats = 3 + 1.5 = 4.5.  Reading the 12 bytes with `f#next`
+// after each: positions 1..12, Σ = 78; cursor_sum answers 78·1000 + 210.
+//
+// @falsified-by: PENDING
+
+struct Doc { bytes: vector<integer>, ints: vector<integer>, reals: vector<float> }
+
+fn put_b(d: Doc, i: integer, v: integer) { d.bytes[i] = v; }
+fn put_i(d: Doc, i: integer, v: integer) { d.ints[i] = v; }
+fn put_r(d: Doc, i: integer, v: float) { d.reals[i] = v; }
+
+fn load(path: text) -> Doc {
+  d = Doc { bytes: [], ints: [], reals: [] };
+  for _ in 0..12 { d.bytes += [0]; }
+  for _ in 0..4 { d.ints += [0]; }
+  for _ in 0..3 { d.reals += [0.0]; }
+  f = file(path);
+  f#format = LittleEndian;
+  for i in 0..12 { b = f#read as u8; put_b(d, i, b as integer); }
+  for i in 0..4 { n = f#read as i32; put_i(d, i, n as integer); }
+  for i in 0..3 { r = f#read as float; put_r(d, i, r); }
+  d
+}
+
+fn cursor_sum(path: text) -> integer {
+  f = file(path);
+  f#format = LittleEndian;
+  s = 0;
+  t = 0;
+  for _ in 0..12 { b = f#read as u8; t += b as integer; s += f#next; }
+  s * 1000 + t
+}
+
+fn main() {
+  name = "test_loft_scalar_read_hoist.bin";
+  delete(name);
+  {
+    f = file(name);
+    f#format = LittleEndian;
+    for k in 0..12 { f += ((3 * k + 1) & 255) as u8; }
+    for k in 0..4 { f += (100 * k - 7) as i32; }
+    for k in 0..3 { f += (k as float) + 0.5; }
+  }
+  d = load(name);
+  sb = 0; for x in d.bytes { sb += x; }
+  si = 0; for x in d.ints { si += x; }
+  sr = 0.0; for x in d.reals { sr += x; }
+  assert(sb == 210 && d.bytes[11] == 34, "bytes: {sb} last {d.bytes[11]}");
+  assert(si == 572 && d.ints[0] == -7, "i32s: {si} first {d.ints[0]}");
+  assert(sr == 4.5 && d.reals[2] == 2.5, "floats: {sr}");
+  c = cursor_sum(name);
+  assert(c == 78210, "the cursor moves with every read: {c}");
+  delete(name);
+}

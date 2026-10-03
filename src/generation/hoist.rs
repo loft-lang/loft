@@ -186,7 +186,7 @@ pub fn in_place_copy(stores: Option<&Stores>, op: &str, args: &[Value]) -> Optio
 /// local writes that local and the File record's own cursor fields (`#next`, `#pos`, the
 /// handle number on first use), each in place: nothing is claimed, grown or freed.  A read
 /// into a text, a vector or a record builds or fills a value in a store and stays a writer.
-/// The scalar tier still reads the op as a write it cannot type (`body_writes`).
+/// The scalar tier types it as a write of the File record's type (`body_writes`).
 fn scalar_file_read(
     data: &Data,
     op: &str,
@@ -1876,6 +1876,17 @@ fn body_writes(
                     return true;
                 };
                 set.own.insert(tp);
+            } else if scalar_stack_ref(name, args, Some(vars)) {
+                // The address of a scalar local writes nothing; what writes through it (the
+                // read below) is judged on its own.
+            } else if scalar_file_read(data, name, args, Some(vars))
+                && let Some(Value::Var(f)) = args.first().map(Value::unspan)
+                && let Some(tp) = plain_record_type(data, vars.tp(*f))
+            {
+                // `@FR-R-InPlace`'s read clause, typed: a scalar `f#read` writes the File
+                // record's own fields (its cursor, its handle on first use) and a local — a
+                // write of that whole record type, and of no other.
+                set.whole.insert(tp);
             } else if RECORD_FREE_OPS.contains(&name) {
                 let freed = match args.first().map(Value::unspan) {
                     Some(Value::Var(r)) => plain_record_type(data, vars.tp(*r)),
