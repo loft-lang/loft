@@ -1,0 +1,13 @@
+diff --git a/src/database/structures.rs b/src/database/structures.rs
+index 4a48abf35..b6c94193b 100644
+--- a/src/database/structures.rs
++++ b/src/database/structures.rs
+@@ -1626,7 +1626,7 @@ impl Stores {
+             }
+             return;
+         }
+-        store.buffer(v_rec).copy_within(from..to, 0);
++        store.buffer(v_rec).copy_within(0..to - from, 0);
+         store.set_u32_raw(v_rec, 4, n);
+     }
+ 
