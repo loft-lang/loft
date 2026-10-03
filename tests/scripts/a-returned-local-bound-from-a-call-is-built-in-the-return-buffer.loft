@@ -11,7 +11,7 @@
 //
 // Expected values by hand: head(m, a) is [m*32 + a] below 24 and [m*32 + 24, a] from 24.
 // bytes(30 × (i*7)&255): [88, 30] + 30 bytes = 32 long, [30] = v[28] = 196.  bytes(3 × …):
-// [67, 0, 7, 14], 4 long — after the 32-long result in the same buffer.  arr([int 5, int 30,
+// [67, 0, 7, 14], 4 long — after the 32-long result in the same buffer; text "abc" is 4.  arr([int 5, int 30,
 // bytes 2]): head(4, 3) = [131], then [5], [24, 30], [66, 0, 7] — 7 bytes summing 131 + 5 +
 // 54 + 73 = 263.  text "ab": [98, 97, 98].  pick(true) = [1, 2, 9] → 12; pick(false) = [7].
 //
@@ -92,6 +92,10 @@ fn main() {
     e = encode(CBytes { value: bytes(3) });
     assert(len(e) == 4 && e[0] == 67 && e[3] == 14, "a shorter result carries nothing over");
   }
+  // A caller that offers no buffer (the result read in place): the callee answers the store it
+  // minted, which the rewritten arm must pass on rather than the null it was handed.
+  assert(len(encode(CBytes { value: bytes(30) })) == 32, "no buffer offered");
+  assert(len(encode(CText { value: "abc" })) == 4, "no buffer offered, text");
   a = encode(CArr { items: [CInt { value: 5 }, CInt { value: 30 }, CBytes { value: bytes(2) }] });
   assert(len(a) == 7 && sumb(a) == 263 && a[0] == 131, "an array arm: inner calls in their own buffers");
   t = encode(CText { value: "ab" });
