@@ -750,6 +750,9 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
         // `(R-ForwardResult)` — a returned local bound from a call is built in the return
         // buffer: the call is handed the buffer the delivery copied into.
         crate::forward_result::rewrite(data, d_nr);
+        // `(R-LiteralAppend)` — a record literal bound to a local whose one use is the append
+        // of it is built in its element.
+        crate::literal_append::rewrite(data, d_nr);
         // `(R-ReturnField)` — the returned field of an owned local is the local's store handed
         // over at the field's position: decided on the same settled IR, after the exit vector
         // a decoder's tree may have been built in.
