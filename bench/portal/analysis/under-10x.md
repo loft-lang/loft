@@ -30,12 +30,13 @@ with `bench/stats.py --routine …` on the same macOS host as the baseline row.
 | 18_consumer_crawler `build_walls` | 9.0× | **4.56×** | the bench keys on the two integers, as crawler now does (owner: the text key was the program's defect) |
 | gridmesh `field_add_cell` | 9.67× | **7.20×** | a repeated hash key takes the bucket it displaces (`LOFT_NO_KEYED_REPLACE`): −27 % of the time, short of the −42 % priced — re-analyse before the next fix |
 | glb `save_glb` | 8.45× | **3.97×** | a vector is written to a file as its stored bytes (`LOFT_NO_SLICE_WRITE`): 2.51 → 1.16 ms, −54 % against −55 % priced |
+| hex_draw `surface_fitted_spread` | 9.88× | **6.62×** | the boolean form of the byte read (`LOFT_NO_BYTE_READ`): −34 % against −33 % priced |
 | 15_stdlib_keyed `sorted_fill_walk` | 10.0× | **1.26×** | its twin made like-for-like (F13 declined) |
-| pluginabi `check_request` | 12.8× | 12.6× | F14; F6's text half, F9's prefill clause not built |
-| hex_field `doc_read` | 15.6× | 12.7× | F2, F12; the twin row is still suspect (§ Measurement) |
-| cbor `decode` | 12.9× | 12.9× | F6's text half, F9's prefill clause not built |
-| zttext `flow_layout_full` | 14.7× | 14.2× | F14; F10 not built |
-| hex_field `edgeset_count` | 18.1× | 18.2× | — (F5 not built) |
+| pluginabi `check_request` | 12.8× | 12.7× | F14; F6's text half, F9's prefill clause not built |
+| hex_field `doc_read` | 15.6× | 12.9× | F2, F12; the twin row is still suspect (§ Measurement) |
+| cbor `decode` | 12.9× | 12.8× | F6's text half, F9's prefill clause not built |
+| zttext `flow_layout_full` | 14.7× | 14.3× | F14; F10 not built |
+| hex_field `edgeset_count` | 18.1× | **1.91×** | F5: the ranged calls (`LOFT_NO_RANGED_CALLS` → 15.8×) with the byte read (`LOFT_NO_BYTE_READ` → 11.8×) |
 
 Not built yet, and why each is more than a site edit:
 
