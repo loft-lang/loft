@@ -363,6 +363,17 @@ pub fn OpDatabaseRefill(cell: &std::cell::UnsafeCell<Stores>, db: DbRef, db_tp: 
             return r;
         }
     }
+    // A LIVE buffer handed in — the store a previous value of this same type was built in —
+    // is the kept-spare case exactly: the emitter admitted this mint only where the group
+    // after it rewrites every field and empties each vector field in place
+    // (`hoist::refill_buffers`).  Keeping it keeps the vectors' records and their capacity,
+    // where the wipe below threw the store's content away and the group claimed it again.
+    if db.store_nr != u16::MAX && crate::keys::refill_buffer_enabled() {
+        let stores: &mut Stores = unsafe { &mut *cell.get() };
+        if stores.refill_keeps(&db, db_tp as u16) {
+            return db;
+        }
+    }
     op_database_inner(cell, db, db_tp, false)
 }
 

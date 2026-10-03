@@ -1127,6 +1127,18 @@ impl Stores {
 
     /// `@FR-R-RefillBuffer` — the kept store, when it holds a root of type `tp`: handed out
     /// as is, its previous value still in it, for a callee whose literal writes every field.
+    /// `@FR-R-RefillBuffer`'s live clause — may a buffer handed in LIVE be refilled where it
+    /// is: it is its store's root (`1@8`) of exactly the type being minted, in an ordinary
+    /// store nothing pins (no file, foreign bytes, lock or recording), so it is a previous
+    /// value of the same type that the admitted group rewrites whole.
+    pub fn refill_keeps(&self, db: &DbRef, tp: u16) -> bool {
+        (db.rec, db.pos) == (1, 8)
+            && (db.store_nr as usize) < self.allocations.len()
+            && !self.is_stack_store(db.store_nr)
+            && self.allocations[db.store_nr as usize].known_type == tp
+            && self.allocations[db.store_nr as usize].content_swappable(false)
+    }
+
     pub(crate) fn take_spare(&mut self, tp: u16) -> Option<DbRef> {
         let s = self.spare_store?;
         if self.allocations[s as usize].known_type != tp {

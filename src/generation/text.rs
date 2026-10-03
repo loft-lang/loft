@@ -35,6 +35,16 @@ impl Output<'_> {
     ) -> std::io::Result<()> {
         if let [Value::Var(nr)] = vals {
             let v_nr = self.var_place(*nr);
+            // `@FR-R-RefillBuffer` — the entry clear of a refilling buffer resets the length
+            // and keeps the record: the refill keeps a live buffer's store, and the group
+            // refills the same vector record.  Released here, every call re-claimed it.
+            if self.refill.var == Some(*nr) && !self.refill_keep_disabled {
+                write!(
+                    w,
+                    "if {v_nr}.rec != 0 {{ vector::clear_vector(&{v_nr}, &mut stores.allocations); }}"
+                )?;
+                return Ok(());
+            }
             // @FR-H-ClearRelease — the release-aware clear: a length reset for no-heap
             // elements and field vectors, the owed heap release for a reused root vector.
             write!(
