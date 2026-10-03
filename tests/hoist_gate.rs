@@ -171,8 +171,16 @@ fn f_log(v: vector<integer>) -> float { t = 0.0; for i in 0..len(v) { t += dist_
 fn f_grow(v: vector<integer>, w: vector<integer>) -> float { t = 0.0; for i in 0..len(v) { t += dist_grow(w, v[i]? as float, 1.0); } t }
 fn main() { }";
     assert_eq!(hoistable(script, "n_f"), 1, "atan2 must read as store-free");
-    assert_eq!(hoistable(script, "n_f_log"), 1, "log(x, base) must read as store-free");
-    assert_eq!(hoistable(script, "n_f_grow"), 0, "the twin that appends still declines");
+    assert_eq!(
+        hoistable(script, "n_f_log"),
+        1,
+        "log(x, base) must read as store-free"
+    );
+    assert_eq!(
+        hoistable(script, "n_f_grow"),
+        0,
+        "the twin that appends still declines"
+    );
 }
 
 /// @PLN157 § V-c — a callee whose only store writes are scalars into its own return

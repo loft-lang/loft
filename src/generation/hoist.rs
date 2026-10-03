@@ -3215,7 +3215,9 @@ pub fn repeat_literal<'a>(
     let [pre, push] = &ops[..] else { return None };
     let named = |v: &'a Value, n: &str| -> Option<&'a [Value]> {
         match v.unspan() {
-            Value::Call(d, a) if (*d as usize) < data.definitions.len() && data.def(*d).name() == n => {
+            Value::Call(d, a)
+                if (*d as usize) < data.definitions.len() && data.def(*d).name() == n =>
+            {
                 Some(a)
             }
             _ => None,
@@ -5175,7 +5177,9 @@ pub fn push_loop_paths<'a>(lp: &'a Block, data: &Data) -> Option<Vec<PushLoop<'a
     for s in &body {
         if let Value::Call(d, args) = s.unspan()
             && (*d as usize) < data.definitions.len()
-            && FUSABLE_PUSHES.iter().any(|(n, _, _)| *n == data.def(*d).name())
+            && FUSABLE_PUSHES
+                .iter()
+                .any(|(n, _, _)| *n == data.def(*d).name())
             && let Some((vec_arg, _, _)) = push_operands(data.def(*d).name(), args)
             && let Some(p) = vector_path(data, vec_arg)
             && !paths.contains(&p)
@@ -14246,22 +14250,71 @@ mod store_free_sentinel {
     /// Scalar-signature ops that are writers, or never reach the native emitter, by group.
     const REVIEWED_WRITERS: &[&str] = &[
         // Control flow and frames — bytecode only; the native emitter never sees them as calls.
-        "OpGoto", "OpGotoWord", "OpGotoFalse", "OpGotoFalseWord", "OpCall", "OpReturn",
-        "OpFreeStack", "OpReserveFrame", "OpStaticCall", "OpInitCreateStack",
+        "OpGoto",
+        "OpGotoWord",
+        "OpGotoFalse",
+        "OpGotoFalseWord",
+        "OpCall",
+        "OpReturn",
+        "OpFreeStack",
+        "OpReserveFrame",
+        "OpStaticCall",
+        "OpInitCreateStack",
         // Literals: `Value::Int` and friends in the IR, an op only in bytecode.
-        "OpConstInt", "OpConstShort", "OpConstTiny", "OpConstSingle", "OpConstFloat",
+        "OpConstInt",
+        "OpConstShort",
+        "OpConstTiny",
+        "OpConstSingle",
+        "OpConstFloat",
         "OpConstEnum",
         // Frame-slot reads and writes through a `const` position.
-        "OpVarBool", "OpPutBool", "OpVarInt", "OpVarCharacter", "OpPutInt", "OpVarNarrow",
-        "OpPutNarrow", "OpPutCharacter", "OpVarSingle", "OpPutSingle", "OpVarFloat",
-        "OpPutFloat", "OpInitText", "OpVarEnum", "OpPutEnum", "OpInitRef", "OpInitRefSentinel",
+        "OpVarBool",
+        "OpPutBool",
+        "OpVarInt",
+        "OpVarCharacter",
+        "OpPutInt",
+        "OpVarNarrow",
+        "OpPutNarrow",
+        "OpPutCharacter",
+        "OpVarSingle",
+        "OpPutSingle",
+        "OpVarFloat",
+        "OpPutFloat",
+        "OpInitText",
+        "OpVarEnum",
+        "OpPutEnum",
+        "OpInitRef",
+        "OpInitRefSentinel",
         // The interpreter's fused superinstructions, emitted after the IR the walk reads.
-        "OpIntVV", "OpIntVC", "OpCmpIntVV", "OpCmpIntVC", "OpIntVVPut", "OpIntVCPut",
-        "OpCmpIntVVJump", "OpCmpIntVCJump", "OpTextWalkStep", "OpTextNullJump",
-        "OpTextEndJump", "OpVecGetInt", "OpVecGetIntNullable", "OpVecSetInt", "OpVecEndJump",
+        "OpIntVV",
+        "OpIntVC",
+        "OpCmpIntVV",
+        "OpCmpIntVC",
+        "OpIntVVPut",
+        "OpIntVCPut",
+        "OpCmpIntVVJump",
+        "OpCmpIntVCJump",
+        "OpTextWalkStep",
+        "OpTextNullJump",
+        "OpTextEndJump",
+        "OpVecGetInt",
+        "OpVecGetIntNullable",
+        "OpVecSetInt",
+        "OpVecEndJump",
         // Reach a store, a fault slot or another frame through the `const` channel.
-        "OpDatabase", "OpTagFault", "OpRangeDefault", "OpDropFnRef", "OpFnRefDetachShared",
-        "OpParallelBegin", "OpParallelArm", "OpParallelJoin", "OpCallRef", "OpCallRefStore",
-        "OpCoroutineCreate", "OpCoroutineNext", "OpCoroutineReturn", "OpCoroutineYield",
+        "OpDatabase",
+        "OpTagFault",
+        "OpRangeDefault",
+        "OpDropFnRef",
+        "OpFnRefDetachShared",
+        "OpParallelBegin",
+        "OpParallelArm",
+        "OpParallelJoin",
+        "OpCallRef",
+        "OpCallRefStore",
+        "OpCoroutineCreate",
+        "OpCoroutineNext",
+        "OpCoroutineReturn",
+        "OpCoroutineYield",
     ];
 }

@@ -153,6 +153,9 @@ fn is_var(v: Option<&Value>, x: u16) -> bool {
     matches!(v.map(Value::unspan), Some(Value::Var(y)) if *y == x)
 }
 
+// One gate per condition the rule states, in the rule's order; split, the conditions would
+// be read in two places.
+#[expect(clippy::too_many_lines, reason = "one gate per stated condition")]
 /// `Err(None)` for a block that holds no candidate at all, `Err(Some(why))` for one that does
 /// and declines.
 fn admit(
@@ -166,8 +169,10 @@ fn admit(
     let clear = (0..ops.len().saturating_sub(1))
         .find(|&k| {
             call_named(&ops[k], data, "OpClearVector").is_some_and(|a| is_var(a.first(), rb))
-                && call_named(&ops[k + 1], data, "OpAppendVector")
-                    .is_some_and(|a| is_var(a.first(), rb) && matches!(a.get(1).map(Value::unspan), Some(Value::Var(_))))
+                && call_named(&ops[k + 1], data, "OpAppendVector").is_some_and(|a| {
+                    is_var(a.first(), rb)
+                        && matches!(a.get(1).map(Value::unspan), Some(Value::Var(_)))
+                })
         })
         .ok_or(None)?;
     let Some(Value::Var(local)) = call_named(&ops[clear + 1], data, "OpAppendVector")
@@ -185,7 +190,10 @@ fn admit(
         return Err(None);
     };
     let Value::Call(f, args) = rhs.unspan() else {
-        return Err(Some(format!("`{}` is not bound from a call", vars.name(local))));
+        return Err(Some(format!(
+            "`{}` is not bound from a call",
+            vars.name(local)
+        )));
     };
     let name = |x: u16| vars.name(x).to_string();
     let Some(Value::Var(h)) = args.last().map(Value::unspan) else {
@@ -204,7 +212,10 @@ fn admit(
         )));
     }
     if !vars.name(h).starts_with("__ref_") {
-        return Err(Some(format!("the buffer `{}` is not a hidden one", name(h))));
+        return Err(Some(format!(
+            "the buffer `{}` is not a hidden one",
+            name(h)
+        )));
     }
     for x in [local, h] {
         if vars.is_argument(x) || vars.is_captured(x) {
@@ -217,18 +228,29 @@ fn admit(
     if args[..args.len() - 1].iter().any(|a| mentions(a, rb) > 0)
         || ops[bind + 1..clear].iter().any(|o| mentions(o, rb) > 0)
     {
-        return Err(Some("the return buffer is named before its delivery".into()));
+        return Err(Some(
+            "the return buffer is named before its delivery".into(),
+        ));
     }
     if ops[bind + 1..clear]
         .iter()
         .any(|o| o.any_node(&mut |c| matches!(c, Value::Set(y, _) if *y == local)))
     {
-        return Err(Some(format!("`{}` is rebound before its delivery", name(local))));
+        return Err(Some(format!(
+            "`{}` is rebound before its delivery",
+            name(local)
+        )));
     }
     if ops[clear + 2..].iter().any(|o| mentions(o, local) > 0) {
-        return Err(Some(format!("`{}` is used after its delivery", name(local))));
+        return Err(Some(format!(
+            "`{}` is used after its delivery",
+            name(local)
+        )));
     }
-    let inside: usize = ops[bind..=clear + 1].iter().map(|o| mentions(o, local)).sum();
+    let inside: usize = ops[bind..=clear + 1]
+        .iter()
+        .map(|o| mentions(o, local))
+        .sum();
     // `__ref_N` serves this call alone: its null inits, its guard's test, the call, its frees.
     let guard = (0..bind).rev().find(|&g| is_null_guard(&ops[g], data, h));
     let mut frees = 0usize;
@@ -241,7 +263,10 @@ fn admit(
     let allowed = count_null_sets(code, h) + frees + 1 + guard_mentions
         - guard.map_or(0, |g| count_null_sets(&ops[g], h));
     if mentions(code, h) != allowed {
-        return Err(Some(format!("the buffer `{}` serves more than this call", name(h))));
+        return Err(Some(format!(
+            "the buffer `{}` serves more than this call",
+            name(h)
+        )));
     }
     Ok(Site {
         local,
@@ -325,5 +350,8 @@ fn apply(code: &mut Value, site: &Site, rb: u16) {
             ops.remove(g);
         }
     });
-    assert!(done, "(R-ForwardResult): the admitted block was not found again");
+    assert!(
+        done,
+        "(R-ForwardResult): the admitted block was not found again"
+    );
 }

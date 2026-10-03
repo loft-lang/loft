@@ -3659,14 +3659,19 @@ impl Output<'_> {
             return Ok(());
         }
         let count = self.push_trip_count(&ps[0])?;
+        use std::fmt::Write as _;
         let mut line = format!("{{ let _pn = {count}; if _pn > 0 {{ ");
         for (_, vec, pushes, size) in &held {
-            line.push_str(&format!(
+            let _ = write!(
+                line,
                 "vector::reserve_more(&({vec}), _pn.saturating_mul({pushes}_i64), {size}_u32, &mut stores.allocations); "
-            ));
+            );
         }
         for (hdr, vec, _, _) in &held {
-            line.push_str(&format!("{hdr} = vector::push_header(&({vec}), &stores.allocations); "));
+            let _ = write!(
+                line,
+                "{hdr} = vector::push_header(&({vec}), &stores.allocations); "
+            );
         }
         line.push_str("} } //@FR-R-PushFill push reserve, several paths");
         self.indent(w)?;
@@ -4507,12 +4512,11 @@ impl Output<'_> {
             // A plain variable, or a sub-record path over one (`atlas.a_cv`), whose key is
             // the root and the field's summed offset — the key the loop hoisted it under.
             let arg = vals.get(*p as usize)?;
-            let (c, fld) = match arg.unspan() {
-                Value::Var(c) => (*c, *fld),
-                _ => {
-                    let vars = self.data.def(self.def_nr).variables();
-                    hoist::path_scalar(self.data, vars, arg, *fld)?.0
-                }
+            let (c, fld) = if let Value::Var(c) = arg.unspan() {
+                (*c, *fld)
+            } else {
+                let fn_vars = self.data.def(self.def_nr).variables();
+                hoist::path_scalar(self.data, fn_vars, arg, *fld)?.0
             };
             let (c, fld) = (&c, &fld);
             if let Some(held) = self.active_scalar_hoist(&(*c, *fld)) {
@@ -4709,7 +4713,6 @@ impl Output<'_> {
     /// for it.  Answers whether a frame was pushed; `output_block` pops what it pushed before
     /// the block closes.  A value-record local (`@FR-R-ValueRecord`) is a tuple, not a place,
     /// and is never bound.
-    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(super) fn bind_record_ptr(
         &mut self,
         w: &mut dyn Write,
@@ -4853,9 +4856,7 @@ impl Output<'_> {
             return Ok(0);
         }
         let vars = self.data.def(self.def_nr).variables();
-        let params: Vec<u16> = (0..vars.count())
-            .filter(|v| vars.is_argument(*v))
-            .collect();
+        let params: Vec<u16> = (0..vars.count()).filter(|v| vars.is_argument(*v)).collect();
         let mut frames = 0;
         for (i, p) in params.into_iter().enumerate() {
             // A tuple parameter (`(R-ValueLocal)`) arrives as values, not as a place.
