@@ -47,23 +47,24 @@ fn is_integer(tp: &Type) -> bool {
     matches!(tp.base(), Type::Integer(_))
 }
 
-/// Does a call of `d` gain from ranged parameters: its body (or a callee's, three deep) does
-/// checked integer arithmetic?  A variant of a function that does none is code for nothing.
-pub fn benefits(data: &Data, d: u32, depth: u8) -> bool {
+/// The checked integer operators a call of `d` runs — its own and its callees', three deep —
+/// which a ranged variant may turn plain.
+fn checked_ops(data: &Data, d: u32, depth: u8) -> usize {
     if depth > 3 || (d as usize) >= data.definitions.len() {
-        return false;
+        return 0;
     }
     let def = data.def(d);
-    if !def.is_loft_defined() || matches!(def.returned(), Type::Iterator(_, _)) {
-        return false;
+    if !def.is_loft_defined() || matches!(def.returned().base(), Type::Iterator(_, _)) {
+        return 0;
     }
-    def.code().any_node(&mut |n| {
-        let Value::Call(c, _) = n else { return false };
+    let mut n = 0;
+    def.code().walk(&mut |c| {
+        let Value::Call(c, _) = c else { return };
         if (*c as usize) >= data.definitions.len() {
-            return false;
+            return;
         }
         let cd = data.def(*c);
-        matches!(
+        if matches!(
             cd.name(),
             "OpAddInt"
                 | "OpMinInt"
@@ -72,12 +73,29 @@ pub fn benefits(data: &Data, d: u32, depth: u8) -> bool {
                 | "OpAddIntNullable"
                 | "OpMinIntNullable"
                 | "OpMulIntNullable"
-        ) || (cd.is_loft_defined() && *c != d && benefits(data, *c, depth + 1))
-    })
+        ) {
+            n += 1;
+        } else if cd.is_loft_defined() && *c != d {
+            n += checked_ops(data, *c, depth + 1);
+        }
+    });
+    n
 }
+
+/// Does a call of `d` repay a ranged variant — and, in a guarded copy, the duplicated loop?
+/// The guard and the copy cost per loop and per code byte; a callee with one or two checked
+/// operators saves too little to repay them (`(R-GuardedChain)` measured the same trade:
+/// one-operator loops LOST 18–50 %).  Three or more reachable operators qualify.
+pub fn benefits(data: &Data, d: u32, _depth: u8) -> bool {
+    checked_ops(data, d, 0) >= MIN_CHECKED_OPS
+}
+
+/// The checked operators a callee must run for its ranged variant to be worth emitting.
+const MIN_CHECKED_OPS: usize = 3;
 
 /// The variables written anywhere in `code` outside the block `skip` (by address).
 fn sets_outside(code: &Value, skip: *const Block, out: &mut HashSet<u16>) {
+    let code = code.unspan();
     if let Value::Block(b) | Value::Loop(b) = code
         && std::ptr::eq(std::ptr::from_ref::<Block>(b), skip)
     {

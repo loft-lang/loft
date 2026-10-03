@@ -837,6 +837,8 @@ pub struct Output<'a> {
     /// Set while the PLAIN copy of a loop (or a loop the clause declined) is emitted, so the
     /// loop arm is not asked again for the same loop.  Nested loops inside it are asked anew.
     pub in_distinct_copy: bool,
+    /// A serial for the operand locals the checking form of a plain operator binds.
+    pub verify_serial: u32,
     /// `LOFT_NO_HEADER_DBREF=1` — rebuild the vector's `DbRef` at every fused read.
     pub header_dbref_disabled: bool,
     /// `LOFT_NO_BYTE_READ=1` — a `vector<u8>` element read keeps its template.
@@ -2297,6 +2299,7 @@ impl<'a> Output<'a> {
             distinct_version_disabled: std::env::var("LOFT_NO_DISTINCT_VERSION")
                 .is_ok_and(|v| v != "0"),
             in_distinct_copy: false,
+            verify_serial: 0,
             header_dbref_disabled: std::env::var("LOFT_NO_HEADER_DBREF").is_ok_and(|v| v != "0"),
             text_set_copy_kept: std::env::var("LOFT_NO_TEXT_SET_BORROW").is_ok_and(|v| v != "0"),
             byte_read_disabled: std::env::var("LOFT_NO_BYTE_READ").is_ok_and(|v| v != "0"),

@@ -200,14 +200,15 @@ impl OpEmitter for IntArithEmitter {
                 write!(ctx.w, "(if {g} {{ ")?;
             }
             if ctx.output.hoist_verify {
+                let bound = bind_operands(ctx, args)?;
                 write!(ctx.w, "ops::range_verify(")?;
-                write_plain(ctx, form, args)?;
+                write_plain(ctx, form, &bound)?;
                 write!(ctx.w, ", ")?;
                 ctx.output.chains_suspended += 1;
-                let checked = self.emit(ctx, args);
+                let checked = self.emit(ctx, &bound);
                 ctx.output.chains_suspended -= 1;
                 checked?;
-                write!(ctx.w, ", \"{name}\")")?;
+                write!(ctx.w, ", \"{name}\") }}")?;
             } else {
                 write_plain(ctx, form, args)?;
             }
@@ -264,16 +265,17 @@ impl OpEmitter for IntArithEmitter {
         {
             crate::rewrite_census::fired("R-Range", 1);
             if ctx.output.hoist_verify {
+                let bound = bind_operands(ctx, args)?;
                 write!(ctx.w, "ops::range_verify(")?;
-                write_range_plain(ctx, form, args)?;
+                write_range_plain(ctx, form, &bound)?;
                 write!(ctx.w, ", ")?;
                 // The checked copy: the ordinary emission with the range arm held off.
                 let name = ctx.def_fn.name();
                 ctx.output.range_suspended += 1;
-                let checked = self.emit(ctx, args);
+                let checked = self.emit(ctx, &bound);
                 ctx.output.range_suspended -= 1;
                 checked?;
-                return write!(ctx.w, ", \"{name}\")");
+                return write!(ctx.w, ", \"{name}\") }}");
             }
             return write_range_plain(ctx, form, args);
         }
@@ -349,4 +351,24 @@ impl OpEmitter for IntArithEmitter {
             }
         }
     }
+}
+
+/// The checking form of a plain operator (`LOFT_HOIST_VERIFY=1`) computes the operator twice,
+/// plain and checked, so each OPERAND is evaluated once into a local first and both read the
+/// locals: an operand with an effect — a call that appends, `m5b_side(o, i) * 2` — answered
+/// differently the second time, and the falsifier reported a fault the program never had.
+/// Opens a block the caller closes after the comparison.
+fn bind_operands(ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<Vec<Value>> {
+    ctx.output.verify_serial += 1;
+    let serial = ctx.output.verify_serial;
+    write!(ctx.w, "{{ ")?;
+    let mut bound = Vec::with_capacity(args.len());
+    for (k, a) in args.iter().enumerate() {
+        let name = format!("__rv{serial}_{k}");
+        write!(ctx.w, "let {name}: i64 = ")?;
+        ctx.emit(a)?;
+        write!(ctx.w, "; ")?;
+        bound.push(Value::RawExpr(name));
+    }
+    Ok(bound)
 }
