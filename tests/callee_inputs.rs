@@ -142,7 +142,11 @@ fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
     cmd.arg("--native-emit")
         .arg(out)
         .arg(src)
-        .env("LOFT_TIMEOUT", "120");
+        .env("LOFT_TIMEOUT", "120")
+        // The predictions pin `(R-Inputs)`' twin selection.  `(R-RangedCall)` would add a
+        // guarded copy of every loop whose callee's arithmetic repays it, doubling each
+        // count for a reason this file does not test; its own guard pins that.
+        .env("LOFT_NO_RANGED_CALLS", "1");
     for (k, v) in env {
         cmd.env(k, v);
     }
