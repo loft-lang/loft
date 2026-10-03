@@ -219,6 +219,12 @@ fn admit(
     {
         return Err(Some("the return buffer is named before its delivery".into()));
     }
+    if ops[bind + 1..clear]
+        .iter()
+        .any(|o| o.any_node(&mut |c| matches!(c, Value::Set(y, _) if *y == local)))
+    {
+        return Err(Some(format!("`{}` is rebound before its delivery", name(local))));
+    }
     if ops[clear + 2..].iter().any(|o| mentions(o, local) > 0) {
         return Err(Some(format!("`{}` is used after its delivery", name(local))));
     }
@@ -289,11 +295,28 @@ fn apply(code: &mut Value, site: &Site, rb: u16) {
         }
         done = true;
         let ops = &mut bl.operators;
-        if let Value::Set(_, rhs) = ops[site.bind].unspan_mut()
-            && let Value::Call(_, args) = rhs.unspan_mut()
+        // The bind becomes the call into rb, bound back onto rb, and every read of L until the
+        // delivery reads rb.
+        let call = match ops[site.bind].unspan_mut() {
+            Value::Set(_, rhs) => std::mem::replace(rhs.as_mut(), Value::Null),
+            _ => unreachable!("is_site checked the bind"),
+        };
+        let mut call = call;
+        if let Value::Call(_, args) = call.unspan_mut()
             && let Some(last) = args.last_mut()
         {
             *last = Value::Var(rb);
+        }
+        // Bound back onto rb: a caller that offered no buffer hands in the null sentinel, and
+        // the callee then answers a store it minted — the value a bare call would drop.  The
+        // shape is the hidden-buffer self-rebind the backends already take (`S1`).
+        ops[site.bind] = Value::Set(rb, Box::new(call));
+        for op in &mut ops[site.bind + 1..site.clear] {
+            op.map_nodes(&mut |n| {
+                if matches!(n, Value::Var(y) if *y == site.local) {
+                    *n = Value::Var(rb);
+                }
+            });
         }
         // From the back, so the earlier indices stay valid.
         ops.remove(site.clear + 1);
