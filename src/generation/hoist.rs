@@ -8976,7 +8976,14 @@ pub fn refill_buffers(data: &Data, stores: &Stores, def_nr: u32) -> RefillBuffer
                 };
                 for g in ops.iter().skip(i + 1) {
                     let Value::Call(d, args) = g.unspan() else {
-                        if matches!(g.unspan(), Value::Line(_)) {
+                        // A view of one of the buffer's fields (`buf = b.data`, the witness
+                        // form of a local vector) writes nothing: the group goes on past it.
+                        let view = matches!(g.unspan(), Value::Set(_, rhs)
+                            if matches!(rhs.unspan(), Value::Call(gf, ga)
+                                if (*gf as usize) < data.definitions.len()
+                                    && data.def(*gf).name() == "OpGetField"
+                                    && matches!(ga.first().map(Value::unspan), Some(Value::Var(w)) if *w == b)));
+                        if matches!(g.unspan(), Value::Line(_)) || view {
                             continue;
                         }
                         break;
