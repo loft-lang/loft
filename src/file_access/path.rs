@@ -92,7 +92,24 @@ impl PathText {
     /// # Errors
     /// The refused name and why.
     pub fn program(raw: &str) -> Result<PathText, String> {
-        let p = PathText::parse_with(raw, Flavor::HOST, true);
+        PathText::program_in(raw, Flavor::HOST)
+    }
+
+    /// [`PathText::program`] under `flavor`'s rules — the form the tests ask on every host.
+    ///
+    /// # Errors
+    /// The refused name and why.
+    pub fn program_in(raw: &str, flavor: Flavor) -> Result<PathText, String> {
+        let p = PathText::parse_with(raw, flavor, true);
+        // A drive without a root (`a:b.txt`, `C:x`) is Windows's drive-RELATIVE form: it
+        // names a place by that drive's hidden current directory.  `:` is allowed only for a
+        // drive leading an absolute path.
+        if !p.prefix.is_empty() && !p.prefix.starts_with("//") && !p.rooted {
+            return Err(format!(
+                "`{raw}` is relative to drive {}'s current directory, which no other platform has",
+                p.prefix
+            ));
+        }
         for name in &p.parts {
             if let Some(why) = name_refusal(name) {
                 return Err(why);
@@ -460,6 +477,30 @@ mod tests {
         assert!(p.ends_with(&["a", "b.loft"]));
         assert!(w(r"D:\a\loft\src\database\mod.rs").ends_with(&["database", "mod.rs"]));
         assert!(!u("src/database/mod.rs").ends_with(&["base", "mod.rs"]));
+    }
+
+    /// `@FR-Path-Name`'s one `:` — a drive leading an ABSOLUTE path — on both flavors.
+    #[test]
+    fn a_program_path_allows_a_drive_only_before_a_root() {
+        let ok = |t: &str, f| PathText::program_in(t, f).is_ok();
+        assert!(ok("C:/x", Windows) && ok(r"C:\x\y.loft", Windows) && ok("C:", Windows) == false);
+        assert!(!ok("a:b.txt", Windows), "drive-relative");
+        assert!(!ok("C:x", Windows), "drive-relative");
+        assert!(
+            !ok("x/C:/y", Windows),
+            "a drive in the middle is a name with `:`"
+        );
+        assert!(
+            !ok("a:b.txt", Unix) && !ok("C:/x", Unix),
+            "on Unix `C:` is a name"
+        );
+        assert!(ok(r"data\x.txt", Unix) && ok("data/x.txt", Windows));
+        assert_eq!(
+            PathText::program_in(r"data\x.txt", Unix)
+                .unwrap()
+                .portable(),
+            "data/x.txt"
+        );
     }
 
     #[test]

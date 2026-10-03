@@ -1685,6 +1685,18 @@ pub(crate) fn native_cabi_enabled() -> bool {
 /// the dynamic linker does at run time.
 ///
 /// A binding to libc needs no entry and gets no flag: it is already linked.
+/// @PLN184 — a native PROGRAM's main thread gets the stack a Linux one has (8 MiB) on Windows
+/// too, where the default is 1 MiB: the same recursion must not overflow on one platform only.
+/// A no-op off Windows.
+pub(crate) fn add_main_stack_flags(cmd: &mut std::process::Command) {
+    if cfg!(all(windows, target_env = "msvc")) {
+        cmd.arg("-C").arg(format!("link-arg=/STACK:{}", 8 << 20));
+    } else if cfg!(all(windows, target_env = "gnu")) {
+        cmd.arg("-C")
+            .arg(format!("link-arg=-Wl,--stack,{}", 8 << 20));
+    }
+}
+
 pub(crate) fn add_c_library_flags(cmd: &mut std::process::Command, data: &crate::data::Data) {
     for lib in data.c_libraries.iter().filter(|c| !c.optional) {
         // @PLN24 arc G — an OPTIONAL library gets no flag at all. On the link
