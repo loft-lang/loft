@@ -36,7 +36,7 @@ with `bench/stats.py --routine …` on the same macOS host as the baseline row.
 | pluginabi `check_request` | 12.8× | 12.7× | F14; F6's text half, F9's prefill clause not built |
 | hex_field `doc_read` | 15.6× | **9.41×** | F2, F12; a scalar `f#read` is a write of the File record only, so the section loops' scalar hoists admit (4.35 → 3.25 ms).  A leaner `OpReadFile` prices at −15 % more (hand-priced, not built); loop 17 (line 947) still declines on a non-scalar stack reference |
 | cbor `decode` | 12.9× | 12.8× | F6's text half, F9's prefill clause not built |
-| zttext `flow_layout_full` | 14.7× | 14.3× | F14; F10 not built |
+| zttext `flow_layout_full` | 14.7× | **12.7×** | F14; F10's second half — `slice_runs` keeps its live buffer of text records, released once at its entry instead of reset twice (22.6 → 19.1 ms, −15 % against −12 % priced).  F10's first half re-priced: a buffer handed to the fn-ref `resolve` buys nothing (20.0 → 19.9 ms, hand-priced) because `default_resolver` forwards `default_style()`, which mints its own store — the cost is that inner literal return, not the missing buffer |
 | hex_field `edgeset_count` | 18.1× | **1.91×** | F5: the ranged calls (`LOFT_NO_RANGED_CALLS` → 15.8×) with the byte read (`LOFT_NO_BYTE_READ` → 11.8×) |
 
 Not built yet, and why each is more than a site edit:
