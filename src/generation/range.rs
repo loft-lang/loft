@@ -182,6 +182,13 @@ pub fn range<F: RangeFacts + ?Sized>(
                 return None;
             }
             let def = data.def(*d_nr);
+            // A guarded field read (`@FR-R-RangedCall`): the run-time test in front of the
+            // code proved the field in range, and nothing in it writes the field.
+            if def.name() == "OpGetInt"
+                && let [Value::Var(p), Value::Int(f)] = [args[0].unspan(), args[1].unspan()]
+            {
+                return rv.field(*p, i64::from(*f));
+            }
             op_range(data, nn, rv, def.name(), args, depth)
                 .or_else(|| call_range(data, nn, rv, def, args, depth))
         }
@@ -303,12 +310,6 @@ pub fn op_range<F: RangeFacts + ?Sized>(
                     let x = a(0)?;
                     Some((x.0 >> k, x.1 >> k))
                 }
-                // A guarded field read (`@FR-R-RangedCall`): the run-time test in front of the
-                // code proved the field in range, and nothing in it writes the field.
-                ("OpGetInt", 2) => match (args[0].unspan(), args[1].unspan()) {
-                    (Value::Var(p), Value::Int(f)) => rv.field(*p, i64::from(*f)),
-                    _ => None,
-                },
                 // The store layout's facts: a length word is `u32`, a byte is a byte.
                 ("OpSizeText" | "OpLengthVector", 1) => Some((0, U32_MAX)),
                 ("t_4text_size" | "t_4text_len" | "t_6vector_len", 1) => Some((0, U32_MAX)),
@@ -380,8 +381,10 @@ fn call_range<F: RangeFacts + ?Sized>(
     // The longer body: its own facts under the parameters' seeds.
     let code = def.code();
     let callee_nn = super::non_sentinel::non_sentinel_vars(data, code);
-    let mut seeded = Ranges::default();
-    seeded.vars = rv2.vars;
+    let seeded = Ranges {
+        vars: rv2.vars,
+        ..Ranges::default()
+    };
     let callee_rv = range_vars(
         data,
         vars,
