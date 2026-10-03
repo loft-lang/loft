@@ -10,16 +10,28 @@
 // scalars and a vector; and a result the caller kept must not change.
 //
 // Expected values by hand: bytes(n) is n bytes (7·i) & 255, sum 7·n(n−1)/2 below the wrap —
-// 5 → 70, 2 → 7, 9 → 252; head(2, n) prefixes [64 + n] below 24.  rec(k) holds n = k and
+// 5 → 70, 2 → 7, 9 → 252; head(2, n) prefixes [64 + n] below 24; head(2, 30) is [88, 30], head(2, 300) [89, 1, 44].  rec(k) holds n = k and
 // v = [k, k + 1, …, 2k − 1]: rec(4) sums 4+5+6+7 = 22, rec(2) 2+3 = 5.
 //
 // @falsified-by: tests/falsified/a-live-buffer-is-refilled-where-it-is.patch — CHANNEL and HOLDS below
 
 struct R { n: integer, v: vector<integer> }
-fn head(major: integer, arg: integer) -> vector<u8> {
+// cbor's header shape: one arm per argument width, which takes the refilling buffer form.
+fn head(major: integer limit(0, 7), arg: integer) -> vector<u8> {
   buf: vector<u8> = [];
-  buf += [((major * 32 + arg) & 255) as u8];
-  buf
+  if arg < 24 {
+    buf += [((major * 32 + arg) & 255) as u8];
+  } else if arg < 256 {
+    buf += [((major * 32 + 24) & 255) as u8];
+    buf += [(arg & 255) as u8];
+  } else {
+    buf += [((major * 32 + 25) & 255) as u8];
+    buf += [((arg / 256) & 255) as u8];
+    buf += [(arg & 255) as u8];
+  }
+  // An explicit `return` (cbor's spelling) is what keeps the buffer a witness the refill
+  // form serves; a bare tail binds the hidden buffer directly and never reaches it.
+  return buf;
 }
 fn enc(n: integer) -> vector<u8> {
   buf = head(2, n);
@@ -44,6 +56,16 @@ fn main() {
     assert(len(e) == 3 && e[0] == 66 && sum8(e) == 66 + 7, "two bytes after nine");
   }
   assert(len(kept) == 6 && sum8(kept) == 139, "a kept result is the caller's");
+  h = head(2, 300);
+  assert(len(h) == 3 && h[0] == 89 && h[1] == 1 && h[2] == 44, "three header bytes");
+  hk = h;
+  for _ in 0..3 {
+    h = head(2, 5);
+    assert(len(h) == 1 && h[0] == 69, "one header byte after three");
+    h = head(2, 30);
+    assert(len(h) == 2 && h[0] == 88 && h[1] == 30, "two header bytes after one");
+  }
+  assert(len(hk) == 3 && sum8(hk) == 134, "a kept header is the caller's");
   r = rec(4);
   assert(r.n == 4 && len(r.v) == 4 && sumi(r.v) == 22, "a record of a scalar and a vector");
   for _ in 0..3 {
