@@ -483,7 +483,7 @@ mod tests {
     #[test]
     fn a_program_path_allows_a_drive_only_before_a_root() {
         let ok = |t: &str, f| PathText::program_in(t, f).is_ok();
-        assert!(ok("C:/x", Windows) && ok(r"C:\x\y.loft", Windows) && ok("C:", Windows) == false);
+        assert!(ok("C:/x", Windows) && ok(r"C:\x\y.loft", Windows) && !ok("C:", Windows));
         assert!(!ok("a:b.txt", Windows), "drive-relative");
         assert!(!ok("C:x", Windows), "drive-relative");
         assert!(
