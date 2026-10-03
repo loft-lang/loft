@@ -518,6 +518,12 @@ displaced entry (with the back-shift of the entries probed past it) and file the
 a second walk again — with it off, the new record takes the displaced entry's bucket in one
 write (`hash::replace_at`; the key's probe chain is the same, the count does not move) — and is
 the first bisect step for a lost or doubled entry, or a leak, after a repeated key.
+**`LOFT_NO_SLICE_WRITE=1`** writes every vector to a file element by element through
+`Stores::read_data` again — with it off, a vector whose elements are stored as they are written
+(`integer`, `long`, `float`, `single`, `character`, a 4-byte sized integer, in the host's byte
+order) goes out as one copy of its payload (`Stores::write_vector_payload`, the one walk both
+backends and a vector field inside a record share) — and is the first bisect step for wrong bytes
+in a binary file written from a vector.
 **`LOFT_KEYED_VERIFY=1`** is the falsifier for both: every pre-resolved comparison, every
 exact lookup and every one-probe insert is checked against the general form as it is made,
 and a disagreement panics naming both answers — run the keyed cells or the script corpus
