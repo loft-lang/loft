@@ -31,6 +31,7 @@ with `bench/stats.py --routine …` on the same macOS host as the baseline row.
 | gridmesh `field_add_cell` | 9.67× | **7.20×** | a repeated hash key takes the bucket it displaces (`LOFT_NO_KEYED_REPLACE`): −27 % of the time, short of the −42 % priced — re-analyse before the next fix |
 | glb `save_glb` | 8.45× | **3.97×** | a vector is written to a file as its stored bytes (`LOFT_NO_SLICE_WRITE`): 2.51 → 1.16 ms, −54 % against −55 % priced |
 | hex_draw `surface_fitted_spread` | 9.88× | **6.62×** | the boolean form of the byte read (`LOFT_NO_BYTE_READ`): −34 % against −33 % priced |
+| graphics `draw_bezier` | 9.94× | **7.36×** (graphics 0.9.8, measured from its branch) | a vector keeps its own slice in place (`OpKeepRange`, `LOFT_NO_KEEP_RANGE`), and the library's @P390 workaround (`t = v[0..n]; v = t`) gives way to `v = v[0..n]`: −26 % against −29 % priced by hand |
 | 15_stdlib_keyed `sorted_fill_walk` | 10.0× | **1.26×** | its twin made like-for-like (F13 declined) |
 | pluginabi `check_request` | 12.8× | 12.7× | F14; F6's text half, F9's prefill clause not built |
 | hex_field `doc_read` | 15.6× | 12.9× | F2, F12; the twin row is still suspect (§ Measurement) |
