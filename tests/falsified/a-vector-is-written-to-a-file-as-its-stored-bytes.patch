@@ -1,0 +1,14 @@
+diff --git a/src/database/io.rs b/src/database/io.rs
+index b598b1e8b..01e1b6407 100644
+--- a/src/database/io.rs
++++ b/src/database/io.rs
+@@ -93,8 +93,7 @@ impl Stores {
+             return;
+         }
+         let elem_size = u32::from(self.size(elem_tp));
+-        if little_endian == cfg!(target_endian = "little")
+-            && crate::keys::slice_write_enabled()
++        if crate::keys::slice_write_enabled()
+             && self.raw_file_width(elem_tp) == Some(elem_size)
+         {
+             let bytes = self.allocations[store_nr as usize].bytes_of(v_rec);

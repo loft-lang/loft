@@ -17,7 +17,7 @@
 // big-endian 1, 2, 3, 4.  The file of section A holds 4 (the leading i32) + 3·4 (singles)
 // + 3·4 (i32s) + 2·8 (floats) + 2·8 (integers) + 0 (the empty vector) = 60 bytes.
 //
-// @falsified-by: PENDING
+// @falsified-by: tests/falsified/a-vector-is-written-to-a-file-as-its-stored-bytes.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
 
 struct P { a: i32, b: u16 }
 
