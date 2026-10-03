@@ -33,9 +33,10 @@ if [ ! -f "$rel/deps/libloft.rlib" ] || [ -z "$ffi" ]; then
   exit 2
 fi
 args=(--edition=2024 -o "$2" "$1" -C opt-level=3 -C codegen-units=1
-      -Clink-arg=-Wl,--allow-multiple-definition
       --extern "loft=$rel/deps/libloft.rlib" -L "dependency=$rel/deps"
       --extern "loft_ffi=$ffi")
 [ -n "$ring" ] && args+=(-L "native=$ring")
+# macOS ld64 rejects the GNU option; `src/main.rs` leaves it out there too.
+[ "$(uname -s)" != Darwin ] && args+=(-Clink-arg=-Wl,--allow-multiple-definition)
 # rustc's warnings about generated code are noise here; an error is the answer.
 rustc "${args[@]}" 2> >(grep -E "^error" -A 14 >&2 || true)

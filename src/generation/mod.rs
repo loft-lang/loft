@@ -796,6 +796,12 @@ pub struct Output<'a> {
     /// prelude.  Keyed by the header's NAME, which is unique per hoist, so no frame has to
     /// be pushed and popped in step with `vec_headers`.
     pub header_dbrefs: HashMap<String, String>,
+    /// The parameters `@FR-R-RecPtr`'s parameter clause bound in the function being emitted.
+    /// Their address serves field reads and writes, never a twin call's inputs: a twin called
+    /// once per call reads its inputs once either way, and each such caller is one more for
+    /// LLVM to weigh against inlining the twin where it IS hot (hex_field's setup calls
+    /// moved `eg_index__inv` off the `edgeset_count` path's inline budget, −30 %).
+    pub param_rec_ptrs: HashSet<u16>,
     /// `LOFT_NO_HEADER_DBREF=1` — rebuild the vector's `DbRef` at every fused read.
     pub header_dbref_disabled: bool,
     /// `LOFT_NO_TEXT_SET_BORROW=1` — every `OpSetText` copies its value first, as before.
@@ -2244,6 +2250,7 @@ impl<'a> Output<'a> {
             param_record_ptr_disabled: std::env::var("LOFT_NO_PARAM_RECORD_PTR")
                 .is_ok_and(|v| v != "0"),
             header_dbrefs: HashMap::new(),
+            param_rec_ptrs: HashSet::new(),
             header_dbref_disabled: std::env::var("LOFT_NO_HEADER_DBREF").is_ok_and(|v| v != "0"),
             text_set_copy_kept: std::env::var("LOFT_NO_TEXT_SET_BORROW").is_ok_and(|v| v != "0"),
             recptr_trace: std::env::var("LOFT_TRACE_RECPTR").is_ok(),
@@ -2588,6 +2595,7 @@ impl Output<'_> {
     pub fn start_fn(&mut self, def_nr: u32) {
         self.def_nr = def_nr;
         self.header_dbrefs.clear();
+        self.param_rec_ptrs.clear();
         self.indent = 0;
         self.placed_locals = hoist::placed_locals(self.data.def(def_nr).code(), self.data);
         // @PLN157 § V-j — the function's paired move-appends, before anything emits.
@@ -4529,6 +4537,9 @@ impl Output<'_> {
             let Value::Call(g, _) = getter.unspan() else {
                 return None;
             };
+            if self.param_rec_ptrs.contains(c) {
+                return None;
+            }
             let name = self.data.def(*g).name().to_string();
             args.push(self.rec_ptr_read(*c, *fld, &name)?);
         }
@@ -4855,6 +4866,11 @@ impl Output<'_> {
         if !self.coroutine_persistent_fields.is_empty() {
             return Ok(0);
         }
+        // A twin's scalar reads arrive as its inputs (`(R-Inputs)`), so the address would serve
+        // only what is left over — in hex_field's `eg_index__inv`, nothing.
+        if self.twin.is_some() {
+            return Ok(0);
+        }
         let vars = self.data.def(self.def_nr).variables();
         let params: Vec<u16> = (0..vars.count()).filter(|v| vars.is_argument(*v)).collect();
         let mut frames = 0;
@@ -4866,7 +4882,13 @@ impl Output<'_> {
             {
                 continue;
             }
-            let twin_params = self.twin_params_of(stmts, p);
+            // The address costs two runtime calls at entry, which one field access does not
+            // repay: a parameter read or written once keeps its store access.
+            if hoist::scalar_field_uses(stmts, p, self.data) < 2 {
+                continue;
+            }
+            // No twin call is served (`param_rec_ptrs`), so none counts as a use.
+            let twin_params = HashSet::new();
             let verdict = hoist::param_view_ptr(
                 stmts,
                 p,
@@ -4889,6 +4911,7 @@ impl Output<'_> {
             match verdict {
                 Ok(p) => {
                     self.emit_record_ptr(w, p, None)?;
+                    self.param_rec_ptrs.insert(p);
                     frames += 1;
                 }
                 Err(why) => {
