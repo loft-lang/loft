@@ -100,7 +100,9 @@ fn len_mentions(len: usize) -> usize {
 
 fn named<'a>(v: &'a Value, data: &Data, name: &str) -> Option<&'a [Value]> {
     match v.unspan() {
-        Value::Call(d, a) if (*d as usize) < data.definitions.len() && data.def(*d).name() == name => {
+        Value::Call(d, a)
+            if (*d as usize) < data.definitions.len() && data.def(*d).name() == name =>
+        {
             Some(a)
         }
         _ => None,
@@ -130,18 +132,19 @@ fn scalar(tp: &Type) -> bool {
 /// A literal, a scalar variable, or a native scalar op over those: reads no record.
 fn simple(v: &Value, data: &Data, vars: &crate::variables::Function) -> bool {
     match v.unspan() {
-        Value::Int(_)
-        | Value::Long(_)
-        | Value::Float(_)
-        | Value::Single(_)
-        | Value::Boolean(_) => true,
+        Value::Int(_) | Value::Long(_) | Value::Float(_) | Value::Single(_) | Value::Boolean(_) => {
+            true
+        }
         Value::Var(x) => *x < vars.count() && scalar(vars.tp(*x)),
         Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
             let def = data.def(*d);
             matches!(def.code(), Value::Null)
                 && def.name().starts_with("Op")
                 && !def.attributes().is_empty()
-                && def.attributes().iter().all(|a| !a.constant && scalar(&a.typedef))
+                && def
+                    .attributes()
+                    .iter()
+                    .all(|a| !a.constant && scalar(&a.typedef))
                 && scalar(def.returned())
                 && args.iter().all(|a| simple(a, data, vars))
         }
@@ -173,7 +176,9 @@ fn admit(all: &[Value], data: &Data, vars: &crate::variables::Function) -> Optio
     }
     let mut k = 2;
     while let Some(op) = ops.get(k) {
-        let Value::Call(d, a) = op.unspan() else { break };
+        let Value::Call(d, a) = op.unspan() else {
+            break;
+        };
         if !SCALAR_SETTERS.contains(&data.def(*d).name()) || !is_var(a.first(), l) {
             break;
         }
@@ -201,10 +206,12 @@ fn admit(all: &[Value], data: &Data, vars: &crate::variables::Function) -> Optio
         return None;
     }
     // The values must not name the element or the vector either (they run after the mint).
-    for op in ops[2..k].iter().copied() {
+    for op in &ops[2..k] {
         if let Value::Call(_, a) = op.unspan()
             && (mentions(&a[2], *e) > 0
-                || new.first().is_some_and(|v| matches!(v.unspan(), Value::Var(x) if mentions(&a[2], *x) > 0)))
+                || new.first().is_some_and(
+                    |v| matches!(v.unspan(), Value::Var(x) if mentions(&a[2], *x) > 0),
+                ))
         {
             return None;
         }
@@ -224,7 +231,8 @@ fn apply(ops: &mut Vec<Value>, at: usize, l: u16) {
         .collect();
     // The writes are the calls on L after the mint.
     let mut k = 2;
-    while matches!(idx.get(k).map(|&i| ops[i].unspan()), Some(Value::Call(_, a)) if is_var(a.first(), l)) {
+    while matches!(idx.get(k).map(|&i| ops[i].unspan()), Some(Value::Call(_, a)) if is_var(a.first(), l))
+    {
         k += 1;
     }
     let Some(Value::Set(e, _)) = idx.get(k).map(|&i| ops[i].unspan()) else {
