@@ -22,7 +22,7 @@
 //   character, which formats as the empty text, so of the reads at k + 3 for k in 0..6 three
 //   are present (indices 3, 4, 5: '😀', 'b', 'z') and three absent (6, 7, 8).
 //
-// @falsified-by: PENDING
+// @falsified-by: tests/falsified/a-character-element-is-read-through-the-held-base.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
 
 fn copy(v: vector<character>, start: integer, count: integer) -> text {
   out = "";

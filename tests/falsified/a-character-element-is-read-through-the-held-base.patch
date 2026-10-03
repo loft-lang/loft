@@ -1,0 +1,13 @@
+diff --git a/src/generation/ops/vector_ops.rs b/src/generation/ops/vector_ops.rs
+index 80c98fc47..4e2ee7fb4 100644
+--- a/src/generation/ops/vector_ops.rs
++++ b/src/generation/ops/vector_ops.rs
+@@ -207,7 +207,7 @@ fn emit_byte_read(ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<bool>
+         // and `0` (`'\0'`) for an absent element — the template's `rec == 0` arm.
+         return write!(
+             ctx.w,
+-            "; let __bl = i64::from({header}.len); let __bf = if __bi < 0 {{ __bi + __bl }} else {{ __bi }}; if __bf >= 0 && __bf < __bl {{ char::from_u32(unsafe {{ ({base}.add(__bf as usize * {size}usize + {fld}usize) as *const u32).read_unaligned() }}).unwrap_or(char::from(0)) as u32 as i32 }} else {{ 0_i32 }} }} /*@FR-R-Base byte read*/"
++            "; let __bl = i64::from({header}.len); let __bf = if __bi < 0 {{ __bi + __bl }} else {{ __bi }}; if __bf >= 0 && __bf < __bl {{ char::from_u32(unsafe {{ ({base}.add(__bf as usize * {size}usize + {fld}usize) as *const u32).read_unaligned() }}).unwrap_or(char::from(0)) as u32 as i32 }} else {{ 97_i32 }} }} /*@FR-R-Base byte read*/"
+         )
+         .map(|()| true);
+     }

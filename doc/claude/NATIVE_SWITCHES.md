@@ -349,7 +349,8 @@ arm, the interpreter can.  ⚠ Built at TWO sites through one recogniser
 emitter arm it does not know about never fires — and only a pin shows that, no value does.
 **`LOFT_NO_BYTE_READ=1`** (`@FR-R-Base`'s byte clause, default-ON, generation time, `--native`
 only) makes `v[i].f` for a ONE-BYTE field — `OpGetByte` (a `u8` / `i8`, re-based by its `min`)
-and `OpGetBoolean` (stored 0 / 1 / 255 for null) — resolve the store per read again — with it
+and `OpGetBoolean` (stored 0 / 1 / 255 for null) — and a `character` element (`OpGetCharacter`,
+the stored code point decoded as the template decodes it) resolve the store per read again — with it
 off, in a loop that holds the vector's header and element base the read is one range test and
 one byte load, a negative index addressing from the end and every index outside the range
 answering the template's absent value (`i64::MIN`, a boolean's 255) inline, with no call into
