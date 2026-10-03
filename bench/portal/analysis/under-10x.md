@@ -52,6 +52,30 @@ Found on the way: F3 first regressed `edgeset_count` to 23.7×.  Bisected at the
 LLVM inlined it into the hot `edge_mat__inv`.  A parameter's address now serves field accesses
 only, never a twin call.
 
+## Re-analysis after F1–F14 (the rows still at 9× or worse)
+
+Re-derived from the CURRENT emitted code (PERFORMANCE.md checklist step 8), macOS `sample`
+profiles, prices from alternated `hand_price.sh` runs with the hash unchanged.
+
+| routine | now | dominant cost (site) | fix, size | priced |
+|---|--:|---|---|--:|
+| zttext `flow_layout_full` | 13.8× | NULL buffers on fn-ref calls (`op_database_inner` 11.9 %); `slice_runs` clears its buffer then re-mints it (19 %); `Str` → `String` through `Display` | F10; the refill fix below | — |
+| cbor `decode` | 11.7× | `remove_claims` per element (F6); each child built in a temporary and moved (`move_field_out` 11 %, prefill 6.8 %) | F6, destination-passing + F9's prefill clause | — |
+| hex_field `doc_read` | 12.9× | the per-cell `OpReadFile` runtime crossing (41.5 %), which also declines F2's scalar hoist (`"reading file"`), so the set helpers run plain (36.7 %) | a fixed-size scalar `f#read` without the crossing, store-free so the hoist admits it | — |
+| pluginabi `check_request` | 12.0× (≈18× like-for-like) | `n_decode` 85 %: prefilled records, `remove_claims`, NULL buffers in `pa_get`/`pa_text`, their deep copies | F6, destination-passing, the view-return question | — |
+| graphics `draw_bezier` | 10.0× | the stack re-copied per subdivision (`v = v[0..n]` through a temp, a left-over @P390 workaround); its slice declines the loop's header hoist | library XS, or `v = v[0..n]` as a length set (S/M); then the hoist (M) | −31 %, −29 % more (≈4.9×) |
+| hex_draw `surface_fitted_spread` | 9.8× (≈3.2× like-for-like) | `OpGetBoolean` not fused (`fused_byte_read` admits `OpGetByte` only); `(R-RangedCall)` declines: range ends are calls, field facts do not reach a callee's record parameter | boolean byte read (S); carry field facts into `call_range` (S) | −33 %, −37 % more (≈1.4×) |
+| cbor `encode_bytes` | 9.6× | `n_head` releases and re-mints the buffer it is handed (47 %): F7's refill half was never built; `buf += encode(…)` still copies; match bindings still owned `String`s | keep a non-NULL buffer, clear it in place (S) | **−44 % (≈5.4×)** |
+| gridmesh `field_add_cell` | 9.4× | a duplicate keyed insert removes and re-adds (`displace_keyed` → `hash::remove`, ~50 %); `rehash_into` re-hashes from records (24 %); the bucket looked up twice (library, 8 %) | overwrite in the probed bucket (S, runtime) | −42 %, −8 % more (≈5.1×) |
+| glb `save_glb` | 7–10× (noisy: the TWIN's disk write) | a vector written to a file element by element (`read_data`, `parts.clone()` per element, 55 %); no element base under the return-buffer growth | one slice copy for a fixed-width vector (S, runtime); a base under distinct growth (M) | −55 %, −42 % more (≈2.7×) |
+| 18_consumer_crawler `build_walls` | 9.0× | a TEXT key formatted and hashed per probe where the twin keys on two integers (deliberate, stated in both headers); a `String` copied per probe; the header hoist declined by a growing callee on a fresh store | owner decision on the key; borrow the work buffer (S/M); admit a call writing only distinct stores (M) | −52 % (int key), −14 %, −23 % (≈3.3×) |
+
+Twin corrections the re-analysis found (bench README rule 1): `surface_fitted_spread`'s twin
+sweeps once where the library sweeps three times (≈3.2× like-for-like); `check_request`'s twin
+decodes twice and zero-copy (aligned: 0.176 ms, ≈18×, not 12×); `doc_read`'s twin is NOT
+suspect on macOS (0.355 ms standalone matches the portal); `build_walls` compares a text key
+with an integer key by design; `save_glb`'s noise is the twin's disk write.
+
 ## The fixes
 
 Ordered by what each buys per unit of work.  "Size" is the build effort, XS to M.
