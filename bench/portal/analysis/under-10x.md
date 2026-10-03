@@ -11,6 +11,46 @@ produces it still has to state the condition that makes it sound (`formal/rewrit
 Read § The fixes for what to build and in what order, § Per routine for which fixes each
 row needs, § Measurement for the corrections the work found in the numbers themselves.
 
+## Status
+
+Built on `157-native-4x`, each behind its own switch with a hand-computed guard; re-measured
+with `bench/stats.py --routine …` on the same macOS host as the baseline row.
+
+| routine | baseline | now | built |
+|---|--:|--:|---|
+| 18_consumer_crawler `build_vis` | 18.5× | **3.60×** | F4 (`LOFT_NO_DISTINCT_VERSION`) |
+| fixstep `timer_spend` | 12.1× | **3.98×** | F3 (`LOFT_NO_PARAM_RECORD_PTR`) |
+| hex_roof `roof_match` | 16.4× | **4.72×** | F1 |
+| text2d `draw_quads` | 22.0× | **4.72×** | F2 |
+| game_protocol `msg_ping` | 10.1× | **5.94×** | F6's struct-release half, F14 |
+| 17_consumer `emit_to_material` | 12.7× | **6.06×** | F9's build-in-element half (`LOFT_NO_LITERAL_APPEND`) |
+| gridmesh `build_index` | 13.4× | **6.34×** | F8 (`LOFT_NO_STORE_SWAP`) |
+| mesh3d `mat4_mul` | 13.2× | **8.93×** | F11's first two shaves (`LOFT_NO_HEADER_DBREF`) |
+| cbor `encode_bytes` | 14.3× | **9.49×** | F7 (`LOFT_NO_FORWARD_RESULT`), F14 |
+| 15_stdlib_keyed `sorted_fill_walk` | 10.0× | 10.0× | — (F13 not built) |
+| pluginabi `check_request` | 12.8× | 12.6× | F14; F6's text half, F9's prefill clause not built |
+| hex_field `doc_read` | 15.6× | 12.7× | F2, F12; the twin row is still suspect (§ Measurement) |
+| cbor `decode` | 12.9× | 12.9× | F6's text half, F9's prefill clause not built |
+| zttext `flow_layout_full` | 14.7× | 14.2× | F14; F10 not built |
+| hex_field `edgeset_count` | 18.1× | 18.2× | — (F5 not built) |
+
+Not built yet, and why each is more than a site edit:
+
+- **F5** needs a SOUNDNESS condition before its price applies: the parameter and record reads
+  it would range are unbounded statically, so the plain-arithmetic form is a guarded fast path
+  (bounds checked at entry), the `(R-GuardedChain)` shape — not a rule change.
+- **F6's text half** — `(R-RefillBuffer)` over a type with text fields needs a text write that
+  reuses the old claim when it fits and releases it when it does not; `refillable()` refuses
+  such types today because the old text would leak.
+- **F9's prefill clause**, **F10**, **F11's float-sum clause**, **F13** (a new runtime op: an
+  unsorted append and one stable sort with keep-last dedup at loop exit).
+
+Found on the way: F3 first regressed `edgeset_count` to 23.7×.  Bisected at the Rust level
+(`hand_price.sh`, which now links on macOS), the cause was COLD setup functions calling
+`eg_index`'s twin through a parameter's address — two more callers of the twin changed how
+LLVM inlined it into the hot `edge_mat__inv`.  A parameter's address now serves field accesses
+only, never a twin call.
+
 ## The fixes
 
 Ordered by what each buys per unit of work.  "Size" is the build effort, XS to M.
