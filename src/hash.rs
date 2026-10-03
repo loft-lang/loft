@@ -396,7 +396,11 @@ pub enum Probed {
     /// (@FR-Col-Insert — latest insert wins).  It sits in the bucket at byte offset
     /// `bucket`, and `index` is the slot value that names the inserted record — so the
     /// insert can take that bucket over ([`replace_at`]).
-    Present { entry: DbRef, bucket: u32, index: u32 },
+    Present {
+        entry: DbRef,
+        bucket: u32,
+        index: u32,
+    },
     /// Nothing established: no table yet, or the record is already filed in it.  The
     /// caller takes the two-walk form, which owns both answers.
     Unknown,
