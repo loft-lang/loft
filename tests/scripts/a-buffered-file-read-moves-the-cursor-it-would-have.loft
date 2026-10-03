@@ -1,0 +1,56 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A BUFFERED FILE READ MOVES THE CURSOR IT WOULD HAVE.  A read the file's 64 KiB buffer
+// already holds is answered with one copy instead of the general fill loop; the bytes and the
+// file's remembered position must be exactly what that loop leaves — so a read that crosses
+// the buffer's refill, a seek after buffered reads (which trusts the remembered position to
+// skip the OS), and a read at the end of the file all answer as before.
+//
+// Axes this file MOVES:  the read width (1, 4 bytes), where the read sits against the
+//                        buffer (inside, across the 65 536-byte refill, at the file's end),
+//                        a seek (`f#next = …`) after buffered reads, forward and backward.
+// Axes it HOLDS FIXED:   little-endian; one file.
+//
+// Expected values by hand: the file holds 70 000 bytes b_k = k % 251.  Σ over all of them:
+// 70 000 = 278·251 + 222, so 278 full cycles of Σ 0..250 = 31 375 (8 722 250) plus Σ 0..221 =
+// 24 531 → 8 746 781.  251 · 261 = 65 511, so byte 65 534 = 23 and the i32 at 65 534 reads
+// bytes 23, 24, 25, 26 (the last two past the 65 536-byte refill) → 23 + 24·256 + 25·65 536 +
+// 26·16 777 216 = 437 852 183.
+// After seeking back to 1000: byte 1000 % 251 = 247.  The last byte, 69 999 % 251 = 221.
+//
+// @falsified-by: PENDING
+
+fn main() {
+  name = "test_loft_buffered_read.bin";
+  delete(name);
+  {
+    f = file(name);
+    f#format = LittleEndian;
+    for k in 0..70000 { f += ((k % 251) & 255) as u8; }
+  }
+  {
+    f = file(name);
+    f#format = LittleEndian;
+    total = 0;
+    for _ in 0..70000 { b = f#read as u8; total += b as integer; }
+    assert(total == 8746781, "every byte, across the refill: {total}");
+    assert(f#next == 70000, "the cursor after all of them: {f#next}");
+  }
+  {
+    f = file(name);
+    f#format = LittleEndian;
+    skipped = 0;
+    for _ in 0..65534 { b = f#read as u8; skipped += b as integer; }
+    assert(skipped > 0, "the first 65 534 bytes were read");
+    w = f#read as i32;
+    assert(w == 437852183, "an i32 across the refill: {w}");
+    f#next = 1000;
+    b1 = f#read as u8;
+    assert(b1 == 247, "a seek back after buffered reads: {b1}");
+    f#next = 69999;
+    last = f#read as u8;
+    assert(last == 221 && f#next == 70000, "the last byte: {last} at {f#next}");
+  }
+  delete(name);
+}

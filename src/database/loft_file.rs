@@ -109,12 +109,43 @@ impl LoftFile {
 
 impl Read for LoftFile {
     fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+        if self.take_buffered(out) {
+            return Ok(out.len());
+        }
         let r = self.fill(out);
         self.settle(r, |n| *n as u64)
+    }
+
+    /// `fill` already reads the whole request unless the file ends, so one `read` answers
+    /// it — and a request the buffer holds is one copy (a binary format's scalar per call).
+    fn read_exact(&mut self, out: &mut [u8]) -> io::Result<()> {
+        if self.take_buffered(out) {
+            return Ok(());
+        }
+        if self.read(out)? == out.len() {
+            Ok(())
+        } else {
+            Err(io::Error::from(io::ErrorKind::UnexpectedEof))
+        }
     }
 }
 
 impl LoftFile {
+    /// A request the buffer already holds whole: copied, and the logical position moved by
+    /// it — exactly what `fill` and `settle` do for it, without their loop.  `false` leaves
+    /// everything as it was.
+    #[inline]
+    fn take_buffered(&mut self, out: &mut [u8]) -> bool {
+        let n = out.len();
+        if n == 0 || self.len - self.pos < n {
+            return false;
+        }
+        out.copy_from_slice(&self.buf[self.pos..self.pos + n]);
+        self.pos += n;
+        self.at = self.at.map(|a| a + n as u64);
+        true
+    }
+
     /// The read itself: the whole request, from the buffer and the file, unless the file ends.
     fn fill(&mut self, out: &mut [u8]) -> io::Result<usize> {
         let mut done = 0;
