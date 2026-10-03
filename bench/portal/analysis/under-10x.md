@@ -68,13 +68,13 @@ profiles, prices from alternated `hand_price.sh` runs with the hash unchanged.
 | cbor `encode_bytes` | 9.6× | `n_head` releases and re-mints the buffer it is handed (47 %): F7's refill half was never built; `buf += encode(…)` still copies; match bindings still owned `String`s | keep a non-NULL buffer, clear it in place (S) | **−44 % (≈5.4×)** |
 | gridmesh `field_add_cell` | 9.4× | a duplicate keyed insert removes and re-adds (`displace_keyed` → `hash::remove`, ~50 %); `rehash_into` re-hashes from records (24 %); the bucket looked up twice (library, 8 %) | overwrite in the probed bucket (S, runtime) | −42 %, −8 % more (≈5.1×) |
 | glb `save_glb` | 7–10× (noisy: the TWIN's disk write) | a vector written to a file element by element (`read_data`, `parts.clone()` per element, 55 %); no element base under the return-buffer growth | one slice copy for a fixed-width vector (S, runtime); a base under distinct growth (M) | −55 %, −42 % more (≈2.7×) |
-| 18_consumer_crawler `build_walls` | 9.0× | a TEXT key formatted and hashed per probe where the twin keys on two integers (deliberate, stated in both headers); a `String` copied per probe; the header hoist declined by a growing callee on a fresh store | owner decision on the key; borrow the work buffer (S/M); admit a call writing only distinct stores (M) | −52 % (int key), −14 %, −23 % (≈3.3×) |
+| 18_consumer_crawler `build_walls` | 9.0× | a TEXT key formatted and hashed per probe where the twin keys on two integers (deliberate, stated in both headers); a `String` copied per probe; the header hoist declined by a growing callee on a fresh store | the bench keys on the two integers (owner: the rounded-coordinate text key is a defect of the program — crawler's `src/wallgeo.loft` `corner_key` should key on them too); borrow the work buffer (S/M); admit a call writing only distinct stores (M) | −52 % (int key), −14 %, −23 % (≈3.3×) |
 
 Twin corrections the re-analysis found (bench README rule 1): `surface_fitted_spread`'s twin
 sweeps once where the library sweeps three times (≈3.2× like-for-like); `check_request`'s twin
 decodes twice and zero-copy (aligned: 0.176 ms, ≈18×, not 12×); `doc_read`'s twin is NOT
-suspect on macOS (0.355 ms standalone matches the portal); `build_walls` compares a text key
-with an integer key by design; `save_glb`'s noise is the twin's disk write.
+suspect on macOS (0.355 ms standalone matches the portal); `build_walls` compared a text key
+with an integer key, now both key on the integers; `save_glb`'s noise is the twin's disk write.
 
 ## The fixes
 
