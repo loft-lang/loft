@@ -201,6 +201,18 @@ fn emit_byte_read(ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<bool>
     let (header, base, size, fld, min) = (b.header, b.base, b.size, b.fld, b.min);
     write!(ctx.w, "{{ let __bi: i64 = ")?;
     ctx.emit(b.index)?;
+    if !ctx.output.hoist_verify {
+        // The template's whole answer, inline: a negative index addresses from the end
+        // (`get_vector`), the null index and anything still outside `[0, len)` is the absent
+        // element, which `OpGetByte` answers `i64::MIN`; a null vector's header has length 0.
+        // No call into the store is left on either arm, which is what lets a chain of pure
+        // helpers around this read fold (hex_field's `edgeset_count`).
+        return write!(
+            ctx.w,
+            "; let __bl = i64::from({header}.len); let __bf = if __bi < 0 {{ __bi + __bl }} else {{ __bi }}; if __bf >= 0 && __bf < __bl {{ i64::from(unsafe {{ {base}.add(__bf as usize * {size}usize + {fld}usize).read() }}) + ({min}_i64) }} else {{ i64::MIN }} }} /*@FR-R-Base byte read*/"
+        )
+        .map(|()| true);
+    }
     write!(
         ctx.w,
         "; if (__bi as u64) < u64::from({header}.len) {{ i64::from(unsafe {{ {base}.add(__bi as usize * {size}usize + {fld}usize).read() }}) + ({min}_i64) }} else {{ "
