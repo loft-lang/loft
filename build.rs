@@ -19,6 +19,15 @@
 // casual one.
 
 fn main() {
+    // @PLN184 — Windows gives a program's main thread 1 MiB of stack where Linux gives 8 MiB,
+    // so a parse or a recursion that runs on Linux overflowed on Windows (the frame-headroom
+    // guard did).  Every loft binary gets the Linux amount on Windows too.
+    let target = std::env::var("TARGET").unwrap_or_default();
+    if target.contains("windows-msvc") {
+        println!("cargo:rustc-link-arg-bins=/STACK:{}", 8 << 20);
+    } else if target.contains("windows-gnu") {
+        println!("cargo:rustc-link-arg-bins=-Wl,--stack,{}", 8 << 20);
+    }
     let id = std::env::var("LOFT_BUILD_ID")
         .ok()
         .map(|v| v.trim().to_string())

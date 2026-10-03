@@ -1758,6 +1758,7 @@ pub(crate) fn run_tests(
                                 .arg("-o")
                                 .arg(&tmp_bin)
                                 .arg(&tmp_rs);
+                            crate::native_utils::add_main_stack_flags(&mut cmd);
                             // Layer 1: strip the linked binary (~36MB → ~1MB;
                             // the bulk is debug info from libloft.rlib + std,
                             // useless to a run-and-check test).  Opt out with
