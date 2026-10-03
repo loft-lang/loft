@@ -667,6 +667,9 @@ pub struct ByteRead<'a> {
     pub size: i32,
     pub fld: i32,
     pub min: i32,
+    /// `OpGetBoolean` rather than `OpGetByte`: the stored byte is the answer as it stands
+    /// (0, 1, or 255 for null), with no bias, and an absent element answers 255.
+    pub boolean: bool,
     pub header: String,
     pub base: String,
 }
@@ -5786,20 +5789,26 @@ impl Output<'_> {
         Some(fused)
     }
 
-    /// `@FR-R-Base`'s byte clause — `OpGetByte(v[i], fld, min)` read through the held header
+    /// `@FR-R-Base`'s byte clause — `OpGetByte(v[i], fld, min)`, or `OpGetBoolean(v[i], fld)`,
+    /// read through the held header
     /// and base: the shape qualifies and the loop holds BOTH for the path.  Answers the
     /// element address call (whose index the fast path binds once), the field and the bias,
     /// with the holders' names.  Asked by the pre-eval collector and the emitter both, so the
     /// collector never lifts an element address the fused read then leaves unused.
     #[must_use]
     pub fn fused_byte_read<'a>(&self, getter: &str, args: &'a [Value]) -> Option<ByteRead<'a>> {
-        if getter != "OpGetByte" || self.byte_read_disabled || self.elem_fuse_disabled {
+        let boolean = getter == "OpGetBoolean";
+        if !(boolean || getter == "OpGetByte") || self.byte_read_disabled || self.elem_fuse_disabled
+        {
             return None;
         }
-        let [inner, fld, min] = args else {
-            return None;
+        // `OpGetByte(e, fld, min)`, `OpGetBoolean(e, fld)`.
+        let (inner, fld, min) = match args {
+            [inner, fld, min] if !boolean => (inner, fld, min.unspan()),
+            [inner, fld] if boolean => (inner, fld, &Value::Int(0)),
+            _ => return None,
         };
-        let (Value::Int(fld), Value::Int(min)) = (fld.unspan(), min.unspan()) else {
+        let (Value::Int(fld), Value::Int(min)) = (fld.unspan(), min) else {
             return None;
         };
         let Value::Call(elem_op, elem_args) = inner.unspan() else {
@@ -5824,6 +5833,7 @@ impl Output<'_> {
             size: *size,
             fld: *fld,
             min: *min,
+            boolean,
             header,
             base,
         })
