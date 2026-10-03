@@ -208,7 +208,8 @@ priced −87 %, and a gap-buffer or chunked layout was the structural alternativ
 
 Neither is built, by the owner's decision: `sorted` keeps its contiguous layout, which is
 what makes it the right collection for in-order reads and appends, and slow random inserts
-are its known cost.  A program that needs random inserts to be fast uses `index` — the
+are its known cost.  Making random inserts fast would morph `sorted` into an `index` and cost
+it exactly the efficiency it exists for.  A program that needs random inserts to be fast uses `index` — the
 keyed collection built for that.  So this row measures a documented trade-off, not a
 defect; what remains open is the MEASUREMENT: its twin is a `BTreeMap`, which is `index`'s
 counterpart, where `sorted`'s like-for-like twin is a `Vec` kept sorted by binary-search
