@@ -4008,11 +4008,19 @@ impl Output<'_> {
         self.assumed_distinct = params.iter().map(|&p| (p, rb)).collect();
         let versioned = self.compute_loop_hoist(lp);
         self.assumed_distinct.clear();
+        // A path counts only when nothing already holds its header: one an enclosing frame
+        // holds (the function clause, an outer loop) would gain the copy no more than an
+        // element base, which measured LESS than the duplicated loop costs (graphics'
+        // `polygon_crossings`, +8 % on `fill_polygon`).
         let gained: Vec<u16> = versioned
             .vectors
             .iter()
+            .filter(|(p, _)| {
+                params.contains(&p.0)
+                    && !plain.vectors.iter().any(|(q, _)| q == p)
+                    && self.active_vec_header(p).is_none()
+            })
             .map(|(p, _)| p.0)
-            .filter(|r| params.contains(r) && !plain.vectors.iter().any(|(q, _)| q.0 == *r))
             .collect();
         if gained.is_empty() {
             return None;
