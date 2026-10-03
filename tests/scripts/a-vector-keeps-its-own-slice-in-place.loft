@@ -26,7 +26,7 @@
 //   cut(a) on [1, 2, 3, 4, 5]: v = [2, 3] + [9] → 14·100 + 3 = 1403; a plain vector
 //   parameter IS the caller's vector, so the caller reads [2, 3, 9] (14, 3) too.
 //
-// @falsified-by: PENDING
+// @falsified-by: tests/falsified/a-vector-keeps-its-own-slice-in-place.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
 
 struct H { items: vector<integer> }
 
