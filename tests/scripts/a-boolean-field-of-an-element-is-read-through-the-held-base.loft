@@ -1,0 +1,74 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A BOOLEAN FIELD OF AN ELEMENT IS READ THROUGH THE HELD BASE (`@FR-R-Base`'s byte clause,
+// boolean form).  Inside a loop that writes no store, `v[i].flag` reads the stored byte
+// through the header and element base the loop holds — one bounds test and one load — where
+// the template resolved the store per read.  The answer must be the template's: the stored
+// truth value of an element in range, at its own field offset among the record's other
+// fields, a negative index counting from the end, and an index past the end the absent
+// element, which reads false in a condition.
+//
+// Axes this file MOVES:  the field's place in the record (first, between two integers,
+//                        last), the index (in range, negative, past the end), the value
+//                        (true, false), the vector's length (0, 1, 7).
+// Axes it HOLDS FIXED:   a vector of records local to the reading function; a dense
+//                        `boolean` field.
+//
+// Expected values by hand: flags of element k are a = (k % 2 == 0), b = (k % 3 == 0),
+// c = (k >= 4), for k in 0..7.  a is true for 0, 2, 4, 6 (4); b for 0, 3, 6 (3); c for 4, 5,
+// 6 (3).  Weighted sum Σ (k+1)·[flag]: a → 1+3+5+7 = 16, b → 1+4+7 = 12, c → 5+6+7 = 18.
+// Read at k - 7 (from the end) the same elements in the same order: the same sums.  Read at
+// k + 4, indices 4..6 are in range (a: 4, 6 → (k+1) of k = 0, 2 → 1 + 3 = 4) and 7..10 absent.
+//
+// @falsified-by: PENDING
+
+struct C { a: boolean, x: integer, b: boolean, y: integer, c: boolean }
+
+fn sums(v: vector<C>) -> (integer, integer, integer) {
+  sa = 0; sb = 0; sc = 0;
+  for k in 0..len(v) {
+    if v[k].a { sa += k + 1; }
+    if v[k].b { sb += k + 1; }
+    if v[k].c { sc += k + 1; }
+  }
+  (sa, sb, sc)
+}
+
+fn from_end(v: vector<C>) -> (integer, integer, integer) {
+  n = len(v);
+  sa = 0; sb = 0; sc = 0;
+  for k in 0..n {
+    if v[k - n].a { sa += k + 1; }
+    if v[k - n].b { sb += k + 1; }
+    if v[k - n].c { sc += k + 1; }
+  }
+  (sa, sb, sc)
+}
+
+fn shifted(v: vector<C>) -> integer {
+  sa = 0;
+  for k in 0..len(v) {
+    if v[k + 4].a { sa += k + 1; }
+  }
+  sa
+}
+
+fn main() {
+  v: vector<C> = [];
+  for k in 0..7 {
+    v += [C { a: k % 2 == 0, x: 100 + k, b: k % 3 == 0, y: -k, c: k >= 4 }];
+  }
+  (a, b, c) = sums(v);
+  assert(a == 16 && b == 12 && c == 18, "in range: {a} {b} {c}");
+  (ea, eb, ec) = from_end(v);
+  assert(ea == 16 && eb == 12 && ec == 18, "from the end: {ea} {eb} {ec}");
+  s = shifted(v);
+  assert(s == 4, "past the end reads false: {s}");
+  one: vector<C> = [C { a: false, x: 1, b: true, y: 2, c: true }];
+  (oa, ob, oc) = sums(one);
+  assert(oa == 0 && ob == 1 && oc == 1, "one element: {oa} {ob} {oc}");
+  none: vector<C> = [];
+  (na, nb, nc) = sums(none);
+  assert(na == 0 && nb == 0 && nc == 0, "empty: {na} {nb} {nc}");
+}

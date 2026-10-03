@@ -188,7 +188,7 @@ impl OpEmitter for FusedElementReadEmitter {
 }
 
 /// `@FR-R-Base`'s byte clause — `OpGetByte(v[i], fld, min)`, a `vector<u8>` (or `i8`) element
-/// read, where the loop holds `v`'s header and element base: one bounds test and one byte
+/// read, or `OpGetBoolean(v[i], fld)`, a boolean field of an element read, where the loop holds `v`'s header and element base: one bounds test and one byte
 /// load plus the bias, where the template resolved the store per read.  `OpGetByte` re-bases
 /// the stored byte by `min` and answers `i64::MIN` for an absent element, so it stayed out of
 /// the typed fused reads; here the in-range arm adds `min` itself, and EVERY other index — past
@@ -201,6 +201,28 @@ fn emit_byte_read(ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<bool>
     let (header, base, size, fld, min) = (b.header, b.base, b.size, b.fld, b.min);
     write!(ctx.w, "{{ let __bi: i64 = ")?;
     ctx.emit(b.index)?;
+    if b.boolean && !ctx.output.hoist_verify {
+        // `OpGetBoolean`: the stored byte as it stands (0, 1, 255 for null), and 255 for an
+        // absent element — the template's `rec == 0` arm.
+        return write!(
+            ctx.w,
+            "; let __bl = i64::from({header}.len); let __bf = if __bi < 0 {{ __bi + __bl }} else {{ __bi }}; if __bf >= 0 && __bf < __bl {{ unsafe {{ {base}.add(__bf as usize * {size}usize + {fld}usize).read() }} }} else {{ 255u8 }} }} /*@FR-R-Base byte read*/"
+        )
+        .map(|()| true);
+    }
+    if b.boolean {
+        write!(
+            ctx.w,
+            "; if (__bi as u64) < u64::from({header}.len) {{ unsafe {{ {base}.add(__bi as usize * {size}usize + {fld}usize).read() }} }} else {{ "
+        )?;
+        let mut elem = b.elem_args.to_vec();
+        elem[2] = Value::RawExpr("__bi".to_string());
+        let mut fallback = args.to_vec();
+        fallback[0] = Value::Call(b.elem_op, elem);
+        super::default::DefaultEmitter.emit(ctx, &fallback)?;
+        write!(ctx.w, " }} }} /*@FR-R-Base byte read*/")?;
+        return Ok(true);
+    }
     if !ctx.output.hoist_verify {
         // The template's whole answer, inline: a negative index addresses from the end
         // (`get_vector`), the null index and anything still outside `[0, len)` is the absent
