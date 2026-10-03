@@ -38,7 +38,7 @@ impl Output<'_> {
             // `@FR-R-RefillBuffer` — the entry clear of a refilling buffer resets the length
             // and keeps the record: the refill keeps a live buffer's store, and the group
             // refills the same vector record.  Released here, every call re-claimed it.
-            if self.refill.var == Some(*nr) && !self.refill_keep_disabled {
+            if self.refill.var == Some(*nr) && !self.refill_keep_disabled && !self.refill.heap_elems {
                 write!(
                     w,
                     "if {v_nr}.rec != 0 {{ vector::clear_vector(&{v_nr}, &mut stores.allocations); }}"

@@ -3547,6 +3547,9 @@ impl Output<'_> {
             {
                 let name = sanitize(self.data.def(self.def_nr).variables().name(*b));
                 self.indent(w)?;
+                // A buffer whose elements own heap had them released by its entry clear
+                // (`hoist::refill_buffers` admits it only then): the length reset is all the
+                // group owes here too.
                 writeln!(
                     w,
                     "{{ let _rf = var_{name}; vector::clear_vector(&DbRef {{ store_nr: _rf.store_nr, rec: _rf.rec, pos: _rf.pos + {off}_u32 }}, &mut stores.allocations); }} //@FR-R-RefillBuffer"

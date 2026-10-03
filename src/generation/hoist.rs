@@ -8888,6 +8888,11 @@ fn group_covers_type(
 pub struct RefillBuffers {
     pub var: Option<u16>,
     pub field_zeros: HashSet<usize>,
+    /// The buffer is a one-field wrapper of a vector whose elements own heap (a text field):
+    /// every empty of it is the releasing clear, which on the store's root wrapper resets the
+    /// store whole and keeps the vector's capacity (`@FR-H-ClearRelease`, § V-ag / V-ai) —
+    /// never the bare length reset, which would strand the elements' texts.
+    pub heap_elems: bool,
 }
 
 /// Can a refilled record of type `tp` be rewritten whole by a complete literal, leaving
@@ -8895,7 +8900,72 @@ pub struct RefillBuffers {
 /// own none — the literal empties such a vector in place and fills it again.  A text, a
 /// keyed collection, a nested record that owns heap or anything else answers no: its old
 /// heap would outlive the write that replaced the handle.
+/// Does the function's top level clear the buffer `b` (`OpClearVector(b)`) before the first
+/// statement that mints it?
+fn entry_cleared(body: &Value, b: u16, data: &Data) -> bool {
+    let Value::Block(bl) = body.unspan() else {
+        return false;
+    };
+    let is = |v: &Value, name: &str| {
+        let mut hit = false;
+        v.any_node(&mut |n| {
+            if let Value::Call(d, args) = n
+                && (*d as usize) < data.definitions.len()
+                && data.def(*d).name() == name
+                && matches!(args.first().map(Value::unspan), Some(Value::Var(v)) if *v == b)
+            {
+                hit = true;
+            }
+            hit
+        });
+        hit
+    };
+    for stmt in &bl.operators {
+        if is(stmt, "OpDatabase") {
+            return false;
+        }
+        if is(stmt, "OpClearVector") {
+            return true;
+        }
+    }
+    false
+}
+
 fn refillable(stores: &Stores, tp: u16) -> bool {
+    refillable_plain(stores, tp) || heap_element_wrapper(stores, tp)
+}
+
+/// A one-field wrapper of a `vector<E>` whose element `E` is a record of scalars and texts:
+/// the shape a vector local or a return buffer mints.  Its releasing clear resets the whole
+/// store — everything in it was claimed inside the vector (`@FR-H-RootExtent`) — so a refill
+/// that empties it that way leaves nothing of the previous value behind.  A text needs no
+/// pointer outside the store, so the content stays swappable (`content_swappable`).
+fn heap_element_wrapper(stores: &Stores, tp: u16) -> bool {
+    let Some(crate::database::Parts::Struct(fields)) = stores.types.get(tp as usize).map(|t| &t.parts)
+    else {
+        return false;
+    };
+    let [field] = &fields[..] else {
+        return false;
+    };
+    let Some(crate::database::Parts::Vector(e)) =
+        stores.types.get(field.content as usize).map(|c| &c.parts)
+    else {
+        return false;
+    };
+    if !stores.owns_heap(*e) {
+        return false;
+    }
+    let Some(crate::database::Parts::Struct(efields)) = stores.types.get(*e as usize).map(|c| &c.parts)
+    else {
+        return false;
+    };
+    efields
+        .iter()
+        .all(|f| f.content == 5 || !stores.owns_heap(f.content))
+}
+
+fn refillable_plain(stores: &Stores, tp: u16) -> bool {
     let Some(t) = stores.types.get(tp as usize) else {
         return false;
     };
@@ -8966,6 +9036,7 @@ pub fn refill_buffers(data: &Data, stores: &Stores, def_nr: u32) -> RefillBuffer
         return out;
     }
     let mut admitted = 0usize;
+    let mut heap_tp: Option<u16> = None;
     let mut ok = true;
     let mut zeros: HashSet<usize> = HashSet::new();
     body.any_node(&mut |n| {
@@ -8976,6 +9047,7 @@ pub fn refill_buffers(data: &Data, stores: &Stores, def_nr: u32) -> RefillBuffer
                     continue;
                 };
                 admitted += 1;
+                heap_tp = Some(tp);
                 if !refillable(stores, tp) || !group_covers_type(ops, i + 1, b, tp, data, stores) {
                     ok = false;
                     continue;
@@ -9025,7 +9097,17 @@ pub fn refill_buffers(data: &Data, stores: &Stores, def_nr: u32) -> RefillBuffer
         false
     });
     if ok && admitted == mints {
+        let heap_elems = heap_tp.is_some_and(|tp| heap_element_wrapper(stores, tp));
+        // Elements that own heap are released ONCE, by the body's own entry clear of the
+        // buffer — the releasing clear resets the store, and a second one in the group
+        // re-claims and zero-fills the capacity for nothing.  So the group's empty is the
+        // length reset, which is sound only when that entry clear runs before the first
+        // mint; without it the buffer keeps its plain mint.
+        if heap_elems && !entry_cleared(body, b, data) {
+            return out;
+        }
         out.var = Some(b);
+        out.heap_elems = heap_elems;
         out.field_zeros = zeros;
     }
     out
