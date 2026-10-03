@@ -27,7 +27,7 @@ with `bench/stats.py --routine …` on the same macOS host as the baseline row.
 | gridmesh `build_index` | 13.4× | **6.34×** | F8 (`LOFT_NO_STORE_SWAP`) |
 | mesh3d `mat4_mul` | 13.2× | **8.93×** | F11's first two shaves (`LOFT_NO_HEADER_DBREF`) |
 | cbor `encode_bytes` | 14.3× | **9.49×** | F7 (`LOFT_NO_FORWARD_RESULT`), F14 |
-| 15_stdlib_keyed `sorted_fill_walk` | 10.0× | 10.0× | — (F13 declined, see F13) |
+| 15_stdlib_keyed `sorted_fill_walk` | 10.0× | **1.26×** | its twin made like-for-like (F13 declined) |
 | pluginabi `check_request` | 12.8× | 12.6× | F14; F6's text half, F9's prefill clause not built |
 | hex_field `doc_read` | 15.6× | 12.7× | F2, F12; the twin row is still suspect (§ Measurement) |
 | cbor `decode` | 12.9× | 12.9× | F6's text half, F9's prefill clause not built |
@@ -210,10 +210,10 @@ Neither is built, by the owner's decision: `sorted` keeps its contiguous layout,
 what makes it the right collection for in-order reads and appends, and slow random inserts
 are its known cost.  Making random inserts fast would morph `sorted` into an `index` and cost
 it exactly the efficiency it exists for.  A program that needs random inserts to be fast uses `index` — the
-keyed collection built for that.  So this row measures a documented trade-off, not a
-defect; what remains open is the MEASUREMENT: its twin is a `BTreeMap`, which is `index`'s
-counterpart, where `sorted`'s like-for-like twin is a `Vec` kept sorted by binary-search
-insert (bench README rule 1).
+keyed collection built for that.  So the 10× measured a documented trade-off, not a
+defect: the twin was a `BTreeMap`, which is `index`'s counterpart.  It is now a `Vec` kept
+sorted by binary-search insert, an equal key overwriting in place (bench README rule 1), and
+the row reads 1.26× with the hash unchanged (`4173` in both lanes).
 
 ### F14. Text reaches a store field without intermediate `String`s — S
 
@@ -252,7 +252,7 @@ own ratio where the two hosts disagree, § Measurement).
 | 17_consumer `emit_to_material` | 12.7× | F9 | ~6.4× (3.8× on the VM) |
 | fixstep `timer_spend` | 12.1× | F3 | ~4.7× (2.5× inlined) |
 | game_protocol `msg_ping` | 10.1× | F6 | ~1.7× |
-| 15_stdlib_keyed `sorted_fill_walk` | 10.0× | — (F13 declined) | — |
+| 15_stdlib_keyed `sorted_fill_walk` | 10.0× | — (twin corrected) | 1.26× |
 
 `decode` and `check_request` are the two that F1–F14 leave near the bar; destination-passing
 is their next lever.
