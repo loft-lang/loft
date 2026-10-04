@@ -1613,7 +1613,7 @@ pub(crate) fn publish_cached_binary(
         .unwrap_or_default()
         .to_string_lossy()
         .into_owned();
-    // The leading `.` keeps a staged file out of the sweep's `<stem>-` prefix.
+    // The leading `.` keeps a staged file out of the sweep's `native-` prefix.
     let staged = cache_dir.join(format!(".{leaf}.{}.tmp", std::process::id()));
     if std::fs::copy(built, &staged).is_ok() {
         // P254 — tighten BEFORE the rename, so the binary is never reachable
@@ -1625,17 +1625,69 @@ pub(crate) fn publish_cached_binary(
     } else {
         let _ = std::fs::remove_file(&staged);
     }
-    // Remove stale cached binaries for THIS source file only, AFTER the publish and
-    // never the entry just written.  Sweeping first deleted the very binary a
-    // concurrent run had already accepted as usable, leaving it to exec a path that
-    // no longer existed.
-    let prefix = format!("{source_stem}-");
-    if let Ok(entries) = std::fs::read_dir(cache_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path != cached_binary && entry.file_name().to_string_lossy().starts_with(&prefix) {
+    // Bound the directory AFTER the publish and never touching the entry just written.
+    // Sweeping first deleted the very binary a concurrent run had already accepted as
+    // usable, leaving it to exec a path that no longer existed.
+    sweep_cached_binaries(cache_dir, cached_binary, source_stem, NATIVE_CACHE_KEEP);
+}
+
+/// How many compiled programs one `.loft/cache` directory keeps.  A binary is named by
+/// what it compiles to, not by its source file, so the same program at two paths in one
+/// directory shares it, and nothing per-source says when an entry went stale: the
+/// directory keeps the most recently USED entries instead (`touch_cached_binary`).
+pub(crate) const NATIVE_CACHE_KEEP: usize = 512;
+
+/// Mark a cached binary as just used, so the bound in `sweep_cached_binaries` keeps it.
+/// Best-effort: a failure costs a recompile later, never a wrong answer.  Opened
+/// read-only, because a write open of a running executable fails on Linux.
+pub(crate) fn touch_cached_binary(path: &std::path::Path) {
+    if let Ok(f) = std::fs::File::open(path) {
+        let _ = f.set_modified(std::time::SystemTime::now());
+    }
+}
+
+/// Keep the `keep` most recently used `native-<key>` binaries in `cache_dir`, never
+/// removing `current`.  Also removes this source's entries from the earlier per-source
+/// naming (`<stem>-<16 hex>`), which nothing will look up again.
+pub(crate) fn sweep_cached_binaries(
+    cache_dir: &std::path::Path,
+    current: &std::path::Path,
+    source_stem: &str,
+    keep: usize,
+) {
+    let is_key = |s: &str| s.len() == 16 && s.bytes().all(|b| b.is_ascii_hexdigit());
+    let Ok(entries) = std::fs::read_dir(cache_dir) else {
+        return;
+    };
+    let mut keyed = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path == current {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if let Some(key) = name.strip_prefix("native-") {
+            if is_key(key) {
+                let used = entry.metadata().and_then(|m| m.modified()).ok();
+                keyed.push((used, path));
+                continue;
+            }
+        }
+        if let Some(key) = name
+            .strip_prefix(source_stem)
+            .and_then(|r| r.strip_prefix('-'))
+        {
+            if source_stem != "native" && is_key(key) {
                 let _ = std::fs::remove_file(path);
             }
+        }
+    }
+    // `current` is one of the kept entries.
+    let keep_others = keep.saturating_sub(1);
+    if keyed.len() > keep_others {
+        keyed.sort_by_key(|e| e.0);
+        for (_, path) in keyed.drain(..keyed.len() - keep_others) {
+            let _ = std::fs::remove_file(path);
         }
     }
 }
@@ -2862,7 +2914,9 @@ mod dep_search_dirs_tests {
 
 #[cfg(test)]
 mod publish_cached_binary_tests {
-    use super::publish_cached_binary;
+    use super::{
+        NATIVE_CACHE_KEEP, publish_cached_binary, sweep_cached_binaries, touch_cached_binary,
+    };
 
     fn scratch(name: &str) -> std::path::PathBuf {
         let d = std::env::temp_dir().join("loft-publish-cache").join(name);
@@ -2973,5 +3027,56 @@ mod publish_cached_binary_tests {
             staging.is_empty(),
             "no staging file may be left behind: {staging:?}"
         );
+    }
+
+    fn keyed(n: u8) -> String {
+        format!("native-{}", format!("{n:x}").repeat(16))
+    }
+
+    /// The directory keeps the most recently USED entries: a reuse (`touch_cached_binary`)
+    /// outranks a later publish, the entry just published always stays, and a name that is
+    /// not a key is not this sweep's business.
+    #[test]
+    fn the_bound_keeps_the_most_recently_used_entries() {
+        let dir = scratch("lru");
+        let base = std::time::SystemTime::now() - std::time::Duration::from_hours(1);
+        for n in 1..=4u8 {
+            let p = dir.join(keyed(n));
+            std::fs::write(&p, [n]).unwrap();
+            let f = std::fs::File::open(&p).unwrap();
+            f.set_modified(base + std::time::Duration::from_secs(u64::from(n) * 60))
+                .unwrap();
+        }
+        // The oldest entry is reused, so it is now the most recent of the four.
+        touch_cached_binary(&dir.join(keyed(1)));
+        let foreign = dir.join("native-notakey");
+        std::fs::write(&foreign, b"x").unwrap();
+        let current = dir.join(keyed(5));
+        std::fs::write(&current, [5]).unwrap();
+
+        sweep_cached_binaries(&dir, &current, "prog", 3);
+
+        let left = |n: u8| dir.join(keyed(n)).exists();
+        assert!(left(5), "the entry just published stays");
+        assert!(left(1), "a reused entry outranks newer publishes");
+        assert!(left(4), "the most recent publish stays");
+        assert!(!left(2) && !left(3), "the least recently used go");
+        assert!(foreign.exists(), "a name that is not a key is left alone");
+    }
+
+    /// A program named `native.loft` must not read every other program's binary as its
+    /// own earlier per-source entry.
+    #[test]
+    fn a_source_named_native_sweeps_nothing_of_others() {
+        let dir = scratch("native_stem");
+        for n in 1..=3u8 {
+            std::fs::write(dir.join(keyed(n)), [n]).unwrap();
+        }
+        let current = dir.join(keyed(9));
+        std::fs::write(&current, [9]).unwrap();
+        sweep_cached_binaries(&dir, &current, "native", NATIVE_CACHE_KEEP);
+        for n in [1u8, 2, 3, 9] {
+            assert!(dir.join(keyed(n)).exists(), "entry {n} survives");
+        }
     }
 }

@@ -136,24 +136,33 @@ fn sidecar_of(root: &Path) -> PathBuf {
     found.remove(0)
 }
 
-fn cached_binary_of(root: &Path) -> PathBuf {
+/// Every compiled program in the script directory's binary cache.
+fn cached_binaries_of(root: &Path) -> Vec<PathBuf> {
     let dir = root.join(".loft").join("cache");
-    let mut found: Vec<PathBuf> = std::fs::read_dir(&dir)
+    std::fs::read_dir(&dir)
         .expect("binary cache dir")
         .flatten()
         .map(|e| e.path())
         .filter(|p| {
             p.file_name()
-                .is_some_and(|n| n.to_string_lossy().starts_with("prog-"))
+                .is_some_and(|n| n.to_string_lossy().starts_with("native-"))
         })
-        .collect();
-    assert_eq!(
-        found.len(),
-        1,
-        "one cached binary under {}: {found:?}",
-        dir.display()
+        .collect()
+}
+
+/// The binary the last run published or executed: a reuse touches its entry, so the most
+/// recently modified one is the binary that run used.
+fn cached_binary_of(root: &Path) -> PathBuf {
+    let found = cached_binaries_of(root);
+    assert!(
+        !found.is_empty(),
+        "no cached binary under {}",
+        root.display()
     );
-    found.remove(0)
+    found
+        .into_iter()
+        .max_by_key(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok())
+        .unwrap()
 }
 
 const PROG_30: &str = "fn main() {\n  v = [5, 10, 15];\n  println(\"sum={v[0]+v[1]+v[2]}\");\n}\n";
@@ -432,6 +441,54 @@ fn a_flag_that_changes_the_binary_is_a_different_key() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// The same program at a second path in the same directory is the same binary: a
+/// test/semantics build holds no path in its code (the driver passes it at run time), so
+/// the second run compiles nothing, and the failure it reports still names ITS OWN file.
+/// Both halves matter: sharing the binary while reporting the first file's path would
+/// be a wrong answer served from the cache.
+#[cfg(not(windows))]
+#[test]
+fn the_same_program_at_two_paths_is_one_binary_naming_its_own_file() {
+    let root = fresh_root("twopath");
+    let prog = "fn main() {\n  println(\"v=7\");\n  assert(1 == 2, \"boom\");\n}\n";
+    let a = root.join("first.loft");
+    let b = root.join("second.loft");
+    std::fs::write(&a, prog).expect("script a");
+    std::fs::write(&b, prog).expect("script b");
+    let ra = run(&root, &a);
+    assert!(
+        ra.stdout.contains("v=7") && ra.stderr.contains("first.loft:3"),
+        "{}{}",
+        ra.stdout,
+        ra.stderr
+    );
+    assert_eq!(ra.binary_cache(), "miss", "{}", ra.stderr);
+    let rb = run(&root, &b);
+    assert!(
+        rb.stdout.contains("v=7") && rb.stderr.contains("second.loft:3"),
+        "the second path reports its own file: {}{}",
+        rb.stdout,
+        rb.stderr
+    );
+    assert!(
+        !rb.stderr.contains("first.loft"),
+        "the first path leaked into the second run: {}",
+        rb.stderr
+    );
+    assert_eq!(
+        rb.binary_cache(),
+        "hit",
+        "the same program at another path compiles nothing: {}",
+        rb.stderr
+    );
+    assert_eq!(
+        cached_binaries_of(&root).len(),
+        1,
+        "one binary for both paths"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// Cells 7, 8 — a `LOFT_*` switch outside the inert list declines the path (a codegen
 /// switch changes the Rust), and the P254 kill switch turns every native cache off.
 #[cfg(not(windows))]
@@ -441,6 +498,7 @@ fn a_switch_in_the_environment_declines_the_fast_path() {
     let script = root.join("prog.loft");
     std::fs::write(&script, PROG_30).expect("script");
     warm_to_a_hit(&root, &script, "sum=30");
+    let default_binary = cached_binary_of(&root);
     let r = run_with(
         &root,
         &script,
@@ -462,13 +520,25 @@ fn a_switch_in_the_environment_declines_the_fast_path() {
     // …and leaves the default program's key alone: the switch run's binary is recorded
     // under its own environment, so the default run after it must not execute it (it did:
     // the two shared one sidecar, and an A/B of a switch compared the switch arm with
-    // itself; loft#1697).  A miss here is the binary cache's single slot, which the switch
-    // run's build took.
+    // itself; loft#1697).  Both binaries stay in the cache, so the default run is a hit,
+    // and the binary it touched is the default build's, not the switch build's.
+    assert_eq!(cached_binaries_of(&root).len(), 2, "one binary per build");
+    let switch_binary = cached_binary_of(&root);
+    assert_ne!(
+        default_binary, switch_binary,
+        "the switch changes the binary"
+    );
     let r = run(&root, &script);
     assert_eq!(
-        r.source_key(),
-        "miss",
+        cached_binary_of(&root),
+        default_binary,
         "a default run is never served the switch run's binary: {}",
+        r.stderr
+    );
+    assert_eq!(
+        r.source_key(),
+        "hit",
+        "the default program's key survives the switch run: {}",
         r.stderr
     );
     let r = run_with(

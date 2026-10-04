@@ -39,7 +39,7 @@ fn write_marker_script(dir: &std::path::Path, marker: &str) -> PathBuf {
 }
 
 /// `loft --native` writes the cache binary at
-/// `<script_dir>/.loft/cache/<stem>-<hash>` — derive the directory
+/// `<script_dir>/.loft/cache/native-<hash>` — derive the directory
 /// path so tests can poison or inspect it.
 fn cache_dir_for(script: &std::path::Path) -> PathBuf {
     script.parent().unwrap().join(".loft").join("cache")
@@ -113,45 +113,36 @@ fn second_run_reuses_safe_cache() {
     let entries: Vec<_> = std::fs::read_dir(&cache_dir)
         .expect("read cache dir")
         .flatten()
-        .map(|e| {
-            (
-                e.path(),
-                e.metadata().expect("stat").modified().expect("mtime"),
-            )
-        })
+        .map(|e| e.path())
         .collect();
     assert_eq!(entries.len(), 1, "expected exactly one cached binary");
 
-    // Sleep a beat so a recompile would produce a strictly newer mtime.
-    std::thread::sleep(std::time::Duration::from_millis(50));
-
-    // Second run — should reuse the cached binary, leaving its mtime alone.
+    // Second run — should reuse the cached binary.  A reuse touches the entry (the cache
+    // keeps its most recently used binaries), so the mtime is no longer the witness; the
+    // run's own verdict is.
     let out = Command::new(loft_bin())
         .arg("--native")
         .arg(&script)
+        .env("LOFT_TIMING", "1")
         .output()
         .expect("second run");
     assert!(out.status.success());
     assert!(String::from_utf8_lossy(&out.stdout).contains(marker));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("native_source_key=hit") || stderr.contains("native_binary_cache=hit"),
+        "recompile happened when the cache was usable: {stderr}"
+    );
 
     let entries2: Vec<_> = std::fs::read_dir(&cache_dir)
         .expect("read cache dir 2")
         .flatten()
-        .map(|e| {
-            (
-                e.path(),
-                e.metadata().expect("stat").modified().expect("mtime"),
-            )
-        })
+        .map(|e| e.path())
         .collect();
     assert_eq!(entries2.len(), 1, "expected exactly one cached binary");
     assert_eq!(
-        entries[0].0, entries2[0].0,
+        entries[0], entries2[0],
         "cache file path changed across runs"
-    );
-    assert_eq!(
-        entries[0].1, entries2[0].1,
-        "cache file mtime changed — recompile happened when cache was usable"
     );
 
     let _ = std::fs::remove_dir_all(&dir);

@@ -334,7 +334,10 @@ impl Output<'_> {
         // holds no path and two copies of one program at different paths are one binary.  Only
         // that parameter — a user's own string literal is never rewritten.
         if !self.lean
-            && def_fn.attributes().get(idx).is_some_and(|a| a.name == "file")
+            && def_fn
+                .attributes()
+                .get(idx)
+                .is_some_and(|a| a.name == "file")
             && let Value::Text(t) = v.unspan()
             && !t.is_empty()
             && *t == self.main_file()

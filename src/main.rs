@@ -9253,6 +9253,7 @@ fn main() {
                 p.diagnostics.restore_from_cache(e);
             }
             report_parse_diagnostics(&p.diagnostics, no_warnings, error_mode_arg.as_deref());
+            native_utils::touch_cached_binary(&hit.binary);
             exec_native_binary(
                 &hit.binary,
                 &hit.binary,
@@ -11559,6 +11560,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
         // Use cached binary if it exists AND passes the safety check;
         // otherwise compile and cache.
         let binary = if cache_usable {
+            native_utils::touch_cached_binary(&cached_binary);
             cached_binary.clone()
         } else {
             // Up-front toolchain check (cache miss ⇒ about to compile).  A rustc
