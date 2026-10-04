@@ -986,8 +986,12 @@ pub fn push_window(p: &PushHeader, size: u32, stores: &[Store]) -> PushWindow {
 /// A null, unallocated or empty vector answers `len: 0`, which makes every fast-path
 /// bounds test in [`get_vector_hoisted`] fail — so those cases route to `get_vector` and
 /// keep its exact answer without needing a marker of their own.
+///
+/// `inline(always)`: a hoisted loop's prelude derives one header per vector it reads, and
+/// in a large function LLVM kept this as a call — 4 ns each, 8 % of `mat4_mul` (priced by
+/// hand on the emitted Rust, bench/portal/analysis/under-10x.md).
 #[must_use]
-#[inline]
+#[inline(always)]
 pub fn vec_header(db: &DbRef, stores: &[Store]) -> VecHeader {
     if db.is_null() || db.rec == 0 || db.pos == 0 {
         return VecHeader {

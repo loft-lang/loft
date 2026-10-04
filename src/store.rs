@@ -2568,6 +2568,7 @@ impl Store {
     /// CONST_STORE / worker borrow / JSON null sentinel.  Does NOT
     /// include the call-bracket free-protection.
     #[must_use]
+    #[inline]
     pub fn is_locked(&self) -> bool {
         self.read_only
     }
