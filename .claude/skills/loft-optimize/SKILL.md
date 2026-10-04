@@ -42,7 +42,11 @@ slower than the compiled program on the same code. So:
 1. **Pick the case by measurement.** Start from a benchmark or profile row that is clearly off,
    and among those the one where you can also *name* a reason. A large profile share with no
    visible cause is a poor first target; a moderate share with an obvious wasted copy is a good
-   one.
+   one. Prefer a mechanism CLASS over a single routine: the portal groups routines by what their
+   cost is made of (`bench/portal/classes.tsv`). When a class's median is over the bar the
+   slowness is systemic, and one fix to its mechanism moves many routines at once; the worst
+   single routine is often a special case of it. Inside a class already under the bar, a slow
+   routine is an outlier and can be handled as an ordinary bug.
 
 2. **Measure real time, on the build that ships.** Debug and "semantics" builds are
    unoptimised; their numbers say nothing about the product. Pin the process to one CPU core
@@ -63,7 +67,10 @@ slower than the compiled program on the same code. So:
    generated Rust the rewrite would produce. Check it produces byte-identical output, read what
    it compiles to on both backends, and time it exactly as in step 2. This number is the prize.
    If it is not clearly faster, the named work was not the cost: go back to step 3 rather than
-   building anything.
+   building anything. Expect the built rewrite to land somewhat under this price — two thirds
+   is common — because the remainder is often the call into the new code itself. Accept that
+   gap rather than chasing it with inlining or special cases unless a measurement shows real
+   work left in it.
 
 5. **Build the rewrite that removes the unneeded work.** Now make the compiler turn the natural
    spelling into that form, under conditions it can *prove* hold (never "usually true"). The
@@ -71,6 +78,13 @@ slower than the compiled program on the same code. So:
    rewrite their code around a slow compiler. Put the rewrite where both backends benefit when
    you can. Prefer a runtime improvement (a better allocator, a faster lookup) over a new
    compiler rule when either would do — it changes no emitted program and is easier to verify.
+   Two traps when stating the condition:
+   - **Sound is not the same as profitable.** State where the gain is paid back, not only where
+     the rewrite is correct. Handing a store on to the next call pays only when that call runs
+     again; outside a loop the same rewrite was correct and cost an extra allocation.
+   - **A whole-function fact cannot be decided while one statement is emitted.** Code emitted
+     earlier — an early return inside the loop — is already written by the time the rewrite's
+     own statement is reached. Collect such facts in a pass over the body before emission.
 
 6. **Verify it cannot be wrong.** Speed is worthless if an answer changes. Write a test whose
    expected values you computed by hand (two backends agreeing proves nothing — they may share
@@ -78,6 +92,17 @@ slower than the compiled program on the same code. So:
    fails. Give the rewrite an off-switch and check that on and off produce the same output.
    Confirm the other backend and every other benchmark did not get slower, and that other
    rewrites still fire where they did. Regenerate any file derived from what you changed.
+   - **Check what the program holds, not only what it answers.** Many rewrites change
+     resources without changing a single value: stores created, records left alive inside a
+     store. Compare those counts with the switch on and off (`LOFT_TRACE_DB=1` names every
+     store mint; `store_memory()` reports live records). A wrong "nothing to release" answer
+     leaves every value right and leaks records that no store-level check can see.
+   - **Use a measurement that works where you run it.** A resident-memory check reads nothing
+     on macOS; a live-record count is exact on every platform. A guard whose channel is blind
+     on the machine at hand passes for the wrong reason.
+   - **When the new rule takes over a shape an older rule handled, run the older rule's pins
+     with the new rule switched off.** Otherwise they count the new rule's work as missing
+     evidence for the old one, or pass on evidence the old rule never produced.
 
 7. **Record it.** Put the measured before and after in the commit message and in the plan or
    log that owns the benchmark row, so the next person starts from numbers, not memory.
