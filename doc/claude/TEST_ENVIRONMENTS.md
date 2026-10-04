@@ -195,6 +195,30 @@ or set `RUSTUP_HOME` / `CARGO_HOME` to the real ones, when the native half is pa
 the test claims.  `n3_use_native.rs::a_dependency_version_is_part_of_its_users_native_artifact`
 is the worked example; the defect it guards read as a flake in `manifest_less_resolution.rs`.
 
+## macOS: what makes the suite slow, and the setup that removes it
+
+**A freshly linked binary pays a security assessment on its first launch** — about 260 ms on top
+of the ~30 ms a second launch takes, and the system runs these assessments nearly one at a time
+(14 fresh binaries launched together take about 82 % of the fully serial time).  The native
+corpus compiles and launches thousands of fresh executables, so on an unprepared Mac that queue
+alone is tens of minutes and parallel tests stall behind it until they time out.  An existing
+binary starts in ~10 ms; only NEW ones pay.  To exempt processes started from your terminal:
+
+1. `sudo DevToolsSecurity -enable` (developer mode — necessary, not sufficient on its own);
+2. System Settings → Privacy & Security → Developer Tools → add the terminal app you run tests
+   from, and switch it on;
+3. quit and reopen that terminal: the exemption applies to processes started after it relaunches.
+
+Check it with two launches of a fresh binary (`rustc -O h.rs -o h && time ./h && time ./h`): the
+first should cost about what the second does.  A managed endpoint agent can still scan on its
+own; the same check shows that.  Whatever does not fit the 20-minute cap afterwards is split or
+moved, never given a longer limit (`scripts/hard_cap.sh`, CI_BUDGET.md).
+
+**Package cdylibs are linked without a post-link `strip`.**  Cargo's release default runs the
+system `strip` over a linked dylib; on one holding `ring`'s objects (every TLS package) that left
+the string table misaligned and the linker refused to link against it (`ld: mis-aligned LINKEDIT
+string pool`).  The linker drops debug symbols itself instead (`cache::NATIVE_LINK_RECIPE`).
+
 ## Occasional valgrind pass (Linux)
 
 The loft codebase has a large `unsafe` surface in `src/store.rs`,
