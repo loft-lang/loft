@@ -98,6 +98,135 @@ samples.  Ratios are native ÷ Rust from the band run before this analysis.
 | mesh3d `mat4_mul` | 8.9× | the 16-zero literal built per call (`push_fill`, 17 %); the caller's `mo_c = mat4_mul(mo_a, mo_c)` rebinds by swapping whole stores (`OpRebindRecord` → `swap_stores_in_as`, 16 %); `vec_header` per inner loop entry (≈ 10 %); the multiply itself 44 % | the result built in the caller's record (the literal refilled in place, F11's first shave); the header held for the whole call |
 | graphics `fill_polygon` | 8.1× | `polygon_crossings` 67 %: every edge reads `pc_a.py` / `pc_b.py` six times each through `stores.store(&db).get_int` on a held element view — 18 store accesses per edge where the twin reads two copied structs; `hline` 21 % | an element view's fields read through its address once (the record-address rewrite, extended from parameters to `v[i]?` views) |
 
+## cbor `decode` — the implementation steps
+
+`decode` is not one cost but seven, all per ELEMENT: the bench's 4096-integer array is ≈ 90 % of
+the nodes, and for each the twin does one `items.push(v)` of a 24-byte value.  Loft spends
+83.8 ns per item.  Each lever below was priced alone by editing the emitted Rust
+(`hand_price.sh`, three alternated rounds, hash `1aec9537` unchanged in every variant); the
+first five together take 13.7 → 7.9 ms per op (−42 %, ≈ 12.8× → 7.4×).  `check_request` is
+83 % this same `decode` and moves with it.  Re-measure both rows after each step with
+`python3 bench/stats.py --routine cbor/decode,pluginabi/check_request`.
+
+Build them in this order: each is independent, the first four are S or XS, and every one is
+a speed change with no new answer, so its guard is an A/B under its switch with
+hand-computed values on both backends.
+
+| step | lever | price alone | size |
+|--:|---|--:|---|
+| D1 | a reused buffer whose heap was moved out is released without the type walk | −17.5 % | S |
+| D2 | a small same-store `move_field_out` is a fixed-width copy | −15 % | S |
+| D3 | the free-unless-returned exit tests NULL inline | −8 % | XS |
+| D4 | a function-clause header carries its element base; byte reads go through it | −7 % (on D1–D3, D5) | S |
+| D5 | no one-element pre-reserve before an append | −3.5 % | XS |
+| D6 | an appended moved value skips the element's prefill | ≈ 10 % of what remains, not priced | S/M |
+| D7 | the child is built in its element (destination passing) | ≈ 25–30 %, not priced | M |
+
+### D1. Release a buffer that owns nothing without walking its type
+
+**What runs.** The loop's pooled `Decoded` buffer (`OpClear`, inserted by
+`src/scopes/buffers.rs`) is cleared before every call through `remove_claims` →
+`remove_claims_mode` → `holds_no_heap`.  The answer is always "nothing": `OpMoveField` zeroed
+the value's bytes, so the enum tag reads 0, a payload-less variant.  Reaching that answer
+costs a type-table walk with `type_owns_heap` (`heap_facts`) at each level — 12.4 % of the row.
+
+**Build.** In `Stores::holds_no_heap` (`src/database/allocation.rs`), precompute per type the
+list of HEAP SLOTS once, cached beside `heap_facts`: for each field that owns heap, its
+position and its kind (text slot, vector slot, enum tag with the variants that own heap,
+nested struct flattened).  `holds_no_heap` then reads those slots and nothing else; for
+`Decoded` that is one tag byte.  This is runtime only, sound by construction (the same
+question, answered from a cache), and helps every pooled buffer, not just cbor.
+- Price ceiling: −17.5 % (the clear dropped entirely).  Expect most of it.
+- Verify: `tests/pooled_buffer_release.rs`, `tests/clear_release.rs`, the leak census
+  (`LOFT_NATIVE_LEAK_CHECK=1`) on the store subject.  No switch is needed (pure cache).
+- Do NOT drop the `OpClear` in the emitter instead: the `!sub.ok` path does not move the
+  value out, so "moved out on every path" is not a static fact here.
+
+### D2. A small same-store move is a fixed-width copy
+
+**What runs.** `Stores::move_field_out` (`src/database/mod.rs`, the `OpMoveField` template
+in `default/01_code.loft`) moves the 16-byte enum value with `copy_block` (a `write_allowed`
+check, a variable-length `memmove`, the @PLN154 shadow test) and `zero_range` (a lock test, a
+variable-length `memset`) — 12.6 %.
+
+**Build.** In the same-store arm, for `size` of 8, 16, 24 or 32 bytes: one `write_allowed`,
+a copy through `[u8; N]` read/write at the two addresses, a zero of the source of the same
+width, and the shadow write only when `shadow_armed()`.  Keep the generic path for every
+other size and for an armed shadow.
+- Price: −15 % (the inline 16-byte move).
+- Verify: the `(R-MoveLast)` field-clause cells (`tests/place_result.rs` and its corpus),
+  `LOFT_STRICT_STORES=1` and `LOFT_POISON=1` over them, both backends.
+
+### D3. The free-unless-returned exit tests NULL inline
+
+**What runs.** Every `return` of `read_value` releases up to eight hidden buffers with
+`if (b).store_nr != (retbuf).store_nr { OpFreeRef(…) }`.  On a path that never minted them
+they are NULL, which is distinct from the result, so `OpFreeRef` is CALLED and returns at once
+— 8 % of the row.
+
+**Build.** `OpFreeRefIfDistinctEmitter` (`src/generation/ops/ref_ops.rs`) emits
+`if (b).store_nr != u16::MAX && (b).store_nr != (w).store_nr { … }` when `b` is a variable —
+the inline test the plain `OpFreeRef` emitter in the same file already writes.
+- Price: −8 %.
+- Verify: emission pins that spell this free (`grep -rl 'store_nr != (var___retbuf)' tests/`)
+  move by the added conjunct only; leak check on the native corpus.
+
+### D4. A function-clause header carries its element base
+
+**What runs.** `read_value` holds `bytes`' header for the whole body (`(R-Header)`'s function
+clause, `src/generation/mod.rs`), but no element base, so each `bytes[i] ?? 0` is
+`get_vector_hoisted` + a store lookup + `get_byte`.  An integer reads 2–4 bytes.
+
+**Build.** Emit `__vb_N = vector::vec_base(&__vh_N, …)` beside the function-clause header,
+under the base's own condition (`@FR-R-Base`: no growth of that vector in the function — true
+here, `bytes` is a `const`-like parameter nothing writes).  Then let `emit_byte_read`
+(`src/generation/ops/vector_ops.rs`) take that base for the `?? 0` form outside a loop, as it
+does inside one.
+- Price: −7 % on top of D1–D3 and D5.  6 of the 24 reads have a second shape (the
+  arithmetic index inside `(… ) * 256 + …`) and should be checked to take the same path.
+- Verify: `tests/vector_base.rs`, `tests/twin_base.rs`; a cell reading past the end (the
+  `?? 0` default must answer), and one where the function appends to the vector it reads
+  (the base must decline).
+
+### D5. No one-element pre-reserve before an append
+
+**What runs.** `items += [sub.value]` lowers to `OpPreAllocVector(items, 1, w)` then
+`OpNewRecord`, which grows the vector itself.  The reserve is a call per element (3.5 %).
+
+**Build.** In the parser's one-element append lowering (`src/parser/vectors.rs`, the
+`OpPreAllocVector` site), omit the reserve when the count is 1.  Check `vector_append`
+grows geometrically first (it does in the profile: no repeated `resize`).
+- Price: −3.5 %.
+- Verify: `tests/prealloc_elide.rs`, `tests/prealloc_stride.rs`, the interpreter's op
+  counts (`make ops-census` must still list `OpPreAllocVector` as live).
+
+### D6. An appended moved value skips the element's prefill
+
+**What runs.** The element is minted by `OpNewRecord` with its default prefill
+(`set_default_value_nullable`, 3 %), and then `OpMoveField` overwrites every byte of it.
+`(R-CompleteWrite)` (`group_covers_type`, `src/generation/hoist.rs`) ignores a field MOVE, so
+it never proves the write complete (F9's prefill clause).
+
+**Build.** Count an `OpMoveField` whose destination is the whole element (`_elm` at offset 0,
+the element's own type) as covering every field, so the mint is the no-prefill form.  With it
+in place, `OpNewRecord` + `OpMoveField` + `OpFinishRecord` could become one runtime
+`append_moved(vec, src, tp)` (reserve, copy, zero the source, bump the length).  Price that
+by hand before building it.
+- Verify: `tests/complete_write.rs` and its cells, `LOFT_POISON_CLAIM=1` (a prefill skipped
+  wrongly shows as poison).
+
+### D7. The child is built in its element — destination passing
+
+**What runs after D1–D6.** `read_value` still builds each child as a `Decoded` in a pooled
+buffer (5 field writes through `store_mut`), and the caller reads `ok` and `next` back
+through `store()` and moves `value` out — ≈ 12 % for the round-trip, plus the move.
+
+**Build.** records.md lever 1: a callee whose result's `value` field is moved straight into
+the caller's element gets the element's address as its destination for that field.  This
+is a design question (ownership of the partially built element when `ok` is false), so it
+starts with a design note in `formal/rewrites.md`, not with code.
+- Not priced; estimated 25–30 % of what remains.
+
 ## The fixes
 
 Ordered by what each buys per unit of work.  "Size" is the build effort, XS to M.
