@@ -300,19 +300,20 @@ fn the_derived_query_runs_and_its_columns_come_back() {
         .expect("query");
     assert_eq!(rows[0][0], Some(Cell::Int(1)));
 
-    // A second open of the same target REUSES the handle, and this is what
-    // PROVES it rather than merely restating it: with the file unlinked, a fresh
-    // open could not possibly succeed, and the cached handle still reads. A
-    // connection per fault would cost more than the eager load laziness
+    // A second open of the same target REUSES the handle: the same open database, not a
+    // new one.  A connection per fault would cost more than the eager load laziness
     // replaces.
-    std::fs::remove_file(&path).expect("unlink");
     let again = SqlConn::open(Driver::Sqlite, &path.to_string_lossy()).expect("reopen is cached");
+    assert!(
+        again.same_connection(&conn),
+        "a second open reuses the handle"
+    );
     let rows = again
         .query(
             "SELECT \"name\" FROM \"person\" WHERE \"id\" = ?",
             &[Cell::Int(42)],
         )
-        .expect("the cached handle still reads");
+        .expect("the cached handle reads");
     assert_eq!(rows[0][0], Some(Cell::Text("grace".to_string())));
 }
 
