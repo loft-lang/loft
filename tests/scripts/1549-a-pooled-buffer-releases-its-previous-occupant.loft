@@ -9,9 +9,10 @@
 // `if OpRefIsNull(b) { mint } else OpClear(b, T)`).  Values were right before the fix; the defect was the
 // store the buffer lives in growing by the previous occupant's heap on every call, unbounded
 // in the loop length and invisible to every store-count gate (the store itself dies on time).
-// So the guard measures the process's own resident memory across 300 000 turns of three
-// leaking shapes (Linux, outside AddressSanitizer; elsewhere `rss_kb` answers -1 and the
-// check is vacuous), and the twelve value cells hold the refill to its hand-computed answers
+// So the guard counts the live records of every store (`store_memory()`'s census) after 100 and
+// after 1 000 refills of each of three leaking shapes, with the buffer still alive: a stranded
+// previous occupant is 900 records more, exactly, on every platform.  The twelve value cells
+// hold the refill to its hand-computed answers
 // — c5 an omitted field that must not keep the previous turn's vector, c12 a variant change.  Plan cells:
 // `doc/claude/plans/164-activation-arena/bytecode-comparisons/1549-pooled-buffer-release-cells.loft`.
 // `LOFT_POISON=1`, `LOFT_POISON_CLAIM=1`, `LOFT_STRICT_STORES=1` and `LOFT_NATIVE_LEAK_CHECK=1`
@@ -182,39 +183,39 @@ fn c12() -> integer {
 }
 
 
-/// The process's resident memory in KB, or -1 where it cannot be read — and under
-/// AddressSanitizer, whose quarantine keeps freed memory resident on purpose, so a growth
-/// there measures the sanitizer rather than the program.
-// -1 where the process's resident memory is not the program's: under AddressSanitizer, and
-// under valgrind, whose own shadow memory is in the count (it preloads `vgpreload_*`).  An
-// UNSET variable answers null, and `null != ""` holds — asked bare, the sanitizer test fired
-// on every run and the check below measured nothing, on every platform.
-fn rss_kb() -> integer {
-  if (env_variable("ASAN_OPTIONS") ?? "") != "" { return -1 }
-  if (env_variable("LD_PRELOAD") ?? "").contains("vgpreload") { return -1 }
-  st = file("/proc/self/status").content() ?? "";
-  for line in st.split('\n') {
-    if line.starts_with("VmRSS:") {
-      return (line[6..size(line)].trim().split(' ')[0]? as integer?) ?? -1
-    }
+/// The live record count of every store, off the runtime's own census — what a previous
+/// occupant stranded inside a buffer's store shows up in, where a store-level leak check sees
+/// nothing (the store itself dies on time).
+fn census_records() -> integer {
+  cr_t = store_memory();
+  cr_i = cr_t.find("records ");
+  if !cr_i { return -1 }
+  cr_j = cr_i + 8;
+  cr_n = 0;
+  while cr_j < len(cr_t) && cr_t[cr_j] >= '0' && cr_t[cr_j] <= '9' {
+    cr_n = cr_n * 10 + (cr_t[cr_j] as integer - '0' as integer);
+    cr_j += 1;
   }
-  -1
+  cr_n
 }
 
-// m1 — the resident memory across 300 000 turns of each leaking shape.  Before the release
-// the three grew by roughly a third of the figures in the header; after it, by well under
-// one megabyte.
-fn m1() {
+// Each leaking shape's loop in its own function, so its pooled buffer is alive when the census is
+// taken; the answer is the record count at that moment.
+fn m1_v(n: integer) -> integer {
   t = 0;
-  for i in 0..1000 { a = mk_v(i); b = mk_rows(i); c = mk_shape(i); t += len(a.v) + len(b.rows); }
-  before = rss_kb();
-  // The volume exists only to make a leak visible in `rss_kb`.  Where that answers -1 the
-  // check is vacuous, so each loop runs just long enough to exercise the refill (the
-  // valgrind sweep memchecks this file, and 900 000 turns there were 300 s of nothing).
-  turns = if before < 0 { 1000 } else { 300000 };
-  for i in 0..turns { a = mk_v(i); t += len(a.v); }
-  for i in 0..turns { b = mk_rows(i); t += len(b.rows); }
-  for i in 0..turns {
+  for i in 0..n { a = mk_v(i); t += len(a.v); }
+  assert(t > 0, "m1_v ran");
+  census_records()
+}
+fn m1_rows(n: integer) -> integer {
+  t = 0;
+  for i in 0..n { b = mk_rows(i); t += len(b.rows); }
+  assert(t > 0, "m1_rows ran");
+  census_records()
+}
+fn m1_shape(n: integer) -> integer {
+  t = 0;
+  for i in 0..n {
     c = mk_shape(i);
     match c {
       Dots { pts } => { t += len(pts); },
@@ -222,10 +223,17 @@ fn m1() {
       Empty => { t += 1; }
     }
   }
-  after = rss_kb();
-  grown = if before < 0 || after < 0 { 0 } else { after - before };
-  assert(grown < 8000, "m1 resident memory grew {grown} KB over 900 000 refills");
-  println("m1 {t > 0}");
+  assert(t > 0, "m1_shape ran");
+  census_records()
+}
+
+// m1 — the live records after 1 000 refills equal those after 100, for each leaking shape.
+fn m1() {
+  assert(census_records() >= 0, "m1: the census answers");
+  assert(m1_v(1000) == m1_v(100), "m1 vector shape grows: {m1_v(100)} -> {m1_v(1000)} records");
+  assert(m1_rows(1000) == m1_rows(100), "m1 rows shape grows: {m1_rows(100)} -> {m1_rows(1000)} records");
+  assert(m1_shape(1000) == m1_shape(100), "m1 enum shape grows: {m1_shape(100)} -> {m1_shape(1000)} records");
+  println("m1 true");
 }
 
 fn main() {
