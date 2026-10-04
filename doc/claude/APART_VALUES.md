@@ -127,6 +127,18 @@ instead of release-and-reclaim, a store-internal change with no new representati
 three together cover the alloc-temp, vector-build, record-build and record-field classes,
 the four worst in the portal.
 
+**Measured coverage of the systemic routines.**  Of the 62 routines in classes whose median
+is over 3× (2026-10-02 run), about 10 have a throwaway apart would remove, and 3 of those are
+keyed benches that build a local collection only to measure it.  None is in vector-build,
+record-field, record-build or call.  Instance 1 moves none: `(R-WorkBuffer)` and
+`(R-LiteralWalk)` already took the fixed-length scalar locals (the `sum4` probe is promoted:
+35 ns a call, 76 without it).  Three facts narrow the rule in practice: the throwaway usually
+crosses a RETURN (a constructor helper builds it, the caller only reads it), the vectors that
+matter sit inside a record (`EdgeSet`, `HexSet`, `SideRun`), and elements often carry text.
+Destination passing reaches about as many rows (10), the worst record-build and vector-build
+ones among them.  So instances 2 and 3 are priced on `rig_world_frame3` and `mat4_mul` before
+anything is built; the rule stays as written.
+
 ## Instances, in the order they would be built
 
 The rule is not about records or vectors: every type may take a form loft itself cannot
