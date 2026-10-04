@@ -2422,7 +2422,16 @@ pub fn prebuild_installed_natives() -> (usize, usize) {
 /// `$ORIGIN` / `@loader_path` (`native_utils::add_native_extern_flags`).
 fn relocatable_dylib_flags(lib_name: &str) -> String {
     if cfg!(target_os = "macos") {
-        format!("-Clink-arg=-Wl,-install_name,@rpath/{lib_name}")
+        // `NATIVE_LINK_RECIPE` (`-Wl,-S`): the LINKER drops the debug symbols.  Cargo's default
+        // (`strip = "debuginfo"`) instead runs the system `strip` over the linked dylib, and
+        // on a dylib holding `ring`'s C and assembly objects (every TLS package: web, server)
+        // that rewrite leaves the string table 4-aligned — which the same linker then refuses
+        // to link a program against (`ld: mis-aligned LINKEDIT string pool`).  The post-link
+        // strip is switched off where the build is spawned (`CARGO_PROFILE_RELEASE_STRIP`).
+        format!(
+            "-Clink-arg=-Wl,-install_name,@rpath/{lib_name} {}",
+            crate::cache::NATIVE_LINK_RECIPE
+        )
     } else {
         String::new()
     }
@@ -2657,6 +2666,10 @@ pub fn auto_build_native(pkg_dir: &str, stem: &str) -> Option<String> {
         );
         cmd.env("RUSTFLAGS", flags.trim())
             .env_remove("CARGO_ENCODED_RUSTFLAGS");
+        if cfg!(target_os = "macos") {
+            // No post-link `strip` on macOS — see `relocatable_dylib_flags`.
+            cmd.env("CARGO_PROFILE_RELEASE_STRIP", "none");
+        }
         if use_redirected_target {
             if let Some(parent) = target_root.parent() {
                 let _ = std::fs::create_dir_all(parent);

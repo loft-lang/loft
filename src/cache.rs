@@ -637,11 +637,34 @@ fn rustflags_fp_of(flags: &str) -> u64 {
 /// loft it would have answered green on a stale one.  @PLN159 phase C.
 #[must_use]
 pub fn native_artifact_cache_key() -> u64 {
+    // An empty recipe leaves the key as it was, so a platform with nothing extra is not
+    // made to rebuild every package for a change that is not its own.
+    let rustflags_and_recipe = if NATIVE_LINK_RECIPE.is_empty() {
+        rustflags_fingerprint()
+    } else {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        rustflags_fingerprint().hash(&mut h);
+        NATIVE_LINK_RECIPE.hash(&mut h);
+        h.finish()
+    };
     native_artifact_cache_key_of(
-        combine_native_cache_key(loft_ffi_fingerprint(), rustflags_fingerprint()),
+        combine_native_cache_key(loft_ffi_fingerprint(), rustflags_and_recipe),
         LOFT_VERSION,
     )
 }
+
+/// The platform part of how a package cdylib is linked, beyond the baked RUSTFLAGS —
+/// one home, read by the build (`extensions::relocatable_dylib_flags`) and folded into
+/// [`native_artifact_cache_key`], so a change to it rebuilds every cached cdylib instead
+/// of reusing one linked the old way.  On macOS the linker drops the debug symbols itself
+/// and the post-link `strip` is off: that strip left a TLS package's string table
+/// misaligned, and the linker then refused it (`mis-aligned LINKEDIT string pool`).
+pub const NATIVE_LINK_RECIPE: &str = if cfg!(target_os = "macos") {
+    "-Clink-arg=-Wl,-S"
+} else {
+    ""
+};
 
 /// Pure core of [`native_artifact_cache_key`] (testable without the build-time env):
 /// fold `LOFT_VERSION` into the ABI/RUSTFLAGS key — a release is the one floor under

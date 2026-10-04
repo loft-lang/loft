@@ -67,7 +67,7 @@ if [ "$background" = 1 ] && [ -z "${LOFT_JANITOR_DETACHED:-}" ]; then
   exit 0
 fi
 
-free_gb() { df -P -B1G "$HOME" | awk 'NR == 2 { print $4 }'; }
+free_gb() { df -Pk "$HOME" | awk 'NR == 2 { print int($4 / 1048576) }'; }
 mkdir -p "$STATE"
 free=$(free_gb)
 stamp="$STATE/stamp"
