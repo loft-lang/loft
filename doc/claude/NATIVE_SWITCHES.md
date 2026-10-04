@@ -557,6 +557,12 @@ previous value, and empties its vector fields in place.  The first bisect step f
 record built into a return buffer on `--native`.  Read where the buffer is emitted and at run
 time.
 
+**`LOFT_NO_REFILL_IN_PLACE=1`** (`@FR-R-RefillBuffer`'s in-place clause, default-ON) empties
+and refills a refilled buffer's repeat-literal vector field every time — with it off, a kept
+vector that already holds the literal's count is overwritten where it stands
+(`Stores::fill_exact`).  The first bisect step for a stale element in a vector a refilling
+callee starts as `[c; n]`.  Read where the literal is emitted.
+
 ## Element-first builds, complete writes and return buffers
 
 **`LOFT_NO_ELEMENT_FIRST=1`** (@PLN157 § V-z) makes a record-literal's vector field

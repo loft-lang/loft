@@ -624,6 +624,12 @@ pins `tests/loop_record.rs`.
                  Every other mint is fresh and the empty is a no-op on it.  A text, a
                  keyed collection, a nested record that owns heap, a mint the walk
                  cannot see the group of, and a `par` worker's stores decline.
+                 THE IN-PLACE CLAUSE: an empty followed by a repeat literal of the
+                 same field (`n` copies of one scalar, `(R-PushFill)`'s form) is one
+                 overwrite when the kept vector holds exactly `n` elements of that
+                 width — every element written, the length already `n`, so the
+                 answer is the empty-and-fill's; any other length, a foreign or
+                 locked vector, empties and fills.
 ```
 
 **In words.** The `(R-LoopRecord)` shape across a call.  A builder called in a loop,
@@ -635,7 +641,10 @@ is vectors the group empties and refills, so nothing of the old value survives a
 old is left unreachable in the store.  A kept store is the runtime's, not a leak, and is
 skipped by the exit census.  Effect on mesh3d's `mat4_mul` loop: priced by hand at −52 %
 of the call.  Switch `LOFT_NO_REFILL_BUFFER=1`, read where the buffer is emitted and at run
-time.  Sites: `hoist::refill_buffers`, `ops::misc_ops` (the mint), the block loop in
+time.  The in-place clause skips the reset, the reserve and the two header derivations of a
+fill whose length the kept vector already has: `mat4_mul` −17 % (priced −24 %), switch
+`LOFT_NO_REFILL_IN_PLACE=1`, site `Stores::fill_exact`, guard
+`tests/scripts/a-refilled-repeat-literal-is-overwritten-in-place.loft`.  Sites: `hoist::refill_buffers`, `ops::misc_ops` (the mint), the block loop in
 `emit.rs` (the vector-field empty), `Stores::take_spare` / `park_spare`.  Guard
 `tests/scripts/a-return-buffer-refills-the-store-a-rebind-released.loft`, pin
 `tests/refill_buffer.rs`.

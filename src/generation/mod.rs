@@ -701,6 +701,12 @@ pub struct Output<'a> {
     /// `_old != _rb_w_<name>`, so it never frees the caller's buffer — closing
     /// the cluster-462 native record leak without an over-free.
     pub retbuf_witness: HashSet<u16>,
+    /// `@FR-R-RebindBuffer` — set by an owned reassignment for the call-return arm inside
+    /// it: the call's hidden buffer local, and the entry witness a retbuf-attr destination
+    /// must not equal.  The arm takes it and marks it used, so the reassignment knows to
+    /// hand the displaced store to that buffer instead of freeing it.
+    pub rebind_buffer: Option<(String, Option<String>)>,
+    pub rebind_buffer_used: bool,
     /// @PLN90 #495 — "runtime-Join" locals: an owned-typed Reference/Enum local
     /// that is INITIALISED owned (a whole-value copy / owned call) but then
     /// REASSIGNED to a borrow (the `r = v[i] ?? x` ncc) at least once.  r's
@@ -2381,6 +2387,8 @@ impl<'a> Output<'a> {
                 || !crate::keys::loop_buffer_reuse_enabled(),
             push_fill_disabled: !crate::keys::push_fill_enabled(),
             refill_in_place: crate::keys::refill_in_place_enabled(),
+            rebind_buffer: None,
+            rebind_buffer_used: false,
             inline_hint: crate::keys::inline_hint_enabled(),
             push_window_disabled: !crate::keys::push_window_enabled(),
             join_read_disabled: !crate::keys::join_read_enabled(),
