@@ -24,6 +24,12 @@ it compiles to, and time it. Only when that hand-written version is clearly fast
 building the general rewrite that turns the natural spelling into it. Building first and
 measuring afterwards is how days disappear into changes that buy nothing.
 
+A slow routine is rarely the problem itself: it is evidence of a MECHANISM in loft that costs
+more than it should. Any one routine can be slow, and a user can work around it. The aim is to
+find the mechanism and remove its cost, so that every program using it gets faster, including
+the ones nobody measured. A fix that makes only the routine in front of you fast has treated a
+symptom.
+
 ## Two backends, one direction
 
 loft runs a program two ways. The compiled build (through Rust and LLVM) is what ships, so it
@@ -60,7 +66,9 @@ slower than the compiled program on the same code. So:
    function call where the body is one operation, a collection grown step by step. Read the
    compiled output (the interpreter's bytecode dump, the generated Rust) to see it happen. For
    "why does this get slower as the input grows", count calls at two input sizes before
-   reaching for a profiler.
+   reaching for a profiler. Then name the mechanism behind the waste: not "a store is minted per
+   call" but "a temporary value passes through store machinery as if it were permanent". The
+   mechanism is what the fix should remove; the wasted work is how you found it.
 
 4. **Write the efficient form by hand and measure it.** Take the one concrete case and write the
    version that avoids the named work — in loft if the language can express it, or as the IR or
@@ -78,7 +86,10 @@ slower than the compiled program on the same code. So:
    rewrite their code around a slow compiler. Put the rewrite where both backends benefit when
    you can. Prefer a runtime improvement (a better allocator, a faster lookup) over a new
    compiler rule when either would do — it changes no emitted program and is easier to verify.
-   Two traps when stating the condition:
+   Prefer the fix that removes the mechanism even when it is larger than a rewrite for this
+   shape. A rewrite that covers only one shape is a STOPGAP: allowed when the root fix is far
+   off, but recorded as such, with the root fix that will retire it, the way `KERNELS.md` keeps
+   every Rust stand-in with its removal trigger. Two traps when stating the condition:
    - **Sound is not the same as profitable.** State where the gain is paid back, not only where
      the rewrite is correct. Handing a store on to the next call pays only when that call runs
      again; outside a loop the same rewrite was correct and cost an extra allocation.
@@ -100,6 +111,9 @@ slower than the compiled program on the same code. So:
    - **Use a measurement that works where you run it.** A resident-memory check reads nothing
      on macOS; a live-record count is exact on every platform. A guard whose channel is blind
      on the machine at hand passes for the wrong reason.
+   - **Measure what the fix moved that you did not target.** Compare the class medians before
+     and after (`make perf-portal`). A fix that moves only its own routine points at a symptom;
+     a root fix moves routines nobody looked at.
    - **When the new rule takes over a shape an older rule handled, run the older rule's pins
      with the new rule switched off.** Otherwise they count the new rule's work as missing
      evidence for the old one, or pass on evidence the old rule never produced.
@@ -109,6 +123,10 @@ slower than the compiled program on the same code. So:
 
 ## Tempting shortcuts, and why they fail
 
+- **A new rule for the shape at hand.** It makes this routine fast while the mechanism stays
+  slow everywhere else, and every such rule is one more place a wrong answer can hide and one
+  more condition the next change must respect. Look for the mechanism first; build a
+  shape-specific rule only as a recorded stopgap.
 - **A new combined instruction for the hot line.** Fusing a few operations into one special
   opcode makes exactly that operand pattern faster and nothing next to it; it grows the
   instruction set and helps only the interpreter. It is a hand-written kernel in disguise. Change
