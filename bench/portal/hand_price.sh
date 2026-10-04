@@ -17,6 +17,11 @@
 # `src/main.rs` passes for a shipped binary; `target/release` must be current
 # (`cargo build --release --lib --bin loft`, `make check-rlib`).
 #
+# A RUNTIME change (an edit to the rlib, not to the emitter) is A/B'd the same way without
+# editing any Rust: emit once, save `target/release/deps/libloft.rlib` from each build, copy
+# each into place before compiling the same emitted file, and interleave the two binaries'
+# runs — formal/rewrites-history.md § (R-Cold)'s fold clause is the worked example.
+#
 # Worked examples, with what each priced: bench/portal/analysis/vector-build.md § Method,
 # bench/portal/analysis/records.md § Built (R2 — where skipping this cost a rebuild cycle).
 set -euo pipefail
