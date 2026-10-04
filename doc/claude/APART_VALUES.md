@@ -1,6 +1,6 @@
 # Apart values — fast representations that never touch the store model
 
-**A proposal: no code follows it until the owner accepts the rule below.**
+**Accepted by the owner, with the rulings recorded below.  `(R-Apart)` enters `formal/rewrites.md` with its first built instance.**
 
 The store model is an in-memory database built for data that LASTS: records with identity, a
 best-fit allocator with a free tree, ownership walks so nothing leaks, checked access because a
@@ -162,7 +162,10 @@ not a boundary — it may format the apart form directly, provided the text is b
 what the store path prints (brackets, separators, number formatting, null rendering).  That
 equality is the guard: cells that format each apart shape both ways and compare the bytes.
 
-## Open questions for the owner
+## The rule's place in the register
 
-1. One new rule `(R-Apart)`, or an extension of `(R-ValueRecord)`?  This draft prefers a new
-   rule that `(R-ValueRecord)` becomes an instance of, since the tuple is the first apart form.
+`(R-Apart)` is a new general rule; `(R-ValueRecord)` becomes its first instance — the register
+form for a small record of scalars — and keeps its own conditions as that instance's admission.
+The stack vector, the vector field inside a value record and any later form are further
+instances under the same requirements and the same admission gate, not clauses of
+`(R-ValueRecord)` (owner).
