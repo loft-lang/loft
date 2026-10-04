@@ -214,23 +214,24 @@ first should cost about what the second does.  A managed endpoint agent can stil
 own; the same check shows that.  Whatever does not fit the 20-minute cap afterwards is split or
 moved, never given a longer limit (`scripts/hard_cap.sh`, CI_BUDGET.md).
 
-**Keep the build directory out of `~/Documents`.**  A process whose binary lives under
-`~/Documents` makes every child it starts wait in the loader: the child blocks in dyld on a
-synchronous image-load notification before `main` runs.  The suite is a tree of such
-spawns (test binary → `loft` → `rustc` / the compiled cell), so every level pays it.  Measured:
-a test harness that spawned a 20 ms `loft --interpret` cell 40 times took 0.5 s from a binary
-outside `~/Documents` and 14 s from the same binary copied into `target/`, and a `copy_lease`
-cell took 0.7–1.4 s against 0.03 s.  Only the PARENT's real path counts.  The child's location
-does not matter, and a symlink is resolved, so either of these removes the stall without
-touching a script:
+**A crowded `target/debug/deps` delays every child the suite starts.**  A process whose binary
+sits in a directory of hundreds of thousands of files starts each child late: the child blocks
+in dyld, before `main`, on a synchronous image-load notification.  The suite is a tree of such
+spawns (test binary → `loft` → `rustc` / the compiled cell), and every test binary runs from
+`target/debug/deps`.  Measured: 40 spawns of a 20 ms `loft --interpret` cell took 0.5 s from a
+small directory and 13 s beside 400,000 empty files, and a `copy_lease` cell took 0.7–1.4 s
+against 0.03 s.  The files were the compiler's object files: macOS keeps every codegen unit's
+`.o` beside a debug binary as its debug info (`split-debuginfo = unpacked`), and no build
+removes the previous build's, so `deps` reached 391,000 of them.  `.cargo/config.toml` builds
+macOS with `split-debuginfo = packed` (one `.dSYM` per binary, no objects left), so a new
+checkout never accumulates them.  An older one still holds the objects from before:
 
-- move `target/` elsewhere and leave a symlink at `target`
-  (`mv target ~/build/loft-target && ln -s ~/build/loft-target target`), or
-- check the repository out outside `~/Documents`.
+```
+find target/*/deps -maxdepth 1 -name '*.rcgu.o' -delete
+```
 
-`CARGO_TARGET_DIR` also works for cargo, but scripts that name `target/debug/loft` would miss it.
-The check: `cargo test` on a one-test crate that spawns any short program in a loop, run once
-from inside the checkout's `target/` and once from `/tmp`.  The two should match.
+They are only the debug info of binaries built before the change.  The check:
+`ls target/debug/deps | wc -l` stays in the thousands.
 
 **Package cdylibs are linked without a post-link `strip`.**  Cargo's release default runs the
 system `strip` over a linked dylib; on one holding `ring`'s objects (every TLS package) that left
