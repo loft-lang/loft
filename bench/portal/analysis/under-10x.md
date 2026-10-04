@@ -25,7 +25,7 @@ with `bench/stats.py --routine …` on the same macOS host as the baseline row.
 | game_protocol `msg_ping` | 10.1× | **5.94×** | F6's struct-release half, F14 |
 | 17_consumer `emit_to_material` | 12.7× | **6.06×** | F9's build-in-element half (`LOFT_NO_LITERAL_APPEND`) |
 | gridmesh `build_index` | 13.4× | **6.34×** | F8 (`LOFT_NO_STORE_SWAP`) |
-| mesh3d `mat4_mul` | 13.2× | **8.93×** | F11's first two shaves (`LOFT_NO_HEADER_DBREF`) |
+| mesh3d `mat4_mul` | 13.2× | **4.68×** | F11's first two shaves (`LOFT_NO_HEADER_DBREF`); `vec_header` always inlined; a refilled repeat literal overwritten in place (`LOFT_NO_REFILL_IN_PLACE`); `(R-RebindBuffer)` (`LOFT_NO_REBIND_BUFFER`) |
 | cbor `encode_bytes` | 14.3× | **5.63×** | F7 (`LOFT_NO_FORWARD_RESULT`), F14, the live refill (`LOFT_NO_REFILL_KEEP`) |
 | 18_consumer_crawler `build_walls` | 9.0× | **4.56×** | the bench keys on the two integers, as crawler now does (owner: the text key was the program's defect) |
 | gridmesh `field_add_cell` | 9.67× | **7.20×** | a repeated hash key takes the bucket it displaces (`LOFT_NO_KEYED_REPLACE`): −27 % of the time, short of the −42 % priced — re-analyse before the next fix |
@@ -34,9 +34,9 @@ with `bench/stats.py --routine …` on the same macOS host as the baseline row.
 | graphics `fill_polygon` | 8.08× | **5.43×** | `(R-Alias)`'s versioned copy counts record addresses as a gain: `polygon_crossings` reads its edge points through their addresses when the result's store is not theirs (−33 %, priced −32 %) |
 | graphics `draw_bezier` | 9.94× | **7.36×** (graphics 0.9.8, measured from its branch) | a vector keeps its own slice in place (`OpKeepRange`, `LOFT_NO_KEEP_RANGE`), and the library's @P390 workaround (`t = v[0..n]; v = t`) gives way to `v = v[0..n]`: −26 % against −29 % priced by hand |
 | 15_stdlib_keyed `sorted_fill_walk` | 10.0× | **1.26×** | its twin made like-for-like (F13 declined) |
-| pluginabi `check_request` | 12.8× | 12.7× | F14; F6's text half, F9's prefill clause not built |
+| pluginabi `check_request` | 12.8× | **12.0×** | F14; D1 (via its `decode`); F6's text half, F9's prefill clause not built |
 | hex_field `doc_read` | 15.6× | **8.53×** | F2, F12; a scalar `f#read` is a write of the File record only, so the section loops' scalar hoists admit (4.35 → 3.25 ms).  A leaner `OpReadFile` prices at −15 % more (hand-priced, not built); loop 17 (line 947) still declines on a non-scalar stack reference |
-| cbor `decode` | 12.9× | 12.8× | F6's text half, F9's prefill clause not built |
+| cbor `decode` | 12.9× | **11.4×** | D1 (a reused buffer that owns nothing skips the release walk); D2–D7 below |
 | zttext `flow_layout_full` | 14.7× | **12.1×** | F14; F10's second half — `slice_runs` keeps its live buffer of text records, released once at its entry instead of reset twice (22.6 → 19.1 ms, −15 % against −12 % priced).  F10's first half re-priced: a buffer handed to the fn-ref `resolve` buys nothing (20.0 → 19.9 ms, hand-priced) because `default_resolver` forwards `default_style()`, which mints its own store — the cost is that inner literal return, not the missing buffer |
 | hex_field `edgeset_count` | 18.1× | **1.91×** | F5: the ranged calls (`LOFT_NO_RANGED_CALLS` → 15.8×) with the byte read (`LOFT_NO_BYTE_READ` → 11.8×) |
 
@@ -114,7 +114,7 @@ hand-computed values on both backends.
 
 | step | lever | price alone | size |
 |--:|---|--:|---|
-| D1 | a reused buffer whose heap was moved out is released without the type walk | −17.5 % | S |
+| D1 | a reused buffer whose heap was moved out is released without the type walk — BUILT: 12.8× → 11.4× | −17.5 % (−11 % built) | S |
 | D2 | a small same-store `move_field_out` is a fixed-width copy | −15 % | S |
 | D3 | the free-unless-returned exit tests NULL inline | −8 % | XS |
 | D4 | a function-clause header carries its element base; byte reads go through it | −7 % (on D1–D3, D5) | S |
@@ -123,6 +123,11 @@ hand-computed values on both backends.
 | D7 | the child is built in its element (destination passing) | ≈ 25–30 %, not priced | M |
 
 ### D1. Release a buffer that owns nothing without walking its type
+
+Built: `Stores::holds_no_heap_fast` over the type's cached `HeapSlots`, answered at the top
+of `remove_claims`; guard `tests/scripts/a-reused-buffer-is-released-whatever-its-slots-hold.loft`.
+It reaches two thirds of the price: the rest is the call into `remove_claims` itself, and an
+`#[inline]` on it measured as noise.
 
 **What runs.** The loop's pooled `Decoded` buffer (`OpClear`, inserted by
 `src/scopes/buffers.rs`) is cleared before every call through `remove_claims` →

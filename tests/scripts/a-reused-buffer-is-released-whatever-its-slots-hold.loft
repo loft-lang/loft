@@ -12,6 +12,12 @@
 // it, so each cell counts the store's live RECORDS (`store_memory()`'s census) after the same
 // loop run 50 and 500 times: a stranded claim grows the second count.  The last cell is the
 // shape the fast path exists for — the value moved out every turn — and checks its values.
+//
+// @falsified-by: tests/falsified/a-reused-buffer-is-released-whatever-its-slots-hold.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: an assertion, on both backends (the release is shared runtime).  WITNESS: the
+//   patch answers "empty" for every record, so s1's text is stranded once per turn — the live
+//   records read 51 -> 501 on --native, 53 -> 503 on --interpret.  HOLDS: no leak, panic or
+//   refusal on either tree; every value cell passes on both.
 
 struct T1 { n: integer, name: text }
 struct V3 { n: integer, v: vector<integer> }

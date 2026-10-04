@@ -354,7 +354,12 @@ parameter (via `&`) is host, a genuinely-copied one is script-owned.
                  a reset; it walks the record's own type, or a struct-enum's
                  PARENT type, so it follows the variant the buffer HOLDS rather
                  than the one about to be written.  A record of scalars has
-                 nothing to release and emits nothing.
+                 nothing to release and emits nothing.  A record whose every
+                 heap slot is EMPTY at the release — each text and collection
+                 slot zero, each struct-enum tag absent or naming a variant that
+                 owns no heap, read from the type's cached slot list — releases
+                 nothing and skips the walk; any slot the list cannot read takes
+                 the walk.
 
   (H-FreeFooter) inside one store, a FREE block of n words carries −n at BOTH ends: its
                  header word and the HIGH half of its LAST word (the tree node's color
