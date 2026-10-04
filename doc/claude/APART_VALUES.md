@@ -34,8 +34,8 @@ The same list is 25–40 % of cbor `decode` (bench/portal/analysis/under-10x.md 
 
 ```
   (R-Apart)      a value the compiler proves is never OBSERVED AS A STORE VALUE may be
-                 held, on --native, in a representation of the compiler's choosing — a
-                 stack array, a Rust tuple, a Rust-owned collection — that has no
+                 held, on --native, in any representation of the compiler's choosing —
+                 on the stack, on Rust's heap, in registers — that has no
                  meaning in loft's semantics and no entry in the store model: no
                  DbRef, no identity, no release a program can see.  It is LIVE from
                  its construction to its first BOUNDARY, where it is converted through
@@ -147,10 +147,17 @@ the four worst in the portal.
   alloc-temp should move, and no long-lived class may get slower.
 - `make rewrite-census`: no existing rewrite fires less often.
 
+## Which representations are allowed
+
+Any representation loft itself cannot express — on the stack, on Rust's heap, in registers — as
+long as the boundaries above hold: it is never observable by a program (C135), it meets the
+store only through the ordinary constructors at a boundary, and every allowed use answers what
+the store path answers.  A stack array is one instance, not the rule; a Rust `Vec` or `String`
+allocated outside the stores is equally admissible (owner).  The choice per value is the
+compiler's, made on measurement.
+
 ## Open questions for the owner
 
-1. Is a Rust-owned `Vec` / `String` acceptable as an apart representation (it allocates
-   outside the stores, through Rust's allocator), or stack-only forms?
-2. Is formatting a value (`"{v}"`) a boundary, or a use the allow-list may take later?
-3. One new rule `(R-Apart)`, or an extension of `(R-ValueRecord)`?  This draft prefers a new
+1. Is formatting a value (`"{v}"`) a boundary, or a use the allow-list may take later?
+2. One new rule `(R-Apart)`, or an extension of `(R-ValueRecord)`?  This draft prefers a new
    rule that `(R-ValueRecord)` becomes an instance of, since the tuple is the first apart form.
