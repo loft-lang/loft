@@ -40,19 +40,24 @@ only under a character walk.  `j -= 1` emits `wrapping_sub`: 2.24 → 1.93 M ns/
 formal/rewrites.md § The accumulator clause; cells `tests/scripts/158-walk-accumulator.loft`
 a10, a12–a18.
 
-## Next — two levers, priced, not built
+## Built — an element read answers every index inline (2026-10-04)
 
-1. **One read for a repeated element read** — `arr[j - 1]` is read in the test and again in the
-   body.  LLVM does not merge them because the read's cold path (a negative or out-of-range
-   index) can raise, which writes state.  Priced together with the plain step: 1.93 → 1.62 M
-   (−16 %).  A generation-time rule: a pure element read whose identical twin DOMINATES it —
-   same vector root, same index expression — with no write to that vector, to any variable
-   of the index, and no call between, reuses the first value; the first read must be
-   unconditional where it stands (not under a short-circuit), so hoisting it adds no read.
-   Reach: 43 sites in 21 files of the benches and libraries (an `if`/`while` testing `v[e]`
-   and the body reading `v[e]` again), among them two more insertion sorts in `hex_recover`
-   (`out[ps - 1] > out[ps]`).
-2. **No bounds test where loft proves the index in range** — the rest of the gap
+The repeated `arr[j - 1]` was the first lever this page priced, proposed as a rule reusing the
+first read.  The assembly showed LLVM already merging the two in-range LOADS; what it could
+not merge was the outlined re-derivation each read carried for an index outside `[0, len)`
+(`get_elem_hoisted_cold`, a call into the rlib that LLVM must assume writes).  Two of them
+kept the inner loop at 17 instructions a step with the lock flag tested inside.  The
+re-derivation is arithmetic on what the read already holds, so it is now folded in
+(`vector::elem_index`, the definition `get_vector` uses): 13 instructions, the flag
+unswitched out, 1.905 → 1.64 M ns/op (−14 %), hash unchanged — the hand-merged price with no
+emitter rule, for every repeated element read.  formal/rewrites.md § (R-Cold), fold clause.
+
+Priced beside it and not built: the write's lock test is a further −19 % (1.62 → 1.31 M) when
+it is gone, and an unchecked write reaches 1.00 M — the second lever's prize.
+
+## Next — one lever, priced, not built
+
+1. **No bounds test where loft proves the index in range** — the rest of the gap
    (1.62 → ~0.8 M).  The facts are loft's: `is_i` runs over `1..len(arr)`, the hoist already
    proved the loop cannot change `arr`'s length, and `j - 1` stays in `[0, is_i - 1]`.  It needs
    a RELATIONAL fact (`index < len(v)`), which `generation::range` does not carry today — its

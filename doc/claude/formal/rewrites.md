@@ -730,7 +730,8 @@ element's bytes lie in that span.  Past the end — where a walk's last read lan
 its length test breaks — is the null text without a call, as `get_vector` answers any
 non-negative index at or beyond the length (a null vector's length is 0); a NEGATIVE index
 counts from the end and takes the unfused path (`text_elem_cold`, outlined: folded in, the
-hot half lost its inline and the walk its registers).
+hot half lost its inline and the walk its registers — the exception (R-Cold)'s fold clause
+names).
 `LOFT_HOIST_VERIFY=1` re-derives header, base and span at every read.  A twin's input
 base carries no span, and such a read keeps the store-resolving form.  Switch
 `LOFT_NO_TEXT_BASE`; cells `tests/scripts/158-text-base.loft` b1–b8 (falsified by the
@@ -2734,6 +2735,22 @@ line in `Output::output_function`'s prelude.
                  that keeps the fast path's test a plain branch — without it LLVM
                  may turn that test into flag arithmetic paid on every element,
                  and which form it picks then moves with unrelated code nearby.
+                 FOLD CLAUSE: an off-fast-path answer computable from what the
+                 fast path already holds — no store resolution, no write, no
+                 report — is FOLDED IN, never outlined: an element read resolves
+                 every index with `vector::elem_index` (a negative index counts
+                 from the end, anything else outside answers the sentinel), the
+                 ONE definition `get_vector` uses too.  A call is opaque to LLVM
+                 even when it is cold and only reads, so two reads of one element
+                 stay two reads and the loop around them is too large to unswitch;
+                 folded, the read is pure and both merge.  `LOFT_HOIST_VERIFY=1`
+                 compares every folded answer with a fresh `get_vector` read
+                 (`verify_folded_read`).  A fold is a layout choice like the
+                 split, so it is kept only where the lanes show it pays: the
+                 TEXT element read keeps its negative-index half outlined,
+                 because folded in, in any arrangement, it slowed the text walk
+                 of the `join` row and a reader of distinct elements has no
+                 merge to gain.
 ```
 
 **In words.** @PLN157 § V-h found the class (`hash` paid a third of its row for the
@@ -2745,7 +2762,11 @@ a layout discipline, not a semantics rewrite, so (R-Switch) does not apply; the 
 are the two instruments: `scripts/native_call_census.py` (which fast-path symbols
 still cross the rlib boundary as calls) and `scripts/inline_audit.py` (which
 `#[inline]` functions rustc declined — an `#[inline]` function with an out-of-line
-symbol and self time is the candidate).  Sites: `vector::get_elem_hoisted_cold`,
+symbol and self time is the candidate).  The fold clause's cells are
+`tests/scripts/fused-element-read-resolves-every-index.loft` e1–e7 (falsified by a fold
+that drops the from-the-end resolution: `--native` fails e1, the verifier names index −2),
+and `vector::elem_index`'s own unit tests.  Fold sites: `vector::get_elem_at`,
+`vector::get_elem_hoisted`.  Outlined sites: `vector::text_elem_cold`,
 `Stores::vec_set_hoisted_cold`, `Stores::note_format_fault`'s split,
 `Store::raise_out_of_bounds`, `Store::shadow_write`, `State::verify_slot`,
 `State::mark_stale_handles`, `Stores::watch_oob_text_report`, and `ops::text_character`
