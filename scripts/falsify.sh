@@ -51,13 +51,17 @@ usage() {
   echo "usage: scripts/falsify.sh <guard.loft> <control-ref>" >&2
   echo "       scripts/falsify.sh <guard.loft> --patch <file>  # control = HEAD + the patch" >&2
   echo "       scripts/falsify.sh --bulk <listfile>   # <guard>TAB<control-ref> per line" >&2
+  echo "       scripts/falsify.sh --self-test         # the scorer's own parsing, on this machine's tools" >&2
   exit 2
 }
 BULK=""
+SELF_TEST=""
 REF=""
 PATCHFILE=""
 PATCH_ABS=""
-if [ "${1:-}" = "--bulk" ]; then
+if [ "${1:-}" = "--self-test" ]; then
+  SELF_TEST=1
+elif [ "${1:-}" = "--bulk" ]; then
   [ $# -eq 2 ] || usage
   BULK="$2"; [ -f "$BULK" ] || { echo "no such list: $BULK" >&2; exit 2; }
 elif [ "${2:-}" = "--patch" ]; then
@@ -135,7 +139,7 @@ if [ -n "$PATCHFILE" ]; then
   # the branch had left, and scored the guard against semantics HEAD no longer has).
   SHA="patch-$(git hash-object "$PATCHFILE" | cut -c1-12)-$(git rev-parse --short=12 HEAD)"
   WT="$CACHE/$SHA"; TGT="$CACHE/$SHA-target"
-elif [ -z "$BULK" ]; then
+elif [ -z "$BULK" ] && [ -z "$SELF_TEST" ]; then
   resolve_control "$REF" || {
     echo "unknown ref: $REF" >&2
     echo "  The control is on no branch of this remote and under no refs/pull/*/head, so NO" >&2
@@ -185,7 +189,7 @@ entry_modes() { # <guard> ; sets MODE_I / MODE_N
     MODE_I=(--tests); MODE_N=(--tests --native)
   fi
 }
-[ -n "$BULK" ] || entry_modes "$GUARD"
+[ -n "$BULK$SELF_TEST" ] || entry_modes "$GUARD"
 
 # Every build here goes through this, and every build takes its target directory's LOCK.
 #
@@ -264,7 +268,10 @@ build() { # <dir> <target-dir> -> path to binary
 # damage.  `FAIL/6 -> 6/6` says what moved without inventing which cells did.
 expect_channel() { # <guard-path> <output> -> "<matched>/<declared>" | "FAIL/<declared>" | "-"
   local file="$1" out="$2" declared matched
-  declared=$(sed -n 's/.*@EXPECT_\(ERROR\|FAIL\)://p' "$file" | grep -c .)
+  # `-E`: alternation in a BASIC expression (`\(a\|b\)`) is a GNU extension.  BSD sed (macOS)
+  # matches it literally, so every guard read `declared 0` there and scored `expect -` on both
+  # trees — the channel blind on one platform, silently (`--self-test` catches it).
+  declared=$(sed -nE 's/.*@EXPECT_(ERROR|FAIL)://p' "$file" | grep -c .)
   [ "$declared" -eq 0 ] && { echo "-"; return; }
   # `error` / `errors` — the suite pluralises the noun, so a guard declaring exactly ONE
   # expectation prints "1 expected error:" and a plural-only pattern never matched it.  Every
@@ -288,6 +295,26 @@ is_clean() { # <signature> -> 0 when the run passed
     *) return 1 ;;
   esac
 }
+
+# `--self-test` — the scorer's own parsing on THIS machine's tools.  The channels are read with
+# sed and grep, whose dialects differ between GNU (Linux CI) and BSD (macOS); a construct one
+# dialect lacks blinds a channel without an error, so the receipts recorded on that machine
+# silently lose it.  Run by `tests/doc_hygiene.rs` on every platform the suite runs on.
+if [ -n "$SELF_TEST" ]; then
+  st_guard="$ROOT/tests/scripts/c87-a-rust-template-outside-the-stdlib-names-native.loft"
+  st_fail=0
+  st_check() { # <what> <got> <want>
+    if [ "$2" != "$3" ]; then echo "falsify self-test: $1 answered '$2', expected '$3'" >&2; st_fail=1; fi
+  }
+  st_check "expect_channel, nothing matched" "$(expect_channel "$st_guard" "")" "FAIL/2"
+  st_check "expect_channel, the suite's line" \
+    "$(expect_channel "$st_guard" "ok (2 expected errors: …)")" "2/2"
+  st_check "is_clean on a passing run" "$(is_clean '0|0|none|none|0|2/2' && echo yes || echo no)" "yes"
+  st_check "is_clean on an unmatched declaration" \
+    "$(is_clean '0|0|none|none|0|FAIL/2' && echo yes || echo no)" "no"
+  [ $st_fail -eq 0 ] && echo "falsify self-test: ok"
+  exit $st_fail
+fi
 
 signature() { # <binary> <tree> <guard-path> <extra-args…> ; "exit|asserts|leak|panic|refusals|expect"
   local bin="$1" tree="$2" file="$3"; shift 3

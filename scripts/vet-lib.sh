@@ -108,7 +108,7 @@ fi
 echo "V1 package       :"
 if ( cd "$DIR" && loft package --tarball-only ) >/dev/null 2>"$tmp/package.err"; then
   for t in "$DIR"/*.tar.gz; do
-    [ -f "$t" ] && echo "     sha256 $(sha256sum "$t" | cut -d' ' -f1)  size $(stat -c%s "$t")  $(basename "$t")"
+    [ -f "$t" ] && echo "     sha256 $(sha256sum "$t" | cut -d' ' -f1)  size $(stat -c%s "$t" 2>/dev/null || stat -f%z "$t")  $(basename "$t")"
   done
 else
   echo "     ✗ loft package failed"

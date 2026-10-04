@@ -771,8 +771,8 @@ gallery:
 	done; \
 	if [ $$missing -gt 0 ]; then exit 1; fi
 	@echo "  [5/8] checking wasm/js glue are from the same build ..."
-	@js_mtime=$$(stat -c %Y doc/pkg/loft.js); \
-	wasm_mtime=$$(stat -c %Y doc/pkg/loft_bg.wasm); \
+	@js_mtime=$$(stat -c %Y doc/pkg/loft.js 2>/dev/null || stat -f %m doc/pkg/loft.js); \
+	wasm_mtime=$$(stat -c %Y doc/pkg/loft_bg.wasm 2>/dev/null || stat -f %m doc/pkg/loft_bg.wasm); \
 	delta=$$((wasm_mtime - js_mtime)); \
 	delta=$${delta#-}; \
 	if [ $$delta -gt 120 ]; then \

@@ -34,7 +34,7 @@ while [ $# -gt 0 ]; do
         --count) count_only=1 ;;
         --repo) shift; repo="$1" ;;
         --label) shift; labels+=("$1") ;;
-        -h|--help) sed -n '2,29p' "$0" | sed 's/^# \?//'; exit 0 ;;
+        -h|--help) sed -n '2,29p' "$0" | sed -E 's/^# ?//'; exit 0 ;;
         *) echo "work-issues: unknown argument $1" >&2; exit 2 ;;
     esac
     shift

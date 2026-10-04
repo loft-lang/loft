@@ -29,7 +29,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --only)     ONLY="$2"; shift 2;;
     --overhead) OVERHEAD=1; shift;;
-    -h|--help)  sed -n '/^# @PLN140 arc D/,/^set -uo/p' "$0" | sed 's/^# \?//;$d'; exit 0;;
+    -h|--help)  sed -n '/^# @PLN140 arc D/,/^set -uo/p' "$0" | sed -E 's/^# ?//;$d'; exit 0;;
     *) echo "profile_corpus.sh: unknown option '$1'" >&2; exit 2;;
   esac
 done

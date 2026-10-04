@@ -157,6 +157,28 @@ fn every_guard_says_how_to_score_it_again() {
 /// Setext-style Markdown heading underline is exactly that, and this file's own docs use them.
 /// The two chevron forms cannot occur in prose, which is what makes the check total without
 /// being a false-positive machine.
+/// The scorer that writes every receipt reads its channels with sed and grep, whose dialects
+/// differ between GNU (Linux) and BSD (macOS).  A construct one lacks blinds a channel without
+/// an error — on macOS the expectations channel read `-` for every `@EXPECT_ERROR` guard — so
+/// receipts recorded there silently lost it.  `falsify.sh --self-test` scores fixed inputs
+/// with this machine's tools.
+#[test]
+fn the_falsify_scorer_reads_its_channels_on_this_platform() {
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out = std::process::Command::new("bash")
+        .arg(root.join("scripts/falsify.sh"))
+        .arg("--self-test")
+        .current_dir(&root)
+        .output()
+        .expect("run scripts/falsify.sh");
+    assert!(
+        out.status.success(),
+        "falsify.sh --self-test failed on this platform:\n{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
 /// A patch receipt (`// @falsified-by: tests/falsified/<guard>.patch`) is the durable form
 /// precisely because it re-applies to the CURRENT tree: `scripts/falsify.sh --patch` scores it
 /// there.  One that no longer applies scores nothing, silently (GUARDS.md § The patch
