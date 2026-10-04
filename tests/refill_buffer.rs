@@ -25,7 +25,8 @@ fn loft(args: &[&str], env: &[(&str, &str)]) -> (String, String, bool) {
         .env("LOFT_TIMEOUT", "300")
         .env("LOFT_NO_CACHE", "1")
         .env_remove("LOFT_NO_REFILL_BUFFER")
-        .env_remove("LOFT_NO_SWAP_REBIND");
+        .env_remove("LOFT_NO_SWAP_REBIND")
+        .env_remove("LOFT_NO_REFILL_IN_PLACE");
     for (k, v) in env {
         cmd.env(k, v);
     }
@@ -83,6 +84,38 @@ fn the_cells_answer_the_same_and_free_every_store() {
         env.push(("LOFT_NATIVE_LEAK_CHECK", "1"));
         let (out, err, ok) = loft(&["--native", &cells()], &env);
         assert!(ok && out.contains("done"), "{env:?}:\n{out}\n{err}");
+        assert!(
+            !err.contains("not freed"),
+            "{env:?} left stores behind:\n{err}"
+        );
+    }
+}
+
+/// The in-place clause's cells: every callee starts its vector field as a repeat literal.
+const IN_PLACE: &str = "tests/scripts/a-refilled-repeat-literal-is-overwritten-in-place.loft";
+
+#[test]
+fn a_refilled_repeat_literal_is_overwritten_in_place() {
+    let cells = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join(IN_PLACE)
+        .to_string_lossy()
+        .into_owned();
+    let rs = std::env::temp_dir().join(format!("loft_refill_ip_{}.rs", std::process::id()));
+    let (_, err, ok) = loft(&["--native-emit", &rs.to_string_lossy(), &cells], &[]);
+    assert!(ok, "emit failed:\n{err}");
+    let src = std::fs::read_to_string(&rs).expect("emitted source");
+    let _ = std::fs::remove_file(&rs);
+    for callee in ["n_bump", "n_grow", "n_tri", "n_half"] {
+        assert!(
+            body(&src, callee).contains("//@FR-R-RefillBuffer in place"),
+            "{callee}: the in-place fill expected"
+        );
+    }
+    for env in [&[][..], &[("LOFT_NO_REFILL_IN_PLACE", "1")][..]] {
+        let mut env = env.to_vec();
+        env.push(("LOFT_NATIVE_LEAK_CHECK", "1"));
+        let (out, err, ok) = loft(&["--native", &cells], &env);
+        assert!(ok, "{env:?}:\n{out}\n{err}");
         assert!(
             !err.contains("not freed"),
             "{env:?} left stores behind:\n{err}"

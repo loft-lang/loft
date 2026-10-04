@@ -10,6 +10,13 @@
 // element after the literal, so each other element must read the literal's value and never
 // the kept store's.  The rebinds alternate two stores, so a stale element would come from
 // the value two calls back.  Every cell checks values AND lengths; values hand-computed.
+//
+// @falsified-by: tests/falsified/a-refilled-repeat-literal-is-overwritten-in-place.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   CHANNEL: an assertion, on --native.  WITNESS: the patch answers true without writing, so
+//   p1 reads `[1,11,3,13]` — the stale elements of the store two calls back.  HOLDS: every
+//   assertion passes on both trees with `LOFT_NO_REFILL_IN_PLACE=1`.  A second planted
+//   defect (2026-10-04), accepting a LONGER kept vector and leaving its length, fails p2
+//   (`len 7`: the kept length survives each refill and the append grows it).
 
 struct M { m: vector<float> }
 

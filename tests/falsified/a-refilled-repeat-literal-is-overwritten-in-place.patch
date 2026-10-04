@@ -1,0 +1,13 @@
+diff --git a/src/database/mod.rs b/src/database/mod.rs
+index 74e2c88c8..ba016a0f8 100644
+--- a/src/database/mod.rs
++++ b/src/database/mod.rs
+@@ -2302,7 +2302,7 @@ impl Stores {
+         if store.is_foreign() {
+             return false;
+         }
+-        store.fill::<T>(h.rec, crate::vector::checked_vec_pos(0, size), h.len, val);
++        let _ = (store, val);
+         true
+     }
+ 
