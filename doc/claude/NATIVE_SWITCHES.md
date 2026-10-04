@@ -557,6 +557,13 @@ previous value, and empties its vector fields in place.  The first bisect step f
 record built into a return buffer on `--native`.  Read where the buffer is emitted and at run
 time.
 
+**`LOFT_NO_REBIND_BUFFER=1`** (`@FR-R-RebindBuffer`, default-ON) exchanges every rebind's
+fresh result into the destination's store (`@FR-H-SwapRebind`) — with it off, `x = f(…)`
+adopts the fresh result and hands `x`'s previous store to the call's hidden buffer for its
+next execution.  The first bisect step for a wrong value after a rebind in a loop on
+`--native`.  Read where the rebind is emitted; `LOFT_TRACE_REBIND_BUFFER=1` names each
+rebind it declines and why.
+
 **`LOFT_NO_REFILL_IN_PLACE=1`** (`@FR-R-RefillBuffer`'s in-place clause, default-ON) empties
 and refills a refilled buffer's repeat-literal vector field every time — with it off, a kept
 vector that already holds the literal's count is overwritten where it stands

@@ -649,6 +649,40 @@ fill whose length the kept vector already has: `mat4_mul` −17 % (priced −24 
 `tests/scripts/a-return-buffer-refills-the-store-a-rebind-released.loft`, pin
 `tests/refill_buffer.rs`.
 
+### A rebind hands the displaced store to the call
+
+```
+  (R-RebindBuffer) on `--native`, the rebind `x = f(…)` of an owned local from a
+                 direct call that answers a FRESH store (`Own::Owned`) through a
+                 hidden buffer local `b` — a compiler local nothing but this call and
+                 its scope-exit free names — ADOPTS the result and hands `x`'s
+                 previous store to `b`, the buffer of the call's next execution,
+                 instead of exchanging the result into `x`'s store
+                 (`(H-SwapRebind)`).  Run-time conditions, each falling back to the
+                 exchange: the result has a store of its own (not null, not `x`'s),
+                 `x` held one, `b` is null or IS the result's store (so no live
+                 buffer is dropped), and `x`'s store is not the caller's entry buffer
+                 (a return-buffer local).  Static conditions: `x` is not an argument
+                 (the return-buffer attribute with its entry witness excepted), not
+                 captured, not never-free, not witnessed, not a coroutine field; and
+                 no local borrowing `x`'s or `b`'s store is named at or after the
+                 top-level statement holding the rebind.
+```
+
+**In words.**  `c = mul(a, c)` in a loop built each result in a buffer, then exchanged the
+two stores' contents so that `c` kept its slot — a check of both stores' flags, the swap,
+the park of the released store and a take of it at the next mint, every iteration.  Nothing
+needs `c`'s SLOT to stay put when nothing else names it: the result is fresh, so `c` can
+simply take it, and the store `c` held — whose value the rebind ends — is exactly a buffer
+of the right type for the next call, which the refilling callee (`(R-RefillBuffer)`) writes
+in place.  The two stores take turns by name instead of by content.  The scope-exit free of
+`b` releases whichever one `c` does not hold.  Effect: mesh3d's `mat4_mul` loop 54 → 39 ns
+per product (−29 %, priced −29 %).  Switch `LOFT_NO_REBIND_BUFFER=1`, read where the rebind
+is emitted; trace `LOFT_TRACE_REBIND_BUFFER=1` names each decline.  Sites:
+`Output::rebind_buffer_for` and the call-return arm in `generation/dispatch.rs`.  Guard
+`tests/scripts/a-rebind-hands-the-displaced-store-to-the-call.loft`, pin
+`tests/rebind_buffer.rs`.
+
 ### An in-place scalar set disturbs no header
 
 ```
