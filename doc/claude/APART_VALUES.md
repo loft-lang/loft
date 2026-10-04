@@ -118,7 +118,8 @@ pays 30 ns to be converted has gained nothing.  The measured routines fall into 
 | routine | throwaway | boundary | the fix |
 |---|---|---|---|
 | vector-temp (`sum4`-shaped helpers, float kernels) | a local vector, summed or read | none — consumed where made | **apart (instance 1)**: priced 29 → <1 ns |
-| mesh3d `mat4_mul` (4.68×) | `Mat4 { m: [16 floats] }`, rebound every iteration | once, when the last product is returned | **apart (instance 2)**: the vector field inside a value record, across admitted calls; to be priced |
+| mesh3d `mat4_mul` (4.8×) | `Mat4 { m: [16 floats] }`, rebound every iteration | once, when the last product is returned | **apart (instance 2)**: the vector field inside a value record, across admitted calls — priced **38 → 4.9 ns a product, 0.63× Rust** ([analysis/apart.md](../../bench/portal/analysis/apart.md)) |
+| hex_body `rig_world_frame3` (5.3×) | twelve `vector<float>` locals, pushed per bone | none — read at the exit, in the frame | **apart (instance 3)**: priced −48 % as an INLINE buffer; a bare Rust `Vec` is SLOWER than the pooled work buffers (same analysis) |
 | cbor `decode`, 17_consumer `emit_to_material` | each child / triangle | at once — built to be stored in a parent | **not apart**: the value is made to be stored; destination passing (build it in its element, D7) |
 
 So the rule covers values consumed where they are made.  Values made to be stored are
@@ -136,8 +137,10 @@ record-field, record-build or call.  Instance 1 moves none: `(R-WorkBuffer)` and
 crosses a RETURN (a constructor helper builds it, the caller only reads it), the vectors that
 matter sit inside a record (`EdgeSet`, `HexSet`, `SideRun`), and elements often carry text.
 Destination passing reaches about as many rows (10), the worst record-build and vector-build
-ones among them.  So instances 2 and 3 are priced on `rig_world_frame3` and `mat4_mul` before
-anything is built; the rule stays as written.
+ones among them.  Instances 2 and 3 are priced on `mat4_mul` and `rig_world_frame3`
+([analysis/apart.md](../../bench/portal/analysis/apart.md), with a triage of every other
+throwaway-shaped row): instance 2 pays an order of magnitude, instance 3 pays only as an
+inline buffer, and the rule stays as written.
 
 ## Instances, in the order they would be built
 
@@ -152,7 +155,10 @@ The list below is only the ORDER, set by measured payoff — the classes over th
    literal of `N` elements, then only index reads and writes, `len`, and `for` iteration.
 2. **The same vector as a field of a value record**, across calls the gate admits on both
    sides — `(R-ValueRecord)`'s tuple carrying the array.  `Mat4` is the case.
-3. **Variable-length vectors and texts** (an inline buffer, or a Rust `Vec` / `String`).
+3. **Variable-length vectors and texts** — an INLINE buffer with a spill to the heap past its
+   capacity, never a bare Rust `Vec` / `String`: many short vectors grown by push pay a
+   `malloc` and its reallocations each, more than the pooled work buffers they replace
+   (`rig_world_frame3`: a `Vec` +37 %, a stack buffer −48 % — analysis/apart.md).
 4. **Every other type the bench shows paying the store protocol as a throwaway** — enums with a
    payload (cbor `decode`'s values), local keyed collections, iterators — each priced by hand
    first, each an instance under the same gate.
