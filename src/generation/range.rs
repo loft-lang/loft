@@ -519,8 +519,12 @@ pub fn range_vars(
             // first round) — is seeded here, and the fixpoint resumes with it.  Seeding is
             // monotone: a counter enters the map once both its seed and its end are ranged,
             // and neither leaves it.
+            // The accumulators likewise: a step under a counted loop is bounded by that
+            // loop's trips, which are known once its counter is — an inner loop whose end is
+            // an outer counter (`for _ in 0..i`) is ranged only in this resumed round.
             let before = rv.vars.len();
             seed_counters(data, code, code, nn, &mut rv, &mut counters);
+            seed_accumulators(data, code, nn, &escaped, walks, &mut rv, &mut counters);
             if rv.vars.len() == before {
                 return rv;
             }
@@ -624,18 +628,18 @@ fn seed_counters(
 
 /// `@FR-R-Range`'s accumulator clause — the second self-stepping shape read off a loop,
 /// after the counters: a local `n` seeded ONCE by a ranged value (`n = 0`) and stepped
-/// only by literals (`n += 1`, `n -= 2`), every step either straight-line after the seed
-/// in the seed's own block or inside ONE loop there that is a character walk over a text
-/// the body never writes (`CharWalk::hoist_null`).  Such a walk makes at most `size(T)`
-/// trips — a text's size is a `u32` word — so per run of the block `n` moves by at most
-/// `Σ|c| · u32::MAX` over the walked steps plus `Σ|c|` over the straight ones, and the seed
-/// plus that bound is `n`'s range whenever it fits the type: the checked `n + c` cannot
-/// fault, and the processor's add answers what the template would.  The seed's block may
-/// itself sit in a loop — each pass re-seeds — but a step under a SECOND loop, under a loop
-/// that is not such a walk, a step by anything but a literal, a second seed, a write to `n`
-/// anywhere else, or `n` handed out by reference declines, and `n` stays unranged.
-/// Measured on the stdlib text bench's `char_walk` (`n += 1` / `n += 2` under `for c in
-/// src`): 12.5 → 10.5 µs (−17 %) with the two adds plain.
+/// only by literals (`n += 1`, `n -= 2`), every step straight-line after the seed in the
+/// seed's own block or under loops there whose trips are bounded — a character walk over a
+/// text the body never writes (`CharWalk::hoist_null`, at most `size(T)`, a `u32` word) or
+/// a counted loop (at most `hi - lo + 1` over its stepped counter's range).  A step under
+/// nested bounded loops moves `n` by `|c|` times the product of their bounds, so the seed
+/// plus the sum over every step is `n`'s range whenever it fits the type: the checked
+/// `n + c` cannot fault, and the processor's add answers what the template would.  The
+/// seed's block may itself sit in a loop — each pass re-seeds — but a step under a loop
+/// with no bound, a step by anything but a literal, a second seed, a write to `n` anywhere
+/// else, or `n` handed out by reference declines, and `n` stays unranged.  Measured: the
+/// stdlib text bench's `char_walk` 12.5 → 10.5 µs (−17 %); the insertion sort's `j -= 1`
+/// under `for _ in 0..i` (`bench/10_sort`) −12 %.
 #[expect(clippy::too_many_lines, reason = "inherited")]
 fn seed_accumulators(
     data: &Data,
@@ -667,34 +671,56 @@ fn seed_accumulators(
         };
         (step.unsigned_abs() < (1u64 << 31)).then_some(sign * step)
     }
-    /// The total movement the steps under `v` can make in one run of the seed's block —
-    /// `None` where a step is not one this clause reads.  `depth` counts the loops between
-    /// the seed's block and `v`, `in_walk` whether the innermost is a qualifying walk.
+    /// How many times one entry of `lp` can run its body, or `None` when nothing bounds it.
+    /// A character walk over a text the body never writes makes at most `size(T)` trips, a
+    /// `u32` word.  A counted loop steps its counter by one from its single seed until the
+    /// end test breaks, so it makes at most `hi - lo + 1` trips over the counter's range —
+    /// the range `seed_counters` recorded from the seed and the end.  Any other loop (a
+    /// `while`, a counted loop whose seed or end is unranged) is unbounded here.
+    fn trips(
+        data: &Data,
+        walks: &std::collections::BTreeMap<u16, super::hoist::CharWalk>,
+        rv: &Ranges,
+        lp: &crate::data::Block,
+    ) -> Option<i128> {
+        if walks.get(&lp.scope).is_some_and(|w| w.hoist_null) {
+            return Some(i128::from(U32_MAX));
+        }
+        let rc = super::hoist::range_counters(lp, data).ok()?;
+        let (lo, hi) = *rv.vars.get(&rc.next.unwrap_or(rc.index))?;
+        Some((i128::from(hi) - i128::from(lo) + 1).max(0))
+    }
+    /// The total movement the steps under `node` can make in one run of the seed's block —
+    /// `None` where a step is not one this clause reads.  `mult` is the product of the trip
+    /// bounds of the loops between the seed's block and `node` (1 outside any loop), `None`
+    /// once one of them is unbounded: a step under such a loop declines.
     fn movement(
         data: &Data,
         walks: &std::collections::BTreeMap<u16, super::hoist::CharWalk>,
+        rv: &Ranges,
         node: &Value,
         acc: u16,
-        depth: u8,
-        in_walk: bool,
+        mult: Option<i128>,
         steps: &mut usize,
     ) -> Option<i128> {
+        // Past this the bound cannot fit an `i64` range anyway; stopping here keeps the
+        // products inside `i128`.
+        const CAP: i128 = 1 << 96;
         match node.unspan() {
             Value::Set(target, expr) if *target == acc => {
                 let step = i128::from(literal_step(data, acc, expr)?.unsigned_abs());
                 *steps += 1;
-                match depth {
-                    0 => Some(step),
-                    1 if in_walk => Some(step * i128::from(U32_MAX)),
-                    _ => None,
-                }
+                Some(step * mult?)
             }
             Value::TuplePut(target, _, _) if *target == acc => None,
             Value::Loop(lp) => {
-                let walk = walks.get(&lp.scope).is_some_and(|w| w.hoist_null);
+                let inner = mult
+                    .zip(trips(data, walks, rv, lp))
+                    .map(|(m, t)| m * t)
+                    .filter(|m| *m <= CAP);
                 let mut total: i128 = 0;
                 for op in &lp.operators {
-                    total += movement(data, walks, op, acc, depth + 1, walk, steps)?;
+                    total += movement(data, walks, rv, op, acc, inner, steps)?;
                 }
                 Some(total)
             }
@@ -703,7 +729,7 @@ fn seed_accumulators(
                 let mut ok = true;
                 node.for_each_child(&mut |child| {
                     if ok {
-                        match movement(data, walks, child, acc, depth, in_walk, steps) {
+                        match movement(data, walks, rv, child, acc, mult, steps) {
                             Some(m) => total += m,
                             None => ok = false,
                         }
@@ -739,11 +765,12 @@ fn seed_accumulators(
                 false
             });
             let mut steps = 0usize;
-            let bound: Option<i128> = bl.operators[k + 1..]
-                .iter()
-                .try_fold(0i128, |total, later| {
-                    Some(total + movement(data, walks, later, n, 0, false, &mut steps)?)
-                });
+            let bound: Option<i128> =
+                bl.operators[k + 1..]
+                    .iter()
+                    .try_fold(0i128, |total, later| {
+                        Some(total + movement(data, walks, rv, later, n, Some(1), &mut steps)?)
+                    });
             let Some(bound) = bound else { continue };
             if steps == 0 || writes != steps + 1 {
                 continue;

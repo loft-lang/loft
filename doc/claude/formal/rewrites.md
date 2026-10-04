@@ -1454,17 +1454,22 @@ is the only unsound direction, and it turns b3 red and makes `LOFT_HOIST_VERIFY=
 naming the operator.
 **The accumulator clause** (@PLN158 round 4): a second self-stepping shape
 read off a loop, after the counters.  A local seeded ONCE by a ranged value (`n = 0`) and
-stepped only by LITERALS (`n += 1`, `n -= 2`), every step either straight-line after the
-seed in the seed's own block or inside ONE loop there that is a character walk `(R-CharWalk)`
-over a text the body never writes, is ranged: such a walk makes at most `size(T)` trips (a
-`u32` word), so per run of the block `n` moves by at most `Σ|c| · u32::MAX` over the walked
-steps plus `Σ|c|` over the straight ones, and the seed plus that bound is `n`'s range
-whenever it fits the type — the checked step cannot fault, so the processor's operator
-answers what the template would.  The seed's block may itself sit in a loop (each pass
-re-seeds); a step under a second loop, under a loop that is not such a walk (a counted loop:
-its trips are not a text's size; a walk over a text the body appends to), a step by a
-non-literal, a second seed, a write to `n` anywhere else, a parameter seed or `n` handed out
-by reference declines.  `LOFT_HOIST_VERIFY=1` compares every plain step with its template.  Cells `tests/scripts/158-walk-accumulator.loft` a1–a11, pins
+stepped only by LITERALS (`n += 1`, `n -= 2`), every step straight-line after the seed in the
+seed's own block or under loops there whose TRIPS are bounded, is ranged.  A character walk
+`(R-CharWalk)` over a text the body never writes makes at most `size(T)` trips (a `u32`
+word); a counted loop makes at most `hi - lo + 1`, over the range `(R-Counter)`'s clause gave
+its stepped counter.  A step under nested bounded loops moves `n` by `|c|` times the PRODUCT
+of their bounds, so per run of the block `n` moves by at most the sum of those, and the seed
+plus that bound is `n`'s range whenever it fits the type — the checked step cannot fault,
+so the processor's operator answers what the template would.  An inner loop whose end is
+an outer counter (`for _ in 0..i`, the insertion sort's `j -= 1`) is bounded once that
+counter is ranged, so the clause is re-read where the fixpoint re-seeds counters.  The
+seed's block may itself sit in a loop (each pass re-seeds); a step under a loop with no
+bound (a `while`, a counted loop whose seed or end is unranged, a walk over a text the body
+appends to), a step by a non-literal, a second seed, a write to `n` anywhere else, a
+parameter seed or `n` handed out by reference declines.  `LOFT_HOIST_VERIFY=1` compares every
+plain step with its template.  Cells `tests/scripts/158-walk-accumulator.loft` a1–a18 (a16/a17
+the boundary pair across i64::MAX, a18 a step that really overflows), pins
 `tests/walk_accumulator.rs`.  Site: `range::seed_accumulators`.
 Sites: `generation::range::{range, op_range, range_vars, plain_form}`, the range arm in
 `ops::int_arith`, `Output::op_range`, `non_sentinel::callee_returns_non_sentinel`.
