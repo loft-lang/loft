@@ -214,6 +214,24 @@ first should cost about what the second does.  A managed endpoint agent can stil
 own; the same check shows that.  Whatever does not fit the 20-minute cap afterwards is split or
 moved, never given a longer limit (`scripts/hard_cap.sh`, CI_BUDGET.md).
 
+**Keep the build directory out of `~/Documents`.**  A process whose binary lives under
+`~/Documents` makes every child it starts wait in the loader: the child blocks in dyld on a
+synchronous image-load notification before `main` runs.  The suite is a tree of such
+spawns (test binary → `loft` → `rustc` / the compiled cell), so every level pays it.  Measured:
+a test harness that spawned a 20 ms `loft --interpret` cell 40 times took 0.5 s from a binary
+outside `~/Documents` and 14 s from the same binary copied into `target/`, and a `copy_lease`
+cell took 0.7–1.4 s against 0.03 s.  Only the PARENT's real path counts.  The child's location
+does not matter, and a symlink is resolved, so either of these removes the stall without
+touching a script:
+
+- move `target/` elsewhere and leave a symlink at `target`
+  (`mv target ~/build/loft-target && ln -s ~/build/loft-target target`), or
+- check the repository out outside `~/Documents`.
+
+`CARGO_TARGET_DIR` also works for cargo, but scripts that name `target/debug/loft` would miss it.
+The check: `cargo test` on a one-test crate that spawns any short program in a loop, run once
+from inside the checkout's `target/` and once from `/tmp`.  The two should match.
+
 **Package cdylibs are linked without a post-link `strip`.**  Cargo's release default runs the
 system `strip` over a linked dylib; on one holding `ring`'s objects (every TLS package) that left
 the string table misaligned and the linker refused to link against it (`ld: mis-aligned LINKEDIT
