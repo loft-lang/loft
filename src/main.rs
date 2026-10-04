@@ -7236,6 +7236,9 @@ fn main() {
         loft::timeout::env_timeout_secs(),
         loft::timeout::env_grace_secs(),
     );
+    // A memory bound beside the time bound, but only when asked for: an explicit
+    // `LOFT_MEMORY_LIMIT` caps an ordinary run too (`store_budget::apply_env_limit_if_set`).
+    loft::store_budget::apply_env_limit_if_set();
     // Plan-07 phase 1 step 1.20 / phase 3 — chain a Rust panic hook
     // that surfaces the loft source position of the offending pc
     // before the default panic message.  Reads the per-thread snapshot

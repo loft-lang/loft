@@ -12,7 +12,7 @@ temp directory.  Running the suite: [RUNNING_TESTS.md](RUNNING_TESTS.md).
 | Bound | Catches | On by default |
 |---|---|---|
 | [Execution timeout](#execution-timeout-loft_timeout----timeout) | a run that does not finish | under `--tests` / `loft test` (300 s) |
-| [Store-memory ceiling](#store-memory-ceiling-loft_memory_limit) | a run whose heap grows without limit | under `--tests` / `loft test` (2 GiB) |
+| [Store-memory ceiling](#store-memory-ceiling-loft_memory_limit) | a run whose heap grows without limit | under `--tests` / `loft test` (2 GiB); any run with `LOFT_MEMORY_LIMIT` set |
 | [Hang guard](#hang-guard-loft_max_ops) | names the LOOP a run is stuck in | only in a build with debug assertions on |
 | [Debug boundary checks](#debug-boundary-checks-debug-builds-only) | a read or pop outside its record or stack | only in a build with debug assertions on |
 
