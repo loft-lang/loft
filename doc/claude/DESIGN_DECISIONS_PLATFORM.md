@@ -217,6 +217,30 @@ program cannot observe is the compiler's; what it can is the language's (C120, o
 **Revisit when.** Not stated.  Decided 2026-09-15 — [record](DESIGN_DECISIONS-history.md#c122--the-contract-is-semantics-a-rewrite-is-free-wherever-its-conditions-are-validated-and-a-library-api-is-the-one-boundary).
 Holds at `(R-Escape)`, [formal/rewrites.md](formal/rewrites.md).
 
+## C135 — loft has no unsafe construct; representation is observable only at a native boundary or a file-backed store
+
+**Decision.** No loft construct lets a program observe how a value is represented: no address,
+no raw buffer, no layout, no `unsafe` block.  A Rust body belongs to the standard library
+(`#rust`, C87); a package binds Rust only through `#native` and its own native crate.
+Representation is observable at exactly two boundaries: a package's native code, and a store
+whose bytes persist or are mapped from a file — there the store layout IS the contract, read
+back by another run, process or tool.  Everywhere else a value's representation is the
+compiler's (C122).  Reports of representation — `store_memory()`, the `LOFT_TRACE_*` switches —
+describe the build, not the program; their output is not part of the contract.  **Why.** Every
+representation rewrite (`(R-Escape)`, `(R-ValueRecord)`, the store rewrites, the proposed
+`(R-Apart)` in [APART_VALUES.md](APART_VALUES.md)) is sound only because a program cannot tell
+the forms apart.  Rust's optimiser stays conservative because `unsafe` code may depend on a
+`Vec`'s layout; loft keeps Rust's guarantees underneath without that door on top.
+
+**Revisit when.** A use case needs a program to observe representation that neither a native
+package nor a file-backed store serves.  Opening that door makes every representation rewrite a
+soundness question at once, so the proposal must name each rewrite it invalidates.  Decided
+2026-10-04 — [record](DESIGN_DECISIONS-history.md#c135--loft-has-no-unsafe-construct-representation-is-observable-only-at-a-native-boundary-or-a-file-backed-store).
+**Holds at:** `@C135` — the `#rust` refusal in `src/parser/definitions.rs` (with C87),
+`(R-Escape)` in [formal/rewrites.md](formal/rewrites.md); guard
+`tests/scripts/c135-representation-is-observable-only-at-a-boundary.loft`; the file-backed
+boundary by the store format's guards (`tests/store_durable_format.rs`).
+
 ## C133 — A development build uses the startup cache; LOFT_NO_CACHE=1 turns it off
 
 **Decision.** The whole-program startup cache is on for every build — `cargo run`, `cargo test`

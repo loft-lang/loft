@@ -58,7 +58,11 @@ Both backends, in this order.  Each step's detail lives where it points; the ord
 
 1. **Pick the row by measurement.**  `make interp-gap` (interpreter against native, the ~100×
    cliff) or `make perf-portal` (native against Rust); rank by [§ The clear case
-   first](#the-clear-case-first), within [§ Wide before deep](#wide-before-deep).
+   first](#the-clear-case-first), within [§ Wide before deep](#wide-before-deep).  A routine
+   over 3× its Rust twin is a SYMPTOM: loft is not inherently slower than rustc, so the excess
+   is a mechanism in loft costing more than it should.  Group such routines by mechanism class
+   (`bench/portal/classes.tsv`) and work the class; a slow routine inside a class already
+   under the bar is an ordinary bug.
 2. **Measure real time on the tier that ships**, never the semantics build (CLAUDE.md § three
    optimisation tiers), pinned to one core (`taskset`, `perf stat -e instructions,cycles`).
    `LOFT_PROFILE` samples by OPERATION COUNT, not time: a line full of cheap ops reads hot and
@@ -80,7 +84,13 @@ Both backends, in this order.  Each step's detail lives where it points; the ord
    all](INTERPRETER_PERFORMANCE.md#why-the-interpreter-is-optimised-at-all)); a runtime lever
    before a generator rewrite ([§ Wide before deep](#wide-before-deep)).  **No combined opcode
    or kernel built for one row**: it speeds one spelling and nothing next to it ([KERNELS.md](KERNELS.md)); an
-   operator comes after the IR work, from broad evidence (formal/performance.md `(Perf-Order)`).  Only proven situations
+   operator comes after the IR work, from broad evidence (formal/performance.md `(Perf-Order)`).
+   **Fix the mechanism, not the shape**: a rule that speeds one shape is a STOPGAP, recorded
+   with the root fix that retires it, and the measure of a fix is what it moved that nobody
+   targeted (class medians, `make perf-portal`).  A representation of the compiler's own —
+   a stack array, a tuple in registers — is allowed wherever a program cannot observe it,
+   which is everywhere except a package's native code and a store bound to a file
+   ([C135](DESIGN_DECISIONS_PLATFORM.md), [APART_VALUES.md](APART_VALUES.md)).  Only proven situations
    ([C120](DESIGN_DECISIONS_VALUES.md)), the contract is semantics, not representation
    ([C122](DESIGN_DECISIONS_PLATFORM.md)), remove the object rather than complicate the memory
    model ([C125](DESIGN_DECISIONS_OWNERSHIP.md)).

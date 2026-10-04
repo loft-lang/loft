@@ -53,7 +53,9 @@ under the same "as if" freedom, but it has to reconstruct facts loft states outr
 of every value and its layout, which stores can never alias (`(R-Alias)`), every owner and every
 lifetime (the scope pass), and — in a release build — the whole program as one unit (C122).
 What LLVM must prove by escape analysis, loft already knows, so it can choose representations
-LLVM never dares to.
+LLVM never dares to.  That freedom depends on loft having no construct that observes
+representation (C135): the two places it is observable, a package's native code and a store
+bound to a file, are exactly where an apart value must already be a store value.
 
 **Where it sits.**  It is an instance of `(R-Escape)` (C122): the contract is what a program
 computes and observes, never where a value lives.  It does not revisit C125: `(O-One-Kind)`

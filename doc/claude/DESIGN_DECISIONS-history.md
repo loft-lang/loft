@@ -4610,3 +4610,17 @@ existed only inside interface declarations.  The 2026.10 cycle's user-operator d
 kept open and declined: allowing `op <` for user definitions — readable, but it keeps the
 machinery those defects came from.  2026.10 ships unchanged; the work is loft#1833.
 
+## C135 — loft has no unsafe construct; representation is observable only at a native boundary or a file-backed store
+
+Decided 2026-10-04 by the owner, while reviewing the apart-values proposal (APART_VALUES.md):
+"this is partly why I love that we have the rustc guarantees under the hood but no unsafe loft
+command", and on the boundary: "the store model is clearly observable though the memory mapped
+files we use.  But that is part of our framing of what we optimize in the first place."  The
+question was why rustc, despite exclusive-access rules, rarely removes heap allocations: a
+`Vec`'s layout is part of Rust's contract because `unsafe` code may take its pointer, so heap
+elision happens only where inlining puts the allocation and the free in one function (measured:
+a summed vector temp 1 ns, a `Vec` returned from a non-inlined function 20 ns).  Loft has no
+such construct — `#rust` in a program was already refused (C87), `unsafe` is not a keyword — but
+nothing recorded it, while C122, `(R-Escape)`, `(R-ValueRecord)` and every store rewrite depend
+on it.  Recorded so a future proposal that opens a representation door has to name the rewrites
+it invalidates.

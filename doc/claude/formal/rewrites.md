@@ -105,7 +105,10 @@ the conditions under which a program cannot tell the rewritten form from the wri
 and the compiler validates those conditions or declines.  What it may never do is change
 a value, a fault or an effect (C120 is the same principle from the other side), or hand a
 representation of its own choosing across a library's API, where the callers that would
-have to validate the conditions are not in the compilation.  `(R-ValueRecord)`'s bridge
+have to validate the conditions are not in the compilation.  The freedom rests on loft having
+no construct that observes representation — no address, no raw buffer, no `unsafe` (@C135);
+the two places representation IS observable, a package's native code and a store bound to a
+file, are boundaries every rule here respects.  `(R-ValueRecord)`'s bridge
 clause is the existing instance — a value tuple inside the library, the promised record
 at the boundary — and `(O-ViewField)` takes its scope from here.  A user PROGRAM is a
 closed unit (every use is in the compilation; a fn-ref call is a match over known

@@ -3728,7 +3728,9 @@ impl Parser {
                 // @C87 — `#rust` / `#iterator` are the standard library's templates for its own
                 // operators, compiled into loft itself; a library's Rust goes through
                 // `#native` and a native crate, which reaches all four targets.  The template
-                // strings are consumed so the refusal is the only diagnostic.
+                // strings are consumed so the refusal is the only diagnostic.  @C135 — this is
+                // also the door a program would observe representation through: it stays shut,
+                // so every representation rewrite may assume no program can tell the forms apart.
                 let what = id.unwrap_or_default();
                 while self.lexer.has_cstring().is_some() {}
                 diagnostic!(
