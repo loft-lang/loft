@@ -502,6 +502,13 @@ pub fn OpFinishRecord(
 /// Bytecode equivalent: `OpFreeRef` in `src/state/io.rs:262`.
 /// The `name` argument is the loft variable name (e.g. `"var_p"`); it appears in
 /// `LOFT_STORE_LOG` output for diagnosing LIFO store-free order violations.
+/// `@FR-R-RebindBuffer` — the scope-exit release of a hidden buffer a rebind handed a store
+/// to: parked as the spare the exchange would have parked, or freed (`Stores::park_or_free`).
+pub fn cr_park_or_free(cell: &std::cell::UnsafeCell<Stores>, db: DbRef, name: &str) {
+    let stores: &mut Stores = unsafe { &mut *cell.get() };
+    stores.park_or_free(&db, name);
+}
+
 pub fn OpFreeRef(cell: &std::cell::UnsafeCell<Stores>, db: DbRef, name: &str) {
     let stores: &mut Stores = unsafe { &mut *cell.get() };
     // A generator handle addresses no store — free the coroutine, which releases the heap

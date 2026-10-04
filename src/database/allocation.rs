@@ -1125,6 +1125,27 @@ impl Stores {
         }
     }
 
+    /// `@FR-R-RebindBuffer` — release a hidden buffer that holds the store a rebind handed
+    /// on, the way the exchange it replaced releases its own: parked as the spare when it is
+    /// a root store the exchange could have parked (`(R-RefillBuffer)`), freed otherwise.
+    pub fn park_or_free(&mut self, db: &DbRef, name: &str) {
+        if db.store_nr == u16::MAX || (db.store_nr as usize) >= self.allocations.len() {
+            return;
+        }
+        if (db.rec, db.pos) == (1, 8)
+            && crate::keys::refill_buffer_enabled()
+            && !self.disable_slot_reuse
+            && !self.is_stack_store(db.store_nr)
+            && self.allocations[db.store_nr as usize].content_swappable(true)
+            && self.lazy_sources.is_empty()
+            && !self.const_refs.iter().any(|r| r.store_nr == db.store_nr)
+        {
+            self.park_spare(db.store_nr);
+        } else {
+            self.free_named(db, name);
+        }
+    }
+
     /// `@FR-R-RefillBuffer` — the kept store, when it holds a root of type `tp`: handed out
     /// as is, its previous value still in it, for a callee whose literal writes every field.
     /// `@FR-R-RefillBuffer`'s live clause — may a buffer handed in LIVE be refilled where it

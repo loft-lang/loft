@@ -707,6 +707,9 @@ pub struct Output<'a> {
     /// hand the displaced store to that buffer instead of freeing it.
     pub rebind_buffer: Option<(u16, String, Option<String>)>,
     pub rebind_buffer_used: bool,
+    /// `@FR-R-RebindBuffer` — the hidden buffer locals a rebind hands stores to; their
+    /// scope-exit release parks the store instead of freeing it.
+    pub rebind_handed: HashSet<u16>,
     /// @PLN90 #495 — "runtime-Join" locals: an owned-typed Reference/Enum local
     /// that is INITIALISED owned (a whole-value copy / owned call) but then
     /// REASSIGNED to a borrow (the `r = v[i] ?? x` ncc) at least once.  r's
@@ -2389,6 +2392,7 @@ impl<'a> Output<'a> {
             refill_in_place: crate::keys::refill_in_place_enabled(),
             rebind_buffer: None,
             rebind_buffer_used: false,
+            rebind_handed: HashSet::new(),
             inline_hint: crate::keys::inline_hint_enabled(),
             push_window_disabled: !crate::keys::push_window_enabled(),
             join_read_disabled: !crate::keys::join_read_enabled(),
@@ -2843,6 +2847,7 @@ impl Output<'_> {
         self.declared.clear();
         self.local_record_link.clear();
         self.retbuf_witness.clear();
+        self.rebind_handed.clear();
         self.witness_vars.clear();
         self.predeclared.clear();
         self.next_format_count = 0;
@@ -10064,6 +10069,31 @@ extern crate loft;"
                         self.retbuf_witness.insert(av);
                     }
                 }
+            }
+            // `@FR-R-RebindBuffer` — every hidden buffer a rebind may hand a store to, marked
+            // before the body is emitted: a release emitted ahead of the rebind (an early
+            // `return` inside the loop) must park the store too.  A superset is safe: parking a
+            // store that is being released is sound wherever freeing it is.
+            {
+                let fvars = self.data.def(self.def_nr).variables();
+                let mut sets: Vec<(u16, &Value)> = Vec::new();
+                self.data.def(self.def_nr).code().any_node(&mut |n| {
+                    if let Value::Set(v, rhs) = n
+                        && matches!(rhs.unspan(), Value::Call(_, _))
+                    {
+                        sets.push((*v, rhs));
+                    }
+                    false
+                });
+                let attrs = self.data.def(self.def_nr).attributes();
+                let mut handed = HashSet::new();
+                for (v, rhs) in sets {
+                    let is_retbuf_attr = attrs.iter().any(|a| a.hidden && fvars.var(&a.name) == v);
+                    if let Some((buf, _)) = self.rebind_buffer_for(v, rhs, is_retbuf_attr) {
+                        handed.insert(buf);
+                    }
+                }
+                self.rebind_handed = handed;
             }
             // @PLN90 #495 — the runtime-Join owned-store tracker.  For each
             // "runtime-Join" local (owned init + ≥1 ncc-borrow reassign) declare

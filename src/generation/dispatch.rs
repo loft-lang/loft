@@ -429,7 +429,8 @@ impl Output<'_> {
                     self.rebind_buffer_for(var, to, is_retbuf_attr)
                 };
                 write!(w, "{{ let _old_{name}: DbRef = {place}; ")?;
-                if let Some(buf) = &rebind_buf {
+                if let Some((buf_nr, buf)) = &rebind_buf {
+                    self.rebind_handed.insert(*buf_nr);
                     self.rebind_buffer = Some((
                         var,
                         buf.clone(),
@@ -443,7 +444,7 @@ impl Output<'_> {
                 let handed = std::mem::take(&mut self.rebind_buffer_used)
                     .then_some(rebind_buf)
                     .flatten()
-                    .map(|buf| format!("if __rbb_{name} {{ var_{buf} = _old_{name}; }} else "))
+                    .map(|(_, buf)| format!("if __rbb_{name} {{ var_{buf} = _old_{name}; }} else "))
                     .unwrap_or_default();
                 write!(
                     w,
@@ -462,7 +463,12 @@ impl Output<'_> {
     /// names `var`'s store — no other local depends on it, it is not captured, not an
     /// argument (a retbuf attribute with its entry witness excepted: the emitted arm then
     /// declines the caller's entry buffer at run time).
-    fn rebind_buffer_for(&self, var: u16, to: &Value, is_retbuf_attr: bool) -> Option<String> {
+    pub(super) fn rebind_buffer_for(
+        &self,
+        var: u16,
+        to: &Value,
+        is_retbuf_attr: bool,
+    ) -> Option<(u16, String)> {
         if !crate::keys::rebind_buffer_enabled() || self.in_coroutine_body {
             return None;
         }
@@ -525,6 +531,25 @@ impl Output<'_> {
             trace("the rebind is not found in the body");
             return None;
         };
+        // The handed store pays only when the call runs again: outside a loop the buffer is
+        // never read, and the exchange's released store would have been parked for the next
+        // mint instead of freed at exit.
+        let mut in_loop = false;
+        def.code().any_node(&mut |n| {
+            if let Value::Loop(lp) = n
+                && lp
+                    .operators
+                    .iter()
+                    .any(|st| st.any_node(&mut |m| std::ptr::eq(std::ptr::from_ref(m), target)))
+            {
+                in_loop = true;
+            }
+            in_loop
+        });
+        if !in_loop {
+            trace("not inside a loop");
+            return None;
+        }
         let names = |w: u16, st: &Value| {
             st.any_node(&mut |n| matches!(n, Value::Var(x) | Value::Set(x, _) if *x == w))
         };
@@ -567,7 +592,7 @@ impl Output<'_> {
             trace(&format!("the buffer has {uses} uses, {frees} frees"));
             return None;
         }
-        Some(sanitize(vars.name(buf)))
+        Some((buf, sanitize(vars.name(buf))))
     }
 
     /// Writes a raw pointer to the store slot a place op names — the element of an

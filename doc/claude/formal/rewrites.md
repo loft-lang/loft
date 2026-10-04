@@ -664,9 +664,13 @@ fill whose length the kept vector already has: `mat4_mul` −17 % (priced −24 
                  buffer is dropped), and `x`'s store is not the caller's entry buffer
                  (a return-buffer local).  Static conditions: `x` is not an argument
                  (the return-buffer attribute with its entry witness excepted), not
-                 captured, not never-free, not witnessed, not a coroutine field; and
-                 no local borrowing `x`'s or `b`'s store is named at or after the
-                 top-level statement holding the rebind.
+                 captured, not never-free, not witnessed, not a coroutine field; the
+                 rebind sits inside a loop (the handed store is a buffer only if the
+                 call runs again); and no local borrowing `x`'s or `b`'s store is named
+                 at or after the top-level statement holding the rebind.  At its
+                 release `b` PARKS the store it holds where the exchange would have
+                 parked its released one (`(R-RefillBuffer)`'s spare), so the stores a
+                 function leaves behind for the next mint are the exchange's.
 ```
 
 **In words.**  `c = mul(a, c)` in a loop built each result in a buffer, then exchanged the
@@ -679,7 +683,9 @@ in place.  The two stores take turns by name instead of by content.  The scope-e
 `b` releases whichever one `c` does not hold.  Effect: mesh3d's `mat4_mul` loop 54 → 39 ns
 per product (−29 %, priced −29 %).  Switch `LOFT_NO_REBIND_BUFFER=1`, read where the rebind
 is emitted; trace `LOFT_TRACE_REBIND_BUFFER=1` names each decline.  Sites:
-`Output::rebind_buffer_for` and the call-return arm in `generation/dispatch.rs`.  Guard
+`Output::rebind_buffer_for`, the call-return arm in `generation/dispatch.rs`, the body
+pre-pass that marks the buffers (`Output::rebind_handed`, so a release emitted before the
+rebind — an early `return` inside the loop — parks too), and `Stores::park_or_free`.  Guard
 `tests/scripts/a-rebind-hands-the-displaced-store-to-the-call.loft`, pin
 `tests/rebind_buffer.rs`.
 
