@@ -33,7 +33,7 @@ The same list is 25–40 % of cbor `decode` (bench/portal/analysis/under-10x.md 
 ## The rule
 
 ```
-  (R-Apart)      a value the compiler proves is never OBSERVED AS A STORE VALUE may be
+  (R-Apart)      a value OF ANY TYPE the compiler proves is never OBSERVED AS A STORE VALUE may be
                  held, on --native, in any representation of the compiler's choosing —
                  on the stack, on Rust's heap, in registers — that has no
                  meaning in loft's semantics and no entry in the store model: no
@@ -129,13 +129,21 @@ the four worst in the portal.
 
 ## Instances, in the order they would be built
 
+The rule is not about records or vectors: every type may take a form loft itself cannot
+express wherever a program cannot see the difference (owner) — a text as a Rust `String` or a
+slice of its source, an enum as a Rust enum, a keyed collection used only as a local lookup as
+a hash map or a sorted array, an iterator fused into its loop, a scalar the store would box.
+The list below is only the ORDER, set by measured payoff — the classes over the bar first.
+
 1. **Fixed-length scalar local vectors that never cross** — a `[T; N]` stack array for a
    `vector<T>` local of a scalar `T` whose length is the same constant for its whole life: a
    literal of `N` elements, then only index reads and writes, `len`, and `for` iteration.
 2. **The same vector as a field of a value record**, across calls the gate admits on both
    sides — `(R-ValueRecord)`'s tuple carrying the array.  `Mat4` is the case.
-3. **Bounded variable-length vectors and texts** (a small inline buffer, or a Rust `Vec` /
-   `String`) — only if instances 1 and 2 leave a measured class above the bar.
+3. **Variable-length vectors and texts** (an inline buffer, or a Rust `Vec` / `String`).
+4. **Every other type the bench shows paying the store protocol as a throwaway** — enums with a
+   payload (cbor `decode`'s values), local keyed collections, iterators — each priced by hand
+   first, each an instance under the same gate.
 
 ## Verification
 
