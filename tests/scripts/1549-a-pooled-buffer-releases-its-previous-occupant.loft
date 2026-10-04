@@ -18,7 +18,9 @@
 // `LOFT_POISON=1`, `LOFT_POISON_CLAIM=1`, `LOFT_STRICT_STORES=1` and `LOFT_NATIVE_LEAK_CHECK=1`
 // must answer identically.
 //
-// @falsified-at: 04cc50b1 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
+// @falsified-at: 04cc50b1e — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   RE-SCORED 2026-10-04 with m1 on the live-record census (it read resident memory from /proc,
+//   vacuous off Linux): the control fails m1 on both backends, on macOS as on Linux.
 //   native exit 1 -> 0, native 1 assertion failures -> 0.
 // @falsified-by: tests/falsified/1549-a-pooled-buffer-releases-its-previous-occupant.patch
 //   — the same channels as the control above.  Score it with

@@ -4890,16 +4890,13 @@ impl Stores {
     #[inline]
     pub(crate) fn holds_no_heap_fast(&self, rec: &DbRef, tp: u16) -> Option<bool> {
         let row = self.types.get(tp as usize)?;
-        let slots = match row.heap_slots.get() {
-            Some(s) => s.as_deref()?,
-            None => {
-                let derived = self
-                    .derive_heap_slots(tp, 0, &mut Vec::new())
-                    .map(Vec::into_boxed_slice);
-                row.heap_slots.set(derived);
-                row.heap_slots.get()?.as_deref()?
-            }
-        };
+        if row.heap_slots.get().is_none() {
+            let derived = self
+                .derive_heap_slots(tp, 0, &mut Vec::new())
+                .map(Vec::into_boxed_slice);
+            row.heap_slots.set(derived);
+        }
+        let slots = row.heap_slots.get()?.as_deref()?;
         if slots.is_empty() {
             return Some(true);
         }
