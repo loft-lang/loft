@@ -1296,6 +1296,17 @@ pub fn refill_buffer_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_REFILL_BUFFER"))
 }
 
+/// A refilled return buffer's repeat literal overwrites the kept vector where it stands when
+/// it already holds that many elements (`@FR-R-RefillBuffer`'s in-place clause,
+/// `Stores::fill_exact`) — **DEFAULT ON**.  Opt OUT with `LOFT_NO_REFILL_IN_PLACE` (read where
+/// the literal is emitted): the vector is emptied and filled again, the before-half of the
+/// A/B and the first bisect step for a wrong element in a refilled vector on `--native`.
+#[must_use]
+pub fn refill_in_place_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_REFILL_IN_PLACE"))
+}
+
 /// A call of an effect-free function made twice in one body on arguments nothing writes in
 /// between is computed once, on both backends (`@FR-R-PureReuse`, `pure_reuse`) — **DEFAULT
 /// ON**.  Opt OUT with `LOFT_NO_PURE_REUSE` (read at the scope pass): every call is made, the

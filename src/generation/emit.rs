@@ -2767,6 +2767,38 @@ impl Output<'_> {
     /// `is_fn_body` marks the one block whose Rust type is the function's
     /// return signature (`Context::Result`).  Only there may the tail expression
     /// carry a narrow-integer cast — see [`block_tail_cast`].
+    /// `@FR-R-PushFill`'s repeat-literal clause — a `[c; n]` template and its copies are one
+    /// fill of the tail; the two statements stand as the fallback for a count or a vector the
+    /// fill refuses.
+    fn output_repeat_literal(
+        &mut self,
+        w: &mut dyn Write,
+        rl: &super::hoist::RepeatLiteral,
+        first: &Value,
+        second: &Value,
+    ) -> std::io::Result<()> {
+        let vec = self.expr_string(rl.vector)?;
+        let val = self.expr_string(rl.val)?;
+        let ty = rl.rust_type;
+        self.indent(w)?;
+        writeln!(
+            w,
+            "if !{{ let mut __rl = vector::push_header(&({vec}), &stores.allocations); stores.push_fill::<{ty}, false>(&mut __rl, &({vec}), {}_u32, {}_i64, ({val}) as {ty}) }} {{ //@FR-R-PushFill repeat literal",
+            rl.size, rl.count
+        )?;
+        self.indent += 1;
+        for s in [first, second] {
+            self.indent(w)?;
+            self.output_code_inner(w, s)?;
+            writeln!(w, ";")?;
+        }
+        self.indent -= 1;
+        self.indent(w)?;
+        writeln!(w, "}}")?;
+        crate::rewrite_census::fired("R-PushFill", 1);
+        Ok(())
+    }
+
     pub(super) fn output_block(
         &mut self,
         w: &mut dyn Write,
@@ -3251,7 +3283,7 @@ impl Output<'_> {
                 writeln!(w, "// loft:{file}:{line}")?;
                 continue;
             }
-            if repeat_skip == Some(vnr) {
+            if repeat_skip.is_some_and(|last| vnr <= last) {
                 continue;
             }
             // `@FR-R-PushFill`'s repeat-literal clause — a `[c; n]` template and its copies are
@@ -3262,25 +3294,7 @@ impl Output<'_> {
                 && let Some(next) = operators.get(vnr + 1)
                 && let Some(rl) = super::hoist::repeat_literal(v, next, self.data)
             {
-                let vec = self.expr_string(rl.vector)?;
-                let val = self.expr_string(rl.val)?;
-                let ty = rl.rust_type;
-                self.indent(w)?;
-                writeln!(
-                    w,
-                    "if !{{ let mut __rl = vector::push_header(&({vec}), &stores.allocations); stores.push_fill::<{ty}, false>(&mut __rl, &({vec}), {}_u32, {}_i64, ({val}) as {ty}) }} {{ //@FR-R-PushFill repeat literal",
-                    rl.size, rl.count
-                )?;
-                self.indent += 1;
-                for s in [v, next] {
-                    self.indent(w)?;
-                    self.output_code_inner(w, s)?;
-                    writeln!(w, ";")?;
-                }
-                self.indent -= 1;
-                self.indent(w)?;
-                writeln!(w, "}}")?;
-                crate::rewrite_census::fired("R-PushFill", 1);
+                self.output_repeat_literal(w, &rl, v, next)?;
                 repeat_skip = Some(vnr + 1);
                 continue;
             }
@@ -3546,6 +3560,33 @@ impl Output<'_> {
                 )
             {
                 let name = sanitize(self.data.def(self.def_nr).variables().name(*b));
+                // The in-place clause: the zero followed by a repeat literal of the same field
+                // overwrites the kept vector where it stands when it already holds that many
+                // elements; any other length empties and fills it as below.
+                let in_place = if self.refill_in_place
+                    && !self.hoist_disabled
+                    && !self.push_fill_disabled
+                    && let (Some(first), Some(second)) =
+                        (operators.get(vnr + 1), operators.get(vnr + 2))
+                    && let Some(rl) = super::hoist::repeat_literal(first, second, self.data)
+                    && super::hoist::vector_path(self.data, rl.vector)
+                        == Some((*b, vec![i64::from(*off)]))
+                {
+                    let vec = self.expr_string(rl.vector)?;
+                    let val = self.expr_string(rl.val)?;
+                    let ty = rl.rust_type;
+                    self.indent(w)?;
+                    writeln!(
+                        w,
+                        "if !stores.fill_exact::<{ty}>(&({vec}), {}_u32, {}_i64, ({val}) as {ty}) {{ //@FR-R-RefillBuffer in place",
+                        rl.size, rl.count
+                    )?;
+                    self.indent += 1;
+                    crate::rewrite_census::fired("R-RefillBuffer", 1);
+                    Some((rl, first, second))
+                } else {
+                    None
+                };
                 self.indent(w)?;
                 // A buffer whose elements own heap had them released by its entry clear
                 // (`hoist::refill_buffers` admits it only then): the length reset is all the
@@ -3554,6 +3595,13 @@ impl Output<'_> {
                     w,
                     "{{ let _rf = var_{name}; vector::clear_vector(&DbRef {{ store_nr: _rf.store_nr, rec: _rf.rec, pos: _rf.pos + {off}_u32 }}, &mut stores.allocations); }} //@FR-R-RefillBuffer"
                 )?;
+                if let Some((rl, first, second)) = in_place {
+                    self.output_repeat_literal(w, &rl, first, second)?;
+                    self.indent -= 1;
+                    self.indent(w)?;
+                    writeln!(w, "}}")?;
+                    repeat_skip = Some(vnr + 2);
+                }
                 continue;
             }
             let lit_guard = match v.unspan() {

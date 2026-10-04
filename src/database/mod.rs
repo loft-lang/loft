@@ -2294,6 +2294,36 @@ impl Stores {
         true
     }
 
+    /// `@FR-R-RefillBuffer`'s in-place clause — make the vector at `db` hold exactly `count`
+    /// copies of `val` by overwriting it where it stands, when it ALREADY holds `count`
+    /// elements of width `size`: the answer `clear_vector` + [`Stores::push_fill`] gives,
+    /// without the reset, the reserve and the two header derivations.  `false` (nothing
+    /// written) for any other length, a null, foreign or locked vector, or a width that is
+    /// not `T`'s — the caller then empties and fills as before.  Scalars only, so the
+    /// elements it overwrites own nothing.
+    #[inline]
+    pub fn fill_exact<T: crate::vector::HoistScalar>(
+        &mut self,
+        db: &crate::keys::DbRef,
+        size: u32,
+        count: i64,
+        val: T,
+    ) -> bool {
+        if size != std::mem::size_of::<T>() as u32 {
+            return false;
+        }
+        let h = crate::vector::vec_header(db, &self.allocations);
+        if h.rec == 0 || h.locked || i64::from(h.len) != count {
+            return false;
+        }
+        let store = &mut self.allocations[h.store_nr as usize];
+        if store.is_foreign() {
+            return false;
+        }
+        store.fill::<T>(h.rec, crate::vector::checked_vec_pos(0, size), h.len, val);
+        true
+    }
+
     #[cold]
     #[inline(never)]
     fn push_hoisted_grow<T: crate::vector::HoistScalar>(

@@ -1,0 +1,91 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-RefillBuffer`'s in-place clause — a refilled return buffer whose literal starts a
+// vector field as `n` copies of one scalar overwrites the kept vector where it stands when
+// that vector already holds `n` elements (`Stores::fill_exact`); any other length is emptied
+// and filled as before (`LOFT_NO_REFILL_IN_PLACE=1` always does that).
+//
+// What can go wrong is the previous value showing through: every callee here writes ONE
+// element after the literal, so each other element must read the literal's value and never
+// the kept store's.  The rebinds alternate two stores, so a stale element would come from
+// the value two calls back.  Every cell checks values AND lengths; values hand-computed.
+
+struct M { m: vector<float> }
+
+struct I { v: vector<integer> }
+
+struct S { s: vector<single> }
+
+// r.m[k] = a.m[k] + 10 + k; every other element 0
+fn bump(a: const M, k: integer) -> M {
+  r = M { m: [0.0, 0.0, 0.0, 0.0] };
+  r.m[k] = (a.m[k] ?? 0.0) + 10.0 + k as float;
+  r
+}
+
+// p1: k = 0, 1, 2, 3, 0, 1 from [1, 2, 3, 4]:
+//   [11,0,0,0] [0,11,0,0] [0,0,12,0] [0,0,0,13] [10,0,0,0] [0,11,0,0]
+fn p1() {
+  c = M { m: [1.0, 2.0, 3.0, 4.0] };
+  for i in 0..6 { c = bump(c, i % 4); }
+  assert(len(c.m) == 4, "p1 len {len(c.m)}");
+  assert(c.m[0] == 0.0 && c.m[1] == 11.0 && c.m[2] == 0.0 && c.m[3] == 0.0, "p1 got {c.m}");
+}
+
+// r.m[0] = len(a.m); an odd k appends 7, so the kept vector's length alternates 4 and 5
+fn grow(a: const M, k: integer) -> M {
+  r = M { m: [0.0, 0.0, 0.0, 0.0] };
+  if k % 2 == 1 { r.m += [7.0]; }
+  r.m[0] = len(a.m) as float;
+  r
+}
+
+// p2: k = 0..5 from a length-4 vector:
+//   [4,0,0,0] [4,0,0,0,7] [5,0,0,0] [4,0,0,0,7] [5,0,0,0] [4,0,0,0,7]
+fn p2() {
+  c = M { m: [9.0, 9.0, 9.0, 9.0] };
+  for k in 0..6 { c = grow(c, k); }
+  assert(len(c.m) == 5, "p2 len {len(c.m)}");
+  assert(c.m[0] == 4.0 && c.m[1] == 0.0 && c.m[2] == 0.0 && c.m[3] == 0.0 && c.m[4] == 7.0,
+         "p2 got {c.m}");
+}
+
+// r.v[k] = a.v[k] * 3 + 1; every other element 6
+fn tri(a: const I, k: integer) -> I {
+  r = I { v: [6, 6, 6, 6] };
+  r.v[k] = (a.v[k] ?? 0) * 3 + 1;
+  r
+}
+
+// p3: k = 2, 0, 1, 2 from [1, 2, 3, 4]:
+//   [6,6,10,6] [19,6,6,6] [6,19,6,6] [6,6,19,6]
+fn p3() {
+  c = I { v: [1, 2, 3, 4] };
+  for k in [2, 0, 1, 2] { c = tri(c, k); }
+  assert(len(c.v) == 4, "p3 len {len(c.v)}");
+  assert(c.v[0] == 6 && c.v[1] == 6 && c.v[2] == 19 && c.v[3] == 6, "p3 got {c.v}");
+}
+
+// r.s[k] = a.s[k] + 1; every other element 0.5
+fn half(a: const S, k: integer) -> S {
+  r = S { s: [0.5f, 0.5f, 0.5f, 0.5f, 0.5f] };
+  r.s[k] = (a.s[k] ?? 0.0f) + 1.0f;
+  r
+}
+
+// p4: k = 4, 4, 0, 4 from five 2.0s:
+//   [.5,.5,.5,.5,3] [.5,.5,.5,.5,4] [1.5,.5,.5,.5,.5] [.5,.5,.5,.5,1.5]
+fn p4() {
+  c = S { s: [2.0f, 2.0f, 2.0f, 2.0f, 2.0f] };
+  for k in [4, 4, 0, 4] { c = half(c, k); }
+  assert(len(c.s) == 5, "p4 len {len(c.s)}");
+  assert(c.s[0] == 0.5f && c.s[3] == 0.5f && c.s[4] == 1.5f, "p4 got {c.s}");
+}
+
+fn main() {
+  p1();
+  p2();
+  p3();
+  p4();
+}

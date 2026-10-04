@@ -1087,6 +1087,8 @@ pub struct Output<'a> {
     /// `LOFT_NO_PUSH_FILL` (generation time): a counted push loop reserves nothing and
     /// fills nothing — the per-push ladder and the per-element loop again (§ V-am).
     pub push_fill_disabled: bool,
+    /// `@FR-R-RefillBuffer`'s in-place clause (`LOFT_NO_REFILL_IN_PLACE` turns it off).
+    pub refill_in_place: bool,
     /// `LOFT_NO_INLINE_HINT` (generation time): loft functions carry no `#[inline]`
     /// ([`crate::keys::inline_hint_enabled`]).
     pub inline_hint: bool,
@@ -2378,6 +2380,7 @@ impl<'a> Output<'a> {
             loop_record_disabled: std::env::var("LOFT_NO_LOOP_RECORD").is_ok_and(|v| v != "0")
                 || !crate::keys::loop_buffer_reuse_enabled(),
             push_fill_disabled: !crate::keys::push_fill_enabled(),
+            refill_in_place: crate::keys::refill_in_place_enabled(),
             inline_hint: crate::keys::inline_hint_enabled(),
             push_window_disabled: !crate::keys::push_window_enabled(),
             join_read_disabled: !crate::keys::join_read_enabled(),
