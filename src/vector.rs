@@ -991,6 +991,10 @@ pub fn push_window(p: &PushHeader, size: u32, stores: &[Store]) -> PushWindow {
 /// in a large function LLVM kept this as a call — 4 ns each, 8 % of `mat4_mul` (priced by
 /// hand on the emitted Rust, bench/portal/analysis/under-10x.md).
 #[must_use]
+#[expect(
+    clippy::inline_always,
+    reason = "a hoisted prelude in a large function kept it as a call (priced -8 % on mat4_mul)"
+)]
 #[inline(always)]
 pub fn vec_header(db: &DbRef, stores: &[Store]) -> VecHeader {
     if db.is_null() || db.rec == 0 || db.pos == 0 {

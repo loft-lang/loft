@@ -571,23 +571,7 @@ impl Output<'_> {
         }
         // Every use of the buffer other than its null declaration and this call's argument
         // is a free of it.
-        let (mut uses, mut frees) = (0usize, 0usize);
-        def.code().any_node(&mut |n| {
-            match n {
-                Value::Var(v) if *v == buf => uses += 1,
-                // Its declaration `buf = null` is not a use; any other write is.
-                Value::Set(v, rhs) if *v == buf && !matches!(rhs.unspan(), Value::Null) => uses += 2,
-                Value::Call(d, a)
-                    if (*d as usize) < self.data.definitions.len()
-                        && self.data.def(*d).name().starts_with("OpFree")
-                        && matches!(a.first().map(Value::unspan), Some(Value::Var(v)) if *v == buf) =>
-                {
-                    frees += 1;
-                }
-                _ => {}
-            }
-            false
-        });
+        let (uses, frees) = buffer_uses(self.data, def.code(), buf);
         if uses != frees + 1 {
             trace(&format!("the buffer has {uses} uses, {frees} frees"));
             return None;
@@ -2774,4 +2758,27 @@ fn tuple_has_non_copy_leaf(elems: &[Type]) -> bool {
         }
     }
     false
+}
+
+/// `@FR-R-RebindBuffer` — how often `body` names the hidden buffer `buf` (its null declaration
+/// aside), and how many of those are frees of it.
+fn buffer_uses(data: &crate::data::Data, body: &Value, buf: u16) -> (usize, usize) {
+    let (mut uses, mut frees) = (0usize, 0usize);
+    body.any_node(&mut |n| {
+        match n {
+            Value::Var(v) if *v == buf => uses += 1,
+            // Its declaration `buf = null` is not a use; any other write is.
+            Value::Set(v, rhs) if *v == buf && !matches!(rhs.unspan(), Value::Null) => uses += 2,
+            Value::Call(d, a)
+                if (*d as usize) < data.definitions.len()
+                    && data.def(*d).name().starts_with("OpFree")
+                    && matches!(a.first().map(Value::unspan), Some(Value::Var(v)) if *v == buf) =>
+            {
+                frees += 1;
+            }
+            _ => {}
+        }
+        false
+    });
+    (uses, frees)
 }

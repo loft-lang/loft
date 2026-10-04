@@ -2763,10 +2763,6 @@ impl Output<'_> {
         ri < bl.operators.len().saturating_sub(1) || self.block_contains_ncc_skip_free(bl)
     }
 
-    #[expect(clippy::too_many_lines, reason = "inherited")]
-    /// `is_fn_body` marks the one block whose Rust type is the function's
-    /// return signature (`Context::Result`).  Only there may the tail expression
-    /// carry a narrow-integer cast — see [`block_tail_cast`].
     /// `@FR-R-PushFill`'s repeat-literal clause — a `[c; n]` template and its copies are one
     /// fill of the tail; the two statements stand as the fallback for a count or a vector the
     /// fill refuses.
@@ -2799,6 +2795,10 @@ impl Output<'_> {
         Ok(())
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
+    /// `is_fn_body` marks the one block whose Rust type is the function's
+    /// return signature (`Context::Result`).  Only there may the tail expression
+    /// carry a narrow-integer cast — see [`block_tail_cast`].
     pub(super) fn output_block(
         &mut self,
         w: &mut dyn Write,
