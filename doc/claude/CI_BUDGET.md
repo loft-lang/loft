@@ -19,6 +19,15 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 > the same commit red or green — and the cancel threw away the leg's output, the one thing that
 > would have said why it ran long.
 >
+> **A WARM local run of the whole suite fits in 20 minutes** (owner): nothing to rebuild, every
+> test.  When one does not, that is the trigger to optimise the SUITE — split it, parallelise
+> it, or move tests to a nightly or PR leg — and the limit is never raised.  Enforced twice:
+> `global-timeout = "20m"` in `.config/nextest.toml`'s default profile (nextest itself cancels
+> the run, however it was started), and `scripts/hard_cap.sh`, which `find_problems.sh` arms
+> around a whole invocation, rebuild included.  Where a warm run stands, measured per binary:
+> `cargo nextest run --status-level pass` and sum each binary's durations — the matrix suites
+> that compile one native program per cell are the place to look first.
+>
 > **The same rule holds for a NIGHTLY job that outgrows its limit: the limit stays, and the job
 > does less repeated work** (owner's direction).  The valgrind sweep was cancelled at
 > its 120 minutes on every run.  The cure was measured, not assumed: a per-file timing column

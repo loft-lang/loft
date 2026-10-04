@@ -17,6 +17,11 @@ status-level     = "pass"
 # stronger guarantee than the in-process `loft --timeout` because nextest
 # escalates to SIGKILL if the process ignores SIGTERM.
 slow-timeout     = { period = "300s", terminate-after = 1 }
+# The run-wide limit: a WARM local run of the suite fits in 20 minutes, and when one does not
+# that is the trigger to optimise the suite — split it, parallelise it, or move tests to a
+# nightly or PR leg — never to raise this (owner; CI_BUDGET.md).  Enforced by nextest itself,
+# so it holds however the suite is started.  CI's profile keeps its own hang guard.
+global-timeout   = "20m"
 
 [profile.ci]
 # CI runs: retry flaky tests once, emit JUnit for the Actions UI.
