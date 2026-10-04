@@ -889,6 +889,28 @@ pub(crate) fn newest_mtime_in(dir: &str) -> Option<std::time::SystemTime> {
     best
 }
 
+/// The generated Rust a native binary cache key is taken over, with the program's own path
+/// removed when the build does not compile it in: a test/semantics build mentions the main
+/// file only in `// loft:` comments (its code reads the path at run time), so two copies of
+/// one program at different paths key the same.  A `lean` build bakes the path into its code
+/// and is keyed on it as written.
+pub(crate) fn path_free_key_source<'a>(
+    rs: &'a [u8],
+    data: &crate::data::Data,
+    lean: bool,
+) -> std::borrow::Cow<'a, [u8]> {
+    let n = data.def_nr("n_main");
+    if lean || n == u32::MAX {
+        return std::borrow::Cow::Borrowed(rs);
+    }
+    let main = data.def(n).position().file.to_string();
+    if main.is_empty() {
+        return std::borrow::Cow::Borrowed(rs);
+    }
+    let text = String::from_utf8_lossy(rs);
+    std::borrow::Cow::Owned(text.replace(main.as_str(), "").into_bytes())
+}
+
 /// FNV-1a 64-bit hash for native binary cache keys.
 pub(crate) fn fnv64(data: &[u8]) -> u64 {
     let mut h = 0xcbf2_9ce4_8422_2325_u64;

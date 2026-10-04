@@ -1714,8 +1714,10 @@ pub(crate) fn run_tests(
                         // published binary is never replaced by a different one.
                         let scratch = crate::platform::scratch_dir();
                         let lib_dir = native_utils::loft_lib_dir();
+                        // Keyed without the program's own path, which this build reads at
+                        // run time (`native_utils::path_free_key_source`).
                         let key = native_utils::native_cache_key(
-                            &buf,
+                            &native_utils::path_free_key_source(&buf, &native_data, false),
                             lib_dir.as_deref(),
                             Some(&native_data),
                         );
@@ -1938,6 +1940,15 @@ pub(crate) fn run_tests(
                                 let mut run_cmd = std::process::Command::new(&binary);
                                 if let Some(name) = only {
                                     run_cmd.arg(name);
+                                }
+                                // The program's own path, which the binary does not hold
+                                // (`codegen_runtime::main_file_or`).
+                                let n_main = native_data.def_nr("n_main");
+                                if n_main != u32::MAX {
+                                    run_cmd.env(
+                                        "LOFT_NATIVE_MAIN_FILE",
+                                        native_data.def(n_main).position().file.to_string(),
+                                    );
                                 }
                                 if std::env::var("LOFT_SOURCE_DIR").is_err()
                                     && let Some(dir) = std::path::Path::new(&abs_file).parent()

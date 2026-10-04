@@ -5768,6 +5768,22 @@ pub fn native_call_chain() -> Vec<String> {
 /// generated function body.  The `&'static str` arguments are string literals
 /// embedded in the generated Rust code.
 #[inline]
+/// The program's own `.loft` path for a compiled program: the one its driver passes in
+/// `LOFT_NATIVE_MAIN_FILE` when it launches the binary, else `baked`.  A test/semantics build
+/// bakes `""` and so holds no path at all — the same program at two paths is one binary and one
+/// cache entry — while a shipped `--native-release` binary bakes its path, since it runs with
+/// no driver.  Read once; the path never changes during a run.
+pub fn main_file_or(baked: &'static str) -> &'static str {
+    static MAIN: std::sync::OnceLock<Option<&'static str>> = std::sync::OnceLock::new();
+    MAIN.get_or_init(|| {
+        std::env::var("LOFT_NATIVE_MAIN_FILE")
+            .ok()
+            .filter(|v| !v.is_empty())
+            .map(|v| &*Box::leak(v.into_boxed_str()))
+    })
+    .unwrap_or(baked)
+}
+
 pub fn cr_call_push(name: &'static str, file: &'static str, line: u32) {
     // @PLN28 — native call-depth guard.  Generated Rust recurses one native
     // frame per loft call, so unbounded recursion overflows the OS stack with

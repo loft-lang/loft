@@ -4416,6 +4416,18 @@ fn exec_native_binary(
     // explicit user-set values win.
     let mut cmd = std::process::Command::new(binary);
     cmd.args(user_args);
+    // A test/semantics build bakes no path (`codegen_runtime::main_file_or`): the program's own
+    // path arrives here, the one its stack traces and log-config lookup name.  It is the main
+    // definition's position when there was a parse, the canonical entry path otherwise — the
+    // same string, since the parser records the entry under `abs_file`.
+    let main_file = data
+        .map(|d| d.def_nr("n_main"))
+        .filter(|&n| n != u32::MAX)
+        .map_or_else(
+            || abs_file.to_string(),
+            |n| data.expect("checked").def(n).position().file.to_string(),
+        );
+    cmd.env("LOFT_NATIVE_MAIN_FILE", &main_file);
     // The compiled program dies with this driver.  A `loft prog.loft` run IS its
     // program: when the driver is killed outright — a test harness reaping its
     // `loft` child, a terminal closing, an OOM kill — the program must not
@@ -11462,10 +11474,15 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
         // keyed by a hash of the generated Rust source so recompilation is
         // skipped when the output hasn't changed.
         let source_bytes = std::fs::read(&emit_path).unwrap_or_default();
+        // The key leaves out the program's own path: a test/semantics build holds it only in
+        // comments (the code reads it at run time, `codegen_runtime::main_file_or`), so the same
+        // program at two paths is one binary.  A lean build bakes the path into its code, and
+        // keeps it in the key.
+        let key_bytes = native_utils::path_free_key_source(&source_bytes, &p.data, lean);
         let source_hash = {
             use std::hash::{Hash, Hasher};
             let mut h = std::collections::hash_map::DefaultHasher::new();
-            source_bytes.hash(&mut h);
+            key_bytes.hash(&mut h);
             // Include the release + debug flags in the hash so each
             // distinct rustc invocation produces a distinct cached
             // binary.  Without this, switching between `--native`
@@ -11503,7 +11520,9 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             .unwrap_or_default()
             .to_string_lossy()
             .to_string();
-        let cached_binary = cache_dir.join(format!("{source_stem}-{source_hash}"));
+        // Named by the key alone: a program's file name is not part of what it compiles to.
+        let _ = &source_stem;
+        let cached_binary = cache_dir.join(format!("native-{source_hash}"));
 
         // P254 — cache-poisoning defense.  Bypass the cache entirely
         // when the user opts out via `LOFT_NATIVE_NO_CACHE=1` (matches

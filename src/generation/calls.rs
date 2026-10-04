@@ -328,6 +328,19 @@ impl Output<'_> {
         idx: usize,
         v: &Value,
     ) -> std::io::Result<()> {
+        // The call-site location the parser hands `assert` / `panic` / `log_*` (a parameter
+        // named `file`): when it is the program's own path, a test/semantics build reads it at
+        // run time like every other mention (`codegen_runtime::main_file_or`), so the binary
+        // holds no path and two copies of one program at different paths are one binary.  Only
+        // that parameter — a user's own string literal is never rewritten.
+        if !self.lean
+            && def_fn.attributes().get(idx).is_some_and(|a| a.name == "file")
+            && let Value::Text(t) = v.unspan()
+            && !t.is_empty()
+            && *t == self.main_file()
+        {
+            return write!(w, "main_file_or(\"\")");
+        }
         // `(R-ValueLocal)` (`@FR-R-ValueLocal`) — a TUPLE PARAMETER takes the tuple: a value
         // local or an admitted call is one already (`hoist::tuple_arg_ready`, the same
         // question the site gate asked); any other record expression is read field by
