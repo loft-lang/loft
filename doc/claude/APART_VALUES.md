@@ -95,7 +95,7 @@ A value crosses into the store when it is:
   take the apart form — instance 2 below);
 - returned where the caller expects a store value;
 - tested for identity or null (an apart value is never null: a `vector?` is not admitted);
-- persisted, formatted, sent to a native (`#rust`) function, or captured by a closure;
+- persisted, sent to a native (`#rust`) function, or captured by a closure;
 - live across a `yield` or handed to a `par` worker (not admitted at all in a first build).
 
 ## Failure paths, and what holds each
@@ -156,8 +156,13 @@ the store path answers.  A stack array is one instance, not the rule; a Rust `Ve
 allocated outside the stores is equally admissible (owner).  The choice per value is the
 compiler's, made on measurement.
 
+The same holds for what a use DOES: any implementation is allowed as long as the user cannot see
+the difference.  Formatting an apart value (`"{v}"`, `log_info`, `println`) is an allowed use,
+not a boundary — it may format the apart form directly, provided the text is byte-identical to
+what the store path prints (brackets, separators, number formatting, null rendering).  That
+equality is the guard: cells that format each apart shape both ways and compare the bytes.
+
 ## Open questions for the owner
 
-1. Is formatting a value (`"{v}"`) a boundary, or a use the allow-list may take later?
-2. One new rule `(R-Apart)`, or an extension of `(R-ValueRecord)`?  This draft prefers a new
+1. One new rule `(R-Apart)`, or an extension of `(R-ValueRecord)`?  This draft prefers a new
    rule that `(R-ValueRecord)` becomes an instance of, since the tuple is the first apart form.
