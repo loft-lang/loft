@@ -547,6 +547,8 @@ Lua, measured (reports, never gates — and run a generator probe inside a memor
 `store_load_key*`, no server-side code) · [LAZY_STORES.md](doc/claude/LAZY_STORES.md) a collection
 bound to an image or `sqlite:` fetches on a MISS, query derived from its own type ·
 [LIFETIME.md](doc/claude/LIFETIME.md) deps/freeing ·
+[APART_VALUES.md](doc/claude/APART_VALUES.md) a proposal: throwaway values held apart from the
+store model (stack arrays, tuples) and converted only at a boundary ·
 [OWNERSHIP_MODEL.md](doc/claude/OWNERSHIP_MODEL.md) the deps north-star (borrow system) ·
 [PLACEMENT.md](doc/claude/PLACEMENT.md) a library runs in this process, a worker, or another
 machine — one manifest line, consumers unchanged; **the four rules for writing one that can
