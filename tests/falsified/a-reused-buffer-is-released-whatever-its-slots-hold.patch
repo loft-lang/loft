@@ -1,11 +1,11 @@
 diff --git a/src/database/allocation.rs b/src/database/allocation.rs
-index 0766c9057..944956054 100644
+index 0cd551b83..cba1c41e6 100644
 --- a/src/database/allocation.rs
 +++ b/src/database/allocation.rs
-@@ -4900,7 +4900,7 @@ impl Stores {
-                 row.heap_slots.get()?.as_deref()?
-             }
-         };
+@@ -4897,7 +4897,7 @@ impl Stores {
+             row.heap_slots.set(derived);
+         }
+         let slots = row.heap_slots.get()?.as_deref()?;
 -        if slots.is_empty() {
 +        if slots.is_empty() || !slots.is_empty() {
              return Some(true);
