@@ -4624,3 +4624,15 @@ such construct — `#rust` in a program was already refused (C87), `unsafe` is n
 nothing recorded it, while C122, `(R-Escape)`, `(R-ValueRecord)` and every store rewrite depend
 on it.  Recorded so a future proposal that opens a representation door has to name the rewrites
 it invalidates.
+
+## C136 — A routine over 3× its Rust twin is a defect; a class whose median is over 3× is a systemic one
+
+Decided 2026-10-04 by the owner, while planning how slow routines become ordinary bugs (@PLN185):
+"the 3x limit versus 4x is from my observation that we are not inherently slower than rustc.  Yes
+we do some more validation and have slower allocation/free but we also have some inherent
+benefits to it due to our type system and inherent ordering of data structures", and "I chose
+the 3x, not because I accept a median of 3x but because it probably exposes a fundamental
+problem.  And with those problems gone and not worked around, the rest of the loft routines will
+benefit also".  @PLN157 had worked to 4×.  The class split comes from the 2026-10-02 macOS portal
+run: 85 of 182 routines over 3×, 7 of 15 class medians over it — filing all 85 would have been
+noise, while the 23 outliers in healthy classes are individual bugs.

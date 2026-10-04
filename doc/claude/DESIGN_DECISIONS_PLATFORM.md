@@ -241,6 +241,27 @@ soundness question at once, so the proposal must name each rewrite it invalidate
 `tests/scripts/c135-representation-is-observable-only-at-a-boundary.loft`; the file-backed
 boundary by the store format's guards (`tests/store_durable_format.rs`).
 
+## C136 — A routine over 3× its Rust twin is a defect; a class whose median is over 3× is a systemic one
+
+**Decision.** On the reference host, a routine whose `--native-release` time is over 3× its
+like-for-like Rust twin is a defect.  When its mechanism class's median is at or under 3×, it is
+an ordinary `performance` issue.  When the class median is over 3×, the class is the defect and
+its plan owns the routine.  `bench/stats.py`'s 2× stays the stricter "ok" line of that report and
+the portal's goal.  **Why.** loft is not inherently slower than rustc: checked arithmetic, null
+handling and the store protocol cost something, and known layouts, a static type for every value
+and ordered stores give something back.  Overhead past 3× is therefore a mechanism in loft costing
+more than it should.  Removing that mechanism brings every routine using it closer to rustc, not
+only the one measured.  The bar is set where the excess is
+a symptom, not where loft should end up.
+
+**Revisit when.** Every class median is under 2× on the reference host (tighten the bar), or a
+class is shown to carry a cost the contract requires that Rust does not pay — that class then
+gets its own recorded bar here, with the cost named.  Decided 2026-10-04 —
+[record](DESIGN_DECISIONS-history.md#c136--a-routine-over-3-its-rust-twin-is-a-defect-a-class-whose-median-is-over-3-is-a-systemic-one).
+**Holds at:** `@C136` — the bar in `bench/portal/outliers.py`; guard
+`tests/doc_hygiene.rs::the_outlier_report_reproduces_the_hand_count`; PERFORMANCE.md § What
+makes a slow routine a bug.
+
 ## C133 — A development build uses the startup cache; LOFT_NO_CACHE=1 turns it off
 
 **Decision.** The whole-program startup cache is on for every build — `cargo run`, `cargo test`

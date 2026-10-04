@@ -27,6 +27,7 @@ read by the release checklist's `M-perf-pass`.
 - [Measuring native code](#measuring-native-code)
 - [How the interpreter executes](#how-the-interpreter-executes)
 - [Front-end speed — how it is measured and guarded](#front-end-speed--how-it-is-measured-and-guarded)
+- [What makes a slow routine a bug](#what-makes-a-slow-routine-a-bug)
 - [Open performance work](#open-performance-work)
 - The startup cache — what is cached, how to turn it off, which loft a benchmark measures:
   [STARTUP_CACHE.md](STARTUP_CACHE.md)
@@ -774,6 +775,22 @@ and guarded by a COUNT, never by a time (@PLN166).
 What each cut measured, and the leads left, are [PERFORMANCE-history.md § F1](PERFORMANCE-history.md).
 
 ---
+
+## What makes a slow routine a bug
+
+A routine over **3× its Rust twin** (C136) is a defect.  Who owns it depends on its mechanism
+class (`bench/portal/classes.tsv`):
+
+- **an OUTLIER** — over the bar in a class whose median is at or under it: an ordinary
+  `performance` issue, filed and fixed like any bug.  One program is slow where its kind is not.
+- **SYSTEMIC** — the class median itself is over the bar: the mechanism is slow, and the class's
+  plan owns every routine in it.  Filing them one by one would bury the one fix under dozens of
+  symptoms.
+
+`bench/portal/outliers.py <results.tsv>` splits a portal run this way and lists the outliers.
+File against the reference host's results only (bench/README.md); another host's ratios are a
+trend.  Before filing, the twin must have been audited like-for-like: a twin doing different
+work makes the ratio meaningless.
 
 ## Open performance work
 

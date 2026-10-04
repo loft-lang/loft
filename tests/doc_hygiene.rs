@@ -3833,3 +3833,54 @@ fn the_diagnostic_tag_test_sees_each_spelling() {
         assert!(diagnostic_tag(clean).is_none(), "false positive on {clean}");
     }
 }
+
+/// @C136 — the outlier report (`bench/portal/outliers.py`) reproduces the hand count on
+/// the frozen 2026-10-02 macOS run: 182 routines, 85 over the 3× bar, the seven classes whose
+/// MEDIAN is over it (their 62 routines are systemic, each class's plan owns them) and the 23
+/// outliers that are ordinary issues.  The run and the registry it was classified with are
+/// frozen copies, so a re-measured baseline or a reclassified routine moves the portal, not this
+/// pin; moving the bar or the split rule does move it.
+#[test]
+fn the_outlier_report_reproduces_the_hand_count() {
+    let out = std::process::Command::new("python3")
+        .args([
+            "bench/portal/outliers.py",
+            "tests/fixtures/portal/2026-10-02-arm64-darwin.tsv",
+            "--routines",
+            "tests/fixtures/portal/2026-10-02-routines.tsv",
+        ])
+        .output()
+        .expect("python3 bench/portal/outliers.py");
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "{text}{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        text.contains("182 routines, 85 over the bar: 62 systemic, 23 outliers"),
+        "{text}"
+    );
+    let systemic: Vec<&str> = text
+        .lines()
+        .filter(|l| l.ends_with("SYSTEMIC"))
+        .filter_map(|l| l.split_whitespace().nth(1))
+        .collect();
+    assert_eq!(
+        systemic,
+        [
+            "alloc-temp",
+            "vector-build",
+            "record-field",
+            "float-kernel",
+            "record-build",
+            "keyed",
+            "call"
+        ],
+        "{text}"
+    );
+    assert!(
+        text.contains("21.99×  text2d/draw_quads  (vector-read)"),
+        "{text}"
+    );
+}
