@@ -232,8 +232,10 @@ library whose calls do real work, and a poor fit for a getter in a loop.
   threads interleaving two frames in one buffer is a wrong answer, not a slow one.
   A placed library is therefore a poor fit for a hot `par` arm (it works, and is
   gated, under both parent-sharing modes).
-- **Linux only** on the calling side (the local handshake is `futex`); elsewhere
-  a placed library runs in-process, which by the invariant is the same program.
+- **Any Unix** on the calling side: the local handshake waits on a futex on Linux,
+  on the shared wait-on-address on macOS 14.4 and later, and in short sleeps
+  elsewhere.  On Windows a placed library runs in-process, which by the invariant
+  is the same program.
 - **Not under `--native`**, which compiles the library's body into the program
   binary, so its calls never leave the process.
 - `LOFT_REQUIRE_PLACEMENT=1` turns either of the last two from a silent fallback

@@ -1,6 +1,6 @@
 // @I116 — Library placement — in-process, a worker, or another machine
 
-//! The Linux transport for @PLN119 placement: the shared mapping, the
+//! The Unix transport for @PLN119 placement: the shared mapping, the
 //! spin-then-sleep handshake, the frame codec, and the two ends of a call.
 //!
 //! See the parent module for why the handshake spins before it sleeps and what
@@ -402,8 +402,9 @@ impl Wire {
     }
 
     /// The worker's wait for the next call. Untimed: a worker has its own way of
-    /// noticing the caller is gone (`PR_SET_PDEATHSIG`), so waking it on a timer
-    /// would burn a wakeup per idle period to learn nothing.
+    /// noticing the caller is gone (`die_with_parent`), so waking it on a timer
+    /// would burn a wakeup per idle period to learn nothing.  (Where the platform
+    /// has no shared wait, `poll_wait` sleeps in short steps instead.)
     fn await_request(&self, last: u32) -> u32 {
         self.await_past(OFF_REQ_SEQ, OFF_REQ_SLEEPERS, last, None, || true)
             .expect("an untimed wait never abandons")
@@ -427,12 +428,17 @@ impl Wire {
     }
 }
 
-// ── futex ───────────────────────────────────────────────────────────────────
+// ── wait / wake on the shared word ─────────────────────────────────────────
 //
-// Shared (no `FUTEX_PRIVATE_FLAG`): the word lives in a file mapping that spans
-// two processes, and the private variant hashes on the mm, so the two sides
-// would queue on different keys and every wake would be lost.
+// One primitive per platform, one contract: `futex_wait` returns when the word may no longer
+// equal `expect`, when `limit` passes, or spuriously — every caller re-reads the word in a
+// loop (`await_past`) — and `futex_wake` wakes one waiter.  The word lives in a file mapping
+// shared by two processes, so every form must be the SHARED one: a process-private wait
+// queues on a key the other side never wakes, and every wake is lost.
 
+/// Linux: the futex itself.  Shared (no `FUTEX_PRIVATE_FLAG`): the private variant hashes on
+/// the mm, so the two processes would queue on different keys.
+#[cfg(target_os = "linux")]
 fn futex_wait(a: &std::sync::atomic::AtomicU32, expect: u32, limit: Option<std::time::Duration>) {
     let ts = limit.map(|d| libc::timespec {
         tv_sec: d.as_secs() as libc::time_t,
@@ -450,6 +456,7 @@ fn futex_wait(a: &std::sync::atomic::AtomicU32, expect: u32, limit: Option<std::
     }
 }
 
+#[cfg(target_os = "linux")]
 fn futex_wake(a: &std::sync::atomic::AtomicU32) {
     unsafe {
         libc::syscall(
@@ -460,6 +467,121 @@ fn futex_wake(a: &std::sync::atomic::AtomicU32) {
         );
     }
 }
+
+/// macOS: the public cross-process wait-on-address (`os_sync_wait_on_address`, macOS 14.4),
+/// looked up at run time so an older macOS still runs — it falls back to [`poll_wait`].
+#[cfg(target_os = "macos")]
+mod darwin {
+    use std::sync::OnceLock;
+
+    /// `OS_SYNC_WAIT_ON_ADDRESS_SHARED` / `OS_SYNC_WAKE_BY_ADDRESS_SHARED`.
+    const SHARED: u32 = 1;
+    /// `OS_CLOCK_MACH_ABSOLUTE_TIME`, the one clock the timed wait takes.
+    const CLOCK_MACH_ABSOLUTE: u32 = 32;
+
+    type WaitFn = unsafe extern "C" fn(*mut libc::c_void, u64, libc::size_t, u32) -> libc::c_int;
+    type WaitTimeoutFn =
+        unsafe extern "C" fn(*mut libc::c_void, u64, libc::size_t, u32, u32, u64) -> libc::c_int;
+    type WakeFn = unsafe extern "C" fn(*mut libc::c_void, libc::size_t, u32) -> libc::c_int;
+
+    pub(super) struct Api {
+        pub wait: WaitFn,
+        pub wait_timeout: WaitTimeoutFn,
+        pub wake_any: WakeFn,
+    }
+
+    fn sym(name: &std::ffi::CStr) -> *mut libc::c_void {
+        unsafe { libc::dlsym(libc::RTLD_DEFAULT, name.as_ptr()) }
+    }
+
+    /// The three functions, or `None` on a macOS that does not have them.
+    pub(super) fn api() -> Option<&'static Api> {
+        static API: OnceLock<Option<Api>> = OnceLock::new();
+        API.get_or_init(|| {
+            let (w, wt, k) = (
+                sym(c"os_sync_wait_on_address"),
+                sym(c"os_sync_wait_on_address_with_timeout"),
+                sym(c"os_sync_wake_by_address_any"),
+            );
+            if w.is_null() || wt.is_null() || k.is_null() {
+                return None;
+            }
+            // SAFETY: each pointer is the named libSystem function, whose signature the
+            // types above spell (os/os_sync_wait_on_address.h).
+            unsafe {
+                Some(Api {
+                    wait: std::mem::transmute::<*mut libc::c_void, WaitFn>(w),
+                    wait_timeout: std::mem::transmute::<*mut libc::c_void, WaitTimeoutFn>(wt),
+                    wake_any: std::mem::transmute::<*mut libc::c_void, WakeFn>(k),
+                })
+            }
+        })
+        .as_ref()
+    }
+
+    pub(super) fn wait(
+        api: &Api,
+        a: &std::sync::atomic::AtomicU32,
+        expect: u32,
+        limit: Option<std::time::Duration>,
+    ) {
+        let addr = std::ptr::from_ref(a).cast_mut().cast::<libc::c_void>();
+        unsafe {
+            match limit {
+                // The timed form's duration is in nanoseconds of the clock it names.
+                Some(d) => {
+                    let ns = u64::try_from(d.as_nanos()).unwrap_or(u64::MAX).max(1);
+                    (api.wait_timeout)(addr, u64::from(expect), 4, SHARED, CLOCK_MACH_ABSOLUTE, ns);
+                }
+                None => {
+                    (api.wait)(addr, u64::from(expect), 4, SHARED);
+                }
+            }
+        }
+    }
+
+    pub(super) fn wake(api: &Api, a: &std::sync::atomic::AtomicU32) {
+        let addr = std::ptr::from_ref(a).cast_mut().cast::<libc::c_void>();
+        unsafe {
+            (api.wake_any)(addr, 4, SHARED);
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn futex_wait(a: &std::sync::atomic::AtomicU32, expect: u32, limit: Option<std::time::Duration>) {
+    match darwin::api() {
+        Some(api) => darwin::wait(api, a, expect, limit),
+        None => poll_wait(a, expect, limit),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn futex_wake(a: &std::sync::atomic::AtomicU32) {
+    if let Some(api) = darwin::api() {
+        darwin::wake(api, a);
+    }
+    // Without the API the waiter polls, so there is no one to wake.
+}
+
+/// Every other platform: a short sleep, then return — the contract allows a spurious return,
+/// and `await_past` re-reads the word and waits again.  Correct everywhere; slower than a
+/// kernel wait only for an exchange that has already spun past its budget.
+#[cfg(not(target_os = "linux"))]
+fn poll_wait(a: &std::sync::atomic::AtomicU32, expect: u32, limit: Option<std::time::Duration>) {
+    let step = std::time::Duration::from_micros(200);
+    if a.load(std::sync::atomic::Ordering::SeqCst) == expect {
+        std::thread::sleep(limit.map_or(step, |l| l.min(step)));
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn futex_wait(a: &std::sync::atomic::AtomicU32, expect: u32, limit: Option<std::time::Duration>) {
+    poll_wait(a, expect, limit);
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn futex_wake(_a: &std::sync::atomic::AtomicU32) {}
 
 // ── frame codec ─────────────────────────────────────────────────────────────
 
@@ -1254,6 +1376,45 @@ const MAX_MESSAGE_BYTES: usize = 256 << 20;
 
 // ── worker side ─────────────────────────────────────────────────────────────
 
+/// Arm the worker to die when the process that started it dies.  Linux has it in one call
+/// (`PR_SET_PDEATHSIG`); macOS watches the parent's exit with `kqueue` (`EVFILT_PROC` /
+/// `NOTE_EXIT`) on a thread; elsewhere a thread checks for re-parenting.
+fn die_with_parent() {
+    #[cfg(target_os = "linux")]
+    unsafe {
+        libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let parent = unsafe { libc::getppid() };
+        std::thread::spawn(move || unsafe {
+            let kq = libc::kqueue();
+            if kq < 0 {
+                return;
+            }
+            let mut ev: libc::kevent = std::mem::zeroed();
+            ev.ident = parent as libc::uintptr_t;
+            ev.filter = libc::EVFILT_PROC;
+            ev.flags = libc::EV_ADD | libc::EV_ONESHOT;
+            ev.fflags = libc::NOTE_EXIT;
+            let mut out: libc::kevent = std::mem::zeroed();
+            // Registers the watch and blocks until the parent exits (or was already gone,
+            // which the registration reports as an error — the same answer).
+            libc::kevent(kq, &raw const ev, 1, &raw mut out, 1, std::ptr::null());
+            libc::_exit(0);
+        });
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    std::thread::spawn(|| {
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            if unsafe { libc::getppid() } == 1 {
+                std::process::exit(0);
+            }
+        }
+    });
+}
+
 /// Run as the worker for one placed library: attach the wire, load the library,
 /// then serve calls until the caller says stop or goes away.
 ///
@@ -1271,11 +1432,9 @@ pub fn serve(wire_path: &Path, pkg_dir: &Path, stdlib_dir: &Path) -> ! {
     // `exit` from any of a dozen places, or be killed outright. Without this a
     // crashed run leaves a worker holding the terminal's stdout, which reads as
     // the run itself having hung.
-    unsafe {
-        libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
-    }
+    die_with_parent();
     // Re-check after arming: if the caller died in the window before the
-    // `prctl`, the signal has already been missed.
+    // watch was armed, its exit has already been missed.
     if unsafe { libc::getppid() } == 1 {
         std::process::exit(0);
     }

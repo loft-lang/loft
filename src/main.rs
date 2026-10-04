@@ -7154,7 +7154,7 @@ fn main() {
     // between calls by design, and the caller's `LOFT_TIMEOUT` is a bound on the
     // caller's work, not on how long a library is allowed to sit waiting to be
     // asked. Arming it here would kill a healthy worker mid-run.
-    #[cfg(target_os = "linux")]
+    #[cfg(unix)]
     if std::env::args().nth(1).is_some_and(|a| a == "--lib-worker") {
         let a: Vec<String> = std::env::args().skip(1).collect();
         let stdlib = a
@@ -7183,7 +7183,7 @@ fn main() {
     // where the library should run. It takes over the process and never returns,
     // and it is armed before the watchdog for the same reason a worker is —
     // sitting idle waiting to be asked is what it is FOR.
-    #[cfg(target_os = "linux")]
+    #[cfg(unix)]
     if std::env::args().nth(1).is_some_and(|a| a == "--lib-server") {
         let a: Vec<String> = std::env::args().skip(1).collect();
         let stdlib = a
@@ -9733,7 +9733,7 @@ fn main() {
     // the whole-program binary, so its calls never reach a worker however they
     // were marked. Marking anyway would leave a dispatch symbol nothing routes
     // and start a worker process to sit idle for the run.
-    #[cfg(target_os = "linux")]
+    #[cfg(unix)]
     if !native_requested {
         for (_, pkg_dir, _) in &placed_libs {
             loft::lib_placement::dispatch::mark_exports(&mut p.data, pkg_dir);
@@ -9862,8 +9862,8 @@ fn main() {
     // never leave the process.
     let no_placement_because = if placed_libs.is_empty() {
         None
-    } else if cfg!(not(target_os = "linux")) {
-        Some("out-of-process placement needs Linux")
+    } else if cfg!(not(unix)) {
+        Some("out-of-process placement needs a Unix host")
     } else if native_requested {
         Some(
             "`--native` compiles a library's own body into the program binary, so its \
@@ -9886,7 +9886,7 @@ fn main() {
     // functions at it. After `byte_code`, because the stubs this replaces are
     // what `byte_code` registered — and only where marking happened, since a
     // worker with nothing routed to it is a process that idles for the run.
-    #[cfg(target_os = "linux")]
+    #[cfg(unix)]
     if !placed_libs.is_empty() && !native_requested {
         let stdlib = std::path::PathBuf::from(&default_str);
         // The directory the program will RUN in, which is not the one this
@@ -12332,11 +12332,11 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
     // third instrument that reports on a RUNNING program.
     loft::net_profile::report();
     // @PLN119 arc A — say goodbye to each placed library's worker rather than
-    // leaving the kernel to do it. `PR_SET_PDEATHSIG` is the backstop that
+    // leaving the kernel to do it. the parent-death watch (`wire::die_with_parent`) is the backstop that
     // covers every `exit` path below and an outright kill; this is the graceful
     // one, and it runs after the leak check so a worker teardown can never be
     // what a leak report is describing.
-    #[cfg(target_os = "linux")]
+    #[cfg(unix)]
     loft::lib_placement::dispatch::shutdown();
     // @PLN130 F8 — LOFT_STRICT_STORES makes both store-lifetime faults fatal: a reference
     // that outlived its store, and a store nobody freed.  Reported at every site during the

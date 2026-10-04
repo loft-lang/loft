@@ -146,6 +146,13 @@ LOG_DEFAULT=/tmp/loft_test.$REPO_TAG.log
 OUT_DEFAULT=/tmp/loft_problems.$REPO_TAG.txt
 OUT_STABLE=/tmp/loft_problems.txt
 PID_FILE=/tmp/loft_test.$REPO_TAG.pid
+# The hard cap: no single run passes 20 minutes (scripts/hard_cap.sh; CI_BUDGET.md).  Counted
+# from this invocation, so the native-fixture rebuild is inside it.
+HARD_CAP_SECS=1200
+INVOKED_AT=$(date +%s)
+# Milliseconds since the epoch.  `date +%s%N` is GNU-only: BSD date (macOS) prints a literal
+# `N`, and every timing line this script wrote there was garbage.
+now_ms() { perl -MTime::HiRes=time -e 'printf "%d", time * 1000'; }
 
 # Refresh every derived artefact that the test suite depends on before
 # running it.  There are three classes of stale artefact, each of which
@@ -239,12 +246,12 @@ sweep_test_tmp() {
 rebuild_one() {
   local label="$1" dir="$2" cmd="$3" log="$4" timing_file="$5"
   local start_ns end_ns elapsed_ms
-  start_ns=$(date +%s%N)
+  start_ns=$(now_ms)
   if ! bash -c "$cmd" >> "$log" 2>&1; then
     echo "warning: rebuild of $dir failed — see $log" >&2
   fi
-  end_ns=$(date +%s%N)
-  elapsed_ms=$(( (end_ns - start_ns) / 1000000 ))
+  end_ns=$(now_ms)
+  elapsed_ms=$(( end_ns - start_ns ))
   printf '  %-44s %6d.%03ds\n' "$label" \
     "$(( elapsed_ms / 1000 ))" "$(( elapsed_ms % 1000 ))" \
     > "$timing_file"
@@ -287,7 +294,7 @@ rebuild_native_cdylibs() {
   local timing_dir
   timing_dir=$(mktemp -d /tmp/loft_timings.XXXXXX)
   local rebuild_start_ns
-  rebuild_start_ns=$(date +%s%N)
+  rebuild_start_ns=$(now_ms)
 
   if [[ "${LOFT_PARALLEL_REBUILD:-0}" == 1 ]]; then
     echo "=== rebuild_native_cdylibs (parallel; per-step timings) ===" >&2
@@ -439,8 +446,8 @@ rebuild_native_cdylibs() {
   rm -rf "$timing_dir"
 
   local rebuild_end_ns
-  rebuild_end_ns=$(date +%s%N)
-  local rebuild_ms=$(( (rebuild_end_ns - rebuild_start_ns) / 1000000 ))
+  rebuild_end_ns=$(now_ms)
+  local rebuild_ms=$(( rebuild_end_ns - rebuild_start_ns ))
   printf '  %-44s %6d.%03ds\n' \
     "(rebuild_native_cdylibs total wall-clock)" \
     "$(( rebuild_ms / 1000 ))" "$(( rebuild_ms % 1000 ))" \
@@ -741,16 +748,15 @@ if [[ "${1:-}" == "--bg" ]]; then
   RUNNER="$(sweep_test_tmp; test_runner_cmd)"
   echo "test runner: $RUNNER"
   (
-    start_ns=$(date +%s%N)
+    run_start=$(date +%s)
     eval "$RUNNER" > "$LOG" 2>&1 || true
-    end_ns=$(date +%s%N)
-    elapsed_ms=$(( (end_ns - start_ns) / 1000000 ))
-    printf '  %-44s %6d.%03ds\n' "$RUNNER" \
-      "$(( elapsed_ms / 1000 ))" "$(( elapsed_ms % 1000 ))" \
-      >> "$TIMINGS_FILE"
+    printf '  %-44s %6ds\n' "$RUNNER" "$(( $(date +%s) - run_start ))" >> "$TIMINGS_FILE"
     summarise "$LOG" "$OUT"
     rm -f "$PID_FILE"
   ) > /dev/null 2>&1 &
+  # The hard cap: the run ends at HARD_CAP_SECS from this invocation's start (hard_cap.sh).
+  scripts/hard_cap.sh "$!" "$(( HARD_CAP_SECS - ($(date +%s) - INVOKED_AT) ))" "$LOG" \
+    > /dev/null 2>&1 &
   # ^ stdio detached: the subshell writes only to files, but an inherited
   #   stdout keeps a caller's pipe (`--bg | tail`) open until the whole
   #   suite ends — silently serialising the "background" run.
@@ -763,21 +769,20 @@ fi
 # Default: foreground run — stream output AND write summary.
 LOG="${1:-$LOG_DEFAULT}"
 OUT="${2:-$OUT_DEFAULT}"
+: > "$LOG"
+scripts/hard_cap.sh "$$" "$(( HARD_CAP_SECS - ($(date +%s) - INVOKED_AT) ))" "$LOG" &
 find tests/ -name '*.loftc' -delete 2>/dev/null || true
 find /tmp -maxdepth 1 -name '*.loftc' -delete 2>/dev/null || true
 rebuild_native_cdylibs
 announce_selection
 RUNNER="$(sweep_test_tmp; test_runner_cmd)"
 echo "test runner: $RUNNER"
-fg_start_ns=$(date +%s%N)
+fg_start=$(date +%s)
 # `|| true` so test failures don't short-circuit `set -e` and skip
-# the post-run summary block.
-eval "$RUNNER" 2>&1 | tee "$LOG" || true
-fg_end_ns=$(date +%s%N)
-fg_elapsed_ms=$(( (fg_end_ns - fg_start_ns) / 1000000 ))
-printf '  %-44s %6d.%03ds\n' "$RUNNER" \
-  "$(( fg_elapsed_ms / 1000 ))" "$(( fg_elapsed_ms % 1000 ))" \
-  >> "$TIMINGS_FILE"
+# the post-run summary block.  The cap was armed at the start of this invocation and ends the
+# runner (not this shell) at HARD_CAP_SECS, so the summary below still reports what finished.
+eval "$RUNNER" 2>&1 | tee -a "$LOG" || true
+printf '  %-44s %6ds\n' "$RUNNER" "$(( $(date +%s) - fg_start ))" >> "$TIMINGS_FILE"
 summarise "$LOG" "$OUT"
 echo
 echo "=== Wall-clock timing summary ==="
