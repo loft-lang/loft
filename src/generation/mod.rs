@@ -705,7 +705,7 @@ pub struct Output<'a> {
     /// it: the call's hidden buffer local, and the entry witness a retbuf-attr destination
     /// must not equal.  The arm takes it and marks it used, so the reassignment knows to
     /// hand the displaced store to that buffer instead of freeing it.
-    pub rebind_buffer: Option<(String, Option<String>)>,
+    pub rebind_buffer: Option<(u16, String, Option<String>)>,
     pub rebind_buffer_used: bool,
     /// @PLN90 #495 — "runtime-Join" locals: an owned-typed Reference/Enum local
     /// that is INITIALISED owned (a whole-value copy / owned call) but then

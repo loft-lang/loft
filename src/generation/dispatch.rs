@@ -430,8 +430,11 @@ impl Output<'_> {
                 };
                 write!(w, "{{ let _old_{name}: DbRef = {place}; ")?;
                 if let Some(buf) = &rebind_buf {
-                    self.rebind_buffer =
-                        Some((buf.clone(), is_retbuf_attr.then(|| format!("_rb_w_{name}"))));
+                    self.rebind_buffer = Some((
+                        var,
+                        buf.clone(),
+                        is_retbuf_attr.then(|| format!("_rb_w_{name}")),
+                    ));
                     self.rebind_buffer_used = false;
                     write!(w, "let mut __rbb_{name} = false; ")?;
                 }
@@ -505,19 +508,50 @@ impl Output<'_> {
             trace("the result is not fresh");
             return None;
         }
+        // A local that borrows `var`'s store (or the buffer's) blocks the hand-on only where
+        // it is still named at or after the top-level statement holding this rebind: a use
+        // wholly before it — the construction temporary of the literal that first built
+        // `var` — has ended before any store is handed on.
+        let Value::Block(top) = def.code() else {
+            trace("the body is not a block");
+            return None;
+        };
+        let target = std::ptr::from_ref(to.unspan());
+        let Some(at) = top
+            .operators
+            .iter()
+            .position(|st| st.any_node(&mut |n| std::ptr::eq(std::ptr::from_ref(n), target)))
+        else {
+            trace("the rebind is not found in the body");
+            return None;
+        };
+        let names = |w: u16, st: &Value| {
+            st.any_node(&mut |n| matches!(n, Value::Var(x) | Value::Set(x, _) if *x == w))
+        };
         let n = vars.count();
-        if (0..n).any(|w| {
-            w != var && (vars.tp(w).depend().contains(&var) || vars.tp(w).depend().contains(&buf))
-        }) {
-            trace("another local depends on it or its buffer");
+        let blocking: Vec<u16> = (0..n)
+            .filter(|&w| {
+                w != var
+                    && w != buf
+                    && (vars.tp(w).depend().contains(&var) || vars.tp(w).depend().contains(&buf))
+                    && top.operators[at..].iter().any(|st| names(w, st))
+            })
+            .collect();
+        if !blocking.is_empty() {
+            trace(&format!(
+                "a local borrowing its store is named after it: {:?}",
+                blocking.iter().map(|&w| vars.name(w)).collect::<Vec<_>>()
+            ));
             return None;
         }
-        // Every use of the buffer other than this call's argument is a free of it.
+        // Every use of the buffer other than its null declaration and this call's argument
+        // is a free of it.
         let (mut uses, mut frees) = (0usize, 0usize);
         def.code().any_node(&mut |n| {
             match n {
                 Value::Var(v) if *v == buf => uses += 1,
-                Value::Set(v, _) if *v == buf => uses += 2,
+                // Its declaration `buf = null` is not a use; any other write is.
+                Value::Set(v, rhs) if *v == buf && !matches!(rhs.unspan(), Value::Null) => uses += 2,
                 Value::Call(d, a)
                     if (*d as usize) < self.data.definitions.len()
                         && self.data.def(*d).name().starts_with("OpFree")
@@ -1424,7 +1458,7 @@ impl Output<'_> {
             // store it displaces is handed (by the reassignment around this arm) to the call's
             // hidden buffer local for its next execution, instead of an exchange into it.
             let rebind = match self.rebind_buffer.take() {
-                Some((buf, rbw)) if !witnessed && !variables.is_view_elided(var) => {
+                Some((v, buf, rbw)) if v == var && !witnessed && !variables.is_view_elided(var) => {
                     self.rebind_buffer_used = true;
                     crate::rewrite_census::fired("R-RebindBuffer", 1);
                     let entry = rbw
