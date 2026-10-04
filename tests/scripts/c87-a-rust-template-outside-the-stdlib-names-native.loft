@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// @falsified-by: tests/falsified/c87-a-rust-template-outside-the-stdlib-names-native.patch — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/c87-a-rust-template-outside-the-stdlib-names-native.patch — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches)
 //
 // @C87 — `#rust` / `#iterator` are the standard library's own Rust templates; everything
 // else binds Rust with `#native` and a native crate.

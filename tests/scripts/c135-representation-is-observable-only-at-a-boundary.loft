@@ -14,8 +14,8 @@
 // fails first.  The file-backed store boundary is held by the store format's own guards
 // (`tests/store_durable_format.rs`), not here.
 //
-// @falsified-by: tests/falsified/c135-representation-is-observable-only-at-a-boundary.patch — interpret exit 1 -> 0, native exit 1 -> 0
-//   CHANNEL: the exit code, on both backends.  WITNESS: the patch lets a program's `#rust` body
+// @falsified-by: tests/falsified/c135-representation-is-observable-only-at-a-boundary.patch — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches)
+//   CHANNEL: the exit code and the expectations, on both backends.  WITNESS: the patch lets a program's `#rust` body
 //   through the parser, so the expected refusal is not produced and the run answers
 //   differently.  HOLDS: no leak, panic or refusal on either tree.
 //
