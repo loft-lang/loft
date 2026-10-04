@@ -497,6 +497,7 @@ fn type_from(p: &Parsed) -> Result<Type, SchemaDecodeError> {
         field_groups,
         facts: super::types::TypeFacts::default(),
         prefill: super::types::PrefillImage::default(),
+        heap_slots: super::types::HeapSlots::default(),
     })
 }
 

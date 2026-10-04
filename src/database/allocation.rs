@@ -3,6 +3,7 @@
 // @I70 — Database subsystem (alloc / persistence / journal / snapshot / schema)
 //! Memory/store allocation helpers and claim management.
 
+use crate::database::types::HeapSlot;
 use crate::database::{Parts, Stores, WorkerStores};
 use crate::hash;
 use crate::keys::DbRef;
@@ -4012,6 +4013,21 @@ impl Stores {
     }
 
     pub fn remove_claims(&mut self, rec: &DbRef, tp: u16) {
+        // A reused buffer is released before every refill, and most hold no heap by then
+        // (a moved-out value is zeroed): answered from the type's heap slots, without the
+        // walk's descent (`holds_no_heap_fast`).  A null or misplaced record, or any slot the
+        // fast test cannot read, still goes the full way — the refusal included.
+        if rec.store_nr != u16::MAX
+            && (rec.store_nr as usize) < self.allocations.len()
+            && u64::from(rec.pos) < u64::from(self.store(rec).capacity_words()) * 8
+            && matches!(
+                self.types.get(tp as usize).map(|t| &t.parts),
+                Some(Parts::Struct(_) | Parts::EnumValue(..) | Parts::Enum(_))
+            )
+            && self.holds_no_heap_fast(rec, tp) == Some(true)
+        {
+            return;
+        }
         self.remove_claims_mode(rec, tp, false);
     }
 
@@ -4864,6 +4880,113 @@ impl Stores {
     #[inline]
     pub(super) fn type_owns_heap(&self, tp: u16) -> bool {
         self.heap_facts(tp).0
+    }
+
+    /// `@FR-H-ClearRelease` — [`Self::holds_no_heap`] answered from the type's cached HEAP
+    /// SLOTS: `Some(true)` when every slot is empty right now, `None` whenever the full walk
+    /// must answer — a slot it cannot read here (past the record's capacity, an enum tag
+    /// naming a variant that owns heap), or a type whose slots the plan cannot express.
+    /// Never `Some(false)`: a non-empty slot is the walk's to release.
+    #[inline]
+    pub(crate) fn holds_no_heap_fast(&self, rec: &DbRef, tp: u16) -> Option<bool> {
+        let row = self.types.get(tp as usize)?;
+        let slots = match row.heap_slots.get() {
+            Some(s) => s.as_deref()?,
+            None => {
+                let derived = self
+                    .derive_heap_slots(tp, 0, &mut Vec::new())
+                    .map(Vec::into_boxed_slice);
+                row.heap_slots.set(derived);
+                row.heap_slots.get()?.as_deref()?
+            }
+        };
+        if slots.is_empty() {
+            return Some(true);
+        }
+        let store = self.store(rec);
+        let capacity_bytes = u64::from(store.capacity_words()) * 8;
+        for slot in slots {
+            let (HeapSlot::Text(off) | HeapSlot::Collection(off) | HeapSlot::Tag(off, _)) = *slot;
+            let pos = rec.pos + off;
+            if u64::from(pos) + 4 > capacity_bytes {
+                return None;
+            }
+            match *slot {
+                HeapSlot::Text(_) => {
+                    if store.get_u32_raw(rec.rec, pos) != 0 {
+                        return None;
+                    }
+                }
+                HeapSlot::Collection(_) => {
+                    if store.collection_rec(rec.rec, pos) != 0 {
+                        return None;
+                    }
+                }
+                HeapSlot::Tag(_, etp) => {
+                    let e_nr = store.get_byte(rec.rec, pos, -1);
+                    if e_nr < 0 {
+                        continue;
+                    }
+                    let Parts::Enum(values) = &self.types.get(etp as usize)?.parts else {
+                        return None;
+                    };
+                    let vtp = values.get(e_nr as usize)?.0;
+                    if vtp != u16::MAX && self.type_owns_heap(vtp) {
+                        return None;
+                    }
+                }
+            }
+        }
+        Some(true)
+    }
+
+    /// The heap slots of a `tp` record placed `base` bytes into its parent, nested inline
+    /// records flattened — [`Self::holds_no_heap`]'s walk written down once.  `None` for a
+    /// field that walk answers `false` for without reading it.
+    fn derive_heap_slots(&self, tp: u16, base: u32, seen: &mut Vec<u16>) -> Option<Vec<HeapSlot>> {
+        if seen.contains(&tp) {
+            return None;
+        }
+        let fields = match &self.types.get(tp as usize)?.parts {
+            Parts::Struct(fields) | Parts::EnumValue(_, fields) => fields,
+            Parts::Enum(_) => return Some(vec![HeapSlot::Tag(base, tp)]),
+            _ => return None,
+        };
+        seen.push(tp);
+        let mut out = Vec::new();
+        for f in fields {
+            if !self.type_owns_heap(f.content) {
+                continue;
+            }
+            if f.other_indexes.first() == Some(&u16::MAX) {
+                seen.pop();
+                return None;
+            }
+            let off = base + u32::from(f.position);
+            match &self.types.get(f.content as usize)?.parts {
+                Parts::Struct(_) | Parts::EnumValue(..) | Parts::Enum(_) => {
+                    let inner = self.derive_heap_slots(f.content, off, seen);
+                    let Some(inner) = inner else {
+                        seen.pop();
+                        return None;
+                    };
+                    out.extend(inner);
+                }
+                Parts::Base if f.content == 5 => out.push(HeapSlot::Text(off)),
+                Parts::Vector(_)
+                | Parts::Array(_)
+                | Parts::Sorted(..)
+                | Parts::Ordered(..)
+                | Parts::Hash(..)
+                | Parts::Index(..) => out.push(HeapSlot::Collection(off)),
+                _ => {
+                    seen.pop();
+                    return None;
+                }
+            }
+        }
+        seen.pop();
+        Some(out)
     }
 
     /// Does the `tp` STRUCT at `rec` hold no heap at this moment — every slot of a

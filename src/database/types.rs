@@ -2293,6 +2293,7 @@ impl Stores {
         for t in &mut self.types {
             t.facts.forget();
             t.prefill.forget();
+            t.heap_slots.forget();
             t.parents.retain(|&p| p < keep);
         }
         self.names.retain(|_, &mut nr| nr < keep);
@@ -3455,6 +3456,57 @@ impl std::fmt::Debug for PrefillImage {
     }
 }
 
+/// One place in a record that can own heap, by its byte offset from the record's position:
+/// a text slot, a collection slot, or a struct-enum's tag (with the enum's type, to read
+/// which variant it names).  `@FR-H-ClearRelease`'s empty test reads only these.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum HeapSlot {
+    Text(u32),
+    Collection(u32),
+    Tag(u32, u16),
+}
+
+/// The HEAP SLOTS of a record of this type — every place a value of it can own heap,
+/// nested inline records flattened — derived from `parts` on the first ask
+/// ([`Stores::holds_no_heap_fast`](super::Stores::holds_no_heap_fast)).  `None` inside
+/// means the type has a field the plan cannot express, and the full walk answers.
+/// Derived, like [`PrefillImage`]: no part in equality or in the stored form, and a table
+/// rollback forgets it.
+#[derive(Default, Clone)]
+pub struct HeapSlots(std::sync::OnceLock<Option<Box<[HeapSlot]>>>);
+
+impl HeapSlots {
+    #[inline]
+    pub(super) fn get(&self) -> Option<&Option<Box<[HeapSlot]>>> {
+        self.0.get()
+    }
+
+    pub(super) fn set(&self, slots: Option<Box<[HeapSlot]>>) {
+        let _ = self.0.set(slots);
+    }
+
+    pub(super) fn forget(&mut self) {
+        self.0.take();
+    }
+}
+
+/// Derived from `parts`, so two rows with equal parts have equal slots.
+impl PartialEq for HeapSlots {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl std::fmt::Debug for HeapSlots {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.get() {
+            Some(Some(s)) => write!(f, "HeapSlots({})", s.len()),
+            Some(None) => f.write_str("HeapSlots(walk)"),
+            None => f.write_str("HeapSlots(?)"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Type {
     pub name: String,
@@ -3481,6 +3533,7 @@ pub struct Type {
     pub field_groups: Vec<crate::data::LinkedFieldGroup>,
     pub(super) facts: TypeFacts,
     pub(super) prefill: PrefillImage,
+    pub(super) heap_slots: HeapSlots,
 }
 
 impl Type {
@@ -3537,6 +3590,7 @@ impl Type {
             field_groups,
             facts: TypeFacts::default(),
             prefill: PrefillImage::default(),
+            heap_slots: HeapSlots::default(),
         }
     }
 
@@ -3561,6 +3615,7 @@ impl Type {
             field_groups: Vec::new(),
             facts: TypeFacts::default(),
             prefill: PrefillImage::default(),
+            heap_slots: HeapSlots::default(),
         }
     }
 
@@ -3579,6 +3634,7 @@ impl Type {
             field_groups: Vec::new(),
             facts: TypeFacts::default(),
             prefill: PrefillImage::default(),
+            heap_slots: HeapSlots::default(),
         }
     }
 
