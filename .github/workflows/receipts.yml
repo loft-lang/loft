@@ -1,0 +1,124 @@
+name: Patch receipts (refresh and score)
+
+# The falsification patch receipts (tests/falsified/*.patch, GUARDS.md § The patch receipt)
+# that went STALE — the code under the defect moved — are refreshed by a clean three-way merge
+# and re-scored with `scripts/falsify.sh <guard> --patch <file>` here, on a runner, instead of
+# by hand on every join (`scripts/receipts_ci.py`).  Scoring builds a control tree per guard,
+# which is the cost this moves off the box.
+#
+# Only a WILD SWING fails: a guard its patch no longer falsifies, or a stale patch whose own
+# lines changed so that no merge can bring it back (that one is re-derived by hand).
+#
+#   pull_request        verify: refresh + score in the job, fail on a swing — and on a receipt
+#                       left stale, whose cure is one dispatch on the branch:
+#   workflow_dispatch   refresh + score, and commit the refreshed patches back to the branch
+#                       (`scripts/derive-ci.sh --workflow receipts.yml`).  Dispatch only for
+#                       the commit, because a push with this job's token starts no workflow.
+#   receipts-probe      a push there runs the dispatch path before this file is on main.
+# JOINING.md § Derived artefacts on a runner.
+
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'default/**'
+      - 'tests/falsified/**'
+      - 'tests/scripts/**'
+  workflow_dispatch:
+  push:
+    branches: [receipts-probe]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: receipts-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  receipts:
+    name: Refresh and score stale patch receipts
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Refuse to commit to the default branch
+        if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        run: |
+          echo "::error::main takes changes only through a PR — dispatch this on a feature branch"
+          exit 1
+
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install mold
+        run: sudo apt-get update && sudo apt-get install -y mold
+
+      # Read-only, from ci.yml's `test` job cache (saved on main — CI_BUDGET.md § F).  The path
+      # list must stay IDENTICAL to that job's, or the restore never matches.
+      - name: Restore cargo registry and build (ci.yml's test job's, read-only)
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            ~/.loft/build-cache
+            target
+            !target/loft-native-cache
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-
+            ${{ runner.os }}-cargo-
+
+      - name: Build loft (release)
+        run: cargo build --release --bin loft
+
+      - name: Refresh and score
+        run: |
+          git config user.name "loft-derive-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          python3 scripts/receipts_ci.py
+
+      - name: The receipt ratchet (every patch applies, the baseline only shrinks)
+        if: success()
+        run: cargo test --release -q --test doc_hygiene every_patch_receipt_still_applies -- --ignored
+
+      - name: Refreshed receipts left uncommitted (pull_request)
+        if: github.event_name == 'pull_request'
+        run: |
+          if [ -n "$(git status --porcelain -- tests/falsified)" ]; then
+            git status --short -- tests/falsified | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "::error::stale receipts refresh cleanly — commit them: scripts/derive-ci.sh --workflow receipts.yml on ${{ github.head_ref }}"
+            exit 1
+          fi
+
+      - name: Commit back (dispatch)
+        if: github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          if [ -z "$(git status --porcelain -- tests/falsified)" ]; then
+            echo "No receipt needed refreshing." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          git add tests/falsified
+          git commit -q -F - <<EOF
+          Stale patch receipts refreshed and re-scored on a runner
+
+          $(git diff --cached --name-only | sed 's/^/- /')
+
+          Each re-applied by a clean three-way merge and still falsifies its guard
+          (scripts/falsify.sh --patch).  By .github/workflows/receipts.yml at ${GITHUB_SHA::9}
+          (run ${GITHUB_RUN_ID}).
+          EOF
+          # Never forced: a branch that moved during the run is dispatched again on its new head.
+          git push origin "HEAD:${GITHUB_REF_NAME}" || {
+            echo "::error::${GITHUB_REF_NAME} moved during the run — dispatch again on the new head"
+            exit 1
+          }

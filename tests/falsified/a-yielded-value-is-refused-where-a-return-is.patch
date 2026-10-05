@@ -1,0 +1,21 @@
+diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
+index be430ed9e..e2738dc44 100644
+--- a/src/parser/expressions.rs
++++ b/src/parser/expressions.rs
+@@ -1451,15 +1451,7 @@ impl Parser {
+                 // came out as 300 (`@FR-I-Narrow`), into `iterator<float>` as the integer's
+                 // bits read as a float, a `null` or a `text` crashed the interpreter and broke
+                 // the native build, and a nullable ended the loop early on `--native` only.
+-                if let Type::Iterator(elem_tp, _) = r_type.base() {
+-                    let elem = (**elem_tp).clone();
+-                    if v_tp == Type::Null {
+-                        self.n_store_violation(&v_tp, &elem, "the yielded value", None);
+-                        v = self.null_value(&elem);
+-                    } else if !self.convert_store_dense(&mut v, &v_tp, &elem, "the yielded value") {
+-                        self.validate_convert("yield", &v_tp, &elem, &expr_start.position);
+-                    }
+-                }
++                let _ = &expr_start;
+                 // @P328 — when yielding a NON-CAPTURING closure into an
+                 // `iterator<fn(...) -> ...>` generator, the expression
+                 // parser leaves the lambda as a bare `Value::Int(d_nr)`

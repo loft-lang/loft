@@ -192,10 +192,14 @@ lines is the disk: `df -h /`, then [RUN_BOUNDS.md § Scratch hygiene](RUN_BOUNDS
 ### The patch receipt — `@falsified-by:`
 
 The durable form carries the defect instead of pointing at it, and it stays durable only while
-it APPLIES: `doc_hygiene::every_patch_receipt_still_applies` fails on one the code has moved out
-from under, and the cure is a patch re-derived at the current tree that still falsifies.  The
-ones already stale when the check landed are in `tests/falsified_patches.baseline`, which only
-shrinks.
+it APPLIES.  A receipt the code moved out from under is cured at PR time, on a runner, not on
+each join: `.github/workflows/receipts.yml` (`scripts/receipts_ci.py`) re-applies every stale
+patch by a clean three-way merge, re-scores it with `falsify.sh --patch`, and then runs
+`doc_hygiene::every_patch_receipt_still_applies` (ignored per commit for that reason).  A
+dispatch on the branch commits the refreshed patches back (`scripts/derive-ci.sh --workflow
+receipts.yml`); the PR's own run fails only on a WILD SWING — a guard its patch fails to
+falsify, or a patch whose own lines changed, which is re-derived by hand at the current tree.
+`tests/falsified_patches.baseline` lists the known-stale receipts, and it only shrinks.
 **`// @falsified-by: tests/falsified/<guard>.patch`** names a patch that reintroduces the fault
 on top of HEAD, and `scripts/falsify.sh <guard> --patch <file>` scores it exactly as a ref
 control is scored.  Nothing outside the repository has to survive for it to be re-run.

@@ -1,0 +1,113 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-PureReuse` — an effect-free call made twice in one body on arguments nothing writes
+// in between is computed once.
+//
+// A request check asked one wrapper whether a frame decodes and another for the decoded
+// value, and each decoded the frame again (`d = decode(b); return d.ok`, then
+// `d = decode(b); v = d.value; return v`).  The scope pass now binds the inner call once
+// before the first statement that makes it and reads both projections of that one value
+// (`pure_reuse`, `LOFT_NO_PURE_REUSE=1` keeps both calls).  What can go wrong is reusing a
+// call whose value has changed or whose effect is lost: an argument rebound in between, a
+// store written in between, a function that writes, a first call that only some paths make,
+// different arguments.  An effect-free call cannot be counted, so the reuse cells check the
+// values and `tests/pure_reuse.rs` pins which bodies reuse; the decline cells count calls.
+// Values hand-computed.
+//
+// @falsified-at: none — the rule has no earlier build to catch, so the receipt is planted
+//   defects (2026-10-02), on --interpret: the "nothing in between" test struck fails p2 (3 and 3:
+//   the rebound vector read as the old one); every function admitted as effect-free fails p3
+//   (length 3 for 4: the second append lost).  Admitting an `if` arm as always evaluated is
+//   INERT — an effect-free call made on a path that did not make it changes no value, only
+//   work — and the pin still sees the two admitted reuses.
+//   CHANNEL: an assertion (p2, p3) and the pin's trace and emission counts.
+
+struct Parsed { ok: boolean, total: integer, first: integer }
+
+// The effect-free function: sums a vector, and is ok when it is non-empty.
+fn parse(v: vector<integer>) -> Parsed {
+  t = 0;
+  for x in v { t += x; }
+  Parsed { ok: len(v) > 0, total: t, first: v[0] ?? -1 }
+}
+
+fn parse_ok(v: vector<integer>) -> boolean { p = parse(v); return p.ok; }
+fn parse_total(v: vector<integer>) -> integer { p = parse(v); return p.total; }
+fn parse_first(v: vector<integer>) -> integer { p = parse(v); return p.first; }
+
+// p1: the request-check shape: ok, then a second projection of the same call
+fn check(v: vector<integer>) -> integer {
+  if !parse_ok(v) { return -100; }
+  return parse_total(v);
+}
+
+fn p1() {
+  assert(check([3, 4, 5]) == 12, "p1 got {check([3, 4, 5])}");
+  assert(check([]) == -100, "p1 empty got {check([])}");
+}
+
+// p2: the argument is rebound between the two calls: the second sees the new vector
+fn p2() {
+  v = [1, 2];
+  a = parse_total(v);
+  v = [10, 20, 30];
+  b = parse_total(v);
+  assert(a == 3 && b == 60, "p2 got {a} {b}");
+}
+
+// An effect: the wrapped function appends to the vector it is handed.
+fn tally(v: vector<integer>) -> Parsed {
+  v += [0];
+  parse(v)
+}
+fn tally_total(v: vector<integer>) -> integer { p = tally(v); return p.total; }
+
+// p3: a function with an effect is called every time: the vector grows by one per call
+fn p3() {
+  v = [2, 2];
+  a = tally_total(v);
+  b = tally_total(v);
+  assert(a == 4 && b == 4 && len(v) == 4, "p3 got {a} {b} len={len(v)}");
+}
+
+// p4: the argument's store is written between the two calls
+fn p4() {
+  v = [1, 1];
+  a = parse_total(v);
+  v += [5];
+  b = parse_total(v);
+  assert(a == 2 && b == 7, "p4 got {a} {b}");
+}
+
+// p5: the first call is in one arm only; the second is made either way
+fn p5(c: boolean) -> integer {
+  v = [4, 6];
+  t = 0;
+  if c { t = parse_total(v); }
+  return t + parse_total(v);
+}
+
+// p6: two different projections of one call
+fn p6() {
+  v = [7, 8, 9];
+  f = parse_first(v);
+  t = parse_total(v);
+  assert(f == 7 && t == 24, "p6 got {f} {t}");
+}
+
+// p7: different arguments are different calls
+fn p7() {
+  a = [1, 2, 3];
+  b = [4, 5];
+  x = parse_total(a);
+  y = parse_total(b);
+  assert(x == 6 && y == 9, "p7 got {x} {y}");
+}
+
+fn main() {
+  p1(); p2(); p3(); p4();
+  assert(p5(true) == 20 && p5(false) == 10, "p5 got {p5(true)} {p5(false)}");
+  p6(); p7();
+  println("done");
+}

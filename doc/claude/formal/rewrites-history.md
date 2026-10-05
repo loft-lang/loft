@@ -62,6 +62,20 @@ this is where it is written down.
 
 ## Attempts and closures
 
+- **2026-10-04 — `(R-Cold)`'s fold clause.**  bench/10_sort's insertion sort reads
+  `arr[j - 1]` in its test and again in its body.  LLVM merged the two in-range loads, but
+  the outlined re-derivation (`get_elem_hoisted_cold`, a call into the rlib that LLVM must
+  assume writes) stayed twice, which kept the inner loop at 17 instructions a step with the
+  store's lock flag tested inside.  With every index resolved inline (`vector::elem_index`)
+  the loop is 13 instructions and the flag is unswitched out: 1.905 → 1.64 M ns per op
+  (−14 %), hash unchanged — the price the hand-merged read had shown (1.94 → 1.62 M), now
+  reached with no emitter rule, for every repeated element read.  An interleaved A/B of the
+  two rlibs over lanes 01–16 (same emitted Rust, five runs each) moved sort −13.8 %,
+  bfs_flow −9.3 %, collatz −8.4 % and nothing else past noise, except `join`: the text
+  reader folded the same way cost it +14 % (8.47 → 9.67 µs), and +10 % with the hot test
+  kept first and only the negative arm inline behind `cold_path()`.  The text reader keeps
+  `text_elem_cold`; the clause names the exception.
+
 - **2026-09-30 — `(R-Cold)`'s `#[cold]` half (823989c77).**  `get_elem_hoisted_cold`,
   `text_elem_cold` and `vec_set_hoisted_cold` carried `#[inline(never)]` without `#[cold]`.
   LLVM then weighed the out-of-range branch evenly and, once 7be88b9d4 (@PLN174 F1–F3) added

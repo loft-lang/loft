@@ -224,6 +224,7 @@ pub static OPERATORS: &[fn(&mut State)] = &[
     append_vector::<false>,
     slice_vector::<false>,
     slice_view::<false>,
+    keep_range::<false>,
     push_int::<false>,
     push_int4::<false>,
     push_float::<false>,
@@ -570,6 +571,7 @@ pub static OPERATORS_FAST: &[fn(&mut State)] = &[
     append_vector::<true>,
     slice_vector::<true>,
     slice_view::<true>,
+    keep_range::<true>,
     push_int::<true>,
     push_int4::<true>,
     push_float::<true>,
@@ -916,6 +918,7 @@ pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
     append_vector_r,
     slice_vector_r,
     slice_view_r,
+    keep_range_r,
     push_int_r,
     push_int4_r,
     push_float_r,
@@ -1262,6 +1265,7 @@ pub const OPERATOR_NAMES: &[&str] = &[
     "OpAppendVector",
     "OpSliceVector",
     "OpSliceView",
+    "OpKeepRange",
     "OpPushInt",
     "OpPushInt4",
     "OpPushFloat",
@@ -1415,7 +1419,7 @@ pub const OPERATOR_NAMES: &[&str] = &[
 pub const OP_HOT: u16 = 36;
 /// How many operators are neither `#hot` nor `#cold` (the slots after the hot ones); the
 /// `#cold` operators follow them, into the two-byte opcodes.
-pub const OP_NORMAL: u16 = 218;
+pub const OP_NORMAL: u16 = 219;
 
 #[inline(always)]
 fn goto<const F: bool>(s: &mut State) {
@@ -5412,6 +5416,22 @@ fn slice_view_r(s: &mut State, r: Regs) -> Regs {
 }
 
 #[inline(always)]
+fn keep_range<const F: bool>(s: &mut State) {
+    let operands = s.operands(2);
+    let v_tp = operands.get::<u16>(0);
+    let v_hi = s.get_stack_m::<F, i64>();
+    let v_lo = s.get_stack_m::<F, i64>();
+    let v_r = s.get_stack_m::<F, DbRef>();
+    s.database.vector_keep_range(&v_r, v_lo, v_hi, v_tp);
+}
+
+fn keep_range_r(s: &mut State, r: Regs) -> Regs {
+    s.regs_in(r);
+    keep_range::<true>(s);
+    s.regs_out()
+}
+
+#[inline(always)]
 fn adopt_vector<const F: bool>(s: &mut State) {
     let operands = s.operands(2);
     let v_tp = operands.get::<u16>(0);
@@ -6346,7 +6366,7 @@ fn size_file_r(s: &mut State, r: Regs) -> Regs {
 #[inline(always)]
 fn delete<const F: bool>(s: &mut State) {
     let v_path = s.string();
-    let new_value = codegen_runtime::fs_delete(&s.database.resolve_path(v_path.str()));
+    let new_value = s.database.fs_delete_at(v_path.str());
     s.put_stack_m::<F, _>(new_value);
 }
 
@@ -6360,10 +6380,7 @@ fn delete_r(s: &mut State, r: Regs) -> Regs {
 fn move_file<const F: bool>(s: &mut State) {
     let v_to = s.string();
     let v_from = s.string();
-    let new_value = codegen_runtime::fs_move(
-        &s.database.resolve_path(v_from.str()),
-        &s.database.resolve_path(v_to.str()),
-    );
+    let new_value = s.database.fs_move_at(v_from.str(), v_to.str());
     s.put_stack_m::<F, _>(new_value);
 }
 
@@ -6457,7 +6474,7 @@ fn call_ref_r(s: &mut State, r: Regs) -> Regs {
 #[inline(always)]
 fn mkdir<const F: bool>(s: &mut State) {
     let v_path = s.string();
-    let new_value = codegen_runtime::fs_mkdir(&s.database.resolve_path(v_path.str()));
+    let new_value = s.database.fs_mkdir_at(v_path.str());
     s.put_stack_m::<F, _>(new_value);
 }
 
@@ -6470,7 +6487,7 @@ fn mkdir_r(s: &mut State, r: Regs) -> Regs {
 #[inline(always)]
 fn mkdir_all<const F: bool>(s: &mut State) {
     let v_path = s.string();
-    let new_value = codegen_runtime::fs_mkdir_all(&s.database.resolve_path(v_path.str()));
+    let new_value = s.database.fs_mkdir_all_at(v_path.str());
     s.put_stack_m::<F, _>(new_value);
 }
 
@@ -6483,7 +6500,7 @@ fn mkdir_all_r(s: &mut State, r: Regs) -> Regs {
 #[inline(always)]
 fn rmdir<const F: bool>(s: &mut State) {
     let v_path = s.string();
-    let new_value = codegen_runtime::fs_rmdir(&s.database.resolve_path(v_path.str()));
+    let new_value = s.database.fs_rmdir_at(v_path.str());
     s.put_stack_m::<F, _>(new_value);
 }
 

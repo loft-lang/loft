@@ -153,8 +153,14 @@ impl OpEmitter for OpDatabaseEmitter {
             // every field calls the no-prefill twin.
             let np = matches!(var_val.unspan(), Value::Var(w)
                 if ctx.output.complete_writes.db_vars.contains(w));
+            // `@FR-R-RefillBuffer` — a refilling return buffer may take the kept store.
+            let refill = hosted.is_empty()
+                && matches!(var_val.unspan(), Value::Var(w) if ctx.output.refill.var == Some(*w));
             ctx.emit(var_val)?;
-            if np {
+            if refill {
+                crate::rewrite_census::fired("R-RefillBuffer", 1);
+                write!(ctx.w, " = OpDatabaseRefill(cell,")?;
+            } else if np {
                 write!(ctx.w, " = OpDatabaseNP(cell,")?;
             } else {
                 write!(ctx.w, " = OpDatabase(cell,")?;

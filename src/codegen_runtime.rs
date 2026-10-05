@@ -352,6 +352,31 @@ pub fn OpDatabase(cell: &std::cell::UnsafeCell<Stores>, db: DbRef, db_tp: i32) -
     op_database_inner(cell, db, db_tp, true)
 }
 
+/// `@FR-R-RefillBuffer` — the mint of a refilling callee's return buffer: a null buffer
+/// takes the kept store of the same type (its previous value still in it — the literal that
+/// follows writes every field, and empties each vector field in place); otherwise the
+/// no-prefill mint, which the same complete literal makes exact.
+pub fn OpDatabaseRefill(cell: &std::cell::UnsafeCell<Stores>, db: DbRef, db_tp: i32) -> DbRef {
+    if db.store_nr == u16::MAX && crate::keys::refill_buffer_enabled() {
+        let stores: &mut Stores = unsafe { &mut *cell.get() };
+        if let Some(r) = stores.take_spare(db_tp as u16) {
+            return r;
+        }
+    }
+    // A LIVE buffer handed in — the store a previous value of this same type was built in —
+    // is the kept-spare case exactly: the emitter admitted this mint only where the group
+    // after it rewrites every field and empties each vector field in place
+    // (`hoist::refill_buffers`).  Keeping it keeps the vectors' records and their capacity,
+    // where the wipe below threw the store's content away and the group claimed it again.
+    if db.store_nr != u16::MAX && crate::keys::refill_buffer_enabled() {
+        let stores: &mut Stores = unsafe { &mut *cell.get() };
+        if stores.refill_keeps(&db, db_tp as u16) {
+            return db;
+        }
+    }
+    op_database_inner(cell, db, db_tp, false)
+}
+
 /// @PLN157 § V-y (`@FR-R-CompleteWrite`) — [`OpDatabase`] minus the default prefill: the
 /// emitter proved this site's literal group writes EVERY field of the type (declared
 /// defaults, sentinels and the variant tag included — the parser's lowering is complete
@@ -477,6 +502,13 @@ pub fn OpFinishRecord(
 /// Bytecode equivalent: `OpFreeRef` in `src/state/io.rs:262`.
 /// The `name` argument is the loft variable name (e.g. `"var_p"`); it appears in
 /// `LOFT_STORE_LOG` output for diagnosing LIFO store-free order violations.
+/// `@FR-R-RebindBuffer` — the scope-exit release of a hidden buffer a rebind handed a store
+/// to: parked as the spare the exchange would have parked, or freed (`Stores::park_or_free`).
+pub fn cr_park_or_free(cell: &std::cell::UnsafeCell<Stores>, db: DbRef, name: &str) {
+    let stores: &mut Stores = unsafe { &mut *cell.get() };
+    stores.park_or_free(&db, name);
+}
+
 pub fn OpFreeRef(cell: &std::cell::UnsafeCell<Stores>, db: DbRef, name: &str) {
     let stores: &mut Stores = unsafe { &mut *cell.get() };
     // A generator handle addresses no store — free the coroutine, which releases the heap
@@ -1151,6 +1183,42 @@ pub fn i_json_errors(stores: &mut Stores) -> String {
 /// Deep-copy a database record: copies the raw bytes and duplicates
 /// all owned sub-structures (text fields, vectors, etc.).
 /// Bytecode equivalent: `State::copy_record` in `src/state/io.rs:697`.
+/// The rebind `x = f(…)` of a record from a call result: the destination's reset followed
+/// by the copy (`OpDatabase` + [`OpCopyRecord`]), with the reset left out when the result's
+/// store can be exchanged into `to` as it stands (`@FR-H-SwapRebind`,
+/// `Stores::try_swap_rebind`).  `to` is the variable's current value and `tp`'s flag bits are
+/// [`OpCopyRecord`]'s.  The exchange needs the source given up (`COPY_FREE_SOURCE`) and not a
+/// store the last fn-ref call borrowed; anything else takes the reset-and-copy path, which
+/// is the sequence this replaces.
+pub fn OpRebindRecord(
+    cell: &std::cell::UnsafeCell<Stores>,
+    to: DbRef,
+    src: DbRef,
+    tp: i32,
+) -> DbRef {
+    let raw = tp as u16;
+    if raw & crate::keys::COPY_FREE_SOURCE != 0
+        && src != to
+        && src.store_nr != u16::MAX
+        && to.store_nr != u16::MAX
+        && !FNREF_BORROWED.with(|b| b.get().is_some_and(|r| r.store_nr == src.store_nr))
+    {
+        let stores: &mut Stores = unsafe { &mut *cell.get() };
+        if stores.try_swap_rebind(&src, &to, raw & crate::keys::COPY_TP_MASK) {
+            // The copy this replaces consumes the marker whatever it named.
+            cr_take_fnref_borrowed(src.store_nr);
+            return DbRef {
+                store_nr: to.store_nr,
+                rec: 1,
+                pos: 8,
+            };
+        }
+    }
+    let dst = OpDatabase(cell, to, i32::from(raw & crate::keys::COPY_TP_MASK));
+    OpCopyRecord(cell, src, dst, tp);
+    dst
+}
+
 pub fn OpCopyRecord(cell: &std::cell::UnsafeCell<Stores>, data: DbRef, to: DbRef, tp: i32) {
     let stores: &mut Stores = unsafe { &mut *cell.get() };
     // @PLAN51 Cluster II — true alias copy is a no-op.  Same rationale
@@ -1256,6 +1324,11 @@ pub fn OpReplaceKeyed(cell: &std::cell::UnsafeCell<Stores>, src: DbRef, dest: Db
     // `@FR-B-Copy` — a source that IS the destination is already the value; the twin of
     // the guard in `State::replace_keyed`, which carries the reasoning.
     if src == dest {
+        return;
+    }
+    // `@FR-H-SwapIn`'s keyed clause — a given-up source is the stores exchanged; the twin of
+    // the call in `State::replace_keyed`.
+    if free_source && stores.try_swap_keyed(&src, &dest, tp) {
         return;
     }
     stores.remove_claims(&dest, tp);
@@ -1719,7 +1792,11 @@ pub fn OpGetFileText(cell: &std::cell::UnsafeCell<Stores>, file: DbRef, content:
     };
     // #255 / @PLN9: re-home against the program anchor (native parity with
     // the interpreter's `State::get_file_text`).
-    let file_path = stores.resolve_path(&file_path);
+    // `@FR-Path-Refuse` — a refused path reads as no text (logged by `resolve_path`).
+    let Some(file_path) = stores.resolve_path(&file_path) else {
+        content.clear();
+        return;
+    };
     read_file_text_into(&file_path, content);
 }
 
@@ -1788,7 +1865,9 @@ pub fn OpSizeFile(cell: &std::cell::UnsafeCell<Stores>, file: DbRef) -> i64 {
             .to_owned()
     };
     // #255 / @PLN9: re-home against the program anchor.
-    let file_path = stores.resolve_path(&file_path);
+    let Some(file_path) = stores.resolve_path(&file_path) else {
+        return i64::MIN;
+    };
     if let Ok(meta) = std::fs::metadata(&file_path) {
         meta.len().cast_signed()
     } else {
@@ -1827,7 +1906,9 @@ pub fn OpTruncateFile(cell: &std::cell::UnsafeCell<Stores>, file: DbRef, size: i
             .to_owned()
     };
     // #255 / @PLN9: re-home against the program anchor.
-    let file_path = stores.resolve_path(&file_path);
+    let Some(file_path) = stores.resolve_path(&file_path) else {
+        return false;
+    };
     // Close any open handle so resize starts from a clean state.
     let file_ref = stores.store(&file).get_i32_raw(file.rec, file.pos + 28);
     if file_ref != i32::MIN && (file_ref as usize) < stores.files.len() {
@@ -1923,7 +2004,9 @@ fn file_handle_write(stores: &mut Stores, file: &DbRef) -> i32 {
         )
     };
     // #255 / @PLN9: re-home against the program anchor.
-    let file_name = stores.resolve_path(&file_name);
+    let Some(file_name) = stores.resolve_path(&file_name) else {
+        return i32::MIN;
+    };
     match OpenOptions::new()
         .read(true)
         .write(true)
@@ -1969,7 +2052,9 @@ fn file_handle_read(stores: &mut Stores, file: &DbRef, initial_pos: i64) -> i32 
             .to_owned()
     };
     // #255 / @PLN9: re-home against the program anchor.
-    let file_name = stores.resolve_path(&file_name);
+    let Some(file_name) = stores.resolve_path(&file_name) else {
+        return i32::MIN;
+    };
     match OpenOptions::new().read(true).open(&file_name) {
         Ok(mut f) => {
             if initial_pos > 0 {
@@ -1980,7 +2065,9 @@ fn file_handle_read(stores: &mut Stores, file: &DbRef, initial_pos: i64) -> i32 
                 .set_i32_raw(file.rec, file.pos + 28, f_nr);
             stores
                 .files
-                .push(Some(crate::database::loft_file::LoftFile::new(f)));
+                .push(Some(crate::database::loft_file::LoftFile::reader(
+                    f, &file_name,
+                )));
             f_nr
         }
         Err(e) => {
@@ -2360,8 +2447,8 @@ impl FileVal for String {
 impl FileVal for DbRef {
     /// Serialise a vector (or struct/simple) `DbRef` into bytes for binary file output.
     ///
-    /// For `Parts::Vector(elem_tp)` the method iterates every element and delegates to
-    /// `Stores::read_data`; for all other types it calls `read_data` on `self` directly.
+    /// For `Parts::Vector(elem_tp)` the method hands the payload to
+    /// `Stores::write_vector_payload`; for all other types it calls `read_data` on `self`.
     fn file_to_bytes(&self, stores: &Stores, db_tp: i32, little_endian: bool) -> Vec<u8> {
         use crate::database::Parts;
         let mut data = Vec::new();
@@ -2371,15 +2458,14 @@ impl FileVal for DbRef {
                 let v_rec = store.get_u32_raw(self.rec, self.pos);
                 if v_rec != 0 {
                     let length = store.get_u32_raw(v_rec, 4);
-                    let elem_size = u32::from(stores.size(elem_tp));
-                    for i in 0..length {
-                        let elem = DbRef {
-                            store_nr: self.store_nr,
-                            rec: v_rec,
-                            pos: 8 + elem_size * i,
-                        };
-                        stores.read_data(&elem, elem_tp, little_endian, &mut data);
-                    }
+                    stores.write_vector_payload(
+                        self.store_nr,
+                        v_rec,
+                        length,
+                        elem_tp,
+                        little_endian,
+                        &mut data,
+                    );
                 }
             } else {
                 stores.read_data(self, db_tp as u16, little_endian, &mut data);
@@ -2935,13 +3021,10 @@ pub fn n_ticks(_cell: &std::cell::UnsafeCell<Stores>) -> i64 {
     crate::loft_host_time_ticks_us() as i64
 }
 
-/// Return the platform path separator as a loft character (`i32`).
-/// Returns `'/'` (47) on Unix and `'\\'` (92) on Windows.
-/// Bytecode equivalent: `n_path_sep` in `src/native.rs`.
-/// Plan 09 phase 01 step 1.5: migrated to the no-stores ABI — body
-/// returns a compile-time platform constant, never touches `Stores`.
+/// The separator of a loft path, as a loft character (`i32`): `'/'` on every platform
+/// (`@FR-Path-Sep`).  Bytecode equivalent: `n_path_sep` in `src/native.rs`.
 pub fn n_path_sep() -> i32 {
-    crate::platform::sep() as i32
+    '/' as i32
 }
 
 /// C60 piece 3: build a scratch u32-rec-nr vector from a hash,
@@ -4945,6 +5028,16 @@ pub trait LoftCoroutine {
     /// Freeing twice is not possible: every scope-exit free the generator DOES run nulls
     /// its own field, and the generated body only frees fields that are still set.
     fn drop_stores(&mut self, _stores: &mut Stores) {}
+
+    /// @FR-G-Next / @FR-G-Done — has this generator reached its end?  Asked only when an advance
+    /// answered its channel's end sentinel, because that sentinel is also a value a
+    /// generator may yield — `i64::MIN` is the integer null, `"\0"` the text null,
+    /// `DbRef::NULL` a null reference — and `(G-Next)` produces it like any other.
+    /// Every emitted generator overrides this with its own flag; the default keeps the
+    /// sentinel meaning "done" for a generator that has no flag to ask.
+    fn done(&self) -> bool {
+        true
+    }
 }
 
 std::thread_local! {
@@ -5233,7 +5326,7 @@ fn advance_native<R>(
 pub fn coroutine_next_i64(gen_ref: DbRef, stores: &mut Stores) -> i64 {
     advance_native(gen_ref, stores, COROUTINE_EXHAUSTED, |coro, stores| {
         let val = coro.next_i64(stores);
-        (val, val == COROUTINE_EXHAUSTED)
+        (val, val == COROUTINE_EXHAUSTED && coro.done())
     })
 }
 
@@ -5257,7 +5350,7 @@ pub fn coroutine_next_dbref(gen_ref: DbRef, stores: &mut Stores) -> DbRef {
     // check also flips to true here because exhaustion frees the slot.
     advance_native(gen_ref, stores, DbRef::NULL, |coro, stores| {
         let val = coro.next_dbref(stores);
-        (val, val.store_nr == u16::MAX)
+        (val, val.store_nr == u16::MAX && coro.done())
     })
 }
 
@@ -5271,7 +5364,7 @@ pub fn coroutine_next_text(gen_ref: DbRef, stores: &mut Stores) -> String {
         crate::state::STRING_NULL.to_string(),
         |coro, stores| {
             let val = coro.next_text(stores);
-            let done = val == crate::state::STRING_NULL;
+            let done = val == crate::state::STRING_NULL && coro.done();
             (val, done)
         },
     )
@@ -5491,6 +5584,59 @@ pub fn fs_is_file(path: &str) -> bool {
     }
 }
 
+// The path-taking operations as a PROGRAM reaches them, in both backends: the program's
+// path goes through `Stores::resolve_path` (formal/paths.md), and a refused path answers the
+// operation's own failure — `FS_OTHER` for a change, `false` for a question
+// (`@FR-Path-Refuse`).  The stdlib's `#rust` templates and the interpreter's handlers call
+// these — written `s.database.fs_*_at(…)`, which the native rewriter turns into
+// `stores.fs_*_at(…)` — never `resolve_path` and an `fs_*` in two steps.
+
+impl Stores {
+    #[must_use]
+    pub fn fs_delete_at(&self, raw: &str) -> i64 {
+        self.resolve_path(raw).map_or(FS_OTHER, |p| fs_delete(&p))
+    }
+
+    #[must_use]
+    pub fn fs_move_at(&self, from: &str, to: &str) -> i64 {
+        match (self.resolve_path(from), self.resolve_path(to)) {
+            (Some(f), Some(t)) => fs_move(&f, &t),
+            _ => FS_OTHER,
+        }
+    }
+
+    #[must_use]
+    pub fn fs_mkdir_at(&self, raw: &str) -> i64 {
+        self.resolve_path(raw).map_or(FS_OTHER, |p| fs_mkdir(&p))
+    }
+
+    #[must_use]
+    pub fn fs_mkdir_all_at(&self, raw: &str) -> i64 {
+        self.resolve_path(raw)
+            .map_or(FS_OTHER, |p| fs_mkdir_all(&p))
+    }
+
+    #[must_use]
+    pub fn fs_rmdir_at(&self, raw: &str) -> i64 {
+        self.resolve_path(raw).map_or(FS_OTHER, |p| fs_rmdir(&p))
+    }
+
+    #[must_use]
+    pub fn fs_is_dir_at(&self, raw: &str) -> bool {
+        self.resolve_path(raw).is_some_and(|p| fs_is_dir(&p))
+    }
+
+    #[must_use]
+    pub fn fs_is_file_at(&self, raw: &str) -> bool {
+        self.resolve_path(raw).is_some_and(|p| fs_is_file(&p))
+    }
+
+    #[must_use]
+    pub fn fs_is_symlink_at(&self, raw: &str) -> bool {
+        self.resolve_path(raw).is_some_and(|p| fs_is_symlink(&p))
+    }
+}
+
 /// Store a closure DbRef associated with a lambda definition number.
 /// Called in generated native code when `OpStoreClosure` appears in the IR,
 /// immediately before the fn-ref variable is stored.
@@ -5634,6 +5780,22 @@ pub fn native_call_chain() -> Vec<String> {
 /// generated function body.  The `&'static str` arguments are string literals
 /// embedded in the generated Rust code.
 #[inline]
+/// The program's own `.loft` path for a compiled program: the one its driver passes in
+/// `LOFT_NATIVE_MAIN_FILE` when it launches the binary, else `baked`.  A test/semantics build
+/// bakes `""` and so holds no path at all — the same program at two paths is one binary and one
+/// cache entry — while a shipped `--native-release` binary bakes its path, since it runs with
+/// no driver.  Read once; the path never changes during a run.
+pub fn main_file_or(baked: &'static str) -> &'static str {
+    static MAIN: std::sync::OnceLock<Option<&'static str>> = std::sync::OnceLock::new();
+    MAIN.get_or_init(|| {
+        std::env::var("LOFT_NATIVE_MAIN_FILE")
+            .ok()
+            .filter(|v| !v.is_empty())
+            .map(|v| &*Box::leak(v.into_boxed_str()))
+    })
+    .unwrap_or(baked)
+}
+
 pub fn cr_call_push(name: &'static str, file: &'static str, line: u32) {
     // @PLN28 — native call-depth guard.  Generated Rust recurses one native
     // frame per loft call, so unbounded recursion overflows the OS stack with

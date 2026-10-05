@@ -643,6 +643,11 @@ pub struct Stores {
     /// number inside its own store: `0` not asked yet, `1` yes, `2` no.  The schema does not
     /// change once a program runs, so the answer is computed once per type.
     pub(crate) swap_safe_types: Vec<u8>,
+    /// `@FR-R-RefillBuffer` — a store an exchange released, kept instead of freed: it holds
+    /// the previous value of the rebound variable, a root of its own `known_type` at `1@8`,
+    /// and nothing references it.  The next buffer of that type minted for a refilling callee
+    /// takes it (`take_spare`); a second release frees the one kept before.
+    pub(crate) spare_store: Option<u16>,
     /// When true, `free_named` overwrites the freed store's buffer with a
     /// poison pattern (`0xDEADBEEF` i32 words) so subsequent reads through a
     /// stale DbRef hit recognisable garbage instead of whatever bytes the
@@ -777,6 +782,7 @@ impl Clone for Stores {
             runtime_error: None,
             dispatch_stop: std::sync::atomic::AtomicBool::new(false),
             swap_safe_types: Vec::new(),
+            spare_store: None,
             // #255: `source_dir` is parse-time CONFIG (the main source file's
             // directory), not runtime state — it must survive `clone()` so the
             // `source_dir()` builtin works after the test runner / native paths
@@ -1548,6 +1554,7 @@ impl Stores {
             runtime_error: None,
             dispatch_stop: std::sync::atomic::AtomicBool::new(false),
             swap_safe_types: Vec::new(),
+            spare_store: None,
             source_dir: String::new(),
             // #255 / @PLN9: program-relative by default — a relative file path
             // re-homes against the program's own directory, so "program + assets"
@@ -1611,19 +1618,37 @@ impl Stores {
     /// sandbox — admission is decided at load time and carries no runtime
     /// checks (`SANDBOX.md`) — so the resolved path is the whole answer and the
     /// filesystem gives it.
+    ///
+    /// It is also where a loft path MEANS the same on every platform (`formal/paths.md`):
+    /// `\` separates as `/` does (`@FR-Path-Sep`), a name no platform could hold is refused
+    /// (`@FR-Path-Name`), and a name that is another entry's spelling with a different case is
+    /// refused (`@FR-Path-Case`).  `None` is the refusal: the caller answers its operation's
+    /// own failure, and the one log line is written here (`@FR-Path-Refuse`).
     #[must_use]
-    pub fn resolve_path(&self, raw: &str) -> String {
-        if !self.program_relative || self.source_dir.is_empty() {
-            return raw.to_string();
+    pub fn resolve_path(&self, raw: &str) -> Option<String> {
+        let norm = match crate::file_access::program_path(raw) {
+            Ok(norm) => norm,
+            Err(why) => {
+                crate::file_access::log_refusal_once(raw, &why);
+                return None;
+            }
+        };
+        let full = if !self.program_relative
+            || self.source_dir.is_empty()
+            || std::path::Path::new(&norm).is_absolute()
+        {
+            norm
+        } else {
+            std::path::Path::new(&self.source_dir)
+                .join(&norm)
+                .to_string_lossy()
+                .into_owned()
+        };
+        if let Err(why) = crate::file_access::case_clash(&full) {
+            crate::file_access::log_refusal_once(raw, &why);
+            return None;
         }
-        let p = std::path::Path::new(raw);
-        if p.is_absolute() {
-            return raw.to_string();
-        }
-        std::path::Path::new(&self.source_dir)
-            .join(p)
-            .to_string_lossy()
-            .into_owned()
+        Some(full)
     }
 
     /// Plan-07 phase 4c — Stores-side counterpart of `State::raise`.
@@ -2266,6 +2291,36 @@ impl Stores {
         store.fill::<T>(h.rec, crate::vector::checked_vec_pos(len, size), n, val);
         store.write::<u32>(h.rec, 4, total);
         *p = crate::vector::push_header(db, &self.allocations);
+        true
+    }
+
+    /// `@FR-R-RefillBuffer`'s in-place clause — make the vector at `db` hold exactly `count`
+    /// copies of `val` by overwriting it where it stands, when it ALREADY holds `count`
+    /// elements of width `size`: the answer `clear_vector` + [`Stores::push_fill`] gives,
+    /// without the reset, the reserve and the two header derivations.  `false` (nothing
+    /// written) for any other length, a null, foreign or locked vector, or a width that is
+    /// not `T`'s — the caller then empties and fills as before.  Scalars only, so the
+    /// elements it overwrites own nothing.
+    #[inline]
+    pub fn fill_exact<T: crate::vector::HoistScalar>(
+        &mut self,
+        db: &crate::keys::DbRef,
+        size: u32,
+        count: i64,
+        val: T,
+    ) -> bool {
+        if size != std::mem::size_of::<T>() as u32 {
+            return false;
+        }
+        let h = crate::vector::vec_header(db, &self.allocations);
+        if h.rec == 0 || h.locked || i64::from(h.len) != count {
+            return false;
+        }
+        let store = &mut self.allocations[h.store_nr as usize];
+        if store.is_foreign() {
+            return false;
+        }
+        store.fill::<T>(h.rec, crate::vector::checked_vec_pos(0, size), h.len, val);
         true
     }
 

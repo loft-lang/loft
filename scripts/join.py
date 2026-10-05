@@ -31,6 +31,7 @@ new sites), or start a gate (`scripts/ci-run.sh start` is yours to run after `ve
 """
 
 import argparse
+import fnmatch
 import datetime
 import json
 import os
@@ -91,7 +92,8 @@ def sh(cmd, quiet=False):
 def is_derived(path, registry):
     for a in registry["artefacts"]:
         for p in a["paths"]:
-            if path == p or (p.endswith("/") and path.startswith(p)):
+            if path == p or (p.endswith("/") and path.startswith(p)) or (
+                    any(c in p for c in "*?[") and fnmatch.fnmatchcase(path, p)):
                 return True
     return False
 

@@ -160,8 +160,14 @@ pub(crate) struct VarSnapshot<'a> {
     pub user_appended: bool,
     /// A whole-value bind COPIED a place into it (`(B-Copy)`, loft#1840); the lint reads it.
     pub copy_bound: bool,
+    /// A construction work-ref still names its store (loft#1522), so no rebind frees it.
+    pub buffer_witnessed: bool,
     /// The owner witness of a mixed-ownership local (`@FR-O-Witness`), `u16::MAX` for none.
     pub owner_witness: u16,
+    /// A rebound parameter's entry witness (@PLN87 P2.1), `u16::MAX` for none.
+    pub rebind_orig: u16,
+    /// The scope that declares it; the yield emitter reads it (loft#1676).
+    pub scope: u16,
 }
 
 /// @PLAN28 C4 — owned codegen-read fields of one `Variable`, consumed by
@@ -185,7 +191,10 @@ pub(crate) struct RestoredVar {
     pub user_named: bool,
     pub user_appended: bool,
     pub copy_bound: bool,
+    pub buffer_witnessed: bool,
     pub owner_witness: u16,
+    pub rebind_orig: u16,
+    pub scope: u16,
 }
 
 impl Variable {
@@ -856,7 +865,10 @@ impl Function {
             user_named: v.user_named,
             user_appended: v.user_appended,
             copy_bound: v.copy_bound,
+            buffer_witnessed: self.is_buffer_witnessed(i as u16),
             owner_witness: self.owner_witness(i as u16).unwrap_or(u16::MAX),
+            rebind_orig: self.rebind_orig(i as u16).unwrap_or(u16::MAX),
+            scope: v.scope,
         }
     }
 
@@ -901,6 +913,12 @@ impl Function {
             if r.owner_witness != u16::MAX {
                 f.owner_witness.insert(i as u16, r.owner_witness);
             }
+            if r.rebind_orig != u16::MAX {
+                f.rebind_orig.insert(i as u16, r.rebind_orig);
+            }
+            if r.buffer_witnessed {
+                f.buffer_witnessed_vars.insert(i as u16);
+            }
         }
         f.variables = vars
             .into_iter()
@@ -922,9 +940,9 @@ impl Function {
                 user_named: r.user_named,
                 user_appended: r.user_appended,
                 copy_bound: r.copy_bound,
+                scope: r.scope,
                 // codegen-irrelevant post-parse defaults (not stored):
                 source: (0, 0),
-                scope: u16::MAX,
                 uses_at_write: 0,
                 incoming_seed: false,
                 target_mentions: 0,
@@ -3758,13 +3776,32 @@ impl Function {
             );
             return;
         }
+        // A DECLARED scalar keeps its type (`@FR-N-Decl`), so "a new variable name" is no cure
+        // there — the author asked for this type — and the cast that is one is spelled out,
+        // as the author would write it (`as u8`, not the unparseable `as integer(0, 255)`).
+        // The diagnosis half stays word for word, for the reason the arms above give.
+        if self.annotated.contains(&var_nr)
+            && crate::data::is_scalar(var_tp)
+            && crate::data::is_scalar(type_def)
+        {
+            let declared = data.written_type_name(var_tp);
+            diagnostic!(
+                lexer,
+                Level::Error,
+                "Variable '{}' cannot change type from {} to {}; it is declared `{declared}` — cast the value with `as {declared}`",
+                self.name(var_nr),
+                declared,
+                data.written_type_name(type_def)
+            );
+            return;
+        }
         diagnostic!(
             lexer,
             Level::Error,
             "Variable '{}' cannot change type from {} to {}; use a new variable name or cast with 'as'",
             self.name(var_nr),
-            var_tp.source_name(data),
-            type_def.source_name(data)
+            data.written_type_name(var_tp),
+            data.written_type_name(type_def)
         );
     }
 

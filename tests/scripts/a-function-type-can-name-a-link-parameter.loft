@@ -1,0 +1,67 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A lambda `fn(p: &P) { … }` has the type `fn(&P)` — that is how the compiler prints it — and
+// `(B-Ref-Intro)` admits `&τ` for every τ, and @FR-L-Escape lets a closure be passed.  The type could not be WRITTEN: the function-type
+// parser read `const` before a parameter and not `&`, so a parameter, a field or a local that
+// holds such a closure was "Expect token )", and no function could accept one (`(L-Escape)`:
+// a closure may be passed as an argument).  It now reads `&` through `ref_var_type`, the one
+// place a declared `&` parameter is decided.
+//
+// Passing a closure that writes through a link also met the unused-`&` lint: in
+// `fn app(f: fn(&P), p: &P) { f(p); }` the call through `f` was never looked into, so `p` read
+// as never modified.  The refusal half — a mismatch, and a `&` that really is unused — is
+// `a-function-type-link-refusals.loft`.
+//
+// Axes this file MOVES:  where the type is written (a parameter · a local · a field · with a
+//                        return), the link's type (struct · integer).
+//
+// @falsified-at: c8cfeb402 — interpret exit 1 -> 0, native exit 1 -> 0 (the control does
+//   not parse `fn(&P)`: "Expect token )").
+// @falsified-by: tests/falsified/a-function-type-can-name-a-link-parameter.patch — the same
+//   channels.  Score it with
+//   `scripts/falsify.sh <this file> --patch <that patch>` once c8cfeb402 is out of reach.
+// HOLDS: leak, panic and refusals are clean on both trees and both backends.
+
+struct P { x: integer, y: integer }
+struct HR { f: fn(&P) }
+
+fn app(f: fn(&P), p: &P) {
+  f(p);
+}
+
+fn bump(f: fn(&integer), n: &integer) {
+  f(n);
+}
+
+fn use_it(f: fn(&P) -> integer, p: &P) -> integer {
+  f(p)
+}
+
+fn as_parameter() -> text {
+  q = P { x: 1, y: 2 };
+  app(fn(p: &P) { p.x = 9; }, q);
+  a = 1;
+  bump(fn(n: &integer) { n = n + 5; }, a);
+  "{q.x} {a}"
+}
+
+fn as_local_and_field() -> text {
+  f: fn(&P) = fn(p: &P) { p.x = 9; };
+  q = P { x: 1, y: 2 };
+  f(q);
+  h = HR { f: fn(p: &P) { p.y = 8; } };
+  h.f(q);
+  "{q.x} {q.y}"
+}
+
+fn with_return() -> integer {
+  q = P { x: 1, y: 2 };
+  use_it(fn(p: &P) -> integer { p.x = 3; p.x + p.y }, q) * 10 + q.x
+}
+
+fn main() {
+  assert(as_parameter() == "9 6", "fn(&P) and fn(&integer) parameters: got {as_parameter()}");
+  assert(as_local_and_field() == "9 8", "fn(&P) in a local and a field: got {as_local_and_field()}");
+  assert(with_return() == 53, "fn(&P) -> integer: 5 returned, x written to 3: got {with_return()}");
+}

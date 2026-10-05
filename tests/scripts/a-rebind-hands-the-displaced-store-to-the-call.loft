@@ -1,0 +1,167 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-RebindBuffer` — a rebind `x = f(…)` whose result is a fresh store adopts it, and the
+// store `x` held becomes the hidden buffer of that call's next execution, so a loop of such
+// rebinds alternates two stores instead of exchanging a new one into `x` each time
+// (`LOFT_NO_REBIND_BUFFER=1` exchanges, `@FR-H-SwapRebind`).
+//
+// What can go wrong is a store owned twice or read after it was handed on: the call reading
+// `x` while it builds into `x`'s previous store, an even or odd trip count leaving the result
+// in either store, a view of `x` taken before the rebind, a callee that hands back its
+// argument instead of a fresh store, `x` starting in the caller's own return buffer, and the
+// state a second call of the same function finds.  Every cell checks values AND lengths;
+// values hand-computed.  `tests/rebind_buffer.rs` pins which rebinds take the form and runs
+// every cell under the native leak check.
+//
+// @falsified-by: tests/falsified/a-rebind-hands-the-displaced-store-to-the-call.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   CHANNEL: an assertion, on --native.  WITNESS: the patch hands the displaced store on AND
+//   still frees it, so b9's temporary takes the freed slot and `c` reads `[9,9,9,9]` (every
+//   other cell passes; `LOFT_STRICT_STORES=1 LOFT_POISON=1` crashes on the corrupt reference).
+//   HOLDS: every assertion passes on both trees with `LOFT_NO_REBIND_BUFFER=1`.  A second
+//   planted defect (2026-10-04), dropping the run-time test against the caller's entry
+//   buffer, fails b6 (`b6(2) got [2,4,6,8]`) and under strict stores reports `USE AFTER FREE
+//   … killed by the free of var___ref_1`.
+
+struct M { m: vector<float> }
+
+struct Named { name: text, k: integer }
+
+// r = a + b elementwise over four elements
+fn add4(a: const M, b: const M) -> M {
+  r = M { m: [0.0, 0.0, 0.0, 0.0] };
+  for i in 0..4 { r.m[i] = (a.m[i] ?? 0.0) + (b.m[i] ?? 0.0); }
+  r
+}
+
+// b1: c = d + c, n times from c = [1, 2, 3, 4], d = [1, 10, 100, 1000]:
+//   c = [1 + n, 2 + 10n, 3 + 100n, 4 + 1000n]
+fn b1(n: integer) {
+  d = M { m: [1.0, 10.0, 100.0, 1000.0] };
+  c = M { m: [1.0, 2.0, 3.0, 4.0] };
+  for _ in 0..n { c = add4(d, c); }
+  f = n as float;
+  assert(len(c.m) == 4, "b1({n}) len {len(c.m)}");
+  assert(c.m[0] == 1.0 + f && c.m[1] == 2.0 + 10.0 * f && c.m[2] == 3.0 + 100.0 * f
+         && c.m[3] == 4.0 + 1000.0 * f, "b1({n}) got {c.m}");
+}
+
+// b2: c = c + c doubles every element: n = 5 from [1, 2, 3, 4] gives * 32
+fn b2() {
+  c = M { m: [1.0, 2.0, 3.0, 4.0] };
+  for _ in 0..5 { c = add4(c, c); }
+  assert(len(c.m) == 4 && c.m[0] == 32.0 && c.m[1] == 64.0 && c.m[2] == 96.0
+         && c.m[3] == 128.0, "b2 got {c.m}");
+}
+
+fn rename(p: const Named, s: text) -> Named {
+  Named { name: "{p.name}{s}", k: p.k + len(s) }
+}
+
+// b3: a type with a text field (no refill): names grow "a" -> "ab" -> "abcd" -> "abcdef"
+fn b3() {
+  x = Named { name: "a", k: 0 };
+  for s in ["b", "cd", "ef"] { x = rename(x, s); }
+  assert(x.name == "abcdef" && x.k == 5, "b3 got {x.name} {x.k}");
+}
+
+// The argument back on an odd k, a fresh sum otherwise: not a fresh result, so no handing on.
+fn maybe(a: const M, k: integer) -> M {
+  if k % 2 == 1 { return a; }
+  add4(a, a)
+}
+
+// b4: k = 0..4 from [1, 1, 1, 1]: doubled on k = 0 and 2 -> 4 each
+fn b4() {
+  c = M { m: [1.0, 1.0, 1.0, 1.0] };
+  for k in 0..4 { c = maybe(c, k); }
+  assert(len(c.m) == 4 && c.m[0] == 4.0 && c.m[3] == 4.0, "b4 got {c.m}");
+}
+
+// b5: a copy of c's vector taken before the loop keeps the value it copied
+fn b5() {
+  d = M { m: [1.0, 1.0, 1.0, 1.0] };
+  c = M { m: [0.0, 0.0, 0.0, 0.0] };
+  v = c.m;
+  for _ in 0..3 { c = add4(d, c); }
+  assert(c.m[0] == 3.0 && len(c.m) == 4, "b5 c {c.m}");
+  assert(len(v) == 4 && v[0] == 0.0 && v[3] == 0.0, "b5 v {v}");
+}
+
+// ANOTHER argument back on an odd k, a fresh sum otherwise
+fn pick(d: const M, a: const M, k: integer) -> M {
+  if k % 2 == 1 { return d; }
+  add4(a, a)
+}
+
+// b7: k = 0..5 from c = [1, 2, 3, 4], d = [7, 7, 7, 7]:
+//   k0 [2,4,6,8]  k1 d  k2 [14,..]  k3 d  k4 [14,..]; d itself never changes
+fn b7() {
+  d = M { m: [7.0, 7.0, 7.0, 7.0] };
+  c = M { m: [1.0, 2.0, 3.0, 4.0] };
+  for k in 0..5 { c = pick(d, c, k); }
+  assert(len(c.m) == 4 && c.m[0] == 14.0 && c.m[3] == 14.0, "b7 c {c.m}");
+  assert(len(d.m) == 4 && d.m[0] == 7.0 && d.m[3] == 7.0, "b7 d {d.m}");
+}
+
+// b8: the FIRST call answers d, while the buffer is still null — `return d` is a copy into a
+//   fresh store, so it may be adopted.  k = 1..5: d, [14,..], d, [14,..]
+fn b8() {
+  d = M { m: [7.0, 7.0, 7.0, 7.0] };
+  c = M { m: [1.0, 2.0, 3.0, 4.0] };
+  for k in 1..5 { c = pick(d, c, k); }
+  assert(len(c.m) == 4 && c.m[0] == 14.0 && c.m[3] == 14.0, "b8 c {c.m}");
+  assert(len(d.m) == 4 && d.m[0] == 7.0 && d.m[3] == 7.0, "b8 d {d.m}");
+}
+
+// b9: a record minted between the rebinds takes any slot that was freed — a store both handed
+//   on and released would then hold its 9s.  c = d + c four times from 0: [4, 8, 12, 16]
+fn b9() {
+  d = M { m: [1.0, 2.0, 3.0, 4.0] };
+  c = M { m: [0.0, 0.0, 0.0, 0.0] };
+  s = 0.0;
+  for _ in 0..4 {
+    c = add4(d, c);
+    t = M { m: [9.0, 9.0, 9.0, 9.0] };
+    s += t.m[0] ?? 0.0;
+  }
+  assert(len(c.m) == 4 && c.m[0] == 4.0 && c.m[1] == 8.0 && c.m[2] == 12.0 && c.m[3] == 16.0,
+         "b9 c {c.m}");
+  assert(s == 36.0, "b9 s {s}");
+}
+
+// Built in the function's own return buffer, then rebound n times by + d.
+fn acc(n: integer, d: const M) -> M {
+  r = M { m: [0.5, 0.5, 0.5, 0.5] };
+  for _ in 0..n { r = add4(d, r); }
+  r
+}
+
+// b6: acc called again and again, each result bound to the same local; n = 0, 1, 2, 3
+//   r.m[1] = 0.5 + 2n
+fn b6() {
+  d = M { m: [1.0, 2.0, 3.0, 4.0] };
+  t = 0.0;
+  for n in 0..4 {
+    a = acc(n, d);
+    assert(len(a.m) == 4 && a.m[1] == 0.5 + 2.0 * n as float, "b6({n}) got {a.m}");
+    t += a.m[3];
+  }
+  // a.m[3] = 0.5 + 4n summed over n = 0..3: 2 + 4 * 6
+  assert(t == 26.0, "b6 total {t}");
+}
+
+fn main() {
+  b1(0);
+  b1(1);
+  b1(6);
+  b1(7);
+  b2();
+  b3();
+  b4();
+  b5();
+  b6();
+  b7();
+  b8();
+  b9();
+}

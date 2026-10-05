@@ -62,6 +62,10 @@ jobs:
             os: windows-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          # A daily build answers `<last release>.<yyyymmdd>` (build.rs `effective_version`),
+          # which needs the release tags.
+          fetch-tags: true
 
       # A dispatch naming one triple builds only that leg; `all` (the default, and what a
       # PR or a push always does) builds every leg.

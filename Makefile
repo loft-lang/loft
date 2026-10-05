@@ -771,8 +771,8 @@ gallery:
 	done; \
 	if [ $$missing -gt 0 ]; then exit 1; fi
 	@echo "  [5/8] checking wasm/js glue are from the same build ..."
-	@js_mtime=$$(stat -c %Y doc/pkg/loft.js); \
-	wasm_mtime=$$(stat -c %Y doc/pkg/loft_bg.wasm); \
+	@js_mtime=$$(stat -c %Y doc/pkg/loft.js 2>/dev/null || stat -f %m doc/pkg/loft.js); \
+	wasm_mtime=$$(stat -c %Y doc/pkg/loft_bg.wasm 2>/dev/null || stat -f %m doc/pkg/loft_bg.wasm); \
 	delta=$$((wasm_mtime - js_mtime)); \
 	delta=$${delta#-}; \
 	if [ $$delta -gt 120 ]; then \
@@ -2817,6 +2817,10 @@ linkcheck-external:
 .PHONY: rule-coverage
 rule-coverage:  ## What share of the formal rules carry a code annotation, and an active guard
 	@python3 scripts/rule_tags.py coverage
+
+.PHONY: rule-worklist
+rule-worklist:  ## The rule-led walk's queue: untested rules ordered by the defects a walk is expected to find
+	@python3 scripts/rule_tags.py worklist $(ARGS)
 
 .PHONY: script-census
 script-census:  ## @PLN179 the work list: every Python/bash script by what a loft port needs (a report)

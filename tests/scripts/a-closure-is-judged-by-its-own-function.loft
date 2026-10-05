@@ -1,0 +1,52 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @FR-L-Fn — whether a fn-ref local holds a CAPTURING closure is a fact about that local, in
+// its own function.  The parser kept it in one map for the whole program, keyed by variable
+// number and never cleared, so a later function whose NON-capturing fn-ref sat in the slot an
+// earlier function's capturing closure had used was refused when a closure captured it:
+// *"only inline lambda literals can be stored in fn-ref struct fields; … not yet supported
+// when the source closure may capture"* — about a struct the program never wrote.  Whether
+// it fired depended on what came BEFORE the function in the file.  The function's own
+// variable table already carried the same map (`closure_var_of`); the parser-wide copy is gone.
+//
+// The pair below is the minimal shape: `first` binds a capturing typed closure, `second`
+// captures a non-capturing one in the same slot.  `before_first` is the control order.
+//
+// @falsified-at: 58acb001b — interpret exit 1 -> 0, native exit 1 -> 0; the control refused
+//   `second` (*"… not yet supported when the source closure may capture"*).
+// @falsified-by: tests/falsified/a-closure-is-judged-by-its-own-function.patch — the same channels.  Score it with
+//   `scripts/falsify.sh <this file> --patch <that patch>` once 58acb001b is out of reach.
+// HOLDS: leak, panic and refusals are clean on both trees and both backends.
+
+fn before_first() -> integer {
+  dbl: fn(integer) -> integer = |a| { a * 2 };
+  fd = fn(a: integer) -> integer { dbl(a) };
+  fd(5)
+}
+
+fn first() -> text {
+  n = 5;
+  f = fn(a: integer) -> integer { a + n };
+  g: fn(integer) -> integer = |a| { a + n };
+  t = "ab";
+  ft = fn() -> text { t };
+  gt = || { t };
+  "{f(5)} {g(0)} {ft()}{gt()}"
+}
+
+fn second() -> text {
+  tu = (9, "x");
+  c = 2;
+  dbl: fn(integer) -> integer = |a| { a * 2 };
+  ft = fn() -> integer { tu.0 };
+  fc = || { c };
+  fd = fn(a: integer) -> integer { dbl(a) };
+  "{ft()} {fc()} {fd(6)}"
+}
+
+fn main() {
+  assert(before_first() == 10, "the control order: got {before_first()}");
+  assert(first() == "10 5 abab", "the capturing function: got {first()}");
+  assert(second() == "9 2 12", "a later function's non-capturing fn-ref: got {second()}");
+}

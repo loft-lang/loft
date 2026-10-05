@@ -35,7 +35,16 @@ python3 bench/stats.py --only 01,08          # some of them
 python3 bench/stats.py --lanes native,rust,interp,python
 python3 bench/stats.py --tsv out.tsv         # keep the run, to diff against the next one
 python3 bench/stats.py --show-samples        # every sample under its row
+python3 bench/stats.py --routine check_request,cbor/decode   # one routine, or a set
 ```
+
+`--routine` takes `name` or `bench/name` (the qualified form for a name several programs
+use, such as `hash`).  On its own it builds only the programs `portal/routines.tsv` places
+those routines in, library benches included, and reports only their rows; `portal.py measure`
+and `scripts/perf_check.py` pass it through.  A program still runs ALL its routines, because
+the twins take no filter: `--n` is calibrated on the picked ones, and `--max-run-ms` (10 s)
+caps one whole run, so a fast pick beside a slow neighbour is timed over less than
+`--target-ms` and can come back `(coarse)`.
 
 ```
 bench           routine          native ns/op    ±%      rust ns/op    ±%  nat/rust         range  verdict
@@ -129,7 +138,7 @@ make perf-portal-render                                           # render from 
 | `portal/census.tsv` | library and consumer routines worth a row and not measured yet, each with its workload and its twin |
 | `portal/gaps.tsv` | features the consumer programs lean on that no measured row exercises |
 | `portal/libs.tsv` + `portal/checkout_libs.sh` | the library repositories the pass measures from, and the script that checks them out |
-| `portal/results/<host>.tsv` | the latest run per machine, stamped with its commit, compiler and settings |
+| `portal/results/<host>.tsv` | the latest run per machine, stamped with its commit, compiler and settings.  `<host>` is the node name, which follows the network a laptop is on — `LOFT_PERF_HOST=<name>` pins it so one machine keeps one history |
 
 A CLASS names the mechanism a routine's cost is made of — the per-call frame, a checked
 integer operator, a record appended to a vector, a hash probe — so a slow class points at one

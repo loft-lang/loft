@@ -92,6 +92,7 @@ open plan.  Silent-wrong defects are issues, not plans: `gh issue list --label s
 | Plan | status | What it is |
 |---|---|---|
 | [@PLN181](https://github.com/loft-lang/plans/issues/181) | active | The standard library compiled like any other library: interpreted scripts call compiled loft bodies, kernels retire |
+| [@PLN184](https://github.com/loft-lang/plans/issues/184) | future | loft fully functional on Windows — every routine, test and script, each count under a ratchet and proven by a Windows CI leg ([CODE.md § File access](CODE.md#file-access)) |
 | [@PLN148](https://github.com/loft-lang/plans/issues/148) | next | Better PHP end to end — a web client, an HTTPS server that renews its own certificate, and the libraries between them ([WEB_STACK.md](WEB_STACK.md)) |
 | [@PLN72](https://github.com/loft-lang/plans/issues/72) | future | Renderer backend boundary |
 | [@PLN43](https://github.com/loft-lang/plans/issues/43) | parked | loft store durability — three-tier opt-in mmap durability |
@@ -122,6 +123,7 @@ open plan.  Silent-wrong defects are issues, not plans: `gh issue list --label s
 | [@PLN172](https://github.com/loft-lang/plans/issues/172) | active | Documentation workflow — one contract, enforced by tools, reviewed on the existing beat |
 | [@PLN175](https://github.com/loft-lang/plans/issues/175) | active | Design decisions with teeth — every C### names the code, docs and guard that keep it |
 | [@PLN180](https://github.com/loft-lang/plans/issues/180) | active | Small records as tuples in the IR phase, decided once for both backends |
+| [@PLN185](https://github.com/loft-lang/plans/issues/185) | next | A slow routine is an ordinary bug — the measurement, the 3× bar and the classes before issue-driven performance work |
 | [@PLN158](https://github.com/loft-lang/plans/issues/158) | future | Release performance pass — every routine against an industry reference twin ([PERF_PORTAL.md](PERF_PORTAL.md)) |
 | [@PLN179](https://github.com/loft-lang/plans/issues/179) | future | Scripts in loft — the repo's Python/bash tooling ported, each port proven against its original |
 | [@PLN82](https://github.com/loft-lang/plans/issues/82) | parked | Constant store, phases B and C |

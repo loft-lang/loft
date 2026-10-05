@@ -8,10 +8,12 @@
 //   build_walls     src/wallgeo.loft `build_walls` phase A + `get_or_add` / `add_edge` /
 //                   `corner_key`, with hex_grid 0.1.0's `hex_neighbor` / `hex_corner_px` /
 //                   `hex_edge_corners` and src/sim.loft's `tile_at` / `is_wall` /
-//                   `edge_wall_raw`: every wall face FORMATS a text key "{kx}_{ky}" and probes
-//                   a `hash<CornerRef[ck]>`, appending a corner record on a miss.  101x101 hexes.
-//                   The Rust twin keys a `HashMap<(i64, i64), u32>` on the two integers, as the
-//                   census row states: the loft side pays a format the twin does not.
+//                   `edge_wall_raw`: every wall face rounds a corner to two integers (x and y
+//                   in thousandths) and probes a `hash<CornerRef[kx, ky]>`, appending a corner
+//                   record on a miss.  101x101 hexes.  The Rust twin keys a
+//                   `HashMap<(i64, i64), u32>` on the same two integers.  crawler formats them
+//                   into a text key "{kx}_{ky}" instead; that is the program's defect, not a
+//                   cost of the language, so this bench keys on the integers.
 //   build_vis       src/view.loft `build_vis_texture` + src/sim.loft `sim_hex_state`: one
 //                   push per hex of a 101x101 level, per frame.  crawler's `graphics::rgba` is
 //                   a one-expression library call and is modelled as the same loft function
@@ -55,11 +57,11 @@ struct Sim {
 
 struct WCorner { x: float, y: float, deg: integer, n1: integer, n2: integer, anc: integer }
 struct WEdge { a: integer, b: integer }
-struct CornerRef { ck: text, idx: integer }
+struct CornerRef { kx: integer, ky: integer, idx: integer }
 struct WallGraph {
   corners: vector<WCorner>,
   edges:   vector<WEdge>,
-  lookup:  hash<CornerRef[ck]>,
+  lookup:  hash<CornerRef[kx, ky]>,
 }
 
 struct Region { rgn_cols: integer, rgn_rows: integer, hex_h: vector<integer> }
@@ -159,20 +161,15 @@ fn hex_edge_corners(dir: integer) -> (integer, integer) {
   (5, 0)
 }
 
-// ── crawler `build_walls` phase A: a text key per corner, probed and appended ────────────
-fn corner_key(x: float, y: float) -> text {
+// ── crawler `build_walls` phase A: a corner keyed on its rounded coordinates ─────────────
+fn get_or_add(g: &WallGraph, x: float, y: float) -> integer {
   kx = round(x * 1000.0) as integer;
   ky = round(y * 1000.0) as integer;
-  "{kx}_{ky}"
-}
-
-fn get_or_add(g: &WallGraph, x: float, y: float) -> integer {
-  k = corner_key(x, y);
-  found = g.lookup[k];
+  found = g.lookup[kx, ky];
   if found != null { return found.idx; }
   idx = len(g.corners);
   g.corners += [WCorner { x: x, y: y, deg: 0, n1: -1, n2: -1, anc: 0 }];
-  g.lookup += [CornerRef { ck: k, idx: idx }];
+  g.lookup += [CornerRef { kx: kx, ky: ky, idx: idx }];
   idx
 }
 

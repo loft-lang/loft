@@ -1,0 +1,88 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A BUFFER OF TEXT RECORDS IS REFILLED WHERE IT IS (`@FR-R-RefillBuffer`, heap elements).  A
+// function that builds a `vector<R>` whose records hold a text, and returns it with
+// `return out;`, keeps the buffer it is handed live: its entry clear releases every element's
+// text and resets the store at its old capacity, the refill keeps that store, and the group
+// empties the vector by its length only.  The values must be a fresh build's exactly — after a
+// longer result in the same buffer and after a shorter one — every text released (no leak),
+// and a result the caller kept must not change.  The release is checked on the live record
+// count (`store_memory()`), since a stranded text changes no value.
+//
+// Axes this file MOVES:  the result length across calls in one buffer (3, 5, 1, 0, 4), the
+//                        text lengths (one to six characters), the caller keeping a
+//                        result (a copy) or rebinding it, repeated calls in a loop.
+// Axes it HOLDS FIXED:   one text field beside one integer; the `return out;` spelling (a
+//                        bare tail binds the hidden buffer directly and takes another form).
+//
+// Expected values by hand: runs(k, n) holds n records, element i is { s: "k" repeated i+1
+// times (the digit of k), n: k·10 + i }.  Its signature sig = Σ (len(s)·100 + n):
+//   runs(3, 3): lens 1, 2, 3 (600) + 30 + 31 + 32 = 693
+//   runs(7, 5): lens 1..5 (1500) + 70..74 (360) = 1860
+//   runs(2, 1): 100 + 20 = 120;   runs(5, 0): 0;   runs(9, 4): 1000 + 90..93 (366) = 1366
+//   the loop: k in 0..400 of runs(k % 10, k % 6), Σ over every call (by the formula below).
+//
+// @falsified-by: tests/falsified/a-buffer-of-text-records-is-refilled-where-it-is.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+
+struct R { s: text, n: integer }
+
+fn runs(k: integer, n: integer) -> vector<R> {
+  out: vector<R> = [];
+  for i in 0..n {
+    t = "";
+    for _ in 0..i + 1 { t += "{k}"; }
+    out += [R { s: t, n: k * 10 + i }];
+  }
+  return out;
+}
+
+fn sig(v: vector<R>) -> integer {
+  t = 0;
+  for r in v { t += len(r.s) * 100 + r.n; }
+  t
+}
+
+fn expect(k: integer, n: integer) -> integer {
+  t = 0;
+  for i in 0..n { t += (i + 1) * 100 + k * 10 + i; }
+  t
+}
+
+// The digits of the `records N` count in store_memory()'s header — the live records of every
+// store.  A text the refill stranded stays a live record in the buffer's store, so 400 calls
+// that strand one to five texts each reach four digits; the released form stays below 100.
+fn record_digits(report: text) -> integer {
+  marker = "records ";
+  pos = report.find(marker) ?? -1;
+  assert(pos >= 0, "records marker present");
+  rest = report[pos + len(marker)..];
+  digits = 0;
+  for c in rest { if c.is_numeric() { digits += 1; } else { break; } }
+  digits
+}
+
+fn main() {
+  a = runs(3, 3);
+  assert(sig(a) == 693 && len(a) == 3 && a[2].s == "333", "runs(3, 3): {sig(a)}");
+  kept = a;
+  a = runs(7, 5);
+  assert(sig(a) == 1860 && len(a) == 5 && a[4].s == "77777", "longer: {sig(a)}");
+  a = runs(2, 1);
+  assert(sig(a) == 120 && len(a) == 1 && a[0].s == "2", "shorter: {sig(a)}");
+  a = runs(5, 0);
+  assert(sig(a) == 0 && len(a) == 0, "empty: {sig(a)}");
+  a = runs(9, 4);
+  assert(sig(a) == 1366 && a[3].s == "9999", "after empty: {sig(a)}");
+  assert(sig(kept) == 693 && kept[1].s == "33", "a kept result is the caller's: {sig(kept)}");
+  total = 0;
+  want = 0;
+  for k in 0..400 {
+    b = runs(k % 10, k % 6);
+    total += sig(b);
+    want += expect(k % 10, k % 6);
+  }
+  assert(total == want, "the loop: {total} against {want}");
+  d = record_digits(store_memory());
+  assert(d <= 2, "every text released: the live records run to {d} digits");
+}

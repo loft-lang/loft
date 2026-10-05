@@ -19,6 +19,15 @@
 // casual one.
 
 fn main() {
+    // @PLN184 — Windows gives a program's main thread 1 MiB of stack where Linux gives 8 MiB,
+    // so a parse or a recursion that runs on Linux overflowed on Windows (the frame-headroom
+    // guard did).  Every loft binary gets the Linux amount on Windows too.
+    let target = std::env::var("TARGET").unwrap_or_default();
+    if target.contains("windows-msvc") {
+        println!("cargo:rustc-link-arg-bins=/STACK:{}", 8 << 20);
+    } else if target.contains("windows-gnu") {
+        println!("cargo:rustc-link-arg-bins=-Wl,--stack,{}", 8 << 20);
+    }
     let id = std::env::var("LOFT_BUILD_ID")
         .ok()
         .map(|v| v.trim().to_string())
@@ -125,6 +134,26 @@ fn main() {
     }
     println!("cargo:rustc-env=LOFT_FFI_FINGERPRINT={ffi_fp}");
 
+    // loft#1859 — WHICH compiler this is, as the content it was built from: every file under
+    // `src/`, `default/` and `loft-ffi/src`, and the manifest and lock that pick its
+    // dependencies.  The startup caches key on it.  They keyed on the running executable's
+    // modification time instead, and every test binary is its own executable: one rebuild
+    // wrote one stdlib image per test binary (31 548 images, 227 GB on one box), none of them
+    // ever read by another.  Every binary of one build shares this stamp, and a WIP edit still
+    // moves it.  A content hash, not a timestamp, so a release rebuilt from its source
+    // archive bakes the same bytes (`scripts/repro-roundtrip.sh`).
+    println!("cargo:rustc-env=LOFT_BUILD_STAMP={:016x}", source_stamp());
+
+    // The version this loft answers to — what a package's `loft = ">=…"` floor is checked
+    // against, and what `loft --version` prints.  A RELEASE is its `Cargo.toml` version.  Any
+    // other build — a daily, a development build — is `<last release's YYYY.M>.<yyyymmdd of
+    // HEAD's commit, UTC>`: it orders after the release it builds on and after any point
+    // release of it, and before the next monthly, so a library that needs what landed on `main`
+    // can name the day instead of waiting for the next release (`2026.10.20261005`).
+    let effective = effective_version();
+    println!("cargo:rustc-env=LOFT_EFFECTIVE_VERSION={effective}");
+    println!("cargo:rerun-if-env-changed=LOFT_VERSION");
+
     // @PLN21 Phase 1 — the target triple this loft was built for (e.g.
     // `x86_64-unknown-linux-gnu`).  cargo sets `TARGET` for build scripts; it is
     // the *authoritative* host triple — `std::env::consts` only yields
@@ -211,6 +240,8 @@ fn main() {
     println!("cargo:rerun-if-changed=src");
     println!("cargo:rerun-if-changed=default");
     println!("cargo:rerun-if-changed=loft-ffi/src");
+    println!("cargo:rerun-if-changed=Cargo.toml");
+    println!("cargo:rerun-if-changed=Cargo.lock");
     // …and when the build flags change, so LOFT_BUILD_RUSTFLAGS stays accurate.
     println!("cargo:rerun-if-env-changed=RUSTFLAGS");
     println!("cargo:rerun-if-env-changed=CARGO_ENCODED_RUSTFLAGS");
@@ -263,5 +294,102 @@ fn warn_stale_compiled_stdlib() {
              compiled from a different default/*.loft): this binary interprets every compiled \
              stdlib function, 5-23x slower on text routines.  Run: make compiled-stdlib"
         );
+    }
+}
+
+/// FNV-1a/64 over every file under the compiler's source roots, in sorted order of their
+/// relative paths, each path hashed before its bytes so a rename moves the stamp too.
+fn source_stamp() -> u64 {
+    fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                walk(&p, out);
+            } else {
+                out.push(p);
+            }
+        }
+    }
+    let mut files = vec![
+        std::path::PathBuf::from("Cargo.toml"),
+        std::path::PathBuf::from("Cargo.lock"),
+    ];
+    for root in ["src", "default", "loft-ffi/src"] {
+        walk(std::path::Path::new(root), &mut files);
+    }
+    files.sort();
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut put = |bytes: &[u8]| {
+        for b in bytes {
+            h ^= u64::from(*b);
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    };
+    for f in &files {
+        put(f.to_string_lossy().replace('\\', "/").as_bytes());
+        if let Ok(bytes) = std::fs::read(f) {
+            put(&(bytes.len() as u64).to_le_bytes());
+            put(&bytes);
+        }
+    }
+    h
+}
+
+/// See the `LOFT_EFFECTIVE_VERSION` comment in `main`.  `LOFT_VERSION` overrides it outright.  A
+/// tree with no git of its OWN — a release's source archive, which `repro-verify.sh` rebuilds —
+/// is the release it was cut from, so it answers the `Cargo.toml` version and reproduces the
+/// tagged build byte for byte.  So does a checkout whose HEAD carries the release's tag.
+fn effective_version() -> String {
+    let release = std::env::var("CARGO_PKG_VERSION").unwrap_or_default();
+    if let Ok(v) = std::env::var("LOFT_VERSION") {
+        let v = v.trim().to_string();
+        if !v.is_empty() {
+            return v;
+        }
+    }
+    let git = |args: &[&str]| -> Option<String> {
+        std::process::Command::new("git")
+            .args(args)
+            .env("TZ", "UTC")
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+    };
+    // Git of its OWN: a source archive unpacked inside some other repository must not read
+    // that repository's history.
+    let own = std::env::var("CARGO_MANIFEST_DIR").ok().and_then(|d| {
+        let top = git(&["rev-parse", "--show-toplevel"])?;
+        let same = std::fs::canonicalize(&top).ok()? == std::fs::canonicalize(&d).ok()?;
+        same.then_some(())
+    });
+    if own.is_none() {
+        return release;
+    }
+    let tagged = git(&["tag", "--points-at", "HEAD"]).unwrap_or_default();
+    if tagged.lines().any(|t| t.trim() == format!("v{release}")) {
+        return release;
+    }
+    let Some(day) = git(&["log", "-1", "--format=%cd", "--date=format-local:%Y%m%d"])
+        .filter(|d| d.len() == 8 && d.bytes().all(|b| b.is_ascii_digit()))
+    else {
+        return release;
+    };
+    // The release this build is ON: the newest `v*` tag HEAD descends from.  `Cargo.toml` may
+    // already name the NEXT release, and a daily stamped with that would outrank the release
+    // it precedes.  A shallow clone cannot walk the ancestry, so it takes the highest release
+    // tag it has (`fetch-tags: true` in the workflows that build loft); with no tag at all it
+    // falls back to `Cargo.toml`.
+    let base = git(&["describe", "--tags", "--abbrev=0", "--match", "v[0-9]*"])
+        .or_else(|| {
+            git(&["tag", "-l", "v[0-9]*", "--sort=-v:refname"])
+                .and_then(|l| l.lines().next().map(str::to_string))
+        })
+        .and_then(|t| t.strip_prefix('v').map(str::to_string))
+        .unwrap_or_else(|| release.clone());
+    let mut parts = base.split('.');
+    match (parts.next(), parts.next()) {
+        (Some(y), Some(m)) => format!("{y}.{m}.{day}"),
+        _ => release,
     }
 }

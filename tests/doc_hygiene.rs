@@ -157,6 +157,29 @@ fn every_guard_says_how_to_score_it_again() {
 /// Setext-style Markdown heading underline is exactly that, and this file's own docs use them.
 /// The two chevron forms cannot occur in prose, which is what makes the check total without
 /// being a false-positive machine.
+/// The scorer that writes every receipt reads its channels with sed and grep, whose dialects
+/// differ between GNU (Linux) and BSD (macOS).  A construct one lacks blinds a channel without
+/// an error — on macOS the expectations channel read `-` for every `@EXPECT_ERROR` guard — so
+/// receipts recorded there silently lost it.  `falsify.sh --self-test` scores fixed inputs
+/// with this machine's tools.
+#[test]
+fn the_falsify_scorer_reads_its_channels_on_this_platform() {
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    // `git_bash()`: a bare `bash` on a Windows runner is the WSL launcher, with no distribution.
+    let out = std::process::Command::new(git_bash())
+        .arg(root.join("scripts/falsify.sh"))
+        .arg("--self-test")
+        .current_dir(&root)
+        .output()
+        .expect("run scripts/falsify.sh");
+    assert!(
+        out.status.success(),
+        "falsify.sh --self-test failed on this platform:\n{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
 /// A patch receipt (`// @falsified-by: tests/falsified/<guard>.patch`) is the durable form
 /// precisely because it re-applies to the CURRENT tree: `scripts/falsify.sh --patch` scores it
 /// there.  One that no longer applies scores nothing, silently (GUARDS.md § The patch
@@ -164,6 +187,7 @@ fn every_guard_says_how_to_score_it_again() {
 /// tree and re-scored.  `tests/falsified_patches.baseline` lists the ones already stale when
 /// this landed, and only shrinks.
 #[test]
+#[ignore = "PR-time: .github/workflows/receipts.yml refreshes and scores stale receipts on a runner, then runs this with `--ignored`; a join does not stop on a receipt the code moved under"]
 fn every_patch_receipt_still_applies() {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let mut patches: Vec<std::path::PathBuf> = fs::read_dir(root.join("tests/falsified"))
@@ -3394,8 +3418,9 @@ fn nightly_gate_classes_drive_every_list_that_reads_them() {
         &lines[start..end]
     };
 
-    // The two CONSUMERS carry no class of their own: they are the readers, not gates.
-    let consumers = ["notify", "daily-status"];
+    // The CONSUMERS carry no class of their own: they are the readers, not gates
+    // (`red-steps-digest` hands the run to the red-steps issue).
+    let consumers = ["notify", "daily-status", "red-steps-digest"];
     let mut unsound: Vec<String> = Vec::new();
     let mut classified: Vec<String> = Vec::new();
     let mut unmarked: Vec<String> = Vec::new();
@@ -3810,4 +3835,57 @@ fn the_diagnostic_tag_test_sees_each_spelling() {
     ] {
         assert!(diagnostic_tag(clean).is_none(), "false positive on {clean}");
     }
+}
+
+/// @C136 — the outlier report (`bench/portal/outliers.py`) reproduces the hand count on
+/// the frozen 2026-10-02 macOS run: 182 routines, 85 over the 3× bar, the seven classes whose
+/// MEDIAN is over it (their 62 routines are systemic, each class's plan owns them) and the 23
+/// outliers that are ordinary issues.  The run and the registry it was classified with are
+/// frozen copies, so a re-measured baseline or a reclassified routine moves the portal, not this
+/// pin; moving the bar or the split rule does move it.
+#[test]
+fn the_outlier_report_reproduces_the_hand_count() {
+    let out = std::process::Command::new("python3")
+        .args([
+            "bench/portal/outliers.py",
+            "tests/fixtures/portal/2026-10-02-arm64-darwin.tsv",
+            "--routines",
+            "tests/fixtures/portal/2026-10-02-routines.tsv",
+        ])
+        // UTF-8 stdout on every platform: Windows' default code page wrote `×` as `�`.
+        .env("PYTHONUTF8", "1")
+        .output()
+        .expect("python3 bench/portal/outliers.py");
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "{text}{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        text.contains("182 routines, 85 over the bar: 62 systemic, 23 outliers"),
+        "{text}"
+    );
+    let systemic: Vec<&str> = text
+        .lines()
+        .filter(|l| l.ends_with("SYSTEMIC"))
+        .filter_map(|l| l.split_whitespace().nth(1))
+        .collect();
+    assert_eq!(
+        systemic,
+        [
+            "alloc-temp",
+            "vector-build",
+            "record-field",
+            "float-kernel",
+            "record-build",
+            "keyed",
+            "call"
+        ],
+        "{text}"
+    );
+    assert!(
+        text.contains("21.99×  text2d/draw_quads  (vector-read)"),
+        "{text}"
+    );
 }

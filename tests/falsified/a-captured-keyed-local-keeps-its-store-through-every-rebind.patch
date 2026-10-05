@@ -1,0 +1,344 @@
+diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
+index c37c42481..dd250e6fe 100644
+--- a/src/parser/expressions.rs
++++ b/src/parser/expressions.rs
+@@ -3792,44 +3792,6 @@ use a separate collection or add after the loop"
+             )
+     }
+ 
+-    /// loft#1862, `@FR-L-CapRebind` — the mint a keyed whole-value rebind of local `v` owes:
+-    /// `if <a closure record built over v still holds v's store> { fresh store for v }`.
+-    ///
+-    /// `(L-CapRebind)`: a rebind is not a mutation-through, so a record keeps the store it was
+-    /// built with.  A keyed rebind otherwise clears and refills the local's store IN PLACE
+-    /// (`gen_keyed_null(first = false)` keeps `store_nr`), which the record reads too: it
+-    /// answered the new contents, and once `@FR-O-Latest` let the frame free the store the
+-    /// local named last, an escaping record read a released store.  Asked by STORE IDENTITY at
+-    /// run time, so the mint happens exactly while a record shares the store: a second rebind
+-    /// finds the local on its own fresh store and clears that in place, rather than minting
+-    /// again and leaving the first fresh store to nobody.
+-    ///
+-    /// `None` while no record over `v` has been built earlier in this pass — every assignment
+-    /// after such a build is a REASSIGNMENT, which keeps a declaration's own init untouched.
+-    pub(crate) fn keyed_rebind_mint(&mut self, v: u16, kt: u16) -> Option<Value> {
+-        if self.first_pass || !self.vars.rebind_must_mint(v) {
+-            return None;
+-        }
+-        let records = self.capture_records.get(&(false, self.context, v))?.clone();
+-        let mut held = Value::Boolean(false);
+-        for (w, pos) in records.into_iter().rev() {
+-            let is_null = self.cl("OpRefIsNull", &[Value::Var(w)]);
+-            let built = self.cl("OpConvBoolFromRef", &[Value::Var(w)]);
+-            let slot = self.cl("OpGetDbRef", &[Value::Var(w), Value::Int(i32::from(pos))]);
+-            let distinct = self.cl("OpDistinctStore", &[slot, Value::Var(v)]);
+-            let shares = v_if(distinct, Value::Boolean(false), Value::Boolean(true));
+-            let this = v_if(
+-                is_null,
+-                Value::Boolean(false),
+-                v_if(built, shares, Value::Boolean(false)),
+-            );
+-            held = v_if(this, Value::Boolean(true), held);
+-        }
+-        let init = self.cl("OpInitRefSentinel", &[Value::Var(v)]);
+-        let alloc = self.cl("OpDatabase", &[Value::Var(v), Value::Int(i32::from(kt))]);
+-        Some(v_if(held, Value::Insert(vec![init, alloc]), Value::Null))
+-    }
+-
+     #[allow(clippy::too_many_arguments)] // the wrapper's list, unchanged from before the split
+     #[expect(clippy::too_many_lines, reason = "inherited")]
+     fn parse_assign_op_inner(
+@@ -6277,15 +6239,6 @@ use a separate collection or add after the loop"
+         // Falls through to the standard assign path which emits
+         // Set(v, code) — codegen then takes the Null arm.
+         if var_nr != u16::MAX && !self.first_pass && Self::create_keyed(code, f_type, op, var_nr) {
+-            // `@FR-L-CapRebind` — `c = []` over a store a closure record holds empties a FRESH
+-            // store, as every other keyed rebind does ([`Parser::keyed_rebind_mint`]).
+-            if crate::parser::vectors::owns_keyed_store(f_type)
+-                && let Some(kt) = self.keyed_type_id(f_type)
+-                && let Some(mint) = self.keyed_rebind_mint(var_nr, kt)
+-            {
+-                *code = Value::Insert(vec![mint, v_set(var_nr, Value::Null)]);
+-                return Type::Void;
+-            }
+             // Don't return here — let the standard pipeline emit
+             // Set(v, Null) so codegen sees it.  No further special-
+             // case handling needed: the rest of the pipeline tolerates
+@@ -6745,16 +6698,45 @@ use a separate collection or add after the loop"
+         if let Some(kt) = keyed_kt
+             && matches!(code, Value::Insert(ls) if !ls.is_empty())
+         {
+-            // `@FR-L-CapRebind` (loft#1447, loft#1862) — a store a closure record holds is
+-            // not cleared in place: the rebind mints a fresh one first, see
+-            // [`Parser::keyed_rebind_mint`].  The `Set(v, Null)` stays, after the mint:
+-            // `@FR-O-Latest`'s scan reads `Value::Set` nodes to learn that a local was
+-            // reassigned after its capture was built, which is what makes the frame free the
+-            // store the local now names (`1324-a-reassigned-capture-suppresses-the-store-the-
+-            // record-holds`); ordered mint-then-clear so the clear lands on the FRESH store.
+-            let clear = match self.keyed_rebind_mint(var_nr, kt) {
+-                Some(mint) => Value::Insert(vec![mint, v_set(var_nr, Value::Null)]),
+-                None => v_set(var_nr, Value::Null),
++            // @FR-L-CapHeap (loft#1447) — a CAPTURED local's rebind MINTS a fresh store
++            // instead of clearing this one in place.  `(L-CapHeap)` says a reassignment is
++            // not a mutation-through: the closure keeps the `DbRef` it was built with and
++            // answers the BUILD-time value, which is what the vector and struct spellings
++            // already do.  `Set(v, Null)` reaches `gen_keyed_null(first = false)`, whose
++            // `OpDatabase` clears the store IN PLACE and reuses `store_nr` — so the record's
++            // own handle sees the rebind, and `h = [Row{k:1,v:9}]` after a build over `v: 5`
++            // answered 9 on `hash`, `sorted` and `index`, both backends.
++            //
++            // Emitted HERE rather than decided in codegen because the licence is POSITIONAL
++            // and only the parser knows the position: `is_captured` is a whole-FUNCTION fact
++            // (`set_captured` runs when the closure BODY is parsed), so it is true for
++            // assignments that PRECEDE the build as well.  This site is reached only by a
++            // NON-EMPTY keyed literal — `h = [Row{…}]`, loft#895's local replace — while a
++            // declaration's `= []` goes through `create_keyed`, so the two cannot be
++            // confused and the declaration keeps its in-place init.
++            let clear = if self.vars.rebind_must_mint(var_nr) {
++                // `OpInitRefSentinel` rather than `OpInitRef`: it nulls the slot to the
++                // sentinel, and `OpDatabase`'s `store_nr == u16::MAX` arm then allocates a
++                // FRESH store from it — the same pair `parse_object` emits for the dense
++                // param rebind.  `OpInitRef` has no native emitter (it is codegen-internal),
++                // so the generated Rust called a function that does not exist.
++                let init = self.cl("OpInitRefSentinel", &[Value::Var(var_nr)]);
++                let alloc = self.cl(
++                    "OpDatabase",
++                    &[Value::Var(var_nr), Value::Int(i32::from(kt))],
++                );
++                // The `Set(v, Null)` STAYS, after the mint rather than instead of it.
++                // `@FR-O-Latest`'s scan reads `Value::Set` nodes to learn that a local was
++                // reassigned after its capture was built, and that fact is what turns OFF
++                // `capture_adoption_owns_free` so the frame frees the store the local now
++                // names.  Dropping the node minted a fresh store and then suppressed its
++                // free — the record kept the build-time store and the new one leaked
++                // (`1324-a-reassigned-capture-suppresses-the-store-the-record-holds`).
++                // Ordered mint-then-clear so the clear lands on the FRESH store: the other
++                // way round it would empty the store the record still holds.
++                Value::Insert(vec![init, alloc, v_set(var_nr, Value::Null)])
++            } else {
++                v_set(var_nr, Value::Null)
+             };
+             if let Value::Insert(ls) = code {
+                 ls.insert(0, clear);
+@@ -6838,27 +6820,10 @@ use a separate collection or add after the loop"
+             };
+             #[cfg(feature = "wasm")]
+             let tp_val = i32::from(kt);
+-            // `@FR-L-CapRebind` — a right-hand side that reads the local runs BEFORE the mint
+-            // (`@FR-O-Detach`): the mint rides in the destination operand, which is evaluated
+-            // after the source.  Its `Set(v, Null)` lands on the fresh store and is what tells
+-            // `@FR-O-Latest`'s scan that the local was reassigned.
+-            let mint = self.keyed_rebind_mint(var_nr, kt);
+-            let dest = match &mint {
+-                Some(m) if code.reads_var(var_nr) => {
+-                    let Value::If(held, then, _) = m.clone() else {
+-                        unreachable!("keyed_rebind_mint answers an `if`")
+-                    };
+-                    let mut then = vec![*then];
+-                    then.push(v_set(var_nr, Value::Null));
+-                    v_block(
+-                        vec![v_if(*held, Value::Insert(then), Value::Null), to.clone()],
+-                        f_type.clone(),
+-                        "keyed rebind",
+-                    )
+-                }
+-                _ => to.clone(),
+-            };
+-            let replace = self.cl("OpReplaceKeyed", &[code.clone(), dest, Value::Int(tp_val)]);
++            let replace = self.cl(
++                "OpReplaceKeyed",
++                &[code.clone(), to.clone(), Value::Int(tp_val)],
++            );
+             // loft#1840 — `(B-Copy)` for the keyed kinds, as `lower_vec_copy_bind` records it.
+             if self.is_copied_place(code)
+                 && let Value::Var(v) = to.unspan()
+@@ -6937,10 +6902,7 @@ use a separate collection or add after the loop"
+             let mut seq = if code.reads_var(var_nr) {
+                 Vec::new()
+             } else {
+-                mint.clone()
+-                    .into_iter()
+-                    .chain([Value::Set(var_nr, Box::new(Value::Null))])
+-                    .collect()
++                vec![Value::Set(var_nr, Box::new(Value::Null))]
+             };
+             // A JOIN's witnesses are its ARMS' — `protectable_ref_args` reads a call's
+             // arguments and a join has none of its own (loft#1154).
+@@ -6958,25 +6920,6 @@ use a separate collection or add after the loop"
+             for av in &guarded {
+                 seq.push(self.cl("n_unprotect_store_frees", &[Value::Var(*av)]));
+             }
+-            // `@FR-L-CapRebind` — a mint inside the destination moved the local off the store
+-            // the bracket protected, so `unprotect(v)` above reached the FRESH one.  The old
+-            // store is the one a record's slot still names; left protected, its release at
+-            // the local's scope exit was refused and it leaked once per pass.
+-            if mint.is_some() && guarded.contains(&var_nr) && code.reads_var(var_nr) {
+-                let records = self
+-                    .capture_records
+-                    .get(&(false, self.context, var_nr))
+-                    .cloned()
+-                    .unwrap_or_default();
+-                for (w, pos) in records {
+-                    let is_null = self.cl("OpRefIsNull", &[Value::Var(w)]);
+-                    let built = self.cl("OpConvBoolFromRef", &[Value::Var(w)]);
+-                    let present = v_if(is_null, Value::Boolean(false), built);
+-                    let slot = self.cl("OpGetDbRef", &[Value::Var(w), Value::Int(i32::from(pos))]);
+-                    let unprotect = self.cl("n_unprotect_store_frees", &[slot]);
+-                    seq.push(v_if(present, unprotect, Value::Null));
+-                }
+-            }
+             *code = Value::Insert(seq);
+             return Type::Void;
+         }
+diff --git a/src/parser/mod.rs b/src/parser/mod.rs
+index 025144e4b..0591a1712 100644
+--- a/src/parser/mod.rs
++++ b/src/parser/mod.rs
+@@ -1263,12 +1263,6 @@ pub struct Parser {
+     /// those were yielded and took a copy (`yield_owned_closure`).  Equal counts mean the local
+     /// is the generator's own again.
+     pub(crate) closure_capture_builds: std::collections::HashMap<(u32, u16), u32>,
+-    /// loft#1862, `@FR-L-CapRebind` — per (function, local): the closure records built over it
+-    /// so far in THIS pass, as (record local, capture slot position).  A keyed rebind asks them
+-    /// whether a record still holds the store the local names ([`Parser::keyed_rebind_mint`]).
+-    /// Entries carry the pass, so pass 2 reads only the builds it has already parsed — every
+-    /// assignment after one of them is a reassignment.
+-    pub(crate) capture_records: std::collections::HashMap<(bool, u32, u16), Vec<(u16, u16)>>,
+     pub(crate) yield_copied_captures: std::collections::HashMap<(u32, u16), u32>,
+     /// #314: capturing lambdas synthesized during each function body in
+     /// pass 1, keyed by the enclosing context's def_nr.  Consumed by
+@@ -1892,7 +1886,6 @@ impl Parser {
+             last_closure_alloc: None,
+             last_closure_captured_vars: vec![],
+             closure_capture_builds: std::collections::HashMap::new(),
+-            capture_records: std::collections::HashMap::new(),
+             yield_copied_captures: std::collections::HashMap::new(),
+             init_field_tracking: false,
+             init_field_deps: Vec::new(),
+diff --git a/src/parser/vectors.rs b/src/parser/vectors.rs
+index 334aeada1..883ab43e4 100644
+--- a/src/parser/vectors.rs
++++ b/src/parser/vectors.rs
+@@ -2170,18 +2170,6 @@ or build a local and use that."
+                         Value::Var(w),
+                         fill,
+                     ));
+-                    if v_nr != u16::MAX && self.vars.rebind_must_mint(v_nr) {
+-                        let pos = self
+-                            .database
+-                            .position(self.data.def(closure_rec_d).known_type(), &cap_name);
+-                        let held = self
+-                            .capture_records
+-                            .entry((self.first_pass, self.context, v_nr))
+-                            .or_default();
+-                        if !held.contains(&(w, pos)) {
+-                            held.push((w, pos));
+-                        }
+-                    }
+                     // P259 / Plan-57 Phase B (Mechanism B): the closure record now
+                     // holds a DbRef into the captured heap cell (`Reference(__cell_*,
+                     // _)`) via the auto-Reference attribute, and the record OWNS that
+diff --git a/src/scopes/capture_builds.rs b/src/scopes/capture_builds.rs
+index 4b74eddf1..834d320d0 100644
+--- a/src/scopes/capture_builds.rs
++++ b/src/scopes/capture_builds.rs
+@@ -589,48 +589,6 @@ pub(super) fn reassigned_join_capture_slot(
+     slot
+ }
+ 
+-/// `@FR-L-CapRebind` (loft#1862) — the capture slots of the PASS-CONFINED records built over
+-/// keyed local `v` when `v` is rebound after the build, as (record local, slot position).
+-///
+-/// The rebind gives `v` a fresh store while the record keeps the one it was built with
+-/// ([`crate::parser::Parser::keyed_rebind_mint`]).  The frame then frees what `v` names last
+-/// (`@FR-O-Latest`), a record that leaves the frame frees what it adopted, but a pass-confined
+-/// record adopts nothing (loft#1610) and is rebuilt in place on the next pass without
+-/// releasing a collection it displaces: the build-time store was released by nobody, once per
+-/// pass.  `v`'s scope exit releases it, by store identity — when no rebind ran the slot and
+-/// `v` name one store, which the frame's own free covers.  Empty for a build on a branch: a
+-/// pass that skips it leaves the slot naming an earlier pass's store, already released.
+-pub(super) fn rebound_capture_slots(
+-    data: &Data,
+-    database: &crate::database::Stores,
+-    function: &Function,
+-    built_with: &CaptureBuilds,
+-    v: u16,
+-) -> Vec<(u16, u16)> {
+-    if !built_with.reassigned_after_build.contains(&v)
+-        || !crate::parser::vectors::is_keyed(function.tp(v))
+-    {
+-        return Vec::new();
+-    }
+-    let name = function.name(v);
+-    let mut slots = Vec::new();
+-    for w in 0..function.next_var() {
+-        if function.is_argument(w) {
+-            continue;
+-        }
+-        let Type::Reference(record, _) = function.tp(w).base() else {
+-            continue;
+-        };
+-        if data.def(*record).name.starts_with("__closure_")
+-            && built_with.pass_confined.contains(record)
+-            && (0..data.attributes(*record)).any(|a| data.attr_name(*record, a) == name)
+-        {
+-            slots.push((w, database.position(data.def(*record).known_type(), name)));
+-        }
+-    }
+-    slots
+-}
+-
+ /// The stores a JOIN assigned by `rhs` may leave in its destination, or empty when `rhs` is no
+ /// join: a `??` temp's value chain with its default arm's owners (`Function::join_owners`,
+ /// loft#1721), else a value branch's per-arm constructions ([`construction_work_refs`]).
+diff --git a/src/scopes/get_free_vars.rs b/src/scopes/get_free_vars.rs
+index 62ab88dd6..76be37971 100644
+--- a/src/scopes/get_free_vars.rs
++++ b/src/scopes/get_free_vars.rs
+@@ -13,7 +13,7 @@ use super::capture_adoption::{
+ use super::capture_builds::{
+     adoption_build_is_conditional, capture_adoption_owns_free, escaping_record_holds,
+     escaping_record_holds_buffer, free_unless_record_built, join_capture_witness,
+-    reassigned_join_capture_slot, rebound_capture_slots,
++    reassigned_join_capture_slot,
+ };
+ use super::free_vars::Delivered;
+ use super::tuple_members::{MemberFacts, tuple_owned_elem_frees};
+@@ -665,38 +665,6 @@ impl Scopes<'_> {
+                     );
+                 }
+                 if emit {
+-                    for (w, pos) in rebound_capture_slots(
+-                        data,
+-                        self.database,
+-                        function,
+-                        &self.capture_build_backing,
+-                        v,
+-                    ) {
+-                        let held = Value::Call(
+-                            data.def_nr("OpGetDbRef"),
+-                            vec![Value::Var(w), Value::Int(i32::from(pos))],
+-                        );
+-                        let release = Value::Insert(vec![
+-                            Value::Call(
+-                                data.def_nr("OpFreeRefIfDistinct"),
+-                                vec![held, Value::Var(v)],
+-                            ),
+-                            Value::Call(
+-                                data.def_nr("OpSetDbRef"),
+-                                vec![
+-                                    Value::Var(w),
+-                                    Value::Int(i32::from(pos)),
+-                                    Value::Call(data.def_nr("OpNullRefSentinel"), vec![]),
+-                                ],
+-                            ),
+-                        ]);
+-                        let built = v_if(
+-                            Value::Call(data.def_nr("OpRefIsNull"), vec![Value::Var(w)]),
+-                            Value::Boolean(false),
+-                            Value::Call(data.def_nr("OpConvBoolFromRef"), vec![Value::Var(w)]),
+-                        );
+-                        ls.push(v_if(built, release, Value::Null));
+-                    }
+                     if scope_debug {
+                         eprintln!(
+                             "[scope_debug] freeing '{}' (var={v}, scope={})",

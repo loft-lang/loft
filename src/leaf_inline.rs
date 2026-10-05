@@ -761,6 +761,7 @@ fn reduce_in(
 
 /// Inline every admitted leaf call and reduce the bodies; answers how many calls were
 /// inlined.
+#[expect(clippy::too_many_lines, reason = "inherited")]
 pub fn rewrite_program(data: &mut Data) -> usize {
     if off_all() || data.open_world || data.observes_entries || profiled() {
         return 0;
@@ -824,7 +825,9 @@ pub fn rewrite_program(data: &mut Data) -> usize {
                 &code,
                 &nn,
                 &std::collections::BTreeMap::new(),
-            );
+                &crate::generation::range::Ranges::default(),
+            )
+            .vars;
             let mut r = Reduce {
                 data,
                 ops: &ops,

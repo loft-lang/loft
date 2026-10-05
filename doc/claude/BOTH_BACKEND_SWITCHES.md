@@ -513,6 +513,24 @@ lookup out of a `sorted`, `ordered` or `index`.  **`LOFT_NO_ONE_PROBE_INSERT=1`*
 `hash` insert look its duplicate up and then file the entry as two hash-and-probe walks again
 — with it off, one walk answers both (`hash::probe_for_insert`; a 5,000-key fill −37 %) — and
 is the first bisect step for a lost, duplicated or unfindable `hash` entry.
+**`LOFT_NO_KEYED_REPLACE=1`** makes a `hash` insert of a key already present unlink the
+displaced entry (with the back-shift of the entries probed past it) and file the new one with
+a second walk again — with it off, the new record takes the displaced entry's bucket in one
+write (`hash::replace_at`; the key's probe chain is the same, the count does not move) — and is
+the first bisect step for a lost or doubled entry, or a leak, after a repeated key.
+**`LOFT_NO_SLICE_WRITE=1`** writes every vector to a file element by element through
+`Stores::read_data` again — with it off, a vector whose elements are stored as they are written
+(`integer`, `long`, `float`, `single`, `character`, a 4-byte sized integer, in the host's byte
+order) goes out as one copy of its payload (`Stores::write_vector_payload`, the one walk both
+backends and a vector field inside a record share) — and is the first bisect step for wrong bytes
+in a binary file written from a vector.
+**`LOFT_NO_KEEP_RANGE=1`** makes `v = v[lo..hi]` over a scalar element kind (lowered to
+`OpKeepRange`) copy the kept span out, clear the vector and append the span again — with it
+off, the span moves to the front of the vector's own record and the length is set
+(`Stores::vector_keep_range`; a foreign view or a locked store always takes the copy form,
+since neither may be written) — and is the first bisect step for a wrong element or length
+after a vector is assigned its own slice.  `LOFT_NO_SLICE_COPY=1` keeps the parse-time
+per-element form for every slice, this one included.
 **`LOFT_KEYED_VERIFY=1`** is the falsifier for both: every pre-resolved comparison, every
 exact lookup and every one-probe insert is checked against the general form as it is made,
 and a disagreement panics naming both answers — run the keyed cells or the script corpus

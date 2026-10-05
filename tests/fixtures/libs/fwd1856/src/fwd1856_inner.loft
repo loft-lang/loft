@@ -1,0 +1,8 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1856 — a PRIVATE function names the entry's `pub` type, which used to be refused:
+// the forward reference travelled to the entry only after a `pub` user.
+fn f1856_private_user() -> integer { F1856Pub { p_n: 31 }.p_n }
+
+pub fn f1856_pub() -> integer { f1856_private_user() }

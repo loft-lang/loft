@@ -272,10 +272,16 @@ impl OpEmitter for OpFreeRefEmitter {
             // result buffer that was never minted on this path (the common case of a `?`
             // that found its element) then costs a compare instead of a call the runtime
             // answers with the same test.  The reset to the sentinel stays inside.
-            if let Value::Var(_) = db_val {
+            if let Value::Var(v) = db_val {
+                // `@FR-R-RebindBuffer` — a buffer a rebind handed a store to parks it.
+                let release = if ctx.output.rebind_handed.contains(v) {
+                    "codegen_runtime::cr_park_or_free"
+                } else {
+                    "OpFreeRef"
+                };
                 write!(
                     ctx.w,
-                    "if {lvalue}.store_nr != u16::MAX {{ OpFreeRef(cell,{lvalue}, \"{label}\"); {lvalue}.store_nr = u16::MAX; }}"
+                    "if {lvalue}.store_nr != u16::MAX {{ {release}(cell,{lvalue}, \"{label}\"); {lvalue}.store_nr = u16::MAX; }}"
                 )?;
             } else {
                 write!(ctx.w, "OpFreeRef(cell,")?;
@@ -400,11 +406,20 @@ impl OpEmitter for OpFreeRefIfDistinctEmitter {
             // (loft#759) emits as `*var_b`, and `*var_b.store_nr` binds as
             // `*(var_b.store_nr)` — a deref of the `u16` field, which is
             // E0614, not a comparison.
+            // `@FR-R-RebindBuffer` — a buffer a rebind handed a store to releases it as the
+            // exchange it replaced would have: parked as the spare.
+            let release = if let Value::Var(v) = ph_val
+                && ctx.output.rebind_handed.contains(v)
+            {
+                "codegen_runtime::cr_park_or_free"
+            } else {
+                "OpFreeRef"
+            };
             write!(ctx.w, "if (")?;
             ctx.emit(ph_val)?;
             write!(ctx.w, ").store_nr != (")?;
             ctx.emit(wit_val)?;
-            write!(ctx.w, ").store_nr {{ OpFreeRef(cell,")?;
+            write!(ctx.w, ").store_nr {{ {release}(cell,")?;
             ctx.emit(ph_val)?;
             write!(ctx.w, ", \"{ph_name}\")")?;
             if let Value::Var(_) = ph_val {

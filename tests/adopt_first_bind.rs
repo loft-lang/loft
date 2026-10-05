@@ -23,7 +23,10 @@ fn cells() -> PathBuf {
 fn loft() -> Command {
     let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     // B1 on its own: B1b (`tests/adopt_buffer_reuse.rs`) pools the buffer this file pins as null.
+    // The tests run in parallel on one source file, and its program cache is shared: an
+    // `introspect` that read another process's half-written entry listed a truncated program.
     cmd.env("LOFT_TIMEOUT", "120")
+        .env("LOFT_NO_CACHE", "1")
         .env("LOFT_NO_ADOPT_BUFFER_REUSE", "1")
         .env_remove("LOFT_NO_ADOPT_FIRST_BIND");
     cmd
@@ -65,6 +68,13 @@ fn fn_body<'a>(rust: &'a str, name: &str) -> &'a str {
     &rest[..end]
 }
 
+/// Does the emitted body copy a call result INTO `var` — the reset-and-copy pair, or the one
+/// call that exchanges the result's store in instead when it can (`@FR-H-SwapRebind`)?
+fn copies_into(body: &str, var: &str) -> bool {
+    body.contains(&format!("OpCopyRecord(cell,_src, var_{var}"))
+        || body.contains(&format!("var_{var} = OpRebindRecord(cell,"))
+}
+
 /// The interpreter's IR + bytecode listing of one function.
 fn ir_section<'a>(listing: &'a str, name: &str) -> &'a str {
     let start = listing
@@ -104,10 +114,7 @@ fn native_binds_the_minted_store_directly() {
         c1.contains("let mut var_b: DbRef = n_mk_loc(cell, var_i, var___ref_2);"),
         "c1: `b` takes the plain assignment"
     );
-    assert!(
-        !c1.contains("OpCopyRecord(cell,_src, var_b"),
-        "c1: no deep copy into `b`"
-    );
+    assert!(!copies_into(c1, "b"), "c1: no deep copy into `b`");
     assert!(
         c1.contains("if (var_b).store_nr != (var___ref_2).store_nr { OpFreeRef(cell,var_b"),
         "c1: `b`'s free is guarded by identity against the call's buffer"
@@ -123,7 +130,7 @@ fn native_binds_the_minted_store_directly() {
     // The destination that IS a return buffer keeps the in-place copy (plan 51 cluster 3).
     let lit = fn_body(&rust, "n_render_lit_then_call");
     assert!(
-        lit.contains("OpCopyRecord(cell,_src, var_cv"),
+        copies_into(lit, "cv"),
         "render_lit_then_call: the promoted buffer local still copies its rebind in place"
     );
     let _ = std::fs::remove_file(&out);
@@ -135,7 +142,7 @@ fn the_switch_restores_the_copy_on_native() {
     let rust = emit(&out, OFF);
     let c1 = fn_body(&rust, "n_c1");
     assert!(
-        c1.contains("OpCopyRecord(cell,_src, var_b"),
+        copies_into(c1, "b"),
         "c1 under LOFT_NO_ADOPT_FIRST_BIND: `b` is deep-copied"
     );
     assert!(
@@ -190,7 +197,11 @@ fn the_store_census_drops_by_one_per_adopting_bind() {
     // with `d > 0`.  2026-09-30: a LIFTED call result adopts the callee's minted store as a
     // named bind does (`Scopes::lift_set`, `tests/lift_adopt.rs`), so the copy's store per
     // lifted minted call goes in the ON arm alone (the switch restores it): 98 → 86 on the
-    // interpreter, 91 → 85 on native; the OFF arms unchanged.
+    // interpreter, 91 → 85 on native; the OFF arms unchanged.  2026-10-02: a native rebind that
+    // exchanges the result's store in resets nothing first (`@FR-H-SwapRebind`), so its
+    // `OpDatabase` line goes in both native arms: 85/127 → 75/117, the interpreter unchanged.
+    // And a complete-literal callee refills the store such a rebind released
+    // (`@FR-R-RefillBuffer`): 75/117 → 65/107 (`LOFT_NO_REFILL_BUFFER=1` gives back the old pair).
     let (i_on, i_off) = (
         store_mints("--interpret", &[]),
         store_mints("--interpret", OFF),
@@ -205,5 +216,5 @@ fn the_store_census_drops_by_one_per_adopting_bind() {
         n_on < n_off,
         "native: {n_on} mints with adoption, {n_off} without"
     );
-    assert_eq!((n_on, n_off), (85, 127), "native mints (on, off)");
+    assert_eq!((n_on, n_off), (65, 107), "native mints (on, off)");
 }

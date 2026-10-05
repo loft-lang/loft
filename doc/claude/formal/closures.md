@@ -131,6 +131,16 @@ available). A bare `f` (a function's name used as a value) is a first-class func
                  the closure, so a write that would replace what it points AT is REFUSED
                  (a decided edge, DESIGN_DECISIONS C115 — not a deviation: the copy is what
                  (L-CapScalar) requires, so no code change closes it).
+  (L-CapRebind)  a WHOLE-VALUE rebind of a captured heap local is not a mutation-through: a
+                 record built before it keeps the store it was built with and answers the
+                 build-time value; the local names a store of its own from the rebind on.  So
+                 the rebind never clears or refills a store a record still holds — it moves
+                 the local to a fresh one first, after reading the local for the right-hand
+                 side (ownership.md O-Detach) — and the store the record keeps is released ONCE
+                 (L-CapOwn): by the record's cascade where it adopted it, else at the local's
+                 scope end.  A second rebind before the next build finds the local on its own
+                 store and replaces it in place.  Every spelling of the rebind is one rule: a
+                 literal, a call, a variable, a branch, a field and `[]`.
 ```
 
 ⚠ **A REASSIGNMENT of the captured variable is not a mutation-through, and the two are worth
@@ -220,9 +230,21 @@ with the closure's environment in scope.
 
 ## Deviations
 
-**OPEN: 0** — `D-clo-45` (opened and CLOSED 2026-09-28, loft#1725); `D-clo-44` (opened and CLOSED 2026-09-28, loft#1715); `D-clo-43` (opened and CLOSED 2026-09-27, found with loft#1700); `D-clo-42` (opened and CLOSED 2026-09-24, loft#1659); `D-clo-41` (opened and CLOSED 2026-09-24, loft#1658); `D-clo-40` (opened and CLOSED 2026-09-23, loft#1642); `D-clo-39` (opened and CLOSED 2026-09-23; `D-clo-38`, loft#1624, opened and
-CLOSED the same day; `D-clo-36` and `D-clo-37` opened 2026-09-22 with `D-clo-35` and CLOSED
-2026-09-23; `D-clo-27` closed 2026-09-12).
+**OPEN: 2.**  Every closed entry is recorded in [closures-history.md](closures-history.md).
+
+- **D-clo-47 (OPEN, loft#1867)** — violates <!-- doc-lint: ok -->
+  `(L-Escape)`: a function cannot return a struct whose field holds a CAPTURING closure — it is
+  refused at compile time (*"function returns a struct type that holds a capturing closure"*),
+  while the same closure returned BARE keeps its captures through the record's adoption
+  (`(L-CapOwn)`).  The adoption has to follow the closure out through a struct field as it does
+  out through the return.  Until then the cure the refusal names works: return the closure and
+  build the struct in the caller.
+- **D-clo-48 (OPEN, loft#1869)** — violates `(L-Fn)`: a closure cannot capture a fn-ref local <!-- doc-lint: ok -->
+  that holds a CAPTURING closure — refused with the fn-ref struct-field message, because the
+  closure record is the struct the capture is stored in.  A non-capturing fn-ref is captured.
+  The inner record's ownership has to follow into the outer record (`(L-CapOwn)`), as a
+  captured struct's does.  Until then: capture the inner closure's values and rebuild it in the
+  body, or pass it as an argument.
 
 > **An `OPEN: 0` is a claim to re-measure, and this one moved four times in a day** — 0 → 1 → 2
 > → 0 → 1, each step a probe pushed one axis off what the oracle below holds fixed, and each

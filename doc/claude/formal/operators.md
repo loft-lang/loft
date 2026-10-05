@@ -139,4 +139,4 @@ saying so.
 
 ## Deviations
 
-**OPEN: 0.**
+**OPEN: 0.**  The closed entries are recorded in [operators-history.md](operators-history.md).

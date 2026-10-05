@@ -649,7 +649,7 @@ upgrade is safe on each axis it can be hurt on:
 ```toml
 [package]
 version              = "0.7.0"
-loft                 = ">=0.8"    # which loft this needs
+loft                 = ">=2026.10.0"    # which loft this needs: the one you build and test with
 api_compatible_with  = "0.3.0"    # oldest release of THIS package it is a drop-in for
 data_compatible_with = "0.1.0"    # oldest release whose stored data it still reads
 ```

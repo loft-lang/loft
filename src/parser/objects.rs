@@ -6966,7 +6966,7 @@ impl Parser {
                     // `vector<float>` field — was copied at the wrong width and read back as
                     // garbage here, where `g.c = v` refuses it.
                     if self.field_store_mismatch("=", u16::MAX, &td, exp_tp) {
-                        self.field_store_refusal(exp_tp, &td);
+                        self.field_store_refusal(exp_tp, &td, None);
                     }
                     let pos = self
                         .database
@@ -7138,15 +7138,9 @@ impl Parser {
                 || !(crate::data::Data::type_has_unresolved(exp_tp)
                     || crate::data::Data::type_has_unresolved(&td))
             {
-                // A FIELD STORE: a literal that fits the type but lands on the
-                // reserved null sentinel of a nullable narrow field is rejected
-                // here too (not just on `obj.f = …`), so `U8N { x: 255 }` doesn't
-                // silently store null.  The sentinel reservation is store-only —
-                // it is NOT applied to the `convert` type-fit (params/casts).
-                let dst_name = self.int_type_name(&td);
-                if let Some(hint) = self.nullable_sentinel_hint(value, &td, &dst_name) {
-                    diagnostic!(self.lexer, Level::Error, "{hint}");
-                } else if !self.convert_store(value, exp_tp, &td, "the field", None) {
+                // A constant that lands on a nullable narrow field's null code is refused
+                // by the store face (`nullable_narrow_constant_refusal`, loft#1796).
+                if !self.convert_store(value, exp_tp, &td, "the field", None) {
                     // @FR-N-Store is asked inside the store face; this arm is the plain
                     // type mismatch.
                     // Plan-07 phase 6 (partial) — name the value side first
@@ -7156,22 +7150,8 @@ impl Parser {
                     // as "field declared as <value_type>" — backwards.
                     // A function type is rendered as the author spells it (`fn(const T)`), since
                     // the `const` of a parameter can be the whole difference (loft#1540).
-                    let (got, want) = if matches!(exp_tp.base(), Type::Function(..))
-                        || matches!(td.base(), Type::Function(..))
-                    {
-                        (exp_tp.source_name(&self.data), td.source_name(&self.data))
-                    } else {
-                        (
-                            exp_tp.show(&self.data, &self.vars),
-                            td.show(&self.data, &self.vars),
-                        )
-                    };
-                    diagnostic!(
-                        self.lexer,
-                        Level::Error,
-                        "Cannot assign {got} to field {}.{field} of type {want}",
-                        self.data.def(td_nr).name()
-                    );
+                    let named = format!("{}.{field}", self.data.def(td_nr).name());
+                    self.field_store_refusal(exp_tp, &td, Some(&named));
                 }
             }
             list.push(self.set_field_no_check(td_nr, nr, 0, code.clone(), value.clone()));

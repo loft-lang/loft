@@ -10,6 +10,79 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### `check_request` makes half the stores: `(R-PureReuse)`, and a `match` evaluates its subject once (2026-10-02)
+
+**`(R-PureReuse)`** (`src/pure_reuse.rs`, the start of the scope pass, both backends): a
+call of an effect-free function made twice in one block on arguments nothing writes in
+between is made once into a fresh local, and each use reads it.  Effect-free is a fixed point
+over the call graph: reads, arithmetic, writes into stores the function made (never a
+parameter's), calls of effect-free functions, and a short list of value-only natives — the
+`#impure` annotations miss `print`, `file` and `env_variable`, so an unknown operator declines.
+It sees the calls through PROJECTION WRAPPERS (`d = f(b); return d.k`), which is how
+pluginabi's `check_request` asked the same frame twice (`pa_decode_ok`, then `pa_decode`).
+`LOFT_NO_PURE_REUSE=1`, `LOFT_TRACE_PURE_REUSE=1`.
+
+**`(M-Match)`, deviation D-match-16** (`Parser::parse_match_inner`): a struct-enum or struct
+subject that is not a place was spliced into every arm test and field binding, so a call ran
+once for the variant and once per field read.  `match next(lx) { Num { v } => … }` tested one
+token and read the next one's payload — silently, on both backends and on main.  The subject is
+now bound once unless it is a variable or a field or element of one.  The binding had been held
+back for a strict free order that `(H-FreeAny)` lifted.
+
+Per `check_request` on the library as written, native, census: 4 stores, 30 claims, 10 deletes →
+**2, 16, 5**, and 46.9 → 24.5 ms for 20 000 checks (−48 %).  The remaining stores are the decoded
+tree and `pa_get`'s copy of the value it finds, which is the return's ownership, not a
+duplicate.  Guards: the reuse cells p1–p7 and the match cells c1–c10, both backends, plants and
+the falsify receipt named in their headers; pin `tests/pure_reuse.rs`.
+
+### `(R-RefillBuffer)` — a return buffer refills the store a rebind released (2026-10-02)
+
+A builder called in a loop, `c = mul(a, c)`, minted its result's store every call, claimed
+its vector and filled it, and the rebind then freed the store holding `c`'s old value.  On
+`--native` that store is now kept (one at a time, never by a `par` worker), and a callee whose
+return buffer is built by a literal that writes every field, of a type whose heap is only
+vectors of no-heap elements, takes it: `OpDatabaseRefill`, with each vector field's zero
+emptying the vector in place.  Every other callee still mints.  `LOFT_NO_REFILL_BUFFER=1`.
+
+Measured on mesh3d's `mat4_mul` loop (`opt-level=3`, one core, three interleaved runs):
+0.16 → 0.10 s for 10⁶ multiplies (−37 %), same result and peak memory; with `(H-SwapRebind)`
+the loop is 0.19 → 0.10 s.  Guard f1–f7 on both backends, both switch arms and every store
+falsifier; plants named in its header.
+
+### A cached image opens without writing its shared mapping (2026-10-02)
+
+Concurrent `loft` processes crashed each other on a warm cache: eight starts of a program that
+only prints died eight times out of eight (`fl_rebuild` out of bounds, or a segfault), one
+start alone never did, and `LOFT_NO_CACHE=1` hid it.  Opening an image rebuilds its free-block
+tree, and the tree's links live INSIDE the free blocks, in a mapping every process opening the
+file shares: one start's rebuild was read by another mid-way as a record number.  The cached
+stdlib and program images are read surfaces, which claim and free nothing, so they now open
+through `Store::open_read_surface`, which leaves the tree and the footers unbuilt and writes
+nothing; a writable file store rebuilds them as before.  Guard
+`tests/concurrent_warm_start.rs` (three rounds of eight starts); with the rebuild planted back
+it fails in round 0.
+
+### `(H-SwapRebind)` — a native record rebind exchanges the result's store without resetting the destination (2026-10-02)
+
+The rebind `x = f(…)` from a fresh call result reset `x`'s store (`OpDatabase`) and then
+copied, or exchanged, the result into it.  On `--native` the copy arm is now one call,
+`OpRebindRecord`, which exchanges the result's store into `x` as it stands: `x`'s old tree
+leaves with the released store and is freed with it.  Where an exchange condition fails
+(a witnessed destination, a borrowed or non-root result, a type whose stores name each other)
+it resets and copies as before.  `LOFT_NO_SWAP_REBIND=1`.
+
+Measured on mesh3d's `mat4_mul` loop (`opt-level=3`, one core, three interleaved runs):
+0.19 → 0.16 s for 10⁶ multiplies, same result and peak memory.  Guard r1–r8 identical
+under both arms, `LOFT_NO_STORE_SWAP`, `LOFT_STRICT_STORES` and both poison switches; plants
+named in its header.  The front-end store census of `tests/adopt_first_bind.rs` counts
+`OpDatabase` lines, so both native arms drop by the ten rebinds (85/127 → 75/117).
+
+Beside it, `tests/adopt_first_bind.rs` and `tests/adopt_buffer_reuse.rs` turn the program
+cache off: their tests run in parallel over one source file with different switch arms, the
+cache does not key on the switches, and an `introspect` intermittently listed a truncated
+program (it failed with the rule off too).  Their copy-arm text checks now recognise both
+spellings, so an absence check cannot pass by the rename.
+
 ### A development build uses the startup cache; `LOFT_NO_CACHE=1` turns it off (2026-10-01, loft#1762, @C133)
 
 `cache_decision` kept the whole-program cache off under Cargo (`CARGO_MANIFEST_DIR`) and for a

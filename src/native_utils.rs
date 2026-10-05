@@ -889,6 +889,28 @@ pub(crate) fn newest_mtime_in(dir: &str) -> Option<std::time::SystemTime> {
     best
 }
 
+/// The generated Rust a native binary cache key is taken over, with the program's own path
+/// removed when the build does not compile it in: a test/semantics build mentions the main
+/// file only in `// loft:` comments (its code reads the path at run time), so two copies of
+/// one program at different paths key the same.  A `lean` build bakes the path into its code
+/// and is keyed on it as written.
+pub(crate) fn path_free_key_source<'a>(
+    rs: &'a [u8],
+    data: &crate::data::Data,
+    lean: bool,
+) -> std::borrow::Cow<'a, [u8]> {
+    let n = data.def_nr("n_main");
+    if lean || n == u32::MAX {
+        return std::borrow::Cow::Borrowed(rs);
+    }
+    let main = data.def(n).position().file.to_string();
+    if main.is_empty() {
+        return std::borrow::Cow::Borrowed(rs);
+    }
+    let text = String::from_utf8_lossy(rs);
+    std::borrow::Cow::Owned(text.replace(main.as_str(), "").into_bytes())
+}
+
 /// FNV-1a 64-bit hash for native binary cache keys.
 pub(crate) fn fnv64(data: &[u8]) -> u64 {
     let mut h = 0xcbf2_9ce4_8422_2325_u64;
@@ -1591,7 +1613,7 @@ pub(crate) fn publish_cached_binary(
         .unwrap_or_default()
         .to_string_lossy()
         .into_owned();
-    // The leading `.` keeps a staged file out of the sweep's `<stem>-` prefix.
+    // The leading `.` keeps a staged file out of the sweep's `native-` prefix.
     let staged = cache_dir.join(format!(".{leaf}.{}.tmp", std::process::id()));
     if std::fs::copy(built, &staged).is_ok() {
         // P254 — tighten BEFORE the rename, so the binary is never reachable
@@ -1603,17 +1625,69 @@ pub(crate) fn publish_cached_binary(
     } else {
         let _ = std::fs::remove_file(&staged);
     }
-    // Remove stale cached binaries for THIS source file only, AFTER the publish and
-    // never the entry just written.  Sweeping first deleted the very binary a
-    // concurrent run had already accepted as usable, leaving it to exec a path that
-    // no longer existed.
-    let prefix = format!("{source_stem}-");
-    if let Ok(entries) = std::fs::read_dir(cache_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path != cached_binary && entry.file_name().to_string_lossy().starts_with(&prefix) {
-                let _ = std::fs::remove_file(path);
+    // Bound the directory AFTER the publish and never touching the entry just written.
+    // Sweeping first deleted the very binary a concurrent run had already accepted as
+    // usable, leaving it to exec a path that no longer existed.
+    sweep_cached_binaries(cache_dir, cached_binary, source_stem, NATIVE_CACHE_KEEP);
+}
+
+/// How many compiled programs one `.loft/cache` directory keeps.  A binary is named by
+/// what it compiles to, not by its source file, so the same program at two paths in one
+/// directory shares it, and nothing per-source says when an entry went stale: the
+/// directory keeps the most recently USED entries instead (`touch_cached_binary`).
+pub(crate) const NATIVE_CACHE_KEEP: usize = 512;
+
+/// Mark a cached binary as just used, so the bound in `sweep_cached_binaries` keeps it.
+/// Best-effort: a failure costs a recompile later, never a wrong answer.  The handle rule
+/// (read-only on Unix, write on Windows, where a read-only handle cannot set the time and
+/// the bound kept nothing by use) is `file_access::set_modified`'s, via `loft::cache::touch_now`.
+pub(crate) fn touch_cached_binary(path: &std::path::Path) {
+    loft::cache::touch_now(path);
+}
+
+/// Keep the `keep` most recently used `native-<key>` binaries in `cache_dir`, never
+/// removing `current`.  Also removes this source's entries from the earlier per-source
+/// naming (`<stem>-<16 hex>`), which nothing will look up again.
+pub(crate) fn sweep_cached_binaries(
+    cache_dir: &std::path::Path,
+    current: &std::path::Path,
+    source_stem: &str,
+    keep: usize,
+) {
+    let is_key = |s: &str| s.len() == 16 && s.bytes().all(|b| b.is_ascii_hexdigit());
+    use crate::file_access::{self as fa, PathText};
+    let Ok(entries) = fa::read_dir(&PathText::from_os(cache_dir)) else {
+        return;
+    };
+    let current = PathText::from_os(current);
+    let mut keyed = Vec::new();
+    for path in entries {
+        if path == current {
+            continue;
+        }
+        let name = path.parts().last().cloned().unwrap_or_default();
+        if let Some(key) = name.strip_prefix("native-") {
+            if is_key(key) {
+                let used = fa::metadata(&path).and_then(|m| m.modified()).ok();
+                keyed.push((used, path));
+                continue;
             }
+        }
+        if let Some(key) = name
+            .strip_prefix(source_stem)
+            .and_then(|r| r.strip_prefix('-'))
+        {
+            if source_stem != "native" && is_key(key) {
+                let _ = fa::remove_file(&path);
+            }
+        }
+    }
+    // `current` is one of the kept entries.
+    let keep_others = keep.saturating_sub(1);
+    if keyed.len() > keep_others {
+        keyed.sort_by_key(|e| e.0);
+        for (_, path) in keyed.drain(..keyed.len() - keep_others) {
+            let _ = fa::remove_file(&path);
         }
     }
 }
@@ -1685,6 +1759,18 @@ pub(crate) fn native_cabi_enabled() -> bool {
 /// the dynamic linker does at run time.
 ///
 /// A binding to libc needs no entry and gets no flag: it is already linked.
+/// @PLN184 — a native PROGRAM's main thread gets the stack a Linux one has (8 MiB) on Windows
+/// too, where the default is 1 MiB: the same recursion must not overflow on one platform only.
+/// A no-op off Windows.
+pub(crate) fn add_main_stack_flags(cmd: &mut std::process::Command) {
+    if cfg!(all(windows, target_env = "msvc")) {
+        cmd.arg("-C").arg(format!("link-arg=/STACK:{}", 8 << 20));
+    } else if cfg!(all(windows, target_env = "gnu")) {
+        cmd.arg("-C")
+            .arg(format!("link-arg=-Wl,--stack,{}", 8 << 20));
+    }
+}
+
 pub(crate) fn add_c_library_flags(cmd: &mut std::process::Command, data: &crate::data::Data) {
     for lib in data.c_libraries.iter().filter(|c| !c.optional) {
         // @PLN24 arc G — an OPTIONAL library gets no flag at all. On the link
@@ -2828,7 +2914,9 @@ mod dep_search_dirs_tests {
 
 #[cfg(test)]
 mod publish_cached_binary_tests {
-    use super::publish_cached_binary;
+    use super::{
+        NATIVE_CACHE_KEEP, publish_cached_binary, sweep_cached_binaries, touch_cached_binary,
+    };
 
     fn scratch(name: &str) -> std::path::PathBuf {
         let d = std::env::temp_dir().join("loft-publish-cache").join(name);
@@ -2939,5 +3027,67 @@ mod publish_cached_binary_tests {
             staging.is_empty(),
             "no staging file may be left behind: {staging:?}"
         );
+    }
+
+    fn keyed(n: u8) -> String {
+        format!("native-{}", format!("{n:x}").repeat(16))
+    }
+
+    /// The cache fixtures write and probe through `file_access`, as the code under test does.
+    fn put(p: &std::path::Path, bytes: &[u8]) {
+        crate::file_access::write(&crate::file_access::PathText::from_os(p), bytes).unwrap();
+    }
+
+    fn there(p: &std::path::Path) -> bool {
+        crate::file_access::exists(&crate::file_access::PathText::from_os(p))
+    }
+
+    /// The directory keeps the most recently USED entries: a reuse (`touch_cached_binary`)
+    /// outranks a later publish, the entry just published always stays, and a name that is
+    /// not a key is not this sweep's business.
+    #[test]
+    fn the_bound_keeps_the_most_recently_used_entries() {
+        let dir = scratch("lru");
+        let base = std::time::SystemTime::now() - std::time::Duration::from_hours(1);
+        for n in 1..=4u8 {
+            let p = dir.join(keyed(n));
+            put(&p, &[n]);
+            crate::file_access::set_modified(
+                &crate::file_access::PathText::from_os(&p),
+                base + std::time::Duration::from_secs(u64::from(n) * 60),
+            )
+            .unwrap();
+        }
+        // The oldest entry is reused, so it is now the most recent of the four.
+        touch_cached_binary(&dir.join(keyed(1)));
+        let foreign = dir.join("native-notakey");
+        put(&foreign, b"x");
+        let current = dir.join(keyed(5));
+        put(&current, &[5]);
+
+        sweep_cached_binaries(&dir, &current, "prog", 3);
+
+        let left = |n: u8| there(&dir.join(keyed(n)));
+        assert!(left(5), "the entry just published stays");
+        assert!(left(1), "a reused entry outranks newer publishes");
+        assert!(left(4), "the most recent publish stays");
+        assert!(!left(2) && !left(3), "the least recently used go");
+        assert!(there(&foreign), "a name that is not a key is left alone");
+    }
+
+    /// A program named `native.loft` must not read every other program's binary as its
+    /// own earlier per-source entry.
+    #[test]
+    fn a_source_named_native_sweeps_nothing_of_others() {
+        let dir = scratch("native_stem");
+        for n in 1..=3u8 {
+            put(&dir.join(keyed(n)), &[n]);
+        }
+        let current = dir.join(keyed(9));
+        put(&current, &[9]);
+        sweep_cached_binaries(&dir, &current, "native", NATIVE_CACHE_KEEP);
+        for n in [1u8, 2, 3, 9] {
+            assert!(there(&dir.join(keyed(n))), "entry {n} survives");
+        }
     }
 }

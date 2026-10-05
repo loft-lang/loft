@@ -72,7 +72,11 @@ The runner:
    single `vector<text>` parameter when `@ARGS` provides argv).
 3. Applies the optional `::name` or `::{a,b}` filter to select specific functions.
 4. Runs each test function independently.  A failed `assert` marks the test as
-   failed but does not abort the run.
+   failed but does not abort the run.  The file is compiled ONCE and each test gets a
+   fresh runtime over it (`State::fork_program`): its own heap, the compiled constants
+   shared read-only, so a test's time does not grow with the number of tests beside it.
+   `LOFT_TEST_RECOMPILE=1` recompiles per test instead (an A/B switch); a `LOFT_LOG` dump
+   always does.
 5. Reports per-file and per-directory summaries.
 6. Exits with code 0 if all tests pass, 1 if any fail.
 

@@ -102,7 +102,9 @@ pub(crate) fn run_collect(argv: &[String], input: &[u8]) -> Finished {
     }
     let mut stderr = err.and_then(|h| h.join().ok()).unwrap_or_default();
     let code = match status {
-        Ok(s) => s.code().map_or_else(|| signal_code(s), i64::from),
+        Ok(s) => s
+            .code()
+            .map_or_else(|| signal_code(s), |c| own_code(i64::from(c))),
         Err(e) => {
             stderr.extend_from_slice(format!("{program}: {e}").as_bytes());
             -1
@@ -112,6 +114,23 @@ pub(crate) fn run_collect(argv: &[String], input: &[u8]) -> Finished {
         code,
         stdout,
         stderr,
+    }
+}
+
+/// The program's own exit code, in the one form every platform can give it.  A Windows child
+/// built on MSYS or Cygwin (`sh`, the Git for Windows tools) that a signal ended exits with
+/// `n << 8`, a value no Unix exit code can take (those are 0..=255), so it reads as the
+/// `128 + n` the same program answers on Unix: `sh -c 'kill -TERM $$'` is 143 on both, not
+/// 3840 on one (formal/paths.md: one program answers the same on every platform).
+fn own_code(c: i64) -> i64 {
+    own_code_on(c, cfg!(windows))
+}
+
+fn own_code_on(c: i64, windows: bool) -> i64 {
+    if windows && c.trailing_zeros() >= 8 && (1..=64).contains(&(c >> 8)) {
+        128 + (c >> 8)
+    } else {
+        c
     }
 }
 
@@ -181,6 +200,25 @@ pub mod typed {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_signal_ended_msys_child_reads_as_128_plus_n_on_windows() {
+        use super::own_code_on;
+        assert_eq!(own_code_on(3840, true), 143, "SIGTERM: 15 << 8");
+        assert_eq!(own_code_on(2304, true), 137, "SIGKILL: 9 << 8");
+        assert_eq!(
+            own_code_on(3, true),
+            3,
+            "an ordinary exit code is the program's own"
+        );
+        assert_eq!(own_code_on(0, true), 0);
+        assert_eq!(own_code_on(65 << 8, true), 65 << 8, "no signal 65");
+        assert_eq!(
+            own_code_on(3840, false),
+            3840,
+            "Unix codes are never read this way"
+        );
+    }
+
     use super::*;
 
     #[test]

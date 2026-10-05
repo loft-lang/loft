@@ -352,7 +352,7 @@ impl Parser {
             if d.def_type != DefType::Function
                 || d.source != source
                 || d.synthetic.is_some()
-                || crate::portable_path::is_stdlib_source(&d.position.file)
+                || crate::file_access::is_stdlib_source(&d.position.file)
             {
                 continue;
             }
@@ -2149,7 +2149,7 @@ impl Parser {
         }
         .filter(|d| {
             self.default
-                || !crate::portable_path::is_stdlib_source(&self.data.def(*d).position().file)
+                || !crate::file_access::is_stdlib_source(&self.data.def(*d).position().file)
         });
         let Some(own) = own else {
             diagnostic!(
@@ -3728,7 +3728,9 @@ impl Parser {
                 // @C87 — `#rust` / `#iterator` are the standard library's templates for its own
                 // operators, compiled into loft itself; a library's Rust goes through
                 // `#native` and a native crate, which reaches all four targets.  The template
-                // strings are consumed so the refusal is the only diagnostic.
+                // strings are consumed so the refusal is the only diagnostic.  @C135 — this is
+                // also the door a program would observe representation through: it stays shut,
+                // so every representation rewrite may assume no program can tell the forms apart.
                 let what = id.unwrap_or_default();
                 while self.lexer.has_cstring().is_some() {}
                 diagnostic!(
@@ -4249,6 +4251,13 @@ impl Parser {
             if self.lexer.peek_token(")") {
                 break;
             }
+            // @FR-L-Escape — `fn(&T)`: the type of a function with a `&` parameter, as
+            // `Type::render` prints it.
+            // `(B-Ref-Intro)` admits `&τ` for every τ and a lambda `fn(p: &P) { … }` has this
+            // type, so a parameter, field or local that holds one must be able to say so; the
+            // link goes through `ref_var_type`, the one place a declared `&` parameter is
+            // decided, so a `&` refused there is refused here too.
+            let is_ref = self.lexer.has_token("&");
             // loft#1540 — `fn(const T)`: a parameter the function behind the reference may not
             // write, so a value-const value can be handed through it (C124, D-bind-45).
             let is_const = self.lexer.has_keyword("const");
@@ -4261,7 +4270,7 @@ impl Parser {
                 );
             }
             if let Some(tp) = self.parse_type_full(d_nr, false) {
-                args.push(tp);
+                args.push(if is_ref { self.ref_var_type(tp) } else { tp });
                 consts.push(is_const);
             }
             if !self.lexer.has_token(",") {
@@ -5025,6 +5034,18 @@ impl Parser {
                              elements are always dense (a key / slot denotes presence)"
                         );
                     }
+                } else if !nullable_elem && type_name != "vector" && matches!(tp, Type::Optional(_))
+                {
+                    // A `?` written after the element's own modifiers (`integer limit(0, 9)?`)
+                    // is read by `parse_type` itself, past the identifier-adjacent test above —
+                    // so ask the type it built.  Admitted, it typed an `iterator` element
+                    // nullable that every other spelling refuses.
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "`?` (nullable element) is only valid on `vector` — `{type_name}` \
+                         elements are always dense (a key / slot denotes presence)"
+                    );
                 }
                 let sub_nr = if let Type::Unknown(d) = tp {
                     d

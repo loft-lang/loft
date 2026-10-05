@@ -351,6 +351,15 @@ pub(crate) fn capture_build_backings(
                 Some([root]) if bind_views_root(function, *v, rhs, *root) => {
                     latest.insert(*v, *root);
                 }
+                // A call that delivers into a hidden return buffer (`c = mk(5)` lowers to
+                // `c = n_mk(5, __ref_1)`) is backed by that buffer: it is the store a build
+                // over `c` holds.  Left unrecorded, the type dep answered instead — the buffer
+                // of the LAST such call — so a rebind after the build had the frame keep the
+                // build-time buffer's free and give up the new one's, which nobody adopted
+                // (loft#1862, one vector store per rebind).
+                _ if let Some(b) = super::backings::call_buffer_of(rhs, function) => {
+                    latest.insert(*v, b);
+                }
                 // A right-hand side that names no single root leaves no backing to remember,
                 // and the stale one would be worse than none: drop it.  So does one whose
                 // destination owns the store it ends up holding — see `bind_views_root`.
@@ -587,6 +596,48 @@ pub(super) fn reassigned_join_capture_slot(
         }
     }
     slot
+}
+
+/// `@FR-L-CapRebind` (loft#1862) — the capture slots of the PASS-CONFINED records built over
+/// keyed local `v` when `v` is rebound after the build, as (record local, slot position).
+///
+/// The rebind gives `v` a fresh store while the record keeps the one it was built with
+/// ([`crate::parser::Parser::keyed_rebind_mint`]).  The frame then frees what `v` names last
+/// (`@FR-O-Latest`), a record that leaves the frame frees what it adopted, but a pass-confined
+/// record adopts nothing (loft#1610) and is rebuilt in place on the next pass without
+/// releasing a collection it displaces: the build-time store was released by nobody, once per
+/// pass.  `v`'s scope exit releases it, by store identity — when no rebind ran the slot and
+/// `v` name one store, which the frame's own free covers.  Empty for a build on a branch: a
+/// pass that skips it leaves the slot naming an earlier pass's store, already released.
+pub(super) fn rebound_capture_slots(
+    data: &Data,
+    database: &crate::database::Stores,
+    function: &Function,
+    built_with: &CaptureBuilds,
+    v: u16,
+) -> Vec<(u16, u16)> {
+    if !built_with.reassigned_after_build.contains(&v)
+        || !crate::parser::vectors::is_keyed(function.tp(v))
+    {
+        return Vec::new();
+    }
+    let name = function.name(v);
+    let mut slots = Vec::new();
+    for w in 0..function.next_var() {
+        if function.is_argument(w) {
+            continue;
+        }
+        let Type::Reference(record, _) = function.tp(w).base() else {
+            continue;
+        };
+        if data.def(*record).name.starts_with("__closure_")
+            && built_with.pass_confined.contains(record)
+            && (0..data.attributes(*record)).any(|a| data.attr_name(*record, a) == name)
+        {
+            slots.push((w, database.position(data.def(*record).known_type(), name)));
+        }
+    }
+    slots
 }
 
 /// The stores a JOIN assigned by `rhs` may leave in its destination, or empty when `rhs` is no

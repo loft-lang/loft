@@ -26,7 +26,8 @@ pub fn flag(word: text) -> Flag {
   Flag { word: word }
 }
 
-/// Splice `words` as one argv word each: `git add -- {args(paths)}`.
+/// Splice `words` as one argv word each: `git add -- {args(paths)}`.  Each is a hole value,
+/// so one that starts with `-` refuses the command, even after `--`.
 pub fn args(words: vector<text>) -> Args {
   Args { words: words }
 }
@@ -111,7 +112,7 @@ pub fn hole_int(self: Command, v: integer) {
   self.value("{v}");
 }
 
-/// A float hole: its shortest decimal form.
+/// A float hole: the digits `"{v}"` writes, so `1.0e20` is twenty-one digits, not `1e20`.
 pub fn hole_float(self: Command, v: float) {
   self.value("{v}");
 }

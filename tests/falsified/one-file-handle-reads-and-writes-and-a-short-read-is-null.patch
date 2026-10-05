@@ -1,0 +1,143 @@
+diff --git b/default/02_files.loft a/default/02_files.loft
+index d4279b643..158c7c879 100644
+--- b/default/02_files.loft
++++ a/default/02_files.loft
+@@ -996,8 +996,7 @@ pub fn files(self: const File) -> vector<File> fs#read {
+ fn write_text_raw(file: File, v: text) -> boolean fs#update;
+ #rust"{{ let __wf_v = @v; stores.write_file(&@file, __wf_v) }}"
+ #impure(io)
+-/// Writes v as UTF-8 text at the file's position: the first write through a File
+-/// replaces the file's content, later ones follow it.  Returns
++/// Writes v as UTF-8 text to the file, overwriting existing content.  Returns
+ /// FileResult.Ok on success and FileResult.Other on an OS write failure (disk
+ /// full, permission denied, a bad path) — a failed write is OBSERVABLE, not
+ /// silently swallowed.  Discarding callers (`f.write(s)` as a statement) are
+diff --git b/src/codegen_runtime.rs a/src/codegen_runtime.rs
+index 1c6e7f2c5..b4ba7bc8a 100644
+--- b/src/codegen_runtime.rs
++++ a/src/codegen_runtime.rs
+@@ -2065,9 +2065,7 @@ fn file_handle_read(stores: &mut Stores, file: &DbRef, initial_pos: i64) -> i32
+                 .set_i32_raw(file.rec, file.pos + 28, f_nr);
+             stores
+                 .files
+-                .push(Some(crate::database::loft_file::LoftFile::reader(
+-                    f, &file_name,
+-                )));
++                .push(Some(crate::database::loft_file::LoftFile::new(f)));
+             f_nr
+         }
+         Err(e) => {
+diff --git b/src/database/io.rs a/src/database/io.rs
+index ba39eb8ef..7de19becf 100644
+--- b/src/database/io.rs
++++ a/src/database/io.rs
+@@ -10,7 +10,7 @@ use crate::vector;
+ #[cfg(not(host_fs))]
+ use std::collections::BTreeMap;
+ #[cfg(not(host_fs))]
+-use std::io::{Seek as _, SeekFrom, Write as _};
++use std::io::Write as _;
+ 
+ enum Format {
+     TextFile = 1,
+@@ -324,7 +324,7 @@ impl Stores {
+ 
+     /// Return the number of bytes that `read_data` will append for the given type.
+     /// Returns 0 for types whose binary size is variable (text) or unsupported (collections).
+-    pub(crate) fn binary_size(&self, tp: u16) -> usize {
++    fn binary_size(&self, tp: u16) -> usize {
+         match tp {
+             2 | 6 => 4,     // single, character
+             0 | 1 | 3 => 8, // integer (post-2c i64), long, float
+@@ -741,18 +741,8 @@ impl Stores {
+             };
+             let s = self.store_mut(file);
+             let mut file_ref = s.get_i32_raw(file.rec, file.pos + 28);
+-            let raw_next = s.get_long(file.rec, file.pos + 16);
+             if file_ref == i32::MIN {
+-                // Read-write, so a read through the same `File` after it sees what was
+-                // written (loft#1861: `File::create` opened it write-only, and the read
+-                // answered nothing on both backends).
+-                match std::fs::OpenOptions::new()
+-                    .read(true)
+-                    .write(true)
+-                    .create(true)
+-                    .truncate(true)
+-                    .open(&resolved_name)
+-                {
++                match std::fs::File::create(&resolved_name) {
+                     Ok(f) => {
+                         s.set_i32_raw(file.rec, file.pos + 28, f_nr);
+                         self.files
+@@ -772,24 +762,11 @@ impl Stores {
+                     }
+                 }
+             }
+-            let Some(Some(f)) = self.files.get_mut(file_ref as usize) else {
+-                return false;
+-            };
+-            // The write lands where the program's position is (`f#next`), as `+=` and a
+-            // read do, and leaves `#index`/`#next` around what it wrote.
+-            if raw_next != i64::MIN && f.seek(SeekFrom::Start(raw_next as u64)).is_err() {
+-                return false;
+-            }
+-            let Ok(start) = f.stream_position() else {
+-                return false;
+-            };
+-            if f.write_all(v.as_bytes()).is_err() {
+-                return false;
++            if let Some(Some(f)) = self.files.get_mut(file_ref as usize) {
++                f.write_all(v.as_bytes()).is_ok()
++            } else {
++                false
+             }
+-            let s = self.store_mut(file);
+-            s.set_long(file.rec, file.pos + 8, start as i64);
+-            s.set_long(file.rec, file.pos + 16, (start + v.len() as u64) as i64);
+-            true
+         }
+     }
+ 
+diff --git b/src/state/io.rs a/src/state/io.rs
+index 75a494b75..11dee6b36 100644
+--- b/src/state/io.rs
++++ a/src/state/io.rs
+@@ -319,14 +319,8 @@ impl State {
+         data: Vec<u8>,
+         n: usize,
+     ) {
+-        // `data` holds the bytes the read GOT.  Fewer than asked for, or fewer than the
+-        // type's width (`#read(4) as integer`), leave the target as the read declared it —
+-        // null — as on `--native` (loft#1861: the zero-padded buffer was decoded as a value).
+         let actual = data.len();
+         let is_text = self.database.is_text_type(db_tp);
+-        if !is_text && actual < self.database.binary_size(db_tp) {
+-            return;
+-        }
+         if is_text {
+             let s = unsafe { String::from_utf8_unchecked(data) };
+             *self
+@@ -485,9 +479,9 @@ impl State {
+                             let _ = f.seek(SeekFrom::Start(next_pos as u64));
+                         }
+                         store.set_i32_raw(file.rec, file.pos + 28, f_nr);
+-                        self.database.files.push(Some(
+-                            crate::database::loft_file::LoftFile::reader(f, shown.as_str()),
+-                        ));
++                        self.database
++                            .files
++                            .push(Some(crate::database::loft_file::LoftFile::new(f)));
+                         file_ref = f_nr;
+                     }
+                     Err(e) => {
+@@ -526,7 +520,9 @@ impl State {
+                 file.pos + 16,
+                 next_pos + actual as i64,
+             );
+-            data.truncate(actual);
++            if is_text {
++                data.truncate(actual);
++            }
+             self.dispatch_read_data(val, db_tp, little_endian, data, n);
+         }
+     }

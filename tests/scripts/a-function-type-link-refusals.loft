@@ -1,0 +1,39 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The refusal half of `a-function-type-can-name-a-link-parameter.loft`: once `fn(&P)` can be
+// written, a closure taking its parameter BY VALUE is not one (the types differ), and a `&`
+// parameter handed only to a by-value `fn(P)` really is never modified — the unused-`&` lint,
+// which now looks inside a call through a fn-ref, still fires when nothing can write.
+//
+// `main` comes first so each expectation belongs to its function.
+//
+// @falsified-at: c8cfeb402 — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 2/2 (the
+//   suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2
+//   -> 2/2.
+// @falsified-by: tests/falsified/a-function-type-link-refusals.patch — the same
+//   channels.  Score it with
+//   `scripts/falsify.sh <this file> --patch <that patch>` once c8cfeb402 is out of reach.
+// HOLDS: nothing runs on either tree (a refusal file).
+
+fn main() {
+  q = P { x: 1, y: 2 };
+  mismatch(q);
+  by_value(fn(p: P) { }, q);
+}
+
+struct P { x: integer, y: integer }
+
+fn app(f: fn(&P), p: &P) {
+  f(p);
+}
+
+// @EXPECT_ERROR: expected fn(&P), got fn(P) on argument 1 of call to app
+fn mismatch(q: P) {
+  app(fn(p: P) { }, q);
+}
+
+// @EXPECT_ERROR: Parameter 'p' has & but is never modified; remove the &
+fn by_value(f: fn(P), p: &P) {
+  f(p);
+}

@@ -139,7 +139,11 @@ impl Output<'_> {
             ValueType::Line => {
                 // P198 / DX-source-map: a `// loft:<file>:<line>` comment so
                 // rustc errors trace back to the loft source line.
-                let file = self.data.def(self.def_nr).position().file.replace('\n', "");
+                // One spelling on every host: the comment is part of generated source that is
+                // compared (`compiled_stdlib_up_to_date`) and read back by the source map.
+                let file = crate::file_access::portable_str(
+                    &self.data.def(self.def_nr).position().file.replace('\n', ""),
+                );
                 // @PLN157 — remember where we are, so an operator checkpoint can name the
                 // loft line it came from.  This stream is the emitter's only notion of
                 // position.
@@ -730,8 +734,80 @@ impl Output<'_> {
             }
         };
         match code {
+            // `@FR-R-RangedCall`'s guarded copy — a counted `For` block whose hoisted integer
+            // fields bound every call it makes: the copy under the guard runs with those
+            // fields ranged (and calls ranged variants), the plain block is the `else` arm.
+            Value::Block(bl) if bl.name == "For block" && !self.in_range_copy => {
+                if let Some((test, facts)) = self.range_guard_for(bl) {
+                    let declared_before = self.declared.clone();
+                    writeln!(w, "if {test} {{ //@FR-R-RangedCall guarded copy")?;
+                    self.in_range_copy = true;
+                    self.range_override.push(std::rc::Rc::new(facts));
+                    self.indent(w)?;
+                    let r = self.output_block(w, IrBlock::Native(bl), false, false);
+                    self.range_override.pop();
+                    self.declared = declared_before;
+                    r?;
+                    writeln!(w)?;
+                    self.indent(w)?;
+                    writeln!(w, "}} else {{")?;
+                    self.indent(w)?;
+                    let r = self.output_block(w, IrBlock::Native(bl), false, false);
+                    self.in_range_copy = false;
+                    r?;
+                    writeln!(w)?;
+                    self.indent(w)?;
+                    write!(w, "}}")?;
+                } else {
+                    self.output_block(w, IrBlock::Native(bl), false, false)?;
+                }
+            }
             Value::Block(bl) => self.output_block(w, IrBlock::Native(bl), false, false)?,
+            Value::Loop(lp) if self.assumed_distinct.is_empty() && !self.in_distinct_copy => {
+                if let Some(pairs) = self.distinct_version(lp) {
+                    // `@FR-R-Alias`'s versioned clause — the copy that holds the parameters'
+                    // headers runs only when their stores are apart from the return buffer's.
+                    let vars = self.data.def(self.def_nr).variables();
+                    let test = pairs
+                        .iter()
+                        .map(|&(p, rb)| {
+                            format!(
+                                "var_{}.store_nr != var_{}.store_nr",
+                                super::sanitize(vars.name(rb)),
+                                super::sanitize(vars.name(p))
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" && ");
+                    writeln!(w, "if {test} {{ //@FR-R-Alias versioned on distinct stores")?;
+                    let declared_before = self.declared.clone();
+                    self.assumed_distinct = pairs;
+                    self.indent(w)?;
+                    self.output_code_inner(w, code)?;
+                    self.assumed_distinct.clear();
+                    self.declared = declared_before;
+                    writeln!(w)?;
+                    self.indent(w)?;
+                    writeln!(w, "}} else {{")?;
+                    self.in_distinct_copy = true;
+                    self.indent(w)?;
+                    let r = self.output_code_inner(w, code);
+                    self.in_distinct_copy = false;
+                    r?;
+                    writeln!(w)?;
+                    self.indent(w)?;
+                    write!(w, "}}")?;
+                    crate::rewrite_census::fired("R-AliasVersion", 1);
+                } else {
+                    self.in_distinct_copy = true;
+                    let r = self.output_code_inner(w, code);
+                    self.in_distinct_copy = false;
+                    r?;
+                }
+            }
             Value::Loop(lp) => {
+                // A loop nested inside this one is asked anew (`distinct_version`).
+                self.in_distinct_copy = false;
                 let hoisted = self.begin_vector_hoist(w, lp)?;
                 // `@FR-R-LoopRecord` — a record local declared inside this loop is declared
                 // here instead, so its store survives the iteration: the per-pass mint takes
@@ -1418,15 +1494,24 @@ impl Output<'_> {
             } else {
                 None
             };
-            let text_link_arg = i < param_types.len()
+            let link_arg =
+                i < param_types.len() && matches!(param_types[i].base(), Type::RefVar(_));
+            let text_link_arg = link_arg
                 && matches!(param_types[i].base(),
                     Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)));
             if let Some(respelled) = tuple_place {
                 write!(w, "let _farg_{i} = {respelled}; ")?;
-            } else if text_link_arg && store_mask & (1 << i) == 0 && !candidates.is_empty() {
-                // A text VARIABLE for a `&text` parameter: the `&mut String` a direct call
-                // hands over, spelled by the one argument emitter (`emit_call_arg`) against a
-                // candidate — every candidate agrees on this parameter's type.
+            } else if link_arg
+                && !(text_link_arg && store_mask & (1 << i) != 0)
+                && !candidates.is_empty()
+            {
+                // @FR-L-Apply — a `&` parameter: the `&mut` slot a direct call hands over, spelled by the one
+                // argument emitter (`emit_call_arg`) against a candidate — every candidate
+                // agrees on this parameter's type.  The argument is `OpCreateStack(var)`, which
+                // has no spelling of its own outside that emitter: bound raw, a `&P` parameter
+                // read `let _farg_0 = ;` and the crate did not build (`(L-Apply)` binds the
+                // parameters as a direct call does).  A text FIELD or element for `&text` keeps
+                // its store instance (`store_mask`, below).
                 let cand = self.data.def(candidates[0].d_nr);
                 let mut buf = Vec::new();
                 self.emit_call_arg(&mut buf, cand, i, arg)?;
@@ -2687,6 +2772,38 @@ impl Output<'_> {
         ri < bl.operators.len().saturating_sub(1) || self.block_contains_ncc_skip_free(bl)
     }
 
+    /// `@FR-R-PushFill`'s repeat-literal clause — a `[c; n]` template and its copies are one
+    /// fill of the tail; the two statements stand as the fallback for a count or a vector the
+    /// fill refuses.
+    fn output_repeat_literal(
+        &mut self,
+        w: &mut dyn Write,
+        rl: &super::hoist::RepeatLiteral,
+        first: &Value,
+        second: &Value,
+    ) -> std::io::Result<()> {
+        let vec = self.expr_string(rl.vector)?;
+        let val = self.expr_string(rl.val)?;
+        let ty = rl.rust_type;
+        self.indent(w)?;
+        writeln!(
+            w,
+            "if !{{ let mut __rl = vector::push_header(&({vec}), &stores.allocations); stores.push_fill::<{ty}, false>(&mut __rl, &({vec}), {}_u32, {}_i64, ({val}) as {ty}) }} {{ //@FR-R-PushFill repeat literal",
+            rl.size, rl.count
+        )?;
+        self.indent += 1;
+        for s in [first, second] {
+            self.indent(w)?;
+            self.output_code_inner(w, s)?;
+            writeln!(w, ";")?;
+        }
+        self.indent -= 1;
+        self.indent(w)?;
+        writeln!(w, "}}")?;
+        crate::rewrite_census::fired("R-PushFill", 1);
+        Ok(())
+    }
+
     #[expect(clippy::too_many_lines, reason = "inherited")]
     /// `is_fn_body` marks the one block whose Rust type is the function's
     /// return signature (`Context::Result`).  Only there may the tail expression
@@ -3140,14 +3257,21 @@ impl Output<'_> {
         // @PLN157 § V-n — the header frames this block's view bindings pushed, popped
         // before the block closes.
         let mut view_frames = 0usize;
-        // `@FR-R-RecPtr` — the record-address frames this block's view bindings pushed.
-        let mut ptr_frames = 0usize;
+        // `@FR-R-RecPtr` — the record-address frames this block's view bindings pushed, and
+        // at a function body's head the ones its record PARAMETERS take for the whole body.
+        let mut ptr_frames = if is_fn_body {
+            self.bind_param_record_ptrs(w, operators)?
+        } else {
+            0usize
+        };
         // @PLN157 § V-x — the open FLAT literal group, if any: `(local, witness)`.
         let mut flat_lit_open: Option<(u16, u16)> = None;
         // `@FR-R-GroupPush` — the groups this block opens are closed by index; a nested
         // block's statements are emitted inside a group's range and never reach here.
         self.block_serial += 1;
         let block_serial = self.block_serial;
+        // `@FR-R-PushFill`'s repeat-literal clause — the statement the fill already emitted.
+        let mut repeat_skip: Option<usize> = None;
         for (vnr, v) in operators.iter().enumerate() {
             self.close_groups_before(w, block_serial, vnr)?;
             self.close_ptr_windows_before(block_serial, vnr);
@@ -3156,12 +3280,31 @@ impl Output<'_> {
             // source.  Without this, only Value::Line nodes inside an
             // expression context get rendered (rare in practice).
             if let Value::Line(line) = v {
-                let file = self.data.def(self.def_nr).position().file.replace('\n', "");
+                // One spelling on every host: the comment is part of generated source that is
+                // compared (`compiled_stdlib_up_to_date`) and read back by the source map.
+                let file = crate::file_access::portable_str(
+                    &self.data.def(self.def_nr).position().file.replace('\n', ""),
+                );
                 // @PLN157 — see the sibling in `output_code_node`: the statement-level
                 // half of the same position stream.
                 self.ckpt_cur_line = *line;
                 self.indent(w)?;
                 writeln!(w, "// loft:{file}:{line}")?;
+                continue;
+            }
+            if repeat_skip.is_some_and(|last| vnr <= last) {
+                continue;
+            }
+            // `@FR-R-PushFill`'s repeat-literal clause — a `[c; n]` template and its copies are
+            // one fill of the tail; the two statements stand as the fallback for a count or a
+            // vector the fill refuses.
+            if !self.hoist_disabled
+                && !self.push_fill_disabled
+                && let Some(next) = operators.get(vnr + 1)
+                && let Some(rl) = super::hoist::repeat_literal(v, next, self.data)
+            {
+                self.output_repeat_literal(w, &rl, v, next)?;
+                repeat_skip = Some(vnr + 1);
                 continue;
             }
             // loft#1753 — a statement that calls into a frame first records the line it calls
@@ -3409,6 +3552,65 @@ impl Output<'_> {
                 && matches!(a1.unspan(), Value::Int(0))
                 && matches!(a2.unspan(), Value::Int(0))
             {
+                continue;
+            }
+            // `@FR-R-RefillBuffer` — a refilling buffer's vector-field zero empties the vector
+            // in place: a fresh mint holds no vector there (a no-op), a kept store holds the
+            // previous value's, whose record the group's fill then reuses.
+            if !self.refill.field_zeros.is_empty()
+                && self
+                    .refill
+                    .field_zeros
+                    .contains(&(std::ptr::from_ref(v.unspan()) as usize))
+                && let Value::Call(_, args) = v.unspan()
+                && let (Some(Value::Var(b)), Some(Value::Int(off))) = (
+                    args.first().map(Value::unspan),
+                    args.get(1).map(Value::unspan),
+                )
+            {
+                let name = sanitize(self.data.def(self.def_nr).variables().name(*b));
+                // The in-place clause: the zero followed by a repeat literal of the same field
+                // overwrites the kept vector where it stands when it already holds that many
+                // elements; any other length empties and fills it as below.
+                let in_place = if self.refill_in_place
+                    && !self.hoist_disabled
+                    && !self.push_fill_disabled
+                    && let (Some(first), Some(second)) =
+                        (operators.get(vnr + 1), operators.get(vnr + 2))
+                    && let Some(rl) = super::hoist::repeat_literal(first, second, self.data)
+                    && super::hoist::vector_path(self.data, rl.vector)
+                        == Some((*b, vec![i64::from(*off)]))
+                {
+                    let vec = self.expr_string(rl.vector)?;
+                    let val = self.expr_string(rl.val)?;
+                    let ty = rl.rust_type;
+                    self.indent(w)?;
+                    writeln!(
+                        w,
+                        "if !stores.fill_exact::<{ty}>(&({vec}), {}_u32, {}_i64, ({val}) as {ty}) {{ //@FR-R-RefillBuffer in place",
+                        rl.size, rl.count
+                    )?;
+                    self.indent += 1;
+                    crate::rewrite_census::fired("R-RefillBuffer", 1);
+                    Some((rl, first, second))
+                } else {
+                    None
+                };
+                self.indent(w)?;
+                // A buffer whose elements own heap had them released by its entry clear
+                // (`hoist::refill_buffers` admits it only then): the length reset is all the
+                // group owes here too.
+                writeln!(
+                    w,
+                    "{{ let _rf = var_{name}; vector::clear_vector(&DbRef {{ store_nr: _rf.store_nr, rec: _rf.rec, pos: _rf.pos + {off}_u32 }}, &mut stores.allocations); }} //@FR-R-RefillBuffer"
+                )?;
+                if let Some((rl, first, second)) = in_place {
+                    self.output_repeat_literal(w, &rl, first, second)?;
+                    self.indent -= 1;
+                    self.indent(w)?;
+                    writeln!(w, "}}")?;
+                    repeat_skip = Some(vnr + 2);
+                }
                 continue;
             }
             let lit_guard = match v.unspan() {

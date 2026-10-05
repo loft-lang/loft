@@ -5106,7 +5106,7 @@ impl Definition {
     /// Declared in `default/` — the standard library.
     #[must_use]
     pub fn is_stdlib(&self) -> bool {
-        crate::portable_path::is_stdlib_source(&self.position.file)
+        crate::file_access::is_stdlib_source(&self.position.file)
     }
 
     #[must_use]
@@ -5117,7 +5117,7 @@ impl Definition {
         if !self.name.starts_with("n_") || self.name.starts_with("n___lambda_") {
             return false;
         }
-        if crate::portable_path::is_stdlib_source(&self.position.file) {
+        if crate::file_access::is_stdlib_source(&self.position.file) {
             return false;
         }
         // Only the AUTHOR's parameters count: `text_return` / `ref_return` add hidden buffers.
@@ -6035,6 +6035,7 @@ impl Clone for OpSetCache {
 }
 
 #[allow(dead_code)]
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Clone)]
 /// The immutable data of a parsed loft program
 pub struct Data {
@@ -6045,6 +6046,12 @@ pub struct Data {
     /// closed program: a later parse would type a call by the rewritten signature, and a
     /// caller outside loft would read a record the function no longer returns.
     pub open_world: bool,
+    /// The whole-program rewrites (`compile::close_program`) have run on this `Data`.  They
+    /// read facts the scope pass leaves on each function that the program cache's image does
+    /// not carry (scopes, loops, intervals), so a program is closed BEFORE its image is taken
+    /// and a warm load marks the decoded `Data` closed rather than closing it a second time
+    /// from a degraded table (loft#1858).
+    pub program_closed: bool,
     /// The run this program is compiled for OBSERVES function entries — `loft test`'s
     /// coverage, which counts a function covered when a call enters it.  A rewrite that
     /// removes calls (`leaf_inline::rewrite_program`, `@FR-R-InlineLeaf`) leaves them alone
@@ -6909,6 +6916,7 @@ impl Data {
         Data {
             definitions: Vec::new(),
             open_world: false,
+            program_closed: false,
             observes_entries: false,
             lazy_drivers: LazyDriverCache::default(),
             def_names: DefIndex::default(),
@@ -7616,6 +7624,47 @@ impl Data {
     #[must_use]
     pub fn has_overload_set(&self, name: &str) -> bool {
         let main = self.def_nr(name);
+        main != u32::MAX && self.def(main).def_type == DefType::Dynamic
+    }
+
+    /// The source whose overload set `name` a call on `receiver` chooses among: the caller's
+    /// scope (`u16::MAX`) when the set is there, else the source that declares the receiver's
+    /// TYPE when that source has one.  `(Op-Left)` and `x.m(…)` choose among the members of
+    /// the RECEIVER's method, and a library declares its type's overloads in its own source:
+    /// through a qualified import (`use time;`, @C98) the set's bare name is not in the
+    /// caller's scope, so `d.minus(span)` reached the first member alone and refused the
+    /// `Duration` the second one takes, and `d - span` was refused outright.
+    ///
+    /// Asked for a RECEIVER only — the method spelling and the operator forms.  A free call
+    /// keeps its own scope: a type's source is never a second place to find a free function
+    /// (loft#853), and the stdlib's sets are in every scope already.
+    #[must_use]
+    pub fn receiver_overload_source(&self, name: &str, receiver: &Type) -> u16 {
+        if self.has_overload_set(name) {
+            return u16::MAX;
+        }
+        // `@FR-N-Shape` — a `τ?` or `&τ` receiver is the type it wraps.
+        let tp = match receiver.base() {
+            Type::RefVar(inner) => inner.base(),
+            other => other,
+        };
+        let type_nr = self.type_def_nr(tp);
+        if type_nr == u32::MAX {
+            return u16::MAX;
+        }
+        let own = self.definitions[type_nr as usize].source;
+        let set = self.source_nr(own, name);
+        if own != STD_SOURCE && set != u32::MAX && self.def(set).def_type == DefType::Dynamic {
+            own
+        } else {
+            u16::MAX
+        }
+    }
+
+    /// Is there an overload set named `name` in `source` (`u16::MAX`: the caller's scope)?
+    #[must_use]
+    pub fn has_overload_set_in(&self, source: u16, name: &str) -> bool {
+        let main = self.source_nr(source, name);
         main != u32::MAX && self.def(main).def_type == DefType::Dynamic
     }
 
@@ -8716,8 +8765,8 @@ impl Data {
         let name = fn_name.strip_prefix("n_").unwrap_or(fn_name);
         let at = &self.def(winner).position;
         if self.def(winner).name.starts_with("n_")
-            && crate::portable_path::is_stdlib_source(&at.file)
-            && !crate::portable_path::is_stdlib_source(&lexer.pos().file)
+            && crate::file_access::is_stdlib_source(&at.file)
+            && !crate::file_access::is_stdlib_source(&lexer.pos().file)
         {
             format!(
                 "`{name}` is a standard-library function, and its name is reserved for it: a program cannot define its own `{name}` (the standard library's is at {at}); choose another name"
@@ -9456,7 +9505,7 @@ impl Data {
             // the first overload's pass-2 body then read *Unknown variable* for its own
             // parameter, and every program with three overloads lost its watcher
             // (measured, @PLN162 step 14).
-            && !crate::portable_path::is_stdlib_source(&lexer.pos().file)
+            && !crate::file_access::is_stdlib_source(&lexer.pos().file)
             && o_nr != u32::MAX
             && self.def(o_nr).def_type == DefType::Dynamic
             && self.def(o_nr).source == self.source
@@ -9478,7 +9527,7 @@ impl Data {
         } else if d_nr == u32::MAX
             && generic_members
             && crate::keys::method_in_set_enabled()
-            && !crate::portable_path::is_stdlib_source(&lexer.pos().file)
+            && !crate::file_access::is_stdlib_source(&lexer.pos().file)
             && (o_nr == u32::MAX
                 || (self.def(o_nr).def_type == DefType::Dynamic
                     && self.def(o_nr).source == self.source))
@@ -10104,6 +10153,19 @@ impl Data {
         if let Some(keys) = self.private_imports.get_mut(&self.source) {
             keys.retain(|_, (def, _)| *def != d_nr);
         }
+    }
+
+    /// How many stubs have been adopted this pass: taken before a declaration, it lets
+    /// [`Data::adopted_since`] name the stubs that one declaration adopted.
+    #[must_use]
+    pub fn adopted_stub_count(&self) -> usize {
+        self.adopted_stubs.len()
+    }
+
+    /// The stubs adopted since `adopted_stub_count` answered `from`.
+    #[must_use]
+    pub fn adopted_since(&self, from: usize) -> &[u32] {
+        self.adopted_stubs.get(from..).unwrap_or(&[])
     }
 
     pub fn resolve_adopted_stubs(&mut self, lexer: &mut Lexer) -> Vec<(u32, Type)> {
@@ -12360,6 +12422,23 @@ impl Data {
         }
     }
 
+    /// `@FR-Op-Left` — every `use` of a library binds the `operator` definitions it publishes,
+    /// whatever its spec: `use time;` brings in only the `time::` qualifier (@C98), and a value
+    /// of `time::DateTime` must still answer `<`, `-`, `"{dt}"` and `for … in` with the
+    /// operators its package declares, as `dt.year()` answers with its methods through the
+    /// type's attribute table.  Bound privately — the importer does not pass them on — and
+    /// under their mangled per-type keys, which `(Op-Home)` places in the type's own source,
+    /// so they cannot take a name the importer could declare.  Each operator site asks by
+    /// name (the forms, the overload set, `to_text`, `next`), and this is the one place the
+    /// names arrive.
+    pub fn import_operators(&mut self, lib_source: u16, into_source: u16) {
+        for (name, def_nr) in self.exported_names(lib_source) {
+            if self.definitions[def_nr as usize].operator_form {
+                self.bind_import(&name, (into_source, lib_source), def_nr, false, true);
+            }
+        }
+    }
+
     /// Everything `lib_source` passes on to an importer: its own public definitions and
     /// what it `pub use`s — not what a plain `use` bound there for its own use (@C98).
     fn exported_names(&self, lib_source: u16) -> Vec<(String, u32)> {
@@ -12367,7 +12446,7 @@ impl Data {
             .iter()
             .filter(|&(name, src, def_nr)| {
                 src == lib_source
-                    && self.definitions[def_nr as usize].pub_visible
+                    && self.passes_on(def_nr)
                     && !self.is_private_import(lib_source, name, def_nr)
             })
             .map(|(name, _, def_nr)| (name.to_string(), def_nr))
@@ -12376,9 +12455,19 @@ impl Data {
 
     /// The definition `lib_source` passes on under `key`, if any (see [`Self::exported_names`]).
     fn exported(&self, key: &str, lib_source: u16) -> Option<u32> {
-        self.def_names.get(key, lib_source).filter(|&d| {
-            self.definitions[d as usize].pub_visible && !self.is_private_import(lib_source, key, d)
-        })
+        self.def_names
+            .get(key, lib_source)
+            .filter(|&d| self.passes_on(d) && !self.is_private_import(lib_source, key, d))
+    }
+
+    /// @FR-F-Surface — a `pub` item, or a forward-reference stub.  A stub is not an item and
+    /// has no `pub` of its own: it travels with the import so the importer's declaration can
+    /// adopt it (loft#801), and that declaration decides whether it is `pub`.  Its USER's
+    /// `pub` decided the trip before, so a private function naming the importer's type
+    /// above its declaration was refused where a `pub` one compiled (loft#1856).
+    fn passes_on(&self, d_nr: u32) -> bool {
+        let d = &self.definitions[d_nr as usize];
+        d.pub_visible || matches!(d.def_type, DefType::Unknown)
     }
 
     /// @FR-F-Surface (loft#1848) — the error for a qualified `lib::name` that reaches what `lib`
@@ -13301,6 +13390,21 @@ impl Data {
     #[must_use]
     pub fn type_name_str(&self, tp: &Type) -> String {
         self.type_name_with(tp, false)
+    }
+
+    /// A type as its author can write it back into the source — the spelling a refusal's
+    /// cure names (`cast with \`as u8?\``).  An integer, nullable or not, is named by its
+    /// alias or range ([`Self::display_type_name`]); every other type keeps its
+    /// [`Type::source_name`], which carries a keyed collection's keys.  `source_name` alone
+    /// spells a ranged integer `integer(0, 255)`, which does not parse, so a cure written
+    /// with it could not be pasted (loft#1786's class).
+    #[must_use]
+    pub fn written_type_name(&self, tp: &Type) -> String {
+        if matches!(tp.base(), Type::Integer(_)) {
+            self.display_type_name(tp)
+        } else {
+            tp.source_name(self)
+        }
     }
 
     /// A type's name as a reader should see it — `type_name()`, advice, hover text: an

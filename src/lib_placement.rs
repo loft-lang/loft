@@ -48,9 +48,10 @@
 //! # Platform
 //!
 //! The declaration is portable — every platform parses `placement` and every
-//! platform agrees on what it means. The *transport* is Linux-only, because the
-//! handshake is built on `futex`. Elsewhere a process-placed library runs
-//! in-process, which by the invariant above is the same program; set
+//! platform agrees on what it means. The *transport* runs on every Unix: the
+//! handshake's wait is a futex on Linux, the shared wait-on-address on macOS, and a
+//! short poll elsewhere (`wire::futex_wait`). On Windows a process-placed library
+//! runs in-process, which by the invariant above is the same program; set
 //! `LOFT_REQUIRE_PLACEMENT=1` to make the lost isolation an error instead.
 
 /// Where a library's functions execute.
@@ -156,19 +157,19 @@ impl Placement {
 
 /// The call arena — the shared store a struct or a vector crosses in, rather
 /// than being re-encoded into a second wire vocabulary (@PLN119 arc B).
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 pub mod arena;
 
-/// The Linux transport: the shared mapping, the spin-then-sleep handshake, the
-/// frame codec, and the two ends of a call.  Gated because the handshake is
-/// built on `futex`; see the Platform note above.
-#[cfg(target_os = "linux")]
+/// The transport: the shared mapping, the spin-then-sleep handshake, the frame
+/// codec, and the two ends of a call.  Unix only — the mapping is `mmap`; see the
+/// Platform note above.
+#[cfg(unix)]
 pub mod wire;
 
 /// Routing a placed library's calls from the interpreter into its worker —
 /// what makes the declaration take effect on an ordinary `use`.
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 pub mod dispatch;
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 pub use wire::{Wire, Worker, serve, serve_remote};

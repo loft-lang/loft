@@ -3,6 +3,7 @@
 // @I70 — Database subsystem (alloc / persistence / journal / snapshot / schema)
 //! Memory/store allocation helpers and claim management.
 
+use crate::database::types::HeapSlot;
 use crate::database::{Parts, Stores, WorkerStores};
 use crate::hash;
 use crate::keys::DbRef;
@@ -984,6 +985,58 @@ impl Stores {
     /// stored reference (a `reference<T>`, a keyed collection's pointers), whose store number
     /// would still name the old slot.
     pub(crate) fn try_swap_in(&mut self, data: &DbRef, to: &DbRef, tp: u16) -> bool {
+        self.swap_stores_in(data, to, tp, true)
+    }
+
+    /// `@FR-H-SwapRebind` — [`Self::try_swap_in`] for a destination that still holds the
+    /// variable's previous value, not yet reset: the rebind `x = f(…)` whose reset the
+    /// exchange makes redundant.  The old tree moves into the released slot with the rest
+    /// of the destination store and is freed with it, which is what the reset would have
+    /// released, so the destination's other content is not a reason to decline; every
+    /// other condition is the exchange's own.
+    pub(crate) fn try_swap_rebind(&mut self, data: &DbRef, to: &DbRef, tp: u16) -> bool {
+        crate::keys::swap_rebind_enabled() && self.swap_stores_in(data, to, tp, false)
+    }
+
+    /// `@FR-H-SwapIn`'s keyed clause — `OpReplaceKeyed`'s free-source form (`h = build(…)`,
+    /// a keyed LOCAL rebound from a callee that minted its collection) is the same
+    /// exchange as [`Self::try_swap_rebind`]: a keyed local is a `DbRef` to a dedicated store
+    /// with its collection header at `1@8`, so the source's whole store IS the value the deep
+    /// copy would rebuild, and the destination's old collection moves into the released slot
+    /// with the rest of its store.  A keyed collection's own pointers are record numbers
+    /// inside its store (`Parts::Hash` / `Sorted` / `Index` / …), so they survive the
+    /// exchange; what must not be stored is a `DbRef` in the ELEMENT tree, which could name
+    /// the source slot itself.  Every other condition is the exchange's own.
+    pub(crate) fn try_swap_keyed(&mut self, src: &DbRef, dest: &DbRef, tp: u16) -> bool {
+        crate::keys::swap_rebind_enabled() && self.swap_stores_in_as(src, dest, tp, false, true)
+    }
+
+    fn swap_stores_in(&mut self, data: &DbRef, to: &DbRef, tp: u16, reset_dest: bool) -> bool {
+        self.swap_stores_in_as(data, to, tp, reset_dest, false)
+    }
+
+    /// The element type of a keyed collection type, whose own pointers are store-local.
+    fn keyed_element(&self, tp: u16) -> Option<u16> {
+        use crate::database::Parts;
+        match &self.types.get(tp as usize)?.parts {
+            Parts::Sorted(e, _)
+            | Parts::Ordered(e, _)
+            | Parts::Hash(e, _)
+            | Parts::Index(e, _, _)
+            | Parts::Radix(e, _)
+            | Parts::Trie(e, _) => Some(*e),
+            _ => None,
+        }
+    }
+
+    fn swap_stores_in_as(
+        &mut self,
+        data: &DbRef,
+        to: &DbRef,
+        tp: u16,
+        reset_dest: bool,
+        keyed: bool,
+    ) -> bool {
         if !crate::keys::store_swap_enabled() {
             return false;
         }
@@ -1006,7 +1059,7 @@ impl Stores {
         }
         if !self.allocations[ds].content_swappable(true)
             || !self.allocations[ts].content_swappable(false)
-            || !self.allocations[ts].holds_only_root()
+            || (reset_dest && !self.allocations[ts].holds_only_root())
         {
             return false;
         }
@@ -1021,7 +1074,12 @@ impl Stores {
             return false;
         }
         let known = self.swap_safe_types.get(tp as usize).copied().unwrap_or(0);
-        let safe = if known == 0 {
+        let safe = if keyed {
+            match self.keyed_element(tp) {
+                Some(e) => self.tree_holds_no_stored_refs(e, &mut Vec::new()),
+                None => false,
+            }
+        } else if known == 0 {
             let safe = self.tree_holds_no_stored_refs(tp, &mut Vec::new());
             if self.swap_safe_types.len() <= tp as usize {
                 self.swap_safe_types.resize(tp as usize + 1, 0);
@@ -1045,8 +1103,75 @@ impl Stores {
                 data.store_nr
             );
         }
-        self.free(data);
+        // A `par` worker's stores are merged back at the join, so a worker keeps none.
+        // A keyed rebind's released slot holds the OLD collection, which no buffer refill
+        // takes up (`spare_store` is a record buffer's): parked, it was still live at exit.
+        if reset_dest || keyed || self.disable_slot_reuse || !crate::keys::refill_buffer_enabled() {
+            self.free(data);
+        } else {
+            self.park_spare(data.store_nr);
+        }
         true
+    }
+
+    /// `@FR-R-RefillBuffer` — keep the store a rebind exchange released (`spare_store`); the
+    /// one kept before is freed, so at most one is held.
+    fn park_spare(&mut self, store_nr: u16) {
+        if let Some(old) = self.spare_store.replace(store_nr) {
+            self.free(&DbRef {
+                store_nr: old,
+                rec: 1,
+                pos: 8,
+            });
+        }
+    }
+
+    /// `@FR-R-RebindBuffer` — release a hidden buffer that holds the store a rebind handed
+    /// on, the way the exchange it replaced releases its own: parked as the spare when it is
+    /// a root store the exchange could have parked (`(R-RefillBuffer)`), freed otherwise.
+    pub fn park_or_free(&mut self, db: &DbRef, name: &str) {
+        if db.store_nr == u16::MAX || (db.store_nr as usize) >= self.allocations.len() {
+            return;
+        }
+        if (db.rec, db.pos) == (1, 8)
+            && crate::keys::refill_buffer_enabled()
+            && !self.disable_slot_reuse
+            && !self.is_stack_store(db.store_nr)
+            && self.allocations[db.store_nr as usize].content_swappable(true)
+            && self.lazy_sources.is_empty()
+            && !self.const_refs.iter().any(|r| r.store_nr == db.store_nr)
+        {
+            self.park_spare(db.store_nr);
+        } else {
+            self.free_named(db, name);
+        }
+    }
+
+    /// `@FR-R-RefillBuffer` — the kept store, when it holds a root of type `tp`: handed out
+    /// as is, its previous value still in it, for a callee whose literal writes every field.
+    /// `@FR-R-RefillBuffer`'s live clause — may a buffer handed in LIVE be refilled where it
+    /// is: it is its store's root (`1@8`) of exactly the type being minted, in an ordinary
+    /// store nothing pins (no file, foreign bytes, lock or recording), so it is a previous
+    /// value of the same type that the admitted group rewrites whole.
+    pub fn refill_keeps(&self, db: &DbRef, tp: u16) -> bool {
+        (db.rec, db.pos) == (1, 8)
+            && (db.store_nr as usize) < self.allocations.len()
+            && !self.is_stack_store(db.store_nr)
+            && self.allocations[db.store_nr as usize].known_type == tp
+            && self.allocations[db.store_nr as usize].content_swappable(false)
+    }
+
+    pub(crate) fn take_spare(&mut self, tp: u16) -> Option<DbRef> {
+        let s = self.spare_store?;
+        if self.allocations[s as usize].known_type != tp {
+            return None;
+        }
+        self.spare_store = None;
+        Some(DbRef {
+            store_nr: s,
+            rec: 1,
+            pos: 8,
+        })
     }
 
     /// Does a record of type `tp` keep every pointer it holds as a record number INSIDE its
@@ -1711,6 +1836,10 @@ impl Stores {
                 continue; // stack store — always alive
             }
             if s.is_locked() || self.const_refs.iter().any(|cr| cr.store_nr == s_nr as u16) {
+                continue;
+            }
+            // The kept store of `@FR-R-RefillBuffer` is the runtime's, not a leaked value.
+            if self.spare_store == Some(s_nr as u16) {
                 continue;
             }
             if !s.free {
@@ -2667,6 +2796,7 @@ impl Stores {
             runtime_error: None,
             dispatch_stop: std::sync::atomic::AtomicBool::new(false),
             swap_safe_types: Vec::new(),
+            spare_store: None,
             // #255 / @PLN9: a parallel worker's file ops must resolve paths the
             // same way as the main thread — carry the anchor + mode.
             source_dir: self.source_dir.clone(),
@@ -3883,6 +4013,21 @@ impl Stores {
     }
 
     pub fn remove_claims(&mut self, rec: &DbRef, tp: u16) {
+        // A reused buffer is released before every refill, and most hold no heap by then
+        // (a moved-out value is zeroed): answered from the type's heap slots, without the
+        // walk's descent (`holds_no_heap_fast`).  A null or misplaced record, or any slot the
+        // fast test cannot read, still goes the full way — the refusal included.
+        if rec.store_nr != u16::MAX
+            && (rec.store_nr as usize) < self.allocations.len()
+            && u64::from(rec.pos) < u64::from(self.store(rec).capacity_words()) * 8
+            && matches!(
+                self.types.get(tp as usize).map(|t| &t.parts),
+                Some(Parts::Struct(_) | Parts::EnumValue(..) | Parts::Enum(_))
+            )
+            && self.holds_no_heap_fast(rec, tp) == Some(true)
+        {
+            return;
+        }
         self.remove_claims_mode(rec, tp, false);
     }
 
@@ -4005,6 +4150,19 @@ impl Stores {
                 if !borrowed && self.holds_no_heap(rec, tp) {
                     return;
                 }
+                // A record's own children are its fields, inline: the walk below would
+                // build a `Vec` of them (one per record released) only to recurse into each.
+                // Recursing field by field releases the same edges in the same order, and a
+                // field that owns no heap is passed over without a call.
+                if !borrowed
+                    && matches!(
+                        self.types[tp as usize].parts,
+                        Parts::Struct(_) | Parts::EnumValue(_, _)
+                    )
+                {
+                    self.remove_struct_claims(rec, tp);
+                    return;
+                }
                 let walk = self.owned_walk(rec, tp, borrowed);
                 for c in walk.children {
                     // @PLN102 heap-free audit — an `owning_elem == Some(0)` slot is an
@@ -4032,6 +4190,42 @@ impl Stores {
                     self.store_mut(rec).set_u32_raw(rec.rec, rec.pos, 0);
                 }
             }
+        }
+    }
+
+    /// [`Self::remove_claims_mode`] for a `Struct` / `EnumValue` record: each field that owns
+    /// heap released in field order, as `owned_walk`'s struct arm lists them — the same
+    /// bounds guard on a field past the store's end, the same secondary-view marker.
+    fn remove_struct_claims(&mut self, rec: &DbRef, tp: u16) {
+        let fields_of = |types: &[crate::database::Type], i: usize| match &types[tp as usize].parts
+        {
+            Parts::Struct(f) | Parts::EnumValue(_, f) => f.get(i).map(|f| {
+                (
+                    f.position,
+                    f.content,
+                    f.other_indexes.first() == Some(&u16::MAX),
+                )
+            }),
+            _ => None,
+        };
+        let capacity_bytes = u64::from(self.store(rec).capacity_words()) * 8;
+        let mut i = 0;
+        while let Some((position, content, view)) = fields_of(&self.types, i) {
+            i += 1;
+            let pos = rec.pos + u32::from(position);
+            if u64::from(pos) >= capacity_bytes {
+                self.refuse_owned_edge(rec, tp, pos, "struct field");
+                break;
+            }
+            if !view && !self.type_owns_heap(content) {
+                continue;
+            }
+            let child = DbRef {
+                store_nr: rec.store_nr,
+                rec: rec.rec,
+                pos,
+            };
+            self.remove_claims_mode(&child, content, view);
         }
     }
 
@@ -4686,6 +4880,110 @@ impl Stores {
     #[inline]
     pub(super) fn type_owns_heap(&self, tp: u16) -> bool {
         self.heap_facts(tp).0
+    }
+
+    /// `@FR-H-ClearRelease` — [`Self::holds_no_heap`] answered from the type's cached HEAP
+    /// SLOTS: `Some(true)` when every slot is empty right now, `None` whenever the full walk
+    /// must answer — a slot it cannot read here (past the record's capacity, an enum tag
+    /// naming a variant that owns heap), or a type whose slots the plan cannot express.
+    /// Never `Some(false)`: a non-empty slot is the walk's to release.
+    #[inline]
+    pub(crate) fn holds_no_heap_fast(&self, rec: &DbRef, tp: u16) -> Option<bool> {
+        let row = self.types.get(tp as usize)?;
+        if row.heap_slots.get().is_none() {
+            let derived = self
+                .derive_heap_slots(tp, 0, &mut Vec::new())
+                .map(Vec::into_boxed_slice);
+            row.heap_slots.set(derived);
+        }
+        let slots = row.heap_slots.get()?.as_deref()?;
+        if slots.is_empty() {
+            return Some(true);
+        }
+        let store = self.store(rec);
+        let capacity_bytes = u64::from(store.capacity_words()) * 8;
+        for slot in slots {
+            let (HeapSlot::Text(off) | HeapSlot::Collection(off) | HeapSlot::Tag(off, _)) = *slot;
+            let pos = rec.pos + off;
+            if u64::from(pos) + 4 > capacity_bytes {
+                return None;
+            }
+            match *slot {
+                HeapSlot::Text(_) => {
+                    if store.get_u32_raw(rec.rec, pos) != 0 {
+                        return None;
+                    }
+                }
+                HeapSlot::Collection(_) => {
+                    if store.collection_rec(rec.rec, pos) != 0 {
+                        return None;
+                    }
+                }
+                HeapSlot::Tag(_, etp) => {
+                    let e_nr = store.get_byte(rec.rec, pos, -1);
+                    if e_nr < 0 {
+                        continue;
+                    }
+                    let Parts::Enum(values) = &self.types.get(etp as usize)?.parts else {
+                        return None;
+                    };
+                    let vtp = values.get(e_nr as usize)?.0;
+                    if vtp != u16::MAX && self.type_owns_heap(vtp) {
+                        return None;
+                    }
+                }
+            }
+        }
+        Some(true)
+    }
+
+    /// The heap slots of a `tp` record placed `base` bytes into its parent, nested inline
+    /// records flattened — [`Self::holds_no_heap`]'s walk written down once.  `None` for a
+    /// field that walk answers `false` for without reading it.
+    fn derive_heap_slots(&self, tp: u16, base: u32, seen: &mut Vec<u16>) -> Option<Vec<HeapSlot>> {
+        if seen.contains(&tp) {
+            return None;
+        }
+        let fields = match &self.types.get(tp as usize)?.parts {
+            Parts::Struct(fields) | Parts::EnumValue(_, fields) => fields,
+            Parts::Enum(_) => return Some(vec![HeapSlot::Tag(base, tp)]),
+            _ => return None,
+        };
+        seen.push(tp);
+        let mut out = Vec::new();
+        for f in fields {
+            if !self.type_owns_heap(f.content) {
+                continue;
+            }
+            if f.other_indexes.first() == Some(&u16::MAX) {
+                seen.pop();
+                return None;
+            }
+            let off = base + u32::from(f.position);
+            match &self.types.get(f.content as usize)?.parts {
+                Parts::Struct(_) | Parts::EnumValue(..) | Parts::Enum(_) => {
+                    let inner = self.derive_heap_slots(f.content, off, seen);
+                    let Some(inner) = inner else {
+                        seen.pop();
+                        return None;
+                    };
+                    out.extend(inner);
+                }
+                Parts::Base if f.content == 5 => out.push(HeapSlot::Text(off)),
+                Parts::Vector(_)
+                | Parts::Array(_)
+                | Parts::Sorted(..)
+                | Parts::Ordered(..)
+                | Parts::Hash(..)
+                | Parts::Index(..) => out.push(HeapSlot::Collection(off)),
+                _ => {
+                    seen.pop();
+                    return None;
+                }
+            }
+        }
+        seen.pop();
+        Some(out)
     }
 
     /// Does the `tp` STRUCT at `rec` hold no heap at this moment — every slot of a

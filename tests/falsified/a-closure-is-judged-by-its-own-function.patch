@@ -1,0 +1,82 @@
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index 4b9e0d723..7a2cd45ee 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -20031,7 +20031,7 @@ impl Parser {
+             // Non-void returns are not handled here — they require a temp to hold
+             // the return value while writing back, which is left for A5.6 (1.1+).
+             if matches!(*ret_type, Type::Void)
+-                && let Some(closure_w) = self.vars.closure_var_of(v_nr)
++                && let Some(&closure_w) = self.closure_vars.get(&v_nr)
+                 && let Type::Reference(closure_rec_d, _) = self.vars.tp(closure_w).clone()
+             {
+                 let n_attrs = self.data.attributes(closure_rec_d);
+diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
+index 8aa41e350..a08549c3c 100644
+--- b/src/parser/expressions.rs
++++ a/src/parser/expressions.rs
+@@ -9086,10 +9086,8 @@ use a separate collection or add after the loop"
+                     self.math_sign_proven.retain(|(slot, _)| *slot != var_nr);
+                 }
+                 if op == "=" && self.last_closure_work_var != u16::MAX && var_nr != u16::MAX {
+-                    // The one home: the FUNCTION's own map.  A parser-wide map keyed by variable
+-                    // number outlived the function that filled it, so a later function's
+-                    // non-capturing fn-ref in the same slot read as capturing and was refused
+-                    // (`… not yet supported when the source closure may capture`).
++                    self.closure_vars.insert(var_nr, self.last_closure_work_var);
++                    // store mapping in Function struct for native codegen.
+                     self.vars
+                         .set_closure_var_of(var_nr, self.last_closure_work_var);
+                     self.last_closure_work_var = u16::MAX;
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index 8e51c2ec0..13d6ed1c4 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -1253,6 +1253,8 @@ pub struct Parser {
+     /// a header meeting an already-claimed spelling can tell "the same variable again" from
+     /// "a second variable that happens to be spelled the same".
+     pub(crate) type_var_bounds: std::collections::HashMap<u32, String>,
++    // maps fn-ref variable numbers to their closure record work variable numbers.
++    pub(crate) closure_vars: std::collections::HashMap<u16, u16>,
+     // last closure work variable created by emit_lambda_code (transient).
+     pub(crate) last_closure_work_var: u16,
+     // closure allocation expression to inject at the call site.
+@@ -1889,6 +1891,7 @@ impl Parser {
+             context_type_template: u32::MAX,
+             type_var_holders: std::collections::HashMap::new(),
+             type_var_bounds: std::collections::HashMap::new(),
++            closure_vars: std::collections::HashMap::new(),
+             last_closure_work_var: u16::MAX,
+             last_closure_alloc: None,
+             last_closure_captured_vars: vec![],
+@@ -14696,7 +14699,7 @@ impl Parser {
+                     Value::FnRef(d_nr, _, _) => Value::Int(d_nr),
+                     Value::Var(v)
+                         if matches!(self.vars.tp(v), Type::Function(..))
+-                            && self.vars.closure_var_of(v).is_none() =>
++                            && !self.closure_vars.contains_key(&v) =>
+                     {
+                         Value::FnRefDnr(v)
+                     }
+@@ -22389,7 +22392,7 @@ fn emit_fn_ref_field_write(
+                 false
+             };
+             let source_is_noncapturing =
+-                matches!(p.vars.tp(v), Type::Function(..)) && p.vars.closure_var_of(v).is_none();
++                matches!(p.vars.tp(v), Type::Function(..)) && !p.closure_vars.contains_key(&v);
+             if target_is_4b && source_is_noncapturing {
+                 return p.cl("OpSetInt4", &[ref_code, pos_val, Value::FnRefDnr(v)]);
+             }
+diff --git b/src/parser/vectors.rs a/src/parser/vectors.rs
+index b5869fa0b..3da0a30a1 100644
+--- b/src/parser/vectors.rs
++++ a/src/parser/vectors.rs
+@@ -5775,7 +5775,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+         }
+         match p.unspan() {
+             Value::FnRef(_, clos_var, _) => *clos_var != u16::MAX,
+-            Value::Var(v) => self.vars.closure_var_of(*v).is_some(),
++            Value::Var(v) => self.closure_vars.contains_key(v),
+             Value::Call(d_nr, _) => matches!(
+                 self.data.def(*d_nr).returned(),
+                 Type::Function(_, _, deps, ..) if !deps.is_empty()

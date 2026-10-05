@@ -1,0 +1,41 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A COUNTED LOOP PUSHING TO SEVERAL VECTORS RESERVES EACH (`@FR-R-PushFill`'s several-paths
+// clause).  `for _ in 0..n { m += [0 as u8]; sf += [0 as i32]; }` reserves every vector its
+// pushes times the trip count before the loop, and re-derives each push header after all of
+// them.  The values must be what one push at a time builds, at every trip count: none, one,
+// many, and an empty range given backwards.
+//
+// Expected values by hand: two(n) pushes 3i and i+1 to `a` and i/2 to `b` per i in 0..n, so
+// a sums 3·n(n-1)/2 + n(n+1)/2 and b ends on (n-1)/2; for n = 10 that is 135 + 55 = 190,
+// b[9] = 4.5 → 4, len(b) 10 → 10000, 10194 in all; n = 1 gives 0 + 1 + 0 + 1000 = 1001.
+//
+// @falsified-at: none — a reserve changes a vector's capacity, never a value; the cells pin
+// the values at each trip count against a rewrite that would reserve the wrong path or count.
+
+struct ES { m: vector<u8>, sf: vector<i32> }
+fn edgeset_new(n: integer) -> ES {
+  m: vector<u8> = [];
+  sf: vector<i32> = [];
+  for _ in 0..n { m += [7 as u8]; sf += [-3 as i32]; }
+  ES { m: m, sf: sf }
+}
+fn two(lo: integer, n: integer) -> integer {
+  a: vector<integer> = [];
+  b: vector<float> = [];
+  for i in lo..n { a += [i * 3]; b += [i as float * 0.5]; a += [i + 1]; }
+  t = 0;
+  for x in a { t += x; }
+  t + (b[len(b) - 1] ?? 0.0) as integer + len(b) * 1000 + len(a) * 100000
+}
+fn main() {
+  e = edgeset_new(37);
+  assert(len(e.m) == 37 && len(e.sf) == 37, "both vectors hold every push");
+  assert(e.m[36] == 7 && e.sf[5] == -3 && e.m[0] == 7, "the values pushed");
+  z = edgeset_new(0);
+  assert(len(z.m) == 0 && len(z.sf) == 0, "no trips");
+  assert(two(0, 10) == 10194 + 2000000, "ten trips, two pushes to one path");
+  assert(two(0, 1) == 1001 + 200000, "one trip");
+  assert(two(5, 2) == 0, "a range given backwards runs nothing");
+}

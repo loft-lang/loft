@@ -91,7 +91,9 @@ refusal later, which breaks nothing.
 which produces one value and re-suspends — so a generator computes lazily, one value per advance,
 and its side effects happen interleaved with the consumer's. When the body runs off the end
 without yielding again, the iterator is **done**; advancing a done iterator stays done (it never
-restarts and never faults).
+restarts and never faults).  A yielded value that happens to be its type's null — a faulted
+`4 / 0`, an absent record — is a value like any other: only the end of the body is **done**,
+so no backend may read the end from the value.
 
 ### `yield` produces one value and suspends the whole stack
 
@@ -100,6 +102,10 @@ restarts and never faults).
                v becomes next's result, ρ (the generator's locals AND every active nested
                call's frame) is serialised into fr, and control returns to the consumer.
                Execution resumes at the statement AFTER this yield on the next G-Next.
+             Statically, in a generator of  iterator<T> ,  yield v  is a STORE of v into T,
+             exactly as  return v  is into a return type: v converts by the same face
+             (C-Int, I-Narrow, N-Store) or is refused with the same message.  T is dense
+             (`iterator<τ?>` is refused), so a refusal never offers  τ?  as its cure.
   (G-YieldDepth)  the FRAME is stackful: `fr` holds the generator's whole saved call stack,
                   so a nested call active across a suspension is preserved with it and
                   delegation needs no trampoline.  What this does NOT give is a `yield` in a
@@ -121,8 +127,10 @@ restarts and never faults).
 **In words.** `yield v` hands `v` to whoever advanced the iterator and freezes the generator
 exactly where it is — including any helper functions it was in the middle of calling (the
 stackful property). On the next advance it thaws and continues from the statement right after the
-`yield`, with every local restored. `yield` is rejected by the compiler outside a generator
-function (a `yield` where the return type is not `iterator<T>` is a static error, not a runtime
+`yield`, with every local restored. The yielded value is converted into the iterator's element type
+the way a returned value is into the return type — an `integer` into `iterator<float>` widens,
+one into `iterator<u8>` must be shown to fit — and `yield` is rejected by the compiler outside a
+generator function (a `yield` where the return type is not `iterator<T>` is a static error, not a runtime
 one) — and that includes a plain helper called from a generator, so "stackful" is a property of
 the saved FRAME and not a licence to write `yield` anywhere.  `yield from g₂` is how a generator
 hands a stretch of its sequence to another one: `g₂` is built on the first advance that reaches

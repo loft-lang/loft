@@ -1,0 +1,47 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A channel `a-yielded-null-is-a-value-not-the-end.loft` held fixed.  `formal/coroutines.md`
+// `(G-Next)` produces the yielded value, null included.
+//
+// iterator<S> on --native: `yield m` of an `S?` did not BUILD.  The work ref it copies into is
+// a nullable `ref(S)?`, and the generator's local declarations asked for its zero on the
+// wrapper, which answered a number (`0 as DbRef`, E0605).  Once it built, the null reference
+// also had to reach the consumer rather than end the loop, which the end-of-sequence fix
+// already gives.  The interpreter was right, so this is a backend-divergence guard.
+//
+// Axes this file MOVES:  the record's presence (a record · null · a record) and a present
+//                        argument read through.
+// Axes it HOLDS FIXED:   a `for` consumer, a state-machine generator.
+//
+// @falsified-at: 04da090bf — native exit 1 -> 0 (the control does not build: E0605);
+//   interpret INERT, expected for a backend-divergence guard.
+// @falsified-by: tests/falsified/a-yielded-null-record-reaches-the-consumer.patch — the same
+//   channels.  Score it with `scripts/falsify.sh <this file> --patch <that patch>` once
+//   04da090bf is out of reach.
+// HOLDS: leak, panic and refusals are clean on both trees and both backends.
+
+struct S { v: integer }
+
+fn records(m: S?) -> iterator<S> {
+  yield S { v: 1 };
+  yield m;
+  yield S { v: 2 };
+}
+
+fn record_seq() -> text {
+  r = "";
+  for y in records(null) { r += "[{y}]"; }
+  r
+}
+
+fn record_total() -> integer {
+  t = 0;
+  for y in records(S { v: 40 }) { t += y.v; }
+  t
+}
+
+fn main() {
+  assert(record_seq() == "[{{v:1}}][null][{{v:2}}]", "record: got {record_seq()}");
+  assert(record_total() == 43, "a present record still reads through: got {record_total()}");
+}

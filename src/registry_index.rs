@@ -1048,7 +1048,7 @@ pub fn newest_cached_loadable_satisfying(
     pkg: &str,
     constraints: &[String],
 ) -> Option<(String, PathBuf)> {
-    let current = env!("CARGO_PKG_VERSION");
+    let current = crate::manifest::LOFT_RUNNING_VERSION;
     let mut best: Option<(String, PathBuf)> = None;
     for (name, version, dir) in installed_packages() {
         if name != pkg

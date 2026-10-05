@@ -1272,6 +1272,69 @@ pub fn loop_rotate_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_LOOP_ROTATE"))
 }
 
+/// A struct rebind from a fresh call result exchanges stores WITHOUT resetting the
+/// destination first on `--native` (`@FR-H-SwapRebind`, `codegen_runtime::OpRebindRecord`):
+/// the old value leaves with the released store — **DEFAULT ON**.  Opt OUT with
+/// `LOFT_NO_SWAP_REBIND` (read at run time): every such rebind resets the destination and
+/// copies or exchanges as before, the before-half of the A/B and the first bisect step for a
+/// wrong record after such a rebind on `--native`.
+#[must_use]
+pub fn swap_rebind_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_SWAP_REBIND"))
+}
+
+/// A callee whose return buffer is built by a literal that writes every field, of a type whose
+/// heap is only vectors of no-heap elements, refills the store a rebind exchange released
+/// instead of minting a new one on `--native` (`@FR-R-RefillBuffer`) — **DEFAULT ON**.  Opt OUT
+/// with `LOFT_NO_REFILL_BUFFER` (read where the buffer is emitted and at run time): the
+/// released store is freed and every buffer is minted, the before-half of the A/B and the
+/// first bisect step for a wrong record built into a return buffer on `--native`.
+#[must_use]
+pub fn refill_buffer_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_REFILL_BUFFER"))
+}
+
+/// The store a rebind `x = f(…)` displaces becomes the hidden buffer of that call's next
+/// execution, and the fresh result is adopted (`@FR-R-RebindBuffer`) — **DEFAULT ON**.  Opt
+/// OUT with `LOFT_NO_REBIND_BUFFER` (read where the rebind is emitted): the result is
+/// exchanged into `x`'s store (`@FR-H-SwapRebind`) as before, the before-half of the A/B and
+/// the first bisect step for a wrong value after a rebind in a loop on `--native`.
+#[must_use]
+pub fn rebind_buffer_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_REBIND_BUFFER"))
+}
+
+/// A refilled return buffer's repeat literal overwrites the kept vector where it stands when
+/// it already holds that many elements (`@FR-R-RefillBuffer`'s in-place clause,
+/// `Stores::fill_exact`) — **DEFAULT ON**.  Opt OUT with `LOFT_NO_REFILL_IN_PLACE` (read where
+/// the literal is emitted): the vector is emptied and filled again, the before-half of the
+/// A/B and the first bisect step for a wrong element in a refilled vector on `--native`.
+#[must_use]
+pub fn refill_in_place_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_REFILL_IN_PLACE"))
+}
+
+/// A call of an effect-free function made twice in one body on arguments nothing writes in
+/// between is computed once, on both backends (`@FR-R-PureReuse`, `pure_reuse`) — **DEFAULT
+/// ON**.  Opt OUT with `LOFT_NO_PURE_REUSE` (read at the scope pass): every call is made, the
+/// before-half of the A/B and the first bisect step for a wrong value read from such a call.
+#[must_use]
+pub fn pure_reuse_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_PURE_REUSE"))
+}
+
+/// `LOFT_TRACE_PURE_REUSE=1` — name each call `pure_reuse` computes once.
+#[must_use]
+pub fn trace_pure_reuse() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_TRACE_PURE_REUSE"))
+}
+
 /// A counted range whose start is not a literal steps ONE counter on the interpreter: the
 /// index is seeded from the start and the rotated loop enters past its step, so the copy
 /// from the second counter is not emitted — **DEFAULT ON** (`@FR-R-StartStep`).  Opt OUT
@@ -1649,6 +1712,20 @@ pub fn api_advice_enabled() -> bool {
 /// exit literal keeps its wrapper store and the literal keeps deep-copying it — the
 /// before-half of `(R-ExitVector)`'s A/B, and the first bisect step for a wrong or empty
 /// vector field out of a callee that built it in a local.
+/// `LOFT_NO_LITERAL_APPEND=1` — `(R-LiteralAppend)` off: a bound record literal is minted in
+/// its own store and copied into the element it is appended as.
+pub fn literal_append_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_LITERAL_APPEND"))
+}
+
+/// `LOFT_NO_FORWARD_RESULT=1` — `(R-ForwardResult)` off: a returned local bound from a call
+/// keeps its own buffer and the copy into the return buffer.
+pub fn forward_result_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_FORWARD_RESULT"))
+}
+
 pub fn exit_vector_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| !env_set("LOFT_NO_EXIT_VECTOR"))
@@ -3131,6 +3208,34 @@ pub fn fast_order_enabled() -> bool {
 pub fn one_probe_insert_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| !env_set("LOFT_NO_ONE_PROBE_INSERT"))
+}
+
+/// `LOFT_NO_KEYED_REPLACE=1` — the first bisect step for a lost or doubled entry, or a
+/// leak, after a `hash` insert of a key already present: the insert unlinks the displaced
+/// entry and files the new one with a second walk again, instead of overwriting the
+/// displaced entry's bucket (`hash::replace_at`).
+#[must_use]
+pub fn keyed_replace_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_KEYED_REPLACE"))
+}
+
+/// `LOFT_NO_SLICE_WRITE=1` — the first bisect step for wrong bytes in a file written from
+/// a vector: every element is written through `Stores::read_data` one by one again,
+/// instead of the payload going out as one copy when its stored bytes are its file bytes.
+#[must_use]
+pub fn slice_write_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_SLICE_WRITE"))
+}
+
+/// `LOFT_NO_KEEP_RANGE=1` — the first bisect step for a wrong element or length after
+/// `v = v[lo..hi]`: the vector keeps the range by the copy form again (span copied out,
+/// vector cleared, span appended) instead of moving it to the front of its own record.
+#[must_use]
+pub fn keep_range_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_KEEP_RANGE"))
 }
 
 /// `LOFT_KEYED_VERIFY=1` — the falsifier for the keyed fast paths: every pre-resolved

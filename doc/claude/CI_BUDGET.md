@@ -19,6 +19,21 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 > the same commit red or green — and the cancel threw away the leg's output, the one thing that
 > would have said why it ran long.
 >
+> **A WARM local run of the whole suite fits in 20 minutes** (owner): nothing to rebuild, every
+> test.  When one does not, that is the trigger to optimise the SUITE — split it, parallelise
+> it, or move tests to a nightly or PR leg — and the limit is never raised.  Enforced twice:
+> `global-timeout = "20m"` in `.config/nextest.toml`'s default profile (nextest itself cancels
+> the run, however it was started), and `scripts/hard_cap.sh`, which `find_problems.sh` arms
+> around a whole invocation, rebuild included.  Where a warm run stands, measured per binary:
+> `cargo nextest run --status-level pass` and sum each binary's durations — the matrix suites
+> that compile one native program per cell are the place to look first.  First check that the
+> time is the tests' own: a test whose cells each take most of a second while the same cell by
+> hand takes milliseconds is a SPAWN cost, and a crowded `target/debug/deps` is one
+> (TEST_ENVIRONMENTS.md § macOS).  Two levers are measured and unbuilt, for when a warm run
+> breaks the cap again: link the loft runtime as a shared library for test/semantics builds
+> (each test binary carries ~9 MB of runtime code, re-linked per cell), and emit only the
+> stdlib functions a program reaches (a one-line program emits ~500 functions, 3 722 lines).
+>
 > **The same rule holds for a NIGHTLY job that outgrows its limit: the limit stays, and the job
 > does less repeated work** (owner's direction).  The valgrind sweep was cancelled at
 > its 120 minutes on every run.  The cure was measured, not assumed: a per-file timing column

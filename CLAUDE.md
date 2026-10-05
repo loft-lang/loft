@@ -181,6 +181,10 @@ scripts/join.py run [SRC …]              # JOIN sibling branches: survey what 
                                          #   artefacts.json, verify — stops at each decision.
                                          #   Steps one by one: survey/apply/rederive/verify/
                                          #   guards — JOINING.md § The script
+scripts/derive-ci.sh                     # the PURE derived artefacts (compiled stdlib, surface,
+                                         #   browser bundle, doc pages, …) regenerated ON A
+                                         #   RUNNER and committed back; ratchets stay local —
+                                         #   JOINING.md § Derived artefacts on a runner
 make view                                # branch-aware doc/code viewer; binds LOOPBACK,
                                          #   LOFT_VIEW_PORT (default 8765).  Remote:
                                          #   ssh -N -L 8765:127.0.0.1:8765 <host>
@@ -190,7 +194,9 @@ make view                                # branch-aware doc/code viewer; binds L
 shell's own command line contains the text it searches for (and `pkill -f` by name has killed a
 sibling checkout's run).  Wait on the recorded PID (`scripts/ci-run.sh status`, the pid
 `find_problems.sh --bg` prints) or on the output FILE (`[ -s <out> ]`, its mtime); a `[m]ake`
-bracket or `pgrep -x` only moves the failure.  Agents repeated this mistake many times after it was
+bracket or `pgrep -x` only moves the failure.  With neither pid nor file to hand,
+**`scripts/pgrep_others.sh <regex>`** (`--wait`, `--count`, `--here`) is `pgrep -f` that cannot
+match its own caller.  Agents repeated this mistake many times after it was
 documented: [CODE.md § shell](doc/claude/CODE.md) has the measurements.
 
 **Bound ad-hoc runs** (loft is unbounded by default; tests already arm a 300s watchdog). Especially
@@ -202,7 +208,8 @@ and an unbounded ALLOCATION on the next — loft#796 reached 59.6 GiB in seconds
 killer took two unrelated agent sessions with it. Test runs (`--tests` / `loft test`) therefore
 carry a **2 GiB store-heap ceiling**; crossing it stops the run at that growth and names the TYPE
 that filled the heap, with a one-store-vs-many breakdown that tells a runaway length from a leak.
-`LOFT_MEMORY_LIMIT=<2G|512M|0>` overrides it; ordinary runs are never capped. When writing a
+`LOFT_MEMORY_LIMIT=<2G|512M|0>` overrides it; an ordinary run is capped only when it is set (the
+portable bound — macOS ignores an address-space `rlimit`). When writing a
 repeat-run harness for a corruption repro, cap the process too (`ulimit -v`) — the runaway is not
 necessarily the process the kernel kills. RUN_BOUNDS.md § Store-memory ceiling.
 
@@ -376,11 +383,11 @@ src/main.rs            CLI; loads default/ then user file
    too often. But NOT PRing serialises through joins, which is the cost above. So a PR is cheap
    exactly when it merges promptly and expensive when it sits — which makes "keep the PR
    mergeable and land it promptly" (rule 5) the load-bearing half, not an aside.
-4. With an **open PR**, hold non-blocking pushes for the user's consent (force-push/rebase/surprise
-   commits) — EXCEPT a push that unblocks a red required check (allowed; it can't merge while red).
-   ⚠ **An open PR stays what it was opened as: only a SIMPLE fix of its own red goes onto it.**
-   More work — a batch of fixes, a docs pass, a sibling's follow-up chain — is a NEW PR on a
-   branch stacked on it (rule 5), however ready or related.  Every push dilutes the PR's checks:
+4. **A running PR is never interrupted: nothing is pushed to it** — not a fix for its own red,
+   not even one that unblocks a red required check.  Every fix goes on the branch stacked on it
+   (`<host>-pr<N>-next`, rule 5), which the owner merges in time together with other work; do
+   not offer to push it onto the PR.  More work — a batch of fixes, a docs pass, a sibling's
+   follow-up chain — is likewise a NEW PR on that stacked branch, however ready or related.  Every push dilutes the PR's checks:
    the run that counts is the last one, and when it fails nobody can tell which added piece broke
    it, so the failure is never seen for what it is.
 5. **While a PR is unmerged, branch from the TIP of that in-flight work — NEVER fork a fresh
@@ -545,6 +552,8 @@ Lua, measured (reports, never gates — and run a generator probe inside a memor
 `store_load_key*`, no server-side code) · [LAZY_STORES.md](doc/claude/LAZY_STORES.md) a collection
 bound to an image or `sqlite:` fetches on a MISS, query derived from its own type ·
 [LIFETIME.md](doc/claude/LIFETIME.md) deps/freeing ·
+[APART_VALUES.md](doc/claude/APART_VALUES.md) a proposal: throwaway values held apart from the
+store model (stack arrays, tuples) and converted only at a boundary ·
 [OWNERSHIP_MODEL.md](doc/claude/OWNERSHIP_MODEL.md) the deps north-star (borrow system) ·
 [PLACEMENT.md](doc/claude/PLACEMENT.md) a library runs in this process, a worker, or another
 machine — one manifest line, consumers unchanged; **the four rules for writing one that can

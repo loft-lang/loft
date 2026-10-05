@@ -408,6 +408,16 @@ Error: conflicting dependency versions for 'math':
 | `{ path = "../math" }` | Local directory (no version check) |
 | `{ version = ">=1.0" }` | Same as string form, explicit syntax |
 
+**The `loft` floor names a release or a DAY.**  A release answers its own version
+(`2026.10.0`).  Every other build — the daily build, a development build of `main` —
+answers `<last release's YYYY.M>.<yyyymmdd of its commit>`, e.g. `2026.10.20261005` <!-- doc-lint: ok -->
+(`loft --version` prints it).  That orders after the release it builds on and any point
+release of it, and before the next monthly release, so a library that needs what landed on
+`main` floors on the day — `loft = ">=2026.10.20261005"` — and publishes now: a loft too old <!-- doc-lint: ok -->
+for it skips that version when resolving (`registry_index.rs`), the daily build and the next
+release take it.  `LOFT_VERSION=<v>` at build time stamps a build explicitly; release builds
+take theirs from the tag.  Guard: `manifest::tests::a_dated_daily_version_orders_between_its_release_and_the_next`.
+
 ### Cycle detection
 
 Circular dependencies are rejected:

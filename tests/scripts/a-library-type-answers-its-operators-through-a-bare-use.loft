@@ -1,0 +1,43 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @ARGS: --lib tests/lib
+//
+// `formal/operators.md` `(Op-Left)`: `a ⊕ b` calls the method of the LEFT operand's TYPE,
+// chosen among that name's members as `a.m(b)` chooses.  A bare `use operatorlib;` brings in
+// only the `operatorlib::` qualifier (@C98), and a value of a library type must still answer
+// with the operators its package declares — as `x.method()` always did through the type.
+// Each operator site asked the caller's scope by name, so every form on such a value was
+// refused with advice to "declare `operator …`" the library already declares; `"{m}"` printed
+// the raw record; `for i in w` was refused; and an overloaded member (`m - span` beside
+// `m - mark`) failed in BOTH spellings, `m.minus(span)` reaching the first member alone.  Met
+// in the 2026.10 review of `time` 0.4.0 and `server` 0.7.3, whose READMEs use a bare `use`.
+//
+// Values by hand: marks at 10 and 4; 10 - 4 = 6s; 10 - 3s = @7; 10 + 3s = @13; a walk over
+// 2..5 yields 2, 3, 4 (sum 9).
+//
+// @falsified-at: c5d5f2732 — interpret exit 1 -> 0, native exit 1 -> 0.  CHANNEL: exit — the
+//   defect is a refusal, so the control does not compile and scores only that abort.
+//   ARMED: nothing.
+//   HOLDS: leak and panic equal on both trees.
+// @falsified-by: tests/falsified/a-library-type-answers-its-operators-through-a-bare-use.patch
+
+use operatorlib;
+
+fn main() {
+  a = operatorlib::mark(10);
+  b = operatorlib::mark(4);
+  assert(a > b && b < a && a >= a && a <= a, "order forms through compare");
+  d = a - b;
+  assert("{d}" == "6s", "mark - mark: {d}");
+  e = a - operatorlib::span(3);
+  assert("{e}" == "@7", "mark - span, the second member: {e}");
+  f = a.minus(operatorlib::span(3));
+  assert("{f}" == "@7", "the method spelling of the second member: {f}");
+  g = a + operatorlib::span(3);
+  assert("{g}" == "@13", "mark + span: {g}");
+  t = 0;
+  for i in operatorlib::walk(2, 5) { t += i; }
+  assert(t == 9, "for over operator next: {t}");
+  println("ok");
+}

@@ -1329,7 +1329,7 @@ fn analyze_fn_survival(
     // the copy-idiom-aware walk above, which excludes `v`'s def and copy-fill.)
     let written = {
         let mut w = HashSet::default();
-        crate::parser::find_written_vars(code, data, &mut w, &mut HashMap::default());
+        crate::parser::find_written_vars(code, data, function, &mut w, &mut HashMap::default());
         w
     };
 
@@ -1477,7 +1477,24 @@ fn analyze_fn_survival(
             let borrowers: Vec<u16> = (0..function.next_var())
                 .filter(|&e| e != v && function.tp(e).base().depend().contains(&v))
                 .collect();
-            if borrowers.iter().all(|e| !u.ineligible.contains(e)) {
+            // …and every borrower of a borrower, at any depth: `s = e.inn; s.x = 9` writes the
+            // element `e` views as surely as `e.x = 9` does.  Asked of the direct borrowers
+            // alone, a write two views deep reached the caller's argument through an elided
+            // `xs = b.items` (`(B-View-Base)`: off a plain parameter that bind is a COPY).
+            // Only the direct ones are re-pointed; a deeper one keeps its own base.
+            let mut reach = borrowers.clone();
+            let mut i = 0;
+            while i < reach.len() {
+                let b = reach[i];
+                for e in 0..function.next_var() {
+                    if e != v && !reach.contains(&e) && function.tp(e).base().depend().contains(&b)
+                    {
+                        reach.push(e);
+                    }
+                }
+                i += 1;
+            }
+            if reach.iter().all(|e| !u.ineligible.contains(e)) {
                 plans.push(ElidePlan {
                     var: v,
                     vdb: *vdb,
@@ -6585,6 +6602,132 @@ fn copies_a_parameter(func: &crate::variables::Function, v: u16, base: u16) -> b
         && func.owner_witness(v).is_none()
 }
 
+/// loft#1864 — a copy and the VIEWS bound off it are one value for the dead-store question.
+///
+/// `e = es[0]` binds `e` to an element of `es`'s own storage (`(B-View)`): a write through `e`
+/// is a write into `es`, and a read of `e` is a read of `es`.  So two reads the access walk
+/// counts on their own observe nothing outside the copy: the read of `es` that only BINDS such
+/// a view, and a read of a member — the member itself or a place in it — that only feeds a
+/// record write back INTO the group (`es[0] = e`, `es[1] = es[0]`).  Counted as reads, they hid exactly the read-modify-write of one element
+/// that the lint exists for — `es = w.es; e = es[0]; e.awake = false; es[0] = e;` with `w`
+/// unchanged and nothing reported.
+///
+/// Answers `acc` with each group's ROOT (the one member that is no view) carrying the group's
+/// reads minus those two kinds, and the group's writes.  A view is a local assigned exactly
+/// once, from a projection of another local, whose type keeps that local as a dependency and
+/// which is neither a copy, a `&` link, an argument nor a capture; anything else is left as
+/// the walk counted it.
+fn with_view_groups(
+    body: &Value,
+    func: &Function,
+    data: &Data,
+    mut acc: Vec<(u16, u16)>,
+) -> Vec<(u16, u16)> {
+    let n = func.var_count();
+    let mut binds: Vec<(u16, u16)> = Vec::new();
+    let copy_record = data.def_nr("OpCopyRecord");
+    let mut write_backs: Vec<(u16, u16)> = Vec::new();
+    body.walk(&mut |node| match node.unspan() {
+        // Only a heap local that keeps its base as a dependency can be a view; asked here so
+        // a function without one allocates nothing (the lint runs over every definition).
+        Value::Set(t, rhs) => {
+            if let Some(b) = projection_root(rhs, data)
+                && b != *t
+                && (*t as usize) < n
+                && func.tp(*t).heap_def_nr().is_some()
+                && func.tp(*t).depend().contains(&b)
+            {
+                binds.push((*t, b));
+            }
+        }
+        Value::Call(op, args) if *op == copy_record && args.len() >= 2 => {
+            if let Some(m) = place_root(&args[0], data)
+                && !matches!(args[1].unspan(), Value::Var(_))
+                && let Some(d) = place_root(&args[1], data)
+            {
+                write_backs.push((m, d));
+            }
+        }
+        _ => {}
+    });
+    if binds.is_empty() && write_backs.is_empty() {
+        return acc;
+    }
+    let mut sets = vec![0u16; n];
+    body.walk(&mut |node| {
+        if let Value::Set(t, _) = node.unspan()
+            && let Some(slot) = sets.get_mut(*t as usize)
+        {
+            *slot = slot.saturating_add(1);
+        }
+    });
+    let is_view = |t: u16, b: u16| {
+        (t as usize) < n
+            && sets[t as usize] == 1
+            && !func.is_argument(t)
+            && !func.is_captured(t)
+            && !func.copy_bound(t)
+            // `@FR-N-Shape` — a `&τ?` links exactly as its dense twin does.
+            && !matches!(func.tp(t).base(), crate::data::Type::RefVar(_))
+            && !is_value_struct_local(func.tp(t), data)
+            && func.tp(t).heap_def_nr().is_some()
+            && func.tp(t).depend().contains(&b)
+    };
+    // Each view's base; a view of a view joins the same group.
+    let mut base: Vec<Option<u16>> = vec![None; n];
+    for &(t, b) in &binds {
+        if is_view(t, b) {
+            base[t as usize] = Some(b);
+        }
+    }
+    let root_of = |mut v: u16| {
+        let mut steps = 0;
+        while let Some(b) = base[v as usize] {
+            v = b;
+            steps += 1;
+            if steps > n {
+                break;
+            }
+        }
+        v
+    };
+    let mut internal = vec![0u16; n];
+    let mut writes = vec![0u16; n];
+    let mut grouped = vec![false; n];
+    for t in 0..n as u16 {
+        if base[t as usize].is_some() {
+            let r = root_of(t);
+            grouped[r as usize] = true;
+            // The read of the base that bound this view.
+            internal[r as usize] = internal[r as usize].saturating_add(1);
+        }
+    }
+    for &(m, d) in &write_backs {
+        if (m as usize) < n && (d as usize) < n {
+            let r = root_of(m);
+            if root_of(d) == r {
+                grouped[r as usize] = true;
+                internal[r as usize] = internal[r as usize].saturating_add(1);
+            }
+        }
+    }
+    let mut reads = vec![0u16; n];
+    for v in 0..n as u16 {
+        let r = root_of(v);
+        if grouped[r as usize] {
+            let (rd, wr) = acc[v as usize];
+            reads[r as usize] = reads[r as usize].saturating_add(rd);
+            writes[r as usize] = writes[r as usize].saturating_add(wr);
+        }
+    }
+    for r in 0..n {
+        if grouped[r] && base[r].is_none() {
+            acc[r] = (reads[r].saturating_sub(internal[r]), writes[r]);
+        }
+    }
+    acc
+}
+
 pub fn warn_dead_stores(
     data: &Data,
     diags: &mut crate::diagnostics::Diagnostics,
@@ -6610,7 +6753,12 @@ pub fn warn_dead_stores(
         };
         let func = &def.variables;
         let n = func.var_count();
-        let acc = dead_store_accesses(&def.code, func, data);
+        let acc = with_view_groups(
+            &def.code,
+            func,
+            data,
+            dead_store_accesses(&def.code, func, data),
+        );
         for i in 0..n {
             let v = i as u16;
             let name = func.name(v);

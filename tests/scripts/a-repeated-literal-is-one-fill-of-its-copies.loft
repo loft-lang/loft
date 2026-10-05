@@ -1,0 +1,44 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A REPEATED LITERAL IS ONE FILL OF ITS COPIES (`@FR-R-PushFill`'s repeat-literal clause).
+// `[c, c, …, c]` and `[c; n]` lower to a template push and `n - 1` copies of it; for a literal
+// of an integer, float or single element that is one fill of `n` copies at the tail.  The
+// values and the length must be the copies' exactly, in a return buffer reused across
+// calls; the short literals beside it (which lower as separate pushes) pin the neighbours.
+//
+// Expected values by hand: zeros16 is sixteen 0.0 with element 15 then set to 1.5 (sum 1.5,
+// len 16); [7, 7, 7] sums 21; the singles sum 2.5 × 4 = 10; [1, 2] + [9, 9] is [1, 2, 9, 9],
+// 21; [5] is one element.
+//
+// @falsified-by: tests/falsified/a-repeated-literal-is-one-fill-of-its-copies.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+// CHANNEL: native assertions — a fill one copy short leaves zeros16 15 long.
+// HOLDS: the interpreter (no fill) and the short literals, which lower as separate pushes.
+
+struct Mat { m: vector<float> }
+fn zeros16() -> Mat {
+  r = Mat { m: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0] };
+  r.m[15] = 1.5;
+  r
+}
+fn ints() -> vector<integer> { [7, 7, 7] }
+fn singles() -> vector<single> { [2.5f, 2.5f, 2.5f, 2.5f] }
+fn sumf(v: vector<float>) -> float { t = 0.0; for x in v { t += x; } t }
+fn sumi(v: vector<integer>) -> integer { t = 0; for x in v { t += x; } t }
+fn main() {
+  for _ in 0..3 {
+    z = zeros16();
+    assert(len(z.m) == 16 && sumf(z.m) == 1.5 && z.m[0] == 0.0 && z.m[15] == 1.5, "sixteen copies, one written");
+  }
+  i = ints();
+  assert(len(i) == 3 && sumi(i) == 21, "three integers");
+  s = singles();
+  t = 0.0f;
+  for x in s { t += x; }
+  assert(len(s) == 4 && t == 10.0f, "four singles");
+  b = [1, 2];
+  b += [9, 9];
+  assert(len(b) == 4 && sumi(b) == 21 && b[3] == 9, "copies after elements already there");
+  one = [5];
+  assert(len(one) == 1 && one[0] == 5, "a template alone");
+}

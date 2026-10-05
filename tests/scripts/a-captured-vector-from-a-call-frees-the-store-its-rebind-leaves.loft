@@ -1,0 +1,51 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1862, the vector half — a vector local bound from a CALL, captured, and rebound.
+//
+// `c = mk(5)` lowers to `c = n_mk(5, __ref_1)`: the callee fills a hidden return buffer, and
+// that buffer is the store a closure built over `c` holds (`formal/ownership.md` `(O-Latest)`).
+// The capture's build-time backing was recorded only for a view-shaped right-hand side, so a
+// call left none and the type dep answered instead — the buffer of the LAST call.  After a
+// rebind (`c = mk(9)`, through `__ref_2`) the frame freed the build-time buffer and gave up the
+// new one, which no record had adopted: one store per rebind, on both backends.  The values
+// were right throughout, so this is a LEAK guard: run it under `LOFT_STRICT_STORES=1`, where
+// the leak fails the run (the nightly poison sweep's leg; the plain suite counts leaks too).
+//
+// Values by hand: mk(n) is `[n]`; add(v, d) adds d to each element; each cell answers
+// `f() * 100 + tot(c)`, the build-time total (5) beside what `c` holds after the rebind.
+//
+// @falsified-at: 04b8e5bc9 — under LOFT_STRICT_STORES=1: interpret exit 1 -> 0, interpret
+//   leaked kt=19 main_vector<integer>×9 -> clean, native the same.  CHANNEL: leak (strict
+//   stores turns it into the exit).  ARMED: LOFT_STRICT_STORES=1.  HOLDS: every value
+//   assertion passes on both trees — the values were right before the fix.
+// @falsified-by: tests/falsified/a-captured-vector-from-a-call-frees-the-store-its-rebind-leaves.patch
+
+fn mk(n: integer) -> vector<integer> { r: vector<integer> = []; r += [n]; r }
+fn add(v: vector<integer>, d: integer) -> vector<integer> {
+  r: vector<integer> = [];
+  for e in v { r += [e + d]; }
+  r
+}
+fn tot(c: vector<integer>) -> integer { t = 0; for e in c { t += e; } t }
+
+fn once() -> integer { c = mk(5); f = fn() -> integer { tot(c) }; c = mk(9); f() * 100 + tot(c) }
+fn twice() -> integer { c = mk(5); f = fn() -> integer { tot(c) }; c = mk(9); c = mk(7); f() * 100 + tot(c) }
+fn self_reading() -> integer { c = mk(5); f = fn() -> integer { tot(c) }; c = add(c, 4); f() * 100 + tot(c) }
+fn emptied() -> integer { c = mk(5); f = fn() -> integer { tot(c) }; c = []; f() * 100 + tot(c) }
+fn every_pass() -> integer {
+  s = 0;
+  for _i in 0..3 { c = mk(5); f = fn() -> integer { tot(c) }; c = mk(9); s += f() * 100 + tot(c); }
+  s
+}
+fn escaping() -> fn() -> integer { c = mk(5); f = fn() -> integer { tot(c) }; c = mk(9); f }
+
+fn main() {
+  assert(once() == 509, "once: {once()}");
+  assert(twice() == 507, "twice: {twice()}");
+  assert(self_reading() == 509, "self-reading: {self_reading()}");
+  assert(emptied() == 500, "emptied: {emptied()}");
+  assert(every_pass() == 1527, "every pass: {every_pass()}");
+  g = escaping();
+  assert(g() == 5, "escaping: {g()}");
+}

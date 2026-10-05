@@ -30,6 +30,11 @@ fn loft_bin() -> PathBuf {
 
 /// Write one source into a directory of its own and run `--tests` over it.
 fn run_tests(case: &str, source: &str, extra: &[&str]) -> String {
+    run_tests_env(case, source, extra, &[])
+}
+
+/// [`run_tests`] with environment variables set for the child.
+fn run_tests_env(case: &str, source: &str, extra: &[&str], env: &[(&str, &str)]) -> String {
     let dir = std::env::temp_dir().join(format!("loft_discovery_{case}_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("case dir");
@@ -41,6 +46,7 @@ fn run_tests(case: &str, source: &str, extra: &[&str]) -> String {
         .arg("subject.loft")
         .current_dir(&dir)
         .env("LOFT_TIMEOUT", "300")
+        .envs(env.iter().copied())
         .output()
         .expect("loft --tests");
     let combined = format!(
@@ -197,5 +203,45 @@ fn a_native_failure_names_the_test_that_failed() {
             !report.contains("::test_ok  —") && !report.contains("::test_also_ok  —"),
             "{case}: the passing tests are not reported as failed:\n{report}"
         );
+    }
+}
+
+/// loft#1865 — a file is compiled ONCE however many tests it has, and each test still runs on
+/// a heap of its own.  The runner cloned the checked program and recompiled every function per
+/// test function, so a file's test time grew with tests × size (300 small tests: 4.5 s, against
+/// 0.18 s compiled once).  `LOFT_TIMING` reports one `byte_code_from` line per compile, which
+/// makes the count observable; `LOFT_TEST_RECOMPILE=1` keeps the per-test path, and is the
+/// control that the count can move.
+#[test]
+fn a_file_is_compiled_once_however_many_tests_it_has() {
+    let src = "\
+fn test_a() { v: vector<integer> = [1, 2]; v += [3]; assert(len(v) == 3, \"a\"); }
+fn test_b() { v: vector<integer> = [7]; assert(len(v) == 1, \"b sees its own heap\"); }
+fn test_c() { panic(\"c fails alone\"); }
+";
+    let compiles = |report: &str| {
+        report
+            .lines()
+            .filter(|l| l.contains("byte_code_from"))
+            .count()
+    };
+    let once = run_tests("compile_once", src, &[]);
+    let per_test = run_tests_env(
+        "compile_each",
+        src,
+        &[],
+        &[("LOFT_TIMING", "1"), ("LOFT_TEST_RECOMPILE", "1")],
+    );
+    let timed = run_tests_env("compile_once_t", src, &[], &[("LOFT_TIMING", "1")]);
+    assert_eq!(
+        compiles(&per_test),
+        3,
+        "the control compiles per test:\n{per_test}"
+    );
+    assert_eq!(compiles(&timed), 1, "one compile for three tests:\n{timed}");
+    // The verdicts are the per-test ones: two pass, the panic fails only its own test.
+    for report in [&once, &timed, &per_test] {
+        assert!(report.contains("FAIL  subject.loft::test_c"), "{report}");
+        assert!(report.contains("(1 failed, 2 passed)"), "{report}");
     }
 }

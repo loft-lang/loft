@@ -16,8 +16,9 @@
 // @falsified-at: 514f99913 — measured by hand on that build before the fix:
 //   `b: i32 = x & 2147483647` and `b: u32 = x & 2147483647` were refused.
 // @falsified-by: tests/falsified/a-narrowing-cure-compiles-where-it-is-offered.patch — interpret exit 1 -> 0, native exit 1 -> 0
-//   The patch is the fix commit aef5fd16f's source diff reversed, since the control above lives in no
-//   pushed ref; its channels match that control's.  Re-score:
+//   The patch puts back the width test the fix narrowed (loft#1814: a contained range over
+//   65 536 codes read as 8 bytes wide), since the control above lives in no pushed ref; its
+//   channels match that control's.  Re-score:
 //   scripts/falsify.sh tests/scripts/a-narrowing-cure-compiles-where-it-is-offered.loft --patch tests/falsified/a-narrowing-cure-compiles-where-it-is-offered.patch
 //   CHANNEL: exit — the control refuses to compile `mask32`, so nothing runs.
 //   WITNESS: `error: cannot implicitly narrow integer limit(0, 2147483647) to i32 (may lose

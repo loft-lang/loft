@@ -586,6 +586,24 @@ pub(crate) enum MethodSelect {
     },
 }
 
+/// `@FR-M-Match` — is `v` a PLACE, read the same each time it is read: a variable, or a field
+/// or element of one at a constant or variable position?  A call, an expression that builds a
+/// value, or anything else answers no, and the match binds it once.
+fn is_place(v: &Value, data: &crate::data::Data) -> bool {
+    match v.unspan() {
+        Value::Var(_) => true,
+        Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
+            let name = data.def(*d).name();
+            (name == "OpGetField" || name.starts_with("OpGetVector"))
+                && args.first().is_some_and(|a| is_place(a, data))
+                && args[1..]
+                    .iter()
+                    .all(|a| matches!(a.unspan(), Value::Int(_) | Value::Long(_) | Value::Var(_)))
+        }
+        _ => false,
+    }
+}
+
 impl Parser {
     /// Consume the `=>` separator that follows a match-arm pattern.
     ///
@@ -6068,17 +6086,21 @@ impl Parser {
             }
         };
 
-        // For plain enums (stack bytes), use a temp var to avoid re-evaluating the subject.
-        // For struct enums (database references / DbRef), do NOT create a temp var — the
-        // allocation system requires DbRefs to be freed in strict LIFO order and copying them
-        // to a new variable breaks that invariant.  Instead, use the subject Value directly.
-        let (subject_val, preamble): (Value, Option<(u16, Value)>) = if is_struct || !valid_enum {
-            (subject, None)
-        } else {
-            let v = self.create_unique("match_subj", &subject_type);
-            self.vars.defined(v);
-            (Value::Var(v), Some((v, subject)))
-        };
+        // `@FR-M-Match` — the subject is evaluated ONCE: every arm's test and every binding read
+        // the one value.  A plain enum (stack bytes) is always bound to a temp.  A struct enum
+        // or struct read from a PLACE (a variable, or a field or element of one) is read in
+        // place, since reading it again reads the same value; anything else — a call above
+        // all — is bound to a temp, which the scope pass owns and frees like any local.  Spliced
+        // into each test and binding, `match next(lx)` ran the call once for the variant and
+        // again for each field.
+        let (subject_val, preamble): (Value, Option<(u16, Value)>) =
+            if !valid_enum || (is_struct && is_place(&subject, &self.data)) {
+                (subject, None)
+            } else {
+                let v = self.create_unique("match_subj", &subject_type);
+                self.vars.defined(v);
+                (Value::Var(v), Some((v, subject)))
+            };
 
         // Build discriminant expression: integer representation of the active variant.
         let disc_expr = if is_struct {
@@ -13109,7 +13131,7 @@ impl Parser {
             // running program promoted (@PLN162 step 14).  A session's eval is never promoted.
             let owned = def.source == crate::data::MAIN_SOURCE
                 || (def.source == crate::data::STD_SOURCE
-                    && !crate::portable_path::is_stdlib_source(&def.position.file));
+                    && !crate::file_access::is_stdlib_source(&def.position.file));
             if def.def_type != DefType::Function || !owned || def.is_reentered_eval() {
                 continue;
             }
@@ -20009,7 +20031,7 @@ impl Parser {
             // Non-void returns are not handled here — they require a temp to hold
             // the return value while writing back, which is left for A5.6 (1.1+).
             if matches!(*ret_type, Type::Void)
-                && let Some(&closure_w) = self.closure_vars.get(&v_nr)
+                && let Some(closure_w) = self.vars.closure_var_of(v_nr)
                 && let Type::Reference(closure_rec_d, _) = self.vars.tp(closure_w).clone()
             {
                 let n_attrs = self.data.attributes(closure_rec_d);
@@ -20779,10 +20801,12 @@ impl Parser {
                 with_receiver.push(dispatch.clone());
                 with_receiver.extend_from_slice(types.get(1..).unwrap_or(&[]));
                 let routed = self.data.routed_types(&with_receiver);
-                match self.select_overload(u16::MAX, name, &routed) {
+                // A library type's set lives in its own source (`Data::receiver_overload_source`).
+                let set_source = self.data.receiver_overload_source(name, dispatch);
+                match self.select_overload(set_source, name, &routed) {
                     crate::parser::dispatch::Selection::One(d) => {
                         return self
-                            .dynamic_dispatcher(u16::MAX, name, &routed, Some(d))
+                            .dynamic_dispatcher(set_source, name, &routed, Some(d))
                             .unwrap_or(d);
                     }
                     sel @ crate::parser::dispatch::Selection::Ambiguous(_) => {
@@ -20801,7 +20825,7 @@ impl Parser {
                     // for `parse_method_selecting`, which ends the call there as the bare
                     // spelling does rather than refusing the slot's routine on top of it.
                     sel @ crate::parser::dispatch::Selection::NoneApplicable => {
-                        if let Some(dd) = self.dynamic_dispatcher(u16::MAX, name, &routed, None) {
+                        if let Some(dd) = self.dynamic_dispatcher(set_source, name, &routed, None) {
                             return dd;
                         }
                         // The slot holds the SET itself (a `self` set that dispatches past its

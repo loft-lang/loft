@@ -422,17 +422,161 @@ impl Output<'_> {
                     Some(field) => format!("self.var_{field}"),
                     None => format!("var_{name}"),
                 };
+                // `@FR-R-RebindBuffer` — the displaced store may become the call's next buffer.
+                let rebind_buf = if self.coroutine_persistent_fields.contains_key(&var) {
+                    None
+                } else {
+                    self.rebind_buffer_for(var, to, is_retbuf_attr)
+                };
                 write!(w, "{{ let _old_{name}: DbRef = {place}; ")?;
+                if let Some((buf_nr, buf)) = &rebind_buf {
+                    self.rebind_handed.insert(*buf_nr);
+                    self.rebind_buffer = Some((
+                        var,
+                        buf.clone(),
+                        is_retbuf_attr.then(|| format!("_rb_w_{name}")),
+                    ));
+                    self.rebind_buffer_used = false;
+                    write!(w, "let mut __rbb_{name} = false; ")?;
+                }
                 self.output_set_inner(w, var, to)?;
+                self.rebind_buffer = None;
+                let handed = std::mem::take(&mut self.rebind_buffer_used)
+                    .then_some(rebind_buf)
+                    .flatten()
+                    .map(|(_, buf)| format!("if __rbb_{name} {{ var_{buf} = _old_{name}; }} else "))
+                    .unwrap_or_default();
                 write!(
                     w,
-                    "; if _old_{name}.store_nr != {place}.store_nr{witness_guard} \
+                    "; {handed}if _old_{name}.store_nr != {place}.store_nr{witness_guard} \
                      {{ OpFreeRef(cell, _old_{name}, \"var_{name}(prev)\"); }} }}"
                 )?;
                 return Ok(());
             }
         }
         self.output_set_inner(w, var, to)
+    }
+
+    /// `@FR-R-RebindBuffer` — the hidden buffer local of the call `to` when the store `var`
+    /// displaces may be handed to it: the result is FRESH (`Own::Owned`), the buffer is a
+    /// compiler local this call alone uses (its scope-exit free aside), and nothing else
+    /// names `var`'s store — no other local depends on it, it is not captured, not an
+    /// argument (a retbuf attribute with its entry witness excepted: the emitted arm then
+    /// declines the caller's entry buffer at run time).
+    pub(super) fn rebind_buffer_for(
+        &self,
+        var: u16,
+        to: &Value,
+        is_retbuf_attr: bool,
+    ) -> Option<(u16, String)> {
+        if !crate::keys::rebind_buffer_enabled() || self.in_coroutine_body {
+            return None;
+        }
+        let trace = |why: &str| {
+            if std::env::var_os("LOFT_TRACE_REBIND_BUFFER").is_some() {
+                eprintln!(
+                    "rebind-buffer: {} `{}` declines: {why}",
+                    self.data.def(self.def_nr).name(),
+                    self.data.def(self.def_nr).variables().name(var)
+                );
+            }
+        };
+        let Value::Call(fn_nr, args) = to.unspan() else {
+            trace("not a direct call");
+            return None;
+        };
+        let callee = self.data.def(*fn_nr);
+        let Some(attr) = callee.hidden_return_buffer_attr() else {
+            trace("the callee has no hidden buffer");
+            return None;
+        };
+        let Some(Value::Var(buf)) = args.get(attr).map(Value::unspan) else {
+            trace("the buffer argument is not a local");
+            return None;
+        };
+        let buf = *buf;
+        let def = self.data.def(self.def_nr);
+        let vars = def.variables();
+        if buf == var
+            || !vars.name(buf).starts_with("__ref_")
+            || vars.is_argument(buf)
+            || vars.is_skip_free(var)
+            || vars.is_captured(var)
+            || (vars.is_argument(var) && !(is_retbuf_attr && self.retbuf_witness.contains(&var)))
+        {
+            trace("buffer or destination shape");
+            return None;
+        }
+        if !matches!(
+            crate::use_analysis::ownership_of(self.data, self.def_nr, to),
+            crate::use_analysis::Own::Owned
+        ) {
+            trace("the result is not fresh");
+            return None;
+        }
+        // A local that borrows `var`'s store (or the buffer's) blocks the hand-on only where
+        // it is still named at or after the top-level statement holding this rebind: a use
+        // wholly before it — the construction temporary of the literal that first built
+        // `var` — has ended before any store is handed on.
+        let Value::Block(top) = def.code() else {
+            trace("the body is not a block");
+            return None;
+        };
+        let target = std::ptr::from_ref(to.unspan());
+        let Some(at) = top
+            .operators
+            .iter()
+            .position(|st| st.any_node(&mut |n| std::ptr::eq(std::ptr::from_ref(n), target)))
+        else {
+            trace("the rebind is not found in the body");
+            return None;
+        };
+        // The handed store pays only when the call runs again: outside a loop the buffer is
+        // never read, and the exchange's released store would have been parked for the next
+        // mint instead of freed at exit.
+        let mut in_loop = false;
+        def.code().any_node(&mut |n| {
+            if let Value::Loop(lp) = n
+                && lp
+                    .operators
+                    .iter()
+                    .any(|st| st.any_node(&mut |m| std::ptr::eq(std::ptr::from_ref(m), target)))
+            {
+                in_loop = true;
+            }
+            in_loop
+        });
+        if !in_loop {
+            trace("not inside a loop");
+            return None;
+        }
+        let names = |w: u16, st: &Value| {
+            st.any_node(&mut |n| matches!(n, Value::Var(x) | Value::Set(x, _) if *x == w))
+        };
+        let n = vars.count();
+        let blocking: Vec<u16> = (0..n)
+            .filter(|&w| {
+                w != var
+                    && w != buf
+                    && (vars.tp(w).depend().contains(&var) || vars.tp(w).depend().contains(&buf))
+                    && top.operators[at..].iter().any(|st| names(w, st))
+            })
+            .collect();
+        if !blocking.is_empty() {
+            trace(&format!(
+                "a local borrowing its store is named after it: {:?}",
+                blocking.iter().map(|&w| vars.name(w)).collect::<Vec<_>>()
+            ));
+            return None;
+        }
+        // Every use of the buffer other than its null declaration and this call's argument
+        // is a free of it.
+        let (uses, frees) = buffer_uses(self.data, def.code(), buf);
+        if uses != frees + 1 {
+            trace(&format!("the buffer has {uses} uses, {frees} frees"));
+            return None;
+        }
+        Some((buf, sanitize(vars.name(buf))))
     }
 
     /// Writes a raw pointer to the store slot a place op names — the element of an
@@ -1192,11 +1336,13 @@ impl Output<'_> {
                 // the call itself, so it asks the same question `user_fn_call_body` does.
                 let twin_args = self.twin_call_inputs(fn_nr, args);
                 crate::rewrite_census::fired("R-Inputs", usize::from(twin_args.is_some()));
+                let ranged = self.ranged_call(fn_nr, args, twin_args.is_some());
                 write!(
                     w,
-                    "{}{}(cell",
+                    "{}{}{}(cell",
                     self.fn_ident(callee),
-                    if twin_args.is_some() { "__inv" } else { "" }
+                    if twin_args.is_some() { "__inv" } else { "" },
+                    if ranged { "__rg" } else { "" }
                 )?;
                 // Emit each arg through the shared `emit_call_arg` helper so the
                 // ABI-B call applies the same per-parameter coercions (boolean→u8,
@@ -1306,11 +1452,39 @@ impl Output<'_> {
                  {{ OpFreeRef(cell, _dst, \"{name}(displaced)\"); }} "
             ));
             let target = copy_target("_dst", first_bind);
+            // `@FR-H-SwapRebind` — the copy arm as one runtime call that exchanges the result's
+            // store into the destination without resetting it first, when it can.
+            let copy = if crate::keys::swap_rebind_enabled() {
+                crate::rewrite_census::fired("H-SwapRebind", 1);
+                format!("var_{name} = OpRebindRecord(cell, {target}, _src, {tp_with_free}_i32);")
+            } else {
+                format!(
+                    "var_{name} = OpDatabase(cell, {target}, {tp_nr}_i32); \
+                     OpCopyRecord(cell,_src, var_{name}, {tp_with_free}_i32);"
+                )
+            };
+            // `@FR-R-RebindBuffer` — a fresh result in a store of its own is adopted, and the
+            // store it displaces is handed (by the reassignment around this arm) to the call's
+            // hidden buffer local for its next execution, instead of an exchange into it.
+            let rebind = match self.rebind_buffer.take() {
+                Some((v, buf, rbw)) if v == var && !witnessed && !variables.is_view_elided(var) => {
+                    self.rebind_buffer_used = true;
+                    crate::rewrite_census::fired("R-RebindBuffer", 1);
+                    let entry = rbw
+                        .map(|r| format!(" && _dst.store_nr != {r}.store_nr"))
+                        .unwrap_or_default();
+                    format!(
+                        "else if _src.store_nr != u16::MAX && _dst.store_nr != u16::MAX \
+                         && _src.store_nr != _dst.store_nr{entry} && (var_{buf}.store_nr == u16::MAX \
+                         || var_{buf}.store_nr == _src.store_nr) \
+                         {{ __rbb_{name} = true; var_{name} = _src; }} "
+                    )
+                }
+                _ => String::new(),
+            };
             write!(
                 w,
-                "; if {adopt} {{ {disp}var_{name} = _src; }} \
-                 else {{ var_{name} = OpDatabase(cell, {target}, {tp_nr}_i32); \
-                 OpCopyRecord(cell,_src, var_{name}, {tp_with_free}_i32); }}{unprotect} }}"
+                "; if {adopt} {{ {disp}var_{name} = _src; }} {rebind}else {{ {copy} }}{unprotect} }}"
             )?;
             // @PLN130 — a MAY-copy site: the emitted code branches on store identity at
             // runtime and copies on the non-adopting arm.  Recorded regardless, because the
@@ -2584,4 +2758,27 @@ fn tuple_has_non_copy_leaf(elems: &[Type]) -> bool {
         }
     }
     false
+}
+
+/// `@FR-R-RebindBuffer` — how often `body` names the hidden buffer `buf` (its null declaration
+/// aside), and how many of those are frees of it.
+fn buffer_uses(data: &crate::data::Data, body: &Value, buf: u16) -> (usize, usize) {
+    let (mut uses, mut frees) = (0usize, 0usize);
+    body.any_node(&mut |n| {
+        match n {
+            Value::Var(v) if *v == buf => uses += 1,
+            // Its declaration `buf = null` is not a use; any other write is.
+            Value::Set(v, rhs) if *v == buf && !matches!(rhs.unspan(), Value::Null) => uses += 2,
+            Value::Call(d, a)
+                if (*d as usize) < data.definitions.len()
+                    && data.def(*d).name().starts_with("OpFree")
+                    && matches!(a.first().map(Value::unspan), Some(Value::Var(v)) if *v == buf) =>
+            {
+                frees += 1;
+            }
+            _ => {}
+        }
+        false
+    });
+    (uses, frees)
 }

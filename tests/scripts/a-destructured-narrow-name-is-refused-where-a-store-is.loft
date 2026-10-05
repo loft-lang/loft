@@ -1,0 +1,51 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The refusal half of `a-destructured-name-keeps-its-declared-type.loft`: what `a = v` refuses
+// for a declared narrow local, `(a, b) = (v, …)` refuses with the same message.  Both used to
+// compile — the plain-integer cell stored 300 into a `u8`, and the nullable cell warned about
+// "the non-null type `integer`", the member's type, not the local's.
+//
+// `main` comes first so each expectation belongs to its function.
+//
+// @falsified-at: 73ee8e8b2 — interpret exit 1 -> 0, interpret expectations FAIL/3 -> 3/3
+//   (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations
+//   FAIL/3 -> 3/3.
+// @falsified-by: tests/falsified/a-destructured-narrow-name-is-refused-where-a-store-is.patch — the same
+//   channels.  Score it with `scripts/falsify.sh <this file> --patch <that patch>` once
+//   73ee8e8b2 is out of reach.
+// HOLDS: nothing runs on either tree (a refusal file).
+
+fn main() {
+  println("{plain(300)} {nullable_member(null)} {narrow_field(300)}");
+}
+
+// @EXPECT_ERROR: cannot implicitly narrow integer to u8
+fn plain(n: integer) -> integer {
+  a: u8 = 1;
+  b = 0;
+  (a, b) = (n, 2);
+  a + b
+}
+
+fn maybe(m: integer?) -> (integer?, integer) {
+  (m, 1)
+}
+
+// @EXPECT_ERROR: a nullable `integer?` cannot be stored into the local `a` of the non-null type `integer(0, 255)`
+fn nullable_member(m: integer?) -> integer {
+  a: u8 = 1;
+  b = 0;
+  (a, b) = maybe(m);
+  a + b
+}
+
+struct Sf { f: u8, g: integer }
+
+// A FIELD in the pattern is a store into the field, refused as `s.f = n` is.
+// @EXPECT_ERROR: cannot implicitly narrow integer to u8
+fn narrow_field(n: integer) -> integer {
+  s = Sf { f: 1, g: 2 };
+  (s.f, s.g) = (n, 2);
+  s.g
+}

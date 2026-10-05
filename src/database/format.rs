@@ -722,14 +722,12 @@ impl Stores {
     /// `source_dir()` means by "no anchor".
     ///
     /// `Path::join` picks the platform separator, matching `resolve_path`.
-    fn dir_with_sub(base: String, sub: &str) -> String {
+    fn dir_with_sub(base: &str, sub: &str) -> String {
+        // `@FR-Path-Sep` — a directory loft gives a program is in the portable form.
         if sub.is_empty() || base.is_empty() {
-            return base;
+            return crate::file_access::given(base);
         }
-        std::path::Path::new(&base)
-            .join(sub)
-            .to_string_lossy()
-            .into_owned()
+        crate::file_access::given(&std::path::Path::new(base).join(sub).to_string_lossy())
     }
 
     /**
@@ -793,7 +791,7 @@ impl Stores {
         };
         #[cfg(feature = "wasm")]
         let base = crate::wasm::host_fs_cwd();
-        Self::dir_with_sub(base, sub)
+        Self::dir_with_sub(&base, sub)
     }
 
     /// Return the byte at position `idx` (0..len) as i64 0-255.
@@ -1014,7 +1012,7 @@ impl Stores {
         };
         #[cfg(feature = "wasm")]
         let base = crate::wasm::host_fs_user_dir();
-        Self::dir_with_sub(base, sub)
+        Self::dir_with_sub(&base, sub)
     }
 
     /// Native-codegen variant of `os_executable` that returns an owned `String`.
@@ -1043,7 +1041,7 @@ impl Stores {
         };
         #[cfg(feature = "wasm")]
         let base = crate::wasm::host_fs_program_dir();
-        Self::dir_with_sub(base, sub)
+        Self::dir_with_sub(&base, sub)
     }
 
     /// Native backend for `source_dir()` (`default/03_text.loft`'s
@@ -1083,14 +1081,15 @@ impl Stores {
             // live.  The driver hands the real program dir down at spawn
             // (`LOFT_SOURCE_DIR`); a standalone bundle runs without the env
             // and keeps the executable-dir anchor.
+            // `@FR-Path-Sep` — given in the portable form, like every directory loft gives.
             if let Ok(d) = std::env::var("LOFT_SOURCE_DIR") {
-                return d;
+                return crate::file_access::given(&d);
             }
             std::env::current_exe()
                 .ok()
                 .as_deref()
                 .and_then(std::path::Path::parent)
-                .map(|d| d.to_string_lossy().into_owned())
+                .map(|d| crate::file_access::given(&d.to_string_lossy()))
                 .unwrap_or_default()
         }
     }
@@ -1112,7 +1111,7 @@ impl Stores {
         }
         #[cfg(not(all(target_arch = "wasm32", not(target_os = "wasi"))))]
         {
-            std::env::temp_dir().to_string_lossy().into_owned()
+            crate::file_access::given(&std::env::temp_dir().to_string_lossy())
         }
     }
 
@@ -1129,9 +1128,7 @@ impl Stores {
         }
         #[cfg(not(all(target_arch = "wasm32", not(target_os = "wasi"))))]
         {
-            crate::cache::cache_base_dir()
-                .to_string_lossy()
-                .into_owned()
+            crate::file_access::given(&crate::cache::cache_base_dir().to_string_lossy())
         }
     }
 }

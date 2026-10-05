@@ -5,7 +5,13 @@
 
     python3 bench/stats.py [--only 01,08] [--lanes native,rust] [--samples 7]
                            [--target-ms 400] [--bar 2.0] [--tsv out.tsv] [--no-pin]
-                           [--package DIR[=NAME]]...
+                           [--package DIR[=NAME]]... [--routine [BENCH/]NAME[,…]]...
+
+`--routine` measures a routine, or a set, without the rest of the portal: alone it builds
+only the programs `portal/routines.tsv` places them in, calibrates `--n` on the picked
+routines (capped by `--max-run-ms` for the whole run) and reports only their rows.  The
+program still runs its other routines — the twins take no filter — so their cost is what
+the cap bounds.
 
 `run_bench.sh` prints one wall time per lane, which for a routine that finishes in a few
 milliseconds is mostly the timer's resolution.  This tool makes the same programs answer
@@ -62,6 +68,14 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
+
+
+def host_key():
+    """The name a machine's results are filed under (`portal/results/<host>.tsv`).  A box's
+    node name follows the network it is on (`firewall02.lan.betterbe.com` at the office,
+    `mac.home` at home), which would split one machine's history in two: `LOFT_PERF_HOST`
+    pins it."""
+    return os.environ.get("LOFT_PERF_HOST") or platform.node() or "unknown"
 
 
 def fail(msg):
@@ -192,7 +206,9 @@ def build(bench, lanes, loft, lib_dir, ref_flags, times, reserve_gb):
 
 def build_package(pkg_dir, lanes, loft, ref_flags, times, reserve_gb):
     """The lanes of a library's own bench.  The native lane is what `loft --native-release`
-    builds and caches for `bench/bench.loft`; the newest file in that cache IS the binary."""
+    builds and caches for `bench/bench.loft`; the newest binary in that cache IS the binary.
+    A binary is named `native-<key>` (by what it compiles to, so one program at two paths is
+    one entry); a cache written by an older loft still names it `bench-<key>`."""
     bench_dir = os.path.join(pkg_dir, "bench")
     src = os.path.join(bench_dir, "bench.loft")
     if not os.path.exists(src):
@@ -203,7 +219,7 @@ def build_package(pkg_dir, lanes, loft, ref_flags, times, reserve_gb):
                     f"{pkg_dir}: loft --native-release", times, "native-release", reserve_gb,
                     cwd=pkg_dir)
         cache = os.path.join(bench_dir, ".loft", "cache")
-        built = [os.path.join(cache, f) for f in os.listdir(cache) if f.startswith("bench-")] \
+        built = [os.path.join(cache, f) for f in os.listdir(cache) if f.startswith(("native-", "bench-"))] \
             if os.path.isdir(cache) else []
         if not built:
             raise BuildFailed(f"{pkg_dir}: loft left no cached native binary under bench/.loft/cache")
@@ -238,17 +254,79 @@ def rows_of(cmd, n, pin, what, cwd=None):
     return rows
 
 
-def calibrate(cmd, pin, target_us, what, cwd=None):
+def calibrate(cmd, pin, target_us, what, cwd=None, keep=None, max_run_us=None):
     """The even `--n` at which the SLOWEST routine of this lane runs for about the target.
     Two probe runs: the first finds the scale, the second corrects a first op that carried
-    one-time costs (a buffer's growth, a cold cache)."""
+    one-time costs (a buffer's growth, a cold cache).
+
+    With `keep` (a `--routine` selection) the target is the slowest KEPT routine's — a
+    program runs every routine `--n` times, and one calibrated on a slow neighbour times a
+    fast pick over a few microseconds.  Routine costs inside one program differ by up to
+    ~30000x (`drawing`), so the whole run is held to `max_run_us`: past it the pick is timed
+    over less than the target, and a region under `--coarse-us` is flagged as usual."""
     n = 2
     for _ in range(2):
         rows = rows_of(cmd, n, pin, what, cwd)
-        per_op = max(max(r["us"], 1) / r["iters"] for r in rows.values())
+        picked = [r for name, r in rows.items() if keep is None or keep(name)] or list(rows.values())
+        per_op = max(max(r["us"], 1) / r["iters"] for r in picked)
         want = int(target_us / per_op)
+        if keep is not None and max_run_us:
+            run_per_op = sum(max(r["us"], 1) / r["iters"] for r in rows.values())
+            want = min(want, int(max_run_us / run_per_op))
         n = max(2, min(want - want % 2, 2_000_000))
     return n
+
+
+def parse_selection(specs):
+    """`--routine` values -> a list of (bench or None, routine).  A value is comma-separated
+    `routine` or `bench/routine`; the qualified form tells apart the names more than one
+    program uses (`hash`, `parse`, `lock`, `byte_at`)."""
+    sel = []
+    for spec in specs:
+        for part in spec.split(","):
+            part = part.strip()
+            if part:
+                bench, _, name = part.rpartition("/")
+                sel.append((bench or None, name))
+    return sel
+
+
+def selected(sel, bench, name):
+    return any(name == r and (b is None or b == bench) for b, r in sel)
+
+
+def resolve_selection(sel):
+    """The units holding the selected routines, read from the routine registry
+    (`portal/routines.tsv`): in-repo benches by directory, library benches by their
+    checkout (`portal.library_packages`).  Fails on a routine the registry does not know,
+    or one whose library has no checkout."""
+    registry = []
+    with open(os.path.join(HERE, "portal", "routines.tsv")) as f:
+        for line in f:
+            if line.strip() and not line.startswith("#"):
+                bench, name = line.split("\t")[:2]
+                registry.append((bench, name))
+    sys.path.insert(0, os.path.join(HERE, "portal"))
+    from portal import library_packages  # noqa: E402
+    checkouts = {}
+    for spec in library_packages()[1::2]:
+        pkg_dir, _, name = spec.rpartition("=")
+        checkouts[name] = pkg_dir
+    benches, packages, unknown = set(), {}, []
+    for b, r in sel:
+        hits = [bench for bench, name in registry if name == r and (b is None or b == bench)]
+        if not hits:
+            unknown.append(f"{b}/{r}" if b else r)
+        for bench in hits:
+            if bench[:2].isdigit():
+                benches.add(bench)
+            elif bench in checkouts:
+                packages[bench] = checkouts[bench]
+            else:
+                fail(f"--routine {r}: its bench `{bench}` has no checkout (make perf-libs)")
+    if unknown:
+        fail(f"--routine: not in bench/portal/routines.tsv: {', '.join(unknown)}")
+    return sorted(benches), sorted(packages.items())
 
 
 def quartiles(xs):
@@ -278,7 +356,7 @@ def run_metadata(a):
         return p.stdout.strip()
 
     return {
-        "host": platform.node(),
+        "host": host_key(),
         "arch": f"{platform.machine()}-{platform.system().lower()}",
         "date": datetime.date.today().isoformat(),
         "commit": git("rev-parse", "--short", "HEAD"),
@@ -337,7 +415,9 @@ def measure_unit(bench, pkg_dir, cmds, pin, a, lanes, target_us, stamp):
     lines, recs, ratios, verdict_list = [], [], [], []
     cwd = pkg_dir
     unit_target = target_us if pkg_dir is None else max(target_us, a.package_target_ms * 1000.0)
-    n_of = {lane: calibrate(cmd, pin, unit_target, f"{bench} [{lane}]", cwd) for lane, cmd in cmds.items()}
+    keep = (lambda name: selected(a.selection, bench, name)) if a.selection else None
+    n_of = {lane: calibrate(cmd, pin, unit_target, f"{bench} [{lane}]", cwd, keep,
+                            a.max_run_ms * 1000.0) for lane, cmd in cmds.items()}
     samples = {lane: {} for lane in cmds}
     regions = {lane: {} for lane in cmds}
     hashes = {lane: {} for lane in cmds}
@@ -353,7 +433,7 @@ def measure_unit(bench, pkg_dir, cmds, pin, a, lanes, target_us, stamp):
                 prev = hashes[lane].setdefault(name, r["hash"])
                 if prev != r["hash"]:
                     fail(f"{bench}/{name} [{lane}]: the hash changed between runs ({prev} vs {r['hash']})")
-    names = list(next(iter(samples.values())))
+    names = [n for n in next(iter(samples.values())) if keep is None or keep(n)]
     for name in names:
         seen = {lane: hashes[lane].get(name) for lane in cmds if name in hashes[lane]}
         if len(set(seen.values())) != 1:
@@ -512,6 +592,12 @@ def main():
     ap.add_argument("--package", action="append", default=[], metavar="DIR[=NAME]",
                     help="a library's own bench (DIR/bench/bench.loft + bench.rs); repeatable")
     ap.add_argument("--no-suite", action="store_true", help="measure only the --package lanes")
+    ap.add_argument("--routine", action="append", default=[], metavar="[BENCH/]NAME[,…]",
+                    help="report only these routines (repeatable); alone, it also picks the "
+                         "programs that hold them from portal/routines.tsv")
+    ap.add_argument("--max-run-ms", type=float, default=10000.0,
+                    help="with --routine: the longest one run of a program may take, all its "
+                         "routines together, once --n is calibrated on the picked ones")
     ap.add_argument("--no-pin", action="store_true")
     ap.add_argument("--show-samples", action="store_true", help="print every sample under its row")
     ap.add_argument("--loft", default=os.environ.get("LOFT_BIN", os.path.join(ROOT, "target/release/loft")))
@@ -532,6 +618,12 @@ def main():
         require_compiled_stdlib(a.loft)
     benches = sorted(b for b in os.listdir(HERE)
                      if b[:2].isdigit() and os.path.exists(os.path.join(HERE, b, "bench.loft")))
+    a.selection = parse_selection(a.routine)
+    if a.selection and not a.only and not a.package and not a.no_suite:
+        picked, picked_packages = resolve_selection(a.selection)
+        a.only = ",".join(picked)
+        a.no_suite = not picked
+        a.package = [f"{d}={n}" for n, d in picked_packages]
     if a.only:
         want = [w.strip() for w in a.only.split(",")]
         benches = [b for b in benches
@@ -587,6 +679,10 @@ def main():
                 verdicts[v] += 1
         measure_wall += time.monotonic() - t0
 
+    missed = [f"{b}/{r}" if b else r for b, r in a.selection
+              if not any(selected([(b, r)], x["bench"], x["routine"]) for x in out_rows)]
+    if missed:
+        failed.append(("--routine", f"no measured program printed {', '.join(missed)}"))
     if ratios:
         print(f"\n{len(ratios)} routine(s): median ratio {statistics.median(ratios):.2f}x, "
               f"worst {max(ratios):.2f}x · within {a.bar}x: {verdicts['ok']} · over: {verdicts['OVER']} · "
@@ -619,7 +715,8 @@ def main():
         print(f"wrote {a.build_tsv}")
     if failed:
         for bench, err in failed:
-            sys.stderr.write(f"stats.py: {bench} did not build — {err}\n")
+            sys.stderr.write(f"stats.py: {bench}: {err}\n" if bench == "--routine"
+                             else f"stats.py: {bench} did not build — {err}\n")
         sys.exit(1)
 
 

@@ -70,7 +70,12 @@ jobs:
       # arrival — the bundle is the unit a programmer can actually run offline.
       - name: Build self-contained release bundle
         shell: bash
-        run: scripts/make-release.sh ${{ matrix.target }}
+        # The tag IS the version: a release answers it exactly, never a dated daily one.
+        env:
+          LOFT_VERSION: ${{ github.ref_name }}
+        run: |
+          export LOFT_VERSION="${LOFT_VERSION#v}"
+          scripts/make-release.sh ${{ matrix.target }}
 
       # Run the bundle we just built.  Everything before this proves the SOURCE
       # compiles; these are ARTIFACT properties, which only exist once the zip does —

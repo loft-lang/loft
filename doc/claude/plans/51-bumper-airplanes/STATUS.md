@@ -121,8 +121,8 @@ markers as "@PLN51 substrate").  Three approaches to integrate
 ## Pointers for resuming
 
 - **Where the work is:** `tools/audience-demo-50/` (probe + tests), `doc/claude/plans/51-bumper-airplanes/` (design)
-- **Where dryopea lives:** `~/Documents/dryopea/` (sibling repo, on `main` branch)
-- **Where the open dryopea questions are:** `~/Documents/dryopea/QUESTIONS_FOR_LOFT.md`
+- **Where dryopea lives:** `~/workspace/dryopea/` (sibling repo, on `main` branch)
+- **Where the open dryopea questions are:** `~/workspace/dryopea/QUESTIONS_FOR_LOFT.md`
 - **Where loft's bug index is:** `doc/claude/PROBLEMS.md` (fast-index at top, full Quick Reference below)
 - **PR status:** PR #222 (store_persist_bind) — merged.  No other loft PR open.  `dryopea-fixes` branch ready to open.
 - **`bumper_plane` push state:** in sync with `origin/bumper_plane`.

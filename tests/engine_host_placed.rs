@@ -13,7 +13,7 @@
 // same conversation whether the kernel is in this process or in a worker — with
 // the consumer's source byte-identical across both runs.
 
-#![cfg(target_os = "linux")]
+#![cfg(unix)]
 
 use std::io::{Read, Write};
 use std::net::TcpStream;

@@ -391,7 +391,7 @@ pub fn library_export_set(data: &Data, pkg_dir: &str) -> HashSet<u32> {
             matches!(def.def_type(), DefType::Function)
                 && def.pub_visible
                 && !is_synthetic_name(def.name())
-                && def.position().file.starts_with(pkg_dir)
+                && crate::file_access::is_under(&def.position().file, pkg_dir)
         })
         .collect();
     crate::native_gate::shared_store_dispatchable(data)
@@ -2461,7 +2461,10 @@ mod rlib_search_tests {
         assert!(
             !dirs
                 .iter()
-                .any(|(d, _)| d.to_string_lossy().contains("share/loft")),
+                .any(|(d, _)| crate::file_access::PathText::from_os(d)
+                    .parts()
+                    .windows(2)
+                    .any(|w| w[0] == "share" && w[1] == "loft")),
             "a dev exe must not gain a share/ candidate: {dirs:?}"
         );
         // every dev candidate links the same deps/ search dir

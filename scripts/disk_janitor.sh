@@ -63,11 +63,11 @@ fi
 if [ "$background" = 1 ] && [ -z "${LOFT_JANITOR_DETACHED:-}" ]; then
   # Beside the build, never ahead of it: detach and return.
   args=(); [ "$force" = 1 ] && args+=(--force)
-  LOFT_JANITOR_DETACHED=1 setsid "$0" "${args[@]}" </dev/null >/dev/null 2>&1 &
+  LOFT_JANITOR_DETACHED=1 setsid "$0" ${args[@]+"${args[@]}"} </dev/null >/dev/null 2>&1 &
   exit 0
 fi
 
-free_gb() { df -P -B1G "$HOME" | awk 'NR == 2 { print $4 }'; }
+free_gb() { df -Pk "$HOME" | awk 'NR == 2 { print int($4 / 1048576) }'; }
 mkdir -p "$STATE"
 free=$(free_gb)
 stamp="$STATE/stamp"

@@ -89,7 +89,7 @@ and read it a field at a time (see [Binary Files](#binary-files)).  A non-UTF-8
 
 | Function | Description |
 |----------|-------------|
-| `write(self: File, v: text)` | Writes `v` as UTF-8 text to the file. Overwrites existing content. |
+| `write(self: File, v: text)` | Writes `v` as UTF-8 text at the file's position. The first write through a `File` replaces the file's content; later writes through the same `File` follow it. `#index`/`#next` then frame what was written, and a read through the same `File` continues from there (`tests/scripts/one-file-handle-reads-and-writes-and-a-short-read-is-null.loft`). |
 
 ### Binary Files
 
@@ -107,7 +107,7 @@ Binary mode must be activated before reading or writing raw data. Use `f#format 
 | `f += value` | Writes `value` at the width of its declared type — `i32`/`u32` → 4B, `u8` → 1B, `u16` → 2B, range-constrained `integer limit(0,255)` → 1B, bare `integer` (i64 storage) → 8B, `single` → 4B, `float` → 8B, `text` → raw UTF-8 bytes, `vector<T>` → each element at its declared width. |
 | `f#read as T` | **Preferred** — reads `T`'s natural byte width and returns a value of type `T`. `as i32` reads 4B, `as u8` reads 1B, `as u16` reads 2B, `as integer` reads 8B. |
 | `s.field = f#read` | **LHS-inferred** — width comes from `s.field`'s declared type; symmetric with `f += s.field`. No `as T` needed. |
-| `f#read(n) as T` | Legacy explicit form — reads exactly `n` bytes and interprets as `T`. `n` MUST match `T`'s storage width or the runtime panics. |
+| `f#read(n) as T` | Legacy explicit form — reads exactly `n` bytes and interprets as `T`. **Null** when the file holds fewer than `n` bytes past the position, or when `n` is less than `T`'s storage width; the position does not move then. |
 | `f#read(n) as text` | Reads exactly `n` bytes (or fewer at EOF) as a UTF-8 string. The `(n)` is REQUIRED for text — variable-width types have no inferable count. |
 | `f#size` | The file size in bytes as `integer`, as it was when the handle was opened — a handle's own `+=` writes are not counted until the file is reopened (both backends; `tests/reference/skill-files.loft`). |
 | `f#index` | Returns the byte offset where the last read started (the `current` field). |
@@ -119,6 +119,7 @@ Binary mode must be activated before reading or writing raw data. Use `f#format 
 
 **Notes:**
 - `f += "text"` writes raw UTF-8 bytes; supported for TextFile, LittleEndian, and BigEndian modes.
+- A `File` is one handle for reading and writing, whichever came first: a write after a read lands at the read's position (`f#next`), and a read after a write starts after what was written.
 - For new files (format=NotExists), `f += value` defaults to TextFile mode and creates the file.  An EXISTING file is opened without truncation, so `f += value` appends after its last byte; `delete(path)` or `f.set_file_size(0)` first to start over.
 - `f#next = pos` (and the `seek` method above) is a no-op if called before the first read or write — the OS file handle does not exist until first I/O. Always perform a read or write before seeking. `seek` returns `false` in that case; the operator form reports nothing, which is why the method is the better choice when the position matters.
 

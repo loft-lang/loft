@@ -1,0 +1,12 @@
+diff --git a/src/database/loft_file.rs b/src/database/loft_file.rs
+index 641b04ecb..38d7e9634 100644
+--- a/src/database/loft_file.rs
++++ b/src/database/loft_file.rs
+@@ -141,7 +141,6 @@ impl LoftFile {
+             return false;
+         }
+         out.copy_from_slice(&self.buf[self.pos..self.pos + n]);
+-        self.pos += n;
+         self.at = self.at.map(|a| a + n as u64);
+         true
+     }

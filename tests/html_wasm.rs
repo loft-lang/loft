@@ -2387,3 +2387,53 @@ fn html_a_trap_is_reported_to_the_page() {
         "an unrelated exception must not be explained as an exhausted stack: {said2}"
     );
 }
+
+/// A browser build never loads a package's HOST native library — the page answers its imports
+/// — so `loft --html` must not build or even resolve one: neither the package's own cdylib nor
+/// a default-native one (`extensions::browser_target`).  Both used to run a full cargo build of
+/// code the page never links, and a stale host rlib aborted the browser build outright.
+/// `LOFT_TIMING` prints one `cdylib` line per host library resolved, hit or built; before the
+/// cut, this program printed two.
+#[test]
+fn a_browser_build_builds_no_host_native_library() {
+    if !wasm32_target_installed() {
+        eprintln!("SKIP: rustup target wasm32-unknown-unknown not installed");
+        return;
+    }
+    let root = repo_root();
+    let loft_bin = root.join("target/release/loft");
+    if !loft_bin.exists() {
+        eprintln!("SKIP: target/release/loft not built (run `cargo build --release` first)");
+        return;
+    }
+    let tmp = std::env::temp_dir().join("loft_html_no_host_native");
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).expect("create per-test dir");
+    let src = tmp.join("uses_random.loft");
+    let html = tmp.join("uses_random.html");
+    std::fs::write(&src, "use random;\nfn main() {\n  println(\"ok\");\n}\n")
+        .expect("write source");
+    let out = std::process::Command::new(&loft_bin)
+        .current_dir(&root)
+        .env("LOFT_TIMING", "1")
+        .env("LOFT_NO_CACHE", "1")
+        .arg("--html")
+        .arg(&html)
+        .args(["--lib", "tests/fixtures/libs"])
+        .arg(&src)
+        .output()
+        .expect("run loft --html");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(out.status.success(), "loft --html failed:\n{log}");
+    let host: Vec<&str> = log.lines().filter(|l| l.contains("cdylib")).collect();
+    assert!(
+        host.is_empty(),
+        "a browser build resolved a host native library:\n{}",
+        host.join("\n")
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
+}

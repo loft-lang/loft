@@ -2293,6 +2293,7 @@ impl Stores {
         for t in &mut self.types {
             t.facts.forget();
             t.prefill.forget();
+            t.heap_slots.forget();
             t.parents.retain(|&p| p < keep);
         }
         self.names.retain(|_, &mut nr| nr < keep);
@@ -3455,6 +3456,57 @@ impl std::fmt::Debug for PrefillImage {
     }
 }
 
+/// One place in a record that can own heap, by its byte offset from the record's position:
+/// a text slot, a collection slot, or a struct-enum's tag (with the enum's type, to read
+/// which variant it names).  `@FR-H-ClearRelease`'s empty test reads only these.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum HeapSlot {
+    Text(u32),
+    Collection(u32),
+    Tag(u32, u16),
+}
+
+/// The HEAP SLOTS of a record of this type — every place a value of it can own heap,
+/// nested inline records flattened — derived from `parts` on the first ask
+/// ([`Stores::holds_no_heap_fast`](super::Stores::holds_no_heap_fast)).  `None` inside
+/// means the type has a field the plan cannot express, and the full walk answers.
+/// Derived, like [`PrefillImage`]: no part in equality or in the stored form, and a table
+/// rollback forgets it.
+#[derive(Default, Clone)]
+pub struct HeapSlots(std::sync::OnceLock<Option<Box<[HeapSlot]>>>);
+
+impl HeapSlots {
+    #[inline]
+    pub(super) fn get(&self) -> Option<&Option<Box<[HeapSlot]>>> {
+        self.0.get()
+    }
+
+    pub(super) fn set(&self, slots: Option<Box<[HeapSlot]>>) {
+        let _ = self.0.set(slots);
+    }
+
+    pub(super) fn forget(&mut self) {
+        self.0.take();
+    }
+}
+
+/// Derived from `parts`, so two rows with equal parts have equal slots.
+impl PartialEq for HeapSlots {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl std::fmt::Debug for HeapSlots {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.get() {
+            Some(Some(s)) => write!(f, "HeapSlots({})", s.len()),
+            Some(None) => f.write_str("HeapSlots(walk)"),
+            None => f.write_str("HeapSlots(?)"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Type {
     pub name: String,
@@ -3481,6 +3533,7 @@ pub struct Type {
     pub field_groups: Vec<crate::data::LinkedFieldGroup>,
     pub(super) facts: TypeFacts,
     pub(super) prefill: PrefillImage,
+    pub(super) heap_slots: HeapSlots,
 }
 
 impl Type {
@@ -3537,6 +3590,7 @@ impl Type {
             field_groups,
             facts: TypeFacts::default(),
             prefill: PrefillImage::default(),
+            heap_slots: HeapSlots::default(),
         }
     }
 
@@ -3544,6 +3598,55 @@ impl Type {
     /// store-reloaded schema against a fresh parse, which carries `parents`).
     pub(crate) fn clear_parents(&mut self) {
         self.parents.clear();
+    }
+
+    /// Rebuild the derived `parents` index of a schema that was read back rather than
+    /// registered (`ir_read::read_schema`), with exactly the links registration writes: a
+    /// record field's struct, enum or variant content, and a collection field's element, name
+    /// the record; each variant names its enum.  `enum_parent_size` reads the variant links to
+    /// size a variant's record, so a cache-loaded schema without them allocated a variant at
+    /// its own size instead of its enum's — 8 where 16 is right for `#fields`' `FvInt`,
+    /// visible only to the debug oracle beside the lookup, on every warm run.
+    pub(crate) fn rebuild_parents(types: &mut [Type]) {
+        let n = types.len();
+        let mut links: Vec<(u16, u16)> = Vec::new();
+        for (p, t) in types.iter().enumerate() {
+            let p = p as u16;
+            match &t.parts {
+                Parts::Enum(variants) => links.extend(variants.iter().map(|(v, _)| (*v, p))),
+                Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
+                    for f in fields {
+                        let Some(content) = types.get(f.content as usize) else {
+                            continue;
+                        };
+                        match content.parts {
+                            Parts::Struct(_) | Parts::EnumValue(_, _) | Parts::Enum(_) => {
+                                links.push((f.content, p));
+                            }
+                            Parts::Array(e)
+                            | Parts::Vector(e)
+                            | Parts::Sorted(e, _)
+                            | Parts::Ordered(e, _)
+                            | Parts::Hash(e, _)
+                            | Parts::Index(e, _, _)
+                            | Parts::Trie(e, _)
+                            | Parts::Radix(e, _)
+                                if (e as usize) < n =>
+                            {
+                                links.push((e, p));
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        for (child, parent) in links {
+            if (child as usize) < n {
+                types[child as usize].parents.insert(parent);
+            }
+        }
     }
 
     pub(super) fn new(name: &str, parts: Parts, size: u16) -> Type {
@@ -3561,6 +3664,7 @@ impl Type {
             field_groups: Vec::new(),
             facts: TypeFacts::default(),
             prefill: PrefillImage::default(),
+            heap_slots: HeapSlots::default(),
         }
     }
 
@@ -3579,6 +3683,7 @@ impl Type {
             field_groups: Vec::new(),
             facts: TypeFacts::default(),
             prefill: PrefillImage::default(),
+            heap_slots: HeapSlots::default(),
         }
     }
 

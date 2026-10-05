@@ -1,0 +1,22 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A library that names each of its types ABOVE the type's declaration (loft#1856), from a
+// user whose `pub`-ness is the opposite of the type's: a private function builds a `pub`
+// struct, a `pub` function builds a private one.  The declaration alone says what is `pub`.
+fn fwd_pub_struct() -> FwdPubS { FwdPubS { v: 1 } }
+pub fn fwd_hid_struct() -> integer { h = FwdHidS { v: 2 }; h.v }
+fn fwd_pub_enum() -> FwdPubE { FwdPubE.FpRed }
+pub fn fwd_hid_enum(e: FwdHidE) -> integer { if e == FwdHidE.FhRed { 3 } else { 4 } }
+fn fwd_pub_type() -> integer { x: FwdPubT = 5; x }
+struct FwdHolder { inner: FwdFieldS }
+pub struct FwdPubS { v: integer }
+struct FwdHidS { v: integer }
+pub enum FwdPubE { FpRed, FpBlue }
+enum FwdHidE { FhRed, FhBlue }
+pub type FwdPubT = integer;
+pub struct FwdFieldS { v: integer }
+pub fn fwd_total() -> integer {
+  fwd_pub_struct().v + fwd_hid_struct() + fwd_hid_enum(FwdHidE.FhBlue) + fwd_pub_type()
+    + FwdHolder { inner: FwdFieldS { v: 6 } }.inner.v + if fwd_pub_enum() == FwdPubE.FpRed { 7 } else { 0 }
+}

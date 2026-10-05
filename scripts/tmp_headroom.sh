@@ -32,7 +32,7 @@ while [ $# -gt 0 ]; do
 done
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$REPO_ROOT" || exit 2
-free_gb() { df -P -B1G "$1" 2>/dev/null | awk 'NR == 2 { print $4 }'; }
+free_gb() { df -Pk "$1" 2>/dev/null | awk 'NR == 2 { print int($4 / 1048576) }'; }
 dirs=(/tmp)
 [ -n "${TMPDIR:-}" ] && [ "$TMPDIR" != /tmp ] && dirs+=("$TMPDIR")
 scripts/sweep_scratch.sh --sessions "${dirs[@]}"

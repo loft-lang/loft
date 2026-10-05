@@ -29,6 +29,9 @@
 #                  entry that names no tracking issue (`loft#N`) and is not marked
 #                  `not resolvable in a release`; `--issues` also asks whether an open
 #                  entry's issue has closed
+#   worklist       the rule-led walk's queue, ordered by the defects a walk of each rule is
+#                  expected to find (its chapter's historical yield × how exposed the rule is);
+#                  `--all` lists every candidate, the default the top 30
 #   dups           rules cited from 2+ sites — the duplication question, asked by MEANING
 #                  rather than by code shape (which is what rule_predicate_audit.py does)
 #   claims         the LIMITATION sentences of the hand-written reference docs (LOFT*.md,
@@ -975,6 +978,55 @@ def main():
               "ANNOTATION, not with\n  verification.  No exclusion set exists, and one is not "
               "being sized up front: the owner\n  judges it against the progress made and the "
               "bugs actually met (2026-09-17).")
+        return 0
+
+    if cmd == "worklist":
+        # The rule-led walk's queue (STABILITY_METHOD.md § The rule-led walk), computed rather
+        # than written down, for the reason that section gives: a position stated in prose is
+        # stale the moment it is committed.  Each rule is weighed by
+        #
+        #   YIELD     its chapter's deviation entries per defined rule — what walks and
+        #             measurements have recorded against that chapter's rules so far;
+        #   EXPOSURE  1 for a rule nothing cites, 0.5 for one code cites but no test names
+        #             (someone looked; nothing would fail without it), 0 once a test names it.
+        #
+        # The product ORDERS the queue; it is not a forecast.  The walk takes the most
+        # error-prone rules first, so a chapter's tail yields less than its average (the low
+        # bound halves it), while a single walk of a covered rule has found several defects
+        # (the high bound takes half again).
+        ann = {t for t in citations_in(CITE_DIRS, CITE_EXTS) if t in rules}
+        grd = {t for t in citations_in(GUARD_DIRS, GUARD_EXTS) if t in rules}
+
+        def chapter(files):
+            return sorted(files)[0].removesuffix(".md").removesuffix("-history")
+
+        size = collections.Counter(chapter(f) for f in rules.values())
+        found = collections.Counter(chapter(f) for f, _status in defined_deviations().values())
+        items = []
+        for tag, files in rules.items():
+            if tag in grd:
+                continue
+            ch = chapter(files)
+            exposure = 0.5 if tag in ann else 1.0
+            items.append((exposure * found[ch] / size[ch], tag, ch, exposure))
+        items.sort(key=lambda it: (-it[0], it[2], it[1]))
+        shown = items if "--all" in sys.argv else items[:30]
+        print(f"{'#':>3}  {'rule':<26} {'chapter':<13} {'tier':<10} expected")
+        for i, (est, tag, ch, exposure) in enumerate(shown, 1):
+            tier = "nowhere" if exposure == 1.0 else "code-only"
+            print(f"{i:>3}  @FR-{tag:<22} {ch:<13} {tier:<10} {est:5.2f}")
+        per = collections.defaultdict(float)
+        for est, _tag, ch, _exp in items:
+            per[ch] += est
+        total = sum(per.values())
+        print(f"\n{len(items)} rules no test names; expected defects behind them "
+              f"{total * 0.5:.0f}–{total * 1.5:.0f}, by chapter:")
+        for ch, est in sorted(per.items(), key=lambda kv: -kv[1]):
+            if est > 0:
+                print(f"  {ch:<13} {est * 0.5:5.1f}–{est * 1.5:5.1f}")
+        print("\nAn ORDER for the walk, not a forecast: the yield is what was found where walks "
+              "already\nlooked, and a rule closes with a guard that would FAIL without it, not "
+              "with a citation.")
         return 0
 
     cites = citations()

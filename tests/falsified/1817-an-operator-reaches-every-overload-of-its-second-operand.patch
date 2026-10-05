@@ -1,11 +1,11 @@
 diff --git a/src/parser/operators.rs b/src/parser/operators.rs
-index 9533a95c1..bbdd110d0 100644
+index fb604ca..16d9634 100644
 --- a/src/parser/operators.rs
 +++ b/src/parser/operators.rs
-@@ -1217,7 +1217,7 @@ impl Parser {
-         let routed = self.data.routed_types(types);
-         let chosen = if self.data.has_overload_set(form) {
-             match self.select_overload(u16::MAX, form, &routed) {
+@@ -1219,7 +1219,7 @@ impl Parser {
+         let set_source = self.data.receiver_overload_source(form, &types[0]);
+         let chosen = if self.data.has_overload_set_in(set_source, form) {
+             match self.select_overload(set_source, form, &routed) {
 -                crate::parser::dispatch::Selection::One(d) => d,
 +                crate::parser::dispatch::Selection::One(_) => key,
                  crate::parser::dispatch::Selection::Ambiguous(_) => return None,

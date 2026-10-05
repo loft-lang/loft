@@ -1,0 +1,78 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @FR-L-Apply — `formal/closures.md`: applying a closure binds its parameters exactly as a direct
+// call does (calls.md `F-Param*`), so a `&` parameter reached through a fn-ref writes through
+// to the caller's place.  Two halves did not:
+//
+//   --native     a fn-ref call whose parameter is `&P` emitted `let _farg_0 = ;` — the
+//                argument `OpCreateStack(q)` has no spelling outside the call-argument
+//                emitter, and only a `&text` parameter was routed through it.  The crate did
+//                not build.
+//
+// A `&` binding FORWARDED to a fn-ref's `&` parameter is
+// `a-fn-ref-call-forwards-a-link-parameter.loft`, apart: on the control it is refused at
+// compile time, which would stop this file before its cells run.
+//
+// Axes this file MOVES:  the link's type (struct · integer · vector · hash · text), the
+//                        argument (a local · a field · two links in one call), and a
+//                        capturing lambda.
+// Axes it HOLDS FIXED:   a lambda held in a local; the `fn(&P)` TYPE spelling is
+//                        `a-function-type-can-name-a-link-parameter.loft`.
+//
+// @falsified-at: c8cfeb402 — native exit 1 -> 0 (the control's crate did not build: `let _farg_0 = ;`);
+//   interpret INERT, expected — the interpreter bound these cells right.
+// @falsified-by: tests/falsified/a-fn-ref-call-binds-a-link-parameter.patch — the same
+//   channels.  Score it with
+//   `scripts/falsify.sh <this file> --patch <that patch>` once c8cfeb402 is out of reach.
+// HOLDS: leak, panic and refusals are clean on both trees and both backends.
+
+struct P { x: integer, y: integer }
+struct K { k: integer, v: integer }
+struct W { p: P }
+
+fn local_struct() -> integer {
+  f = fn(p: &P) { p.x = 9; };
+  q = P { x: 1, y: 2 };
+  f(q);
+  q.x
+}
+
+fn local_kinds() -> text {
+  fi = fn(n: &integer) { n = n + 5; };
+  fv = fn(v: &vector<integer>) { v += [9]; };
+  fh = fn(h: &hash<K[k]>) { h += [K { k: 2, v: 5 }]; };
+  ft = fn(t: &text) { t += "z"; };
+  a = 1;
+  w: vector<integer> = [1, 2];
+  m: hash<K[k]> = [K { k: 1, v: 1 }];
+  s = "ab";
+  fi(a);
+  fv(w);
+  fh(m);
+  ft(s);
+  "{a} {w} {len(m)} {s}"
+}
+
+fn field_and_two() -> text {
+  f = fn(p: &P, n: &integer) { p.x = 9; n = 7; };
+  w = W { p: P { x: 1, y: 2 } };
+  a = 0;
+  f(w.p, a);
+  "{w.p.x} {a}"
+}
+
+fn capturing() -> integer {
+  k = 4;
+  f = fn(p: &P) { p.x = p.x + k + 8; };
+  q = P { x: 1, y: 2 };
+  f(q);
+  q.x
+}
+
+fn main() {
+  assert(local_struct() == 9, "a &P through a fn-ref: got {local_struct()}");
+  assert(local_kinds() == "6 [1,2,9] 2 abz", "each link kind: got {local_kinds()}");
+  assert(field_and_two() == "9 7", "a field and two links: got {field_and_two()}");
+  assert(capturing() == 13, "a capturing lambda with a link: got {capturing()}");
+}

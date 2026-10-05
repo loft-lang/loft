@@ -1,20 +1,13 @@
-diff --git b/src/parser/mod.rs a/src/parser/mod.rs
-index 401435696..b1d709d75 100644
---- b/src/parser/mod.rs
-+++ a/src/parser/mod.rs
-@@ -6081,14 +6081,9 @@ impl Parser {
-             // @FR-N-Store — a tuple stores ELEMENT-WISE, so each member is its own slot and
-             // the diagnostic names which (`element 0 of the field`); the six tuple-literal
-             // cells loft#1366 lists were silent because nothing named them.
--            // With no enclosing store named, a member is still a SLOT (`(N-Reserve)`, and
--            // `(L-Tuple)` lays it out as a field), so a narrow one keeps `(N-Store)`'s hard
--            // error: `never_error` defaulted to true here, and `t: (integer, u8) = (1, x as
--            // u8?)` warned and stored null into the non-null `u8` (loft#1815).  Only a narrow
--            // integer member is affected — a heap member never escalates either way.
-             let (what, at, lenient) = match self.store_ctx.last() {
-                 Some(c) => (c.what.clone(), c.at.clone(), c.never_error),
--                None => ("this tuple".to_string(), None, false),
-+                None => ("this tuple".to_string(), None, true),
+diff --git a/src/parser/mod.rs b/src/parser/mod.rs
+index d817aa749..d43ecafd3 100644
+--- a/src/parser/mod.rs
++++ b/src/parser/mod.rs
+@@ -6284,7 +6284,7 @@ impl Parser {
+             // integer member is affected — a heap member never escalates either way.
+             let (what, at, lenient, dense) = match self.store_ctx.last() {
+                 Some(c) => (c.what.clone(), c.at.clone(), c.never_error, c.dense),
+-                None => ("this tuple".to_string(), None, false, false),
++                None => ("this tuple".to_string(), None, true, false),
              };
              for (i, (s, d)) in src_elems.iter().zip(dst_elems.iter()).enumerate() {
                  let mut placeholder = Value::Null;

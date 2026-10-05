@@ -2170,6 +2170,18 @@ or build a local and use that."
                         Value::Var(w),
                         fill,
                     ));
+                    if v_nr != u16::MAX && self.vars.rebind_must_mint(v_nr) {
+                        let pos = self
+                            .database
+                            .position(self.data.def(closure_rec_d).known_type(), &cap_name);
+                        let held = self
+                            .capture_records
+                            .entry((self.first_pass, self.context, v_nr))
+                            .or_default();
+                        if !held.contains(&(w, pos)) {
+                            held.push((w, pos));
+                        }
+                    }
                     // P259 / Plan-57 Phase B (Mechanism B): the closure record now
                     // holds a DbRef into the captured heap cell (`Reference(__cell_*,
                     // _)`) via the auto-Reference attribute, and the record OWNS that
@@ -5668,8 +5680,8 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                         "cannot store {} elements in a vector<{}> (would lose precision); \
                      cast each element explicitly with 'as {}'",
                         t.source_name(&self.data),
-                        in_t.source_name(&self.data),
-                        in_t.source_name(&self.data)
+                        self.data.written_type_name(in_t),
+                        self.data.written_type_name(in_t)
                     );
                 }
             } else if self.widen_literal_items(elm, in_t, &t, res) {
@@ -5763,7 +5775,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         }
         match p.unspan() {
             Value::FnRef(_, clos_var, _) => *clos_var != u16::MAX,
-            Value::Var(v) => self.closure_vars.contains_key(v),
+            Value::Var(v) => self.vars.closure_var_of(*v).is_some(),
             Value::Call(d_nr, _) => matches!(
                 self.data.def(*d_nr).returned(),
                 Type::Function(_, _, deps, ..) if !deps.is_empty()

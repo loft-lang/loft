@@ -770,20 +770,37 @@ pub fn get_vector(db: &DbRef, size: u32, from: i64, stores: &[Store]) -> DbRef {
         );
     }
     let store = keys::store(db, stores);
-    if from == i64::MIN {
-        return DbRef::NULL;
-    }
     let v_rec = store.collection_rec(db.rec, db.pos);
-    let l = length_vector(db, stores);
-    let f = if from < 0 { from + i64::from(l) } else { from };
-    if f < 0 || f >= i64::from(l) {
-        DbRef::NULL
-    } else {
-        DbRef {
+    match elem_index(from, length_vector(db, stores)) {
+        None => DbRef::NULL,
+        Some(f) => DbRef {
             store_nr: db.store_nr,
             rec: v_rec,
-            pos: checked_vec_pos(f as u32, size),
-        }
+            pos: checked_vec_pos(f, size),
+        },
+    }
+}
+
+/// The element an index addresses in a vector `len` long — the ONE definition every
+/// element read shares, the fused readers' fast path included: a non-negative index
+/// addresses from the front, a negative one from the end (`v[-1]` is the last element),
+/// and anything outside `[0, len)` after that — `i64::MIN` among them — addresses
+/// nothing.  `from + len` cannot overflow: `len` fits in a `u32`, so the sum of a negative
+/// `from` and it stays negative exactly when `from < -len`.
+///
+/// Pure arithmetic, so a reader can answer every index inline with no call — what lets
+/// LLVM merge two reads of the same element and unswitch the loop around them
+/// (`@FR-R-Cold`'s fold clause).
+#[must_use]
+#[inline]
+pub fn elem_index(from: i64, len: u32) -> Option<u32> {
+    let len = i64::from(len);
+    let f = if from < 0 { from + len } else { from };
+    // `f < len <= u32::MAX` once the unsigned test passes, so the narrowing is exact.
+    if (f as u64) < (len as u64) {
+        Some(f as u32)
+    } else {
+        None
     }
 }
 
@@ -986,8 +1003,16 @@ pub fn push_window(p: &PushHeader, size: u32, stores: &[Store]) -> PushWindow {
 /// A null, unallocated or empty vector answers `len: 0`, which makes every fast-path
 /// bounds test in [`get_vector_hoisted`] fail — so those cases route to `get_vector` and
 /// keep its exact answer without needing a marker of their own.
+///
+/// `inline(always)`: a hoisted loop's prelude derives one header per vector it reads, and
+/// in a large function LLVM kept this as a call — 4 ns each, 8 % of `mat4_mul` (priced by
+/// hand on the emitted Rust, bench/portal/analysis/under-10x.md).
 #[must_use]
-#[inline]
+#[expect(
+    clippy::inline_always,
+    reason = "a hoisted prelude in a large function kept it as a call (priced -8 % on mat4_mul)"
+)]
+#[inline(always)]
 pub fn vec_header(db: &DbRef, stores: &[Store]) -> VecHeader {
     if db.is_null() || db.rec == 0 || db.pos == 0 {
         return VecHeader {
@@ -1219,9 +1244,10 @@ pub fn abs_bound_i64(h: &VecHeader, stores: &[Store]) -> Option<i64> {
     i64::try_from(bound).ok()
 }
 
-/// [`get_elem_hoisted`]'s twin through a hoisted BASE (`@FR-R-Base`): the same bounds test
-/// against the header's length, then a single unaligned load at `base + from * size + fld`.
-/// The cold path — an index outside the vector — is the same one.
+/// [`get_elem_hoisted`]'s twin through a hoisted BASE (`@FR-R-Base`): the index resolved
+/// against the header's length ([`elem_index`]), then a single unaligned load at
+/// `base + index * size + fld`; an index that addresses nothing answers `absent`.  No call
+/// on any path, so two reads of one element merge (`@FR-R-Cold`'s fold clause).
 ///
 /// # Safety
 ///
@@ -1248,29 +1274,35 @@ pub unsafe fn get_elem_at<T: Copy, const VERIFY: bool>(
     absent: T,
     stores: &[Store],
 ) -> T {
-    if from >= 0 && from < i64::from(h.len) {
-        if VERIFY {
-            assert_eq!(
-                *h,
-                vec_header(db, stores),
-                "hoisted vector header is stale — the loop wrote the vector it was hoisted for"
-            );
-            assert!(
-                std::ptr::eq(base, vec_base(h, stores)),
-                "hoisted vector base is stale — a store grew or moved under the loop"
-            );
+    let val = match elem_index(from, h.len) {
+        Some(f) => {
+            if VERIFY {
+                assert_eq!(
+                    *h,
+                    vec_header(db, stores),
+                    "hoisted vector header is stale — the loop wrote the vector it was hoisted for"
+                );
+                assert!(
+                    std::ptr::eq(base, vec_base(h, stores)),
+                    "hoisted vector base is stale — a store grew or moved under the loop"
+                );
+            }
+            // SAFETY: `base` is element 0 of a live vector record in a store the loop
+            // cannot grow (the emitter's growth-free proof), and `f < len` keeps the
+            // address inside the record's claim; `read_unaligned` because an element
+            // offset need not be aligned for `T` (loft#1481).
+            unsafe {
+                base.add(f as usize * size as usize + fld as usize)
+                    .cast::<T>()
+                    .read_unaligned()
+            }
         }
-        // SAFETY: `base` is element 0 of a live vector record in a store the loop cannot
-        // grow (the emitter's growth-free proof), and `from < len` keeps the address inside
-        // the record's claim; `read_unaligned` because an element offset need not be
-        // aligned for `T` (loft#1481).
-        return unsafe {
-            base.add(from as usize * size as usize + fld as usize)
-                .cast::<T>()
-                .read_unaligned()
-        };
+        None => absent,
+    };
+    if VERIFY {
+        verify_folded_read(val, db, size, from, fld, absent, stores);
     }
-    get_elem_hoisted_cold::<T>(db, size, from, fld, absent, stores)
+    val
 }
 
 /// `(R-BoundedNest)`'s reduction clause — the plain part of `acc = acc + v[i]` over the
@@ -1428,8 +1460,8 @@ pub unsafe fn elem_field_at<T: Copy, const VERIFY: bool>(
 }
 
 /// The general typed read of a record's scalar field — `absent` for the null record, else
-/// the load: what a fused read answers off its fast path ([`get_elem_hoisted_cold`]), for a
-/// record already in hand.  The fallback of [`elem_field_at`], applied to the join's result.
+/// the load: what an element read answers once [`get_vector`] has addressed the element, for
+/// a record already in hand.  The fallback of [`elem_field_at`], applied to the join's result.
 #[must_use]
 #[inline]
 pub fn field_of<T: Copy>(db: &DbRef, fld: u32, absent: T, stores: &[Store]) -> T {
@@ -1449,14 +1481,15 @@ pub fn field_of<T: Copy>(db: &DbRef, fld: u32, absent: T, stores: &[Store]) -> T
 /// getter, which had already been decided by the bounds test. What remains is one comparison
 /// and one load.
 ///
-/// `absent` is the getter's own null sentinel (`f32::NAN`, `i64::MIN`, …), so an index the
-/// fast path refuses answers exactly what the unfused pair answered. Off the fast path this
-/// routes back through [`get_vector`], which is what keeps negative indices addressing from
-/// the end rather than reading `absent`.
+/// `absent` is the getter's own null sentinel (`f32::NAN`, `i64::MIN`, …), so an index that
+/// addresses nothing answers exactly what the unfused pair answered.  The index is resolved
+/// by [`elem_index`], the definition [`get_vector`] uses, so a negative index addresses from
+/// the end here too — inline, with no call on any path (`@FR-R-Cold`'s fold clause).
 ///
 /// # Panics
 ///
-/// Under `VERIFY`, when the header no longer describes `db`. Never in the emitted default.
+/// Under `VERIFY`, when the header no longer describes `db`, or when the answer differs from
+/// a fresh read through [`get_vector`]. Never in the emitted default.
 #[must_use]
 #[inline]
 pub fn get_elem_hoisted<T: Copy, const VERIFY: bool>(
@@ -1468,30 +1501,66 @@ pub fn get_elem_hoisted<T: Copy, const VERIFY: bool>(
     absent: T,
     stores: &[Store],
 ) -> T {
-    if from >= 0 && from < i64::from(h.len) {
-        if VERIFY {
-            assert_eq!(
-                *h,
-                vec_header(db, stores),
-                "hoisted vector header is stale — the loop wrote the vector it was hoisted for"
-            );
+    let val = match elem_index(from, h.len) {
+        Some(f) => {
+            if VERIFY {
+                assert_eq!(
+                    *h,
+                    vec_header(db, stores),
+                    "hoisted vector header is stale — the loop wrote the vector it was hoisted for"
+                );
+            }
+            stores[h.store_nr as usize].read::<T>(h.rec, checked_vec_pos(f, size) + fld)
         }
-        return stores[h.store_nr as usize]
-            .read::<T>(h.rec, checked_vec_pos(from as u32, size) + fld);
+        None => absent,
+    };
+    if VERIFY {
+        verify_folded_read(val, db, size, from, fld, absent, stores);
     }
-    get_elem_hoisted_cold::<T>(db, size, from, fld, absent, stores)
+    val
 }
 
-/// The off-fast-path half of [`get_elem_hoisted`]: an out-of-range or negative index, which
-/// routes back through [`get_vector`] so a negative one still addresses from the end.
+/// `LOFT_HOIST_VERIFY=1`'s check of a folded element read ([`get_elem_at`],
+/// [`get_elem_hoisted`]): the answer must be bit-identical to the unfused read — the element
+/// [`get_vector`] addresses, or `absent` where it addresses nothing.  Bit equality is the
+/// exact test: both sides read the same field bytes or answer the same sentinel.
 ///
-/// Enforces `@FR-R-Cold` (formal/rewrites.md).
-/// `#[inline(never)]` is load-bearing rather than a hint (loft#1508).  Its caller is generic
-/// and `#[inline]`, so rustc sees the whole body and decides on SIZE — and with this half
-/// folded in, the body carried a second call and a second read and lost that decision.  The
-/// caller then stayed out of line at every one of its call sites, which on a real workload
-/// cost ~11% of self time for a fast path that is a compare and a load.  Keeping the cold
-/// half behind a call is what lets the hot half be inlined into its callers.
+/// # Panics
+///
+/// When the two answers differ — the fold resolved an index to another element than
+/// `get_vector` does, or read through a stale header.
+#[cold]
+#[inline(never)]
+fn verify_folded_read<T: Copy>(
+    val: T,
+    db: &DbRef,
+    size: u32,
+    from: i64,
+    fld: u32,
+    absent: T,
+    stores: &[Store],
+) {
+    let elem = get_vector(db, size, from, stores);
+    let fresh = if elem.rec == 0 {
+        absent
+    } else {
+        keys::store(&elem, stores).read::<T>(elem.rec, elem.pos + fld)
+    };
+    let n = std::mem::size_of::<T>();
+    // SAFETY: both are live `T` values on this frame; a scalar `T` has no padding, so its
+    // `size_of` bytes are initialised.
+    let (a, b) = unsafe {
+        (
+            std::slice::from_raw_parts((&raw const val).cast::<u8>(), n),
+            std::slice::from_raw_parts((&raw const fresh).cast::<u8>(), n),
+        )
+    };
+    assert_eq!(
+        a, b,
+        "folded element read disagrees with get_vector at index {from} — elem_index or a stale header"
+    );
+}
+
 /// The text record `rec` of the store whose data span is `(ptr, size)` ([`Store::text_span`])
 /// — what [`Store::get_str`] answers for it, computed off the span: the null text for the
 /// null record, for a record number outside the store and for a length past its end; the
@@ -1593,10 +1662,10 @@ pub unsafe fn text_elem_at<const VERIFY: bool>(
     text_elem_cold(db, from, stores)
 }
 
-/// The out-of-range half of [`text_elem_at`], behind a call for the reason
-/// [`get_elem_hoisted_cold`] gives: folded in, the hot half — a compare, a load and a slice
-/// — lost its inline and the whole read stayed a call per element (measured: 8.4 µs where
-/// the inlined form prices 6.9 on the stdlib `join`).
+/// The negative-index half of [`text_elem_at`], behind a call although it only reads: folded
+/// in — the resolution through [`elem_index`] inline, in any arrangement — the text walk on
+/// the stdlib `join` row lost 10–14 %, and a text reader gains nothing from the fold's merge,
+/// which needs the same element read twice (`@FR-R-Cold`'s fold clause names this exception).
 #[cold]
 #[inline(never)]
 fn text_elem_cold(db: &DbRef, from: i64, stores: &[Store]) -> &'static str {
@@ -1606,24 +1675,6 @@ fn text_elem_cold(db: &DbRef, from: i64, stores: &[Store]) -> &'static str {
     } else {
         let store = keys::store(&elem, stores);
         store.get_str(store.get_u32_raw(elem.rec, elem.pos))
-    }
-}
-
-#[cold]
-#[inline(never)]
-fn get_elem_hoisted_cold<T: Copy>(
-    db: &DbRef,
-    size: u32,
-    from: i64,
-    fld: u32,
-    absent: T,
-    stores: &[Store],
-) -> T {
-    let elem = get_vector(db, size, from, stores);
-    if elem.rec == 0 {
-        absent
-    } else {
-        keys::store(&elem, stores).read::<T>(elem.rec, elem.pos + fld)
     }
 }
 
@@ -2387,6 +2438,39 @@ pub fn reverse_vector(db: &DbRef, elem_size: u32, stores: &mut [Store]) {
         }
         lo += 1;
         hi -= 1;
+    }
+}
+
+#[cfg(test)]
+mod elem_index_tests {
+    //! [`super::elem_index`] — the one definition of which element an index addresses —
+    //! against hand-computed answers: from the front, from the end, and the edges where a
+    //! sum near the type's limits would overflow if it were computed the other way.
+    use super::elem_index;
+
+    #[test]
+    fn front_end_and_nothing() {
+        assert_eq!(elem_index(0, 5), Some(0));
+        assert_eq!(elem_index(4, 5), Some(4));
+        assert_eq!(elem_index(5, 5), None);
+        assert_eq!(elem_index(-1, 5), Some(4));
+        assert_eq!(elem_index(-5, 5), Some(0));
+        assert_eq!(elem_index(-6, 5), None);
+        assert_eq!(elem_index(0, 0), None);
+        assert_eq!(elem_index(-1, 0), None);
+    }
+
+    #[test]
+    fn limits() {
+        assert_eq!(elem_index(i64::MIN, 5), None);
+        assert_eq!(elem_index(i64::MIN, u32::MAX), None);
+        assert_eq!(elem_index(i64::MAX, u32::MAX), None);
+        assert_eq!(
+            elem_index(i64::from(u32::MAX) - 1, u32::MAX),
+            Some(u32::MAX - 1)
+        );
+        assert_eq!(elem_index(-i64::from(u32::MAX), u32::MAX), Some(0));
+        assert_eq!(elem_index(-i64::from(u32::MAX) - 1, u32::MAX), None);
     }
 }
 

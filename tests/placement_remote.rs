@@ -17,7 +17,7 @@
 // `placement_parity.rs` is the setup: a server has to be started, reached, and
 // stopped, and a test that leaked one would wedge a port for every later run.
 
-#![cfg(target_os = "linux")]
+#![cfg(unix)]
 
 use std::io::Read;
 use std::path::{Path, PathBuf};

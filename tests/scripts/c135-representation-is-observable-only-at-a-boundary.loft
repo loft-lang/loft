@@ -1,0 +1,32 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @C135 — loft has no unsafe construct: no loft code can observe how a value is represented
+// (an address, a raw buffer, a layout), so the compiler may choose any representation that
+// answers the same (`(R-Escape)`, C122).  Representation is observable at exactly two
+// boundaries: a package's native code, and a store whose bytes persist or are mapped from a
+// file — there the store layout IS the contract, read back by another run or tool.
+//
+// Each refusal below is a door that would hand a program a representation: an `unsafe`
+// block, and a Rust body written into a program (`#rust` is the standard library's own
+// template, C87; a package binds Rust with `#native` and its native crate).  A build that
+// opens either door breaks every representation rewrite at once, silently, so this file
+// fails first.  The file-backed store boundary is held by the store format's own guards
+// (`tests/store_durable_format.rs`), not here.
+//
+// @falsified-by: tests/falsified/c135-representation-is-observable-only-at-a-boundary.patch — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches)
+//   CHANNEL: the exit code and the expectations, on both backends.  WITNESS: the patch lets a program's `#rust` body
+//   through the parser, so the expected refusal is not produced and the run answers
+//   differently.  HOLDS: no leak, panic or refusal on either tree.
+//
+// @EXPECT_ERROR: Expect token ;
+// @EXPECT_ERROR: #rust is the standard library's own Rust template, not a library route
+
+fn bump(x: integer) -> integer;
+#rust"@x + 1"
+
+fn main() {
+  v = [1, 2, 3];
+  unsafe { println("{v}"); }
+  println("{bump(len(v))}");
+}

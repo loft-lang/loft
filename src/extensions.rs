@@ -191,7 +191,7 @@ fn load_one(path: &str) -> bool {
 
     static LOAD_LOCK: Mutex<Option<HashSet<String>>> = Mutex::new(None);
 
-    let canonical = crate::portable_path::plain_canonical_str(path);
+    let canonical = crate::file_access::plain_canonical_str(path);
 
     let mut guard = LOAD_LOCK
         .lock()
@@ -2193,8 +2193,8 @@ pub fn native_target_root(pkg_dir: &std::path::Path) -> std::path::PathBuf {
     #[cfg(feature = "registry")]
     {
         let registry_cache = crate::registry_index::cache_dir();
-        let registry_cache_canon = crate::portable_path::try_plain_canonical(&registry_cache);
-        let pkg_canon = crate::portable_path::try_plain_canonical(std::path::Path::new(pkg_dir));
+        let registry_cache_canon = crate::file_access::try_plain_canonical(&registry_cache);
+        let pkg_canon = crate::file_access::try_plain_canonical(std::path::Path::new(pkg_dir));
         let use_redirected = match (&registry_cache_canon, &pkg_canon) {
             (Some(rc), Some(pc)) => pc.starts_with(rc),
             _ => false,
@@ -2224,6 +2224,36 @@ pub fn native_target_root(pkg_dir: &std::path::Path) -> std::path::PathBuf {
 /// [`auto_build_native`].  The ONE home for this resolution — the parser's two
 /// manifest paths and the warm startup-cache load (#310) all derive from it,
 /// so a cached run re-checks cdylib freshness exactly like a cold parse.
+/// Set for a `loft --html` run: the program is built for the browser, which never loads a
+/// package's HOST native library — the page answers the package's imports itself.  So the
+/// parse registers no host cdylib and the driver builds no default-native one, where both
+/// used to run a full cargo build of code the build never links (`html_gl_imports` spent
+/// minutes of a 327 s run there on a cold runner).  The program cache keys on `--html`
+/// (`startup_cache::native_lib_context`), so a browser run's bundle is never warm-loaded by
+/// a run that needs those libraries.
+static BROWSER_TARGET: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Mark this run as a browser build (`loft --html`), before anything resolves a package.
+pub fn set_browser_target() {
+    BROWSER_TARGET.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Is this run a browser build?  Then no host native library is built or registered.
+#[must_use]
+pub fn browser_target() -> bool {
+    BROWSER_TARGET.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The host native library a `use`d package registers — none for a browser build, which
+/// never loads one ([`browser_target`]); otherwise [`resolve_native_lib`].
+#[must_use]
+pub fn host_native_lib(pkg_dir: &str, stem: &str) -> Option<String> {
+    if browser_target() {
+        return None;
+    }
+    resolve_native_lib(pkg_dir, stem)
+}
+
 pub fn resolve_native_lib(pkg_dir: &str, stem: &str) -> Option<String> {
     // @PLN21 Phase 3 — a missing DECLARED runtime system lib is terminal:
     // neither a prebuilt nor a source build can load it (both link the same lib,
@@ -2422,7 +2452,16 @@ pub fn prebuild_installed_natives() -> (usize, usize) {
 /// `$ORIGIN` / `@loader_path` (`native_utils::add_native_extern_flags`).
 fn relocatable_dylib_flags(lib_name: &str) -> String {
     if cfg!(target_os = "macos") {
-        format!("-Clink-arg=-Wl,-install_name,@rpath/{lib_name}")
+        // `NATIVE_LINK_RECIPE` (`-Wl,-S`): the LINKER drops the debug symbols.  Cargo's default
+        // (`strip = "debuginfo"`) instead runs the system `strip` over the linked dylib, and
+        // on a dylib holding `ring`'s C and assembly objects (every TLS package: web, server)
+        // that rewrite leaves the string table 4-aligned — which the same linker then refuses
+        // to link a program against (`ld: mis-aligned LINKEDIT string pool`).  The post-link
+        // strip is switched off where the build is spawned (`CARGO_PROFILE_RELEASE_STRIP`).
+        format!(
+            "-Clink-arg=-Wl,-install_name,@rpath/{lib_name} {}",
+            crate::cache::NATIVE_LINK_RECIPE
+        )
     } else {
         String::new()
     }
@@ -2657,6 +2696,10 @@ pub fn auto_build_native(pkg_dir: &str, stem: &str) -> Option<String> {
         );
         cmd.env("RUSTFLAGS", flags.trim())
             .env_remove("CARGO_ENCODED_RUSTFLAGS");
+        if cfg!(target_os = "macos") {
+            // No post-link `strip` on macOS — see `relocatable_dylib_flags`.
+            cmd.env("CARGO_PROFILE_RELEASE_STRIP", "none");
+        }
         if use_redirected_target {
             if let Some(parent) = target_root.parent() {
                 let _ = std::fs::create_dir_all(parent);

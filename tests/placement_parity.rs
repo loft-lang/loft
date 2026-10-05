@@ -22,7 +22,7 @@
 //
 // Any divergence here falsifies the invariant, which is exactly what it is for.
 
-#![cfg(target_os = "linux")]
+#![cfg(unix)]
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

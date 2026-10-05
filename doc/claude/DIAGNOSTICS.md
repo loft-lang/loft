@@ -37,7 +37,7 @@ conditional one (each is one fix line), and the concept door they open onto.
 | `copy-of-droppable` | error | A line writes a COPY of a value whose type owns a resource — it declares `OpDrop`, or holds a member that does — and the type declares no `OpCopy` to give the copy its own lease, so the two structures would release one resource twice (`formal/heap.md` `(H-Copy-Refuse)`, @PLN163). A copy places an EXISTING value — a variable, a parameter, a loop variable, a `match` binding, a member, a member of a call result — into a new structure: bound as a whole value, written into a field, enum payload, element or tuple member of a literal, appended, returned where `(H-Move)` does not allow it, or chosen by `??` or a join in one of those positions. The verdict is read off that line and the declared types alone, so no later line changes it. Legal, because no second structure is made: a fresh value anywhere, passing a value as an argument, a `&` bind, and a view of a member. | Use the value where it is, pass it as an argument, build it where it belongs, or return the owner. | C C · `@F106` |
 | `read-after-move` | error | A line reads a name whose value an earlier statement MOVED into a new structure — the function owned it and placed it in a field, element or tuple member, appended it, bound it to another name, or returned it — so the new structure releases the value now (`formal/heap.md` `(H-Spent)`, @PLN163). Placing the name a second time is such a read. A move under a branch spends the name on that path, and a read any such path reaches is refused. Reads inside the moving statement are not late, and a reassignment refills the name. | Read it through the structure it moved into, or give the name a new value before the read. | C C · `@F106` |
 | `text-link-kind` | error | A `&` text link is bound to one kind of place and then to the other: a text VARIABLE and a text FIELD or ELEMENT are different places to a link (the first is a frame slot, the second a slot in a store), and a link keeps the kind of place it was first bound to — `(B-Ref-Repoint)` keeps a link's type (`formal/binding.md`, @PLN167 C1). Refused whichever order the two binds come in, and across the arms of an `if`. | Bind a second `&` link for the other place. | C · `@F21` |
-| `lost-write` | warning | A write landed in a COPY (C86) and reached nothing. Two shapes: a COPY mutated but never read — an element written, or appended to with `+=`; a collection built fresh and never read is not a copy and is not reported — and a call that writes through a by-value struct parameter given a value RETURNED by another call — `hurt(first(s), …)`, where the returned copy is freed at the end of the statement while `hurt(s.es[0] ?? E {}, …)` lands. | Bind a live reference with `&` for write-through; pass the element itself rather than a call returning it; or read the copy back if a copy was intended. | C C · `@F21` `@F106` |
+| `lost-write` | warning | A write landed in a COPY (C86) and reached nothing. Two shapes: a COPY mutated but never read — an element written, or appended to with `+=`, directly or through a view bound off the copy (`e = es[0]; e.f = x; es[0] = e`); a collection built fresh and never read is not a copy and is not reported — and a call that writes through a by-value struct parameter given a value RETURNED by another call — `hurt(first(s), …)`, where the returned copy is freed at the end of the statement while `hurt(s.es[0] ?? E {}, …)` lands. | Bind a live reference with `&` for write-through; pass the element itself rather than a call returning it; or read the copy back if a copy was intended. | C C · `@F21` `@F106` |
 | `text-parse-may-fail` | error | A text parsed `as <numeric>` can fail, and the result was typed non-null. | `?? <default>` for a fallback, `(… as T?)?` for the type's default, or `as T?` for a checked cast. | C C C · `@F2` `@F96` `@F5` |
 | `enum-parse-default` | warning | A text is parsed `as E` for a plain enum and is not a literal, so a text naming no variant answers E's first-declared variant (`@C131`). | Give the parse a fallback with `?? <variant>`, or write `as E?` for null on a miss. | C C · `@F2` `@F5` |
 | `variant-cast-default` | warning | An enum value is cast to one of its variants (`s as Circle`) where the variant is not proven, so a value holding another variant answers the variant with every field at its default (`@C131`). Silent inside `if s is Circle { … }`. | Check the variant first with `if s is Circle { … }`, or write `as Circle?` for null on a miss. | C C · `@F30` `@F5` |
@@ -480,7 +480,14 @@ type's spelling wrong are exactly the ones nobody had a symptom for.
    none, and `every_offered_door_resolves_to_a_catalogue_entry` fails a `@F` that is not in
    the catalogue. If the fix genuinely cannot be offered yet, add a row to `FIX_BLOCKED`
    naming what blocks it — a listed exception, never a silent one.
-4. **Point the caret with `diagnostic_at!` whenever detection happens after parsing.**
+4. **Measure a new or widened `warning` over every program we can reach, off this box.** A
+   warning gates a library's CI, so its reach over loft, every `loft-libs-*` repo and the
+   consumers is known before it lands: push a commit carrying `Lint-sweep-base: <sha>` and
+   `Lint-sweep-code: <code>` trailers to the `lint-sweep` branch, and
+   `.github/workflows/lint-sweep.yml` lists every file whose count moved, with the new
+   build's diagnostics there (`scripts/lint_sweep.py` runs the same locally).
+
+5. **Point the caret with `diagnostic_at!` whenever detection happens after parsing.**
    `diagnostic!` uses the lexer's CURRENT cursor, which is only right while the offending
    construct is still under it. A whole-function judgement (complexity, parameter count,
    trailing booleans) needs the whole body first, and by then the cursor sits on the NEXT
@@ -491,7 +498,7 @@ type's spelling wrong are exactly the ones nobody had a symptom for.
    `tests/error_messages/cases/48_advice_points_at_the_function_it_names.loft`, whose
    fixture deliberately ends in a `next_function_marker` no caret may land on.
 
-5. **A seek to a diagnostic site is not free — it moves what every LATER position is read
+6. **A seek to a diagnostic site is not free — it moves what every LATER position is read
    from.** `Lexer::to` points the reporting position at a declaration a whole-body pass is
    complaining about; it does **not** move the read cursor, and the tokenizer keeps
    incrementing that reporting position on every physical line it pulls afterwards. So a
@@ -511,7 +518,7 @@ type's spelling wrong are exactly the ones nobody had a symptom for.
    ([GUARDS.md](GUARDS.md#the-set-a-suite-runs-is-not-the-set-it-contains-loft_trace_asserts)),
    which reads exactly this injected line.
 
-6. **The cursor is one token AHEAD of what the parser has decided about, and `diagnostic!`
+7. **The cursor is one token AHEAD of what the parser has decided about, and `diagnostic!`
    now attributes to the consumed source when that token has crossed a line.**
    `Lexer::position` is the scan cursor: the END of the token the parser is *holding*. A
    check that can only run once a construct is complete — a write to a `const` parameter, a
@@ -563,7 +570,7 @@ type's spelling wrong are exactly the ones nobody had a symptom for.
    current_token` pins the opt-out direction. All proven able to fail by disabling
    `report_pos`.
 
-7. **A whole-CONSTRUCT check must still name the part it is about, and `report_pos` cannot
+8. **A whole-CONSTRUCT check must still name the part it is about, and `report_pos` cannot
    guess which part.** The default of item 6 is right and not enough for a check that can only
    run once a whole construct is complete: its consumed source genuinely ends at the closing
    brace, so the caret lands there. That is correct and useless — a struct has many fields, and

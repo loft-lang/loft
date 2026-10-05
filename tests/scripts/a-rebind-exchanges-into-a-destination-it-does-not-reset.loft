@@ -1,0 +1,138 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-H-SwapRebind` — the rebind `x = f(…)` of a record from a fresh call result exchanges the
+// result's store into `x` without resetting `x` first.
+//
+// The rebind reset `x`'s store and then copied, or exchanged, the result into it.  On
+// `--native` the reset is left out where the exchange can run: `x`'s old tree leaves with the
+// released store and is freed with it (`codegen_runtime::OpRebindRecord`,
+// `LOFT_NO_SWAP_REBIND=1` keeps the reset).  What can go wrong is the old value surviving into
+// the new one — a longer old vector, an old text — or an exchange where the result is not the
+// call's to give: a parameter handed back, a captured record, a type whose stores name each
+// other.  Every cell checks the value AND the length.  Values hand-computed;
+// `tests/swap_rebind.rs` pins that every cell's rebind is emitted through the exchange and
+// that both arms leave no store behind.
+//
+// @falsified-at: none — the rule has no earlier build to catch, so the receipt is planted
+//   defects (2026-10-02), on --native: the exchange reported without being made fails r1 (the
+//   chain reads [1,1,1,1], the old value); the released store kept instead of freed leaves
+//   "2 stores not freed" (Bag x10, M x3), which the pin fails on.  Ignoring the fn-ref
+//   borrowed marker is INERT: a borrowed result lives in the closure's store, whose root is the
+//   closure record, so the exchange's own root-type test declines it first.
+//   CHANNEL: an assertion (r1) and the native leak report (the pin).
+
+struct M { m: vector<float> }
+
+struct Bag { name: text, items: vector<integer>, n: integer }
+
+struct Keyed { k: integer }
+
+struct Index { rows: hash<Keyed[k]>, tag: integer }
+
+fn mul2(a: const M, b: const M) -> M {
+  r = M { m: [0.0, 0.0, 0.0, 0.0] };
+  for i in 0..4 { r.m[i] = (a.m[i] ?? 0.0) * (b.m[i] ?? 0.0); }
+  r
+}
+
+// r1: the matrix chain: b is multiplied by a = [2, 3, 1, 0.5] three times, starting at all-ones
+fn r1() {
+  a = M { m: [2.0, 3.0, 1.0, 0.5] };
+  c = M { m: [1.0, 1.0, 1.0, 1.0] };
+  for _ in 0..3 { c = mul2(a, c); }
+  assert(len(c.m) == 4, "r1 len {len(c.m)}");
+  assert(c.m[0] == 8.0 && c.m[1] == 27.0 && c.m[2] == 1.0 && c.m[3] == 0.125, "r1 got {c.m}");
+}
+
+fn bag(name: text, n: integer) -> Bag {
+  b = Bag { name: name, items: [], n: n };
+  for i in 0..n { b.items += [i * 10]; }
+  b
+}
+
+// r2: the old value is longer — 5 items, then 2: nothing of the five may survive
+fn r2() {
+  x = bag("five", 5);
+  old = len(x.items);
+  x = bag("two", 2);
+  assert(old == 5, "r2 old {old}");
+  assert(len(x.items) == 2 && x.items[0] == 0 && x.items[1] == 10, "r2 items {x.items}");
+  assert(x.name == "two" && x.n == 2, "r2 got {x.name} {x.n}");
+}
+
+// r3: text and vector together, rebound in a loop: the last round's value only
+fn r3() {
+  x = bag("start", 3);
+  for i in 0..4 { x = bag("round{i}", i); }
+  assert(x.name == "round3" && len(x.items) == 3 && x.items[2] == 20, "r3 got {x.name} {x.items}");
+}
+
+fn grow(b: const Bag) -> Bag {
+  r = Bag { name: "{b.name}+", items: [], n: b.n + 1 };
+  for v in b.items { r.items += [v + 1]; }
+  r.items += [b.n];
+  r
+}
+
+// r4: the result is built from the old value it replaces
+fn r4() {
+  x = bag("g", 2);           // items [0, 10], n 2
+  x = grow(x);               // [1, 11, 2], n 3, "g+"
+  x = grow(x);               // [2, 12, 3, 3], n 4, "g++"
+  assert(x.name == "g++" && x.n == 4, "r4 got {x.name} {x.n}");
+  assert(len(x.items) == 4 && x.items[0] == 2 && x.items[1] == 12 && x.items[3] == 3,
+         "r4 items {x.items}");
+}
+
+fn same(b: Bag) -> Bag { b }
+
+// r5: the callee hands back what it was given: an adopt, never an exchange
+fn r5() {
+  x = bag("kept", 2);
+  x = same(x);
+  assert(x.name == "kept" && len(x.items) == 2 && x.items[1] == 10, "r5 got {x.name} {x.items}");
+}
+
+// r6: a closure returning its capture returns a COPY: the copy is exchanged, the capture stays
+fn r6() {
+  held = bag("held", 3);
+  get = fn() -> Bag { held };
+  x = bag("x", 1);
+  old = len(x.items);
+  x = get();
+  assert(old == 1, "r6 old {old}");
+  x.items += [99];
+  assert(len(x.items) == 4 && x.items[3] == 99, "r6 x {x.items}");
+  assert(len(held.items) == 3, "r6 the capture changed: {held.items}");
+}
+
+fn make_index(tag: integer, rows: integer) -> Index {
+  r = Index { rows: [], tag: tag };
+  for i in 0..rows { r.rows += [Keyed { k: i * 7 }]; }
+  r
+}
+
+// r7: a keyed collection's pointers name its store, so the exchange declines and copies
+fn r7() {
+  x = make_index(1, 4);
+  old = x.tag;
+  x = make_index(2, 3);
+  assert(old == 1, "r7 old {old}");
+  assert(x.tag == 2 && x.rows[14] != null && x.rows[21] == null && x.rows[0] != null,
+         "r7 got tag {x.tag}");
+}
+
+// r8: a rebind on one branch of a loop body only
+fn r8() {
+  x = bag("odd", 1);
+  for i in 0..5 {
+    if i % 2 == 0 { x = bag("even{i}", i + 1); }
+  }
+  assert(x.name == "even4" && len(x.items) == 5 && x.items[4] == 40, "r8 got {x.name} {x.items}");
+}
+
+fn main() {
+  r1(); r2(); r3(); r4(); r5(); r6(); r7(); r8();
+  println("done");
+}

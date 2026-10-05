@@ -246,8 +246,9 @@ fn a_bind_into_the_locals_own_store_takes_the_view_op_and_every_other_shape_the_
         "n_appended: `+=` copies:\n{ir}"
     );
     // A returned local is the caller's buffer, and an argument the caller's vector: neither
-    // store is the local's own, so both copy — the argument through its temp, which does
-    // own its store and views, then copies into the parameter.
+    // store is the local's own, so the returned local copies.  The argument's `v = v[1..3]`
+    // is a slice of the vector itself and keeps its range in place (`OpKeepRange`); a
+    // foreign or locked store takes the copy form at run time (`vector_keep_range`).
     let ir = ir_of(&dump, "n_returned");
     assert!(
         ir.contains("OpSliceVector(") && !ir.contains("OpSliceView("),
@@ -255,7 +256,7 @@ fn a_bind_into_the_locals_own_store_takes_the_view_op_and_every_other_shape_the_
     );
     let ir = ir_of(&dump, "n_argument");
     assert!(
-        ir.contains("OpSliceView(___p390_tmp") && ir.contains("OpAppendVector(v("),
-        "n_argument: the temp views, the parameter is copied into:\n{ir}"
+        ir.contains("OpKeepRange(v") && !ir.contains("___p390_tmp"),
+        "n_argument: the parameter keeps its own slice in place:\n{ir}"
     );
 }

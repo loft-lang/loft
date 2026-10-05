@@ -1165,7 +1165,7 @@ impl Store {
         Self::open_mapped(path, false)
     }
 
-    /// [`open`](Store::open) for a READ SURFACE — a cache bundle or image another process may
+    /// `@FR-H-ReadSurface` — [`open`](Store::open) for a READ SURFACE — a cache bundle or image another process may
     /// map at the same time.  The mapping is the file's own pages (`MAP_SHARED`), so anything
     /// `open` writes reaches every process using the file: the free-list and claims rebuilds
     /// write block footers and tree links into free blocks, and N processes warm-loading one
@@ -2568,6 +2568,7 @@ impl Store {
     /// CONST_STORE / worker borrow / JSON null sentinel.  Does NOT
     /// include the call-bracket free-protection.
     #[must_use]
+    #[inline]
     pub fn is_locked(&self) -> bool {
         self.read_only
     }

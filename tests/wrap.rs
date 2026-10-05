@@ -1684,22 +1684,7 @@ fn run_test(entry: PathBuf, debug: bool, allow_dump: bool) -> std::io::Result<()
     // here, so a failing script fails its test exactly as before.  A sanitizer build's frames
     // are several times larger (ASan's redzones), so its jobs raise the floor through
     // `RUST_MIN_STACK`, the knob std's own threads read.
-    let stack = std::env::var("RUST_MIN_STACK")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .map_or(8 << 20, |v| v.max(8 << 20));
-    std::thread::scope(|sc| {
-        let run = std::thread::Builder::new()
-            .stack_size(stack)
-            .spawn_scoped(sc, || {
-                run_test_inner(entry, debug, allow_dump, None, 0, &mut collected)
-            })
-            .expect("spawn the script thread");
-        match run.join() {
-            Ok(result) => result,
-            Err(panic) => std::panic::resume_unwind(panic),
-        }
-    })
+    common::on_cli_stack(|| run_test_inner(entry, debug, allow_dump, None, 0, &mut collected))
 }
 
 /// How many times a file may be peeled before the harness gives up (loft#1242).

@@ -354,7 +354,12 @@ parameter (via `&`) is host, a genuinely-copied one is script-owned.
                  a reset; it walks the record's own type, or a struct-enum's
                  PARENT type, so it follows the variant the buffer HOLDS rather
                  than the one about to be written.  A record of scalars has
-                 nothing to release and emits nothing.
+                 nothing to release and emits nothing.  A record whose every
+                 heap slot is EMPTY at the release — each text and collection
+                 slot zero, each struct-enum tag absent or naming a variant that
+                 owns no heap, read from the type's cached slot list — releases
+                 nothing and skips the walk; any slot the list cannot read takes
+                 the walk.
 
   (H-FreeFooter) inside one store, a FREE block of n words carries −n at BOTH ends: its
                  header word and the HIGH half of its LAST word (the tree node's color
@@ -424,6 +429,11 @@ parameter (via `&`) is host, a genuinely-copied one is script-owned.
                  within its first rungs, so the working set never doubles.  Below the
                  bound a claim the wilderness cannot hold grows the store, or takes an
                  untracked block the chain walk meets on its way to growing.
+  (H-ReadSurface) a store opened from a file only to be READ — a cached stdlib or program
+                 image — writes nothing into the file: its free-block tree and footers
+                 (`H-FreeFooter`, `H-Wilderness`) are left unbuilt, since a read surface
+                 claims and frees nothing.  The file's mapping is shared by every process
+                 that opens it, so a rebuild in place is a write another start reads.
   (H-SwapIn)     the deep copy of a store's ROOT record into the root of another store
                  that holds nothing else, the source store given up after it (the copy's
                  free-source form — the rebind `x = f(…, x, …)` from a callee that minted
@@ -441,6 +451,19 @@ parameter (via `&`) is host, a genuinely-copied one is script-owned.
                  slot — a file, foreign bytes, a recording, a lock, a borrow, a constant,
                  a lazy binding, the interpreter's stack — keeps the copy; a free
                  protection refuses only the side the exchange releases.
+  (H-SwapRebind) on `--native`, the rebind `x = f(…)` whose copy would follow a reset of
+                 `x`'s store is the exchange of `(H-SwapIn)` WITHOUT the reset: `x`'s
+                 previous tree moves to the released slot with the rest of `x`'s store
+                 and is freed with it, which is what the reset releases.  Every other
+                 condition is the exchange's; where one fails, the reset and the copy run.
+  (H-SwapKeyed)  a keyed LOCAL rebound from a call that gave its collection up (`h =
+                 build(…)`, `OpReplaceKeyed`'s free-source form) is `(H-SwapRebind)`'s
+                 exchange on both backends: a keyed local is a dedicated store with its
+                 header at `1@8`, so the source's whole store is the value the copy would
+                 rebuild.  A keyed collection's own pointers are record numbers inside its
+                 store, so they survive; what keeps the copy is a stored reference in the
+                 ELEMENT tree, which could name the source slot.  The released slot holds
+                 the old collection and is freed, never parked for a buffer refill.
 ```
 
 **`H-SwapIn` is the copy's own answer, delivered without the copy.** The copy it replaces
@@ -453,6 +476,27 @@ is the type walk.  `LOFT_NO_STORE_SWAP=1` keeps the copy; `LOFT_TRACE_STORE_SWAP
 each exchange.  Site: `Stores::try_swap_in`, called by both backends' `OpCopyRecord`.  Guard
 `tests/scripts/a-rebind-from-a-fresh-result-exchanges-the-stores.loft`, pin
 `tests/store_swap.rs`.
+
+**`H-ReadSurface` is why a cache can be shared.** The tree's links live in the free blocks'
+own bodies, so building it is a write to the store's bytes, and for a mapped file those bytes
+are the file's.  One start alone rewrites the same links each time, which is why the image
+reads byte-identical after a run; two starts at once each read a link the other is halfway
+through writing, as a record number.  The rule is a property of the OPEN, not of the caller:
+`Store::open_read_surface` builds the in-memory claims set from the headers and nothing else,
+and every cache loader goes through it (`ir_read::adopt_read_surface`).  A writable file store
+opens with `Store::open` and rebuilds as before.  Guard `tests/concurrent_warm_start.rs`.
+
+**`H-SwapRebind` is the same exchange, one statement earlier.** A reset clears the destination
+store and claims a fresh root, and the exchange that follows moves that root out again: the
+only thing the reset changed is what the released slot holds when it is freed — an empty root
+instead of `x`'s previous tree.  Both are freed, so skipping the reset changes no reachable
+value.  The source must still be given up and must not be a store the last fn-ref call
+borrowed; a witnessed destination is reset as before, since its old store has to survive.
+`LOFT_NO_SWAP_REBIND=1` keeps the reset.  Site: `codegen_runtime::OpRebindRecord` over
+`Stores::try_swap_rebind`, emitted for a call-return rebind's copy arm
+(`generation/dispatch.rs`).  Guard
+`tests/scripts/a-rebind-exchanges-into-a-destination-it-does-not-reset.loft`, pin
+`tests/swap_rebind.rs`.
 
 **`H-RootExtent` is what makes `H-ClearRelease`'s release affordable.** The release has to
 reach everything the cleared elements own, and it can do that two ways: walk the elements and

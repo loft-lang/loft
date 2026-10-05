@@ -1,0 +1,6 @@
+[package]
+name = "fwd1856h"
+version = "0.1.0"
+
+[library]
+entry = "src/fwd1856h.loft"

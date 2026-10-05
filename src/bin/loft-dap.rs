@@ -1033,7 +1033,7 @@ fn collect_lib_dirs(args: &[String]) -> Vec<String> {
     while i + 1 < args.len() {
         if args[i] == "--lib" {
             let raw = &args[i + 1];
-            let abs = loft::portable_path::plain_canonical_str(raw);
+            let abs = loft::file_access::plain_canonical_str(raw);
             if !dirs.contains(&abs) {
                 dirs.push(abs);
             }

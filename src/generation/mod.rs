@@ -18,6 +18,7 @@ pub mod non_sentinel;
 pub(crate) mod ops;
 mod pre_eval;
 pub mod range;
+mod ranged_call;
 mod text;
 
 /// One hoisted binding produced by `collect_pre_evals`:
@@ -658,6 +659,24 @@ pub fn ckpt_filter_from_env() -> Option<String> {
     (!filter.is_empty()).then(|| filter.to_string())
 }
 
+/// `@FR-R-Base`'s byte clause, as [`Output::fused_byte_read`] answers it.
+pub struct ByteRead<'a> {
+    pub elem_op: u32,
+    pub elem_args: &'a [Value],
+    pub index: &'a Value,
+    pub size: i32,
+    pub fld: i32,
+    pub min: i32,
+    /// `OpGetBoolean` rather than `OpGetByte`: the stored byte is the answer as it stands
+    /// (0, 1, or 255 for null), with no bias, and an absent element answers 255.
+    pub boolean: bool,
+    /// `OpGetCharacter`: the stored `u32` decoded as the template decodes it
+    /// (`char::from_u32(..).unwrap_or('\0')`), and `'\0'` for an absent element.
+    pub character: bool,
+    pub header: String,
+    pub base: String,
+}
+
 /// Use this to drive Rust code generation from a compiled loft program.
 /// It bundles the read-only compile-time data with the mutable emission state
 /// so that individual emits functions don't need to pass both separately.
@@ -682,6 +701,15 @@ pub struct Output<'a> {
     /// `_old != _rb_w_<name>`, so it never frees the caller's buffer — closing
     /// the cluster-462 native record leak without an over-free.
     pub retbuf_witness: HashSet<u16>,
+    /// `@FR-R-RebindBuffer` — set by an owned reassignment for the call-return arm inside
+    /// it: the call's hidden buffer local, and the entry witness a retbuf-attr destination
+    /// must not equal.  The arm takes it and marks it used, so the reassignment knows to
+    /// hand the displaced store to that buffer instead of freeing it.
+    pub rebind_buffer: Option<(u16, String, Option<String>)>,
+    pub rebind_buffer_used: bool,
+    /// `@FR-R-RebindBuffer` — the hidden buffer locals a rebind hands stores to; their
+    /// scope-exit release parks the store instead of freeing it.
+    pub rebind_handed: HashSet<u16>,
     /// @PLN90 #495 — "runtime-Join" locals: an owned-typed Reference/Enum local
     /// that is INITIALISED owned (a whole-value copy / owned call) but then
     /// REASSIGNED to a borrow (the `r = v[i] ?? x` ncc) at least once.  r's
@@ -789,6 +817,52 @@ pub struct Output<'a> {
     /// `LOFT_NO_RECORD_PTR=1` — no record view carries its address; every field read and
     /// write resolves the store again.
     pub record_ptr_disabled: bool,
+    /// `LOFT_NO_PARAM_RECORD_PTR=1` — `@FR-R-RecPtr`'s parameter clause off: a record
+    /// parameter's field accesses resolve the store each, as before the clause.
+    pub param_record_ptr_disabled: bool,
+    /// Header local → the local holding its vector's `DbRef`, bound beside it at a loop
+    /// prelude.  Keyed by the header's NAME, which is unique per hoist, so no frame has to
+    /// be pushed and popped in step with `vec_headers`.
+    pub header_dbrefs: HashMap<String, String>,
+    /// The parameters `@FR-R-RecPtr`'s parameter clause bound in the function being emitted.
+    /// Their address serves field reads and writes, never a twin call's inputs: a twin called
+    /// once per call reads its inputs once either way, and each such caller is one more for
+    /// LLVM to weigh against inlining the twin where it IS hot (hex_field's setup calls
+    /// moved `eg_index__inv` off the `edgeset_count` path's inline budget, −30 %).
+    pub param_rec_ptrs: HashSet<u16>,
+    /// `@FR-R-Alias`'s versioned clause — the (parameter, return buffer) pairs the loop copy
+    /// being emitted runs under, proved apart by the test in front of it.
+    pub assumed_distinct: Vec<(u16, u16)>,
+    /// `@FR-R-RangedCall` — the facts the code being emitted runs under, replacing the
+    /// function's own: a ranged variant's (its parameters and scalar inputs seeded), or a
+    /// guarded `For` copy's (the guarded fields seeded).  A stack: a copy inside a variant
+    /// pushes over it.
+    pub range_override: Vec<std::rc::Rc<range::Ranges>>,
+    /// Set while a guarded `For` copy (or the plain arm beside it) is emitted, so the block
+    /// is not asked again.
+    pub in_range_copy: bool,
+    /// `@FR-R-RangedCall` — the ranged variants calls have asked for, `(function, twin)`,
+    /// and the ones already emitted.
+    pub rg_requests: Vec<(u32, bool)>,
+    pub rg_emitted: HashSet<(u32, bool)>,
+    /// Set while a ranged variant's body is emitted: its name takes `__rg`.
+    pub emitting_ranged: bool,
+    /// `LOFT_NO_DISTINCT_VERSION=1` — no loop is emitted twice on a store-distinct test.
+    pub distinct_version_disabled: bool,
+    /// Set while the PLAIN copy of a loop (or a loop the clause declined) is emitted, so the
+    /// loop arm is not asked again for the same loop.  Nested loops inside it are asked anew.
+    pub in_distinct_copy: bool,
+    /// A serial for the operand locals the checking form of a plain operator binds.
+    pub verify_serial: u32,
+    /// `LOFT_NO_HEADER_DBREF=1` — rebuild the vector's `DbRef` at every fused read.
+    pub header_dbref_disabled: bool,
+    /// `LOFT_NO_REFILL_KEEP=1` — a refilling buffer's entry clear releases its vector, as
+    /// before the live clause.
+    pub refill_keep_disabled: bool,
+    /// `LOFT_NO_BYTE_READ=1` — a `vector<u8>` element read keeps its template.
+    pub byte_read_disabled: bool,
+    /// `LOFT_NO_TEXT_SET_BORROW=1` — every `OpSetText` copies its value first, as before.
+    pub text_set_copy_kept: bool,
     /// `LOFT_NO_BASE_RECPTR=1` — a record view bound from an element of a vector whose BASE
     /// the loop holds resolves the store for its address again (`@FR-R-RecPtr`'s base
     /// clause off).
@@ -963,6 +1037,9 @@ pub struct Output<'a> {
     /// whose write set covers every field ([`hoist::complete_writes`]): their
     /// `OpDatabase`/`OpNewRecord` emit the no-prefill twin.
     pub complete_writes: hoist::CompleteWrites,
+    /// `@FR-R-RefillBuffer` — the current function's return buffer when it refills a kept
+    /// store ([`hoist::refill_buffers`]), and the vector-field zeroes that empty in place.
+    pub refill: hoist::RefillBuffers,
     /// `LOFT_NO_COMPLETE_WRITE=1` — every record keeps its default prefill, as before
     /// @PLN157 § V-y; the bisect step for a wrong default/sentinel in a literal-built
     /// record on native.
@@ -1019,6 +1096,8 @@ pub struct Output<'a> {
     /// `LOFT_NO_PUSH_FILL` (generation time): a counted push loop reserves nothing and
     /// fills nothing — the per-push ladder and the per-element loop again (§ V-am).
     pub push_fill_disabled: bool,
+    /// `@FR-R-RefillBuffer`'s in-place clause (`LOFT_NO_REFILL_IN_PLACE` turns it off).
+    pub refill_in_place: bool,
     /// `LOFT_NO_INLINE_HINT` (generation time): loft functions carry no `#[inline]`
     /// ([`crate::keys::inline_hint_enabled`]).
     pub inline_hint: bool,
@@ -1114,7 +1193,7 @@ pub struct Output<'a> {
     nn_cache: HashMap<u32, std::rc::Rc<HashMap<u16, bool>>>,
     /// `@FR-R-Range` — the per-definition range facts ([`range::range_vars`]), computed on
     /// the first integer op a function emits and cached beside the non-sentinel ones.
-    range_cache: HashMap<u32, std::rc::Rc<HashMap<u16, range::Range>>>,
+    range_cache: HashMap<u32, std::rc::Rc<range::Ranges>>,
     /// `LOFT_NO_TYPED_KEYED=1` — a lookup in a `hash` with one integer key is emitted as the
     /// general `OpGetRecord` again instead of `OpGetHashLong` (`@FR-R-TypedKeyed`); the
     /// bisect step for a wrong or missing record out of such a lookup on native.
@@ -2227,6 +2306,24 @@ impl<'a> Output<'a> {
             record_ptr_disabled: std::env::var("LOFT_NO_RECORD_PTR").is_ok_and(|v| v != "0")
                 || !crate::keys::vector_base_enabled(),
             base_rec_ptr_disabled: std::env::var("LOFT_NO_BASE_RECPTR").is_ok_and(|v| v != "0"),
+            param_record_ptr_disabled: std::env::var("LOFT_NO_PARAM_RECORD_PTR")
+                .is_ok_and(|v| v != "0"),
+            header_dbrefs: HashMap::new(),
+            param_rec_ptrs: HashSet::new(),
+            assumed_distinct: Vec::new(),
+            range_override: Vec::new(),
+            in_range_copy: false,
+            rg_requests: Vec::new(),
+            rg_emitted: HashSet::new(),
+            emitting_ranged: false,
+            distinct_version_disabled: std::env::var("LOFT_NO_DISTINCT_VERSION")
+                .is_ok_and(|v| v != "0"),
+            in_distinct_copy: false,
+            verify_serial: 0,
+            header_dbref_disabled: std::env::var("LOFT_NO_HEADER_DBREF").is_ok_and(|v| v != "0"),
+            text_set_copy_kept: std::env::var("LOFT_NO_TEXT_SET_BORROW").is_ok_and(|v| v != "0"),
+            byte_read_disabled: std::env::var("LOFT_NO_BYTE_READ").is_ok_and(|v| v != "0"),
+            refill_keep_disabled: std::env::var("LOFT_NO_REFILL_KEEP").is_ok_and(|v| v != "0"),
             recptr_trace: std::env::var("LOFT_TRACE_RECPTR").is_ok(),
             scalar_hoists: Vec::new(),
             scalar_write_cache: HashMap::new(),
@@ -2274,6 +2371,7 @@ impl<'a> Output<'a> {
             invariant_lits: hoist::LitHoist::default(),
             literal_hoist_disabled: std::env::var("LOFT_NO_LITERAL_HOIST").is_ok_and(|v| v != "0"),
             complete_writes: hoist::CompleteWrites::default(),
+            refill: hoist::RefillBuffers::default(),
             complete_write_disabled: std::env::var("LOFT_NO_COMPLETE_WRITE")
                 .is_ok_and(|v| v != "0"),
             value_records: hoist::ValueRecords::default(),
@@ -2291,6 +2389,10 @@ impl<'a> Output<'a> {
             loop_record_disabled: std::env::var("LOFT_NO_LOOP_RECORD").is_ok_and(|v| v != "0")
                 || !crate::keys::loop_buffer_reuse_enabled(),
             push_fill_disabled: !crate::keys::push_fill_enabled(),
+            refill_in_place: crate::keys::refill_in_place_enabled(),
+            rebind_buffer: None,
+            rebind_buffer_used: false,
+            rebind_handed: HashSet::new(),
             inline_hint: crate::keys::inline_hint_enabled(),
             push_window_disabled: !crate::keys::push_window_enabled(),
             join_read_disabled: !crate::keys::join_read_enabled(),
@@ -2520,6 +2622,25 @@ fn collect_witness_vars(data: &crate::data::Data, def_nr: u32) -> HashSet<u16> {
 }
 
 impl Output<'_> {
+    /// Does the compiled program learn its own `.loft` path from its driver at run time
+    /// (`codegen_runtime::main_file_or`, fed `LOFT_NATIVE_MAIN_FILE`)?  Only a host-native
+    /// test/semantics build has a driver; a shipped (lean) binary, a browser page and a WASI
+    /// module run without one, so they keep the path baked — without it a browser `panic`
+    /// rendered no `--> file:line` at all.
+    pub(super) fn reads_main_file_at_run_time(&self) -> bool {
+        !self.lean && !self.wasm_browser && !self.wasm_wasi
+    }
+
+    /// The program's own `.loft` path — the file `main` is defined in (empty without one).
+    pub(super) fn main_file(&self) -> String {
+        let d = self.data.def_nr("n_main");
+        if d == u32::MAX {
+            String::new()
+        } else {
+            self.data.def(d).position().file.to_string()
+        }
+    }
+
     /// The Rust identifier this generation emits for function `def` — the bare
     /// name unless it collides across modules (see [`disambiguated_fn_ident`]).
     /// Every site that writes a fn definition OR a call to one must go through
@@ -2567,6 +2688,8 @@ impl Output<'_> {
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn start_fn(&mut self, def_nr: u32) {
         self.def_nr = def_nr;
+        self.header_dbrefs.clear();
+        self.param_rec_ptrs.clear();
         self.indent = 0;
         self.placed_locals = hoist::placed_locals(self.data.def(def_nr).code(), self.data);
         // @PLN157 § V-j — the function's paired move-appends, before anything emits.
@@ -2623,6 +2746,11 @@ impl Output<'_> {
             hoist::CompleteWrites::default()
         } else {
             hoist::complete_writes(self.data, self.stores, def_nr)
+        };
+        self.refill = if crate::keys::refill_buffer_enabled() {
+            hoist::refill_buffers(self.data, self.stores, def_nr)
+        } else {
+            hoist::RefillBuffers::default()
         };
         self.move_pairs = if self.move_append_disabled {
             BTreeMap::new()
@@ -2738,6 +2866,7 @@ impl Output<'_> {
         self.declared.clear();
         self.local_record_link.clear();
         self.retbuf_witness.clear();
+        self.rebind_handed.clear();
         self.witness_vars.clear();
         self.predeclared.clear();
         self.next_format_count = 0;
@@ -3552,6 +3681,10 @@ impl Output<'_> {
             return Ok(None);
         }
         let Some(p) = hoist::push_loop(lp, self.data) else {
+            if let Some(ps) = hoist::push_loop_paths(lp, self.data) {
+                self.push_reserve_paths(w, &ps)?;
+                return Ok(None);
+            }
             // `@FR-R-PushFill`'s record clause — a counted loop appending RECORDS through
             // mint groups, possibly under `if` arms, reserves and opens a window the same
             // way, over the record-push header the loop holds.
@@ -3605,6 +3738,49 @@ impl Output<'_> {
         self.push_windows.push((p.path.clone(), win.clone()));
         crate::rewrite_census::fired("R-PushFill", 1);
         Ok(Some((win, hdr, vec)))
+    }
+
+    /// `@FR-R-PushFill`'s several-paths clause — reserve every path a counted loop pushes to
+    /// ([`hoist::push_loop_paths`]), each its own pushes times the trip count, and only then
+    /// re-derive each held push header: two vectors in one store would otherwise see the
+    /// second reserve move the record the first header was just derived from.  A path whose
+    /// header the loop does not hold is not reserved (its pushes go through the runtime,
+    /// which grows as it needs).
+    fn push_reserve_paths(
+        &mut self,
+        w: &mut dyn Write,
+        ps: &[hoist::PushLoop<'_>],
+    ) -> std::io::Result<()> {
+        let mut held: Vec<(String, String, u32, u32)> = Vec::new();
+        for p in ps {
+            if let Some(hdr) = self.active_push_header(&p.path).map(str::to_owned) {
+                let vec = self.expr_string(p.vector)?;
+                held.push((hdr, vec, p.pushes, p.size));
+            }
+        }
+        if held.is_empty() {
+            return Ok(());
+        }
+        let count = self.push_trip_count(&ps[0])?;
+        use std::fmt::Write as _;
+        let mut line = format!("{{ let _pn = {count}; if _pn > 0 {{ ");
+        for (_, vec, pushes, size) in &held {
+            let _ = write!(
+                line,
+                "vector::reserve_more(&({vec}), _pn.saturating_mul({pushes}_i64), {size}_u32, &mut stores.allocations); "
+            );
+        }
+        for (hdr, vec, _, _) in &held {
+            let _ = write!(
+                line,
+                "{hdr} = vector::push_header(&({vec}), &stores.allocations); "
+            );
+        }
+        line.push_str("} } //@FR-R-PushFill push reserve, several paths");
+        self.indent(w)?;
+        writeln!(w, "{line}")?;
+        crate::rewrite_census::fired("R-PushFill", 1);
+        Ok(())
     }
 
     /// `@FR-R-PushFill`'s record clause — [`Self::push_reserve`] for a record-append loop
@@ -3869,6 +4045,201 @@ impl Output<'_> {
             .find_map(|j| self.vec_headers[j].get(path).cloned())
     }
 
+    /// `@FR-R-Alias`'s versioned clause — when `lp` pushes into this function's return buffer
+    /// and keeps fewer headers than it would if each parameter's store were apart from the
+    /// buffer's (`StoreFacts::distinct` cannot prove that statically: a caller may hand a
+    /// field of the record it passes), answer the pairs to test at run time.  The loop is
+    /// then emitted twice: under the test with those pairs assumed, and as before.  `None`
+    /// for a loop that gains nothing, cannot be copied (a `yield`, a `par`, a fn-ref call),
+    /// declares a loop record the copies would have to share, or sits in a generator.
+    pub(super) fn distinct_version(&mut self, lp: &crate::data::Block) -> Option<Vec<(u16, u16)>> {
+        if self.distinct_version_disabled
+            || self.hoist_disabled
+            || self.distinct_growth_disabled
+            || self.in_coroutine_body
+            || !self.assumed_distinct.is_empty()
+            || self.loop_records.values().any(|r| r.loop_scope == lp.scope)
+            || lp.operators.iter().any(|op| {
+                op.any_node(&mut |n| {
+                    matches!(
+                        n,
+                        Value::Yield(_) | Value::Parallel(_) | Value::CallRef(_, _)
+                    )
+                })
+            })
+        {
+            return None;
+        }
+        let rb = hoist::retbuf_var(self.data, self.def_nr)?;
+        let vars = self.data.def(self.def_nr).variables();
+        let params: Vec<u16> = (0..vars.count())
+            .filter(|&v| vars.is_argument(v) && v != rb && crate::data::is_dbref(vars.tp(v).base()))
+            .collect();
+        if params.is_empty() {
+            return None;
+        }
+        let plain = self.compute_loop_hoist(lp);
+        if plain
+            .pushes
+            .iter()
+            .chain(plain.mint_pushes.iter())
+            .all(|(p, _)| p.0 != rb)
+            && !plain.movers.contains(&rb)
+        {
+            return None;
+        }
+        self.assumed_distinct = params.iter().map(|&p| (p, rb)).collect();
+        let versioned = self.compute_loop_hoist(lp);
+        self.assumed_distinct.clear();
+        // A path counts only when nothing already holds its header: one an enclosing frame
+        // holds (the function clause, an outer loop) would gain the copy no more than an
+        // element base, which measured LESS than the duplicated loop costs (graphics'
+        // `polygon_crossings`, +8 % on `fill_polygon`).
+        let mut gained: Vec<u16> = versioned
+            .vectors
+            .iter()
+            .filter(|(p, _)| {
+                params.contains(&p.0)
+                    && !plain.vectors.iter().any(|(q, _)| q == p)
+                    && self.active_vec_header(p).is_none()
+            })
+            .map(|(p, _)| p.0)
+            .collect();
+        // `@FR-R-RecPtr` under the same assumption: a record VIEW of a parameter's element,
+        // read field by field in the loop, takes its address only when the buffer's growth is
+        // proven to leave the parameter's store alone — a gain of its own, which the header
+        // count above does not see (graphics' `polygon_crossings`: 18 store reads per edge).
+        for p in self.record_ptr_gains(lp, &params, rb) {
+            if !gained.contains(&p) {
+                gained.push(p);
+            }
+        }
+        if gained.is_empty() {
+            return None;
+        }
+        let mut pairs: Vec<(u16, u16)> = Vec::new();
+        for r in gained {
+            if !pairs.contains(&(r, rb)) {
+                pairs.push((r, rb));
+            }
+        }
+        Some(pairs)
+    }
+
+    /// The parameters of `params` with an element VIEW bound in `lp` that `@FR-R-RecPtr`
+    /// declines as things stand and admits once each parameter's store is assumed apart from
+    /// the return buffer `rb`.
+    fn record_ptr_gains(&mut self, lp: &crate::data::Block, params: &[u16], rb: u16) -> Vec<u16> {
+        if self.record_ptr_disabled || self.distinct_growth_disabled {
+            return Vec::new();
+        }
+        let vars = self.data.def(self.def_nr).variables();
+        let root = |v: u16| -> Option<u16> {
+            let mut cur = v;
+            for _ in 0..16 {
+                if params.contains(&cur) {
+                    return Some(cur);
+                }
+                let deps: Vec<u16> = vars.tp(cur).depend().clone();
+                let [d] = deps[..] else {
+                    return None;
+                };
+                cur = d;
+            }
+            None
+        };
+        // Every block inside the loop, with each statement that binds a view of a parameter.
+        let mut sites: Vec<(Vec<Value>, usize, u16)> = Vec::new();
+        let body = Value::Loop(Box::new(lp.clone()));
+        body.any_node(&mut |n| {
+            if let Value::Block(bl) = n {
+                for (i, st) in bl.operators.iter().enumerate() {
+                    if let Value::Set(r, _) = st.unspan()
+                        && let Some(p) = root(*r)
+                        && *r != p
+                    {
+                        sites.push((bl.operators.clone(), i, p));
+                    }
+                }
+            }
+            false
+        });
+        let mut out = Vec::new();
+        for (stmts, at, p) in sites {
+            if out.contains(&p) {
+                continue;
+            }
+            let pairs: Vec<(u16, u16)> = params.iter().map(|&q| (q, rb)).collect();
+            let verdict = |this: &mut Self, assumed: &[(u16, u16)]| {
+                let twin_params = this.twin_params_of(
+                    &stmts[at + 1..],
+                    match stmts[at].unspan() {
+                        Value::Set(r, _) => *r,
+                        _ => u16::MAX,
+                    },
+                );
+                hoist::record_view_ptr(
+                    &stmts,
+                    at,
+                    this.data,
+                    this.stores,
+                    this.def_nr,
+                    &mut this.hoist_cache,
+                    !this.write_hoist_disabled,
+                    &twin_params,
+                    Some(&hoist::StoreFacts {
+                        vars: this.data.def(this.def_nr).variables(),
+                        placed: &this.placed_locals,
+                        adopted: this.ret_adopt.as_ref().map(|a| (a.v, a.vdb)),
+                        owned: Some(&this.hoist_owned),
+                        assumed,
+                    }),
+                    Some(&this.hoist_owned),
+                )
+                .is_ok()
+            };
+            if !verdict(self, &[]) && verdict(self, &pairs) {
+                out.push(p);
+            }
+        }
+        out
+    }
+
+    /// The hoist verdict for loop `lp`, under the pairs [`Self::assumed_distinct`] holds.
+    fn compute_loop_hoist(&mut self, lp: &crate::data::Block) -> hoist::LoopHoist {
+        if self.hoist_disabled {
+            return hoist::LoopHoist::default();
+        }
+        hoist::hoistable(
+            lp,
+            self.data,
+            self.stores,
+            self.def_nr,
+            &mut self.hoist_cache,
+            &mut self.scalar_write_cache,
+            hoist::HoistTiers {
+                in_place: !self.write_hoist_disabled,
+                scalars: !self.scalar_hoist_disabled,
+                push: !self.push_hoist_disabled,
+                mint: !self.mint_hoist_disabled,
+                record_push: !self.record_push_disabled,
+                heap_push: !self.heap_record_push_disabled,
+                rebound_movers: !self.rebound_mover_disabled,
+            },
+            (!self.callee_inputs_disabled).then_some(&mut self.input_cache),
+            Some(&self.hoist_owned),
+            (!self.distinct_growth_disabled)
+                .then_some(hoist::StoreFacts {
+                    vars: self.data.def(self.def_nr).variables(),
+                    placed: &self.placed_locals,
+                    adopted: self.ret_adopt.as_ref().map(|a| (a.v, a.vdb)),
+                    owned: Some(&self.hoist_owned),
+                    assumed: &self.assumed_distinct,
+                })
+                .as_ref(),
+        )
+    }
+
     #[expect(clippy::too_many_lines, reason = "inherited")]
     fn begin_vector_hoist(
         &mut self,
@@ -3892,37 +4263,7 @@ impl Output<'_> {
         } else {
             hoist::nest_read_paths(lp, self.data)
         };
-        let hoisted = if self.hoist_disabled {
-            hoist::LoopHoist::default()
-        } else {
-            hoist::hoistable(
-                lp,
-                self.data,
-                self.stores,
-                self.def_nr,
-                &mut self.hoist_cache,
-                &mut self.scalar_write_cache,
-                hoist::HoistTiers {
-                    in_place: !self.write_hoist_disabled,
-                    scalars: !self.scalar_hoist_disabled,
-                    push: !self.push_hoist_disabled,
-                    mint: !self.mint_hoist_disabled,
-                    record_push: !self.record_push_disabled,
-                    heap_push: !self.heap_record_push_disabled,
-                    rebound_movers: !self.rebound_mover_disabled,
-                },
-                (!self.callee_inputs_disabled).then_some(&mut self.input_cache),
-                Some(&self.hoist_owned),
-                (!self.distinct_growth_disabled)
-                    .then_some(hoist::StoreFacts {
-                        vars: self.data.def(self.def_nr).variables(),
-                        placed: &self.placed_locals,
-                        adopted: self.ret_adopt.as_ref().map(|a| (a.v, a.vdb)),
-                        owned: Some(&self.hoist_owned),
-                    })
-                    .as_ref(),
-            )
-        };
+        let hoisted = self.compute_loop_hoist(lp);
         let hoist::LoopHoist {
             vectors: candidates,
             scalars,
@@ -3943,6 +4284,7 @@ impl Output<'_> {
                 placed: &self.placed_locals,
                 adopted: self.ret_adopt.as_ref().map(|a| (a.v, a.vdb)),
                 owned: Some(&self.hoist_owned),
+                assumed: &self.assumed_distinct,
             };
             let apart: HashSet<hoist::PathKey> = candidates
                 .iter()
@@ -4064,6 +4406,14 @@ impl Output<'_> {
             lines.push(format!(
                 "let {name} = vector::vec_header(&({operand}), &stores.allocations);"
             ));
+            // The vector's own `DbRef`, which a fused read hands its cold path by reference:
+            // bound once here, where the path is evaluated once, instead of rebuilt on the
+            // stack at every read (`header_dbrefs`).
+            if !self.header_dbref_disabled {
+                let vd = format!("__vd_{}", self.hoist_counter);
+                lines.push(format!("let {vd}: DbRef = {operand};"));
+                self.header_dbrefs.insert(name.clone(), vd);
+            }
             // @PLN157 § V-ak (`@FR-R-Base`) — in a growth-free loop the header's vector
             // cannot move, so its element base is derived once beside it.
             if base_paths.contains(&path) {
@@ -4428,9 +4778,16 @@ impl Output<'_> {
         let inputs = self.callee_inputs_of(def_nr)?;
         let mut args = Vec::with_capacity(inputs.scalars.len() + inputs.headers.len());
         for (p, fld, getter) in &inputs.scalars {
-            let Some(Value::Var(c)) = vals.get(*p as usize).map(Value::unspan) else {
-                return None;
+            // A plain variable, or a sub-record path over one (`atlas.a_cv`), whose key is
+            // the root and the field's summed offset — the key the loop hoisted it under.
+            let arg = vals.get(*p as usize)?;
+            let (c, fld) = if let Value::Var(c) = arg.unspan() {
+                (*c, *fld)
+            } else {
+                let fn_vars = self.data.def(self.def_nr).variables();
+                hoist::path_scalar(self.data, fn_vars, arg, *fld)?.0
             };
+            let (c, fld) = (&c, &fld);
             if let Some(held) = self.active_scalar_hoist(&(*c, *fld)) {
                 args.push(held.to_owned());
                 continue;
@@ -4441,6 +4798,9 @@ impl Output<'_> {
             let Value::Call(g, _) = getter.unspan() else {
                 return None;
             };
+            if self.param_rec_ptrs.contains(c) {
+                return None;
+            }
             let name = self.data.def(*g).name().to_string();
             args.push(self.rec_ptr_read(*c, *fld, &name)?);
         }
@@ -4625,7 +4985,6 @@ impl Output<'_> {
     /// for it.  Answers whether a frame was pushed; `output_block` pops what it pushed before
     /// the block closes.  A value-record local (`@FR-R-ValueRecord`) is a tuple, not a place,
     /// and is never bound.
-    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(super) fn bind_record_ptr(
         &mut self,
         w: &mut dyn Write,
@@ -4645,38 +5004,7 @@ impl Output<'_> {
         {
             return Ok(false);
         }
-        // The `(callee, parameter)` pairs of the remainder's calls that hand `r` to a twin
-        // taking that parameter's scalar fields as inputs — a use of the address at the call.
-        let mut candidates: Vec<(u32, u16)> = Vec::new();
-        for op in &stmts[at + 1..] {
-            op.any_node(&mut |n| {
-                if let Value::Call(g, args) = n
-                    && (*g as usize) < self.data.definitions.len()
-                {
-                    for (i, a) in args.iter().enumerate() {
-                        if matches!(a.unspan(), Value::Var(v) if *v == *r)
-                            && let Ok(p) = u16::try_from(i)
-                        {
-                            candidates.push((*g, p));
-                        }
-                    }
-                }
-                false
-            });
-        }
-        let mut twin_params: HashSet<(u32, u16)> = HashSet::new();
-        for (g, p) in candidates {
-            // `(R-ValueLocal)` — a TUPLE PARAMETER is the same use of the address at the
-            // call: the site reads the view's fields into the tuple where the twin read its
-            // inputs, so the view keeps its address for them.
-            if self.value_records.param_type(g, usize::from(p)).is_some()
-                || self
-                    .callee_inputs_of(g)
-                    .is_some_and(|ci| ci.scalars.iter().any(|(q, _, _)| *q == p))
-            {
-                twin_params.insert((g, p));
-            }
-        }
+        let twin_params = self.twin_params_of(&stmts[at + 1..], *r);
         let verdict = hoist::record_view_ptr(
             stmts,
             at,
@@ -4692,6 +5020,7 @@ impl Output<'_> {
                     placed: &self.placed_locals,
                     adopted: self.ret_adopt.as_ref().map(|a| (a.v, a.vdb)),
                     owned: Some(&self.hoist_owned),
+                    assumed: &self.assumed_distinct,
                 })
                 .as_ref(),
             Some(&self.hoist_owned),
@@ -4725,8 +5054,8 @@ impl Output<'_> {
         let r = match verdict {
             Ok(r) => r,
             Err(why) => {
-                // Scalar locals and non-bindings are not candidates worth a line.
-                if self.recptr_trace && why != "not a plain record" && why != "not a binding" {
+                // Scalar locals are not candidates worth a line.
+                if self.recptr_trace && why != "not a plain record" {
                     eprintln!(
                         "recptr: {} declines `{}`: {why}",
                         self.data.def(self.def_nr).name(),
@@ -4736,6 +5065,141 @@ impl Output<'_> {
                 return Ok(false);
             }
         };
+        self.emit_record_ptr(w, r, Some(&stmts[at]))?;
+        if let (Some(finish), Some(block)) = (window, block) {
+            // A window's frame is closed at its finish, not with the block: the caller
+            // must not count it among the frames it pops.
+            self.ptr_windows.push((block, finish, r));
+            return Ok(false);
+        }
+        Ok(true)
+    }
+
+    /// The `(callee, parameter)` pairs of `rest`'s calls that hand `r` to a twin taking that
+    /// parameter's scalar fields as inputs — a use of the address at the call.
+    fn twin_params_of(&mut self, rest: &[Value], r: u16) -> HashSet<(u32, u16)> {
+        let mut candidates: Vec<(u32, u16)> = Vec::new();
+        for op in rest {
+            op.any_node(&mut |n| {
+                if let Value::Call(g, args) = n
+                    && (*g as usize) < self.data.definitions.len()
+                {
+                    for (i, a) in args.iter().enumerate() {
+                        if matches!(a.unspan(), Value::Var(v) if *v == r)
+                            && let Ok(p) = u16::try_from(i)
+                        {
+                            candidates.push((*g, p));
+                        }
+                    }
+                }
+                false
+            });
+        }
+        let mut twin_params: HashSet<(u32, u16)> = HashSet::new();
+        for (g, p) in candidates {
+            // `(R-ValueLocal)` — a TUPLE PARAMETER is the same use of the address at the
+            // call: the site reads the view's fields into the tuple where the twin read its
+            // inputs, so the view keeps its address for them.
+            if self.value_records.param_type(g, usize::from(p)).is_some()
+                || self
+                    .callee_inputs_of(g)
+                    .is_some_and(|ci| ci.scalars.iter().any(|(q, _, _)| *q == p))
+            {
+                twin_params.insert((g, p));
+            }
+        }
+        twin_params
+    }
+
+    /// `@FR-R-RecPtr`'s parameter clause — at the head of a function body, bind the address
+    /// of every record PARAMETER the whole body may read and write through
+    /// ([`hoist::param_view_ptr`]), one frame each.  Answers how many frames it pushed, which
+    /// `output_block` pops with the body's own.
+    pub(super) fn bind_param_record_ptrs(
+        &mut self,
+        w: &mut dyn Write,
+        stmts: &[Value],
+    ) -> std::io::Result<usize> {
+        if self.hoist_disabled || self.record_ptr_disabled || self.param_record_ptr_disabled {
+            return Ok(0);
+        }
+        // A generator's parameters persist across its yields, where the caller runs and
+        // may grow any store: no address outlives a resumption.
+        if !self.coroutine_persistent_fields.is_empty() {
+            return Ok(0);
+        }
+        // A twin's scalar reads arrive as its inputs (`(R-Inputs)`), so the address would serve
+        // only what is left over — in hex_field's `eg_index__inv`, nothing.
+        if self.twin.is_some() {
+            return Ok(0);
+        }
+        let vars = self.data.def(self.def_nr).variables();
+        let params: Vec<u16> = (0..vars.count()).filter(|v| vars.is_argument(*v)).collect();
+        let mut frames = 0;
+        for (i, p) in params.into_iter().enumerate() {
+            // A tuple parameter (`(R-ValueLocal)`) arrives as values, not as a place.
+            if self.value_records.param_type(self.def_nr, i).is_some()
+                || self.value_record_locals.contains_key(&p)
+                || self.rec_ptrs.iter().any(|f| f.contains_key(&p))
+            {
+                continue;
+            }
+            // The address costs two runtime calls at entry, which one field access does not
+            // repay: a parameter read or written once keeps its store access.
+            if hoist::scalar_field_uses(stmts, p, self.data) < 2 {
+                continue;
+            }
+            // No twin call is served (`param_rec_ptrs`), so none counts as a use.
+            let twin_params = HashSet::new();
+            let verdict = hoist::param_view_ptr(
+                stmts,
+                p,
+                self.data,
+                self.stores,
+                self.def_nr,
+                &mut self.hoist_cache,
+                !self.write_hoist_disabled,
+                &twin_params,
+                (!self.distinct_growth_disabled)
+                    .then_some(hoist::StoreFacts {
+                        vars: self.data.def(self.def_nr).variables(),
+                        placed: &self.placed_locals,
+                        adopted: self.ret_adopt.as_ref().map(|a| (a.v, a.vdb)),
+                        owned: Some(&self.hoist_owned),
+                        assumed: &self.assumed_distinct,
+                    })
+                    .as_ref(),
+                Some(&self.hoist_owned),
+            );
+            match verdict {
+                Ok(p) => {
+                    self.emit_record_ptr(w, p, None)?;
+                    self.param_rec_ptrs.insert(p);
+                    frames += 1;
+                }
+                Err(why) => {
+                    if self.recptr_trace && why != "not a plain record" {
+                        eprintln!(
+                            "recptr: {} declines parameter `{}`: {why}",
+                            self.data.def(self.def_nr).name(),
+                            self.data.def(self.def_nr).variables().name(p)
+                        );
+                    }
+                }
+            }
+        }
+        Ok(frames)
+    }
+
+    /// `@FR-R-RecPtr` — emit `let __pa_N = …` for view `r` and push its frame.  `stmt` is the
+    /// binding when there is one: the head of a held iteration or a windowed mint takes its
+    /// address from the base it already holds instead of resolving the store.
+    fn emit_record_ptr(
+        &mut self,
+        w: &mut dyn Write,
+        r: u16,
+        stmt: Option<&Value>,
+    ) -> std::io::Result<()> {
         self.hoist_counter += 1;
         let name = format!("__pa_{}", self.hoist_counter);
         let lock = rec_ptr_lock(&name);
@@ -4747,7 +5211,9 @@ impl Output<'_> {
         // vector whose header and element BASE this loop holds: the element is at the base
         // plus index times size, with no `DbRef` consulted and no store resolved; past the
         // end the element is the null record, whose address is null.
-        if let Some((header, base, index, size, offset)) = self.held_iteration_base(&stmts[at]) {
+        if let Some((header, base, index, size, offset)) =
+            stmt.and_then(|s| self.held_iteration_base(s))
+        {
             let plus = if offset == 0 {
                 String::new()
             } else {
@@ -4759,7 +5225,7 @@ impl Output<'_> {
             )?;
             self.indent(w)?;
             writeln!(w, "let {lock}: bool = {header}.locked;")?;
-        } else if let Some((win, size)) = self.windowed_mint_of(&stmts[at]) {
+        } else if let Some((win, size)) = stmt.and_then(|s| self.windowed_mint_of(s)) {
             // `@FR-R-PushFill`'s record clause — an element minted through an open window
             // sits at the window's next slot: its address is the base plus the length
             // times the element's width, no store resolved.
@@ -4789,13 +5255,7 @@ impl Output<'_> {
         }
         self.rec_ptrs.push(HashMap::from([(r, name)]));
         crate::rewrite_census::fired("R-RecPtr", 1);
-        if let (Some(finish), Some(block)) = (window, block) {
-            // A window's frame is closed at its finish, not with the block: the caller
-            // must not count it among the frames it pops.
-            self.ptr_windows.push((block, finish, r));
-            return Ok(false);
-        }
-        Ok(true)
+        Ok(())
     }
 
     /// `@FR-R-RecPtr`'s mint clause — drop the address of every mint window of `block`
@@ -5455,6 +5915,60 @@ impl Output<'_> {
         Some(fused)
     }
 
+    /// `@FR-R-Base`'s byte clause — `OpGetByte(v[i], fld, min)`, or `OpGetBoolean(v[i], fld)`,
+    /// read through the held header
+    /// and base: the shape qualifies and the loop holds BOTH for the path.  Answers the
+    /// element address call (whose index the fast path binds once), the field and the bias,
+    /// with the holders' names.  Asked by the pre-eval collector and the emitter both, so the
+    /// collector never lifts an element address the fused read then leaves unused.
+    #[must_use]
+    pub fn fused_byte_read<'a>(&self, getter: &str, args: &'a [Value]) -> Option<ByteRead<'a>> {
+        let boolean = getter == "OpGetBoolean";
+        let character = getter == "OpGetCharacter";
+        if !(boolean || character || getter == "OpGetByte")
+            || self.byte_read_disabled
+            || self.elem_fuse_disabled
+        {
+            return None;
+        }
+        // `OpGetByte(e, fld, min)`, `OpGetBoolean(e, fld)`, `OpGetCharacter(e, fld)`.
+        let (inner, fld, min) = match args {
+            [inner, fld, min] if !boolean && !character => (inner, fld, min.unspan()),
+            [inner, fld] if boolean || character => (inner, fld, &Value::Int(0)),
+            _ => return None,
+        };
+        let (Value::Int(fld), Value::Int(min)) = (fld.unspan(), min) else {
+            return None;
+        };
+        let Value::Call(elem_op, elem_args) = inner.unspan() else {
+            return None;
+        };
+        if !hoist::is_element_address(self.data, *elem_op) {
+            return None;
+        }
+        let [vector, size, index] = &elem_args[..] else {
+            return None;
+        };
+        let Value::Int(size) = size.unspan() else {
+            return None;
+        };
+        let path = hoist::vector_path(self.data, vector)?;
+        let header = self.active_vec_header(&path)?.to_owned();
+        let base = self.active_vec_base(&path)?.to_owned();
+        Some(ByteRead {
+            elem_op: *elem_op,
+            elem_args,
+            index,
+            size: *size,
+            fld: *fld,
+            min: *min,
+            boolean,
+            character,
+            header,
+            base,
+        })
+    }
+
     /// `@FR-R-Base`'s join clause — `v[i]?.f` as one range test and one load: the shape
     /// qualifies ([`hoist::fused_join_read`]) and the loop holds BOTH a header and an element
     /// base for the path (the load goes through the base; a loop that grows a store holds
@@ -5527,6 +6041,9 @@ impl Output<'_> {
             return None;
         }
         let nn = self.nn_facts();
+        if let Some(over) = self.range_override.last().cloned() {
+            return range::op_range(self.data, &nn, &*over, name, args, 0);
+        }
         let rv = if let Some(v) = self.range_cache.get(&self.def_nr) {
             v.clone()
         } else {
@@ -5536,11 +6053,44 @@ impl Output<'_> {
                 self.data.def(self.def_nr).code(),
                 &nn,
                 &self.char_walks,
+                &range::Ranges::default(),
             ));
             self.range_cache.insert(self.def_nr, map.clone());
             map
         };
-        range::op_range(self.data, &nn, &rv, name, args, 0)
+        range::op_range(self.data, &nn, &*rv, name, args, 0)
+    }
+
+    /// The facts the code being emitted runs under: the innermost override, or the
+    /// function's own (computed once).
+    fn current_ranges(&mut self) -> std::rc::Rc<range::Ranges> {
+        if let Some(over) = self.range_override.last() {
+            return over.clone();
+        }
+        if let Some(v) = self.range_cache.get(&self.def_nr) {
+            return v.clone();
+        }
+        let nn = self.nn_facts();
+        let map = std::rc::Rc::new(range::range_vars(
+            self.data,
+            self.data.def(self.def_nr).variables(),
+            self.data.def(self.def_nr).code(),
+            &nn,
+            &self.char_walks,
+            &range::Ranges::default(),
+        ));
+        self.range_cache.insert(self.def_nr, map.clone());
+        map
+    }
+
+    /// The range of value `v` under the current facts.
+    pub fn value_range(&mut self, v: &Value) -> Option<range::Range> {
+        if self.range_arith_disabled || self.range_suspended > 0 {
+            return None;
+        }
+        let nn = self.nn_facts();
+        let rv = self.current_ranges();
+        range::range(self.data, &nn, &*rv, v, 0)
     }
 
     /// Emit the CHECKED form of an operator for a verify comparison: the range arm is held
@@ -5644,7 +6194,7 @@ impl Output<'_> {
                 let user_fn = name.starts_with("n_") || name.starts_with("t_");
                 let opaque = user_fn
                     && !matches!(callee.code(), Value::Block(_))
-                    && (!crate::portable_path::is_stdlib_source(&callee.position.file)
+                    && (!crate::file_access::is_stdlib_source(&callee.position.file)
                         || callee
                             .attributes()
                             .iter()
@@ -6749,13 +7299,8 @@ extern crate loft;"
                 // Linux/macOS only ever produce `/` separators so the
                 // original check happened to work; Windows surfaced
                 // the gap in PR #212 CI.
-                let normalised: String = pos_file
-                    .chars()
-                    .map(|c| if c == '\\' { '/' } else { c })
-                    .collect();
-                if pos_file.is_empty()
-                    || normalised.contains("/default/")
-                    || normalised.contains("/lib/")
+                let path = crate::file_access::PathText::host(pos_file);
+                if pos_file.is_empty() || path.has_component("default") || path.has_component("lib")
                 {
                     continue;
                 }
@@ -7247,13 +7792,12 @@ extern crate loft;"
         // `log.conf`, beside the program).  Without a logger the generated `n_log_*`
         // bodies have nowhere to write, which is how `--native` silently dropped every
         // `log_info` / `log_warn` / `log_error` / `log_fatal`.
-        let main_file = {
-            let d = self.data.def_nr("n_main");
-            if d == u32::MAX {
-                String::new()
-            } else {
-                self.data.def(d).position().file.to_string()
-            }
+        // A test/semantics build bakes no path: `main()` reads it through `main_file_or`, which
+        // takes the driver's `LOFT_NATIVE_MAIN_FILE`.  A shipped (lean) build keeps the literal.
+        let main_file = if self.reads_main_file_at_run_time() {
+            String::new()
+        } else {
+            self.main_file()
         };
         writeln!(w, "static LOFT_MAIN_FILE: &str = {main_file:?};")?;
         if self.emit_live {
@@ -7276,7 +7820,7 @@ extern crate loft;"
             // ~8 MiB OS main-thread stack), then the optional native leak check.
             write!(
                 w,
-                "\nfn main() {{\n    loft::timeout::arm(loft::timeout::env_timeout_secs(), loft::timeout::env_grace_secs());\n    loft::database::NATIVE_FAIL_FAST.store(true, std::sync::atomic::Ordering::Relaxed);\n    let __run = || {{\n    let cell = std::cell::UnsafeCell::new(loft::live_dispatch::boot_stores(LOFT_LIVE_FNS, LOFT_SRC));\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.user_args = std::env::args().skip(1).collect(); stores.source_dir = Stores::source_dir_native(); stores.program_relative = LOFT_PROGRAM_RELATIVE; if let Ok(m) = std::env::var(\"LOFT_PATHS\") {{ stores.program_relative = m.eq_ignore_ascii_case(\"program\"); }} }}\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; {{ let mut lg = loft::logger::Logger::from_config_file(&loft::logger::Logger::resolve_config_path(std::env::var(\"LOFT_LOG_CONF\").ok().as_deref(), LOFT_MAIN_FILE), LOFT_MAIN_FILE); if std::env::var_os(\"LOFT_PRODUCTION\").is_some_and(|v| v != \"0\") {{ lg.config.production = true; }} stores.set_logger(lg); }} }}\n    if !loft::live_dispatch::live_enabled() {{ init(&cell); }}\n{prelude}    n_main(&cell{args});{ckpt}\n    {{ let stores: &Stores = unsafe {{ &*cell.get() }}; if stores.run_failed() {{ std::process::exit(1); }} }}\n"
+                "\nfn main() {{\n    loft::timeout::arm(loft::timeout::env_timeout_secs(), loft::timeout::env_grace_secs());\n    loft::database::NATIVE_FAIL_FAST.store(true, std::sync::atomic::Ordering::Relaxed);\n    let __run = || {{\n    let cell = std::cell::UnsafeCell::new(loft::live_dispatch::boot_stores(LOFT_LIVE_FNS, LOFT_SRC));\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.user_args = std::env::args().skip(1).collect(); stores.source_dir = Stores::source_dir_native(); stores.program_relative = LOFT_PROGRAM_RELATIVE; if let Ok(m) = std::env::var(\"LOFT_PATHS\") {{ stores.program_relative = m.eq_ignore_ascii_case(\"program\"); }} }}\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; {{ let mut lg = loft::logger::Logger::from_config_file(&loft::logger::Logger::resolve_config_path(std::env::var(\"LOFT_LOG_CONF\").ok().as_deref(), main_file_or(LOFT_MAIN_FILE)), main_file_or(LOFT_MAIN_FILE)); if std::env::var_os(\"LOFT_PRODUCTION\").is_some_and(|v| v != \"0\") {{ lg.config.production = true; }} stores.set_logger(lg); }} }}\n    if !loft::live_dispatch::live_enabled() {{ init(&cell); }}\n{prelude}    n_main(&cell{args});{ckpt}\n    {{ let stores: &Stores = unsafe {{ &*cell.get() }}; if stores.run_failed() {{ std::process::exit(1); }} }}\n"
             )?;
             writeln!(w, "    if !loft::live_dispatch::live_enabled() {{")?;
             w.write_all(NATIVE_LEAK_CHECK_TAIL.as_bytes())?;
@@ -7317,7 +7861,7 @@ extern crate loft;"
             // references no `live_dispatch` symbol at all.
             write!(
                 w,
-                "\nfn main() {{\n    loft::timeout::arm(loft::timeout::env_timeout_secs(), loft::timeout::env_grace_secs());\n    loft::database::NATIVE_FAIL_FAST.store(true, std::sync::atomic::Ordering::Relaxed);\n    let __run = || {{\n    let cell = std::cell::UnsafeCell::new(Stores::new());\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.user_args = std::env::args().skip(1).collect(); stores.source_dir = Stores::source_dir_native(); stores.program_relative = LOFT_PROGRAM_RELATIVE; if let Ok(m) = std::env::var(\"LOFT_PATHS\") {{ stores.program_relative = m.eq_ignore_ascii_case(\"program\"); }} }}\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; {{ let mut lg = loft::logger::Logger::from_config_file(&loft::logger::Logger::resolve_config_path(std::env::var(\"LOFT_LOG_CONF\").ok().as_deref(), LOFT_MAIN_FILE), LOFT_MAIN_FILE); if std::env::var_os(\"LOFT_PRODUCTION\").is_some_and(|v| v != \"0\") {{ lg.config.production = true; }} stores.set_logger(lg); }} }}\n    init(&cell);\n{prelude}    n_main(&cell{args});{ckpt}\n    {{ let stores: &Stores = unsafe {{ &*cell.get() }}; if stores.run_failed() {{ std::process::exit(1); }} }}\n"
+                "\nfn main() {{\n    loft::timeout::arm(loft::timeout::env_timeout_secs(), loft::timeout::env_grace_secs());\n    loft::database::NATIVE_FAIL_FAST.store(true, std::sync::atomic::Ordering::Relaxed);\n    let __run = || {{\n    let cell = std::cell::UnsafeCell::new(Stores::new());\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.user_args = std::env::args().skip(1).collect(); stores.source_dir = Stores::source_dir_native(); stores.program_relative = LOFT_PROGRAM_RELATIVE; if let Ok(m) = std::env::var(\"LOFT_PATHS\") {{ stores.program_relative = m.eq_ignore_ascii_case(\"program\"); }} }}\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; {{ let mut lg = loft::logger::Logger::from_config_file(&loft::logger::Logger::resolve_config_path(std::env::var(\"LOFT_LOG_CONF\").ok().as_deref(), main_file_or(LOFT_MAIN_FILE)), main_file_or(LOFT_MAIN_FILE)); if std::env::var_os(\"LOFT_PRODUCTION\").is_some_and(|v| v != \"0\") {{ lg.config.production = true; }} stores.set_logger(lg); }} }}\n    init(&cell);\n{prelude}    n_main(&cell{args});{ckpt}\n    {{ let stores: &Stores = unsafe {{ &*cell.get() }}; if stores.run_failed() {{ std::process::exit(1); }} }}\n"
             )?;
             w.write_all(NATIVE_LEAK_CHECK_TAIL.as_bytes())?;
             w.write_all(NATIVE_STRICT_STORE_TAIL.as_bytes())?;
@@ -8472,6 +9016,39 @@ extern crate loft;"
                 self.twin = None;
             }
         }
+        // `@FR-R-RangedCall` — the ranged variants the calls asked for, each emitted under its
+        // seeded facts; a variant's own calls may ask for more, so until none is left.
+        while let Some(at) = self
+            .rg_requests
+            .iter()
+            .position(|r| !self.rg_emitted.contains(r))
+        {
+            let (dnr, twin) = self.rg_requests[at];
+            self.rg_emitted.insert((dnr, twin));
+            if std::env::var("LOFT_TRACE_RANGED_CALL").is_ok() {
+                eprintln!(
+                    "ranged-call: emits {}{}__rg",
+                    self.data.def(dnr).name(),
+                    if twin { "__inv" } else { "" }
+                );
+            }
+            let facts = self.variant_ranges(dnr, twin);
+            self.twin = if twin {
+                self.callee_inputs_of(dnr)
+            } else {
+                None
+            };
+            if twin && self.twin.is_none() {
+                continue;
+            }
+            self.range_override.push(std::rc::Rc::new(facts));
+            self.emitting_ranged = true;
+            let r = self.output_function(w, dnr, program_store.as_ref());
+            self.emitting_ranged = false;
+            self.range_override.pop();
+            self.twin = None;
+            r?;
+        }
         Ok(())
     }
 
@@ -9195,15 +9772,21 @@ extern crate loft;"
         // (e.g. wrong arg type, missing trait impl) map directly to
         // the .loft definition site.
         if !def.position().file.is_empty() {
-            writeln!(w, "// loft:{}:{}", def.position().file, def.position().line)?;
+            writeln!(
+                w,
+                "// loft:{}:{}",
+                crate::file_access::portable_str(&def.position().file),
+                def.position().line
+            )?;
         }
         let twin = self.twin.clone();
         write!(
             w,
-            "{}fn {}{}(cell: &std::cell::UnsafeCell<Stores>",
+            "{}fn {}{}{}(cell: &std::cell::UnsafeCell<Stores>",
             self.fn_inline_attr(def),
             self.fn_ident(def),
-            if twin.is_some() { "__inv" } else { "" }
+            if twin.is_some() { "__inv" } else { "" },
+            if self.emitting_ranged { "__rg" } else { "" }
         )?;
         // @PLN157 § V-aa (`@FR-R-ValueRecord`) — an admitted function returns its
         // record's fields in registers, so it needs no return BUFFER to write them into.
@@ -9505,6 +10088,31 @@ extern crate loft;"
                     }
                 }
             }
+            // `@FR-R-RebindBuffer` — every hidden buffer a rebind may hand a store to, marked
+            // before the body is emitted: a release emitted ahead of the rebind (an early
+            // `return` inside the loop) must park the store too.  A superset is safe: parking a
+            // store that is being released is sound wherever freeing it is.
+            {
+                let fvars = self.data.def(self.def_nr).variables();
+                let mut sets: Vec<(u16, &Value)> = Vec::new();
+                self.data.def(self.def_nr).code().any_node(&mut |n| {
+                    if let Value::Set(v, rhs) = n
+                        && matches!(rhs.unspan(), Value::Call(_, _))
+                    {
+                        sets.push((*v, rhs));
+                    }
+                    false
+                });
+                let attrs = self.data.def(self.def_nr).attributes();
+                let mut handed = HashSet::new();
+                for (v, rhs) in sets {
+                    let is_retbuf_attr = attrs.iter().any(|a| a.hidden && fvars.var(&a.name) == v);
+                    if let Some((buf, _)) = self.rebind_buffer_for(v, rhs, is_retbuf_attr) {
+                        handed.insert(buf);
+                    }
+                }
+                self.rebind_handed = handed;
+            }
             // @PLN90 #495 — the runtime-Join owned-store tracker.  For each
             // "runtime-Join" local (owned init + ≥1 ncc-borrow reassign) declare
             // `_own_store_<name>: DbRef` (NULL sentinel).  `output_set` keeps it
@@ -9744,8 +10352,17 @@ extern crate loft;"
                 let push = if leaf {
                     String::new()
                 } else if !self.lean {
+                    // The main file's path comes from the driver at run time
+                    // (`main_file_or`), so a test/semantics build holds no path and the same
+                    // program at another path is the same binary and cache entry.
+                    let file_expr =
+                        if self.reads_main_file_at_run_time() && **loft_file == *self.main_file() {
+                            "main_file_or(\"\")".to_string()
+                        } else {
+                            format!("\"{escaped_file}\"")
+                        };
                     format!(
-                        "\n  cr_call_push(\"{loft_name}\", \"{escaped_file}\", {loft_line});\n  \
+                        "\n  cr_call_push(\"{loft_name}\", {file_expr}, {loft_line});\n  \
                          let _call_guard = codegen_runtime::CallGuard;"
                     )
                 } else {

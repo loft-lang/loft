@@ -347,6 +347,33 @@ a declared field default makes non-zero — `LOFT_HOIST_VERIFY=1` cannot see a m
 arm, the interpreter can.  ⚠ Built at TWO sites through one recogniser
 (`hoist::fused_join_read`): the pre-eval collector lifts every `Block` argument, so an
 emitter arm it does not know about never fires — and only a pin shows that, no value does.
+**`LOFT_NO_BYTE_READ=1`** (`@FR-R-Base`'s byte clause, default-ON, generation time, `--native`
+only) makes `v[i].f` for a ONE-BYTE field — `OpGetByte` (a `u8` / `i8`, re-based by its `min`)
+and `OpGetBoolean` (stored 0 / 1 / 255 for null) — and a `character` element (`OpGetCharacter`,
+the stored code point decoded as the template decodes it) resolve the store per read again — with it
+off, in a loop that holds the vector's header and element base the read is one range test and
+one byte load, a negative index addressing from the end and every index outside the range
+answering the template's absent value (`i64::MIN`, a boolean's 255) inline, with no call into
+the store left (`edgeset_count` 11.8× → 1.9× with the ranged calls below; `surface_fitted_spread`
+−34 % for the boolean form) — and is the first bisect step for a wrong byte or truth value read
+out of a vector element inside a loop on native.  `LOFT_HOIST_VERIFY=1` keeps the template as
+the fallback arm instead, so a verify run compares the fast arm against it.
+**`LOFT_NO_RANGED_CALLS=1`** (`(R-RangedCall)`, default-ON, generation time, `--native` only)
+emits every counted loop once and no `__rg` variant of any function — with it off, a loop that
+hoists integer record fields runs a second copy under a once-per-entry guard `|x| <= 2^20`, and
+a call in that copy whose integer arguments are proven within `[-2^30, 2^30]` goes to the
+callee's ranged variant, compiled with plain arithmetic where (R-Range) proves it cannot
+overflow (`edgeset_count` 15.8× → 1.9× with the byte read above).  It is the first bisect step
+for a wrong integer, or a missing overflow error, out of a call inside a loop on native;
+`LOFT_TRACE_RANGED_CALL=1` names each copy, variant and decline, and `LOFT_HOIST_VERIFY=1`
+checks every plain operator.
+**`LOFT_NO_DISTINCT_VERSION=1`** (`(R-Alias)`'s versioned clause, default-ON, generation time,
+`--native` only) emits every loop once — with it off, a loop that grows the function's return
+buffer while it reads a parameter also runs a copy under a run-time test that the two stores
+differ, keeping the parameter's headers and its element views' record addresses there
+(`fill_polygon` 8.1× → 5.4×) — and is the first bisect step for a wrong value read from a
+parameter inside a loop that appends to the result on native.  `LOFT_TRACE_RECPTR=1` names
+each address the copy binds.
 **`LOFT_NO_INVARIANT_HOIST=1`** (@PLN157 § V-ao, `@FR-R-Invariant`, default-ON, generation
 time) makes every invariant integer chain evaluate at every use again — with it off, a
 chain of `+ - * neg & | ^` over literals and variables a loop neither rebinds nor lets
@@ -514,6 +541,34 @@ everywhere — which is what kept the drawing library's `parse_circle` and `pars
 buffers (their `no_mark()` tail was forwarded by `parse_fronds`).  It is the first bisect
 step for a wrong field, a leak or a null-store panic at a `return g(…)` of a record-returning
 function on native.
+
+**`LOFT_NO_SWAP_REBIND=1`** (`@FR-H-SwapRebind`, default-ON, runtime) keeps the reset of a
+record variable's store before a rebind from a fresh call result — with it off, the result's
+store is exchanged into the variable as it stands and the old value leaves with the released
+store — and is the first bisect step for a wrong record after such a rebind on `--native`.
+Read where the rebind is emitted (the reset-and-copy pair instead of `OpRebindRecord`) and by
+`OpRebindRecord` at run time, so either is the off arm.  `LOFT_TRACE_STORE_SWAP=1` names each
+exchange.
+
+**`LOFT_NO_REFILL_BUFFER=1`** (`@FR-R-RefillBuffer`, default-ON) frees the store a rebind
+exchange released and mints every return buffer — with it off, a callee whose buffer is built
+by a complete literal of a refillable type takes that store, holding the rebound variable's
+previous value, and empties its vector fields in place.  The first bisect step for a wrong
+record built into a return buffer on `--native`.  Read where the buffer is emitted and at run
+time.
+
+**`LOFT_NO_REBIND_BUFFER=1`** (`@FR-R-RebindBuffer`, default-ON) exchanges every rebind's
+fresh result into the destination's store (`@FR-H-SwapRebind`) — with it off, `x = f(…)`
+adopts the fresh result and hands `x`'s previous store to the call's hidden buffer for its
+next execution.  The first bisect step for a wrong value after a rebind in a loop on
+`--native`.  Read where the rebind is emitted; `LOFT_TRACE_REBIND_BUFFER=1` names each
+rebind it declines and why.
+
+**`LOFT_NO_REFILL_IN_PLACE=1`** (`@FR-R-RefillBuffer`'s in-place clause, default-ON) empties
+and refills a refilled buffer's repeat-literal vector field every time — with it off, a kept
+vector that already holds the literal's count is overwritten where it stands
+(`Stores::fill_exact`).  The first bisect step for a stale element in a vector a refilling
+callee starts as `[c; n]`.  Read where the literal is emitted.
 
 ## Element-first builds, complete writes and return buffers
 

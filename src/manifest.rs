@@ -742,6 +742,14 @@ impl Predicate {
     }
 }
 
+/// The version this loft answers to (`build.rs` `effective_version`): a release's own version,
+/// or `<last release's YYYY.M>.<yyyymmdd>` for a daily or development build, which orders
+/// after the release it builds on and before the next one.  A package's `loft = ">=…"` floor,
+/// the resolver's choice of a package version and `loft --version` all read this, so a
+/// library that needs what landed on `main` names the day (`>=2026.10.20261005`) instead of
+/// waiting for the next monthly release.
+pub const LOFT_RUNNING_VERSION: &str = env!("LOFT_EFFECTIVE_VERSION");
+
 /// Check whether the `required` version constraint is satisfied by `current`.
 ///
 /// Supported syntax: comparison predicates `>=`, `<=`, `>`, `<`, `=` over
@@ -761,7 +769,7 @@ pub fn check_version(required: &str, current: &str) -> VersionCheck {
         return VersionCheck::Satisfied;
     }
     let Some(cur) = parse_version(current) else {
-        // `current` is `env!("CARGO_PKG_VERSION")` at the real call site, so
+        // `current` is `LOFT_RUNNING_VERSION` at the real call site, so
         // this is defensive; a bad build version is itself a hard error.
         return VersionCheck::Malformed(format!(
             "interpreter version '{current}' is not a valid version"
@@ -1198,6 +1206,66 @@ mod tests {
         let mut f = std::fs::File::create(&path).unwrap();
         f.write_all(content.as_bytes()).unwrap();
         path
+    }
+
+    /// A daily or development build answers `<last release's YYYY.M>.<yyyymmdd>` (`build.rs`
+    /// `effective_version`), so a library can floor on the day a feature landed on `main`.
+    /// The scheme stands on this ordering: a daily outranks the release it builds on and any
+    /// point release of it, a later daily outranks an earlier one, and the next monthly
+    /// release outranks every daily before it.
+    #[test]
+    fn a_dated_daily_version_orders_between_its_release_and_the_next() {
+        use VersionCheck::{Satisfied, Unsatisfied};
+        let floor = ">=2026.10.20261005";
+        assert_eq!(
+            check_version(floor, "2026.10.20261005"),
+            Satisfied,
+            "the day itself"
+        );
+        assert_eq!(
+            check_version(floor, "2026.10.20261012"),
+            Satisfied,
+            "a later daily"
+        );
+        assert_eq!(
+            check_version(floor, "2026.11.0"),
+            Satisfied,
+            "the next release"
+        );
+        assert_eq!(
+            check_version(floor, "2026.10.20261004"),
+            Unsatisfied,
+            "an earlier daily"
+        );
+        assert_eq!(
+            check_version(floor, "2026.10.0"),
+            Unsatisfied,
+            "the release it builds on"
+        );
+        assert_eq!(
+            check_version(floor, "2026.10.1"),
+            Unsatisfied,
+            "a point release of it"
+        );
+        assert_eq!(check_version(">=2026.10.0", "2026.10.20261005"), Satisfied);
+        assert_eq!(check_version("<2026.11.0", "2026.10.20261005"), Satisfied);
+    }
+
+    /// The running build's own version is one the floor check reads: a release (`YYYY.M.P`)
+    /// or a dated daily (`YYYY.M.yyyymmdd`), and it satisfies a floor at its own month.
+    #[test]
+    fn the_running_version_is_a_release_or_a_dated_daily() {
+        let v = LOFT_RUNNING_VERSION;
+        let parts: Vec<&str> = v.split('.').collect();
+        assert_eq!(parts.len(), 3, "{v}");
+        assert!(parts.iter().all(|p| p.parse::<u32>().is_ok()), "{v}");
+        let patch = parts[2];
+        assert!(
+            patch.len() < 4 || (patch.len() == 8 && patch.starts_with(parts[0])),
+            "the patch is a point release or the yyyymmdd of a daily in the release's year or later: {v}"
+        );
+        let floor = format!(">={}.{}.0", parts[0], parts[1]);
+        assert_eq!(check_version(&floor, v), VersionCheck::Satisfied, "{v}");
     }
 
     #[test]

@@ -529,6 +529,9 @@ jobs:
           RUSTFLAGS: '-Zsanitizer=address -Cforce-frame-pointers=yes'
           ASAN_OPTIONS: 'detect_leaks=1'
           LSAN_OPTIONS: 'suppressions=${{ github.workspace }}/.github/lsan_suppressions.txt'
+          # The same floor as the ASan sweep above: redzones overflow the 8 MiB script
+          # thread on the corpus's 100-deep nested expression (loft#1863).
+          RUST_MIN_STACK: '33554432'
         # The fault-path text class (append_text / format_text / format_long / text_tl_fmt)
         # is suppressed in lsan_suppressions.txt — a faulting program never frees its
         # in-flight text local, an accepted non-cleanup on the terminating abort path (the
@@ -1506,6 +1509,27 @@ jobs:
   # It reports; it does not gate.  `notify` above owns the interrupt, and only for
   # the unsound-language class.  A badge on this workflow answers the question
   # without opening anything.
+  # The red-steps issue (`advisory-failures.yml`) listens with `workflow_run`, which GitHub never
+  # fires for a workflow that is also REUSABLE — this one is, `release-gate.yml` calls it — so the
+  # nightly's red jobs never reached that issue (github.com/orgs/community/discussions/72631).
+  # This hands the run over by id instead.  Its name matches the digest's META_JOB filter, so the
+  # still-running hand-over is not read as one of the gates.
+  red-steps-digest:
+    name: → tracked issue (red-steps digest)
+    needs: [stale-plans-audit, stale-claims, miri, asan, asan-leak-gate, poison, stack-shadow, tsan,
+            native-asan, valgrind, release-gate-sweeps, debug-asserts, audit,
+            toolchain-matrix, index-hygiene, library-health]
+    if: always() && github.event_name != 'pull_request' && !inputs.from_gate && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Hand this run to the red-steps digest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh workflow run advisory-failures.yml -f run_id=${{ github.run_id }}
+
   daily-status:
     name: Daily status (the one place to look)
     needs: [stale-plans-audit, stale-claims, miri, asan, asan-leak-gate, poison, stack-shadow, tsan,

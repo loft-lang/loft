@@ -13,6 +13,7 @@ Rules for all Rust and loft code in this project.
 - [Clippy and Formatting](#clippy-and-formatting)
 - [Null Sentinels](#null-sentinels)
 - [Hot-path conventions](#hot-path-conventions)
+- [File access](#file-access)
 
 ---
 
@@ -152,6 +153,25 @@ And one shape to recognise: a scan over `definitions` or `def_names` inside a lo
 (`children_of` walked every definition per call, `has_private_type` every name) is a
 quadratic waiting for a large program.  Derive an index and keep it at the ONE writer of
 the field it derives from (`Data::set_parent`), or scan the cheapest field first.
+
+## File access
+
+The compiler (`src/`) reaches the file system ONLY through `src/file_access/`: it never
+opens, lists, creates, removes or inspects a file or directory from a string or a bare
+`Path`.  Build a `PathText` (`PathText::host(text)`, `PathText::from_os(path)`) and call
+`file_access::read_to_string` / `write` / `read_dir` / `exists` / `canonical` / …; compare
+paths with `==`, `starts_with`, `ends_with` and `has_component`, never as text.
+
+- **Why:** every Windows defect the compiler has had was a decision on path text — a mixed
+  `D:\a\loft/default\x` missing a `"/default/"` pattern, a verbatim `\\?\D:\…`
+  never equal to its plain twin, `dir/` not equal to `dir`, `pkg` claiming `pkg2/x`.
+- **Tested on any host:** `file_access::path` parses under an explicit `Flavor`, so the
+  Windows rules are unit tests on Linux; an operation's error names its path, and a
+  listing is sorted.
+- **Guarded:** `file_access::guard` counts each file's direct accesses (`std::fs`,
+  `File::open`, `Path::exists()`, `canonicalize`, a separator handled by hand) against
+  `src/file_access/direct.baseline`.  A count that rises fails; one that falls fails until
+  you lock it in with `LOFT_BLESS_FILE_ACCESS=1 cargo test --lib file_access::guard`.
 
 ## Dependencies
 
@@ -294,6 +314,14 @@ Four shapes that read as correct and are not, each measured in this repo's own s
   reports "finished" the whole time. Reaching for `-x` after being burned by `-f` is reaching
   for the next pattern instead of stopping using patterns, which is the actual lesson: use the
   recorded pid.
+
+  **When there is no pid and no artefact, use `scripts/pgrep_others.sh <regex>`** (`--wait
+  [--timeout S]`, `--count`, `--here` for this checkout only).  It excludes by process TREE —
+  itself, every ancestor, its own children — so no pattern spelling can make it match the
+  shell that called it.  The trap is platform-dependent, which is why it hides: BSD `pgrep`
+  (macOS) leaves out its ancestors by default, `procps` `pgrep` (Linux, CI) matches them — a
+  loop that exits on a Mac spins forever on the box it is written for.  The script answers
+  the same on both.
 
 - ⚠ **`git merge-base --is-ancestor <sha> HEAD` is not the test for "do I have this CHANGE".**
   It answers about COMMITS, and the moment any checkout cherry-picks, the same change exists

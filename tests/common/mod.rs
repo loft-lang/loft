@@ -77,6 +77,30 @@ pub fn deadline_scale() -> u64 {
     if shared { 3 } else { 1 }
 }
 
+/// Run `f` on a thread with the `loft` CLI's own stack: 8 MiB, or `RUST_MIN_STACK` when a
+/// sanitizer job raises it.  A test thread has 2 MiB on Linux and less on Windows, and the
+/// front end spends ~22 KiB of stack per nesting level of an expression, so a corpus program
+/// the CLI compiles (the 100-term sum in `a-frame-never-pushes-past-the-room-its-entry-made`)
+/// overflowed a test that walked the corpus on its own thread.  A panic re-raises here, so the
+/// test fails exactly as it would have.
+#[allow(dead_code)]
+pub fn on_cli_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
+    let stack = std::env::var("RUST_MIN_STACK")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .map_or(8 << 20, |v| v.max(8 << 20));
+    std::thread::scope(|sc| {
+        let run = std::thread::Builder::new()
+            .stack_size(stack)
+            .spawn_scoped(sc, f)
+            .expect("spawn the CLI-stack thread");
+        match run.join() {
+            Ok(v) => v,
+            Err(panic) => std::panic::resume_unwind(panic),
+        }
+    })
+}
+
 /// A server-test port, isolated PER CHECKOUT.  The engine-host / wasm-relay tests bind FIXED
 /// ports; two suites run at once — e.g. two agents in sibling checkouts (`loft` and `loft2`) —
 /// collide on them and flake, and the red reads as a browser or kernel defect rather than as a

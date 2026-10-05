@@ -1,0 +1,108 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A HELPER RUNS ITS ARITHMETIC PLAIN ONLY WHERE THE CALLER'S GUARD BOUNDS ITS ARGUMENTS
+// (`@FR-R-RangedCall`).  A grid walk whose hoisted record fields are each tested `|x| <= 2^20`
+// at the loop's entry calls ranged variants of its helpers (`nb`, `idx`, `cell`), whose
+// integer parameters are assumed within 2^30 and whose operators interval arithmetic then
+// proves unable to overflow.  A field outside the bound takes the plain loop with the checked
+// helpers, which is the only place an overflow can happen — and must answer what the
+// checked arithmetic answers.  A helper that reassigns its parameter, a cubic helper, a
+// recursive one and a field written inside the loop keep their checked operators.
+//
+// Expected values by hand: on grid `a` (q0 3, r0 −2, 4 × 3, cells (7i) % 5 =
+// 0 2 4 1 | 3 0 2 4 | 1 3 0 2) the three neighbour reads per cell sum 20 + 20 + 15 = 55;
+// `reassigns` adds (2q + 1) % 7 = 0 + 2 + 4 + 6 per row, 36, and `cube` q³ % 11 =
+// 5 + 9 + 4 + 7 per row, 75: 166.  Grid `o` starts at i64::MAX − 1: the second column's
+// right neighbour overflows (absent, 0) and the third column overflows whole, so 2 + 2 = 4.
+// `c` sits exactly on the bound (2^20, guarded), `d` one past it (plain); both read their
+// cells as `a` does.  `count_down` and `count_writes` pin the recursive helper and a field
+// written in the loop.  rec(3)·2 + rec(2) = 6 + 2 = 8.
+//
+// @falsified-by: tests/falsified/a-helper-runs-plain-only-where-the-callers-guard-bounds-its-arguments.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+// CHANNEL: native assertions — with the guard forced true, grid `o` runs the plain copy and
+// its overflowing coordinates wrap instead of reading absent.
+// HOLDS: every grid inside the bound, and the interpreter (no ranged calls).
+
+struct Grid { q0: integer, r0: integer, w: integer, h: integer, cells: vector<u8> }
+fn nb(q: integer, d: integer) -> integer {
+  if d == 0 { return q + 1; }
+  if d == 1 { return q - 1; }
+  q
+}
+fn idx(g: Grid, q: integer, r: integer) -> integer {
+  dq = q - g.q0;
+  dr = r - g.r0;
+  if dq < 0 || dq >= g.w || dr < 0 || dr >= g.h { return -1; }
+  dr * g.w + dq
+}
+fn cell(g: Grid, q: integer, r: integer) -> integer {
+  i = idx(g, q, r);
+  if i < 0 { return 0; }
+  (g.cells[i] ?? 0) as integer
+}
+fn reassigns(q: integer) -> integer { q = q * 2; q + 1 }
+fn cube(q: integer) -> integer { (q * q * q ?? 0) }
+fn down(q: integer, n: integer) -> integer { if n <= 0 { return q; } down(q + 1, n - 1) }
+fn count(g: Grid) -> integer {
+  n = 0;
+  for iq in 0..g.w {
+    for ir in 0..g.h {
+      cq = g.q0 + iq;
+      cr = g.r0 + ir;
+      for d in 0..3 { n += cell(g, nb(cq, d), cr); }
+      n += reassigns(cq) % 7 + (cube(cq) ?? 0) % 11;
+    }
+  }
+  n
+}
+fn count_cells(g: Grid) -> integer {
+  n = 0;
+  for iq in 0..g.w {
+    for ir in 0..g.h {
+      cq = g.q0 + iq;
+      cr = g.r0 + ir;
+      for d in 0..3 { n += cell(g, nb(cq, d), cr); }
+    }
+  }
+  n
+}
+fn count_down(g: Grid) -> integer {
+  n = 0;
+  for iq in 0..g.w { n += down(g.q0 + iq, 3) % 5; }
+  n
+}
+fn count_writes(g: Grid) -> integer {
+  n = 0;
+  for iq in 0..g.w {
+    n += cell(g, g.q0 + iq, g.r0);
+    g.q0 = g.q0 + 0;
+  }
+  n
+}
+fn mk(q0: integer, r0: integer, w: integer, h: integer) -> Grid {
+  g = Grid { q0: q0, r0: r0, w: w, h: h, cells: [] };
+  for i in 0..(w * h) { g.cells += [((i * 7) % 5) as u8 ?? 0]; }
+  g
+}
+// A recursive helper whose result feeds arithmetic: ranging its result analyses its body with
+// the argument's range, which meets the same call again one value lower — that analysis
+// must stop, not recurse until the compiler's stack overflows (it did, on cbor's encoder).
+fn rec(n: integer) -> integer {
+  if n <= 0 { return 0; }
+  m = rec(n - 1);
+  m + 1
+}
+fn main() {
+  assert(rec(3) * 2 + rec(2) == 8, "a recursive helper ranged in context");
+  a = mk(3, -2, 4, 3);
+  o = mk(9223372036854775806, 0, 3, 1);
+  assert(count_cells(a) == 55, "the neighbour reads, guarded");
+  assert(count(a) == 166, "beside a reassigning and a cubic helper");
+  assert(count_cells(o) == 4, "an overflowing grid takes the checked loop");
+  c = mk(1048576, 0, 2, 2);
+  d = mk(1048577, 0, 2, 2);
+  assert(count_cells(c) == count_cells(d), "on the bound and one past it");
+  assert(count_cells(mk(-1000000, 999990, 5, 2)) == count_cells(mk(0, 0, 5, 2)), "negative coordinates");
+  assert(count_writes(a) == 7 && count_down(a) == 10, "a field written in the loop; a recursive helper");
+}

@@ -5,7 +5,7 @@
 # The seconds-long checks a `make ci` would otherwise report only after minutes of building.
 #
 #   scripts/gate_preflight.sh            # the default set, ~45 s on this box
-#   CI_PREFLIGHT=full scripts/gate_preflight.sh   # + doc_hygiene and frontend_counts via nextest
+#   CI_PREFLIGHT=full scripts/gate_preflight.sh   # + doc_hygiene via nextest
 #
 # `scripts/ci-run.sh start` runs this first and refuses to queue a gate that would fail on one
 # of these.  Why it exists: `make ci` rebuilds the native fixtures and both wasm rlibs BEFORE
@@ -24,8 +24,8 @@
 #                was compiled from default/ as it is now; when it was not,
 #                `make compiled-stdlib` regenerates it here and the step
 #                says so (commit the regenerated file with the change)      <1 s, or ~2 min
-#   full only    `cargo nextest run --release` over doc_hygiene and
-#                frontend_counts — seconds of tests, minutes of compiling
+#   full only    `cargo nextest run --release` over doc_hygiene (the front-end allocation
+#                pins are advisory, ci.yml's own job) — seconds of tests, minutes of compiling
 #                when the release test binaries are stale
 #
 # Clippy is not here: both variants the gate runs compile the whole crate, which is the cost
@@ -91,7 +91,7 @@ stdlib_fresh() {
 }
 step stdlib stdlib_fresh
 if [ "${CI_PREFLIGHT:-}" = full ]; then
-  step "hygiene+fe" cargo nextest run --release -E 'binary(doc_hygiene) + binary(frontend_counts)'
+  step "hygiene" cargo nextest run --release -E 'binary(doc_hygiene)'
 fi
 
 if [ ${#failed[@]} -gt 0 ]; then

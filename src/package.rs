@@ -150,11 +150,12 @@ pub fn declared_levels(
     );
     let loft = manifest.loft_version.clone();
     if loft.is_none() {
-        problems.push(
+        problems.push(format!(
             "`loft` is not declared.  It is which loft this package needs, and unlike the \
-             other two it is a RANGE:\n      loft = \">=0.8\""
-                .to_string(),
-        );
+             other two it is a RANGE — the loft you build and test it with:\n      \
+             loft = \">={}\"",
+            env!("CARGO_PKG_VERSION")
+        ));
     }
 
     match (loft, api, data) {
@@ -968,7 +969,7 @@ mod tests {
             .filter(|e| e.header().entry_type().is_file())
             .filter_map(|e| {
                 let p = e.path().ok()?.to_path_buf();
-                Some(crate::portable_path::portable(
+                Some(crate::file_access::portable(
                     p.strip_prefix("web-0.3.2").unwrap_or(&p),
                 ))
             })
@@ -1013,7 +1014,7 @@ mod tests {
             if p.is_dir() {
                 collect_rel(root, &p, out);
             } else if let Ok(rel) = p.strip_prefix(root) {
-                out.push(crate::portable_path::portable(rel));
+                out.push(crate::file_access::portable(rel));
             }
         }
     }

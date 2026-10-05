@@ -4610,3 +4610,29 @@ existed only inside interface declarations.  The 2026.10 cycle's user-operator d
 kept open and declined: allowing `op <` for user definitions — readable, but it keeps the
 machinery those defects came from.  2026.10 ships unchanged; the work is loft#1833.
 
+## C135 — loft has no unsafe construct; representation is observable only at a native boundary or a file-backed store
+
+Decided 2026-10-04 by the owner, while reviewing the apart-values proposal (APART_VALUES.md):
+"this is partly why I love that we have the rustc guarantees under the hood but no unsafe loft
+command", and on the boundary: "the store model is clearly observable though the memory mapped
+files we use.  But that is part of our framing of what we optimize in the first place."  The
+question was why rustc, despite exclusive-access rules, rarely removes heap allocations: a
+`Vec`'s layout is part of Rust's contract because `unsafe` code may take its pointer, so heap
+elision happens only where inlining puts the allocation and the free in one function (measured:
+a summed vector temp 1 ns, a `Vec` returned from a non-inlined function 20 ns).  Loft has no
+such construct — `#rust` in a program was already refused (C87), `unsafe` is not a keyword — but
+nothing recorded it, while C122, `(R-Escape)`, `(R-ValueRecord)` and every store rewrite depend
+on it.  Recorded so a future proposal that opens a representation door has to name the rewrites
+it invalidates.
+
+## C136 — A routine over 3× its Rust twin is a defect; a class whose median is over 3× is a systemic one
+
+Decided 2026-10-04 by the owner, while planning how slow routines become ordinary bugs (@PLN185):
+"the 3x limit versus 4x is from my observation that we are not inherently slower than rustc.  Yes
+we do some more validation and have slower allocation/free but we also have some inherent
+benefits to it due to our type system and inherent ordering of data structures", and "I chose
+the 3x, not because I accept a median of 3x but because it probably exposes a fundamental
+problem.  And with those problems gone and not worked around, the rest of the loft routines will
+benefit also".  @PLN157 had worked to 4×.  The class split comes from the 2026-10-02 macOS portal
+run: 85 of 182 routines over 3×, 7 of 15 class medians over it — filing all 85 would have been
+noise, while the 23 outliers in healthy classes are individual bugs.

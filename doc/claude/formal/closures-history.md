@@ -1258,6 +1258,20 @@ permanent refusal as distance from the spec overstates the register by one.
 
 Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), as written.
 
+- **D-clo-46** *(opened 2026-10-05, CLOSED 2026-10-05; loft#1862)* — `(L-CapRebind)` for the
+  keyed kinds.  Every keyed whole-value rebind but a non-empty literal (loft#1447's mint) cleared
+  and refilled the local's store IN PLACE, which the record read too: a closure built over
+  `c = mk(5)` answered 9 after `c = mk(9)` on all five keyed kinds, both backends, for a call, a
+  variable, a branch, a field, `[]` and a right-hand side reading `c`; and once `(O-Latest)` let
+  the frame free the store the local named last, a record that left the frame read a released
+  store.  The literal mint itself leaked: one store per extra rebind (it minted again over its
+  own fresh store) and one per loop pass (a pass-confined record adopts nothing and is rebuilt
+  without releasing a collection it displaces).  Closed by `Parser::keyed_rebind_mint` at every
+  rebind spelling — asked by store identity against the records built so far, so only a store a
+  record shares is left — and `rebound_capture_slots`, which releases a pass-confined record's
+  build-time store at the local's scope end.  84 cells (6 shapes × 7 spellings × 2 backends),
+  under strict stores and poison; loft2's 392-cell control for the five kinds and the pre-build
+  half.  Guard `a-captured-keyed-local-keeps-its-store-through-every-rebind.loft`.
 - **D-clo-45** *(opened 2026-09-28, CLOSED 2026-09-28; loft#1725)* — `(L-CapHeap)` with
   `(O-Latest)` for a capture bound from a JOIN (`c = f() ?? []`, a value branch) and ASSIGNED
   again after the build, in a closure that leaves the frame.  loft#1721 releases each arm by
@@ -1659,3 +1673,7 @@ Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), 
   that is a RETURN SOURCE as handed out, and the ownership question reads
   `returned_closure_records` — the records named in RETURN POSITION, off the tail and off every
   `return`.  Guard `1444-the-returned-closure-is-the-one-that-keeps-its-capture.loft`.
+
+## The closure record closures.md's OPEN line carried until 2026-10-05
+
+`D-clo-46` (opened and CLOSED 2026-10-05, loft#1862); `D-clo-45` (opened and CLOSED 2026-09-28, loft#1725); `D-clo-44` (opened and CLOSED 2026-09-28, loft#1715); `D-clo-43` (opened and CLOSED 2026-09-27, found with loft#1700); `D-clo-42` (opened and CLOSED 2026-09-24, loft#1659); `D-clo-41` (opened and CLOSED 2026-09-24, loft#1658); `D-clo-40` (opened and CLOSED 2026-09-23, loft#1642); `D-clo-39` (opened and CLOSED 2026-09-23; `D-clo-38`, loft#1624, opened and CLOSED the same day; `D-clo-36` and `D-clo-37` opened 2026-09-22 with `D-clo-35` and CLOSED 2026-09-23; `D-clo-27` closed 2026-09-12).

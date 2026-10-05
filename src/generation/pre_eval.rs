@@ -730,6 +730,11 @@ impl Output<'_> {
                 self.collect_pre_evals_inner(fused.index, result)?;
                 return self.collect_pre_evals_inner(fused.fld, result);
             }
+            // `@FR-R-Base`'s byte clause — the same, for a byte element read: its element
+            // address is folded into the fast path, so only the index can still hold work.
+            if let Some(b) = self.fused_byte_read(self.data.def(*d_nr).name(), vals) {
+                return self.collect_pre_evals_inner(b.index, result);
+            }
             // `@FR-R-Base`'s join clause — `v[i]?.f` folds its JOIN block: in range the field
             // is one load and the block never runs, and the emitter writes the block itself
             // in the fallback arm.  Lifted into a `let _pre_N` it would run on every pass and

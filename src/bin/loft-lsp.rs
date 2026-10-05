@@ -48,7 +48,7 @@ const DIAGNOSTIC_DOC_URL: &str =
     "https://github.com/loft-lang/loft/blob/main/doc/claude/DIAGNOSTICS.md#the-codes";
 
 const SERVER_NAME: &str = "loft-lsp";
-const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
+const SERVER_VERSION: &str = loft::manifest::LOFT_RUNNING_VERSION;
 
 fn main() {
     // Opt this server into the stdlib startup cache: the parse accessors then
@@ -1041,7 +1041,7 @@ fn stdlib_file_uri(stdlib_dir: &str, rel_file: &str) -> String {
         .parent()
         .unwrap_or_else(|| Path::new(""))
         .join(rel_file);
-    let abs = loft::portable_path::plain_canonical(&path);
+    let abs = loft::file_access::plain_canonical(&path);
     file_uri(&abs)
 }
 

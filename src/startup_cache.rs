@@ -32,7 +32,7 @@ fn cache_target(default_dir: &str) -> Option<std::path::PathBuf> {
         return None;
     }
     Some(crate::cache::stdlib_cache_path(
-        &crate::cache::stdlib_cache_key(&srcs),
+        &crate::cache::stdlib_cache_key(default_dir, &srcs),
     ))
 }
 
@@ -48,6 +48,8 @@ pub fn warm_load_stdlib(p: &mut Parser, default_dir: &str) -> bool {
     match crate::ir_read::open_bundle_into(&path.to_string_lossy(), &mut p.database) {
         Ok(data) => {
             p.data = data;
+            // Recency is USE, so the images a live build keeps loading survive the prune.
+            crate::cache::touch_now(&path);
             true
         }
         Err(_) => false, // cache miss (different key / absent) → cold parse
@@ -73,6 +75,7 @@ pub fn save_stdlib_cache(p: &Parser, default_dir: &str) {
         let _ = std::fs::create_dir_all(parent);
     }
     let _ = crate::ir_store::save_bundle(&p.data, &p.database.types, &path.to_string_lossy());
+    crate::cache::prune_stdlib_images();
 }
 
 /// Non-`mmap` builds: no bundle to write.
@@ -100,7 +103,7 @@ fn stdlib_key_hex(default_dir: &str) -> Option<String> {
     if srcs.is_empty() {
         return None;
     }
-    Some(hex32(&crate::cache::stdlib_cache_key(&srcs)))
+    Some(hex32(&crate::cache::stdlib_cache_key(default_dir, &srcs)))
 }
 
 #[cfg(feature = "mmap")]
@@ -393,12 +396,13 @@ pub struct AutoNative<'a> {
 /// skips a `[wasm.bridge]` library's cdylib).  Persisted in the manifest and compared on a
 /// warm load, so a bundle is only replayed under the context that marked it.
 #[must_use]
-pub fn native_lib_context(html: bool) -> String {
+pub fn native_lib_context(html: bool, open_world: bool) -> String {
     format!(
-        "nolibs={} forcefail={} html={}",
+        "nolibs={} forcefail={} html={} open={}",
         u8::from(std::env::var_os("LOFT_NO_NATIVE_LIBS").is_some()),
         u8::from(std::env::var_os("LOFT_FORCE_NATIVE_BUILD_FAIL").is_some()),
-        u8::from(html)
+        u8::from(html),
+        u8::from(open_world)
     )
 }
 
@@ -731,11 +735,19 @@ pub fn native_fast_path(
         _ => return None,
     }
     let binary = std::path::PathBuf::from(lines.next()?.strip_prefix("bin ")?);
+    // The manifest the binary was built beside.  The manifest is SHARED with every other
+    // mode: an `--interpret` run of an edited source rewrites it for the new source, and
+    // without this line the next native run validated the new source against it and
+    // exec'd the old source's binary — a silent answer from code that no longer exists.
+    let built_beside = lines.next()?.strip_prefix("man ")?.to_string();
     // A line this build does not know is a sidecar this build did not write.
     if lines.next().is_some() {
         return None;
     }
     if !binary.is_file() {
+        return None;
+    }
+    if crate::cache::file_hash(manifest.to_str()?).map(|h| hex32(&h)) != Some(built_beside) {
         return None;
     }
     let state = manifest_state(&manifest, &stdlib_key_hex(default_dir)?)?;
@@ -769,10 +781,14 @@ pub fn save_native_sidecar(
     let Some(binary) = binary.to_str() else {
         return;
     };
+    let Some(built_beside) = manifest.to_str().and_then(crate::cache::file_hash) else {
+        return;
+    };
     let sidecar = crate::cache::native_sidecar_path(&manifest);
     let body = format!(
-        "sig {}\nfp {fingerprint:016x}\nbin {binary}\n",
-        crate::cache::build_signature()
+        "sig {}\nfp {fingerprint:016x}\nbin {binary}\nman {}\n",
+        crate::cache::build_signature(),
+        hex32(&built_beside)
     );
     let tmp = sidecar.with_extension(format!("native.{}.tmp", std::process::id()));
     if std::fs::write(&tmp, body.as_bytes()).is_ok() {

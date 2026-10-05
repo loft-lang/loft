@@ -106,10 +106,10 @@ fn OpSizeFile(file: File) -> integer fs#read;
 #cold
 fn OpDelete(path: text) -> integer fs#update;
 #cold
-#rust"codegen_runtime::fs_delete(&s.database.resolve_path(@path))"
+#rust"s.database.fs_delete_at(@path)"
 fn OpMoveFile(from: text, to: text) -> integer fs#update;
 #cold
-#rust"codegen_runtime::fs_move(&s.database.resolve_path(@from), &s.database.resolve_path(@to))"
+#rust"s.database.fs_move_at(@from, @to)"
 fn OpTruncateFile(self: File, size: integer) -> boolean fs#update;
 #cold
 fn OpSyncFile(self: File) -> boolean fs#update;
@@ -145,13 +145,13 @@ fn OpCallRef(fn_var: const u16, arg_size: const u16);
 #rust"s.fn_call_ref(@fn_var, @arg_size);"
 fn OpMkdir(path: text) -> integer fs#update;
 #cold
-#rust"codegen_runtime::fs_mkdir(&s.database.resolve_path(@path))"
+#rust"s.database.fs_mkdir_at(@path)"
 fn OpMkdirAll(path: text) -> integer fs#update;
 #cold
-#rust"codegen_runtime::fs_mkdir_all(&s.database.resolve_path(@path))"
+#rust"s.database.fs_mkdir_all_at(@path)"
 fn OpRmdir(path: text) -> integer fs#update;
 #cold
-#rust"codegen_runtime::fs_rmdir(&s.database.resolve_path(@path))"
+#rust"s.database.fs_rmdir_at(@path)"
 /// Reads the entire file as a UTF-8 text value.
 /// Use for small configuration files or scripts.
 /// Example: @STD-010
@@ -248,9 +248,8 @@ pub fn split_text(self: text, separator: text) -> vector<text> {
 }
 #pure
 // --- Files and directories ---
-/// Returns the platform path separator character: '\' on Windows, '/' elsewhere.
-/// Detected once at startup from the runtime filesystem, and fixed for the
-/// lifetime of the process.
+/// The separator of a loft path: '/' on every platform.  A path a program hands loft may
+/// also use '\' (it reads as '/'), and every path loft hands back uses '/'.
 
 pub fn path_sep() -> character;
 #impure(host_io)
@@ -259,6 +258,10 @@ pub fn path_sep() -> character;
 /// working directory under `#cwd`), so `../data.txt` names the file above the
 /// script — the same file an absolute path would name, and it answers the same
 /// either way.
+/// A path means the same on every platform: `/` and `\` both separate; a name no
+/// platform could hold (`a:b`, `q?`, `aux.txt`, a trailing dot or space) is refused
+/// everywhere; a name means its exact spelling, so `B.txt` beside `b.txt` is refused.
+/// A refused path answers like a missing one, and is logged once.
 
 pub fn file(path: text) -> File fs#read {
   result = File { path: path, ref: null };
@@ -337,18 +340,18 @@ pub fn rmdir(path: text) -> FileResult fs#update {
 /// Returns true if `path` exists and is a directory.
 /// Use to branch on a path's kind before descending into / reading it.
 pub fn is_dir(path: text) -> boolean fs#read;
-#rust"codegen_runtime::fs_is_dir(&s.database.resolve_path(@path))"
+#rust"s.database.fs_is_dir_at(@path)"
 #impure(io)
 /// Returns true if `path` exists and is a regular file.
 /// Use to confirm a directory entry is a readable file before opening it.
 pub fn is_file(path: text) -> boolean fs#read;
-#rust"codegen_runtime::fs_is_file(&s.database.resolve_path(@path))"
+#rust"s.database.fs_is_file_at(@path)"
 #impure(io)
 /// Returns true if `path` itself is a symbolic link, whatever it points at —
 /// is_dir and is_file answer for the TARGET, so a walk that must not follow a
 /// link asks this first.  False on a browser host, which has no links.
 pub fn is_symlink(path: text) -> boolean fs#read;
-#rust"codegen_runtime::fs_is_symlink(&s.database.resolve_path(@path))"
+#rust"s.database.fs_is_symlink_at(@path)"
 #impure(io)
 /// Lists the entry NAMES of directory `path` (base names, not full paths),
 /// sorted.  A MISSING / non-directory path lists as NULL (distinct
@@ -993,7 +996,8 @@ pub fn files(self: const File) -> vector<File> fs#read {
 fn write_text_raw(file: File, v: text) -> boolean fs#update;
 #rust"{{ let __wf_v = @v; stores.write_file(&@file, __wf_v) }}"
 #impure(io)
-/// Writes v as UTF-8 text to the file, overwriting existing content.  Returns
+/// Writes v as UTF-8 text at the file's position: the first write through a File
+/// replaces the file's content, later ones follow it.  Returns
 /// FileResult.Ok on success and FileResult.Other on an OS write failure (disk
 /// full, permission denied, a bad path) — a failed write is OBSERVABLE, not
 /// silently swallowed.  Discarding callers (`f.write(s)` as a statement) are

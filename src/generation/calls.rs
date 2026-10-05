@@ -210,11 +210,18 @@ impl Output<'_> {
         if forward.is_some() {
             write!(w, "{{ let __vt = ")?;
         }
+        // `@FR-R-RangedCall` — the ranged variant, when every integer argument is proven
+        // within its bound.  Not for a forward site, which spells its own call shape.
+        let ranged = forward.is_none()
+            && (self.current_call_def as usize) < self.data.definitions.len()
+            && std::ptr::eq(self.data.def(self.current_call_def), def_fn)
+            && self.ranged_call(self.current_call_def, vals, twin_args.is_some());
         write!(
             w,
-            "{}{}(",
+            "{}{}{}(",
             self.fn_ident(def_fn),
-            if twin_args.is_some() { "__inv" } else { "" }
+            if twin_args.is_some() { "__inv" } else { "" },
+            if ranged { "__rg" } else { "" }
         )?;
         let mut first_arg = true;
         if matches!(abi, crate::codegen_runtime::Abi::Cell) {
@@ -321,6 +328,22 @@ impl Output<'_> {
         idx: usize,
         v: &Value,
     ) -> std::io::Result<()> {
+        // The call-site location the parser hands `assert` / `panic` / `log_*` (a parameter
+        // named `file`): when it is the program's own path, a test/semantics build reads it at
+        // run time like every other mention (`codegen_runtime::main_file_or`), so the binary
+        // holds no path and two copies of one program at different paths are one binary.  Only
+        // that parameter — a user's own string literal is never rewritten.
+        if self.reads_main_file_at_run_time()
+            && def_fn
+                .attributes()
+                .get(idx)
+                .is_some_and(|a| a.name == "file")
+            && let Value::Text(t) = v.unspan()
+            && !t.is_empty()
+            && *t == self.main_file()
+        {
+            return write!(w, "main_file_or(\"\")");
+        }
         // `(R-ValueLocal)` (`@FR-R-ValueLocal`) — a TUPLE PARAMETER takes the tuple: a value
         // local or an admitted call is one already (`hoist::tuple_arg_ready`, the same
         // question the site gate asked); any other record expression is read field by
@@ -663,6 +686,21 @@ impl Output<'_> {
             && matches!(vals.get(vi), Some(Value::Null))
         {
             res = "{{let db = @v1; if db.rec != 0 {{ stores.store_mut(&db).set_u32_raw(db.rec, db.pos + u32::from(@fld), 0u32); }}}}".to_string();
+        }
+        // `OpSetText` copies its value into a fresh `String` before `set_str` because the value
+        // may BORROW store memory (a field read, a slice of a text parameter) that the claim
+        // can move.  A literal and an owned `String` local borrow no store: their bytes are
+        // read where they are, one allocation and one copy fewer per write.
+        if def_fn.name() == "OpSetText"
+            && !self.text_set_copy_kept
+            && let Some(vi) = def_fn.attributes().iter().position(|a| a.name == "val")
+            && match vals.get(vi).map(Value::unspan) {
+                Some(Value::Text(_)) => true,
+                Some(Value::Var(v)) => self.text_owned(*v),
+                _ => false,
+            }
+        {
+            res = "{{let db = @v1; let s_val = AsRef::<str>::as_ref(&*@val); if db.rec != 0 {{ let store = stores.store_mut(&db); let s_pos = store.set_str(s_val); store.set_u32_raw(db.rec, db.pos + u32::from(@fld), s_pos); }}}}".to_string();
         }
         // Bytecode templates wrap text values in Str::new(...) for put_stack compatibility.
         // Native code uses &str directly — strip the wrapper by extracting its argument.

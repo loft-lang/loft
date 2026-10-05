@@ -15,7 +15,7 @@
 // lives with the language wiring; what is proven here is that a call CAN cross
 // with its value, its type, and its error behaviour intact.
 
-#![cfg(target_os = "linux")]
+#![cfg(unix)]
 
 use loft::host::Value;
 use loft::lib_placement::Worker;

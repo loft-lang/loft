@@ -88,24 +88,24 @@ fn package_root_for(file: &str) -> Option<std::path::PathBuf> {
 /// Returns the path relative to the package root, so the report reads
 /// `src/regex.loft:30` rather than an absolute path nobody can scan.
 fn coverage_path(src: &str, test_file: &str, root: Option<&std::path::Path>) -> Option<String> {
-    if src.is_empty() || crate::portable_path::is_stdlib_source(src) {
+    if src.is_empty() || crate::file_access::is_stdlib_source(src) {
         return None;
     }
-    let abs = crate::portable_path::try_plain_canonical(std::path::Path::new(src))?;
-    if let Some(t) = crate::portable_path::try_plain_canonical(std::path::Path::new(test_file))
+    let abs = crate::file_access::try_plain_canonical(std::path::Path::new(src))?;
+    if let Some(t) = crate::file_access::try_plain_canonical(std::path::Path::new(test_file))
         && abs == t
     {
         return None;
     }
     let root = root?;
-    let root = crate::portable_path::try_plain_canonical(root)?;
+    let root = crate::file_access::try_plain_canonical(root)?;
     let rel = abs.strip_prefix(&root).ok()?;
     // This string is a REPORT — something a reader copies into an editor, and something
     // a test asserts on — not a path anything opens, so it must read the same on every
     // platform.  `to_string_lossy()` alone hands back the native separator, which made
     // the Windows leg print `src\pos.loft` against a contract (and a `loft.toml`
     // `entry = "src/<name>.loft"`) that says `src/pos.loft`.
-    Some(crate::portable_path::portable(rel))
+    Some(crate::file_access::portable(rel))
 }
 
 /// loft#925 — what is known about one group of test files: those that open with
@@ -249,11 +249,12 @@ fn build_test_base(
 /// `<dir>default` — a directory that does not exist, reported as *"cannot load
 /// default library"* against a file that passes without the flag.  `main.rs` joins
 /// the same way for an ordinary run (@P363); this is the test runner's half.
+/// `<dir>/default`, in ONE separator: `--path D:\\loft/` joined by hand spelled the stdlib
+/// `D:\\loft/default`, and its files were then not recognised as the stdlib (loft#1860).
 fn stdlib_dir_of(default_dir: &str) -> String {
-    std::path::Path::new(default_dir)
+    loft::file_access::PathText::host(default_dir)
         .join("default")
-        .to_string_lossy()
-        .into_owned()
+        .native()
 }
 
 fn build_test_base_inner(
@@ -911,7 +912,7 @@ pub(crate) fn run_tests(
         let mut bases: BTreeMap<(Vec<String>, String), BaseSlot> = BTreeMap::new();
 
         for file_path in files {
-            let abs_file = crate::portable_path::plain_canonical(file_path)
+            let abs_file = crate::file_access::plain_canonical(file_path)
                 .to_str()
                 .unwrap_or("")
                 .to_string();
@@ -921,7 +922,7 @@ pub(crate) fn run_tests(
             // checks literally.  On Windows the host separator made the runner print
             // `greeter\tests\greet.loft` where the page shows `greeter/tests/greet.loft`, and the
             // documented output did not match the real one.
-            let display_name = crate::portable_path::portable(file_path);
+            let display_name = crate::file_access::portable(file_path);
 
             // Read the raw source to extract annotations before parsing.
             let source = match std::fs::read_to_string(file_path) {
@@ -1443,7 +1444,7 @@ pub(crate) fn run_tests(
                     continue;
                 }
                 // Skip standard library / operators.
-                if crate::portable_path::is_stdlib_source(&def.position.file) {
+                if crate::file_access::is_stdlib_source(&def.position.file) {
                     continue;
                 }
                 // skip library functions loaded via `use`. Only run
@@ -1713,8 +1714,10 @@ pub(crate) fn run_tests(
                         // published binary is never replaced by a different one.
                         let scratch = crate::platform::scratch_dir();
                         let lib_dir = native_utils::loft_lib_dir();
+                        // Keyed without the program's own path, which this build reads at
+                        // run time (`native_utils::path_free_key_source`).
                         let key = native_utils::native_cache_key(
-                            &buf,
+                            &native_utils::path_free_key_source(&buf, &native_data, false),
                             lib_dir.as_deref(),
                             Some(&native_data),
                         );
@@ -1757,6 +1760,7 @@ pub(crate) fn run_tests(
                                 .arg("-o")
                                 .arg(&tmp_bin)
                                 .arg(&tmp_rs);
+                            crate::native_utils::add_main_stack_flags(&mut cmd);
                             // Layer 1: strip the linked binary (~36MB → ~1MB;
                             // the bulk is debug info from libloft.rlib + std,
                             // useless to a run-and-check test).  Opt out with
@@ -1937,6 +1941,15 @@ pub(crate) fn run_tests(
                                 if let Some(name) = only {
                                     run_cmd.arg(name);
                                 }
+                                // The program's own path, which the binary does not hold
+                                // (`codegen_runtime::main_file_or`).
+                                let n_main = native_data.def_nr("n_main");
+                                if n_main != u32::MAX {
+                                    run_cmd.env(
+                                        "LOFT_NATIVE_MAIN_FILE",
+                                        native_data.def(n_main).position().file.to_string(),
+                                    );
+                                }
                                 if std::env::var("LOFT_SOURCE_DIR").is_err()
                                     && let Some(dir) = std::path::Path::new(&abs_file).parent()
                                 {
@@ -2017,6 +2030,29 @@ pub(crate) fn run_tests(
                 // duration of this file's tests; the guard restores the cwd
                 // afterwards so the next file's parse/compile is unaffected.
                 let _cwd = enter_source_dir(&clean_db.source_dir, clean_db.program_relative);
+                // loft#1865 — compile the file ONCE and fork a fresh runtime per test
+                // (`State::fork_program`).  Cloning the checked `Data` and recompiling every
+                // function per test made a file's test time quadratic in its size (≈12 ms a
+                // test on a 3 600-line file whose cells ran in 0.13 s through `main`).  The
+                // per-test path stays for a `LOFT_LOG` dump, which needs the table mutable,
+                // for `LOFT_TEST_RECOMPILE=1` (the A/B against this), and when compiling
+                // panics — each test then reports it, as before.
+                let loft_log_active = std::env::var("LOFT_LOG").is_ok();
+                let compiled: Option<(State, std::sync::Arc<crate::data::Data>)> =
+                    if loft_log_active || std::env::var_os("LOFT_TEST_RECOMPILE").is_some() {
+                        None
+                    } else {
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            let mut data = clean_data.clone();
+                            let mut state = State::new(clean_db.clone());
+                            data.observes_entries = true;
+                            compile::byte_code(&mut state, &mut data);
+                            crate::extensions::load_all(&mut state, pending_native.clone());
+                            crate::extensions::wire_native_fns(&mut state, &data);
+                            (state, std::sync::Arc::new(data))
+                        }))
+                        .ok()
+                    };
                 for (_, fn_name) in &test_fns {
                     // Per-function @IGNORE: skip without running.
                     if ann.ignore_fn.contains(fn_name.as_str()) {
@@ -2036,20 +2072,29 @@ pub(crate) fn run_tests(
                     let production = ann.production;
                     let log_conf = ann.log_conf.clone();
 
-                    // Build a fresh State + bytecode for every function so tests
-                    // within a file cannot leak heap/store state into each other.
-                    let loft_log_active = std::env::var("LOFT_LOG").is_ok();
+                    // A fresh runtime for every function, so tests within a file cannot
+                    // leak heap/store state into each other.
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        let mut data_copy = clean_data.clone();
-                        let mut state = State::new(clean_db.clone());
-                        // Coverage is armed below and counts a function entered by a CALL, so
-                        // the calls stay calls (`@FR-R-InlineLeaf`).
-                        data_copy.observes_entries = true;
-                        compile::byte_code(&mut state, &mut data_copy);
-                        // Load native extensions for packages with #native functions.
-                        crate::extensions::load_all(&mut state, pending_native.clone());
-                        // PKG.5: wire auto-marshalled native functions.
-                        crate::extensions::wire_native_fns(&mut state, &data_copy);
+                        let (mut state, mut data_copy) = if let Some((program, data)) = &compiled {
+                            // SAFETY: `compiled` outlives this test's `state`, which is
+                            // dropped inside this closure.
+                            (
+                                unsafe { program.fork_program() },
+                                std::sync::Arc::clone(data),
+                            )
+                        } else {
+                            let mut data_copy = clean_data.clone();
+                            let mut state = State::new(clean_db.clone());
+                            // Coverage is armed below and counts a function entered by a
+                            // CALL, so the calls stay calls (`@FR-R-InlineLeaf`).
+                            data_copy.observes_entries = true;
+                            compile::byte_code(&mut state, &mut data_copy);
+                            // Load native extensions for packages with #native functions.
+                            crate::extensions::load_all(&mut state, pending_native.clone());
+                            // PKG.5: wire auto-marshalled native functions.
+                            crate::extensions::wire_native_fns(&mut state, &data_copy);
+                            (state, std::sync::Arc::new(data_copy))
+                        };
 
                         // Set up logger if @ARGS requested --production or --log-conf.
                         if production || log_conf.is_some() {
@@ -2070,8 +2115,6 @@ pub(crate) fn run_tests(
                         // Arm coverage for this run.  Sized to the definition table so
                         // the hook is a bounds-checked index, never a resize.
                         state.entered_fns = Some(vec![false; data_copy.definitions() as usize]);
-                        // The run co-owns this test's table, so it is shared, not copied again.
-                        let mut data_copy = std::sync::Arc::new(data_copy);
                         // loft#860 — and the profiler, if the environment asked for it.
                         // A no-op otherwise: `Profiler::from_env` returns `None`, so an
                         // ordinary test run pays a single `var_os` per test.

@@ -25,9 +25,16 @@
 //! The handle therefore remembers its logical position after every operation that settles
 //! it, and a seek to exactly that position answers without asking the OS.  An error forgets
 //! the position, so the next seek goes to the OS again.
+//!
+//! A handle a READ opened is read-only, so that a program which only reads never opens a
+//! file for writing (a watcher sees a write-close for that, and a read-only file could not be
+//! read at all).  It keeps its path, and the first write or resize through it reopens the
+//! file read-write at the logical position — the program's `File` is one handle whichever
+//! operation came first (loft#1861: a write after a read failed with `Bad file descriptor`).
 
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::path::PathBuf;
 
 /// Bytes a refill asks for.  A request at least this large bypasses the buffer.
 const CAPACITY: usize = 64 * 1024;
@@ -41,9 +48,12 @@ pub struct LoftFile {
     pos: usize,
     /// The bytes `buf` holds.
     len: usize,
+    /// A read-only handle's path, kept to reopen it read-write on its first write.
+    reopen: Option<PathBuf>,
 }
 
 impl LoftFile {
+    /// A handle opened for writing (and reading).
     #[must_use]
     pub fn new(file: File) -> LoftFile {
         LoftFile {
@@ -52,7 +62,35 @@ impl LoftFile {
             buf: Vec::new(),
             pos: 0,
             len: 0,
+            reopen: None,
         }
+    }
+
+    /// A handle opened read-only from `path`; a write through it reopens `path` read-write.
+    #[must_use]
+    pub fn reader(file: File, path: impl Into<PathBuf>) -> LoftFile {
+        LoftFile {
+            reopen: Some(path.into()),
+            ..LoftFile::new(file)
+        }
+    }
+
+    /// Before a write: a read-only handle becomes a read-write one at the same logical
+    /// position.  A file that cannot be opened for writing answers the OS error, and the
+    /// handle stays a reader.
+    fn writable(&mut self) -> io::Result<()> {
+        let Some(path) = self.reopen.clone() else {
+            return Ok(());
+        };
+        self.realign()?;
+        let at = self.file.stream_position()?;
+        let mut file =
+            crate::file_access::open_read_write(&crate::file_access::PathText::from_os(&path))?;
+        file.seek(SeekFrom::Start(at))?;
+        self.file = file;
+        self.at = Some(at);
+        self.reopen = None;
+        Ok(())
     }
 
     /// Unread buffered bytes: how far the OS position runs ahead of the logical one.
@@ -93,6 +131,7 @@ impl LoftFile {
     /// # Errors
     /// The OS error of the realigning seek or of the resize.
     pub fn set_len(&mut self, size: u64) -> io::Result<()> {
+        self.writable()?;
         self.realign()?;
         self.file.set_len(size)
     }
@@ -109,12 +148,43 @@ impl LoftFile {
 
 impl Read for LoftFile {
     fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+        if self.take_buffered(out) {
+            return Ok(out.len());
+        }
         let r = self.fill(out);
         self.settle(r, |n| *n as u64)
+    }
+
+    /// `fill` already reads the whole request unless the file ends, so one `read` answers
+    /// it — and a request the buffer holds is one copy (a binary format's scalar per call).
+    fn read_exact(&mut self, out: &mut [u8]) -> io::Result<()> {
+        if self.take_buffered(out) {
+            return Ok(());
+        }
+        if self.read(out)? == out.len() {
+            Ok(())
+        } else {
+            Err(io::Error::from(io::ErrorKind::UnexpectedEof))
+        }
     }
 }
 
 impl LoftFile {
+    /// A request the buffer already holds whole: copied, and the logical position moved by
+    /// it — exactly what `fill` and `settle` do for it, without their loop.  `false` leaves
+    /// everything as it was.
+    #[inline]
+    fn take_buffered(&mut self, out: &mut [u8]) -> bool {
+        let n = out.len();
+        if n == 0 || self.len - self.pos < n {
+            return false;
+        }
+        out.copy_from_slice(&self.buf[self.pos..self.pos + n]);
+        self.pos += n;
+        self.at = self.at.map(|a| a + n as u64);
+        true
+    }
+
     /// The read itself: the whole request, from the buffer and the file, unless the file ends.
     fn fill(&mut self, out: &mut [u8]) -> io::Result<usize> {
         let mut done = 0;
@@ -151,7 +221,7 @@ impl LoftFile {
 
 impl Write for LoftFile {
     fn write(&mut self, data: &[u8]) -> io::Result<usize> {
-        if let Err(e) = self.realign() {
+        if let Err(e) = self.writable().and_then(|()| self.realign()) {
             self.at = None;
             return Err(e);
         }
@@ -188,20 +258,18 @@ impl Seek for LoftFile {
 mod tests {
     use super::*;
 
+    fn host(p: &std::path::Path) -> crate::file_access::PathText {
+        crate::file_access::PathText::from_os(p)
+    }
+
     fn scratch(name: &str, bytes: &[u8]) -> std::path::PathBuf {
         let p = std::env::temp_dir().join(format!("loft_file_{name}_{}", std::process::id()));
-        std::fs::write(&p, bytes).unwrap();
+        crate::file_access::write(&host(&p), bytes).unwrap();
         p
     }
 
     fn open(p: &std::path::Path) -> LoftFile {
-        LoftFile::new(
-            std::fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open(p)
-                .unwrap(),
-        )
+        LoftFile::new(crate::file_access::open_read_write(&host(p)).unwrap())
     }
 
     #[test]
@@ -215,7 +283,7 @@ mod tests {
             got.extend_from_slice(&two);
         }
         assert_eq!(got, data);
-        std::fs::remove_file(p).unwrap();
+        crate::file_access::remove_file(&host(&p)).unwrap();
     }
 
     #[test]
@@ -246,8 +314,23 @@ mod tests {
         f.read_exact(&mut rest).unwrap();
         assert_eq!(&rest, b"fghij");
         drop(f);
-        assert_eq!(std::fs::read(&p).unwrap(), b"abcXYfghij");
-        std::fs::remove_file(p).unwrap();
+        assert_eq!(crate::file_access::read(&host(&p)).unwrap(), b"abcXYfghij");
+        crate::file_access::remove_file(&host(&p)).unwrap();
+    }
+
+    #[test]
+    fn a_reader_written_through_reopens_at_the_logical_position() {
+        let p = scratch("reader", b"abcdefghij");
+        let mut f = LoftFile::reader(crate::file_access::open(&host(&p)).unwrap(), &p);
+        let mut three = [0u8; 3];
+        f.read_exact(&mut three).unwrap();
+        f.write_all(b"XY").unwrap();
+        let mut rest = [0u8; 5];
+        f.read_exact(&mut rest).unwrap();
+        assert_eq!(&rest, b"fghij");
+        drop(f);
+        assert_eq!(crate::file_access::read(&host(&p)).unwrap(), b"abcXYfghij");
+        crate::file_access::remove_file(&host(&p)).unwrap();
     }
 
     #[test]
@@ -270,7 +353,7 @@ mod tests {
         assert_eq!(f.stream_position().unwrap(), 4);
         drop(f);
         assert_eq!(std::fs::read(&p).unwrap(), b"abcZef");
-        std::fs::remove_file(p).unwrap();
+        crate::file_access::remove_file(&host(&p)).unwrap();
     }
 
     #[test]
@@ -288,6 +371,6 @@ mod tests {
         assert_eq!(f.seek(SeekFrom::Start(1)).unwrap(), 1);
         f.read_exact(&mut two).unwrap();
         assert_eq!(&two, b"12");
-        std::fs::remove_file(p).unwrap();
+        crate::file_access::remove_file(&host(&p)).unwrap();
     }
 }

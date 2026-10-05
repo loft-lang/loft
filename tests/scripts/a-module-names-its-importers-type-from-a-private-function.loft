@@ -1,0 +1,30 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @ARGS: --lib tests/fixtures/libs
+//
+// @FR-F-Surface (loft#1856) — a module may name a type the file that `use`s it declares
+// below the `use` (loft#801), and whether that resolves, and whether the type is `pub`,
+// is the DECLARATION's to say, not the naming function's.  `fwd1856_inner` names the
+// entry's `pub` type from a private function, `fwd1856h_inner` its private type from a
+// `pub` one.
+//
+// @falsified-at: be004e56c — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-module-names-its-importers-type-from-a-private-function.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: the exit — on the control the stub `fwd1856_inner`'s private function leaves
+//   never reaches the entry, so the library does not compile.
+//   WITNESS: "unknown type F1856Pub — it is in `fwd1856`, which nothing this file imports
+//   passes on" at fwd1856_inner.loft.
+//   ARMED: nothing.
+//   HOLDS: on this tree every assertion passes on both backends, with no leak and no panic.
+use fwd1856;
+use fwd1856h;
+
+fn test_a_private_function_names_the_importers_type() {
+  assert(fwd1856::f1856_pub() == 31, "named from a private function: {fwd1856::f1856_pub()}");
+  assert(fwd1856::F1856Pub { p_n: 7 }.p_n == 7, "the entry's pub type is published");
+}
+
+fn test_a_pub_function_names_the_importers_private_type() {
+  assert(fwd1856h::f1856_hid() == 42, "the library reaches its private type: {fwd1856h::f1856_hid()}");
+}

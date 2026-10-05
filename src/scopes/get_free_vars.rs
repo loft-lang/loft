@@ -13,7 +13,7 @@ use super::capture_adoption::{
 use super::capture_builds::{
     adoption_build_is_conditional, capture_adoption_owns_free, escaping_record_holds,
     escaping_record_holds_buffer, free_unless_record_built, join_capture_witness,
-    reassigned_join_capture_slot,
+    reassigned_join_capture_slot, rebound_capture_slots,
 };
 use super::free_vars::Delivered;
 use super::tuple_members::{MemberFacts, tuple_owned_elem_frees};
@@ -665,6 +665,38 @@ impl Scopes<'_> {
                     );
                 }
                 if emit {
+                    for (w, pos) in rebound_capture_slots(
+                        data,
+                        self.database,
+                        function,
+                        &self.capture_build_backing,
+                        v,
+                    ) {
+                        let held = Value::Call(
+                            data.def_nr("OpGetDbRef"),
+                            vec![Value::Var(w), Value::Int(i32::from(pos))],
+                        );
+                        let release = Value::Insert(vec![
+                            Value::Call(
+                                data.def_nr("OpFreeRefIfDistinct"),
+                                vec![held, Value::Var(v)],
+                            ),
+                            Value::Call(
+                                data.def_nr("OpSetDbRef"),
+                                vec![
+                                    Value::Var(w),
+                                    Value::Int(i32::from(pos)),
+                                    Value::Call(data.def_nr("OpNullRefSentinel"), vec![]),
+                                ],
+                            ),
+                        ]);
+                        let built = v_if(
+                            Value::Call(data.def_nr("OpRefIsNull"), vec![Value::Var(w)]),
+                            Value::Boolean(false),
+                            Value::Call(data.def_nr("OpConvBoolFromRef"), vec![Value::Var(w)]),
+                        );
+                        ls.push(v_if(built, release, Value::Null));
+                    }
                     if scope_debug {
                         eprintln!(
                             "[scope_debug] freeing '{}' (var={v}, scope={})",

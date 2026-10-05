@@ -1,0 +1,107 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-H-ClearRelease` — a pooled return buffer is released before every refill, and the
+// release first asks whether the record owns any heap RIGHT NOW from the type's cached heap
+// slots (`Stores::holds_no_heap_fast`): a text slot, a collection slot, a struct-enum tag.
+// Only an all-empty answer skips the walk; every other answer goes the full way.
+//
+// What can go wrong is a slot the plan misses or misreads: the release is skipped while the
+// record still owns a text, a vector, or a variant's payload, and the previous turn's heap
+// is stranded inside the buffer's store.  No value moves and no store-level leak check sees
+// it, so each cell counts the store's live RECORDS (`store_memory()`'s census) after the same
+// loop run 50 and 500 times: a stranded claim grows the second count.  The last cell is the
+// shape the fast path exists for — the value moved out every turn — and checks its values.
+//
+// @falsified-by: tests/falsified/a-reused-buffer-is-released-whatever-its-slots-hold.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: an assertion, on both backends (the release is shared runtime).  WITNESS: the
+//   patch answers "empty" for every record, so s1's text is stranded once per turn — the live
+//   records read 51 -> 501 on --native, 53 -> 503 on --interpret.  HOLDS: no leak, panic or
+//   refusal on either tree; every value cell passes on both.
+
+struct T1 { n: integer, name: text }
+struct V3 { n: integer, v: vector<integer> }
+struct Inner { w: vector<integer> }
+struct Nest { k: integer, inner: Inner }
+enum Shape { Dots { pts: vector<integer> }, Label { txt: text }, Empty }
+struct Held { s: Shape, ok: boolean }
+
+/// The live record count of every store, off the runtime's own census.
+fn census_records() -> integer {
+  cr_t = store_memory();
+  cr_i = cr_t.find("records ");
+  if !cr_i { return -1 }
+  cr_j = cr_i + 8;
+  cr_n = 0;
+  while cr_j < len(cr_t) && cr_t[cr_j] >= '0' && cr_t[cr_j] <= '9' {
+    cr_n = cr_n * 10 + (cr_t[cr_j] as integer - '0' as integer);
+    cr_j += 1;
+  }
+  cr_n
+}
+
+fn mk_t1(i: integer) -> T1 { T1 { n: i, name: "name-{i}" } }
+fn mk_v3(i: integer) -> V3 { V3 { n: i, v: [i, i + 1, i + 2] } }
+fn mk_nest(i: integer) -> Nest { Nest { k: i, inner: Inner { w: [i, i * 2] } } }
+fn mk_shape(i: integer) -> Held {
+  if i % 3 == 0 { return Held { s: Dots { pts: [i, i] }, ok: true } }
+  if i % 3 == 1 { return Held { s: Label { txt: "t{i}" }, ok: true } }
+  Held { s: Empty, ok: false }
+}
+
+// s1..s4: each loop's sum is hand-computed from its n, and the census after it
+fn s1(n: integer) -> integer {
+  t = 0;
+  for i in 0..n { r = mk_t1(i); t += len(r.name) - 5; }
+  // len("name-i") - 5 = the digits of i: 10 one-digit, 40 two-digit, then three-digit
+  assert(t == if n == 50 { 10 + 2 * 40 } else { 10 + 2 * 90 + 3 * 400 }, "s1({n}) t {t}");
+  census_records()
+}
+fn s2(n: integer) -> integer {
+  t = 0;
+  for i in 0..n { r = mk_v3(i); t += r.v[2] ?? 0; }
+  assert(t == n * (n - 1) / 2 + 2 * n, "s2({n}) t {t}");
+  census_records()
+}
+fn s3(n: integer) -> integer {
+  t = 0;
+  for i in 0..n { r = mk_nest(i); t += r.inner.w[1] ?? 0; }
+  assert(t == n * (n - 1), "s3({n}) t {t}");
+  census_records()
+}
+fn s4(n: integer) -> integer {
+  t = 0;
+  for i in 0..n {
+    h = mk_shape(i);
+    t += match h.s { Dots { pts } => len(pts), Label { txt } => 0 * len(txt) + 1, Empty => 0 };
+  }
+  // Dots on i % 3 == 0 count 2, Label on i % 3 == 1 count 1: n = 50 → 17 * 2 + 17, 500 → 167 * 2 + 167
+  assert(t == if n == 50 { 51 } else { 501 }, "s4({n}) t {t}");
+  census_records()
+}
+
+// s5: the value moved out of the buffer every turn — `items += [h.s]` for the ok turns —
+// i = 0..8: Dots(0), Label "t1", -, Dots(3), Label "t4", -, Dots(6), Label "t7" → 6 items
+fn s5() {
+  items: vector<Shape> = [];
+  for i in 0..8 {
+    h = mk_shape(i);
+    if h.ok { items += [h.s]; }
+  }
+  assert(len(items) == 6, "s5 len {len(items)}");
+  d = 0;
+  l = "";
+  for it in items {
+    match it { Dots { pts } => d += pts[0] ?? 0, Label { txt } => l += txt, Empty => d += 1000 }
+  }
+  assert(d == 9 && l == "t1t4t7", "s5 got {d} {l}");
+}
+
+fn main() {
+  assert(census_records() >= 0, "the census answers");
+  assert(s1(500) == s1(50), "s1 grows: {s1(50)} -> {s1(500)}");
+  assert(s2(500) == s2(50), "s2 grows: {s2(50)} -> {s2(500)}");
+  assert(s3(500) == s3(50), "s3 grows: {s3(50)} -> {s3(500)}");
+  assert(s4(500) == s4(50), "s4 grows: {s4(50)} -> {s4(500)}");
+  s5();
+}

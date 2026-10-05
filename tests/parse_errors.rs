@@ -477,7 +477,7 @@ fn wrong_cast() {
 #[test]
 fn field_type() {
     code!("struct Rec { v: u8 }\nfn test() { r = Rec { v: \"a\" }; assert(\"{r}\" == \"{{v:\\\"a\\\"}}\", \"Object\"); }")
-        .error("Cannot assign text to field Rec.v of type integer(0, 255) at field_type:2:31");
+        .error("Cannot assign text to field Rec.v of type u8 at field_type:2:31");
 }
 
 #[test]

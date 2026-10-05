@@ -136,24 +136,33 @@ fn sidecar_of(root: &Path) -> PathBuf {
     found.remove(0)
 }
 
-fn cached_binary_of(root: &Path) -> PathBuf {
+/// Every compiled program in the script directory's binary cache.
+fn cached_binaries_of(root: &Path) -> Vec<PathBuf> {
     let dir = root.join(".loft").join("cache");
-    let mut found: Vec<PathBuf> = std::fs::read_dir(&dir)
+    std::fs::read_dir(&dir)
         .expect("binary cache dir")
         .flatten()
         .map(|e| e.path())
         .filter(|p| {
             p.file_name()
-                .is_some_and(|n| n.to_string_lossy().starts_with("prog-"))
+                .is_some_and(|n| n.to_string_lossy().starts_with("native-"))
         })
-        .collect();
-    assert_eq!(
-        found.len(),
-        1,
-        "one cached binary under {}: {found:?}",
-        dir.display()
+        .collect()
+}
+
+/// The binary the last run published or executed: a reuse touches its entry, so the most
+/// recently modified one is the binary that run used.
+fn cached_binary_of(root: &Path) -> PathBuf {
+    let found = cached_binaries_of(root);
+    assert!(
+        !found.is_empty(),
+        "no cached binary under {}",
+        root.display()
     );
-    found.remove(0)
+    found
+        .into_iter()
+        .max_by_key(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok())
+        .unwrap()
 }
 
 const PROG_30: &str = "fn main() {\n  v = [5, 10, 15];\n  println(\"sum={v[0]+v[1]+v[2]}\");\n}\n";
@@ -223,7 +232,7 @@ fn an_unchanged_program_is_served_from_its_source_key_and_every_damaged_sidecar_
     // Cell 10 — garbage, then a truncated sidecar.
     let sidecar = sidecar_of(&root);
     let good = std::fs::read_to_string(&sidecar).expect("sidecar");
-    assert_eq!(good.lines().count(), 3, "sig / fp / bin: {good}");
+    assert_eq!(good.lines().count(), 4, "sig / fp / bin / man: {good}");
     std::fs::write(&sidecar, "not a sidecar\n").expect("garbage");
     let r = run(&root, &script);
     assert!(
@@ -240,7 +249,7 @@ fn an_unchanged_program_is_served_from_its_source_key_and_every_damaged_sidecar_
         "rewritten after garbage: {}",
         r.stderr
     );
-    let two_lines: String = good.lines().take(2).map(|l| format!("{l}\n")).collect();
+    let two_lines: String = good.lines().take(3).map(|l| format!("{l}\n")).collect();
     std::fs::write(&sidecar, two_lines).expect("truncate");
     let r = run(&root, &script);
     assert_eq!(
@@ -302,6 +311,43 @@ fn an_edit_that_changes_the_program_is_never_served_stale() {
     assert!(
         r.stdout.contains("sum=100") && r.source_key() == "hit",
         "{}{}",
+        r.stdout,
+        r.stderr
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Cell 2b — the program manifest is SHARED with the interpreter: an `--interpret` run of
+/// an edited source re-validates and rewrites it for the new source, so a sidecar that only
+/// asked "is the manifest current?" execs the OLD binary on the next native run.  The
+/// sidecar names the manifest it was built beside.
+#[cfg(not(windows))]
+#[test]
+fn an_interpret_run_between_two_native_runs_never_serves_the_old_binary() {
+    let root = fresh_root("interleave");
+    let script = root.join("prog.loft");
+    std::fs::write(&script, PROG_30).expect("script");
+    warm_to_a_hit(&root, &script, "sum=30");
+    std::fs::write(&script, PROG_100).expect("edit");
+    let i = run_with(&root, &script, &["--interpret"], &[]);
+    assert!(
+        i.ok && i.stdout.contains("sum=100"),
+        "{}{}",
+        i.stdout,
+        i.stderr
+    );
+    let r = run(&root, &script);
+    assert!(
+        r.ok && r.stdout.contains("sum=100"),
+        "the edited program's answer, never the binary of the source the interpreter replaced: {}{}",
+        r.stdout,
+        r.stderr
+    );
+    assert_eq!(r.source_key(), "miss", "{}", r.stderr);
+    let r = run(&root, &script);
+    assert!(
+        r.stdout.contains("sum=100") && r.source_key() == "hit",
+        "re-keyed beside the interpreter's manifest: {}{}",
         r.stdout,
         r.stderr
     );
@@ -395,6 +441,54 @@ fn a_flag_that_changes_the_binary_is_a_different_key() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// The same program at a second path in the same directory is the same binary: a
+/// test/semantics build holds no path in its code (the driver passes it at run time), so
+/// the second run compiles nothing, and the failure it reports still names ITS OWN file.
+/// Both halves matter: sharing the binary while reporting the first file's path would
+/// be a wrong answer served from the cache.
+#[cfg(not(windows))]
+#[test]
+fn the_same_program_at_two_paths_is_one_binary_naming_its_own_file() {
+    let root = fresh_root("twopath");
+    let prog = "fn main() {\n  println(\"v=7\");\n  assert(1 == 2, \"boom\");\n}\n";
+    let a = root.join("first.loft");
+    let b = root.join("second.loft");
+    std::fs::write(&a, prog).expect("script a");
+    std::fs::write(&b, prog).expect("script b");
+    let ra = run(&root, &a);
+    assert!(
+        ra.stdout.contains("v=7") && ra.stderr.contains("first.loft:3"),
+        "{}{}",
+        ra.stdout,
+        ra.stderr
+    );
+    assert_eq!(ra.binary_cache(), "miss", "{}", ra.stderr);
+    let rb = run(&root, &b);
+    assert!(
+        rb.stdout.contains("v=7") && rb.stderr.contains("second.loft:3"),
+        "the second path reports its own file: {}{}",
+        rb.stdout,
+        rb.stderr
+    );
+    assert!(
+        !rb.stderr.contains("first.loft"),
+        "the first path leaked into the second run: {}",
+        rb.stderr
+    );
+    assert_eq!(
+        rb.binary_cache(),
+        "hit",
+        "the same program at another path compiles nothing: {}",
+        rb.stderr
+    );
+    assert_eq!(
+        cached_binaries_of(&root).len(),
+        1,
+        "one binary for both paths"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// Cells 7, 8 — a `LOFT_*` switch outside the inert list declines the path (a codegen
 /// switch changes the Rust), and the P254 kill switch turns every native cache off.
 #[cfg(not(windows))]
@@ -404,6 +498,7 @@ fn a_switch_in_the_environment_declines_the_fast_path() {
     let script = root.join("prog.loft");
     std::fs::write(&script, PROG_30).expect("script");
     warm_to_a_hit(&root, &script, "sum=30");
+    let default_binary = cached_binary_of(&root);
     let r = run_with(
         &root,
         &script,
@@ -425,13 +520,25 @@ fn a_switch_in_the_environment_declines_the_fast_path() {
     // …and leaves the default program's key alone: the switch run's binary is recorded
     // under its own environment, so the default run after it must not execute it (it did:
     // the two shared one sidecar, and an A/B of a switch compared the switch arm with
-    // itself; loft#1697).  A miss here is the binary cache's single slot, which the switch
-    // run's build took.
+    // itself; loft#1697).  Both binaries stay in the cache, so the default run is a hit,
+    // and the binary it touched is the default build's, not the switch build's.
+    assert_eq!(cached_binaries_of(&root).len(), 2, "one binary per build");
+    let switch_binary = cached_binary_of(&root);
+    assert_ne!(
+        default_binary, switch_binary,
+        "the switch changes the binary"
+    );
     let r = run(&root, &script);
     assert_eq!(
-        r.source_key(),
-        "miss",
+        cached_binary_of(&root),
+        default_binary,
         "a default run is never served the switch run's binary: {}",
+        r.stderr
+    );
+    assert_eq!(
+        r.source_key(),
+        "hit",
+        "the default program's key survives the switch run: {}",
         r.stderr
     );
     let r = run_with(

@@ -1,0 +1,41 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A BYTE ELEMENT READ THROUGH THE HELD BASE ANSWERS WHAT THE TEMPLATE ANSWERS (`@FR-R-Base`'s
+// byte clause).  `e.m[i]` over a `vector<u8>` (or `i8`) in a loop that holds the vector's
+// header and base is one bounds test and one byte load plus the bias.  Every index the fast
+// arm refuses takes the template: past the end (absent, so `?? 0`), and negative (addressing
+// from the end).  An `i8` vector's bias is not zero.
+//
+// Expected values by hand: m[i] = 13·i for i < 20 (all below 256), Σ = 13·190 = 2470, and
+// indexes 20..24 add 0; s[i] = (i % 7) − 3 sums 0 per cycle of 7, so 20 elements sum
+// −3 −2 −1 + 0 + 1 + 2 = −3, and 22 the same; m[−1], m[−2], m[−3] = 247 + 234 + 221 = 702.
+//
+// @falsified-by: tests/falsified/a-byte-element-read-through-the-held-base-answers-the-template.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+// CHANNEL: native assertions — without the bias the i8 vector's elements read 3 high.
+// HOLDS: the interpreter (no fused read); the u8 cells (bias 0) and the template arms.
+
+struct ES { m: vector<u8>, s: vector<i8>, w: integer }
+fn sum_m(e: ES, n: integer) -> integer {
+  t = 0;
+  for i in 0..n { t += (e.m[i] ?? 0) as integer; }
+  t
+}
+fn sum_s(e: ES, n: integer) -> integer {
+  t = 0;
+  for i in 0..n { t += (e.s[i] ?? 0) as integer; }
+  t
+}
+fn back(e: ES) -> integer {
+  t = 0;
+  for i in 0..3 { t += (e.m[-1 - i] ?? 0) as integer; }
+  t
+}
+fn main() {
+  e = ES { m: [], s: [], w: 0 };
+  for i in 0..20 { e.m += [((i * 13) & 255) as u8]; e.s += [((i % 7) - 3) as i8 ?? 0]; }
+  assert(sum_m(e, 20) == 2470, "every element in range");
+  assert(sum_m(e, 25) == 2470, "past the end: absent");
+  assert(sum_s(e, 20) == -3 && sum_s(e, 22) == -3, "an i8 vector's bias");
+  assert(back(e) == 702, "a negative index addresses from the end");
+}

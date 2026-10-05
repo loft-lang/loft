@@ -34,6 +34,39 @@ pub fn byte_code_with_store(
     byte_code_from(state, data, 0, program_store);
 }
 
+/// Close the program: the whole-program rewrites, once per `Data`.  `@FR-R-ValueRecord`
+/// (@PLN180) — a small record returned to a caller that only reads its fields travels as a
+/// tuple — changes signatures, which is why this runs on a closed program and not in
+/// `scopes::check`; the rest follow it.  Each rewrite re-reads the scope pass's facts
+/// (scopes, loops, intervals) and lays the frames it changes out again, and the program
+/// cache's image carries the stored slots but not those facts — so the cold run closes the
+/// program BEFORE taking the image (`main.rs`) and a warm load marks the decoded `Data`
+/// closed: closing it again from the degraded table laid frames out differently and freed a
+/// caller's store (loft#1858).
+pub fn close_program(data: &mut Data, database: &mut crate::database::Stores) {
+    if data.program_closed {
+        return;
+    }
+    data.program_closed = true;
+    // `value_record` reads closure-record layouts; the verdict `byte_code_from` carries in
+    // first is idempotent, so a close ahead of it carries it in too.
+    crate::typedef::sync_capture_ownership(data, database);
+    crate::value_record::rewrite_program(data, database);
+    // `@FR-R-InlineLeaf` (with `R-MaskRange`, `R-SingleUse`, `R-ScaleFold` inside the
+    // inlined bodies) — after the value records, so a leaf it inlines is final.
+    crate::leaf_inline::rewrite_program(data);
+    // `@FR-R-ForwardWalk` — a vector walk the body cannot resize as a counted loop.
+    crate::forward_walk::rewrite_program(data);
+    // `@FR-R-SameRead` — a discharged read a statement spells twice, read once.
+    crate::same_read::rewrite_program(data);
+    // `@FR-R-InRange` — a record element its loop proves in range, read without a discharge.
+    crate::in_range::rewrite_program(data);
+    // `@FR-R-SingleUse`'s statement clause — a comprehension's element temporary.
+    crate::single_use::rewrite_program(data);
+    // `@FR-R-DischargeInto` — a text discharge read straight into the local it assigns.
+    crate::discharge_into::rewrite_program(data);
+}
+
 /// Incremental variant of [`byte_code`] — only emit bytecode for
 /// functions whose `d_nr >= start_d_nr`, and skip the one-time init
 /// (`native::init`, `register_native_stubs`, `build_const_vectors`,
@@ -68,25 +101,10 @@ pub fn byte_code_from(
     // that verdict in now, while `Data` and the live schema are both in hand; this
     // is the single funnel every `byte_code*` entry point goes through.
     crate::typedef::sync_capture_ownership(data, &mut state.database);
-    // `@FR-R-ValueRecord` (@PLN180) — a small record returned to a caller that only reads
-    // its fields travels as a tuple.  Here and not in `scopes::check` because it changes
-    // signatures: this is where the program is closed.  A warm start reads its bodies from
-    // the cached store instead of `data`, so it keeps the record form.
+    // Close the program if no one has (`close_program`).  A warm start that reads its bodies
+    // from the cached store reads them as the image holds them: already closed.
     if start_d_nr == 0 && warm_store.is_none() {
-        crate::value_record::rewrite_program(data, &state.database);
-        // `@FR-R-InlineLeaf` (with `R-MaskRange`, `R-SingleUse`, `R-ScaleFold` inside the
-        // inlined bodies) — after the value records, so a leaf it inlines is final.
-        crate::leaf_inline::rewrite_program(data);
-        // `@FR-R-ForwardWalk` — a vector walk the body cannot resize as a counted loop.
-        crate::forward_walk::rewrite_program(data);
-        // `@FR-R-SameRead` — a discharged read a statement spells twice, read once.
-        crate::same_read::rewrite_program(data);
-        // `@FR-R-InRange` — a record element its loop proves in range, read without a discharge.
-        crate::in_range::rewrite_program(data);
-        // `@FR-R-SingleUse`'s statement clause — a comprehension's element temporary.
-        crate::single_use::rewrite_program(data);
-        // `@FR-R-DischargeInto` — a text discharge read straight into the local it assigns.
-        crate::discharge_into::rewrite_program(data);
+        close_program(data, &mut state.database);
     }
     // @PLN165 D10 — an instance's literal names its template (`Stores::shown`).
     for d in 0..data.definitions() {
@@ -786,7 +804,7 @@ pub fn show_captures_summary(writer: &mut dyn Write, data: &Data) -> Result<(), 
 /// so the default-skip filter holds in both.  Mirrors
 /// `introspect::is_default_lib_path`.
 pub(crate) fn is_default_file(file: &str) -> bool {
-    crate::portable_path::is_stdlib_source(file)
+    crate::file_access::is_stdlib_source(file)
 }
 
 /// Write the static dump (IR and/or bytecode) for the functions selected by

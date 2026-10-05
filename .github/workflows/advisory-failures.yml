@@ -29,6 +29,13 @@
 name: Advisory failures
 
 on:
+  # The nightly hands its run over by id (its `red-steps-digest` job): `workflow_run` never fires
+  # for a reusable workflow, and `miri.yml` is one.
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'The run to digest'
+        required: true
   workflow_run:
     workflows: ["CI", "Nightly checks (UB sanitizers + toolchain matrix)"]
     types: [completed]
@@ -48,7 +55,7 @@ concurrency:
 jobs:
   digest:
     # A cancelled run was superseded (a newer push) and proves nothing either way.
-    if: github.event.workflow_run.conclusion != 'cancelled' && github.event.workflow_run.conclusion != 'skipped'
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion != 'cancelled' && github.event.workflow_run.conclusion != 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -62,7 +69,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: python3 scripts/ci_failure_digest.py file "${{ github.event.workflow_run.id }}"
+        run: python3 scripts/ci_failure_digest.py file "${{ inputs.run_id || github.event.workflow_run.id }}"
 
   # The PR's timing report: every test leg's setup / test / after split, how many tests ran
   # at once, its tail and last test, the slowest tests, and those slower than on the default

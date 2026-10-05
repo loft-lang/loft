@@ -48,7 +48,7 @@ for f in "$dir"/[0-9][0-9][0-9]-*.md; do
     startup-over:*)
       bar=${expect#startup-over:}; best=""
       for i in 1 2 3 4 5; do
-        s=$(date +%s%N); "$loft" --interpret "$dir/$probe" > /dev/null 2>&1; e=$(date +%s%N); ms=$(( (e - s) / 1000000 ))
+        s=$(perl -MTime::HiRes=time -e 'printf "%d", time * 1000000000'); "$loft" --interpret "$dir/$probe" > /dev/null 2>&1; e=$(perl -MTime::HiRes=time -e 'printf "%d", time * 1000000000'); ms=$(( (e - s) / 1000000 ))
         [ -z "$best" ] || [ "$ms" -lt "$best" ] && best=$ms
       done
       [ "$best" -gt "$bar" ] && holds=yes
@@ -56,7 +56,7 @@ for f in "$dir"/[0-9][0-9][0-9]-*.md; do
     over:*)
       bar=${expect#over:}; best=""
       for i in 1 2 3 4 5; do
-        s=$(date +%s%N); "$loft" --interpret "$dir/$probe" > /dev/null 2>&1; e=$(date +%s%N); ms=$(( (e - s) / 1000000 ))
+        s=$(perl -MTime::HiRes=time -e 'printf "%d", time * 1000000000'); "$loft" --interpret "$dir/$probe" > /dev/null 2>&1; e=$(perl -MTime::HiRes=time -e 'printf "%d", time * 1000000000'); ms=$(( (e - s) / 1000000 ))
         [ -z "$best" ] || [ "$ms" -lt "$best" ] && best=$ms
       done
       [ "$best" -gt "$bar" ] && holds=yes

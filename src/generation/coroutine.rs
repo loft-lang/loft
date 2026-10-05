@@ -1449,6 +1449,10 @@ fn emit_struct_def(
 ) -> std::io::Result<()> {
     writeln!(w, "struct {struct_name} {{")?;
     writeln!(w, "    state: u32,")?;
+    // @FR-G-Done — set where the generator ENDS, read by `LoftCoroutine::done`.  The value
+    // channels' end sentinel is also a value a generator may yield — `i64::MIN` is the
+    // integer null, `"\0"` the text null — so the value alone cannot say which happened.
+    writeln!(w, "    __done: bool,")?;
     for attr in attrs {
         let field_tp = if is_text_slot(&attr.typedef) {
             "String".to_string()
@@ -1533,6 +1537,7 @@ fn emit_factory_fn(
     writeln!(w, "    let _ = cell;")?;
     writeln!(w, "    Box::new({struct_name} {{")?;
     writeln!(w, "        state: 0,")?;
+    writeln!(w, "        __done: false,")?;
     for attr in attrs {
         let aname = sanitize(&attr.name);
         if is_text_slot(&attr.typedef) {
@@ -1567,7 +1572,10 @@ fn persistent_default(tp: &Type) -> String {
     if is_text_slot(tp) {
         return "String::new()".to_string();
     }
-    match tp {
+    // `base()` — a NULLABLE heap local (`ref(S)?`, the work ref a `yield m` of an `S?` copies
+    // into) is the same `DbRef` underneath; matched on the wrapper it fell to the number arm
+    // and was declared `DbRef = 0 as DbRef` (E0605, so the generator did not build).
+    match tp.base() {
         // A heap local starts as the null reference and the body's own `OpDatabase` fills
         // it — the same initialiser the per-arm `let` used before these became fields.
         Type::Reference(_, _)
@@ -1589,7 +1597,7 @@ fn persistent_default(tp: &Type) -> String {
         // `0_u32`, a `single` field `f32` and initialised `0.0_f64`, a `boolean` field `u8`
         // and initialised `false` — so a generator holding a local of any of those types
         // did not compile under `--native` at all, while `--interpret` ran it.
-        other => format!("0 as {}", rust_type(other, &Context::Variable)),
+        _ => format!("0 as {}", rust_type(tp, &Context::Variable)),
     }
 }
 
@@ -1751,6 +1759,10 @@ impl Output<'_> {
                 close,
             )
         };
+        // Every RETURNED end sets `__done` first; `exhaust_val` stays the bare sentinel for
+        // the one place that compares against it (a delegation reading its sub-generator).
+        let exhaust_val = exhaust;
+        let exhaust = format!("{{ self.__done = true; {exhaust_val} }}");
         writeln!(w, "{sig}")?;
         if has_for_body {
             writeln!(
@@ -2072,7 +2084,12 @@ impl Output<'_> {
                             w,
                             "                let val = self.sub_{sub}.as_mut().unwrap().{advance}(stores);"
                         )?;
-                        writeln!(w, "                if val == {exhaust} {{")?;
+                        // `(G-Next)` — a delegated null is a value; only the sub-generator's
+                        // own end ends the delegation.
+                        writeln!(
+                            w,
+                            "                if val == {exhaust_val} && self.sub_{sub}.as_ref().unwrap().done() {{"
+                        )?;
                         // Release the sub-generator's own heap locals on the way out, the same
                         // cleanup a handle's scope-exit free performs (loft#835) — this path
                         // owns the sub-generator directly, so nothing else would.
@@ -2888,6 +2905,7 @@ impl Output<'_> {
             w,
             "impl loft::codegen_runtime::LoftCoroutine for {struct_name} {{"
         )?;
+        writeln!(w, "    fn done(&self) -> bool {{ self.__done }}")?;
         self.emit_next_i64(w, &attrs, &segments, &tail, has_yf, &yield_tp)?;
         let owns_snapshots = crate::data::is_dbref(&yield_tp) && is_eager(&segments);
         let owns_fnrefs = matches!(yield_tp.base(), Type::Function(..)) && is_eager(&segments);
@@ -3176,7 +3194,10 @@ impl Output<'_> {
                     }
                     writeln!(w, "        loop {{")?;
                     writeln!(w, "            let v = __sub.{sub_advance}(stores);")?;
-                    writeln!(w, "            if v == {sub_exhaust} {{ break; }}")?;
+                    writeln!(
+                        w,
+                        "            if v == {sub_exhaust} && __sub.done() {{ break; }}"
+                    )?;
                     if let Some(tp) = snapshot_tp {
                         // The sub-generator hands each value over (`(G-Own)`), so this
                         // buffer snapshots it and releases the handed store; a type not
@@ -3267,6 +3288,7 @@ impl Output<'_> {
         }
         writeln!(w, "    Box::new({struct_name} {{")?;
         writeln!(w, "        state: 0,")?;
+        writeln!(w, "        __done: false,")?;
         for attr in attrs {
             let aname = sanitize(&attr.name);
             if is_text_slot(&attr.typedef) {

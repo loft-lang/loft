@@ -109,6 +109,9 @@ impl OpEmitter for FusedElementReadEmitter {
             return write!(ctx.w, "var_{name}.{idx}");
         }
 
+        if emit_byte_read(ctx, args)? {
+            return Ok(());
+        }
         let Some(fused) = ctx.output.fused_element_read(ctx.def_fn.name(), args) else {
             if emit_join_read(ctx, args)? {
                 return Ok(());
@@ -165,7 +168,11 @@ impl OpEmitter for FusedElementReadEmitter {
                 "vector::get_elem_hoisted::<{ty}, {verify}>(&{header}, &("
             )?;
         }
-        ctx.emit(fused.vector)?;
+        // The `DbRef` the loop prelude bound beside the header, when it did.
+        match ctx.output.header_dbrefs.get(&header) {
+            Some(vd) => write!(ctx.w, "{vd}")?,
+            None => ctx.emit(fused.vector)?,
+        }
         write!(ctx.w, "), (")?;
         ctx.emit(fused.size)?;
         write!(ctx.w, ") as u32, ")?;
@@ -178,6 +185,91 @@ impl OpEmitter for FusedElementReadEmitter {
         }
         Ok(())
     }
+}
+
+/// `@FR-R-Base`'s byte clause — `OpGetByte(v[i], fld, min)`, a `vector<u8>` (or `i8`) element
+/// read, or `OpGetBoolean(v[i], fld)`, a boolean field of an element read, where the loop holds `v`'s header and element base: one bounds test and one byte
+/// load plus the bias, where the template resolved the store per read.  `OpGetByte` re-bases
+/// the stored byte by `min` and answers `i64::MIN` for an absent element, so it stayed out of
+/// the typed fused reads; here the in-range arm adds `min` itself, and EVERY other index — past
+/// the end, or negative (which addresses from the end) — takes the template whole, bound to
+/// the index evaluated once.  Answers whether it emitted.
+fn emit_byte_read(ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<bool> {
+    let Some(b) = ctx.output.fused_byte_read(ctx.def_fn.name(), args) else {
+        return Ok(false);
+    };
+    let (header, base, size, fld, min) = (b.header, b.base, b.size, b.fld, b.min);
+    write!(ctx.w, "{{ let __bi: i64 = ")?;
+    ctx.emit(b.index)?;
+    if b.character && !ctx.output.hoist_verify {
+        // `OpGetCharacter`: the stored `u32`, decoded as the template decodes it, in loft's
+        // `i32` form of a character (the `as u32 as i32` every character template takes),
+        // and `0` (`'\0'`) for an absent element — the template's `rec == 0` arm.
+        return write!(
+            ctx.w,
+            "; let __bl = i64::from({header}.len); let __bf = if __bi < 0 {{ __bi + __bl }} else {{ __bi }}; if __bf >= 0 && __bf < __bl {{ char::from_u32(unsafe {{ ({base}.add(__bf as usize * {size}usize + {fld}usize) as *const u32).read_unaligned() }}).unwrap_or(char::from(0)) as u32 as i32 }} else {{ 0_i32 }} }} /*@FR-R-Base byte read*/"
+        )
+        .map(|()| true);
+    }
+    if b.character {
+        write!(
+            ctx.w,
+            "; if (__bi as u64) < u64::from({header}.len) {{ char::from_u32(unsafe {{ ({base}.add(__bi as usize * {size}usize + {fld}usize) as *const u32).read_unaligned() }}).unwrap_or(char::from(0)) as u32 as i32 }} else {{ "
+        )?;
+        let mut elem = b.elem_args.to_vec();
+        elem[2] = Value::RawExpr("__bi".to_string());
+        let mut fallback = args.to_vec();
+        fallback[0] = Value::Call(b.elem_op, elem);
+        super::default::DefaultEmitter.emit(ctx, &fallback)?;
+        write!(ctx.w, " }} }} /*@FR-R-Base byte read*/")?;
+        return Ok(true);
+    }
+    if b.boolean && !ctx.output.hoist_verify {
+        // `OpGetBoolean`: the stored byte as it stands (0, 1, 255 for null), and 255 for an
+        // absent element — the template's `rec == 0` arm.
+        return write!(
+            ctx.w,
+            "; let __bl = i64::from({header}.len); let __bf = if __bi < 0 {{ __bi + __bl }} else {{ __bi }}; if __bf >= 0 && __bf < __bl {{ unsafe {{ {base}.add(__bf as usize * {size}usize + {fld}usize).read() }} }} else {{ 255u8 }} }} /*@FR-R-Base byte read*/"
+        )
+        .map(|()| true);
+    }
+    if b.boolean {
+        write!(
+            ctx.w,
+            "; if (__bi as u64) < u64::from({header}.len) {{ unsafe {{ {base}.add(__bi as usize * {size}usize + {fld}usize).read() }} }} else {{ "
+        )?;
+        let mut elem = b.elem_args.to_vec();
+        elem[2] = Value::RawExpr("__bi".to_string());
+        let mut fallback = args.to_vec();
+        fallback[0] = Value::Call(b.elem_op, elem);
+        super::default::DefaultEmitter.emit(ctx, &fallback)?;
+        write!(ctx.w, " }} }} /*@FR-R-Base byte read*/")?;
+        return Ok(true);
+    }
+    if !ctx.output.hoist_verify {
+        // The template's whole answer, inline: a negative index addresses from the end
+        // (`get_vector`), the null index and anything still outside `[0, len)` is the absent
+        // element, which `OpGetByte` answers `i64::MIN`; a null vector's header has length 0.
+        // No call into the store is left on either arm, which is what lets a chain of pure
+        // helpers around this read fold (hex_field's `edgeset_count`).
+        return write!(
+            ctx.w,
+            "; let __bl = i64::from({header}.len); let __bf = if __bi < 0 {{ __bi + __bl }} else {{ __bi }}; if __bf >= 0 && __bf < __bl {{ i64::from(unsafe {{ {base}.add(__bf as usize * {size}usize + {fld}usize).read() }}) + ({min}_i64) }} else {{ i64::MIN }} }} /*@FR-R-Base byte read*/"
+        )
+        .map(|()| true);
+    }
+    write!(
+        ctx.w,
+        "; if (__bi as u64) < u64::from({header}.len) {{ i64::from(unsafe {{ {base}.add(__bi as usize * {size}usize + {fld}usize).read() }}) + ({min}_i64) }} else {{ "
+    )?;
+    // The template, over the index already evaluated.
+    let mut elem = b.elem_args.to_vec();
+    elem[2] = Value::RawExpr("__bi".to_string());
+    let mut fallback = args.to_vec();
+    fallback[0] = Value::Call(b.elem_op, elem);
+    super::default::DefaultEmitter.emit(ctx, &fallback)?;
+    write!(ctx.w, " }} }} /*@FR-R-Base byte read*/")?;
+    Ok(true)
 }
 
 /// `@FR-R-Base`'s join clause — `v[i]?.f` where the loop holds `v`'s header and element

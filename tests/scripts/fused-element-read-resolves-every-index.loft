@@ -1,0 +1,127 @@
+// `@FR-R-Cold`'s fold clause — a fused scalar element read inside a loop
+// (`vector::get_elem_at`, `get_elem_hoisted` on `--native`) resolves EVERY index inline
+// through `vector::elem_index`, the one definition `get_vector` uses: a negative index
+// counts from the end, anything outside the vector after that answers null.  Before the
+// fold, every index but `[0, len)` went through an outlined call; the call is gone, so these
+// cells pin that the inline resolution answers what the call answered.  The text reader
+// (`text_elem_at`) keeps its negative half outlined — the clause's exception — and e5 pins
+// it at every kind of index all the same.  The interpreter is the oracle (it never fuses);
+// every value is hand-computed.  Cells: a negative index inside the
+// vector (e1), past the end (e2), negative past the start (e3), the insertion sort whose
+// repeated `arr[j - 1]` the fold lets LLVM read once (e4), a text vector at all three
+// kinds of index (e5), a float vector whose absent element is NaN-null (e6), and an empty
+// vector, where every index addresses nothing (e7).  The sort keeps the bench's spelling,
+// whose element-to-element store warns.
+//
+// @EXPECT_WARNING: a nullable `integer?` is stored into the assignment target of the non-null type `integer`
+// @falsified-at: hand-measured (2026-10-04) — with `get_elem_at` sabotaged to answer
+// `absent` for every negative index (the fold without its from-the-end clause),
+// `--interpret` stays green, `--native` fails `e1 null`, and `LOFT_HOIST_VERIFY=1` panics in
+// `verify_folded_read` with "folded element read disagrees with get_vector at index -2";
+// restored, every cell agrees on `--interpret`, `--native` and `LOFT_HOIST_VERIFY=1`.
+
+fn e1() {
+  v = [10, 20, 30, 40, 50];
+  s = 0;
+  // indices -2, -1, 0, 1, 2, 3, 4 -> 40 + 50 + 10 + 20 + 30 + 40 + 50
+  for i in 0..7 { s += v[i - 2]; }
+  assert(s == 240, "e1 {s}");
+  println("e1 {s}");
+}
+
+fn e2() {
+  v = [10, 20, 30, 40, 50];
+  s = 0; nulls = 0;
+  // indices 4, 5, 6 -> 50, null, null
+  for i in 0..3 {
+    x = v[i + 4];
+    if x == null { nulls += 1; } else { s += x; }
+  }
+  assert(s == 50 && nulls == 2, "e2 {s} {nulls}");
+  println("e2 {s} {nulls}");
+}
+
+fn e3() {
+  v = [10, 20, 30, 40, 50];
+  s = 0; nulls = 0;
+  // indices -7, -6, -5 -> null, null, v[0] = 10
+  for i in 0..3 {
+    x = v[i - 7];
+    if x == null { nulls += 1; } else { s += x; }
+  }
+  assert(s == 10 && nulls == 2, "e3 {s} {nulls}");
+  println("e3 {s} {nulls}");
+}
+
+fn insertion_sort(arr: vector<integer>) {
+  n = len(arr);
+  for is_i in 1..n {
+    key = arr[is_i];
+    j = is_i;
+    for _ in 0..is_i {
+      if arr[j - 1] > key {
+        arr[j] = arr[j - 1];
+        j -= 1;
+      } else {
+        break;
+      }
+    }
+    arr[j] = key;
+  }
+}
+
+fn e4() {
+  a = [5, 3, 9, 1, 7, 3, -4];
+  insertion_sort(a);
+  r = "{a}";
+  assert(r == "[-4,1,3,3,5,7,9]", "e4 {r}");
+  println("e4 {r}");
+}
+
+fn e5() {
+  t = ["a", "bb", "ccc"];
+  s = "";
+  // indices -2, -1, 0, 1, 2 -> "bb" "ccc" "a" "bb" "ccc"
+  for i in 0..5 { s += t[i - 2]; }
+  nulls = 0; n = 0;
+  // indices 1, 2, 3 -> "bb" "ccc" null
+  for i in 0..3 {
+    x = t[i + 1];
+    if x == null { nulls += 1; } else { n += len(x); }
+  }
+  far = 0;
+  // indices -4, -3 -> null, "a"
+  for i in 0..2 {
+    y = t[i - 4];
+    if y == null { far += 1; } else { far += 10 * len(y); }
+  }
+  assert(s == "bbcccabbccc" && n == 5 && nulls == 1 && far == 11, "e5 {s} {n} {nulls} {far}");
+  println("e5 {s} {n} {nulls} {far}");
+}
+
+fn e6() {
+  f = [1.5, 2.5];
+  s = 0.0; nulls = 0;
+  // indices -1, 0, 1, 2 -> 2.5, 1.5, 2.5, null
+  for i in 0..4 {
+    x = f[i - 1];
+    if x == null { nulls += 1; } else { s += x; }
+  }
+  assert(s == 6.5 && nulls == 1, "e6 {s} {nulls}");
+  println("e6 {s} {nulls}");
+}
+
+fn e7() {
+  e: vector<integer> = [];
+  nulls = 0;
+  // indices -1, 0, 1 on an empty vector -> null, null, null
+  for i in 0..3 {
+    if e[i - 1] == null { nulls += 1; }
+  }
+  assert(nulls == 3, "e7 {nulls}");
+  println("e7 {nulls}");
+}
+
+fn main() {
+  e1(); e2(); e3(); e4(); e5(); e6(); e7();
+}

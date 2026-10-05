@@ -71,7 +71,7 @@ while [ $# -gt 0 ]; do
     --)         shift; break;;
     # Anchored on the text, not a line range: adding a usage line must not
     # silently truncate --help.
-    -h|--help)  sed -n '/^# Sampling profiler/,/^# Everything after/p' "$0" | sed 's/^# \?//'; exit 0;;
+    -h|--help)  sed -n '/^# Sampling profiler/,/^# Everything after/p' "$0" | sed -E 's/^# ?//'; exit 0;;
     *) echo "profile.sh: unknown option '$1' (did you forget '--' before the loft args?)" >&2; exit 2;;
   esac
 done

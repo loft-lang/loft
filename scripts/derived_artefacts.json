@@ -1,5 +1,5 @@
 {
-  "about": "Every committed artefact a join must RE-DERIVE on the joined tree rather than take from either side (doc/claude/JOINING.md § The script). `paths` are whole files that are nothing but the artefact: a conflict in one is resolved to either side and re-derived, and a commit touching only such files is skipped by `scripts/join.py`. `inputs` are the paths whose change makes re-deriving necessary. `pin` names a file of numbers that must not GROW: a rise is accepted only up to the growth each source pinned on its own tree. `regen` runs in order; `check` must pass afterwards. `union_files` are append-only (a conflict keeps both sides); `shrink_files` are ratchets that only lose lines (a conflict keeps the lines BOTH sides still carry). `row_files` are hand-written docs holding measured `| **N** |` rows: a commit that changes only such rows there is not missing for that file.",
+  "about": "Every committed artefact a join must RE-DERIVE on the joined tree rather than take from either side (doc/claude/JOINING.md § The script). `paths` are whole files that are nothing but the artefact: a conflict in one is resolved to either side and re-derived, and a commit touching only such files is skipped by `scripts/join.py`. `inputs` are the paths whose change makes re-deriving necessary. `pin` names a file of numbers that must not GROW: a rise is accepted only up to the growth each source pinned on its own tree. `regen` runs in order; `check` must pass afterwards. `union_files` are append-only (a conflict keeps both sides); `shrink_files` are ratchets that only lose lines (a conflict keeps the lines BOTH sides still carry). `row_files` are hand-written docs holding measured `| **N** |` rows: a commit that changes only such rows there is not missing for that file. `ci: true` marks an artefact that is a pure function of the tree — no pin, no judgement — which `.github/workflows/derive.yml` regenerates on a runner and commits back (`scripts/derive_ci.py` runs exactly those, in this order); a ratchet never carries it. A `paths` entry may be a glob (`doc/lib-*.html`).",
   "artefacts": [
     {
       "name": "compiled-stdlib",
@@ -14,7 +14,8 @@
       "regen": [
         "python3 scripts/compiled_stdlib_fresh.py >/dev/null 2>&1 || make -s compiled-stdlib"
       ],
-      "note": "the stdlib's compiled loft bodies (@PLN181): stale after any default/*.loft change, and a stale one is interpreted 5-23x slower — first, because the census and the allocation pins measure the build it produces"
+      "note": "the stdlib's compiled loft bodies (@PLN181): stale after any default/*.loft change, and a stale one is interpreted 5-23x slower — first, because the census and the allocation pins measure the build it produces",
+      "ci": true
     },
     {
       "name": "optional-ratchet",
@@ -58,10 +59,10 @@
         "Cargo.toml",
         "Cargo.lock"
       ],
-      "check": "cargo test --release -q --test frontend_counts",
+      "check": "cargo test --release -q --test frontend_counts -- --ignored",
       "regen": [
-        "LOFT_FRONTEND_REPIN=1 cargo test --release -q --test frontend_counts",
-        "LOFT_FRONTEND_REPIN=1 cargo test -q --test frontend_counts"
+        "LOFT_FRONTEND_REPIN=1 cargo test --release -q --test frontend_counts -- --ignored",
+        "LOFT_FRONTEND_REPIN=1 cargo test -q --test frontend_counts -- --ignored"
       ],
       "pin": {
         "file": "bench/frontend/allocations.tsv",
@@ -97,9 +98,9 @@
       ],
       "check": "make -s surface-check",
       "regen": [
-        "cargo build --release -q --target wasm32-unknown-unknown --lib --no-default-features --features random",
         "make -s surface-gen"
-      ]
+      ],
+      "ci": true
     },
     {
       "name": "browser-bundle",
@@ -115,8 +116,10 @@
       ],
       "check": null,
       "regen": [
-        "make -s wasm"
-      ]
+        "[ \"$(./scripts/wasm_bundle_stamp.sh)\" = \"$(cat doc/pkg-src.stamp)\" ] || make -s wasm"
+      ],
+      "ci": true,
+      "note": "rebuilt only when its source stamp moved (scripts/wasm_bundle_stamp.sh): its bytes depend on the toolchain, so an unconditional rebuild re-commits ~9 MB of wasm on every runner pass with no source change"
     },
     {
       "name": "features-shadow",
@@ -131,7 +134,8 @@
       "check": "make -s features-check",
       "regen": [
         "make -s features-gen"
-      ]
+      ],
+      "ci": true
     },
     {
       "name": "docs-lint-baseline",
@@ -159,7 +163,8 @@
       "check": "cargo test --release -q --test doc_hygiene ignored_tests_baseline_is_current",
       "regen": [
         "python3 tests/dump_ignored_tests.py > tests/ignored_tests.baseline"
-      ]
+      ],
+      "ci": true
     },
     {
       "name": "ownership-drop-gate",
@@ -178,6 +183,33 @@
         "LOFT_BLESS_DROP_GATE=1 cargo test --release -q --test ownership_drop_gate -- --include-ignored"
       ],
       "cure": "a NEW line is a cell that releases wrongly on the union: fix it; only GONE lines (fixes) may be blessed, by hand"
+    },
+    {
+      "name": "reference-pages",
+      "paths": [
+        "doc/lib-*.html",
+        "doc/stdlib-*.html",
+        "doc/[0-9][0-9]-*.html",
+        "doc/libraries.html",
+        "doc/stdlib.html",
+        "doc/print.html",
+        "doc/search-index.js",
+        "doc/sitemap.xml",
+        "doc/loft-reference.typ"
+      ],
+      "inputs": [
+        "default/",
+        "tests/docs/",
+        "src/gendoc.rs",
+        "src/documentation.rs",
+        "lib/"
+      ],
+      "check": null,
+      "regen": [
+        "make -s doc"
+      ],
+      "ci": true,
+      "note": "the reference pages gendoc writes, with the library pages rendered from the published packages `make doc` fetches — a box without them keeps the committed pages, so the runner (a clean cache, the registry reachable) is the reliable writer"
     }
   ],
   "union_files": [
@@ -210,6 +242,10 @@
       "python3 scripts/o_proxy_check.py"
     ],
     [
+      "file_access guard",
+      "cargo test --release -q --lib file_access::guard"
+    ],
+    [
       "rule tags",
       "python3 scripts/rule_tags.py check"
     ],
@@ -219,7 +255,7 @@
     ],
     [
       "hygiene",
-      "cargo nextest run --release -E 'binary(doc_hygiene) + binary(frontend_counts)'"
+      "cargo nextest run --release -E 'binary(doc_hygiene)'"
     ]
   ],
   "shrink_files": [

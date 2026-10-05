@@ -79,11 +79,11 @@ fn the_live_host_still_gets_the_source_and_artifact_it_parses() {
     // and the prefix matched nothing. On Windows `temp_dir()` is the 8.3 short form
     // (`C:\Users\RUNNER~1\…`) and a bare `canonicalize` is the verbatim form
     // (`\\?\C:\Users\runneradmin\…`) — neither is what the driver prints. The driver's own
-    // spelling is `portable_path::plain_canonical`, so the resolved candidate is built the
+    // spelling is `file_access::plain_canonical`, so the resolved candidate is built the
     // same way, and whichever of the two the driver used is accepted.
     let candidates = [
         dir.join("hello.loft"),
-        loft::portable_path::plain_canonical(&dir).join("hello.loft"),
+        loft::file_access::plain_canonical(&dir).join("hello.loft"),
     ];
     let artifact = candidates
         .iter()

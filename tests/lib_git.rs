@@ -14,7 +14,7 @@
 // in it, a rename, a binary file), and a real checkout's history is whatever it
 // happens to be that day.
 
-#![cfg(target_os = "linux")]
+#![cfg(unix)]
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

@@ -556,6 +556,8 @@ struct Scopes<'s> {
 /// allocation (the Phase-4 Goal-E watermark guard).  Never panics in normal builds.
 #[expect(clippy::too_many_lines, reason = "inherited")]
 pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
+    // `@FR-R-PureReuse` — on the parser's bodies, before any of this pass's own rewrites.
+    crate::pure_reuse::rewrite_program(data);
     // `(H-Spent)` — the reads of a moved name, found while every body is still the parser's:
     // the scan below adds reads of its own (releases, hooks, snapshots) that are not the author's.
     crate::spent::record_all(data);
@@ -745,6 +747,12 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
         // `(R-ExitVector)` — a local vector returned inside the exit literal is built in the
         // return buffer's store: decided on the same IR, after the placements it may host.
         crate::exit_vector::rewrite(data, d_nr);
+        // `(R-ForwardResult)` — a returned local bound from a call is built in the return
+        // buffer: the call is handed the buffer the delivery copied into.
+        crate::forward_result::rewrite(data, d_nr);
+        // `(R-LiteralAppend)` — a record literal bound to a local whose one use is the append
+        // of it is built in its element.
+        crate::literal_append::rewrite(data, d_nr);
         // `(R-ReturnField)` — the returned field of an owned local is the local's store handed
         // over at the field's position: decided on the same settled IR, after the exit vector
         // a decoder's tree may have been built in.

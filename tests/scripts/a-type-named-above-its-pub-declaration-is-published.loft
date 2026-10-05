@@ -1,0 +1,41 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @ARGS: --lib tests/lib
+//
+// @FR-F-Surface (loft#1856) — what a library publishes is what it DECLARES `pub`, wherever
+// the type is first named.  fwdlib names each type above its declaration from a private
+// function, so the forward reference is created by a user that is not `pub`; the `pub`
+// declaration below must still publish it, by the qualifier and by the glob import alike.
+// The refusals that must hold the other way are in
+// a-type-named-above-its-private-declaration-stays-private.loft.
+//
+// @falsified-at: be004e56c — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-type-named-above-its-pub-declaration-is-published.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: the exit — on the control each type a private function names first stays
+//   private, so the program's reaches are refused and nothing compiles.
+//   WITNESS: "`FwdPubS` is not `pub` in `fwdlib`" for a struct declared `pub`.
+//   ARMED: nothing.
+//   HOLDS: on this tree every assertion passes on both backends, with no leak and no panic.
+use fwdlib;
+use fwdlib::*;
+
+fn takes(s: fwdlib::FwdPubS) -> integer { s.v }
+
+fn test_qualified_reach() {
+  assert(takes(fwdlib::FwdPubS { v: 10 }) == 10, "a pub struct a private fn names first");
+  assert("{fwdlib::FwdPubE.FpBlue}" == "FpBlue", "a pub enum a private fn names first");
+  x: fwdlib::FwdPubT = 12;
+  assert(x == 12, "a pub typedef a private fn names first");
+  assert(fwdlib::FwdFieldS { v: 13 }.v == 13, "a pub struct a private struct's field names first");
+}
+
+fn test_glob_reach() {
+  assert(FwdPubS { v: 20 }.v + FwdFieldS { v: 1 }.v == 21, "pub structs through use fwdlib::*");
+  assert("{FwdPubE.FpRed}" == "FpRed", "a pub enum through use fwdlib::*");
+}
+
+fn test_library_reaches_its_private_half() {
+  // 1 + 2 + 4 + 5 + 6 + 7
+  assert(fwdlib::fwd_total() == 25, "the library's own code reaches every item");
+}

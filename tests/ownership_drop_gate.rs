@@ -1037,7 +1037,13 @@ fn cap_address_space(cmd: &mut Command, mode: &str) {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn cap_address_space(_cmd: &mut Command, _mode: &str) {}
+fn cap_address_space(cmd: &mut Command, mode: &str) {
+    // macOS does not enforce `RLIMIT_AS`; the store-heap ceiling bounds the same runaway
+    // allocation on every platform (`store_budget::apply_env_limit_if_set`).
+    if mode == "--interpret" {
+        cmd.env("LOFT_MEMORY_LIMIT", "2G");
+    }
+}
 
 /// Runs every cell alone, `workers` at a time, and answers the verdicts in cell order.
 fn run_all(cells: &[Cell], mode: &str, timeout: &str, workers: usize) -> Vec<Verdict> {

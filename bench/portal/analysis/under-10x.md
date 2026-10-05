@@ -1,0 +1,459 @@
+# Every routine under 10× — what has to be fixed
+
+The portal run of 2026-10-02 on branch `157-native-4x` (macOS, arm64) left 15 routines at
+10× their Rust twin or worse.  Each was profiled and its emitted Rust read beside the twin;
+for every one, the work the twin does not do was named, the compiler site that declines to
+remove it was found, and the removal was PRICED by hand-editing the emitted Rust
+(`hand_price.sh`, in the lima arm64 VM, A/B runs alternated on one pinned core, the hash
+column unchanged in every price).  A price is a CEILING for the form: the rewrite that
+produces it still has to state the condition that makes it sound (`formal/rewrites.md`).
+
+Read § The fixes for what to build and in what order, § Per routine for which fixes each
+row needs, § Measurement for the corrections the work found in the numbers themselves.
+
+## Status
+
+Built on `157-native-4x`, each behind its own switch with a hand-computed guard; re-measured
+with `bench/stats.py --routine …` on the same macOS host as the baseline row.
+
+| routine | baseline | now | built |
+|---|--:|--:|---|
+| 18_consumer_crawler `build_vis` | 18.5× | **3.60×** | F4 (`LOFT_NO_DISTINCT_VERSION`) |
+| fixstep `timer_spend` | 12.1× | **3.98×** | F3 (`LOFT_NO_PARAM_RECORD_PTR`) |
+| hex_roof `roof_match` | 16.4× | **4.72×** | F1 |
+| text2d `draw_quads` | 22.0× | **4.72×** | F2 |
+| game_protocol `msg_ping` | 10.1× | **5.94×** | F6's struct-release half, F14 |
+| 17_consumer `emit_to_material` | 12.7× | **6.06×** | F9's build-in-element half (`LOFT_NO_LITERAL_APPEND`) |
+| gridmesh `build_index` | 13.4× | **6.34×** | F8 (`LOFT_NO_STORE_SWAP`) |
+| mesh3d `mat4_mul` | 13.2× | **4.68×** | F11's first two shaves (`LOFT_NO_HEADER_DBREF`); `vec_header` always inlined; a refilled repeat literal overwritten in place (`LOFT_NO_REFILL_IN_PLACE`); `(R-RebindBuffer)` (`LOFT_NO_REBIND_BUFFER`) |
+| cbor `encode_bytes` | 14.3× | **5.63×** | F7 (`LOFT_NO_FORWARD_RESULT`), F14, the live refill (`LOFT_NO_REFILL_KEEP`) |
+| 18_consumer_crawler `build_walls` | 9.0× | **4.56×** | the bench keys on the two integers, as crawler now does (owner: the text key was the program's defect) |
+| gridmesh `field_add_cell` | 9.67× | **7.20×** | a repeated hash key takes the bucket it displaces (`LOFT_NO_KEYED_REPLACE`): −27 % of the time, short of the −42 % priced — re-analyse before the next fix |
+| glb `save_glb` | 8.45× | **3.97×** | a vector is written to a file as its stored bytes (`LOFT_NO_SLICE_WRITE`): 2.51 → 1.16 ms, −54 % against −55 % priced |
+| hex_draw `surface_fitted_spread` | 9.88× | **6.62×** | the boolean form of the byte read (`LOFT_NO_BYTE_READ`): −34 % against −33 % priced |
+| graphics `fill_polygon` | 8.08× | **5.43×** | `(R-Alias)`'s versioned copy counts record addresses as a gain: `polygon_crossings` reads its edge points through their addresses when the result's store is not theirs (−33 %, priced −32 %) |
+| graphics `draw_bezier` | 9.94× | **7.36×** (graphics 0.9.8, measured from its branch) | a vector keeps its own slice in place (`OpKeepRange`, `LOFT_NO_KEEP_RANGE`), and the library's @P390 workaround (`t = v[0..n]; v = t`) gives way to `v = v[0..n]`: −26 % against −29 % priced by hand |
+| 15_stdlib_keyed `sorted_fill_walk` | 10.0× | **1.26×** | its twin made like-for-like (F13 declined) |
+| pluginabi `check_request` | 12.8× | **12.0×** | F14; D1 (via its `decode`); F6's text half, F9's prefill clause not built |
+| hex_field `doc_read` | 15.6× | **8.53×** | F2, F12; a scalar `f#read` is a write of the File record only, so the section loops' scalar hoists admit (4.35 → 3.25 ms).  A leaner `OpReadFile` prices at −15 % more (hand-priced, not built); loop 17 (line 947) still declines on a non-scalar stack reference |
+| cbor `decode` | 12.9× | **11.4×** | D1 (a reused buffer that owns nothing skips the release walk); D2–D7 below |
+| zttext `flow_layout_full` | 14.7× | **12.1×** | F14; F10's second half — `slice_runs` keeps its live buffer of text records, released once at its entry instead of reset twice (22.6 → 19.1 ms, −15 % against −12 % priced).  F10's first half re-priced: a buffer handed to the fn-ref `resolve` buys nothing (20.0 → 19.9 ms, hand-priced) because `default_resolver` forwards `default_style()`, which mints its own store — the cost is that inner literal return, not the missing buffer |
+| hex_field `edgeset_count` | 18.1× | **1.91×** | F5: the ranged calls (`LOFT_NO_RANGED_CALLS` → 15.8×) with the byte read (`LOFT_NO_BYTE_READ` → 11.8×) |
+
+Not built yet, and why each is more than a site edit:
+
+- **F5** needs a SOUNDNESS condition before its price applies: the parameter and record reads
+  it would range are unbounded statically, so the plain-arithmetic form is a guarded fast path
+  (bounds checked at entry), the `(R-GuardedChain)` shape — not a rule change.
+- **F6's text half** — `(R-RefillBuffer)` over a type with text fields needs a text write that
+  reuses the old claim when it fits and releases it when it does not; `refillable()` refuses
+  such types today because the old text would leak.
+- **F9's prefill clause**, **F10**, **F11's float-sum clause**.
+
+Declined: **F13** — `sorted` is not re-implemented for random inserts (§ F13).
+
+Found on the way: F3 first regressed `edgeset_count` to 23.7×.  Bisected at the Rust level
+(`hand_price.sh`, which now links on macOS), the cause was COLD setup functions calling
+`eg_index`'s twin through a parameter's address — two more callers of the twin changed how
+LLVM inlined it into the hot `edge_mat__inv`.  A parameter's address now serves field accesses
+only, never a twin call.
+
+## Re-analysis after F1–F14 (the rows still at 9× or worse)
+
+Re-derived from the CURRENT emitted code (PERFORMANCE.md checklist step 8), macOS `sample`
+profiles, prices from alternated `hand_price.sh` runs with the hash unchanged.
+
+| routine | now | dominant cost (site) | fix, size | priced |
+|---|--:|---|---|--:|
+| zttext `flow_layout_full` | 13.8× | NULL buffers on fn-ref calls (`op_database_inner` 11.9 %); `slice_runs` clears its buffer then re-mints it (19 %); `Str` → `String` through `Display` | F10; the refill fix below | — |
+| cbor `decode` | 11.7× | `remove_claims` per element (F6); each child built in a temporary and moved (`move_field_out` 11 %, prefill 6.8 %) | F6, destination-passing + F9's prefill clause | — |
+| hex_field `doc_read` | 12.9× | the per-cell `OpReadFile` runtime crossing (41.5 %), which also declines F2's scalar hoist (`"reading file"`), so the set helpers run plain (36.7 %) | a fixed-size scalar `f#read` without the crossing, store-free so the hoist admits it | — |
+| pluginabi `check_request` | 12.0× (≈18× like-for-like) | `n_decode` 85 %: prefilled records, `remove_claims`, NULL buffers in `pa_get`/`pa_text`, their deep copies | F6, destination-passing, the view-return question | — |
+| graphics `draw_bezier` | 10.0× | the stack re-copied per subdivision (`v = v[0..n]` through a temp, a left-over @P390 workaround); its slice declines the loop's header hoist | library XS, or `v = v[0..n]` as a length set (S/M); then the hoist (M) | −31 %, −29 % more (≈4.9×) |
+| hex_draw `surface_fitted_spread` | 9.8× (≈3.2× like-for-like) | `OpGetBoolean` not fused (`fused_byte_read` admits `OpGetByte` only); `(R-RangedCall)` declines: range ends are calls, field facts do not reach a callee's record parameter | boolean byte read (S); carry field facts into `call_range` (S) | −33 %, −37 % more (≈1.4×) |
+| cbor `encode_bytes` | 9.6× | `n_head` releases and re-mints the buffer it is handed (47 %): F7's refill half was never built; `buf += encode(…)` still copies; match bindings still owned `String`s | keep a non-NULL buffer, clear it in place (S) | **−44 % (≈5.4×)** |
+| gridmesh `field_add_cell` | 9.4× | a duplicate keyed insert removes and re-adds (`displace_keyed` → `hash::remove`, ~50 %); `rehash_into` re-hashes from records (24 %); the bucket looked up twice (library, 8 %) | overwrite in the probed bucket (S, runtime) | −42 %, −8 % more (≈5.1×) |
+| glb `save_glb` | 7–10× (noisy: the TWIN's disk write) | a vector written to a file element by element (`read_data`, `parts.clone()` per element, 55 %); no element base under the return-buffer growth | one slice copy for a fixed-width vector (S, runtime); a base under distinct growth (M) | −55 %, −42 % more (≈2.7×) |
+| 18_consumer_crawler `build_walls` | 9.0× | a TEXT key formatted and hashed per probe where the twin keys on two integers (deliberate, stated in both headers); a `String` copied per probe; the header hoist declined by a growing callee on a fresh store | the bench keys on the two integers (owner: the rounded-coordinate text key is a defect of the program — crawler's `src/wallgeo.loft` now keys on them too, crawler 5cb1a59); borrow the work buffer (S/M); admit a call writing only distinct stores (M) | −52 % (int key), −14 %, −23 % (≈3.3×) |
+
+Twin corrections the re-analysis found (bench README rule 1): `surface_fitted_spread`'s twin
+sweeps once where the library sweeps three times (≈3.2× like-for-like); `check_request`'s twin
+decodes twice and zero-copy (aligned: 0.176 ms, ≈18×, not 12×); `doc_read`'s twin is NOT
+suspect on macOS (0.355 ms standalone matches the portal); `build_walls` compared a text key
+with an integer key, now both key on the integers; `save_glb`'s noise is the twin's disk write.
+
+## Re-analysis of the rows above 8×, from profiles of the current code
+
+Each row profiled with macOS `sample` over its own window (or its bench function's subtree),
+from the emitted Rust built as the release tier builds it; shares are of that routine's
+samples.  Ratios are native ÷ Rust from the band run before this analysis.
+
+| routine | now | where the time goes | the lever |
+|---|--:|---|---|
+| cbor `decode` | 12.9× | `read_value` itself 30 %; per child value: the placed `Decoded` buffer is walked by `remove_claims` before each reuse (12 %, most of it `holds_no_heap` confirming there is nothing to release), the child is relocated into its element by `move_field_out` (11 %), the element record minted (`record_new`, `vector_append`, 8 %), exit frees (`OpFreeRef` 4 %) | skip the claim walk of a buffer whose heap field was moved out; build the child in its element (destination passing) — the Rust twin moves one pointer |
+| pluginabi `check_request` | 12.7× | 83 % is the same `decode`; on top, every text value is a heap `String` (`text_from_bytes`) copied into the store by `set_str` (claims, `memset`, `malloc`/`free` ≈ 15 %); `pa_text` 13.5 %, `pa_get` 8.4 % (lookups that copy the found value) | the `decode` levers; a text built from bytes straight into its store slot |
+| zttext `flow_layout_full` | 12.7× | `buf_slice_text` 13 %: `buf[j]?` per character goes through `get_vector_hoisted` + `get_u32_raw`, though the loop holds the header and base — the fused reads cover bytes and scalar fields, not `character` elements; a store minted and freed per `resolve` call (`default_style()` returns a literal, ≈ 10 % with its claims and `memset`); `slice_runs`' entry reset re-claims its capacity (≈ 5 %); `place_line`'s vector reads unhoisted (3 %) | a fused `character` element read (S); `default_style()` built in the caller's buffer — a literal-returning call forwarded (M) |
+| graphics `draw_bezier` | 10.0× (7.36× from 0.9.8) | profiled at 0.9.8: 30 % is the eight stack reads per pop through `get_vector` / `length_vector` — the loop appends to the same vectors, so no header is held; the rest is the body (the line drawing inlined) | a header re-taken after each append rather than declined for the loop (`(R-Header)` with a growth refresh) |
+| hex_field `doc_read` | 9.6× | the per-cell `f#read` path is ≈ 55 %: `OpReadFile` (17 %), `LoftFile::read` (18 %), `file_handle_read` (8 %), the cursor writes (`store_mut` 7 %), `file_from_bytes` (3 %), copies (5 %); `edgeset_new` 13 %; the three setters 17 % | a scalar read that keeps only the cursor (priced −15 % before the hoist, now a larger share); a fixed-width section read as one span |
+| mesh3d `mat4_mul` | 8.9× | the 16-zero literal built per call (`push_fill`, 17 %); the caller's `mo_c = mat4_mul(mo_a, mo_c)` rebinds by swapping whole stores (`OpRebindRecord` → `swap_stores_in_as`, 16 %); `vec_header` per inner loop entry (≈ 10 %); the multiply itself 44 % | the result built in the caller's record (the literal refilled in place, F11's first shave); the header held for the whole call |
+| graphics `fill_polygon` | 8.1× | `polygon_crossings` 67 %: every edge reads `pc_a.py` / `pc_b.py` six times each through `stores.store(&db).get_int` on a held element view — 18 store accesses per edge where the twin reads two copied structs; `hline` 21 % | an element view's fields read through its address once (the record-address rewrite, extended from parameters to `v[i]?` views) |
+
+## cbor `decode` — the implementation steps
+
+`decode` is not one cost but seven, all per ELEMENT: the bench's 4096-integer array is ≈ 90 % of
+the nodes, and for each the twin does one `items.push(v)` of a 24-byte value.  Loft spends
+83.8 ns per item.  Each lever below was priced alone by editing the emitted Rust
+(`hand_price.sh`, three alternated rounds, hash `1aec9537` unchanged in every variant); the
+first five together take 13.7 → 7.9 ms per op (−42 %, ≈ 12.8× → 7.4×).  `check_request` is
+83 % this same `decode` and moves with it.  Re-measure both rows after each step with
+`python3 bench/stats.py --routine cbor/decode,pluginabi/check_request`.
+
+Build them in this order: each is independent, the first four are S or XS, and every one is
+a speed change with no new answer, so its guard is an A/B under its switch with
+hand-computed values on both backends.
+
+| step | lever | price alone | size |
+|--:|---|--:|---|
+| D1 | a reused buffer whose heap was moved out is released without the type walk — BUILT: 12.8× → 11.4× | −17.5 % (−11 % built) | S |
+| D2 | a small same-store `move_field_out` is a fixed-width copy | −15 % | S |
+| D3 | the free-unless-returned exit tests NULL inline | −8 % | XS |
+| D4 | a function-clause header carries its element base; byte reads go through it | −7 % (on D1–D3, D5) | S |
+| D5 | no one-element pre-reserve before an append | −3.5 % | XS |
+| D6 | an appended moved value skips the element's prefill | ≈ 10 % of what remains, not priced | S/M |
+| D7 | the child is built in its element (destination passing) | ≈ 25–30 %, not priced | M |
+
+### D1. Release a buffer that owns nothing without walking its type
+
+Built: `Stores::holds_no_heap_fast` over the type's cached `HeapSlots`, answered at the top
+of `remove_claims`; guard `tests/scripts/a-reused-buffer-is-released-whatever-its-slots-hold.loft`.
+It reaches two thirds of the price: the rest is the call into `remove_claims` itself, and an
+`#[inline]` on it measured as noise.
+
+**What runs.** The loop's pooled `Decoded` buffer (`OpClear`, inserted by
+`src/scopes/buffers.rs`) is cleared before every call through `remove_claims` →
+`remove_claims_mode` → `holds_no_heap`.  The answer is always "nothing": `OpMoveField` zeroed
+the value's bytes, so the enum tag reads 0, a payload-less variant.  Reaching that answer
+costs a type-table walk with `type_owns_heap` (`heap_facts`) at each level — 12.4 % of the row.
+
+**Build.** In `Stores::holds_no_heap` (`src/database/allocation.rs`), precompute per type the
+list of HEAP SLOTS once, cached beside `heap_facts`: for each field that owns heap, its
+position and its kind (text slot, vector slot, enum tag with the variants that own heap,
+nested struct flattened).  `holds_no_heap` then reads those slots and nothing else; for
+`Decoded` that is one tag byte.  This is runtime only, sound by construction (the same
+question, answered from a cache), and helps every pooled buffer, not just cbor.
+- Price ceiling: −17.5 % (the clear dropped entirely).  Expect most of it.
+- Verify: `tests/pooled_buffer_release.rs`, `tests/clear_release.rs`, the leak census
+  (`LOFT_NATIVE_LEAK_CHECK=1`) on the store subject.  No switch is needed (pure cache).
+- Do NOT drop the `OpClear` in the emitter instead: the `!sub.ok` path does not move the
+  value out, so "moved out on every path" is not a static fact here.
+
+### D2. A small same-store move is a fixed-width copy
+
+**What runs.** `Stores::move_field_out` (`src/database/mod.rs`, the `OpMoveField` template
+in `default/01_code.loft`) moves the 16-byte enum value with `copy_block` (a `write_allowed`
+check, a variable-length `memmove`, the @PLN154 shadow test) and `zero_range` (a lock test, a
+variable-length `memset`) — 12.6 %.
+
+**Build.** In the same-store arm, for `size` of 8, 16, 24 or 32 bytes: one `write_allowed`,
+a copy through `[u8; N]` read/write at the two addresses, a zero of the source of the same
+width, and the shadow write only when `shadow_armed()`.  Keep the generic path for every
+other size and for an armed shadow.
+- Price: −15 % (the inline 16-byte move).
+- Verify: the `(R-MoveLast)` field-clause cells (`tests/place_result.rs` and its corpus),
+  `LOFT_STRICT_STORES=1` and `LOFT_POISON=1` over them, both backends.
+
+### D3. The free-unless-returned exit tests NULL inline
+
+**What runs.** Every `return` of `read_value` releases up to eight hidden buffers with
+`if (b).store_nr != (retbuf).store_nr { OpFreeRef(…) }`.  On a path that never minted them
+they are NULL, which is distinct from the result, so `OpFreeRef` is CALLED and returns at once
+— 8 % of the row.
+
+**Build.** `OpFreeRefIfDistinctEmitter` (`src/generation/ops/ref_ops.rs`) emits
+`if (b).store_nr != u16::MAX && (b).store_nr != (w).store_nr { … }` when `b` is a variable —
+the inline test the plain `OpFreeRef` emitter in the same file already writes.
+- Price: −8 %.
+- Verify: emission pins that spell this free (`grep -rl 'store_nr != (var___retbuf)' tests/`)
+  move by the added conjunct only; leak check on the native corpus.
+
+### D4. A function-clause header carries its element base
+
+**What runs.** `read_value` holds `bytes`' header for the whole body (`(R-Header)`'s function
+clause, `src/generation/mod.rs`), but no element base, so each `bytes[i] ?? 0` is
+`get_vector_hoisted` + a store lookup + `get_byte`.  An integer reads 2–4 bytes.
+
+**Build.** Emit `__vb_N = vector::vec_base(&__vh_N, …)` beside the function-clause header,
+under the base's own condition (`@FR-R-Base`: no growth of that vector in the function — true
+here, `bytes` is a `const`-like parameter nothing writes).  Then let `emit_byte_read`
+(`src/generation/ops/vector_ops.rs`) take that base for the `?? 0` form outside a loop, as it
+does inside one.
+- Price: −7 % on top of D1–D3 and D5.  6 of the 24 reads have a second shape (the
+  arithmetic index inside `(… ) * 256 + …`) and should be checked to take the same path.
+- Verify: `tests/vector_base.rs`, `tests/twin_base.rs`; a cell reading past the end (the
+  `?? 0` default must answer), and one where the function appends to the vector it reads
+  (the base must decline).
+
+### D5. No one-element pre-reserve before an append
+
+**What runs.** `items += [sub.value]` lowers to `OpPreAllocVector(items, 1, w)` then
+`OpNewRecord`, which grows the vector itself.  The reserve is a call per element (3.5 %).
+
+**Build.** In the parser's one-element append lowering (`src/parser/vectors.rs`, the
+`OpPreAllocVector` site), omit the reserve when the count is 1.  Check `vector_append`
+grows geometrically first (it does in the profile: no repeated `resize`).
+- Price: −3.5 %.
+- Verify: `tests/prealloc_elide.rs`, `tests/prealloc_stride.rs`, the interpreter's op
+  counts (`make ops-census` must still list `OpPreAllocVector` as live).
+
+### D6. An appended moved value skips the element's prefill
+
+**What runs.** The element is minted by `OpNewRecord` with its default prefill
+(`set_default_value_nullable`, 3 %), and then `OpMoveField` overwrites every byte of it.
+`(R-CompleteWrite)` (`group_covers_type`, `src/generation/hoist.rs`) ignores a field MOVE, so
+it never proves the write complete (F9's prefill clause).
+
+**Build.** Count an `OpMoveField` whose destination is the whole element (`_elm` at offset 0,
+the element's own type) as covering every field, so the mint is the no-prefill form.  With it
+in place, `OpNewRecord` + `OpMoveField` + `OpFinishRecord` could become one runtime
+`append_moved(vec, src, tp)` (reserve, copy, zero the source, bump the length).  Price that
+by hand before building it.
+- Verify: `tests/complete_write.rs` and its cells, `LOFT_POISON_CLAIM=1` (a prefill skipped
+  wrongly shows as poison).
+
+### D7. The child is built in its element — destination passing
+
+**What runs after D1–D6.** `read_value` still builds each child as a `Decoded` in a pooled
+buffer (5 field writes through `store_mut`), and the caller reads `ok` and `next` back
+through `store()` and moves `value` out — ≈ 12 % for the round-trip, plus the move.
+
+**Build.** records.md lever 1: a callee whose result's `value` field is moved straight into
+the caller's element gets the element's address as its destination for that field.  This
+is a design question (ownership of the partially built element when `ok` is false), so it
+starts with a design note in `formal/rewrites.md`, not with code.
+- Not priced; estimated 25–30 % of what remains.
+
+## The fixes
+
+Ordered by what each buys per unit of work.  "Size" is the build effort, XS to M.
+
+### F1. The two-argument libm dispatchers are store-free — XS
+
+`OpMathFunc2Float` and `OpMathFunc2Single` (`atan2`, `log(x, base)`) are missing from
+`PURE_NULLARY_OPS` (`src/generation/hoist.rs`), which lists their one-argument siblings
+`OpMathFuncFloat` / `OpMathFuncSingle`.  Their `const` function-selector parameter makes
+`native_op_is_store_free` read them as writers, so ONE `atan2` anywhere in a callee — here
+on a cold arc branch of hex_way's `seg_distance` — declines the loop hoist of every caller,
+transitively: `track_distance`, both sweeps of hex_roof's `ridge_at`.
+
+- Priced: `roof_match` 23.2 → 6.5 ms/op (−72 %), by removing the branch in a library copy;
+  the trace then reports no declined loop.  Reaches every `hex_*` library built on hex_way;
+  `atan2` is also in hex_edge and hex_shape.
+- Guard: a loop calling a helper that calls `atan2` hoists (`LOFT_TRACE_HOIST_DECLINE`
+  silent).  The class behind it: a native op is store-free by NAME LIST or by a signature
+  rule, and an op missing from both is silently a writer.  A sentinel that lists every
+  native op with only scalar operands that neither path admits would catch the next one.
+
+### F2. A twin call takes scalar inputs through a field path — S
+
+`twin_call_inputs` (`src/generation/mod.rs`) requires each scalar input's argument to be a
+plain `Value::Var`; a header input already accepts a pure path (`@PLN157 § V-ac`).  A call
+on a field — `atlas.a_cv.get_pixel(x, y)`, `hexset_set(d.doc_cells, …)` — therefore takes the
+plain callee, which re-reads the record's scalars through the store and rebuilds the vector
+header per call, although the loop already holds the header for that path.
+
+- Priced: `draw_quads` 2.64 → 0.645 ms (−75 %); `doc_read` −31 % (−55 % with F12 and F13).
+- Needs: a scalar hoist keyed on a pure path, the same key the header hoist uses.
+
+### F3. A record parameter's field accesses take its address once — M
+
+`(R-RecPtr)` (`record_view_ptr`, `src/generation/hoist.rs`) only considers `Value::Set`
+bindings; a PARAMETER is never a candidate, and the decline ("not a binding") is not traced.
+`fixstep::timer_spend(t: Timer)` makes 7 field accesses, each `stores.store(&db).get_int(…)`
+with its strict-store and bounds checks — which also bloats the function past what
+`#[inline]` inlines.
+
+- Priced: `timer_spend` 28.6 → 11.1 ms (−61 %); with the callee then small enough to inline,
+  7.0 ms (−75 %).
+- Needs: the parameter case of `(R-RecPtr)`, with the same lock and growth conditions as a
+  binding; a trace line for the decline.
+
+### F4. A loop versioned on a store-distinct check keeps its parameter headers — M
+
+`@FR-R-Alias` in `hoistable` drops a header rooted at a parameter when the loop pushes into
+the return buffer (`any_retbuf`), because `StoreFacts::distinct(param, retbuf)` cannot be
+proved statically.  18_consumer_crawler's `build_vis` therefore calls the plain
+`sim_hex_state` per pixel although its `__inv` twin is emitted.
+
+- Priced: `build_vis` 3.06 → 0.62 ms (−79 %), headers built at the loop prelude.
+- Needs: one runtime test, `retbuf.store_nr != param.store_nr`, choosing between the hoisted
+  loop and the plain one.  The same versioning would answer other `distinct` refusals.
+
+### F5. Byte elements fuse, and helper parameters get a range — M (one unit, two halves)
+
+hex_field's `edgeset_count` needs both or neither:
+
+- `FUSABLE_GETTERS` / `FUSABLE_SETTERS` (`hoist.rs`) have no `OpGetByte` / `OpSetByte`, so a
+  `vector<u8>` or `boolean` element read goes through `get_vector_hoisted` and a store
+  lookup although the base `__ib_0` is passed in, unused.  The getter's bias is the literal
+  `0` here.
+- `@FR-R-Range` never ranges a parameter or a record read, so `nb_q`, `nb_r`, `eg_index`
+  keep `op_add_int` / `op_mul_int`; the overflow note is a side effect, and it stops LLVM
+  folding the six neighbour evaluations per slot.
+- Priced: byte read alone −13 %, plain arithmetic alone −27 %, both **9.3 → 0.6 ms
+  (−93.5 %, about 1.15× Rust)**.  The loop collapses only when every op in the per-slot
+  chain is side-effect free.
+
+### F6. A reused buffer is cleared by type, and its text fields refill in place — M
+
+A pooled call buffer is emptied by `OpClear` (`src/scopes/buffers.rs`) → `remove_claims`
+→ `owned_walk`, a generic recursive walk that allocates a `Vec` per struct; the callee then
+re-claims every text field through `set_str`.  `(R-RefillBuffer)` would avoid it, but
+`refillable()` (`hoist.rs`) refuses a type with a text field.
+
+- Priced: `msg_ping` typed clear alone −56 %, with text fields rewritten in place when they
+  fit **207 → 35 ns (−83 %, 1.7×)**; `decode` −20 % (the five per-iteration `remove_claims`
+  of its pooled temporaries, whose only heap field was already moved out);
+  `check_request` −5 %.
+
+### F7. A returned local is built in the return buffer — M
+
+A local bound from a call and returned bare gets its own store, then is copied into
+`__retbuf`: cbor's `encode` arms do `OpDatabase` → `n_head(…)` → `vector_add(__retbuf, buf)`
+→ `OpFreeRef`.  `(R-ExitVector)` (`src/exit_vector.rs`) declines a bare return, and a
+call-bound local is never a candidate.  The rewrite is `(R-Rebind)`'s shape: hand the
+function's own `__retbuf` to the call whose result is returned.
+
+- Priced: −35 % on `encode_bytes`; with the callee then refilling the vector it is given
+  (`n_head` releases and re-claims it, `OpDatabaseRefill` keeps only a NULL buffer's store)
+  **1.5 → 0.47 ms (−68 %)**.  The refill half is worth nothing without the forwarding.
+
+### F8. A keyed result is moved, not copied — S
+
+`h = build_index(…)` emits `OpDatabase(h)` then `OpReplaceKeyed(src, h, 0x8000 | tp)`: a
+deep copy whose source is freed by the same op.  The keyed-local `=` branch
+(`src/parser/expressions.rs`) has no move form for a fresh-store result into a plain owned
+local.  Beside it, `mint_target` (`hoist.rs`) keeps every keyed insert blocking the header
+hoist, even into a frame-minted store distinct from the vectors the loop reads.
+
+- Priced: `build_index` 30.9 → 15.7 ms (−49 %); the hoist clause −8 % more.
+
+### F9. An appended record literal is built in its element — M
+
+`tri = Triangle{…}; m.triangles += [tri]` mints a store for `tri`, sets three fields, then
+`OpNewRecord` + `OpCopyRecord` + `OpFreeRef` — six times per hex in 17_consumer's
+`emit_to_material`.  `v += [vertex(…)]` already builds in place; a literal local whose last
+use is the append does not (`LOOP_RECORD` trace: "a native op takes it otherwise").
+Beside it, `(R-CompleteWrite)` (`group_covers_type`) stops at the first statement between a
+mint and its sets, and ignores a field MOVE, so fully written elements keep the default
+prefill.
+
+- Priced: `emit_to_material` build-in-element −40 %, no-prefill −17 % more (813 → 412 µs);
+  `decode` no-prefill on move-written elements −12 %.
+
+### F10. Return buffers for fn-ref calls, and no second clear — M
+
+zttext's `flow_layout_full`:
+
+- a fn-ref call answering a record gets a NULL buffer (`@FR-O-Unknown`) and mints and frees
+  a store per call — 4 sites, about 3 calls per token;
+- `slice_runs` clears its result buffer twice on entry (`clear_vector_release`, then
+  `OpDatabaseNP` clears again);
+- `(R-WorkBuffer)` declines a result buffer whose element holds a record or a text.
+
+- Priced: −19 %, −12 %, −9 % respectively; with F14 the row goes 19.1 → 10.9 ms (−43 %).
+
+### F11. mat4_mul's three shaves — S each
+
+- The refilled `[0.0; 16]` result literal is rebuilt per call (clear, pre-alloc, append, 15
+  template copies) although the buffer already holds 16 elements: write in place.  −30 %.
+- Each hoisted element read rebuilds a `DbRef` temporary on the stack for the cold path's
+  `&db` (`src/generation/ops/vector_ops.rs`): bind it once at the prelude.  −23 %.
+- `bounded_nest` (`hoist.rs`) admits only an `OpAddInt` accumulate; a float sum needs the
+  in-range proof and no overflow guard.  −9 %.
+- Together 117 → 54 ns.  Not priced: the result rebound through another store
+  (`OpRebindRecord`, ~15 %; `(R-ValueRecord)` declines a record with a vector field).
+
+### F12. A counted fill of two vectors is reserved and filled — S
+
+`for _ in 0..n { m += [0 as u8]; sf += [0 as i32]; }` (hex_field `edgeset_new`) pushes one
+element at a time: `push_loop` declines "the pushes reach two paths", and a byte push is
+kept out of the fill form.  `doc_read` −9 %.
+
+### F13. DECLINED — `sorted` is not re-implemented for random inserts
+
+Every insert into `sorted<…>` binary-searches and memmoves the tail (`sorted_finish`,
+`src/vector.rs`): 98.7 MB moved per op in `15_stdlib_keyed`'s `sorted_fill_walk`, where the
+twin's `BTreeMap` insert is O(log n).  A deferred sort (append, one stable sort at loop exit)
+priced −87 %, and a gap-buffer or chunked layout was the structural alternative.
+
+Neither is built, by the owner's decision: `sorted` keeps its contiguous layout, which is
+what makes it the right collection for in-order reads and appends, and slow random inserts
+are its known cost.  Making random inserts fast would morph `sorted` into an `index` and cost
+it exactly the efficiency it exists for.  A program that needs random inserts to be fast uses `index` — the
+keyed collection built for that.  So the 10× measured a documented trade-off, not a
+defect: the twin was a `BTreeMap`, which is `index`'s counterpart.  It is now a `Vec` kept
+sorted by binary-search insert, an equal key overwriting in place (bench README rule 1), and
+the row reads 1.26× with the hash unchanged (`4173` in both lanes).
+
+### F14. Text reaches a store field without intermediate `String`s — S
+
+Every text local, match bindings (`_mv_*`) included, is an owned `String`; a slice goes
+through `Display` and a second `to_string()` before `set_str`.  −4 % to −10 % on
+`encode_bytes`, `check_request`, `flow_layout_full`.
+
+### Not needed for 10×, priced or estimated
+
+- **Destination-passing for recursive builders** (records.md lever 1): cbor `read_value`
+  builds each child in a temporary, moves it and frees it.  Estimated 20–30 % of `decode`
+  and `check_request`, not priced.  `check_request` needs it if its twin is corrected
+  (§ Measurement).
+- **A fixed-size scalar `f#read` without a full runtime crossing**: about 30 % of `doc_read`.
+- **A view return for a match the caller only reads** (`pa_get`'s deep copy): −11 % on
+  `check_request`; whether a view is allowed is an ownership decision for the owner.
+
+## Per routine
+
+Ratio on the macOS run; priced ratio from the hand prices' fraction applied to it (the VM's
+own ratio where the two hosts disagree, § Measurement).
+
+| routine | ratio | needs | priced to |
+|---|--:|---|--:|
+| text2d `draw_quads` | 22.0× | F2 | ~5.5× |
+| 18_consumer_crawler `build_vis` | 18.5× | F4 | ~4× |
+| hex_field `edgeset_count` | 18.1× | F5 | ~1.2× |
+| hex_roof `roof_match` | 16.4× | F1 | ~4.6× |
+| hex_field `doc_read` | 15.6× | F2 + F12 | ~9× (6× on the VM before any fix) |
+| zttext `flow_layout_full` | 14.7× | F10 + F14 | ~8.6× |
+| cbor `encode_bytes` | 14.3× | F7 | ~4.6× |
+| gridmesh `build_index` | 13.4× | F8 | ~6.8× |
+| mesh3d `mat4_mul` | 13.2× | F11 (first two) | ~6.8× |
+| cbor `decode` | 12.9× | F6 + F9's prefill clause | ~9.5× |
+| pluginabi `check_request` | 12.8× | F6 + F9 + F14 | ~10.7× here, 7.5× on the VM |
+| 17_consumer `emit_to_material` | 12.7× | F9 | ~6.4× (3.8× on the VM) |
+| fixstep `timer_spend` | 12.1× | F3 | ~4.7× (2.5× inlined) |
+| game_protocol `msg_ping` | 10.1× | F6 | ~1.7× |
+| 15_stdlib_keyed `sorted_fill_walk` | 10.0× | — (twin corrected) | 1.26× |
+
+`decode` and `check_request` are the two that F1–F14 leave near the bar; destination-passing
+is their next lever.
+
+## Measurement
+
+- **The host moves the twin, not loft.**  On the macOS run the Rust twins are 30–75 % faster
+  than in the lima VM on the same machine, while loft native is about level.  So a ratio
+  moved between the two results files is not a regression: `emit_to_material` read 7.7× →
+  12.7× across them and is 7.5× on the VM today.  Compare a routine on one host only.
+- **`doc_read`'s twin is suspect**: 0.90–0.94 ms standalone on the VM against 0.36 ms in the
+  portal row.  Re-measure before ranking the row.
+- **`check_request`'s twin does MORE than the library**: it decodes twice, as the library
+  source reads, while loft decodes once since `(R-PureReuse)`.  Aligning the twin (bench
+  README rule 1) roughly halves its time and doubles the ratio, so this row's real distance
+  from the bar is larger than shown.
+- **Four benches are not in the run**: `drawing` and `stage` fail to build on the pinned
+  `laptop-perf-bench` branch of loft-libs-graphics (items its `main` already makes `pub`;
+  `bench/portal/libs.tsv`), and `web` and `server` fail to link on macOS (`ld: mis-aligned
+  LINKEDIT string pool` in the library's native dylib).  Their routines may hold more rows
+  over the bar.
+- **Re-measuring a row** after a fix: `python3 bench/stats.py --routine <bench/routine,…>`
+  builds only the programs that hold them; `make perf-check ARGS="--routine …"` compares
+  with the machine's committed row.

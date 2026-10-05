@@ -311,10 +311,10 @@ fn walk_files(staged: &Path) -> Result<Vec<String>, String> {
             } else if meta.is_file()
                 && let Ok(rel) = path.strip_prefix(base)
             {
-                // `portable_path` and not a blind backslash replace: on Unix a
+                // `file_access` and not a blind backslash replace: on Unix a
                 // backslash is a legal filename character, and rewriting it would
                 // rename someone's file on the way into the set.
-                out.push(crate::portable_path::portable(rel));
+                out.push(crate::file_access::portable(rel));
             }
         }
         Ok(())

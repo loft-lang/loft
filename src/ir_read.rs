@@ -812,7 +812,10 @@ fn read_function(stores: &Stores, parent: Record, base: u32) -> Function {
             user_named: vr.field_bool(stores, ds::VAR_USER_NAMED),
             user_appended: vr.field_bool(stores, ds::VAR_USER_APPENDED),
             copy_bound: vr.field_bool(stores, ds::VAR_COPY_BOUND),
+            buffer_witnessed: vr.field_bool(stores, ds::VAR_BUFFER_WITNESSED),
             owner_witness: vr.field_int(stores, ds::VAR_OWNER_WITNESS) as u16,
+            rebind_orig: vr.field_int(stores, ds::VAR_REBIND_ORIG) as u16,
+            scope: vr.field_int(stores, ds::VAR_SCOPE) as u16,
         });
     }
     let names_vec = parent.field_recvec(base + ds::FN_NAMES, ds::NAMENR_STRIDE);
@@ -877,14 +880,16 @@ fn purity_from_code(c: i64) -> Purity {
 /// Rebuild the database type schema (`Vec<database::Type>`) from the
 /// `vector<DbType>` field at `off` of `parent` — the inverse of
 /// [`crate::ir_store::materialize_schema`].  Each `Type.parents` (a derived
-/// back-reference index, read only by parse-time layout validation + debug
-/// display) is restored empty; the load path skips the validation that uses it.
+/// back-reference index the image does not carry) is rebuilt here, with the links
+/// registration writes: `enum_parent_size` reads it to size a variant's record.
 #[must_use]
 pub fn read_schema(stores: &Stores, parent: Record, off: u32) -> Vec<SchemaType> {
     let v = parent.field_recvec(off, ds::DBTYPE_STRIDE);
-    (0..v.len(stores))
+    let mut schema: Vec<SchemaType> = (0..v.len(stores))
         .map(|i| read_db_type(stores, v.get(i, stores)))
-        .collect()
+        .collect();
+    SchemaType::rebuild_parents(&mut schema);
+    schema
 }
 
 /// Read one `DbType` record into a native `database::Type`.
@@ -1365,6 +1370,165 @@ mod tests {
             "multi-source round-trip drops/changes {} derived-index binding(s):\n{}",
             diff.len(),
             diff.iter().take(40).cloned().collect::<Vec<_>>().join("\n")
+        );
+    }
+
+    /// The cache's contract (`Function::from_snapshot`): a program decoded from its image
+    /// compiles to the SAME bytecode as the parse it was taken from.  `ir_roundtrip_check`
+    /// compares the fields the image carries; this compares what codegen MAKES of them, so a
+    /// codegen-read fact the image never carried shows up here and nowhere else (loft#1858:
+    /// `rebind_orig` was such a fact, and a warm run freed a caller's vector).
+    ///
+    /// Every `tests/scripts` and `tests/oracle` program that parses clean, after the scope
+    /// pass and `compile::close_program` — the point the program cache snapshots (`main.rs`,
+    /// `save_program`).  `LOFT_DECODE_FILTER=<path part>` narrows the corpus,
+    /// `LOFT_DECODE_TRACE=1` names each program and every function that differs, and
+    /// `LOFT_DECODE_DUMP=<dir>` writes the first differing function's variable tables and
+    /// bytecode, cold and decoded, to `<dir>`.
+    ///
+    /// CHUNKED like `tests/wrap.rs`'s corpus (every [`DECODE_CHUNKS`]-th program from each
+    /// offset): one test over all ~2100 programs parses and compiles each twice in series,
+    /// and under ASan that passed the 600 s per-test limit (loft#1863).
+    fn a_decoded_program_compiles_to_the_bytecode_of_its_parse(chunk: usize) {
+        // The parser recurses as deeply as the CLI's own thread allows.
+        std::thread::Builder::new()
+            .stack_size(512 << 20)
+            .spawn(move || decoded_programs_compile_alike(chunk))
+            .expect("spawn")
+            .join()
+            .unwrap_or_else(|e| std::panic::resume_unwind(e));
+    }
+
+    const DECODE_CHUNKS: usize = 8;
+
+    macro_rules! decode_chunks {
+        ($($name:ident = $k:expr),* $(,)?) => {$(
+            #[test]
+            fn $name() {
+                a_decoded_program_compiles_to_the_bytecode_of_its_parse($k);
+            }
+        )*};
+    }
+
+    decode_chunks!(
+        a_decoded_program_compiles_to_the_bytecode_of_its_parse_0 = 0,
+        a_decoded_program_compiles_to_the_bytecode_of_its_parse_1 = 1,
+        a_decoded_program_compiles_to_the_bytecode_of_its_parse_2 = 2,
+        a_decoded_program_compiles_to_the_bytecode_of_its_parse_3 = 3,
+        a_decoded_program_compiles_to_the_bytecode_of_its_parse_4 = 4,
+        a_decoded_program_compiles_to_the_bytecode_of_its_parse_5 = 5,
+        a_decoded_program_compiles_to_the_bytecode_of_its_parse_6 = 6,
+        a_decoded_program_compiles_to_the_bytecode_of_its_parse_7 = 7,
+    );
+
+    /// Every `chunk`-th program of the sorted `tests/scripts` + `tests/oracle` corpus.
+    fn decode_corpus_chunk(chunk: usize) -> Vec<std::path::PathBuf> {
+        let mut files: Vec<std::path::PathBuf> = Vec::new();
+        for dir in ["tests/scripts", "tests/oracle"] {
+            for e in std::fs::read_dir(dir).expect("corpus dir").flatten() {
+                let path = e.path();
+                if path.extension().is_some_and(|x| x == "loft") {
+                    files.push(path);
+                }
+            }
+        }
+        files.sort();
+        files
+            .into_iter()
+            .enumerate()
+            .filter(|(i, _)| i % DECODE_CHUNKS == chunk)
+            .map(|(_, f)| f)
+            .collect()
+    }
+
+    fn decoded_programs_compile_alike(chunk: usize) {
+        let files = decode_corpus_chunk(chunk);
+        let filter = std::env::var("LOFT_DECODE_FILTER").unwrap_or_default();
+        let mut diverged = Vec::new();
+        let mut compared = 0usize;
+        for path in &files {
+            let name = path.to_string_lossy().into_owned();
+            if !name.contains(&filter) {
+                continue;
+            }
+            let src = std::fs::read_to_string(path).unwrap_or_default();
+            let mut p = crate::parser::Parser::new();
+            p.parse_dir("default", true, false).expect("parse default/");
+            for line in src.lines().filter(|l| l.contains("@ARGS:")) {
+                let words: Vec<&str> = line.split_whitespace().collect();
+                for w in words.windows(2) {
+                    if w[0] == "--lib" {
+                        p.lib_dirs.push(w[1].to_string());
+                    }
+                }
+            }
+            if std::env::var_os("LOFT_DECODE_TRACE").is_some() {
+                eprintln!("decode: {name}");
+            }
+            p.parse(&name, false);
+            if p.diagnostics.level() >= crate::diagnostics::Level::Error {
+                continue;
+            }
+            crate::scopes::check(&mut p.data, &mut p.database);
+            // As `main.rs` does before `save_program`: the image is the CLOSED program.
+            crate::compile::close_program(&mut p.data, &mut p.database);
+            let mut stores = Stores::new();
+            let root = crate::ir_store::materialize_data(&mut stores, &p.data);
+            let mut loaded = read_data(&stores, root);
+            loaded.program_closed = true;
+            let db = p.database.clone();
+            let mut cold = crate::state::State::new(p.database);
+            crate::compile::byte_code(&mut cold, &mut p.data);
+            let mut warm = crate::state::State::new(db);
+            crate::compile::byte_code(&mut warm, &mut loaded);
+            compared += 1;
+            if cold.bytecode != warm.bytecode {
+                // Name the first function whose code differs.
+                let mut first = String::from("?");
+                let mut all = Vec::new();
+                for d in 0..p.data.definitions() {
+                    let (a, b) = (p.data.def(d), loaded.def(d));
+                    let (pa, pb) = (a.code_position as usize, b.code_position as usize);
+                    let (la, lb) = (a.code_length as usize, b.code_length as usize);
+                    if la == 0 && lb == 0 {
+                        continue;
+                    }
+                    if la != lb || cold.bytecode.get(pa..pa + la) != warm.bytecode.get(pb..pb + lb)
+                    {
+                        if first == "?" {
+                            first = a.name.clone();
+                            if let Ok(dir) = std::env::var("LOFT_DECODE_DUMP") {
+                                let mut ca = Vec::new();
+                                let mut cb = Vec::new();
+                                let _ = cold.dump_code(&mut ca, d, &p.data, false);
+                                let _ = warm.dump_code(&mut cb, d, &loaded, false);
+                                let _ = std::fs::write(format!("{dir}/cold_bc.txt"), ca);
+                                let _ = std::fs::write(format!("{dir}/warm_bc.txt"), cb);
+                                let _ = std::fs::write(
+                                    format!("{dir}/cold.txt"),
+                                    format!("{:#?}\n{:#?}", a.variables, a.code),
+                                );
+                                let _ = std::fs::write(
+                                    format!("{dir}/warm.txt"),
+                                    format!("{:#?}\n{:#?}", b.variables, b.code),
+                                );
+                            }
+                        }
+                        all.push(a.name.clone());
+                    }
+                }
+                if std::env::var_os("LOFT_DECODE_TRACE").is_some() {
+                    eprintln!("decode: {} differ: {}", all.len(), all.join(" "));
+                }
+                diverged.push(format!("{name}: first in {first}"));
+            }
+        }
+        assert!(compared > 0, "no program compared");
+        assert!(
+            diverged.is_empty(),
+            "{} of {compared} programs compile differently from their decoded image:\n{}",
+            diverged.len(),
+            diverged.join("\n")
         );
     }
 
@@ -2159,7 +2323,7 @@ mod tests {
         let mut p = crate::parser::Parser::new();
         p.parse_dir("default", true, false)
             .expect("parse default/ stdlib");
-        let mut cold = p.database.types.clone();
+        let cold = p.database.types.clone();
         assert!(cold.len() > 50, "stdlib schema small? got {}", cold.len());
 
         let mut ir = Stores::new();
@@ -2169,9 +2333,8 @@ mod tests {
 
         let loaded = read_schema(&ir, host, 0);
         assert_eq!(loaded.len(), cold.len(), "type count");
-        for t in &mut cold {
-            t.clear_parents();
-        }
+        // `parents` is not stored but REBUILT on read, with the links registration writes:
+        // compared whole, because `enum_parent_size` sizes a variant's record from it.
         assert_eq!(loaded, cold, "database type schema round-trip mismatch");
     }
 
@@ -2203,12 +2366,9 @@ mod tests {
         if let Err(diff) = compare_data(&p.data, &loaded_data) {
             panic!("bundle Data diverged from fresh parse: {diff:?}");
         }
-        // (2) Schema round-trips (parents are derived, cleared on both sides).
+        // (2) Schema round-trips, the rebuilt `parents` index included.
         assert_eq!(loaded_types.len(), p.database.types.len(), "type count");
-        let mut cold = p.database.types.clone();
-        for t in &mut cold {
-            t.clear_parents();
-        }
+        let cold = p.database.types.clone();
         assert_eq!(
             loaded_types, cold,
             "bundle schema diverged from fresh parse"

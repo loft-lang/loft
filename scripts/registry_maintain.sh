@@ -712,7 +712,9 @@ if [ -n "$ONLY" ]; then
         exit 0
     fi
     for e in "${EXPECTS[@]}"; do sign_args+=(--expect "$e"); done
-    for m in "${META_EXPECTS[@]}"; do sign_args+=(--expect-meta "$m"); done
+    # `${a[@]+…}`: bash 3.2 (macOS's /usr/bin/env bash) treats an EMPTY array as unbound
+    # under `set -u`, and the run died here after publishing, before it signed.
+    for m in ${META_EXPECTS[@]+"${META_EXPECTS[@]}"}; do sign_args+=(--expect-meta "$m"); done
 elif [ "$YES" = 1 ]; then
     sign_args+=(--yes)
 fi

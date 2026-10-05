@@ -4,7 +4,7 @@
 //! The native binary cache publishes ATOMICALLY.
 //!
 //! `--native` compiles into a per-process scratch dir and then publishes the result to a
-//! shared, content-keyed path `<script dir>/.loft/cache/<stem>-<hash>`. That publish is the
+//! shared, content-keyed path `<script dir>/.loft/cache/native-<hash>`. That publish is the
 //! one step several concurrent runs of the SAME source contend on, and it used to be a plain
 //! `fs::copy`: the destination is truncated in place and then streamed, while a concurrent
 //! reader's `exists()` is true throughout and `cache_safe_to_execute` reads symlink, owner

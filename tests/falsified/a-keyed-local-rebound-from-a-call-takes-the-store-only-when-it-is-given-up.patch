@@ -1,0 +1,13 @@
+diff --git a/src/store.rs b/src/store.rs
+index 097c2c459..6431f89c7 100644
+--- a/src/store.rs
++++ b/src/store.rs
+@@ -2591,7 +2591,7 @@ impl Store {
+             && !self.borrowed
+             && !self.stack_buffer
+             && !self.pinned
+-            && (!released || self.free_protect_depth == 0)
++            && (!released || self.free_protect_depth == 0 || true)
+             && !self.is_file_backed()
+             && self.foreign.is_none()
+             && self.recording.is_none()

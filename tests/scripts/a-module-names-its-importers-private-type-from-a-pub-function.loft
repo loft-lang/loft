@@ -1,0 +1,22 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @ARGS: --lib tests/fixtures/libs
+//
+// @FR-F-Surface (loft#1856) — the refusal half of
+// a-module-names-its-importers-type-from-a-private-function.loft: a `pub` function in
+// `fwd1856h_inner` names the entry's PRIVATE type first, and the type stays private.
+//
+// @falsified-at: be004e56c — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/a-module-names-its-importers-private-type-from-a-pub-function.patch — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
+//   CHANNEL: the expectations — on the control the `pub` function's stub publishes the
+//   type, so the qualified reach compiles and the pin meets no refusal.
+//   WITNESS: the program compiles with no error on the control (fwd1856h alone, so no
+//   other cell can fail in its place).
+//   ARMED: nothing.
+//   HOLDS: every cell is a refusal on this tree, so leak, panic and value cannot move; only
+//   which message the pin meets does.
+use fwd1856h;
+
+// @EXPECT_ERROR: `F1856Hid` is not `pub` in `fwd1856h`, so `fwd1856h::F1856Hid` cannot reach it
+fn hidden_struct() -> integer { fwd1856h::F1856Hid { h_n: 1 }.h_n }

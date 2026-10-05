@@ -63,7 +63,7 @@ const CALLS: &[(&str, usize)] = &[
     ("n_c2", 0),             // bumpw has no twin
     ("n_c3", 0),             // the loop writes the field: no hoist, no twin
     ("n_c4", 0),             // setw's write evicts width
-    ("n_c5", 0),             // a field path, not a variable, as the argument
+    ("n_c5", 1),             // a field path as the argument (`hoist::path_scalar`)
     ("n_c6", 0),             // an optional element view as the argument
     ("n_c7", 2),             // two records, two twin calls
     ("n_c8", 1),             // blend
@@ -142,7 +142,11 @@ fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
     cmd.arg("--native-emit")
         .arg(out)
         .arg(src)
-        .env("LOFT_TIMEOUT", "120");
+        .env("LOFT_TIMEOUT", "120")
+        // The predictions pin `(R-Inputs)`' twin selection.  `(R-RangedCall)` would add a
+        // guarded copy of every loop whose callee's arithmetic repays it, doubling each
+        // count for a reason this file does not test; its own guard pins that.
+        .env("LOFT_NO_RANGED_CALLS", "1");
     for (k, v) in env {
         cmd.env(k, v);
     }

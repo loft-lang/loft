@@ -1,0 +1,126 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A `yield` is a STORE into the generator's element type, exactly as a `return` is into the
+// return type — `@FR-G-Yield`, and the loft#1130 comment at the yield site already said so for
+// the type hint.  The value half was missing: nothing converted or refused the yielded value,
+// so the element type was a label the body did not have to honour.
+//
+//   iterator<float>  ← integer   the integer's BITS read as a float (`0.000…`) on --interpret;
+//                                 rustc E0599 (`i64::to_bits`) on --native
+//   iterator<float>  ← u8        the same, both backends
+//   iterator<boolean> ← integer  `false` on --interpret, `true` on --native, for one program
+//   iterator<u8>     ← integer   300 came out of a `u8` sequence (`@FR-I-Narrow`) — the
+//                                 refusal half is `a-yielded-value-is-refused-where-a-return-is`
+//
+// Each cell is checked against its RETURN twin as well as a hand-computed value, because the
+// return is the store face the yield now shares: a cure that converted the yield some other way
+// would pass a value check written from the buggy output and fail this one.
+//
+// Axes this file MOVES:  the element type (float · boolean · u8 · integer) and the source type
+//                        (integer · u8 · a cast with a fallback).
+// Axes it HOLDS FIXED:   a scalar element, two yields per generator, a `for` consumer.  A null
+//                        yield into `iterator<integer>` is not here: `--native` reads it as the
+//                        end of the sequence (the integer exhaust sentinel is the integer null),
+//                        which is its own defect.
+//
+// @falsified-at: 9c8254861 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
+//   native exit 1 -> 0.  Native's control is an exit with no assertion: rustc refuses the
+//   float generator (E0599), so the program never runs there.
+// @falsified-by: tests/falsified/a-yielded-value-converts-into-its-element-type.patch — the
+//   same channels.  Score it with `scripts/falsify.sh <this file> --patch <that patch>` once
+//   9c8254861 is out of reach.
+// HOLDS: leak, panic and refusals are clean on both trees and both backends.
+
+fn floats(a: integer, f: float) -> iterator<float> {
+  yield a;
+  yield f;
+}
+
+fn float_ret(a: integer) -> float {
+  a
+}
+
+fn floats_from_u8(b: u8, f: float) -> iterator<float> {
+  yield b;
+  yield f;
+}
+
+fn ints_from_u8(b: u8, a: integer) -> iterator<integer> {
+  yield b;
+  yield a;
+}
+
+fn bools(a: integer) -> iterator<boolean> {
+  yield a;
+  yield false;
+}
+
+fn bool_ret(a: integer) -> boolean {
+  a
+}
+
+fn narrow_cured(a: integer) -> iterator<u8> {
+  yield a as u8 ?? 9;
+}
+
+fn float_cell() -> text {
+  t = 0.0;
+  n = 0;
+  first = 0.0;
+  for y in floats(3, 2.5) {
+    if n == 0 {
+      first = y;
+    }
+    t += y;
+    n += 1;
+  }
+  "{n} {first} {t}"
+}
+
+fn float_from_u8_cell() -> text {
+  t = 0.0;
+  n = 0;
+  for y in floats_from_u8(7, 2.5) {
+    t += y;
+    n += 1;
+  }
+  "{n} {t}"
+}
+
+fn int_from_u8_cell() -> text {
+  t = 0;
+  n = 0;
+  for y in ints_from_u8(7, 3) {
+    t += y;
+    n += 1;
+  }
+  "{n} {t}"
+}
+
+fn bool_cell() -> text {
+  r = "";
+  for y in bools(3) {
+    r += "{y},";
+  }
+  r
+}
+
+fn narrow_cell(a: integer) -> integer {
+  r = -1;
+  for y in narrow_cured(a) {
+    r = y;
+  }
+  r
+}
+
+fn main() {
+  assert(float_cell() == "2 3 5.5", "iterator<float> from an integer: got {float_cell()}");
+  assert(float_ret(3) == 3.0, "the return twin converts: got {float_ret(3)}");
+  assert(float_from_u8_cell() == "2 9.5", "iterator<float> from a u8: got {float_from_u8_cell()}");
+  assert(int_from_u8_cell() == "2 10", "control, a widening that was right: got {int_from_u8_cell()}");
+  assert(bool_cell() == "{bool_ret(3)},false,", "iterator<boolean> answers what the return twin does: got {bool_cell()}");
+  assert(bool_cell() == "true,false,", "a non-zero integer is true: got {bool_cell()}");
+  assert(narrow_cell(300) == 9, "the cast's fallback where 300 does not fit a u8: got {narrow_cell(300)}");
+  assert(narrow_cell(3) == 3, "the cast's value where it fits: got {narrow_cell(3)}");
+}

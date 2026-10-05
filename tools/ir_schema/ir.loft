@@ -206,9 +206,19 @@ struct Variable {
   // loft#1840 — a whole-value bind COPIED a place into it (B-Copy); the `lost-write` lint
   // reports an append only into a copy, never into a collection being built
   copy_bound: boolean,
+  // loft#1522 — a construction work-ref still names its store, so no rebind frees it; read by
+  // `owns_displaced_store`, the displacement free both emitters ask (loft#1858)
+  buffer_witnessed: boolean,
   // @FR-O-Witness — the owner witness `__own_<name>` of a mixed-ownership local (u16::MAX = none);
   // read by both emitters, so it must survive the snapshot exactly as `skip_free` does
   owner_witness: integer,
+  // @PLN87 P2.1 — a rebound parameter's entry witness (u16::MAX = none): which store the CALLER
+  // handed, so its release is the function-exit free and no other (loft#1858)
+  rebind_orig: integer,
+  // The scope that declares it: the yield emitter skips a temp declared INSIDE the yielded
+  // value (loft#1676), and a warm load that read every scope as unknown nulled a live local
+  // (loft#1858)
+  scope: integer,
 }
 
 struct Function {

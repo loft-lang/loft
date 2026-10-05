@@ -27,6 +27,7 @@ read by the release checklist's `M-perf-pass`.
 - [Measuring native code](#measuring-native-code)
 - [How the interpreter executes](#how-the-interpreter-executes)
 - [Front-end speed — how it is measured and guarded](#front-end-speed--how-it-is-measured-and-guarded)
+- [What makes a slow routine a bug](#what-makes-a-slow-routine-a-bug)
 - [Open performance work](#open-performance-work)
 - The startup cache — what is cached, how to turn it off, which loft a benchmark measures:
   [STARTUP_CACHE.md](STARTUP_CACHE.md)
@@ -58,7 +59,11 @@ Both backends, in this order.  Each step's detail lives where it points; the ord
 
 1. **Pick the row by measurement.**  `make interp-gap` (interpreter against native, the ~100×
    cliff) or `make perf-portal` (native against Rust); rank by [§ The clear case
-   first](#the-clear-case-first), within [§ Wide before deep](#wide-before-deep).
+   first](#the-clear-case-first), within [§ Wide before deep](#wide-before-deep).  A routine
+   over 3× its Rust twin is a SYMPTOM: loft is not inherently slower than rustc, so the excess
+   is a mechanism in loft costing more than it should.  Group such routines by mechanism class
+   (`bench/portal/classes.tsv`) and work the class; a slow routine inside a class already
+   under the bar is an ordinary bug.
 2. **Measure real time on the tier that ships**, never the semantics build (CLAUDE.md § three
    optimisation tiers), pinned to one core (`taskset`, `perf stat -e instructions,cycles`).
    `LOFT_PROFILE` samples by OPERATION COUNT, not time: a line full of cheap ops reads hot and
@@ -80,7 +85,13 @@ Both backends, in this order.  Each step's detail lives where it points; the ord
    all](INTERPRETER_PERFORMANCE.md#why-the-interpreter-is-optimised-at-all)); a runtime lever
    before a generator rewrite ([§ Wide before deep](#wide-before-deep)).  **No combined opcode
    or kernel built for one row**: it speeds one spelling and nothing next to it ([KERNELS.md](KERNELS.md)); an
-   operator comes after the IR work, from broad evidence (formal/performance.md `(Perf-Order)`).  Only proven situations
+   operator comes after the IR work, from broad evidence (formal/performance.md `(Perf-Order)`).
+   **Fix the mechanism, not the shape**: a rule that speeds one shape is a STOPGAP, recorded
+   with the root fix that retires it, and the measure of a fix is what it moved that nobody
+   targeted (class medians, `make perf-portal`).  A representation of the compiler's own —
+   a stack array, a tuple in registers — is allowed wherever a program cannot observe it,
+   which is everywhere except a package's native code and a store bound to a file
+   ([C135](DESIGN_DECISIONS_PLATFORM.md), [APART_VALUES.md](APART_VALUES.md)).  Only proven situations
    ([C120](DESIGN_DECISIONS_VALUES.md)), the contract is semantics, not representation
    ([C122](DESIGN_DECISIONS_PLATFORM.md)), remove the object rather than complicate the memory
    model ([C125](DESIGN_DECISIONS_OWNERSHIP.md)).
@@ -93,6 +104,16 @@ Both backends, in this order.  Each step's detail lives where it points; the ord
    what stdlib functions compile to, `make surface-gen` after a new op or builtin.
 7. **Record it**: `make perf-check ARGS=--record` beside the change, and the measured
    before/after in the commit and in the plan or ledger that owns the row.
+8. **Re-analyse after every few optimisations — never work a list of fixes to its end.**  A
+   fix moves more than its own row: it changes what LLVM inlines and what other rewrites see,
+   so it can add a cost somewhere else (a rewrite that gave a cold caller access to a hot
+   helper changed how that helper was inlined into its hot caller, +30 % on an unrelated
+   routine) and remove one nobody priced (two fixes aimed at one row lowered a neighbour by
+   19 %).  Re-measure the whole worst-offender band (`bench/stats.py --routine` over every
+   row at or past the bar, not only the target), compare per row against the previous run,
+   bisect any rise with the rewrites' switches, and re-derive the remaining analysis from the
+   CURRENT emitted code — an analysis written before the fixes describes a program that no
+   longer exists.
 
 ---
 
@@ -616,7 +637,8 @@ falsifiable](formal/rewrites.md#every-rewrite-is-switchable-and-falsifiable).
 
 The portal (`make perf-portal`) writes ONE row per routine into
 `bench/portal/results/<host>.tsv` — the machine's latest measurement — and the page reads
-that row.  The history is the file's git history: every commit that touched it is one
+that row.  A laptop's node name changes with its network; `LOFT_PERF_HOST=<name>` keeps its
+rows in one file.  The history is the file's git history: every commit that touched it is one
 measurement of the whole lane set on that machine, and a routine that got slower between
 two joins is visible nowhere else (the census reads admissions, the speed gate reads test
 times).  Two scripts read it:
@@ -726,9 +748,11 @@ and guarded by a COUNT, never by a time (@PLN166).
 - **The gate counts, it does not time.**  Wall clock varied ±30 % under load on one box,
   so a time gate teaches people to ignore it; an allocation count is exact.
   `tests/frontend_counts.rs` counts the front end's heap allocations in-process against
-  `bench/frontend/allocations.tsv`, keyed by OS and cargo profile.  A count that GROWS
-  fails; one that falls passes and names the re-pin (`LOFT_FRONTEND_REPIN=1 cargo test
-  [--release] --test frontend_counts`).  One uncounted run goes first — the first compile
+  `bench/frontend/allocations.tsv`, keyed by OS and cargo profile.  It is ADVISORY: ci.yml's
+  `front-end allocation pins (ubuntu, advisory)` job runs it (`-- --ignored`), red there and
+  never failing a test leg or the merge.  A count that GROWS fails it; one that falls passes and
+  names the re-pin (`LOFT_FRONTEND_REPIN=1 cargo test [--release] --test frontend_counts --
+  --ignored`).  One uncounted run goes first — the first compile
   in a process pays one-time setup that differs by platform — and the counted runs must
   agree wherever a pin is read or written; a build with no pin reports and passes.
 - **Two pins, because they are two costs.**  `stdlib` is the COLD stdlib parse alone —
@@ -754,6 +778,22 @@ and guarded by a COUNT, never by a time (@PLN166).
 What each cut measured, and the leads left, are [PERFORMANCE-history.md § F1](PERFORMANCE-history.md).
 
 ---
+
+## What makes a slow routine a bug
+
+A routine over **3× its Rust twin** (C136) is a defect.  Who owns it depends on its mechanism
+class (`bench/portal/classes.tsv`):
+
+- **an OUTLIER** — over the bar in a class whose median is at or under it: an ordinary
+  `performance` issue, filed and fixed like any bug.  One program is slow where its kind is not.
+- **SYSTEMIC** — the class median itself is over the bar: the mechanism is slow, and the class's
+  plan owns every routine in it.  Filing them one by one would bury the one fix under dozens of
+  symptoms.
+
+`bench/portal/outliers.py <results.tsv>` splits a portal run this way and lists the outliers.
+File against the reference host's results only (bench/README.md); another host's ratios are a
+trend.  Before filing, the twin must have been audited like-for-like: a twin doing different
+work makes the ratio meaningless.
 
 ## Open performance work
 
