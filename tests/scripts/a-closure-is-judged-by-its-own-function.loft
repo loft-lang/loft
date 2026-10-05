@@ -12,6 +12,12 @@
 //
 // The pair below is the minimal shape: `first` binds a capturing typed closure, `second`
 // captures a non-capturing one in the same slot.  `before_first` is the control order.
+//
+// @falsified-at: 58acb001b — interpret exit 1 -> 0, native exit 1 -> 0; the control refused
+//   `second` (*"… not yet supported when the source closure may capture"*).
+// @falsified-by: tests/falsified/a-closure-is-judged-by-its-own-function.patch — the same channels.  Score it with
+//   `scripts/falsify.sh <this file> --patch <that patch>` once 58acb001b is out of reach.
+// HOLDS: leak, panic and refusals are clean on both trees and both backends.
 
 fn before_first() -> integer {
   dbl: fn(integer) -> integer = |a| { a * 2 };
