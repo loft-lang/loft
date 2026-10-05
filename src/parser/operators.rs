@@ -110,7 +110,7 @@ impl Parser {
         // referent — and is likewise fully blocked.
         // `is_scalar` is the one home for which types collapse — the plain enum among them.
         let collapses = crate::data::is_scalar(self.vars.var_type(nr))
-            || matches!(self.vars.var_type(nr), Type::RefVar(_));
+            || matches!(self.vars.var_type(nr).base(), Type::RefVar(_));
         // binding-const rejects a rebind (`=`); value-const rejects contents mutation
         // (`+=`) while allowing a `=` rebind that re-points the slot.  Under collapse both
         // reject everything.

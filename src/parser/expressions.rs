@@ -10922,7 +10922,6 @@ use a separate collection or add after the loop"
     /// ⚠ Construction does NOT come through here (@FR-Const-ConstructExempt): a literal
     /// lowers via `Value::Insert`, so a const field is SET at construction rather than
     /// CHECKED there, and `T{ v: 1 }` is always admitted however `v` is qualified.
-    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn validate_write(&mut self, to: &Value, parent_tp: &Type, op: &str) {
         // @PLN40 step 3 — value-const base-resolution.  `validate_write` fires only for
         // a COMPONENT write (`p.x = …`, `p[i] = …`, `p.a.b = …`; the whole-var case has
@@ -11007,9 +11006,11 @@ use a separate collection or add after the loop"
                             // op (`+=`) on a SCALAR.  ALLOW a compound op on a collection/text
                             // field — that is an in-place append (contents mutation), consistent
                             // with the already-allowed element write `t.v[0] = x`.
+                            // `@FR-N-Shape` — through `base()`: a `const v: text?` field
+                            // appends exactly as its dense twin does.
                             let contents_append = op != "="
                                 && matches!(
-                                    self.data.def(d_nr).attributes()[f_nr].typedef,
+                                    self.data.def(d_nr).attributes()[f_nr].typedef.base(),
                                     Type::Text(_)
                                         | Type::Vector(_, _)
                                         | Type::Sorted(_, _, _)
