@@ -70,11 +70,20 @@ out-of-range `.i` is a compile error, never a runtime null. (Verified: `(3,7).0`
 
 ```
   (T-Destr)  ⟨(x₁, …, xₙ) = e, σ⟩ → bind each xᵢ to the i-th element of the tuple value of e.
-             The arities must match (n names for an n-tuple), positionally.
+             The arities must match (n members for an n-tuple), positionally.
+             A member xᵢ is a NAME or any PLACE a lone assignment may target (a field, a
+             nested field, a vector element).  e is evaluated ONCE, before any member is
+             written, and each member is then the store  xᵢ = eᵢ  — with that store's
+             conversion, narrowing, nullability and copy; a name the author declared keeps
+             its declared type (N-Decl).
 ```
 
 **In words.** `(a, b) = (5, 9)` binds `a = 5`, `b = 9` — a positional unpack. It composes with a
 tuple-returning call: `(x, y) = pair()` unpacks the returned tuple directly (verified: `2 3`).
+The members may be fields or elements as well as names: `(w.sq, w.sr) = hex(w)` writes two
+fields, and because the right-hand side is evaluated first, `(p.x, p.y) = (p.y, p.x)` swaps.
+Each member is an ordinary store, so `(s.f, b) = (300, 1)` into a `u8` field is refused exactly
+as `s.f = 300` is, and into a `u8?` field holds null.
 
 ### Tuples as call arguments and returns
 

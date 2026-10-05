@@ -1,0 +1,114 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `(T-Destr)` over PLACES (owner, 2026-10-05): a pattern member may be any place a lone
+// assignment may target — a field, a nested field, a vector element — beside plain names.
+// `(p.x, b) = e` means `tmp = e; p.x = tmp.0; b = tmp.1`: the right-hand side is evaluated
+// once, BEFORE any member is written (so a swap swaps), and each member is an ordinary store
+// with that store's conversion, narrowing, nullability and copy.
+//
+// It used to be lowered as ONE tuple-typed field starting at the first member: the members
+// after it were written side by side from that offset, whatever they named.
+//
+//   (p.x, p.z) = (7, 8)    wrote 8 into y and left z     (silent)
+//   (p.z, p.x) = (7, 8)    wrote 8 past the record        (silent)
+//   (s.g, b) = (7, 9)      wrote b into the struct and never assigned b
+//   (b, p.x) = (7, 8)      refused, "requires plain variable names"
+//
+// crawler's `(w.sq, w.sr) = sim_player_hex(w.s)` was right only because its two fields sat
+// side by side; `crawler_shape` below keeps a third field after them.
+//
+// Axes this file MOVES:  member kind (field · nested field · element · new name · existing
+//                        name), member order (in layout order · reversed · skipping a
+//                        field), value kind (scalar · nullable narrow · text · struct ·
+//                        vector), right-hand side (literal · call · reading the targets),
+//                        evaluation count (once · in a loop).
+// Axes it HOLDS FIXED:   two or three members; the narrowing refusal is
+//                        `a-destructured-narrow-name-is-refused-where-a-store-is.loft`.
+
+struct In { v: integer }
+struct Mid { inn: In, n: integer }
+struct P { x: integer, y: integer, z: integer, t: text }
+struct S { f: u8, g: u8?, h: float }
+struct W { m: Mid, vs: vector<integer>, i: In, sq: integer, sr: integer, z: integer }
+
+fn hex(k: integer) -> (integer, integer) {
+  (k * 2, k * 3)
+}
+
+fn named(n: integer) -> (integer, text, integer) {
+  (n, "w{n}", n + 1)
+}
+
+fn parts(k: integer) -> (In, vector<integer>) {
+  (In { v: k }, [k, k + 1])
+}
+
+fn fields_in_any_order() -> text {
+  p = P { x: 1, y: 2, z: 3, t: "a" };
+  (p.x, p.z) = (7, 8);
+  a = "{p.x}{p.y}{p.z}";
+  (p.z, p.x) = (5, 6);
+  "{a} {p.x}{p.y}{p.z}"
+}
+
+fn names_and_fields() -> text {
+  s = S { f: 1, g: 2, h: 1.5 };
+  b = 0;
+  (s.g, b) = (7, 9);
+  (b, s.f) = (4, 3);
+  (c, s.h) = (11, 2.5);
+  "{s.f} {s.g} {s.h} {b} {c}"
+}
+
+fn swaps() -> text {
+  p = P { x: 1, y: 2, z: 3, t: "a" };
+  (p.x, p.y) = (p.y, p.x);
+  v: vector<integer> = [10, 20, 30];
+  (v[0], v[2]) = (v[2], v[0]);
+  "{p.x}{p.y} {v}"
+}
+
+fn nullable_narrow(n: integer) -> text {
+  s = S { f: 1, g: 2, h: 1.5 };
+  b = 0;
+  (s.g, b) = (n, 1);
+  "{s.g}"
+}
+
+fn heap_members() -> text {
+  w = W { m: Mid { inn: In { v: 1 }, n: 2 }, vs: [9], i: In { v: 5 }, sq: 0, sr: 0, z: 77 };
+  (w.m.inn.v, w.m.n) = (7, 8);
+  (w.i, w.vs) = parts(3);
+  p = P { x: 0, y: 0, z: 0, t: "" };
+  (p.x, p.t, p.z) = named(5);
+  "{w.m.inn.v} {w.m.n} {w.i.v} {w.vs} {p.x} {p.t} {p.z}"
+}
+
+fn copies() -> text {
+  w = W { m: Mid { inn: In { v: 1 }, n: 2 }, vs: [], i: In { v: 5 }, sq: 0, sr: 0, z: 0 };
+  j = In { v: 6 };
+  (w.i, w.sq) = (j, 1);
+  j.v = 99;
+  "{w.i.v} {j.v}"
+}
+
+fn crawler_shape() -> text {
+  w = W { m: Mid { inn: In { v: 1 }, n: 2 }, vs: [], i: In { v: 5 }, sq: 0, sr: 0, z: 77 };
+  for k in 0..3 {
+    (w.sq, w.sr) = hex(k + 2);
+    (w.i, w.vs) = parts(k);
+  }
+  "{w.sq} {w.sr} {w.z} {w.vs}"
+}
+
+fn main() {
+  assert(fields_in_any_order() == "728 625", "field order: got {fields_in_any_order()}");
+  assert(names_and_fields() == "3 7 2.5 4 11", "names beside fields: got {names_and_fields()}");
+  assert(swaps() == "21 [30,20,10]", "a swap reads before it writes: got {swaps()}");
+  assert(nullable_narrow(300) == "null", "u8? field out of range: got {nullable_narrow(300)}");
+  assert(nullable_narrow(200) == "200", "u8? field in range: got {nullable_narrow(200)}");
+  assert(heap_members() == "7 8 3 [3,4] 5 w5 6", "heap members: got {heap_members()}");
+  assert(copies() == "6 99", "a struct member is copied into the field: got {copies()}");
+  assert(crawler_shape() == "8 12 77 [2,3]", "a call into two fields, in a loop: got {crawler_shape()}");
+}

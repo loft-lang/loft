@@ -388,6 +388,9 @@ pub struct Parser {
     /// rather than resolve to that definition (loft#756).  See
     /// `Parser::at_binding_name`.
     pub(crate) in_tuple_lhs: bool,
+    /// `(T-Destr)` over places — the value the next `parse_assign_op` stores, read off the
+    /// pattern's temp, in place of a right-hand side it would otherwise parse itself.
+    pub(crate) preset_rhs: Option<(Value, Type)>,
     /// @PLN86 — the host-supplied sandbox policy (profiles + designations).
     /// Empty by default; set by the embedder before parsing.  A script cannot
     /// designate itself — the designation is read from here, not the source.
@@ -1735,6 +1738,7 @@ impl Parser {
             rebuild_watch: u16::MAX,
             rebuild_watch_hit: false,
             in_tuple_lhs: false,
+            preset_rhs: None,
             sandbox: crate::sandbox::SandboxConfig::default(),
             def_sandbox: HashMap::new(),
             sandbox_unbounded_loops: HashMap::new(),

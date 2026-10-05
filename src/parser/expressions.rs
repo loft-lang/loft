@@ -3507,7 +3507,7 @@ use a separate collection or add after the loop"
         // nothing, so `x = ;` silently bound null and `x += ;` compiled to a program whose
         // later output vanished (loft#1800's library parser met it: the compiler accepted
         // what no grammar of loft allows).
-        if self.operand_absent() {
+        if self.preset_rhs.is_none() && self.operand_absent() {
             diagnostic!(self.lexer, Level::Error, "Expected a value after `{op}`");
             *code = Value::Null;
             return Type::Void;
@@ -4199,7 +4199,12 @@ use a separate collection or add after the loop"
         // itself, the literal had no member types to steer it.
         let link_tuple = self.ref_tuple_expected(op, to);
         let expect = link_tuple.as_ref().unwrap_or(f_type);
-        let mut s_type = self.parse_operators(expect, code, &mut parent_tp, 0);
+        let mut s_type = if let Some((value, tp)) = self.preset_rhs.take() {
+            *code = value;
+            tp
+        } else {
+            self.parse_operators(expect, code, &mut parent_tp, 0)
+        };
         // loft#1840 — `(B-Copy)` for a text: `t = s.name` copies the text into `t`, so a `+=`
         // into it that nothing reads is a lost write.  A text has no copy lowering of its own
         // (the bind is the `Set`), so the verdict is recorded here, from the same place test
@@ -7712,6 +7717,195 @@ use a separate collection or add after the loop"
         binds
     }
 
+    /// `(T-Destr)` — a CONSTANT member of a tuple-literal right-hand side, read as itself
+    /// rather than off the pattern's temp.  A constant cannot depend on the order the members
+    /// are stored in, so `(O-Detach)` holds either way, and the store then sees the literal:
+    /// `a: u8; (a, b) = (9, 1)` fits as `a = 9` does, where the temp's member is an `integer`
+    /// that may not.
+    fn destructure_constant_member(&self, rhs: &Value, i: usize) -> Option<Value> {
+        let Value::Tuple(members) = rhs.unspan() else {
+            return None;
+        };
+        let m = members.get(i)?;
+        (self.const_int(m).is_some()
+            || matches!(
+                m.unspan(),
+                Value::Float(_) | Value::Single(_) | Value::Boolean(_)
+            ))
+        .then(|| m.clone())
+    }
+
+    /// Does the statement begin with a parenthesised LIST — `( a , b … ) =` — whatever its
+    /// members are?  `peek_tuple_lhs` asks the narrower "a list of NAMES"; this is the shape a
+    /// `(T-Destr)` pattern has, places included, and the one a read of a tuple-typed FIELD
+    /// (`p.v = (…)`) never has.  The two lower to the same `Value::Tuple` of reads, so the
+    /// source spelling is what tells them apart.
+    fn peek_list_lhs(&mut self) -> bool {
+        if !self.lexer.peek_token("(") {
+            return false;
+        }
+        let lnk = self.lexer.link();
+        self.lexer.cont(); // step over "("
+        let mut depth: u32 = 1;
+        let mut list = false;
+        // Bounded to what a pattern of places is made of — names, `.`, `,`, indexes — for
+        // the reason `peek_tuple_lhs` gives: a lookahead that walks into a format string
+        // desyncs the lexer, and `(s.value, "v{s.value}")` is an ordinary tuple expression.
+        while depth > 0 {
+            if self.lexer.peek_token("(") || self.lexer.peek_token("[") {
+                depth += 1;
+            } else if self.lexer.peek_token(")") || self.lexer.peek_token("]") {
+                depth -= 1;
+            } else if depth == 1 && self.lexer.peek_token(",") {
+                list = true;
+            } else if !self.lexer.peek_token(".")
+                && !self.lexer.peek_token(",")
+                && !matches!(
+                    self.lexer.peek().has,
+                    LexItem::Identifier(_) | LexItem::Integer(..)
+                )
+            {
+                list = false;
+                break;
+            }
+            self.lexer.cont();
+        }
+        let binds = list && self.lexer.peek_token("=") && !self.lexer.peek_token("==");
+        self.lexer.revert(lnk);
+        binds
+    }
+
+    /// `(T-Destr)` over PLACES — `(p.x, v[i], b) = e` with a member that is not a plain name.
+    /// The right-hand side is evaluated ONCE into a temp before any member is written
+    /// (`(O-Detach)`, so `(p.x, p.y) = (p.y, p.x)` swaps), and each member is then an ordinary
+    /// assignment of the temp's i-th element: the same `parse_assign_op` a lone `p.x = …`
+    /// takes, so every store rule — conversion, narrowing, nullability, copy — is the one that
+    /// statement would get.  A pattern of names only keeps the binding path below it.
+    ///
+    /// The member list is read AFTER the right-hand side: the lexer reads ahead past the `=`,
+    /// parses the value, then returns to the `(` for the targets and on to the end.
+    fn parse_place_destructure(&mut self, code: &mut Value) -> Type {
+        let start = self.lexer.link();
+        self.lexer.token("(");
+        let mut depth: u32 = 1;
+        let mut members: usize = 1;
+        while depth > 0 && self.lexer.peek().has != LexItem::None {
+            if self.lexer.peek_token("(")
+                || self.lexer.peek_token("[")
+                || self.lexer.peek_token("{")
+            {
+                depth += 1;
+            } else if self.lexer.peek_token(")")
+                || self.lexer.peek_token("]")
+                || self.lexer.peek_token("}")
+            {
+                depth -= 1;
+            } else if depth == 1 && self.lexer.peek_token(",") {
+                members += 1;
+            }
+            self.lexer.cont();
+        }
+        self.lexer.token("=");
+        let mut rhs = Value::Null;
+        let mut rhs_type = self.expression(&mut rhs);
+        if let Some((reads, elems)) = self.ref_tuple_subject(&rhs, &rhs_type) {
+            rhs = reads;
+            rhs_type = Type::Tuple(elems);
+        }
+        let end = self.lexer.link();
+        let (elems, ref_def_nr): (Vec<Type>, u32) = match &rhs_type {
+            Type::Tuple(elems) => (elems.clone(), u32::MAX),
+            Type::Reference(d_nr, _) if self.data.def(*d_nr).name().starts_with("__tuple<") => (
+                self.data
+                    .def(*d_nr)
+                    .attributes
+                    .iter()
+                    .map(|a| a.typedef.clone())
+                    .collect(),
+                *d_nr,
+            ),
+            _ => {
+                if !self.first_pass && !rhs_type.is_unknown() {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "Cannot destructure a non-tuple value"
+                    );
+                }
+                self.lexer.revert(end);
+                drop(start);
+                *code = Value::Null;
+                return Type::Void;
+            }
+        };
+        if elems.len() != members && !self.first_pass {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "Tuple arity mismatch: left has {members} names, right has {} elements",
+                elems.len()
+            );
+        }
+        let tmp = self.vars.work_refs(&rhs_type, &mut self.lexer);
+        if !self.first_pass {
+            self.change_var_type(tmp, &rhs_type);
+        }
+        let constants: Vec<Option<Value>> = (0..elems.len())
+            .map(|i| self.destructure_constant_member(&rhs, i))
+            .collect();
+        let mut steps = vec![Value::Set(tmp, Box::new(rhs))];
+        self.lexer.revert(start);
+        self.lexer.token("(");
+        let saved_tuple_lhs = std::mem::replace(&mut self.in_tuple_lhs, true);
+        for (i, elem) in elems.iter().enumerate().take(members) {
+            let mut target = Value::Null;
+            let mut parent_tp = Type::Unknown(0);
+            let f_type = self.parse_operators(&Type::Unknown(0), &mut target, &mut parent_tp, 0);
+            let mut read = if let Some(c) = &constants[i] {
+                c.clone()
+            } else if ref_def_nr == u32::MAX {
+                Value::TupleGet(tmp, i as u16)
+            } else {
+                let offset = crate::data::stored_tuple_offsets_for_def(
+                    &self.data,
+                    &self.database,
+                    ref_def_nr,
+                    elems.len(),
+                )
+                .map_or_else(
+                    || crate::data::element_stack_offsets(&elems)[i] as u32,
+                    |offs| u32::from(offs[i]),
+                );
+                self.get_val(elem, false, offset, Value::Var(tmp), u32::MAX)
+            };
+            let mut elem_tp = elem.clone();
+            if let Some((syn, pointer)) = self.tagged_pointer_type(elem) {
+                read = self.emit_nullable_slot_read(syn, read, elem);
+                elem_tp = pointer;
+            }
+            let to = target.clone();
+            // A name the pattern binds is defined by this store, as a lone `c = …` defines it.
+            if let Value::Var(v) = target
+                && !self.first_pass
+                && self.vars.exists(v)
+            {
+                self.vars.defined(v);
+            }
+            let var_nr = self.assign_var_nr(&mut target, "=", &f_type, &mut parent_tp);
+            self.preset_rhs = Some((read, elem_tp));
+            self.parse_assign_op(&mut target, "=", &f_type, &to, parent_tp, var_nr, false);
+            self.preset_rhs = None;
+            steps.push(target);
+            if !self.lexer.has_token(",") {
+                break;
+            }
+        }
+        self.in_tuple_lhs = saved_tuple_lhs;
+        self.lexer.revert(end);
+        *code = Value::Insert(steps);
+        Type::Void
+    }
+
     /// Parse an assignment, keeping [`Parser::last_place_discharge`] the answer for the
     /// left-hand side that is being parsed HERE.
     ///
@@ -7822,6 +8016,9 @@ use a separate collection or add after the loop"
         // LHS parse.  Only ever SET here (never cleared): a nested parse_assign
         // inside the list must not un-mark the elements around it.  Restored
         // below, so the RHS — parsed further down — sees the outer state again.
+        if self.peek_list_lhs() && !self.peek_tuple_lhs() {
+            return self.parse_place_destructure(code);
+        }
         let saved_tuple_lhs = self.in_tuple_lhs;
         if self.peek_tuple_lhs() {
             self.in_tuple_lhs = true;
@@ -8109,6 +8306,9 @@ use a separate collection or add after the loop"
                 if !self.first_pass {
                     self.change_var_type(tmp, &tmp_tp);
                 }
+                let constants: Vec<Option<Value>> = (0..rhs_elems.len())
+                    .map(|i| self.destructure_constant_member(&rhs, i))
+                    .collect();
                 let mut steps = vec![Value::Set(tmp, Box::new(rhs))];
                 for (i, &v_nr) in var_nrs.iter().enumerate() {
                     // The arity mismatch above is already an Error, but it only
@@ -8185,7 +8385,10 @@ use a separate collection or add after the loop"
                         self.change_var_type(v_nr, &member_tp);
                     }
                     let step = if ref_def_nr == u32::MAX {
-                        let mut read = Value::TupleGet(tmp, i as u16);
+                        let mut read = match &constants[i] {
+                            Some(c) if declared_scalar => c.clone(),
+                            _ => Value::TupleGet(tmp, i as u16),
+                        };
                         if let Some((syn, _)) = tagged_member {
                             read = self.emit_nullable_slot_read(syn, read, &rhs_elems[i]);
                         }
