@@ -26,7 +26,7 @@
 //! What this does NOT prove:
 //!   * S3 equivalence — that a decoded `Data` recompiles to byte-identical
 //!     bytecode.  This test is codec self-consistency on real data; the
-//!     equivalence is `ir_read`'s `a_decoded_program_compiles_to_the_bytecode_of_its_parse`.
+//!     equivalence is `ir_read`'s `a_decoded_program_compiles_to_the_bytecode_of_its_parse_*` (eight chunks).
 
 mod common;
 

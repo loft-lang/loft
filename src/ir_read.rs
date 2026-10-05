@@ -1383,18 +1383,44 @@ mod tests {
     /// `LOFT_DECODE_TRACE=1` names each program and every function that differs, and
     /// `LOFT_DECODE_DUMP=<dir>` writes the first differing function's variable tables and
     /// bytecode, cold and decoded, to `<dir>`.
-    #[test]
-    fn a_decoded_program_compiles_to_the_bytecode_of_its_parse() {
+    ///
+    /// CHUNKED like `tests/wrap.rs`'s corpus (every [`DECODE_CHUNKS`]-th program from each
+    /// offset): one test over all ~2100 programs parses and compiles each twice in series,
+    /// and under ASan that passed the 600 s per-test limit (loft#1863).
+    fn a_decoded_program_compiles_to_the_bytecode_of_its_parse(chunk: usize) {
         // The parser recurses as deeply as the CLI's own thread allows.
         std::thread::Builder::new()
             .stack_size(512 << 20)
-            .spawn(decoded_programs_compile_alike)
+            .spawn(move || decoded_programs_compile_alike(chunk))
             .expect("spawn")
             .join()
             .unwrap_or_else(|e| std::panic::resume_unwind(e));
     }
 
-    fn decoded_programs_compile_alike() {
+    const DECODE_CHUNKS: usize = 8;
+
+    macro_rules! decode_chunks {
+        ($($name:ident = $k:expr),* $(,)?) => {$(
+            #[test]
+            fn $name() {
+                a_decoded_program_compiles_to_the_bytecode_of_its_parse($k);
+            }
+        )*};
+    }
+
+    decode_chunks!(
+        a_decoded_program_compiles_to_the_bytecode_of_its_parse_0 = 0,
+        a_decoded_program_compiles_to_the_bytecode_of_its_parse_1 = 1,
+        a_decoded_program_compiles_to_the_bytecode_of_its_parse_2 = 2,
+        a_decoded_program_compiles_to_the_bytecode_of_its_parse_3 = 3,
+        a_decoded_program_compiles_to_the_bytecode_of_its_parse_4 = 4,
+        a_decoded_program_compiles_to_the_bytecode_of_its_parse_5 = 5,
+        a_decoded_program_compiles_to_the_bytecode_of_its_parse_6 = 6,
+        a_decoded_program_compiles_to_the_bytecode_of_its_parse_7 = 7,
+    );
+
+    /// Every `chunk`-th program of the sorted `tests/scripts` + `tests/oracle` corpus.
+    fn decode_corpus_chunk(chunk: usize) -> Vec<std::path::PathBuf> {
         let mut files: Vec<std::path::PathBuf> = Vec::new();
         for dir in ["tests/scripts", "tests/oracle"] {
             for e in std::fs::read_dir(dir).expect("corpus dir").flatten() {
@@ -1405,6 +1431,16 @@ mod tests {
             }
         }
         files.sort();
+        files
+            .into_iter()
+            .enumerate()
+            .filter(|(i, _)| i % DECODE_CHUNKS == chunk)
+            .map(|(_, f)| f)
+            .collect()
+    }
+
+    fn decoded_programs_compile_alike(chunk: usize) {
+        let files = decode_corpus_chunk(chunk);
         let filter = std::env::var("LOFT_DECODE_FILTER").unwrap_or_default();
         let mut diverged = Vec::new();
         let mut compared = 0usize;
