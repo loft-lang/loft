@@ -677,6 +677,78 @@ fill whose length the kept vector already has: `mat4_mul` −17 % (priced −24 
 `tests/scripts/a-return-buffer-refills-the-store-a-rebind-released.loft`, pin
 `tests/refill_buffer.rs`.
 
+### A pooled buffer's texts are refilled in their slots
+
+```
+  (R-RefillText) at a call site whose result buffer b is a POOLED call buffer —
+                 minted once per activation by a zero-filling OpDatabase and
+                 released before every later call by OpClear(b, tp) (the
+                 (R-Reuse) pool, @FR-H-ClearRelease) — the release is not
+                 emitted, and the call goes to the callee's REFILL TWIN, whose
+                 text sets into its own return buffer refill the slot: the
+                 slot's block is written over when the new text fits its claim
+                 (len + 8 ≤ 8 × the block's header words), released and claimed
+                 anew when it does not, claimed when the slot is 0; a null text
+                 releases the slot's block.  Admitted where (a) tp's heap is
+                 TEXT ONLY — every heap slot of the type, nested inline records
+                 flattened, is a text (no collection, no reference, no enum
+                 payload that owns heap); (b) the callee builds its result as a
+                 record LITERAL into its own buffer on EVERY exit — `return b`,
+                 or a block whose value is b — the literal writing every text
+                 slot of tp exactly once, and nothing else in the callee names
+                 the buffer; and (c) b is named by nothing but its pool
+                 statement, this call's buffer argument and its releases, and
+                 the result bound from the call is only READ (a reading OpGet*,
+                 the source of a copy that keeps its source).  Where the site
+                 would call an `__inv` or `__rg` twin it releases first instead,
+                 in the pool statement's order.
+```
+
+**In words.**  A pooled buffer's release walk frees every text the previous result held, and
+the callee then claims a fresh block for every text of the new one: per call, one walk and
+one claim-and-free per text field, for blocks that are the same size each time more often
+than not.  Writing over the old block when the new text fits keeps the bytes where they are
+and drops both halves.  What makes it sound is ONE invariant, enforced at three points:
+**a text slot read by the refill holds 0 or a text block that slot owns.**
+
+- *The buffer's history* — (c): its mint zero-fills it (a slot is 0) and every later write
+  is the refill twin's literal (a slot owns its block).  A no-prefill mint
+  (`OpDatabaseNP`, `(R-CompleteWrite)`) or an element slot handed in as the buffer
+  (`(R-Place)`, `(R-ElemFirst)`) leaves BYTES there, which a refill would read as a block
+  number; neither is a pooled buffer, and neither can reach a refill twin, because the
+  decision is the SITE's, not the callee's.  A twin that mints its own buffer keeps the
+  zero-filling mint for the same reason.
+- *The callee* — (b): every exit is a literal writing every text slot, so after the call no
+  slot still holds the previous result's text (no stale value is visible, none leaks); a
+  forwarded exit (`return g(…)`), a copy into the buffer (`OpCopyRecord`, which claims fresh
+  blocks over the old ones) or an early exit that writes nothing declines.  The parser
+  writes every field of a literal, a defaulted text included, so what (b) protects is the
+  live-record count, not a value.
+- *The type* — (a): a refilled text slot is the only heap the walk would have freed; a
+  collection or a heap-owning enum payload would be left for the walk and is out of scope
+  until a clause of its own (vector-build.md's text-bearing elements).
+
+Why a TWIN and not the callee itself: the same callee is also called with buffers that do
+not keep the invariant (a fresh element slot, a no-prefill mint), and one emitted body cannot
+tell them apart; a twin, chosen where the buffer's history is known, can.  It is the shape
+`(R-Inputs)` (`__inv`) and `(R-RangedCall)` (`__rg`) emit.  A previous result read through a
+borrow after the next call is no new hazard: the release walk freed its block at the same
+point, and the scope pass never pools a site whose result a later text still depends on (it
+mints per call there instead).
+
+Native only; the interpreter keeps the walk and the fresh claims and is the oracle.  An
+armed release no call takes is an emission error, never a silent leak.  Effect on
+game_protocol `msg_ping` (x86-64): 18.0 → 4.89 ms, 7.55× → 2.05× Rust, hash unchanged.
+`flow_layout_full`, pluginabi `check_request` and cbor `decode` need the collection clause
+after it (vectors of text-bearing records).  Switch `LOFT_NO_REFILL_TEXT=1`; trace
+`LOFT_TRACE_REFILL_TEXT=1` names each pooled site's verdict.  Sites: `hoist::refill_text_sites`
+and `hoist::refill_text_callee` (the admission), `Stores::text_slots` (a), the block loop in
+`emit.rs` (the pool statement), `user_fn_call_body` (the call), `substitute_template_body`
+(the twin's text set), `Store::refill_str` (the write).  Guard
+`tests/scripts/a-pooled-buffers-texts-are-refilled-in-their-slots.loft` — value cells and a
+live-record census (`m1`), with three planted defects under `tests/falsified/` — and pin
+`tests/refill_text.rs`.
+
 ### A rebind hands the displaced store to the call
 
 ```
@@ -4352,91 +4424,6 @@ and `LOFT_NATIVE_LEAK_CHECK=1` on both backends (a view freed as if owned shows 
 release); a planted arm that appends to `p.entries` before reading the binding must decline;
 `LOFT_POISON=1` catches a read through a view whose record moved.
 
-### A pooled buffer's texts are refilled in their slots
-
-```
-  (R-RefillText) at a call site whose result buffer b is a POOLED call buffer —
-                 minted once per activation by a zero-filling OpDatabase and
-                 released before every later call by OpClear(b, tp) (the
-                 (R-Reuse) pool, @FR-H-ClearRelease) — the release is not
-                 emitted, and the call goes to the callee's REFILL TWIN, whose
-                 text sets into its own return buffer refill the slot: the
-                 slot's block is written over when the new text fits its claim
-                 (len + 8 ≤ 8 × the block's header words), released and claimed
-                 anew when it does not, claimed when the slot is 0.  Admitted
-                 where (a) tp's heap is TEXT ONLY — every heap slot of the type,
-                 nested inline records flattened, is a text (no collection, no
-                 reference, no enum payload that owns heap); (b) the callee
-                 builds its result as a record LITERAL into its own buffer on
-                 EVERY exit, the literal writing every text slot of tp exactly
-                 once, and nothing else in the callee writes, copies into or
-                 frees the buffer; and (c) b is written by nothing but its
-                 zero-filling mint and this call's result.
-```
-
-**In words.**  A pooled buffer's release walk frees every text the previous result held, and
-the callee then claims a fresh block for every text of the new one: per call, one walk and
-one claim-and-free per text field, for blocks that are the same size each time more often
-than not.  Writing over the old block when the new text fits keeps the bytes where they are
-and drops both halves.  What makes it sound is ONE invariant, enforced at three points:
-**a text slot read by the refill holds 0 or a text block that slot owns.**
-
-- *The buffer's history* — (c): its mint zero-fills it (a slot is 0) and every later write
-  is the refill twin's literal (a slot owns its block).  A no-prefill mint
-  (`OpDatabaseNP`, `(R-CompleteWrite)`) or an element slot handed in as the buffer
-  (`(R-Place)`, `(R-ElemFirst)`) leaves BYTES there, which a refill would read as a block
-  number; neither is a pooled buffer, and neither can reach a refill twin, because the
-  decision is the SITE's, not the callee's.
-- *The callee* — (b): every exit is a literal writing every text slot, so after the call no
-  slot still holds the previous result's text (no stale value is visible, none leaks); a
-  forwarded exit (`return g(…)`), a copy into the buffer (`OpCopyRecord`, which claims fresh
-  blocks over the old ones) or an early exit that writes nothing declines.
-- *The type* — (a): a refilled text slot is the only heap the walk would have freed; a
-  collection or a heap-owning enum payload would be left for the walk and is out of scope
-  until a clause of its own (vector-build.md's text-bearing elements).
-
-Why a TWIN and not the callee itself: the same callee is also called with buffers that do
-not keep the invariant (a fresh element slot, a no-prefill mint), and one emitted body cannot
-tell them apart; a twin, chosen where the buffer's history is known, can.  It is the shape
-`(R-Inputs)` (`__inv`) and `(R-RangedCall)` (`__rg`) already emit; the first build offers it
-only where the site would call the plain callee.  A previous result read by a borrow after
-the next call is no new hazard: the release walk freed its block at the same point, and the
-scope pass never lets such a borrow live across the call.
-
-Native first; the interpreter keeps the walk and the fresh claims and is the oracle — its
-answers are the values the twin must reproduce.  Priced on game_protocol `msg_ping` (x86-64,
-`bench/portal/analysis/worklist.md`): 17.4 → 4.78 ms, 7.47× → ~2.0×, hash
-unchanged.  `flow_layout_full`, pluginabi `check_request` and cbor `decode` are priced against
-the same mechanism but need the collection clause after it.
-
-**The steps, each landing on its own with what proves it:**
-
-1. *The runtime write* — `Store::refill_str(rec, fld, val)`: the three cases above, the
-   release through the store's own `delete`.  Unit tests for each case (0, fits, does not
-   fit, a longer text after a shorter one) and `LOFT_POISON=1` over them.  Nothing calls it.
-2. *The census channel that can see a text leak* — a guard program that calls a pooled
-   callee N times and asserts the store's live-record count (`store_memory()`) is the same
-   after call 10 and after call 1000: a block leaked per call grows it, which no
-   store-level leak check sees (the pooled store is freed whole at the end).  Green before
-   any rewrite, and its planted defect — the release walk dropped with nothing refilling —
-   goes red.  This is the falsifier every later step leans on.
-3. *The admission, traced and pinned, emitting nothing* — `hoist::refill_text_sites(data,
-   stores, def_nr)` answering the sites (a)–(c) admit, with `LOFT_TRACE_REFILL_TEXT` naming
-   each decline; cells for every decline: a type with a vector field, a callee with a
-   forwarded exit, one that copies into its buffer, one whose literal skips a text (a
-   default), a site whose buffer is NP-minted, a site under `__inv`/`__rg`.
-4. *The twin and the site, behind `LOFT_NO_REFILL_TEXT`* — the callee's `__rt` twin with
-   its literal text sets through `refill_str`, the site calling it, the pool's `OpClear`
-   not emitted.  Guard cells, hand-computed on both backends: texts that shrink, grow past
-   their block, become empty and come back, a nested record's text (msg_ping's `payload`),
-   a result kept across the next call by a copy; under `LOFT_POISON=1`, the step-2 census
-   flat, `LOFT_HOIST_VERIFY=1`, the switch A/B; `make rewrite-census` with the new row.
-   Planted: the twin keeping `set_str` (the census grows), the decline on (b) removed (a
-   stale text read back, the value red).
-5. *Measure the rows it names* (`msg_ping`, then the rows that call such callees in a loop)
-   and record them; the collection clause (vectors of text-bearing records,
-   `flow_layout_full`'s runs) is the next rule, priced on its own.
-
 ### Proposed clauses on existing rules
 
 Each extends a rule above with one admission the measured rows need; the rule's own switch,
@@ -4457,10 +4444,10 @@ trace and falsifiers apply, plus the cells named here.  Priced in
   borrows an element for an iteration; this borrows a field for an arm under the same
   value-only reading.  Cells: an arm that appends to the subject's vector after reading the
   binding (declines); one that stores the binding into another record (copies).
-- **The text clause** is a rule of its own, `(R-RefillText)` above: the release it removes
-  is the pooled call buffer's `OpClear`, not `(R-RefillBuffer)`'s return buffer, and the slot
-  invariant decides it at the call site.  The kept VECTOR of text-bearing records is the
-  collection clause after it.
+- **The collection clause, for `(R-RefillText)`.**  A pooled buffer whose type holds a
+  VECTOR of text-bearing records: the rule's text clause stops at a type whose heap is text
+  only, and `flow_layout_full`'s runs, `check_request` and `decode` keep the release walk
+  for their vectors.
 - **Text-bearing elements and the work text, for `(R-WorkBuffer)`.**  `vector<τ>` with τ a
   record of scalars and texts is admitted under the mention test unchanged PROVIDED the
   callee refills it under the text clause (otherwise the per-call release is what the pool

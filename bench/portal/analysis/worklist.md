@@ -73,7 +73,7 @@ Sizes are the analysis files' own (XS–M); "→" is the hand price, a ceiling f
 
 | | unit | size | rows and priced landing | priced in |
 |---|---|---|---|---|
-| S1 | `(R-RefillText)` — a pooled call buffer's texts refilled in their slots through the callee's refill twin; the design and its five steps are in `formal/rewrites.md` § A pooled buffer's texts are refilled in their slots | M, in five steps | `msg_ping` 7.47× → ~2.0× priced on x86-64; the collection clause after it carries `flow_layout_full`, `check_request`, `decode` | that note |
+| S1 | BUILT — `(R-RefillText)`: a pooled call buffer's texts refilled in their slots through the callee's refill twin (`formal/rewrites.md` § A pooled buffer's texts are refilled in their slots) | M | `msg_ping` 7.55× → 2.05× on x86-64 (the price), hash unchanged; the collection clause after it carries `flow_layout_full`, `check_request`, `decode` | under-10x.md § Status |
 | S2 | `(R-Apart)` instance 2 — a fixed-length vector field inside a value record, across admitted calls | new gate over the IR | `mat4_mul` → 0.63× | apart.md |
 | S3 | `(R-Apart)` instance 3 — an inline buffer with a spill, never a bare `Vec` | after S2, same gate | `rig_world_frame3` → 2.75×; `draw_bezier`'s two stacks → 2.3× | apart.md |
 | S4 | `(R-Destination)` — a child built in its element (D7); beside it `(R-CompleteWrite)` counting a field MOVE (D6) and the fixed-width `move_field_out` (D2) | M + S + S | `decode` → 6.0× with C1's two XS steps (required: without D7 the ladder stops at 8.3×); `check_request` is 84 % the same `decode` | over-9x.md, under-10x.md § cbor |
@@ -82,13 +82,6 @@ Sizes are the analysis files' own (XS–M); "→" is the hand price, a ceiling f
 | S7 | `(R-FoldCompare)` with its operand clause — a case fold compared, never built | S + XS | `header` → 4.3× (3.6× when the split table slices the borrow); every case-insensitive lookup | over-9x.md |
 | S8 | `(R-ViewReturn)` — a lookup's found entry read in place | M | `check_request` −10 %; `pa_get` is the shape of the hex_* and markdown finders | over-9x.md |
 | S9 | destination-directed builds — `(R-Place)` widened to a local with ONE owning sink, the return buffer a host | not sized | `panel_build` (most of its 55 % lifecycle share), `emit_to_material` (`tri`, `up`, `centre`; no-prefill −17 % more), `encode_bytes` (`buf += encode(x)`) | records.md § Order item 2 |
-
-S1 re-priced on x86-64 (2026-10-05, today's emission, same hash): `msg_ping` 17.4 → 4.78 ms
-(7.47× → ~2.0×) with the per-message release walk of the pooled call buffer dropped and each text
-write reusing its slot's claim when the new text fits.  The design settles the three questions
-the price raised — native first with the interpreter as oracle, the slot invariant decided at the
-call site through a refill twin, every text slot written by every exit — in `formal/rewrites.md`
-§ A pooled buffer's texts are refilled in their slots, with the five steps that build it.
 
 ### Cycle units
 
@@ -169,8 +162,8 @@ CLASS, not a row; the visible reason is a hypothesis until priced.
 ## 7. Order
 
 1. M1–M3 and the regressions that stand: they change which rows are on the list.
-2. S1, then S2 and S3: the three units that take a row under the bar by removing a
-   temporary; S1 is the mechanism four of the worst rows were priced against.
+2. S2 and S3, then `(R-RefillText)`'s collection clause: the units that take a row under
+   the bar by removing a temporary (S1, the text clause, is built).
 3. M4 and one full run (the first since step 1), then § 5's pricing pass over the classes
    with a median over the bar (keyed, record-field, alloc-temp), read on both axes.
 4. S4 with C1 (the XS steps first), then C2; S6 and S7; S5; S8 and S9 after their decisions.

@@ -22,7 +22,7 @@ with `bench/stats.py --routine …` on the same macOS host as the baseline row.
 | fixstep `timer_spend` | 12.1× | **3.98×** | F3 (`LOFT_NO_PARAM_RECORD_PTR`) |
 | hex_roof `roof_match` | 16.4× | **4.72×** | F1 |
 | text2d `draw_quads` | 22.0× | **4.72×** | F2 |
-| game_protocol `msg_ping` | 10.1× | **5.94×** | F6's struct-release half, F14 |
+| game_protocol `msg_ping` | 10.1× | **5.94×** | F6's struct-release half, F14; F6's text half as `(R-RefillText)` (`LOFT_NO_REFILL_TEXT`): 7.55× → **2.05×** on x86-64, not yet re-read on this host |
 | 17_consumer `emit_to_material` | 12.7× | **6.06×** | F9's build-in-element half (`LOFT_NO_LITERAL_APPEND`) |
 | gridmesh `build_index` | 13.4× | **6.34×** | F8 (`LOFT_NO_STORE_SWAP`) |
 | mesh3d `mat4_mul` | 13.2× | **4.68×** | F11's first two shaves (`LOFT_NO_HEADER_DBREF`); `vec_header` always inlined; a refilled repeat literal overwritten in place (`LOFT_NO_REFILL_IN_PLACE`); `(R-RebindBuffer)` (`LOFT_NO_REBIND_BUFFER`) |

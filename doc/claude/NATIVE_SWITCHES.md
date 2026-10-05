@@ -570,6 +570,15 @@ next execution.  The first bisect step for a wrong value after a rebind in a loo
 `--native`.  Read where the rebind is emitted; `LOFT_TRACE_REBIND_BUFFER=1` names each
 rebind it declines and why.
 
+**`LOFT_NO_REFILL_TEXT=1`** (`@FR-R-RefillText`, default-ON) keeps a pooled call buffer's
+release walk before every call and the plain callee, instead of the callee's `__rt` twin
+writing each text over the block its slot already owns.  The first bisect step for a wrong
+text, or a store that grows, read back from a record-returning call in a loop.
+`LOFT_TRACE_REFILL_TEXT=1` names each pooled site's verdict (`refill-text: <caller> →
+<callee> admitted`, or the condition that declined).  Guard
+`tests/scripts/a-pooled-buffers-texts-are-refilled-in-their-slots.loft` (its `m1` is the
+live-record census that sees a text leaked per call); pin `tests/refill_text.rs`.
+
 **`LOFT_NO_REFILL_IN_PLACE=1`** (`@FR-R-RefillBuffer`'s in-place clause, default-ON) empties
 and refills a refilled buffer's repeat-literal vector field every time — with it off, a kept
 vector that already holds the literal's count is overwritten where it stands

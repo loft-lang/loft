@@ -471,3 +471,18 @@ s21); the first s2 passed `nothing ?? ""`, an empty text, and saw nothing.  The 
 then made to answer the null text as one piece, matching `split`.  loft#1795 made `len` and
 `size` of an absent text 0, as `for c in t` over it already was, and the iterator, `split`
 and the split table now all answer no pieces.
+
+## 2026-10-05 — `(R-RefillText)` proposed and built
+
+Priced first on `msg_ping` (x86-64, 17.4 → 4.78 ms by hand), then built in the five steps the
+proposal named: `Store::refill_str` with unit tests over its three cases; the census guard,
+whose planted defect (the text release dropped, nothing refilling) read 31 → 3001 records
+on both backends before any rewrite existed; the admission traced and pinned while it
+emitted nothing; the twin and the site behind `LOFT_NO_REFILL_TEXT`, falsified by the twin
+releasing nothing (native 31 → 3001) and by (b)'s whole-body checks removed (native 11 → 1001);
+then the row, 18.03 → 4.89 ms.  The first trace declined `msg_ping` itself as "an exit that is
+not the literal": a literal with no work text is lowered as `return { …; b }`, which the exit
+check then learned.  An earlier draft pinned the text clause on `(R-RefillBuffer)`'s return
+buffer; the release removed is the pool's `OpClear` (`@FR-H-ClearRelease`).  Found on the
+way: a text field reassigned on a live record leaks the text it replaces, on both backends
+(loft#1873) — the same slot invariant, at every `OpSetText` site.
