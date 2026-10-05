@@ -4663,6 +4663,12 @@ use a separate collection or add after the loop"
             };
             if let Some(src) = link_src {
                 amp_unlowered = false;
+                // `@FR-O-Borrow-Scalar` — the link this one copies must live as long, and the
+                // place behind it with it: the slot allocator follows the chain from the
+                // record on each target.  Unrecorded, `x = 250; c = &x; d = &c` let a later
+                // local take `x`'s slot once `c` was last named, and the interpreter read
+                // the usurper's value through `d` while native answered 250.
+                self.vars.record_amp_link(var_nr, src);
                 if self.vars.is_store_text_link(src) {
                     self.bind_text_link_kind(var_nr, true);
                 } else if matches!(self.vars.tp(src).base(), Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)))

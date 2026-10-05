@@ -22018,6 +22018,63 @@ impl Parser {
             }
         }
         written.extend(propagated);
+        // `@FR-B-Ref-Write` — a write through a local LINK is a write to the place it names:
+        // `c = &p; c += 10` modifies `p`.  A scalar link carries no deps
+        // (`@FR-O-Borrow-Scalar`), so the dep walk above cannot see it; the bind itself says
+        // which place the link names (`OpCreateStack(x)` for a local, `OpVarRef(b)` for a
+        // copy of another link), and a write to the link carries back along that chain.
+        // The bind is a `Set` of the link too, so the writes are measured on the body with the
+        // binds blanked: a link only READ leaves its target unwritten.
+        let link_bind = |data: &Data, n: &Value| -> Option<(u16, u16)> {
+            if let Value::Set(v, rhs) = n.unspan()
+                && let Value::Call(op, args) = rhs.unspan()
+                && matches!(data.def(*op).name(), "OpCreateStack" | "OpVarRef")
+                && let Some(Value::Var(src)) = args.first().map(Value::unspan)
+            {
+                return Some((*v, *src));
+            }
+            None
+        };
+        let mut link_src: HashMap<u16, u16> = HashMap::new();
+        code.walk(&mut |n| {
+            if let Some((v, src)) = link_bind(&self.data, n) {
+                link_src.insert(v, src);
+            }
+        });
+        let mut through_written = crate::fxhash::FxHashSet::default();
+        if !link_src.is_empty() {
+            fn blank(code: &mut Value, data: &Data, is_bind: &impl Fn(&Data, &Value) -> bool) {
+                if is_bind(data, code) {
+                    *code = Value::Null;
+                    return;
+                }
+                code.for_each_child_mut(&mut |c| blank(c, data, is_bind));
+            }
+            let mut unbound = code.clone();
+            blank(&mut unbound, &self.data, &|d, n| link_bind(d, n).is_some());
+            find_written_vars(
+                &unbound,
+                &self.data,
+                &self.vars,
+                &mut through_written,
+                &mut callee_cache,
+            );
+            find_field_written_vars(&unbound, &self.data, &mut through_written);
+        }
+        let through: Vec<u16> = through_written
+            .iter()
+            .copied()
+            .filter(|w| link_src.contains_key(w))
+            .collect();
+        for w in through {
+            let (mut at, mut hops) = (w, 0);
+            while let Some(&src) = link_src.get(&at)
+                && hops < link_src.len()
+            {
+                written.insert(src);
+                (at, hops) = (src, hops + 1);
+            }
+        }
         // A write from inside a CLOSURE lives in the lambda's own definition, so walking this
         // function's code cannot see it.  Two routes reach the same fact and both feed the
         // `&`-parameter test below, so both are kept: this one reads the mutated-capture set
