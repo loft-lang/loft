@@ -833,8 +833,10 @@ pub struct FillSpan {
 ///
 /// `locked` is the store's lock state, read with the rest: no loop the hoist admits can
 /// lock or unlock a store (every op that does is a writer the hoist refuses), so it holds
-/// for the loop too, and a hoisted writer tests this local instead of the store —
-/// `@FR-H-WriteLocked` once per loop, not once per element.
+/// for the loop too, and a hoisted writer reads this local instead of the store —
+/// `@FR-H-WriteLocked` once per loop, not once per element.  A locked header has no
+/// writable element ([`crate::database::Stores::vec_set_at`]): its writes leave the fast
+/// path by the bounds test and are refused by the runtime's own setter.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct VecHeader {
     pub store_nr: u16,
@@ -1216,10 +1218,11 @@ pub unsafe fn rec_set<T: Copy>(
     verify: bool,
 ) {
     // `@FR-H-WriteLocked` — `locked` is [`rec_locked`] (or the header's, or the window's)
-    // held beside the address; only a locked store is asked, and it refuses the write.
-    if ptr.is_null()
-        || (locked && !stores[db.store_nr as usize].write_allowed(db.rec, db.pos + fld))
-    {
+    // held beside the address.  The null record and the locked store leave the fast path
+    // by ONE test; [`rec_set_refused`] tells them apart and asks the locked store, which
+    // refuses the write.
+    if ptr.is_null() | locked {
+        rec_set_refused(ptr, db, fld, stores);
         return;
     }
     if verify {
@@ -1236,6 +1239,18 @@ pub unsafe fn rec_set<T: Copy>(
             .cast::<T>()
             .write_unaligned(val)
     };
+}
+
+/// The slow half of [`rec_set`]: nothing for the null record (`@FR-H-WriteNull`), and for a
+/// record in a locked store the store's own refusal (`@FR-H-WriteLocked`) — a development
+/// run halts in it, a production run logs the write, and the caller drops it either way.
+/// Enforces `@FR-R-Cold`: outlined, so the write itself is a test and a store.
+#[cold]
+#[inline(never)]
+fn rec_set_refused(ptr: *const u8, db: &DbRef, fld: u32, stores: &[Store]) {
+    if !ptr.is_null() {
+        let _ = stores[db.store_nr as usize].write_allowed(db.rec, db.pos + fld);
+    }
 }
 
 /// `@FR-R-BoundedNest` — the largest magnitude among a vector's `integer` elements, or

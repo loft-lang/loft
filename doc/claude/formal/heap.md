@@ -199,8 +199,10 @@ can reach, and never grows, moves or frees one the store holds) and the `--nativ
 writers all consult the same lock (`tests/locked_writes.rs`). The hoisted writers consult it
 ONCE per loop, not once per element: no loop the hoist admits can lock or unlock a store (every
 op that does is a writer it refuses), so the lock state is read with the vector header, the push
-window or the record address the loop holds, and a window over a locked store has no capacity —
-every push through it takes the runtime's refusing append. Crucially, a write's target ROOT decides whose state it touches: a
+window or the record address the loop holds.  A locked store then has no room on any fast path —
+a window over it has no capacity, a header over it no writable element, a record address in it
+leaves the fast path by the same test as a null one — so every write to it takes the runtime's
+refusing path, and the fast path carries no lock test of its own. Crucially, a write's target ROOT decides whose state it touches: a
 write whose root is a **parameter** mutates the caller's value; a write to a **local** touches
 only that local's own store (see `H-Copy`) — the exact fact [capabilities.md](capabilities.md)'s
 `Cap-Own`/raw-write admission rests on.

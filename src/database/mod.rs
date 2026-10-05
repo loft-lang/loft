@@ -2017,10 +2017,12 @@ impl Stores {
         fld: u32,
         val: T,
     ) {
-        if index >= 0
-            && index < i64::from(h.len)
-            && (!h.locked || self.allocations[h.store_nr as usize].write_allowed(h.rec, 8))
-        {
+        // `@FR-H-WriteLocked` — a locked store has no writable element: the bound the
+        // fast path tests is 0 for it, so the write takes the cold path, whose setter
+        // refuses it.  One compare answers range and lock together, and the element write
+        // carries no call.
+        let writable = if h.locked { 0 } else { h.len };
+        if index >= 0 && index < i64::from(writable) {
             if VERIFY {
                 assert_eq!(
                     *h,

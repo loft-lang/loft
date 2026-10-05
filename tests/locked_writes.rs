@@ -21,6 +21,11 @@
 //! writers: the `view`, `idxrec` and `index` cells changed the locked store (`v=77,77`,
 //! `v=55,55`, `xs=[0,100,200]`).  The windowed cells do not move on that build — closing the
 //! window refuses the length — so they guard the outcome, not the check.
+//! Falsified again against the form where a locked header has no writable element and a
+//! locked record address leaves `rec_set`'s fast path with the null one: a header bound
+//! that ignores the lock fails the production, development and hoisted cells on `--native`
+//! (`idxrec v=55,55`, `xs=[0,100,200]`, `loop` reached); a `rec_set` that ignores it fails
+//! the hoisted `view` cell (`v=77,77`) and the development `view` cell.
 
 use std::process::Command;
 
@@ -135,7 +140,7 @@ fn production_discards_every_locked_write_native() {
 /// One write per program, since a development run stops at the first.  The three cells
 /// are the three shapes the matrix saw fail differently: a scalar field, a text field (a
 /// claim — it crashed), and a hoisted loop (native wrote through it silently).
-const DEV_CELLS: [(&str, &str, &str); 4] = [
+const DEV_CELLS: [(&str, &str, &str); 6] = [
     ("scalar", "d.n = 99;", "write to a locked store"),
     ("text", "d.name = \"changed\";", "write to a locked store"),
     (
@@ -143,8 +148,24 @@ const DEV_CELLS: [(&str, &str, &str); 4] = [
         "for i in 0..len(d.xs) { d.xs[i] = i * 100; }",
         "write to a locked store",
     ),
+    (
+        "from-end",
+        "for i in 0..len(d.xs) { d.xs[i - len(d.xs)] = 9; }",
+        "write to a locked store",
+    ),
+    (
+        "view",
+        "for r in d.recs { r.v = 77; }",
+        "write to a locked store",
+    ),
     ("constant", "NUMS += [3];", "write to a constant"),
 ];
+
+/// A write PAST the end of a locked vector names no element (`@FR-H-WriteOOB`): it lands
+/// nowhere and is no lock fault, so a development run does not halt on it.  The hoisted
+/// writer sends a locked store and an absent element down the same slow path, which has to
+/// keep telling them apart.
+const DEV_PAST_END: &str = "for i in 0..len(d.xs) { d.xs[i + 7] = 9; }";
 
 /// Bytes the program does not own: a development run halts on the write too.
 const DEV_FOREIGN: &str = r#"fn main() {
@@ -155,6 +176,18 @@ const DEV_FOREIGN: &str = r#"fn main() {
   println("reached {m}");
 }
 "#;
+
+/// One locked record and one write to it, then a line a halted run never prints.
+fn dev_program(write: &str) -> String {
+    format!(
+        "struct E {{ k: integer, v: integer }}\n\
+         struct D {{ n: integer, name: text, xs: vector<integer>, recs: vector<E> }}\n\
+         NUMS: vector<integer> = [1, 2];\n\
+         fn main() {{\n  d = D {{ n: 7, name: \"abc\", xs: [1, 2, 3], recs: [E {{ k: 1, v: 10 }}] }};\n  \
+         d#lock = true;\n  {write}\n  \
+         println(\"reached {{d.n}} {{d.name}} {{d.xs}} {{d.recs[0].v}} {{NUMS}}\");\n}}\n"
+    )
+}
 
 fn development_halts_with_the_report(backend: &str) {
     let (stdout, stderr, code, _) = run("foreign", DEV_FOREIGN, backend, false);
@@ -175,13 +208,7 @@ fn development_halts_with_the_report(backend: &str) {
         "{backend} foreign: a crash:\n{stderr}"
     );
     for (name, write, report) in DEV_CELLS {
-        let source = format!(
-            "struct D {{ n: integer, name: text, xs: vector<integer> }}\n\
-             NUMS: vector<integer> = [1, 2];\n\
-             fn main() {{\n  d = D {{ n: 7, name: \"abc\", xs: [1, 2, 3] }};\n  d#lock = true;\n  \
-             {write}\n  println(\"reached {{d.n}} {{d.name}} {{d.xs}} {{NUMS}}\");\n}}\n"
-        );
-        let (stdout, stderr, code, _) = run(name, &source, backend, false);
+        let (stdout, stderr, code, _) = run(name, &dev_program(write), backend, false);
         assert_ne!(
             code, 0,
             "{backend} {name}: a development run halts; stdout {stdout:?}"
@@ -199,6 +226,12 @@ fn development_halts_with_the_report(backend: &str) {
             "{backend} {name}: a crash, not the report:\n{stderr}"
         );
     }
+    let (stdout, stderr, code, _) = run("past-end", &dev_program(DEV_PAST_END), backend, false);
+    assert_eq!(
+        (stdout.as_str(), code),
+        ("reached 7 abc [1,2,3] 10 [1,2]\n", 0),
+        "{backend} past-end: a write to an absent element is no lock fault; stderr:\n{stderr}"
+    );
 }
 
 #[test]
@@ -219,12 +252,20 @@ struct D { n: integer, xs: vector<integer>, recs: vector<E> }
 fn view_loop(d: &D) { for r in d.recs { r.v = 77; } }
 fn index_rec_loop(d: &D) { for i in 0..len(d.recs) { d.recs[i].v = 55; } }
 fn index_loop(d: &D) { for i in 0..len(d.xs) { d.xs[i] = i * 100; } }
+fn from_end_loop(d: &D) { for i in 0..len(d.xs) { d.xs[i - len(d.xs)] = i * 100 + 5; } }
+fn past_end_loop(d: &D) { for i in 0..len(d.xs) { d.xs[i + 7] = 9; } }
 fn main() {
+  o = D { n: 7, xs: [1, 2, 3], recs: [E { k: 1, v: 10 }, E { k: 2, v: 20 }] };
+  view_loop(o); index_loop(o); println("open view v={o.recs[0].v},{o.recs[1].v} index xs={o.xs}");
+  index_rec_loop(o); from_end_loop(o); past_end_loop(o);
+  println("open idxrec v={o.recs[0].v},{o.recs[1].v} from-end xs={o.xs}");
   d = D { n: 7, xs: [1, 2, 3], recs: [E { k: 1, v: 10 }, E { k: 2, v: 20 }] };
   d#lock = true;
   view_loop(d); println("view v={d.recs[0].v},{d.recs[1].v}");
   index_rec_loop(d); println("idxrec v={d.recs[0].v},{d.recs[1].v}");
   index_loop(d); println("index xs={d.xs}");
+  from_end_loop(d); println("from-end xs={d.xs}");
+  past_end_loop(d); println("past-end xs={d.xs}");
   ys = [1, 2, 3];
   ys#lock = true;
   for i in 0..3 { ys += [i * 11]; }
@@ -237,8 +278,14 @@ fn main() {
 }
 "#;
 
-const HOISTED_UNCHANGED: &str =
-    "view v=10,20\nidxrec v=10,20\nindex xs=[1,2,3]\npush ys=[1,2,3]\nmint ts=1 v=10\ndone\n";
+/// The two `open` lines are the same loops over an UNLOCKED record, so a writer that wrote
+/// nothing at all could not pass for one that refused: `view` then `index` leave 77s and
+/// `[0,100,200]`; `idxrec` then `from-end` (`xs[i - 3] = i * 100 + 5`) leave 55s and
+/// `[5,105,205]`, and `past-end` writes no element.
+const HOISTED_UNCHANGED: &str = "open view v=77,77 index xs=[0,100,200]\n\
+     open idxrec v=55,55 from-end xs=[5,105,205]\n\
+     view v=10,20\nidxrec v=10,20\nindex xs=[1,2,3]\nfrom-end xs=[1,2,3]\npast-end xs=[1,2,3]\n\
+     push ys=[1,2,3]\nmint ts=1 v=10\ndone\n";
 
 fn production_discards_every_hoisted_write(backend: &str) {
     let (stdout, stderr, code, log) = run("hoisted", HOISTED, backend, true);

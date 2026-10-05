@@ -80,11 +80,14 @@ row measured at `7df5a4f4b`, and it takes `sort` back under the bar; it is 16 of
 `index_write` rose by, and none of `grid`'s, `remove_front`'s or `indices`' — those rises
 have another cause, not found.
 
-The form to build, not priced beyond this ceiling: the push window already carries no test,
-because a locked store's window has capacity 0 and every push takes the outlined path, which
-refuses the write.  The same shape serves the two writers — a WRITE length held beside the
-header that is 0 for a locked store, and a write address that is null for a locked record —
-so the in-range test is the only test in the loop and the rule is kept by the cold path.
+**Built** in the push window's form: a locked header has no writable element
+(`vec_set_at`'s bound is 0 for it) and a locked record address leaves `rec_set`'s fast path
+by the same test as a null one, so the write carries no call and the cold path refuses it.
+The emitted Rust is unchanged; measured on x86-64 against the tree before it, same sitting:
+`10_sort` 3.53× → **2.77×**, `blend_pixel` 1.84× → 1.44×, `comprehension` 1.62× → 1.34×,
+`index_write` 1.97× → 1.64×, `fill_rect` −9 %, `index_read` flat — most of the ceiling above.
+Guard `tests/locked_writes.rs` (cells from the end and past the end of a locked vector, and
+the record writer in a development run).
 
 ## Next — one lever, priced, not built
 
