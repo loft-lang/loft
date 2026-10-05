@@ -2,7 +2,6 @@
 # tests/*.rs and src/**/*.rs.  One `<file>::<test_name>\t<reason>` pair per line,
 # sorted; the file is part of the key because two `src/` tests share a bare name.
 # Checked by tests/doc_hygiene.rs::ignored_tests_baseline_is_current, which fails on
-# any drift.  A drift typically means one of:
 #   - an ignored test just got its fix landed (un-ignore it + delete its line here)
 #   - a new ignored test landed (add its line here, with the reason it carries)
 #   - the reason message changed (update the line here)
