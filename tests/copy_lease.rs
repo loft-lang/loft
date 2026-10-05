@@ -370,6 +370,103 @@ fn a_copy_that_cannot_lease_stays_refused() {
     )]);
 }
 
+/// `@FR-H-Elide` — an elided copy is UNOBSERVABLE, so a copy `u = s.v` off a parameter reads the
+/// value it copied however the caller's store is written afterwards.  The borrow elision used to
+/// prove that from `s`'s own name staying unwritten, and every route below wrote the store without
+/// naming `s`: `u` then read `9` instead of `1`.  Two parameters are never proven apart (`f(s, s)`,
+/// and a view of one, `o.inn` beside `o`); a closure writes through to its capture, called here or
+/// by a named function; a function reference runs code the body cannot see; and a generator lets
+/// the caller write between two resumes.  The CONTROLS keep the elision: a read-only copy beside an
+/// unwritten parameter, or a written SCALAR one, runs no hook and no drop for the copy.
+#[test]
+fn an_elided_copy_reads_its_own_value_when_the_callers_store_is_written() {
+    const SI: &str = "struct SI { v: vector<integer>, n: integer }\n\
+                      struct O { inn: SI }\n\
+                      fn grow(s: SI) { s.v[0] = 9; }\n";
+    let cells: Vec<(String, String, &str)> = vec![
+        (
+            "alias_param",
+            "fn f(s: SI, t: SI) { u = s.v; t.v[0] = 9; println(\"R{u[0]} {s.v[0]}\"); }\n\
+             fn main() { s = SI { v: [1, 2], n: 0 }; f(s, s); println(\"back {s.v[0]}\"); }",
+            "R1 9 back 9",
+        ),
+        (
+            "alias_param_callee",
+            "fn f(s: SI, t: SI) { u = s.v; grow(t); println(\"R{u[0]} {s.v[0]}\"); }\n\
+             fn main() { s = SI { v: [1, 2], n: 0 }; f(s, s); println(\"back {s.v[0]}\"); }",
+            "R1 9 back 9",
+        ),
+        (
+            "alias_vector_param",
+            "fn f(p: vector<integer>, q: vector<integer>) { u = p; q[0] = 9; \
+             println(\"R{u[0]} {p[0]}\"); }\n\
+             fn main() { w: vector<integer> = [1, 2]; f(w, w); println(\"back {w[0]}\"); }",
+            "R1 9 back 9",
+        ),
+        (
+            "view_of_param",
+            "fn f(s: SI, t: O) { u = s.v; w = t.inn; w.v[0] = 9; println(\"R{u[0]} {s.v[0]}\"); }\n\
+             fn main() { o = O { inn: SI { v: [1, 2], n: 0 } }; f(o.inn, o); \
+             println(\"back {o.inn.v[0]}\"); }",
+            "R1 9 back 9",
+        ),
+        (
+            "view_to_callee",
+            "fn f(s: SI, t: O) { u = s.v; w = t.inn; grow(w); println(\"R{u[0]} {s.v[0]}\"); }\n\
+             fn main() { o = O { inn: SI { v: [1, 2], n: 0 } }; f(o.inn, o); \
+             println(\"back {o.inn.v[0]}\"); }",
+            "R1 9 back 9",
+        ),
+        (
+            "closure",
+            "fn f(s: SI) { u = s.v; m = fn() { s.v[0] = 9; }; m(); println(\"R{u[0]} {s.v[0]}\"); }\n\
+             fn main() { s = SI { v: [1, 2], n: 0 }; f(s); println(\"back {s.v[0]}\"); }",
+            "R1 9 back 9",
+        ),
+        (
+            "closure_to_named",
+            "fn apply(cb: fn()) { cb(); }\n\
+             fn f(s: SI) { u = s.v; apply(fn() { s.v[0] = 9; }); println(\"R{u[0]} {s.v[0]}\"); }\n\
+             fn main() { s = SI { v: [1, 2], n: 0 }; f(s); println(\"back {s.v[0]}\"); }",
+            "R1 9 back 9",
+        ),
+        (
+            "fn_ref_param",
+            "fn f(s: SI, cb: fn()) { u = s.v; cb(); println(\"R{u[0]} {s.v[0]}\"); }\n\
+             fn main() { s = SI { v: [1, 2], n: 0 }; f(s, fn() { s.v[0] = 9; }); \
+             println(\"back {s.v[0]}\"); }",
+            "R1 9 back 9",
+        ),
+        (
+            "generator",
+            "fn g(s: SI) -> iterator<integer> { u = s.v; yield 0; yield u[0]; }\n\
+             fn main() { s = SI { v: [1, 2], n: 0 }; out = \"\"; \
+             for x in g(s) { s.v[0] = 9; out += \"-{x}\"; } println(\"R{out}\"); }",
+            "R-0-1",
+        ),
+        (
+            "control_elided",
+            "fn cp(p: vector<H>) { u = p; println(\"R{len(u)} {u[0].id}\"); }\n\
+             fn main() { w: vector<H> = [mk(1), mk(2)]; cp(w); println(\"back {w[0].id}\"); }",
+            "R2 1 back 1 D1 D2",
+        ),
+        (
+            "control_scalar_written",
+            "fn cp(p: vector<H>, n: integer) { u = p; n += 1; println(\"R{len(u)} {u[0].id} {n}\"); }\n\
+             fn main() { w: vector<H> = [mk(1), mk(2)]; cp(w, 3); println(\"back {w[0].id}\"); }",
+            "R2 1 4 back 1 D1 D2",
+        ),
+    ]
+    .into_iter()
+    .map(|(t, b, w)| (t.to_string(), format!("{SI}{b}"), w))
+    .collect();
+    let cells: Vec<(&str, &str, &str)> = cells
+        .iter()
+        .map(|(t, b, w)| (t.as_str(), b.as_str(), *w))
+        .collect();
+    check(&cells);
+}
+
 /// `(H-Elide)` — the compiler MAY elide a copy of a leasing type together with the drop of the
 /// structure it would have made, and neither hook may rely on running for an elided copy
 /// (@PLN163 P6).  Every route that elides a copy is asked, with the transparent-link widening
@@ -451,4 +548,83 @@ fn a_copy_under_a_branch_or_a_loop_leases_per_path_and_drops_at_its_block() {
             "C1 R101 D101 C1 R101 D101 back 1 D1",
         ),
     ]);
+}
+
+/// `@FR-H-Move` — an owned collection placed into a FIELD moves its elements' release to the
+/// record that now holds them: a literal's field (`T { v: u }`, nested, an enum payload), an
+/// append into a field (`o.v += u`), and the same under a branch, where the path that does not
+/// place it keeps `u`'s own release.  The hand-off recognised only a VARIABLE destination, so
+/// each of these released every element twice (`D7 D7`) once the construction elision left the
+/// copy standing — after `u[0].id = 7`, or for a `u` copied from a parameter.  The controls are a
+/// field assignment, a tuple member and a `u` the elision builds in place, which were right.
+#[test]
+fn an_owned_collection_placed_in_a_field_releases_once() {
+    const T: &str = "struct T { v: vector<H> }\n\
+                     struct O { inn: T }\n\
+                     enum E { E1 { v: vector<H> }, E0 }\n";
+    let cells: Vec<(String, String, &str)> = vec![
+        (
+            "literal",
+            "fn main() { u: vector<H> = [mk(1)]; u[0].id = 7; t = T { v: u }; \
+             println(\"R{len(t.v)}\"); }",
+            "R1 D7",
+        ),
+        (
+            "nested_literal",
+            "fn main() { u: vector<H> = [mk(1)]; u[0].id = 7; o = O { inn: T { v: u } }; \
+             println(\"R{len(o.inn.v)}\"); }",
+            "R1 D7",
+        ),
+        (
+            "enum_payload",
+            "fn main() { u: vector<H> = [mk(1)]; u[0].id = 7; e = E1 { v: u }; \
+             println(\"R{e is E1}\"); }",
+            "Rtrue D7",
+        ),
+        (
+            "field_append",
+            "fn main() { o = T { v: [mk(2)] }; u: vector<H> = [mk(1)]; u[0].id = 7; o.v += u; \
+             println(\"R{len(o.v)}\"); }",
+            "R2 D2 D7",
+        ),
+        (
+            "branch",
+            "fn b(c: boolean) { u: vector<H> = [mk(1)]; u[0].id = 7; \
+             if c { t = T { v: u }; println(\"R{len(t.v)}\"); } println(\"Rafter\"); }\n\
+             fn main() { b(true); b(false); }",
+            "R1 D7 Rafter Rafter D7",
+        ),
+        (
+            "leased_from_param",
+            "fn f(p: vector<H>) { u = p; u += [mk(3)]; t = T { v: u }; \
+             println(\"R{len(t.v)} {t.v[0].id}\"); }\n\
+             fn main() { w: vector<H> = [mk(1), mk(2)]; f(w); println(\"back\"); }",
+            "C1 C2 R3 101 D101 D102 D3 back D1 D2",
+        ),
+        (
+            "control_field_assign",
+            "fn main() { o = T { v: [] }; u: vector<H> = [mk(1)]; u[0].id = 7; o.v = u; \
+             println(\"R{len(o.v)}\"); }",
+            "R1 D7",
+        ),
+        (
+            "control_tuple",
+            "fn main() { u: vector<H> = [mk(1)]; u[0].id = 7; t = (u, 1); println(\"R{len(t.0)}\"); }",
+            "R1 D7",
+        ),
+        (
+            "control_built_in_place",
+            "fn main() { u: vector<H> = [mk(1)]; u += [mk(2)]; t = T { v: u }; \
+             println(\"R{len(t.v)}\"); }",
+            "R2 D1 D2",
+        ),
+    ]
+    .into_iter()
+    .map(|(t, b, w)| (t.to_string(), format!("{T}{b}"), w))
+    .collect();
+    let cells: Vec<(&str, &str, &str)> = cells
+        .iter()
+        .map(|(t, b, w)| (t.as_str(), b.as_str(), *w))
+        .collect();
+    check(&cells);
 }

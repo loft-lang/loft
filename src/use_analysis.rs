@@ -1288,6 +1288,71 @@ pub fn dump_link_observability(data: &Data) {
     }
 }
 
+/// `@FR-H-Elide` — can nothing in this function write a store its CALLER holds, by a route the
+/// per-variable `written` fact does not name?  A copy `u = p.f` off a parameter elides into a
+/// read of `p.f` only where the copy is unobservable (C86), and `p`'s own name staying unwritten
+/// does not prove that: two parameters are never proven apart (`formal/rewrites.md` R-Hold's
+/// growth clause — a caller can hand one record twice), a closure writes THROUGH to its capture,
+/// a function reference runs code this body cannot see, and a generator lets the caller run
+/// between two resumes.  Each made the elided `u` read the new value instead of its copy.
+///
+/// Answers `false` when the body calls or builds a function reference, yields, or runs a `par`
+/// block; when it writes any non-scalar parameter but the hidden buffers (`written` already
+/// follows a parameter into a mutating callee); or when it field-writes, or hands to a call, a
+/// local whose dep chain reaches a parameter — a view of one (`w = t.inn; w.v[0] = 9`).
+fn caller_stores_stable(
+    code: &Value,
+    function: &Function,
+    data: &Data,
+    written: &HashSet<u16>,
+) -> bool {
+    let mut opaque = false;
+    let mut handed: HashSet<u16> = HashSet::default();
+    code.walk(&mut |n| match n {
+        Value::CallRef(..)
+        | Value::FnRef(..)
+        | Value::FnRefDnr(_)
+        | Value::Yield(_)
+        | Value::Parallel(_) => opaque = true,
+        Value::Call(d, args) if !data.def(*d).name().starts_with("Op") => {
+            for a in args {
+                if let Value::Var(v) = a.unspan() {
+                    handed.insert(*v);
+                }
+            }
+        }
+        _ => {}
+    });
+    if opaque {
+        return false;
+    }
+    let mut field_written = HashSet::default();
+    crate::parser::find_field_written_vars(code, data, &mut field_written);
+    let reaches_argument = |v: u16| {
+        let mut seen: HashSet<u16> = HashSet::default();
+        let mut todo = function.tp(v).depend();
+        while let Some(d) = todo.pop() {
+            if !seen.insert(d) || d >= function.next_var() {
+                continue;
+            }
+            if function.is_argument(d) && !function.name(d).starts_with("__") {
+                return true;
+            }
+            todo.extend(function.tp(d).depend());
+        }
+        false
+    };
+    !(0..function.next_var()).any(|v| {
+        if function.is_argument(v) {
+            !function.name(v).starts_with("__")
+                && !crate::data::is_scalar(function.tp(v).base())
+                && written.contains(&v)
+        } else {
+            (field_written.contains(&v) || handed.contains(&v)) && reaches_argument(v)
+        }
+    })
+}
+
 fn analyze_fn(
     code: &Value,
     function: &Function,
@@ -1332,6 +1397,8 @@ fn analyze_fn_survival(
         crate::parser::find_written_vars(code, data, function, &mut w, &mut HashMap::default());
         w
     };
+    // A parameter's store may still be written by a route `written` does not name.
+    let caller_stable = caller_stores_stable(code, function, data, &written);
 
     let mut vars: Vec<u16> = u.append_src.keys().copied().collect();
     vars.sort_unstable();
@@ -1381,7 +1448,7 @@ fn analyze_fn_survival(
         // the first turn).  The verdicts below are for a LOCAL, as their own words say.
         let v_is_local = !function.is_argument(v);
         let src_is_param = src.is_some_and(|s| function.is_argument(s));
-        let src_unmutated = src.is_some_and(|s| !written.contains(&s));
+        let src_unmutated = caller_stable && src.is_some_and(|s| !written.contains(&s));
 
         // TIER 1 (max_tier >= 1): a read-only LOCAL source. The set-based facts
         // can't prove a local unmutated (its construction looks like a write), so
@@ -1417,6 +1484,7 @@ fn analyze_fn_survival(
                     CopyClass::Eliminated,
                 )
             } else if crate::keys::link_widen_enabled()
+                && (caller_stable || !src.is_some_and(|s| function.is_argument(s)))
                 && bind_link_safe(&u, function, v, src)
                 && bind_link_unobservable(&u, function, v, src)
             {
