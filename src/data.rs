@@ -8454,6 +8454,15 @@ impl Data {
             Some(key) if key.kind == KeyKind::Method && !key.rest.is_empty() => {
                 format!("{}.{}", key.spelling, key.rest)
             }
+            // An instance is the generic its author wrote (`i_7integer_n_gen` is `gen`).
+            Some(key) if key.kind == KeyKind::Instance && !key.rest.is_empty() => {
+                let template = self.def_nr(key.rest);
+                if template == u32::MAX {
+                    key.rest.strip_prefix("n_").unwrap_or(key.rest).to_string()
+                } else {
+                    self.user_facing_name(template)
+                }
+            }
             _ => name.to_string(),
         }
     }
@@ -9289,14 +9298,27 @@ impl Data {
         // This used to be refused only when the name also had a bare-name definition — which a
         // `both` method registers and a `self` method does not — so `fn doit(self: Pt)` followed
         // by `fn doit(p: Pt)` compiled, and `doit(p)` silently ran the method.
+        // `@FR-N-Shape` — `τ` and `τ?` are one receiver for this question: `(F-Recv)` sends a
+        // call to whichever of `m(τ)` / `m(τ?)` is declared, so a plain `m(p: P?)` beside
+        // `fn m(self: P)` was reached by neither spelling, dead in silence.  Both method keys
+        // are asked; a `self`/`self` pair over `τ` and `τ?` never reaches this test.
+        let nullability_twin = |tp: &Type| -> Type {
+            if matches!(tp, Type::Optional(_)) {
+                tp.base().clone()
+            } else {
+                Type::optional(tp.clone())
+            }
+        };
         let shadowed_method = if is_both || is_self {
             None
         } else {
-            arguments
-                .first()
-                .and_then(|a| receiver_key(self, &a.typedef))
-                .map(|key| own(self, &key))
-                .filter(|m| *m != u32::MAX)
+            arguments.first().and_then(|a| {
+                [a.typedef.clone(), nullability_twin(&a.typedef)]
+                    .iter()
+                    .filter_map(|tp| receiver_key(self, tp))
+                    .map(|key| own(self, &key))
+                    .find(|m| *m != u32::MAX)
+            })
         };
         let shadows_a_method = shadowed_method.is_some();
         // …and the other order: a `self`/`both` method declared after a plain function of its
@@ -9322,8 +9344,11 @@ impl Data {
                             && self.def(d).attributes.first().is_some_and(|p| {
                                 p.name != "self"
                                     && p.name != "both"
-                                    && receiver_key(self, &p.typedef).as_deref()
-                                        == Some(key.as_str())
+                                    && [p.typedef.clone(), nullability_twin(&p.typedef)]
+                                        .iter()
+                                        .any(|tp| {
+                                            receiver_key(self, tp).as_deref() == Some(key.as_str())
+                                        })
                             })
                     })
                 })

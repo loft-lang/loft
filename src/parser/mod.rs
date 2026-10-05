@@ -17010,7 +17010,22 @@ impl Parser {
         if types.is_empty() {
             return actual;
         }
-        if list.len() > self.data.attributes(d_nr) {
+        // `@FR-F-Arity` — a compiler-inserted slot (a record's `__retbuf`, a text return's
+        // buffer) is not a user parameter: an argument past the declared ones is too many,
+        // never a fill of the hidden buffer.  Counted as a parameter, `txt("a", "b", "c")`
+        // handed `"c"` to `txt`'s text buffer and answered `ab` in silence, and a record
+        // return's extra argument was refused as a type mismatch on the buffer.
+        // A compiler-built call (an enum-variant dispatcher forwarding its own buffer) does
+        // fill the hidden slot, and with a buffer variable: that is the one extra argument a
+        // hidden slot takes.
+        let attrs = self.data.def(d_nr).attributes();
+        let overfilled = list.len() > attrs.len()
+            || list.iter().enumerate().any(|(i, arg)| {
+                attrs[i].hidden
+                    && !matches!(arg.unspan(), Value::Var(v)
+                        if *v < self.vars.count() && self.vars.name(*v).starts_with("__"))
+            });
+        if overfilled {
             if report {
                 diagnostic!(
                     self.lexer,

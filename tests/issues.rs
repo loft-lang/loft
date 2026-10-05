@@ -10588,6 +10588,78 @@ at a_composed_const_field_refuses_an_element_write:2:42",
     );
 }
 
+/// `@FR-F-Arity` — a compiler-inserted slot (a text return's buffer, a record's `__retbuf`) is
+/// not a user parameter: an argument past the declared ones is too many.  Counted as one, the
+/// extra `"c"` filled `txt`'s text buffer and the call answered `ab` in silence; a record
+/// return's extra argument was refused as a type mismatch on its buffer; and a generic's refusal
+/// named its mangled instance (`i_7integer_n_gen`) instead of `gen`.
+#[test]
+fn an_argument_past_the_parameters_never_fills_a_text_buffer() {
+    code!(
+        "fn txt(a: text, b: text = \"z\") -> text { \"{a}{b}\" }
+fn test() { t = txt(\"a\", \"b\", \"c\"); }"
+    )
+    .error("Too many parameters for txt at an_argument_past_the_parameters_never_fills_a_text_buffer:2:36");
+}
+
+#[test]
+fn an_argument_past_the_parameters_never_fills_a_record_buffer() {
+    code!(
+        "struct P { x: integer }
+fn rec(a: integer) -> P { P { x: a } }
+fn test() { r = rec(1, 2); }"
+    )
+    .error("Too many parameters for rec at an_argument_past_the_parameters_never_fills_a_record_buffer:3:27");
+}
+
+#[test]
+fn a_generic_called_with_too_many_arguments_is_named_as_written() {
+    code!(
+        "fn gen<T>(a: T) -> T { a }
+fn test() { gen(8, 1); }"
+    )
+    .error("Too many parameters for gen at a_generic_called_with_too_many_arguments_is_named_as_written:2:23");
+}
+
+/// `@FR-F-OneBody` with `@FR-N-Shape` — `τ` and `τ?` are one receiver for the one-body question:
+/// `(F-Recv)` sends both call spellings to whichever of `m(τ)` / `m(τ?)` is a method, so a plain
+/// `m(p: P?)` beside `fn m(self: P)` was reached by neither, dead in silence.  Refused in either
+/// order; a `self`/`self` pair over `P` and `P?` is untouched
+/// (`a-method-and-its-nullable-twin-are-two-bodies`).
+#[test]
+fn a_plain_function_on_the_nullable_receiver_of_a_method_is_refused() {
+    code!(
+        "struct P { x: integer }
+fn m(self: P) -> integer { 1 }
+fn m(p: P?) -> integer { 2 }
+fn test() { }"
+    )
+    .error(
+        "Cannot redefine 'm' (already defined at \
+a_plain_function_on_the_nullable_receiver_of_a_method_is_refused:2:17) — a name has one body per \
+receiver type, and `x.m(…)` and `m(x, …)` would reach different functions; declare it once as a \
+`self` method, which takes both spellings, or rename one at \
+a_plain_function_on_the_nullable_receiver_of_a_method_is_refused:3:15",
+    );
+}
+
+#[test]
+fn a_method_after_a_plain_function_on_its_nullable_receiver_is_refused() {
+    code!(
+        "struct P { x: integer }
+fn m(p: P?) -> integer { 2 }
+fn m(self: P) -> integer { 1 }
+fn test() { }"
+    )
+    .error(
+        "Cannot redefine 'm' (already defined at \
+a_method_after_a_plain_function_on_its_nullable_receiver_is_refused:2:15) — a name has one body \
+per receiver type, and `x.m(…)` and `m(x, …)` would reach different functions; declare it once \
+as a `self` method, which takes both spellings, or rename one at \
+a_method_after_a_plain_function_on_its_nullable_receiver_is_refused:3:17",
+    );
+}
+
 /// `break value` in void function → compile error.
 #[test]
 fn enhancement_break_value_in_void_function_errors() {
