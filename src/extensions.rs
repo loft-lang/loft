@@ -2244,6 +2244,16 @@ pub fn browser_target() -> bool {
     BROWSER_TARGET.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// The host native library a `use`d package registers — none for a browser build, which
+/// never loads one ([`browser_target`]); otherwise [`resolve_native_lib`].
+#[must_use]
+pub fn host_native_lib(pkg_dir: &str, stem: &str) -> Option<String> {
+    if browser_target() {
+        return None;
+    }
+    resolve_native_lib(pkg_dir, stem)
+}
+
 pub fn resolve_native_lib(pkg_dir: &str, stem: &str) -> Option<String> {
     // @PLN21 Phase 3 — a missing DECLARED runtime system lib is terminal:
     // neither a prebuilt nor a source build can load it (both link the same lib,

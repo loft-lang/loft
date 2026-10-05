@@ -20692,8 +20692,7 @@ impl Parser {
         // package that uses `lib/server`) lose their native bindings in
         // interpreter mode.
         if let Some(ref stem) = m.native
-            && !crate::extensions::browser_target()
-            && let Some(path) = crate::extensions::resolve_native_lib(&pkg_dir, stem)
+            && let Some(path) = crate::extensions::host_native_lib(&pkg_dir, stem)
             && !self.pending_native_libs.contains(&path)
         {
             self.pending_native_libs.push(path);
@@ -21043,8 +21042,7 @@ impl Parser {
         // Pre-built location first, then auto-build from source (one home:
         // `extensions::resolve_native_lib`, shared with the warm-cache load).
         if let Some(ref stem) = m.native
-            && !crate::extensions::browser_target()
-            && let Some(path) = crate::extensions::resolve_native_lib(pkg_dir, stem)
+            && let Some(path) = crate::extensions::host_native_lib(pkg_dir, stem)
             && !self.pending_native_libs.contains(&path)
         {
             self.pending_native_libs.push(path);
