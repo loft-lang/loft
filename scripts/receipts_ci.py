@@ -11,8 +11,8 @@ patch or guard CHANGED was scored by its author when it was written (a new guard
 its receipt), so it is in reach only with `--changed` (a by-hand run).  A receipt stale since
 before the apply check landed (`tests/falsified_patches.baseline`) is known and skipped.
 
-A stale patch is first REFRESHED: applied with a three-way merge in a scratch worktree; when
-that merges cleanly the patch is rewritten from the result.  A patch whose own lines changed
+A stale patch is first REFRESHED in a scratch worktree — a three-way merge, else an apply that
+needs one line of context — and rewritten from the result.  A patch whose own lines changed
 cannot be merged and needs a hand re-derivation.  Every receipt in reach is then scored with
 `scripts/falsify.sh <guard> --patch <file>`.
 
@@ -75,8 +75,15 @@ def refresh(patch):
         wt = pathlib.Path(td) / "wt"
         git("worktree", "add", "--detach", str(wt), "HEAD")
         try:
-            r = git("apply", "--3way", str(patch), cwd=wt, check=False)
-            if r.returncode != 0:
+            # A three-way merge needs the patch's recorded pre-image blob, which a hand
+            # re-derived patch's `index` line need not name; then one line of context is
+            # enough — every removed line of the defect must still match exactly, and the
+            # score that follows fails a patch that lands somewhere it does not belong.
+            for how in (["--3way"], ["-C1"]):
+                if git("apply", *how, str(patch), cwd=wt, check=False).returncode == 0:
+                    break
+                git("checkout", "--", ".", cwd=wt, check=False)
+            else:
                 return False
             diff = git("diff", "HEAD", "--", "src/", "default/", cwd=wt).stdout
             if not diff.strip():
