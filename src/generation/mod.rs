@@ -6329,12 +6329,11 @@ impl Output<'_> {
             }
             data.def(d).code().any_node(&mut |v| {
                 if let Value::Call(c, _) = v {
-                    let callee = data.def(*c);
-                    let name = callee.name();
-                    if (name.starts_with("n_") || name.starts_with("t_"))
-                        && matches!(callee.code(), Value::Block(_))
-                        && !seen.contains(c)
-                    {
+                    // Every loft-bodied callee, whatever its key: a generic INSTANCE
+                    // (`i_1P_n_once`) is a call like any other, and skipping it judged a
+                    // frame guard-free above an instance that registers buffers, which
+                    // left the stores it handed up to nobody.
+                    if matches!(data.def(*c).code(), Value::Block(_)) && !seen.contains(c) {
                         todo.push(*c);
                     }
                 }

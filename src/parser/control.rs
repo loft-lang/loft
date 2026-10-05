@@ -3919,6 +3919,55 @@ impl Parser {
         self.set_delivered_vector_return(elm_ty, buf_attr);
     }
 
+    /// `@FR-O-Buffer` — a vector return buffer BOUND to a call that delivers its own store
+    /// (#409's forwarder, `o = text as vector<R>` with `o` promoted onto the buffer) is
+    /// filled, not rebound: the call runs into a `__fwd` local and its elements are adopted
+    /// into the buffer, the shape [`Self::emit_forward_copy_409`] gives the tail spelling of
+    /// the same call.  Rebound, the buffer var named the forwarder's store, which the
+    /// function returned while the caller released only the buffer it passed.
+    pub(crate) fn fill_buffer_bound_to_forwarder(&mut self, body: &mut Value) {
+        if self.first_pass {
+            return;
+        }
+        let Some((_, buf_var)) = self.return_buffer() else {
+            return;
+        };
+        let Type::Vector(elm, _) = self.vars.tp(buf_var).base().clone() else {
+            return;
+        };
+        let bound = body.any_node(&mut |n| {
+            matches!(n, Value::Set(w, rhs)
+                if *w == buf_var && Self::tail_forwards_own_store(rhs, &self.data))
+        });
+        if !bound {
+            return;
+        }
+        let fwd = self.create_var("__fwd", &Type::Vector(elm.clone(), Deps::none()));
+        if fwd == u16::MAX {
+            return;
+        }
+        let rec_tp = self.append_elem_tp(&elm);
+        let clear = self.cl("OpClearVector", &[Value::Var(buf_var)]);
+        let adopt = self.cl(
+            "OpAdoptVector",
+            &[Value::Var(buf_var), Value::Var(fwd), Value::Int(rec_tp)],
+        );
+        let data = &self.data;
+        body.map_nodes(&mut |n| {
+            if let Value::Set(w, rhs) = n
+                && *w == buf_var
+                && Self::tail_forwards_own_store(rhs, data)
+            {
+                let call = std::mem::replace(rhs.as_mut(), Value::Null);
+                *n = crate::data::v_block(
+                    vec![crate::data::v_set(fwd, call), clear.clone(), adopt.clone()],
+                    Type::Void,
+                    "fwd_bind_409",
+                );
+            }
+        });
+    }
+
     /// Plan-14 phase 07 (P234 runtime): rewrite a body-tail
     /// `Value::Tuple([elem_0, elem_1, …])` into the synthetic-struct
     /// construction sequence that an inline struct literal would

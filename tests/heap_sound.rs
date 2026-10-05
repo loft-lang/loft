@@ -223,3 +223,85 @@ fn a_displaced_free_never_releases_the_callers_buffer() {
         ),
     ]);
 }
+
+/// `(H-FreeAll)` — nothing is left unfreed at exit.  A generic instance called inline, whose
+/// function-reference call hands up a store it minted: the frame above must carry the guard
+/// that releases it, which a call-graph walk skipping instances (`i_…`) judged unnecessary.
+#[test]
+fn a_store_handed_up_through_a_generic_instance_is_released() {
+    const P: &str = "struct P { n: integer }\n\
+                     fn once<T>(x: T, f: fn(T) -> T) -> T { f(x) }\n\
+                     fn once_p(x: P, f: fn(P) -> P) -> P { f(x) }\n";
+    let main = |setup: &str, step: &str| {
+        format!("{P}fn main() {{ {setup} s = 0; for i in 0..4 {{ {step} }} println(\"R{{s}}\"); }}")
+    };
+    check(&[
+        (
+            "capture",
+            main(
+                "cap = P { n: 7 }; f = fn(v: P) -> P { cap };",
+                "s += once(P { n: 41 }, f).n;",
+            ),
+            "R28",
+        ),
+        (
+            "mint",
+            main(
+                "f = fn(v: P) -> P { P { n: v.n + 1 } }; \
+                 if len(\"ab\") == 2 { f = fn(v: P) -> P { P { n: v.n + 2 } }; }",
+                "s += once(P { n: 41 }, f).n;",
+            ),
+            "R172",
+        ),
+        // CONTROLS: the concrete twin, and the result bound before it is read.
+        (
+            "concrete",
+            main(
+                "cap = P { n: 7 }; f = fn(v: P) -> P { cap };",
+                "s += once_p(P { n: 41 }, f).n;",
+            ),
+            "R28",
+        ),
+        (
+            "bound",
+            main(
+                "cap = P { n: 7 }; f = fn(v: P) -> P { cap };",
+                "r = once(P { n: 41 }, f); s += r.n;",
+            ),
+            "R28",
+        ),
+    ]);
+}
+
+/// `(H-FreeAll)` with `@FR-O-Buffer` — a vector local promoted onto the return buffer and
+/// bound to a call that delivers its own store (`o = text as vector<R>; o`) fills the buffer.
+/// Rebound, it handed back the call's store while the caller released only its buffer.
+#[test]
+fn a_vector_buffer_bound_to_a_forwarding_call_is_filled() {
+    const R: &str = "struct R { n: integer }\n\
+                     const J: text = \"[{{\\\"n\\\":1}},{{\\\"n\\\":2}}]\";\n";
+    let main = |f: &str| {
+        format!(
+            "{R}{f}\nfn main() {{ t = 0; for i in 0..3 {{ v = f(); t += len(v) + v[1].n; }} \
+             println(\"R{{t}}\"); }}"
+        )
+    };
+    check(&[
+        (
+            "bound_local",
+            main("fn f() -> vector<R> { o = J as vector<R>; o }"),
+            "R12",
+        ),
+        (
+            "bound_then_appended",
+            main("fn f() -> vector<R> { o = J as vector<R>; o += [R { n: 9 }]; o }"),
+            "R15",
+        ),
+        // CONTROL: the tail spelling, which was already copied in.
+        (
+            "tail",
+            main("fn f() -> vector<R> { J as vector<R> }"),
+            "R12",
+        ),
+    ]);
+}

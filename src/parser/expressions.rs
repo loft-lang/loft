@@ -770,6 +770,7 @@ impl Parser {
         if !self.first_pass {
             self.wrap_value_text_dest(&mut v);
         }
+        self.fill_buffer_bound_to_forwarder(&mut v);
         if let Value::Block(bl) = &mut v {
             let ls = &mut bl.operators;
             // @PLN87 P2.1 — stash each rebindable heap param's caller-supplied
