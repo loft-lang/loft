@@ -5271,7 +5271,7 @@ pub fn drop_copy_census(
         crate::copy_manifest::clear_lease();
     }
     let mut sites = 0;
-    if data.any_drop_hook() {
+    if data.any_release() {
         let copy_d = data.def_nr("OpCopyRecord");
         for d_nr in 0..data.definitions() {
             let def = data.def(d_nr);
@@ -5355,7 +5355,7 @@ pub fn drop_copy_census(
             sites += cx.sites;
             if refuse {
                 raise_copy_refusals(&mut cx, def, diags, fallback_file);
-                raise_spent_reads(def, diags, fallback_file);
+                raise_spent_reads(data, def, diags, fallback_file);
             }
         }
     }
@@ -5441,6 +5441,7 @@ fn raise_copy_refusals(
 /// the value moved on and the cure the rule gives: read it through the structure it moved into,
 /// or give the name a new value first.
 fn raise_spent_reads(
+    data: &Data,
     def: &crate::data::Definition,
     diags: &mut crate::diagnostics::Diagnostics,
     fallback_file: &str,
@@ -5451,6 +5452,9 @@ fn raise_spent_reads(
         &*def.position.file
     };
     for read in crate::spent::take(def) {
+        if read.tp != u32::MAX && data.drop_cascade_nr(read.tp) == u32::MAX {
+            continue;
+        }
         let (file, line, col) = match &read.pos {
             Some(p) if !p.file.is_empty() => (&*p.file, p.line, p.pos),
             Some(p) => (def_file, p.line, p.pos),

@@ -38,18 +38,24 @@ gets a single defined owner first.  Decided 2026-06-10 — [record](DESIGN_DECIS
 `tests/issues.rs::issue_314_*`.
 **Catalogue:** @F22 (closures & lambdas).
 
-## C75 — Closure-carrying struct values are frame-bound
+## C75 — A closure-carrying struct owns what its closures adopted
 
-**Decision.** A struct that holds a capturing closure cannot leave the frame that owns the
-captures: returning such a struct type, writing a capturing closure into a struct rooted at an
-argument, and a collection of such structs are compile errors.  Local use and passing it down as
-an argument are supported.  **Why.** The closure record holds references into the frame's stores,
-which are freed at return, so an escaped closure would read and write unrelated live data.
+**Decision.** A struct whose fn field holds a capturing closure may leave the frame that built
+it — returned, or written into a struct received as an argument.  The closure record is built
+in the struct's own store and adopts its captures there, and the struct's drop cascade runs the
+record's, so the struct owns that release like any other member's.  A copy of such a struct is
+judged by `(H-Copy-Refuse)` and a move by `(H-Spent)`, as for any type that owns a release.  A
+collection of such structs stays refused (C116), and so does placing one into another struct's
+field as a value (loft#1877, D-clo-49).  **Why.** `(L-Escape)` makes a closure an ordinary value;
+building the record where the struct lives makes the transfer the ordinary ownership of a
+member, with every release emitted code (CODEGEN_METHOD.md § Ownership and copy semantics are
+emitted code).
 
-**Revisit when.** A consumer needs factory-built closure-holding structs AND the deep copy gains
-a designed ownership transfer of the captured stores, verified on both backends.
-Decided 2026-06-10 — [record](DESIGN_DECISIONS-history.md#c75--closure-carrying-struct-values-are-frame-bound).
-**Holds at:** `Parser::type_carries_closure` (`src/parser/mod.rs`); `tests/issues.rs::issue_318_*`.
+**Revisit when.** loft#1877 settles how an overwritten field releases a displaced closure's
+captures.  Decided 2026-06-10, revised 2026-10-05 (loft#1867) — [record](DESIGN_DECISIONS-history.md#c75--closure-carrying-struct-values-are-frame-bound).
+**Holds at:** `OpChildRec` (`Parser::emit_fn_ref_field_write`), `Parser::cascade_fn_fields`,
+`capture_adoption::claimed_into_delivered`;
+`tests/scripts/1867-a-returned-struct-keeps-its-closure-capture.loft`, `tests/issues.rs::issue_1867_*`.
 **Catalogue:** @F22 (closures & lambdas).
 
 ## C77 — Binding ownership: heap aliases by default; `&` binds a live reference

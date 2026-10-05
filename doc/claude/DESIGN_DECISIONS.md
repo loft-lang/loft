@@ -37,7 +37,7 @@ Every entry, by the subject it decides.  Ids are one flat sequence across the su
 
 - [C38](DESIGN_DECISIONS_OWNERSHIP.md#c38--closure-capture-is-copy-at-definition) — Closure capture is copy-at-definition
 - [C74](DESIGN_DECISIONS_OWNERSHIP.md#c74--a-mutated-scalar-may-be-captured-by-only-one-closure) — A mutated scalar may be captured by only ONE closure
-- [C75](DESIGN_DECISIONS_OWNERSHIP.md#c75--closure-carrying-struct-values-are-frame-bound) — Closure-carrying struct values are frame-bound
+- [C75](DESIGN_DECISIONS_OWNERSHIP.md#c75--a-closure-carrying-struct-owns-what-its-closures-adopted) — A closure-carrying struct owns what its closures adopted
 - [C77](DESIGN_DECISIONS_OWNERSHIP.md#c77--binding-ownership-heap-aliases-by-default--binds-a-live-reference) — Binding ownership: heap aliases by default; `&` binds a live reference
 - [C79](DESIGN_DECISIONS_OWNERSHIP.md#c79--ownership-is-internal-no-user-facing-borrow-checker) — Ownership is internal; no user-facing borrow checker
 - [C83](DESIGN_DECISIONS_OWNERSHIP.md#c83--the-internal-representation-follows-the-user-visible-contract-never-widen-storage-for-implementation-convenience) — The internal representation follows the user-visible contract; never widen storage for implementation convenience

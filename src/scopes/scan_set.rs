@@ -1426,7 +1426,20 @@ impl Scopes<'_> {
         if first_binding {
             self.binding_now.push(v);
         }
+        // The records this statement's prefix will release (below), known before the value is
+        // scanned so the rebuild inside it does not release them a second time.
+        let prefix_from = self.prefix_released.len();
+        let built_before = captures_built_in_value(value, data);
+        if !built_before.is_empty()
+            && built_before
+                .iter()
+                .all(|(_, c)| self.owner_witness.contains_key(c))
+        {
+            self.prefix_released
+                .extend(built_before.iter().map(|(rec, _)| *rec));
+        }
         let scanned = self.scan(value, function, data);
+        self.prefix_released.truncate(prefix_from);
         if first_binding {
             self.binding_now.pop();
         }
@@ -1772,15 +1785,12 @@ impl Scopes<'_> {
                 .all(|(_, c)| self.owner_witness.contains_key(c))
         {
             for (rec, _) in &built_here {
+                // `@FR-L-CapOwn` — the record gives up what it adopted through its own
+                // cascade, emitted here; the store free releases only the record.
+                if let Some(hook) = super::drops::drop_hook(function, *rec, data) {
+                    prefix.push(hook);
+                }
                 prefix.push(call("OpFreeRef", *rec, data));
-            }
-        }
-        for (_, c) in &built_here {
-            if let Some(&cw) = self.owner_witness.get(c) {
-                prefix.push(v_set(
-                    cw,
-                    Value::Call(data.def_nr("OpNullRefSentinel"), vec![]),
-                ));
             }
         }
         // loft#1628, `@FR-H-Drop` — a REBIND of a witnessed local that still holds a record it took

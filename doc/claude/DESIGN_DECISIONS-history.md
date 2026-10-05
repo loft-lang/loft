@@ -1305,6 +1305,18 @@ the deep-copy path gets a designed ownership transfer (claim the captured
 stores into the host, or re-point the record at host-owned copies) —
 verified on both backends.
 
+
+**Revised 2026-10-05 (loft#1867).**  The revisit condition was met by a different route than the
+one it named: no deep copy transfers the captured stores — the closure record is BUILT in the
+host's child-record slot (`OpChildRec`), adopts its captures there, and the host's drop cascade
+runs the record's.  The return route and the argument route are accepted; the collection route
+(C116) and a closure-carrying struct VALUE placed into another struct's field (loft#1877) stay
+refused.  The decision as it stood until then:
+
+> A struct that holds a capturing closure cannot leave the frame that owns the captures:
+> returning such a struct type, writing a capturing closure into a struct rooted at an argument,
+> and a collection of such structs are compile errors.  Local use and passing it down as an
+> argument are supported.
 ## C76 — Selective imports group with `()`, not Rust-style `{}`; flat comma list dropped
 
 **Catalogue:** @F47 (library imports / module system).

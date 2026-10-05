@@ -385,6 +385,10 @@ struct Scopes<'s> {
     /// itself is never freed.  Keyed on every id the local is known by (the original and
     /// any scope copy `scan_set` makes of it).  [`owner_witness_locals`] picks them.
     owner_witness: HashMap<u16, u16>,
+    /// `@FR-L-CapRebind` — the closure records the statement being scanned releases in its
+    /// prefix (the record a rebuild is about to overwrite, loft#1388).  The rebuild's own
+    /// snapshot (`displaced_drop`) skips them: one release per displaced record.
+    prefix_released: Vec<u16>,
     /// @PLN85 `local_source` over-free fix (gated by `LOFT_JOIN_OWN`): heap slots
     /// that hold an OWNED store displaced by a later `Borrowed`/`Join` reassignment
     /// (`use_analysis::displaced_owned_slots`). For these, `scan_set` strips the

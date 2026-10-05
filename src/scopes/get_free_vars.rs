@@ -8,7 +8,7 @@
 use super::backings::{member_backing, outer_collection_backing};
 use super::capture_adoption::{
     closure_records_of_source, link_written_closure_records, owning_record_locals,
-    record_leaves_frame,
+    record_store_leaves_frame,
 };
 use super::capture_builds::{
     adoption_build_is_conditional, capture_adoption_owns_free, escaping_record_holds,
@@ -466,7 +466,7 @@ impl Scopes<'_> {
                     // reference local.
                     || (matches!(function.tp(v), Type::Reference(r, _)
                             if data.def(*r).name.starts_with("__closure_"))
-                        && record_leaves_frame(data, function, self.d_nr, v));
+                        && record_store_leaves_frame(data, function, self.d_nr, v));
                 // H2 step 5 (DEPS_INVENTORY): the BLOCK-RESULT type's deps were
                 // read here for years under the positional guess.  That read is
                 // RETIRED: the declared-return (`ret_borrows_v`, a TYPED decode),
@@ -1054,7 +1054,13 @@ impl Scopes<'_> {
                     if keep {
                         ls.extend(self.closure_keep_stand_down(v, function, data));
                     }
-                    if (keep || !local_record) && data.any_closure_drop() {
+                    // A fn-ref with a local record of its own may hold ANOTHER record by now — a
+                    // closure written into it through a `&fn` link (loft#1463) — so its release
+                    // dispatches on what it holds.  The cascade runs only on a live store
+                    // (`OpDropFnRef` asks, as `OpStoreLive` does at a record's own release), so
+                    // where the local record already released this store nothing runs twice.
+                    let _ = (keep, local_record);
+                    if data.any_closure_drop() {
                         ls.push(call("OpDropFnRef", v, data));
                     }
                     ls.push(call("OpFreeRef", v, data));

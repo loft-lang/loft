@@ -1951,7 +1951,13 @@ impl Parser {
                     // freshly claimed record whose pointer is already zero, so the
                     // literal's emit stays exactly what it was.
                     let mut ops = Vec::new();
+                    // `@FR-L-CapOwn` (loft#1867) — a CAPTURING source builds its record in this
+                    // slot (`OpChildRec`), which replaces the old one there, after releasing
+                    // what the old one captured by reading it out of the field.  Cleared first,
+                    // that read would find nothing.
+                    let in_place = super::find_capturing_fn_ref(&self.data, val).is_some();
                     if split
+                        && !in_place
                         && let Ok(crec_off) = u16::try_from(offset + 4)
                         && let Some(crec_tp) = self
                             .database
@@ -1962,6 +1968,27 @@ impl Parser {
                             "OpGetField",
                             &[host.clone(), Value::Int(offset + 4), tp_val.clone()],
                         );
+                        // The old record's cascade releases what it adopted before the clear
+                        // frees its bytes: bound here, run by the scope pass once adoption is
+                        // decided (`capture_adoption::cascade_before_record_frees`).
+                        let lambda = self.data.def(d_nr).attributes()[f_nr].assigned_lambda_d_nr;
+                        let record = if lambda == u32::MAX {
+                            u32::MAX
+                        } else {
+                            self.data.def(lambda).closure_record()
+                        };
+                        if record != u32::MAX && !self.first_pass {
+                            let old = self.create_unique(
+                                "__oldrec",
+                                &Type::Reference(record, crate::data::Deps::none()),
+                            );
+                            self.vars.set_skip_free(old);
+                            let read = self.cl(
+                                "OpGetField",
+                                &[host.clone(), Value::Int(offset + 4), Value::Int(0)],
+                            );
+                            ops.push(v_set(old, self.cl("OpRefFromChildRec", &[read])));
+                        }
                         ops.push(self.cl("OpClearKeyed", &[field, tp_val]));
                     }
                     let write = self.set_field(d_nr, f_nr, 0, host, val.clone());

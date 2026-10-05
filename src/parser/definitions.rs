@@ -3443,27 +3443,12 @@ impl Parser {
                 // attributes — propagation goes through the
                 // shared cell DbRef, not via per-call slot copy.
                 self.flip_scalars_to_box_types();
-                // #318 sink R1: a fn cannot RETURN a closure-carrying
-                // struct — the value's closure record holds raw DbRefs
-                // into this frame's stores, which die at return (the
-                // caller then silently corrupts whatever reuses the
-                // slots).  Checked in pass 2 only: by then pass 1 has
-                // recorded every capturing assignment on the struct's
-                // attributes, so the predicate is complete.  Returning
-                // a BARE capturing closure stays supported (the case-C
-                // factory transfer owns the record + captures).
-                let returned = self.data.def(self.context).returned().clone();
-                if self.type_carries_closure(&returned) {
-                    diagnostic!(
-                        self.lexer,
-                        Level::Error,
-                        "function returns a struct type that holds a capturing closure; \
-                         the closure references state owned by this function's frame, so \
-                         the value cannot outlive it — construct the struct in the frame \
-                         that owns the captured state and pass it down, or return the \
-                         closure itself"
-                    );
-                }
+                // `@FR-L-Escape` — a struct holding a capturing closure may be RETURNED: the
+                // closure record leaves inside it and takes its adopted captures along
+                // (`@FR-L-CapOwn`; the claim moves them, the struct's teardown releases them,
+                // a copy of the struct copies them — `Stores::claim_child_rec`,
+                // `remove_claims`, `copy_claims`).  This was #318's sink R1, which refused it
+                // before that ownership existed (loft#1867).
             }
             self.vars.mark_declared_parameters(&self.data, self.context);
             if !self.first_pass {
@@ -7945,6 +7930,8 @@ impl Parser {
     }
 
     pub(crate) fn synth_drop_cascades(&mut self) {
+        // The parse unit is finished: what every fn field holds is known from here on.
+        self.data.fn_fields_settled = self.data.definitions();
         // `(H-Copy-Lease)`'s cascades are independent of the drop ones and can exist in a program
         // that declares no `OpDrop`, so they are made before the drop pass's early return.
         self.synth_copy_cascades();
@@ -7953,7 +7940,9 @@ impl Parser {
         // …and a generator handle held by a record or a collection (loft#1585), which its
         // container releases although the program declares no hook.
         let generators = self.data.any_generator_member();
-        if !self.data.any_drop_hook() && !generators {
+        // …and a closure record that holds a captured store, which its cascade releases.
+        let captures = (0..self.data.definitions()).any(|d| !self.cascade_captures(d).is_empty());
+        if !self.data.any_drop_hook() && !generators && !captures {
             return;
         }
         let mut targets: Vec<u32> = Vec::new();
@@ -7969,7 +7958,9 @@ impl Parser {
                         && (!self.cascade_fields(d_nr).is_empty()
                             || !self.cascade_vectors(d_nr).is_empty()
                             || !self.cascade_shared_vectors(d_nr).is_empty()
-                            || !self.cascade_keyed(d_nr).is_empty())
+                            || !self.cascade_keyed(d_nr).is_empty()
+                            || !self.cascade_captures(d_nr).is_empty()
+                            || !self.cascade_fn_fields(d_nr).is_empty())
                 }
                 // An ENUM releases through whichever variant it currently holds.
                 DefType::Enum => !self.cascade_variants(d_nr).is_empty(),
@@ -8287,6 +8278,63 @@ impl Parser {
                 continue;
             }
             out.push((off, a.typedef.base().clone(), elm, ed));
+        }
+        out
+    }
+
+    /// `@FR-L-CapOwn` — a CLOSURE record's captures that hold a STORE: the byte offset of
+    /// each 12-byte `DbRef` slot a struct, collection or boxed-scalar capture is shared
+    /// through (`closure_attr_type`, a `Reference` with the share marker).  The record's
+    /// cascade RELEASES each one; the scope pass then removes the release of every capture
+    /// the record only BORROWS (`strip_borrowed_capture_walk`), so the cascade releases
+    /// exactly what the record adopted.  A generator handle is not one: its frame is given
+    /// back by its own hook (`(G-Hold)`).
+    /// `@FR-L-CapOwn` — a struct's fn FIELDS whose closure record has something to release:
+    /// `(byte offset of the field's child record, closure record)`.  The record is built in
+    /// the host's own store (`OpChildRec`, loft#1867), so it lives and dies with the host and
+    /// the host's cascade runs the record's.  One lambda per field (`assigned_lambda_d_nr`),
+    /// so the record's type is known here.
+    pub(crate) fn cascade_fn_fields(&self, d_nr: u32) -> Vec<(u16, u32)> {
+        let def = self.data.def(d_nr);
+        if def.name.starts_with("__closure_") {
+            return Vec::new();
+        }
+        let kt = def.known_type();
+        if kt == u16::MAX {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        for a in def.attributes() {
+            let Some(record) = self.data.fn_field_record(a) else {
+                continue;
+            };
+            let off = self
+                .database
+                .position(kt, &format!("{}__closure_rec", a.name));
+            if off != u16::MAX {
+                out.push((off, record));
+            }
+        }
+        out
+    }
+
+    pub(crate) fn cascade_captures(&self, d_nr: u32) -> Vec<u16> {
+        let def = self.data.def(d_nr);
+        if def.def_type != DefType::Struct || !def.name.starts_with("__closure_") {
+            return Vec::new();
+        }
+        let kt = def.known_type();
+        if kt == u16::MAX {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        for a in def.attributes() {
+            if matches!(a.typedef.base(), Type::Reference(_, deps) if !deps.is_empty()) {
+                let off = self.database.position(kt, &a.name);
+                if off != u16::MAX {
+                    out.push(off);
+                }
+            }
         }
         out
     }
@@ -8655,8 +8703,46 @@ impl Parser {
             );
             ops.push(release);
         }
+        self.push_closure_releases(t, self_var, &mut ops);
 
         self.finish_drop_cascade(c_nr, ops, outer_vars, outer_context);
+    }
+
+    /// `@FR-L-CapOwn` — the releases a record type's cascade owes for closures: a fn field's
+    /// closure record, built in the record's own store, runs its cascade; a closure record
+    /// itself releases the stores it adopted — last, after every walk over what they hold,
+    /// and by nothing in the store runtime.
+    fn push_closure_releases(&mut self, t: u32, self_var: u16, ops: &mut Vec<Value>) {
+        // `@FR-L-CapOwn` — a fn field's closure record, built in this record's store: its
+        // cascade releases what it adopted, before the store that holds it goes.
+        for (off, record) in self.cascade_fn_fields(t) {
+            let target = self.data.drop_cascade_nr(record);
+            if target == u32::MAX {
+                continue;
+            }
+            let field = self.cl(
+                "OpGetField",
+                &[
+                    Value::Var(self_var),
+                    Value::Int(i32::from(off)),
+                    Value::Int(0),
+                ],
+            );
+            let child = self.cl("OpRefFromChildRec", &[field]);
+            let live = self.cl("OpConvBoolFromRef", std::slice::from_ref(&child));
+            ops.push(v_if(live, Value::Call(target, vec![child]), Value::Null));
+        }
+        // `@FR-L-CapOwn` — last, after every walk over what they hold: the stores the record
+        // adopted are released by its cascade, and by nothing in the store runtime.
+        for off in self.cascade_captures(t) {
+            let slot = self.cl(
+                "OpGetDbRef",
+                &[Value::Var(self_var), Value::Int(i32::from(off))],
+            );
+            let live = self.cl("OpConvBoolFromRef", std::slice::from_ref(&slot));
+            let free = self.cl("OpFreeRef", &[slot]);
+            ops.push(v_if(live, free, Value::Null));
+        }
     }
 
     /// Install a cascade's built body and restore the parser's table — the tail both shapes

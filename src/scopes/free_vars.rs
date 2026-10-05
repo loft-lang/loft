@@ -7,7 +7,7 @@
 
 use super::capture_adoption::{
     capture_store_adopters, free_record_in_omitting_arms, link_written_closure_records,
-    record_leaves_frame,
+    record_store_leaves_frame,
 };
 use super::handoff::promoted_ret_buffer;
 use super::insert_free::{
@@ -168,7 +168,7 @@ impl Scopes<'_> {
                         continue;
                     };
                     if !data.def(*rec_def).name.starts_with("__closure_")
-                        || !record_leaves_frame(data, function, self.d_nr, v)
+                        || !record_store_leaves_frame(data, function, self.d_nr, v)
                         || link_delivered.contains(&v)
                     {
                         continue;

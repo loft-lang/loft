@@ -196,6 +196,7 @@ pub(super) fn run_scan_phase(
         entry_witness: None,
         local_owns: HashMap::default(),
         owner_witness: HashMap::default(),
+        prefix_released: Vec::new(),
         displaced_owned,
         views_to_materialise,
         text_views_reported: HashSet::default(),

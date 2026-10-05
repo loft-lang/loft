@@ -1293,6 +1293,19 @@ impl Stores {
         }
     }
 
+    /// `@FR-L-CapOwn` — does `db` name a store that is still allocated (`OpStoreLive`)?  The
+    /// question [`Self::free_named`] asks before it releases one: a closure record's cascade
+    /// is emitted ahead of each free of the record and runs only where that free releases.
+    #[must_use]
+    pub fn store_live(&self, db: &DbRef) -> bool {
+        db.rec != 0
+            && db.store_nr != u16::MAX
+            && self
+                .allocations
+                .get(db.store_nr as usize)
+                .is_some_and(|s| !s.is_free())
+    }
+
     /**
     Like [`free`], but includes the loft variable name in `LOFT_STORE_LOG` output.
     Generated native code calls this variant via `OpFreeRef(stores, var, "var_name")`.
@@ -1448,64 +1461,10 @@ impl Stores {
         // store is single-owner (closure-captured cells are owned by the closure
         // record's cascade, not rc — see Phase B), so `free_named` always frees.
         // (Pinned const/global stores returned above.)
-        // P259 commit 4: cascade-free closure-record DbRef attributes.
-        // When the store being freed holds a `__closure_*` record, each
-        // ADOPTED `DbRef` field references a store the record is the sole
-        // owner of: the closure's captured `__cell_<T>` (C74 limits a mutated
-        // cell to one capturing closure), or a `Reference` / collection
-        // capture the defining frame owned and handed over — the frame's own
-        // `OpFreeRef` is suppressed for exactly those (`scopes.rs`
-        // `captured_ref`), so this cascade is their single free, and that is
-        // what lets an escaping factory closure outlive the frame (#323).
-        // Walk those fields, read each 12-byte stored DbRef, and recursively
-        // free_named.  There is no ref-count (plan-57 phase C removed it):
-        // when the target was already freed the recursive call hits the
-        // `store.free` no-op above.
-        //
-        // A BORROWED capture (`dbref_borrow`, #682) is skipped: its store
-        // belongs to a parameter's caller or to the vector a projection local
-        // views into, both of which outlive this record.  Freeing it here
-        // handed the caller a dangling World and surfaced as a panic thousands
-        // of ops later in whatever function next touched it.
-        //
-        // Gated on the type name's `__closure_` prefix because:
-        // - Only closure records hold cells via Parts::DbRef.
-        // - User code can't define identifiers with `__` prefix
-        //   (loft parser rejects), so the prefix check is leak-free.
-        // - Cascading every Parts::DbRef field would break P213
-        //   ChildRec storage and any future DbRef-holding struct.
-        let cascade_targets: Vec<DbRef> = {
-            let store_ref = &self.allocations[al as usize];
-            let known_type = store_ref.known_type;
-            if known_type != u16::MAX
-                && self.types[known_type as usize]
-                    .name
-                    .starts_with("__closure_")
-            {
-                let dbref_positions: Vec<u16> =
-                    if let Parts::Struct(fields) = &self.types[known_type as usize].parts {
-                        fields
-                            .iter()
-                            .filter(|f| self.dbref_is_adopted(f.content))
-                            .map(|f| f.position)
-                            .collect()
-                    } else {
-                        Vec::new()
-                    };
-                dbref_positions
-                    .iter()
-                    .map(|&fpos| {
-                        let off = db.pos + u32::from(fpos);
-                        let store_nr = store_ref.get_u32_raw(db.rec, off) as u16;
-                        let rec = store_ref.get_u32_raw(db.rec, off + 4);
-                        let pos = store_ref.get_u32_raw(db.rec, off + 8);
-                        DbRef { store_nr, rec, pos }
-                    })
-                    .collect()
-            } else {
-                Vec::new()
-            }
-        };
+        // A closure record's captured stores are released by the record's synthesized drop
+        // cascade, which the compiler emits at every release of the record (`@FR-L-CapOwn`,
+        // CODEGEN_METHOD.md § Ownership and copy semantics are emitted code).  Freeing a
+        // store releases that store and nothing it points at.
         match crate::keys::stores_mode() {
             Some("log") => {
                 let active = self.allocations.iter().filter(|s| !s.free).count();
@@ -1611,22 +1570,6 @@ impl Stores {
         // can reuse it without LIFO ordering.
         self.set_free_bit(al);
         self.trim_free_top(al);
-        // P259 commit 4: cascade-free the captured-cell DbRefs collected
-        // above.  Done AFTER the closure record's own free so that
-        // a recursive cascade on a closure-record cell sees this slot
-        // as already-freed and does not re-enter.  Skip the null
-        // sentinel pattern (store_nr=0, rec=0) which is the default
-        // value written by `set_default_value` for unset DbRef fields.
-        for target in cascade_targets {
-            // A captured GENERATOR handle is no store: the closure's drop hook gives its hold
-            // back (`(G-Hold)`), and here it named `--native`'s coroutine table as a store.
-            if crate::database::format::is_generator_handle(target.store_nr) {
-                continue;
-            }
-            if target.store_nr != 0 || target.rec != 0 {
-                self.free_named(&target, "<cascade>");
-            }
-        }
     }
 
     /// S29: Find the lowest free slot index below `max` using the `free_bits` bitmap.

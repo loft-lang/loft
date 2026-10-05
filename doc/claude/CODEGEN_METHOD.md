@@ -341,6 +341,26 @@ the copy each cell owes and is what caught the second case.  A value cell cannot
 at all, and `every_cell_releases_each_resource_once` cannot see WHICH record was released
 (loft#1617 lives in exactly that blind spot).
 
+## Ownership and copy semantics are emitted code, not store machinery
+
+What a value OWNS, when it is released and what a copy of it makes are decided by the
+compiler and EMITTED as code — a move, a synthesized drop or copy cascade
+([formal/heap.md](formal/heap.md) `(H-Lease)`, `(H-Move)`, `(H-Copy-Lease)`), or a refusal
+on the line (`(H-Copy-Refuse)`).  The store runtime (`src/database/`) executes those
+decisions; it does not make new ones by walking the schema for an ownership question.
+
+**Why.** A decision inside the store is a black box to every optimisation above it.  The
+optimiser reasons over loft types and the emitted IR — it can move, elide or batch a copy or a
+release it can see — and a store-side walk is invisible to it, so it would need optimisations
+of its own, and those would need the loft type information and the actual code the store does
+not have.
+
+**What stays in the store.** The mechanics the schema fully describes and no ownership choice
+depends on: copying the bytes of a record and the texts, vectors and child records that live
+in the SAME store (`copy_claims`), and releasing a whole store.  Anything that reaches OUTSIDE
+the record's store — a closure record's adopted capture, a droppable's resource — is the
+compiler's: a cascade it synthesizes, or a refusal.
+
 ## What this rules out
 
 - Heuristic forests at the generation site (the `has_ref_params && … && …` shape).

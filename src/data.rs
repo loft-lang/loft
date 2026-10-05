@@ -6034,6 +6034,11 @@ impl Clone for OpSetCache {
     }
 }
 
+/// The suffix [`Data::retire_def_name`] gives a definition taken out of the name index.  A
+/// retired definition is still the one at its number: [`Data::def_identity`] reads the name it
+/// was declared under.
+pub const RETIRED: &str = "_retired";
+
 #[allow(dead_code)]
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Clone)]
@@ -6052,6 +6057,12 @@ pub struct Data {
     /// and a warm load marks the decoded `Data` closed rather than closing it a second time
     /// from a degraded table (loft#1858).
     pub program_closed: bool,
+    /// Definitions below this number have had their parse unit finished and their cascades
+    /// synthesized, so what their fn FIELDS hold is known ([`Self::fn_field_record`]).  A
+    /// field's closure record is learned while the parse meets the lambda written into it, so
+    /// during that parse the answer grows; [`Self::owns_droppable`] steers parse-time
+    /// lowerings that must answer alike in both passes, and asks it only for a settled host.
+    pub fn_fields_settled: u32,
     /// The run this program is compiled for OBSERVES function entries — `loft test`'s
     /// coverage, which counts a function covered when a call enters it.  A rewrite that
     /// removes calls (`leaf_inline::rewrite_program`, `@FR-R-InlineLeaf`) leaves them alone
@@ -6917,6 +6928,7 @@ impl Data {
             definitions: Vec::new(),
             open_world: false,
             program_closed: false,
+            fn_fields_settled: 0,
             observes_entries: false,
             lazy_drivers: LazyDriverCache::default(),
             def_names: DefIndex::default(),
@@ -11557,6 +11569,39 @@ impl Data {
         })
     }
 
+    /// Does anything in this program RELEASE on a value's death — a drop hook, or a closure
+    /// record's cascade over the stores it adopted (`@FR-L-CapOwn`)?  The gate of the rules
+    /// that judge a copy and a move ((H-Copy-Refuse), (H-Spent)): both kinds of release are
+    /// owned, and a copy of either releases it twice.
+    #[must_use]
+    pub fn any_release(&self) -> bool {
+        self.any_drop_hook() || self.any_closure_drop()
+    }
+
+    /// Take definition `d` out of the name index and rename it `<name>`[`RETIRED`], so no
+    /// lookup by its old name — a fresh one, or the index a cached program rebuilds from
+    /// names — finds it again.  The definition itself stays where it is: code that already
+    /// calls it keeps a valid target.
+    pub fn retire_def_name(&mut self, d: u32) {
+        debug_assert!(!self.definitions[d as usize].name.ends_with(RETIRED));
+        let name = self.definitions[d as usize].name.clone();
+        let source = self.definitions[d as usize].source;
+        self.def_names.remove(&name, source);
+        self.def_names.remove(&name, STD_SOURCE);
+        self.definitions[d as usize].name = format!("{name}{RETIRED}");
+        let renamed = self.definitions[d as usize].name.clone();
+        self.def_names.insert_if_absent(&renamed, source, d);
+    }
+
+    /// The name definition `d` was declared under — its name, less the suffix a retirement
+    /// added.  What two parses of one program agree on, when only one of them ran the pass
+    /// that retired it (a live-reload shadow session parses and stops).
+    #[must_use]
+    pub fn def_identity(&self, d: u32) -> &str {
+        let name = &self.def(d).name;
+        name.strip_suffix(RETIRED).unwrap_or(name)
+    }
+
     #[must_use]
     pub fn drop_cascade_nr(&self, type_def: u32) -> u32 {
         if type_def == u32::MAX || type_def as usize >= self.definitions.len() {
@@ -11643,6 +11688,28 @@ impl Data {
         self.owns_droppable_walk(type_def, &mut path)
     }
 
+    /// `@FR-L-CapOwn` — the closure record a struct's fn FIELD is built into, where that record
+    /// has something to release: a captured store it may adopt (an attribute typed `Reference`
+    /// with deps), or a captured droppable.  The record lives in the struct's own store
+    /// (`OpChildRec`, loft#1867), so the struct answers for what it adopted, as it answers for
+    /// any other member.  One lambda per field (`assigned_lambda_d_nr`).
+    #[must_use]
+    pub fn fn_field_record(&self, a: &Attribute) -> Option<u32> {
+        if !matches!(a.typedef.base(), Type::Function(..)) || a.assigned_lambda_d_nr == u32::MAX {
+            return None;
+        }
+        let record = self.def(a.assigned_lambda_d_nr).closure_record();
+        if record == u32::MAX {
+            return None;
+        }
+        let holds = self
+            .def(record)
+            .attributes()
+            .iter()
+            .any(|c| matches!(c.typedef.base(), Type::Reference(_, deps) if !deps.is_empty()));
+        (holds || self.owns_droppable(record)).then_some(record)
+    }
+
     fn owns_droppable_walk(&self, d_nr: u32, path: &mut HashSet<u32>) -> bool {
         if d_nr == u32::MAX || d_nr as usize >= self.definitions.len() {
             return false;
@@ -11653,12 +11720,10 @@ impl Data {
         if self.drop_hook_nr(d_nr) != u32::MAX || d_nr == self.iterator_def() {
             return true;
         }
-        if self
-            .def(d_nr)
-            .attributes()
-            .iter()
-            .any(|a| self.type_owns_droppable(&a.typedef, path))
-        {
+        if self.def(d_nr).attributes().iter().any(|a| {
+            self.type_owns_droppable(&a.typedef, path)
+                || (d_nr < self.fn_fields_settled && self.fn_field_record(a).is_some())
+        }) {
             return true;
         }
         // An enum's variants are its CHILDREN, not its attributes, and each carries its own
@@ -11674,9 +11739,8 @@ impl Data {
     /// Every heap-record constructor forwards to its record definition; `Vector` and the
     /// keyed collections forward to their element, because owning a collection of
     /// droppables is owning the droppables. `Optional` / `RefVar` / `Rewritten` are
-    /// wrappers over a base type and peel. A `Function` does NOT forward: a closure record
-    /// is owned by the fn-ref slot's own cascade, not by the type that names it, and
-    /// following it would make every fn-ref-holding struct answer for its captures.
+    /// wrappers over a base type and peel. A `Function` does NOT forward: what a closure holds
+    /// is known per FIELD, by the record that owns the field ([`Self::fn_fields_settled`]).
     /// Does a value of this TYPE own a droppable somewhere inside it — a struct through
     /// its fields, a vector through its elements, at any depth?  The type-level twin of
     /// [`Self::owns_droppable`], for a container that has no def of its own (a `vector<S>`).

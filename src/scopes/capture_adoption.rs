@@ -9,7 +9,7 @@
 use super::capture_builds::{CaptureBuilds, capture_build_backings};
 use super::insert_free::expr_ends_in_return;
 use super::returns::{collect_return_sources, last_non_free_result};
-use crate::data::{Data, DefType, Type, Value};
+use crate::data::{Data, DefType, Type, Value, v_if};
 use crate::fxhash::FxHashMap as HashMap;
 use crate::variables::Function;
 
@@ -86,6 +86,232 @@ pub(super) fn mark_borrowed_captures(data: &mut Data, database: &crate::database
     for (record, a) in borrowed {
         data.mark_capture_borrowed(record, a);
         strip_borrowed_capture_walk(data, database, record, a);
+    }
+    prune_empty_cascades(data);
+    cascade_before_record_frees(data);
+}
+
+/// `@FR-L-CapOwn` — every release of a closure RECORD runs the record's cascade first, so
+/// what the record adopted is released wherever the record is: the one rule, emitted at the
+/// one point that sees every release after adoption is final (CODEGEN_METHOD.md § Ownership
+/// and copy semantics are emitted code).  The scope pass releases a record on many routes —
+/// at its scope end, per arm of a branch that hands out another (loft#1476), before a
+/// rebuild — and each was written while the store runtime cascaded on any free.  A free whose
+/// statement is already preceded by the record's cascade is left as it is.
+fn cascade_before_record_frees(data: &mut Data) {
+    let ops = ReleaseOps {
+        free_ref: data.def_nr("OpFreeRef"),
+        live: data.def_nr("OpStoreLive"),
+        conv: data.def_nr("OpConvBoolFromRef"),
+        clear_keyed: data.def_nr("OpClearKeyed"),
+    };
+    if ops.free_ref == u32::MAX || ops.live == u32::MAX {
+        return;
+    }
+    let mut patch_list = |list: &mut Vec<Value>, data: &Data, vars: &Function| {
+        let mut out: Vec<Value> = Vec::with_capacity(list.len());
+        for op in std::mem::take(list) {
+            if let Some((t, c)) = ops.old_record(out.last(), &op, data, vars) {
+                out.push(v_if(
+                    Value::Call(ops.conv, vec![Value::Var(t)]),
+                    Value::Call(c, vec![Value::Var(t)]),
+                    Value::Null,
+                ));
+            }
+            if let Some((v, c)) = ops.owed(data, vars, &op) {
+                // A cascade the scope pass already placed ahead of this free is re-guarded on
+                // the store rather than run a second time beside a new one.
+                if out.last().is_some_and(|prev| runs_cascade(prev, v, c)) {
+                    let prev = out.pop().unwrap_or(Value::Null);
+                    let reguard = matches!(prev.unspan(), Value::If(test, _, _)
+                        if matches!(test.unspan(), Value::Call(d, _)
+                            if *d == ops.conv || *d == ops.live));
+                    out.push(if reguard { ops.guarded(v, c) } else { prev });
+                } else {
+                    out.push(ops.guarded(v, c));
+                }
+            }
+            out.push(op);
+        }
+        *list = out;
+    };
+    for d in 0..data.definitions() {
+        if data.def(d).def_type != DefType::Function {
+            continue;
+        }
+        let vars = data.def(d).variables.clone();
+        let mut code = std::mem::replace(&mut data.definitions[d as usize].code, Value::Null);
+        patch_statement_lists(&mut code, data, &vars, &mut patch_list);
+        data.definitions[d as usize].code = code;
+    }
+}
+
+/// The operators [`cascade_before_record_frees`] reads and writes.
+struct ReleaseOps {
+    free_ref: u32,
+    /// The free that runs the cascade is the one that RELEASES: a release protocol that frees
+    /// a store twice (`@FR-H-FreeTwice`) must not run its cascade twice.
+    live: u32,
+    conv: u32,
+    clear_keyed: u32,
+}
+
+impl ReleaseOps {
+    /// The cascade a free of local `v` owes: `v`'s type is a closure record with a cascade.
+    fn owed(&self, data: &Data, vars: &Function, op: &Value) -> Option<(u16, u32)> {
+        let Value::Call(d, args) = op.unspan() else {
+            return None;
+        };
+        let [arg] = args.as_slice() else {
+            return None;
+        };
+        let Value::Var(v) = arg.unspan() else {
+            return None;
+        };
+        if *d != self.free_ref || *v >= vars.count() {
+            return None;
+        }
+        let Type::Reference(r, _) = vars.tp(*v).base() else {
+            return None;
+        };
+        if !data.def(*r).name.starts_with("__closure_") {
+            return None;
+        }
+        let c = data.drop_cascade_nr(*r);
+        (c != u32::MAX).then_some((*v, c))
+    }
+
+    /// A fn field's old closure record, bound just ahead of the clear that frees its bytes
+    /// (`___oldrec_N = OpRefFromChildRec(field)`, the parser's field reset): its cascade
+    /// releases what it adopted first.
+    fn old_record(
+        &self,
+        prev: Option<&Value>,
+        op: &Value,
+        data: &Data,
+        vars: &Function,
+    ) -> Option<(u16, u32)> {
+        let Value::Call(d, _) = op.unspan() else {
+            return None;
+        };
+        if *d != self.clear_keyed {
+            return None;
+        }
+        let Some(Value::Set(t, _)) = prev.map(Value::unspan) else {
+            return None;
+        };
+        if !vars.name(*t).trim_start_matches('_').starts_with("oldrec") {
+            return None;
+        }
+        let Type::Reference(r, _) = vars.tp(*t).base() else {
+            return None;
+        };
+        let c = data.drop_cascade_nr(*r);
+        (c != u32::MAX).then_some((*t, c))
+    }
+
+    fn guarded(&self, v: u16, c: u32) -> Value {
+        v_if(
+            Value::Call(self.live, vec![Value::Var(v)]),
+            Value::Call(c, vec![Value::Var(v)]),
+            Value::Null,
+        )
+    }
+}
+
+/// Does `op` call cascade `c` on local `v`?
+fn runs_cascade(op: &Value, v: u16, c: u32) -> bool {
+    let mut hit = false;
+    op.walk(&mut |n| {
+        if let Value::Call(d, args) = n.unspan()
+            && *d == c
+            && matches!(args.first().map(Value::unspan), Some(Value::Var(x)) if *x == v)
+        {
+            hit = true;
+        }
+    });
+    hit
+}
+
+/// Hand every statement list in `v` — a block's, a loop's, an `Insert`'s — to `patch`,
+/// innermost first.
+fn patch_statement_lists(
+    v: &mut Value,
+    data: &Data,
+    vars: &Function,
+    patch: &mut dyn FnMut(&mut Vec<Value>, &Data, &Function),
+) {
+    v.for_each_child_mut(&mut |c| patch_statement_lists(c, data, vars, patch));
+    match v {
+        Value::Block(bl) | Value::Loop(bl) => patch(&mut bl.operators, data, vars),
+        Value::Insert(ops) => patch(ops, data, vars),
+        // The value a `Span` wraps is one of its children, patched by the walk above.
+        Value::Span(_) => {}
+        _ => {}
+    }
+}
+
+/// A drop cascade left with nothing to do is no cascade (`@FR-L-CapOwn`, loft#1867).
+///
+/// A closure record's cascade is synthesized at parse time with a release for every capture
+/// that holds a store; the scope pass removes the release of each capture the record only
+/// BORROWS (`strip_borrowed_capture_walk`).  Where every capture is borrowed the cascade
+/// is left empty, and so is every cascade whose only work was calling it.  Unregistered, the
+/// type has no release to run: no `OpDropFnRef` arm, no copy treated as a lease, no call made
+/// for nothing.  Renamed as well as unregistered, because a cached program rebuilds the name
+/// index from the definitions' names.
+fn prune_empty_cascades(data: &mut Data) {
+    fn effectless(v: &Value, pruned: &[u32]) -> bool {
+        match v.unspan() {
+            Value::Null => true,
+            Value::Call(d, _) => pruned.contains(d),
+            Value::If(_, t, f) => effectless(t, pruned) && effectless(f, pruned),
+            Value::Block(bl) | Value::Loop(bl) => {
+                bl.operators.iter().all(|o| effectless(o, pruned))
+            }
+            Value::Insert(ops) => ops.iter().all(|o| effectless(o, pruned)),
+            _ => false,
+        }
+    }
+    let mut pruned: Vec<u32> = Vec::new();
+    loop {
+        let before = pruned.len();
+        for d in 0..data.definitions() {
+            if pruned.contains(&d)
+                || data.def(d).def_type != DefType::Function
+                || !data.def(d).name.ends_with("_OpDropAll")
+            {
+                continue;
+            }
+            if matches!(data.def(d).code(), Value::Block(bl) if bl.name == "drop_cascade")
+                && effectless(data.def(d).code(), &pruned)
+            {
+                pruned.push(d);
+            }
+        }
+        if pruned.len() == before {
+            break;
+        }
+    }
+    if pruned.is_empty() {
+        return;
+    }
+    // Every call of a pruned cascade does nothing: removed, so no analysis after this reads
+    // it as a call that uses its argument.
+    fn drop_calls(v: &mut Value, pruned: &[u32]) {
+        if matches!(v.unspan(), Value::Call(d, _) if pruned.contains(d)) {
+            *v = Value::Null;
+            return;
+        }
+        v.for_each_child_mut(&mut |c| drop_calls(c, pruned));
+    }
+    for d in 0..data.definitions() {
+        if !pruned.contains(&d) {
+            drop_calls(&mut data.definitions[d as usize].code, &pruned);
+        }
+    }
+    for d in pruned {
+        data.retire_def_name(d);
     }
 }
 
@@ -318,7 +544,11 @@ fn builds_are_mutually_exclusive(body: &Value, a: u16, b: u16) -> bool {
     found
 }
 
-/// Does EVERY record adopting this store leave the frame?
+/// Does EVERY record adopting this store leave the frame — as a fn-ref value of its own?
+///
+/// Records CLAIMED into one delivered struct (loft#1867) leave TOGETHER and coexist in the
+/// caller, so they are not this group: they keep one owner like records that stay
+/// (`claimed_into_delivered`).
 ///
 /// `@FR-L-CapOne`'s second admissible group.  The single owner exists because a record left
 /// BEHIND would otherwise release what the escaping one still holds (loft#1440) — but that
@@ -338,7 +568,7 @@ fn group_every_record_leaves(
 ) -> bool {
     group
         .iter()
-        .all(|(local, _, _)| record_leaves_frame(data, function, d_nr, *local))
+        .all(|(local, _, _)| record_store_leaves_frame(data, function, d_nr, *local))
 }
 
 /// Are the records adopting one store pairwise unable to coexist?
@@ -535,6 +765,59 @@ fn adopted_store_key(
 /// in RETURN POSITION instead, and the note is asked only where that finds nothing — the
 /// `return fn() { … }` written straight out, where the two agree.
 pub(super) fn record_leaves_frame(data: &Data, function: &Function, d_nr: u32, v: u16) -> bool {
+    record_store_leaves_frame(data, function, d_nr, v)
+        || claimed_into_delivered(data, function, d_nr).contains(&v)
+}
+
+/// The closure records CLAIMED into a struct the return delivers (loft#1867,
+/// `@FR-L-CapOwn` with `@FR-L-Escape`): built into the caller's return buffer — a literal in
+/// return position, or the local `ref_return` promoted into it — or into a returned local.
+/// The claim is `OpClaimChildRec(<field of the host>, Var(record), _)`, and it MOVES the
+/// record's captures into the struct (`Stores::claim_child_rec`).  So such a record leaves
+/// for the question of who owns what it captured ([`record_leaves_frame`]) and stays for
+/// the question of who frees its own, now emptied, store
+/// ([`record_store_leaves_frame`]).
+pub(super) fn claimed_into_delivered(data: &Data, function: &Function, d_nr: u32) -> Vec<u16> {
+    let body = data.def(d_nr).code();
+    let mut sources: Vec<u16> = Vec::new();
+    body.walk(&mut |n| {
+        if let Value::Return(inner) = n.unspan() {
+            collect_return_sources(inner, data, &mut sources);
+        }
+    });
+    if let Some(tail) = last_non_free_result(std::slice::from_ref(body), data) {
+        collect_return_sources(tail, data, &mut sources);
+    }
+    let mut out: Vec<u16> = Vec::new();
+    let def = data.def(d_nr);
+    let retbuf = def
+        .hidden_return_buffer_attr()
+        .map_or(u16::MAX, |a| function.var(&def.attributes()[a].name));
+    body.walk(&mut |n| {
+        if let Value::Set(w, value) = n.unspan()
+            && let Value::Call(op, args) = value.unspan()
+            && data.def(*op).name() == "OpChildRec"
+            && let Some(host) = args.first()
+            && let Some(base) = host.base_var()
+            && (base == retbuf || sources.contains(&base) || function.is_argument(base))
+            && !out.contains(w)
+        {
+            out.push(*w);
+        }
+    });
+    out
+}
+
+/// Does the closure record held by local `v` itself leave the frame — the record's own STORE,
+/// handed out as a fn-ref value through the return or a `&fn(…)` link?  The frame does not
+/// free such a record.  A record whose contents were CLAIMED into a delivered struct does not
+/// leave by this question: the frame frees its emptied store ([`claimed_into_delivered`]).
+pub(super) fn record_store_leaves_frame(
+    data: &Data,
+    function: &Function,
+    d_nr: u32,
+    v: u16,
+) -> bool {
     if function.is_argument(v) {
         return false;
     }
@@ -601,6 +884,23 @@ fn returned_closure_records(data: &Data, function: &Function, d_nr: u32) -> Vec<
             });
         }
     });
+    // The scope pass hoists a tail it must free things after into a return temp
+    // (`__ret_tail_N = <value>; …; return __ret_tail_N`).  The temp names no record of its
+    // own: what the return delivers is the value it was given, read like any tail.
+    let hoisted: Vec<u16> = sources
+        .iter()
+        .copied()
+        .filter(|&t| t < function.count() && function.name(t).starts_with("__ret_"))
+        .collect();
+    if !hoisted.is_empty() {
+        body.walk(&mut |n| {
+            if let Value::Set(t, value) = n.unspan()
+                && hoisted.contains(t)
+            {
+                delivered.push(value);
+            }
+        });
+    }
     while let Some(v) = delivered.pop() {
         match v.unspan() {
             Value::FnRef(_, w, _) => {

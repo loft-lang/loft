@@ -213,6 +213,7 @@ pub static OPERATORS: &[fn(&mut State)] = &[
     vector_is_null::<false>,
     ref_is_null::<false>,
     distinct_store::<false>,
+    store_live::<false>,
     ref_alias::<false>,
     clear_vector::<false>,
     get_vector::<false>,
@@ -236,6 +237,7 @@ pub static OPERATORS: &[fn(&mut State)] = &[
     push_byte::<false>,
     claim_child_rec::<false>,
     ref_from_child_rec::<false>,
+    child_rec::<false>,
     get_record::<false>,
     hash_add::<false>,
     hash_find::<false>,
@@ -561,6 +563,7 @@ pub static OPERATORS_FAST: &[fn(&mut State)] = &[
     vector_is_null::<true>,
     ref_is_null::<true>,
     distinct_store::<true>,
+    store_live::<true>,
     ref_alias::<true>,
     clear_vector::<true>,
     get_vector::<true>,
@@ -584,6 +587,7 @@ pub static OPERATORS_FAST: &[fn(&mut State)] = &[
     push_byte::<true>,
     claim_child_rec::<true>,
     ref_from_child_rec::<true>,
+    child_rec::<true>,
     get_record::<true>,
     hash_add::<true>,
     hash_find::<true>,
@@ -909,6 +913,7 @@ pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
     vector_is_null_r,
     ref_is_null_r,
     distinct_store_r,
+    store_live_r,
     ref_alias_r,
     clear_vector_r,
     get_vector_r,
@@ -932,6 +937,7 @@ pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
     push_byte_r,
     claim_child_rec_r,
     ref_from_child_rec_r,
+    child_rec_r,
     get_record_r,
     hash_add_r,
     hash_find_r,
@@ -1257,6 +1263,7 @@ pub const OPERATOR_NAMES: &[&str] = &[
     "OpVectorIsNull",
     "OpRefIsNull",
     "OpDistinctStore",
+    "OpStoreLive",
     "OpRefAlias",
     "OpClearVector",
     "OpGetVector",
@@ -1280,6 +1287,7 @@ pub const OPERATOR_NAMES: &[&str] = &[
     "OpPushByte",
     "OpClaimChildRec",
     "OpRefFromChildRec",
+    "OpChildRec",
     "OpGetRecord",
     "OpHashAdd",
     "OpHashFind",
@@ -1423,7 +1431,7 @@ pub const OPERATOR_NAMES: &[&str] = &[
 pub const OP_HOT: u16 = 36;
 /// How many operators are neither `#hot` nor `#cold` (the slots after the hot ones); the
 /// `#cold` operators follow them, into the two-byte opcodes.
-pub const OP_NORMAL: u16 = 220;
+pub const OP_NORMAL: u16 = 222;
 
 #[inline(always)]
 fn goto<const F: bool>(s: &mut State) {
@@ -5133,6 +5141,19 @@ fn distinct_store_r(s: &mut State, r: Regs) -> Regs {
 }
 
 #[inline(always)]
+fn store_live<const F: bool>(s: &mut State) {
+    let v_r = s.get_stack_m::<F, DbRef>();
+    let new_value = s.database.store_live(&v_r);
+    s.put_stack_m::<F, _>(new_value);
+}
+
+fn store_live_r(s: &mut State, r: Regs) -> Regs {
+    s.regs_in(r);
+    store_live::<true>(s);
+    s.regs_out()
+}
+
+#[inline(always)]
 fn ref_alias<const F: bool>(s: &mut State) {
     let v_r = s.get_stack_m::<F, DbRef>();
     let new_value = v_r;
@@ -5626,6 +5647,21 @@ fn ref_from_child_rec<const F: bool>(s: &mut State) {
 fn ref_from_child_rec_r(s: &mut State, r: Regs) -> Regs {
     s.regs_in(r);
     ref_from_child_rec::<true>(s);
+    s.regs_out()
+}
+
+#[inline(always)]
+fn child_rec<const F: bool>(s: &mut State) {
+    let operands = s.operands(2);
+    let v_tp = operands.get::<u16>(0);
+    let v_field = s.get_stack_m::<F, DbRef>();
+    let new_value = s.database.new_child_rec(&v_field, v_tp);
+    s.put_stack_m::<F, _>(new_value);
+}
+
+fn child_rec_r(s: &mut State, r: Regs) -> Regs {
+    s.regs_in(r);
+    child_rec::<true>(s);
     s.regs_out()
 }
 

@@ -9,6 +9,7 @@ use super::backings::construction_work_refs;
 use super::call;
 use super::capture_adoption::{
     capture_attr_is_cascade_relevant, record_adopts_capture, record_leaves_frame,
+    record_store_leaves_frame,
 };
 use super::closure_keep::pass_confined_records;
 use crate::data::{Data, Type, Value, v_if};
@@ -144,7 +145,7 @@ fn captured_only_by_confined(
     let name = function.name(v);
     let mut any = false;
     for w in 0..function.next_var() {
-        if function.is_argument(w) {
+        if !is_record_local(function, w) {
             continue;
         }
         let Type::Reference(record, _) = function.tp(w).base() else {
@@ -577,7 +578,7 @@ pub(super) fn reassigned_join_capture_slot(
     let name = function.name(c);
     let mut slot = None;
     for w in 0..function.next_var() {
-        if function.is_argument(w) {
+        if !is_record_local(function, w) {
             continue;
         }
         let Type::Reference(record, _) = function.tp(w).base() else {
@@ -588,7 +589,7 @@ pub(super) fn reassigned_join_capture_slot(
         }
         if (0..data.attributes(*record)).any(|a| data.attr_name(*record, a) == name) {
             // A record that stays in the frame is released by it, possibly before this read.
-            if slot.is_some() || !record_leaves_frame(data, function, d_nr, w) {
+            if slot.is_some() || !record_store_leaves_frame(data, function, d_nr, w) {
                 return None;
             }
             let pos = database.position(data.def(*record).known_type(), name);
@@ -624,7 +625,7 @@ pub(super) fn rebound_capture_slots(
     let name = function.name(v);
     let mut slots = Vec::new();
     for w in 0..function.next_var() {
-        if function.is_argument(w) {
+        if !is_record_local(function, w) {
             continue;
         }
         let Type::Reference(record, _) = function.tp(w).base() else {
@@ -1057,4 +1058,12 @@ pub(super) fn free_unless_record_built(
         None => release,
     };
     v_if(present, Value::Null, release)
+}
+
+/// Is local `w` a closure record this frame BUILDS (`___clos_N`, `emit_lambda_code`)?  The
+/// other locals of a closure-record type are not: the lambda's own `__closure` parameter, and
+/// a rebuild's snapshot (`__disp_N`, `Scopes::displaced_drop`), which copies a record to run
+/// its cascade and is never the record a capture lives in.
+fn is_record_local(function: &Function, w: u16) -> bool {
+    !function.is_argument(w) && function.name(w).starts_with("___clos_")
 }

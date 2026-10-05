@@ -16351,47 +16351,47 @@ fn run() -> integer {
 }
 
 #[test]
-fn issue_318_returning_closure_carrying_struct_rejected() {
+fn issue_1867_a_returned_struct_keeps_its_closure_capture() {
+    // `@FR-L-Escape`, `@FR-L-CapOwn` — the struct's closure record is built in its own store
+    // and adopts `w`, so the capture outlives `make`'s frame: 8 and 9 through a fn-ref read
+    // out of the field, then 10 through the field itself.
     code!(
         "struct Counter { n: integer }
-struct K { cb: fn() }
+struct K { cb: fn() -> integer }
 fn make() -> K {
     w = Counter { n: 7 };
-    K { cb: fn() { w.n = w.n + 1; } }
+    K { cb: fn() -> integer { w.n = w.n + 1; w.n } }
 }
-fn test_it() { k = make(); c = k.cb; c(); }"
+fn run() -> integer { k = make(); c = k.cb; c(); c() * 100 + k.cb() }"
     )
-    .error(
-        "function returns a struct type that holds a capturing closure; the \
-         closure references state owned by this function's frame, so the value \
-         cannot outlive it — construct the struct in the frame that owns the \
-         captured state and pass it down, or return the closure itself \
-         at issue_318_returning_closure_carrying_struct_rejected:3:17",
-    );
+    .expr("run()")
+    .result(Value::Int(910));
 }
 
 #[test]
-fn issue_318_closure_into_argument_struct_rejected() {
+fn issue_1867_a_closure_written_into_an_argument_struct_keeps_its_capture() {
+    // `@FR-L-Escape` — the closure record is built in the caller's struct, adopts `w`, and the
+    // second `attach` releases the record it displaces: 8, then 21 and 22 from the new one.
     code!(
         "struct Counter { n: integer }
-struct K { cb: fn() }
+struct K { cb: fn() -> integer }
 struct H { k: K }
-fn attach(h: H) {
-    w = Counter { n: 7 };
-    h.k = K { cb: fn() { w.n = w.n + 1; } };
+fn orig() -> integer { 0 }
+fn attach(h: H, n: integer) {
+    w = Counter { n: n };
+    h.k = K { cb: fn() -> integer { w.n = w.n + 1; w.n } };
 }
-fn test_it() {
-    h = H { k: K { cb: fn() { print(\"orig\"); } } };
-    attach(h);
+fn run() -> integer {
+    h = H { k: K { cb: orig } };
+    attach(h, 7);
+    a = (h.k.cb)();
+    attach(h, 20);
+    b = (h.k.cb)();
+    a * 10000 + b * 100 + (h.k.cb)()
 }"
     )
-    .error(
-        "cannot store a capturing closure into a struct received as an argument \
-         — the closure references state owned by this function's frame, which \
-         the argument's struct outlives; construct the closure in the frame \
-         that owns the captured state \
-         at issue_318_closure_into_argument_struct_rejected:6:44",
-    );
+    .expr("run()")
+    .result(Value::Int(82122));
 }
 
 #[test]

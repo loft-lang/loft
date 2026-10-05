@@ -15666,28 +15666,10 @@ impl Parser {
                               lambda's); split into two structs or unify the captures"
                         );
                     }
-                    // #318 sink R2: the host being written must be
-                    // rooted in a frame-local — writing a capturing
-                    // closure into (a field of) an ARGUMENT claims the
-                    // closure record into a store that outlives this
-                    // frame, while the record's DbRefs point at this
-                    // frame's captures (silent corruption on slot
-                    // reuse once the frame dies).
-                    if !self.first_pass
-                        && let Some(base) = ref_code.base_var()
-                        && self.vars.is_argument(base)
-                    {
-                        diagnostic!(
-                            self.lexer,
-                            Level::Error,
-                            "cannot store a capturing closure into a struct received as an \
-                             argument — the closure references state owned by this \
-                             function's frame, which the argument's struct outlives; \
-                             construct the closure in the frame that owns the captured \
-                             state"
-                        );
-                        return Value::Null;
-                    }
+                    // `@FR-L-Escape` (loft#1867): a host rooted in an ARGUMENT is the caller's
+                    // struct, and the closure record is built in its store (`OpChildRec`).  The
+                    // record leaves this frame with it and adopts its captures, as it does for
+                    // a struct this function returns (`claimed_into_delivered`).
                 }
                 emit_fn_ref_field_write(self, d_nr, f_nr, ref_code, pos_val, &val_code)
             }
@@ -22485,7 +22467,16 @@ pub(crate) fn widen_bare_fn_ref(v: &mut Value, tp: &Type) -> bool {
     }
 }
 
-fn find_capturing_fn_ref(data: &Data, v: &Value) -> Option<(i32, u16)> {
+/// Every read of variable `v` in `code` becomes `with`.
+fn replace_var(code: &mut Value, v: u16, with: &Value) {
+    if matches!(code.unspan(), Value::Var(x) if *x == v) {
+        *code = with.clone();
+        return;
+    }
+    code.for_each_child_mut(&mut |c| replace_var(c, v, with));
+}
+
+pub(crate) fn find_capturing_fn_ref(data: &Data, v: &Value) -> Option<(i32, u16)> {
     match v.unspan() {
         // `w != MAX` only appears in the second pass (`emit_lambda_code`
         // builds the closure-allocation block there).  In the FIRST
@@ -22576,6 +22567,54 @@ fn emit_fn_ref_field_write(
                 .take(bl.operators.len() - 1)
                 .cloned()
                 .collect();
+            // `@FR-L-Escape`, `@FR-L-CapOwn` — the record is built IN PLACE in the host's child
+            // slot (`OpChildRec`, loft#1867): `w` names that slot's record, the captures are
+            // written straight into it, and it is the HOST's, released with it and by its
+            // cascade.  Built apart and copied in, the frame then released the record it had
+            // built, and its cascade released the captures the copy still named.
+            let in_place = if w_var != u16::MAX && f_nr != usize::MAX && !p.first_pass {
+                let closure_rec_d = p.data.def(lambda_d as u32).closure_record();
+                (closure_rec_d != u32::MAX).then(|| {
+                    let kt = p.data.def(closure_rec_d).known_type();
+                    let crec_pos = match &pos_val {
+                        Value::Int(pi) => Value::Int(pi + 4),
+                        _ => Value::Int(0),
+                    };
+                    let field = p.cl(
+                        "OpGetField",
+                        &[ref_code.clone(), crec_pos, Value::Int(i32::from(kt))],
+                    );
+                    (kt, field)
+                })
+            } else {
+                None
+            };
+            if let Some((kt, field)) = &in_place {
+                let database = p.data.def_nr("OpDatabase");
+                // The release of what the record held before reads that record where it lives,
+                // in the field: the local names the record this SITE built last, which may sit
+                // in another host or be gone.
+                let old = p.cl("OpRefFromChildRec", std::slice::from_ref(field));
+                let build_at = ops.iter().position(|op| {
+                    matches!(op.unspan(), Value::Call(d, args) if *d == database
+                        && matches!(args.first().map(Value::unspan), Some(Value::Var(x)) if *x == w_var))
+                });
+                if let Some(at) = build_at {
+                    for op in &mut ops[..at] {
+                        replace_var(op, w_var, &old);
+                    }
+                }
+                for op in &mut ops {
+                    if matches!(op.unspan(), Value::Call(d, args) if *d == database
+                        && matches!(args.first().map(Value::unspan), Some(Value::Var(x)) if *x == w_var))
+                    {
+                        let child =
+                            p.cl("OpChildRec", &[field.clone(), Value::Int(i32::from(*kt))]);
+                        *op = v_set(w_var, child);
+                    }
+                }
+                p.vars.set_skip_free(w_var);
+            }
             // Write the d_nr at the loft-attribute position (which maps
             // to the database-side `<attr>` field — the d_nr half).
             ops.push(p.cl(
@@ -22586,34 +22625,6 @@ fn emit_fn_ref_field_write(
             // `__closure_rec` vector at pos+4.  We need the host's
             // closure_rec field as a DbRef + the closure record's
             // known_type for `OpAppendVector`'s type parameter.
-            if w_var != u16::MAX && f_nr != usize::MAX && !p.first_pass {
-                let closure_rec_d = p.data.def(lambda_d as u32).closure_record();
-                if closure_rec_d != u32::MAX {
-                    let closure_kt = p.data.def(closure_rec_d).known_type();
-                    let crec_pos = match &pos_val {
-                        Value::Int(pi) => Value::Int(pi + 4),
-                        _ => Value::Int(0),
-                    };
-                    // OpGetField(host_ref, pos+4, type_id) yields a DbRef
-                    // pointing at the host's closure_rec field.
-                    let crec_field = p.cl(
-                        "OpGetField",
-                        &[
-                            ref_code.clone(),
-                            crec_pos,
-                            Value::Int(i32::from(closure_kt)),
-                        ],
-                    );
-                    ops.push(p.cl(
-                        "OpClaimChildRec",
-                        &[
-                            crec_field,
-                            Value::Var(w_var),
-                            Value::Int(i32::from(closure_kt)),
-                        ],
-                    ));
-                }
-            }
             v_block(ops, Type::Void, "fn_ref_field_set")
         }
         Value::Var(v) => {

@@ -1272,6 +1272,40 @@ impl Stores {
         }
     }
 
+    /// `OpChildRec` — a fresh `tp` child record in `host_field`'s store, default-filled, its
+    /// rec-id written into the field (loft#1867).  In-store mechanics only: a record the field
+    /// held before is released as BYTES of this store; what it adopted outside the store is
+    /// the emitted cascade's to release (CODEGEN_METHOD.md § Ownership and copy semantics are
+    /// emitted code).
+    pub fn new_child_rec(&mut self, host_field: &DbRef, tp: u16) -> DbRef {
+        if host_field.store_nr == u16::MAX || host_field.rec == 0 {
+            return DbRef::NULL;
+        }
+        let old = self
+            .store(host_field)
+            .get_u32_raw(host_field.rec, host_field.pos);
+        if old != 0 {
+            let old_db = DbRef {
+                store_nr: host_field.store_nr,
+                rec: old,
+                pos: 8,
+            };
+            self.remove_claims(&old_db, tp);
+            self.store_mut(host_field).delete(old);
+        }
+        let size = u32::from(self.size(tp));
+        let rec = self.allocations[host_field.store_nr as usize].claim(size);
+        let db = DbRef {
+            store_nr: host_field.store_nr,
+            rec,
+            pos: 8,
+        };
+        self.set_default_value(tp, &db);
+        self.store_mut(host_field)
+            .set_u32_raw(host_field.rec, host_field.pos, rec);
+        db
+    }
+
     /// Make `db` (dest) hold `o_db` (src)'s content — the aliasing-safe vector
     /// "deliver into buffer" the return machinery needs.  When `db` and `o_db`
     /// name the SAME backing vector (the NRVO case where a returned local still
