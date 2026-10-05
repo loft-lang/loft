@@ -20,10 +20,16 @@ slow-timeout     = { period = "300s", terminate-after = 1 }
 # The run-wide limit: a WARM local run of the suite fits in 20 minutes, and when one does not
 # that is the trigger to optimise the suite — split it, parallelise it, or move tests to a
 # nightly or PR leg — never to raise this (owner; CI_BUDGET.md).  Enforced by nextest itself,
-# so it holds however the suite is started.  CI's profile keeps its own hang guard.
+# so it holds however the suite is started.  The CI profiles below set no cap of their own
+# (their jobs' `timeout-minutes` bound them) — and must say so, since they inherit this one.
 global-timeout   = "20m"
 
 [profile.ci]
+# No run-wide cap: profiles inherit `[profile.default]`, not each other, so without this line
+# CI inherited the LOCAL 20-minute `global-timeout` and cut the unsharded ubuntu and macOS
+# legs on `main` at 1200 s with every test passing.  A CI job's own `timeout-minutes` is its
+# bound; "30y" is nextest's own default, the absence of a cap.
+global-timeout   = "30y"
 # CI runs: retry flaky tests once, emit JUnit for the Actions UI.
 retries          = 1
 failure-output   = "immediate-final"
@@ -202,6 +208,11 @@ priority = 100
 # runs the main pass without them.  Its junit lands in `target/nextest/ci-victims/`, so the main
 # pass's report, which the duration and speed gates read, is not overwritten.
 [profile.ci-victims]
+# No run-wide cap: profiles inherit `[profile.default]`, not each other, so without this line
+# CI inherited the LOCAL 20-minute `global-timeout` and cut the unsharded ubuntu and macOS
+# legs on `main` at 1200 s with every test passing.  A CI job's own `timeout-minutes` is its
+# bound; "30y" is nextest's own default, the absence of a cap.
+global-timeout   = "30y"
 retries          = 1
 failure-output   = "immediate-final"
 success-output   = "never"
@@ -227,6 +238,11 @@ test-group = 'heavy-serial'
 # (`loft_suite_00..07`), so each chunk is an eighth of that and the ceiling is the hang guard
 # again, not a budget the corpus grows into.
 [profile.sanitizer]
+# No run-wide cap: profiles inherit `[profile.default]`, not each other, so without this line
+# CI inherited the LOCAL 20-minute `global-timeout` and cut the unsharded ubuntu and macOS
+# legs on `main` at 1200 s with every test passing.  A CI job's own `timeout-minutes` is its
+# bound; "30y" is nextest's own default, the absence of a cap.
+global-timeout   = "30y"
 retries          = 1
 failure-output   = "immediate-final"
 success-output   = "never"
