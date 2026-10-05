@@ -98,7 +98,10 @@ no `map<K, V>`. A keyed collection holds records, and its key is one or more of 
 fields, named in the type — like a table with an index. A word count is `hash<Count[word]>` over
 `struct Count { word: text, n: integer }`; the ordered and other indexes are `sorted<T[-key]>`,
 `index<T[a, -b]>`, `spatial<T[x, y]>` and `trie<T[name]>`, and a subscript is a query by key,
-never a position (LOFT.md § Composite types). Sources: [GOALS.md](GOALS.md) § Legible cost (the scattered
+never a position (LOFT.md § Composite types). Those constructions are less common inside games,
+which mostly hold specialised structures in vectors; mainly a general web app would feel the
+strangeness, and with databases in mind most programmers quickly form a mental model that
+matches loft's. Sources: [GOALS.md](GOALS.md) § Legible cost (the scattered
 allocation that generated loft) and [OWNERSHIP_MODEL.md](OWNERSHIP_MODEL.md) § the control story.
 
 **Games that feel made by a person.** Candidate sources, for the owner to choose from: dryopea's
