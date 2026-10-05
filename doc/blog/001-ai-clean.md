@@ -15,11 +15,11 @@ loft, the programming language I am building to ease the creation of games.
 
 ## Loft is not a new language
 
-Loft has been in development for eight years before any AI was involved. The agents did not
-invent it; they inherited it and build it out.
+Loft had been in development for eight years before any AI was involved. The agents did not
+invent it; they inherited it and built it out.
 
 What changed is not only the development speed. The language has become much more complete.
-It as quick to compare the current loft state against other languages like Julia, OCaml or
+It is quick to compare the current loft state against other languages like Julia, OCaml or
 Python. Then the things unique to those languages get turned into tests. And this then
 leads to an important decision: is this a missing feature, a language bug or something that
 we do not want to implement at all.
@@ -27,7 +27,7 @@ we do not want to implement at all.
 ## What I actually do
 
 I write very little of the code myself now. My work is steering: guiding the agents around
-problems, devising ways of working that enhances what they are good at while covering
+problems, devising ways of working that enhance what they are good at while covering
 for what they tend to overlook.
 
 Their strengths are easy to list: they are fast, they do not tire, they know a lot, and they
@@ -48,13 +48,13 @@ memory.
 
 That memory goes stale, just like a person's. Almost anything written in a document might be
 true on the day it is written, and is certainly wrong a month later. So the documents need to
-be easily validated with as little facts that can go stale as possible.
+be easily validated with as few facts that can go stale as possible.
 
-None of this is unique to AI. A team of people needs the same discipline. Individual People
-just hide the problem by faguely remembering things. Agents cannot, so the gaps show up
-immediately. The same as when experienced team member leave and new ones replace them.
+None of this is unique to AI. A team of people needs the same discipline. Individual people
+just hide the problem by vaguely remembering things. Agents cannot, so the gaps show up
+immediately. The same as when experienced team members leave and new ones replace them.
 
-## The exact problem is fixed, but their reason is not
+## The exact problem is fixed, but its cause is not
 
 This is where inexperience shows most. An agent finds a bug, finds a change that makes the
 failing case pass, and stops. The exact problem is fixed, but the place it came from is not,
@@ -68,17 +68,17 @@ shape. That is why loft treats a slow library routine as work for the compiler, 
 place for a hand-written shortcut.
 
 Two things help. The first is making it cheaper to look than not to: before fixing anything
-non-trivial, each agent has to maps out the cases around the bug to see where the real boundary
-is. Only when there are only working cases found it can be sure that the failures are mapped
-correctly. This might be inefficient for people but an AI is quick here. The actual fix and
-the tests after it will always take lot more time.
+non-trivial, each agent has to map out the cases around the bug to see where the real boundary
+is. Only when the working and the failing cases are both mapped can it be sure it has found
+the real boundary. This might be inefficient for people but an AI is quick here. The actual fix and
+the tests after it will always take a lot more time.
 
 The second is a set of formal rules: precise statements of how the language must behave. The
 rules come first, and code that disagrees with them is what gets fixed. When a bug comes in,
 the rules usually already say what the right answer is, so there is much less guessing. But
 the rules only help if they are checked each time again. And these rules are also the way to
-find code duplication and many errors, when two algorithms implement it indepdendly one can
-be wrong and one right.
+find code duplication and many errors: when two algorithms implement it independently, one
+can be wrong and one right, so the rule shows where to merge them.
 
 ## Tests introduce new problems too
 
@@ -108,9 +108,9 @@ With all those challenges, why do it? Because the result is worth it.
 ## Starting yourself?
 
 Let the AI fix a couple of bugs. See where it fails, takes the wrong turn, invents things on
-its own that does not fit your plan. Those problems are not inherent to AI it shows the gaps in
-your setup, you miss easy to find designs, old bugs cannot be learned from, your project is
-too much of a mess. Yes, AI does that automatically if you let it.
+its own that do not fit your plan. Those problems are not inherent to AI; they show the gaps in
+your setup: designs that are hard to find, old bugs nobody can learn from, a project that is
+too much of a mess. And yes, left alone, an AI will make that mess for you.
 
 This is not really advice about AI. It is advice about leading a team. The AI just makes it
 impossible to skip.
