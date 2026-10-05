@@ -1638,12 +1638,11 @@ pub(crate) fn publish_cached_binary(
 pub(crate) const NATIVE_CACHE_KEEP: usize = 512;
 
 /// Mark a cached binary as just used, so the bound in `sweep_cached_binaries` keeps it.
-/// Best-effort: a failure costs a recompile later, never a wrong answer.  Opened
-/// read-only, because a write open of a running executable fails on Linux.
+/// Best-effort: a failure costs a recompile later, never a wrong answer.  The handle rule
+/// (read-only on Unix, write on Windows, where a read-only handle cannot set the time and
+/// the bound kept nothing by use) is `file_access::set_modified`'s, via `loft::cache::touch_now`.
 pub(crate) fn touch_cached_binary(path: &std::path::Path) {
-    if let Ok(f) = crate::file_access::open(&crate::file_access::PathText::from_os(path)) {
-        let _ = f.set_modified(std::time::SystemTime::now());
-    }
+    loft::cache::touch_now(path);
 }
 
 /// Keep the `keep` most recently used `native-<key>` binaries in `cache_dir`, never
@@ -3053,9 +3052,11 @@ mod publish_cached_binary_tests {
         for n in 1..=4u8 {
             let p = dir.join(keyed(n));
             put(&p, &[n]);
-            let f = crate::file_access::open(&crate::file_access::PathText::from_os(&p)).unwrap();
-            f.set_modified(base + std::time::Duration::from_secs(u64::from(n) * 60))
-                .unwrap();
+            crate::file_access::set_modified(
+                &crate::file_access::PathText::from_os(&p),
+                base + std::time::Duration::from_secs(u64::from(n) * 60),
+            )
+            .unwrap();
         }
         // The oldest entry is reused, so it is now the most recent of the four.
         touch_cached_binary(&dir.join(keyed(1)));

@@ -145,6 +145,24 @@ pub fn open_read_write(path: &PathText) -> io::Result<std::fs::File> {
     })
 }
 
+/// Set the file's modification time.  The handle is opened for WRITE only on Windows, where
+/// `SetFileTime` needs it; on Unix `futimens` works on a read-only descriptor, and the files
+/// touched are cached executables and loaded cdylibs — a write handle on a Mach-O another
+/// process is running is what macOS's code-signing checks act on (a cached native test
+/// binary was killed by a signal on its first run after a write handle was taken everywhere).
+///
+/// # Errors
+/// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
+pub fn set_modified(path: &PathText, when: std::time::SystemTime) -> io::Result<()> {
+    run(path, |p| {
+        std::fs::OpenOptions::new()
+            .read(true)
+            .write(cfg!(windows))
+            .open(p)?
+            .set_modified(when)
+    })
+}
+
 /// Open the file with `options` (append, create-new, …).
 ///
 /// # Errors

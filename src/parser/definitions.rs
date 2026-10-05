@@ -5027,9 +5027,7 @@ impl Parser {
                              elements are always dense (a key / slot denotes presence)"
                         );
                     }
-                } else if !nullable_elem
-                    && type_name != "vector"
-                    && matches!(tp, Type::Optional(_))
+                } else if !nullable_elem && type_name != "vector" && matches!(tp, Type::Optional(_))
                 {
                     // A `?` written after the element's own modifiers (`integer limit(0, 9)?`)
                     // is read by `parse_type` itself, past the identifier-adjacent test above —

@@ -250,6 +250,10 @@ fn stdlib_load_compares_equal_to_fresh() {
 /// (cloned per script) so the stdlib parses once, not once-per-script.
 #[test]
 fn tests_scripts_round_trip() {
+    common::on_cli_stack(tests_scripts_round_trip_body);
+}
+
+fn tests_scripts_round_trip_body() {
     let (stdlib_data, stdlib_db) = parsed_default();
     let stdlib_defs = stdlib_data.definitions();
 
@@ -322,6 +326,10 @@ fn tests_scripts_round_trip() {
 /// codec mishandles fails here loudly, localized by the `DataDiff`.
 #[test]
 fn corpus_store_codec_round_trips() {
+    common::on_cli_stack(corpus_store_codec_round_trips_body);
+}
+
+fn corpus_store_codec_round_trips_body() {
     let (stdlib_data, stdlib_db) = parsed_default();
     // The stdlib itself first (the bulk of the variants).
     if let Err(diff) = loft::ir_read::ir_roundtrip_check(&stdlib_data) {

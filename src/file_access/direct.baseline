@@ -7,7 +7,7 @@
 43 src/build_phase.rs
 1 src/c_call.rs
 11 src/c_shim.rs
-72 src/cache.rs
+71 src/cache.rs
 47 src/cache_gc.rs
 16 src/codegen_runtime.rs
 1 src/crash_report.rs

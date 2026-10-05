@@ -92,7 +92,11 @@ fn search(ca: Option<&str>) -> (Vec<String>, String) {
         .unwrap_or_else(|_| env!("CARGO_BIN_EXE_loft").to_string());
     let mut cmd = Command::new(bin);
     cmd.args(["search", "anything"])
+        // `LOFT_HOME` too: on Windows `$HOME` is not where loft looks (registry_index::cache_dir,
+        // @P332), so without it `search` read the real profile's cached index and never
+        // connected — the server saw nothing and loft said nothing.
         .env("HOME", &home)
+        .env("LOFT_HOME", &home)
         .env("XDG_CACHE_HOME", home.join("cache"))
         .env(
             "LOFT_REGISTRY_URL",
