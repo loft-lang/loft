@@ -5,7 +5,8 @@ orders the WORK between the tree and that bar.  It holds no price of its own: ea
 at the analysis file beside it that priced it, and at its rule in
 `doc/claude/formal/rewrites.md` (§ Proposed for a rule no site implements).
 
-**Position.**  `python3 bench/portal/outliers.py bench/portal/results/<host>.tsv`.  The rows
+**Position.**  `python3 bench/portal/outliers.py bench/portal/results/<host>.tsv` reads the
+last full run; it does not start one.  The rows
 named here are read off `results/firewall02.lan.betterbe.com.tsv` (arm64 macOS, commit
 `0d40d53d0`): 185 routines, 74 over the bar, three classes with a median over it (alloc-temp,
 record-field, keyed).  A row leaves this file when a re-measured run puts it under the bar; a
@@ -42,10 +43,10 @@ it directly.
 | | item | why it comes first |
 |---|---|---|
 | M1 | name ONE reference host in `bench/README.md` (@PLN185 A5) | the bar is read per host: `tween/ease` is over the bar on arm64 macOS and far under it on the x86-64 laptop, and seven rows sit within 6 % of the bar on an unpinned run |
-| M2 | join `main` into `laptop-perf-bench` of `loft-libs-graphics` (@PLN185 A3a) | `drawing` (14 routines) and `stage` (6) do not build from that branch at the current tree and are absent from the run; `draw_bezier` is measured in the form the built `(R-Refresh)` keep-range clause does not see |
-| M3 | re-align two twins (@PLN185 A4, bench README rule 1) | `check_request`'s twin decodes twice where the library decodes once (aligned ≈ 17×, so further from the bar than shown); `surface_fitted_spread`'s twin sweeps once where the library sweeps three times (aligned ≈ a third of its row) |
-| M4 | the portal's bytes-moved columns from `LOFT_STORE_CENSUS` on the native lane: bytes moved within a store, between two stores, and claimed fresh, with stores touched and store switches per op | ranks every row on § 1's axis with no profile; run § 5's pricing pass after it.  A report, never a gate |
-| M5 | re-measure the band after every two or three units (PERFORMANCE.md step 8) | each price describes the program as emitted before the unit ahead of it |
+| M2 | join `main` into `laptop-perf-bench` of `loft-libs-graphics` (@PLN185 A3a), then measure `drawing`, `stage` and `graphics` only | `drawing` (14 routines) and `stage` (6) do not build from that branch at the current tree and are absent from the run; `draw_bezier` is measured in the form the built `(R-Refresh)` keep-range clause does not see |
+| M3 | re-align two twins (@PLN185 A4, bench README rule 1), re-measuring those two rows | `check_request`'s twin decodes twice where the library decodes once (aligned ≈ 17×, so further from the bar than shown); `surface_fitted_spread`'s twin sweeps once where the library sweeps three times (aligned ≈ a third of its row) |
+| M4 | the portal's bytes-moved columns from `LOFT_STORE_CENSUS` on the native lane: bytes moved within a store, between two stores, and claimed fresh, with stores touched and store switches per op | ranks every row on § 1's axis with no profile; filled by the next full run, and § 5's pricing pass reads it.  A report, never a gate |
+| M5 | measure per unit only the rows that unit names (`python3 bench/stats.py --routine <bench/routine,…>`); run the full list (`make perf-portal`) after a group of units, not after each | a full run occupies the box for one unit's sake; the group run is what catches a row nobody targeted, and each price describes the program as emitted before the unit ahead of it |
 
 ## 3. Units with a price
 
@@ -144,13 +145,13 @@ CLASS, not a row; the visible reason is a hypothesis until priced.
 1. M1–M3: they change which rows are on the list.
 2. S1, then S2 and S3: the three units that take a row under the bar by removing a
    temporary; S1 is the mechanism four of the worst rows were priced against.
-3. M4, then § 5's pricing pass over the classes with a median over the bar (keyed,
-   record-field, alloc-temp), read on both axes.
+3. M4 and one full run (the first since step 1), then § 5's pricing pass over the classes
+   with a median over the bar (keyed, record-field, alloc-temp), read on both axes.
 4. S4 with C1 (the XS steps first), then C2; S6 and S7; S5; S8 and S9 after their decisions.
 5. The remaining cycle units, each on the row that carries it.
 
 Each unit lands with a guard of hand-computed cells on both backends, its switch A/B,
-`make rewrite-census` and `make perf-check` on its own row (PERFORMANCE.md steps 6–7).
+`make rewrite-census` and a timing of the rows it names (M5; PERFORMANCE.md steps 6–7).
 
 ## Tooling the pass keeps tripping over
 
