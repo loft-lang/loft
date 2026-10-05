@@ -9557,11 +9557,7 @@ use a separate collection or add after the loop"
         }
         if Self::is_narrowing_int_store(s_type, store_tp) {
             let dst = self.int_type_name(store_tp);
-            if let Some(hint) = self.nullable_sentinel_hint(code, store_tp, &dst) {
-                // The literal fits the type but lands on the reserved null
-                // sentinel of a nullable narrow FIELD — explain that, not "too big".
-                diagnostic!(self.lexer, Level::Error, "{hint}");
-            } else if !self.int_value_fits(code, store_tp) {
+            if !self.int_value_fits(code, store_tp) {
                 // Refused where the author can choose what an unfitting value becomes (@C127).
                 let src = self.int_type_name(s_type);
                 let cures = Self::narrowing_cures(code, store_tp, &dst, false);

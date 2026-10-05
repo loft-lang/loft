@@ -7138,15 +7138,9 @@ impl Parser {
                 || !(crate::data::Data::type_has_unresolved(exp_tp)
                     || crate::data::Data::type_has_unresolved(&td))
             {
-                // A FIELD STORE: a literal that fits the type but lands on the
-                // reserved null sentinel of a nullable narrow field is rejected
-                // here too (not just on `obj.f = …`), so `U8N { x: 255 }` doesn't
-                // silently store null.  The sentinel reservation is store-only —
-                // it is NOT applied to the `convert` type-fit (params/casts).
-                let dst_name = self.int_type_name(&td);
-                if let Some(hint) = self.nullable_sentinel_hint(value, &td, &dst_name) {
-                    diagnostic!(self.lexer, Level::Error, "{hint}");
-                } else if !self.convert_store(value, exp_tp, &td, "the field", None) {
+                // A constant that lands on a nullable narrow field's null code is refused
+                // by the store face (`nullable_narrow_constant_refusal`, loft#1796).
+                if !self.convert_store(value, exp_tp, &td, "the field", None) {
                     // @FR-N-Store is asked inside the store face; this arm is the plain
                     // type mismatch.
                     // Plan-07 phase 6 (partial) — name the value side first

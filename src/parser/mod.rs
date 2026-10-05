@@ -5059,7 +5059,7 @@ impl Parser {
     /// `f(65535)` to a `u16` param stay legal without `as`.  This is the TYPE-fit
     /// question (a full-width register value); the narrower nullable-narrow-FIELD
     /// sentinel reservation is a separate, store-only check
-    /// ([`Self::nullable_sentinel_hint`]) applied at the field-store sites.
+    /// (`nullable_narrow_constant_refusal`) applied at the store face.
     ///
     /// `@FR-I-Lit` — a literal checks at the width EXPECTED of it, and a value `if` or `match`
     /// passes that expectation to each arm (`@FR-T-Chk`), so one whose every arm is a fitting
@@ -5191,51 +5191,6 @@ impl Parser {
             });
         if repeated {
             self.lexer.rewind_diagnostics(mark);
-        }
-    }
-
-    /// When a literal stored into a NULLABLE narrow field fits the type's full
-    /// range but lands on the reserved null sentinel (out of the usable range),
-    /// return a hint explaining WHY — e.g. `255` in a nullable `u8`.  This tells
-    /// the developer the value is the null encoding, not just "too big", and
-    /// points at `not null` for the full range.  `None` for the ordinary
-    /// out-of-range case (a generic narrowing message fits that).
-    fn nullable_sentinel_hint(&self, code: &Value, dst: &Type, dst_name: &str) -> Option<String> {
-        let Type::Integer(spec) = dst else {
-            return None;
-        };
-        // @PLN25 F2 (range reconciliation): a plain (non-`Optional`) narrow integer is NON-null
-        // under DN1, so it uses the FULL width — no reserved sentinel, nothing to reject. `dst`
-        // here is a `Type::Integer` (an `Optional` target hit the let-else above), i.e. exactly
-        // the non-null narrow that F2 makes full-range. (The `Optional` narrow's constant that
-        // lands outside its usable range is `nullable_narrow_constant_refusal`'s, loft#1796.)
-        if crate::keys::pln25_f2_enabled() {
-            return None;
-        }
-        if spec.not_null {
-            return None;
-        }
-        let n = match code.unspan() {
-            Value::Int(n) => i64::from(*n),
-            Value::Long(n) => *n,
-            other => match crate::const_eval::const_eval(other, &self.data) {
-                Some(Value::Int(n)) => i64::from(n),
-                Some(Value::Long(n)) => n,
-                _ => return None,
-            },
-        };
-        let fits_full = n >= i64::from(spec.usable_min(false)) && n <= spec.usable_max(false);
-        let fits_usable = n >= i64::from(spec.usable_min(true)) && n <= spec.usable_max(true);
-        if fits_full && !fits_usable {
-            Some(format!(
-                "{n} is reserved as the null sentinel of a nullable {dst_name} \
-                 (usable {}..={}); declare the field `not null` for the full range, \
-                 or cast with `as {dst_name}`",
-                spec.usable_min(true),
-                spec.usable_max(true),
-            ))
-        } else {
-            None
         }
     }
 
