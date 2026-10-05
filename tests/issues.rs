@@ -1680,7 +1680,7 @@ fn test() {
     .result(loft::data::Value::Null);
 }
 
-/// @PLN40: `const virtual(…)` is rejected — a virtual field is already computed
+/// @FR-Const-VirtualReject (@PLN40): `const virtual(…)` is rejected — a virtual field is already computed
 /// and read-only, so `const` on it is redundant.
 #[test]
 fn pln40_const_virtual_field_rejected() {
