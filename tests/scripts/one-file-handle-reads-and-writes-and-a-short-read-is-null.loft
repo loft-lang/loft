@@ -14,6 +14,10 @@
 //
 // Values by hand: "0123" little-endian is 0x33323130 = 858927408; "4567" is
 // 0x37363534 = 926299444; 1094795585 is 0x41414141, written as "AAAA".
+//
+// @falsified-at: efa064884 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
+// native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/one-file-handle-reads-and-writes-and-a-short-read-is-null.patch
 
 fn scratch(tag: text) -> text {
   "{temp_dir() ?? "/tmp"}/loft_one_handle_{tag}_{ticks()}.bin"
