@@ -19,6 +19,9 @@
 //! - a loop buffer (`@FR-R-LoopBuffer`) was kept across iterations while a local bound from its
 //!   field owned the store and freed it at the iteration's end.  `hoist::loop_buffers` now
 //!   declines such a buffer.
+//! - a local promoted onto the return buffer, rebound from a call through a function
+//!   reference, freed the store it displaced, which could be the buffer the caller handed.
+//!   The three adopt-path displaced frees now ask the entry witness, as the rebind does.
 //!
 //! The controls are the shapes one step away, which were right.
 
@@ -165,6 +168,58 @@ fn a_loop_buffer_is_not_kept_when_a_local_frees_its_store() {
              println(\"R{s} {cp[1]}\"); }"
                 .to_string(),
             "R150 42",
+        ),
+    ]);
+}
+
+/// A local promoted onto the return buffer, rebound from a call through a function reference.
+/// The adopt path frees the store the local displaces, and that store may be the buffer the
+/// CALLER handed.  It must be guarded by the entry witness (`_rb_w_<name>`), as the rebind's own
+/// free is.
+#[test]
+fn a_displaced_free_never_releases_the_callers_buffer() {
+    const CANVAS: &str = "struct Canvas { data: vector<integer>, w: integer }\n\
+                          fn lit_canvas(t: integer) -> Canvas { Canvas { data: [t, t + 1], w: t } }\n";
+    const MAIN: &str =
+        "{ s = 0; for t in 0..3 { m = CALL; s += m.w + m.data[1]; } println(\"R{s}\"); }";
+    let main = |call: &str| format!("fn main() {}", MAIN.replace("CALL", call));
+    check(&[
+        (
+            "fn_ref_rebind",
+            format!(
+                "{CANVAS}fn rf(f: fn(integer) -> Canvas, t: integer) -> Canvas {{ \
+                 cv = Canvas {{ data: [], w: 0 }}; cv = f(t); cv }}\n{}",
+                main("rf(lit_canvas, t + 4)")
+            ),
+            "R33",
+        ),
+        (
+            "fn_ref_first_bind",
+            format!(
+                "{CANVAS}fn rb(f: fn(integer) -> Canvas, t: integer) -> Canvas {{ cv = f(t); cv }}\n{}",
+                main("rb(lit_canvas, t + 4)")
+            ),
+            "R33",
+        ),
+        // CONTROLS: a closure built in the function, and a named call.
+        (
+            "closure",
+            format!(
+                "{CANVAS}fn rc(t: integer) -> Canvas {{ \
+                 f = fn(k: integer) -> Canvas {{ Canvas {{ data: [k, k + 1], w: k }} }}; \
+                 cv = Canvas {{ data: [], w: 0 }}; cv = f(t); cv }}\n{}",
+                main("rc(t + 4)")
+            ),
+            "R33",
+        ),
+        (
+            "named_call",
+            format!(
+                "{CANVAS}fn rn(t: integer) -> Canvas {{ \
+                 cv = Canvas {{ data: [], w: 0 }}; cv = lit_canvas(t); cv }}\n{}",
+                main("rn(t + 4)")
+            ),
+            "R33",
         ),
     ]);
 }

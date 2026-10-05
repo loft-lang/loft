@@ -1144,11 +1144,22 @@ impl Output<'_> {
                 current.to_string()
             }
         };
-        let displaced_free = |free: &str| -> String {
+        // `@FR-O-Buffer` — a local promoted onto the return buffer may still hold the store the
+        // CALLER handed (`_rb_w_<name>`), which a displaced free must never release: the next
+        // call fills that buffer again.  The rebind's own `_old_` free asks the same.
+        let entry_guard = if self.retbuf_witness.contains(&var) {
+            format!(" && _dst.store_nr != _rb_w_{name}.store_nr")
+        } else {
+            String::new()
+        };
+        let displaced_free = || -> String {
             if witnessed {
                 String::new()
             } else {
-                free.to_string()
+                format!(
+                    "if _dst.store_nr != u16::MAX && _dst.store_nr != _src.store_nr{entry_guard} \
+                     {{ OpFreeRef(cell, _dst, \"{name}(displaced)\"); }} "
+                )
             }
         };
         // P198 — most operators are wrapped in Value::Span by the parser.
@@ -1489,10 +1500,7 @@ impl Output<'_> {
             // COPY arm already makes (it clears `_dst` in place via
             // `OpDatabase`).  A same-store adopt (the NRVO alias) and the
             // null-sentinel `_dst` are excluded by the guard.
-            let disp = displaced_free(&format!(
-                "if _dst.store_nr != u16::MAX && _dst.store_nr != _src.store_nr \
-                 {{ OpFreeRef(cell, _dst, \"{name}(displaced)\"); }} "
-            ));
+            let disp = displaced_free();
             let target = copy_target("_dst", first_bind);
             // `@FR-H-SwapRebind` — the copy arm as one runtime call that exchanges the result's
             // store into the destination without resetting it first, when it can.
@@ -1578,10 +1586,7 @@ impl Output<'_> {
             }
             write!(w, "{{ let _dst = var_{name}; let _src = ")?;
             self.output_code_inner(w, to)?;
-            let disp = displaced_free(&format!(
-                "if _dst.store_nr != u16::MAX && _dst.store_nr != _src.store_nr \
-                 {{ OpFreeRef(cell, _dst, \"{name}(displaced)\"); }} "
-            ));
+            let disp = displaced_free();
             let target = copy_target("_dst", first_bind);
             write!(
                 w,
@@ -1623,10 +1628,7 @@ impl Output<'_> {
             }
             write!(w, "{{ let _dst = var_{name}; let _src = ")?;
             self.output_code_inner(w, to)?;
-            let disp = displaced_free(&format!(
-                "if _dst.store_nr != u16::MAX && _dst.store_nr != _src.store_nr \
-                 {{ OpFreeRef(cell, _dst, \"{name}(displaced)\"); }} "
-            ));
+            let disp = displaced_free();
             let target = copy_target("_dst", first_bind);
             write!(
                 w,
