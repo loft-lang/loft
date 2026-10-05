@@ -1,8 +1,8 @@
-diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
-index 1e920aed1..339710bea 100644
---- b/src/parser/expressions.rs
-+++ a/src/parser/expressions.rs
-@@ -3507,7 +3507,7 @@ use a separate collection or add after the loop"
+diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
+index 1de2245ae..aee8053c2 100644
+--- a/src/parser/expressions.rs
++++ b/src/parser/expressions.rs
+@@ -3524,7 +3524,7 @@ use a separate collection or add after the loop"
          // nothing, so `x = ;` silently bound null and `x += ;` compiled to a program whose
          // later output vanished (loft#1800's library parser met it: the compiler accepted
          // what no grammar of loft allows).
@@ -11,7 +11,7 @@ index 1e920aed1..339710bea 100644
              diagnostic!(self.lexer, Level::Error, "Expected a value after `{op}`");
              *code = Value::Null;
              return Type::Void;
-@@ -4161,12 +4161,7 @@ use a separate collection or add after the loop"
+@@ -4216,12 +4216,7 @@ use a separate collection or add after the loop"
          // itself, the literal had no member types to steer it.
          let link_tuple = self.ref_tuple_expected(op, to);
          let expect = link_tuple.as_ref().unwrap_or(f_type);
@@ -25,7 +25,7 @@ index 1e920aed1..339710bea 100644
          // loft#1840 — `(B-Copy)` for a text: `t = s.name` copies the text into `t`, so a `+=`
          // into it that nothing reads is a lost write.  A text has no copy lowering of its own
          // (the bind is the `Set`), so the verdict is recorded here, from the same place test
-@@ -7660,242 +7655,6 @@ use a separate collection or add after the loop"
+@@ -7779,242 +7774,6 @@ use a separate collection or add after the loop"
          binds
      }
  
@@ -268,7 +268,7 @@ index 1e920aed1..339710bea 100644
      /// Parse an assignment, keeping [`Parser::last_place_discharge`] the answer for the
      /// left-hand side that is being parsed HERE.
      ///
-@@ -8006,9 +7765,6 @@ use a separate collection or add after the loop"
+@@ -8125,9 +7884,6 @@ use a separate collection or add after the loop"
          // LHS parse.  Only ever SET here (never cleared): a nested parse_assign
          // inside the list must not un-mark the elements around it.  Restored
          // below, so the RHS — parsed further down — sees the outer state again.
@@ -278,7 +278,7 @@ index 1e920aed1..339710bea 100644
          let saved_tuple_lhs = self.in_tuple_lhs;
          if self.peek_tuple_lhs() {
              self.in_tuple_lhs = true;
-@@ -8296,9 +8052,6 @@ use a separate collection or add after the loop"
+@@ -8420,9 +8176,6 @@ use a separate collection or add after the loop"
                  if !self.first_pass {
                      self.change_var_type(tmp, &tmp_tp);
                  }
@@ -288,7 +288,7 @@ index 1e920aed1..339710bea 100644
                  let mut steps = vec![Value::Set(tmp, Box::new(rhs))];
                  for (i, &v_nr) in var_nrs.iter().enumerate() {
                      // The arity mismatch above is already an Error, but it only
-@@ -8375,10 +8128,7 @@ use a separate collection or add after the loop"
+@@ -8499,10 +8252,7 @@ use a separate collection or add after the loop"
                          self.change_var_type(v_nr, &member_tp);
                      }
                      let step = if ref_def_nr == u32::MAX {
@@ -300,10 +300,10 @@ index 1e920aed1..339710bea 100644
                          if let Some((syn, _)) = tagged_member {
                              read = self.emit_nullable_slot_read(syn, read, &rhs_elems[i]);
                          }
-diff --git b/src/parser/mod.rs a/src/parser/mod.rs
-index d817aa749..0591a1712 100644
---- b/src/parser/mod.rs
-+++ a/src/parser/mod.rs
+diff --git a/src/parser/mod.rs b/src/parser/mod.rs
+index df456d2e6..4a2c3fc76 100644
+--- a/src/parser/mod.rs
++++ b/src/parser/mod.rs
 @@ -388,9 +388,6 @@ pub struct Parser {
      /// rather than resolve to that definition (loft#756).  See
      /// `Parser::at_binding_name`.
@@ -311,14 +311,14 @@ index d817aa749..0591a1712 100644
 -    /// `(T-Destr)` over places — the value the next `parse_assign_op` stores, read off the
 -    /// pattern's temp, in place of a right-hand side it would otherwise parse itself.
 -    pub(crate) preset_rhs: Option<(Value, Type)>,
-     /// @PLN86 — the host-supplied sandbox policy (profiles + designations).
-     /// Empty by default; set by the embedder before parsing.  A script cannot
-     /// designate itself — the designation is read from here, not the source.
-@@ -1732,7 +1729,6 @@ impl Parser {
+     /// The variable whose `x: const T = …` declaration is being parsed: its own initialising
+     /// bind sets the value and is not a write `const` forbids (`@FR-Const-ConstructExempt`).
+     /// `u16::MAX` outside one.
+@@ -1740,7 +1737,6 @@ impl Parser {
              rebuild_watch: u16::MAX,
              rebuild_watch_hit: false,
              in_tuple_lhs: false,
 -            preset_rhs: None,
+             declaring_const: u16::MAX,
              sandbox: crate::sandbox::SandboxConfig::default(),
              def_sandbox: HashMap::new(),
-             sandbox_unbounded_loops: HashMap::new(),
