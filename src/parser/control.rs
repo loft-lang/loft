@@ -20801,10 +20801,12 @@ impl Parser {
                 with_receiver.push(dispatch.clone());
                 with_receiver.extend_from_slice(types.get(1..).unwrap_or(&[]));
                 let routed = self.data.routed_types(&with_receiver);
-                match self.select_overload(u16::MAX, name, &routed) {
+                // A library type's set lives in its own source (`Data::receiver_overload_source`).
+                let set_source = self.data.receiver_overload_source(name, dispatch);
+                match self.select_overload(set_source, name, &routed) {
                     crate::parser::dispatch::Selection::One(d) => {
                         return self
-                            .dynamic_dispatcher(u16::MAX, name, &routed, Some(d))
+                            .dynamic_dispatcher(set_source, name, &routed, Some(d))
                             .unwrap_or(d);
                     }
                     sel @ crate::parser::dispatch::Selection::Ambiguous(_) => {
@@ -20823,7 +20825,7 @@ impl Parser {
                     // for `parse_method_selecting`, which ends the call there as the bare
                     // spelling does rather than refusing the slot's routine on top of it.
                     sel @ crate::parser::dispatch::Selection::NoneApplicable => {
-                        if let Some(dd) = self.dynamic_dispatcher(u16::MAX, name, &routed, None) {
+                        if let Some(dd) = self.dynamic_dispatcher(set_source, name, &routed, None) {
                             return dd;
                         }
                         // The slot holds the SET itself (a `self` set that dispatches past its

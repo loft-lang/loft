@@ -1216,8 +1216,9 @@ impl Parser {
             return None;
         }
         let routed = self.data.routed_types(types);
-        let chosen = if self.data.has_overload_set(form) {
-            match self.select_overload(u16::MAX, form, &routed) {
+        let set_source = self.data.receiver_overload_source(form, &types[0]);
+        let chosen = if self.data.has_overload_set_in(set_source, form) {
+            match self.select_overload(set_source, form, &routed) {
                 crate::parser::dispatch::Selection::One(d) => d,
                 crate::parser::dispatch::Selection::Ambiguous(_) => return None,
                 // The set is the NAME's, across receivers: none of its members applying says

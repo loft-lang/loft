@@ -3664,6 +3664,7 @@ impl Parser {
         // the now-registered real def in the library source.
         let applied = std::mem::take(&mut self.applied_imports);
         for pi in &applied {
+            self.data.import_operators(pi.lib_source, pi.for_source);
             match &pi.spec {
                 ImportSpec::Wildcard => {
                     self.data
@@ -16141,7 +16142,8 @@ impl Parser {
         if m == u32::MAX {
             return Some(m);
         }
-        if !self.data.has_overload_set(op_name) {
+        let set_source = self.data.receiver_overload_source(op_name, first);
+        if !self.data.has_overload_set_in(set_source, op_name) {
             if Self::visible_arity(&self.data, m) != types.len() {
                 m = self
                     .data
@@ -16151,7 +16153,7 @@ impl Parser {
             return Some(m);
         }
         let routed = self.data.routed_types(types);
-        match self.select_overload(u16::MAX, op_name, &routed) {
+        match self.select_overload(set_source, op_name, &routed) {
             crate::parser::dispatch::Selection::One(d) => return Some(d),
             sel @ crate::parser::dispatch::Selection::Ambiguous(_) => {
                 if !self.first_pass {
@@ -18130,7 +18132,9 @@ impl Parser {
                         // `use foo as m;` (`m::`): names come in unqualified only through
                         // an explicit `::*` or `::(…)` spec, so a library growing a name
                         // can never collide with the program's own (@C98).
-                        let import_spec = spec;
+                        // …but a bare one still brings the library's operator definitions
+                        // (`Data::import_operators`), so it queues an empty name list.
+                        let import_spec = spec.or(Some(ImportSpec::Names(Vec::new())));
                         if let Some(import_spec) = import_spec {
                             self.pending_imports.push(PendingImport {
                                 for_source: self.data.source,
@@ -18507,6 +18511,7 @@ impl Parser {
             // with overwrite semantics after a cyclic `use` has finished
             // registering the partner file's definitions.
             self.applied_imports.push(pi.clone());
+            self.data.import_operators(pi.lib_source, cur);
             match pi.spec {
                 ImportSpec::Wildcard => {
                     self.data.import_all(pi.lib_source, cur, pi.public);
@@ -19092,7 +19097,7 @@ impl Parser {
             // Same rule as a bare `use`: only an explicit `::` spec brings names in
             // unqualified; without one the module is reached through its qualifier
             // (@C98).
-            let import_spec = spec;
+            let import_spec = spec.or(Some(ImportSpec::Names(Vec::new())));
             if let Some(import_spec) = import_spec {
                 self.pending_imports.push(PendingImport {
                     for_source: self.data.source,

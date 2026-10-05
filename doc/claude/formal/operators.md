@@ -139,4 +139,4 @@ saying so.
 
 ## Deviations
 
-**OPEN: 0.**
+**OPEN: 0** — `D-opr-1` (opened and CLOSED 2026-10-05: an operator on a library type was unreachable through a bare `use`).  The record is [operators-history.md](operators-history.md).

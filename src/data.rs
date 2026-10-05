@@ -7627,6 +7627,46 @@ impl Data {
         main != u32::MAX && self.def(main).def_type == DefType::Dynamic
     }
 
+    /// The source whose overload set `name` a call on `receiver` chooses among: the caller's
+    /// scope (`u16::MAX`) when the set is there, else the source that declares the receiver's
+    /// TYPE when that source has one.  `(Op-Left)` and `x.m(…)` choose among the members of
+    /// the RECEIVER's method, and a library declares its type's overloads in its own source:
+    /// through a qualified import (`use time;`, @C98) the set's bare name is not in the
+    /// caller's scope, so `d.minus(span)` reached the first member alone and refused the
+    /// `Duration` the second one takes, and `d - span` was refused outright.
+    ///
+    /// Asked for a RECEIVER only — the method spelling and the operator forms.  A free call
+    /// keeps its own scope: a type's source is never a second place to find a free function
+    /// (loft#853), and the stdlib's sets are in every scope already.
+    #[must_use]
+    pub fn receiver_overload_source(&self, name: &str, receiver: &Type) -> u16 {
+        if self.has_overload_set(name) {
+            return u16::MAX;
+        }
+        let tp = match receiver {
+            Type::RefVar(inner) => inner.as_ref(),
+            other => other,
+        };
+        let type_nr = self.type_def_nr(tp);
+        if type_nr == u32::MAX {
+            return u16::MAX;
+        }
+        let own = self.definitions[type_nr as usize].source;
+        let set = self.source_nr(own, name);
+        if own != STD_SOURCE && set != u32::MAX && self.def(set).def_type == DefType::Dynamic {
+            own
+        } else {
+            u16::MAX
+        }
+    }
+
+    /// Is there an overload set named `name` in `source` (`u16::MAX`: the caller's scope)?
+    #[must_use]
+    pub fn has_overload_set_in(&self, source: u16, name: &str) -> bool {
+        let main = self.source_nr(source, name);
+        main != u32::MAX && self.def(main).def_type == DefType::Dynamic
+    }
+
     /// Does `d_nr` declare the visible parameters `params` — compared by type definition, at
     /// every position whose wanted type is concrete (a type variable or an unknown there asks
     /// nothing)?
@@ -12378,6 +12418,23 @@ impl Data {
         for (name, def_nr) in self.exported_names(lib_source) {
             self.note_ambiguity(&name, into_source, def_nr);
             self.bind_import(&name, (into_source, lib_source), def_nr, public, false);
+        }
+    }
+
+    /// `@FR-Op-Left` — every `use` of a library binds the `operator` definitions it publishes,
+    /// whatever its spec: `use time;` brings in only the `time::` qualifier (@C98), and a value
+    /// of `time::DateTime` must still answer `<`, `-`, `"{dt}"` and `for … in` with the
+    /// operators its package declares, as `dt.year()` answers with its methods through the
+    /// type's attribute table.  Bound privately — the importer does not pass them on — and
+    /// under their mangled per-type keys, which `(Op-Home)` places in the type's own source,
+    /// so they cannot take a name the importer could declare.  Each operator site asks by
+    /// name (the forms, the overload set, `to_text`, `next`), and this is the one place the
+    /// names arrive.
+    pub fn import_operators(&mut self, lib_source: u16, into_source: u16) {
+        for (name, def_nr) in self.exported_names(lib_source) {
+            if self.definitions[def_nr as usize].operator_form {
+                self.bind_import(&name, (into_source, lib_source), def_nr, false, true);
+            }
         }
     }
 
