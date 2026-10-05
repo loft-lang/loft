@@ -3277,7 +3277,23 @@ impl Output<'_> {
         let block_serial = self.block_serial;
         // `@FR-R-PushFill`'s repeat-literal clause — the statement the fill already emitted.
         let mut repeat_skip: Option<usize> = None;
+        // `@FR-R-RefillText` — the statement holding the call an armed release waits for.
+        let mut rt_call_at: Option<usize> = None;
         for (vnr, v) in operators.iter().enumerate() {
+            if let Some(at) = rt_call_at
+                && vnr > at
+            {
+                self.refill_text_unconsumed()?;
+                rt_call_at = None;
+            }
+            if self
+                .refill_text_pending
+                .is_some_and(|p| p.2 == block_serial)
+                && rt_call_at.is_none()
+                && !matches!(v, Value::Line(_))
+            {
+                rt_call_at = Some(vnr);
+            }
             self.close_groups_before(w, block_serial, vnr)?;
             self.close_ptr_windows_before(block_serial, vnr);
             // DX-source-map: surface line comments at the
@@ -3298,6 +3314,22 @@ impl Output<'_> {
                 continue;
             }
             if repeat_skip.is_some_and(|last| vnr <= last) {
+                continue;
+            }
+            // `@FR-R-RefillText` — an admitted pool statement keeps only its mint: the release
+            // is the call's to emit, which calls the refill twin instead where it can.
+            if let Some(&(b, tp)) = self
+                .refill_text
+                .pools
+                .get(&(std::ptr::from_ref(v.unspan()) as usize))
+            {
+                let name = sanitize(self.data.def(self.def_nr).variables().name(b));
+                self.indent(w)?;
+                writeln!(
+                    w,
+                    "if var_{name}.store_nr == u16::MAX {{ var_{name} = OpDatabase(cell, var_{name}, {tp}_i32); }}"
+                )?;
+                self.refill_text_pending = Some((b, tp, block_serial));
                 continue;
             }
             // `@FR-R-PushFill`'s repeat-literal clause — a `[c; n]` template and its copies are
@@ -3787,6 +3819,9 @@ impl Output<'_> {
             }
             self.bind_group_push(w, operators, vnr, block_serial)?;
         }
+        if rt_call_at.is_some() {
+            self.refill_text_unconsumed()?;
+        }
         self.close_groups_before(w, block_serial, usize::MAX)?;
         self.close_ptr_windows_before(block_serial, usize::MAX);
         if flat_lit_open.is_some() {
@@ -3890,6 +3925,20 @@ impl Output<'_> {
         clippy::too_many_lines,
         reason = "moved whole out of output_block: one match arm per element-first override"
     )]
+    /// `@FR-R-RefillText` — a release the pool statement left to its call and no call took
+    /// would be a text leaked per call; it is an emission fault, never a silent leak.
+    fn refill_text_unconsumed(&mut self) -> std::io::Result<()> {
+        if let Some((b, _, _)) = self.refill_text_pending.take() {
+            let def = self.data.def(self.def_nr);
+            return Err(std::io::Error::other(format!(
+                "refill-text: the release of `{}` in `{}` was left to a call that did not take it",
+                def.variables().name(b),
+                def.name()
+            )));
+        }
+        Ok(())
+    }
+
     fn elem_first_override(
         &mut self,
         w: &mut dyn Write,

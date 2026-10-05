@@ -9212,7 +9212,7 @@ fn pool_of(stmt: &Value, data: &Data) -> Option<(u16, u16)> {
 
 /// The byte offset of a record path rooted at `b` — `b` itself, or `OpGetField` steps into
 /// its inline sub-records.
-fn path_offset(v: &Value, b: u16, data: &Data) -> Option<u32> {
+pub(crate) fn path_offset(v: &Value, b: u16, data: &Data) -> Option<u32> {
     if is_var(v, b) {
         return Some(0);
     }

@@ -196,11 +196,21 @@ fn m1_sz(n: integer) -> integer {
   census_records()
 }
 
+// The forwarded exit (c6's callee): declined by (b), so it keeps the release.  Admitting it
+// hands half the turns to the plain `mk_sz`, whose fresh claims over a kept buffer leak.
+fn m1_fwd(n: integer) -> integer {
+  t = 0;
+  for i in 0..n { e = mk_fwd(i); t += size(e.a) + 1; }
+  assert(t > 0, "m1_fwd ran");
+  census_records()
+}
+
 // m1 — the live records after 1 000 calls equal those after 10, for each shape.
 fn m1() {
   assert(census_records() >= 0, "m1: the census answers");
   assert(m1_env(1000) == m1_env(10), "m1 env shape grows: {m1_env(10)} -> {m1_env(1000)} records");
   assert(m1_sz(1000) == m1_sz(10), "m1 sized shape grows: {m1_sz(10)} -> {m1_sz(1000)} records");
+  assert(m1_fwd(1000) == m1_fwd(10), "m1 forwarded shape grows: {m1_fwd(10)} -> {m1_fwd(1000)} records");
   println("m1 true");
 }
 

@@ -21,6 +21,7 @@ const TRACE: &[&str] = &[
     "refill-text: n_c9 → n_mk_sz declined — the result is not only read",
     "refill-text: n_m1_env → n_mk_env admitted",
     "refill-text: n_m1_sz → n_mk_sz admitted",
+    "refill-text: n_m1_fwd → n_mk_fwd declined — the buffer is named outside its literals",
 ];
 
 fn emit(env: &[(&str, &str)]) -> (String, bool) {

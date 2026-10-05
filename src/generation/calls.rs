@@ -216,12 +216,43 @@ impl Output<'_> {
             && (self.current_call_def as usize) < self.data.definitions.len()
             && std::ptr::eq(self.data.def(self.current_call_def), def_fn)
             && self.ranged_call(self.current_call_def, vals, twin_args.is_some());
+        // `@FR-R-RefillText` — the call its pool statement left the release to: the refill
+        // twin where the plain callee would be called; before an `__inv`/`__rg` twin, the
+        // release the pool statement did not emit.
+        let refill = match (
+            self.refill_text_pending,
+            self.refill_text.calls.get(&(vals.as_ptr() as usize)),
+        ) {
+            (Some((b, tp, _)), Some(&(cb, _))) if b == cb => {
+                self.refill_text_pending = None;
+                Some((b, tp))
+            }
+            _ => None,
+        };
+        let refill_twin = refill.is_some()
+            && twin_args.is_none()
+            && !ranged
+            && forward.is_none()
+            && std::ptr::eq(self.data.def(self.current_call_def), def_fn);
+        if refill.is_some() {
+            crate::rewrite_census::fired("R-RefillText", usize::from(refill_twin));
+        }
+        if let Some((b, tp)) = refill
+            && !refill_twin
+        {
+            let name = super::sanitize(self.data.def(self.def_nr).variables().name(b));
+            write!(w, "{{ stores.remove_claims(&(var_{name}), {tp}_u16); ")?;
+        }
+        if refill_twin && !self.rt_requests.contains(&self.current_call_def) {
+            self.rt_requests.push(self.current_call_def);
+        }
         write!(
             w,
-            "{}{}{}(",
+            "{}{}{}{}(",
             self.fn_ident(def_fn),
             if twin_args.is_some() { "__inv" } else { "" },
-            if ranged { "__rg" } else { "" }
+            if ranged { "__rg" } else { "" },
+            if refill_twin { "__rt" } else { "" }
         )?;
         let mut first_arg = true;
         if matches!(abi, crate::codegen_runtime::Abi::Cell) {
@@ -304,6 +335,9 @@ impl Output<'_> {
             )?;
             self.write_tuple_fields(w, tp, &Value::RawExpr("__vd".to_string()), "__vt")?;
             write!(w, "__vd }}")?;
+        }
+        if refill.is_some() && !refill_twin {
+            write!(w, " }}")?;
         }
         Ok(())
     }
@@ -701,6 +735,31 @@ impl Output<'_> {
             }
         {
             res = "{{let db = @v1; let s_val = AsRef::<str>::as_ref(&*@val); if db.rec != 0 {{ let store = stores.store_mut(&db); let s_pos = store.set_str(s_val); store.set_u32_raw(db.rec, db.pos + u32::from(@fld), s_pos); }}}}".to_string();
+        }
+        // `@FR-R-RefillText` — in a refill twin, the literal's text sets into its own buffer
+        // refill the slot: written over the block the slot owns when the text fits, released
+        // and claimed anew when it does not; a null releases the block the slot held.
+        if def_fn.name() == "OpSetText"
+            && let Some(b) = self.refill_twin_buf
+            && vals
+                .first()
+                .is_some_and(|t| super::hoist::path_offset(t, b, self.data).is_some())
+            && let Some(vi) = def_fn.attributes().iter().position(|a| a.name == "val")
+        {
+            let borrowed = !self.text_set_copy_kept
+                && match vals.get(vi).map(Value::unspan) {
+                    Some(Value::Text(_)) => true,
+                    Some(Value::Var(v)) => self.text_owned(*v),
+                    _ => false,
+                };
+            res = if matches!(vals.get(vi), Some(Value::Null)) {
+                "{{let db = @v1; if db.rec != 0 {{ let store = stores.store_mut(&db); let fld = db.pos + u32::from(@fld); let old = store.get_u32_raw(db.rec, fld); if old != 0 {{ store.delete(old); }} store.set_u32_raw(db.rec, fld, 0u32); }}}}"
+            } else if borrowed {
+                "{{let db = @v1; let s_val = AsRef::<str>::as_ref(&*@val); if db.rec != 0 {{ stores.store_mut(&db).refill_str(db.rec, db.pos + u32::from(@fld), s_val); }}}}"
+            } else {
+                "{{let db = @v1; let s_val = @val.to_string(); if db.rec != 0 {{ stores.store_mut(&db).refill_str(db.rec, db.pos + u32::from(@fld), &s_val); }}}}"
+            }
+            .to_string();
         }
         // Bytecode templates wrap text values in Str::new(...) for put_stack compatibility.
         // Native code uses &str directly — strip the wrapper by extracting its argument.

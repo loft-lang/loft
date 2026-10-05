@@ -864,6 +864,17 @@ pub struct Output<'a> {
     pub refill_text: hoist::RefillTextSites,
     /// `LOFT_NO_REFILL_TEXT=1` — every pooled call site keeps its release and the plain callee.
     pub refill_text_disabled: bool,
+    /// The release an admitted pool statement did not emit, `(buffer, type)`: the call after
+    /// it consumes it — by calling the refill twin, or by releasing first where it calls an
+    /// `__inv`/`__rg` twin.  Still armed after that statement is an emission fault.
+    /// The third member is the serial of the block that armed it.
+    pub refill_text_pending: Option<(u16, u16, usize)>,
+    /// The refill twins calls have asked for, and the ones already emitted.
+    pub rt_requests: Vec<u32>,
+    pub rt_emitted: HashSet<u32>,
+    /// Set while a refill twin's body is emitted: its return buffer, whose literal text sets
+    /// refill their slots; its name takes `__rt`.
+    pub refill_twin_buf: Option<u16>,
     /// `LOFT_NO_BYTE_READ=1` — a `vector<u8>` element read keeps its template.
     pub byte_read_disabled: bool,
     /// `LOFT_NO_TEXT_SET_BORROW=1` — every `OpSetText` copies its value first, as before.
@@ -2331,6 +2342,10 @@ impl<'a> Output<'a> {
             refill_keep_disabled: std::env::var("LOFT_NO_REFILL_KEEP").is_ok_and(|v| v != "0"),
             refill_text: hoist::RefillTextSites::default(),
             refill_text_disabled: std::env::var("LOFT_NO_REFILL_TEXT").is_ok_and(|v| v != "0"),
+            refill_text_pending: None,
+            rt_requests: Vec::new(),
+            rt_emitted: HashSet::new(),
+            refill_twin_buf: None,
             recptr_trace: std::env::var("LOFT_TRACE_RECPTR").is_ok(),
             scalar_hoists: Vec::new(),
             scalar_write_cache: HashMap::new(),
@@ -2754,6 +2769,11 @@ impl Output<'_> {
         } else {
             hoist::complete_writes(self.data, self.stores, def_nr)
         };
+        // `@FR-R-RefillText` — a refill twin reads every text slot of its buffer, so a buffer
+        // it mints itself keeps the zero-filling mint (a slot holds 0 or a block it owns).
+        if let Some(b) = self.refill_twin_buf {
+            self.complete_writes.db_vars.remove(&b);
+        }
         self.refill = if crate::keys::refill_buffer_enabled() {
             hoist::refill_buffers(self.data, self.stores, def_nr)
         } else {
@@ -9043,8 +9063,17 @@ extern crate loft;"
                 self.twin = None;
             }
         }
-        // `@FR-R-RangedCall` — the ranged variants the calls asked for, each emitted under its
-        // seeded facts; a variant's own calls may ask for more, so until none is left.
+        self.output_ranged_variants(w, program_store.as_ref())?;
+        self.output_refill_twins(w, program_store.as_ref())
+    }
+
+    /// `@FR-R-RangedCall` — the ranged variants the calls asked for, each emitted under its
+    /// seeded facts; a variant's own calls may ask for more, so until none is left.
+    fn output_ranged_variants(
+        &mut self,
+        w: &mut dyn Write,
+        program_store: Option<&(crate::database::Stores, crate::keys::DbRef)>,
+    ) -> std::io::Result<()> {
         while let Some(at) = self
             .rg_requests
             .iter()
@@ -9070,11 +9099,35 @@ extern crate loft;"
             }
             self.range_override.push(std::rc::Rc::new(facts));
             self.emitting_ranged = true;
-            let r = self.output_function(w, dnr, program_store.as_ref());
+            let r = self.output_function(w, dnr, program_store);
             self.emitting_ranged = false;
             self.range_override.pop();
             self.twin = None;
             r?;
+        }
+        Ok(())
+    }
+
+    /// `@FR-R-RefillText` — the refill twins (`__rt`) calls asked for: the callee's body with
+    /// its literal's text sets refilling their slots.  A twin's own calls may ask for more
+    /// twins of either kind, so until neither has a request left.
+    fn output_refill_twins(
+        &mut self,
+        w: &mut dyn Write,
+        program_store: Option<&(crate::database::Stores, crate::keys::DbRef)>,
+    ) -> std::io::Result<()> {
+        while let Some(at) = self
+            .rt_requests
+            .iter()
+            .position(|r| !self.rt_emitted.contains(r))
+        {
+            let dnr = self.rt_requests[at];
+            self.rt_emitted.insert(dnr);
+            self.refill_twin_buf = hoist::retbuf_var(self.data, dnr);
+            let r = self.output_function(w, dnr, program_store);
+            self.refill_twin_buf = None;
+            r?;
+            self.output_ranged_variants(w, program_store)?;
         }
         Ok(())
     }
@@ -9809,11 +9862,16 @@ extern crate loft;"
         let twin = self.twin.clone();
         write!(
             w,
-            "{}fn {}{}{}(cell: &std::cell::UnsafeCell<Stores>",
+            "{}fn {}{}{}{}(cell: &std::cell::UnsafeCell<Stores>",
             self.fn_inline_attr(def),
             self.fn_ident(def),
             if twin.is_some() { "__inv" } else { "" },
-            if self.emitting_ranged { "__rg" } else { "" }
+            if self.emitting_ranged { "__rg" } else { "" },
+            if self.refill_twin_buf.is_some() {
+                "__rt"
+            } else {
+                ""
+            }
         )?;
         // @PLN157 § V-aa (`@FR-R-ValueRecord`) — an admitted function returns its
         // record's fields in registers, so it needs no return BUFFER to write them into.
