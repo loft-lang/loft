@@ -7,6 +7,13 @@
 // so it shared the twin's defect: the function-exit release freed the store the return was
 // handing out, a panic on `--native` (loft#1871).  Kept apart from the scalar and text
 // instances because it failed on a different channel.
+//
+// @falsified-at: e6383dd9e — native exit 1 -> 0, native panicked -> clean (the store the return
+//   read was already freed).  interpret INERT: the control reads the freed store and finds the
+//   right value in it; only `LOFT_STRICT_STORES=1` names the use-after-free there.
+// @falsified-by: tests/falsified/a-generic-record-parameter-reassigns-like-its-twin.patch — the same channels.  Score it with
+//   `scripts/falsify.sh <this file> --patch <that patch>` once e6383dd9e is out of reach.
+// HOLDS: leak, refusals and asserts are clean on both trees and both backends.
 
 struct S { x: integer }
 
