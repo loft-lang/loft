@@ -1,13 +1,13 @@
-diff --git b/src/codegen_runtime.rs a/src/codegen_runtime.rs
-index 2037deac6..b4ba7bc8a 100644
---- b/src/codegen_runtime.rs
-+++ a/src/codegen_runtime.rs
-@@ -5026,16 +5026,6 @@ pub trait LoftCoroutine {
+diff --git a/src/codegen_runtime.rs b/src/codegen_runtime.rs
+index 3bf8d26be..1c6e7f2c5 100644
+--- a/src/codegen_runtime.rs
++++ b/src/codegen_runtime.rs
+@@ -5028,16 +5028,6 @@ pub trait LoftCoroutine {
      /// Freeing twice is not possible: every scope-exit free the generator DOES run nulls
      /// its own field, and the generated body only frees fields that are still set.
      fn drop_stores(&mut self, _stores: &mut Stores) {}
 -
--    /// Has this generator reached its end (`(G-Done)`)?  Asked only when an advance
+-    /// @FR-G-Next / @FR-G-Done — has this generator reached its end?  Asked only when an advance
 -    /// answered its channel's end sentinel, because that sentinel is also a value a
 -    /// generator may yield — `i64::MIN` is the integer null, `"\0"` the text null,
 -    /// `DbRef::NULL` a null reference — and `(G-Next)` produces it like any other.
@@ -19,7 +19,7 @@ index 2037deac6..b4ba7bc8a 100644
  }
  
  std::thread_local! {
-@@ -5324,7 +5314,7 @@ fn advance_native<R>(
+@@ -5326,7 +5316,7 @@ fn advance_native<R>(
  pub fn coroutine_next_i64(gen_ref: DbRef, stores: &mut Stores) -> i64 {
      advance_native(gen_ref, stores, COROUTINE_EXHAUSTED, |coro, stores| {
          let val = coro.next_i64(stores);
@@ -28,7 +28,7 @@ index 2037deac6..b4ba7bc8a 100644
      })
  }
  
-@@ -5348,7 +5338,7 @@ pub fn coroutine_next_dbref(gen_ref: DbRef, stores: &mut Stores) -> DbRef {
+@@ -5350,7 +5340,7 @@ pub fn coroutine_next_dbref(gen_ref: DbRef, stores: &mut Stores) -> DbRef {
      // check also flips to true here because exhaustion frees the slot.
      advance_native(gen_ref, stores, DbRef::NULL, |coro, stores| {
          let val = coro.next_dbref(stores);
@@ -37,7 +37,7 @@ index 2037deac6..b4ba7bc8a 100644
      })
  }
  
-@@ -5362,7 +5352,7 @@ pub fn coroutine_next_text(gen_ref: DbRef, stores: &mut Stores) -> String {
+@@ -5364,7 +5354,7 @@ pub fn coroutine_next_text(gen_ref: DbRef, stores: &mut Stores) -> String {
          crate::state::STRING_NULL.to_string(),
          |coro, stores| {
              let val = coro.next_text(stores);
@@ -46,15 +46,15 @@ index 2037deac6..b4ba7bc8a 100644
              (val, done)
          },
      )
-diff --git b/src/generation/coroutine.rs a/src/generation/coroutine.rs
-index 7886d2160..3a16ab9a7 100644
---- b/src/generation/coroutine.rs
-+++ a/src/generation/coroutine.rs
+diff --git a/src/generation/coroutine.rs b/src/generation/coroutine.rs
+index 73998e81c..2e8ec879d 100644
+--- a/src/generation/coroutine.rs
++++ b/src/generation/coroutine.rs
 @@ -1449,10 +1449,6 @@ fn emit_struct_def(
  ) -> std::io::Result<()> {
      writeln!(w, "struct {struct_name} {{")?;
      writeln!(w, "    state: u32,")?;
--    // Set where the generator ENDS (`(G-Done)`), read by `LoftCoroutine::done`.  The value
+-    // @FR-G-Done — set where the generator ENDS, read by `LoftCoroutine::done`.  The value
 -    // channels' end sentinel is also a value a generator may yield — `i64::MIN` is the
 -    // integer null, `"\0"` the text null — so the value alone cannot say which happened.
 -    writeln!(w, "    __done: bool,")?;
@@ -69,7 +69,7 @@ index 7886d2160..3a16ab9a7 100644
      for attr in attrs {
          let aname = sanitize(&attr.name);
          if is_text_slot(&attr.typedef) {
-@@ -1756,10 +1751,6 @@ impl Output<'_> {
+@@ -1759,10 +1754,6 @@ impl Output<'_> {
                  close,
              )
          };
@@ -80,7 +80,7 @@ index 7886d2160..3a16ab9a7 100644
          writeln!(w, "{sig}")?;
          if has_for_body {
              writeln!(
-@@ -2081,12 +2072,7 @@ impl Output<'_> {
+@@ -2084,12 +2075,7 @@ impl Output<'_> {
                              w,
                              "                let val = self.sub_{sub}.as_mut().unwrap().{advance}(stores);"
                          )?;
@@ -94,7 +94,7 @@ index 7886d2160..3a16ab9a7 100644
                          // Release the sub-generator's own heap locals on the way out, the same
                          // cleanup a handle's scope-exit free performs (loft#835) — this path
                          // owns the sub-generator directly, so nothing else would.
-@@ -2902,7 +2888,6 @@ impl Output<'_> {
+@@ -2905,7 +2891,6 @@ impl Output<'_> {
              w,
              "impl loft::codegen_runtime::LoftCoroutine for {struct_name} {{"
          )?;
@@ -102,7 +102,7 @@ index 7886d2160..3a16ab9a7 100644
          self.emit_next_i64(w, &attrs, &segments, &tail, has_yf, &yield_tp)?;
          let owns_snapshots = crate::data::is_dbref(&yield_tp) && is_eager(&segments);
          let owns_fnrefs = matches!(yield_tp.base(), Type::Function(..)) && is_eager(&segments);
-@@ -3191,10 +3176,7 @@ impl Output<'_> {
+@@ -3194,10 +3179,7 @@ impl Output<'_> {
                      }
                      writeln!(w, "        loop {{")?;
                      writeln!(w, "            let v = __sub.{sub_advance}(stores);")?;
@@ -114,7 +114,7 @@ index 7886d2160..3a16ab9a7 100644
                      if let Some(tp) = snapshot_tp {
                          // The sub-generator hands each value over (`(G-Own)`), so this
                          // buffer snapshots it and releases the handed store; a type not
-@@ -3285,7 +3267,6 @@ impl Output<'_> {
+@@ -3288,7 +3270,6 @@ impl Output<'_> {
          }
          writeln!(w, "    Box::new({struct_name} {{")?;
          writeln!(w, "        state: 0,")?;

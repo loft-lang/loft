@@ -1,8 +1,8 @@
 diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
-index dc0ced271..8b3709338 100644
+index dd250e6fe..232054a07 100644
 --- a/src/parser/expressions.rs
 +++ b/src/parser/expressions.rs
-@@ -8673,27 +8673,12 @@ use a separate collection or add after the loop"
+@@ -9114,33 +9114,12 @@ use a separate collection or add after the loop"
      ///
      /// The `??` cure is real rather than aspirational: a discharge at the ROOT of the stored
      /// expression supplies the fallback (`range_guard_inside_discharge`), so the position it
@@ -15,35 +15,43 @@ index dc0ced271..8b3709338 100644
 -    /// - An `if` range check is not offered: loft does not narrow a value's type after a
 -    ///   test, so the store inside it is refused the same way (loft#1804).
 -    /// - The mask is spelled out, and only when one fits the range (`narrowing_mask`).
--    pub(crate) fn narrowing_cures(code: &Value, dst_tp: &Type, dst: &str) -> String {
+-    /// - A `dense` slot — a `yield` into `iterator<τ>`, whose element cannot be `τ?` — is not
+-    ///   offered the nullable destination.
+-    pub(crate) fn narrowing_cures(code: &Value, dst_tp: &Type, dst: &str, dense: bool) -> String {
 -        use std::fmt::Write as _;
-+    /// is offered in is the position it works in.
-+    pub(crate) fn narrowing_cures(code: &Value, dst: &str) -> String {
-         let mut out = format!(
--            "give it a fallback with `?? <value>`, or make the destination `{dst}?` so a value \
--             that does not fit reads null"
-+            "give it a fallback with `?? <value>`, take the checked cast `as {dst}?` (value or \
-+             null), or make the value provably fit (a mask, or an `if` range check)"
-         );
+-        let mut out = if dense {
+-            "give it a fallback with `?? <value>`".to_string()
+-        } else {
+-            format!(
+-                "give it a fallback with `?? <value>`, or make the destination `{dst}?` so a \
+-                 value that does not fit reads null"
+-            )
+-        };
 -        if let Some(mask) = Self::narrowing_mask(dst_tp) {
 -            let _ = write!(
 -                out,
 -                ", or make the value provably fit with a mask (`& {mask}`)"
 -            );
 -        }
++    /// is offered in is the position it works in.
++    pub(crate) fn narrowing_cures(code: &Value, dst: &str) -> String {
++        let mut out = format!(
++            "give it a fallback with `?? <value>`, take the checked cast `as {dst}?` (value or \
++             null), or make the value provably fit (a mask, or an `if` range check)"
++        );
          // @PLN152 N2 — a `??` that discharges a SUB-expression reads, to its author, as if it
          // should have covered the store. Only a discharge at the root does. Shallow on
          // purpose: the shape this is for is `(v[0] ?? 0) + 10`, where the discharge is a direct
-@@ -8752,7 +8737,7 @@ use a separate collection or add after the loop"
+@@ -9203,7 +9182,7 @@ use a separate collection or add after the loop"
              } else if !self.int_value_fits(code, store_tp) {
                  // Refused where the author can choose what an unfitting value becomes (@C127).
                  let src = self.int_type_name(s_type);
--                let cures = Self::narrowing_cures(code, store_tp, &dst);
+-                let cures = Self::narrowing_cures(code, store_tp, &dst, false);
 +                let cures = Self::narrowing_cures(code, &dst);
                  diagnostic!(
                      self.lexer,
                      Level::Error,
-@@ -8814,8 +8799,7 @@ use a separate collection or add after the loop"
+@@ -9265,8 +9244,7 @@ use a separate collection or add after the loop"
                      self.lexer,
                      Level::Error,
                      "cannot implicitly narrow member {i} ({src}) to {dst} (may lose data) — build \
@@ -53,7 +61,7 @@ index dc0ced271..8b3709338 100644
                  );
              }
          }
-@@ -8831,24 +8815,6 @@ use a separate collection or add after the loop"
+@@ -9282,24 +9260,6 @@ use a separate collection or add after the loop"
          )
      }
  
@@ -79,10 +87,10 @@ index dc0ced271..8b3709338 100644
      fn is_root_discharge(v: &Value) -> bool {
          matches!(v.unspan(), Value::Block(bl) if bl.name == "ncc")
 diff --git a/src/parser/mod.rs b/src/parser/mod.rs
-index d34de7b0c..f3228af4c 100644
+index 0591a1712..8ab49ff9f 100644
 --- a/src/parser/mod.rs
 +++ b/src/parser/mod.rs
-@@ -4946,13 +4946,7 @@ impl Parser {
+@@ -5027,13 +5027,7 @@ impl Parser {
          let Some(d_width) = d.forced_size.map(std::num::NonZeroU8::get) else {
              return false;
          };
@@ -97,20 +105,21 @@ index d34de7b0c..f3228af4c 100644
      }
  
      /// @PLAN48 P2: render an integer type with its explicit narrow alias
-@@ -5822,7 +5816,7 @@ impl Parser {
+@@ -6000,8 +5994,7 @@ impl Parser {
          if !discharged && !self.first_pass && narrows && !self.int_value_fits(code, should) {
              let src = self.int_type_name(is_type);
              let dst = self.int_type_name(should);
--            let cures = Self::narrowing_cures(code, should, &dst);
+-            let dense = self.store_ctx.last().is_some_and(|c| c.dense);
+-            let cures = Self::narrowing_cures(code, should, &dst, dense);
 +            let cures = Self::narrowing_cures(code, &dst);
              diagnostic!(
                  self.lexer,
                  Level::Error,
 diff --git a/src/parser/operators.rs b/src/parser/operators.rs
-index aa900b52c..74aac4852 100644
+index b55dce595..fdd556e38 100644
 --- a/src/parser/operators.rs
 +++ b/src/parser/operators.rs
-@@ -4632,24 +4632,12 @@ impl Parser {
+@@ -5089,24 +5089,12 @@ impl Parser {
                                  self.lexer.peek_token("??").then(|| tp.clone());
                              tp = self.dn4_checked_cast(code, &tp, &src_base);
                          } else {
