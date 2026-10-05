@@ -230,7 +230,7 @@ with the closure's environment in scope.
 
 ## Deviations
 
-**OPEN: 1.**  Every closed entry is recorded in [closures-history.md](closures-history.md).
+**OPEN: 2.**  Every closed entry is recorded in [closures-history.md](closures-history.md).
 
 - **D-clo-47 (OPEN, loft#1867)** — violates <!-- doc-lint: ok -->
   `(L-Escape)`: a function cannot return a struct whose field holds a CAPTURING closure — it is
@@ -239,6 +239,12 @@ with the closure's environment in scope.
   (`(L-CapOwn)`).  The adoption has to follow the closure out through a struct field as it does
   out through the return.  Until then the cure the refusal names works: return the closure and
   build the struct in the caller.
+- **D-clo-48 (OPEN, loft#1869)** — violates `(L-Fn)`: a closure cannot capture a fn-ref local
+  that holds a CAPTURING closure — refused with P215's struct-field message, because the
+  closure record is the struct the capture is stored in.  A non-capturing fn-ref is captured.
+  The inner record's ownership has to follow into the outer record (`(L-CapOwn)`), as a
+  captured struct's does.  Until then: capture the inner closure's values and rebuild it in the
+  body, or pass it as an argument.
 
 > **An `OPEN: 0` is a claim to re-measure, and this one moved four times in a day** — 0 → 1 → 2
 > → 0 → 1, each step a probe pushed one axis off what the oracle below holds fixed, and each
