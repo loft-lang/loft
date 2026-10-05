@@ -47,8 +47,9 @@ development. Posts about what is happening in a given month come later.
 | # | post | draws on |
 |---|---|---|
 | 1 | *A team of eager juniors who google a lot* — building the language with AI agents | subjects 1–3 |
-| 2 | How the games, the libraries and the language features connect | subjects 8–12 |
-| 3 | What loft is for — its goals | [GOALS.md](GOALS.md), [COMPATIBILITY.md](COMPATIBILITY.md) |
+| 2 | Why loft. there are so many languages around already. | |
+| 3 | How the games, the libraries and the language features connect | subjects 8–12 |
+| 4 | What loft is for — its goals | [GOALS.md](GOALS.md), [COMPATIBILITY.md](COMPATIBILITY.md) |
 | later | Stability — of loft, and of the libraries and projects built on it | see below |
 | later | Games that feel made by a person, not by an AI | see below |
 
@@ -65,7 +66,19 @@ built to realise it (`crawler/CLAUDE.md` § Conventions); moros as the hand-auth
 crawler's generated one; and the `draw` skill's iterative craft ([DRAWING.md](DRAWING.md)) against
 one-shot generation.
 
-**Post 2 — games, libraries and language features.** The thread is the dogfood loop (CLAUDE.md
+**Post 2 - Why loft.** there are so many languages around already.
+In my opinion C++ that is still the most common language for published games is not very helpful
+for them. Many things are in there that crashes games, and being one of the most efficient languages
+around still doesn't help against the actual reasons things get slow. Those reasons are:
+
+- bloat in features or details that cannot be experienced by players.
+- memory fragmentation where the processor & GPU are waiting on data and not actually doing something useful.
+- running a different language inside it because most game developers cannot write reliable C++ code.
+
+I cannot really help with the first one but both the others can be aided, though that road is not short
+or simple.
+
+**Post 3 — games, libraries and language features.** The thread is the dogfood loop (CLAUDE.md
 § Dogfood loop): a real consumer, the lessons it yields, the language fixed, the result shipped.
 Told through its cycles:
 
@@ -78,7 +91,7 @@ Told through its cycles:
 - the two-agent split: the language's agent builds and fixes, each consumer's agent uses and
   breaks, and neither edits the other's tree.
 
-**Post 3 — loft's goals.** [GOALS.md](GOALS.md) is the source: the purpose, goals A–G, and *"the
+**Post 4 — loft's goals.** [GOALS.md](GOALS.md) is the source: the purpose, goals A–G, and *"the
 destination is BORING"* — a tool noticed only when it is missing. [COMPATIBILITY.md](COMPATIBILITY.md)
 carries the promise behind it: after the freeze, a working program keeps working.
 
