@@ -59,6 +59,12 @@ and the promise in [COMPATIBILITY.md](COMPATIBILITY.md). For the libraries and p
 [REVALIDATE_LIBS.md](REVALIDATE_LIBS.md) (does a loft change break a shipped library) and the
 `lib-main-health` / `consumer-main-health` workflows in `.github/workflows/`.
 
+- every optimiser rewrite has its own off-switch, so when a routine breaks, turning the
+  rewrites off one at a time finds the faulty one within minutes
+  ([NATIVE_SWITCHES.md](NATIVE_SWITCHES.md), [BOTH_BACKEND_SWITCHES.md](BOTH_BACKEND_SWITCHES.md)).
+  Important for us, but not something a team building an efficient and robust game can work
+  with: performance has to be closer to our goals before loft is feasible for them.
+
 **Games that feel made by a person.** Candidate sources, for the owner to choose from: dryopea's
 design test that *the player cannot lean back* and its design questions settled by measured play
 (`dryopea/docs/DESIGN.md`); crawler's rule that content keeps its full design and the engine is
