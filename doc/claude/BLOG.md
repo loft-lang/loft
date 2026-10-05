@@ -78,6 +78,17 @@ around still doesn't help against the actual reasons things get slow. Those reas
 I cannot really help with the first one but both the others can be aided, though that road is not short
 or simple.
 
+Further points to consider:
+
+- who it is for: small teams and indies, who cannot afford to work around C++'s problems.
+- iteration speed: change code while the game runs, keeping its state, instead of compile,
+  restart and play back to where you were.
+- save games, networking and mods: the data in memory, on disk and on the wire is one
+  representation, so a save file cannot drift from the code.
+- one source, every target: native, wasm, and a single HTML page playable in the browser.
+- the intention that a working program keeps working: a promise for the future, which can
+  only be judged after the fact.
+
 **Post 3 — games, libraries and language features.** The thread is the dogfood loop (CLAUDE.md
 § Dogfood loop): a real consumer, the lessons it yields, the language fixed, the result shipped.
 Told through its cycles:
