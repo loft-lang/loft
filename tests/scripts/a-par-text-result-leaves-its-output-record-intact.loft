@@ -8,7 +8,7 @@
 // plain run, so the values stayed right; a claim that did read it (`LOFT_POISON_CLAIM=1`, whose
 // fill sizes itself off the header) wrote past the block and broke the store.  The interpreter's
 // worker already started at byte 4.  The cells run several rows per worker — a worker with one
-// row wrote only the header and nothing read it — at two worker counts, every value by hand.
+// row wrote only the header and nothing read it — at three worker counts, every value by hand.
 //
 // @falsified-at: none — the defect moves no value in a plain run; the planted defect is recorded
 //   with `@falsified-by:` below.

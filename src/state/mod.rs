@@ -129,8 +129,10 @@ impl<'a> Hot<'a> {
     /// [`State::put_stack_m`]'s direct path on the registers.
     #[inline(always)]
     pub fn put_stack<T: 'static>(&mut self, val: T) {
-        // SAFETY: inside the room `push_frame` ensured (`@FR-R-FrameHeadroom`); aligned.
-        unsafe { *self.base.add(self.stack_pos as usize).cast::<T>() = val };
+        // SAFETY: inside the room `push_frame` ensured (`@FR-R-FrameHeadroom`); aligned.  A
+        // WRITE, not an assignment: the slot is fresh stack space, and an assignment drops the
+        // bytes there as a `T` — a `String`'s drop frees whatever pointer they spell.
+        unsafe { self.base.add(self.stack_pos as usize).cast::<T>().write(val) };
         self.stack_pos += crate::variables::aligned_stack_step(size_of::<T>() as u32);
         if self.stack_pos > self.high {
             self.high = self.stack_pos;
@@ -3189,8 +3191,9 @@ impl State {
         // `@FR-R-FrameHeadroom` — no capacity test: the frame's entry (`push_frame`) made room
         // for every push its operators can make.
         let slot = self.stack_slot(self.stack_pos);
-        // SAFETY: inside the room `push_frame` ensured; aligned as in `put_var`.
-        unsafe { *slot.cast::<T>() = val };
+        // SAFETY: inside the room `push_frame` ensured; aligned as in `put_var`.  A WRITE: the
+        // slot is fresh stack space (see `put_stack`).
+        unsafe { slot.cast::<T>().write(val) };
         self.stack_pos += self.stack_step(size_of::<T>() as u32);
         if self.stack_pos > self.stack_high {
             self.stack_high = self.stack_pos;
@@ -3775,8 +3778,9 @@ impl State {
             self.ensure_stack(self.stack_step(size_of::<T>() as u32));
             let slot = self.stack_slot(self.stack_pos);
             debug_assert_eq!(slot.align_offset(std::mem::align_of::<T>()), 0);
-            // SAFETY: `ensure_stack` just made room; aligned as in `put_var`.
-            unsafe { *slot.cast::<T>() = val };
+            // SAFETY: `ensure_stack` just made room; aligned as in `put_var`.  A WRITE, not an
+            // assignment: the slot is fresh, and dropping its bytes as a `T` frees garbage.
+            unsafe { slot.cast::<T>().write(val) };
             self.stack_pos += self.stack_step(size_of::<T>() as u32);
             if self.stack_pos > self.stack_high {
                 self.stack_high = self.stack_pos;
@@ -3862,7 +3866,8 @@ impl State {
                 crate::keys::uaf_clear_shadow(self.stack_pos);
             }
         }
-        *m = val;
+        // A WRITE, not an assignment: the slot is fresh stack space (see `put_stack`).
+        unsafe { std::ptr::write(m, val) };
         self.stack_pos += self.stack_step(size_of::<T>() as u32);
         if self.stack_pos > self.stack_high {
             self.stack_high = self.stack_pos;

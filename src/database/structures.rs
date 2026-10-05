@@ -2235,17 +2235,15 @@ impl Stores {
                 let crate::json::Parsed::Array(items) = parsed else {
                     return Err(mismatch());
                 };
-                // @P357: an EMPTY JSON array must still zero the collection
-                // header.  The per-item loop below is the ONLY thing that
-                // initialises the vector/array field (the first `record_new`
-                // writes its header) — so with zero items the field keeps
-                // whatever bytes the recycled store record held, reading back
-                // as a phantom non-zero length (e.g. `json_parse("[]").item(0)`
-                // returning a garbage object, and `len` reporting 8 after a
-                // run of earlier parses populated then freed that block).  The
-                // `Parts::Null` arm above already calls `set_default_value` for
-                // exactly this reason; do the same when the array is empty.
-                if items.is_empty() {
+                // @P357: the collection field is WRITTEN empty before any item is
+                // appended, whatever the item count.  Nothing else initialises it: the
+                // first `record_new` READS the field's handle to find the vector, so a
+                // field holding the claim's bytes — an element the loop above just
+                // minted, whose own vector field is walked here — appended into a
+                // handle that was never written (`LOFT_POISON_CLAIM=1` reads it as
+                // 0xDEADBEEF), and an empty array read back a phantom length.  The
+                // `Parts::Null` arm above writes the same default for the same reason.
+                {
                     // @P373: write the default to the COLLECTION FIELD's slot,
                     // not to `to` — which for a struct field is the struct base
                     // (field 0), so `set_default_value(tp, to)` zeroed the FIRST
