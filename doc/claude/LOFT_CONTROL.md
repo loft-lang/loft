@@ -303,6 +303,24 @@ binding under that name, even when a variable of that name is in scope (`@FR-P-P
 literal, a range or `_` in that position tests the field instead (`Circle { radius: 0 }`,
 `Circle { radius: 1..4 }`).
 
+**One arm for several variants — two spellings.**  `|` joins variant names that bind nothing
+(`North | South =>`).  When the variants carry fields, list the whole patterns with `,` — a
+*multi-pattern arm* (`@FR-P-Multi`):
+
+```
+match s {
+    Circle { r }, Sphere { r } => r,
+    Pt => 0
+}
+```
+
+Each pattern binds from its own variant, and the body runs for whichever one matched.  A name
+every pattern binds must have one type in all of them (a different type is refused); a name only
+some patterns bind is nullable in the body (`@FR-P-Alt-Diff`).  A guard after the last pattern
+applies to whichever one matched.  `|` between patterns that carry bindings is refused (*"Expect
+token =>"*); write `,`.  A multi-pattern arm takes enum variants only, at the top of the arm —
+not slice patterns, and not inside a tuple element.
+
 Whether a destructured field is a **view of the subject** or a **copy** depends on the
 field's type:
 
@@ -503,10 +521,9 @@ A slice arm takes an `if` guard like any other arm.
 An element written **after** a `..` takes the same forms as one before it — a name, `_`, a
 literal or a variant pattern (`[Kw { word }, .., End { e }]` binds `e` from the last element;
 guard `tests/scripts/1419-a-fixed-pattern-after-a-rest-is-a-tail-element.loft`).
-**One limit worth knowing.** A multi-pattern arm (`A { r }, B { r } => …`) is for enum
-variants only — it does not accept slice patterns.  A name only some of its patterns bind
-(`A { r }, B { s } => …`) is nullable in the body — `null` when a pattern without it matched
-(guard `tests/scripts/a-name-only-some-listed-patterns-bind-is-nullable.loft`).
+**One limit worth knowing.** A multi-pattern arm (`A { r }, B { r } => …`, § Match
+expressions) does not accept slice patterns (guard for its nullable partial names:
+`tests/scripts/a-name-only-some-listed-patterns-bind-is-nullable.loft`).
 
 ### `is` variant check
 
