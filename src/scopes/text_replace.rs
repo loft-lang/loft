@@ -15,31 +15,91 @@
 
 use crate::data::{Data, Type, Value};
 use crate::variables::Function;
+use std::borrow::Cow;
 
-/// Run over every definition, after the scope pass has settled each variable's deps.
-pub(super) fn admit(data: &mut Data) {
+/// Run over the functions this scope pass checked (`fresh`), after it has settled each
+/// variable's deps.  A function checked by an earlier pass — the standard library, on every
+/// later compile — was decided then and is not walked again.
+pub(super) fn admit(data: &mut Data, fresh: &[u32]) {
     let replace = data.def_nr("OpSetTextReplace");
     let set = data.def_nr("OpSetText");
     if replace == u32::MAX || set == u32::MAX {
         return;
     }
-    for d_nr in 0..data.definitions.len() {
-        if !data.definitions[d_nr]
+    for &d_nr in fresh {
+        let d = d_nr as usize;
+        if !data.definitions[d]
             .code
-            .any_node(&mut |n| matches!(n, Value::Call(d, _) if *d == replace))
+            .any_node(&mut |n| matches!(n, Value::Call(c, _) if *c == replace))
         {
             continue;
         }
-        let mut code = std::mem::replace(&mut data.definitions[d_nr].code, Value::Null);
-        visit(
-            &mut code,
-            false,
-            replace,
-            set,
-            data,
-            &data.definitions[d_nr].variables,
-        );
-        data.definitions[d_nr].code = code;
+        let mut code = std::mem::replace(&mut data.definitions[d].code, Value::Null);
+        let facts = Facts::of(&data.definitions[d].variables);
+        visit(&mut code, false, replace, set, data, &facts);
+        data.definitions[d].code = code;
+    }
+}
+
+/// What one function's variable table says about borrows, read once per function: each
+/// variable's deps, whether it is a parameter, and whether a `text` variable depends on it,
+/// directly or through other variables' deps.  `.base()`: a `text?` variable borrows exactly
+/// as a `text` one does.
+struct Facts<'a> {
+    deps: Vec<Cow<'a, [u16]>>,
+    argument: Vec<bool>,
+    text_borrowed: Vec<bool>,
+}
+
+impl<'a> Facts<'a> {
+    /// The deps are BORROWED from the table (`Type::deps_ref`); only a tuple, whose deps are
+    /// the union of its members', is built (`Type::depend`).
+    fn of(vars: &'a Function) -> Facts<'a> {
+        let n = usize::from(vars.count());
+        let deps: Vec<Cow<'a, [u16]>> = (0..vars.count())
+            .map(|v| match vars.tp(v).deps_ref() {
+                Some(d) => Cow::Borrowed(d.as_slice()),
+                None if matches!(vars.tp(v).base(), Type::Tuple(_)) => {
+                    Cow::Owned(vars.tp(v).depend())
+                }
+                None => Cow::Borrowed(&[][..]),
+            })
+            .collect();
+        let argument = (0..vars.count()).map(|v| vars.is_argument(v)).collect();
+        let mut text_borrowed = vec![false; n];
+        let mut todo = Vec::new();
+        for v in 0..vars.count() {
+            if matches!(vars.tp(v).base(), Type::Text(_)) {
+                todo.extend_from_slice(&deps[usize::from(v)]);
+            }
+        }
+        while let Some(d) = todo.pop() {
+            if let Some(b) = text_borrowed.get_mut(usize::from(d))
+                && !*b
+            {
+                *b = true;
+                todo.extend_from_slice(&deps[usize::from(d)]);
+            }
+        }
+        Facts {
+            deps,
+            argument,
+            text_borrowed,
+        }
+    }
+
+    /// Follow single deps from `v` to the variable that owns its store; `None` for a chain
+    /// that branches (two deps) or does not end within the table's size (a cycle).
+    fn owner_of(&self, v: u16) -> Option<u16> {
+        let mut at = v;
+        for _ in 0..=self.deps.len() {
+            match &**self.deps.get(usize::from(at))? {
+                [] => return Some(at),
+                [one] => at = *one,
+                _ => return None,
+            }
+        }
+        None
     }
 }
 
@@ -47,14 +107,14 @@ pub(super) fn admit(data: &mut Data) {
 /// argument already evaluated there is a borrow on the evaluation stack that no variable
 /// records, so a write nested inside one (`f(r.a, { r.a = "x"; 1 })`) is declined.  A
 /// statement in a block, a loop or a branch is not inside any argument list.
-fn visit(n: &mut Value, under_call: bool, replace: u32, set: u32, data: &Data, vars: &Function) {
+fn visit(n: &mut Value, under_call: bool, replace: u32, set: u32, data: &Data, facts: &Facts<'_>) {
     // A `Span` only carries a source position: its child is in the same evaluation context.
     if let Value::Span(b) = n {
-        return visit(&mut b.1, under_call, replace, set, data, vars);
+        return visit(&mut b.1, under_call, replace, set, data, facts);
     }
     let inner = match n {
         Value::Call(d, args) => {
-            if *d == replace && (under_call || !admitted(args, data, vars)) {
+            if *d == replace && (under_call || !admitted(args, data, facts)) {
                 *d = set;
             }
             true
@@ -62,7 +122,7 @@ fn visit(n: &mut Value, under_call: bool, replace: u32, set: u32, data: &Data, v
         Value::CallRef(..) | Value::Parallel(_) | Value::Iter(..) => true,
         _ => under_call,
     };
-    n.for_each_child_mut(&mut |c| visit(c, inner, replace, set, data, vars));
+    n.for_each_child_mut(&mut |c| visit(c, inner, replace, set, data, facts));
 }
 
 /// Is the write `OpSetTextReplace(place, fld, val)` free of a borrow of the block it replaces?
@@ -70,55 +130,21 @@ fn visit(n: &mut Value, under_call: bool, replace: u32, set: u32, data: &Data, v
 /// Yes when the place's record resolves, through the deps of the variables that reach it, to an
 /// OWNER that is a local of this function (not a parameter, so no caller frame can hold a borrow
 /// of its texts), and no `text` variable of this function depends on that owner (a borrow this
-/// frame took — `x = r.a`, a `for c in r.a` walk, a `text?` local).  A place with no recognisable root, a chain
-/// that branches or cycles, or an owner reached by a text borrow answers no: each is a shape
-/// whose borrows this pass cannot see, and declining one costs only the release.
-fn admitted(args: &[Value], data: &Data, vars: &Function) -> bool {
+/// frame took — `x = r.a`, a `for c in r.a` walk, a `text?` local).  A place with no
+/// recognisable root, a chain that branches or cycles, or an owner reached by a text borrow
+/// answers no: each is a shape whose borrows this pass cannot see, and declining one costs only
+/// the release.
+fn admitted(args: &[Value], data: &Data, facts: &Facts<'_>) -> bool {
     let Some(root) = args
         .first()
         .and_then(|p| crate::use_analysis::place_root(p, data))
     else {
         return false;
     };
-    let Some(owner) = owner_of(root, vars) else {
+    let Some(owner) = facts.owner_of(root) else {
         return false;
     };
-    if vars.is_argument(owner) {
-        return false;
-    }
-    // `.base()`: a `text?` variable borrows exactly as a `text` one does.
-    !(0..vars.count())
-        .any(|v| matches!(vars.tp(v).base(), Type::Text(_)) && reaches(v, owner, vars))
-}
-
-/// Follow single deps from `v` to the variable that owns its store; `None` for a chain that
-/// branches (two deps) or does not end within the table's size (a cycle).
-fn owner_of(v: u16, vars: &Function) -> Option<u16> {
-    let mut at = v;
-    for _ in 0..=vars.count() {
-        match vars.tp(at).depend().as_slice() {
-            [] => return Some(at),
-            [one] => at = *one,
-            _ => return None,
-        }
-    }
-    None
-}
-
-/// Does `v` depend on `owner`, directly or through other variables' deps?
-fn reaches(v: u16, owner: u16, vars: &Function) -> bool {
-    let mut seen = vec![false; usize::from(vars.count())];
-    let mut todo = vars.tp(v).depend();
-    while let Some(d) = todo.pop() {
-        if d == owner {
-            return true;
-        }
-        if let Some(s) = seen.get_mut(usize::from(d))
-            && !*s
-        {
-            *s = true;
-            todo.extend(vars.tp(d).depend());
-        }
-    }
-    false
+    let o = usize::from(owner);
+    !facts.argument.get(o).copied().unwrap_or(true)
+        && !facts.text_borrowed.get(o).copied().unwrap_or(true)
 }

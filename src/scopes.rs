@@ -617,6 +617,12 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
     let disturbed =
         crate::keys::callee_disturb_enabled().then(|| disturbed_params_map(data, Some(database)));
     let disturbed = disturbed.as_ref();
+    // The functions this call checks: `text_replace::admit` decides only theirs.
+    let fresh: Vec<u32> = (0..data.definitions())
+        .filter(|&d| {
+            matches!(data.def(d).def_type, DefType::Function) && !data.def(d).variables.done
+        })
+        .collect();
     for d_nr in 0..data.definitions() {
         if !matches!(data.def(d_nr).def_type, DefType::Function) || data.def(d_nr).variables.done {
             continue;
@@ -849,7 +855,7 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
     crate::use_analysis::lease_calls(data);
     // `@FR-H-TextReplace` — an assignment to a text field releases the text it replaces only
     // where no borrow of that text can be live; every other site writes without releasing.
-    text_replace::admit(data);
+    text_replace::admit(data, &fresh);
     // `LOFT_VAR_TABLE=<fn substring>` — the variable table beside the IR dump, with
     // each type dep resolved to `name(index)`.  Observer only; a no-op when unset.
     crate::variables::dump_var_tables(data, 0);
