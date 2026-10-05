@@ -9,7 +9,22 @@
 //   iterator<integer> ← text     a store-access panic on --interpret, rustc E0606 on --native
 //   iterator<text>    ← integer  a crash on --interpret, the integer's digits on --native
 //
-// All three fire in pass 2, so one file holds them.
+// All three fire in pass 2, so one file holds them.  `main` comes first so that each
+// `@EXPECT_ERROR` belongs to its function — one above the first code in the file is read as a
+// FILE-level expectation, which the suite scores but leaves out of the per-function count
+// `make falsify` reads.
+
+fn main() {
+  for y in narrowed(300) {
+    println("{y}");
+  }
+  for y in texts_as_ints() {
+    println("{y}");
+  }
+  for y in ints_as_texts(3) {
+    println("{y}");
+  }
+}
 
 // @EXPECT_ERROR: cannot implicitly narrow integer to u8
 fn narrowed(a: integer) -> iterator<u8> {
@@ -24,16 +39,4 @@ fn texts_as_ints() -> iterator<integer> {
 // @EXPECT_ERROR: expected text, got integer on yield
 fn ints_as_texts(a: integer) -> iterator<text> {
   yield a;
-}
-
-fn main() {
-  for y in narrowed(300) {
-    println("{y}");
-  }
-  for y in texts_as_ints() {
-    println("{y}");
-  }
-  for y in ints_as_texts(3) {
-    println("{y}");
-  }
 }
