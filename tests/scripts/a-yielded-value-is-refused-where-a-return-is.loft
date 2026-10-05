@@ -13,6 +13,14 @@
 // `@EXPECT_ERROR` belongs to its function — one above the first code in the file is read as a
 // FILE-level expectation, which the suite scores but leaves out of the per-function count
 // `make falsify` reads.
+//
+// @falsified-at: 9c8254861 — interpret exit 1 -> 0, interpret expectations FAIL/3 -> 3/3 (the
+//   suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/3
+//   -> 3/3.
+// @falsified-by: tests/falsified/a-yielded-value-is-refused-where-a-return-is.patch — the same
+//   channels.  Score it with `scripts/falsify.sh <this file> --patch <that patch>` once
+//   9c8254861 is out of reach.
+// HOLDS: nothing runs on either tree (a refusal file).
 
 fn main() {
   for y in narrowed(300) {

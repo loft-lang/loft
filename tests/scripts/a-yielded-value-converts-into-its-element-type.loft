@@ -23,6 +23,14 @@
 //                        yield into `iterator<integer>` is not here: `--native` reads it as the
 //                        end of the sequence (the integer exhaust sentinel is the integer null),
 //                        which is its own defect.
+//
+// @falsified-at: 9c8254861 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
+//   native exit 1 -> 0.  Native's control is an exit with no assertion: rustc refuses the
+//   float generator (E0599), so the program never runs there.
+// @falsified-by: tests/falsified/a-yielded-value-converts-into-its-element-type.patch — the
+//   same channels.  Score it with `scripts/falsify.sh <this file> --patch <that patch>` once
+//   9c8254861 is out of reach.
+// HOLDS: leak, panic and refusals are clean on both trees and both backends.
 
 fn floats(a: integer, f: float) -> iterator<float> {
   yield a;
