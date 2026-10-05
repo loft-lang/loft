@@ -1263,6 +1263,12 @@ pub struct Parser {
     /// those were yielded and took a copy (`yield_owned_closure`).  Equal counts mean the local
     /// is the generator's own again.
     pub(crate) closure_capture_builds: std::collections::HashMap<(u32, u16), u32>,
+    /// loft#1862, `@FR-L-CapRebind` — per (function, local): the closure records built over it
+    /// so far in THIS pass, as (record local, capture slot position).  A keyed rebind asks them
+    /// whether a record still holds the store the local names ([`Parser::keyed_rebind_mint`]).
+    /// Entries carry the pass, so pass 2 reads only the builds it has already parsed — every
+    /// assignment after one of them is a reassignment.
+    pub(crate) capture_records: std::collections::HashMap<(bool, u32, u16), Vec<(u16, u16)>>,
     pub(crate) yield_copied_captures: std::collections::HashMap<(u32, u16), u32>,
     /// #314: capturing lambdas synthesized during each function body in
     /// pass 1, keyed by the enclosing context's def_nr.  Consumed by
@@ -1886,6 +1892,7 @@ impl Parser {
             last_closure_alloc: None,
             last_closure_captured_vars: vec![],
             closure_capture_builds: std::collections::HashMap::new(),
+            capture_records: std::collections::HashMap::new(),
             yield_copied_captures: std::collections::HashMap::new(),
             init_field_tracking: false,
             init_field_deps: Vec::new(),

@@ -1,0 +1,84 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1862 — `formal/closures.md` `(L-CapRebind)`: a whole-value rebind of a captured keyed
+// local leaves the record with the store it was built with, whatever spells the rebind.
+//
+// Only the non-empty literal minted a fresh store (loft#1447).  A call, a variable, a branch,
+// a field, `[]` and a right-hand side that reads the local all cleared and refilled the store
+// the record held, so the closure answered the new contents on all five keyed kinds and both
+// backends — and a record that left the frame read a store the frame had released.  The
+// literal mint leaked: a second rebind minted over the first fresh store, and a loop pass
+// left the build-time store to a pass-confined record that releases nothing.
+//
+// Each cell answers `f() * 100 + tot(c)`: the build-time total (5) beside what `c` holds after
+// the rebind.  Values by hand: mk(n) holds one record of value n; add(h, d) adds d to each.
+//
+// Axes this file MOVES: the rebind's spelling (literal, call, variable, branch, field, `[]`,
+// self-reading call); its position (once, twice, inside a loop pass, on a branch not taken,
+// in a function whose closure leaves the frame); the keyed kind for the call spelling.
+// Axes it HOLDS FIXED: one capturing closure per local; the element is a two-field record.
+
+struct E { k: integer, v: integer }
+struct W { c: hash<E[k]> }
+fn mk(v: integer) -> hash<E[k]> { r: hash<E[k]> = []; r += [E { k: 1, v: v }]; r }
+fn add(h: hash<E[k]>, d: integer) -> hash<E[k]> {
+  r: hash<E[k]> = [];
+  for e in h { r += [E { k: e.k, v: e.v + d }]; }
+  r
+}
+fn tot(c: hash<E[k]>) -> integer { t = 0; for e in c { t += e.v; } t }
+
+fn once_lit() -> integer { c = mk(5); f = fn() -> integer { tot(c) }; c = [E { k: 1, v: 9 }]; f() * 100 + tot(c) }
+fn once_call() -> integer { c = mk(5); f = fn() -> integer { tot(c) }; c = mk(9); f() * 100 + tot(c) }
+fn once_var() -> integer { o = mk(9); c = mk(5); f = fn() -> integer { tot(c) }; c = o; f() * 100 + tot(c) }
+fn once_join(p: boolean) -> integer { c = mk(5); f = fn() -> integer { tot(c) }; c = if p { mk(9) } else { mk(8) }; f() * 100 + tot(c) }
+fn once_field() -> integer { w = W { c: mk(9) }; c = mk(5); f = fn() -> integer { tot(c) }; c = w.c; f() * 100 + tot(c) }
+fn once_empty() -> integer { c = mk(5); f = fn() -> integer { tot(c) }; c = []; f() * 100 + tot(c) }
+fn once_self() -> integer { c = mk(5); f = fn() -> integer { tot(c) }; c = add(c, 4); f() * 100 + tot(c) }
+
+fn twice() -> integer { c = mk(5); f = fn() -> integer { tot(c) }; c = mk(9); c = mk(7); f() * 100 + tot(c) }
+fn twice_self() -> integer { c = mk(5); f = fn() -> integer { tot(c) }; c = add(c, 4); c = add(c, 2); f() * 100 + tot(c) }
+
+fn loop_pass() -> integer {
+  s = 0;
+  for _i in 0..3 { c = mk(5); f = fn() -> integer { tot(c) }; c = add(c, 4); s += f() * 100 + tot(c); }
+  s
+}
+fn loop_some_passes() -> integer {
+  s = 0;
+  for i in 0..4 { c = mk(5); f = fn() -> integer { tot(c) }; if i % 2 == 1 { c = mk(9); } s += f(); }
+  s
+}
+fn not_taken(p: boolean) -> integer { c = mk(5); f = fn() -> integer { tot(c) }; if p { c = mk(9); } f() * 100 + tot(c) }
+
+fn escaping() -> fn() -> integer { c = mk(5); f = fn() -> integer { tot(c) }; c = mk(9); f }
+
+fn sorted_call() -> integer {
+  c: sorted<E[k]> = [E { k: 1, v: 5 }];
+  f = fn() -> integer { t = 0; for e in c { t += e.v; } t };
+  c = [E { k: 1, v: 9 }, E { k: 2, v: 0 }];
+  c = if true { c } else { c };
+  f()
+}
+fn mk_index(v: integer) -> index<E[k]> { r: index<E[k]> = []; r += [E { k: 1, v: v }]; r }
+fn index_call() -> integer { c = mk_index(5); f = fn() -> integer { t = 0; for e in c { t += e.v; } t }; c = mk_index(9); f() }
+
+fn main() {
+  assert(once_lit() == 509, "literal: {once_lit()}");
+  assert(once_call() == 509, "call: {once_call()}");
+  assert(once_var() == 509, "variable: {once_var()}");
+  assert(once_join(true) == 509, "branch: {once_join(true)}");
+  assert(once_field() == 509, "field: {once_field()}");
+  assert(once_empty() == 500, "empty: {once_empty()}");
+  assert(once_self() == 509, "self-reading: {once_self()}");
+  assert(twice() == 507, "two rebinds: {twice()}");
+  assert(twice_self() == 511, "two self-reading rebinds: {twice_self()}");
+  assert(loop_pass() == 1527, "a rebind every pass: {loop_pass()}");
+  assert(loop_some_passes() == 20, "a rebind on odd passes: {loop_some_passes()}");
+  assert(not_taken(false) == 505, "a rebind not taken: {not_taken(false)}");
+  g = escaping();
+  assert(g() == 5, "the closure leaves the frame: {g()}");
+  assert(sorted_call() == 5, "sorted: {sorted_call()}");
+  assert(index_call() == 5, "index: {index_call()}");
+}

@@ -2170,6 +2170,18 @@ or build a local and use that."
                         Value::Var(w),
                         fill,
                     ));
+                    if v_nr != u16::MAX && self.vars.rebind_must_mint(v_nr) {
+                        let pos = self
+                            .database
+                            .position(self.data.def(closure_rec_d).known_type(), &cap_name);
+                        let held = self
+                            .capture_records
+                            .entry((self.first_pass, self.context, v_nr))
+                            .or_default();
+                        if !held.contains(&(w, pos)) {
+                            held.push((w, pos));
+                        }
+                    }
                     // P259 / Plan-57 Phase B (Mechanism B): the closure record now
                     // holds a DbRef into the captured heap cell (`Reference(__cell_*,
                     // _)`) via the auto-Reference attribute, and the record OWNS that

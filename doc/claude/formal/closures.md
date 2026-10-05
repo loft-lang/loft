@@ -131,6 +131,16 @@ available). A bare `f` (a function's name used as a value) is a first-class func
                  the closure, so a write that would replace what it points AT is REFUSED
                  (a decided edge, DESIGN_DECISIONS C115 — not a deviation: the copy is what
                  (L-CapScalar) requires, so no code change closes it).
+  (L-CapRebind)  a WHOLE-VALUE rebind of a captured heap local is not a mutation-through: a
+                 record built before it keeps the store it was built with and answers the
+                 build-time value; the local names a store of its own from the rebind on.  So
+                 the rebind never clears or refills a store a record still holds — it moves
+                 the local to a fresh one first, after reading the local for the right-hand
+                 side (ownership.md O-Detach) — and the store the record keeps is released ONCE
+                 (L-CapOwn): by the record's cascade where it adopted it, else at the local's
+                 scope end.  A second rebind before the next build finds the local on its own
+                 store and replaces it in place.  Every spelling of the rebind is one rule: a
+                 literal, a call, a variable, a branch, a field and `[]`.
 ```
 
 ⚠ **A REASSIGNMENT of the captured variable is not a mutation-through, and the two are worth
@@ -220,7 +230,7 @@ with the closure's environment in scope.
 
 ## Deviations
 
-**OPEN: 0** — `D-clo-45` (opened and CLOSED 2026-09-28, loft#1725); `D-clo-44` (opened and CLOSED 2026-09-28, loft#1715); `D-clo-43` (opened and CLOSED 2026-09-27, found with loft#1700); `D-clo-42` (opened and CLOSED 2026-09-24, loft#1659); `D-clo-41` (opened and CLOSED 2026-09-24, loft#1658); `D-clo-40` (opened and CLOSED 2026-09-23, loft#1642); `D-clo-39` (opened and CLOSED 2026-09-23; `D-clo-38`, loft#1624, opened and
+**OPEN: 0** — `D-clo-46` (opened and CLOSED 2026-10-05, loft#1862); `D-clo-45` (opened and CLOSED 2026-09-28, loft#1725); `D-clo-44` (opened and CLOSED 2026-09-28, loft#1715); `D-clo-43` (opened and CLOSED 2026-09-27, found with loft#1700); `D-clo-42` (opened and CLOSED 2026-09-24, loft#1659); `D-clo-41` (opened and CLOSED 2026-09-24, loft#1658); `D-clo-40` (opened and CLOSED 2026-09-23, loft#1642); `D-clo-39` (opened and CLOSED 2026-09-23; `D-clo-38`, loft#1624, opened and
 CLOSED the same day; `D-clo-36` and `D-clo-37` opened 2026-09-22 with `D-clo-35` and CLOSED
 2026-09-23; `D-clo-27` closed 2026-09-12).
 

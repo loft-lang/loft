@@ -3792,6 +3792,44 @@ use a separate collection or add after the loop"
             )
     }
 
+    /// loft#1862, `@FR-L-CapRebind` — the mint a keyed whole-value rebind of local `v` owes:
+    /// `if <a closure record built over v still holds v's store> { fresh store for v }`.
+    ///
+    /// `(L-CapRebind)`: a rebind is not a mutation-through, so a record keeps the store it was
+    /// built with.  A keyed rebind otherwise clears and refills the local's store IN PLACE
+    /// (`gen_keyed_null(first = false)` keeps `store_nr`), which the record reads too: it
+    /// answered the new contents, and once `@FR-O-Latest` let the frame free the store the
+    /// local named last, an escaping record read a released store.  Asked by STORE IDENTITY at
+    /// run time, so the mint happens exactly while a record shares the store: a second rebind
+    /// finds the local on its own fresh store and clears that in place, rather than minting
+    /// again and leaving the first fresh store to nobody.
+    ///
+    /// `None` while no record over `v` has been built earlier in this pass — every assignment
+    /// after such a build is a REASSIGNMENT, which keeps a declaration's own init untouched.
+    pub(crate) fn keyed_rebind_mint(&mut self, v: u16, kt: u16) -> Option<Value> {
+        if self.first_pass || !self.vars.rebind_must_mint(v) {
+            return None;
+        }
+        let records = self.capture_records.get(&(false, self.context, v))?.clone();
+        let mut held = Value::Boolean(false);
+        for (w, pos) in records.into_iter().rev() {
+            let is_null = self.cl("OpRefIsNull", &[Value::Var(w)]);
+            let built = self.cl("OpConvBoolFromRef", &[Value::Var(w)]);
+            let slot = self.cl("OpGetDbRef", &[Value::Var(w), Value::Int(i32::from(pos))]);
+            let distinct = self.cl("OpDistinctStore", &[slot, Value::Var(v)]);
+            let shares = v_if(distinct, Value::Boolean(false), Value::Boolean(true));
+            let this = v_if(
+                is_null,
+                Value::Boolean(false),
+                v_if(built, shares, Value::Boolean(false)),
+            );
+            held = v_if(this, Value::Boolean(true), held);
+        }
+        let init = self.cl("OpInitRefSentinel", &[Value::Var(v)]);
+        let alloc = self.cl("OpDatabase", &[Value::Var(v), Value::Int(i32::from(kt))]);
+        Some(v_if(held, Value::Insert(vec![init, alloc]), Value::Null))
+    }
+
     #[allow(clippy::too_many_arguments)] // the wrapper's list, unchanged from before the split
     #[expect(clippy::too_many_lines, reason = "inherited")]
     fn parse_assign_op_inner(
@@ -6239,6 +6277,15 @@ use a separate collection or add after the loop"
         // Falls through to the standard assign path which emits
         // Set(v, code) — codegen then takes the Null arm.
         if var_nr != u16::MAX && !self.first_pass && Self::create_keyed(code, f_type, op, var_nr) {
+            // `@FR-L-CapRebind` — `c = []` over a store a closure record holds empties a FRESH
+            // store, as every other keyed rebind does ([`Parser::keyed_rebind_mint`]).
+            if crate::parser::vectors::owns_keyed_store(f_type)
+                && let Some(kt) = self.keyed_type_id(f_type)
+                && let Some(mint) = self.keyed_rebind_mint(var_nr, kt)
+            {
+                *code = Value::Insert(vec![mint, v_set(var_nr, Value::Null)]);
+                return Type::Void;
+            }
             // Don't return here — let the standard pipeline emit
             // Set(v, Null) so codegen sees it.  No further special-
             // case handling needed: the rest of the pipeline tolerates
@@ -6698,45 +6745,16 @@ use a separate collection or add after the loop"
         if let Some(kt) = keyed_kt
             && matches!(code, Value::Insert(ls) if !ls.is_empty())
         {
-            // @FR-L-CapHeap (loft#1447) — a CAPTURED local's rebind MINTS a fresh store
-            // instead of clearing this one in place.  `(L-CapHeap)` says a reassignment is
-            // not a mutation-through: the closure keeps the `DbRef` it was built with and
-            // answers the BUILD-time value, which is what the vector and struct spellings
-            // already do.  `Set(v, Null)` reaches `gen_keyed_null(first = false)`, whose
-            // `OpDatabase` clears the store IN PLACE and reuses `store_nr` — so the record's
-            // own handle sees the rebind, and `h = [Row{k:1,v:9}]` after a build over `v: 5`
-            // answered 9 on `hash`, `sorted` and `index`, both backends.
-            //
-            // Emitted HERE rather than decided in codegen because the licence is POSITIONAL
-            // and only the parser knows the position: `is_captured` is a whole-FUNCTION fact
-            // (`set_captured` runs when the closure BODY is parsed), so it is true for
-            // assignments that PRECEDE the build as well.  This site is reached only by a
-            // NON-EMPTY keyed literal — `h = [Row{…}]`, loft#895's local replace — while a
-            // declaration's `= []` goes through `create_keyed`, so the two cannot be
-            // confused and the declaration keeps its in-place init.
-            let clear = if self.vars.rebind_must_mint(var_nr) {
-                // `OpInitRefSentinel` rather than `OpInitRef`: it nulls the slot to the
-                // sentinel, and `OpDatabase`'s `store_nr == u16::MAX` arm then allocates a
-                // FRESH store from it — the same pair `parse_object` emits for the dense
-                // param rebind.  `OpInitRef` has no native emitter (it is codegen-internal),
-                // so the generated Rust called a function that does not exist.
-                let init = self.cl("OpInitRefSentinel", &[Value::Var(var_nr)]);
-                let alloc = self.cl(
-                    "OpDatabase",
-                    &[Value::Var(var_nr), Value::Int(i32::from(kt))],
-                );
-                // The `Set(v, Null)` STAYS, after the mint rather than instead of it.
-                // `@FR-O-Latest`'s scan reads `Value::Set` nodes to learn that a local was
-                // reassigned after its capture was built, and that fact is what turns OFF
-                // `capture_adoption_owns_free` so the frame frees the store the local now
-                // names.  Dropping the node minted a fresh store and then suppressed its
-                // free — the record kept the build-time store and the new one leaked
-                // (`1324-a-reassigned-capture-suppresses-the-store-the-record-holds`).
-                // Ordered mint-then-clear so the clear lands on the FRESH store: the other
-                // way round it would empty the store the record still holds.
-                Value::Insert(vec![init, alloc, v_set(var_nr, Value::Null)])
-            } else {
-                v_set(var_nr, Value::Null)
+            // `@FR-L-CapRebind` (loft#1447, loft#1862) — a store a closure record holds is
+            // not cleared in place: the rebind mints a fresh one first, see
+            // [`Parser::keyed_rebind_mint`].  The `Set(v, Null)` stays, after the mint:
+            // `@FR-O-Latest`'s scan reads `Value::Set` nodes to learn that a local was
+            // reassigned after its capture was built, which is what makes the frame free the
+            // store the local now names (`1324-a-reassigned-capture-suppresses-the-store-the-
+            // record-holds`); ordered mint-then-clear so the clear lands on the FRESH store.
+            let clear = match self.keyed_rebind_mint(var_nr, kt) {
+                Some(mint) => Value::Insert(vec![mint, v_set(var_nr, Value::Null)]),
+                None => v_set(var_nr, Value::Null),
             };
             if let Value::Insert(ls) = code {
                 ls.insert(0, clear);
@@ -6820,10 +6838,27 @@ use a separate collection or add after the loop"
             };
             #[cfg(feature = "wasm")]
             let tp_val = i32::from(kt);
-            let replace = self.cl(
-                "OpReplaceKeyed",
-                &[code.clone(), to.clone(), Value::Int(tp_val)],
-            );
+            // `@FR-L-CapRebind` — a right-hand side that reads the local runs BEFORE the mint
+            // (`@FR-O-Detach`): the mint rides in the destination operand, which is evaluated
+            // after the source.  Its `Set(v, Null)` lands on the fresh store and is what tells
+            // `@FR-O-Latest`'s scan that the local was reassigned.
+            let mint = self.keyed_rebind_mint(var_nr, kt);
+            let dest = match &mint {
+                Some(m) if code.reads_var(var_nr) => {
+                    let Value::If(held, then, _) = m.clone() else {
+                        unreachable!("keyed_rebind_mint answers an `if`")
+                    };
+                    let mut then = vec![*then];
+                    then.push(v_set(var_nr, Value::Null));
+                    v_block(
+                        vec![v_if(*held, Value::Insert(then), Value::Null), to.clone()],
+                        f_type.clone(),
+                        "keyed rebind",
+                    )
+                }
+                _ => to.clone(),
+            };
+            let replace = self.cl("OpReplaceKeyed", &[code.clone(), dest, Value::Int(tp_val)]);
             // loft#1840 — `(B-Copy)` for the keyed kinds, as `lower_vec_copy_bind` records it.
             if self.is_copied_place(code)
                 && let Value::Var(v) = to.unspan()
@@ -6902,7 +6937,10 @@ use a separate collection or add after the loop"
             let mut seq = if code.reads_var(var_nr) {
                 Vec::new()
             } else {
-                vec![Value::Set(var_nr, Box::new(Value::Null))]
+                mint.clone()
+                    .into_iter()
+                    .chain([Value::Set(var_nr, Box::new(Value::Null))])
+                    .collect()
             };
             // A JOIN's witnesses are its ARMS' — `protectable_ref_args` reads a call's
             // arguments and a join has none of its own (loft#1154).
@@ -6919,6 +6957,25 @@ use a separate collection or add after the loop"
             seq.push(replace);
             for av in &guarded {
                 seq.push(self.cl("n_unprotect_store_frees", &[Value::Var(*av)]));
+            }
+            // `@FR-L-CapRebind` — a mint inside the destination moved the local off the store
+            // the bracket protected, so `unprotect(v)` above reached the FRESH one.  The old
+            // store is the one a record's slot still names; left protected, its release at
+            // the local's scope exit was refused and it leaked once per pass.
+            if mint.is_some() && guarded.contains(&var_nr) && code.reads_var(var_nr) {
+                let records = self
+                    .capture_records
+                    .get(&(false, self.context, var_nr))
+                    .cloned()
+                    .unwrap_or_default();
+                for (w, pos) in records {
+                    let is_null = self.cl("OpRefIsNull", &[Value::Var(w)]);
+                    let built = self.cl("OpConvBoolFromRef", &[Value::Var(w)]);
+                    let present = v_if(is_null, Value::Boolean(false), built);
+                    let slot = self.cl("OpGetDbRef", &[Value::Var(w), Value::Int(i32::from(pos))]);
+                    let unprotect = self.cl("n_unprotect_store_frees", &[slot]);
+                    seq.push(v_if(present, unprotect, Value::Null));
+                }
             }
             *code = Value::Insert(seq);
             return Type::Void;
