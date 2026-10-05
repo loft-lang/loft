@@ -582,9 +582,9 @@ mod tests {
         // `i32` and character kinds add two more (`OpPushInt4`, `OpPushCharacter`), and its
         // boolean and enum kinds two more (`OpPushBoolean`, `OpPushEnum`, the byte kind at
         // bias 0).  `(G-Hold)` adds one, `OpCoroutineRetainEmitter`: a second holder of a
-        // generator handle takes a hold on its frame.  `(R-Refresh)`'s keep-range clause adds
-        // one, `KeepRangeEmitter` for `OpKeepRange`: a self-slice that keeps its own range in
-        // place refreshes the held header at its own site.
+        // generator handle takes a hold on its frame.  `@FR-R-Refresh`'s keep-range clause adds
+        // one, `KeepRangeEmitter` for `OpKeepRange`: a self-slice pop on a vector whose push
+        // header the loop holds refreshes that header at its own site.
         assert!(
             count <= 133,
             "registry has {count} custom emitters — bump the cap if \
