@@ -2979,17 +2979,20 @@ fn scaffold_library(name: &str, native: bool, chunk: bool) -> i32 {
         Ok(())
     };
 
-    // loft.toml — includes [native] declaration when --native.
+    // loft.toml — includes [native] declaration when --native.  The loft floor is the loft
+    // this library is written against: a floor older than that is a claim nothing checked, and
+    // the resolver hands the library to a loft it does not build on.
+    let floor = env!("CARGO_PKG_VERSION");
     let loft_toml = if native {
         format!(
-            "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nloft = \">=0.8\"\n\
+            "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nloft = \">={floor}\"\n\
              description = \"One-line description of {name}.\"\n\n\
              [library]\nentry = \"src/{name}.loft\"\nnative = \"loft_{name}\"\n\n\
              [native]\ncrate = \"loft-{name}\"\n\n[dependencies]\n"
         )
     } else {
         format!(
-            "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nloft = \">=0.8\"\n\
+            "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nloft = \">={floor}\"\n\
              description = \"One-line description of {name}.\"\n\n\
              [library]\nentry = \"src/{name}.loft\"\n\n[dependencies]\n"
         )

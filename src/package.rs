@@ -150,11 +150,12 @@ pub fn declared_levels(
     );
     let loft = manifest.loft_version.clone();
     if loft.is_none() {
-        problems.push(
+        problems.push(format!(
             "`loft` is not declared.  It is which loft this package needs, and unlike the \
-             other two it is a RANGE:\n      loft = \">=0.8\""
-                .to_string(),
-        );
+             other two it is a RANGE — the loft you build and test it with:\n      \
+             loft = \">={}\"",
+            env!("CARGO_PKG_VERSION")
+        ));
     }
 
     match (loft, api, data) {
