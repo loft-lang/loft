@@ -16332,6 +16332,25 @@ fn run_it() -> integer {
 
 /// @C75 — closure-carrying struct values are frame-bound.
 #[test]
+fn a_field_after_a_capturing_fn_field_is_written_by_name() {
+    // A struct with a capturing fn field lays out a hidden `<f>__closure_rec` field with no
+    // attribute, so a layout field's index is not its attribute index: the write's const check
+    // resolves the attribute by name.  By index it read past the attribute list (an ICE).
+    code!(
+        "struct V { a: integer }
+struct H1 { f: fn(integer) -> integer, tag: integer }
+fn run() -> integer {
+    v = V { a: 3 };
+    a = H1 { f: fn(x: integer) -> integer { v.a * 10 + x }, tag: 1 };
+    a.tag = 9;
+    a.tag * 100 + a.f(1)
+}"
+    )
+    .expr("run()")
+    .result(Value::Int(931));
+}
+
+#[test]
 fn issue_318_returning_closure_carrying_struct_rejected() {
     code!(
         "struct Counter { n: integer }

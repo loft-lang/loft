@@ -10986,8 +10986,15 @@ use a separate collection or add after the loop"
                         } else {
                             "struct"
                         };
-                    for (f_nr, f) in fields.iter().enumerate() {
+                    for f in fields {
                         if f.position != pos as u16 {
+                            continue;
+                        }
+                        // The record's layout carries fields with no attribute of their own
+                        // (a fn field's `<name>__closure_rec`), so a field's index there is
+                        // not its attribute index: resolve it by name.
+                        let f_nr = self.data.attr(d_nr, &f.name);
+                        if f_nr == usize::MAX {
                             continue;
                         }
                         if !self.data.def(d_nr).attributes()[f_nr].mutable {
@@ -11132,8 +11139,13 @@ use a separate collection or add after the loop"
                     else {
                         return None;
                     };
-                    let f_nr = fields.iter().position(|f| f.position == *pos as u16)?;
-                    let attr = &self.data.def(d_nr).attributes()[f_nr];
+                    let field = fields.iter().find(|f| f.position == *pos as u16)?;
+                    // By name: a layout field need not have an attribute (`<f>__closure_rec`).
+                    let attr = self
+                        .data
+                        .def(d_nr)
+                        .attributes()
+                        .get(self.data.attr(d_nr, &field.name))?;
                     if (include_leaf || !is_leaf) && attr.value_const {
                         return Some((
                             format!("{}.{}", self.data.def(d_nr).name(), attr.name),
