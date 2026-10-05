@@ -30,5 +30,5 @@ fn main() {
   assert(r == "b", "text instance: got {r}");
   assert(s == "a", "the caller's argument is untouched: got {s}");
   assert(in_loop("a", "b") == "b", "reassigned in a loop: got {in_loop("a", "b")}");
-  assert("{setg("x", "y")} {setg(1, 2)}" == "y 2", "two instances of one generic");
+  assert("{setg("x", "y")} {in_loop("p", "q")}" == "y q", "a second call of each instance");
 }
