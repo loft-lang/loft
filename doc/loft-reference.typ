@@ -6423,6 +6423,16 @@ Combine patterns with `|` to share the same arm body.
   assert(axis == "vertical", "multi-pattern: {axis}");
 ```
 
+`|` joins variant NAMES.  To bind fields in several variants with one arm, list the whole patterns separated by `,` instead: each pattern binds from its own variant, and the arm body runs for whichever one matched.  A name every pattern binds must have the same type in each; a name only some patterns bind is nullable in the body, `null` when a pattern without it matched.
+
+```rust
+  long_side = match Rect { w: 3, h: 8 } {
+    Circle { radius }, Rect { h: radius } => radius,
+    _ => 0,
+  };
+  assert(long_side == 8, "a field bound from either variant: {long_side}");
+```
+
 === Tuple patterns
 
 A tuple subject matches element by element.  Write `\_` for an element you do not care about.
