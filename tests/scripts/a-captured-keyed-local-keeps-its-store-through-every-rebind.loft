@@ -18,6 +18,13 @@
 // self-reading call); its position (once, twice, inside a loop pass, on a branch not taken,
 // in a function whose closure leaves the frame); the keyed kind for the call spelling.
 // Axes it HOLDS FIXED: one capturing closure per local; the element is a two-field record.
+//
+// @falsified-at: 689786603 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
+//   native exit 1 -> 0, native 1 assertion failures -> 0.  CHANNEL: exit and assertions (the
+//   first failing assertion stops the run).
+//   ARMED: nothing.
+//   HOLDS: leak and panic are equal on both trees.
+// @falsified-by: tests/falsified/a-captured-keyed-local-keeps-its-store-through-every-rebind.patch
 
 struct E { k: integer, v: integer }
 struct W { c: hash<E[k]> }

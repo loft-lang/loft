@@ -14,6 +14,12 @@
 //
 // Values by hand: mk(n) is `[n]`; add(v, d) adds d to each element; each cell answers
 // `f() * 100 + tot(c)`, the build-time total (5) beside what `c` holds after the rebind.
+//
+// @falsified-at: 04b8e5bc9 — under LOFT_STRICT_STORES=1: interpret exit 1 -> 0, interpret
+//   leaked kt=19 main_vector<integer>×9 -> clean, native the same.  CHANNEL: leak (strict
+//   stores turns it into the exit).  ARMED: LOFT_STRICT_STORES=1.  HOLDS: every value
+//   assertion passes on both trees — the values were right before the fix.
+// @falsified-by: tests/falsified/a-captured-vector-from-a-call-frees-the-store-its-rebind-leaves.patch
 
 fn mk(n: integer) -> vector<integer> { r: vector<integer> = []; r += [n]; r }
 fn add(v: vector<integer>, d: integer) -> vector<integer> {

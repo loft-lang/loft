@@ -13,10 +13,18 @@
 // for its value, a write-back into the SOURCE, a `&` bind, a copy read after the write, and a
 // borrowed base, where the same lines write through.
 //
-// CHANNEL: the `lost-write` warnings; every value assertion HOLDS on both backends.  One more
-// cell found a second defect: `view_of_a_view` wrote `w` — the copy `vv_es = w.es` off a plain
-// parameter was ELIDED because only its direct borrower `e` was checked for writes, and
+// One cell found a second defect: `view_of_a_view` wrote `w` — the copy `vv_es = w.es` off a
+// plain parameter was ELIDED because only its direct borrower `e` was checked for writes, and
 // `s = e.inn; s.x = 9` writes two views deep.  Its `inn.x == 1` assertion is that guard.
+//
+// @falsified-at: 40262dc82 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
+//   native exit 1 -> 0, native 1 assertion failures -> 0 (the elision's channel); and BY HAND,
+//   because `make falsify` cannot see a warning: 0 `lost-write` reports there, 6 here (cw_es
+//   ln_es nv_es rmw_es th_es vv_es) on both backends.  `tests/dead_code_lint.rs` asserts the
+//   exact set.  CHANNEL: exit/assertions for the elision, the warnings for the lint.
+//   ARMED: nothing.
+//   HOLDS: leak and panic equal on both trees.
+// @falsified-by: tests/falsified/1864-a-copy-written-through-its-own-view-is-a-lost-write.patch
 
 struct In1864 { x: integer }
 struct E1864 { hp: integer, awake: boolean, inn: In1864 }
