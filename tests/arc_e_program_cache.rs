@@ -905,3 +905,66 @@ fn a_lowering_switch_is_part_of_the_program_cache_key() {
     );
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// loft#1859 — every executable of ONE build shares one stdlib image.  The key folded in the
+/// running executable's modification time, and every test binary is its own executable: one
+/// rebuild wrote one ~7 MB image per test binary, which nothing read again and nothing removed
+/// (31 548 of them, 227 GB, on one box).  A copy of the binary has a new mtime and path, the
+/// same shape as a second test binary; and the `LOFT_BUILD_*` stamps `cargo test` exports
+/// into a process it starts must not count as a semantic switch either.
+#[test]
+fn every_binary_of_one_build_shares_one_stdlib_image() {
+    let pid = std::process::id();
+    let root = std::env::temp_dir().join(format!("loft_stdlib_share_{pid}"));
+    let _ = std::fs::remove_dir_all(&root);
+    let cache = root.join("xdg");
+    std::fs::create_dir_all(&cache).expect("create scratch");
+    let script = root.join("prog.loft");
+    std::fs::write(&script, "fn main() { println(\"ok\"); }\n").expect("write script");
+    let copy = root.join(format!("loft-copy{}", std::env::consts::EXE_SUFFIX));
+    std::fs::copy(loft_bin(), &copy).expect("copy the binary");
+    let run_with = |bin: &std::path::Path, env: &[(&str, &str)]| {
+        let mut cmd = Command::new(bin);
+        cmd.arg("--path")
+            .arg(workspace_root())
+            .arg("--interpret")
+            .arg(&script)
+            .current_dir(workspace_root())
+            .env_remove("LOFT_NO_CACHE")
+            .env("XDG_CACHE_HOME", &cache);
+        for (k, v) in env {
+            cmd.env(k, v);
+        }
+        let out = cmd.output().expect("failed to invoke loft");
+        assert!(out.status.success(), "{}: {out:?}", bin.display());
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
+    };
+    let images = || -> Vec<String> {
+        std::fs::read_dir(cache.join("loft"))
+            .map(|d| {
+                d.flatten()
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .filter(|n| n.starts_with("stdlib-") && n.ends_with(".store"))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    run_with(&loft_bin(), &[]);
+    let first = images();
+    assert_eq!(first.len(), 1, "the first run writes one image: {first:?}");
+    run_with(&copy, &[]);
+    run_with(
+        &loft_bin(),
+        &[
+            ("LOFT_BUILD_STAMP", "elsewhere"),
+            ("LOFT_BUILD_ID", "elsewhere"),
+        ],
+    );
+    assert_eq!(
+        images(),
+        first,
+        "a second executable of the same build, and a run under cargo's exported stamps, \
+         read the first image instead of writing their own"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}

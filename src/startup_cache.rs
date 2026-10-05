@@ -48,6 +48,8 @@ pub fn warm_load_stdlib(p: &mut Parser, default_dir: &str) -> bool {
     match crate::ir_read::open_bundle_into(&path.to_string_lossy(), &mut p.database) {
         Ok(data) => {
             p.data = data;
+            // Recency is USE, so the images a live build keeps loading survive the prune.
+            crate::cache::touch_now(&path);
             true
         }
         Err(_) => false, // cache miss (different key / absent) → cold parse
@@ -73,6 +75,7 @@ pub fn save_stdlib_cache(p: &Parser, default_dir: &str) {
         let _ = std::fs::create_dir_all(parent);
     }
     let _ = crate::ir_store::save_bundle(&p.data, &p.database.types, &path.to_string_lossy());
+    crate::cache::prune_stdlib_images();
 }
 
 /// Non-`mmap` builds: no bundle to write.
