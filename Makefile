@@ -2818,6 +2818,10 @@ linkcheck-external:
 rule-coverage:  ## What share of the formal rules carry a code annotation, and an active guard
 	@python3 scripts/rule_tags.py coverage
 
+.PHONY: rule-worklist
+rule-worklist:  ## The rule-led walk's queue: untested rules ordered by the defects a walk is expected to find
+	@python3 scripts/rule_tags.py worklist $(ARGS)
+
 .PHONY: script-census
 script-census:  ## @PLN179 the work list: every Python/bash script by what a loft port needs (a report)
 	@cargo build --release --bin loft -q
