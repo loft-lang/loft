@@ -7643,8 +7643,9 @@ impl Data {
         if self.has_overload_set(name) {
             return u16::MAX;
         }
-        let tp = match receiver {
-            Type::RefVar(inner) => inner.as_ref(),
+        // `@FR-N-Shape` — a `τ?` or `&τ` receiver is the type it wraps.
+        let tp = match receiver.base() {
+            Type::RefVar(inner) => inner.base(),
             other => other,
         };
         let type_nr = self.type_def_nr(tp);
