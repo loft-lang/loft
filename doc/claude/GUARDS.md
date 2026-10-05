@@ -194,7 +194,9 @@ lines is the disk: `df -h /`, then [RUN_BOUNDS.md § Scratch hygiene](RUN_BOUNDS
 The durable form carries the defect instead of pointing at it, and it stays durable only while
 it APPLIES.  A receipt the code moved out from under is cured at PR time, on a runner, not on
 each join: `.github/workflows/receipts.yml` (`scripts/receipts_ci.py`) re-applies every stale
-patch by a clean three-way merge, re-scores it with `falsify.sh --patch`, and then runs
+patch by a clean three-way merge, re-scores it with `falsify.sh --patch` — under every
+`LOFT_X=value` its receipt's **ARMED** label names, so a receipt that needs a switch is scored
+the way it was recorded — and then runs
 `doc_hygiene::every_patch_receipt_still_applies` (ignored per commit for that reason).  A
 dispatch on the branch commits the refreshed patches back (`scripts/derive-ci.sh --workflow
 receipts.yml`); the PR's own run fails only on a WILD SWING — a guard its patch fails to

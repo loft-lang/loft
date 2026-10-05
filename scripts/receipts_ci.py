@@ -69,6 +69,31 @@ def recorded(guard, name):
     return m.group(1).strip() if m else ""
 
 
+def armed(guard, name):
+    """The switches the receipt for patch `name` says its score needs: every `LOFT_X=value`
+    on the `ARMED:` label inside that patch's own `@falsified-by:` block (GUARDS.md § The patch
+    receipt).  A label owns its wrapped continuation lines, up to the next label or the next
+    receipt.  A switch named without `=` ("ran without `LOFT_STRICT_STORES`") arms nothing."""
+    lines = (ROOT / guard).read_text(encoding="utf-8", errors="replace").splitlines()
+    head = f"@falsified-by: tests/falsified/{name}"
+    env, inside, label = {}, False, None
+    for line in lines:
+        if head in line:
+            inside, label = True, None
+            continue
+        if not inside:
+            continue
+        body = line.removeprefix("//").strip()
+        if not line.startswith("//   ") or "@falsified" in line:
+            break
+        m = re.match(r"([A-Z]+):", body)
+        if m:
+            label = m.group(1)
+        if label == "ARMED":
+            env.update(re.findall(r"\b(LOFT_[A-Z0-9_]+)=([^\s`.,;)]+)", body))
+    return env
+
+
 def refresh(patch):
     """Rewrite a stale patch from a clean three-way merge onto HEAD; False when it conflicts."""
     with tempfile.TemporaryDirectory(prefix="loft-receipt-") as td:
@@ -142,7 +167,8 @@ def main():
                 continue
         for guard in cites[name]:
             r = subprocess.run(["scripts/falsify.sh", guard, "--patch", str(patch)], cwd=ROOT,
-                               capture_output=True, text=True)
+                               capture_output=True, text=True,
+                               env={**os.environ, **armed(guard, name)})
             got = re.search(r"// @falsified-by: \S+ — (.*)", r.stdout)
             got = got.group(1).strip() if got else ""
             if r.returncode != 0:
