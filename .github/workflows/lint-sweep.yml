@@ -1,0 +1,111 @@
+name: lint-sweep
+
+# Does a diagnostic change move what it reports over every loft program we can reach —
+# this repo, every loft-libs-* library and the consumers?  A MEASUREMENT, never a gate and
+# never on a PR.  Builds loft at two commits and runs `scripts/lint_sweep.py` over the
+# checkouts with both; the job summary lists every file whose count of the one code moved,
+# with the diagnostics the new build printed there.
+#
+# Trigger: push a commit whose message carries the two trailers to the `lint-sweep` branch
+# (a push trigger, so it runs before this file reaches the default branch):
+#
+#   git commit --allow-empty -m "lint sweep" \
+#       -m "Lint-sweep-base: <sha>" -m "Lint-sweep-code: lost-write"
+#   git push --force origin HEAD:lint-sweep
+#
+# The pushed tree is the HEAD side.  The private consumer needs `secrets.CONSUMER_TOKEN`;
+# without it that consumer is skipped with a notice, never counted as clean.
+
+on:
+  push:
+    branches: [lint-sweep]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout loft
+        uses: actions/checkout@v4
+        with:
+          path: loft-src
+          fetch-depth: 0
+
+      - name: Read the trailers
+        id: arg
+        working-directory: loft-src
+        run: |
+          set -euo pipefail
+          msg="$(git log -1 --format=%B)"
+          base=$(printf '%s\n' "$msg" | sed -n 's/^Lint-sweep-base: *//p' | head -1)
+          code=$(printf '%s\n' "$msg" | sed -n 's/^Lint-sweep-code: *//p' | head -1)
+          [ -n "$base" ] && [ -n "$code" ] || { echo "::error::the commit needs Lint-sweep-base and Lint-sweep-code trailers"; exit 1; }
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "head $(git rev-parse --short HEAD), base $base, code $code"
+
+      - name: Install mold
+        run: sudo apt-get update -y && sudo apt-get install -y mold
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: lint-sweep-${{ hashFiles('loft-src/Cargo.lock') }}
+          restore-keys: lint-sweep-
+
+      - name: Build loft at head and at base
+        working-directory: loft-src
+        run: |
+          set -euo pipefail
+          cargo build --release --bin loft
+          git worktree add --detach ../loft-base "${{ steps.arg.outputs.base }}"
+          ( cd ../loft-base && cargo build --release --bin loft --target-dir ../base-target )
+
+      - name: Clone the libraries and the consumers
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CONSUMER_TOKEN: ${{ secrets.CONSUMER_TOKEN }}
+        run: |
+          set -uo pipefail
+          mkdir -p corpus
+          for r in $(gh repo list loft-lang --limit 100 --json name --jq '.[].name' | grep -E '^loft-libs-' | sort); do
+            git clone --quiet --depth 1 "https://github.com/loft-lang/$r.git" "corpus/$r" || echo "::warning::$r did not clone"
+          done
+          for r in jjstwerff/moros jjstwerff/dryopea jjstwerff/crawler; do
+            git clone --quiet --depth 1 "https://github.com/$r.git" "corpus/$(basename $r)" || echo "::warning::$r did not clone"
+          done
+          if [ -n "${CONSUMER_TOKEN:-}" ]; then
+            git clone --quiet --depth 1 "https://x-access-token:${CONSUMER_TOKEN}@github.com/hstellingwerff-jpg/Moros-Economy-Development.git" corpus/Moros-Economy-Development \
+              || echo "::warning::Moros-Economy-Development did not clone"
+          else
+            echo "::notice title=Moros-Economy-Development skipped::no CONSUMER_TOKEN — NOT swept (this is not a clean result)"
+          fi
+          ls corpus
+
+      - name: Sweep
+        run: |
+          set -euo pipefail
+          # crawler passes its unpublished bundles and loft's lib/ as --lib (its Makefile),
+          # as consumer-main-health does; without them its bundle files do not compile.
+          python3 loft-src/scripts/lint_sweep.py \
+            --base base-target/release/loft --head loft-src/target/release/loft \
+            --code "${{ steps.arg.outputs.code }}" --out lint-sweep \
+            --lib "corpus/crawler=../../loft-src/lib" \
+            loft-src corpus/*
+          cat lint-sweep/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lint-sweep
+          path: lint-sweep/
