@@ -1,0 +1,19 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `(T-Destr)` with `@FR-N-Decl`: a declared `float` in a pattern takes an integer member the way
+// `a = 3` does — widened (`@FR-C-Int`).  The pattern used to retype the local to the member and
+// refused it: "Variable 'a' cannot change type from float to integer".  A file of its own:
+// that refusal stops a file, which would hide the value cells of
+// `a-destructured-name-keeps-its-declared-type.loft`.
+
+fn widened() -> float {
+  a: float = 1.5;
+  b = 0;
+  (a, b) = (3, 2);
+  a / 2.0
+}
+
+fn main() {
+  assert(widened() == 1.5, "an integer widens into a declared float: got {widened()}");
+}

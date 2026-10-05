@@ -13,13 +13,15 @@
 //   (p.x, p.z) = (7, 8)    wrote 8 into y and left z     (silent)
 //   (p.z, p.x) = (7, 8)    wrote 8 past the record        (silent)
 //   (s.g, b) = (7, 9)      wrote b into the struct and never assigned b
-//   (b, p.x) = (7, 8)      refused, "requires plain variable names"
+//   (b, p.x) = (7, 8)      refused, "requires plain variable names" — that cell is
+//                          `a-destructuring-pattern-mixes-names-and-places.loft`, apart, because a
+//                          refusal stops the file before these value cells run
 //
 // crawler's `(w.sq, w.sr) = sim_player_hex(w.s)` was right only because its two fields sat
 // side by side; `crawler_shape` below keeps a third field after them.
 //
-// Axes this file MOVES:  member kind (field · nested field · element · new name · existing
-//                        name), member order (in layout order · reversed · skipping a
+// Axes this file MOVES:  member kind (field · nested field · element · an existing name
+//                        after a field), member order (in layout order · reversed · skipping a
 //                        field), value kind (scalar · nullable narrow · text · struct ·
 //                        vector), right-hand side (literal · call · reading the targets),
 //                        evaluation count (once · in a loop).
@@ -50,15 +52,6 @@ fn fields_in_any_order() -> text {
   a = "{p.x}{p.y}{p.z}";
   (p.z, p.x) = (5, 6);
   "{a} {p.x}{p.y}{p.z}"
-}
-
-fn names_and_fields() -> text {
-  s = S { f: 1, g: 2, h: 1.5 };
-  b = 0;
-  (s.g, b) = (7, 9);
-  (b, s.f) = (4, 3);
-  (c, s.h) = (11, 2.5);
-  "{s.f} {s.g} {s.h} {b} {c}"
 }
 
 fn swaps() -> text {
@@ -104,7 +97,6 @@ fn crawler_shape() -> text {
 
 fn main() {
   assert(fields_in_any_order() == "728 625", "field order: got {fields_in_any_order()}");
-  assert(names_and_fields() == "3 7 2.5 4 11", "names beside fields: got {names_and_fields()}");
   assert(swaps() == "21 [30,20,10]", "a swap reads before it writes: got {swaps()}");
   assert(nullable_narrow(300) == "null", "u8? field out of range: got {nullable_narrow(300)}");
   assert(nullable_narrow(200) == "200", "u8? field in range: got {nullable_narrow(200)}");

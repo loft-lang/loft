@@ -8,11 +8,14 @@
 //
 //   a: u8?   (a, b) = (300, 1)        held 300, outside its own type, where `a = 300` is null
 //   a: i32?  (a, b) = (5000000000, 1) held 5000000000
-//   a: float (a, b) = (3, 1)          refused "cannot change type", where `a = 3` widens
+//
+// The float twin — `a: float; (a, b) = (3, 1)` was REFUSED where `a = 3` widens — is
+// `a-destructured-float-name-widens-an-integer.loft`, apart, because a refusal stops the file
+// before these value cells run.
 //
 // The refusal half is `a-destructured-narrow-name-is-refused-where-a-store-is.loft`.
 //
-// Axes this file MOVES:  the declared type (u8? · i32? · float · integer), the member source
+// Axes this file MOVES:  the declared type (u8? · i32? · integer), the member source
 //                        (a tuple literal · a call), the value (in range · out of range).
 // Axes it HOLDS FIXED:   a two-member pattern, the narrow name first.  Field targets in a
 //                        pattern are not here: they are a separate question for (T-Destr).
@@ -42,13 +45,6 @@ fn wide_nullable(w: integer) -> text {
   "{a} {b}"
 }
 
-fn widened() -> float {
-  a: float = 1.5;
-  b = 0;
-  (a, b) = (3, 2);
-  a / 2.0
-}
-
 fn inferred(n: integer) -> integer {
   (a, b) = (n, 2);
   a + b
@@ -59,6 +55,5 @@ fn main() {
   assert(narrow_nullable(100) == "100 2", "u8? in range: got {narrow_nullable(100)}");
   assert(narrow_nullable_call(300) == "null 1", "u8? from a call: got {narrow_nullable_call(300)}");
   assert(wide_nullable(5000000000) == "null 2", "i32? out of range: got {wide_nullable(5000000000)}");
-  assert(widened() == 1.5, "an integer widens into a declared float: got {widened()}");
   assert(inferred(300) == 302, "an undeclared name takes the member as it is: got {inferred(300)}");
 }
