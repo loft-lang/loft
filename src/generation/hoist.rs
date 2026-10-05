@@ -9337,10 +9337,19 @@ pub fn refill_text_callee(data: &Data, stores: &Stores, d: u32) -> Result<u16, &
     if var_mentions(body, b) != admitted {
         return Err("the buffer is named outside its literals");
     }
+    // An exit answers the buffer: `return b`, or a block whose value is `b` (the literal's
+    // own block, `return { …; b }`).
+    fn answers(v: &Value, b: u16) -> bool {
+        match v.unspan() {
+            Value::Var(x) => *x == b,
+            Value::Block(bl) => bl.operators.last().is_some_and(|l| answers(l, b)),
+            _ => false,
+        }
+    }
     let mut other_exit = false;
     body.any_node(&mut |n| {
         if let Value::Return(r) = n
-            && !is_var(r, b)
+            && !answers(r, b)
         {
             other_exit = true;
         }
