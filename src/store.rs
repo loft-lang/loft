@@ -4994,6 +4994,35 @@ impl Store {
         res
     }
 
+    /// `@FR-R-RefillText` — write `val` into the text slot at `(rec, fld)` reusing the block
+    /// the slot already owns: written over when `val` fits its claim (`len + 8 ≤ 8 × words`),
+    /// released and claimed anew when it does not, claimed when the slot is 0.  The caller
+    /// owes the rule's invariant — the slot holds 0 or a text block it owns — which the
+    /// emitter proves at the call site; a slot holding anything else is read as a block.
+    #[inline]
+    pub fn refill_str(&mut self, rec: u32, fld: u32, val: &str) {
+        let old = self.get_u32_raw(rec, fld);
+        if old != 0 && !self.read_only {
+            let words = self.read::<i32>(old, 0);
+            if words > 0 && val.len() + 8 <= words as usize * 8 {
+                #[cfg(feature = "op-census")]
+                crate::op_census::moved(crate::op_census::Moved::Text, val.len());
+                self.set_u32_raw(old, 4, val.len() as u32);
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        val.as_ptr(),
+                        self.ptr.offset(old as isize * 8 + 8),
+                        val.len(),
+                    );
+                }
+                return;
+            }
+            self.delete(old);
+        }
+        let res = self.set_str(val);
+        self.set_u32_raw(rec, fld, res);
+    }
+
     #[inline]
     pub fn set_str_ptr(&mut self, ptr: *const u8, len: usize) -> u32 {
         #[cfg(feature = "op-census")]
@@ -5779,6 +5808,56 @@ mod tests {
             },
         );
         (plain, rec, foreign, froot)
+    }
+
+    /// `@FR-R-RefillText` — the three cases of `refill_str`, read by value, by block and by
+    /// live-claim count: a 0 slot claims; a text that fits is written over the slot's own
+    /// block (same block, no claim); one that does not releases the block and claims a fit
+    /// (count flat); an empty text and a longer one after it ride the same rules.  A
+    /// one-word block holds 0 bytes of text, two words up to 8.
+    #[test]
+    fn refill_str_writes_over_a_fitting_block_and_replaces_one_that_does_not() {
+        let mut s = Store::new(64);
+        let rec = s.claim(2);
+        // The rule's precondition, as the zero-filling mint leaves it (a poisoned claim
+        // under `LOFT_POISON_CLAIM=1` is read as a block otherwise — the invariant).
+        s.set_u32_raw(rec, 8, 0);
+        let base = s.claims_count();
+        s.refill_str(rec, 8, "abcd");
+        let first = s.get_u32_raw(rec, 8);
+        assert_ne!(first, 0);
+        assert_eq!(s.get_str(first), "abcd");
+        assert_eq!(s.claims_count(), base + 1);
+        // Fits (12 ≤ 16): the same block, the shorter text.
+        s.refill_str(rec, 8, "xy");
+        assert_eq!(s.get_u32_raw(rec, 8), first);
+        assert_eq!(s.get_str(first), "xy");
+        assert_eq!(s.claims_count(), base + 1);
+        // Exactly the claim (8 + 8 = 16).
+        s.refill_str(rec, 8, "12345678");
+        assert_eq!(s.get_u32_raw(rec, 8), first);
+        assert_eq!(s.get_str(first), "12345678");
+        // Empty, then longer than the block: released and claimed anew, the count flat.
+        s.refill_str(rec, 8, "");
+        assert_eq!(s.get_u32_raw(rec, 8), first);
+        assert_eq!(s.get_str(first), "");
+        s.refill_str(rec, 8, "a text past two words");
+        let grown = s.get_u32_raw(rec, 8);
+        assert_eq!(s.get_str(grown), "a text past two words");
+        assert_eq!(s.claims_count(), base + 1);
+        assert!(!s.claims_record(first) || first == grown);
+        // A thousand refills of alternating sizes leave one block.
+        for i in 0..1000 {
+            let v = if i % 3 == 0 {
+                "a much longer text than the others"
+            } else {
+                "s"
+            };
+            s.refill_str(rec, 8, v);
+            assert_eq!(s.get_str(s.get_u32_raw(rec, 8)), v);
+        }
+        assert_eq!(s.claims_count(), base + 1);
+        assert_eq!(s.validate_structure(), Ok(()));
     }
 
     fn sample_bytes() -> Vec<u8> {
