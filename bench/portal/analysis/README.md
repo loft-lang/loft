@@ -167,6 +167,15 @@ remainder is structural; `mesh_aabb`'s rest is the null-aware float compare.
   there is memory.  `scripts/find_problems.sh --changed` falls back to the long curated set
   while `loft-ffi/Cargo.lock` sits untracked in the tree; run named test binaries instead.
 
+- **A slow path that takes a `&DbRef` keeps the record in memory for the whole loop.**  An
+  outlined (`#[cold]`, `#[inline(never)]`) helper the optimiser cannot see into makes every
+  `DbRef` handed to it by reference live in a stack slot; on x86-64 its fields are then
+  written narrow and read back wide every pass, a store-forwarding stall per element that
+  arm64 barely shows.  `rec_set`'s refusal path took one: `timer_spend` 13.9× on x86-64
+  against 3.7× on the Mac, 3.2× once it took the fields by value.  A host gap in loft's own
+  lane with the twin level is the tell; `perf annotate` shows the stall as the load after a
+  narrower store to the same slot.
+
 ## Tools used here
 
 `python3 bench/stats.py --only <lane>` (one lane as statistics; `--tsv` to keep a run) ·

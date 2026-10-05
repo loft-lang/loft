@@ -1258,7 +1258,7 @@ pub unsafe fn rec_set<T: Copy>(
     // by ONE test; [`rec_set_refused`] tells them apart and asks the locked store, which
     // refuses the write.
     if ptr.is_null() | locked {
-        rec_set_refused(ptr, db, fld, stores);
+        rec_set_refused(ptr.is_null(), db.store_nr, db.rec, db.pos + fld, stores);
         return;
     }
     if verify {
@@ -1280,12 +1280,16 @@ pub unsafe fn rec_set<T: Copy>(
 /// The slow half of [`rec_set`]: nothing for the null record (`@FR-H-WriteNull`), and for a
 /// record in a locked store the store's own refusal (`@FR-H-WriteLocked`) — a development
 /// run halts in it, a production run logs the write, and the caller drops it either way.
-/// Enforces `@FR-R-Cold`: outlined, so the write itself is a test and a store.
+/// Enforces `@FR-R-Cold`: outlined, so the write itself is a test and a store.  It takes the
+/// record's fields BY VALUE: a `&DbRef` handed to a function the optimiser cannot see into
+/// makes the caller's `DbRef` live in memory for the whole loop, and on x86-64 its fields are
+/// then written narrow and read back wide every pass — a store-forwarding stall per element
+/// (`timer_spend` 45.5 → 11.7 ms when this took a reference).
 #[cold]
 #[inline(never)]
-fn rec_set_refused(ptr: *const u8, db: &DbRef, fld: u32, stores: &[Store]) {
-    if !ptr.is_null() {
-        let _ = stores[db.store_nr as usize].write_allowed(db.rec, db.pos + fld);
+fn rec_set_refused(null: bool, store_nr: u16, rec: u32, at: u32, stores: &[Store]) {
+    if !null {
+        let _ = stores[store_nr as usize].write_allowed(rec, at);
     }
 }
 
