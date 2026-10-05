@@ -190,8 +190,11 @@ close.  Decided 2026-09-15, an error from 2026-09-28 — [record](DESIGN_DECISIO
 **Decision.** A store is one object, identity is the store, a free releases a store.  An
 optimisation may not add a second object kind (an arena record with pair identity); it removes
 the temporary instead — `(R-ValueRecord)`, `(O-ViewField)`, `(R-Place)`, `(R-InPlaceLiteral)`,
-`(R-ElemFirst)` — or reuses a store per call site.  **Why.** A model that grows a second object
-kind becomes hard to reason about and so impossible to verify.
+`(R-ElemFirst)` — or reuses a store per call site.  **Why.** With one kind of value the programmer never
+chooses between a long-lived store and a Rust-like local structure, and so cannot choose
+wrong: which values live on the stack is the compiler's to prove (`(R-Apart)`), never a
+decision in the program.  A model that grows a second object kind puts that choice back on
+the programmer, becomes hard to reason about and so impossible to verify.
 
 **Revisit when.** Temporaries that cannot be removed or reused cost more than a few percent,
 measured on the release binary with `perf`.  Decided 2026-09-17 — [record](DESIGN_DECISIONS-history.md#c125--the-store-model-stays-simple-performance-work-removes-objects-it-does-not-add-a-second-kind-of-object).
