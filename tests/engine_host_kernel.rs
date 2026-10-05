@@ -429,9 +429,12 @@ fn reap_port(port: u16) {
     // `lsof` that returns empty and exits at once; the loop is bounded so a genuinely
     // stuck holder surfaces via the spawn/connect below rather than hanging here.
     for _ in 0..40 {
+        // LISTENERS only: a client holding a connection to the port — the test itself, once
+        // it has dialled the kernel — is not an orphan, and killing it ended the test.
         let pids: Vec<i32> = match Command::new("lsof")
             .arg("-ti")
             .arg(format!("tcp:{port}"))
+            .arg("-sTCP:LISTEN")
             .output()
         {
             Ok(out) => String::from_utf8_lossy(&out.stdout)
@@ -458,10 +461,17 @@ fn reap_port(port: u16) {
 /// which is never zero (`common::test_port`, `(cksum(path) % 6 + 1) * 2000`).  A stem built
 /// from the base port therefore matches nothing on any checkout, and the guard runs its
 /// `pgrep` against a port the process never had.
-struct S5Hygiene(String);
+///
+/// The PORT is reaped too: a compiled kernel runs as `.loft/cache/native-<hash>`, which holds no
+/// stem, so a swap child the stem misses outlived the test on the port and the next run on the
+/// machine shared it (`SO_REUSEPORT`).  `None` where the test has no port of its own.
+struct S5Hygiene(String, Option<u16>);
 impl Drop for S5Hygiene {
     fn drop(&mut self) {
         s5_kill_stale(&self.0);
+        if let Some(port) = self.1 {
+            reap_port(port);
+        }
     }
 }
 
@@ -480,7 +490,7 @@ fn s5_native_swap_under_running_world() {
     std::thread::sleep(Duration::from_millis(200));
     let port = common::bind_port(18100);
     reap_port(port); // reap a leaked swap-child orphan the stem pgrep misses (flake guard)
-    let _hygiene = S5Hygiene(format!("/.loft/cache/eh_s5_{port}-")); // OUR swap child dies at exit
+    let _hygiene = S5Hygiene(format!("/.loft/cache/eh_s5_{port}-"), Some(port)); // OUR swap child dies at exit
     // A test-OWNED always-fails binary: /bin/false varies across platforms
     // and runners (macOS CI refused it — forensics pending); a temp script
     // is deterministic everywhere this unix-only suite runs.
@@ -720,7 +730,7 @@ fn s5_client_swap_under_running_world() {
     let port = common::bind_port(18116);
     const STEM: &str = "/.loft/cache/eh_s5c_";
     s5_kill_stale(STEM);
-    let _hygiene = S5Hygiene(STEM.to_string());
+    let _hygiene = S5Hygiene(STEM.to_string(), Some(port));
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
     let srv_prog = test_tmp().join(format!("eh_s5c_srv_{port}.loft"));
@@ -908,7 +918,7 @@ fn s7_client_debug_over_its_own_endpoint() {
     let port = common::bind_port(18115);
     const STEM: &str = "/.loft/cache/eh_s7c_";
     s5_kill_stale(STEM);
-    let _hygiene = S5Hygiene(STEM.to_string());
+    let _hygiene = S5Hygiene(STEM.to_string(), Some(port));
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
     // A minimal kernel server for the client to ride against.
@@ -1066,11 +1076,13 @@ fn s8_standing_four_state_differential() {
         eprintln!("skipping: release loft not built");
         return;
     }
+    // Through `common::bind_port`, as every other kernel scenario here: the raw ports were
+    // shared by every checkout on the machine, so a sibling's run met this one's kernel.
     let legs = [
-        ("interpreted", 18110u16),
-        ("compiled", 18111u16),
-        ("mixed", 18112u16),
-        ("post-swap", 18113u16),
+        ("interpreted", common::bind_port(18110)),
+        ("compiled", common::bind_port(18111)),
+        ("mixed", common::bind_port(18112)),
+        ("post-swap", common::bind_port(18113)),
     ];
     let mut transcripts = Vec::new();
     for (mode, port) in legs {
@@ -1088,6 +1100,11 @@ fn s8_standing_four_state_differential() {
 fn run_s8_leg(mode: &str, port: u16) -> Vec<String> {
     let stem = format!("/.loft/cache/eh_s8_{port}-");
     s5_kill_stale(&stem);
+    // A compiled kernel runs as `.loft/cache/native-<hash>`, whose command line holds no stem,
+    // and the post-swap leg's SWAPPED kernel is a new process the group kill below does not
+    // reach.  Left on the port, every later run on the machine shares it (`SO_REUSEPORT`) and
+    // reads a random one: "D:rebuild refused", a rebuild never ready, or an empty stderr.
+    reap_port(port);
     let fixture = format!(
         r#"
 use engine_host;
@@ -1193,6 +1210,7 @@ fn main() {{
     ws_send(&tail_ws, "d");
     replies.push(ws_recv(&tail_ws));
     drop(_guard);
+    reap_port(port); // the swapped kernel outlives the group kill above
 
     // Per-leg positive controls: the tier state must be REAL, not silent.
     let stderr = std::fs::read_to_string(&err_path).unwrap_or_default();
@@ -1252,7 +1270,7 @@ fn s7_debugger_loop_end_to_end() {
     std::thread::sleep(Duration::from_millis(200));
     let port = common::bind_port(18108);
     reap_port(port); // reap a leaked swap-child orphan the stem pgrep misses (flake guard)
-    let _hygiene = S5Hygiene(format!("/.loft/cache/eh_s7_{port}-"));
+    let _hygiene = S5Hygiene(format!("/.loft/cache/eh_s7_{port}-"), Some(port));
     // The edit touches ONLY the named fn (lambdas don't reload — the
     // documented v1 boundary); each build's identity shows in the STEP:
     // +1 = original, +100 = the edit (and post-swap, its compiled form).
@@ -1940,7 +1958,7 @@ fn s5_local_swap_hands_over() {
         eprintln!("skipping: release loft not built");
         return;
     }
-    let _hygiene = S5Hygiene("eh_s5local".to_string());
+    let _hygiene = S5Hygiene("eh_s5local".to_string(), None);
     let fixture = r#"use engine_host;
 
 struct World { ticks: integer, gen: integer }
