@@ -232,7 +232,7 @@ with the closure's environment in scope.
 
 **OPEN: 1.**  Every closed entry is recorded in [closures-history.md](closures-history.md).
 
-- **D-clo-47 (OPEN, loft#1867)** — violates
+- **D-clo-47 (OPEN, loft#1867)** — violates <!-- doc-lint: ok -->
   `(L-Escape)`: a function cannot return a struct whose field holds a CAPTURING closure — it is
   refused at compile time (*"function returns a struct type that holds a capturing closure"*),
   while the same closure returned BARE keeps its captures through the record's adoption
