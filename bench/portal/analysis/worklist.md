@@ -9,7 +9,8 @@ at the analysis file beside it that priced it, and at its rule in
 last full run; it does not start one.  The rows
 named here are read off `results/firewall02.lan.betterbe.com.tsv` (arm64 macOS, commit
 `0d40d53d0`): 185 routines, 74 over the bar, three classes with a median over it (alloc-temp,
-record-field, keyed).  A row leaves this file when a re-measured run puts it under the bar; a
+record-field, keyed).  It is the only file measured whole at a recent tree: `results/laptop.tsv`
+(x86-64) holds fresh rows for the regressions below and older ones for everything else.  A row leaves this file when a re-measured run puts it under the bar; a
 unit leaves when it is built, and its record goes to its analysis file's § Built.
 
 | what is known about the row | rows | next action |
@@ -43,10 +44,23 @@ it directly.
 | | item | why it comes first |
 |---|---|---|
 | M1 | name ONE reference host in `bench/README.md` (@PLN185 A5) | the bar is read per host: `tween/ease` is over the bar on arm64 macOS and far under it on the x86-64 laptop, and seven rows sit within 6 % of the bar on an unpinned run |
-| M2 | join `main` into `laptop-perf-bench` of `loft-libs-graphics` (@PLN185 A3a), then measure `drawing`, `stage` and `graphics` only | `drawing` (14 routines) and `stage` (6) do not build from that branch at the current tree and are absent from the run; `draw_bezier` is measured in the form the built `(R-Refresh)` keep-range clause does not see |
+| M2 | join `main` into `laptop-perf-bench` of `loft-libs-graphics` (@PLN185 A3a), then measure `drawing`, `stage` and `graphics` only | `drawing` (14 routines) and `stage` (6) do not build from that branch at the current tree (the bench names items the library does not mark `pub`) and are absent from the run; `arguments` fails the same way on a library checkout that `make perf-libs` has not fast-forwarded; `draw_bezier` is measured in the form the built `(R-Refresh)` keep-range clause does not see |
 | M3 | re-align two twins (@PLN185 A4, bench README rule 1), re-measuring those two rows | `check_request`'s twin decodes twice where the library decodes once (aligned ≈ 17×, so further from the bar than shown); `surface_fitted_spread`'s twin sweeps once where the library sweeps three times (aligned ≈ a third of its row) |
 | M4 | the portal's bytes-moved columns from `LOFT_STORE_CENSUS` on the native lane: bytes moved within a store, between two stores, and claimed fresh, with stores touched and store switches per op | ranks every row on § 1's axis with no profile; filled by the next full run, and § 5's pricing pass reads it.  A report, never a gate |
 | M5 | measure per unit only the rows that unit names (`python3 bench/stats.py --routine <bench/routine,…>`); run the full list (`make perf-portal`) after a group of units, not after each | a full run occupies the box for one unit's sake; the group run is what catches a row nobody targeted, and each price describes the program as emitted before the unit ahead of it |
+
+### Regressions that stand
+
+A row that reads slower than its previous measurement is re-measured alone before anything is
+built on it (`make perf-trend` lists them; PERFORMANCE.md step 7).  These reproduce that way,
+with the Rust lane steady, and are fixed ahead of the units.  The x86-64 figures are native
+time against the row measured at `7df5a4f4b`:
+
+| host | rows | cause |
+|---|---|---|
+| x86-64 laptop | `index_write` +95 %, `10_sort` +37 %, `blend_pixel` +37 %, `indices` +16 %, `grid` +15 %, `remove_front` +14 %, `comprehension` +13 % | all element-write loops.  Established for `index_write` and `grid` (loft#1743): the write-lock test of `@FR-H-WriteLocked` inside the hoisted writers — the flag is held beside the header and still tested per element.  The fix is C9's first half: a locked store takes the unhoisted path, so the hoisted loop carries no test.  `10_sort` and `grid` are over the bar on this host and were under it |
+| x86-64 laptop | `mesh_aabb` +34 %, `time/parse` +28 %, `keys_near` +16 %, `collect_dirty_inputs` +15 %, `mapfile_to_painted` +13 %, `hash_text_keys`, `hash_find` and `hash_update` +10–12 % | not attributed |
+| arm64 macOS | `clock_pump` 4.44× → 5.95×, `boundary_loops` 1.94× → 2.40× | not attributed |
 
 ## 3. Units with a price
 

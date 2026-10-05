@@ -105,8 +105,10 @@ Both backends, in this order.  Each step's detail lives where it points; the ord
 7. **Measure the routines the optimisation was scheduled against, and only those**:
    `python3 bench/stats.py --routine <bench/routine,…>`, or `make perf-check ARGS="--routine
    <bench/routine> --record"` to compare them with this machine's committed rows and keep the
-   new ones.  One optimisation never starts the full list (`make perf-portal`).  The measured
-   before/after goes in the commit and in the plan or ledger that owns the row.
+   new ones.  One optimisation never starts the full list (`make perf-portal`).  A row that
+   reads slower than its last committed measurement (`make perf-trend` lists them) is the
+   exception that needs no schedule: re-measure it alone, at any time, before explaining it.
+   The measured before/after goes in the commit and in the plan or ledger that owns the row.
 8. **Re-analyse after every few optimisations — never work a list of fixes to its end.**  A
    fix moves more than its own row: it changes what LLVM inlines and what other rewrites see,
    so it can add a cost somewhere else (a rewrite that gave a cold caller access to a hot
