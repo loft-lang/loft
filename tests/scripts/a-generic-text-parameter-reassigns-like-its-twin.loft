@@ -11,6 +11,13 @@
 // as a plain function's is (`@FR-F-ParamScalar`, `@FR-G-Mono`: the instance takes the twin's
 // answer).  The sibling files hold the other instance types apart, because each failed on a
 // different channel and one channel stops a file before the next is read.
+//
+// @falsified-at: 5cb1b4b39 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0 (the
+//   instance answered the argument, silently), native exit 1 -> 0 (the crate did not build).
+// @falsified-by: tests/falsified/a-generic-text-parameter-reassigns-like-its-twin.patch — the
+//   same channels.  Score it with `scripts/falsify.sh <this file> --patch <that patch>` once
+//   5cb1b4b39 is out of reach.
+// HOLDS: leak, panic and refusals are clean on both trees and both backends.
 
 fn setg<T>(p: T, q: T) -> T {
   p = q;
