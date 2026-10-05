@@ -240,7 +240,7 @@ with the closure's environment in scope.
   out through the return.  Until then the cure the refusal names works: return the closure and
   build the struct in the caller.
 - **D-clo-48 (OPEN, loft#1869)** — violates `(L-Fn)`: a closure cannot capture a fn-ref local
-  that holds a CAPTURING closure — refused with P215's struct-field message, because the
+  that holds a CAPTURING closure — refused with the fn-ref struct-field message, because the
   closure record is the struct the capture is stored in.  A non-capturing fn-ref is captured.
   The inner record's ownership has to follow into the outer record (`(L-CapOwn)`), as a
   captured struct's does.  Until then: capture the inner closure's values and rebuild it in the
