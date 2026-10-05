@@ -59,10 +59,10 @@
         "Cargo.toml",
         "Cargo.lock"
       ],
-      "check": "cargo test --release -q --test frontend_counts",
+      "check": "cargo test --release -q --test frontend_counts -- --ignored",
       "regen": [
-        "LOFT_FRONTEND_REPIN=1 cargo test --release -q --test frontend_counts",
-        "LOFT_FRONTEND_REPIN=1 cargo test -q --test frontend_counts"
+        "LOFT_FRONTEND_REPIN=1 cargo test --release -q --test frontend_counts -- --ignored",
+        "LOFT_FRONTEND_REPIN=1 cargo test -q --test frontend_counts -- --ignored"
       ],
       "pin": {
         "file": "bench/frontend/allocations.tsv",
@@ -255,7 +255,7 @@
     ],
     [
       "hygiene",
-      "cargo nextest run --release -E 'binary(doc_hygiene) + binary(frontend_counts)'"
+      "cargo nextest run --release -E 'binary(doc_hygiene)'"
     ]
   ],
   "shrink_files": [

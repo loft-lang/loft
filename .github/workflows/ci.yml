@@ -1313,6 +1313,63 @@ jobs:
       - name: Leak scan over tests/scripts (0 findings)
         run: cargo test --release --test ownership_oracle oracle_leak_scan_ratchet -- --ignored
 
+  # The front end's allocation pins (`tests/frontend_counts.rs`, `bench/frontend/allocations.tsv`):
+  # an exact count per compile that may only fall.  ADVISORY (not in required-status-checks): a
+  # moved count is a measurement to explain or re-pin, so it shows red HERE and does not fail
+  # a test leg or the merge.  Both rows, release and debug, since each is pinned.
+  frontend-pins:
+    name: front-end allocation pins (ubuntu, advisory)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install mold
+        run: sudo apt-get update && sudo apt-get install -y mold
+      # Read-only, from the `test` job's cache, as `leak-scan` does: the path list must stay
+      # IDENTICAL to that job's, or the restore never matches.
+      - name: Restore cargo registry and build (the test job's, read-only)
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            ~/.loft/build-cache
+            target
+            !target/loft-native-cache
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-
+            ${{ runner.os }}-cargo-
+      - name: Release row
+        env:
+          LOFT_FRONTEND_REPORT: ${{ runner.temp }}/frontend.tsv
+        run: cargo test --release --test frontend_counts -- --ignored
+      - name: Debug row
+        if: always()
+        env:
+          LOFT_FRONTEND_REPORT: ${{ runner.temp }}/frontend.tsv
+        run: cargo test --test frontend_counts -- --ignored
+      # The counts this runner measured, in bench/frontend/allocations.tsv's own form, beside
+      # what is pinned: a re-pin is a paste of these rows, so it never rests on one box's numbers.
+      - name: Measured counts (paste into bench/frontend/allocations.tsv to re-pin)
+        if: always()
+        run: |
+          f="${{ runner.temp }}/frontend.tsv"
+          {
+            echo "### Front-end allocations measured on this runner"
+            echo
+            echo "measured (paste these rows to re-pin):"
+            echo '```'
+            sort "$f" 2>/dev/null || echo "(no counts — the test did not run)"
+            echo '```'
+            echo "pinned:"
+            echo '```'
+            grep -v '^#' bench/frontend/allocations.tsv
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
   # WASM node bridge — build the wasm-pack nodejs bundle and RUN the binary-I/O
   # bridge tests (tests/wasm/bridge.test.mjs).  The per-platform `Test` job's
   # `wasm_compile_and_run_smoke` self-SKIPS whenever tests/wasm/pkg/ is absent —

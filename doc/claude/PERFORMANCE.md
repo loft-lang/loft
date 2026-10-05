@@ -748,9 +748,11 @@ and guarded by a COUNT, never by a time (@PLN166).
 - **The gate counts, it does not time.**  Wall clock varied ±30 % under load on one box,
   so a time gate teaches people to ignore it; an allocation count is exact.
   `tests/frontend_counts.rs` counts the front end's heap allocations in-process against
-  `bench/frontend/allocations.tsv`, keyed by OS and cargo profile.  A count that GROWS
-  fails; one that falls passes and names the re-pin (`LOFT_FRONTEND_REPIN=1 cargo test
-  [--release] --test frontend_counts`).  One uncounted run goes first — the first compile
+  `bench/frontend/allocations.tsv`, keyed by OS and cargo profile.  It is ADVISORY: ci.yml's
+  `front-end allocation pins (ubuntu, advisory)` job runs it (`-- --ignored`), red there and
+  never failing a test leg or the merge.  A count that GROWS fails it; one that falls passes and
+  names the re-pin (`LOFT_FRONTEND_REPIN=1 cargo test [--release] --test frontend_counts --
+  --ignored`).  One uncounted run goes first — the first compile
   in a process pays one-time setup that differs by platform — and the counted runs must
   agree wherever a pin is read or written; a build with no pin reports and passes.
 - **Two pins, because they are two costs.**  `stdlib` is the COLD stdlib parse alone —

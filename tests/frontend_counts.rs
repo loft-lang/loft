@@ -164,7 +164,7 @@ fn write_pins(rows: &[(String, String, u64)]) {
     let mut out = String::from(
         "# key\tsize\tallocations — the front end's heap allocations: `stdlib` the cold stdlib\n\
          # parse alone, `tiny`/`medium` bench/frontend's corpus on top of it (a warm run's cost).\n\
-         # Pinned by `LOFT_FRONTEND_REPIN=1 cargo test [--release] --test frontend_counts`;\n\
+         # Pinned by `LOFT_FRONTEND_REPIN=1 cargo test [--release] --test frontend_counts -- --ignored`;\n\
          # read by tests/frontend_counts.rs, which fails when a pinned count GROWS.\n",
     );
     let mut rows = rows.to_vec();
@@ -192,6 +192,7 @@ fn write_pins(rows: &[(String, String, u64)]) {
 /// `tiny: 1077867 → 1400822 (+322955), medium: 3562376 → 4202195 (+639819)` on linux-release —
 /// and measured, by the way, how often the front end looks a name up.
 #[test]
+#[ignore = "advisory: ci.yml's `front-end allocation pins (ubuntu, advisory)` job runs it with `--ignored` (both rows); a moved count shows red there, never failing a test leg or the merge"]
 fn front_end_allocations_do_not_grow() {
     let key = key();
     let repin = std::env::var_os("LOFT_FRONTEND_REPIN").is_some();
@@ -209,6 +210,26 @@ fn front_end_allocations_do_not_grow() {
             program.push(prog);
         }
         rows.push((size, program));
+    }
+    // `LOFT_FRONTEND_REPORT=<file>`: append the counts this build measured, in the pins file's
+    // own `key<TAB>size<TAB>count` form, pass or fail — the advisory CI job publishes them, so
+    // a pin can be taken from the runner's numbers rather than one box's.
+    if let Some(path) = std::env::var_os("LOFT_FRONTEND_REPORT") {
+        use std::io::Write as _;
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .expect("open LOFT_FRONTEND_REPORT");
+        for (row, counts) in &rows {
+            let agree = counts.iter().all(|c| *c == counts[0]);
+            let note = if agree {
+                String::new()
+            } else {
+                format!("\t# runs disagree: {counts:?}")
+            };
+            writeln!(f, "{key}\t{row}\t{}{note}", counts[0]).expect("write the report");
+        }
     }
     let mut grew_stdlib = Vec::new();
     let mut grew_program = Vec::new();
@@ -278,8 +299,8 @@ fn front_end_allocations_do_not_grow() {
         report.is_empty(),
         "the front end allocates more than its pins ({key}):\n- {}\nAllocation is where a \
          compile's time goes.  If the growth is meant — a feature that must allocate — re-pin \
-         with `LOFT_FRONTEND_REPIN=1 cargo test [--release] --test frontend_counts` and say \
-         why in the commit.",
+         with `LOFT_FRONTEND_REPIN=1 cargo test [--release] --test frontend_counts -- --ignored` \
+         and say why in the commit.",
         report.join("\n- ")
     );
 }
