@@ -3600,6 +3600,55 @@ impl Type {
         self.parents.clear();
     }
 
+    /// Rebuild the derived `parents` index of a schema that was read back rather than
+    /// registered (`ir_read::read_schema`), with exactly the links registration writes: a
+    /// record field's struct, enum or variant content, and a collection field's element, name
+    /// the record; each variant names its enum.  `enum_parent_size` reads the variant links to
+    /// size a variant's record, so a cache-loaded schema without them allocated a variant at
+    /// its own size instead of its enum's — 8 where 16 is right for `#fields`' `FvInt`,
+    /// visible only to the debug oracle beside the lookup, on every warm run.
+    pub(crate) fn rebuild_parents(types: &mut [Type]) {
+        let n = types.len();
+        let mut links: Vec<(u16, u16)> = Vec::new();
+        for (p, t) in types.iter().enumerate() {
+            let p = p as u16;
+            match &t.parts {
+                Parts::Enum(variants) => links.extend(variants.iter().map(|(v, _)| (*v, p))),
+                Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
+                    for f in fields {
+                        let Some(content) = types.get(f.content as usize) else {
+                            continue;
+                        };
+                        match content.parts {
+                            Parts::Struct(_) | Parts::EnumValue(_, _) | Parts::Enum(_) => {
+                                links.push((f.content, p));
+                            }
+                            Parts::Array(e)
+                            | Parts::Vector(e)
+                            | Parts::Sorted(e, _)
+                            | Parts::Ordered(e, _)
+                            | Parts::Hash(e, _)
+                            | Parts::Index(e, _, _)
+                            | Parts::Trie(e, _)
+                            | Parts::Radix(e, _)
+                                if (e as usize) < n =>
+                            {
+                                links.push((e, p));
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        for (child, parent) in links {
+            if (child as usize) < n {
+                types[child as usize].parents.insert(parent);
+            }
+        }
+    }
+
     pub(super) fn new(name: &str, parts: Parts, size: u16) -> Type {
         Type {
             name: name.to_string(),

@@ -880,14 +880,16 @@ fn purity_from_code(c: i64) -> Purity {
 /// Rebuild the database type schema (`Vec<database::Type>`) from the
 /// `vector<DbType>` field at `off` of `parent` — the inverse of
 /// [`crate::ir_store::materialize_schema`].  Each `Type.parents` (a derived
-/// back-reference index, read only by parse-time layout validation + debug
-/// display) is restored empty; the load path skips the validation that uses it.
+/// back-reference index the image does not carry) is rebuilt here, with the links
+/// registration writes: `enum_parent_size` reads it to size a variant's record.
 #[must_use]
 pub fn read_schema(stores: &Stores, parent: Record, off: u32) -> Vec<SchemaType> {
     let v = parent.field_recvec(off, ds::DBTYPE_STRIDE);
-    (0..v.len(stores))
+    let mut schema: Vec<SchemaType> = (0..v.len(stores))
         .map(|i| read_db_type(stores, v.get(i, stores)))
-        .collect()
+        .collect();
+    SchemaType::rebuild_parents(&mut schema);
+    schema
 }
 
 /// Read one `DbType` record into a native `database::Type`.
@@ -2321,7 +2323,7 @@ mod tests {
         let mut p = crate::parser::Parser::new();
         p.parse_dir("default", true, false)
             .expect("parse default/ stdlib");
-        let mut cold = p.database.types.clone();
+        let cold = p.database.types.clone();
         assert!(cold.len() > 50, "stdlib schema small? got {}", cold.len());
 
         let mut ir = Stores::new();
@@ -2331,9 +2333,8 @@ mod tests {
 
         let loaded = read_schema(&ir, host, 0);
         assert_eq!(loaded.len(), cold.len(), "type count");
-        for t in &mut cold {
-            t.clear_parents();
-        }
+        // `parents` is not stored but REBUILT on read, with the links registration writes:
+        // compared whole, because `enum_parent_size` sizes a variant's record from it.
         assert_eq!(loaded, cold, "database type schema round-trip mismatch");
     }
 
@@ -2365,12 +2366,9 @@ mod tests {
         if let Err(diff) = compare_data(&p.data, &loaded_data) {
             panic!("bundle Data diverged from fresh parse: {diff:?}");
         }
-        // (2) Schema round-trips (parents are derived, cleared on both sides).
+        // (2) Schema round-trips, the rebuilt `parents` index included.
         assert_eq!(loaded_types.len(), p.database.types.len(), "type count");
-        let mut cold = p.database.types.clone();
-        for t in &mut cold {
-            t.clear_parents();
-        }
+        let cold = p.database.types.clone();
         assert_eq!(
             loaded_types, cold,
             "bundle schema diverged from fresh parse"
