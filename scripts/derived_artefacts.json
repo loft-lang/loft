@@ -243,6 +243,10 @@
       "python3 scripts/o_proxy_check.py"
     ],
     [
+      "file_access guard",
+      "cargo test --release -q --lib file_access::guard"
+    ],
+    [
       "rule tags",
       "python3 scripts/rule_tags.py check"
     ],
