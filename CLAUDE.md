@@ -646,7 +646,9 @@ start / what is the signature), the one-home rule that kills the drift already m
 between a library's guide and its copy in this repo, the REPL+debugger panel for the doc
 pages (`src/wasm_debug.rs` is built and the pages expose only ▶ Run), and the README's
 repositioning from one-game project to distribution ·
-[LAVITION.md](doc/claude/LAVITION.md) · [PROMPTS.md](doc/PROMPTS.md).
+[LAVITION.md](doc/claude/LAVITION.md) · [PROMPTS.md](doc/PROMPTS.md) ·
+[BLOG.md](doc/claude/BLOG.md) the blog's subjects, each with where its evidence lives and the
+command that re-measures it.
 
 **Skills** (`.claude/skills/`): `loft-write` (.loft authoring) · `loft-debug` (runtime crashes) ·
 `loft-test` · `loft-codegen` · `loft-optimize` (making code faster, both backends) · `loft-ship` (library cross-target + publish) · `engineering-rigor` /
