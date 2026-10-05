@@ -6607,17 +6607,18 @@ fn with_view_groups(
     mut acc: Vec<(u16, u16)>,
 ) -> Vec<(u16, u16)> {
     let n = func.var_count();
-    let mut sets = vec![0u16; n];
     let mut binds: Vec<(u16, u16)> = Vec::new();
     let copy_record = data.def_nr("OpCopyRecord");
     let mut write_backs: Vec<(u16, u16)> = Vec::new();
     body.walk(&mut |node| match node.unspan() {
+        // Only a heap local that keeps its base as a dependency can be a view; asked here so
+        // a function without one allocates nothing (the lint runs over every definition).
         Value::Set(t, rhs) => {
-            if let Some(slot) = sets.get_mut(*t as usize) {
-                *slot = slot.saturating_add(1);
-            }
             if let Some(b) = projection_root(rhs, data)
                 && b != *t
+                && (*t as usize) < n
+                && func.tp(*t).heap_def_nr().is_some()
+                && func.tp(*t).depend().contains(&b)
             {
                 binds.push((*t, b));
             }
@@ -6632,13 +6633,25 @@ fn with_view_groups(
         }
         _ => {}
     });
+    if binds.is_empty() && write_backs.is_empty() {
+        return acc;
+    }
+    let mut sets = vec![0u16; n];
+    body.walk(&mut |node| {
+        if let Value::Set(t, _) = node.unspan()
+            && let Some(slot) = sets.get_mut(*t as usize)
+        {
+            *slot = slot.saturating_add(1);
+        }
+    });
     let is_view = |t: u16, b: u16| {
         (t as usize) < n
             && sets[t as usize] == 1
             && !func.is_argument(t)
             && !func.is_captured(t)
             && !func.copy_bound(t)
-            && !matches!(func.tp(t), crate::data::Type::RefVar(_))
+            // `@FR-N-Shape` — a `&τ?` links exactly as its dense twin does.
+            && !matches!(func.tp(t).base(), crate::data::Type::RefVar(_))
             && !is_value_struct_local(func.tp(t), data)
             && func.tp(t).heap_def_nr().is_some()
             && func.tp(t).depend().contains(&b)
