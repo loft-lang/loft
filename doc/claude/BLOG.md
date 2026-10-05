@@ -67,6 +67,13 @@ crawler's generated one; and the `draw` skill's iterative craft ([DRAWING.md](DR
 one-shot generation.
 
 **Post 2 - Why loft.** there are so many languages around already.
+
+The personal origin, as the opening: loft was from the start a way to get the lessons learned in
+my professional career somewhere where more people can make use of them. A lot of that
+engineering was about the speed of servers running complex calculations, with Java as the
+language. There I had to hand-craft stores like the ones inside loft many times to reach the
+performance we needed, and Java itself doesn't help much with that (certainly not its standard
+library). Games are the first audience; the lessons came from servers.
 In my opinion C++ that is still the most common language for published games is not very helpful
 for them. Many things are in there that crashes games, and being one of the most efficient languages
 around still doesn't help against the actual reasons things get slow. Those reasons are:
