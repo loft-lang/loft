@@ -422,7 +422,7 @@ impl OpEmitter for ParallelForEmitter {
                 {
                     write!(
                         prep,
-                        "let _pd{i}: DbRef = unsafe {{ &mut *cell.get() }}.database(100); "
+                        "let _pd{i}: DbRef = DbRef::NULL; "
                     )
                     .unwrap();
                     write!(dests, ", _pd{i}").unwrap();
@@ -586,7 +586,7 @@ impl OpEmitter for ParallelQueueEmitter {
                 {
                     write!(
                         prep,
-                        "let _pd{i}: DbRef = unsafe {{ &mut *cell.get() }}.database(100); "
+                        "let _pd{i}: DbRef = DbRef::NULL; "
                     )
                     .unwrap();
                     write!(dests, ", _pd{i}").unwrap();
@@ -726,7 +726,7 @@ impl OpEmitter for ParallelDiscardEmitter {
                 {
                     write!(
                         prep,
-                        "let _pd{i}: DbRef = unsafe {{ &mut *cell.get() }}.database(100); "
+                        "let _pd{i}: DbRef = DbRef::NULL; "
                     )
                     .unwrap();
                     write!(dests, ", _pd{i}").unwrap();

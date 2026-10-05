@@ -1,0 +1,41 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A `par` whose worker answers TEXT collects each worker's results in an output record of its
+// own: one text handle per row the worker ran.  On `--native` that record was sized for the
+// handles alone and written from byte 0, so the first handle overwrote the record's size
+// header — the word the store reads as the block's length.  Nothing read that word back in a
+// plain run, so the values stayed right; a claim that did read it (`LOFT_POISON_CLAIM=1`, whose
+// fill sizes itself off the header) wrote past the block and broke the store.  The interpreter's
+// worker already started at byte 4.  The cells run several rows per worker — a worker with one
+// row wrote only the header and nothing read it — at two worker counts, every value by hand.
+//
+// @falsified-at: none — the defect moves no value in a plain run; the planted defect is recorded
+//   with `@falsified-by:` below.
+
+fn word(i: integer) -> text {
+  t = "w{i}";
+  for _ in 0..(i % 3) { t += "x"; }
+  t
+}
+
+// Ten rows: "w0".."w9" are 2 bytes each (20) and the x's add 0,1,2,0,1,2,0,1,2,0 (9)  →  29.
+fn total(threads: integer) -> integer {
+  n = 0;
+  for i in 0..10 par(r = word(i), threads) { n += len(r); }
+  n
+}
+
+fn joined(threads: integer) -> text {
+  out = "";
+  for i in 0..10 par(r = word(i), threads) { out += r + "|"; }
+  out
+}
+
+fn main() {
+  for th in [1, 2, 3] {
+    assert(total(th) == 29, "total with {th} workers: {total(th)}");
+    assert(joined(th) == "w0|w1x|w2xx|w3|w4x|w5xx|w6|w7x|w8xx|w9|", "joined with {th}: {joined(th)}");
+  }
+  println("ok");
+}
