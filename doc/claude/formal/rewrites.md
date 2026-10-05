@@ -2666,6 +2666,23 @@ line in `Output::output_function`'s prelude.
                  argument condition — no other argument names `out`.  A value the
                  list does not declare keeps its copy into the early element.  The interpreter keeps the
                  temp-store build and is the oracle.
+                 THE COMPREHENSION CLAUSE: a row built by a comprehension and appended
+                 as a WHOLE element of a local vector of vectors (`[for y { [for x {
+                 … }] }]`) is the same build with a third declaration shape and a
+                 whole-element destination — the row's vector, declared through its
+                 `__vdb` buffer INSIDE the comprehension's block, is bound to the
+                 element (the element of a vector of vectors IS the inner vector's
+                 handle) and the `OpCopyRecord` into the element vanishes.  Gates: the
+                 block's value is read by the copy alone, the row's vector and its
+                 buffer are named only inside the block (the buffer also by its
+                 declaration and frees), the block names neither `out` nor a view of
+                 its elements and jumps nowhere outside itself, and the block LOOPS —
+                 a body that loops again holds no push window on `out` (R-PushFill),
+                 the one raw address into `out`'s store the row's growth could leave
+                 stale; everything else held on that store is refreshed or declined per
+                 pass already, because the element's own mint grows it.  The append
+                 group stands in the body of the LOOP that builds the outer vector, so
+                 a loop body's statements consult the same overrides a block's do.
 
   (R-ValueRecord) a function whose result is a PLAIN NO-HEAP RECORD of at most eight
                  scalars (an `integer` only at its 8-byte width), an INLINE sub-record

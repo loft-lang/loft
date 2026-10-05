@@ -917,6 +917,11 @@ impl Output<'_> {
                         }
                         continue;
                     }
+                    if !self.elem_first.pairs.is_empty()
+                        && self.elem_first_override(w, &lp.operators, at, v)?
+                    {
+                        continue;
+                    }
                     self.indent(w)?;
                     self.indent += 1;
                     self.output_code_inner(w, v)?;
@@ -3356,162 +3361,10 @@ impl Output<'_> {
             // mint, paired handle-zeros and paired copies (scalar sets and the finish
             // stay — the finish is the length bump that keeps the element invisible
             // until the append).
-            if !self.elem_first.pairs.is_empty() {
-                let dvars = self.data.def(self.def_nr).variables();
-                let named = |d: &u32, n: &str| {
-                    (*d as usize) < self.data.definitions.len() && self.data.def(*d).name() == n
-                };
-                let uv = |x: Option<&Value>| match x.map(Value::unspan) {
-                    Some(Value::Var(w)) => Some(*w),
-                    _ => None,
-                };
-                let ui = |x: Option<&Value>| match x.map(Value::unspan) {
-                    Some(Value::Int(n)) => Some(*n),
-                    _ => None,
-                };
-                let mut handled = false;
-                match v.unspan() {
-                    // The temp's declaration site.
-                    Value::Call(d, args) if named(d, "OpDatabase") => {
-                        if let Some(vdb) = uv(args.first())
-                            && let Some(&pi) = self.elem_first.by_vdb.get(&vdb)
-                        {
-                            let pair = &self.elem_first.pairs[pi];
-                            let b = pair
-                                .binds
-                                .iter()
-                                .find(|b| b.vdb == vdb)
-                                .expect("by_vdb names a bind");
-                            let tmpn = sanitize(dvars.name(b.tmp));
-                            let elmn = sanitize(dvars.name(pair.elm));
-                            let (first, field_off) = (b.first, b.field_off);
-                            self.write_elem_first_mint(w, pi, first)?;
-                            self.indent(w)?;
-                            writeln!(
-                                w,
-                                "var_{tmpn} = DbRef {{ store_nr: var_{elmn}.store_nr, rec: var_{elmn}.rec, pos: var_{elmn}.pos + {field_off} }}; //@PLN157 § V-z field-slot bind"
-                            )?;
-                            handled = true;
-                        }
-                    }
-                    // @PLN164 E-2 — a call-filled temp's lazy buffer guard: the buffer is
-                    // never minted, and the element is, when this temp carries the mint.
-                    Value::If(cond, _, _)
-                        if matches!(cond.unspan(), Value::Call(d, cargs)
-                            if named(d, "OpRefIsNull")
-                                && uv(cargs.first())
-                                    .is_some_and(|u| self.elem_first.buf_place.contains_key(&u))) =>
-                    {
-                        if let Value::Call(_, cargs) = cond.unspan()
-                            && let Some(buf) = uv(cargs.first())
-                            && let Some(&pi) = self.elem_first.by_vdb.get(&buf)
-                        {
-                            let first = self.elem_first.pairs[pi]
-                                .binds
-                                .iter()
-                                .any(|b| b.vdb == buf && b.first);
-                            self.write_elem_first_mint(w, pi, first)?;
-                            handled = true;
-                        }
-                    }
-                    // The declaration's bind and length reset are replaced above.
-                    Value::Set(_, x)
-                        if matches!(x.unspan(), Value::Call(d, cargs)
-                            if named(d, "OpGetField")
-                                && uv(cargs.first())
-                                    .is_some_and(|u| self.elem_first.by_vdb.contains_key(&u))) =>
-                    {
-                        handled = true;
-                    }
-                    Value::Call(d, args)
-                        if named(d, "OpSetInt4")
-                            && uv(args.first())
-                                .is_some_and(|u| self.elem_first.by_vdb.contains_key(&u)) =>
-                    {
-                        handled = true;
-                    }
-                    // The append site's reservation (only when the next statement is
-                    // the suppressed mint of an admitted element).
-                    Value::Call(d, args) if named(d, "OpPreAllocVector") => {
-                        if ui(args.get(1)) == Some(1)
-                            && let Some(next) = operators[vnr + 1..]
-                                .iter()
-                                .find(|o| !matches!(o.unspan(), Value::Line(_)))
-                            && let Value::Set(e2, m2) = next.unspan()
-                            && self.elem_first.by_elm.contains_key(e2)
-                            && matches!(m2.unspan(), Value::Call(md, margs)
-                                if named(md, "OpNewRecord")
-                                    && uv(margs.first()) == uv(args.first()))
-                        {
-                            handled = true;
-                        }
-                    }
-                    // An element's null pre-init (the parser writes one per arm in front of an
-                    // `if` whose arms each append): the element is bound by its early mint, and
-                    // the pre-init would otherwise reset it between the mint and the arms.
-                    Value::Set(e2, x)
-                        if self.elem_first.elms.contains(e2)
-                            && matches!(x.unspan(), Value::Null) =>
-                    {
-                        handled = true;
-                    }
-                    // The append site's mint — or, in another arm of a joined append
-                    // (@PLN164 E-2b), the alias of the element minted at the declaration.
-                    Value::Set(e2, m2)
-                        if self.elem_first.by_elm.contains_key(e2)
-                            && matches!(m2.unspan(), Value::Call(md, _) if named(md, "OpNewRecord")) =>
-                    {
-                        let pi = self.elem_first.by_elm[e2];
-                        let first = self.elem_first.pairs[pi].elm;
-                        if first != *e2 {
-                            let aliasn = sanitize(dvars.name(*e2));
-                            let firstn = sanitize(dvars.name(first));
-                            self.indent(w)?;
-                            writeln!(
-                                w,
-                                "var_{aliasn} = var_{firstn}; //@PLN164 E-2b the arm's element is the one minted at the declaration"
-                            )?;
-                        }
-                        handled = true;
-                    }
-                    // Paired handle-zeros and paired copies on the element.
-                    Value::Call(d, args)
-                        if named(d, "OpSetInt4")
-                            && uv(args.first())
-                                .and_then(|e| self.elem_first.by_elm.get(&e))
-                                .is_some_and(|&pi| {
-                                    ui(args.get(1)).is_some_and(|off| {
-                                        self.elem_first.pairs[pi]
-                                            .binds
-                                            .iter()
-                                            .any(|b| b.field_off == off)
-                                    })
-                                }) =>
-                    {
-                        handled = true;
-                    }
-                    Value::Call(d, args)
-                        if named(d, "OpAppendVector")
-                            && matches!(args.first().map(Value::unspan), Some(Value::Call(gd, gargs))
-                            if named(gd, "OpGetField")
-                                && uv(gargs.first())
-                                    .and_then(|e| self.elem_first.by_elm.get(&e))
-                                    .is_some_and(|&pi| {
-                                        ui(gargs.get(1)).is_some_and(|off| {
-                                            self.elem_first.pairs[pi]
-                                                .binds
-                                                .iter()
-                                                .any(|b| b.field_off == off)
-                                        })
-                                    })) =>
-                    {
-                        handled = true;
-                    }
-                    _ => {}
-                }
-                if handled {
-                    continue;
-                }
+            if !self.elem_first.pairs.is_empty()
+                && self.elem_first_override(w, operators, vnr, v)?
+            {
+                continue;
             }
             // `@FR-R-LoopRecord` — a loop record's per-pass declaration (`Set(v, null)`) and
             // its end-of-body free are not emitted from the block that declares it: the local
@@ -4025,6 +3878,189 @@ impl Output<'_> {
     /// its field; the length bump stays at the append's finish.  A local vector is reserved
     /// first, as its append would have; a record's collection field is not.  Writes nothing for
     /// a temp that does not carry the mint.
+    /// @PLN157 § V-z (`@FR-R-ElemFirst`) — the element-first overrides for statement `vnr` of
+    /// `operators`: a paired temp's declaration becomes the element mint (first temp) plus a
+    /// bind to the element's own field slot, and the append site loses its reservation, mint,
+    /// paired handle-zeros and paired copies (scalar sets and the finish stay — the finish is
+    /// the length bump that keeps the element invisible until the append).  Answers whether the
+    /// statement was handled.  Asked by every statement loop — a block's and a loop body's —
+    /// because an append group stands in either (the comprehension clause's, in the loop that
+    /// builds the outer vector).
+    #[expect(
+        clippy::too_many_lines,
+        reason = "moved whole out of output_block: one match arm per element-first override"
+    )]
+    fn elem_first_override(
+        &mut self,
+        w: &mut dyn Write,
+        operators: &[Value],
+        vnr: usize,
+        v: &Value,
+    ) -> std::io::Result<bool> {
+        let dvars = self.data.def(self.def_nr).variables();
+        let named = |d: &u32, n: &str| {
+            (*d as usize) < self.data.definitions.len() && self.data.def(*d).name() == n
+        };
+        let uv = |x: Option<&Value>| match x.map(Value::unspan) {
+            Some(Value::Var(w)) => Some(*w),
+            _ => None,
+        };
+        let ui = |x: Option<&Value>| match x.map(Value::unspan) {
+            Some(Value::Int(n)) => Some(*n),
+            _ => None,
+        };
+        let mut handled = false;
+        match v.unspan() {
+            // The temp's declaration site (`OpDatabaseNP` for a comprehension's buffer,
+            // `@FR-R-ElemFirst`'s comprehension clause).
+            Value::Call(d, args) if named(d, "OpDatabase") || named(d, "OpDatabaseNP") => {
+                if let Some(vdb) = uv(args.first())
+                    && let Some(&pi) = self.elem_first.by_vdb.get(&vdb)
+                {
+                    let pair = &self.elem_first.pairs[pi];
+                    let b = pair
+                        .binds
+                        .iter()
+                        .find(|b| b.vdb == vdb)
+                        .expect("by_vdb names a bind");
+                    let tmpn = sanitize(dvars.name(b.tmp));
+                    let elmn = sanitize(dvars.name(pair.elm));
+                    let (first, field_off) = (b.first, b.field_off);
+                    self.write_elem_first_mint(w, pi, first)?;
+                    self.indent(w)?;
+                    writeln!(
+                        w,
+                        "var_{tmpn} = DbRef {{ store_nr: var_{elmn}.store_nr, rec: var_{elmn}.rec, pos: var_{elmn}.pos + {field_off} }}; //@PLN157 § V-z field-slot bind"
+                    )?;
+                    handled = true;
+                }
+            }
+            // @PLN164 E-2 — a call-filled temp's lazy buffer guard: the buffer is
+            // never minted, and the element is, when this temp carries the mint.
+            Value::If(cond, _, _)
+                if matches!(cond.unspan(), Value::Call(d, cargs)
+                    if named(d, "OpRefIsNull")
+                        && uv(cargs.first())
+                            .is_some_and(|u| self.elem_first.buf_place.contains_key(&u))) =>
+            {
+                if let Value::Call(_, cargs) = cond.unspan()
+                    && let Some(buf) = uv(cargs.first())
+                    && let Some(&pi) = self.elem_first.by_vdb.get(&buf)
+                {
+                    let first = self.elem_first.pairs[pi]
+                        .binds
+                        .iter()
+                        .any(|b| b.vdb == buf && b.first);
+                    self.write_elem_first_mint(w, pi, first)?;
+                    handled = true;
+                }
+            }
+            // The declaration's bind and length reset are replaced above.
+            Value::Set(_, x)
+                if matches!(x.unspan(), Value::Call(d, cargs)
+                    if named(d, "OpGetField")
+                        && uv(cargs.first())
+                            .is_some_and(|u| self.elem_first.by_vdb.contains_key(&u))) =>
+            {
+                handled = true;
+            }
+            Value::Call(d, args)
+                if named(d, "OpSetInt4")
+                    && uv(args.first())
+                        .is_some_and(|u| self.elem_first.by_vdb.contains_key(&u)) =>
+            {
+                handled = true;
+            }
+            // The append site's reservation (only when the next statement is
+            // the suppressed mint of an admitted element).
+            Value::Call(d, args) if named(d, "OpPreAllocVector") => {
+                if ui(args.get(1)) == Some(1)
+                    && let Some(next) = operators[vnr + 1..]
+                        .iter()
+                        .find(|o| !matches!(o.unspan(), Value::Line(_)))
+                    && let Value::Set(e2, m2) = next.unspan()
+                    && self.elem_first.by_elm.contains_key(e2)
+                    && matches!(m2.unspan(), Value::Call(md, margs)
+                        if named(md, "OpNewRecord")
+                            && uv(margs.first()) == uv(args.first()))
+                {
+                    handled = true;
+                }
+            }
+            // An element's null pre-init (the parser writes one per arm in front of an
+            // `if` whose arms each append): the element is bound by its early mint, and
+            // the pre-init would otherwise reset it between the mint and the arms.
+            Value::Set(e2, x)
+                if self.elem_first.elms.contains(e2) && matches!(x.unspan(), Value::Null) =>
+            {
+                handled = true;
+            }
+            // The append site's mint — or, in another arm of a joined append
+            // (@PLN164 E-2b), the alias of the element minted at the declaration.
+            Value::Set(e2, m2)
+                if self.elem_first.by_elm.contains_key(e2)
+                    && matches!(m2.unspan(), Value::Call(md, _) if named(md, "OpNewRecord")) =>
+            {
+                let pi = self.elem_first.by_elm[e2];
+                let first = self.elem_first.pairs[pi].elm;
+                if first != *e2 {
+                    let aliasn = sanitize(dvars.name(*e2));
+                    let firstn = sanitize(dvars.name(first));
+                    self.indent(w)?;
+                    writeln!(
+                        w,
+                        "var_{aliasn} = var_{firstn}; //@PLN164 E-2b the arm's element is the one minted at the declaration"
+                    )?;
+                }
+                handled = true;
+            }
+            // Paired handle-zeros and paired copies on the element.
+            Value::Call(d, args)
+                if named(d, "OpSetInt4")
+                    && uv(args.first())
+                        .and_then(|e| self.elem_first.by_elm.get(&e))
+                        .is_some_and(|&pi| {
+                            ui(args.get(1)).is_some_and(|off| {
+                                self.elem_first.pairs[pi]
+                                    .binds
+                                    .iter()
+                                    .any(|b| b.field_off == off)
+                            })
+                        }) =>
+            {
+                handled = true;
+            }
+            // The comprehension clause's whole-element copy: the row was built in it.
+            Value::Call(d, args)
+                if named(d, "OpCopyRecord")
+                    && uv(args.first())
+                        .zip(uv(args.get(1)))
+                        .is_some_and(|ce| self.elem_first.whole_copies.contains(&ce)) =>
+            {
+                handled = true;
+            }
+            Value::Call(d, args)
+                if named(d, "OpAppendVector")
+                    && matches!(args.first().map(Value::unspan), Some(Value::Call(gd, gargs))
+                    if named(gd, "OpGetField")
+                        && uv(gargs.first())
+                            .and_then(|e| self.elem_first.by_elm.get(&e))
+                            .is_some_and(|&pi| {
+                                ui(gargs.get(1)).is_some_and(|off| {
+                                    self.elem_first.pairs[pi]
+                                        .binds
+                                        .iter()
+                                        .any(|b| b.field_off == off)
+                                })
+                            })) =>
+            {
+                handled = true;
+            }
+            _ => {}
+        }
+        Ok(handled)
+    }
+
     fn write_elem_first_mint(
         &mut self,
         w: &mut dyn Write,

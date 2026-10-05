@@ -9294,6 +9294,9 @@ pub struct ElemFirstMap {
     /// @PLN164 E-2 — a call-filled temp's hidden buffer → the element and the field offset the
     /// call is handed in its place.
     pub buf_place: HashMap<u16, (u16, i32)>,
+    /// The comprehension clause — `(block value, element)` pairs whose `OpCopyRecord(c, elm, tp)`
+    /// is emitted as nothing: the block's vector was built in the element ([`comprehension_rows`]).
+    pub whole_copies: HashSet<(u16, u16)>,
 }
 
 fn call_named<'v>(stmt: &'v Value, data: &Data, name: &str) -> Option<&'v [Value]> {
@@ -10059,6 +10062,7 @@ pub fn element_first(
         }
         false
     });
+    comprehension_rows(data, stores, vars, body, &mut out_map, trace);
     // A temp or an element serving TWO admitted pairs is beyond this keying.
     let mut vdb_seen: HashMap<u16, u32> = HashMap::new();
     for p in &out_map.pairs {
@@ -10070,6 +10074,321 @@ pub fn element_first(
         return ElemFirstMap::default();
     }
     out_map
+}
+
+/// `@FR-R-ElemFirst`'s comprehension clause — a vector built by a block (a comprehension,
+/// `[for x in … { … }]`) and appended as a WHOLE element of a local vector of vectors is built
+/// in that element:
+///
+/// ```text
+/// c = { …  OpDatabase[NP](vdb, tp) · vec = OpGetField(vdb, 0, tp) · … pushes into vec … · vec }
+/// [OpPreAllocVector(out, 1, size)] · elm = OpNewRecord(out, etp, 65535) · [OpSetInt4(elm, 0, 0)]
+/// OpCopyRecord(c, elm, vtp) · OpFinishRecord(out, elm, etp, 65535)
+/// ```
+///
+/// becomes the element minted where `vdb` was, `vec` bound to the element's slot, and the copy
+/// emitted as nothing: the row is written once, in the store it lives in, instead of built in a
+/// loop-buffer store and copied across.  Admitted where `c` is named by its bind and the copy
+/// alone, `vec` only inside its block, `vdb` only there and by frees; the block names neither
+/// `out` nor a view of its elements and jumps nowhere outside itself (an unfinished element
+/// would be stranded); and the block LOOPS — a body that loops again holds no push window on
+/// `out` (`@FR-R-PushFill`), the one raw address into `out`'s store the growth of the row's
+/// vector could leave stale.  Everything else held on that store is already refreshed or
+/// declined per pass, because the element's own mint grows it.
+fn comprehension_rows(
+    data: &Data,
+    stores: &Stores,
+    vars: &crate::variables::Function,
+    body: &Value,
+    out_map: &mut ElemFirstMap,
+    trace: bool,
+) {
+    let mut found: Vec<(ElemFirst, u16)> = Vec::new();
+    body.any_node(&mut |n| {
+        // A comprehension's append group stands in the body of the LOOP that builds the outer
+        // vector, so a loop body is searched as a block is.
+        let (Value::Block(bl) | Value::Loop(bl)) = n else {
+            return false;
+        };
+        let ops = &bl.operators;
+        let idx: Vec<usize> = (0..ops.len())
+            .filter(|p| !matches!(ops[*p].unspan(), Value::Line(_)))
+            .collect();
+        for ki in 0..idx.len() {
+            let Value::Set(comp, cv) = ops[idx[ki]].unspan() else {
+                continue;
+            };
+            let Some(row) = comprehension_block(data, vars, cv) else {
+                continue;
+            };
+            let Some(group) = row_append_group(data, ops, &idx, ki, *comp, row.vtp) else {
+                continue;
+            };
+            if let Err(why) =
+                admit_row(data, vars, body, ops[idx[ki]].unspan(), &row, &group, *comp)
+            {
+                if trace {
+                    eprintln!(
+                        "elemfirst: comprehension {} -> {}: DECLINED — {why}",
+                        vars.name(row.vec),
+                        vars.name(group.out)
+                    );
+                }
+                continue;
+            }
+            if trace {
+                eprintln!(
+                    "elemfirst: comprehension {} built in its element of {}",
+                    vars.name(row.vec),
+                    vars.name(group.out)
+                );
+            }
+            let size = group.size.unwrap_or_else(|| {
+                u16::try_from(group.etp).map_or(0, |t| i32::from(stores.size(t)))
+            });
+            found.push((
+                ElemFirst {
+                    out: group.out,
+                    out_tp: group.etp,
+                    out_fld: 65535,
+                    elm: group.elm,
+                    aliases: Vec::new(),
+                    prealloc_size: size,
+                    binds: vec![ElemBind {
+                        tmp: row.vec,
+                        vdb: row.vdb,
+                        field_off: 0,
+                        first: true,
+                        from_call: false,
+                    }],
+                },
+                *comp,
+            ));
+        }
+        false
+    });
+    for (pair, comp) in found {
+        if out_map.by_vdb.contains_key(&pair.binds[0].vdb) || out_map.by_elm.contains_key(&pair.elm)
+        {
+            continue;
+        }
+        let at = out_map.pairs.len();
+        out_map.by_vdb.insert(pair.binds[0].vdb, at);
+        out_map.by_elm.insert(pair.elm, at);
+        out_map.elms.insert(pair.elm);
+        out_map.whole_copies.insert((comp, pair.elm));
+        out_map.pairs.push(pair);
+    }
+}
+
+/// The comprehension clause's ROW: the block that builds it, the vector local it builds, the
+/// buffer that vector is declared through, and the vector's type.
+struct RowBlock<'a> {
+    inner: &'a Value,
+    vec: u16,
+    vdb: u16,
+    vtp: i32,
+}
+
+/// The block a bind's value descends to through value blocks, when its value is a vector
+/// declared through a `__vdb` buffer: `OpDatabase[NP](vdb, …) · vec = OpGetField(vdb, 0, vtp)`.
+fn comprehension_block<'a>(
+    data: &Data,
+    vars: &crate::variables::Function,
+    value: &'a Value,
+) -> Option<RowBlock<'a>> {
+    let mut inner = value.unspan();
+    while let Value::Block(outer) = inner
+        && let Some(Value::Block(_)) = outer.operators.last().map(Value::unspan)
+    {
+        inner = outer.operators.last().map(Value::unspan)?;
+    }
+    let Value::Block(vblock) = inner else {
+        return None;
+    };
+    let vec = as_var(vblock.operators.last())?;
+    let code: Vec<&Value> = vblock
+        .operators
+        .iter()
+        .filter(|o| !matches!(o.unspan(), Value::Line(_)))
+        .collect();
+    let di = code.iter().position(|o| {
+        call_named(o, data, "OpDatabase").is_some() || call_named(o, data, "OpDatabaseNP").is_some()
+    })?;
+    let dargs = call_named(code[di], data, "OpDatabase")
+        .or_else(|| call_named(code[di], data, "OpDatabaseNP"))?;
+    let vdb = as_var(dargs.first())?;
+    if !vars.name(vdb).starts_with("__vdb") {
+        return None;
+    }
+    let Value::Set(t, x) = code.get(di + 1)?.unspan() else {
+        return None;
+    };
+    let ga = call_named(x, data, "OpGetField")?;
+    if *t != vec
+        || as_var(ga.first()) != Some(vdb)
+        || !matches!(ga.get(1).map(Value::unspan), Some(Value::Int(0)))
+    {
+        return None;
+    }
+    let Some(Value::Int(vtp)) = ga.get(2).map(Value::unspan) else {
+        return None;
+    };
+    Some(RowBlock {
+        inner,
+        vec,
+        vdb,
+        vtp: *vtp,
+    })
+}
+
+/// The append group that consumes the row bound to `comp` at `idx[ki]`, right after it:
+/// `[OpPreAllocVector(out, 1, size)] · elm = OpNewRecord(out, etp, 65535) · [OpSetInt4(elm,
+/// 0, 0)] · OpCopyRecord(comp, elm, vtp) · OpFinishRecord(out, elm, …)`.  The copy writes the
+/// element itself — the element of a vector of vectors IS the inner vector's handle, at offset
+/// 0 — and copies the row's own vector type.
+struct RowGroup {
+    out: u16,
+    elm: u16,
+    etp: i32,
+    size: Option<i32>,
+}
+
+fn row_append_group(
+    data: &Data,
+    ops: &[Value],
+    idx: &[usize],
+    ki: usize,
+    comp: u16,
+    vtp: i32,
+) -> Option<RowGroup> {
+    let at = |g: usize| idx.get(g).map(|&p| &ops[p]);
+    let mut gi = ki + 1;
+    let mut size = None;
+    if let Some(pa) = at(gi).and_then(|o| call_named(o, data, "OpPreAllocVector")) {
+        if let Some(Value::Int(sz)) = pa.get(2).map(Value::unspan) {
+            size = Some(*sz);
+        }
+        gi += 1;
+    }
+    let Value::Set(elm, mv) = at(gi)?.unspan() else {
+        return None;
+    };
+    let margs = call_named(mv, data, "OpNewRecord")?;
+    let (Some(out), Some(Value::Int(etp)), Some(Value::Int(65535))) = (
+        as_var(margs.first()),
+        margs.get(1).map(Value::unspan),
+        margs.get(2).map(Value::unspan),
+    ) else {
+        return None;
+    };
+    gi += 1;
+    if at(gi)
+        .and_then(|o| call_named(o, data, "OpSetInt4"))
+        .is_some_and(|a| {
+            as_var(a.first()) == Some(*elm)
+                && matches!(a.get(1).map(Value::unspan), Some(Value::Int(0)))
+        })
+    {
+        gi += 1;
+    }
+    let copies = at(gi)
+        .and_then(|o| call_named(o, data, "OpCopyRecord"))
+        .is_some_and(|a| {
+            as_var(a.first()) == Some(comp)
+                && as_var(a.get(1)) == Some(*elm)
+                && matches!(a.get(2).map(Value::unspan), Some(Value::Int(t)) if *t == vtp)
+        });
+    let finishes = at(gi + 1)
+        .and_then(|o| call_named(o, data, "OpFinishRecord"))
+        .is_some_and(|a| as_var(a.first()) == Some(out) && as_var(a.get(1)) == Some(*elm));
+    (copies && finishes).then_some(RowGroup {
+        out,
+        elm: *elm,
+        etp: *etp,
+        size,
+    })
+}
+
+/// Every mention of `w` in `within`: a read, or a bind of it.
+fn var_mentions(within: &Value, w: u16) -> u32 {
+    let mut n = 0;
+    within.any_node(&mut |x| {
+        match x {
+            Value::Var(v) | Value::Set(v, _) if *v == w => n += 1,
+            _ => {}
+        }
+        false
+    });
+    n
+}
+
+/// `w`'s null declarations and frees in `body` — the only mentions a never-minted buffer
+/// answers as nothing.
+fn decl_and_free_mentions(data: &Data, body: &Value, w: u16) -> u32 {
+    let mut n = 0;
+    body.any_node(&mut |x| {
+        match x {
+            Value::Set(v, init) if *v == w && matches!(init.unspan(), Value::Null) => n += 1,
+            Value::Call(d, args)
+                if (*d as usize) < data.definitions.len()
+                    && matches!(
+                        data.def(*d).name(),
+                        "OpFreeRef" | "OpFreeRefIfDistinct" | "OpClear"
+                    )
+                    && as_var(args.first()) == Some(w) =>
+            {
+                n += 1;
+            }
+            _ => {}
+        }
+        false
+    });
+    n
+}
+
+/// The comprehension clause's admission, per `comprehension_rows`' doc: `Err` names the
+/// condition that declines.
+fn admit_row(
+    data: &Data,
+    vars: &crate::variables::Function,
+    body: &Value,
+    bind: &Value,
+    row: &RowBlock,
+    group: &RowGroup,
+    comp: u16,
+) -> Result<(), &'static str> {
+    if !matches!(vars.tp(group.out).base(), Type::Vector(_, _)) || vars.is_argument(group.out) {
+        return Err("the destination is not a local vector");
+    }
+    if u16::try_from(group.etp).is_err() {
+        return Err("the element type is out of range");
+    }
+    if var_mentions(body, comp) != 2 {
+        return Err("the block's value is read elsewhere");
+    }
+    if var_mentions(body, row.vec) != var_mentions(row.inner, row.vec) {
+        return Err("the vector is named outside its block");
+    }
+    if var_mentions(body, row.vdb)
+        != var_mentions(row.inner, row.vdb) + decl_and_free_mentions(data, body, row.vdb)
+    {
+        return Err("the buffer is named outside its block");
+    }
+    if !row.inner.any_node(&mut |x| matches!(x, Value::Loop(_))) {
+        return Err("the block does not loop");
+    }
+    if row.inner.reads_var(group.out) || jumps_out(bind) {
+        return Err("the block names the destination or jumps out");
+    }
+    let moved = destination_views(data, body, vars, group.out, None);
+    if moved
+        .iter()
+        .any(|w| *w != group.elm && row.inner.reads_var(*w))
+    {
+        return Err("the block reads a view of the destination's elements");
+    }
+    Ok(())
 }
 
 /// @PLN157 § V-aa (`@FR-R-ValueRecord`) — the functions whose NO-HEAP RECORD result is
