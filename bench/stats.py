@@ -198,7 +198,9 @@ def build(bench, lanes, loft, lib_dir, ref_flags, times, reserve_gb):
 
 def build_package(pkg_dir, lanes, loft, ref_flags, times, reserve_gb):
     """The lanes of a library's own bench.  The native lane is what `loft --native-release`
-    builds and caches for `bench/bench.loft`; the newest file in that cache IS the binary."""
+    builds and caches for `bench/bench.loft`; the newest binary in that cache IS the binary.
+    A binary is named `native-<key>` (by what it compiles to, so one program at two paths is
+    one entry); a cache written by an older loft still names it `bench-<key>`."""
     bench_dir = os.path.join(pkg_dir, "bench")
     src = os.path.join(bench_dir, "bench.loft")
     if not os.path.exists(src):
@@ -209,7 +211,7 @@ def build_package(pkg_dir, lanes, loft, ref_flags, times, reserve_gb):
                     f"{pkg_dir}: loft --native-release", times, "native-release", reserve_gb,
                     cwd=pkg_dir)
         cache = os.path.join(bench_dir, ".loft", "cache")
-        built = [os.path.join(cache, f) for f in os.listdir(cache) if f.startswith("bench-")] \
+        built = [os.path.join(cache, f) for f in os.listdir(cache) if f.startswith(("native-", "bench-"))] \
             if os.path.isdir(cache) else []
         if not built:
             raise BuildFailed(f"{pkg_dir}: loft left no cached native binary under bench/.loft/cache")
