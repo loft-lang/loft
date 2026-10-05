@@ -14,6 +14,7 @@
 // @falsified-at: 726b9665e — INERT on all four channels, both backends, and that is the correct
 //   answer for a CONTROL: the casts compiled there too.  What this file pins is that each cure
 //   the refusals print compiles and runs, which the refusal guards beside it cannot see.
+//   WITNESS: `cures(2.5)` answers `2 2 2 2 [2]` on both trees — each cast truncates 2.5.
 // HOLDS: leak, panic and refusals are clean on both trees and both backends.
 
 struct S { a: u8?, b: u8 }
