@@ -670,6 +670,66 @@ jobs:
             target
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
+  native-poison:
+    # @nightly-class: unsound — a store use-after-free or leak the --native backend alone makes
+    name: LOFT_POISON + leak gate on the --native corpus
+    runs-on: ubuntu-latest
+    # Measured: the --native corpus is the Windows CI `corpus` shard, 47 min with its build;
+    # this one leg of it on ubuntu fits well inside the hour.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install mold
+        run: sudo apt-get update && sudo apt-get install -y mold
+
+      - name: Cache cargo registry and build
+        id: cargo-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ubuntu-native-poison-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ubuntu-native-poison-cargo-
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
+      # The `poison` job sweeps the interpreter only, and `--native` is the backend where a
+      # store is actually freed (the interpreter reuses one in place), so its use-after-free
+      # and its exit leaks lived there unseen.  Each corpus program is compiled and run with
+      # LOFT_POISON=1 (a freed record reads 0xDEADBEEF) and LOFT_NATIVE_LEAK_CHECK=1, which
+      # makes `tests/native.rs` fail a program that leaves a store at exit — the warning alone
+      # exits 0.  The generated crates link this build's libloft.rlib, so it is built here.
+      - name: Rebuild the native cdylibs against this libloft.rlib
+        run: make rebuild-native-cdylibs
+
+      - name: Build the loft binary and runtime rlib
+        run: cargo build --release --bin loft --lib
+
+      - name: Poison + leak sweep (--native corpus)
+        env:
+          LOFT_POISON: '1'
+          LOFT_NATIVE_LEAK_CHECK: '1'
+        run: >
+          cargo nextest run --profile ci --release --no-fail-fast
+          --test native -E 'test(/native_scripts_/)'
+
+      - name: Save cargo cache (main only)
+        if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+
   stack-shadow:
     # @nightly-class: unsound — a frame slot nobody wrote, mistyped, or stale
     name: LOFT_VERIFY_STACK gate (a frame slot nobody wrote, mistyped, or stale)
@@ -1428,7 +1488,7 @@ jobs:
     # list_that_reads_them` fails when they disagree, and when a job carries no
     # class at all, so a new gate cannot be added without answering the question.
     # Reclassifying is a one-word edit to the marker, and it is meant to be one.
-    needs: [miri, asan, poison, stack-shadow, tsan, native-asan, valgrind, debug-asserts]
+    needs: [miri, asan, poison, native-poison, stack-shadow, tsan, native-asan, valgrind, debug-asserts]
     # Never from a PR: a pull request must not be able to open an issue on the repo.
     # Never from the release gate either: its run is evidence for a candidate, and a
     # green candidate must not auto-CLOSE an issue main's nightly opened.
@@ -1516,7 +1576,7 @@ jobs:
   # still-running hand-over is not read as one of the gates.
   red-steps-digest:
     name: → tracked issue (red-steps digest)
-    needs: [stale-plans-audit, stale-claims, miri, asan, asan-leak-gate, poison, stack-shadow, tsan,
+    needs: [stale-plans-audit, stale-claims, miri, asan, asan-leak-gate, poison, native-poison, stack-shadow, tsan,
             native-asan, valgrind, release-gate-sweeps, debug-asserts, audit,
             toolchain-matrix, index-hygiene, library-health]
     if: always() && github.event_name != 'pull_request' && !inputs.from_gate && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
@@ -1532,7 +1592,7 @@ jobs:
 
   daily-status:
     name: Daily status (the one place to look)
-    needs: [stale-plans-audit, stale-claims, miri, asan, asan-leak-gate, poison, stack-shadow, tsan,
+    needs: [stale-plans-audit, stale-claims, miri, asan, asan-leak-gate, poison, native-poison, stack-shadow, tsan,
             native-asan, valgrind, release-gate-sweeps, debug-asserts, audit,
             toolchain-matrix, index-hygiene, library-health]
     # The digest describes the default branch's nightlies, so it follows `notify`: not a
@@ -1585,7 +1645,7 @@ jobs:
             done
             echo
             echo "_Gates that FILE an issue when red — the \`@nightly-class: unsound\` set:"
-            echo "miri, asan, poison, stack-shadow, tsan, native-asan, valgrind, debug-asserts."
+            echo "miri, asan, poison, native-poison, stack-shadow, tsan, native-asan, valgrind, debug-asserts."
             echo "Everything else reports here only._"
           } >> "$GITHUB_STEP_SUMMARY"
           echo "digest written to the job summary"

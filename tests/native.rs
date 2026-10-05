@@ -760,15 +760,37 @@ fn compile_native_job(
 fn run_native_job(job: &NativeJob) -> std::io::Result<()> {
     let cwd = std::env::current_dir().unwrap_or_default();
     let _run_lock = common::source_run_lock(&job.source);
-    let run_status = std::process::Command::new(&job.binary)
-        .current_dir(&cwd)
-        .status()?;
+    // Under `LOFT_NATIVE_LEAK_CHECK` the binary reports the stores it left behind at exit
+    // (`NATIVE_LEAK_CHECK_TAIL`), but only as a warning on stderr, with exit 0.  The run's
+    // output is read here so that report fails the program, the way the interpreter corpus
+    // fails a script with a store left at exit — a leak check that warns and passes is no
+    // gate.  Without the switch the output goes straight through, as it always has.
+    let leak_check = std::env::var_os("LOFT_NATIVE_LEAK_CHECK").is_some();
+    let mut cmd = std::process::Command::new(&job.binary);
+    cmd.current_dir(&cwd);
+    let (run_status, leaked) = if leak_check {
+        let out = cmd.output()?;
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        print!("{}", String::from_utf8_lossy(&out.stdout));
+        eprint!("{stderr}");
+        let leaked = stderr
+            .lines()
+            .find(|l| l.contains("stores not freed at program exit"))
+            .map(str::to_string);
+        (out.status, leaked)
+    } else {
+        (cmd.status()?, None)
+    };
     if !run_status.success() {
         eprintln!(
             "native binary failed for {} (exit {:?})",
             job.stem,
             run_status.code()
         );
+        return Err(Error::from(std::io::ErrorKind::Other));
+    }
+    if let Some(line) = leaked {
+        eprintln!("native binary for {} leaked at exit: {line}", job.stem);
         return Err(Error::from(std::io::ErrorKind::Other));
     }
     Ok(())
