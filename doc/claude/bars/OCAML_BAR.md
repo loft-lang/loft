@@ -19,7 +19,7 @@ measurements, and the documentation-derived statuses they replaced, are in
 
 ## Evaluation
 
-Measured at `b194678c` (origin/main), every probe on both backends, from a scratch directory.
+Measured at `b194678c` (origin/main), every probe on both backends, from a scratch directory. <!-- doc-lint: ok -->
 **The two backends agreed on every cell except where a cell says otherwise.**  A probe whose
 spelling is wrong for a capability loft has is scored in the real spelling, and the row names
 it.
@@ -28,7 +28,7 @@ it.
 |---|---|---|
 | A1 map, two variables | **PASS** | `fn map2<T, U>(…)` as written |
 | A2 fold | **PASS** | as written |
-| A3 variable not in first param | FAIL | `zip<T, U>` building a `vector<(T, U)>`: the interpreter skips `main`, panics or segfaults, native fails `E0308` — [loft#1868](https://github.com/loft-lang/loft/issues/1868) (`silent-wrong`); a generic struct element (`vector<Two<T>>`) works.  `empty_of<T>() -> vector<T>` is refused: *"Generic function must have at least one parameter of type T"* |
+| A3 variable not in first param | FAIL | `zip<T, U>` building a `vector<(T, U)>`: the interpreter skips `main`, panics or segfaults, native fails `E0308` — [loft#1868](https://github.com/loft-lang/loft/issues/1868) (`silent-wrong`); a generic struct element (`vector<Two<T>>`) works.  `empty_of<T>() -> vector<T>` is refused: *"Generic function must have at least one parameter of type T"* <!-- doc-lint: ok --> |
 | A4 generic struct | **PASS** | as written |
 | A5 generic recursive enum | FAIL | `Node { left: reference<Tree<T> >, … }` is refused (*"variant Node has no field 'left'"*).  `>>` closing two type-argument lists in a variant field is read as comparison operators; write `> >` |
 | A5b recursive enum, monomorphic | **PASS** | `Add { l: reference<Expr>, r: reference<Expr> }`, each node bound to a local and linked with `&`; nesting the constructors inline is refused (*"Cannot assign ref(Lit) to field Add.l"*) |
@@ -41,7 +41,7 @@ it.
 | B4 local recursive function | FAIL | `fn` only at file scope; the self-referencing lambda is refused naming the cure (*"'go' is not bound yet … declare a file-scope 'fn go(…)'"*) |
 | B5 capture a `&` parameter | **PASS** | capturing and writing through a `&` parameter works (`[1,10]` → `[2,11]`), written `fn(i: integer) { v[i] += 1; }` |
 | B6 compose | **PASS** | `compose<T, U, V>` returning `\|x\| { g(f(x)) }`, called with `fn(n: integer) -> integer { … }` lambdas or named functions.  An untyped `\|n\|` argument is not inferred through a generic parameter (*"No matching operator '+' on 'T'"*) |
-| C1 nested constructor pattern | PARTIAL | non-recursive nesting PASS; the recursive shape through a `reference<Expr>` field never matches on the interpreter and fails `E0605` on native — [loft#1870](https://github.com/loft-lang/loft/issues/1870) (`silent-wrong`) |
+| C1 nested constructor pattern | PARTIAL | non-recursive nesting PASS; the recursive shape through a `reference<Expr>` field never matches on the interpreter and fails `E0605` on native — [loft#1870](https://github.com/loft-lang/loft/issues/1870) (`silent-wrong`) <!-- doc-lint: ok --> |
 | C2 literal in field position | **PASS** | `Circle { r: 0.0 } => "point"` |
 | C3 field rename + as-binding | PARTIAL | rename PASS (`Rect { w: width, h }`); `whole @ Rect {…}` → *"'whole' is not a variant"* |
 | C4 tuple of variants | **PASS** | as written once the arm BODY spells `Playing { hp: hp }` (no field-init shorthand) |
@@ -63,8 +63,8 @@ C 4/8 + 4 partial · D 0/2 · E not measured · F 1/2.
 
 | entry | issue | what it is |
 |---|---|---|
-| A3 | [loft#1868](https://github.com/loft-lang/loft/issues/1868) | a tuple holding a type variable, as a vector element, is never instantiated — `silent-wrong` |
-| C1 | [loft#1870](https://github.com/loft-lang/loft/issues/1870) | a field sub-pattern through a `reference<T>` field never matches — `silent-wrong` |
+| A3 | [loft#1868](https://github.com/loft-lang/loft/issues/1868) | a tuple holding a type variable, as a vector element, is never instantiated — `silent-wrong` <!-- doc-lint: ok --> |
+| C1 | [loft#1870](https://github.com/loft-lang/loft/issues/1870) | a field sub-pattern through a `reference<T>` field never matches — `silent-wrong` <!-- doc-lint: ok --> |
 
 ### Spellings the probes got wrong
 
@@ -818,4 +818,4 @@ documented example; do not "improve" them.
   COMPATIBILITY.md. Until then `make bar` is a report.
 - Never mark PASS on one backend. Both or neither.
 - Tier A's generics are @PLN165's (finished). What remains in tier A is a defect
-  (loft#1868) or a refusal § Evaluation names, not a plan arc.
+  (loft#1868) or a refusal § Evaluation names, not a plan arc. <!-- doc-lint: ok -->
