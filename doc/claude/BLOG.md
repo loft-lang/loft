@@ -66,7 +66,7 @@ and the promise in [COMPATIBILITY.md](COMPATIBILITY.md). For the libraries and p
   Important for us, but not something a team building an efficient and robust game can work
   with: performance has to be closer to our goals before loft is feasible for them.
 
-**The heap is a typed database.** Its own post, with the AS/400 origin story: a machine whose
+**The heap is a typed database.** A more technical post, for later. Its own post, with the AS/400 origin story: a machine whose
 database, language and store were one dependable whole, and loft's bet to win that back without
 the closed, proprietary cage ([GOALS.md](GOALS.md) § the AS/400 passage,
 [COMPATIBILITY.md](COMPATIBILITY.md)). Subject 4 below has the mechanics.
@@ -91,7 +91,14 @@ Things are getting better there too, so loft should try a good algorithm in the 
 (Examples to check before quoting: MariaDB's `OPTIMIZE TABLE` rebuilds the table; PostgreSQL's
 `VACUUM FULL` locks it, and tools like `pg_repack` exist to do the same online.) There are
 nuances, but deep down only simple records hold their exact space; a lot of data is pushed into a
-more general pool with blobs (InnoDB's overflow pages, PostgreSQL's TOAST). Sources: [GOALS.md](GOALS.md) § Legible cost (the scattered
+more general pool with blobs (InnoDB's overflow pages, PostgreSQL's TOAST).
+
+The strange constructions of maps inside loft stores, because of their database roots: there is
+no `map<K, V>`. A keyed collection holds records, and its key is one or more of the record's own
+fields, named in the type — like a table with an index. A word count is `hash<Count[word]>` over
+`struct Count { word: text, n: integer }`; the ordered and other indexes are `sorted<T[-key]>`,
+`index<T[a, -b]>`, `spatial<T[x, y]>` and `trie<T[name]>`, and a subscript is a query by key,
+never a position (LOFT.md § Composite types). Sources: [GOALS.md](GOALS.md) § Legible cost (the scattered
 allocation that generated loft) and [OWNERSHIP_MODEL.md](OWNERSHIP_MODEL.md) § the control story.
 
 **Games that feel made by a person.** Candidate sources, for the owner to choose from: dryopea's
