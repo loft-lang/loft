@@ -351,6 +351,15 @@ pub(crate) fn capture_build_backings(
                 Some([root]) if bind_views_root(function, *v, rhs, *root) => {
                     latest.insert(*v, *root);
                 }
+                // A call that delivers into a hidden return buffer (`c = mk(5)` lowers to
+                // `c = n_mk(5, __ref_1)`) is backed by that buffer: it is the store a build
+                // over `c` holds.  Left unrecorded, the type dep answered instead — the buffer
+                // of the LAST such call — so a rebind after the build had the frame keep the
+                // build-time buffer's free and give up the new one's, which nobody adopted
+                // (loft#1862, one vector store per rebind).
+                _ if let Some(b) = super::backings::call_buffer_of(rhs, function) => {
+                    latest.insert(*v, b);
+                }
                 // A right-hand side that names no single root leaves no backing to remember,
                 // and the stale one would be worse than none: drop it.  So does one whose
                 // destination owns the store it ends up holding — see `bind_views_root`.
