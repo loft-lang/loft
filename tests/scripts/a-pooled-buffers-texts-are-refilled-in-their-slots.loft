@@ -19,6 +19,11 @@
 //
 // @falsified-at: none — written before the rewrite it guards; the planted defects are recorded
 //   with `@falsified-by:` below.
+// @falsified-by: tests/falsified/a-pooled-buffers-texts-are-refilled-in-their-slots.patch — the
+//   release walk's text leaf zeroing the slot without releasing the block, nothing refilling.
+//   CHANNEL: an assertion, on BOTH backends.
+//   WITNESS: `m1 env shape grows: 31 -> 3001 records` (990 calls × 3 texts).
+//   HOLDS: c1–c4 green on both (the defect never moves a value).
 
 enum Kind { Ping, Pong }
 struct Msg { kind: Kind, payload: text }
