@@ -14,6 +14,7 @@ place: [DEVELOPMENT.md § Stay close to `main`](DEVELOPMENT.md#stay-close-to-mai
 
 ## Contents
 - [The script](#the-script)
+- [Derived artefacts on a runner](#derived-artefacts-on-a-runner)
 - [Does this tree already have that change?](#does-this-tree-already-have-that-change)
 - [Rebasing onto a squash that carried your commits](#rebasing-onto-a-squash-that-carried-your-commits)
 - [Joining a sibling checkout](#joining-a-sibling-checkout)
@@ -50,6 +51,27 @@ from `scripts/derived_artefacts.json` — each artefact's paths, the inputs that
 its writer and its check — and refuses to re-pin a count that GREW beyond the growth each
 source pinned on its own tree, naming the source or, for the `@FR-N-Shape` ratchet, the new
 opaque shape tests.  A new derived artefact is one entry in that file.
+
+## Derived artefacts on a runner
+
+An artefact that is a pure function of the tree carries `"ci": true` in
+`scripts/derived_artefacts.json`: the compiled stdlib, the target surface, the browser
+bundle, the feature shadow, the ignored-tests baseline and the reference pages.
+`.github/workflows/derive.yml` regenerates exactly those (`scripts/derive_ci.py`) and commits
+the result back to the branch, so a checkout does not have to:
+
+```bash
+scripts/derive-ci.sh             # this branch: dispatch, wait, fast-forward onto the bot's commit
+gh workflow run derive.yml --ref <branch>
+git push origin HEAD:derive-probe   # before derive.yml is on main, or to try a change to it
+```
+
+The runner is the better writer for these.  It builds the wasm rlib fresh, which a local
+`surface-gen` does not guarantee, and `make doc` there fetches every published package into a
+clean cache.  Dispatch it where the branch stops moving: after a join, and before opening a
+PR.  It refuses `main`, and it never force-pushes; when the branch moved during the run, it
+fails and asks for a new dispatch.  A ratchet (a `pin`, the census, the drop gate) never
+carries `ci`: a moved count is a decision, so it stays with `join.py rederive`.
 
 ## Does this tree already have that change?
 

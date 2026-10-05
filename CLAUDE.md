@@ -181,6 +181,10 @@ scripts/join.py run [SRC …]              # JOIN sibling branches: survey what 
                                          #   artefacts.json, verify — stops at each decision.
                                          #   Steps one by one: survey/apply/rederive/verify/
                                          #   guards — JOINING.md § The script
+scripts/derive-ci.sh                     # the PURE derived artefacts (compiled stdlib, surface,
+                                         #   browser bundle, doc pages, …) regenerated ON A
+                                         #   RUNNER and committed back; ratchets stay local —
+                                         #   JOINING.md § Derived artefacts on a runner
 make view                                # branch-aware doc/code viewer; binds LOOPBACK,
                                          #   LOFT_VIEW_PORT (default 8765).  Remote:
                                          #   ssh -N -L 8765:127.0.0.1:8765 <host>

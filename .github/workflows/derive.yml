@@ -1,0 +1,111 @@
+name: Derived artefacts (regenerate and commit back)
+
+# The derived artefacts that are a PURE function of the tree — the compiled stdlib, the
+# target surface, the browser bundle, the feature shadow, the ignored-tests baseline and the
+# reference pages: every `scripts/derived_artefacts.json` entry marked `"ci": true` — are
+# regenerated here and committed back to the branch, instead of by hand on each checkout.
+# A runner is the better writer: it builds the wasm rlib fresh (a stale one recorded a new
+# builtin as unavailable in the browser), and `make doc` fetches every published package into
+# a clean cache (a box without them keeps the committed library pages).  The RATCHETS
+# (allocation pins, rewrite census, optional ratchet, drop gate) stay with `join.py rederive`:
+# a moved count is a decision, and a bot that re-pins would switch them off.
+#
+# Dispatch only, never on push or pull_request: a commit pushed with this job's token starts
+# no workflow, so a bot commit on an open PR would leave its required checks unrun on the new
+# head, and a bot commit on every push would race the agent working on that branch.  Run it
+# where the branch stops moving — before opening a PR, after a join:
+#   scripts/derive-ci.sh            # dispatch for the current branch, wait, fast-forward
+#   gh workflow run derive.yml --ref <branch>
+# JOINING.md § Derived artefacts on a runner.
+
+on:
+  workflow_dispatch:
+  # A dispatch needs the workflow on the default branch; until then — and to try a change to
+  # it — push the branch to `derive-probe` (the same probe pattern as `ci-probe` and
+  # `release-gate-probe`): the regenerated commit lands on `derive-probe`, never elsewhere.
+  push:
+    branches: [derive-probe]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: derive-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  derive:
+    name: Regenerate the pure derived artefacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Refuse the default branch
+        if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        run: |
+          echo "::error::main takes changes only through a PR — dispatch this on a feature branch"
+          exit 1
+
+      - uses: actions/checkout@v5
+
+      - name: Install Rust stable (+ wasm32)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install mold + binaryen
+        run: sudo apt-get update && sudo apt-get install -y mold binaryen
+
+      - name: Install wasm-pack
+        run: curl -sSLf https://rustwasm.github.io/wasm-pack/installer/init.sh | sh
+
+      # Read-only, from ci.yml's `test` job cache (saved on main — CI_BUDGET.md § F); this
+      # workflow never runs on main, so it never saves.  The path list must stay IDENTICAL to
+      # that job's, or the restore never matches.
+      - name: Restore cargo registry and build (ci.yml's test job's, read-only)
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            ~/.loft/build-cache
+            target
+            !target/loft-native-cache
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-
+            ${{ runner.os }}-cargo-
+
+      - name: Build loft (release)
+        run: cargo build --release --bin loft
+
+      - name: Regenerate
+        run: python3 scripts/derive_ci.py
+
+      - name: Commit back
+        run: |
+          set -euo pipefail
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "Every pure derived artefact already matches the tree." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          git status --short | tee -a "$GITHUB_STEP_SUMMARY"
+          git config user.name "loft-derive-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -F - <<EOF
+          Derived artefacts regenerated on a runner
+
+          $(python3 scripts/derive_ci.py --list | sed 's/^/- /')
+
+          By .github/workflows/derive.yml at ${GITHUB_SHA::9} (run ${GITHUB_RUN_ID}).
+          EOF
+          # Never forced: if the branch moved while this ran, the push fails and the run is
+          # redone on the new head rather than overwriting someone's commits.
+          git push origin "HEAD:${GITHUB_REF_NAME}" || {
+            echo "::error::${GITHUB_REF_NAME} moved during the run — dispatch again on the new head"
+            exit 1
+          }
