@@ -1451,7 +1451,7 @@ impl Parser {
                 // came out as 300 (`@FR-I-Narrow`), into `iterator<float>` as the integer's
                 // bits read as a float, a `null` or a `text` crashed the interpreter and broke
                 // the native build, and a nullable ended the loop early on `--native` only.
-                if let Type::Iterator(elem_tp, _) = &r_type {
+                if let Type::Iterator(elem_tp, _) = r_type.base() {
                     let elem = (**elem_tp).clone();
                     if v_tp == Type::Null {
                         self.n_store_violation(&v_tp, &elem, "the yielded value", None);
