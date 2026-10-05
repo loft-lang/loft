@@ -1,10 +1,10 @@
-diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
-index b32acc837..8aa41e350 100644
---- b/src/parser/expressions.rs
-+++ a/src/parser/expressions.rs
-@@ -4663,12 +4663,6 @@ use a separate collection or add after the loop"
-             };
-             if let Some(src) = link_src {
+diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
+index 62fb059ee..06efc4073 100644
+--- a/src/parser/expressions.rs
++++ b/src/parser/expressions.rs
+@@ -4695,12 +4695,6 @@ use a separate collection or add after the loop"
+                 }
+             } else if let Some(src) = link_src {
                  amp_unlowered = false;
 -                // `@FR-O-Borrow-Scalar` — the link this one copies must live as long, and the
 -                // place behind it with it: the slot allocator follows the chain from the
@@ -15,11 +15,11 @@ index b32acc837..8aa41e350 100644
                  if self.vars.is_store_text_link(src) {
                      self.bind_text_link_kind(var_nr, true);
                  } else if matches!(self.vars.tp(src).base(), Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)))
-diff --git b/src/parser/mod.rs a/src/parser/mod.rs
-index c5f5e4765..d1c3f221c 100644
---- b/src/parser/mod.rs
-+++ a/src/parser/mod.rs
-@@ -22018,63 +22018,6 @@ impl Parser {
+diff --git a/src/parser/mod.rs b/src/parser/mod.rs
+index 0180d32a5..244eb056f 100644
+--- a/src/parser/mod.rs
++++ b/src/parser/mod.rs
+@@ -22039,63 +22039,6 @@ impl Parser {
              }
          }
          written.extend(propagated);
