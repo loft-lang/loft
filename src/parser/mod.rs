@@ -21905,7 +21905,13 @@ impl Parser {
         // Re-created per function-body check; small cost, avoids
         // persisting state across passes or across unrelated checks.
         let mut callee_cache = crate::fxhash::FxHashMap::default();
-        find_written_vars(&code, &self.data, &mut written, &mut callee_cache);
+        find_written_vars(
+            &code,
+            &self.data,
+            &self.vars,
+            &mut written,
+            &mut callee_cache,
+        );
         // Enhancement: when a for-loop variable is FIELD-WRITTEN (OpSet*
         // through the loop var, not just loop-advance Set), also mark the
         // collection it iterates over as written.  The dep chain is:
@@ -22637,13 +22643,14 @@ pub(crate) fn op_writes_first_arg(name: &str) -> bool {
 pub(crate) fn find_written_vars(
     code: &Value,
     data: &Data,
+    vars: &crate::variables::Function,
     written: &mut crate::fxhash::FxHashSet<u16>,
     callee_cache: &mut crate::fxhash::FxHashMap<u32, Vec<bool>>,
 ) {
     match code {
         Value::Set(v, body) => {
             written.insert(*v);
-            find_written_vars(body, data, written, callee_cache);
+            find_written_vars(body, data, vars, written, callee_cache);
         }
         Value::Call(fn_nr, args) => {
             let def = data.def(*fn_nr);
@@ -22671,7 +22678,7 @@ pub(crate) fn find_written_vars(
                 if i == 1 && second_arg_write {
                     collect_vars_in(arg, written);
                 }
-                find_written_vars(arg, data, written, callee_cache);
+                find_written_vars(arg, data, vars, written, callee_cache);
             }
             // the callee may mutate one of its by-value parameters
             // through a field write (e.g. `fn add(self: Box, x) { self.items += [x] }`).
@@ -22692,35 +22699,53 @@ pub(crate) fn find_written_vars(
                 }
             }
         }
+        // A call through a fn-ref: the callee is not known here, but the fn-ref's TYPE names
+        // which parameters are `&`, and handing a value to one IS a write the callee may make —
+        // `fn app(f: fn(&P), p: &P) { f(p); }` was told to drop the `&` it needs.
+        Value::CallRef(f, args) => {
+            let params = match (*f < vars.count()).then(|| vars.tp(*f).base()) {
+                Some(Type::Function(params, ..)) => params.clone(),
+                _ => Vec::new(),
+            };
+            for (i, arg) in args.iter().enumerate() {
+                if params
+                    .get(i)
+                    .is_some_and(|p| matches!(p.base(), Type::RefVar(_)))
+                {
+                    collect_vars_in(arg, written);
+                }
+                find_written_vars(arg, data, vars, written, callee_cache);
+            }
+        }
         Value::Block(block) | Value::Loop(block) => {
             for item in &block.operators {
-                find_written_vars(item, data, written, callee_cache);
+                find_written_vars(item, data, vars, written, callee_cache);
             }
         }
         Value::Insert(list) => {
             for item in list {
-                find_written_vars(item, data, written, callee_cache);
+                find_written_vars(item, data, vars, written, callee_cache);
             }
         }
         Value::If(cond, then, els) => {
-            find_written_vars(cond, data, written, callee_cache);
-            find_written_vars(then, data, written, callee_cache);
-            find_written_vars(els, data, written, callee_cache);
+            find_written_vars(cond, data, vars, written, callee_cache);
+            find_written_vars(then, data, vars, written, callee_cache);
+            find_written_vars(els, data, vars, written, callee_cache);
         }
         Value::Return(v) | Value::Drop(v) => {
-            find_written_vars(v, data, written, callee_cache);
+            find_written_vars(v, data, vars, written, callee_cache);
         }
         // T1.5: TuplePut writes to the ref-tuple variable via its element assignment.
         Value::TuplePut(var_nr, _, inner) => {
             written.insert(*var_nr);
-            find_written_vars(inner, data, written, callee_cache);
+            find_written_vars(inner, data, vars, written, callee_cache);
         }
         Value::Iter(_, create, next, extra) => {
-            find_written_vars(create, data, written, callee_cache);
-            find_written_vars(next, data, written, callee_cache);
-            find_written_vars(extra, data, written, callee_cache);
+            find_written_vars(create, data, vars, written, callee_cache);
+            find_written_vars(next, data, vars, written, callee_cache);
+            find_written_vars(extra, data, vars, written, callee_cache);
         }
-        Value::Span(b) => find_written_vars(&b.1, data, written, callee_cache),
+        Value::Span(b) => find_written_vars(&b.1, data, vars, written, callee_cache),
         _ => {}
     }
 }
@@ -22804,7 +22829,7 @@ fn callee_param_writes(
     }
     let body = def.code().clone();
     let mut written = crate::fxhash::FxHashSet::default();
-    find_written_vars(&body, data, &mut written, cache);
+    find_written_vars(&body, data, def.variables(), &mut written, cache);
     let result: Vec<bool> = (0..n).map(|i| written.contains(&(i as u16))).collect();
     // Monotone merge with any prior placeholder entry.
     let prev = cache.get(&fn_nr).cloned().unwrap_or_else(|| vec![false; n]);

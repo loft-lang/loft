@@ -1329,7 +1329,7 @@ fn analyze_fn_survival(
     // the copy-idiom-aware walk above, which excludes `v`'s def and copy-fill.)
     let written = {
         let mut w = HashSet::default();
-        crate::parser::find_written_vars(code, data, &mut w, &mut HashMap::default());
+        crate::parser::find_written_vars(code, data, function, &mut w, &mut HashMap::default());
         w
     };
 

@@ -1494,15 +1494,24 @@ impl Output<'_> {
             } else {
                 None
             };
-            let text_link_arg = i < param_types.len()
+            let link_arg =
+                i < param_types.len() && matches!(param_types[i].base(), Type::RefVar(_));
+            let text_link_arg = link_arg
                 && matches!(param_types[i].base(),
                     Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)));
             if let Some(respelled) = tuple_place {
                 write!(w, "let _farg_{i} = {respelled}; ")?;
-            } else if text_link_arg && store_mask & (1 << i) == 0 && !candidates.is_empty() {
-                // A text VARIABLE for a `&text` parameter: the `&mut String` a direct call
-                // hands over, spelled by the one argument emitter (`emit_call_arg`) against a
-                // candidate — every candidate agrees on this parameter's type.
+            } else if link_arg
+                && !(text_link_arg && store_mask & (1 << i) != 0)
+                && !candidates.is_empty()
+            {
+                // @FR-L-Apply — a `&` parameter: the `&mut` slot a direct call hands over, spelled by the one
+                // argument emitter (`emit_call_arg`) against a candidate — every candidate
+                // agrees on this parameter's type.  The argument is `OpCreateStack(var)`, which
+                // has no spelling of its own outside that emitter: bound raw, a `&P` parameter
+                // read `let _farg_0 = ;` and the crate did not build (`(L-Apply)` binds the
+                // parameters as a direct call does).  A text FIELD or element for `&text` keeps
+                // its store instance (`store_mask`, below).
                 let cand = self.data.def(candidates[0].d_nr);
                 let mut buf = Vec::new();
                 self.emit_call_arg(&mut buf, cand, i, arg)?;

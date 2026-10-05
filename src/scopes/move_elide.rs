@@ -327,6 +327,7 @@ pub(super) fn move_elide(data: &mut Data) {
             crate::parser::find_written_vars(
                 &data.def(d_nr).code,
                 data,
+                data.def(d_nr).variables(),
                 &mut written,
                 &mut HashMap::default(),
             );

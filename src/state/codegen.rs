@@ -4551,17 +4551,7 @@ impl State {
         for (a_nr, a) in stack.data.def(op).attributes().iter().enumerate() {
             if a.mutable {
                 let stack_before = stack.position;
-                // When a RefVar argument is passed directly to a matching RefVar parameter
-                // (e.g. a dispatcher forwarding its text-buffer arg to a variant), emit only
-                // OpVarRef to push the raw DbRef — do NOT emit the trailing OpGetStackText /
-                // OpGetStackRef that generate_var would normally add.
-                if matches!(a.typedef, Type::RefVar(_))
-                    && let Value::Var(v) = &parameters[a_nr]
-                    && matches!(stack.function.tp(*v), Type::RefVar(_))
-                {
-                    let var_pos = stack.var_pos(*v);
-                    stack.add_op("OpVarRef", self);
-                    self.code_add(var_pos);
+                if self.push_forwarded_link(stack, &a.typedef, &parameters[a_nr]) {
                     tps.push(a.typedef.clone());
                 } else if stack.data.def(op).name() == "OpSetInt4"
                     && let Value::TupleGet(tvar, tidx) = parameters[a_nr].unspan()
@@ -5282,6 +5272,25 @@ impl State {
         }
     }
 
+    /// A `&` argument that is itself a `&` binding — a dispatcher forwarding its text buffer
+    /// to a variant, a function handing its `&P` parameter on — is passed as the LINK: only
+    /// `OpVarRef`, the raw DbRef, without the `OpGetStack*` read `generate_var` would add.
+    /// The one home for a direct call and a call through a fn-ref, which bind their
+    /// parameters alike.  Answers whether it pushed.
+    fn push_forwarded_link(&mut self, stack: &mut Stack, param: &Type, arg: &Value) -> bool {
+        if matches!(param, Type::RefVar(_))
+            && let Value::Var(v) = arg
+            && matches!(stack.function.tp(*v), Type::RefVar(_))
+        {
+            let var_pos = stack.var_pos(*v);
+            stack.add_op("OpVarRef", self);
+            self.code_add(var_pos);
+            true
+        } else {
+            false
+        }
+    }
+
     pub(super) fn generate_call_ref(
         &mut self,
         stack: &mut Stack,
@@ -5310,6 +5319,13 @@ impl State {
         for (i, arg) in args.iter().enumerate() {
             if i < param_types.len() && matches!(param_types[i].base(), Type::Function(..)) {
                 self.gen_fn_ref_value_node(arg, stack);
+            } else if i < param_types.len()
+                && self.push_forwarded_link(stack, &param_types[i], &arg.to_owned_value())
+            {
+                // @FR-L-Apply — binds the parameters as a direct call does: a `&` binding
+                // handed to a `&` parameter passes its link on.  Generated as a value, it
+                // pushed the pointee where the callee reads a link — a `&P` written through a
+                // fn-ref did not reach the caller, and a `&integer` read off the store.
             } else {
                 self.generate_node(arg, stack, false);
             }

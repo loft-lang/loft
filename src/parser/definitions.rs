@@ -4251,6 +4251,13 @@ impl Parser {
             if self.lexer.peek_token(")") {
                 break;
             }
+            // @FR-L-Escape — `fn(&T)`: the type of a function with a `&` parameter, as
+            // `Type::render` prints it.
+            // `(B-Ref-Intro)` admits `&τ` for every τ and a lambda `fn(p: &P) { … }` has this
+            // type, so a parameter, field or local that holds one must be able to say so; the
+            // link goes through `ref_var_type`, the one place a declared `&` parameter is
+            // decided, so a `&` refused there is refused here too.
+            let is_ref = self.lexer.has_token("&");
             // loft#1540 — `fn(const T)`: a parameter the function behind the reference may not
             // write, so a value-const value can be handed through it (C124, D-bind-45).
             let is_const = self.lexer.has_keyword("const");
@@ -4263,7 +4270,7 @@ impl Parser {
                 );
             }
             if let Some(tp) = self.parse_type_full(d_nr, false) {
-                args.push(tp);
+                args.push(if is_ref { self.ref_var_type(tp) } else { tp });
                 consts.push(is_const);
             }
             if !self.lexer.has_token(",") {
