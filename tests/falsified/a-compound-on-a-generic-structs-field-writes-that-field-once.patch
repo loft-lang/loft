@@ -1,5 +1,5 @@
 diff --git a/src/data.rs b/src/data.rs
-index 1b2f14acc..483c12a18 100644
+index 1b2f14ac..483c12a1 100644
 --- a/src/data.rs
 +++ b/src/data.rs
 @@ -10544,21 +10544,6 @@ impl Data {
@@ -154,7 +154,7 @@ index 1b2f14acc..483c12a18 100644
                  pairs.push((d, Type::Reference(bound, Deps::none())));
              }
 diff --git a/src/parser/collections.rs b/src/parser/collections.rs
-index 4a930c1b4..29fd903f8 100644
+index 4a930c1b..29fd903f 100644
 --- a/src/parser/collections.rs
 +++ b/src/parser/collections.rs
 @@ -661,11 +661,8 @@ impl Parser {
@@ -200,7 +200,7 @@ index 4a930c1b4..29fd903f8 100644
                                  };
                                  v_set(var, read)
 diff --git a/src/parser/dispatch.rs b/src/parser/dispatch.rs
-index 06c82ae0a..3730e1481 100644
+index 06c82ae0..3730e148 100644
 --- a/src/parser/dispatch.rs
 +++ b/src/parser/dispatch.rs
 @@ -198,7 +198,7 @@ impl Parser {
@@ -213,10 +213,10 @@ index 06c82ae0a..3730e1481 100644
          let declared: Vec<Type> = self
              .data
 diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
-index 0dedb0f22..8aa41e350 100644
+index 1de2245a..a8972339 100644
 --- a/src/parser/expressions.rs
 +++ b/src/parser/expressions.rs
-@@ -7064,21 +7064,10 @@ use a separate collection or add after the loop"
+@@ -7102,21 +7102,10 @@ use a separate collection or add after the loop"
          // `t.0 += [7]` was fixed while `n.0.0 += [7]` still answered `[7, 7]`.  QUALITY.md's
          // `spellings` screen is what named it — the audit row moved, and the cell built to
          // answer *why* found the half-fix.
@@ -242,7 +242,7 @@ index 0dedb0f22..8aa41e350 100644
              && op == "+="
              && let Type::Vector(elm_tp, _) = &f_type.base().clone()
 diff --git a/src/parser/fields.rs b/src/parser/fields.rs
-index 36c8817de..d33e574c5 100644
+index 36c8817d..d33e574c 100644
 --- a/src/parser/fields.rs
 +++ b/src/parser/fields.rs
 @@ -2121,9 +2121,6 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
@@ -352,10 +352,10 @@ index 36c8817de..d33e574c5 100644
      /// element's own `__tuple<…>` record, the shape `r[i].b` has for a struct element.
      ///
 diff --git a/src/parser/mod.rs b/src/parser/mod.rs
-index ba2b087b2..1ac341eab 100644
+index df456d2e..379b648d 100644
 --- a/src/parser/mod.rs
 +++ b/src/parser/mod.rs
-@@ -8512,7 +8512,7 @@ impl Parser {
+@@ -8526,7 +8526,7 @@ impl Parser {
              return Type::Unknown(0);
          }
          // `-> Box<T>` predicts the instance the binding names, as the monomorph declares it.
@@ -364,7 +364,7 @@ index ba2b087b2..1ac341eab 100644
          bindings.extend(open);
          let tmpl_returned = self.data.definitions[g_nr as usize].returned.clone();
          let from_tv = bindings
-@@ -8937,7 +8937,7 @@ impl Parser {
+@@ -8951,7 +8951,7 @@ impl Parser {
          bindings.extend(self.associated_bindings(g_nr, &var_bindings));
          // @PLN165 D5 — each open instance the bindings close (`Box<T>` ↦ `Box<integer>`),
          // substituted wherever the template's types mention it.
@@ -373,7 +373,7 @@ index ba2b087b2..1ac341eab 100644
          bindings.extend(open);
          // Clone the template data before mutating self.data.
          let tmpl_code = self.data.definitions[g_nr as usize].code.clone();
-@@ -10856,31 +10856,8 @@ impl Parser {
+@@ -10956,31 +10956,8 @@ impl Parser {
              // their recorded arguments: `Box<T>` against `Box<integer>` binds `T` to
              // `integer`.  The arguments live in `Data`, where the keystone pairing below
              // does not look.  A generic enum's instance is an `Enum` (@PLN165 D8).
@@ -405,7 +405,7 @@ index ba2b087b2..1ac341eab 100644
                      && matches!(concrete_tp.base(), Type::Reference(c, _) | Type::Enum(c, _, _)
                          if data.def(*c).instance_of == data.def(*o).instance_of) =>
              {
-@@ -12396,21 +12373,14 @@ impl Parser {
+@@ -12496,21 +12473,14 @@ impl Parser {
                  };
                  self.rewrite_generic_type_defaults(args.swap_remove(0))
              }
@@ -430,7 +430,7 @@ index ba2b087b2..1ac341eab 100644
                  v_block(ops, Type::Void, "tuple_elem_set")
              }
              // loft#1020 — the deferred `== null` / `!= null`.  `bl.result` came through
-@@ -14438,15 +14408,6 @@ impl Parser {
+@@ -14558,15 +14528,6 @@ impl Parser {
      ) -> Vec<Value> {
          let elems_vec = elems.to_vec();
          let tuple_d_nr = self.data.tuple_def(&mut self.lexer, &elems_vec);
@@ -446,7 +446,7 @@ index ba2b087b2..1ac341eab 100644
          let offsets: Vec<u16> = crate::data::stored_tuple_offsets_for_def(
              &self.data,
              &self.database,
-@@ -14696,10 +14657,6 @@ impl Parser {
+@@ -14816,10 +14777,6 @@ impl Parser {
      /// element at a fixed byte offset within the host record.
      /// Returns a vec because nested-tuple elements expand to multiple
      /// per-leaf set ops.
@@ -457,7 +457,7 @@ index ba2b087b2..1ac341eab 100644
      fn emit_set_one_element(
          &mut self,
          ref_code: &Value,
-@@ -14756,9 +14713,6 @@ impl Parser {
+@@ -14876,9 +14833,6 @@ impl Parser {
                  self.cl("OpSetByte", &[ref_code.clone(), pos_v, Value::Int(0), v])
              }
              Type::Text(_) => self.cl("OpSetText", &[ref_code.clone(), pos_v, value]),
@@ -468,7 +468,7 @@ index ba2b087b2..1ac341eab 100644
                  let type_nr = if self.first_pass {
                      Value::Int(i32::from(u16::MAX))
 diff --git a/src/parser/objects.rs b/src/parser/objects.rs
-index bd0805287..17ef3b909 100644
+index bd080528..17ef3b90 100644
 --- a/src/parser/objects.rs
 +++ b/src/parser/objects.rs
 @@ -5535,14 +5535,8 @@ impl Parser {
@@ -489,10 +489,10 @@ index bd0805287..17ef3b909 100644
              if let Type::Reference(d, _) = bound.base() {
                  self.lay_out_instance(*d);
 diff --git a/src/parser/operators.rs b/src/parser/operators.rs
-index 89d35bcfc..fb604cada 100644
+index 081c4bfd..bbd026de 100644
 --- a/src/parser/operators.rs
 +++ b/src/parser/operators.rs
-@@ -161,23 +161,6 @@ impl Parser {
+@@ -163,23 +163,6 @@ impl Parser {
          );
      }
  
@@ -516,7 +516,7 @@ index 89d35bcfc..fb604cada 100644
      pub(crate) fn assign_text(
          &mut self,
          code: &mut Value,
-@@ -187,45 +170,27 @@ impl Parser {
+@@ -189,45 +172,27 @@ impl Parser {
          var_nr: u16,
      ) {
          // The const guard is `parse_assign_op_inner`'s, run before it routed here.
@@ -555,7 +555,7 @@ index 89d35bcfc..fb604cada 100644
              if op == "=" {
                  let mut p = parms.clone();
                  p.push(code.clone());
-                 *code = self.cl("OpSetText", &p);
+                 *code = self.cl("OpSetTextReplace", &p);
              } else {
 -                let mut ls = vec![v_set(var_nr, to.clone())];
 -                ls.extend(self.text_append_ops(code, tp, var_nr));
@@ -576,8 +576,8 @@ index 89d35bcfc..fb604cada 100644
 +                }
                  let mut p = parms.clone();
                  p.push(Value::Var(var_nr));
-                 ls.push(self.cl("OpSetText", &p));
-@@ -2365,12 +2330,6 @@ impl Parser {
+                 ls.push(self.cl("OpSetTextReplace", &p));
+@@ -2367,12 +2332,6 @@ impl Parser {
                                  } else {
                                      *code = Value::Null;
                                  }
@@ -590,7 +590,7 @@ index 89d35bcfc..fb604cada 100644
                              } else if let Some(place) =
                                  self.stored_tuple_member_place(&unspanned, idx)
                              {
-@@ -2442,6 +2401,21 @@ impl Parser {
+@@ -2444,6 +2403,21 @@ impl Parser {
                          if self.tuple_index_out_of_range(idx, elems.len()) {
                              t = Type::Unknown(0);
                          } else {
@@ -612,7 +612,7 @@ index 89d35bcfc..fb604cada 100644
                              let elem_tp = elems[idx].clone();
                              // Carry the BASE's lifetime into the element, exactly as the
                              // plain-tuple site above (P197) and the struct-field read in
-@@ -2458,7 +2432,8 @@ impl Parser {
+@@ -2460,7 +2434,8 @@ impl Parser {
                                  Value::Var(nr) => Some(*nr),
                                  _ => None,
                              };
@@ -623,10 +623,10 @@ index 89d35bcfc..fb604cada 100644
                              // Same `@FR-O-Oracle` reading as the stack-tuple site above.  When the
                              // base is a VARIABLE that variable IS the base, so it alone is the
 diff --git a/src/parser/vectors.rs b/src/parser/vectors.rs
-index d00f0aa10..b5869fa0b 100644
+index 0e3385ea..9bdea0bc 100644
 --- a/src/parser/vectors.rs
 +++ b/src/parser/vectors.rs
-@@ -6476,35 +6476,27 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+@@ -6492,35 +6492,27 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                  // `emit_nullable_slot_write` is the shared home; a struct field holding the
                  // same slot goes through it too.
                  let src_elems = self.tuple_elements(in_t).unwrap_or_default();
