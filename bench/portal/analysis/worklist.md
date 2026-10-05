@@ -58,8 +58,9 @@ time against the row measured at `7df5a4f4b`:
 
 | host | rows | cause |
 |---|---|---|
-| x86-64 laptop | `index_write` (+61 % with the lock test gone), `time/parse` +28 %, `indices` +16 %, `keys_near` +16 %, `grid` +15 %, `collect_dirty_inputs` +15 %, `remove_front` +13 %, `mapfile_to_painted` +13 %, `hash_text_keys`, `hash_find` and `hash_update` +10–12 % | not attributed; the lock test is ruled out for `index_write`'s remainder, `grid`, `remove_front`, `indices`, `hash_update` and `mesh_aabb` |
+| x86-64 laptop | `index_write` (+61 % with the lock test gone), `time/parse` +28 %, `keys_near` +16 %, `grid` +15 %, `collect_dirty_inputs` +15 %, `remove_front` +13 %, `mapfile_to_painted` +13 %, `hash_text_keys`, `hash_find` and `hash_update` +10–12 % | not attributed; the lock test is ruled out for `index_write`'s remainder, `grid`, `remove_front`, `indices`, `hash_update` and `mesh_aabb` |
 | arm64 macOS | `clock_pump` 4.44× → 5.95×, `boundary_loops` 1.94× → 2.40× | not attributed |
+| x86-64 laptop | random `indices` 7.61× | FIXED: the shuffle loop calls `get`, whose one inferred-range local inserts `OpRangeDefault`; its `const` bounds read as a store write, so every loop calling `get` declined the hoist.  Named store-free beside `atan2`'s dispatchers: `indices` 19.0 → 6.6 ms (2.63×), `get` 20.2 → 14.5 ms (2.57×) |
 | x86-64 laptop | `mesh_aabb` +34 % (21.0 → 28.3 µs) | not in its emission or runtime (byte-identical twin since `70079f138`, `rec_get` unchanged), most likely layout — and the row is now 17.0 µs (2.23×) through `(R-RecPtr)`'s non-null address, which also took `entity_tick` −19 % |
 | x86-64 laptop, with the library merge | `arguments/parse` +24 %, `stage/render_stage` +19 %, `zttext/insert_text` +9 % | the library source changed under them (arguments 0.2.4–0.2.5, stage 0.18.6–0.18.7, zttext 0.1.3): a library change or loft's is not yet told apart |
 
@@ -94,6 +95,8 @@ Sizes are the analysis files' own (XS–M); "→" is the hand price, a ceiling f
 | C7 | a keyed insert into a frame-minted store does not block the header hoist (`mint_target`) | not sized | `build_index` −8 % | under-10x.md F8 |
 | C8 | a fixed-size scalar `f#read` without the runtime crossing; a leaner `OpReadFile` | not sized | `doc_read` ~−30 %, −15 % | under-10x.md |
 | C9 | no bounds test where the index is proved in range (the write's lock test is BUILT) | a design | `10_sort` 2.77× → ~1.3× | vector-write.md |
+
+| S10 | `(R-ElemFirst)` for a COMPREHENSION temp appended as a whole element (`[for y { [for x { … }] }]`, `rows += [[for …]]`): the inner build lands in the minted element instead of a loop-buffer store copied in by `OpCopyRecord` | M | `grid` 28.9 → 15.5 µs (3.39× → 1.82×) hand-priced on x86-64, hash unchanged; every vector of vectors built row by row | this file (priced 2026-10-05) |
 
 ### Where the priced path stops
 
@@ -134,7 +137,7 @@ CLASS, not a row; the visible reason is a hypothesis until priced.
 | record-field (5) | `fill_polygon`, `stencil_rotate`, `locate`, `terrain_relief_pass`, cbor `encode` | a class with a median over the bar; `terrain_relief_pass` reads a type through a nullable record per cell |
 | text-scan (4) | `arguments/parse`, `mapfile_to_painted`, `seg`, `time/parse` | — |
 | record-build (3) | `slope_path_with_undo`, `sphere`, `pluginabi/request` | — |
-| vector-write (3) | `canvas`, `indices`, `fill_rect` | the lock-test fix moved `fill_rect` 9 % and `indices` not at all |
+| vector-write (2) | `canvas`, `fill_rect` | the lock-test fix moved `fill_rect` 9 % |
 | alloc-temp (3) | `draft_fit_p`, `catalog_churn`, `slugify` | `draft_fit_p` hands its temporary to callees in another library (apart.md triage) |
 | vector-build (2) | `emit_segment`, `field_union` | nine parallel narrow appends per segment |
 | vector-read (2) | `draw_quads`, `wall_chain_walk` | — |

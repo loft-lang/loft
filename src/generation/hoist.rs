@@ -43,7 +43,7 @@ pub const ELEMENT_ADDRESS_OPS: [&str; 2] = ["OpGetVector", "OpGetVectorNullable"
 /// reaches state through the frame (`OpParallelJoin`), and the signature cannot tell them
 /// apart. `OpConvIntFromNull` is the one that matters in practice — it initialises the
 /// index of a `for` loop, so a nested loop carries it inside its parent's body.
-const PURE_NULLARY_OPS: [&str; 18] = [
+const PURE_NULLARY_OPS: [&str; 19] = [
     "OpConvIntFromNull",
     "OpConvBoolFromNull",
     "OpConvCharacterFromNull",
@@ -71,6 +71,12 @@ const PURE_NULLARY_OPS: [&str; 18] = [
     "OpMathFunc2Single",
     // `sizeof` of a scalar expression: consumes the value, answers the `const` size.
     "OpSizeScalar",
+    // The checked narrowing into a ranged integer (`z: integer(lo, hi)`): its `const`
+    // parameters are the BOUNDS and the default, not a slot or type id, and its one effect
+    // outside its value is a recoverable-error report through the logger — no store is
+    // touched.  Missing here, one ranged local in a callee (random's `get`) declined the
+    // hoist of every loop that called it (`indices` −43 % priced).
+    "OpRangeDefault",
 ];
 
 /// Ops that take a collection or a reference and only READ it.
@@ -14486,7 +14492,6 @@ mod store_free_sentinel {
         // Reach a store, a fault slot or another frame through the `const` channel.
         "OpDatabase",
         "OpTagFault",
-        "OpRangeDefault",
         "OpDropFnRef",
         "OpFnRefDetachShared",
         "OpParallelBegin",

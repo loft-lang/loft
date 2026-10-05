@@ -183,6 +183,30 @@ fn main() { }";
     );
 }
 
+/// The checked narrowing into a ranged integer (`OpRangeDefault`) is store-free: its `const`
+/// operands are bounds and a default, and its one other effect is a recoverable report.  A
+/// callee with one ranged local (random's `get`) must not decline the hoist of the loop that
+/// calls it; its twin differs only in an append and must decline.
+#[test]
+fn a_ranged_local_in_a_callee_does_not_decline_the_hoist() {
+    let script = "\
+fn pick(x: integer) -> integer { z = x % 1000 ?? 0; if z < 1 { z += 1000; } z }
+fn pick_grow(w: vector<integer>, x: integer) -> integer { w += [1]; z = x % 1000 ?? 0; if z < 1 { z += 1000; } z }
+fn f(v: vector<integer>) -> integer { t = 0; for i in 0..len(v) { t += pick(v[i]?); } t }
+fn f_grow(v: vector<integer>, w: vector<integer>) -> integer { t = 0; for i in 0..len(v) { t += pick_grow(w, v[i]?); } t }
+fn main() { }";
+    assert_eq!(
+        hoistable(script, "n_f"),
+        1,
+        "a ranged narrowing must read as store-free"
+    );
+    assert_eq!(
+        hoistable(script, "n_f_grow"),
+        0,
+        "the twin that appends still declines"
+    );
+}
+
 /// @PLN157 § V-c — a callee whose only store writes are scalars into its own return
 /// buffer (a struct-literal return over an all-scalar record) does not decline the
 /// caller's header hoist; every neighbouring shape still does.
