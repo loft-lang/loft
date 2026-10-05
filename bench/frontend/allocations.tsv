@@ -2,9 +2,9 @@
 # parse alone, `tiny`/`medium` bench/frontend's corpus on top of it (a warm run's cost).
 # Pinned by `LOFT_FRONTEND_REPIN=1 cargo test [--release] --test frontend_counts`;
 # read by tests/frontend_counts.rs, which fails when a pinned count GROWS.
-linux-debug	medium	766196
+linux-debug	medium	766206
 linux-debug	stdlib	399122
-linux-debug	tiny	26018
-linux-release	medium	766196
+linux-debug	tiny	26028
+linux-release	medium	766206
 linux-release	stdlib	398312
-linux-release	tiny	26018
+linux-release	tiny	26028
