@@ -1,25 +1,8 @@
 diff --git a/src/codegen_runtime.rs b/src/codegen_runtime.rs
-index 3bf8d26be..1c6e7f2c5 100644
+index 3bf8d26be..63006551a 100644
 --- a/src/codegen_runtime.rs
 +++ b/src/codegen_runtime.rs
-@@ -5028,16 +5028,6 @@ pub trait LoftCoroutine {
-     /// Freeing twice is not possible: every scope-exit free the generator DOES run nulls
-     /// its own field, and the generated body only frees fields that are still set.
-     fn drop_stores(&mut self, _stores: &mut Stores) {}
--
--    /// @FR-G-Next / @FR-G-Done — has this generator reached its end?  Asked only when an advance
--    /// answered its channel's end sentinel, because that sentinel is also a value a
--    /// generator may yield — `i64::MIN` is the integer null, `"\0"` the text null,
--    /// `DbRef::NULL` a null reference — and `(G-Next)` produces it like any other.
--    /// Every emitted generator overrides this with its own flag; the default keeps the
--    /// sentinel meaning "done" for a generator that has no flag to ask.
--    fn done(&self) -> bool {
--        true
--    }
- }
- 
- std::thread_local! {
-@@ -5326,7 +5316,7 @@ fn advance_native<R>(
+@@ -5326,7 +5326,7 @@ fn advance_native<R>(
  pub fn coroutine_next_i64(gen_ref: DbRef, stores: &mut Stores) -> i64 {
      advance_native(gen_ref, stores, COROUTINE_EXHAUSTED, |coro, stores| {
          let val = coro.next_i64(stores);
@@ -28,7 +11,7 @@ index 3bf8d26be..1c6e7f2c5 100644
      })
  }
  
-@@ -5350,7 +5340,7 @@ pub fn coroutine_next_dbref(gen_ref: DbRef, stores: &mut Stores) -> DbRef {
+@@ -5350,7 +5350,7 @@ pub fn coroutine_next_dbref(gen_ref: DbRef, stores: &mut Stores) -> DbRef {
      // check also flips to true here because exhaustion frees the slot.
      advance_native(gen_ref, stores, DbRef::NULL, |coro, stores| {
          let val = coro.next_dbref(stores);
@@ -37,7 +20,7 @@ index 3bf8d26be..1c6e7f2c5 100644
      })
  }
  
-@@ -5364,7 +5354,7 @@ pub fn coroutine_next_text(gen_ref: DbRef, stores: &mut Stores) -> String {
+@@ -5364,7 +5364,7 @@ pub fn coroutine_next_text(gen_ref: DbRef, stores: &mut Stores) -> String {
          crate::state::STRING_NULL.to_string(),
          |coro, stores| {
              let val = coro.next_text(stores);
@@ -46,79 +29,3 @@ index 3bf8d26be..1c6e7f2c5 100644
              (val, done)
          },
      )
-diff --git a/src/generation/coroutine.rs b/src/generation/coroutine.rs
-index 73998e81c..2e8ec879d 100644
---- a/src/generation/coroutine.rs
-+++ b/src/generation/coroutine.rs
-@@ -1449,10 +1449,6 @@ fn emit_struct_def(
- ) -> std::io::Result<()> {
-     writeln!(w, "struct {struct_name} {{")?;
-     writeln!(w, "    state: u32,")?;
--    // @FR-G-Done — set where the generator ENDS, read by `LoftCoroutine::done`.  The value
--    // channels' end sentinel is also a value a generator may yield — `i64::MIN` is the
--    // integer null, `"\0"` the text null — so the value alone cannot say which happened.
--    writeln!(w, "    __done: bool,")?;
-     for attr in attrs {
-         let field_tp = if is_text_slot(&attr.typedef) {
-             "String".to_string()
-@@ -1537,7 +1533,6 @@ fn emit_factory_fn(
-     writeln!(w, "    let _ = cell;")?;
-     writeln!(w, "    Box::new({struct_name} {{")?;
-     writeln!(w, "        state: 0,")?;
--    writeln!(w, "        __done: false,")?;
-     for attr in attrs {
-         let aname = sanitize(&attr.name);
-         if is_text_slot(&attr.typedef) {
-@@ -1759,10 +1754,6 @@ impl Output<'_> {
-                 close,
-             )
-         };
--        // Every RETURNED end sets `__done` first; `exhaust_val` stays the bare sentinel for
--        // the one place that compares against it (a delegation reading its sub-generator).
--        let exhaust_val = exhaust;
--        let exhaust = format!("{{ self.__done = true; {exhaust_val} }}");
-         writeln!(w, "{sig}")?;
-         if has_for_body {
-             writeln!(
-@@ -2084,12 +2075,7 @@ impl Output<'_> {
-                             w,
-                             "                let val = self.sub_{sub}.as_mut().unwrap().{advance}(stores);"
-                         )?;
--                        // `(G-Next)` — a delegated null is a value; only the sub-generator's
--                        // own end ends the delegation.
--                        writeln!(
--                            w,
--                            "                if val == {exhaust_val} && self.sub_{sub}.as_ref().unwrap().done() {{"
--                        )?;
-+                        writeln!(w, "                if val == {exhaust} {{")?;
-                         // Release the sub-generator's own heap locals on the way out, the same
-                         // cleanup a handle's scope-exit free performs (loft#835) — this path
-                         // owns the sub-generator directly, so nothing else would.
-@@ -2905,7 +2891,6 @@ impl Output<'_> {
-             w,
-             "impl loft::codegen_runtime::LoftCoroutine for {struct_name} {{"
-         )?;
--        writeln!(w, "    fn done(&self) -> bool {{ self.__done }}")?;
-         self.emit_next_i64(w, &attrs, &segments, &tail, has_yf, &yield_tp)?;
-         let owns_snapshots = crate::data::is_dbref(&yield_tp) && is_eager(&segments);
-         let owns_fnrefs = matches!(yield_tp.base(), Type::Function(..)) && is_eager(&segments);
-@@ -3194,10 +3179,7 @@ impl Output<'_> {
-                     }
-                     writeln!(w, "        loop {{")?;
-                     writeln!(w, "            let v = __sub.{sub_advance}(stores);")?;
--                    writeln!(
--                        w,
--                        "            if v == {sub_exhaust} && __sub.done() {{ break; }}"
--                    )?;
-+                    writeln!(w, "            if v == {sub_exhaust} {{ break; }}")?;
-                     if let Some(tp) = snapshot_tp {
-                         // The sub-generator hands each value over (`(G-Own)`), so this
-                         // buffer snapshots it and releases the handed store; a type not
-@@ -3288,7 +3270,6 @@ impl Output<'_> {
-         }
-         writeln!(w, "    Box::new({struct_name} {{")?;
-         writeln!(w, "        state: 0,")?;
--        writeln!(w, "        __done: false,")?;
-         for attr in attrs {
-             let aname = sanitize(&attr.name);
-             if is_text_slot(&attr.typedef) {

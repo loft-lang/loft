@@ -1,23 +1,13 @@
-diff --git b/src/parser/definitions.rs a/src/parser/definitions.rs
-index 589515a1b..df04ad6d7 100644
---- b/src/parser/definitions.rs
-+++ a/src/parser/definitions.rs
-@@ -5027,18 +5027,6 @@ impl Parser {
+diff --git a/src/parser/definitions.rs b/src/parser/definitions.rs
+index 3282bfc54..b7082a3f8 100644
+--- a/src/parser/definitions.rs
++++ b/src/parser/definitions.rs
+@@ -5027,7 +5027,7 @@ impl Parser {
                               elements are always dense (a key / slot denotes presence)"
                          );
                      }
 -                } else if !nullable_elem && type_name != "vector" && matches!(tp, Type::Optional(_))
--                {
--                    // A `?` written after the element's own modifiers (`integer limit(0, 9)?`)
--                    // is read by `parse_type` itself, past the identifier-adjacent test above —
--                    // so ask the type it built.  Admitted, it typed an `iterator` element
--                    // nullable that every other spelling refuses.
--                    diagnostic!(
--                        self.lexer,
--                        Level::Error,
--                        "`?` (nullable element) is only valid on `vector` — `{type_name}` \
--                         elements are always dense (a key / slot denotes presence)"
--                    );
-                 }
-                 let sub_nr = if let Type::Unknown(d) = tp {
-                     d
++                } else if false && !nullable_elem && type_name != "vector" && matches!(tp, Type::Optional(_))
+                 {
+                     // A `?` written after the element's own modifiers (`integer limit(0, 9)?`)
+                     // is read by `parse_type` itself, past the identifier-adjacent test above —

@@ -7786,25 +7786,7 @@ use a separate collection or add after the loop"
     /// parses the value, then returns to the `(` for the targets and on to the end.
     fn parse_place_destructure(&mut self, code: &mut Value) -> Type {
         let start = self.lexer.link();
-        self.lexer.token("(");
-        let mut depth: u32 = 1;
-        let mut members: usize = 1;
-        while depth > 0 && self.lexer.peek().has != LexItem::None {
-            if self.lexer.peek_token("(")
-                || self.lexer.peek_token("[")
-                || self.lexer.peek_token("{")
-            {
-                depth += 1;
-            } else if self.lexer.peek_token(")")
-                || self.lexer.peek_token("]")
-                || self.lexer.peek_token("}")
-            {
-                depth -= 1;
-            } else if depth == 1 && self.lexer.peek_token(",") {
-                members += 1;
-            }
-            self.lexer.cont();
-        }
+        let members = self.skip_pattern_members();
         self.lexer.token("=");
         let mut rhs = Value::Null;
         let mut rhs_type = self.expression(&mut rhs);
@@ -7813,48 +7795,11 @@ use a separate collection or add after the loop"
             rhs_type = Type::Tuple(elems);
         }
         let end = self.lexer.link();
-        // A NULLABLE tuple has no members to store (`(N-Index)`'s `τ?`): refused with the
-        // names path's cure before the shape is asked of the peeled type.
-        if self.nullable_tuple_elems(&rhs_type).is_some() {
-            if !self.first_pass {
-                let spelled = rhs_type.source_name(&self.data);
-                diagnostic!(
-                    self.lexer,
-                    Level::Error,
-                    "cannot destructure `{spelled}` — the tuple may be absent, and an \
-                     absent tuple has no members; discharge it first (`(a, b) = t?`, or \
-                     `(a, b) = t ?? (…)`)"
-                );
-            }
+        let Some((elems, ref_def_nr)) = self.place_destructure_elems(&rhs_type) else {
             self.lexer.revert(end);
             drop(start);
             *code = Value::Null;
             return Type::Void;
-        }
-        let (elems, ref_def_nr): (Vec<Type>, u32) = match rhs_type.base() {
-            Type::Tuple(elems) => (elems.clone(), u32::MAX),
-            Type::Reference(d_nr, _) if self.data.def(*d_nr).name().starts_with("__tuple<") => (
-                self.data
-                    .def(*d_nr)
-                    .attributes
-                    .iter()
-                    .map(|a| a.typedef.clone())
-                    .collect(),
-                *d_nr,
-            ),
-            _ => {
-                if !self.first_pass && !rhs_type.is_unknown() {
-                    diagnostic!(
-                        self.lexer,
-                        Level::Error,
-                        "Cannot destructure a non-tuple value"
-                    );
-                }
-                self.lexer.revert(end);
-                drop(start);
-                *code = Value::Null;
-                return Type::Void;
-            }
         };
         if elems.len() != members && !self.first_pass {
             diagnostic!(
@@ -7875,32 +7820,12 @@ use a separate collection or add after the loop"
         self.lexer.revert(start);
         self.lexer.token("(");
         let saved_tuple_lhs = std::mem::replace(&mut self.in_tuple_lhs, true);
-        for (i, elem) in elems.iter().enumerate().take(members) {
+        for (i, constant) in constants.iter().enumerate().take(members) {
             let mut target = Value::Null;
             let mut parent_tp = Type::Unknown(0);
             let f_type = self.parse_operators(&Type::Unknown(0), &mut target, &mut parent_tp, 0);
-            let mut read = if let Some(c) = &constants[i] {
-                c.clone()
-            } else if ref_def_nr == u32::MAX {
-                Value::TupleGet(tmp, i as u16)
-            } else {
-                let offset = crate::data::stored_tuple_offsets_for_def(
-                    &self.data,
-                    &self.database,
-                    ref_def_nr,
-                    elems.len(),
-                )
-                .map_or_else(
-                    || crate::data::element_stack_offsets(&elems)[i] as u32,
-                    |offs| u32::from(offs[i]),
-                );
-                self.get_val(elem, false, offset, Value::Var(tmp), u32::MAX)
-            };
-            let mut elem_tp = elem.clone();
-            if let Some((syn, pointer)) = self.tagged_pointer_type(elem) {
-                read = self.emit_nullable_slot_read(syn, read, elem);
-                elem_tp = pointer;
-            }
+            let (read, elem_tp) =
+                self.place_destructure_read(tmp, i, &elems, ref_def_nr, constant.as_ref());
             let to = target.clone();
             // A name the pattern binds is defined by this store, as a lone `c = …` defines it.
             if let Value::Var(v) = target
@@ -7922,6 +7847,110 @@ use a separate collection or add after the loop"
         self.lexer.revert(end);
         *code = Value::Insert(steps);
         Type::Void
+    }
+
+    /// Step over a `( … )` pattern, answering how many members it has at its top level.
+    fn skip_pattern_members(&mut self) -> usize {
+        self.lexer.token("(");
+        let mut depth: u32 = 1;
+        let mut members: usize = 1;
+        while depth > 0 && self.lexer.peek().has != LexItem::None {
+            if self.lexer.peek_token("(")
+                || self.lexer.peek_token("[")
+                || self.lexer.peek_token("{")
+            {
+                depth += 1;
+            } else if self.lexer.peek_token(")")
+                || self.lexer.peek_token("]")
+                || self.lexer.peek_token("}")
+            {
+                depth -= 1;
+            } else if depth == 1 && self.lexer.peek_token(",") {
+                members += 1;
+            }
+            self.lexer.cont();
+        }
+        members
+    }
+
+    /// The member types of a place pattern's right-hand side, and the synthetic `__tuple<…>`
+    /// definition when the tuple is stored as one (`u32::MAX` otherwise).  `None` after
+    /// reporting why it cannot be destructured.  A NULLABLE tuple has no members to store
+    /// (`(N-Index)`'s `τ?`), so it is refused with the names path's cure before the shape is
+    /// asked of the peeled type.
+    fn place_destructure_elems(&mut self, rhs_type: &Type) -> Option<(Vec<Type>, u32)> {
+        if self.nullable_tuple_elems(rhs_type).is_some() {
+            if !self.first_pass {
+                let spelled = rhs_type.source_name(&self.data);
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "cannot destructure `{spelled}` — the tuple may be absent, and an \
+                     absent tuple has no members; discharge it first (`(a, b) = t?`, or \
+                     `(a, b) = t ?? (…)`)"
+                );
+            }
+            return None;
+        }
+        match rhs_type.base() {
+            Type::Tuple(elems) => Some((elems.clone(), u32::MAX)),
+            Type::Reference(d_nr, _) if self.data.def(*d_nr).name().starts_with("__tuple<") => {
+                let elems = self
+                    .data
+                    .def(*d_nr)
+                    .attributes
+                    .iter()
+                    .map(|a| a.typedef.clone());
+                Some((elems.collect(), *d_nr))
+            }
+            _ => {
+                if !self.first_pass && !rhs_type.is_unknown() {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "Cannot destructure a non-tuple value"
+                    );
+                }
+                None
+            }
+        }
+    }
+
+    /// The value member `i` of a place pattern stores, and its type: the member itself when it
+    /// is a constant, else a read off the pattern's temp — a tagged `S?` member read through
+    /// its tag, as the names path reads it.
+    fn place_destructure_read(
+        &mut self,
+        tmp: u16,
+        i: usize,
+        elems: &[Type],
+        ref_def_nr: u32,
+        constant: Option<&Value>,
+    ) -> (Value, Type) {
+        let elem = &elems[i];
+        let mut read = if let Some(c) = constant {
+            c.clone()
+        } else if ref_def_nr == u32::MAX {
+            Value::TupleGet(tmp, i as u16)
+        } else {
+            let offset = crate::data::stored_tuple_offsets_for_def(
+                &self.data,
+                &self.database,
+                ref_def_nr,
+                elems.len(),
+            )
+            .map_or_else(
+                || crate::data::element_stack_offsets(elems)[i] as u32,
+                |offs| u32::from(offs[i]),
+            );
+            self.get_val(elem, false, offset, Value::Var(tmp), u32::MAX)
+        };
+        let mut elem_tp = elem.clone();
+        if let Some((syn, pointer)) = self.tagged_pointer_type(elem) {
+            read = self.emit_nullable_slot_read(syn, read, elem);
+            elem_tp = pointer;
+        }
+        (read, elem_tp)
     }
 
     /// Parse an assignment, keeping [`Parser::last_place_discharge`] the answer for the
