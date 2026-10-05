@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>audio_bus guide — Loft, a programming language for small browser games</title>
+  <meta name="description" content="Getting started with the loft library audio_bus — a runnable guide that is itself a loft program, so every example in it compiles.">
+<link rel="canonical" href="https://loft-lang.org/loft/lib-audio_bus-guide.html">
+<meta property="og:title" content="audio_bus guide — Loft, a programming language for small browser games">
+<meta property="og:description" content="Getting started with the loft library audio_bus — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://loft-lang.org/loft/lib-audio_bus-guide.html">
+<meta property="og:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<meta property="og:site_name" content="Loft">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="audio_bus guide — Loft, a programming language for small browser games">
+<meta name="twitter:description" content="Getting started with the loft library audio_bus — a runnable guide that is itself a loft program, so every example in it compiles.">
+<meta name="twitter:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<link rel="stylesheet" href="style.css">
+<style>.playground-link{display:inline-block;margin:0.3em 0 0.8em;padding:4px 12px;background:#2563eb;color:#fff;border-radius:4px;text-decoration:none;font-size:0.85em}.playground-link:hover{filter:brightness(1.15)}@media print{.playground-link{display:none}}</style>
+</head>
+<body>
+<nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
+<h1>audio_bus guide</h1>
+<article>
+<p><a href="lib-audio_bus.html">← audio_bus</a> · <a href="lib-audio_bus-api.html">API reference</a> · <a href="lib-audio_bus-src.html">source</a></p>
+<p><code>audio_bus</code> decides how loud; <code>graphics</code> plays the sounds.  A bus is a number that multiplies, arranged in a tree under <code>MASTER</code>, and a voice is heard at its own level times the gain of every bus above it — so one write to <code>sfx</code> moves every effect, and everything under it.  Nothing below plays a sound: <code>attach</code> puts a handle a caller already holds on a bus, which is also how this guide runs on a machine with no audio device.</p>
+<pre><code><span class="kw">use</span> audio_bus::*;
+<span class="kw">use</span> graphics;</code></pre>
+<pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {
+  m = <span class="fn-call">mixer</span>();
+  _ = <span class="fn-call">add</span>(m, <span class="st">"music"</span>, <span class="en">MASTER</span>, <span class="nm">0.5</span>);
+  _ = <span class="fn-call">add</span>(m, <span class="st">"sfx"</span>, <span class="en">MASTER</span>, <span class="nm">0.8</span>);
+  _ = <span class="fn-call">add</span>(m, <span class="st">"steps"</span>, <span class="st">"sfx"</span>, <span class="nm">0.5</span>);          <span class="cm">// a bus under a bus</span></code></pre>
+<p><code>steps</code> is heard at its own 0.5 times <code>sfx</code>'s 0.8 times <code>MASTER</code>'s 1.0.</p>
+<pre><code>  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"music {gain(m, "</span>music<span class="st">")}, steps {gain(m, "</span>steps<span class="st">")}"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">gain</span>(m, <span class="st">"music"</span>) == <span class="nm">0.5</span> &amp;&amp; <span class="fn-call">gain</span>(m, <span class="st">"steps"</span>) == <span class="nm">0.4</span>, <span class="st">"a gain is the product of its chain"</span>);</code></pre>
+<p>Every section below is a function, and <code>main</code> calls each one: a section nothing calls still compiles, but its assertions never run.</p>
+<pre><code>  <span class="fn-call">one_write_moves_a_subtree</span>();
+  <span class="fn-call">a_duck_comes_home_exactly</span>();
+  <span class="fn-call">what_silence_means</span>();
+  <span class="fn-call">stopping_a_bus</span>();
+}</code></pre>
+<p>That prints:</p>
+<pre><code>  music 0.5, steps 0.4
+</code></pre>
+<h2 id="one-write-moves-a-subtree">One write moves a subtree</h2>
+<p><code>set_volume</code> changes one bus's own level and re-applies every voice under it.  A voice keeps its OWN level beside the bus's, so the level its sink is set to (<code>level</code>) is recomputed rather than scaled — a derived number cannot be un-multiplied.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">one_write_moves_a_subtree</span>() {
+  m = <span class="fn-call">mixer</span>();
+  _ = <span class="fn-call">add</span>(m, <span class="st">"sfx"</span>, <span class="en">MASTER</span>, <span class="nm">0.8</span>);
+  _ = <span class="fn-call">add</span>(m, <span class="st">"steps"</span>, <span class="st">"sfx"</span>, <span class="nm">0.5</span>);
+  _ = <span class="fn-call">attach</span>(m, <span class="nm">7</span>, <span class="st">"steps"</span>, <span class="nm">0.5</span>);           <span class="cm">// a sink played elsewhere, at its own 0.5</span>
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">level</span>(m, <span class="nm">7</span>) == <span class="nm">0.2</span>, <span class="st">"0.5 × 0.5 × 0.8"</span>);
+  _ = <span class="fn-call">set_volume</span>(m, <span class="st">"sfx"</span>, <span class="nm">0.5</span>);            <span class="cm">// the effects slider</span>
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">volume</span>(m, <span class="st">"sfx"</span>) == <span class="nm">0.5</span> &amp;&amp; <span class="fn-call">gain</span>(m, <span class="st">"steps"</span>) == <span class="nm">0.25</span>, <span class="st">"steps follows sfx"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">level</span>(m, <span class="nm">7</span>) == <span class="nm">0.125</span>, <span class="st">"0.5 × 0.5 × 0.5"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"subtree : sfx 0.8 -&gt; 0.5 moves a footstep from 0.2 to 0.125"</span>);
+}</code></pre>
+<h2 id="a-duck-comes-home-exactly">A duck comes home exactly</h2>
+<p><code>duck</code> remembers the level it replaces and <code>unduck</code> writes that number back, so nothing is computed on the way home and nothing can drift — 0.35 has no exact binary form and still comes back on the same bits.  A duck inside a duck keeps the ORIGINAL level, so a second speaker starting does not turn the first one's restore into a guess.  An <code>unduck</code> that finds nothing to lift answers false: a duck and its lift have come apart somewhere.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">a_duck_comes_home_exactly</span>() {
+  m = <span class="fn-call">mixer</span>();
+  _ = <span class="fn-call">add</span>(m, <span class="st">"music"</span>, <span class="en">MASTER</span>, <span class="nm">0.35</span>);
+  _ = <span class="fn-call">duck</span>(m, <span class="st">"music"</span>, <span class="nm">0.1</span>);                <span class="cm">// speech starts</span>
+  _ = <span class="fn-call">duck</span>(m, <span class="st">"music"</span>, <span class="nm">0.05</span>);               <span class="cm">// a second line over the first</span>
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">ducked</span>(m, <span class="st">"music"</span>) &amp;&amp; <span class="fn-call">volume</span>(m, <span class="st">"music"</span>) == <span class="nm">0.05</span>, <span class="st">"ducked twice"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">unduck</span>(m, <span class="st">"music"</span>), <span class="st">"one lift"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">volume</span>(m, <span class="st">"music"</span>) == <span class="nm">0.35</span> &amp;&amp; !<span class="fn-call">ducked</span>(m, <span class="st">"music"</span>), <span class="st">"home to the original level"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="fn-call">unduck</span>(m, <span class="st">"music"</span>), <span class="st">"nothing left to lift"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"duck    : 0.35 -&gt; 0.1 -&gt; 0.05 -&gt; 0.35, exactly"</span>);
+}</code></pre>
+<h2 id="what-silence-means">What silence means</h2>
+<p>A bus nobody declared is SILENCE, never full volume: <code>gain</code> answers 0.0, <code>set_volume</code> and <code>duck</code> answer false, and <code>play</code> refuses with -1 before it touches the audio device.  A negative level is clamped to 0.0, because a negative gain inverts a waveform rather than quietening it.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">what_silence_means</span>() {
+  m = <span class="fn-call">mixer</span>();
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">gain</span>(m, <span class="st">"musci"</span>) == <span class="nm">0.0</span>, <span class="st">"a typo is silence"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="fn-call">set_volume</span>(m, <span class="st">"musci"</span>, <span class="nm">0.5</span>) &amp;&amp; !<span class="fn-call">duck</span>(m, <span class="st">"musci"</span>, <span class="nm">0.1</span>), <span class="st">"and changes nothing"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">play</span>(m, <span class="st">"musci"</span>, <span class="nm">1</span>) == -<span class="nm">1</span>, <span class="st">"play refuses an unknown bus"</span>);
+  _ = <span class="fn-call">add</span>(m, <span class="st">"music"</span>, <span class="en">MASTER</span>, <span class="nm">0.5</span>);
+  _ = <span class="fn-call">set_volume</span>(m, <span class="st">"music"</span>, -<span class="nm">0.5</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">volume</span>(m, <span class="st">"music"</span>) == <span class="nm">0.0</span>, <span class="st">"clamped, not inverted"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"silence : an unknown bus answers 0.0; a negative level is 0.0"</span>);
+}</code></pre>
+<h2 id="stopping-a-bus">Stopping a bus</h2>
+<p><code>stop_bus</code> stops every voice on a bus AND on the buses under it, and answers how many — "the scene is over" is a claim worth checking.  <code>under</code> is the tree question it asks.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">stopping_a_bus</span>() {
+  m = <span class="fn-call">mixer</span>();
+  _ = <span class="fn-call">add</span>(m, <span class="st">"music"</span>, <span class="en">MASTER</span>, <span class="nm">0.5</span>);
+  _ = <span class="fn-call">add</span>(m, <span class="st">"sfx"</span>, <span class="en">MASTER</span>, <span class="nm">0.8</span>);
+  _ = <span class="fn-call">add</span>(m, <span class="st">"steps"</span>, <span class="st">"sfx"</span>, <span class="nm">0.5</span>);
+  _ = <span class="fn-call">attach</span>(m, <span class="nm">1</span>, <span class="st">"music"</span>);
+  _ = <span class="fn-call">attach</span>(m, <span class="nm">2</span>, <span class="st">"sfx"</span>);
+  _ = <span class="fn-call">attach</span>(m, <span class="nm">3</span>, <span class="st">"steps"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">under</span>(m, <span class="st">"steps"</span>, <span class="st">"sfx"</span>) &amp;&amp; !<span class="fn-call">under</span>(m, <span class="st">"music"</span>, <span class="st">"sfx"</span>), <span class="st">"the tree"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">stop_bus</span>(m, <span class="st">"sfx"</span>) == <span class="nm">2</span>, <span class="st">"sfx and steps, not music"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">level</span>(m, <span class="nm">1</span>) == <span class="nm">0.5</span> &amp;&amp; <span class="fn-call">level</span>(m, <span class="nm">3</span>) == <span class="nm">0.0</span>, <span class="st">"music plays on; a stopped voice is gone"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"stop    : stop_bus(sfx) stops 2 of 3"</span>);
+}</code></pre>
+
+  </article>
+<script src="search-index.js"></script>
+<script src="search.js"></script>
+<script>
+(function(){
+var m={"Keywords":"keywords","Texts":"texts","Integers":"integers","Boolean":"boolean","Float":"float","Functions":"functions","Vector":"vector","Structs":"structs","Enums":"enums","Sorted":"sorted","Index":"index","Hash":"hash","File":"file","Lexer":"lexer","Parser":"parser","Libraries":"libraries","Store Locks":"store_locks","Parallel execution":"parallel_execution","Logging":"logging","Time":"time","Safety":"safety","JSON":"json","Generics":"generics","Closures":"closures","Coroutines":"coroutines","Tuples":"tuples","Match":"match","Formatting":"formatting"};
+var h=document.querySelector('h1');
+if(!h)return;
+var key=m[h.textContent];
+if(!key)return;
+var a=document.createElement('a');
+a.className='playground-link';
+a.href='playground.html?example='+key;
+a.textContent='\u25B6 Try in Playground';
+h.parentNode.insertBefore(a,h.nextSibling);
+})();
+</script>
+</body>
+</html>

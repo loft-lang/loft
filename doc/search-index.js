@@ -380,6 +380,7 @@ const SEARCH_INDEX=[
 {name:"assets::layout_descriptor",kind:"fn",url:"lib-assets-api.html"},
 {name:"assets::layout_fingerprint",kind:"fn",url:"lib-assets-api.html"},
 {name:"audio_bus",kind:"library",url:"lib-audio_bus.html"},
+{name:"audio_bus guide",kind:"guide",url:"lib-audio_bus-guide.html"},
 {name:"audio_bus::Bus",kind:"struct",url:"lib-audio_bus-api.html"},
 {name:"audio_bus::Voice",kind:"struct",url:"lib-audio_bus-api.html"},
 {name:"audio_bus::Mixer",kind:"struct",url:"lib-audio_bus-api.html"},
