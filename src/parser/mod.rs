@@ -14019,17 +14019,37 @@ impl Parser {
             // (loft#1072). The read carries a byte offset, and on pass 1 that offset is
             // `u16::MAX` for every field of a struct whose layout does not exist yet.
             self.fn_ref_read_attr = Some((d_nr, f_nr));
+            // The pair is TWO reads of one record, so a record a call returns is bound once
+            // and both halves read the binding: spliced into each read, `mk().f(21)` ran `mk`
+            // twice on `--native`, and the call lifted out of the pair broke the pair's own
+            // shape there (E0308, a `DbRef` where `(u32, DbRef)` belongs).
+            let (code, bind) = if matches!(code.unspan(), Value::Call(c, _)
+                if !self.data.def(*c).name().starts_with("Op"))
+            {
+                let host = Type::Reference(d_nr, crate::data::Deps::none());
+                let w = self.vars.work_refs(&host, &mut self.lexer);
+                if !self.first_pass {
+                    self.change_var_type(w, &host);
+                }
+                (Value::Var(w), Some(v_set(w, code)))
+            } else {
+                (code, None)
+            };
             // @PLN114 — the layout decides the reader, and BOTH answers are now
             // explicit: a split field reads its closure_rec child, a legacy one
             // synthesises a NULL closure.  `get_val`'s Function arm is the legacy
             // read (tuple / vector elements), so a split field must not fall
             // through to it.
-            return if self.fn_ref_field_is_split(d_nr, f_nr) {
+            let read = if self.fn_ref_field_is_split(d_nr, f_nr) {
                 self.read_fn_ref_split(&tp, u32::from(pos), code)
             } else {
                 let read_dnr = self.cl("OpGetInt4", &[code, Value::Int(i32::from(pos))]);
                 let read_clos = self.cl("OpNullRefSentinel", &[]);
                 crate::data::v_block(vec![read_dnr, read_clos], tp.clone(), "fn_ref_field_read")
+            };
+            return match bind {
+                Some(bind) => v_block(vec![bind, read], tp, "fn_ref_field_base"),
+                None => read,
             };
         }
         self.get_val(&tp, nullable, u32::from(pos), code, alias)

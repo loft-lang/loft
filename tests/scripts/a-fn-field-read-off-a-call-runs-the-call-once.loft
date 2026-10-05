@@ -1,0 +1,33 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `formal/closures.md` `@FR-L-Apply`: a closure held in a struct field is applied like any
+// fn-ref, whatever the struct came from.  Read off a CALL's result, the field's two halves —
+// the function number and the closure record — each spliced the call in: `mk(log).f(21)`
+// ran `mk` twice, and on `--native` the call lifted out of the pair broke the pair's shape
+// (E0308, a `DbRef` where `(u32, DbRef)` belongs).  And a call whose result a function
+// returns through a local it built (`h = H { … }; h`) emitted its integer argument as a fn-ref
+// pair on `--native` (E0308) when its result was read for a field call: the argument was
+// spelled under the context of the slot the result lands in.
+//
+// Values by hand: dbl(21) = 42, dbl(4) = 8, tri(5) = 15; `log` grows by one per `mk` call.
+//
+// Axes this file MOVES: the base (call result · local · call of a function returning a built
+// local), the call count, both backends.  Axes it HOLDS FIXED: non-capturing closures (a
+// capturing one cannot be returned in a struct yet — loft#1867).
+
+struct H { f: fn(integer) -> integer }
+fn dbl(a: integer) -> integer { a * 2 }
+fn tri(a: integer) -> integer { a * 3 }
+fn mk(log: &vector<integer>) -> H { log += [1]; H { f: dbl } }
+fn mkl(n: integer) -> H { h = H { f: tri }; if n > 100 { h.f = dbl; } h }
+
+fn main() {
+  log: vector<integer> = [];
+  assert(mk(log).f(21) == 42, "a field read off a call");
+  assert(len(log) == 1, "the call ran once, not {len(log)} times");
+  h = mk(log);
+  assert(h.f(4) == 8 && len(log) == 2, "through a local");
+  assert(mkl(5).f(5) == 15, "off a function returning the local it built");
+  assert(mkl(500).f(5) == 10, "the same, rebound in that function");
+}

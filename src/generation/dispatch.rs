@@ -1349,6 +1349,13 @@ impl Output<'_> {
                 // narrow-int, text deref, typed-null, fn-ref) as the normal call
                 // path.  Re-deriving arg emission here is what dropped the
                 // boolean→u8 wrap and tripped rustc E0308 (issue #366).
+                //
+                // And under the context `output_call` gives every argument: an argument
+                // binds to the callee's parameter, never to the slot this call's result
+                // lands in.  Spelled here without that reset, a record bound for a fn-ref
+                // read (`mkl(5).f(4)`) emitted its integer argument as a fn-ref pair (E0308).
+                let saved_ctx = std::mem::replace(&mut self.fn_ref_context, false);
+                let saved_tuple = std::mem::replace(&mut self.tuple_text_to_string, false);
                 for (idx, arg) in args.iter().enumerate() {
                     write!(w, ", ")?;
                     // The callee this argument belongs to, for the questions `emit_call_arg`
@@ -1357,6 +1364,8 @@ impl Output<'_> {
                     self.current_call_def = fn_nr;
                     self.emit_call_arg(w, callee, idx, arg)?;
                 }
+                self.fn_ref_context = saved_ctx;
+                self.tuple_text_to_string = saved_tuple;
                 for extra in twin_args.iter().flatten() {
                     write!(w, ", {extra}")?;
                 }
