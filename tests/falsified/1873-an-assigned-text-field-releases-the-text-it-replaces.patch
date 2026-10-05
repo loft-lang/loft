@@ -1,13 +1,13 @@
 diff --git a/src/scopes/text_replace.rs b/src/scopes/text_replace.rs
-index 77d0f94d8..e7b76988d 100644
+index ce5cdfd70..9c5b49f73 100644
 --- a/src/scopes/text_replace.rs
 +++ b/src/scopes/text_replace.rs
-@@ -46,7 +46,7 @@ pub(super) fn admit(data: &mut Data) {
- fn visit(n: &mut Value, under_call: bool, replace: u32, set: u32, data: &Data, vars: &Function) {
+@@ -114,7 +114,7 @@ fn visit(n: &mut Value, under_call: bool, replace: u32, set: u32, data: &Data, f
+     }
      let inner = match n {
          Value::Call(d, args) => {
--            if *d == replace && (under_call || !admitted(args, data, vars)) {
-+            if *d == replace && false && (under_call || !admitted(args, data, vars)) {
+-            if *d == replace && (under_call || !admitted(args, data, facts)) {
++            if *d == replace && false && (under_call || !admitted(args, data, facts)) {
                  *d = set;
              }
              true
