@@ -27,15 +27,32 @@ const TRACE: &[&str] = &[
 ];
 
 fn emit(env: &[(&str, &str)]) -> (String, bool) {
+    emit_file(CELLS, env)
+}
+
+fn emit_file(cells: &str, env: &[(&str, &str)]) -> (String, bool) {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let out = std::env::temp_dir().join(format!("loft_refill_text_{}.rs", std::process::id()));
+    // One file per test: the tests are threads of one process.
+    let stem = Path::new(cells)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("cells");
+    let tag = env.iter().map(|(k, _)| *k).collect::<Vec<_>>().join("_");
+    let out = std::env::temp_dir().join(format!(
+        "loft_refill_text_{}_{stem}_{tag}.rs",
+        std::process::id()
+    ));
     let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("--native-emit")
         .arg(&out)
-        .arg(root.join(CELLS))
+        .arg(root.join(cells))
         .env("LOFT_TIMEOUT", "120")
         .env("LOFT_NO_CACHE", "1");
-    for k in ["LOFT_NO_REFILL_TEXT", "LOFT_TRACE_REFILL_TEXT"] {
+    for k in [
+        "LOFT_NO_REFILL_TEXT",
+        "LOFT_NO_REFILL_ELEMENTS",
+        "LOFT_TRACE_REFILL_TEXT",
+    ] {
         cmd.env_remove(k);
     }
     for (k, v) in env {
@@ -60,6 +77,22 @@ fn the_cells_refill_where_the_rule_admits() {
     let (err, ok) = emit(&[("LOFT_TRACE_REFILL_TEXT", "1")]);
     assert!(ok, "emission failed:\n{err}");
     assert_eq!(trace(&err), TRACE, "the refilled sites moved:\n{err}");
+}
+
+/// The collection clause's guard: which builders keep their elements, and why the other
+/// declines.
+const KEPT: &str = "tests/scripts/a-kept-buffers-elements-are-refilled-in-their-slots.loft";
+const KEPT_TRACE: &[&str] = &[
+    "refill-text: n_runs_of keeps its elements",
+    "refill-text: n_twos_of keeps its elements",
+    "refill-text: n_trimmed_of keeps no elements — the vector or an element is used another way",
+];
+
+#[test]
+fn the_builders_keep_their_elements_where_the_clause_admits() {
+    let (err, ok) = emit_file(KEPT, &[("LOFT_TRACE_REFILL_TEXT", "1")]);
+    assert!(ok, "emission failed:\n{err}");
+    assert_eq!(trace(&err), KEPT_TRACE, "the kept builders moved:\n{err}");
 }
 
 #[test]

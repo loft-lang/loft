@@ -1,0 +1,13 @@
+diff --git a/src/database/allocation.rs b/src/database/allocation.rs
+index 64ed2660e..127bc8291 100644
+--- a/src/database/allocation.rs
++++ b/src/database/allocation.rs
+@@ -1199,7 +1199,7 @@ impl Stores {
+         size: u32,
+         texts: &[u32],
+     ) {
+-        if keep == 0 || buf.store_nr == u16::MAX || buf.rec == 0 {
++        if keep == 0 || buf.store_nr == u16::MAX || buf.rec == 0 || keep != 0 {
+             return;
+         }
+         let store = self.store_mut(buf);
