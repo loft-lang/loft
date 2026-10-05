@@ -14,6 +14,14 @@
 // that would take a freed slot.  The same bind's other defect — a write through it was not
 // seen as a write to a `&` parameter — is a refusal, so it has its own file
 // (`a-write-through-a-link-modifies-the-amp-parameter`).
+//
+// @falsified-at: 3c979e3a1 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0 (the
+//   first read through `d` answered 8, the usurper's value); native INERT, which is the
+//   divergence: a native link is a raw pointer to a live Rust local.
+// @falsified-by: tests/falsified/a-link-to-a-link-keeps-the-place-alive.patch — the same
+//   channels.  Score it with `scripts/falsify.sh <this file> --patch <that patch>` once
+//   3c979e3a1 is out of reach.
+// HOLDS: leak, panic and refusals are clean on both trees and both backends.
 
 fn main() {
   x = 250;

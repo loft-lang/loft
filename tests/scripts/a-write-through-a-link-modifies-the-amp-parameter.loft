@@ -9,6 +9,13 @@
 // The cells write through one link, through a chain of two, and through a link handed on to
 // another `&` parameter; the refusal for a parameter only READ through a link must stay, and
 // that control lives in the parse-error suite beside the other needless-`&` refusals.
+//
+// @falsified-at: 3c979e3a1 — interpret exit 1 -> 0, native exit 1 -> 0 (the control refuses
+//   `through_one`: "Parameter 'p' has & but is never modified").
+// @falsified-by: tests/falsified/a-write-through-a-link-modifies-the-amp-parameter.patch — the
+//   same channels.  Score it with `scripts/falsify.sh <this file> --patch <that patch>` once
+//   3c979e3a1 is out of reach.
+// HOLDS: leak, panic and asserts are clean on both trees and both backends.
 
 fn through_one(p: &integer) {
   c = &p;
