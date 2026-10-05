@@ -74,6 +74,15 @@ engineering was about the speed of servers running complex calculations, with Ja
 language. There I had to hand-craft stores like the ones inside loft many times to reach the
 performance we needed, and Java itself doesn't help much with that (certainly not its standard
 library). Games are the first audience; the lessons came from servers.
+
+Speed, and why it matters: not because every algorithm in a game needs the same speed, but
+because without speed comparable to rustc or C++ there will always be a reason to reach for
+those instead, and to give up code that is readable for as many people as possible. Rust is
+already more readable than C++ in many cases, but even it has many constructions that baffle a
+curious reader without years of experience. That is not a slight against Rust; it is a complex
+language. Loft tries to prevent that as much as possible. (The libraries follow the same rule:
+a slow routine is work for the compiler, never a hand-written Rust shortcut, so nobody has to
+read Rust to read a library.)
 In my opinion C++ that is still the most common language for published games is not very helpful
 for them. Many things are in there that crashes games, and being one of the most efficient languages
 around still doesn't help against the actual reasons things get slow. Those reasons are:
