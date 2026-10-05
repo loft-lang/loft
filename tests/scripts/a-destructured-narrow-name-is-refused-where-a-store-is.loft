@@ -7,6 +7,14 @@
 // "the non-null type `integer`", the member's type, not the local's.
 //
 // `main` comes first so each expectation belongs to its function.
+//
+// @falsified-at: 73ee8e8b2 — interpret exit 1 -> 0, interpret expectations FAIL/3 -> 3/3
+//   (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations
+//   FAIL/3 -> 3/3.
+// @falsified-by: tests/falsified/a-destructured-narrow-name-is-refused-where-a-store-is.patch — the same
+//   channels.  Score it with `scripts/falsify.sh <this file> --patch <that patch>` once
+//   73ee8e8b2 is out of reach.
+// HOLDS: nothing runs on either tree (a refusal file).
 
 fn main() {
   println("{plain(300)} {nullable_member(null)} {narrow_field(300)}");

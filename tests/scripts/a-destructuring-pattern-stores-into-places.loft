@@ -27,6 +27,13 @@
 //                        evaluation count (once · in a loop).
 // Axes it HOLDS FIXED:   two or three members; the narrowing refusal is
 //                        `a-destructured-narrow-name-is-refused-where-a-store-is.loft`.
+//
+// @falsified-at: 7e707d323 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
+//   native exit 1 -> 0, native 1 assertion failures -> 0.
+// @falsified-by: tests/falsified/a-destructuring-pattern-stores-into-places.patch — the same
+//   channels.  Score it with `scripts/falsify.sh <this file> --patch <that patch>` once
+//   7e707d323 is out of reach.
+// HOLDS: leak, panic and refusals are clean on both trees and both backends.
 
 struct In { v: integer }
 struct Mid { inn: In, n: integer }

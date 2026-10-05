@@ -19,6 +19,13 @@
 //                        (a tuple literal · a call), the value (in range · out of range).
 // Axes it HOLDS FIXED:   a two-member pattern, the narrow name first.  Field targets in a
 //                        pattern are not here: they are a separate question for (T-Destr).
+//
+// @falsified-at: 73ee8e8b2 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
+//   native exit 1 -> 0, native 1 assertion failures -> 0.
+// @falsified-by: tests/falsified/a-destructured-name-keeps-its-declared-type.patch — the same
+//   channels.  Score it with `scripts/falsify.sh <this file> --patch <that patch>` once
+//   73ee8e8b2 is out of reach.
+// HOLDS: leak, panic and refusals are clean on both trees and both backends.
 
 fn pair(n: integer) -> (integer, integer) {
   (n, 1)

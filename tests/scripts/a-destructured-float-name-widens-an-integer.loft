@@ -6,6 +6,13 @@
 // refused it: "Variable 'a' cannot change type from float to integer".  A file of its own:
 // that refusal stops a file, which would hide the value cells of
 // `a-destructured-name-keeps-its-declared-type.loft`.
+//
+// @falsified-at: 73ee8e8b2 — interpret exit 1 -> 0, native exit 1 -> 0 (the control refuses
+//   the pattern: "cannot change type from float to integer").
+// @falsified-by: tests/falsified/a-destructured-float-name-widens-an-integer.patch — the same
+//   channels.  Score it with `scripts/falsify.sh <this file> --patch <that patch>` once
+//   73ee8e8b2 is out of reach.
+// HOLDS: leak, panic and refusals are clean on both trees and both backends.
 
 fn widened() -> float {
   a: float = 1.5;

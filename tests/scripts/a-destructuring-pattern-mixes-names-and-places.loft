@@ -6,6 +6,13 @@
 // destructuring requires plain variable names" — while the same members in the other order
 // compiled (and wrote the wrong fields).  A file of its own: that refusal stops a file, which
 // would hide the value cells of `a-destructuring-pattern-stores-into-places.loft`.
+//
+// @falsified-at: 7e707d323 — interpret exit 1 -> 0, native exit 1 -> 0 (the control refuses
+//   the pattern: "Tuple destructuring requires plain variable names").
+// @falsified-by: tests/falsified/a-destructuring-pattern-mixes-names-and-places.patch — the same
+//   channels.  Score it with `scripts/falsify.sh <this file> --patch <that patch>` once
+//   7e707d323 is out of reach.
+// HOLDS: leak, panic and refusals are clean on both trees and both backends.
 
 struct S { f: u8, g: u8?, h: float }
 
