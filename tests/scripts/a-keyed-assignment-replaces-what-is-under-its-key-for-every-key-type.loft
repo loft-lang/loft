@@ -17,6 +17,10 @@
 // under one key {1, 2, 5} x churn {none, an unrelated insert-and-remove between the writes,
 // which recycles arena slots}.  Each asserts the length AND a walk AND the lookup AND that a
 // neighbouring key survives.
+// The cells are grouped one test function per kind x key: `--tests` builds a fresh State and
+// bytecode per test function, so 270 separate functions cost 270 compiles of this whole file —
+// past the valgrind sweep's per-run limit under memcheck (loft#1863).  Each assertion names its
+// cell, so a failure still says which one.
 //
 // @falsified-at: e07f178da — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
 // @falsified-by: tests/falsified/a-keyed-assignment-replaces-what-is-under-its-key-for-every-key-type.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
@@ -3320,7 +3324,7 @@ fn c_index_two_fieldprm_5_churn() {
   assert(h.c["s7", 7].v == 5, "c_index_two_fieldprm_5_churn: value");
   assert(h.c["nb", 3].v == 100, "c_index_two_fieldprm_5_churn: neighbour");
 }
-fn main() {
+fn test_hash_int() {
   c_hash_int_local_1_plain();
   c_hash_int_local_1_churn();
   c_hash_int_local_2_plain();
@@ -3351,6 +3355,8 @@ fn main() {
   c_hash_int_fieldprm_2_churn();
   c_hash_int_fieldprm_5_plain();
   c_hash_int_fieldprm_5_churn();
+}
+fn test_hash_text() {
   c_hash_text_local_1_plain();
   c_hash_text_local_1_churn();
   c_hash_text_local_2_plain();
@@ -3381,6 +3387,8 @@ fn main() {
   c_hash_text_fieldprm_2_churn();
   c_hash_text_fieldprm_5_plain();
   c_hash_text_fieldprm_5_churn();
+}
+fn test_hash_two() {
   c_hash_two_local_1_plain();
   c_hash_two_local_1_churn();
   c_hash_two_local_2_plain();
@@ -3411,6 +3419,8 @@ fn main() {
   c_hash_two_fieldprm_2_churn();
   c_hash_two_fieldprm_5_plain();
   c_hash_two_fieldprm_5_churn();
+}
+fn test_sorted_int() {
   c_sorted_int_local_1_plain();
   c_sorted_int_local_1_churn();
   c_sorted_int_local_2_plain();
@@ -3441,6 +3451,8 @@ fn main() {
   c_sorted_int_fieldprm_2_churn();
   c_sorted_int_fieldprm_5_plain();
   c_sorted_int_fieldprm_5_churn();
+}
+fn test_sorted_text() {
   c_sorted_text_local_1_plain();
   c_sorted_text_local_1_churn();
   c_sorted_text_local_2_plain();
@@ -3471,6 +3483,8 @@ fn main() {
   c_sorted_text_fieldprm_2_churn();
   c_sorted_text_fieldprm_5_plain();
   c_sorted_text_fieldprm_5_churn();
+}
+fn test_sorted_two() {
   c_sorted_two_local_1_plain();
   c_sorted_two_local_1_churn();
   c_sorted_two_local_2_plain();
@@ -3501,6 +3515,8 @@ fn main() {
   c_sorted_two_fieldprm_2_churn();
   c_sorted_two_fieldprm_5_plain();
   c_sorted_two_fieldprm_5_churn();
+}
+fn test_index_int() {
   c_index_int_local_1_plain();
   c_index_int_local_1_churn();
   c_index_int_local_2_plain();
@@ -3531,6 +3547,8 @@ fn main() {
   c_index_int_fieldprm_2_churn();
   c_index_int_fieldprm_5_plain();
   c_index_int_fieldprm_5_churn();
+}
+fn test_index_text() {
   c_index_text_local_1_plain();
   c_index_text_local_1_churn();
   c_index_text_local_2_plain();
@@ -3561,6 +3579,8 @@ fn main() {
   c_index_text_fieldprm_2_churn();
   c_index_text_fieldprm_5_plain();
   c_index_text_fieldprm_5_churn();
+}
+fn test_index_two() {
   c_index_two_local_1_plain();
   c_index_two_local_1_churn();
   c_index_two_local_2_plain();
@@ -3591,5 +3611,16 @@ fn main() {
   c_index_two_fieldprm_2_churn();
   c_index_two_fieldprm_5_plain();
   c_index_two_fieldprm_5_churn();
+}
+fn main() {
+  test_hash_int();
+  test_hash_text();
+  test_hash_two();
+  test_sorted_int();
+  test_sorted_text();
+  test_sorted_two();
+  test_index_int();
+  test_index_text();
+  test_index_two();
   println("cells ok: 270");
 }
