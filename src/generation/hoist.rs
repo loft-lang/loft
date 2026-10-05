@@ -13084,8 +13084,13 @@ fn value_shape(node: &Value, ctx: &ShapeCtx) -> Option<u16> {
             // the oracle reads it through the call as Borrowed of `a`: read as a view the copy
             // was freed by nobody, one record per call on `--native` alone, in a concrete
             // function and an instance alike (Found-via loft#1820).  A parameter is exempt —
-            // the frame never owns it.
-            if !vars.is_argument(*var) && !vars.is_skip_free(*var) {
+            // the frame never owns it — unless the body REBINDS it: then it may hold a store
+            // of its own (`@FR-F-ParamRebind`), which the record form hands to the caller to
+            // release and the tuple form hands to nobody (`fn f(p: S, q: S) -> S { p = q; p }`,
+            // one record per call, loft#1871).
+            if !vars.is_argument(*var) && !vars.is_skip_free(*var)
+                || vars.rebind_orig(*var).is_some()
+            {
                 return None;
             }
             // A VIEW by the ownership oracle (`@FR-O-Oracle`), not by the dep list: then_v

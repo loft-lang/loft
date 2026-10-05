@@ -1127,6 +1127,15 @@ impl Scopes<'_> {
         if to_scope == 1 {
             let free_distinct = data.def_nr("OpFreeRefIfDistinct");
             for (param, orig) in function.rebind_params() {
+                // A rebound parameter this exit HANDS OUT is not released here: the caller
+                // takes it (`(F-ParamRebind)`).  Its call site already decides per run — it
+                // copies a fresh store with `COPY_FREE_SOURCE` and protects its own argument
+                // — so a release here freed the store the return was about to read
+                // (`fn f(p: S) -> S { p = S { x: 5 }; p }`: a use-after-free on
+                // `--interpret`, a panic on `--native`, loft#1871).
+                if param == ret_var || return_sources.contains(&param) {
+                    continue;
+                }
                 ls.push(Value::Call(
                     free_distinct,
                     vec![Value::Var(param), Value::Var(orig)],

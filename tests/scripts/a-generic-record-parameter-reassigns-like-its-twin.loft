@@ -1,0 +1,23 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A generic's parameter of type `T` reassigned and returned, instantiated at a struct, answers
+// what its non-generic twin answers (`@FR-G-Mono`): the instance keeps the heap-parameter
+// rebind of `(F-ParamRebind)` — the scalar and text instances drop it, in the sibling files —
+// so it shared the twin's defect: the function-exit release freed the store the return was
+// handing out, a panic on `--native` (loft#1871).  Kept apart from the scalar and text
+// instances because it failed on a different channel.
+
+struct S { x: integer }
+
+fn setg<T>(p: T, q: T) -> T {
+  p = q;
+  p
+}
+
+fn main() {
+  a = S { x: 1 };
+  r = setg(a, S { x: 2 });
+  assert(r.x == 2, "record instance: got {r.x}");
+  assert(a.x == 1, "the caller's record is untouched: got {a.x}");
+}

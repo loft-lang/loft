@@ -1,0 +1,89 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A record PARAMETER the body rebinds whole (`p = …`) and then RETURNS: `(F-ParamRebind)` makes
+// the rebind local, with a store of the callee's own, and the return hands that store to the
+// caller.  The function-exit release of a rebound parameter (`OpFreeRefIfDistinct(p, witness)`)
+// ran BEFORE the return read `p`: `--native` panicked on the freed store, and `--interpret`
+// read freed memory (`LOFT_STRICT_STORES=1` names it) while happening to print the right
+// value.  Now an exit does not release a rebound parameter it hands out — the call site
+// already copies a fresh result and frees it, and protects the caller's own argument — and
+// the native register-tuple return declines such a parameter, because a tuple hands the
+// store to nobody (`fn f(p: S, q: S) -> S { p = q; p }` leaked one record per call).
+//
+// Every cell checks the caller's argument is untouched and the result is the rebound value.
+// The two-arm join (`if c { p } else { q }`) and a rebound parameter nested in a returned
+// record were already right; they stay as controls on the same exit.
+
+struct S { x: integer }
+
+fn lit(p: S) -> S {
+  p = S { x: 5 };
+  p
+}
+
+fn from_arg(p: S, q: S) -> S {
+  p = q;
+  p
+}
+
+fn bump(p: S) -> S {
+  p = S { x: p.x + 10 };
+  p
+}
+
+fn maybe(p: S, c: boolean) -> S {
+  if c {
+    p = S { x: 5 };
+  }
+  p
+}
+
+fn early(p: S) -> S {
+  for i in 0..5 {
+    p = S { x: p.x + i };
+    if i == 2 {
+      return p;
+    }
+  }
+  p
+}
+
+fn twice(p: S) -> S {
+  p = S { x: 5 };
+  p = S { x: p.x + 1 };
+  p
+}
+
+fn grow(self: S) -> S {
+  self = S { x: self.x + 1 };
+  self
+}
+
+fn join(p: S, q: S, c: boolean) -> S {
+  p = S { x: 5 };
+  q = S { x: 6 };
+  if c { p } else { q }
+}
+
+fn main() {
+  a = S { x: 1 };
+  b = S { x: 2 };
+  assert(lit(a).x == 5, "a literal rebind returned: got {lit(a).x}");
+  r = from_arg(a, b);
+  assert(r.x == 2, "a rebind from another parameter returned: got {r.x}");
+  assert(maybe(a, true).x == 5, "a conditional rebind, taken: got {maybe(a, true).x}");
+  assert(maybe(a, false).x == 1, "a conditional rebind, not taken: got {maybe(a, false).x}");
+  assert(early(a).x == 4, "returned from inside a loop: got {early(a).x}");
+  assert(twice(a).x == 6, "rebound twice: got {twice(a).x}");
+  assert(a.grow().x == 2, "a method rebinding self: got {a.grow().x}");
+  assert(bump(bump(a)).x == 21, "a chain of calls: got {bump(bump(a)).x}");
+  bump(a);
+  c = S { x: 1 };
+  c = bump(c);
+  c = bump(c);
+  assert(c.x == 21, "the caller rebinding its own argument: got {c.x}");
+  assert(bump(S { x: 3 }).x == 13, "a temporary argument: got {bump(S { x: 3 }).x}");
+  assert(join(a, b, true).x == 5 && join(a, b, false).x == 6, "a join of two rebinds");
+  assert(a.x == 1 && b.x == 2, "the caller's arguments are untouched: got {a.x} {b.x}");
+}
