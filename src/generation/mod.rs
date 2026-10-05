@@ -5221,7 +5221,8 @@ impl Output<'_> {
             };
             writeln!(
                 w,
-                "let {name}: *const u8 = if (var_{index} as u64) < u64::from({header}.len) {{ unsafe {{ {base}.add(var_{index} as usize * {size}{plus}) }} }} else {{ std::ptr::null() }}; //@FR-R-RecPtr record view address for {operand}, from the held base"
+                "let {name}: *const u8 = if (var_{index} as u64) < u64::from({header}.len) {{ unsafe {{ vector::held_elem_ptr({base}, var_{index} as usize * {size}{plus}, {verify}) }} }} else {{ std::ptr::null() }}; //@FR-R-RecPtr record view address for {operand}, from the held base",
+                verify = self.hoist_verify
             )?;
             self.indent(w)?;
             writeln!(w, "let {lock}: bool = {header}.locked;")?;

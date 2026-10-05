@@ -1119,6 +1119,42 @@ pub fn vec_base(h: &VecHeader, stores: &[Store]) -> *const u8 {
     }
 }
 
+/// `@FR-R-RecPtr`'s base clause — the address of the element `at` bytes past a held element
+/// BASE, for an index the caller has already tested against the held header's length.  The
+/// result is never null, and saying so is the point: a field read through it ([`rec_get`])
+/// tests its address for the null record, and once the compiler knows the address cannot be
+/// null that test and the absent value it guards fold away for the whole loop body.
+///
+/// # Safety
+///
+/// `base` must be [`vec_base`] of a header whose `len` is above zero, and `at` inside that
+/// vector's elements.  Such a base is never null: [`vec_base`] answers null only for an
+/// absent vector (`rec == 0`), whose header length is 0, and otherwise the live store's own
+/// buffer plus an offset, or a foreign store's span, which exists whenever its length is.
+///
+/// # Panics
+///
+/// Under `verify` (`LOFT_HOIST_VERIFY=1`), when the address IS null — the fact is checked
+/// instead of assumed.  Never in the emitted default.
+#[must_use]
+#[allow(clippy::inline_always)] // the fact is only seen where the body is: inlined, or it states nothing
+#[inline(always)]
+pub unsafe fn held_elem_ptr(base: *const u8, at: usize, verify: bool) -> *const u8 {
+    // SAFETY: the caller's contract — `at` is inside the vector `base` is element 0 of.
+    let p = unsafe { base.add(at) };
+    if verify {
+        assert!(
+            !p.is_null(),
+            "held element address is null — a base taken for an empty or absent vector"
+        );
+    } else {
+        // SAFETY: a base of a non-empty vector is not null (above), and neither is an
+        // offset inside its allocation.
+        unsafe { std::hint::assert_unchecked(!p.is_null()) };
+    }
+    p
+}
+
 /// `@FR-R-RecPtr` — the address of a record's first byte: what every scalar field read
 /// and in-place write of a record VIEW (`e = tbl[i]?`, `s = o.inner`) may go through for
 /// the rest of its block, derived ONCE after the binding.  Null for the null record, so

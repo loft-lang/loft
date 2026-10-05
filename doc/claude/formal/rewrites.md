@@ -988,6 +988,13 @@ the same gate admits it once the `Optional` is peeled — the loop body reads ev
 element and then resolved the store a second time to turn that `DbRef` back into an address
 — per element, in a loop that already held the address of element 0.  An explicit index binding (`e = v[i]?`)
 is a JOIN — the element, or a discharge buffer in another store — and keeps `rec_ptr`.
+Inside the in-range test the address is NOT NULL, and the emitted code says so
+(`vector::held_elem_ptr`): a held base is null only for an absent vector, whose length is 0,
+so `index < len` proves it real.  Every field read through the address tests it for the null
+record; with the fact stated, those tests and the absent value they guard fold away for the
+loop body — and with them the cost the null-aware float compare showed (`mesh_aabb` 28.3 →
+17.0 µs, `entity_tick` −19 %).  Under `LOFT_HOIST_VERIFY=1` the fact is checked, not assumed:
+an address built without its range test panics at the first empty or absent vector (cell w16).
 Switch `LOFT_NO_BASE_RECPTR`; falsifier `LOFT_HOIST_VERIFY=1` (`rec_get`/`rec_set` compare
 the address with a fresh `rec_ptr` at every use — a sabotaged `index + 1` panics there, and
 answers `0 0 162 135 243` for `0 -7 155 135 250` without it).  Cells
@@ -998,8 +1005,7 @@ answers `0 0 162 135 243` for `0 -7 155 135 250` without it).  Cells
 *The path clause.*  Only a DIRECT field of a view counted as a
 fusable access, so a loop over records of records — `for v in m.verts { … v.pos.x … }` —
 bound no address at all, and each of its reads rebuilt a `DbRef` with two offset additions
-and resolved the store (`mesh_aabb`: twelve per vertex, 9.2× the Rust reference).  What is left there is the null-aware float comparison, which is the language's
-semantics on operands no proof says are non-null.  **Emitter-local by design:** the fold
+and resolved the store (`mesh_aabb`: twelve per vertex, 9.2× the Rust reference).  **Emitter-local by design:** the fold
 is sound for an ADDRESS, which loads the bytes where they are each time.  Done in the
 parser it would turn `v.pos.x` into `OpGetFloat(v, 8)`, a `(R-Scalar)` candidate typed
 `(Vertex, 8)` — and a write through a sub-record view (`p = v.pos; p.x = …`) is typed
