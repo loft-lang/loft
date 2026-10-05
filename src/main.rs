@@ -1784,7 +1784,7 @@ fn self_update_cmd(args: &SelfUpdateArgs<'_>) -> i32 {
     } = *args;
     use loft::install::InstallOptions;
     use loft::self_update::{Plan, host_triple, plan};
-    let current = env!("CARGO_PKG_VERSION");
+    let current = loft::manifest::LOFT_RUNNING_VERSION;
     let triple = host_triple();
     // `--from <dir>` — install a bundle the user already has, with no registry at all.
     //
@@ -1905,7 +1905,7 @@ fn published_manifest_digest() -> Result<Option<String>, String> {
         .ok_or_else(|| "the registry carries no toolchain entry".to_string())?;
     Ok(pkg
         .versions
-        .get(env!("CARGO_PKG_VERSION"))
+        .get(loft::manifest::LOFT_RUNNING_VERSION)
         .and_then(|v| v.binaries.get(&loft::self_update::host_triple()))
         .and_then(|b| b.manifest_sha256.clone()))
 }
@@ -2516,7 +2516,7 @@ fn bundle_export(outdir: &str, packages: Option<&[String]>, all: bool) -> i32 {
         .collect::<Vec<_>>()
         .join(",\n");
     let registry_url = registry_index::registry_url();
-    let loft_version = env!("CARGO_PKG_VERSION");
+    let loft_version = loft::manifest::LOFT_RUNNING_VERSION;
     let manifest = format!(
         "{{\n  \"schema_version\": 1,\n  \"created\": \"{}\",\n  \"registry_url\": \"{}\",\n  \"loft_version\": \"{}\",\n  \"packages\": [\n{}\n  ]\n}}\n",
         chrono_iso8601_utc(),
@@ -7411,7 +7411,7 @@ fn main() {
             continue;
         }
         if a == "--version" {
-            println!("loft {}", env!("CARGO_PKG_VERSION"));
+            println!("loft {}", loft::manifest::LOFT_RUNNING_VERSION);
             return;
         } else if a == "--migrate-long" {
             // C54.B migration tool — rewrite `long` type references and

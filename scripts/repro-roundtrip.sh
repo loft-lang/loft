@@ -44,12 +44,19 @@ SHA=sha256sum; command -v sha256sum >/dev/null || SHA="shasum -a 256"
 
 echo "repro-roundtrip: commit $COMMIT"
 
+# The version both builds answer.  A release is built with `LOFT_VERSION` set to its tag
+# (release.yml), and its source archive has no git, so it answers `Cargo.toml` — the same
+# string.  This probe builds an arbitrary commit, which a checkout would stamp as a dated
+# daily (`build.rs` `effective_version`); pinning it to `Cargo.toml` on both sides keeps the
+# comparison about the build rather than the date.
+REL=$(grep -m1 '^version = ' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')
+
 # A — the checkout. A release is cut here, where `git rev-parse` answers, so `build.rs`
 #     bakes the commit.  Its own target dir: the caller's must not be disturbed, and a
 #     shared one would let the second build reuse the first's artifacts and pass trivially.
 echo "   [A] building in the checkout"
 ( . scripts/repro-flags.sh \
-  && CARGO_TARGET_DIR="$ROOT/ta" CARGO_INCREMENTAL=0 cargo build --release --bin loft ) \
+  && LOFT_VERSION="$REL" CARGO_TARGET_DIR="$ROOT/ta" CARGO_INCREMENTAL=0 cargo build --release --bin loft ) \
   >"$ROOT/a.log" 2>&1 || { tail -20 "$ROOT/a.log"; die "build A failed"; }
 
 # B — an exported tree with NO `.git`, which is what a verifier unpacks.  `LOFT_BUILD_ID`
@@ -60,7 +67,7 @@ mkdir -p "$ROOT/src"
 git archive HEAD | tar -x -C "$ROOT/src"
 [ -e "$ROOT/src/.git" ] && die "the export still carries .git — it would not test anything"
 ( cd "$ROOT/src" && . "$ROOT/src/scripts/repro-flags.sh" \
-  && LOFT_BUILD_ID="$COMMIT" CARGO_TARGET_DIR="$ROOT/tb" CARGO_INCREMENTAL=0 \
+  && LOFT_BUILD_ID="$COMMIT" LOFT_VERSION="$REL" CARGO_TARGET_DIR="$ROOT/tb" CARGO_INCREMENTAL=0 \
      cargo build --release --bin loft ) \
   >"$ROOT/b.log" 2>&1 || { tail -20 "$ROOT/b.log"; die "build B failed"; }
 

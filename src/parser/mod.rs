@@ -20596,7 +20596,7 @@ impl Parser {
         let Some(ref req) = m.loft_version else {
             return true;
         };
-        let current = env!("CARGO_PKG_VERSION");
+        let current = crate::manifest::LOFT_RUNNING_VERSION;
         match manifest::check_version(req, current) {
             manifest::VersionCheck::Satisfied => true,
             manifest::VersionCheck::Unsatisfied => {

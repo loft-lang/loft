@@ -48,7 +48,7 @@ const DIAGNOSTIC_DOC_URL: &str =
     "https://github.com/loft-lang/loft/blob/main/doc/claude/DIAGNOSTICS.md#the-codes";
 
 const SERVER_NAME: &str = "loft-lsp";
-const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
+const SERVER_VERSION: &str = loft::manifest::LOFT_RUNNING_VERSION;
 
 fn main() {
     // Opt this server into the stdlib startup cache: the parse accessors then

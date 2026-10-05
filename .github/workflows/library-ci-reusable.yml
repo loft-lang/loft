@@ -66,6 +66,9 @@ jobs:
           repository: loft-lang/loft          # was `jjstwerff/loft` in the drifted copies
           ref: ${{ inputs.loft-ref }}
           path: loft-src
+          # The release tags, so the loft built here answers `<last release>.<yyyymmdd>` and a
+          # library floored on the day a feature landed (`loft = ">=2026.10.20261005"`) passes.
+          fetch-tags: true
 
       # ⚠⚠ THE KEY MUST CARRY LOFT'S COMMIT, NOT ITS BRANCH NAME.
       #
