@@ -9162,6 +9162,376 @@ pub fn refill_buffers(data: &Data, stores: &Stores, def_nr: u32) -> RefillBuffer
     out
 }
 
+/// `@FR-R-RefillText` — the pooled call sites of one function whose release is not emitted
+/// and whose call goes to the callee's refill twin (`__rt`): each pool statement
+/// (`if OpRefIsNull(b) { OpDatabase(b, tp) } else OpClear(b, tp)`) and each call's argument
+/// slice, by address, with the buffer variable and its type.
+#[derive(Default, Debug)]
+pub struct RefillTextSites {
+    pub pools: HashMap<usize, (u16, u16)>,
+    pub calls: HashMap<usize, (u16, u16)>,
+}
+
+fn is_var(v: &Value, var: u16) -> bool {
+    matches!(v.unspan(), Value::Var(x) if *x == var)
+}
+
+/// The pool statement of a call site: `if OpRefIsNull(b) { OpDatabase(b, tp) } else
+/// OpClear(b, tp)`, answered as `(b, tp)`.
+fn pool_of(stmt: &Value, data: &Data) -> Option<(u16, u16)> {
+    let Value::If(c, t, f) = stmt.unspan() else {
+        return None;
+    };
+    let b = match call_named(c, data, "OpRefIsNull")? {
+        [x] => match x.unspan() {
+            Value::Var(b) => *b,
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let mint = match t.unspan() {
+        Value::Block(bl) => match &bl.operators[..] {
+            [m] => m,
+            _ => return None,
+        },
+        Value::Insert(ops) => match &ops[..] {
+            [m] => m,
+            _ => return None,
+        },
+        m => m,
+    };
+    let tp = match call_named(mint, data, "OpDatabase")? {
+        [x, Value::Int(tp)] if is_var(x, b) => u16::try_from(*tp).ok()?,
+        _ => return None,
+    };
+    match call_named(f, data, "OpClear")? {
+        [x, Value::Int(t2)] if is_var(x, b) && i32::from(tp) == *t2 => Some((b, tp)),
+        _ => None,
+    }
+}
+
+/// The byte offset of a record path rooted at `b` — `b` itself, or `OpGetField` steps into
+/// its inline sub-records.
+fn path_offset(v: &Value, b: u16, data: &Data) -> Option<u32> {
+    if is_var(v, b) {
+        return Some(0);
+    }
+    match call_named(v, data, "OpGetField")? {
+        [p, Value::Int(off), _] => Some(path_offset(p, b, data)? + u32::try_from(*off).ok()?),
+        _ => None,
+    }
+}
+
+/// `@FR-R-RefillText` (a) and (b) for a callee — its result type's heap is text only, and
+/// every exit is a record literal into its own buffer writing every text slot exactly once,
+/// with nothing else in the body naming the buffer.  Answers the type, or why it declines.
+pub fn refill_text_callee(data: &Data, stores: &Stores, d: u32) -> Result<u16, &'static str> {
+    let Some(b) = retbuf_var(data, d) else {
+        return Err("no return buffer");
+    };
+    let body = data.def(d).code();
+    let mut tp: Option<u16> = None;
+    let mut admitted = 0u32;
+    let mut why: Option<&'static str> = None;
+    let mut slots: Vec<u32> = Vec::new();
+    body.any_node(&mut |n| {
+        let Value::Block(bl) = n else {
+            return false;
+        };
+        let ops = &bl.operators;
+        for (i, stmt) in ops.iter().enumerate() {
+            let Some(t) = mint_of(stmt, b, data) else {
+                continue;
+            };
+            if tp.is_some_and(|p| p != t) {
+                why = Some("two result types");
+                return true;
+            }
+            if tp.is_none() {
+                match stores.text_slots(t) {
+                    Some(s) if !s.is_empty() => slots = s,
+                    Some(_) => {
+                        why = Some("the result holds no text");
+                        return true;
+                    }
+                    None => {
+                        why = Some("the result owns heap other than text");
+                        return true;
+                    }
+                }
+                tp = Some(t);
+            }
+            admitted += var_mentions(stmt, b);
+            let mut written: Vec<u32> = Vec::new();
+            let mut j = i + 1;
+            while let Some(g) = ops.get(j) {
+                if matches!(g.unspan(), Value::Line(_)) {
+                    j += 1;
+                    continue;
+                }
+                let Value::Call(gd, ga) = g.unspan() else {
+                    break;
+                };
+                if (*gd as usize) >= data.definitions.len()
+                    || !data.def(*gd).name().starts_with("OpSet")
+                {
+                    break;
+                }
+                let Some(base) = ga.first().and_then(|t| path_offset(t, b, data)) else {
+                    break;
+                };
+                if ga.iter().skip(1).any(|a| var_mentions(a, b) > 0) {
+                    why = Some("a literal value reads the buffer");
+                    return true;
+                }
+                if data.def(*gd).name() == "OpSetText" {
+                    let Some(Value::Int(off)) = ga.get(1).map(Value::unspan) else {
+                        why = Some("a text set at a computed offset");
+                        return true;
+                    };
+                    written.push(base + u32::try_from(*off).unwrap_or(u32::MAX));
+                }
+                admitted += 1;
+                j += 1;
+            }
+            // The exit: frees of the literal's own work texts, then `return b` (or `b` as
+            // the block's value).
+            let mut exit = false;
+            for g in &ops[j..] {
+                match g.unspan() {
+                    Value::Line(_) => {}
+                    Value::Return(r) if is_var(r, b) => {
+                        exit = true;
+                        break;
+                    }
+                    Value::Var(x) if *x == b => {
+                        exit = true;
+                        break;
+                    }
+                    _ if call_named(g, data, "OpFreeText").is_some() && var_mentions(g, b) == 0 => {
+                    }
+                    _ => break,
+                }
+            }
+            if !exit {
+                why = Some("a literal that is not the exit");
+                return true;
+            }
+            admitted += 1;
+            written.sort_unstable();
+            let mut want = slots.clone();
+            want.sort_unstable();
+            if written != want {
+                why = Some("a literal does not write every text once");
+                return true;
+            }
+        }
+        false
+    });
+    if let Some(w) = why {
+        return Err(w);
+    }
+    let Some(tp) = tp else {
+        return Err("no literal into the buffer");
+    };
+    if var_mentions(body, b) != admitted {
+        return Err("the buffer is named outside its literals");
+    }
+    let mut other_exit = false;
+    body.any_node(&mut |n| {
+        if let Value::Return(r) = n
+            && !is_var(r, b)
+        {
+            other_exit = true;
+        }
+        other_exit
+    });
+    if other_exit {
+        return Err("an exit that is not the literal");
+    }
+    Ok(tp)
+}
+
+/// Is every mention of the pooled result `e` in `v` a READ — the record a reading `OpGet*`
+/// (through `OpGetField` steps) reads, the source of a copy that keeps it, or a release
+/// that leaves the pool's buffer alone?  A write, a move, a pass to a call, a rebind or a
+/// bare use declines.  Its binding (`Set(e, …)`) is counted by the caller, once.
+fn result_only_read(v: &Value, e: u16, b: u16, data: &Data) -> bool {
+    let e_path = |p: &Value| path_offset(p, e, data).is_some();
+    match v.unspan() {
+        Value::Var(x) => *x != e,
+        Value::Set(_, val) => result_only_read(val, e, b, data),
+        Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
+            let name = data.def(*d).name();
+            let skip_first = (name.starts_with("OpGet") && name != "OpGetField")
+                || (name == "OpCopyRecord"
+                    && matches!(args.get(2).map(Value::unspan), Some(Value::Int(t))
+                        if (*t as u16) & crate::keys::COPY_FREE_SOURCE == 0));
+            if name == "OpFreeRefIfDistinct"
+                && matches!(&args[..], [x, y] if is_var(x, e) && is_var(y, b))
+            {
+                return true;
+            }
+            args.iter().enumerate().all(|(i, a)| {
+                (i == 0 && skip_first && e_path(a)) || result_only_read(a, e, b, data)
+            })
+        }
+        _ => {
+            let mut ok = true;
+            v.for_each_child(&mut |c| {
+                if ok && !result_only_read(c, e, b, data) {
+                    ok = false;
+                }
+            });
+            ok
+        }
+    }
+}
+
+/// `@FR-R-RefillText` — the pooled call sites of `def_nr` whose callee refills its texts in
+/// place ([`refill_text_callee`]) and whose buffer keeps the slot invariant (c): named by
+/// nothing but its pool statement, this call's buffer argument and the releases at the end
+/// of the turn and the frame; and whose result is only READ.  `trace` prints each site's
+/// verdict (`LOFT_TRACE_REFILL_TEXT`); `callee_declines` is the emitter's own reason a callee
+/// cannot take a twin (a value-record callee has no buffer).
+pub fn refill_text_sites(
+    data: &Data,
+    stores: &Stores,
+    def_nr: u32,
+    callee_declines: &dyn Fn(u32) -> Option<&'static str>,
+    trace: bool,
+) -> RefillTextSites {
+    let mut out = RefillTextSites::default();
+    let body = data.def(def_nr).code();
+    let mut sites: Vec<(&Value, &[Value], u16, u16, u16, u32)> = Vec::new();
+    body.any_node(&mut |n| {
+        let Value::Block(bl) = n else {
+            return false;
+        };
+        let ops = &bl.operators;
+        for (i, stmt) in ops.iter().enumerate() {
+            let Some((b, tp)) = pool_of(stmt, data) else {
+                continue;
+            };
+            let Some(next) = ops[i + 1..]
+                .iter()
+                .find(|o| !matches!(o.unspan(), Value::Line(_)))
+            else {
+                continue;
+            };
+            let Value::Set(e, call) = next.unspan() else {
+                continue;
+            };
+            let Value::Call(callee, args) = call.unspan() else {
+                continue;
+            };
+            sites.push((stmt, args.as_slice(), b, tp, *e, *callee));
+        }
+        false
+    });
+    for (stmt, args, b, tp, e, callee) in sites {
+        let decline = (|| {
+            if (callee as usize) >= data.definitions.len()
+                || !matches!(data.def(callee).def_type(), DefType::Function)
+            {
+                return Some("not a loft function");
+            }
+            // The buffer ARGUMENT's position is its attribute's, not its variable number: a
+            // renamed buffer (`(R-Rebind)`'s `__ref_1`) sits behind locals of its own.
+            let Some(rv) = data.def(callee).hidden_return_buffer_attr() else {
+                return Some("no return buffer");
+            };
+            if let Some(w) = callee_declines(callee) {
+                return Some(w);
+            }
+            if args.iter().enumerate().any(|(i, a)| {
+                if i == rv {
+                    !is_var(a, b)
+                } else {
+                    var_mentions(a, b) > 0 || var_mentions(a, e) > 0
+                }
+            }) {
+                return Some("the call's arguments name the buffer or the result");
+            }
+            match refill_text_callee(data, stores, callee) {
+                Err(w) => return Some(w),
+                Ok(t) if t != tp => return Some("the pool's type is not the callee's"),
+                Ok(_) => {}
+            }
+            // (c): every mention of `b` is the pool statement's, the call's buffer argument,
+            // or a release.
+            let mut allowed = var_mentions(stmt, b) + 1;
+            body.any_node(&mut |n| {
+                if let Value::Call(d, a) = n
+                    && (*d as usize) < data.definitions.len()
+                    && matches!(data.def(*d).name(), "OpFreeRef" | "OpFreeRefIfDistinct")
+                {
+                    allowed += a.iter().filter(|x| is_var(x, b)).count() as u32;
+                }
+                if let Value::Set(x, v) = n
+                    && *x == b
+                    && matches!(v.unspan(), Value::Null)
+                {
+                    allowed += 1;
+                }
+                false
+            });
+            if var_mentions(body, b) != allowed {
+                return Some("the buffer is named outside its pool");
+            }
+            let mut binds = 0usize;
+            body.any_node(&mut |n| {
+                if let Value::Set(x, v) = n
+                    && *x == e
+                    && !matches!(v.unspan(), Value::Null)
+                {
+                    binds += 1;
+                }
+                false
+            });
+            if binds != 1 {
+                return Some("the result is bound more than once");
+            }
+            if !result_only_read(body, e, b, data) {
+                return Some("the result is not only read");
+            }
+            None
+        })();
+        if trace {
+            let callee_name = if (callee as usize) < data.definitions.len() {
+                data.def(callee).name()
+            } else {
+                "?"
+            };
+            let line = match decline {
+                None => format!(
+                    "refill-text: {} → {callee_name} admitted",
+                    data.def(def_nr).name()
+                ),
+                Some(w) => format!(
+                    "refill-text: {} → {callee_name} declined — {w}",
+                    data.def(def_nr).name()
+                ),
+            };
+            // A function is emitted more than once (its twins, a second pass); its sites
+            // are named once.
+            thread_local! {
+                static SEEN: std::cell::RefCell<HashSet<String>> =
+                    std::cell::RefCell::new(HashSet::new());
+            }
+            if SEEN.with(|s| s.borrow_mut().insert(line.clone())) {
+                eprintln!("{line}");
+            }
+        }
+        if decline.is_none() {
+            out.pools
+                .insert(std::ptr::from_ref(stmt.unspan()) as usize, (b, tp));
+            out.calls.insert(args.as_ptr() as usize, (b, tp));
+        }
+    }
+    out
+}
+
 /// @PLN157 § V-y (`@FR-R-CompleteWrite`) — the literal groups whose write set is
 /// COMPLETE, so the default prefill writes nothing that survives: the parser's lowering
 /// writes every field explicitly (a named value, the declared default, the interned

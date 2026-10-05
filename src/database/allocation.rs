@@ -4889,14 +4889,7 @@ impl Stores {
     /// Never `Some(false)`: a non-empty slot is the walk's to release.
     #[inline]
     pub(crate) fn holds_no_heap_fast(&self, rec: &DbRef, tp: u16) -> Option<bool> {
-        let row = self.types.get(tp as usize)?;
-        if row.heap_slots.get().is_none() {
-            let derived = self
-                .derive_heap_slots(tp, 0, &mut Vec::new())
-                .map(Vec::into_boxed_slice);
-            row.heap_slots.set(derived);
-        }
-        let slots = row.heap_slots.get()?.as_deref()?;
+        let slots = self.heap_slots_of(tp)?;
         if slots.is_empty() {
             return Some(true);
         }
@@ -4935,6 +4928,32 @@ impl Stores {
             }
         }
         Some(true)
+    }
+
+    /// `@FR-R-RefillText` (a) — the byte offsets of a `tp` record's TEXT slots, nested inline
+    /// records flattened, when text is the only heap the type can own: `None` for a
+    /// collection, a heap-owning enum payload or a field the heap-slot plan cannot express.
+    #[must_use]
+    pub fn text_slots(&self, tp: u16) -> Option<Vec<u32>> {
+        self.heap_slots_of(tp)?
+            .iter()
+            .map(|s| match *s {
+                HeapSlot::Text(off) => Some(off),
+                HeapSlot::Collection(_) | HeapSlot::Tag(..) => None,
+            })
+            .collect()
+    }
+
+    /// A type's heap slots, derived on the first ask and cached on its row.
+    fn heap_slots_of(&self, tp: u16) -> Option<&[HeapSlot]> {
+        let row = self.types.get(tp as usize)?;
+        if row.heap_slots.get().is_none() {
+            let derived = self
+                .derive_heap_slots(tp, 0, &mut Vec::new())
+                .map(Vec::into_boxed_slice);
+            row.heap_slots.set(derived);
+        }
+        row.heap_slots.get()?.as_deref()
     }
 
     /// The heap slots of a `tp` record placed `base` bytes into its parent, nested inline

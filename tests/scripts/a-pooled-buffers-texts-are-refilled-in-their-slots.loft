@@ -111,6 +111,63 @@ fn c4() -> text {
   joined
 }
 
+// The declines (`tests/refill_text.rs` pins each site's verdict): a result owning a vector
+// (c5), a callee with a forwarded exit (c6) and a caller that writes its result (c9).  c7's
+// callee returns its argument, which the scope pass never pools — no site.  c8's literal
+// omits a defaulted text, which the parser writes as the default: every text slot is still
+// written once, so it is admitted.
+struct TV { t: text, v: vector<integer> }
+struct TD { a: text, b: text = "dflt", n: integer }
+
+fn mk_tv(i: integer) -> TV { TV { t: "v{i}", v: [i, i + 1] } }
+fn mk_fwd(i: integer) -> T2 {
+  if i % 2 == 0 { return mk_sz(i) }
+  T2 { a: "f", b: "fw{i}", n: i }
+}
+fn mk_cp(x: const T2) -> T2 { x }
+fn mk_td(i: integer) -> TD { TD { a: "d{i}", n: i } }
+
+// c5: size("v{i}") 2·5 = 10, len 2·5 = 10, v[1] = 1 + … + 5 = 15  →  35.
+fn c5() -> integer {
+  t = 0;
+  for i in 0..5 { e = mk_tv(i); t += size(e.t) + len(e.v) + e.v[1]?; }
+  t
+}
+
+// c6: the even turns are mk_sz's (3, 22, 3), the odd ones "f" + "fw{i}" (4 each, 12), and
+// n = 0 + … + 5 = 15  →  55.
+fn c6() -> integer {
+  t = 0;
+  for i in 0..6 { e = mk_fwd(i); t += size(e.a) + size(e.b) + e.n; }
+  t
+}
+
+// c7: (3 + 4 + 7)·4  →  56.
+fn c7() -> integer {
+  src = T2 { a: "src", b: "copy", n: 7 };
+  t = 0;
+  for i in 0..4 { e = mk_cp(src); t += size(e.a) + size(e.b) + e.n; }
+  t
+}
+
+// c8: (2 + 4)·4 + (0 + 1 + 2 + 3)  →  30.
+fn c8() -> integer {
+  t = 0;
+  for i in 0..4 {
+    e = mk_td(i);
+    assert(e.b == "dflt", "c8 default at {i}: '{e.b}'");
+    t += size(e.a) + size(e.b) + e.n;
+  }
+  t
+}
+
+// c9: a = "w{i}" 2·4 = 8; b of turns 0..3 = 0 + 1 + 22 + 2 = 25  →  33.
+fn c9() -> integer {
+  t = 0;
+  for i in 0..4 { e = mk_sz(i); e.a = "w{i}"; t += size(e.a) + size(e.b); }
+  t
+}
+
 fn census_records() -> integer {
   cr_t = store_memory();
   cr_i = cr_t.find("records ");
@@ -152,6 +209,11 @@ fn main() {
   assert(c2() == "190 10 110 s1//pl19", "c2 {c2()}");
   assert(c3() == 102, "c3 {c3()}");
   assert(c4() == "abc|longer than two words||x3|abc|longer than two words||", "c4 {c4()}");
+  assert(c5() == 35, "c5 {c5()}");
+  assert(c6() == 55, "c6 {c6()}");
+  assert(c7() == 56, "c7 {c7()}");
+  assert(c8() == 30, "c8 {c8()}");
+  assert(c9() == 33, "c9 {c9()}");
   m1();
   println("ok");
 }

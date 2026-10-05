@@ -859,6 +859,11 @@ pub struct Output<'a> {
     /// `LOFT_NO_REFILL_KEEP=1` — a refilling buffer's entry clear releases its vector, as
     /// before the live clause.
     pub refill_keep_disabled: bool,
+    /// `@FR-R-RefillText` — the function's pooled call sites whose release is dropped and
+    /// whose call goes to the callee's refill twin.
+    pub refill_text: hoist::RefillTextSites,
+    /// `LOFT_NO_REFILL_TEXT=1` — every pooled call site keeps its release and the plain callee.
+    pub refill_text_disabled: bool,
     /// `LOFT_NO_BYTE_READ=1` — a `vector<u8>` element read keeps its template.
     pub byte_read_disabled: bool,
     /// `LOFT_NO_TEXT_SET_BORROW=1` — every `OpSetText` copies its value first, as before.
@@ -2324,6 +2329,8 @@ impl<'a> Output<'a> {
             text_set_copy_kept: std::env::var("LOFT_NO_TEXT_SET_BORROW").is_ok_and(|v| v != "0"),
             byte_read_disabled: std::env::var("LOFT_NO_BYTE_READ").is_ok_and(|v| v != "0"),
             refill_keep_disabled: std::env::var("LOFT_NO_REFILL_KEEP").is_ok_and(|v| v != "0"),
+            refill_text: hoist::RefillTextSites::default(),
+            refill_text_disabled: std::env::var("LOFT_NO_REFILL_TEXT").is_ok_and(|v| v != "0"),
             recptr_trace: std::env::var("LOFT_TRACE_RECPTR").is_ok(),
             scalar_hoists: Vec::new(),
             scalar_write_cache: HashMap::new(),
@@ -2751,6 +2758,25 @@ impl Output<'_> {
             hoist::refill_buffers(self.data, self.stores, def_nr)
         } else {
             hoist::RefillBuffers::default()
+        };
+        self.refill_text = if self.refill_text_disabled {
+            hoist::RefillTextSites::default()
+        } else {
+            // A value-record callee takes no buffer, so its site has none to refill.
+            let value_fns = &self.value_records.fns;
+            hoist::refill_text_sites(
+                self.data,
+                self.stores,
+                def_nr,
+                &|d| {
+                    value_fns
+                        .contains_key(&d)
+                        .then_some("the callee answers a value record")
+                },
+                self.twin.is_none()
+                    && !self.emitting_ranged
+                    && std::env::var("LOFT_TRACE_REFILL_TEXT").is_ok(),
+            )
         };
         self.move_pairs = if self.move_append_disabled {
             BTreeMap::new()
