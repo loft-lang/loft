@@ -92,8 +92,13 @@ Why I am convinced loft will be useful in the end — not that it is useful toda
   only of the interpreter, and that is not how the games run, nor most code during development.
 - the interpreter is for turnaround: instant start, editing while the game runs, the debugger.
 - once native is close to rustc, the interpreter gets its own overhaul, to come closer to Python.
-- not useful today: that needs speed and stability, and stability will not come as long as the
-  model under the language keeps changing for speed.
+- not useful today: that needs speed and stability. Stability has two sides — the semantics are
+  close to locked in, though not all of them have guards yet; the implementation is still very
+  much under construction. The two are being separated further, so that the implementation can
+  keep changing for speed without changing what a program means.
+- but implementation changes are very hard to stabilise: a routine that worked fine yesterday
+  can suddenly stop working because the optimiser now chose another implementation for it,
+  with new bugs.
 In my opinion C++ that is still the most common language for published games is not very helpful
 for them. Many things are in there that crashes games, and being one of the most efficient languages
 around still doesn't help against the actual reasons things get slow. Those reasons are:
