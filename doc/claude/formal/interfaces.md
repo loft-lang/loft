@@ -218,9 +218,17 @@ decided boundary, so it belongs here as a scope rule, not as a deviation to clos
 
 ## Deviations
 
-**OPEN: 0.**
+**OPEN: 1.**
 The record, and every closed deviation, are in the companion
 [interfaces-history.md](interfaces-history.md).
+
+- **D-gen-7 (OPEN, loft#1872)** — violates <!-- doc-lint: ok -->
+  `(G-Mono)`: a recursive generic instance returning a struct is not given its twin's return
+  protocol.  The twin `fn pick(n, a: S, b: S) -> S` returns `S["a", "b"]` through a caller's
+  buffer; the instance returns a bare `S` with no buffer, and its recursive arm's result is a
+  store of its own that a caller reading a field straight off the call (`pick(1, a, b).x`)
+  never releases — one record per call on `--interpret`.  Binding the result first
+  (`r = pick(1, a, b); r.x`) is clean.
 
 ## Conformance
 
