@@ -60,15 +60,13 @@
         "Cargo.lock"
       ],
       "check": "cargo test --release -q --test frontend_counts -- --ignored",
-      "regen": [
-        "LOFT_FRONTEND_REPIN=1 cargo test --release -q --test frontend_counts -- --ignored",
-        "LOFT_FRONTEND_REPIN=1 cargo test -q --test frontend_counts -- --ignored"
-      ],
+      "regen": [],
       "pin": {
         "file": "bench/frontend/allocations.tsv",
         "format": "tsv"
       },
-      "cure": "two pins: the `stdlib` row is the COLD stdlib parse, and a new default/ declaration also moves the `tiny`/`medium` program rows by one constant (the scope pass and lints read every definition each run) — accept that with --accept frontend-allocations and name the declarations in the commit; a program delta that grows with the corpus is the front end: find the new allocation (tests/frontend_counts.rs reports both halves and says which applies). PERFORMANCE.md § Front-end speed"
+      "cure": "two pins: the `stdlib` row is the COLD stdlib parse, and a new default/ declaration also moves the `tiny`/`medium` program rows by one constant (the scope pass and lints read every definition each run) — accept that with --accept frontend-allocations and name the declarations in the commit; a program delta that grows with the corpus is the front end: find the new allocation (tests/frontend_counts.rs reports both halves and says which applies). PERFORMANCE.md § Front-end speed",
+      "note": "pinned from the counts the advisory CI job `front-end allocation pins (ubuntu, advisory)` publishes — the runner reads more on the program rows than a development box, so a local re-pin would lower them; a join leaves the file to that job"
     },
     {
       "name": "rewrite-census",
