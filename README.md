@@ -7,7 +7,7 @@
 [![Libraries](https://img.shields.io/badge/registry-42_libraries-brightgreen)](https://loft-lang.org/loft/)
 [![Gallery](https://img.shields.io/badge/gallery-live-brightgreen)](https://loft-lang.org/loft/gallery.html)
 
-[**▶ Try it in the browser**](https://loft-lang.org/loft/playground.html) · [**📘 Docs**](https://loft-lang.org/loft/) · [**🎮 Play Brick Buster**](https://loft-lang.org/loft/brick-buster.html) · [**🖼 Gallery**](https://loft-lang.org/loft/gallery.html)
+[**▶ Try it in the browser**](https://loft-lang.org/loft/playground.html) · [**📘 Docs**](https://loft-lang.org/loft/) · [**🎮 Play Brick Buster**](https://loft-lang.org/loft/brick-buster.html) · [**🖼 Gallery**](https://loft-lang.org/loft/gallery.html) · [**✍ Blog**](https://loft-lang.org/blog/)
 
 ---
 
