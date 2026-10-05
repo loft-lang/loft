@@ -6091,6 +6091,54 @@ pub fn cr_fnref_minted(
     });
 }
 
+/// `@FR-R-RefillText`'s collection clause — the exit half of a refilling callee's kept
+/// elements ([`Stores::refill_keep_close`]), run on EVERY return of the function by being
+/// dropped there: the texts of the kept slots the build did not reuse are released.  Armed
+/// right after [`Stores::refill_keep_open`] with the buffer as it arrived, which the mint
+/// kept whenever `keep` is not 0.
+pub struct RefillKeepGuard {
+    cell: *const std::cell::UnsafeCell<Stores>,
+    buf: DbRef,
+    field: u32,
+    keep: u32,
+    size: u32,
+    texts: &'static [u32],
+}
+
+impl RefillKeepGuard {
+    #[must_use]
+    #[inline]
+    pub fn new(
+        cell: &std::cell::UnsafeCell<Stores>,
+        buf: DbRef,
+        field: u32,
+        keep: u32,
+        size: u32,
+        texts: &'static [u32],
+    ) -> Self {
+        Self {
+            cell: std::ptr::from_ref(cell),
+            buf,
+            field,
+            keep,
+            size,
+            texts,
+        }
+    }
+}
+
+impl Drop for RefillKeepGuard {
+    #[inline]
+    fn drop(&mut self) {
+        if self.keep != 0 {
+            // SAFETY: the guard lives in the frame of the function it was armed in, inside
+            // the `cell`'s lifetime, and runs after that frame's last use of `stores`.
+            let stores: &mut Stores = unsafe { &mut *(*self.cell).get() };
+            stores.refill_keep_close(&self.buf, self.field, self.keep, self.size, self.texts);
+        }
+    }
+}
+
 /// Releases the fn-ref return buffers a frame delivered into, when that frame ends.
 ///
 /// The `--native` counterpart of `State::release_fnref_bufs`, and it answers the same

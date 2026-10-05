@@ -8940,6 +8940,26 @@ pub struct RefillBuffers {
     /// store whole and keeps the vector's capacity (`@FR-H-ClearRelease`, § V-ag / V-ai) —
     /// never the bare length reset, which would strand the elements' texts.
     pub heap_elems: bool,
+    /// `@FR-R-RefillText`'s collection clause — the heap-element buffer keeps its elements
+    /// across calls and the build refills their texts ([`keep_elements`]).
+    pub keep: Option<KeepElems>,
+}
+
+/// `@FR-R-RefillText`'s collection clause, admitted for a heap-element refill buffer: the
+/// wrapper's type and its vector field's byte position, the element type with its width and
+/// text slots, and the element locals an append mints into the buffer's vector — the only
+/// targets of the build's text sets.
+#[derive(Clone, Debug)]
+pub struct KeepElems {
+    pub wrapper_tp: u16,
+    pub field: u32,
+    pub elem_tp: u16,
+    pub size: u32,
+    pub texts: Vec<u32>,
+    pub elems: HashSet<u16>,
+    /// The type operands of the appends' `OpNewRecord` mints — what `(R-CompleteWrite)`'s
+    /// `mint_tps` is keyed by.
+    pub mint_tps: HashSet<u16>,
 }
 
 /// Can a refilled record of type `tp` be rewritten whole by a complete literal, leaving
@@ -9158,8 +9178,212 @@ pub fn refill_buffers(data: &Data, stores: &Stores, def_nr: u32) -> RefillBuffer
         out.var = Some(b);
         out.heap_elems = heap_elems;
         out.field_zeros = zeros;
+        if heap_elems && let Some(tp) = heap_tp {
+            out.keep = keep_elements(data, stores, def_nr, b, tp).ok();
+        }
     }
     out
+}
+
+/// The type `buf`'s mint names in `def_nr` — the first `OpDatabase(buf, tp)` found.
+pub fn mint_type_of(data: &Data, def_nr: u32, buf: u16) -> Option<u16> {
+    let mut tp = None;
+    data.def(def_nr).code().any_node(&mut |n| {
+        if let Some([b, Value::Int(t)]) = call_named(n, data, "OpDatabase")
+            && is_var(b, buf)
+        {
+            tp = u16::try_from(*t).ok();
+        }
+        tp.is_some()
+    });
+    tp
+}
+
+/// The variables a kept-element build names: the buffer, its field views and the elements
+/// minted into it.
+struct KeepVars {
+    buf: u16,
+    field: u32,
+    views: HashSet<u16>,
+    elems: HashSet<u16>,
+}
+
+impl KeepVars {
+    /// The buffer's vector: a field view, or the field read in place.
+    fn is_view(&self, v: &Value, data: &Data) -> bool {
+        match v.unspan() {
+            Value::Var(var) => self.views.contains(var),
+            _ => matches!(call_named(v, data, "OpGetField"),
+                Some([b, Value::Int(off), _]) if is_var(b, self.buf) && *off as u32 == self.field),
+        }
+    }
+
+    fn is_elem(&self, v: &Value) -> bool {
+        matches!(v.unspan(), Value::Var(var) if self.elems.contains(var))
+    }
+
+    /// Is every mention of the buffer, a view or an element under `node` one the kept
+    /// elements survive: the entry clear and the mint, the field's zero, a self-replace, a
+    /// release, a return; on the vector a reservation, a length, an element read, an append's
+    /// mint and finish; on an element its own sets and reads.
+    fn admits(&self, node: &Value, data: &Data) -> bool {
+        let rest = |args: &[Value], from: usize| args[from..].iter().all(|a| self.admits(a, data));
+        match node.unspan() {
+            Value::Var(var) => {
+                *var != self.buf && !self.views.contains(var) && !self.elems.contains(var)
+            }
+            Value::Set(var, rhs) if *var == self.buf => matches!(rhs.unspan(), Value::Null),
+            Value::Set(var, rhs) if self.views.contains(var) => self.is_view(rhs, data),
+            Value::Set(var, rhs) if self.elems.contains(var) => match rhs.unspan() {
+                Value::Null => true,
+                _ => matches!(call_named(rhs, data, "OpNewRecord"),
+                    Some(args) if self.is_view(&args[0], data) && rest(args, 1)),
+            },
+            Value::Return(r) if is_var(r, self.buf) || self.is_view(r, data) => true,
+            Value::Call(op, args)
+                if (*op as usize) < data.definitions.len() && !args.is_empty() =>
+            {
+                let name = data.def(*op).name();
+                let on_buf = is_var(&args[0], self.buf);
+                match name {
+                    "OpRefAlias" | "OpClearVector" | "OpDatabase" if on_buf => rest(args, 1),
+                    "OpSetInt4" => {
+                        (on_buf
+                            && matches!(&args[1..], [Value::Int(off), Value::Int(0)] if *off as u32 == self.field))
+                            || (!on_buf && args.iter().all(|a| self.admits(a, data)))
+                    }
+                    "OpReplaceVector"
+                        if on_buf && args.len() > 1 && self.is_view(&args[1], data) =>
+                    {
+                        rest(args, 2)
+                    }
+                    "OpFreeRef" | "OpFreeRefIfDistinct" => {
+                        args.iter().all(|a| matches!(a.unspan(), Value::Var(_)))
+                    }
+                    "OpPreAllocVector"
+                    | "OpLengthVector"
+                    | "t_6vector_len"
+                    | "OpGetVector"
+                    | "OpGetVectorNullable"
+                        if self.is_view(&args[0], data) =>
+                    {
+                        rest(args, 1)
+                    }
+                    "OpFinishRecord"
+                        if self.is_view(&args[0], data)
+                            && args.len() > 1
+                            && self.is_elem(&args[1]) =>
+                    {
+                        rest(args, 2)
+                    }
+                    "OpSetText" if self.is_elem(&args[0]) => {
+                        matches!(args.get(1).map(Value::unspan), Some(Value::Int(_)))
+                            && rest(args, 2)
+                    }
+                    n if (n.starts_with("OpSet") || n.starts_with("OpGet"))
+                        && self.is_elem(&args[0]) =>
+                    {
+                        rest(args, 1)
+                    }
+                    _ => args.iter().all(|a| self.admits(a, data)),
+                }
+            }
+            _ => {
+                let mut ok = true;
+                node.for_each_child(&mut |c| {
+                    if ok && !self.admits(c, data) {
+                        ok = false;
+                    }
+                });
+                ok
+            }
+        }
+    }
+}
+
+/// `@FR-R-RefillText`'s collection clause — may the heap-element buffer `buf` (a one-field
+/// `wrapper_tp` around `vector<E>`) keep its elements across calls, the build refilling each
+/// element's texts in its slot?  The element is a record of scalars and texts; its build
+/// appends through `OpNewRecord` minted elements only; the buffer is cleared once, at entry
+/// (a second clear would reset the store under the kept slots); and every other mention is
+/// one [`KeepVars::admits`] names.  Answers the facts the emitter needs, or why it declines.
+///
+/// # Errors
+/// The condition the build fails, in the words `LOFT_TRACE_REFILL_TEXT` prints.
+pub fn keep_elements(
+    data: &Data,
+    stores: &Stores,
+    def_nr: u32,
+    buf: u16,
+    wrapper_tp: u16,
+) -> Result<KeepElems, &'static str> {
+    let Some(crate::database::Parts::Struct(fields)) =
+        stores.types.get(wrapper_tp as usize).map(|t| &t.parts)
+    else {
+        return Err("the buffer is not a wrapper record");
+    };
+    let [field] = &fields[..] else {
+        return Err("the buffer is not a one-field wrapper");
+    };
+    let Some(crate::database::Parts::Vector(elem_tp)) =
+        stores.types.get(field.content as usize).map(|c| &c.parts)
+    else {
+        return Err("the wrapper's field is not a vector");
+    };
+    let Some(texts) = stores.text_slots(*elem_tp) else {
+        return Err("an element owns heap other than text");
+    };
+    let body = data.def(def_nr).code();
+    let mut k = KeepVars {
+        buf,
+        field: u32::from(field.position),
+        views: HashSet::new(),
+        elems: HashSet::new(),
+    };
+    let mut clears = 0usize;
+    body.any_node(&mut |n| {
+        match n {
+            Value::Set(var, rhs) if k.is_view(rhs, data) => {
+                k.views.insert(*var);
+            }
+            Value::Call(..) if matches!(call_named(n, data, "OpClearVector"), Some([b]) if is_var(b, buf)) => {
+                clears += 1;
+            }
+            _ => {}
+        }
+        false
+    });
+    let mut mint_tps = HashSet::new();
+    body.any_node(&mut |n| {
+        if let Value::Set(var, rhs) = n
+            && let Some(args) = call_named(rhs, data, "OpNewRecord")
+            && k.is_view(&args[0], data)
+        {
+            k.elems.insert(*var);
+            if let Some(Value::Int(tp)) = args.get(1).map(Value::unspan) {
+                mint_tps.insert(*tp as u16);
+            }
+        }
+        false
+    });
+    if clears != 1 {
+        return Err("the buffer is cleared again after its entry");
+    }
+    if k.elems.is_empty() {
+        return Err("no element is appended");
+    }
+    if !k.admits(body, data) {
+        return Err("the vector or an element is used another way");
+    }
+    Ok(KeepElems {
+        wrapper_tp,
+        field: k.field,
+        elem_tp: *elem_tp,
+        size: u32::from(stores.size(*elem_tp)),
+        texts,
+        elems: k.elems,
+        mint_tps,
+    })
 }
 
 /// `@FR-R-RefillText` — the pooled call sites of one function whose release is not emitted
@@ -9491,6 +9715,18 @@ fn refill_text_site_declines(
 
 /// `LOFT_TRACE_REFILL_TEXT`'s line for one site, printed once: a function is emitted more
 /// than once (its twins, a second pass) and its sites are named the first time.
+/// Print a `LOFT_TRACE_REFILL_TEXT` line once: a function is emitted more than once (its
+/// twins, a second pass) and each verdict is named the first time.
+pub fn trace_refill_text_once(line: String) {
+    thread_local! {
+        static SEEN: std::cell::RefCell<HashSet<String>> =
+            std::cell::RefCell::new(HashSet::new());
+    }
+    if SEEN.with(|seen| seen.borrow_mut().insert(line.clone())) {
+        eprintln!("{line}");
+    }
+}
+
 fn trace_refill_text_site(data: &Data, site_fn: u32, target: u32, decline: Option<&str>) {
     let to = if (target as usize) < data.definitions.len() {
         data.def(target).name()
@@ -9502,13 +9738,7 @@ fn trace_refill_text_site(data: &Data, site_fn: u32, target: u32, decline: Optio
         None => format!("refill-text: {from} → {to} admitted"),
         Some(why) => format!("refill-text: {from} → {to} declined — {why}"),
     };
-    thread_local! {
-        static SEEN: std::cell::RefCell<HashSet<String>> =
-            std::cell::RefCell::new(HashSet::new());
-    }
-    if SEEN.with(|seen| seen.borrow_mut().insert(line.clone())) {
-        eprintln!("{line}");
-    }
+    trace_refill_text_once(line);
 }
 
 /// `@FR-R-RefillText` — the pooled call sites of `def_nr` whose callee refills its texts in

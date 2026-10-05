@@ -1161,6 +1161,65 @@ impl Stores {
             && self.allocations[db.store_nr as usize].content_swappable(false)
     }
 
+    /// `@FR-R-RefillText`'s collection clause — the entry of a refilling callee whose return
+    /// buffer is a one-field wrapper of `vector<E>`, `E` a record of scalars and texts, with its
+    /// vector field at byte `field`.  A live buffer the mint keeps (`refill_keeps`, the test
+    /// `OpDatabaseRefill` asks) keeps its ELEMENTS: the length becomes 0 and the old length `K`
+    /// is answered — slot `i < K` still owns its texts, and the build's element text sets refill
+    /// them.  Only slots under the length are trusted: past it, a removal leaves a stale copy
+    /// of a live element.  Any other buffer is released as the clause's absence releases it
+    /// (the releasing clear) and answers 0.
+    pub fn refill_keep_open(&mut self, buf: &DbRef, tp: u16, field: u32) -> u32 {
+        if buf.store_nr == u16::MAX || buf.rec == 0 {
+            return 0;
+        }
+        if !(crate::keys::refill_buffer_enabled() && self.refill_keeps(buf, tp)) {
+            self.clear_vector_release(buf);
+            return 0;
+        }
+        let store = self.store_mut(buf);
+        let v_rec = store.collection_rec(buf.rec, buf.pos + field);
+        if v_rec == 0 {
+            return 0;
+        }
+        let keep = store.get_u32_raw(v_rec, 4);
+        store.set_u32_raw(v_rec, 4, 0);
+        keep
+    }
+
+    /// The exit of [`Self::refill_keep_open`]'s build: the texts the kept slots `[len, keep)`
+    /// still own — the slots this call did not refill — are released and their slots zeroed,
+    /// so nothing past the length owns heap again.  `size` is the element's width, `texts`
+    /// its text slots' offsets.  A vector that grew past `keep` has no such slot.
+    pub fn refill_keep_close(
+        &mut self,
+        buf: &DbRef,
+        field: u32,
+        keep: u32,
+        size: u32,
+        texts: &[u32],
+    ) {
+        if keep == 0 || buf.store_nr == u16::MAX || buf.rec == 0 {
+            return;
+        }
+        let store = self.store_mut(buf);
+        let v_rec = store.collection_rec(buf.rec, buf.pos + field);
+        if v_rec == 0 {
+            return;
+        }
+        let len = store.get_u32_raw(v_rec, 4);
+        for i in len..keep {
+            for off in texts {
+                let at = 8 + i * size + off;
+                let old = store.get_u32_raw(v_rec, at);
+                if old != 0 {
+                    store.delete(old);
+                    store.set_u32_raw(v_rec, at, 0);
+                }
+            }
+        }
+    }
+
     pub(crate) fn take_spare(&mut self, tp: u16) -> Option<DbRef> {
         let s = self.spare_store?;
         if self.allocations[s as usize].known_type != tp {

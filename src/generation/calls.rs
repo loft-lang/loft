@@ -806,6 +806,29 @@ impl Output<'_> {
             }
             .to_string();
         }
+        // `@FR-R-RefillText`'s collection clause — a text set into an element the build
+        // appended: a slot under the kept length refills the block it owns, a slot past it
+        // claims (fresh capacity holds no block).
+        if def_fn.name() == "OpSetText"
+            && let Some(k) = &self.refill.keep
+            && matches!(vals.first().map(Value::unspan), Some(Value::Var(e)) if k.elems.contains(e))
+            && let Some(vi) = def_fn.attributes().iter().position(|a| a.name == "val")
+        {
+            let borrowed = !self.text_set_copy_kept
+                && match vals.get(vi).map(Value::unspan) {
+                    Some(Value::Text(_)) => true,
+                    Some(Value::Var(v)) => self.text_owned(*v),
+                    _ => false,
+                };
+            res = if matches!(vals.get(vi), Some(Value::Null)) {
+                "{{let db = @v1; if db.rec != 0 {{ let store = stores.store_mut(&db); let fld = db.pos + u32::from(@fld); if db.pos < __rk_end {{ let old = store.get_u32_raw(db.rec, fld); if old != 0 {{ store.delete(old); }} }} store.set_u32_raw(db.rec, fld, 0u32); }}}}"
+            } else if borrowed {
+                "{{let db = @v1; let s_val = AsRef::<str>::as_ref(&*@val); if db.rec != 0 {{ let store = stores.store_mut(&db); let fld = db.pos + u32::from(@fld); if db.pos < __rk_end {{ store.refill_str(db.rec, fld, s_val); }} else {{ let s_pos = store.set_str(s_val); store.set_u32_raw(db.rec, fld, s_pos); }} }}}}"
+            } else {
+                "{{let db = @v1; let s_val = @val.to_string(); if db.rec != 0 {{ let store = stores.store_mut(&db); let fld = db.pos + u32::from(@fld); if db.pos < __rk_end {{ store.refill_str(db.rec, fld, &s_val); }} else {{ let s_pos = store.set_str(&s_val); store.set_u32_raw(db.rec, fld, s_pos); }} }}}}"
+            }
+            .to_string();
+        }
         // Bytecode templates wrap text values in Str::new(...) for put_stack compatibility.
         // Native code uses &str directly — strip the wrapper by extracting its argument.
         // Must be done before @param substitution so argument expressions are not affected.

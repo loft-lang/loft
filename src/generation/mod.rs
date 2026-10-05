@@ -864,6 +864,9 @@ pub struct Output<'a> {
     pub refill_text: hoist::RefillTextSites,
     /// `LOFT_NO_REFILL_TEXT=1` — every pooled call site keeps its release and the plain callee.
     pub refill_text_disabled: bool,
+    /// `LOFT_NO_REFILL_ELEMENTS=1` — `@FR-R-RefillText`'s collection clause off: a
+    /// heap-element refill buffer is released whole at entry and its elements claimed anew.
+    pub refill_elements_disabled: bool,
     /// The release an admitted pool statement did not emit, `(buffer, type)`: the call after
     /// it consumes it — by calling the refill twin, or by releasing first where it calls an
     /// `__inv`/`__rg` twin.  Still armed after that statement is an emission fault.
@@ -2342,6 +2345,8 @@ impl<'a> Output<'a> {
             refill_keep_disabled: std::env::var("LOFT_NO_REFILL_KEEP").is_ok_and(|v| v != "0"),
             refill_text: hoist::RefillTextSites::default(),
             refill_text_disabled: std::env::var("LOFT_NO_REFILL_TEXT").is_ok_and(|v| v != "0"),
+            refill_elements_disabled: std::env::var("LOFT_NO_REFILL_ELEMENTS")
+                .is_ok_and(|v| v != "0"),
             refill_text_pending: None,
             rt_requests: Vec::new(),
             rt_emitted: HashSet::new(),
@@ -2779,6 +2784,44 @@ impl Output<'_> {
         } else {
             hoist::RefillBuffers::default()
         };
+        // `@FR-R-RefillText`'s collection clause needs the append's no-prefill mint: a
+        // prefilling one writes 0 over the kept slot's text and strands its block.
+        let keep_np = self.refill.keep.as_ref().map(|k| {
+            if self.refill_elements_disabled || self.refill_keep_disabled {
+                Err("switched off")
+            } else if k
+                .mint_tps
+                .iter()
+                .all(|tp| self.complete_writes.mint_tps.contains(tp))
+            {
+                Ok(())
+            } else {
+                Err("an append's element is prefilled")
+            }
+        });
+        if !matches!(keep_np, None | Some(Ok(()))) {
+            self.refill.keep = None;
+        }
+        if self.refill.heap_elems
+            && self.twin.is_none()
+            && !self.emitting_ranged
+            && std::env::var("LOFT_TRACE_REFILL_TEXT").is_ok()
+        {
+            let why = match (keep_np, self.refill.var) {
+                (Some(Ok(())), _) => None,
+                (Some(Err(w)), _) => Some(w),
+                (None, Some(b)) => {
+                    let tp = hoist::mint_type_of(self.data, def_nr, b).unwrap_or(u16::MAX);
+                    hoist::keep_elements(self.data, self.stores, def_nr, b, tp).err()
+                }
+                (None, None) => Some("no refill buffer"),
+            };
+            let name = self.data.def(def_nr).name();
+            hoist::trace_refill_text_once(match why {
+                None => format!("refill-text: {name} keeps its elements"),
+                Some(w) => format!("refill-text: {name} keeps no elements — {w}"),
+            });
+        }
         self.refill_text = if self.refill_text_disabled {
             hoist::RefillTextSites::default()
         } else {
