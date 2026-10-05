@@ -8249,6 +8249,11 @@ use a separate collection or add after the loop"
                 self.vars.set_annotated(v_nr);
                 if is_value_const {
                     self.vars.set_value_const(v_nr);
+                    // `@FR-Const-ConstructExempt` — the declaration's own initialising bind
+                    // SETS the value; it is not a write the const forbids.  The flag above is
+                    // already set (and survives from pass 1), so the guard is told which bind
+                    // this is: `x: const integer = 1` was refused as a write to itself.
+                    self.declaring_const = v_nr;
                 }
                 f_type = tp;
                 got_annotation = true;
@@ -9055,7 +9060,20 @@ use a separate collection or add after the loop"
                 } else {
                     None
                 };
+                let lhs_parent = parent_tp.clone();
                 let var_nr = self.assign_var_nr(code, op, &f_type, &mut parent_tp);
+                // `@FR-Const-Value` — a COMPONENT target that `assign_var_nr` routes through a
+                // working variable (a `text` field append, `h.v += "z"`) is validated here,
+                // against the parent read before that routing reset it: the check inside the
+                // assignment runs only for a write with no variable, and a `v: const text`
+                // field was appended to in silence.
+                if var_nr != u16::MAX
+                    && !f2_hoisted
+                    && !self.first_pass
+                    && !matches!(to.unspan(), Value::Var(_))
+                {
+                    self.validate_write(&to, &lhs_parent, op);
+                }
                 // Handle `f += X` for File variables before type-changing logic.
                 if op == "+="
                     && self.is_file_var_type(&f_type)
@@ -9084,6 +9102,7 @@ use a separate collection or add after the loop"
                 }
                 let result =
                     self.parse_assign_op(code, op, &f_type, &to, parent_tp, var_nr, f2_hoisted);
+                self.declaring_const = u16::MAX;
                 if first_bind.is_some() {
                     self.first_bind_targets.pop();
                 }
@@ -9146,6 +9165,7 @@ use a separate collection or add after the loop"
                 return result;
             }
         }
+        self.declaring_const = u16::MAX;
         // @PLN87 D-bind-7 — a statement that BEGAN with `&` whose `&` was not
         // consumed by an assignment: a bare `&a;` statement or a block-final
         // `{ &a }`.  Both are non-binding positions the VITAL rule (binding.md
@@ -10801,19 +10821,25 @@ use a separate collection or add after the loop"
     /// guard that refuses a write through a value-const name (`validate_write`,
     /// `const_write_blocked`, the closure capture, `#remove`) now refuses it through the view.
     pub(crate) fn mark_const_view(&mut self, view: u16, source: &Value, bare_var_views: bool) {
+        // A `&` link is a view at EVERY type (`(B-Ref-Alias)`): a link to a scalar writes
+        // through it, where a scalar read out of a value is the reader's own copy.
+        let is_link = view != u16::MAX
+            && self.vars.exists(view)
+            && matches!(self.vars.tp(view).base(), Type::RefVar(_));
         if view == u16::MAX
             || !self.vars.exists(view)
-            || !matches!(
-                self.vars.tp(view).peel_link().base(),
-                Type::Reference(_, _)
-                    | Type::Enum(_, true, _)
-                    | Type::Vector(_, _)
-                    | Type::Sorted(_, _, _)
-                    | Type::Index(_, _, _)
-                    | Type::Radix(_, _, _)
-                    | Type::Trie(_, _, _)
-                    | Type::Hash(_, _, _)
-            )
+            || !is_link
+                && !matches!(
+                    self.vars.tp(view).peel_link().base(),
+                    Type::Reference(_, _)
+                        | Type::Enum(_, true, _)
+                        | Type::Vector(_, _)
+                        | Type::Sorted(_, _, _)
+                        | Type::Index(_, _, _)
+                        | Type::Radix(_, _, _)
+                        | Type::Trie(_, _, _)
+                        | Type::Hash(_, _, _)
+                )
         {
             return;
         }
@@ -10862,8 +10888,28 @@ use a separate collection or add after the loop"
                 self.vars.written_name(report)
             ));
         }
-        self.frozen_through(node, true)
-            .map(|field| format!("value-const field '{field}'"))
+        // `@FR-Const-ScalarCollapse` — a by-value scalar has no interior distinct from its
+        // binding, so binding-const freezes it as fully as value-const: a link to it or a `&`
+        // argument of it is a write past the `const`.
+        if let Some(root) = root
+            && self.vars.exists(root)
+            && self.vars.is_const_binding(root)
+            && crate::data::is_scalar(self.vars.var_type(root))
+        {
+            let report = self.vars.const_report_var(root);
+            return Some(format!(
+                "{} '{}'",
+                self.const_noun(report),
+                self.vars.written_name(report)
+            ));
+        }
+        self.frozen_through(node, true).map(|(field, value)| {
+            if value {
+                format!("value-const field '{field}'")
+            } else {
+                format!("const field '{field}'")
+            }
+        })
     }
 
     /// Reject a write that a `const` binding forbids, for a COMPONENT target.
@@ -10993,13 +11039,10 @@ use a separate collection or add after the loop"
                         // `else`): it COMPOSES with `const_field` so `const v: const T` is
                         // fully frozen — const_field blocks the rebind, value_const the append.
                         if self.data.def(d_nr).attributes()[f_nr].value_const {
-                            let collapses = matches!(
-                                self.data.def(d_nr).attributes()[f_nr].typedef.base(),
-                                Type::Integer(_)
-                                    | Type::Float
-                                    | Type::Single
-                                    | Type::Boolean
-                                    | Type::Character
+                            // `@FR-Const-ScalarCollapse` — every by-value scalar, the plain
+                            // enum included: `is_scalar` is the one home for which types.
+                            let collapses = crate::data::is_scalar(
+                                &self.data.def(d_nr).attributes()[f_nr].typedef,
                             );
                             if op != "=" || collapses {
                                 diagnostic!(
@@ -11034,14 +11077,14 @@ use a separate collection or add after the loop"
     /// mirrors the leaf block's `parent_tp`→`known_type`→`Parts::Struct` field lookup,
     /// but applied at every node so an inner field's `value_const` is reachable.
     fn lhs_frozen_through(&self, to: &Value) -> Option<String> {
-        self.frozen_through(to, false)
+        self.frozen_through(to, false).map(|(field, _)| field)
     }
 
     /// [`Self::lhs_frozen_through`], with `include_leaf` also counting the OUTERMOST field.  A
     /// READ of `w.ps` where the field `ps` is value-const hands out that field's value, so a
     /// view bound from it is read-only (loft#1540); a WRITE to `w.ps` itself is the slot's own
     /// rebind or append, which the leaf-field block in `validate_write` decides.
-    fn frozen_through(&self, to: &Value, include_leaf: bool) -> Option<String> {
+    fn frozen_through(&self, to: &Value, include_leaf: bool) -> Option<(String, bool)> {
         if self.first_pass {
             return None;
         }
@@ -11091,7 +11134,22 @@ use a separate collection or add after the loop"
                     let f_nr = fields.iter().position(|f| f.position == *pos as u16)?;
                     let attr = &self.data.def(d_nr).attributes()[f_nr];
                     if (include_leaf || !is_leaf) && attr.value_const {
-                        return Some(format!("{}.{}", self.data.def(d_nr).name(), attr.name));
+                        return Some((
+                            format!("{}.{}", self.data.def(d_nr).name(), attr.name),
+                            true,
+                        ));
+                    }
+                    // `@FR-Const-ScalarCollapse` — a binding-const SCALAR leaf is frozen as
+                    // fully: read out as a view (a `&` link, a `&` argument), it is read-only.
+                    if include_leaf
+                        && is_leaf
+                        && attr.const_field
+                        && crate::data::is_scalar(&attr.typedef)
+                    {
+                        return Some((
+                            format!("{}.{}", self.data.def(d_nr).name(), attr.name),
+                            false,
+                        ));
                     }
                     cur_type = attr.typedef.clone();
                 }

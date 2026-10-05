@@ -10467,6 +10467,75 @@ first (`m = t.0; c = &m;`) and write it back at a_member_of_a_linked_tuple_is_re
     );
 }
 
+/// `@FR-Const-ScalarCollapse` / `@FR-Const-Value` — every spelling that writes past a `const`
+/// scalar or a value-const field is refused.  Each wrote in silence on both backends before: a
+/// `&` link to a binding-const scalar field or local, the same handed to a `&` parameter, a
+/// link to a value-const scalar field, a rebind of a value-const ENUM (the collapse list named
+/// five scalar types and not the enum), and an append to a value-const `text` field (routed
+/// through a working variable that skipped the component check).
+#[test]
+fn a_link_to_a_const_scalar_field_is_refused() {
+    code!(
+        "struct H { const v: integer }
+fn test() { h = H { v: 1 }; c = &h.v; c = 7; assert(h.v == 1, \"h\"); }"
+    )
+    .error(
+        "Cannot modify 'c': it is a view of const field 'H.v', whose value is read-only; remove \
+'const' there, or copy what you change into a local at a_link_to_a_const_scalar_field_is_refused:2:44",
+    );
+}
+
+#[test]
+fn a_const_scalar_local_to_an_amp_parameter_is_refused() {
+    code!(
+        "fn bump(p: &integer) { p += 1; }
+fn test() { const x: integer = 1; bump(x); assert(x == 1, \"x\"); }"
+    )
+    .error(
+        "Cannot pass const variable 'x' to the `&` parameter 1 of `bump`, which may modify it; its \
+value is read-only — pass a local copy, or make the parameter `const` if `bump` only reads it \
+at a_const_scalar_local_to_an_amp_parameter_is_refused:2:43",
+    );
+}
+
+#[test]
+fn a_link_to_a_value_const_scalar_field_is_refused() {
+    code!(
+        "struct H { v: const integer }
+fn test() { h = H { v: 1 }; c = &h.v; c = 7; assert(h.v == 1, \"h\"); }"
+    )
+    .error(
+        "Cannot modify 'c': it is a view of value-const field 'H.v', whose value is read-only; \
+remove 'const' there, or copy what you change into a local at \
+a_link_to_a_value_const_scalar_field_is_refused:2:44",
+    );
+}
+
+#[test]
+fn a_value_const_enum_field_rebind_is_refused() {
+    code!(
+        "enum Col { Red, Green }
+struct H { v: const Col }
+fn test() { h = H { v: Col.Red }; h.v = Col.Green; assert(h.v == Col.Red, \"h\"); }"
+    )
+    .error(
+        "cannot mutate value-const field 'v' of struct 'H' — its value is read-only (rebind with \
+'=' to re-point, or drop 'const') at a_value_const_enum_field_rebind_is_refused:3:51",
+    );
+}
+
+#[test]
+fn a_value_const_text_field_append_is_refused() {
+    code!(
+        "struct H { v: const text }
+fn test() { h = H { v: \"a\" }; h.v += \"z\"; assert(h.v == \"a\", \"h\"); }"
+    )
+    .error(
+        "cannot mutate value-const field 'v' of struct 'H' — its value is read-only (rebind with \
+'=' to re-point, or drop 'const') at a_value_const_text_field_append_is_refused:2:41",
+    );
+}
+
 /// `break value` in void function → compile error.
 #[test]
 fn enhancement_break_value_in_void_function_errors() {

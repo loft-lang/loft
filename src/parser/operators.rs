@@ -93,6 +93,10 @@ impl Parser {
         if self.first_pass || nr == u16::MAX {
             return false;
         }
+        // The declaration's own initialising bind (`x: const T = …`) sets the value.
+        if op == "=" && nr == self.declaring_const {
+            return false;
+        }
         let binding = self.vars.is_const_binding(nr);
         let value = self.vars.is_value_const(nr);
         if !binding && !value {
@@ -104,11 +108,9 @@ impl Parser {
         // A `&`-reference binding writes THROUGH to its referent, so a value-const `&`
         // param (`& const T`) has no local rebind either — every write mutates the
         // referent — and is likewise fully blocked.
-        let tp = self.vars.var_type(nr).base();
-        let collapses = matches!(
-            tp,
-            Type::Integer(_) | Type::Float | Type::Single | Type::Boolean | Type::Character
-        ) || matches!(self.vars.var_type(nr), Type::RefVar(_));
+        // `is_scalar` is the one home for which types collapse — the plain enum among them.
+        let collapses = crate::data::is_scalar(self.vars.var_type(nr))
+            || matches!(self.vars.var_type(nr), Type::RefVar(_));
         // binding-const rejects a rebind (`=`); value-const rejects contents mutation
         // (`+=`) while allowing a `=` rebind that re-points the slot.  Under collapse both
         // reject everything.

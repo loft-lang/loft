@@ -391,6 +391,10 @@ pub struct Parser {
     /// `(T-Destr)` over places — the value the next `parse_assign_op` stores, read off the
     /// pattern's temp, in place of a right-hand side it would otherwise parse itself.
     pub(crate) preset_rhs: Option<(Value, Type)>,
+    /// The variable whose `x: const T = …` declaration is being parsed: its own initialising
+    /// bind sets the value and is not a write `const` forbids (`@FR-Const-ConstructExempt`).
+    /// `u16::MAX` outside one.
+    pub(crate) declaring_const: u16,
     /// @PLN86 — the host-supplied sandbox policy (profiles + designations).
     /// Empty by default; set by the embedder before parsing.  A script cannot
     /// designate itself — the designation is read from here, not the source.
@@ -1737,6 +1741,7 @@ impl Parser {
             rebuild_watch_hit: false,
             in_tuple_lhs: false,
             preset_rhs: None,
+            declaring_const: u16::MAX,
             sandbox: crate::sandbox::SandboxConfig::default(),
             def_sandbox: HashMap::new(),
             sandbox_unbounded_loops: HashMap::new(),
