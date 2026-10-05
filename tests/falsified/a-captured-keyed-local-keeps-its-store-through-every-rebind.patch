@@ -1,8 +1,8 @@
 diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
-index c37c42481..dd250e6fe 100644
+index 451455971..a37d9fbb1 100644
 --- a/src/parser/expressions.rs
 +++ b/src/parser/expressions.rs
-@@ -3792,44 +3792,6 @@ use a separate collection or add after the loop"
+@@ -3809,44 +3809,6 @@ use a separate collection or add after the loop"
              )
      }
  
@@ -47,7 +47,7 @@ index c37c42481..dd250e6fe 100644
      #[allow(clippy::too_many_arguments)] // the wrapper's list, unchanged from before the split
      #[expect(clippy::too_many_lines, reason = "inherited")]
      fn parse_assign_op_inner(
-@@ -6277,15 +6239,6 @@ use a separate collection or add after the loop"
+@@ -6337,15 +6299,6 @@ use a separate collection or add after the loop"
          // Falls through to the standard assign path which emits
          // Set(v, code) — codegen then takes the Null arm.
          if var_nr != u16::MAX && !self.first_pass && Self::create_keyed(code, f_type, op, var_nr) {
@@ -63,7 +63,7 @@ index c37c42481..dd250e6fe 100644
              // Don't return here — let the standard pipeline emit
              // Set(v, Null) so codegen sees it.  No further special-
              // case handling needed: the rest of the pipeline tolerates
-@@ -6745,16 +6698,45 @@ use a separate collection or add after the loop"
+@@ -6805,16 +6758,45 @@ use a separate collection or add after the loop"
          if let Some(kt) = keyed_kt
              && matches!(code, Value::Insert(ls) if !ls.is_empty())
          {
@@ -119,7 +119,7 @@ index c37c42481..dd250e6fe 100644
              };
              if let Value::Insert(ls) = code {
                  ls.insert(0, clear);
-@@ -6838,27 +6820,10 @@ use a separate collection or add after the loop"
+@@ -6898,27 +6880,10 @@ use a separate collection or add after the loop"
              };
              #[cfg(feature = "wasm")]
              let tp_val = i32::from(kt);
@@ -151,7 +151,7 @@ index c37c42481..dd250e6fe 100644
              // loft#1840 — `(B-Copy)` for the keyed kinds, as `lower_vec_copy_bind` records it.
              if self.is_copied_place(code)
                  && let Value::Var(v) = to.unspan()
-@@ -6937,10 +6902,7 @@ use a separate collection or add after the loop"
+@@ -6997,10 +6962,7 @@ use a separate collection or add after the loop"
              let mut seq = if code.reads_var(var_nr) {
                  Vec::new()
              } else {
@@ -163,7 +163,7 @@ index c37c42481..dd250e6fe 100644
              };
              // A JOIN's witnesses are its ARMS' — `protectable_ref_args` reads a call's
              // arguments and a join has none of its own (loft#1154).
-@@ -6958,25 +6920,6 @@ use a separate collection or add after the loop"
+@@ -7018,25 +6980,6 @@ use a separate collection or add after the loop"
              for av in &guarded {
                  seq.push(self.cl("n_unprotect_store_frees", &[Value::Var(*av)]));
              }
@@ -190,10 +190,10 @@ index c37c42481..dd250e6fe 100644
              return Type::Void;
          }
 diff --git a/src/parser/mod.rs b/src/parser/mod.rs
-index 025144e4b..0591a1712 100644
+index 51c1c7a38..7a2daffe5 100644
 --- a/src/parser/mod.rs
 +++ b/src/parser/mod.rs
-@@ -1263,12 +1263,6 @@ pub struct Parser {
+@@ -1268,12 +1268,6 @@ pub struct Parser {
      /// those were yielded and took a copy (`yield_owned_closure`).  Equal counts mean the local
      /// is the generator's own again.
      pub(crate) closure_capture_builds: std::collections::HashMap<(u32, u16), u32>,
@@ -206,7 +206,7 @@ index 025144e4b..0591a1712 100644
      pub(crate) yield_copied_captures: std::collections::HashMap<(u32, u16), u32>,
      /// #314: capturing lambdas synthesized during each function body in
      /// pass 1, keyed by the enclosing context's def_nr.  Consumed by
-@@ -1892,7 +1886,6 @@ impl Parser {
+@@ -1898,7 +1892,6 @@ impl Parser {
              last_closure_alloc: None,
              last_closure_captured_vars: vec![],
              closure_capture_builds: std::collections::HashMap::new(),
@@ -215,10 +215,10 @@ index 025144e4b..0591a1712 100644
              init_field_tracking: false,
              init_field_deps: Vec::new(),
 diff --git a/src/parser/vectors.rs b/src/parser/vectors.rs
-index 334aeada1..883ab43e4 100644
+index 0e3385ea4..4625a39c9 100644
 --- a/src/parser/vectors.rs
 +++ b/src/parser/vectors.rs
-@@ -2170,18 +2170,6 @@ or build a local and use that."
+@@ -2186,18 +2186,6 @@ or build a local and use that."
                          Value::Var(w),
                          fill,
                      ));
@@ -238,10 +238,10 @@ index 334aeada1..883ab43e4 100644
                      // holds a DbRef into the captured heap cell (`Reference(__cell_*,
                      // _)`) via the auto-Reference attribute, and the record OWNS that
 diff --git a/src/scopes/capture_builds.rs b/src/scopes/capture_builds.rs
-index 4b74eddf1..834d320d0 100644
+index d0dd79078..665966640 100644
 --- a/src/scopes/capture_builds.rs
 +++ b/src/scopes/capture_builds.rs
-@@ -589,48 +589,6 @@ pub(super) fn reassigned_join_capture_slot(
+@@ -599,48 +599,6 @@ pub(super) fn reassigned_join_capture_slot(
      slot
  }
  
@@ -271,7 +271,7 @@ index 4b74eddf1..834d320d0 100644
 -    let name = function.name(v);
 -    let mut slots = Vec::new();
 -    for w in 0..function.next_var() {
--        if function.is_argument(w) {
+-        if !is_record_local(function, w) {
 -            continue;
 -        }
 -        let Type::Reference(record, _) = function.tp(w).base() else {
@@ -291,7 +291,7 @@ index 4b74eddf1..834d320d0 100644
  /// join: a `??` temp's value chain with its default arm's owners (`Function::join_owners`,
  /// loft#1721), else a value branch's per-arm constructions ([`construction_work_refs`]).
 diff --git a/src/scopes/get_free_vars.rs b/src/scopes/get_free_vars.rs
-index 62ab88dd6..76be37971 100644
+index 72fe3db8e..095898a58 100644
 --- a/src/scopes/get_free_vars.rs
 +++ b/src/scopes/get_free_vars.rs
 @@ -13,7 +13,7 @@ use super::capture_adoption::{
