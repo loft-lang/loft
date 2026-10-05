@@ -9,16 +9,14 @@
 //                argument `OpCreateStack(q)` has no spelling outside the call-argument
 //                emitter, and only a `&text` parameter was routed through it.  The crate did
 //                not build.
-//   --interpret  a `&` binding handed on to a fn-ref's `&` parameter (`fn outer(p: &P) {
-//                f(p); }`) was pushed as a VALUE where the callee reads a link: the write
-//                did not reach the caller, and a `&integer` read off the store and panicked.
-//                The direct call already passed the link (`OpVarRef`); both now share it.
-//                Until the same commit the program did not compile at all — the unused-`&`
-//                lint never looked inside a call through a fn-ref.
+//
+// A `&` binding FORWARDED to a fn-ref's `&` parameter is
+// `a-fn-ref-call-forwards-a-link-parameter.loft`, apart: on the control it is refused at
+// compile time, which would stop this file before its cells run.
 //
 // Axes this file MOVES:  the link's type (struct · integer · vector · hash · text), the
-//                        argument (a local · a field · a forwarded `&` parameter · two links in
-//                        one call), and a capturing lambda.
+//                        argument (a local · a field · two links in one call), and a
+//                        capturing lambda.
 // Axes it HOLDS FIXED:   a lambda held in a local; the `fn(&P)` TYPE spelling is
 //                        `a-function-type-can-name-a-link-parameter.loft`.
 
@@ -65,24 +63,9 @@ fn capturing() -> integer {
   q.x
 }
 
-fn forward(p: &P, n: &integer) {
-  f = fn(q: &P) { q.x = 9; };
-  g = fn(m: &integer) { m = m + 5; };
-  f(p);
-  g(n);
-}
-
-fn forwarded() -> text {
-  q = P { x: 1, y: 2 };
-  a = 1;
-  forward(q, a);
-  "{q.x} {a}"
-}
-
 fn main() {
   assert(local_struct() == 9, "a &P through a fn-ref: got {local_struct()}");
   assert(local_kinds() == "6 [1,2,9] 2 abz", "each link kind: got {local_kinds()}");
   assert(field_and_two() == "9 7", "a field and two links: got {field_and_two()}");
   assert(capturing() == 13, "a capturing lambda with a link: got {capturing()}");
-  assert(forwarded() == "9 6", "a & parameter forwarded to a fn-ref: got {forwarded()}");
 }

@@ -1,0 +1,32 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `(L-Apply)` binds a closure's parameters as a direct call does, so a function that hands its
+// own `&` parameter on to a fn-ref's `&` parameter passes the LINK and the write reaches the
+// caller.  On --interpret it was pushed as a value where the callee reads a link: `q.x` stayed
+// 1 and the `&integer` read off the store and panicked.  Native was right.  The direct call
+// already passed the link (`OpVarRef`); `push_forwarded_link` is now the one home for both.
+//
+// Until the same change the program did not compile at all — the unused-`&` lint never looked
+// inside a call through a fn-ref, and refused `p` as never modified — which is why this cell
+// sits apart from `a-fn-ref-call-binds-a-link-parameter.loft`.
+
+struct P { x: integer, y: integer }
+
+fn forward(p: &P, n: &integer) {
+  f = fn(q: &P) { q.x = 9; };
+  g = fn(m: &integer) { m = m + 5; };
+  f(p);
+  g(n);
+}
+
+fn forwarded() -> text {
+  q = P { x: 1, y: 2 };
+  a = 1;
+  forward(q, a);
+  "{q.x} {a}"
+}
+
+fn main() {
+  assert(forwarded() == "9 6", "a & parameter forwarded to a fn-ref: got {forwarded()}");
+}
