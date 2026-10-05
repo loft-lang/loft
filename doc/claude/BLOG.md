@@ -76,7 +76,14 @@ often faster cores. Their memory has grown a lot, and for many programs the proc
 fact waiting for memory — showing 100% activity, but only because they are not available for
 other work while they wait. The only solution is to keep data that is used together close
 together in memory, preferably in the order it is needed, because memory retrieval is optimised
-for reading memory continuously. Sources: [GOALS.md](GOALS.md) § Legible cost (the scattered
+for reading memory continuously.
+
+Honest about loft's own model: it is not ideal yet. Data inside a store is ordered by history,
+not strictly by logic, so over time records get shuffled inside a store with uneven gaps between
+them. There is still a solution, the costly serialisation and deserialisation of the data inside
+— not ideal either, but relatively quick — and a slow and steady optimiser for stores can be
+built in the future too. (Today a store is already rebuilt dense when it is loaded:
+[DATABASE.md](DATABASE.md) § The interior is taken automatically, @PLN123 arc B.) Sources: [GOALS.md](GOALS.md) § Legible cost (the scattered
 allocation that generated loft) and [OWNERSHIP_MODEL.md](OWNERSHIP_MODEL.md) § the control story.
 
 **Games that feel made by a person.** Candidate sources, for the owner to choose from: dryopea's
