@@ -34,7 +34,6 @@ run is measured and, with `--record`, becomes the baseline the next check reads.
 """
 import argparse
 import os
-import platform
 import subprocess
 import sys
 import tempfile
@@ -42,6 +41,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "bench" / "portal"))
+from portal import host_key  # noqa: E402
 RESULTS = ROOT / "bench" / "portal" / "results"
 
 
@@ -102,7 +102,7 @@ def main():
     ap.add_argument("--record", action="store_true", help="merge this run into the machine's results file")
     ap.add_argument("--no-build", action="store_true", help="skip `cargo build --release --bin loft`")
     a = ap.parse_args()
-    host = platform.node() or "unknown"
+    host = host_key()
     if not a.no_build:
         subprocess.run(["cargo", "build", "--release", "--bin", "loft", "-q"], cwd=ROOT, check=True)
     only, packages = a.only, []

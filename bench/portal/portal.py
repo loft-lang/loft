@@ -36,6 +36,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 BENCH = os.path.dirname(HERE)
 ROOT = os.path.dirname(BENCH)
 RESULTS = os.path.join(HERE, "results")
+sys.path.insert(0, BENCH)
+from stats import host_key  # noqa: E402  — one home for the results file name
 PAGE = os.path.join(ROOT, "doc", "claude", "PERF_PORTAL.md")
 BAR, CEILING = 2.0, 3.0
 
@@ -87,10 +89,9 @@ def measure(argv):
     """Run stats.py and MERGE what it measured into this machine's results file: a partial
     run (`--only`, `--no-suite`) replaces the rows it re-measured and leaves the others, and
     every row carries the commit and date it was measured at."""
-    import platform
     import tempfile
     os.makedirs(RESULTS, exist_ok=True)
-    out = os.path.join(RESULTS, f"{platform.node() or 'unknown'}.tsv")
+    out = os.path.join(RESULTS, f"{host_key()}.tsv")
     # `--routine` picks its own programs (stats.py reads routines.tsv), so it takes no default list.
     explicit = any(x in argv for x in ("--package", "--no-packages", "--routine"))
     packages = [] if explicit else library_packages()
@@ -119,8 +120,7 @@ def merge_builds(fresh):
     """Merge one run's build costs into `results/<host>-builds.tsv`: per program and step,
     the wall-clock and CPU seconds and the peak memory of its latest build on this machine.
     The CPU figure compares across runs; the wall-clock one depends on what built beside it."""
-    import platform
-    out = os.path.join(RESULTS, f"{platform.node() or 'unknown'}-builds.tsv")
+    out = os.path.join(RESULTS, f"{host_key()}-builds.tsv")
 
     def rows_of(path):
         meta, head, rows = [], None, []
@@ -155,9 +155,8 @@ def merge_run(fresh):
     """Merge one `stats.py --tsv` run into this machine's results file (the half of
     [`measure`] `scripts/perf_check.py --record` shares): the rows it measured replace
     theirs, every other row is kept."""
-    import platform
     os.makedirs(RESULTS, exist_ok=True)
-    out = os.path.join(RESULTS, f"{platform.node() or 'unknown'}.tsv")
+    out = os.path.join(RESULTS, f"{host_key()}.tsv")
     meta, rows = read_run(fresh)
     if not rows:
         # A run that measured nothing (a `--help` passed through, an `--only` that matched

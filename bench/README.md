@@ -138,7 +138,7 @@ make perf-portal-render                                           # render from 
 | `portal/census.tsv` | library and consumer routines worth a row and not measured yet, each with its workload and its twin |
 | `portal/gaps.tsv` | features the consumer programs lean on that no measured row exercises |
 | `portal/libs.tsv` + `portal/checkout_libs.sh` | the library repositories the pass measures from, and the script that checks them out |
-| `portal/results/<host>.tsv` | the latest run per machine, stamped with its commit, compiler and settings |
+| `portal/results/<host>.tsv` | the latest run per machine, stamped with its commit, compiler and settings.  `<host>` is the node name, which follows the network a laptop is on — `LOFT_PERF_HOST=<name>` pins it so one machine keeps one history |
 
 A CLASS names the mechanism a routine's cost is made of — the per-call frame, a checked
 integer operator, a record appended to a vector, a hash probe — so a slow class points at one

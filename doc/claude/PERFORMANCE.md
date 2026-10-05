@@ -637,7 +637,8 @@ falsifiable](formal/rewrites.md#every-rewrite-is-switchable-and-falsifiable).
 
 The portal (`make perf-portal`) writes ONE row per routine into
 `bench/portal/results/<host>.tsv` — the machine's latest measurement — and the page reads
-that row.  The history is the file's git history: every commit that touched it is one
+that row.  A laptop's node name changes with its network; `LOFT_PERF_HOST=<name>` keeps its
+rows in one file.  The history is the file's git history: every commit that touched it is one
 measurement of the whole lane set on that machine, and a routine that got slower between
 two joins is visible nowhere else (the census reads admissions, the speed gate reads test
 times).  Two scripts read it:

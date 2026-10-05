@@ -70,6 +70,14 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 
 
+def host_key():
+    """The name a machine's results are filed under (`portal/results/<host>.tsv`).  A box's
+    node name follows the network it is on (`firewall02.lan.betterbe.com` at the office,
+    `mac.home` at home), which would split one machine's history in two: `LOFT_PERF_HOST`
+    pins it."""
+    return os.environ.get("LOFT_PERF_HOST") or platform.node() or "unknown"
+
+
 def fail(msg):
     sys.stderr.write(f"stats.py: {msg}\n")
     sys.exit(1)
@@ -348,7 +356,7 @@ def run_metadata(a):
         return p.stdout.strip()
 
     return {
-        "host": platform.node(),
+        "host": host_key(),
         "arch": f"{platform.machine()}-{platform.system().lower()}",
         "date": datetime.date.today().isoformat(),
         "commit": git("rev-parse", "--short", "HEAD"),
