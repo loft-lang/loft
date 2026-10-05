@@ -93,7 +93,8 @@ const OFF: &[(&str, &str)] = &[("LOFT_NO_RETURN_FIELD", "1")];
 /// The exits are hand-overs: no mint of the buffer, no copy, the field's address returned,
 /// and every buffer free the exit keeps witnessed against the root — the plain root (r1),
 /// the lifted root (r10), the pooled loop root (r12), and the alias (r5, whose owner's free
-/// is witnessed against the alias).  The parameter cell (r4) keeps the copy.
+/// is witnessed against the alias), and the natural spelling over a forwarding decoder (r14,
+/// whose call buffer's guard stands inside the exit).  The parameter cell (r4) keeps the copy.
 #[test]
 fn the_exits_hand_the_root_store_over() {
     let on = introspect(&[]);
@@ -123,6 +124,11 @@ fn the_exits_hand_the_root_store_over() {
             "return v(1);",
             "OpFreeRefIfDistinct(__ref_1(1), d(1))",
         ),
+        (
+            "n_r14",
+            "return OpGetField(__lift_1(2), 0i32,",
+            "OpFreeRefIfDistinct(__ref_1(1), __lift_1(2))",
+        ),
     ] {
         let ir = section(&on, name);
         assert!(
@@ -143,6 +149,13 @@ fn the_exits_hand_the_root_store_over() {
             "{name}: the copy block is gone\n{ir}"
         );
     }
+    // r14: the pooled buffer's mint-or-release guard stays where the scope pass put it, in
+    // front of the lifted call, inside the hand-over.
+    let r14 = section(&on, "n_r14");
+    assert!(
+        r14.contains("if OpRefIsNull(__ref_1(1))"),
+        "r14: the call's buffer guard is kept\n{r14}"
+    );
     let r4 = section(&on, "n_r4");
     assert!(
         !r4.contains("return_field_handover"),

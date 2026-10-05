@@ -9,10 +9,13 @@ use std::process::Command;
 
 const CELLS: &str = "tests/scripts/a-pure-call-made-twice-is-computed-once.loft";
 
-/// Every reuse the cells make, in order: the request-check shape and the two projections.
+/// Every reuse the cells make, in order: the request-check shape, the two projections, and
+/// the request-check and record-field shapes in the natural spelling (`parse(v).ok`).
 const TRACE: &[&str] = &[
     "[pure-reuse] n_check: n_parse computed once",
     "[pure-reuse] n_p6: n_parse computed once",
+    "[pure-reuse] n_check_n: n_parse computed once",
+    "[pure-reuse] n_spanned: n_parse computed once",
 ];
 
 fn loft(args: &[&str], env: &[(&str, &str)]) -> (String, String, bool) {
@@ -41,7 +44,7 @@ fn cells() -> String {
 }
 
 #[test]
-fn the_reusing_bodies_are_the_two_admitted_shapes() {
+fn the_reusing_bodies_are_the_admitted_shapes() {
     let (out, err, ok) = loft(
         &["--interpret", &cells()],
         &[("LOFT_TRACE_PURE_REUSE", "1")],

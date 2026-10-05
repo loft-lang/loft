@@ -16,7 +16,10 @@
 // a loop (a reused buffer: the values hold every round); r8 the view-local spelling
 // (`v = d.a; return v` — pluginabi's `pa_decode`); r9 a struct-enum field out of its wrapper;
 // r10 a LIFTED root (`return mk(n).b`); r11 a literal exit beside a field exit; r12 the root
-// bound in a loop from a pooled buffer and returned from inside it; r13 a nested record.
+// bound in a loop from a pooled buffer and returned from inside it; r13 a nested record; r14
+// the natural spelling `f(n).value` over a decoder that FORWARDS its inner result — the call's
+// buffer is pooled, so its mint-or-release guard stands inside the exit block (pluginabi's
+// `pa_decode` written as `decode(bytes).value`).
 // `LOFT_ALLOC_REPORT=1 loft --interpret <this> r9` counts the stores: r9 2 → 1 per call;
 // `LOFT_COPY_DUMP=1 … r1` the copies: 1 → 0 per call.  `tests/return_field.rs` pins the IR
 // shape, both censuses and the switch (`LOFT_NO_RETURN_FIELD=1` restores the copy).
@@ -75,6 +78,13 @@ fn r12(n: integer) -> In {
 }
 // r13 a nested field path
 fn r13(n: integer) -> In { d = mk_deep(n); return d.inner; }
+// r14 the natural spelling over a forwarding decoder: its buffer's guard is inside the exit
+fn dfwd(n: integer) -> DWrap {
+  d = dinner(n);
+  if d.ok { if n > 50 { return DWrap { value: CNull, ok: false }; } }
+  return d;
+}
+fn r14(n: integer) -> CV { dfwd(n).value }
 fn run_cell(cell: text, r: integer) -> integer {
   s = 0;
   if cell == "r1" { s += r1(r % 7).n; }
@@ -88,6 +98,7 @@ fn run_cell(cell: text, r: integer) -> integer {
   if cell == "r11" { s += r11(r % 9 - 2).n; }
   if cell == "r12" { s += r12(r % 6).n; }
   if cell == "r13" { s += r13(r % 7).n; }
+  if cell == "r14" { match r14(r % 7) { CMap { entries } => { s += len(entries); }, _ => {} } }
   return s;
 }
 
@@ -134,6 +145,9 @@ fn run_all() {
   assert(x12a.n == 6 && x12a.tag == "b3" && x12b.n == 0 && x12b.tag == "none", "r12");
   x13 = r13(8);
   assert(x13.n == 8 && x13.tag == "d8", "r13");
+  x14 = r14(3);
+  match x14 { CMap { entries } => { e0 = entries[0] ?? In { n: -1, tag: "" }; assert(len(entries) == 1 && e0.tag == "e3" && e0.n == 3, "r14"); }, _ => { assert(false, "r14 arm"); } }
+  match r14(60) { CNull => {}, _ => { assert(false, "r14 past 50 answers CNull"); } }
   println("return-field ok");
 }
 

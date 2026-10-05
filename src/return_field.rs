@@ -42,6 +42,7 @@ struct Ops {
     free_ref: u32,
     free_if_distinct: u32,
     free_text: u32,
+    is_null: u32,
 }
 
 impl Ops {
@@ -57,6 +58,7 @@ impl Ops {
             free_ref: nr("OpFreeRef")?,
             free_if_distinct: nr("OpFreeRefIfDistinct")?,
             free_text: nr("OpFreeText")?,
+            is_null: nr("OpRefIsNull")?,
         })
     }
 }
@@ -213,6 +215,23 @@ impl Cx<'_> {
         }
     }
 
+    /// A statement that may stand between the buffer's mint and the copy: a bind (a lifted
+    /// root's, r10), or the lazy mint-or-release of the HIDDEN buffer a lifted call is handed
+    /// (`@FR-O-LazyBuffer`, `if OpRefIsNull(b) { mint b } else { release b }`).  Neither names
+    /// the function's own buffer or reads the root, so the copy's source and the frees after it
+    /// are what they are without them; the natural spelling `return f(x).k` puts the guard here,
+    /// where `d = f(x); return d.k` leaves it outside the block.
+    fn before_copy(&self, op: &Value) -> bool {
+        match op.unspan() {
+            Value::Set(_, _) => true,
+            Value::If(cond, _, _) => matches!(cond.unspan(), Value::Call(d, args)
+                if *d == self.ops.is_null
+                    && matches!(args.as_slice(), [b] if matches!(b.unspan(), Value::Var(b)
+                        if *b != self.rb && self.function.is_caller_hidden_buf(*b)))),
+            _ => false,
+        }
+    }
+
     fn admit(&self, bl: &Block) -> Result<Source, &'static str> {
         let ops = bl.operators.as_slice();
         let n = ops.len();
@@ -232,10 +251,10 @@ impl Cx<'_> {
             Value::Return(r) if matches!(r.unspan(), Value::Var(b) if *b == self.rb) => {}
             _ => return Err("the block does not return the buffer last"),
         }
-        // The copy: the first op after the mint that is not a bind (a lifted root's bind
-        // stands between the two, r10).
+        // The copy: the first op after the mint that is not a bind or a lifted call's buffer
+        // guard ([`Self::before_copy`]).
         let mut i = 1;
-        while i < n - 1 && matches!(ops[i].unspan(), Value::Set(_, _)) {
+        while i < n - 1 && self.before_copy(&ops[i]) {
             i += 1;
         }
         let (src, tp) = match ops[i].unspan() {
@@ -301,7 +320,7 @@ impl Cx<'_> {
             }
             if source.is_none() {
                 match op.unspan() {
-                    Value::Set(_, _) => {
+                    _ if self.before_copy(&op) => {
                         out.push(op);
                         continue;
                     }

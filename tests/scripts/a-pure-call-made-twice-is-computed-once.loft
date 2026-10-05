@@ -22,14 +22,18 @@
 //   INERT — an effect-free call made on a path that did not make it changes no value, only
 //   work — and the pin still sees the two admitted reuses.
 //   CHANNEL: an assertion (p2, p3) and the pin's trace and emission counts.
+//   The natural-spelling cells (p8-p11), planted on 2026-10-05: the one-expression recogniser
+//   struck leaves the values right and the pin's trace without n_check_n and n_spanned; the
+//   effect-free test struck from it fails p10 (length 3 for 4).
 
-struct Parsed { ok: boolean, total: integer, first: integer }
+struct Pair { a: integer, b: integer }
+struct Parsed { ok: boolean, total: integer, first: integer, span: Pair }
 
 // The effect-free function: sums a vector, and is ok when it is non-empty.
 fn parse(v: vector<integer>) -> Parsed {
   t = 0;
   for x in v { t += x; }
-  Parsed { ok: len(v) > 0, total: t, first: v[0] ?? -1 }
+  Parsed { ok: len(v) > 0, total: t, first: v[0] ?? -1, span: Pair { a: t, b: len(v) } }
 }
 
 fn parse_ok(v: vector<integer>) -> boolean { p = parse(v); return p.ok; }
@@ -105,7 +109,48 @@ fn p7() {
   assert(x == 6 && y == 9, "p7 got {x} {y}");
 }
 
+// The NATURAL spelling of the same wrappers: the read written on the call — a scalar field as
+// the body's value or returned, a record field materialised into the result.  The same
+// projections as the two-statement forms above, so the same reuse.
+fn parse_ok_n(v: vector<integer>) -> boolean { parse(v).ok }
+fn parse_total_n(v: vector<integer>) -> integer { return parse(v).total; }
+fn parse_span_n(v: vector<integer>) -> Pair { parse(v).span }
+
+// p8: the request-check shape in the natural spelling
+fn check_n(v: vector<integer>) -> integer {
+  if !parse_ok_n(v) { return -100; }
+  return parse_total_n(v);
+}
+
+// p9: a record field handed back, read after the reuse: span of [3, 4, 5] is (12, 3)
+fn spanned(v: vector<integer>) -> integer {
+  if !parse_ok_n(v) { return -100; }
+  s = parse_span_n(v);
+  s.a * 10 + s.b
+}
+
+// p10: the natural spelling over a function with an effect is called every time
+fn tally_total_n(v: vector<integer>) -> integer { tally(v).total }
+fn p10() {
+  v = [2, 2];
+  a = tally_total_n(v);
+  b = tally_total_n(v);
+  assert(a == 4 && b == 4 && len(v) == 4, "p10 got {a} {b} len={len(v)}");
+}
+
+// p11: the argument is rebound between two natural-spelling calls
+fn p11() {
+  v = [1, 2];
+  a = parse_total_n(v);
+  v = [10, 20, 30];
+  b = parse_total_n(v);
+  assert(a == 3 && b == 60, "p11 got {a} {b}");
+}
+
 fn main() {
+  assert(check_n([3, 4, 5]) == 12 && check_n([]) == -100, "p8 got {check_n([3, 4, 5])} {check_n([])}");
+  assert(spanned([3, 4, 5]) == 123 && spanned([]) == -100, "p9 got {spanned([3, 4, 5])} {spanned([])}");
+  p10(); p11();
   p1(); p2(); p3(); p4();
   assert(p5(true) == 20 && p5(false) == 10, "p5 got {p5(true)} {p5(false)}");
   p6(); p7();

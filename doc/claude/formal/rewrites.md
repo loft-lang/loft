@@ -2884,8 +2884,9 @@ on the drawing bench).
                  buffer and copies nothing on the way up.  The move is same-store and
                  into an empty slot by construction; the runtime keeps the copy for any
                  other pair, and `LOFT_HOIST_VERIFY=1` makes that pair fatal.
-  (R-ReturnField) the returned FIELD of an OWNED local — `p = mk(…); return p.a`, or its
-                 view-local spelling `v = p.a; return v` — is answered as the local's own
+  (R-ReturnField) the returned FIELD of an OWNED local — `p = mk(…); return p.a`, its
+                 view-local spelling `v = p.a; return v`, or the natural spelling
+                 `mk(…).a`, whose call the parser lifts into a local — is answered as the local's own
                  store at the field's position, instead of a store minted for the return
                  and the field deep-copied into it.  The parser's copy stands where a view
                  of a frame local would dangle once the frame's free ran; here the local is
@@ -2900,8 +2901,11 @@ on the drawing bench).
                  own free is dropped.  Admitted only where the returned record OWNS HEAP (a
                  scalar-only record is the native value form's to answer as a tuple, and its
                  copy is a few words), the exit block is the parser's materialised copy over
-                 the function's own buffer, and every statement between the copy and the
-                 return is a store or text free.  Declines keep the copy: a parameter's or a
+                 the function's own buffer, every statement between its mint and the copy
+                 is a bind or the mint-or-release guard of a hidden buffer the lifted call is
+                 handed (`@FR-O-LazyBuffer` — it names neither the function's buffer nor the
+                 root), and every statement between the copy and the return is a store or
+                 text free.  Declines keep the copy: a parameter's or a
                  view's field, an ELEMENT (`p.items[i]` — a slot inside a claimed block, not
                  a field of the root record), any other statement in the exit, a buffer that
                  is not the function's own.  A caller is not consulted: it binds what comes
@@ -4066,8 +4070,10 @@ header), pin `tests/start_step.rs`.
                  calls no function value, yields nothing and names no native outside a
                  short list of known value-only ones.  A PROJECTION WRAPPER is a function
                  whose body is one call of an effect-free function on its parameters
-                 followed by a read of the result: `d = f(…); return d.k`, or
-                 `d = f(…); v = d.k; return v`.  In one block, two calls of projection
+                 followed by a read of the result: `d = f(…); return d.k`,
+                 `d = f(…); v = d.k; return v`, or the natural spelling, the read
+                 written on the call (`f(…).k`, returned or as the body's value — a
+                 record field through its materialised copy).  In one block, two calls of projection
                  wrappers of the same `f` on the same argument variables — the first in a
                  position its statement always evaluates (the statement, an `if`'s test,
                  an assignment's value, a call's arguments), nothing between them
