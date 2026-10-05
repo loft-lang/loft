@@ -21,6 +21,13 @@
 // Axes it HOLDS FIXED:   the null's position (between two values) and a `for` consumer.  The
 //                        reference channel is not here: a nullable struct yield does not build
 //                        on --native at all, which is its own defect.
+//
+// @falsified-at: f53630386 — native exit 1 -> 0, native 1 assertion failures -> 0; interpret
+//   INERT, expected for a backend-divergence guard: the interpreter was already right.
+// @falsified-by: tests/falsified/a-yielded-null-is-a-value-not-the-end.patch — the same
+//   channels.  Score it with `scripts/falsify.sh <this file> --patch <that patch>` once
+//   f53630386 is out of reach.
+// HOLDS: leak, panic and refusals are clean on both trees and both backends.
 
 fn ints(m: integer?) -> iterator<integer> {
   yield 1;
