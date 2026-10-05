@@ -529,6 +529,9 @@ jobs:
           RUSTFLAGS: '-Zsanitizer=address -Cforce-frame-pointers=yes'
           ASAN_OPTIONS: 'detect_leaks=1'
           LSAN_OPTIONS: 'suppressions=${{ github.workspace }}/.github/lsan_suppressions.txt'
+          # The same floor as the ASan sweep above: redzones overflow the 8 MiB script
+          # thread on the corpus's 100-deep nested expression (loft#1863).
+          RUST_MIN_STACK: '33554432'
         # The fault-path text class (append_text / format_text / format_long / text_tl_fmt)
         # is suppressed in lsan_suppressions.txt — a faulting program never frees its
         # in-flight text local, an accepted non-cleanup on the terminating abort path (the
