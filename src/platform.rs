@@ -847,8 +847,8 @@ mod reclaim_tests {
             let p = dir.join(name);
             fa::write(&at(&p), b"x").unwrap();
             let t = std::time::SystemTime::now() - std::time::Duration::from_hours(1);
-            // Read-only is enough to set the time of a file this process owns.
-            fa::open(&at(&p)).unwrap().set_modified(t).unwrap();
+            // `set_modified` takes the handle each platform needs (write on Windows).
+            fa::set_modified(&at(&p), t).unwrap();
             p
         };
         let there = |p: &std::path::Path| fa::exists(&at(p));
