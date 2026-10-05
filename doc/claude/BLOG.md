@@ -52,6 +52,7 @@ development. Posts about what is happening in a given month come later.
 | 4 | What loft is for — its goals | [GOALS.md](GOALS.md), [COMPATIBILITY.md](COMPATIBILITY.md) |
 | later | Stability — of loft, and of the libraries and projects built on it | see below |
 | later | Games that feel made by a person, not by an AI | see below |
+| later | The heap is a typed database — its AS/400 origin, and why fast machines wait on memory | subject 4, see below |
 
 **Stability.** Sources for the language: [STABILITY_ROADMAP.md](STABILITY_ROADMAP.md) (the
 tracking view), the `silent-wrong` freeze axis in [.github/LABELS.md](../../.github/LABELS.md),
@@ -64,6 +65,17 @@ and the promise in [COMPATIBILITY.md](COMPATIBILITY.md). For the libraries and p
   ([NATIVE_SWITCHES.md](NATIVE_SWITCHES.md), [BOTH_BACKEND_SWITCHES.md](BOTH_BACKEND_SWITCHES.md)).
   Important for us, but not something a team building an efficient and robust game can work
   with: performance has to be closer to our goals before loft is feasible for them.
+
+**The heap is a typed database.** Its own post, with the AS/400 origin story: a machine whose
+database, language and store were one dependable whole, and loft's bet to win that back without
+the closed, proprietary cage ([GOALS.md](GOALS.md) § the AS/400 passage,
+[COMPATIBILITY.md](COMPATIBILITY.md)). Subject 4 below has the mechanics.
+
+A performance section: why many modern machines feel slower even though they have many more and
+often faster cores. Their memory has grown a lot, and for many programs the processors are in
+fact waiting for memory — showing 100% activity, but only because they are not available for
+other work while they wait. Sources: [GOALS.md](GOALS.md) § Legible cost (the scattered
+allocation that generated loft) and [OWNERSHIP_MODEL.md](OWNERSHIP_MODEL.md) § the control story.
 
 **Games that feel made by a person.** Candidate sources, for the owner to choose from: dryopea's
 design test that *the player cannot lean back* and its design questions settled by measured play
