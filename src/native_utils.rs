@@ -1641,7 +1641,7 @@ pub(crate) const NATIVE_CACHE_KEEP: usize = 512;
 /// Best-effort: a failure costs a recompile later, never a wrong answer.  Opened
 /// read-only, because a write open of a running executable fails on Linux.
 pub(crate) fn touch_cached_binary(path: &std::path::Path) {
-    if let Ok(f) = std::fs::File::open(path) {
+    if let Ok(f) = crate::file_access::open(&crate::file_access::PathText::from_os(path)) {
         let _ = f.set_modified(std::time::SystemTime::now());
     }
 }
@@ -1656,19 +1656,20 @@ pub(crate) fn sweep_cached_binaries(
     keep: usize,
 ) {
     let is_key = |s: &str| s.len() == 16 && s.bytes().all(|b| b.is_ascii_hexdigit());
-    let Ok(entries) = std::fs::read_dir(cache_dir) else {
+    use crate::file_access::{self as fa, PathText};
+    let Ok(entries) = fa::read_dir(&PathText::from_os(cache_dir)) else {
         return;
     };
+    let current = PathText::from_os(current);
     let mut keyed = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
+    for path in entries {
         if path == current {
             continue;
         }
-        let name = entry.file_name().to_string_lossy().into_owned();
+        let name = path.parts().last().cloned().unwrap_or_default();
         if let Some(key) = name.strip_prefix("native-") {
             if is_key(key) {
-                let used = entry.metadata().and_then(|m| m.modified()).ok();
+                let used = fa::metadata(&path).and_then(|m| m.modified()).ok();
                 keyed.push((used, path));
                 continue;
             }
@@ -1678,7 +1679,7 @@ pub(crate) fn sweep_cached_binaries(
             .and_then(|r| r.strip_prefix('-'))
         {
             if source_stem != "native" && is_key(key) {
-                let _ = std::fs::remove_file(path);
+                let _ = fa::remove_file(&path);
             }
         }
     }
@@ -1687,7 +1688,7 @@ pub(crate) fn sweep_cached_binaries(
     if keyed.len() > keep_others {
         keyed.sort_by_key(|e| e.0);
         for (_, path) in keyed.drain(..keyed.len() - keep_others) {
-            let _ = std::fs::remove_file(path);
+            let _ = fa::remove_file(&path);
         }
     }
 }
@@ -3033,6 +3034,15 @@ mod publish_cached_binary_tests {
         format!("native-{}", format!("{n:x}").repeat(16))
     }
 
+    /// The cache fixtures write and probe through `file_access`, as the code under test does.
+    fn put(p: &std::path::Path, bytes: &[u8]) {
+        crate::file_access::write(&crate::file_access::PathText::from_os(p), bytes).unwrap();
+    }
+
+    fn there(p: &std::path::Path) -> bool {
+        crate::file_access::exists(&crate::file_access::PathText::from_os(p))
+    }
+
     /// The directory keeps the most recently USED entries: a reuse (`touch_cached_binary`)
     /// outranks a later publish, the entry just published always stays, and a name that is
     /// not a key is not this sweep's business.
@@ -3042,26 +3052,26 @@ mod publish_cached_binary_tests {
         let base = std::time::SystemTime::now() - std::time::Duration::from_hours(1);
         for n in 1..=4u8 {
             let p = dir.join(keyed(n));
-            std::fs::write(&p, [n]).unwrap();
-            let f = std::fs::File::open(&p).unwrap();
+            put(&p, &[n]);
+            let f = crate::file_access::open(&crate::file_access::PathText::from_os(&p)).unwrap();
             f.set_modified(base + std::time::Duration::from_secs(u64::from(n) * 60))
                 .unwrap();
         }
         // The oldest entry is reused, so it is now the most recent of the four.
         touch_cached_binary(&dir.join(keyed(1)));
         let foreign = dir.join("native-notakey");
-        std::fs::write(&foreign, b"x").unwrap();
+        put(&foreign, b"x");
         let current = dir.join(keyed(5));
-        std::fs::write(&current, [5]).unwrap();
+        put(&current, &[5]);
 
         sweep_cached_binaries(&dir, &current, "prog", 3);
 
-        let left = |n: u8| dir.join(keyed(n)).exists();
+        let left = |n: u8| there(&dir.join(keyed(n)));
         assert!(left(5), "the entry just published stays");
         assert!(left(1), "a reused entry outranks newer publishes");
         assert!(left(4), "the most recent publish stays");
         assert!(!left(2) && !left(3), "the least recently used go");
-        assert!(foreign.exists(), "a name that is not a key is left alone");
+        assert!(there(&foreign), "a name that is not a key is left alone");
     }
 
     /// A program named `native.loft` must not read every other program's binary as its
@@ -3070,13 +3080,13 @@ mod publish_cached_binary_tests {
     fn a_source_named_native_sweeps_nothing_of_others() {
         let dir = scratch("native_stem");
         for n in 1..=3u8 {
-            std::fs::write(dir.join(keyed(n)), [n]).unwrap();
+            put(&dir.join(keyed(n)), &[n]);
         }
         let current = dir.join(keyed(9));
-        std::fs::write(&current, [9]).unwrap();
+        put(&current, &[9]);
         sweep_cached_binaries(&dir, &current, "native", NATIVE_CACHE_KEEP);
         for n in [1u8, 2, 3, 9] {
-            assert!(dir.join(keyed(n)).exists(), "entry {n} survives");
+            assert!(there(&dir.join(keyed(n))), "entry {n} survives");
         }
     }
 }

@@ -387,21 +387,21 @@ pub fn sweep_own_native_cache(dir: &std::path::Path, stamp: &str) -> u64 {
 /// [`sweep_own_native_cache`], only `dir` is read — the caller passes its own
 /// [`native_cache_dir`].  Answers the bytes freed.
 pub fn evict_own_native_cache(dir: &std::path::Path, want_avail: u64) -> u64 {
-    let Ok(entries) = std::fs::read_dir(dir) else {
+    use crate::file_access::{self as fa, PathText};
+    let Ok(entries) = fa::read_dir(&PathText::from_os(dir)) else {
         return 0;
     };
-    let mut bins: Vec<(std::time::SystemTime, std::path::PathBuf, u64)> = entries
-        .flatten()
-        .filter_map(|entry| {
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
+    let mut bins: Vec<(std::time::SystemTime, String, u64)> = entries
+        .iter()
+        .filter_map(|path| {
+            let name = path.parts().last()?;
             if !(name.starts_with("loft_native_") && name.ends_with("_bin")) {
                 return None;
             }
-            let meta = entry.metadata().ok()?;
+            let meta = fa::metadata(path).ok()?;
             let used = meta.modified().ok()?;
             let idle = used.elapsed().ok()?.as_secs() >= 600;
-            (meta.is_file() && idle).then(|| (used, entry.path(), meta.len()))
+            (fa::is_file(path) && idle).then(|| (used, path.native(), meta.len()))
         })
         .collect();
     bins.sort();
@@ -410,11 +410,9 @@ pub fn evict_own_native_cache(dir: &std::path::Path, want_avail: u64) -> u64 {
         if fs_avail_bytes(dir).is_none_or(|a| a >= want_avail) {
             break;
         }
-        if std::fs::remove_file(&bin).is_ok() {
+        if fa::remove_file(&PathText::host(&bin)).is_ok() {
             freed += len;
-            let mut key = bin.into_os_string();
-            key.push(".key");
-            let _ = std::fs::remove_file(key);
+            let _ = fa::remove_file(&PathText::host(&format!("{bin}.key")));
         }
     }
     freed
@@ -839,35 +837,34 @@ mod reclaim_tests {
     /// `.rs` and every foreign name; with room enough it takes nothing.
     #[test]
     fn eviction_takes_idle_binaries_and_their_keys_only() {
+        use crate::file_access::{self as fa, PathText};
+        let at = |p: &std::path::Path| PathText::from_os(p);
         let dir =
             std::env::temp_dir().join(format!("loft_native_evict_test_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let _ = fa::remove_dir_all(&at(&dir));
+        fa::create_dir_all(&at(&dir)).unwrap();
         let old = |name: &str| {
             let p = dir.join(name);
-            std::fs::write(&p, b"x").unwrap();
+            fa::write(&at(&p), b"x").unwrap();
             let t = std::time::SystemTime::now() - std::time::Duration::from_hours(1);
-            std::fs::OpenOptions::new()
-                .write(true)
-                .open(&p)
-                .unwrap()
-                .set_modified(t)
-                .unwrap();
+            // Read-only is enough to set the time of a file this process owns.
+            fa::open(&at(&p)).unwrap().set_modified(t).unwrap();
             p
         };
+        let there = |p: &std::path::Path| fa::exists(&at(p));
         let idle_bin = old("loft_native_a_bin");
         let idle_key = old("loft_native_a_bin.key");
         let source = old("loft_native_a.rs");
         let foreign = old("other_tool_output");
         let recent = dir.join("loft_native_b_bin");
-        std::fs::write(&recent, b"y").unwrap();
+        fa::write(&at(&recent), b"y").unwrap();
 
         assert_eq!(
             evict_own_native_cache(&dir, 0),
             0,
             "room enough: nothing goes"
         );
-        assert!(idle_bin.exists());
+        assert!(there(&idle_bin));
 
         assert_eq!(
             evict_own_native_cache(&dir, u64::MAX),
@@ -875,15 +872,15 @@ mod reclaim_tests {
             "the one idle binary"
         );
         assert!(
-            !idle_bin.exists() && !idle_key.exists(),
+            !there(&idle_bin) && !there(&idle_key),
             "an idle binary goes with its key"
         );
-        assert!(recent.exists(), "a recently used binary stays");
+        assert!(there(&recent), "a recently used binary stays");
         assert!(
-            source.exists() && foreign.exists(),
+            there(&source) && there(&foreign),
             "sources and foreign names stay"
         );
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = fa::remove_dir_all(&at(&dir));
     }
 
     /// `pid_alive` answers the same three ways on every unix, which is what makes the

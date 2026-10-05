@@ -597,7 +597,7 @@ impl CachedPairError {
 /// A sentence for the reader: no index has been fetched yet, or the one here does not verify.
 pub fn cached_index() -> Result<registry_index::RegistryIndex, String> {
     let (idx_path, sig_path, _) = registry_index::index_paths();
-    if !idx_path.is_file() {
+    if !crate::file_access::is_file(&crate::file_access::PathText::from_os(&idx_path)) {
         return Err(
             "no registry index on this machine yet — `loft search <word>` or \
                     `loft install <library>` fetches it"
