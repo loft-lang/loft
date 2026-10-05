@@ -14,8 +14,7 @@
 struct S { a: u8?, b: u8 }
 
 fn cures(f: float) -> text {
-  x: u8? = 1;
-  x = f as u8?;
+  x: u8? = f as u8?;
   y: u8 = f as u8;
   s = S { a: f as u8?, b: f as u8 };
   s.a = f as u8?;
