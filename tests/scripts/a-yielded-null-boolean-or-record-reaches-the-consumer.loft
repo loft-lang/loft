@@ -1,0 +1,57 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The two channels `a-yielded-null-is-a-value-not-the-end.loft` held fixed, and the two
+// defects they carried on --native.  `formal/coroutines.md` `(G-Next)` produces the yielded
+// value, null included.
+//
+//   iterator<boolean>  a yielded null came out as `true`.  Native stores a boolean as a byte
+//                      whose null is 255; the consumer decoded the transport with `!= 0`,
+//                      which turns 255 into true.  It now hands the byte through.
+//   iterator<S>        `yield m` of an `S?` did not BUILD: the work ref it copies into is a
+//                      nullable `ref(S)?`, and the generator's local declarations asked for its
+//                      zero on the wrapper, which answered a number (`0 as DbRef`, E0605).
+//
+// The interpreter was right on both, so this guard is a backend-divergence guard.
+//
+// Axes this file MOVES:  the channel (the boolean byte · the record reference).
+// Axes it HOLDS FIXED:   the null's position (between two values), a `for` consumer, a
+//                        state-machine generator.
+
+struct S { v: integer }
+
+fn flags(m: boolean?) -> iterator<boolean> {
+  yield true;
+  yield m;
+  yield false;
+}
+
+fn records(m: S?) -> iterator<S> {
+  yield S { v: 1 };
+  yield m;
+  yield S { v: 2 };
+}
+
+fn flag_seq() -> text {
+  r = "";
+  for y in flags(null) { r += "[{y}]"; }
+  r
+}
+
+fn record_seq() -> text {
+  r = "";
+  for y in records(null) { r += "[{y}]"; }
+  r
+}
+
+fn record_total() -> integer {
+  t = 0;
+  for y in records(S { v: 40 }) { t += y.v; }
+  t
+}
+
+fn main() {
+  assert(flag_seq() == "[true][null][false]", "boolean: got {flag_seq()}");
+  assert(record_seq() == "[{{v:1}}][null][{{v:2}}]", "record: got {record_seq()}");
+  assert(record_total() == 43, "a present record still reads through: got {record_total()}");
+}

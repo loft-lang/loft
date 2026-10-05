@@ -1572,7 +1572,10 @@ fn persistent_default(tp: &Type) -> String {
     if is_text_slot(tp) {
         return "String::new()".to_string();
     }
-    match tp {
+    // `base()` — a NULLABLE heap local (`ref(S)?`, the work ref a `yield m` of an `S?` copies
+    // into) is the same `DbRef` underneath; matched on the wrapper it fell to the number arm
+    // and was declared `DbRef = 0 as DbRef` (E0605, so the generator did not build).
+    match tp.base() {
         // A heap local starts as the null reference and the body's own `OpDatabase` fills
         // it — the same initialiser the per-arm `let` used before these became fields.
         Type::Reference(_, _)
@@ -1594,7 +1597,7 @@ fn persistent_default(tp: &Type) -> String {
         // `0_u32`, a `single` field `f32` and initialised `0.0_f64`, a `boolean` field `u8`
         // and initialised `false` — so a generator holding a local of any of those types
         // did not compile under `--native` at all, while `--interpret` ran it.
-        other => format!("0 as {}", rust_type(other, &Context::Variable)),
+        _ => format!("0 as {}", rust_type(tp, &Context::Variable)),
     }
 }
 
