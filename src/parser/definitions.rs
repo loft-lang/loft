@@ -5041,6 +5041,7 @@ impl Parser {
                     );
                 }
                 let sub_nr = if let Type::Unknown(d) = tp {
+                    // probe: a context-only edit beside the receipt's hunk
                     d
                 } else {
                     self.data.type_def_nr(&tp)

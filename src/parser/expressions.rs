@@ -9114,7 +9114,7 @@ use a separate collection or add after the loop"
     ///
     /// The `??` cure is real rather than aspirational: a discharge at the ROOT of the stored
     /// expression supplies the fallback (`range_guard_inside_discharge`), so the position it
-    /// is offered in is the position it works in.  Every cure here is held to that:
+    /// is offered in is the position it works in.  Every cure here is held to that (probe):
     ///
     /// - The refusal only ever meets a NON-null slot — a nullable one takes the checked
     ///   narrowing instead (`@FR-I-Narrow-Opt`, loft#1812).  So the checked cast is offered
