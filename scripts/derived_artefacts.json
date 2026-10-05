@@ -98,7 +98,6 @@
       ],
       "check": "make -s surface-check",
       "regen": [
-        "cargo build --release -q --target wasm32-unknown-unknown --lib --no-default-features --features random",
         "make -s surface-gen"
       ],
       "ci": true
