@@ -9717,12 +9717,12 @@ fn refill_text_site_declines(
 /// than once (its twins, a second pass) and its sites are named the first time.
 /// Print a `LOFT_TRACE_REFILL_TEXT` line once: a function is emitted more than once (its
 /// twins, a second pass) and each verdict is named the first time.
-pub fn trace_refill_text_once(line: String) {
+pub fn trace_refill_text_once(line: &str) {
     thread_local! {
         static SEEN: std::cell::RefCell<HashSet<String>> =
             std::cell::RefCell::new(HashSet::new());
     }
-    if SEEN.with(|seen| seen.borrow_mut().insert(line.clone())) {
+    if SEEN.with(|seen| seen.borrow_mut().insert(line.to_string())) {
         eprintln!("{line}");
     }
 }
@@ -9738,7 +9738,7 @@ fn trace_refill_text_site(data: &Data, site_fn: u32, target: u32, decline: Optio
         None => format!("refill-text: {from} → {to} admitted"),
         Some(why) => format!("refill-text: {from} → {to} declined — {why}"),
     };
-    trace_refill_text_once(line);
+    trace_refill_text_once(&line);
 }
 
 /// `@FR-R-RefillText` — the pooled call sites of `def_nr` whose callee refills its texts in

@@ -2817,7 +2817,7 @@ impl Output<'_> {
                 (None, None) => Some("no refill buffer"),
             };
             let name = self.data.def(def_nr).name();
-            hoist::trace_refill_text_once(match why {
+            hoist::trace_refill_text_once(&match why {
                 None => format!("refill-text: {name} keeps its elements"),
                 Some(w) => format!("refill-text: {name} keeps no elements — {w}"),
             });

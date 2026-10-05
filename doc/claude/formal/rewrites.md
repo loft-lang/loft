@@ -749,6 +749,44 @@ and `hoist::refill_text_callee` (the admission), `Stores::text_slots` (a), the b
 live-record census (`m1`), with three planted defects under `tests/falsified/` — and pin
 `tests/refill_text.rs`.
 
+```
+  (R-RefillText), the collection clause: a function whose hidden return buffer b is
+                 a (R-RefillBuffer) heap-element buffer — a one-field wrapper of
+                 vector<E>, E a record of scalars and texts — KEEPS b's elements
+                 where the mint keeps b (refill_keeps, the test OpDatabaseRefill
+                 asks): the entry sets the length to 0 and keeps K, the old length,
+                 in place of the releasing clear; a text set into an element the
+                 build appended refills the block its slot owns when the slot is
+                 under K and claims past it; and every exit releases the texts of
+                 the kept slots [len, K) the call did not reuse.  Admitted where the
+                 buffer is cleared once, at entry; every append mints its element
+                 with OpNewRecord, emitted without the prefill (R-CompleteWrite);
+                 and every other mention of b, its field views and its appended
+                 elements is a reservation, a length, an element read, an
+                 append's finish, an element's own set or read, the field's zero,
+                 a self-replace, a release or a return.
+```
+
+**In words.**  The same invariant, one level down: a text slot read by the refill holds 0 or
+a block that slot owns.  Slots under the length at entry are live elements, which own their
+texts; past the length a removal can leave a stale copy of a live element's handle, and fresh
+capacity holds whatever the store left there, so neither is trusted and K is the length, not
+the capacity.  The length stays true during the build — a read of the vector mid-build sees
+only what this call appended — which is why each kept slot still goes through the append (a
+form that overwrote kept elements in place under the old length priced −20 % against this
+form's −16.5 %, and answers a mid-build read with stale elements).  The vector grows only
+when its length reaches its capacity, which is at least K, so a slot past K is never one a
+growth copied.  A second clear inside the build would reset the store under the kept slots;
+a prefilling mint would write 0 over a kept text and strand its block; a removal, an insert
+or any use the whitelist does not name declines.  Effect on zttext `flow_layout_full`
+(x86-64): 26.0 → 22.7 ms, 14.15× → 12.35× Rust, hash unchanged.  Switch
+`LOFT_NO_REFILL_ELEMENTS=1`; `LOFT_TRACE_REFILL_TEXT=1` names each heap-element buffer's
+verdict.  Sites: `hoist::keep_elements` (the admission), `Stores::refill_keep_open` /
+`refill_keep_close` (entry and exit), `codegen_runtime::RefillKeepGuard` (the exit on every
+return), `clear_vector` in `text.rs` (the entry), `substitute_template_body` (the element's
+text set).  Guard `tests/scripts/a-kept-buffers-elements-are-refilled-in-their-slots.loft`,
+with two planted defects under `tests/falsified/`; pin `tests/refill_text.rs`.
+
 ### A rebind hands the displaced store to the call
 
 ```
@@ -4444,10 +4482,14 @@ trace and falsifiers apply, plus the cells named here.  Priced in
   borrows an element for an iteration; this borrows a field for an arm under the same
   value-only reading.  Cells: an arm that appends to the subject's vector after reading the
   binding (declines); one that stores the binding into another record (copies).
-- **The collection clause, for `(R-RefillText)`.**  A pooled buffer whose type holds a
-  VECTOR of text-bearing records: the rule's text clause stops at a type whose heap is text
-  only, and `flow_layout_full`'s runs, `check_request` and `decode` keep the release walk
-  for their vectors.
+- **The pooled clause, for `(R-RefillText)`'s collection clause.**  A return buffer whose
+  elements the callee keeps is only kept across calls the CALLER's buffer survives: a
+  caller that mints it per activation and is itself called per token (zttext's
+  `token_width`) hands a fresh store each time.  Lifting that work-ref into the caller's
+  caller, as `(R-WorkBuffer)`'s transitive clause lifts a work buffer, is the next unit:
+  priced −8 % alone and −31 % with the collection clause on `flow_layout_full`.
+  `check_request` and `decode` build their vectors by other operations than appends and are
+  not admitted.
 - **Text-bearing elements and the work text, for `(R-WorkBuffer)`.**  `vector<τ>` with τ a
   record of scalars and texts is admitted under the mention test unchanged PROVIDED the
   callee refills it under the text clause (otherwise the per-call release is what the pool
