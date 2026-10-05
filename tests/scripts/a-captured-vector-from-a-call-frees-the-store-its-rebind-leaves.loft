@@ -4,7 +4,7 @@
 // loft#1862, the vector half — a vector local bound from a CALL, captured, and rebound.
 //
 // `c = mk(5)` lowers to `c = n_mk(5, __ref_1)`: the callee fills a hidden return buffer, and
-// that buffer is the store a closure built over `c` holds (`formal/ownership.md` `(O-Latest)`).
+// that buffer is the store a closure built over `c` holds (`formal/ownership.md` `@FR-O-Latest`).
 // The capture's build-time backing was recorded only for a view-shaped right-hand side, so a
 // call left none and the type dep answered instead — the buffer of the LAST call.  After a
 // rebind (`c = mk(9)`, through `__ref_2`) the frame freed the build-time buffer and gave up the
