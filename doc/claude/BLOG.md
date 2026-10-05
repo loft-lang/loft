@@ -41,11 +41,29 @@ cannot be corrected by the next commit.
 The posts themselves live in [loft-lang/blog](https://github.com/loft-lang/blog), published at
 `loft-lang.org/blog`; this doc holds their subjects and sources, never their text.
 
+The series opens with **why the project exists and how it is made**, not with a running log of
+development. Posts about what is happening in a given month come later.
+
 | # | post | draws on |
 |---|---|---|
 | 1 | *A team of eager juniors who google a lot* — building the language with AI agents | subjects 1–3 |
 | 2 | How the games, the libraries and the language features connect | subjects 8–12 |
 | 3 | What loft is for — its goals | [GOALS.md](GOALS.md), [COMPATIBILITY.md](COMPATIBILITY.md) |
+| later | Stability — of loft, and of the libraries and projects built on it | see below |
+| later | Games that feel made by a person, not by an AI | see below |
+
+**Stability.** Sources for the language: [STABILITY_ROADMAP.md](STABILITY_ROADMAP.md) (the
+tracking view), the `silent-wrong` freeze axis in [.github/LABELS.md](../../.github/LABELS.md),
+and the promise in [COMPATIBILITY.md](COMPATIBILITY.md). For the libraries and projects:
+[REVALIDATE_LIBS.md](REVALIDATE_LIBS.md) (does a loft change break a shipped library) and the
+`lib-main-health` / `consumer-main-health` workflows in `.github/workflows/`.
+
+**Games that feel made by a person.** Candidate sources, for the owner to choose from: dryopea's
+design test that *the player cannot lean back* and its design questions settled by measured play
+(`dryopea/docs/DESIGN.md`); crawler's rule that content keeps its full design and the engine is
+built to realise it (`crawler/CLAUDE.md` § Conventions); moros as the hand-authored pole beside
+crawler's generated one; and the `draw` skill's iterative craft ([DRAWING.md](DRAWING.md)) against
+one-shot generation.
 
 **Post 2 — games, libraries and language features.** The thread is the dogfood loop (CLAUDE.md
 § Dogfood loop): a real consumer, the lessons it yields, the language fixed, the result shipped.
