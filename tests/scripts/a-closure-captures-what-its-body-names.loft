@@ -15,7 +15,7 @@
 //                        `@FR-L-Escape`'s, in the fn-ref guards.
 //
 // @falsified-at: 58acb001b — interpret exit 1 -> 0, native exit 1 -> 0; the control refused
-//   `other_values`'s non-capturing fn-ref, because `spellings` came first — the leak
+//   `other_values`'s non-capturing fn-ref, because `spellings` came first — the cross-function state
 //   `a-closure-is-judged-by-its-own-function.loft` isolates.
 // @falsified-by: tests/falsified/a-closure-captures-what-its-body-names.patch — the same channels.  Score it with
 //   `scripts/falsify.sh <this file> --patch <that patch>` once 58acb001b is out of reach.
