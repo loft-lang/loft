@@ -6149,7 +6149,7 @@ impl Parser {
     /// A `&<operand>` recorded as a possible side of `&a == &b` that turned out to be part of
     /// a wider operand (`x + &a == y`, `&a + 1 == y`): the sub-expression `&` the binding rule
     /// refuses.
-    fn refuse_amp_operand(&mut self) {
+    pub(crate) fn refuse_amp_operand(&mut self) {
         if !self.first_pass {
             diagnostic!(
                 self.lexer,

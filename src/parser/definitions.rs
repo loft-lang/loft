@@ -4781,7 +4781,28 @@ impl Parser {
 
     /// Parse a type expression that may be a tuple `(T1, T2, ...)` or an identifier-based type.
     /// This is the entry point for type positions (return types, parameter types, annotations).
+    /// @FR-B-RefType-OfVar — `&τ` is the type of a VARIABLE or PARAMETER linked to a place;
+    /// every site that may legally carry one (a declared parameter, a local's annotation, a
+    /// `fn(&τ)` parameter) consumes its `&` before it asks for the type.  A `&` that reaches
+    /// the type itself sits where a value is held — a return, a field, an element, a tuple
+    /// member — and was a parse cascade naming punctuation (*"Expect token {"*, *"Expect
+    /// token ;"*).  Named here instead, and consumed so the type after it still parses.
+    fn refuse_link_type(&mut self) {
+        if self.lexer.peek_token("&") && !self.lexer.peek_token("&&") {
+            self.lexer.has_token("&");
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`&` marks a variable or a parameter as a link to a place (`fn f(x: &T)`, \
+                 `x = &a`); a return type, a field, an element or a tuple member holds a \
+                 value and cannot be a link — drop the `&` (a field that points into another \
+                 store is `reference<T>`)"
+            );
+        }
+    }
+
     pub(crate) fn parse_type_full(&mut self, on_d: u32, returned: bool) -> Option<Type> {
+        self.refuse_link_type();
         if self.lexer.has_token("(") {
             // Tuple type: (T1, T2, ...)
             let mut types = Vec::new();
@@ -4878,6 +4899,7 @@ impl Parser {
 
     #[expect(clippy::too_many_lines, reason = "inherited")]
     fn sub_type_inner(&mut self, on_d: u32, type_name: &str, link: Link) -> Option<Type> {
+        self.refuse_link_type();
         // Plan-06 phase 4d.A — accept tuple as the inner type of
         // `vector<(T1, T2, ...)>` (and reserve the same shape for
         // `iterator<(T1, T2)>` once that lands).  Without this, the

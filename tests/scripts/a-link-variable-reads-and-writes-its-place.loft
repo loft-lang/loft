@@ -1,0 +1,84 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @FR-B-RefType / @FR-B-RefType-OfVar — `&τ` is a TYPE, and a variable or parameter that has
+// it is a live link to its place for its whole life: a read sees the place's current value, a
+// write writes the place, and assigning another value writes THROUGH rather than re-pointing.
+// Walked over the linked type and the place it names; it found no defect in these, and this
+// file keeps that negative result.  The positions where `&τ` is refused are
+// `a-link-type-outside-a-variable-is-refused.loft`.
+//
+// Axes this file MOVES:  the linked type (integer · text · struct · vector · hash · enum ·
+//                        nullable), the place (a local · a field · an element · a caller's
+//                        local through a parameter), and the access (read after the place
+//                        moves · write · a later plain assignment).
+
+struct P { x: integer, y: integer }
+struct K { k: integer, v: integer }
+enum Col { Red, Green }
+
+fn set8(n: &integer) {
+  n = 8;
+}
+
+fn scalars() -> text {
+  a = 3;
+  b = &a;
+  a = 5;
+  r = "{b}";
+  b = 4;
+  c: &integer = a;
+  c = c + 1;
+  "{r} {a}"
+}
+
+fn heap_kinds() -> text {
+  t = "a";
+  pt = &t;
+  pt = "z";
+  p = P { x: 1, y: 2 };
+  q = &p;
+  q.x = 9;
+  v: vector<integer> = [1];
+  w = &v;
+  w += [2];
+  h: hash<K[k]> = [K { k: 1, v: 1 }];
+  g = &h;
+  g += [K { k: 2, v: 2 }];
+  "{t} {p.x} {v} {len(h)}"
+}
+
+fn other_kinds() -> text {
+  c = Col.Red;
+  d = &c;
+  d = Col.Green;
+  n: integer? = 3;
+  m = &n;
+  m = null;
+  was = "{n}";
+  m = 7;
+  "{c} {was} {n}"
+}
+
+fn places() -> text {
+  p = P { x: 1, y: 2 };
+  bx = &p.x;
+  bx = 9;
+  v: vector<integer> = [1, 2];
+  be = &v[1];
+  be = 9;
+  a = 1;
+  set8(a);
+  k = 1;
+  seven = 7;
+  bk = &k;
+  bk = seven;
+  "{p.x} {v} {a} {k}"
+}
+
+fn main() {
+  assert(scalars() == "5 5", "read after the place moved, then writes: got {scalars()}");
+  assert(heap_kinds() == "z 9 [1,2] 2", "text, struct, vector, hash links: got {heap_kinds()}");
+  assert(other_kinds() == "Green null 7", "enum and nullable links: got {other_kinds()}");
+  assert(places() == "9 [1,9] 8 7", "field, element, parameter, write-through: got {places()}");
+}

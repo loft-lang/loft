@@ -474,6 +474,20 @@ fn wrong_cast() {
         .error("Unknown cast from E1 to float at wrong_cast:2:29");
 }
 
+/// `@FR-B-RefType-OfVar` — a struct field holds a value, so a `&` field type is refused by
+/// name, not as the punctuation cascade it was (*"Attribute f needs type or definition"*).
+/// The other positions (a return, an element, a tuple member) are
+/// `tests/scripts/a-link-type-outside-a-variable-is-refused.loft`.
+#[test]
+fn link_field_type() {
+    code!("struct Bad { f: &integer }\nfn test() { }").error(
+        "`&` marks a variable or a parameter as a link to a place (`fn f(x: &T)`, `x = &a`); \
+         a return type, a field, an element or a tuple member holds a value and cannot be a \
+         link — drop the `&` (a field that points into another store is `reference<T>`) at \
+         link_field_type:1:25",
+    );
+}
+
 #[test]
 fn field_type() {
     code!("struct Rec { v: u8 }\nfn test() { r = Rec { v: \"a\" }; assert(\"{r}\" == \"{{v:\\\"a\\\"}}\", \"Object\"); }")

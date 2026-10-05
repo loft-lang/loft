@@ -1,0 +1,34 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @FR-B-RefType-OfVar — `&τ` is the type of a VARIABLE or PARAMETER; a return, an element and
+// a tuple member hold values and cannot be links.  Each was refused as a parse cascade naming
+// punctuation — *"Expect token {"*, *"Expect token ;"*, *"Expect token )"* — and now says what
+// is wrong and what to write.  A struct field with a `&` type is the same refusal; it is
+// declared before any function, so it is checked by `tests/parse_errors.rs`, where a
+// declaration-level refusal does not stop the cells beside it.
+//
+// `main` comes first so each expectation belongs to its function.
+
+fn main() {
+  a = 1;
+  println("{returned(a)} {element()} {member()}");
+}
+
+// @EXPECT_ERROR: `&` marks a variable or a parameter as a link to a place
+fn returned(n: &integer) -> &integer {
+  n
+}
+
+// @EXPECT_ERROR: `&` marks a variable or a parameter as a link to a place
+fn element() -> integer {
+  v: vector<&integer> = [];
+  len(v)
+}
+
+// @EXPECT_ERROR: `&` marks a variable or a parameter as a link to a place
+fn member() -> integer {
+  a = 1;
+  t: (&integer, integer) = (a, 1);
+  t.1
+}

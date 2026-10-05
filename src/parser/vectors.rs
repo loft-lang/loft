@@ -495,6 +495,19 @@ impl Parser {
         );
     }
 
+    /// `@FR-B-Ref-AnnotationOnly` — a `&` right after a prefix operator (`!&a`, `-&n`, `~&m`)
+    /// is the sub-expression `&` the binding rule refuses.  The prefix parses its operand
+    /// directly, past the operand-start check in `parse_operators`, so the `&` was left for
+    /// the binary loop: it read as a BINARY `&` (*"No matching operator '&' on 'boolean'
+    /// and 'boolean'"*) with an *"Unknown variable"* for the binding beside it.  Refused here
+    /// in the binding rule's own words, and consumed, so the operand still parses.
+    fn refuse_amp_after_prefix(&mut self) {
+        if self.lexer.peek_token("&") && !self.lexer.peek_token("&&") {
+            self.lexer.has_token("&");
+            self.refuse_amp_operand();
+        }
+    }
+
     // <single> ::= '!' <expression> |
     //              '(' <expression> ')' |
     //              <vector> |
@@ -540,6 +553,7 @@ impl Parser {
             // The operand is a SUB-expression, so the assignment's destination hint does not
             // reach it (loft#1304 — see `Parser::prefix_operand`).
             let outer_prefix = std::mem::replace(&mut self.prefix_operand, true);
+            self.refuse_amp_after_prefix();
             let mut t = self.parse_part(var_tp, val, parent_tp);
             self.prefix_operand = outer_prefix;
             // A unary prefix operator must validate its operand like a binary
@@ -627,6 +641,7 @@ impl Parser {
             // The operand is a SUB-expression, so the assignment's destination hint does not
             // reach it (loft#1304 — see `Parser::prefix_operand`).
             let outer_prefix = std::mem::replace(&mut self.prefix_operand, true);
+            self.refuse_amp_after_prefix();
             let t = self.parse_part(var_tp, val, parent_tp);
             self.prefix_operand = outer_prefix;
             self.known_var_or_type(val, &operand_pos); // @PLN53 F1-1 (see `!` above)
@@ -637,6 +652,7 @@ impl Parser {
             // The operand is a SUB-expression, so the assignment's destination hint does not
             // reach it (loft#1304 — see `Parser::prefix_operand`).
             let outer_prefix = std::mem::replace(&mut self.prefix_operand, true);
+            self.refuse_amp_after_prefix();
             let t = self.parse_part(var_tp, val, parent_tp);
             self.prefix_operand = outer_prefix;
             self.known_var_or_type(val, &operand_pos); // @PLN53 F1-1 (see `!` above)
