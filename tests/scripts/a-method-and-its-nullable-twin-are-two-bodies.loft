@@ -6,6 +6,12 @@
 // spelling the call uses (`x.m()`, `m(x)`); an absent receiver reaches `m(P?)`.  The control for
 // `@FR-F-OneBody`'s nullability-insensitive refusal: it refuses a PLAIN function beside a method
 // over the other nullability (pinned in `tests/issues.rs`), and must leave this pair alone.
+//
+// @falsified-at: 84120b0b1 — INERT on every channel, both backends, and that is this CONTROL's
+//   assertion: the fix that refuses a plain function beside a method over the other nullability
+//   must not move the `self`/`self` pair, and it does not.  The refusals it guards are scored by
+//   their pins in `tests/issues.rs`, which fail on that build.
+// HOLDS: exit, asserts, leak, panic and refusals are equal on both trees.
 
 struct P { x: integer }
 

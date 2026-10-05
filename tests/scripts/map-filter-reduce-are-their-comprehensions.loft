@@ -1,0 +1,89 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-I-Map`, `@FR-I-Filter`, `@FR-I-Reduce` — `src.map(f)`, `src.filter(p)` and
+// `src.reduce(a, g)` ARE their comprehension and loop forms: each cell computes both and a
+// hand-computed literal, so a lowering that drifts from the definition fails on either side.
+// Crossed: element type (integer, text, struct, nullable, tuple), source (vector, slice, empty),
+// callback (lambda, capturing lambda, fn-ref), a chain, a fold's ORDER, a struct accumulator
+// (the loft-bodied fold; scalar and text folds are the runtime's), and the copy `(I-Comp)`
+// makes — a filtered struct is a fresh store, so writing it leaves the source alone.
+// `@FR-I-Done` — a walk stops exactly at the length it observes each round: removing the
+// current element visits every element once, a keyed record removed before the walk reaches it
+// is never visited, and the source is evaluated once.  The walk found no defect.
+//
+// @falsified-at: none — the walk found no defect, so no earlier build answers wrong.  Each cell
+//   is checked against two independent oracles (the comprehension or loop form, lowered by its
+//   own path, and a hand-computed literal), so a lowering that drifts from the definition fails
+//   it without a control build.
+// HOLDS: exit, asserts, leak, panic and refusals are clean on both backends.
+
+struct P { x: integer, n: text }
+
+struct Acc { total: integer, names: text }
+
+fn dbl(v: integer) -> integer {
+  v * 2
+}
+
+fn big(p: P) -> boolean {
+  p.x > 1
+}
+
+fn count_calls(c: &integer) -> vector<integer> {
+  c += 1;
+  [1, 2, 3]
+}
+
+fn main() {
+  v = [1, 2, 3];
+  k = 7;
+  assert("{v.map(dbl)}" == "{[for x in v { dbl(x) }]}" && "{v.map(dbl)}" == "[2,4,6]", "map, fn-ref");
+  m = v.map(fn(x: integer) -> integer { x + k });
+  assert("{m}" == "{[for x in v { x + k }]}" && "{m}" == "[8,9,10]", "map, capturing lambda");
+  w = [1, 2, 3, 4];
+  assert("{w[1..3].map(dbl)}" == "[4,6]", "map over a slice");
+  e: vector<integer> = [];
+  assert("{e.map(dbl)} {e.filter(fn(x: integer) -> boolean { x > 0 })}" == "[] []", "an empty source");
+  nv: vector<integer?> = [1, null, 3];
+  assert("{nv.map(fn(x: integer?) -> integer { x ?? 0 })}" == "[1,0,3]", "nullable elements");
+  tv = [(1, "a"), (2, "b")];
+  assert("{tv.map(fn(t: (integer, text)) -> integer { t.0 })}" == "[1,2]", "tuple elements");
+  f = [1, 5, 2, 8].filter(fn(x: integer) -> boolean { x > 2 });
+  assert("{f}" == "[5,8]", "filter");
+  ps = [P { x: 1, n: "a" }, P { x: 2, n: "b" }, P { x: 3, n: "c" }];
+  names = ps.filter(big).map(fn(p: P) -> text { p.n });
+  assert("{names}" == "{[for p in ps if big(p) { p.n }]}" && "{names}" == "[\"b\",\"c\"]", "filter then map");
+  kept = ps.filter(big);
+  kept[0].x = 99;
+  assert(ps[1].x == 2 && kept[0].x == 99, "a filtered struct is a fresh copy");
+  assert(w.reduce(0, fn(a: integer, x: integer) -> integer { a * 10 + x }) == 1234, "a fold runs left to right");
+  assert(e.reduce(5, fn(a: integer, x: integer) -> integer { a + x }) == 5, "an empty fold is its seed");
+  assert(["a", "b", "c"].reduce("", fn(a: text, x: text) -> text { a + x }) == "abc", "a text fold");
+  st = ps.reduce(Acc { total: 0, names: "" }, fn(a: Acc, p: P) -> Acc { Acc { total: a.total + p.x, names: a.names + p.n } });
+  assert(st.total == 6 && st.names == "abc", "a struct accumulator: got {st.total} {st.names}");
+  r = [1, 2, 3, 4, 5];
+  seen = 0;
+  for x in r {
+    seen += 1;
+    if x % 2 == 0 {
+      x#remove;
+    }
+  }
+  assert(seen == 5 && "{r}" == "[1,3,5]", "removing the current element visits each once");
+  h: hash<P[x]> = [P { x: 1, n: "a" }, P { x: 2, n: "b" }, P { x: 3, n: "c" }];
+  ks = "";
+  for p in h {
+    ks += "{p.x}";
+    if p.x == 1 {
+      h[3] = null;
+    }
+  }
+  assert(ks == "12" && len(h) == 2, "a record removed ahead of the walk is not visited");
+  c = 0;
+  t = 0;
+  for x in count_calls(c) {
+    t += x;
+  }
+  assert(t == 6 && c == 1, "the source is evaluated once");
+}
