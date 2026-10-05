@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @I90 — Shared utilities & data structures
 
-//! The rule's guard: compiler code reaches the file system only through `file_access`.
+//! The rule's guard: compiler code reaches the file system, and reasons about path names,
+//! only through `file_access`.
 //!
 //! Every line in `src/` outside this module that touches the file system directly — a
 //! `std::fs` call, a `File::open`, `Path::exists()`, `canonicalize`, a separator handled by
@@ -32,6 +33,18 @@ const PATTERNS: &[&str] = &[
     ".symlink_metadata(",
     "MAIN_SEPARATOR",
     r#"replace('\\', "/")"#,
+    // Path-NAME logic through `std::path` (owner, 2026-10-03: "use this tool where we do
+    // some logic on filenames/directories"): the name operations `file_access` answers by
+    // the host flavor's rules.  `.parent()` is left out — a tree's or a scope's parent is
+    // spelled the same, and a count that cannot tell them apart would not be honest.
+    ".file_name()",
+    ".file_stem()",
+    ".extension()",
+    ".with_extension(",
+    ".set_extension(",
+    ".with_file_name(",
+    ".has_root()",
+    ".is_relative()",
 ];
 
 const BASELINE: &str = "src/file_access/direct.baseline";
@@ -173,6 +186,10 @@ fn the_guard_sees_what_it_must_and_nothing_else() {
     assert!(line_accesses("    fs::write(&p, x)?;"));
     assert!(line_accesses("    if p.exists() {"));
     assert!(line_accesses(r#"    s.replace('\\', "/")"#));
+    assert!(line_accesses(
+        "    let ext = p.extension().unwrap_or_default();"
+    ));
+    assert!(!line_accesses("    let up = scope.parent();"));
     assert!(!line_accesses("    // std::fs::write is not called here"));
     assert!(!line_accesses(
         r#"    out.push_str("std::fs::write(&p, b)?;");"#
