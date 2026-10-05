@@ -138,6 +138,7 @@ resolved once per DESCENT and inlined into it, as `fast_key` is for the probe lo
 | L6 | `--native` lowers a lookup or an append on a statically known `hash<T[integer]>` to a typed entry point: no `Content` slice, no `Stores::find` dispatch, no type-table walk per element | M | the remaining ~250 instr of a lookup, ~900 of an insert |
 | L7 | removal: carry the home bucket instead of re-hashing the cluster | S | `hash_remove` ≈ −10 % (est.) |
 | L8 | `for e in hash` sorts its walk DECORATED: one key read per record into `(key, index)` pairs, sorted; the comparator form resolved two stores and dispatched on the kind per comparison | XS | `hash_walk` 540 → 257 µs/op, 5.93× → 2.83× (measured) |
+| L8b | L8's compound clause: two to four integer parts decorated as one array per record | XS | `reload_and_record` 10.88× → 7.06×, `mapfile_to_painted` 10.56× → 9.10× (measured) |
 
 L1–L4 are the clear cases — each shows in the statistics and has one visible reason.
 Estimated together they take lookups from ~6× to ~3.5× and the fills to ~4×; reaching 2×
@@ -308,6 +309,15 @@ hash has none; the tie-break is what makes the two forms one order).  `hash_walk
 order against `keys::compare` pair by pair; the 188 corpus cells that walk a hash run clean
 under it, and `a-hash-walk-orders-every-key-width` pins the four widths).  A float, a
 compound or a 1-byte key keeps the comparator.
+
+**The compound clause (2026-10-05).**  A key of two to four integer parts — every integer kind
+`compare_ref` reads, a 1-byte part included — is decorated as `([i64; N], index)`, a
+descending part as its bitwise complement (a hash key refuses descending parts, so the hash
+walk never meets one; `compare` honours them and the sort is generic).  Found by profiling
+bench 17's worst keyed row: `reload_and_record` walks two `hash<…[q, r]>` per pass and spent
+about 60 % in the comparator sort.  Same emitted program, the runtime A/B: `reload_and_record`
+10.88× → 7.06×, `mapfile_to_painted` 10.56× → 9.10× (`stats.py`, x86-64), hashes unchanged.
+Guard `a-hash-walk-orders-a-compound-key`, with its planted defect (only the first part read).
 
 What remains of the row is the walk: 22 ns per element through `OpStep` → `step_ordered` →
 `arena::slot` and two field reads, against the twin's 6 ns `HashMap` lookup — the

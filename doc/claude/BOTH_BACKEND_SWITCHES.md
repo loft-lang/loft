@@ -509,7 +509,10 @@ and an `index` insert look its duplicate up before it descends — with it off, 
 resolved once per search (`keys::FastOrder`), a full-key lookup stops at the equal node
 (`tree::find_exact`), and a refused `tree::add` names the duplicate its own descent met
 (`index` fill-and-find −33 %) — and is the first bisect step for a wrong element, order or
-lookup out of a `sorted`, `ordered` or `index`.  **`LOFT_NO_ONE_PROBE_INSERT=1`** makes a
+lookup out of a `sorted`, `ordered` or `index`.  It also sorts a `for e in hash` walk through
+`keys::compare` again, where with it off a single key, or a compound key of two to four
+integer parts, is read once per record and the reads sorted (`keys::sort_records`) — the
+first bisect step for a hash walk visiting in the wrong order.  **`LOFT_NO_ONE_PROBE_INSERT=1`** makes a
 `hash` insert look its duplicate up and then file the entry as two hash-and-probe walks again
 — with it off, one walk answers both (`hash::probe_for_insert`; a 5,000-key fill −37 %) — and
 is the first bisect step for a lost, duplicated or unfindable `hash` entry.
