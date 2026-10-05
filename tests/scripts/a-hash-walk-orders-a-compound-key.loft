@@ -15,6 +15,11 @@
 //
 // @falsified-at: none — a lever with no earlier build to catch; the cells assert the walk's
 //   order themselves, and the planted defect is recorded with `@falsified-by:` below.
+// @falsified-by: tests/falsified/a-hash-walk-orders-a-compound-key.patch — the decorated form
+//   reading only the first part of the key.
+//   CHANNEL: an assertion, on BOTH backends; a panic under LOFT_KEYED_VERIFY=1.
+//   WITNESS: `c1 -2,-1 -2,0 -2,1 -1,-1 -1,0 -1,1 0,-1 0,1 0,0 …` (r out of order within q).
+//   HOLDS: LOFT_NO_FAST_ORDER=1 green on both (the comparator road).
 
 struct P { q: integer, r: integer, v: integer }
 struct ByQR { rows: hash<P[q, r]> }

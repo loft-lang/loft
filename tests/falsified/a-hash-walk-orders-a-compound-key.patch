@@ -1,0 +1,13 @@
+diff --git a/src/keys.rs b/src/keys.rs
+index bd4a8fcc8..1f0f23d5b 100644
+--- a/src/keys.rs
++++ b/src/keys.rs
+@@ -3421,7 +3421,7 @@ fn compound_order<const N: usize>(
+     for (i, r) in recs.iter().enumerate() {
+         let s = store(r, stores);
+         let mut key = [0_i64; N];
+-        for (part, k) in key.iter_mut().zip(keys) {
++        for (part, k) in key.iter_mut().zip(keys).take(1) {
+             *part = int_key_part(s, r, k)?;
+         }
+         pairs.push((key, i as u32));
