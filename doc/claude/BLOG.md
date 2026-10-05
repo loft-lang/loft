@@ -25,6 +25,34 @@ cannot be corrected by the next commit.
 - **A consumer repo is read, never written.** Cite its files; quote its measurements with
   their decision tag (`@M094`), which is how the source stays findable.
 
+## The series
+
+The posts themselves live in [loft-lang/blog](https://github.com/loft-lang/blog), published at
+`loft-lang.org/blog`; this doc holds their subjects and sources, never their text.
+
+| # | post | draws on |
+|---|---|---|
+| 1 | *A team of eager juniors who google a lot* — building the language with AI agents | subjects 1–3 |
+| 2 | How the games, the libraries and the language features connect | subjects 8–12 |
+| 3 | What loft is for — its goals | [GOALS.md](GOALS.md), [COMPATIBILITY.md](COMPATIBILITY.md) |
+
+**Post 2 — games, libraries and language features.** The thread is the dogfood loop (CLAUDE.md
+§ Dogfood loop): a real consumer, the lessons it yields, the language fixed, the result shipped.
+Told through its cycles:
+
+- game → library: a library that began as one game's code and now serves several — `fixstep`
+  from dryopea's timers, `text2d` from dryopea's text, `drawing` from crawler's sprite renderer,
+  the `hex_*` family from hexbody.
+- game → language: each consumer's queue of defects it hit (`dryopea/QUESTIONS_FOR_LOFT.md`,
+  `crawler/LOFT-HANDOFF.md`, `routing/docs/loft-feedback.md`); the `hit-by:<project>` labels
+  on loft-lang/loft say who found what, and the silent wrong answers are the stories.
+- the two-agent split: the language's agent builds and fixes, each consumer's agent uses and
+  breaks, and neither edits the other's tree.
+
+**Post 3 — loft's goals.** [GOALS.md](GOALS.md) is the source: the purpose, goals A–G, and *"the
+destination is BORING"* — a tool noticed only when it is missing. [COMPATIBILITY.md](COMPATIBILITY.md)
+carries the promise behind it: after the freeze, a working program keeps working.
+
 ## The subjects, by how unusual they are
 
 ### 1. A language its builder cannot remember building
