@@ -1,0 +1,14 @@
+diff --git a/src/state/codegen.rs b/src/state/codegen.rs
+index 65853fb5a..437920d00 100644
+--- a/src/state/codegen.rs
++++ b/src/state/codegen.rs
+@@ -5319,7 +5319,8 @@ impl State {
+         for (i, arg) in args.iter().enumerate() {
+             if i < param_types.len() && matches!(param_types[i].base(), Type::Function(..)) {
+                 self.gen_fn_ref_value_node(arg, stack);
+-            } else if i < param_types.len()
++            } else if false
++                && i < param_types.len()
+                 && self.push_forwarded_link(stack, &param_types[i], &arg.to_owned_value())
+             {
+                 // @FR-L-Apply — binds the parameters as a direct call does: a `&` binding

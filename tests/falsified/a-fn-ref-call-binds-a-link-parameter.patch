@@ -1,0 +1,267 @@
+diff --git b/src/generation/emit.rs a/src/generation/emit.rs
+index bac757fc2..938293056 100644
+--- b/src/generation/emit.rs
++++ a/src/generation/emit.rs
+@@ -1494,24 +1494,15 @@ impl Output<'_> {
+             } else {
+                 None
+             };
+-            let link_arg =
+-                i < param_types.len() && matches!(param_types[i].base(), Type::RefVar(_));
+-            let text_link_arg = link_arg
++            let text_link_arg = i < param_types.len()
+                 && matches!(param_types[i].base(),
+                     Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)));
+             if let Some(respelled) = tuple_place {
+                 write!(w, "let _farg_{i} = {respelled}; ")?;
+-            } else if link_arg
+-                && !(text_link_arg && store_mask & (1 << i) != 0)
+-                && !candidates.is_empty()
+-            {
+-                // @FR-L-Apply — a `&` parameter: the `&mut` slot a direct call hands over, spelled by the one
+-                // argument emitter (`emit_call_arg`) against a candidate — every candidate
+-                // agrees on this parameter's type.  The argument is `OpCreateStack(var)`, which
+-                // has no spelling of its own outside that emitter: bound raw, a `&P` parameter
+-                // read `let _farg_0 = ;` and the crate did not build (`(L-Apply)` binds the
+-                // parameters as a direct call does).  A text FIELD or element for `&text` keeps
+-                // its store instance (`store_mask`, below).
++            } else if text_link_arg && store_mask & (1 << i) == 0 && !candidates.is_empty() {
++                // A text VARIABLE for a `&text` parameter: the `&mut String` a direct call
++                // hands over, spelled by the one argument emitter (`emit_call_arg`) against a
++                // candidate — every candidate agrees on this parameter's type.
+                 let cand = self.data.def(candidates[0].d_nr);
+                 let mut buf = Vec::new();
+                 self.emit_call_arg(&mut buf, cand, i, arg)?;
+diff --git b/src/parser/definitions.rs a/src/parser/definitions.rs
+index 8521daeb6..3282bfc54 100644
+--- b/src/parser/definitions.rs
++++ a/src/parser/definitions.rs
+@@ -4251,13 +4251,6 @@ impl Parser {
+             if self.lexer.peek_token(")") {
+                 break;
+             }
+-            // @FR-L-Escape — `fn(&T)`: the type of a function with a `&` parameter, as
+-            // `Type::render` prints it.
+-            // `(B-Ref-Intro)` admits `&τ` for every τ and a lambda `fn(p: &P) { … }` has this
+-            // type, so a parameter, field or local that holds one must be able to say so; the
+-            // link goes through `ref_var_type`, the one place a declared `&` parameter is
+-            // decided, so a `&` refused there is refused here too.
+-            let is_ref = self.lexer.has_token("&");
+             // loft#1540 — `fn(const T)`: a parameter the function behind the reference may not
+             // write, so a value-const value can be handed through it (C124, D-bind-45).
+             let is_const = self.lexer.has_keyword("const");
+@@ -4270,7 +4263,7 @@ impl Parser {
+                 );
+             }
+             if let Some(tp) = self.parse_type_full(d_nr, false) {
+-                args.push(if is_ref { self.ref_var_type(tp) } else { tp });
++                args.push(tp);
+                 consts.push(is_const);
+             }
+             if !self.lexer.has_token(",") {
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index 13d6ed1c4..50f924454 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -21900,13 +21900,7 @@ impl Parser {
+         // Re-created per function-body check; small cost, avoids
+         // persisting state across passes or across unrelated checks.
+         let mut callee_cache = crate::fxhash::FxHashMap::default();
+-        find_written_vars(
+-            &code,
+-            &self.data,
+-            &self.vars,
+-            &mut written,
+-            &mut callee_cache,
+-        );
++        find_written_vars(&code, &self.data, &mut written, &mut callee_cache);
+         // Enhancement: when a for-loop variable is FIELD-WRITTEN (OpSet*
+         // through the loop var, not just loop-advance Set), also mark the
+         // collection it iterates over as written.  The dep chain is:
+@@ -22638,14 +22632,13 @@ pub(crate) fn op_writes_first_arg(name: &str) -> bool {
+ pub(crate) fn find_written_vars(
+     code: &Value,
+     data: &Data,
+-    vars: &crate::variables::Function,
+     written: &mut crate::fxhash::FxHashSet<u16>,
+     callee_cache: &mut crate::fxhash::FxHashMap<u32, Vec<bool>>,
+ ) {
+     match code {
+         Value::Set(v, body) => {
+             written.insert(*v);
+-            find_written_vars(body, data, vars, written, callee_cache);
++            find_written_vars(body, data, written, callee_cache);
+         }
+         Value::Call(fn_nr, args) => {
+             let def = data.def(*fn_nr);
+@@ -22673,7 +22666,7 @@ pub(crate) fn find_written_vars(
+                 if i == 1 && second_arg_write {
+                     collect_vars_in(arg, written);
+                 }
+-                find_written_vars(arg, data, vars, written, callee_cache);
++                find_written_vars(arg, data, written, callee_cache);
+             }
+             // the callee may mutate one of its by-value parameters
+             // through a field write (e.g. `fn add(self: Box, x) { self.items += [x] }`).
+@@ -22694,53 +22687,35 @@ pub(crate) fn find_written_vars(
+                 }
+             }
+         }
+-        // A call through a fn-ref: the callee is not known here, but the fn-ref's TYPE names
+-        // which parameters are `&`, and handing a value to one IS a write the callee may make —
+-        // `fn app(f: fn(&P), p: &P) { f(p); }` was told to drop the `&` it needs.
+-        Value::CallRef(f, args) => {
+-            let params = match (*f < vars.count()).then(|| vars.tp(*f).base()) {
+-                Some(Type::Function(params, ..)) => params.clone(),
+-                _ => Vec::new(),
+-            };
+-            for (i, arg) in args.iter().enumerate() {
+-                if params
+-                    .get(i)
+-                    .is_some_and(|p| matches!(p.base(), Type::RefVar(_)))
+-                {
+-                    collect_vars_in(arg, written);
+-                }
+-                find_written_vars(arg, data, vars, written, callee_cache);
+-            }
+-        }
+         Value::Block(block) | Value::Loop(block) => {
+             for item in &block.operators {
+-                find_written_vars(item, data, vars, written, callee_cache);
++                find_written_vars(item, data, written, callee_cache);
+             }
+         }
+         Value::Insert(list) => {
+             for item in list {
+-                find_written_vars(item, data, vars, written, callee_cache);
++                find_written_vars(item, data, written, callee_cache);
+             }
+         }
+         Value::If(cond, then, els) => {
+-            find_written_vars(cond, data, vars, written, callee_cache);
+-            find_written_vars(then, data, vars, written, callee_cache);
+-            find_written_vars(els, data, vars, written, callee_cache);
++            find_written_vars(cond, data, written, callee_cache);
++            find_written_vars(then, data, written, callee_cache);
++            find_written_vars(els, data, written, callee_cache);
+         }
+         Value::Return(v) | Value::Drop(v) => {
+-            find_written_vars(v, data, vars, written, callee_cache);
++            find_written_vars(v, data, written, callee_cache);
+         }
+         // T1.5: TuplePut writes to the ref-tuple variable via its element assignment.
+         Value::TuplePut(var_nr, _, inner) => {
+             written.insert(*var_nr);
+-            find_written_vars(inner, data, vars, written, callee_cache);
++            find_written_vars(inner, data, written, callee_cache);
+         }
+         Value::Iter(_, create, next, extra) => {
+-            find_written_vars(create, data, vars, written, callee_cache);
+-            find_written_vars(next, data, vars, written, callee_cache);
+-            find_written_vars(extra, data, vars, written, callee_cache);
++            find_written_vars(create, data, written, callee_cache);
++            find_written_vars(next, data, written, callee_cache);
++            find_written_vars(extra, data, written, callee_cache);
+         }
+-        Value::Span(b) => find_written_vars(&b.1, data, vars, written, callee_cache),
++        Value::Span(b) => find_written_vars(&b.1, data, written, callee_cache),
+         _ => {}
+     }
+ }
+@@ -22824,7 +22799,7 @@ fn callee_param_writes(
+     }
+     let body = def.code().clone();
+     let mut written = crate::fxhash::FxHashSet::default();
+-    find_written_vars(&body, data, def.variables(), &mut written, cache);
++    find_written_vars(&body, data, &mut written, cache);
+     let result: Vec<bool> = (0..n).map(|i| written.contains(&(i as u16))).collect();
+     // Monotone merge with any prior placeholder entry.
+     let prev = cache.get(&fn_nr).cloned().unwrap_or_else(|| vec![false; n]);
+diff --git b/src/scopes/move_elide.rs a/src/scopes/move_elide.rs
+index edcff5722..3e59f67c6 100644
+--- b/src/scopes/move_elide.rs
++++ a/src/scopes/move_elide.rs
+@@ -327,7 +327,6 @@ pub(super) fn move_elide(data: &mut Data) {
+             crate::parser::find_written_vars(
+                 &data.def(d_nr).code,
+                 data,
+-                data.def(d_nr).variables(),
+                 &mut written,
+                 &mut HashMap::default(),
+             );
+diff --git b/src/state/codegen.rs a/src/state/codegen.rs
+index 65853fb5a..4d8cee2a2 100644
+--- b/src/state/codegen.rs
++++ a/src/state/codegen.rs
+@@ -4551,7 +4551,17 @@ impl State {
+         for (a_nr, a) in stack.data.def(op).attributes().iter().enumerate() {
+             if a.mutable {
+                 let stack_before = stack.position;
+-                if self.push_forwarded_link(stack, &a.typedef, &parameters[a_nr]) {
++                // When a RefVar argument is passed directly to a matching RefVar parameter
++                // (e.g. a dispatcher forwarding its text-buffer arg to a variant), emit only
++                // OpVarRef to push the raw DbRef — do NOT emit the trailing OpGetStackText /
++                // OpGetStackRef that generate_var would normally add.
++                if matches!(a.typedef, Type::RefVar(_))
++                    && let Value::Var(v) = &parameters[a_nr]
++                    && matches!(stack.function.tp(*v), Type::RefVar(_))
++                {
++                    let var_pos = stack.var_pos(*v);
++                    stack.add_op("OpVarRef", self);
++                    self.code_add(var_pos);
+                     tps.push(a.typedef.clone());
+                 } else if stack.data.def(op).name() == "OpSetInt4"
+                     && let Value::TupleGet(tvar, tidx) = parameters[a_nr].unspan()
+@@ -5272,25 +5282,6 @@ impl State {
+         }
+     }
+ 
+-    /// A `&` argument that is itself a `&` binding — a dispatcher forwarding its text buffer
+-    /// to a variant, a function handing its `&P` parameter on — is passed as the LINK: only
+-    /// `OpVarRef`, the raw DbRef, without the `OpGetStack*` read `generate_var` would add.
+-    /// The one home for a direct call and a call through a fn-ref, which bind their
+-    /// parameters alike.  Answers whether it pushed.
+-    fn push_forwarded_link(&mut self, stack: &mut Stack, param: &Type, arg: &Value) -> bool {
+-        if matches!(param, Type::RefVar(_))
+-            && let Value::Var(v) = arg
+-            && matches!(stack.function.tp(*v), Type::RefVar(_))
+-        {
+-            let var_pos = stack.var_pos(*v);
+-            stack.add_op("OpVarRef", self);
+-            self.code_add(var_pos);
+-            true
+-        } else {
+-            false
+-        }
+-    }
+-
+     pub(super) fn generate_call_ref(
+         &mut self,
+         stack: &mut Stack,
+@@ -5319,13 +5310,6 @@ impl State {
+         for (i, arg) in args.iter().enumerate() {
+             if i < param_types.len() && matches!(param_types[i].base(), Type::Function(..)) {
+                 self.gen_fn_ref_value_node(arg, stack);
+-            } else if i < param_types.len()
+-                && self.push_forwarded_link(stack, &param_types[i], &arg.to_owned_value())
+-            {
+-                // @FR-L-Apply — binds the parameters as a direct call does: a `&` binding
+-                // handed to a `&` parameter passes its link on.  Generated as a value, it
+-                // pushed the pointee where the callee reads a link — a `&P` written through a
+-                // fn-ref did not reach the caller, and a `&integer` read off the store.
+             } else {
+                 self.generate_node(arg, stack, false);
+             }
+diff --git b/src/use_analysis.rs a/src/use_analysis.rs
+index 8c14c697b..9684dd922 100644
+--- b/src/use_analysis.rs
++++ a/src/use_analysis.rs
+@@ -1329,7 +1329,7 @@ fn analyze_fn_survival(
+     // the copy-idiom-aware walk above, which excludes `v`'s def and copy-fill.)
+     let written = {
+         let mut w = HashSet::default();
+-        crate::parser::find_written_vars(code, data, function, &mut w, &mut HashMap::default());
++        crate::parser::find_written_vars(code, data, &mut w, &mut HashMap::default());
+         w
+     };
+ 

@@ -7,6 +7,14 @@
 // which now looks inside a call through a fn-ref, still fires when nothing can write.
 //
 // `main` comes first so each expectation belongs to its function.
+//
+// @falsified-at: c8cfeb402 — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 2/2 (the
+//   suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2
+//   -> 2/2.
+// @falsified-by: tests/falsified/a-function-type-link-refusals.patch — the same
+//   channels.  Score it with
+//   `scripts/falsify.sh <this file> --patch <that patch>` once c8cfeb402 is out of reach.
+// HOLDS: nothing runs on either tree (a refusal file).
 
 fn main() {
   q = P { x: 1, y: 2 };

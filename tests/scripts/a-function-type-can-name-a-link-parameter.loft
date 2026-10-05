@@ -15,6 +15,13 @@
 //
 // Axes this file MOVES:  where the type is written (a parameter · a local · a field · with a
 //                        return), the link's type (struct · integer).
+//
+// @falsified-at: c8cfeb402 — interpret exit 1 -> 0, native exit 1 -> 0 (the control does
+//   not parse `fn(&P)`: "Expect token )").
+// @falsified-by: tests/falsified/a-function-type-can-name-a-link-parameter.patch — the same
+//   channels.  Score it with
+//   `scripts/falsify.sh <this file> --patch <that patch>` once c8cfeb402 is out of reach.
+// HOLDS: leak, panic and refusals are clean on both trees and both backends.
 
 struct P { x: integer, y: integer }
 struct HR { f: fn(&P) }

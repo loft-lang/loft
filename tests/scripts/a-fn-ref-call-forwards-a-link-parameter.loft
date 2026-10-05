@@ -10,6 +10,14 @@
 // Until the same change the program did not compile at all — the unused-`&` lint never looked
 // inside a call through a fn-ref, and refused `p` as never modified — which is why this cell
 // sits apart from `a-fn-ref-call-binds-a-link-parameter.loft`.
+//
+// @falsified-at: c8cfeb402 — interpret exit 1 -> 0, native exit 1 -> 0 — the control
+//   refuses `forward` (the unused-`&` lint), so neither backend reaches the value there.
+// @falsified-by: tests/falsified/a-fn-ref-call-forwards-a-link-parameter.patch — interpret exit 101 -> 0,
+//   interpret panicked -> clean; native INERT.  The patch puts back ONLY the interpreter's
+//   value push for a forwarded link, so it scores the value defect the refusal hid.  Score it with
+//   `scripts/falsify.sh <this file> --patch <that patch>` once c8cfeb402 is out of reach.
+// HOLDS: leak and refusals are clean on both trees and both backends.
 
 struct P { x: integer, y: integer }
 
