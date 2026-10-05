@@ -7813,7 +7813,25 @@ use a separate collection or add after the loop"
             rhs_type = Type::Tuple(elems);
         }
         let end = self.lexer.link();
-        let (elems, ref_def_nr): (Vec<Type>, u32) = match &rhs_type {
+        // A NULLABLE tuple has no members to store (`(N-Index)`'s `τ?`): refused with the
+        // names path's cure before the shape is asked of the peeled type.
+        if self.nullable_tuple_elems(&rhs_type).is_some() {
+            if !self.first_pass {
+                let spelled = rhs_type.source_name(&self.data);
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "cannot destructure `{spelled}` — the tuple may be absent, and an \
+                     absent tuple has no members; discharge it first (`(a, b) = t?`, or \
+                     `(a, b) = t ?? (…)`)"
+                );
+            }
+            self.lexer.revert(end);
+            drop(start);
+            *code = Value::Null;
+            return Type::Void;
+        }
+        let (elems, ref_def_nr): (Vec<Type>, u32) = match rhs_type.base() {
             Type::Tuple(elems) => (elems.clone(), u32::MAX),
             Type::Reference(d_nr, _) if self.data.def(*d_nr).name().starts_with("__tuple<") => (
                 self.data
