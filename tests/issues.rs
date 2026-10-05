@@ -10536,6 +10536,58 @@ fn test() { h = H { v: \"a\" }; h.v += \"z\"; assert(h.v == \"a\", \"h\"); }"
     );
 }
 
+/// `@FR-Const-Bind` — a binding-const field's SLOT never re-points (a rebind is refused) while
+/// its contents stay mutable (`a-value-const-scalar-local-can-be-declared` holds the append and
+/// the element write).  `@FR-Const-Compose` — `const v: const T` refuses the rebind AND every
+/// write beneath it: the append and the element write that Const-Bind alone allows.
+#[test]
+fn a_binding_const_field_rebind_is_refused() {
+    code!(
+        "struct H { const v: vector<integer> }
+fn test() { h = H { v: [1] }; h.v = [2]; }"
+    )
+    .error(
+        "cannot reassign const field 'v' of struct 'H' — const fields are write-once-at-construction \
+at a_binding_const_field_rebind_is_refused:2:41",
+    );
+}
+
+#[test]
+fn a_composed_const_field_refuses_its_rebind() {
+    code!(
+        "struct H { const v: const vector<integer> }
+fn test() { h = H { v: [1] }; h.v = [2]; }"
+    )
+    .error(
+        "cannot reassign const field 'v' of struct 'H' — const fields are write-once-at-construction \
+at a_composed_const_field_refuses_its_rebind:2:41",
+    );
+}
+
+#[test]
+fn a_composed_const_field_refuses_its_append() {
+    code!(
+        "struct H { const v: const vector<integer> }
+fn test() { h = H { v: [1] }; h.v += [2]; }"
+    )
+    .error(
+        "cannot mutate value-const field 'v' of struct 'H' — its value is read-only (rebind with \
+'=' to re-point, or drop 'const') at a_composed_const_field_refuses_its_append:2:42",
+    );
+}
+
+#[test]
+fn a_composed_const_field_refuses_an_element_write() {
+    code!(
+        "struct H { const v: const vector<integer> }
+fn test() { h = H { v: [1] }; h.v[0] = 5; }"
+    )
+    .error(
+        "Cannot modify value-const field 'H.v'; its value is read-only \
+at a_composed_const_field_refuses_an_element_write:2:42",
+    );
+}
+
 /// `break value` in void function → compile error.
 #[test]
 fn enhancement_break_value_in_void_function_errors() {

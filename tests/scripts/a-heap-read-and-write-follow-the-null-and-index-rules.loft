@@ -10,6 +10,14 @@
 // bare spellings are the null-continue reads; the `?` spellings are discharges, which answer the
 // type's default instead (`@FR-E-Asgn-Discharge`), and are kept beside them so the two answers
 // cannot be confused.  The walk found no defect: every cell is the rule's answer on both trees.
+//
+// @falsified-at: none — the walk found no defect, so there is no earlier build that answers
+//   wrong; every cell is the rule's answer on both trees.  The control is the hand patch below.
+// @falsified-by: tests/falsified/a-heap-read-and-write-follow-the-null-and-index-rules.patch — `elem_index` no longer counts a negative index
+//   from the end: interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0,
+//   native 1 assertion failures -> 0.  Score it with `scripts/falsify.sh <this file> --patch
+//   <that patch>`.
+// HOLDS: leak, panic and refusals are clean on both trees and both backends.
 
 struct In { c: integer }
 
