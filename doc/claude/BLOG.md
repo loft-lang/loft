@@ -15,6 +15,12 @@ cannot be corrected by the next commit.
 
 ## The rules for every post
 
+- **It is the owner's blog.** He gives each post's subject, its reasoning and its word use. An
+  agent helps — language corrections, ordering, suggested content — and nothing is published
+  until he has approved it and made it something he would say himself. The subjects and
+  outlines below are suggestions to draw on, not posts. The working rules are in the blog
+  repository's `CLAUDE.md`.
+
 - **Re-measure, then quote.** A figure carries the commit or date it was measured at.
 - **Name the ancestors.** A subject below that has precedent in another system says which; a
   post that claims "first" where it is not loses the reader on the one point they can check.
