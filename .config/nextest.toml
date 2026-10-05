@@ -167,7 +167,7 @@ filter = 'binary(native) + binary(n2_cdylib) + binary(n3_parity) + binary(n3_use
 test-group = 'heavy-wide'
 
 # No per-test raise for the corpus runners: `loft_suite` and `native_scripts` are CHUNKED
-# (`loft_suite_00..07`, `native_scripts_00..11`), each a fixed slice of `tests/scripts`, because a
+# (`loft_suite_00..07`, `native_scripts_00..23`), each a fixed slice of `tests/scripts`, because a
 # test that grows with the corpus meets any ceiling eventually.  `scripts/test_duration_gate.py`
 # holds every test to HALF its limit; the owner rules out raising limits (2026-09-24).
 
