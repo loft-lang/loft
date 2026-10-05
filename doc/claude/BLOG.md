@@ -83,7 +83,13 @@ not strictly by logic, so over time records get shuffled inside a store with une
 them. There is still a solution, the costly serialisation and deserialisation of the data inside
 — not ideal either, but relatively quick — and a slow and steady optimiser for stores can be
 built in the future too. (Today a store is already rebuilt dense when it is loaded:
-[DATABASE.md](DATABASE.md) § The interior is taken automatically, @PLN123 arc B.) Sources: [GOALS.md](GOALS.md) § Legible cost (the scattered
+[DATABASE.md](DATABASE.md) § The interior is taken automatically, @PLN123 arc B.)
+
+Frankly, that is close to the model MariaDB, and probably many other databases, use inside too.
+There is an optimiser, but that routine is often not really possible on a database in full use.
+Things are getting better there too, so loft should try a good algorithm in the future as well.
+(Examples to check before quoting: MariaDB's `OPTIMIZE TABLE` rebuilds the table; PostgreSQL's
+`VACUUM FULL` locks it, and tools like `pg_repack` exist to do the same online.) Sources: [GOALS.md](GOALS.md) § Legible cost (the scattered
 allocation that generated loft) and [OWNERSHIP_MODEL.md](OWNERSHIP_MODEL.md) § the control story.
 
 **Games that feel made by a person.** Candidate sources, for the owner to choose from: dryopea's
