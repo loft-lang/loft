@@ -1,0 +1,31 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A channel `a-yielded-null-is-a-value-not-the-end.loft` held fixed.  `formal/coroutines.md`
+// `(G-Next)` produces the yielded value, null included.
+//
+// iterator<boolean> on --native: a yielded null came out as `true`.  Native stores a boolean
+// as a byte whose null is 255; the consumer decoded the transport with `!= 0`, which turns
+// 255 into true.  It now hands the byte through.  The interpreter was right, so this is a
+// backend-divergence guard.  Its record twin, which did not even build, is
+// `a-yielded-null-record-reaches-the-consumer.loft` — a file of its own so that build failure
+// cannot hide this cell's value.
+//
+// Axes this file MOVES:  the boolean's three values (true · null · false).
+// Axes it HOLDS FIXED:   a `for` consumer, a state-machine generator.
+
+fn flags(m: boolean?) -> iterator<boolean> {
+  yield true;
+  yield m;
+  yield false;
+}
+
+fn flag_seq() -> text {
+  r = "";
+  for y in flags(null) { r += "[{y}]"; }
+  r
+}
+
+fn main() {
+  assert(flag_seq() == "[true][null][false]", "boolean: got {flag_seq()}");
+}
