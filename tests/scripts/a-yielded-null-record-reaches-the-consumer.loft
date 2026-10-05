@@ -13,6 +13,13 @@
 // Axes this file MOVES:  the record's presence (a record · null · a record) and a present
 //                        argument read through.
 // Axes it HOLDS FIXED:   a `for` consumer, a state-machine generator.
+//
+// @falsified-at: 04da090bf — native exit 1 -> 0 (the control does not build: E0605);
+//   interpret INERT, expected for a backend-divergence guard.
+// @falsified-by: tests/falsified/a-yielded-null-record-reaches-the-consumer.patch — the same
+//   channels.  Score it with `scripts/falsify.sh <this file> --patch <that patch>` once
+//   04da090bf is out of reach.
+// HOLDS: leak, panic and refusals are clean on both trees and both backends.
 
 struct S { v: integer }
 
