@@ -33,7 +33,10 @@ def tracked_loft(root):
 
 
 def check(binary, path, code, timeout, libs):
-    env = dict(os.environ, LOFT_NO_CACHE="1")
+    # No program cache (each file is checked once per build, and a warm load is not what is
+    # measured), but the stdlib image: it is keyed on each build, so the two binaries never
+    # share one, and parsing `default/` cold for every check made a 5 000-file sweep 90 minutes.
+    env = dict(os.environ, LOFT_NO_CACHE="1", LOFT_STDLIB_CACHE="1")
     cmd = [binary]
     for lib in libs:
         cmd += ["--lib", lib]
