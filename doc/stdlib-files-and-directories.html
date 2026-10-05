@@ -81,7 +81,7 @@
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-files-and-directories.html">write</a></span>(self: <span class="en"><a href="stdlib-file-system.html">File</a></span>, v: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="en"><a href="stdlib-file-system.html">FileResult</a></span> fs#update</code></pre>
-<p>Writes v as UTF-8 text to the file, overwriting existing content.  Returns FileResult.Ok on success and FileResult.Other on an OS write failure (disk full, permission denied, a bad path) — a failed write is OBSERVABLE, not silently swallowed.  Discarding callers (<code>f.write(s)</code> as a statement) are unaffected; check with <code>f.write(s).ok()</code> or match the result.</p>
+<p>Writes v as UTF-8 text at the file's position: the first write through a File replaces the file's content, later ones follow it.  Returns FileResult.Ok on success and FileResult.Other on an OS write failure (disk full, permission denied, a bad path) — a failed write is OBSERVABLE, not silently swallowed.  Discarding callers (<code>f.write(s)</code> as a statement) are unaffected; check with <code>f.write(s).ok()</code> or match the result.</p>
 </div>
 
   </article>

@@ -8945,7 +8945,7 @@ Returns the entries inside a directory, sorted by path — the same order as `li
 pub fn write(self: File, v: text) -> FileResult fs#update
 ```
 
-Writes v as UTF-8 text to the file, overwriting existing content.  Returns FileResult.Ok on success and FileResult.Other on an OS write failure (disk full, permission denied, a bad path) — a failed write is OBSERVABLE, not silently swallowed.  Discarding callers (`f.write(s)` as a statement) are unaffected; check with `f.write(s).ok()` or match the result.
+Writes v as UTF-8 text at the file's position: the first write through a File replaces the file's content, later ones follow it.  Returns FileResult.Ok on success and FileResult.Other on an OS write failure (disk full, permission denied, a bad path) — a failed write is OBSERVABLE, not silently swallowed.  Discarding callers (`f.write(s)` as a statement) are unaffected; check with `f.write(s).ok()` or match the result.
 
 == Binary file I/O
 
