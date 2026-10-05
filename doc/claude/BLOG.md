@@ -101,7 +101,9 @@ fields, named in the type — like a table with an index. A word count is `hash<
 never a position (LOFT.md § Composite types). Those constructions are less common inside games,
 which mostly hold specialised structures in vectors; mainly a general web app would feel the
 strangeness, and with databases in mind most programmers quickly form a mental model that
-matches loft's. Sources: [GOALS.md](GOALS.md) § Legible cost (the scattered
+matches loft's. The exception is `spatial`, which is game-shaped: "everything near this point" is
+one keyed collection rather than a structure each game builds by hand — crawler's nearby-monster
+lookup uses it (`crawler/CLAUDE.md`, `make near-test`). Sources: [GOALS.md](GOALS.md) § Legible cost (the scattered
 allocation that generated loft) and [OWNERSHIP_MODEL.md](OWNERSHIP_MODEL.md) § the control story.
 
 **Games that feel made by a person.** Candidate sources, for the owner to choose from: dryopea's
