@@ -16,7 +16,7 @@
 1 src/database/format.rs
 13 src/database/io.rs
 3 src/database/journal.rs
-12 src/database/loft_file.rs
+5 src/database/loft_file.rs
 6 src/database/spans.rs
 1 src/diagnostic_render.rs
 44 src/documentation.rs
@@ -46,7 +46,7 @@
 10 src/migrate_long.rs
 2 src/native.rs
 97 src/native_lib.rs
-154 src/native_utils.rs
+151 src/native_utils.rs
 2 src/op_census.rs
 36 src/package.rs
 8 src/package_layout.rs

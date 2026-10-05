@@ -84,10 +84,8 @@ impl LoftFile {
         };
         self.realign()?;
         let at = self.file.stream_position()?;
-        let mut file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(&path)?;
+        let mut file =
+            crate::file_access::open_read_write(&crate::file_access::PathText::from_os(&path))?;
         file.seek(SeekFrom::Start(at))?;
         self.file = file;
         self.at = Some(at);
@@ -260,20 +258,18 @@ impl Seek for LoftFile {
 mod tests {
     use super::*;
 
+    fn host(p: &std::path::Path) -> crate::file_access::PathText {
+        crate::file_access::PathText::from_os(p)
+    }
+
     fn scratch(name: &str, bytes: &[u8]) -> std::path::PathBuf {
         let p = std::env::temp_dir().join(format!("loft_file_{name}_{}", std::process::id()));
-        std::fs::write(&p, bytes).unwrap();
+        crate::file_access::write(&host(&p), bytes).unwrap();
         p
     }
 
     fn open(p: &std::path::Path) -> LoftFile {
-        LoftFile::new(
-            std::fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open(p)
-                .unwrap(),
-        )
+        LoftFile::new(crate::file_access::open_read_write(&host(p)).unwrap())
     }
 
     #[test]
@@ -287,7 +283,7 @@ mod tests {
             got.extend_from_slice(&two);
         }
         assert_eq!(got, data);
-        std::fs::remove_file(p).unwrap();
+        crate::file_access::remove_file(&host(&p)).unwrap();
     }
 
     #[test]
@@ -318,14 +314,14 @@ mod tests {
         f.read_exact(&mut rest).unwrap();
         assert_eq!(&rest, b"fghij");
         drop(f);
-        assert_eq!(std::fs::read(&p).unwrap(), b"abcXYfghij");
-        std::fs::remove_file(p).unwrap();
+        assert_eq!(crate::file_access::read(&host(&p)).unwrap(), b"abcXYfghij");
+        crate::file_access::remove_file(&host(&p)).unwrap();
     }
 
     #[test]
     fn a_reader_written_through_reopens_at_the_logical_position() {
         let p = scratch("reader", b"abcdefghij");
-        let mut f = LoftFile::reader(std::fs::File::open(&p).unwrap(), &p);
+        let mut f = LoftFile::reader(crate::file_access::open(&host(&p)).unwrap(), &p);
         let mut three = [0u8; 3];
         f.read_exact(&mut three).unwrap();
         f.write_all(b"XY").unwrap();
@@ -333,8 +329,8 @@ mod tests {
         f.read_exact(&mut rest).unwrap();
         assert_eq!(&rest, b"fghij");
         drop(f);
-        assert_eq!(std::fs::read(&p).unwrap(), b"abcXYfghij");
-        std::fs::remove_file(p).unwrap();
+        assert_eq!(crate::file_access::read(&host(&p)).unwrap(), b"abcXYfghij");
+        crate::file_access::remove_file(&host(&p)).unwrap();
     }
 
     #[test]
@@ -357,7 +353,7 @@ mod tests {
         assert_eq!(f.stream_position().unwrap(), 4);
         drop(f);
         assert_eq!(std::fs::read(&p).unwrap(), b"abcZef");
-        std::fs::remove_file(p).unwrap();
+        crate::file_access::remove_file(&host(&p)).unwrap();
     }
 
     #[test]
@@ -375,6 +371,6 @@ mod tests {
         assert_eq!(f.seek(SeekFrom::Start(1)).unwrap(), 1);
         f.read_exact(&mut two).unwrap();
         assert_eq!(&two, b"12");
-        std::fs::remove_file(p).unwrap();
+        crate::file_access::remove_file(&host(&p)).unwrap();
     }
 }
