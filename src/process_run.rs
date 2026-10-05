@@ -127,7 +127,7 @@ fn own_code(c: i64) -> i64 {
 }
 
 fn own_code_on(c: i64, windows: bool) -> i64 {
-    if windows && c & 0xff == 0 && (1..=64).contains(&(c >> 8)) {
+    if windows && c.trailing_zeros() >= 8 && (1..=64).contains(&(c >> 8)) {
         128 + (c >> 8)
     } else {
         c
