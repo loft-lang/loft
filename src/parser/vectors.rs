@@ -6492,27 +6492,35 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 // `emit_nullable_slot_write` is the shared home; a struct field holding the
                 // same slot goes through it too.
                 let src_elems = self.tuple_elements(in_t).unwrap_or_default();
-                for (i, val) in values.iter().enumerate() {
-                    if !self.first_pass
-                        && let Type::Enum(syn, true, _) = self.data.attr_type(ed_nr, i)
-                        && let Some(src_tp) = src_elems.get(i)
-                        && self.needs_nullable_wrap(syn, src_tp)
-                    {
-                        let enum_kt = i32::from(self.data.def(syn).known_type());
-                        let name = self.data.def(ed_nr).attributes[i].name.clone();
-                        let pos = i32::from(
-                            self.database
-                                .position(self.data.def(ed_nr).known_type(), &name),
-                        );
-                        let slot = self.cl(
-                            "OpGetField",
-                            &[Value::Var(elm), Value::Int(pos), Value::Int(enum_kt)],
-                        );
-                        let write = self.emit_nullable_slot_write(syn, &slot, val.clone());
-                        ls.extend(write);
-                        continue;
+                // A tuple of a type variable has no member offsets yet: each monomorph writes
+                // the tuple it closes to (loft#1868).
+                let open_members = (!self.first_pass && self.data.is_open_instance(ed_nr))
+                    .then(|| self.data.def(ed_nr).instance_args.clone());
+                if let Some(members) = open_members {
+                    ls.extend(self.emit_tuple_set_ops(&Value::Var(elm), 0, &members, p.clone()));
+                } else {
+                    for (i, val) in values.iter().enumerate() {
+                        if !self.first_pass
+                            && let Type::Enum(syn, true, _) = self.data.attr_type(ed_nr, i)
+                            && let Some(src_tp) = src_elems.get(i)
+                            && self.needs_nullable_wrap(syn, src_tp)
+                        {
+                            let enum_kt = i32::from(self.data.def(syn).known_type());
+                            let name = self.data.def(ed_nr).attributes[i].name.clone();
+                            let pos = i32::from(
+                                self.database
+                                    .position(self.data.def(ed_nr).known_type(), &name),
+                            );
+                            let slot = self.cl(
+                                "OpGetField",
+                                &[Value::Var(elm), Value::Int(pos), Value::Int(enum_kt)],
+                            );
+                            let write = self.emit_nullable_slot_write(syn, &slot, val.clone());
+                            ls.extend(write);
+                            continue;
+                        }
+                        ls.push(self.set_field(ed_nr, i, 0, Value::Var(elm), val.clone()));
                     }
-                    ls.push(self.set_field(ed_nr, i, 0, Value::Var(elm), val.clone()));
                 }
             } else if let Value::Insert(steps) = p {
                 for l in steps {

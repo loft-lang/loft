@@ -8512,7 +8512,7 @@ impl Parser {
             return Type::Unknown(0);
         }
         // `-> Box<T>` predicts the instance the binding names, as the monomorph declares it.
-        let open = self.open_instance_bindings(&bindings);
+        let open = self.open_instance_bindings(&bindings, g_nr);
         bindings.extend(open);
         let tmpl_returned = self.data.definitions[g_nr as usize].returned.clone();
         let from_tv = bindings
@@ -8937,7 +8937,7 @@ impl Parser {
         bindings.extend(self.associated_bindings(g_nr, &var_bindings));
         // @PLN165 D5 — each open instance the bindings close (`Box<T>` ↦ `Box<integer>`),
         // substituted wherever the template's types mention it.
-        let open = self.open_instance_bindings(&bindings);
+        let open = self.open_instance_bindings(&bindings, g_nr);
         bindings.extend(open);
         // Clone the template data before mutating self.data.
         let tmpl_code = self.data.definitions[g_nr as usize].code.clone();
@@ -10942,8 +10942,31 @@ impl Parser {
             // their recorded arguments: `Box<T>` against `Box<integer>` binds `T` to
             // `integer`.  The arguments live in `Data`, where the keystone pairing below
             // does not look.  A generic enum's instance is an `Enum` (@PLN165 D8).
+            // An open TUPLE (loft#1868) against a tuple — stack or stored — pairs its members.
+            Type::Reference(o, _)
+                if data.is_open_instance(*o) && data.def(*o).instance_of == u32::MAX =>
+            {
+                let members: Vec<Type> = match concrete_tp.base() {
+                    Type::Tuple(ts) => ts.clone(),
+                    Type::Reference(c, _) if data.is_tuple_def(*c) => data
+                        .def(*c)
+                        .attributes()
+                        .iter()
+                        .map(|a| a.typedef.clone())
+                        .collect(),
+                    _ => return Type::Unknown(0),
+                };
+                data.def(*o)
+                    .instance_args
+                    .iter()
+                    .zip(&members)
+                    .map(|(t, a)| Self::resolve_type_var(data, t, tv_nr, a))
+                    .find(|r| !r.is_unknown())
+                    .unwrap_or(Type::Unknown(0))
+            }
             Type::Reference(o, _) | Type::Enum(o, _, _)
                 if data.is_open_instance(*o)
+                    && data.def(*o).instance_of != u32::MAX
                     && matches!(concrete_tp.base(), Type::Reference(c, _) | Type::Enum(c, _, _)
                         if data.def(*c).instance_of == data.def(*o).instance_of) =>
             {
@@ -12459,14 +12482,21 @@ impl Parser {
                 };
                 self.rewrite_generic_type_defaults(args.swap_remove(0))
             }
-            Value::Block(bl) if bl.name == Self::TV_TUPLE_ELEM && bl.operators.len() == 2 => {
+            Value::Block(bl)
+                if bl.name == Self::TV_TUPLE_ELEM && matches!(bl.operators.len(), 2 | 3) =>
+            {
                 let mut bl = *bl;
+                // The member offset a template's tuple FIELD write sits at (loft#1868).
+                let base_pos = match bl.operators.get(2) {
+                    Some(Value::Int(p)) => u16::try_from(*p).unwrap_or(0),
+                    _ => 0,
+                };
                 let src = self.rewrite_generic_type_defaults(bl.operators.remove(1));
-                let elm = bl.operators.remove(0);
+                let elm = self.rewrite_generic_type_defaults(bl.operators.remove(0));
                 let Type::Tuple(elems) = bl.result.base().clone() else {
                     return Value::Null;
                 };
-                let ops = self.emit_tuple_set_ops(&elm, 0, &elems, src);
+                let ops = self.emit_tuple_set_ops(&elm, base_pos, &elems, src);
                 v_block(ops, Type::Void, "tuple_elem_set")
             }
             // loft#1020 — the deferred `== null` / `!= null`.  `bl.result` came through
@@ -14494,6 +14524,15 @@ impl Parser {
     ) -> Vec<Value> {
         let elems_vec = elems.to_vec();
         let tuple_d_nr = self.data.tuple_def(&mut self.lexer, &elems_vec);
+        // A tuple of a type variable has no member offsets yet: each monomorph writes the
+        // tuple it closes to, member by member (loft#1868).
+        if tuple_d_nr != u32::MAX && self.data.is_open_instance(tuple_d_nr) {
+            let mut ops = vec![ref_code.clone(), val_code];
+            if base_pos != 0 {
+                ops.push(Value::Int(i32::from(base_pos)));
+            }
+            return vec![v_block(ops, Type::Tuple(elems_vec), Self::TV_TUPLE_ELEM)];
+        }
         let offsets: Vec<u16> = crate::data::stored_tuple_offsets_for_def(
             &self.data,
             &self.database,
@@ -14743,6 +14782,10 @@ impl Parser {
     /// element at a fixed byte offset within the host record.
     /// Returns a vec because nested-tuple elements expand to multiple
     /// per-leaf set ops.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one arm per member type, the exhaustive match"
+    )]
     fn emit_set_one_element(
         &mut self,
         ref_code: &Value,
@@ -14799,6 +14842,9 @@ impl Parser {
                 self.cl("OpSetByte", &[ref_code.clone(), pos_v, Value::Int(0), v])
             }
             Type::Text(_) => self.cl("OpSetText", &[ref_code.clone(), pos_v, value]),
+            // A plain enum member is its tag byte, as a struct's enum field is (loft#1868: a
+            // generic's tuple element of an enum type was refused here).
+            Type::Enum(_, false, _) => self.cl("OpSetEnum", &[ref_code.clone(), pos_v, value]),
             Type::Reference(inner_d_nr, _) | Type::Enum(inner_d_nr, true, _) => {
                 let type_nr = if self.first_pass {
                     Value::Int(i32::from(u16::MAX))

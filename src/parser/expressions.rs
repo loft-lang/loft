@@ -7070,10 +7070,21 @@ use a separate collection or add after the loop"
         // `t.0 += [7]` was fixed while `n.0.0 += [7]` still answered `[7, 7]`.  QUALITY.md's
         // `spellings` screen is what named it — the audit row moved, and the cell built to
         // answer *why* found the half-fix.
-        let rhs_built_into_place = extract_nested_tuple_lhs(to).is_some()
+        // A generic struct's field (`Parser::TV_FIELD`, deferred to each monomorph) is the
+        // other place a literal is built through: appending the built vector again doubled
+        // the field once per `+=` — `b.items += [x]` twice in a `Bag<T>` template left six
+        // elements (loft#1868's matrix).
+        let place_builds_literals = extract_nested_tuple_lhs(to).is_some()
+            || matches!(to.unspan(), Value::Block(bl) if bl.name == Self::TV_FIELD);
+        // Built INTO the place means the block's accumulator is bound to the place and kept:
+        // a comprehension binds it there and then re-points it at a fresh store, and that
+        // vector still has to be appended.
+        let rhs_built_into_place = place_builds_literals
             && matches!(code.unspan(), Value::Block(bl)
-                if matches!(bl.operators.first().map(Value::unspan), Some(Value::Set(_, adopted))
-                    if adopted.unspan() == to.unspan()));
+                if matches!(bl.operators.first().map(Value::unspan), Some(Value::Set(acc, adopted))
+                    if adopted.unspan() == to.unspan()
+                        && !bl.operators[1..].iter().any(|o|
+                            matches!(o.unspan(), Value::Set(w, _) if w == acc))));
         if !self.first_pass
             && op == "+="
             && let Type::Vector(elm_tp, _) = &f_type.base().clone()

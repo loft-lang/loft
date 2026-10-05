@@ -161,6 +161,23 @@ impl Parser {
         );
     }
 
+    /// The appends a text compound `place += code` makes on its work text `var_nr` — the
+    /// one spelling the getter place and the deferred field place share.
+    fn text_append_ops(&mut self, code: &Value, tp: &Type, var_nr: u16) -> Vec<Value> {
+        if let Value::Insert(cd) = code {
+            cd.clone()
+        } else if Self::appends_rendering(tp) {
+            match self.append_rendering(var_nr, tp, code) {
+                Value::Insert(parts) => parts,
+                _ => Vec::new(),
+            }
+        } else if *tp == Type::Character {
+            vec![self.cl("OpAppendCharacter", &[Value::Var(var_nr), code.clone()])]
+        } else {
+            vec![self.cl("OpAppendText", &[Value::Var(var_nr), code.clone()])]
+        }
+    }
+
     pub(crate) fn assign_text(
         &mut self,
         code: &mut Value,
@@ -170,27 +187,45 @@ impl Parser {
         var_nr: u16,
     ) {
         // The const guard is `parse_assign_op_inner`'s, run before it routed here.
+        // A text field of a generic struct (`Parser::TV_FIELD`, deferred to each monomorph)
+        // is a place too: its compound reads into the work text and writes it back through
+        // the deferred field write, as a plain field's does through `OpSetText`.  Without it
+        // the append ran on a work text nothing had read or would write back — a panic on the
+        // interpreter and E0425 on `--native` for `b.name += "x"` in a `Bag<T>` template.
+        if op != "="
+            && let Value::Block(bl) = to.unspan()
+            && bl.name == Self::TV_FIELD
+            && let [Value::Int(open), Value::Int(f_nr), receiver] = &bl.operators[..]
+        {
+            let (open, f_nr, receiver) = (*open, *f_nr, receiver.clone());
+            let mut ls = vec![v_set(var_nr, to.clone())];
+            ls.extend(self.text_append_ops(code, tp, var_nr));
+            ls.push(v_block(
+                vec![
+                    Value::Int(open),
+                    Value::Int(f_nr),
+                    Value::Text("=".to_string()),
+                    receiver,
+                    v_block(
+                        vec![Value::Var(var_nr)],
+                        self.vars.tp(var_nr).clone(),
+                        Self::TV_SELECT_ARG,
+                    ),
+                ],
+                Type::Void,
+                Self::TV_FIELD_SET,
+            ));
+            *code = Value::Insert(ls);
+            return;
+        }
         if let Value::Call(_, parms) = to.unspan().clone() {
             if op == "=" {
                 let mut p = parms.clone();
                 p.push(code.clone());
                 *code = self.cl("OpSetText", &p);
             } else {
-                let mut ls = Vec::new();
-                ls.push(v_set(var_nr, to.clone()));
-                if let Value::Insert(cd) = code {
-                    for c in cd {
-                        ls.push(c.clone());
-                    }
-                } else if Self::appends_rendering(tp) {
-                    if let Value::Insert(parts) = self.append_rendering(var_nr, tp, code) {
-                        ls.extend(parts);
-                    }
-                } else if *tp == Type::Character {
-                    ls.push(self.cl("OpAppendCharacter", &[Value::Var(var_nr), code.clone()]));
-                } else {
-                    ls.push(self.cl("OpAppendText", &[Value::Var(var_nr), code.clone()]));
-                }
+                let mut ls = vec![v_set(var_nr, to.clone())];
+                ls.extend(self.text_append_ops(code, tp, var_nr));
                 let mut p = parms.clone();
                 p.push(Value::Var(var_nr));
                 ls.push(self.cl("OpSetText", &p));
@@ -2331,6 +2366,12 @@ impl Parser {
                                     *code = Value::Null;
                                 }
                             } else if let Some(place) =
+                                self.open_tuple_member_place(&unspanned, idx)
+                            {
+                                // loft#1868 — the member of an element of a tuple of a type
+                                // variable: its record's field, deferred to each monomorph.
+                                *code = place;
+                            } else if let Some(place) =
                                 self.stored_tuple_member_place(&unspanned, idx)
                             {
                                 // loft#1698 — a stored tuple's member is its record's field.
@@ -2401,21 +2442,6 @@ impl Parser {
                         if self.tuple_index_out_of_range(idx, elems.len()) {
                             t = Type::Unknown(0);
                         } else {
-                            // Stored-tuple field offset goes through the
-                            // synthetic struct's post-finish layout — same
-                            // offsets `OpGetInt` uses for an ordinary
-                            // struct field.
-                            let elem_offset = if let Some(v) =
-                                crate::data::stored_tuple_offsets_for_def(
-                                    &self.data,
-                                    &self.database,
-                                    d_nr,
-                                    elems.len(),
-                                ) {
-                                u32::from(v[idx])
-                            } else {
-                                crate::data::element_stack_offsets(&elems)[idx] as u32
-                            };
                             let elem_tp = elems[idx].clone();
                             // Carry the BASE's lifetime into the element, exactly as the
                             // plain-tuple site above (P197) and the struct-field read in
@@ -2432,8 +2458,7 @@ impl Parser {
                                 Value::Var(nr) => Some(*nr),
                                 _ => None,
                             };
-                            *code =
-                                self.get_val(&elem_tp, false, elem_offset, code.clone(), u32::MAX);
+                            *code = self.stored_tuple_member_read(d_nr, idx, &elems, code.clone());
                             t = elem_tp;
                             // Same `@FR-O-Oracle` reading as the stack-tuple site above.  When the
                             // base is a VARIABLE that variable IS the base, so it alone is the

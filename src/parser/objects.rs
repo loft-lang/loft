@@ -5535,8 +5535,14 @@ impl Parser {
 
     /// [`Data::open_instance_bindings`](crate::data::Data::open_instance_bindings), with each
     /// concrete instance it mints on pass 2 laid out as [`Parser::instance_def`] lays one out.
-    pub(crate) fn open_instance_bindings(&mut self, bindings: &[(u32, Type)]) -> Vec<(u32, Type)> {
-        let pairs = self.data.open_instance_bindings(&mut self.lexer, bindings);
+    pub(crate) fn open_instance_bindings(
+        &mut self,
+        bindings: &[(u32, Type)],
+        template: u32,
+    ) -> Vec<(u32, Type)> {
+        let pairs = self
+            .data
+            .open_instance_bindings(&mut self.lexer, bindings, template);
         for (_, bound) in &pairs {
             if let Type::Reference(d, _) = bound.base() {
                 self.lay_out_instance(*d);

@@ -10544,6 +10544,21 @@ impl Data {
         bindings: &[(u32, Type)],
     ) {
         let tp = self.close_open(lexer, &f.typedef, bindings);
+        // A field that holds a TUPLE needs its record before the instance is laid out, as a
+        // declared struct's tuple field has it from its parse: missing, the layout waited for
+        // it (`lay_out_late`) and the record took an id after unrelated types, while the
+        // generated `init()` creates it with the instance's fields — every id past it
+        // disagreed on `--native` (a `W<integer>` with `p: (T, T)`).  Innermost first.
+        let mut tuples: Vec<Vec<Type>> = Vec::new();
+        tp.any_node(&mut |t| {
+            if let Type::Tuple(elems) = t.base() {
+                tuples.push(elems.clone());
+            }
+            false
+        });
+        for elems in tuples.into_iter().rev() {
+            self.tuple_def(lexer, &elems);
+        }
         let a_nr = self.add_attribute(lexer, d, &f.name, tp);
         let a = &mut self.definitions[d as usize].attributes[a_nr];
         a.mutable = f.mutable;
@@ -10581,14 +10596,13 @@ impl Data {
         });
         let mut pairs: Vec<(u32, Type)> = Vec::new();
         for o in opens {
-            let template = self.definitions[o as usize].instance_of;
             let args: Vec<Type> = self.definitions[o as usize]
                 .instance_args
                 .clone()
                 .iter()
                 .map(|a| self.close_open(lexer, a, bindings))
                 .collect();
-            let closed = self.instance_def(lexer, template, &args);
+            let closed = self.close_instance(lexer, o, &args);
             if closed != u32::MAX && closed != o {
                 pairs.push((o, Type::Reference(closed, Deps::none())));
             }
@@ -10737,6 +10751,12 @@ impl Data {
                 alignment,
                 size,
             });
+        // A tuple of a TYPE VARIABLE (`(T, U)` inside a template) is an OPEN instance of the
+        // anonymous tuple template (`(G-Type)`): it keeps its members as written, so each
+        // monomorph closes it to the tuple of their bindings ([`Data::close_instance`]).
+        if types.iter().any(|t| self.mentions_type_var(t)) {
+            self.definitions[d as usize].instance_args = types.to_vec();
+        }
         d
     }
 
@@ -11108,7 +11128,62 @@ impl Data {
                 .is_some_and(|p| p.def_type == DefType::Enum)
                 && self.is_open_instance(d.parent);
         }
-        d.instance_of != u32::MAX && d.instance_args.iter().any(|a| self.mentions_type_var(a))
+        (d.instance_of != u32::MAX || self.is_tuple_def(d_nr))
+            && d.instance_args.iter().any(|a| self.mentions_type_var(a))
+    }
+
+    /// The synthetic record of a tuple shape (`__tuple<…>`, [`Data::tuple_def`]) — told by
+    /// its Tuple field group, never by its name.
+    #[must_use]
+    pub fn is_tuple_def(&self, d_nr: u32) -> bool {
+        self.definitions.get(d_nr as usize).is_some_and(|d| {
+            d.field_groups
+                .iter()
+                .any(|g| matches!(g.kind, LinkedFieldKind::Tuple))
+        })
+    }
+
+    /// The open tuples (loft#1868) the template `g` names in its parameters, its return and
+    /// its variables — written as a tuple type or held as its record.
+    fn open_tuples_named_by(&self, g: u32) -> Vec<u32> {
+        let Some(def) = self.definitions.get(g as usize) else {
+            return Vec::new();
+        };
+        let vars = &def.variables;
+        let mut types: Vec<&Type> = def.attributes.iter().map(|a| &a.typedef).collect();
+        types.push(&def.returned);
+        types.extend((0..vars.count()).map(|v| vars.tp(v)));
+        let mut out: Vec<u32> = Vec::new();
+        for tp in types {
+            tp.any_node(&mut |t| {
+                let d = match t.base() {
+                    Type::Reference(r, _) => *r,
+                    tuple @ Type::Tuple(_) => self.type_def_nr(tuple),
+                    _ => u32::MAX,
+                };
+                if d != u32::MAX
+                    && self.is_tuple_def(d)
+                    && self.is_open_instance(d)
+                    && !out.contains(&d)
+                {
+                    out.push(d);
+                }
+                false
+            });
+        }
+        out
+    }
+
+    /// The instance an OPEN instance `open` closes to at the arguments `args`: its template's
+    /// instance, or — for an open TUPLE (loft#1868) — the tuple of those members, the record
+    /// a concrete `vector<(integer, text)>` stores.
+    pub fn close_instance(&mut self, lexer: &mut Lexer, open: u32, args: &[Type]) -> u32 {
+        let template = self.definitions[open as usize].instance_of;
+        if template == u32::MAX && self.is_tuple_def(open) {
+            self.tuple_def(lexer, args)
+        } else {
+            self.instance_def(lexer, template, args)
+        }
     }
 
     /// An instance of a generic FUNCTION bound to a type VARIABLE (`i_1U_n_hole`), minted while
@@ -11206,10 +11281,17 @@ impl Data {
         &mut self,
         lexer: &mut Lexer,
         bindings: &[(u32, Type)],
+        template: u32,
     ) -> Vec<(u32, Type)> {
         let mut pairs: Vec<(u32, Type)> = Vec::new();
+        // An open TUPLE is anonymous, so another template's `(T?, integer)` shares its
+        // placeholder with this one's `T` and would close too — minting tuples, and the
+        // `__nullable<S>` a member `S?` stores as, that nothing asked for (on pass 2, which
+        // H5 refuses).  Only the open tuples this template's own types name are closed.
+        let own_tuples = self.open_tuples_named_by(template);
         for d in 0..self.definitions() {
-            if !self.is_open_instance(d)
+            if (self.is_tuple_def(d) && !own_tuples.contains(&d))
+                || !self.is_open_instance(d)
                 || !bindings.iter().any(|(h, _)| {
                     self.definitions[d as usize]
                         .instance_args
@@ -11219,7 +11301,6 @@ impl Data {
             {
                 continue;
             }
-            let template = self.definitions[d as usize].instance_of;
             let all: Vec<(u32, Type)> = bindings.iter().chain(pairs.iter()).cloned().collect();
             let args: Vec<Type> = self.definitions[d as usize]
                 .instance_args
@@ -11227,7 +11308,7 @@ impl Data {
                 .into_iter()
                 .map(|a| a.substitute_all(&all))
                 .collect();
-            let bound = self.instance_def(lexer, template, &args);
+            let bound = self.close_instance(lexer, d, &args);
             if bound != u32::MAX && bound != d {
                 pairs.push((d, Type::Reference(bound, Deps::none())));
             }

@@ -116,6 +116,8 @@ step feeding one shared IR to both backends, generics behave identically under `
              Inside a template, `Grid<T>` at the template's own variables is an OPEN instance:
              it has no layout, and each monomorph reads the instance its bindings close it to —
              its fields, its variants, its element width, the records it builds (G-Mono).
+             A tuple of the template's variables (`vector<(T, U)>`) is an open instance of the
+             anonymous tuple template, closed the same way to the tuple of their bindings.
              A literal takes its instance from the type expected of it (an annotation, a
              parameter), or else binds each variable from the field values that name it; a
              variable bound nowhere — or only by `null` — is refused naming it.  A call binds a

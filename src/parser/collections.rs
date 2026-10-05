@@ -661,8 +661,11 @@ impl Parser {
                     let db_tp = self.data.def(vec_tp).known_type();
                     let size = self.vector_elem_iter_stride(vtp);
                     // A type variable's element names its variable (@PLN165 C2).
-                    let stride = match vtp.base() {
-                        Type::Reference(tv, _) | Type::Enum(tv, _, _)
+                    // A tuple of a type variable names its open tuple (loft#1868).
+                    let open_tuple = self.open_tuple_of(vtp);
+                    let stride = match (open_tuple, vtp.base()) {
+                        (Some(open), _) => Self::type_var_stride(open),
+                        (_, Type::Reference(tv, _) | Type::Enum(tv, _, _))
                             if (size == 0 && self.data.is_type_var_placeholder(*tv))
                                 || self.data.is_open_instance(*tv) =>
                         {
@@ -4167,23 +4170,11 @@ use #count instead"
                                 let read = if ref_def_nr == u32::MAX {
                                     Value::TupleGet(for_var, i as u16)
                                 } else {
-                                    let elem_offset = if let Some(offs) =
-                                        crate::data::stored_tuple_offsets_for_def(
-                                            &self.data,
-                                            &self.database,
-                                            ref_def_nr,
-                                            elem_types.len(),
-                                        ) {
-                                        u32::from(offs[i])
-                                    } else {
-                                        crate::data::element_stack_offsets(&elem_types)[i] as u32
-                                    };
-                                    self.get_val(
-                                        &elem_tp,
-                                        false,
-                                        elem_offset,
+                                    self.stored_tuple_member_read(
+                                        ref_def_nr,
+                                        i,
+                                        &elem_types,
                                         Value::Var(for_var),
-                                        u32::MAX,
                                     )
                                 };
                                 v_set(var, read)
