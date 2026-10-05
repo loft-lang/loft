@@ -10986,85 +10986,101 @@ use a separate collection or add after the loop"
                         } else {
                             "struct"
                         };
-                    for f in fields {
-                        if f.position != pos as u16 {
-                            continue;
-                        }
+                    // Owned names: the checks below report through `&mut self`.
+                    let written: Vec<String> = fields
+                        .iter()
+                        .filter(|f| f.position == pos as u16)
+                        .map(|f| f.name.clone())
+                        .collect();
+                    for name in written {
                         // The record's layout carries fields with no attribute of their own
                         // (a fn field's `<name>__closure_rec`), so a field's index there is
                         // not its attribute index: resolve it by name.
-                        let f_nr = self.data.attr(d_nr, &f.name);
+                        let f_nr = self.data.attr(d_nr, &name);
                         if f_nr == usize::MAX {
                             continue;
                         }
-                        if !self.data.def(d_nr).attributes()[f_nr].mutable {
-                            diagnostic!(
-                                self.lexer,
-                                Level::Error,
-                                "Cannot write to key field {}.{} create a record instead",
-                                self.data.def(d_nr).name(),
-                                f.name
-                            );
-                        } else if self.data.def(d_nr).attributes()[f_nr].const_field {
-                            // @PLN40 — a `const` field is write-once at construction.  The
-                            // constructor lowers via Value::Insert (a separate path that does
-                            // not reach here), so only a later write lands in this guard.
-                            // Reject a rebind of the whole value: `=` (any type) or a compound
-                            // op (`+=`) on a SCALAR.  ALLOW a compound op on a collection/text
-                            // field — that is an in-place append (contents mutation), consistent
-                            // with the already-allowed element write `t.v[0] = x`.
-                            // `@FR-N-Shape` — through `base()`: a `const v: text?` field
-                            // appends exactly as its dense twin does.
-                            let contents_append = op != "="
-                                && matches!(
-                                    self.data.def(d_nr).attributes()[f_nr].typedef.base(),
-                                    Type::Text(_)
-                                        | Type::Vector(_, _)
-                                        | Type::Sorted(_, _, _)
-                                        | Type::Index(_, _, _)
-                                        | Type::Radix(_, _, _)
-                                        | Type::Trie(_, _, _)
-                                        | Type::Hash(_, _, _)
-                                );
-                            if !contents_append {
-                                diagnostic!(
-                                    self.lexer,
-                                    Level::Error,
-                                    "cannot reassign const field '{}' of {} '{}' — const fields are write-once-at-construction",
-                                    f.name,
-                                    owner_kind,
-                                    self.data.def(d_nr).name()
-                                );
-                            }
-                        }
-                        // @PLN40 Phase 2 — value-const field (`v: const T`).  This is the
-                        // LEAF write to `s.v` itself.  Reject a contents mutation (a compound
-                        // op `+=` append) while ALLOWING a rebind (`=`) that re-points the
-                        // slot.  A by-value SCALAR collapses (no interior distinct from its
-                        // binding), so value-const freezes it fully — reject `=` too.  Writes
-                        // THROUGH the field (`s.v[i]=`, `s.v.x=`) are inner derefs already
-                        // rejected by `lhs_frozen_through` above.  Independent `if` (not
-                        // `else`): it COMPOSES with `const_field` so `const v: const T` is
-                        // fully frozen — const_field blocks the rebind, value_const the append.
-                        if self.data.def(d_nr).attributes()[f_nr].value_const {
-                            // `@FR-Const-ScalarCollapse` — every by-value scalar, the plain
-                            // enum included: `is_scalar` is the one home for which types.
-                            let collapses = crate::data::is_scalar(
-                                &self.data.def(d_nr).attributes()[f_nr].typedef,
-                            );
-                            if op != "=" || collapses {
-                                diagnostic!(
-                                    self.lexer,
-                                    Level::Error,
-                                    "cannot mutate value-const field '{}' of {} '{}' — its value is read-only (rebind with '=' to re-point, or drop 'const')",
-                                    f.name,
-                                    owner_kind,
-                                    self.data.def(d_nr).name()
-                                );
-                            }
-                        }
+                        self.check_field_write(d_nr, f_nr, &name, owner_kind, op);
                     }
                 }
+            }
+        }
+    }
+
+    /// The checks a write to one field of a record answers: a key field is not written (a record
+    /// is made instead), a `const` field is write-once at construction, and a value-const field's
+    /// value is read-only.  `field_name` is the field as the author spelled it, and `owner_kind`
+    /// says whether it sits on a struct or an enum variant.
+    fn check_field_write(
+        &mut self,
+        d_nr: u32,
+        f_nr: usize,
+        field_name: &str,
+        owner_kind: &str,
+        op: &str,
+    ) {
+        if !self.data.def(d_nr).attributes()[f_nr].mutable {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "Cannot write to key field {}.{} create a record instead",
+                self.data.def(d_nr).name(),
+                field_name
+            );
+        } else if self.data.def(d_nr).attributes()[f_nr].const_field {
+            // @PLN40 — a `const` field is write-once at construction.  The
+            // constructor lowers via Value::Insert (a separate path that does
+            // not reach here), so only a later write lands in this guard.
+            // Reject a rebind of the whole value: `=` (any type) or a compound
+            // op (`+=`) on a SCALAR.  ALLOW a compound op on a collection/text
+            // field — that is an in-place append (contents mutation), consistent
+            // with the already-allowed element write `t.v[0] = x`.
+            // `@FR-N-Shape` — through `base()`: a `const v: text?` field
+            // appends exactly as its dense twin does.
+            let contents_append = op != "="
+                && matches!(
+                    self.data.def(d_nr).attributes()[f_nr].typedef.base(),
+                    Type::Text(_)
+                        | Type::Vector(_, _)
+                        | Type::Sorted(_, _, _)
+                        | Type::Index(_, _, _)
+                        | Type::Radix(_, _, _)
+                        | Type::Trie(_, _, _)
+                        | Type::Hash(_, _, _)
+                );
+            if !contents_append {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "cannot reassign const field '{}' of {} '{}' — const fields are write-once-at-construction",
+                    field_name,
+                    owner_kind,
+                    self.data.def(d_nr).name()
+                );
+            }
+        }
+        // @PLN40 Phase 2 — value-const field (`v: const T`).  This is the
+        // LEAF write to `s.v` itself.  Reject a contents mutation (a compound
+        // op `+=` append) while ALLOWING a rebind (`=`) that re-points the
+        // slot.  A by-value SCALAR collapses (no interior distinct from its
+        // binding), so value-const freezes it fully — reject `=` too.  Writes
+        // THROUGH the field (`s.v[i]=`, `s.v.x=`) are inner derefs already
+        // rejected by `lhs_frozen_through` above.  Independent `if` (not
+        // `else`): it COMPOSES with `const_field` so `const v: const T` is
+        // fully frozen — const_field blocks the rebind, value_const the append.
+        if self.data.def(d_nr).attributes()[f_nr].value_const {
+            // `@FR-Const-ScalarCollapse` — every by-value scalar, the plain
+            // enum included: `is_scalar` is the one home for which types.
+            let collapses = crate::data::is_scalar(&self.data.def(d_nr).attributes()[f_nr].typedef);
+            if op != "=" || collapses {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "cannot mutate value-const field '{}' of {} '{}' — its value is read-only (rebind with '=' to re-point, or drop 'const')",
+                    field_name,
+                    owner_kind,
+                    self.data.def(d_nr).name()
+                );
             }
         }
     }
