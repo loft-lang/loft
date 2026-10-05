@@ -1,0 +1,28 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @FR-L-CapBox — a narrow capture refuses the stores its type refuses: an `integer` assigned to
+// a captured non-null `u8` inside the closure is refused exactly as the same assignment on an
+// uncaptured `u8` is (`@FR-I-Narrow`).  The value half is
+// `a-captured-scalar-keeps-its-type-and-its-moment.loft`.
+//
+// `main` comes first so each expectation belongs to its function.
+
+fn main() {
+  println("{captured(300)} {uncaptured(300)}");
+}
+
+// @EXPECT_ERROR: cannot implicitly narrow integer to u8
+fn captured(n: integer) -> integer {
+  x: u8 = 1;
+  f = fn() { x = n; };
+  f();
+  x
+}
+
+// @EXPECT_ERROR: cannot implicitly narrow integer to u8
+fn uncaptured(n: integer) -> integer {
+  x: u8 = 1;
+  x = n;
+  x
+}
