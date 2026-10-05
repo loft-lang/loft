@@ -1,0 +1,35 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A method or a field after an integer literal's dot is a call, as it is on any other receiver
+// (`@FR-F-Rec`'s walk found it on `5.tri()`): no decimal literal has a letter or `_` after its
+// dot, so the lexer ends the integer there.  Read as a float fraction, `5.tri()` was refused
+// with "Problem parsing float" while `(5).tri()` and `x.tri()` compiled.
+//
+// The same literal at the START of a format hole (`"{5.tri()}"`) went wrong a second way: the
+// `.` the lexer split off the number was replayed with the mode it was queued in, which is the
+// string's formatting mode — the parser had already switched the hole to code — so the rest of
+// the hole read as text ("Formatter error").  A queued piece now keeps the state the read
+// before it left.  The floats, the width spec and the tuple index beside them are the controls:
+// each is a dot after a digit that must keep its meaning.
+
+fn tri(self: integer) -> integer {
+  if self == 0 {
+    0
+  } else {
+    self + (self - 1).tri()
+  }
+}
+
+fn main() {
+  assert(5.tri() == 15, "a method on an integer literal");
+  assert(5.abs() == 5, "a stdlib method on an integer literal");
+  assert("{5.tri()}" == "15", "the same call opening a format hole");
+  assert("{5.tri():>4}" == "  15", "with a width spec after it");
+  assert("{ 5.tri() }" == "15", "with a space before it");
+  assert("{5.5}" == "5.5", "a float literal keeps its fraction");
+  assert("{12.5:.2}" == "12.50", "a float literal with a precision spec");
+  assert("{5:>4}" == "   5", "an integer literal with a width spec");
+  t = (7, 1);
+  assert("{t.0}" == "7", "a tuple index after a dot");
+}
