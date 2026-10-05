@@ -1,0 +1,60 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The heap rules of `formal/heap.md`, walked as a matrix on both backends: a reference is a
+// value and its null is one (`@FR-H-RefVal`, `@FR-H-RefNull`); a read through a live reference
+// answers the field and a read through null answers null and continues (`@FR-H-Read`); a write
+// updates in place and a write through null, or out of bounds, is a no-op that continues
+// (`@FR-H-Write`); an appended element starts at its type's zero and null (`@FR-H-NewRec`); and a
+// NEGATIVE index names the element counted from the end, for a read and a write alike.  The
+// bare spellings are the null-continue reads; the `?` spellings are discharges, which answer the
+// type's default instead (`@FR-E-Asgn-Discharge`), and are kept beside them so the two answers
+// cannot be confused.  The walk found no defect: every cell is the rule's answer on both trees.
+
+struct In { c: integer }
+
+struct S { x: integer, t: text, inn: In? }
+
+struct W { s: S? }
+
+fn none() -> S? {
+  null
+}
+
+fn read_x(s: S?) -> integer? {
+  s.x
+}
+
+fn main() {
+  s: S? = null;
+  assert("{s.x}" == "null", "a field read through null");
+  assert("{read_x(null)} {read_x(S { x: 5, t: "", inn: null })}" == "null 5", "through a parameter");
+  assert("{none().x}" == "null", "through a call that answers null");
+  w = W { s: S { x: 1, t: "a", inn: null } };
+  assert("{w.s.inn.c}" == "null", "a chain with a null link");
+  s.x = 9;
+  w.s.inn.c = 9;
+  assert("{w.s.x} {w.s.inn.c}" == "1 null", "writes through null are no-ops");
+  assert("{s?.x} {w.s?.inn?.c}" == "0 0", "a discharge answers the default");
+  v = [10, 20, 30];
+  assert("{v[-1]} {v[-3]}" == "30 10", "a negative index reads from the end");
+  v[-1] = 99;
+  assert("{v}" == "[10,20,99]", "and writes there");
+  assert("{v[5]} {v[-4]}" == "null(oob) null(oob)", "out of bounds reads null");
+  v[7] = 1;
+  v[-9] = 2;
+  assert("{v} {len(v)}" == "[10,20,99] 3", "out-of-bounds writes are no-ops");
+  e: vector<S> = [];
+  e += [S { x: 0, t: "", inn: null }];
+  assert("{e[0].x}|{e[0].t}|{e[0].inn.c} {len(e)}" == "0||null 1", "an appended element");
+  r: vector<S?> = [null, S { x: 4, t: "", inn: null }];
+  assert("{len(r)} {r[0].x} {r[1].x} {r[0] == null}" == "2 null 4 true", "a null element");
+  p = S { x: 1, t: "a", inn: In { c: 2 } };
+  p.x = 9;
+  p.t += "b";
+  p.inn.c = 8;
+  assert("{p.x} {p.t} {p.inn.c}" == "9 ab 8", "writes through a live reference");
+  tv = ["a", "b"];
+  sv = [S { x: 1, t: "", inn: null }];
+  assert("{tv[5]} {sv[3].x}" == "null null(oob)", "out of bounds at text and struct elements");
+}
