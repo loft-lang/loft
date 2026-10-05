@@ -5028,6 +5028,16 @@ pub trait LoftCoroutine {
     /// Freeing twice is not possible: every scope-exit free the generator DOES run nulls
     /// its own field, and the generated body only frees fields that are still set.
     fn drop_stores(&mut self, _stores: &mut Stores) {}
+
+    /// Has this generator reached its end (`(G-Done)`)?  Asked only when an advance
+    /// answered its channel's end sentinel, because that sentinel is also a value a
+    /// generator may yield — `i64::MIN` is the integer null, `"\0"` the text null,
+    /// `DbRef::NULL` a null reference — and `(G-Next)` produces it like any other.
+    /// Every emitted generator overrides this with its own flag; the default keeps the
+    /// sentinel meaning "done" for a generator that has no flag to ask.
+    fn done(&self) -> bool {
+        true
+    }
 }
 
 std::thread_local! {
@@ -5316,7 +5326,7 @@ fn advance_native<R>(
 pub fn coroutine_next_i64(gen_ref: DbRef, stores: &mut Stores) -> i64 {
     advance_native(gen_ref, stores, COROUTINE_EXHAUSTED, |coro, stores| {
         let val = coro.next_i64(stores);
-        (val, val == COROUTINE_EXHAUSTED)
+        (val, val == COROUTINE_EXHAUSTED && coro.done())
     })
 }
 
@@ -5340,7 +5350,7 @@ pub fn coroutine_next_dbref(gen_ref: DbRef, stores: &mut Stores) -> DbRef {
     // check also flips to true here because exhaustion frees the slot.
     advance_native(gen_ref, stores, DbRef::NULL, |coro, stores| {
         let val = coro.next_dbref(stores);
-        (val, val.store_nr == u16::MAX)
+        (val, val.store_nr == u16::MAX && coro.done())
     })
 }
 
@@ -5354,7 +5364,7 @@ pub fn coroutine_next_text(gen_ref: DbRef, stores: &mut Stores) -> String {
         crate::state::STRING_NULL.to_string(),
         |coro, stores| {
             let val = coro.next_text(stores);
-            let done = val == crate::state::STRING_NULL;
+            let done = val == crate::state::STRING_NULL && coro.done();
             (val, done)
         },
     )
