@@ -142,29 +142,44 @@ pub fn feature_signature() -> String {
 /// build must never be loaded by another (its baked store layout / codegen may
 /// differ, which `Store::is_store_file`'s fixed magic does NOT catch).
 ///
-/// Also folds in the running executable's modification time ([`binary_signature_tag`])
-/// so an **uncommitted** compiler rebuild invalidates bundles too — [`BUILD_ID`]
-/// is the git HEAD hash, which does not change across uncommitted edits, leaving
-/// a parser/scopes fix under development at risk of a stale warm-load (see the
-/// plan's "Debugging-iteration cost + dev-safety caveat").
+/// Also folds in the build's source content ([`build_identity_tag`]) so an **uncommitted**
+/// compiler rebuild invalidates bundles too — [`BUILD_ID`] is the git HEAD hash, which does
+/// not change across uncommitted edits, leaving a parser/scopes fix under development at
+/// risk of a stale warm-load (see the plan's "Debugging-iteration cost + dev-safety caveat").
 #[must_use]
 pub fn build_signature() -> String {
     format!(
         "v{CACHE_FORMAT_VERSION}|{LOFT_VERSION}|{BUILD_ID}|{}|{}|{}",
         target_triple(),
         feature_signature(),
-        binary_signature_tag(),
+        build_identity_tag(),
     )
 }
 
-/// A tag for the *running binary's own build*, folded into [`build_signature`].
+/// Which compiler BUILD this is, for the two startup caches (loft#1859): the content hash of
+/// the sources it was built from (`build.rs` `source_stamp`), the flags it was built with,
+/// and whether debug assertions are compiled in — the facts that decide what a parse
+/// produces.  Every binary of one build answers the same, so the loft binary and each test
+/// binary share one stdlib image; keyed on each executable's own modification time, every
+/// test binary of every rebuild wrote its own.  A rebuild from edited sources still moves
+/// it, which is what the executable's mtime was there for.
+#[must_use]
+fn build_identity_tag() -> String {
+    format!(
+        "{}|{}|{}",
+        env!("LOFT_BUILD_STAMP"),
+        env!("LOFT_BUILD_RUSTFLAGS"),
+        cfg!(debug_assertions)
+    )
+}
+
+/// A tag for the *running executable*, folded into [`loft_exe_identity`].
 ///
-/// The executable's modification time changes on every rebuild (cargo rewrites
-/// the binary), so mixing it in makes any rebuild — committed or not —
-/// invalidate program bundles, closing the gap [`BUILD_ID`] (git HEAD) leaves
-/// open for uncommitted dev builds.  Best-effort: returns `""` when the exe path
-/// or its mtime is unavailable, so the signature gracefully falls back to the
-/// [`BUILD_ID`]-only behaviour rather than panicking.
+/// The executable's modification time changes on every rebuild (cargo rewrites the
+/// binary), and it differs between two executables of ONE build — which is why the startup
+/// caches key on [`build_identity_tag`] instead, and why an auto-native artifact, which must
+/// never cross executables, keys on this.  Best-effort: returns `""` when the exe path or its
+/// mtime is unavailable.
 #[must_use]
 fn binary_signature_tag() -> String {
     let Ok(exe) = std::env::current_exe() else {
@@ -272,7 +287,7 @@ pub fn stdlib_cache_key(stdlib_sources: &[(String, String)]) -> [u8; 32] {
     // because someone remembered to bump the format byte by hand.  The two caches answer ONE
     // question — *may a bundle written by another build be read by this one?* — so they fold in
     // the same facts; the format byte goes back to being a second line of defence.
-    put(binary_signature_tag().as_bytes());
+    put(build_identity_tag().as_bytes());
     put(target_triple().as_bytes());
     put(feature_signature().as_bytes());
     put(semantic_env_signature().as_bytes());
@@ -312,6 +327,16 @@ pub const INERT_ENV: &[&str] = &[
     "LOFT_TMPDIR",
     "LOFT_TMPFS_MIN_FREE_MB",
     "LOFT_SOURCE_DIR",
+    // loft#1859 — the build script's own stamps.  `cargo test` and `cargo run` export them
+    // into the process they start, while an installed binary sees none, so counting them
+    // keyed every test binary apart from the `loft` binary of the same build.  Nothing reads
+    // them at run time: the build's values are compiled in (`env!`) and already in the key.
+    "LOFT_BUILD_ID",
+    "LOFT_BUILD_RUSTC",
+    "LOFT_BUILD_RUSTFLAGS",
+    "LOFT_BUILD_STAMP",
+    "LOFT_BUILD_TARGET",
+    "LOFT_FFI_FINGERPRINT",
 ];
 
 /// Whether `name` is an environment variable that may change what a run parses or emits:
@@ -1065,6 +1090,53 @@ fn prune_dir(base: &std::path::Path, budget_bytes: u64, ttl: std::time::Duration
     }
 }
 
+/// How many stdlib images the cache keeps (loft#1859).  One image serves every binary of one
+/// compiler build ([`build_identity_tag`]), so the images in use at once are one per build
+/// that is still running — a checkout's debug and release builds, a sibling checkout's, a
+/// falsify control — which this covers with room to spare.  An image dropped while wanted is
+/// a cold parse of `default/`, then written again.
+pub const KEEP_STDLIB_IMAGES: usize = 16;
+
+/// After writing a stdlib image: keep the [`KEEP_STDLIB_IMAGES`] most recently USED (a warm
+/// load bumps an image's mtime) and remove the rest.  Each build writes one image and none
+/// reads another's, so without this the directory only grows.  A process that still maps a
+/// removed image keeps reading it; one that has yet to open it parses cold.
+pub fn prune_stdlib_images() {
+    prune_stdlib_dir(&cache_base_dir(), KEEP_STDLIB_IMAGES);
+}
+
+/// [`prune_stdlib_images`] against an explicit directory, for the tests.  Only a
+/// `stdlib-<64 hex>.store` name is considered.
+fn prune_stdlib_dir(base: &std::path::Path, keep: usize) {
+    let Ok(entries) = std::fs::read_dir(base) else {
+        return;
+    };
+    let mut images: Vec<(std::time::SystemTime, std::path::PathBuf)> = entries
+        .flatten()
+        .filter(|e| {
+            e.file_name().to_str().is_some_and(|n| {
+                n.strip_prefix("stdlib-")
+                    .and_then(|r| r.strip_suffix(".store"))
+                    .is_some_and(|k| k.len() == 64 && k.bytes().all(|b| b.is_ascii_hexdigit()))
+            })
+        })
+        .map(|e| {
+            let at = e
+                .metadata()
+                .and_then(|m| m.modified())
+                .unwrap_or(std::time::UNIX_EPOCH);
+            (at, e.path())
+        })
+        .collect();
+    if images.len() <= keep {
+        return;
+    }
+    images.sort_by_key(|i| std::cmp::Reverse(i.0)); // newest first
+    for (_, path) in &images[keep..] {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     /// loft#930 — the `--lib` search path is part of the program-cache key.  Keying on
@@ -1553,6 +1625,46 @@ mod tests {
         assert!(
             !dir.join("program-stale.manifest").exists(),
             "the idle bundle's manifest is evicted with it"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// loft#1859 — the stdlib images are bounded: the newest `keep` stay, the rest go, and
+    /// nothing but a `stdlib-<64 hex>.store` is touched.
+    #[test]
+    fn stdlib_images_keep_the_newest_and_nothing_else() {
+        use std::time::{Duration, SystemTime};
+        let dir = std::env::temp_dir().join(format!("loft_stdlib_prune_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let name = |i: u8| format!("stdlib-{}.store", format!("{i:02x}").repeat(32));
+        for i in 0..5u8 {
+            let p = dir.join(name(i));
+            std::fs::write(&p, b"img").unwrap();
+            let when = SystemTime::now() - Duration::from_secs(1000 - u64::from(i) * 100);
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(&p)
+                .unwrap()
+                .set_modified(when)
+                .unwrap();
+        }
+        std::fs::write(dir.join("stdlib-zzz.store"), b"keepme").unwrap();
+        std::fs::write(dir.join("program-aaa.store"), b"keepme").unwrap();
+        prune_stdlib_dir(&dir, 2);
+        for i in 0..3u8 {
+            assert!(!dir.join(name(i)).exists(), "older image {i} removed");
+        }
+        for i in 3..5u8 {
+            assert!(dir.join(name(i)).exists(), "newest image {i} kept");
+        }
+        assert!(
+            dir.join("stdlib-zzz.store").exists(),
+            "a foreign name is left alone"
+        );
+        assert!(
+            dir.join("program-aaa.store").exists(),
+            "a program bundle is left alone"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
