@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// A `par` whose worker answers TEXT collects each worker's results in an output record of its
+// `@FR-H-Claim` (`@C137`) — a `par` whose worker answers TEXT collects each worker's results in an output record of its
 // own: one text handle per row the worker ran.  On `--native` that record was sized for the
 // handles alone and written from byte 0, so the first handle overwrote the record's size
 // header — the word the store reads as the block's length.  Nothing read that word back in a

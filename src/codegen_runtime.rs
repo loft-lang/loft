@@ -4181,7 +4181,7 @@ where
     let n_threads = n_threads.max(1) as usize;
     let batches = crate::parallel::parallel_workers(stores, n_threads, n, |start, end, mut ws| {
         let row_count = end - start;
-        // The s_pos array record needs 4 bytes for the record-size header (fld 0..4) plus
+        // `@FR-H-Claim` — the s_pos array record needs 4 bytes for the record-size header (fld 0..4) plus
         // 4 bytes per row; writes start at fld 4 — writing from fld 0 overwrote the record's
         // own header word, which a later claim then read as the block's size.  The twin of
         // `parallel.rs`'s interpreter worker.

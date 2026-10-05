@@ -4648,3 +4648,17 @@ problem.  And with those problems gone and not worked around, the rest of the lo
 benefit also".  @PLN157 had worked to 4×.  The class split comes from the 2026-10-02 macOS portal
 run: 85 of 182 routines over 3×, 7 of 15 class medians over it — filing all 85 would have been
 noise, while the 23 outliers in healthy classes are individual bugs.
+
+## C137 — A claim promises no value; a slot is read only after it is written
+
+Owner, 2026-10-05, while pricing graphics' `filled` as `[value; count]`: *"if a type assumes
+zero fill that type is wrong"* — and the only legitimate zero fills are `[0; n]` and a record
+whose defaults are all zero written in place.  The poisoned suite (`LOFT_POISON_CLAIM=1`, every
+subject) then found the reliers: the JSON constructors' unwritten fields, a null copied into a
+fresh element, the nullable-slot writer releasing a slot the construction had just minted, a
+comprehension's element copy, the text parser's collection field, the interpreter's stack push
+assigning (dropping) into fresh memory, and on native the par workers — one of them a real
+overrun: the text worker's output record written from its own size header.  Each was fixed to
+write what it had assumed; a test that pinned the exact garbage a deliberately restored stale
+read returned was loosened to pin where it fails.
+

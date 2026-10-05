@@ -130,9 +130,14 @@ impl<'a> Hot<'a> {
     #[inline(always)]
     pub fn put_stack<T: 'static>(&mut self, val: T) {
         // SAFETY: inside the room `push_frame` ensured (`@FR-R-FrameHeadroom`); aligned.  A
-        // WRITE, not an assignment: the slot is fresh stack space, and an assignment drops the
+        // WRITE, not an assignment (`@FR-H-Claim`): the slot is fresh stack space, and an assignment drops the
         // bytes there as a `T` — a `String`'s drop frees whatever pointer they spell.
-        unsafe { self.base.add(self.stack_pos as usize).cast::<T>().write(val) };
+        unsafe {
+            self.base
+                .add(self.stack_pos as usize)
+                .cast::<T>()
+                .write(val)
+        };
         self.stack_pos += crate::variables::aligned_stack_step(size_of::<T>() as u32);
         if self.stack_pos > self.high {
             self.high = self.stack_pos;

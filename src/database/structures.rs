@@ -1494,7 +1494,7 @@ impl Stores {
         });
     }
 
-    /// A NULL source copied into a destination `OpNewRecord` just created
+    /// `@FR-H-Claim` (`@C137`) — a NULL source copied into a destination `OpNewRecord` just created
     /// (`keys::COPY_FRESH_DEST` in `raw_tp`) leaves the destination ABSENT: its bytes WRITTEN
     /// all-zero — a nullable struct-enum's discriminant 0, the only null encoding a fresh slot
     /// has — because a claimed slot holds no value until one is written.  An existing

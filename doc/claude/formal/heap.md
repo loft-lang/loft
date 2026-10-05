@@ -72,20 +72,31 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 value (a reference that points at nothing), not a separate error state — the reference-typed
 analogue of `integer`'s `i64::MIN` null.
 
-### Allocation — a fresh store, zero-initialised
+### Allocation — a fresh store, every field written
 
 ```
   (H-Alloc)    ⟨alloc τ, ⟨ρ, H⟩⟩ → ⟨r, ⟨ρ, H'⟩⟩
                  where s = fresh(H),  r = (s, 0, 0),
-                       H' = H[s ↦ zeroed Store for τ]      (every field/element is its type's null/zero)
+                       H' = H[s ↦ Store for τ, every field/element WRITTEN to its type's default]
   (H-NewRec)   ⟨new-record r_v, ⟨ρ, H⟩⟩ → ⟨r_e, ⟨ρ, H'⟩⟩
                  a fresh record inside the vector/collection store r_v; r_e points at it,
-                 its fields zero/null-initialised, the container's length grown by one.
+                 its fields written before any read, the container's length grown by one.
+  (H-Claim)    the bytes of a claimed block are UNDEFINED until something writes them: a
+                 claim promises no value, zero included.  Every field a construction does not
+                 write from its source is written to the type's default (H-Alloc); a slot
+                 read before it is written is a defect of the code that reads it, never of
+                 the claim.  A zeroed claim is legitimate only as the implementation of a
+                 write the program makes anyway — `[0; n]`, and a record whose every field's
+                 default is zero built in place — and is requested at that site.  (@C137)
 ```
 
 **In words.** Allocating a struct/vector reserves a **fresh** store slot (`OpDatabase`) whose
-content starts fully null/zero — a fresh `store_nr` distinct from every live store, so a new
-value can never coincide with an existing one. Appending an element (`OpNewRecord` /
+fields are WRITTEN to their defaults — a fresh `store_nr` distinct from every live store, so a
+new value can never coincide with an existing one.  The defaults are a write, not the memory's
+state: a type, a constructor or a release walk that reads a slot its own code has not written
+relies on bytes nothing promised (H-Claim), and `LOFT_POISON_CLAIM=1` — which fills every claim
+with 0xDEADBEEF — is the instrument that makes such a read fail; the nightly runs the suite
+under it on both backends. Appending an element (`OpNewRecord` /
 `OpFinishRecord`) claims a record inside the container's store. Construction is a pure
 extension of `H`: it frees nothing and aliases nothing (this is why *constructing* a host
 value is unrestricted under [capabilities.md](capabilities.md)'s `Cap-Own`).

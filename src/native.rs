@@ -3730,7 +3730,7 @@ pub(crate) const JV_DISCR_INT: i32 = 7;
 
 /// Allocate a fresh `JsonValue` record in its own store and return
 /// the DbRef.  Caller writes the discriminant byte at pos+0 and any
-/// variant payload at pos + position(variant_tp, field_name).  The payload is
+/// variant payload at pos + position(variant_tp, field_name).  `@FR-H-Claim`: the payload is
 /// WRITTEN all-zero first — the empty value of every variant field a caller leaves
 /// (an empty `JArray`'s items, an empty `JObject`'s fields): a claimed record is not
 /// zero by any promise.

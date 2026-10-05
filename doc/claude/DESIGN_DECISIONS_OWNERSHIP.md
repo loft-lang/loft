@@ -218,3 +218,21 @@ state, as `(G-Own)` already says for a yielded record.
 
 **Revisit when.** Not stated.  Decided 2026-09-25 — [record](DESIGN_DECISIONS-history.md#c128--a-yielded-lambda-owns-copies-of-what-it-captures).
 **Catalogue:** loft#1676 · `formal/coroutines.md` `(G-Own)`
+
+## C137 — A claim promises no value; a slot is read only after it is written
+
+**Decision.** The store hands out claimed blocks whose bytes are undefined.  Every value is
+written by the code that builds it — its source's fields, else its type's defaults — and a
+type, constructor or reader that relies on a claim's bytes (zero included) is wrong.  A zeroed
+claim is legitimate only as the implementation of a write the program makes anyway: `[0; n]`,
+and a record whose every field defaults to zero built in place.  **Why.** Zero-on-claim hid
+every such defect behind one memset per claim — a cost paid by every program (two 16 MB
+passes in graphics' `canvas`) for a promise the formal rules never made, and the reason a
+read-before-write stayed invisible until a different filler ran.
+
+**Revisit when.** Not stated.  Decided 2026-10-05 — [record](DESIGN_DECISIONS-history.md#c137--a-claim-promises-no-value-a-slot-is-read-only-after-it-is-written).
+**Holds at:** `@C137` — the rule `(H-Claim)` in [formal/heap.md](formal/heap.md); the nightly
+`poison-claim` job (`LOFT_POISON_CLAIM=1` over both backends); guard
+`tests/scripts/a-par-text-result-leaves-its-output-record-intact.loft`.
+**Catalogue:** `formal/heap.md` `(H-Alloc)` `(H-NewRec)` · reads C125
+

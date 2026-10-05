@@ -15088,7 +15088,7 @@ impl Parser {
         let mut list = vec![v_set(src_var, value)];
         let kt = self.data.def(syn).known_type();
         let mut present = Vec::with_capacity(3);
-        // A FRESH slot — an element the construction just minted — holds no value yet, so
+        // `@FR-H-Claim` — a FRESH slot, an element the construction just minted, holds no value yet, so
         // there is nothing to release and nothing to read: its bytes are not zero by any
         // promise.  Every other slot may hold a previous value whose payload is released.
         if kt != u16::MAX && !fresh {

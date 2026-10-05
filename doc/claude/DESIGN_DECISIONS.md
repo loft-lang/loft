@@ -50,6 +50,7 @@ Every entry, by the subject it decides.  Ids are one flat sequence across the su
 - [C124](DESIGN_DECISIONS_OWNERSHIP.md#c124--a-const-value-reaches-only-a-const-parameter-semantics-is-judged-by-the-line-optimisation-by-the-proof) — a `const` value reaches only a `const` parameter; semantics is judged by the line, optimisation by the proof
 - [C125](DESIGN_DECISIONS_OWNERSHIP.md#c125--the-store-model-stays-simple-performance-work-removes-objects-it-does-not-add-a-second-kind-of-object) — The store model stays simple: performance work removes objects, it does not add a second kind of object
 - [C128](DESIGN_DECISIONS_OWNERSHIP.md#c128--a-yielded-lambda-owns-copies-of-what-it-captures) — a yielded lambda owns copies of what it captures
+- [C137](DESIGN_DECISIONS_OWNERSHIP.md#c137--a-claim-promises-no-value-a-slot-is-read-only-after-it-is-written) — A claim promises no value; a slot is read only after it is written
 
 ## Syntax, names and calls — [DESIGN_DECISIONS_SYNTAX.md](DESIGN_DECISIONS_SYNTAX.md)
 - [C132](DESIGN_DECISIONS_SYNTAX.md#c132--operators-are-defined-by-the-stdlib-only-a-user-fn-op-is-an-ordinary-function) — operators are defined by the stdlib only; a user `fn Op…` is an ordinary function
