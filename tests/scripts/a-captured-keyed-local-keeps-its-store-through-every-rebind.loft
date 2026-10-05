@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// loft#1862 — `formal/closures.md` `(L-CapRebind)`: a whole-value rebind of a captured keyed
+// loft#1862 — @FR-L-CapRebind (`formal/closures.md`): a whole-value rebind of a captured keyed
 // local leaves the record with the store it was built with, whatever spells the rebind.
 //
 // Only the non-empty literal minted a fresh store (loft#1447).  A call, a variable, a branch,
