@@ -165,7 +165,8 @@ fn every_guard_says_how_to_score_it_again() {
 #[test]
 fn the_falsify_scorer_reads_its_channels_on_this_platform() {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out = std::process::Command::new("bash")
+    // `git_bash()`: a bare `bash` on a Windows runner is the WSL launcher, with no distribution.
+    let out = std::process::Command::new(git_bash())
         .arg(root.join("scripts/falsify.sh"))
         .arg("--self-test")
         .current_dir(&root)
@@ -3850,6 +3851,8 @@ fn the_outlier_report_reproduces_the_hand_count() {
             "--routines",
             "tests/fixtures/portal/2026-10-02-routines.tsv",
         ])
+        // UTF-8 stdout on every platform: Windows' default code page wrote `×` as `�`.
+        .env("PYTHONUTF8", "1")
         .output()
         .expect("python3 bench/portal/outliers.py");
     let text = String::from_utf8_lossy(&out.stdout);
