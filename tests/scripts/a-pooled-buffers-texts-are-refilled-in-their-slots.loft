@@ -1,0 +1,152 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-RefillText` — a POOLED call buffer whose type's only heap is text is refilled by the
+// callee's refill twin on `--native`: each text slot is written over the block it already owns
+// when the new text fits, released and claimed anew when it does not, and the pool's release
+// walk (`OpClear`, `@FR-H-ClearRelease`) is not emitted.  The interpreter applies no rewrite and
+// is the oracle; every value below is computed by hand.
+//
+// What can go wrong is a text left from the previous call (a slot the literal skipped), a block
+// written past its claim (a text that grows), a text released twice or not at all (the walk
+// dropped with nothing refilling), and a previous result read after the next call through
+// something that still points at its block (c3 keeps whole results by copy, c4 keeps a text).
+// So m1 counts the live records of every store (`store_memory()`'s census) after 10 and after
+// 1 000 calls of each shape, with the pooled buffer still alive: a text leaked per call is
+// ~2 000 records more, which no store-level leak check sees — the pooled store is freed whole.
+// `LOFT_NO_REFILL_TEXT=1`, `LOFT_HOIST_VERIFY=1`, `LOFT_POISON=1`, `LOFT_POISON_CLAIM=1` and
+// `LOFT_STRICT_STORES=1` must answer identically.
+//
+// @falsified-at: none — written before the rewrite it guards; the planted defects are recorded
+//   with `@falsified-by:` below.
+
+enum Kind { Ping, Pong }
+struct Msg { kind: Kind, payload: text }
+struct Env { sender: text, recipient: text, seq: integer, message: Msg }
+struct T2 { a: text, b: text, n: integer }
+
+// msg_ping's shape: a nested record pair, three texts, one of them inside the inner record.
+fn mk_env(i: integer) -> Env {
+  Env { sender: "s{i % 3}", recipient: "", seq: i,
+        message: Msg { kind: if i % 2 == 0 { Kind.Ping } else { Kind.Pong }, payload: "pl{i}" } }
+}
+
+// Texts that shrink, grow past their block (21 and 22 bytes against a 3-byte or empty block),
+// become empty and come back.
+fn mk_sz(i: integer) -> T2 {
+  if i % 4 == 0 { return T2 { a: "abc", b: "", n: i } }
+  if i % 4 == 1 { return T2 { a: "longer than two words", b: "b", n: i } }
+  if i % 4 == 2 { return T2 { a: "", b: "longer than two words!", n: i } }
+  T2 { a: "x{i}", b: "yy", n: i }
+}
+
+fn want_a(i: integer) -> text {
+  if i == 3 { return "x3" }
+  if i == 7 { return "x7" }
+  if i == 11 { return "x11" }
+  if i % 4 == 0 { return "abc" }
+  if i % 4 == 1 { return "longer than two words" }
+  ""
+}
+
+// c1: a over 0..11 = 3·3 + 21·3 + 0 + (2 + 2 + 3) = 79; b = 0 + 1·3 + 22·3 + 2·3 = 75;
+// n = 66  →  220.  Every a is checked against its literal on the turn it is returned.
+fn c1() -> integer {
+  t = 0;
+  for i in 0..12 {
+    e = mk_sz(i);
+    assert(e.a == want_a(i), "c1 a at {i}: '{e.a}'");
+    t += size(e.a) + size(e.b) + e.n;
+  }
+  t
+}
+
+// c2: seq 0..19 = 190; pings at the even i = 10; bytes: sender 2·20 = 40, recipient 0,
+// payload "pl0".."pl9" 3·10 + "pl10".."pl19" 4·10 = 70  →  110.  The last turn is read whole.
+fn c2() -> text {
+  seq = 0;
+  pings = 0;
+  bytes = 0;
+  last = "";
+  for i in 0..20 {
+    e = mk_env(i);
+    seq += e.seq;
+    if e.message.kind == Kind.Ping { pings += 1; }
+    bytes += size(e.sender) + size(e.recipient) + size(e.message.payload);
+    last = "{e.sender}/{e.recipient}/{e.message.payload}";
+  }
+  "{seq} {pings} {bytes} {last}"
+}
+
+// c3: whole results kept by copy across the next call.  a over 0..7 = 3 + 21 + 0 + 2 + 3 +
+// 21 + 0 + 2 = 52; b = 0 + 1 + 22 + 2 + 0 + 1 + 22 + 2 = 50  →  102.
+fn c3() -> integer {
+  kept: vector<T2> = [];
+  for i in 0..8 { e = mk_sz(i); kept += [e]; }
+  assert(len(kept) == 8, "c3 len {len(kept)}");
+  assert(kept[1]?.a == "longer than two words" && kept[2]?.b == "longer than two words!",
+         "c3 grown texts '{kept[1]?.a}' '{kept[2]?.b}'");
+  assert(kept[3]?.a == "x3" && kept[7]?.a == "x7" && kept[0]?.b == "" && kept[2]?.a == "",
+         "c3 kept texts");
+  t = 0;
+  for k in kept { t += size(k.a) + size(k.b); }
+  t
+}
+
+// c4: a text of the previous result kept as a text across the next call — the a of turns
+// 0..6, each followed by "|": "abc|longer than two words||x3|abc|longer than two words||".
+fn c4() -> text {
+  prev = "";
+  joined = "";
+  for i in 0..8 {
+    e = mk_sz(i);
+    if i > 0 { joined += prev + "|"; }
+    prev = e.a;
+  }
+  joined
+}
+
+fn census_records() -> integer {
+  cr_t = store_memory();
+  cr_i = cr_t.find("records ");
+  if !cr_i { return -1 }
+  cr_j = cr_i + 8;
+  cr_n = 0;
+  while cr_j < len(cr_t) && cr_t[cr_j] >= '0' && cr_t[cr_j] <= '9' {
+    cr_n = cr_n * 10 + (cr_t[cr_j] as integer - '0' as integer);
+    cr_j += 1;
+  }
+  cr_n
+}
+
+// Each shape's loop in its own function, so its pooled buffer is alive when the census is
+// taken.
+fn m1_env(n: integer) -> integer {
+  t = 0;
+  for i in 0..n { e = mk_env(i); t += size(e.message.payload); }
+  assert(t > 0, "m1_env ran");
+  census_records()
+}
+fn m1_sz(n: integer) -> integer {
+  t = 0;
+  for i in 0..n { e = mk_sz(i); t += size(e.a) + size(e.b) + 1; }
+  assert(t > 0, "m1_sz ran");
+  census_records()
+}
+
+// m1 — the live records after 1 000 calls equal those after 10, for each shape.
+fn m1() {
+  assert(census_records() >= 0, "m1: the census answers");
+  assert(m1_env(1000) == m1_env(10), "m1 env shape grows: {m1_env(10)} -> {m1_env(1000)} records");
+  assert(m1_sz(1000) == m1_sz(10), "m1 sized shape grows: {m1_sz(10)} -> {m1_sz(1000)} records");
+  println("m1 true");
+}
+
+fn main() {
+  assert(c1() == 220, "c1 {c1()}");
+  assert(c2() == "190 10 110 s1//pl19", "c2 {c2()}");
+  assert(c3() == 102, "c3 {c3()}");
+  assert(c4() == "abc|longer than two words||x3|abc|longer than two words||", "c4 {c4()}");
+  m1();
+  println("ok");
+}
