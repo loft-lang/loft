@@ -1,0 +1,196 @@
+diff --git b/src/data.rs a/src/data.rs
+index 1e847633a..515f28de9 100644
+--- b/src/data.rs
++++ a/src/data.rs
+@@ -13334,21 +13334,6 @@ impl Data {
+         self.type_name_with(tp, false)
+     }
+ 
+-    /// A type as its author can write it back into the source — the spelling a refusal's
+-    /// cure names (`cast with \`as u8?\``).  An integer, nullable or not, is named by its
+-    /// alias or range ([`Self::display_type_name`]); every other type keeps its
+-    /// [`Type::source_name`], which carries a keyed collection's keys.  `source_name` alone
+-    /// spells a ranged integer `integer(0, 255)`, which does not parse, so a cure written
+-    /// with it could not be pasted (loft#1786's class).
+-    #[must_use]
+-    pub fn written_type_name(&self, tp: &Type) -> String {
+-        if matches!(tp.base(), Type::Integer(_)) {
+-            self.display_type_name(tp)
+-        } else {
+-            tp.source_name(self)
+-        }
+-    }
+-
+     /// A type's name as a reader should see it — `type_name()`, advice, hover text: an
+     /// integer is named by its alias (`u8`, `i16`, a user's `type Lim = …`) or its range
+     /// (`integer limit(0, 10)`), inside a collection or a function type too (loft#1824).
+diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
+index ea38e5d3a..1e920aed1 100644
+--- b/src/parser/expressions.rs
++++ a/src/parser/expressions.rs
+@@ -2619,39 +2619,22 @@ use a separate collection or add after the loop"
+     /// so its cure is to give the value the field's type where the value is built.  One home
+     /// for the assignment and the struct literal, which accept the same values (loft#1072)
+     /// and so refuse the same ones in the same words.
+-    ///
+-    /// `field` names the field when the site knows it (a struct literal: `S.a`).  The type a
+-    /// cast cure names is spelled as the author writes it (`as u8?`): `source_name` spells a
+-    /// ranged integer `integer(0, 255)`, which does not parse.  Only a SCALAR has a cast; a
+-    /// record, a fn-ref or a text field is refused with the diagnosis alone.
+-    pub(crate) fn field_store_refusal(
+-        &mut self,
+-        s_type: &Type,
+-        f_type: &Type,
+-        field: Option<&str>,
+-    ) {
++    pub(crate) fn field_store_refusal(&mut self, s_type: &Type, f_type: &Type) {
+         let got = s_type.source_name(&self.data);
+-        let want = self.data.written_type_name(f_type);
+-        let target = field.map_or_else(|| "a field".to_string(), |f| format!("field {f}"));
++        let want = f_type.source_name(&self.data);
+         if matches!(f_type.base(), Type::Vector(..)) {
+             diagnostic!(
+                 self.lexer,
+                 Level::Error,
+-                "Cannot assign {got} to {target} of type {want} — build the value at the \
++                "Cannot assign {got} to a field of type {want} — build the value at the \
+                  field's type (declare it `: {want}` where it is made)"
+             );
+-        } else if crate::data::is_scalar(f_type) && crate::data::is_scalar(s_type) {
+-            diagnostic!(
+-                self.lexer,
+-                Level::Error,
+-                "Cannot assign {got} to {target} of type {want} — use 'as {want}' to cast \
+-                 explicitly"
+-            );
+         } else {
+             diagnostic!(
+                 self.lexer,
+                 Level::Error,
+-                "Cannot assign {got} to {target} of type {want}"
++                "Cannot assign {got} to a field of type {want} — use 'as {want}' to cast \
++                 explicitly"
+             );
+         }
+     }
+@@ -5614,7 +5597,7 @@ use a separate collection or add after the loop"
+                     f_type.source_name(&self.data),
+                 );
+             } else {
+-                self.field_store_refusal(&s_type, f_type, None);
++                self.field_store_refusal(&s_type, f_type);
+             }
+         }
+         // loft#1034 — a TUPLE target reaches `convert` too.
+@@ -7263,11 +7246,15 @@ use a separate collection or add after the loop"
+             && !matches!(s_type, Type::Null)
+             && !f_type.is_equal(&s_type)
+             && !self.convert_store(code, &s_type, f_type, "the assignment target", None)
+-            // A FIELD target was already refused at loft#893's chokepoint above, in these
+-            // words; reporting it here too printed the same error twice at one position.
+-            && !self.field_store_mismatch(op, var_nr, f_type, &s_type)
+         {
+-            self.field_store_refusal(&s_type, f_type, None);
++            diagnostic!(
++                self.lexer,
++                Level::Error,
++                "Cannot assign {} to a field of type {} — use 'as {}' to cast explicitly",
++                s_type.source_name(&self.data),
++                f_type.source_name(&self.data),
++                f_type.source_name(&self.data),
++            );
+         }
+         // A write THROUGH a link stores into the linked slot, so the narrowing refusal and the
+         // range guard below are asked of that slot's type (`linked_store_target`, loft#1604).
+diff --git b/src/parser/objects.rs a/src/parser/objects.rs
+index 410108d30..169df3d49 100644
+--- b/src/parser/objects.rs
++++ a/src/parser/objects.rs
+@@ -6966,7 +6966,7 @@ impl Parser {
+                     // `vector<float>` field — was copied at the wrong width and read back as
+                     // garbage here, where `g.c = v` refuses it.
+                     if self.field_store_mismatch("=", u16::MAX, &td, exp_tp) {
+-                        self.field_store_refusal(exp_tp, &td, None);
++                        self.field_store_refusal(exp_tp, &td);
+                     }
+                     let pos = self
+                         .database
+@@ -7156,8 +7156,22 @@ impl Parser {
+                     // as "field declared as <value_type>" — backwards.
+                     // A function type is rendered as the author spells it (`fn(const T)`), since
+                     // the `const` of a parameter can be the whole difference (loft#1540).
+-                    let named = format!("{}.{field}", self.data.def(td_nr).name());
+-                    self.field_store_refusal(exp_tp, &td, Some(&named));
++                    let (got, want) = if matches!(exp_tp.base(), Type::Function(..))
++                        || matches!(td.base(), Type::Function(..))
++                    {
++                        (exp_tp.source_name(&self.data), td.source_name(&self.data))
++                    } else {
++                        (
++                            exp_tp.show(&self.data, &self.vars),
++                            td.show(&self.data, &self.vars),
++                        )
++                    };
++                    diagnostic!(
++                        self.lexer,
++                        Level::Error,
++                        "Cannot assign {got} to field {}.{field} of type {want}",
++                        self.data.def(td_nr).name()
++                    );
+                 }
+             }
+             list.push(self.set_field_no_check(td_nr, nr, 0, code.clone(), value.clone()));
+diff --git b/src/parser/vectors.rs a/src/parser/vectors.rs
+index 2bcbfc349..883ab43e4 100644
+--- b/src/parser/vectors.rs
++++ a/src/parser/vectors.rs
+@@ -5668,8 +5668,8 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+                         "cannot store {} elements in a vector<{}> (would lose precision); \
+                      cast each element explicitly with 'as {}'",
+                         t.source_name(&self.data),
+-                        self.data.written_type_name(in_t),
+-                        self.data.written_type_name(in_t)
++                        in_t.source_name(&self.data),
++                        in_t.source_name(&self.data)
+                     );
+                 }
+             } else if self.widen_literal_items(elm, in_t, &t, res) {
+diff --git b/src/variables/mod.rs a/src/variables/mod.rs
+index c5b695698..d3814521a 100644
+--- b/src/variables/mod.rs
++++ a/src/variables/mod.rs
+@@ -3776,32 +3776,13 @@ impl Function {
+             );
+             return;
+         }
+-        // A DECLARED scalar keeps its type (`@FR-N-Decl`), so "a new variable name" is no cure
+-        // there — the author asked for this type — and the cast that is one is spelled out,
+-        // as the author would write it (`as u8`, not the unparseable `as integer(0, 255)`).
+-        // The diagnosis half stays word for word, for the reason the arms above give.
+-        if self.annotated.contains(&var_nr)
+-            && crate::data::is_scalar(var_tp)
+-            && crate::data::is_scalar(type_def)
+-        {
+-            let declared = data.written_type_name(var_tp);
+-            diagnostic!(
+-                lexer,
+-                Level::Error,
+-                "Variable '{}' cannot change type from {} to {}; it is declared `{declared}` — cast the value with `as {declared}`",
+-                self.name(var_nr),
+-                declared,
+-                data.written_type_name(type_def)
+-            );
+-            return;
+-        }
+         diagnostic!(
+             lexer,
+             Level::Error,
+             "Variable '{}' cannot change type from {} to {}; use a new variable name or cast with 'as'",
+             self.name(var_nr),
+-            data.written_type_name(var_tp),
+-            data.written_type_name(type_def)
++            var_tp.source_name(data),
++            type_def.source_name(data)
+         );
+     }
+ 

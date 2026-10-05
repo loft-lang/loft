@@ -10,6 +10,11 @@
 //
 // The cells are cures as printed, so each must compile and run; the refusal texts are pinned
 // by `a-cast-cure-refusals-name-the-written-type.loft`.
+//
+// @falsified-at: 726b9665e — INERT on all four channels, both backends, and that is the correct
+//   answer for a CONTROL: the casts compiled there too.  What this file pins is that each cure
+//   the refusals print compiles and runs, which the refusal guards beside it cannot see.
+// HOLDS: leak, panic and refusals are clean on both trees and both backends.
 
 struct S { a: u8?, b: u8 }
 
