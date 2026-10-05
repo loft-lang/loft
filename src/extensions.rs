@@ -2224,6 +2224,26 @@ pub fn native_target_root(pkg_dir: &std::path::Path) -> std::path::PathBuf {
 /// [`auto_build_native`].  The ONE home for this resolution — the parser's two
 /// manifest paths and the warm startup-cache load (#310) all derive from it,
 /// so a cached run re-checks cdylib freshness exactly like a cold parse.
+/// Set for a `loft --html` run: the program is built for the browser, which never loads a
+/// package's HOST native library — the page answers the package's imports itself.  So the
+/// parse registers no host cdylib and the driver builds no default-native one, where both
+/// used to run a full cargo build of code the build never links (`html_gl_imports` spent
+/// minutes of a 327 s run there on a cold runner).  The program cache keys on `--html`
+/// (`startup_cache::native_lib_context`), so a browser run's bundle is never warm-loaded by
+/// a run that needs those libraries.
+static BROWSER_TARGET: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Mark this run as a browser build (`loft --html`), before anything resolves a package.
+pub fn set_browser_target() {
+    BROWSER_TARGET.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Is this run a browser build?  Then no host native library is built or registered.
+#[must_use]
+pub fn browser_target() -> bool {
+    BROWSER_TARGET.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 pub fn resolve_native_lib(pkg_dir: &str, stem: &str) -> Option<String> {
     // @PLN21 Phase 3 — a missing DECLARED runtime system lib is terminal:
     // neither a prebuilt nor a source build can load it (both link the same lib,

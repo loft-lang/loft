@@ -9283,6 +9283,9 @@ fn main() {
         false
     };
     let mut warm_store: Option<(loft::database::Stores, loft::keys::DbRef)> = None;
+    if html_out.is_some() {
+        loft::extensions::set_browser_target();
+    }
     // #358 — a warm hit returns the def-table index where user definitions
     // start; the cold path derives it from the post-stdlib def count below.
     let warm_user_start = if program_cache_on && !p.sandbox_is_active() {
@@ -9541,7 +9544,9 @@ fn main() {
     let native_required = std::env::var("LOFT_REQUIRE_NATIVE")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
-    let mut pending_native = if native_libs_off {
+    // A browser build compiles every library into the page's wasm: a default-native host
+    // cdylib would be built and never linked (`extensions::browser_target`).
+    let mut pending_native = if native_libs_off || loft::extensions::browser_target() {
         p.pending_native_compile.clear();
         Vec::new()
     } else {
