@@ -370,7 +370,7 @@ and `…-reaches-what-a-library-publishes.loft`; DESIGN_DECISIONS C97, C98.  A t
 its declaration is a forward-reference stub, not an item: it travels with any import
 (`Data::passes_on`) and the declaration that adopts it decides its `pub` (the definition loop
 in `src/parser/mod.rs`) — `tests/scripts/a-type-named-above-its-*.loft` in one file,
-`a-module-names-its-importers-*.loft` across two (loft#1856).
+`a-module-names-its-importers-*.loft` across two.
 
 
 ---

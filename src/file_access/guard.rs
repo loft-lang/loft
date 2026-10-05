@@ -33,8 +33,7 @@ const PATTERNS: &[&str] = &[
     ".symlink_metadata(",
     "MAIN_SEPARATOR",
     r#"replace('\\', "/")"#,
-    // Path-NAME logic through `std::path` (owner, 2026-10-03: "use this tool where we do
-    // some logic on filenames/directories"): the name operations `file_access` answers by
+    // Path-NAME logic through `std::path`: the name operations `file_access` answers by
     // the host flavor's rules.  `.parent()` is left out — a tree's or a scope's parent is
     // spelled the same, and a count that cannot tell them apart would not be honest.
     ".file_name()",

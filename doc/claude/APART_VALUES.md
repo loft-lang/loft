@@ -129,7 +129,7 @@ three together cover the alloc-temp, vector-build, record-build and record-field
 the four worst in the portal.
 
 **Measured coverage of the systemic routines.**  Of the 62 routines in classes whose median
-is over 3× (2026-10-02 run), about 10 have a throwaway apart would remove, and 3 of those are
+is over 3× (the frozen portal run), about 10 have a throwaway apart would remove, and 3 of those are
 keyed benches that build a local collection only to measure it.  None is in vector-build,
 record-field, record-build or call.  Instance 1 moves none: `(R-WorkBuffer)` and
 `(R-LiteralWalk)` already took the fixed-length scalar locals (the `sum4` probe is promoted:

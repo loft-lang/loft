@@ -163,7 +163,7 @@ opens, lists, creates, removes or inspects a file or directory from a string or 
 paths with `==`, `starts_with`, `ends_with` and `has_component`, never as text.
 
 - **Why:** every Windows defect the compiler has had was a decision on path text — a mixed
-  `D:\a\loft/default\x` missing a `"/default/"` pattern (loft#1860), a verbatim `\\?\D:\…`
+  `D:\a\loft/default\x` missing a `"/default/"` pattern, a verbatim `\\?\D:\…`
   never equal to its plain twin, `dir/` not equal to `dir`, `pkg` claiming `pkg2/x`.
 - **Tested on any host:** `file_access::path` parses under an explicit `Flavor`, so the
   Windows rules are unit tests on Linux; an operation's error names its path, and a

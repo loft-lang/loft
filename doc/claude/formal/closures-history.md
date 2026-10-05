@@ -1673,3 +1673,7 @@ Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), 
   that is a RETURN SOURCE as handed out, and the ownership question reads
   `returned_closure_records` — the records named in RETURN POSITION, off the tail and off every
   `return`.  Guard `1444-the-returned-closure-is-the-one-that-keeps-its-capture.loft`.
+
+## The closure record closures.md's OPEN line carried until 2026-10-05
+
+`D-clo-46` (opened and CLOSED 2026-10-05, loft#1862); `D-clo-45` (opened and CLOSED 2026-09-28, loft#1725); `D-clo-44` (opened and CLOSED 2026-09-28, loft#1715); `D-clo-43` (opened and CLOSED 2026-09-27, found with loft#1700); `D-clo-42` (opened and CLOSED 2026-09-24, loft#1659); `D-clo-41` (opened and CLOSED 2026-09-24, loft#1658); `D-clo-40` (opened and CLOSED 2026-09-23, loft#1642); `D-clo-39` (opened and CLOSED 2026-09-23; `D-clo-38`, loft#1624, opened and CLOSED the same day; `D-clo-36` and `D-clo-37` opened 2026-09-22 with `D-clo-35` and CLOSED 2026-09-23; `D-clo-27` closed 2026-09-12).

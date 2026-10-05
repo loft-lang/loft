@@ -1595,7 +1595,7 @@ impl Stores {
     /// `r = r[lo..hi]` for a SCALAR element kind (`OpKeepRange`): the vector keeps that range
     /// IN PLACE — the kept span moves to the front of its own record and the length is set —
     /// where the self-slice copied the span into a temporary, released `r` and copied it back
-    /// (@P390's alias break).  The bounds arrive clamped by the slice prelude and are clamped
+    /// (an alias break).  The bounds arrive clamped by the slice prelude and are clamped
     /// again here, as [`Self::vector_slice`] does.  A vector whose store may not be written —
     /// a FOREIGN view, a locked store — takes the copy form instead: the span copied out, the
     /// vector cleared as `OpClearVector` clears it (a view is released), the span appended.
