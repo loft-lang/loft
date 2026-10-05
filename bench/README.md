@@ -219,6 +219,16 @@ A bench whose routines run on more than one thread says how many in a header com
 it alone.  Undeclared is one thread, pinned to one core: `19_stdlib_par`'s four threads ran on
 a single core until it declared them.
 
+## Which host's numbers count
+
+A ratio is read on one machine and compared on that machine only: the Rust lane moves between
+hosts (the arm64 Mac and the lima VM on the same box disagree by 30–75 % on it) while loft's
+native lane stays level.  So there is no single reference host.  An agent works against the
+results of the host it runs on (`bench/portal/results/<host>.tsv`, `LOFT_PERF_HOST` naming
+it): that file picks the rows, files the outliers and judges a fix.  A bar is MET only when
+every host's latest run agrees — a routine under 3× on one host and over it on another is
+still over the bar (owner).
+
 Four rules keep a row LIKE-FOR-LIKE, and a bench that breaks one measures something else:
 
 1. **The same algorithm in every lane, and the hash proves it.**  The suite once compared a

@@ -795,8 +795,9 @@ class (`bench/portal/classes.tsv`):
   symptoms.
 
 `bench/portal/outliers.py <results.tsv>` splits a portal run this way and lists the outliers.
-File against the reference host's results only (bench/README.md); another host's ratios are a
-trend.  Before filing, the twin must have been audited like-for-like: a twin doing different
+File against the results of the host the work runs on, and call a bar met only when every
+host's latest run agrees ([bench/README.md § Which host's numbers
+count](../../bench/README.md#which-hosts-numbers-count)).  Before filing, the twin must have been audited like-for-like: a twin doing different
 work makes the ratio meaningless.
 
 ## Open performance work

@@ -10,7 +10,7 @@ last full run; it does not start one.  The rows
 named here are read off `results/firewall02.lan.betterbe.com.tsv` (arm64 macOS, commit
 `0d40d53d0`): 185 routines, 74 over the bar, three classes with a median over it (alloc-temp,
 record-field, keyed).  It is the only file measured whole at a recent tree: `results/laptop.tsv`
-(x86-64) holds fresh rows for the regressions below and older ones for everything else.  A row leaves this file when a re-measured run puts it under the bar; a
+(x86-64) holds fresh rows for the regressions below and older ones for everything else.  A row leaves this file when the latest run of EVERY host puts it under the bar; a
 unit leaves when it is built, and its record goes to its analysis file's § Built.
 
 | what is known about the row | rows | next action |
@@ -43,8 +43,8 @@ it directly.
 
 | | item | why it comes first |
 |---|---|---|
-| M1 | name ONE reference host in `bench/README.md` (@PLN185 A5) | the bar is read per host: `tween/ease` is over the bar on arm64 macOS and far under it on the x86-64 laptop, and seven rows sit within 6 % of the bar on an unpinned run |
-| M2 | join `main` into `laptop-perf-bench` of `loft-libs-graphics` (@PLN185 A3a), then measure `drawing`, `stage` and `graphics` only | `drawing` (14 routines) and `stage` (6) do not build from that branch at the current tree (the bench names items the library does not mark `pub`) and are absent from the run; `arguments` fails the same way on a library checkout that `make perf-libs` has not fast-forwarded; `draw_bezier` is measured in the form the built `(R-Refresh)` keep-range clause does not see |
+| M1 | the host rule: each agent reads its own host's results; a bar is met when every host's latest run agrees (bench/README.md § Which host's numbers count) | the bar is read per host — `tween/ease` is over it on arm64 macOS and far under it on the x86-64 laptop — so a row leaves this list only when no host has it over |
+| M2 | the bench branches carry the libraries as they ship: `laptop-perf-bench` of `loft-libs-graphics` and `loft-libs-core` equal their `main` (@PLN185 A3a) | every library lane builds; after a library release, merge `main` into the bench branch again and measure its lanes only |
 | M3 | re-align two twins (@PLN185 A4, bench README rule 1), re-measuring those two rows | `check_request`'s twin decodes twice where the library decodes once (aligned ≈ 17×, so further from the bar than shown); `surface_fitted_spread`'s twin sweeps once where the library sweeps three times (aligned ≈ a third of its row) |
 | M4 | the portal's bytes-moved columns from `LOFT_STORE_CENSUS` on the native lane: bytes moved within a store, between two stores, and claimed fresh, with stores touched and store switches per op | ranks every row on § 1's axis with no profile; filled by the next full run, and § 5's pricing pass reads it.  A report, never a gate |
 | M5 | measure per unit only the rows that unit names (`python3 bench/stats.py --routine <bench/routine,…>`); run the full list (`make perf-portal`) after a group of units, not after each | a full run occupies the box for one unit's sake; the group run is what catches a row nobody targeted, and each price describes the program as emitted before the unit ahead of it |
@@ -60,6 +60,7 @@ time against the row measured at `7df5a4f4b`:
 |---|---|---|
 | x86-64 laptop | `index_write` (+61 % with the lock test gone), `mesh_aabb` +34 %, `time/parse` +28 %, `indices` +16 %, `keys_near` +16 %, `grid` +15 %, `collect_dirty_inputs` +15 %, `remove_front` +13 %, `mapfile_to_painted` +13 %, `hash_text_keys`, `hash_find` and `hash_update` +10–12 % | not attributed; the lock test is ruled out for `index_write`'s remainder, `grid`, `remove_front`, `indices`, `hash_update` and `mesh_aabb` |
 | arm64 macOS | `clock_pump` 4.44× → 5.95×, `boundary_loops` 1.94× → 2.40× | not attributed |
+| x86-64 laptop, with the library merge | `arguments/parse` +24 %, `stage/render_stage` +19 %, `zttext/insert_text` +9 % | the library source changed under them (arguments 0.2.4–0.2.5, stage 0.18.6–0.18.7, zttext 0.1.3): a library change or loft's is not yet told apart |
 
 ## 3. Units with a price
 
@@ -100,7 +101,7 @@ Sizes are the analysis files' own (XS–M); "→" is the hand price, a ceiling f
 | `header` | 3.6–4.3× | "twin-shaped" remainder, no further lever named |
 | `decode` | 3.6–3.8× | no further lever named |
 | `flow_layout_full` | 3.6× | no further lever named |
-| `draw_bezier` | 4.08× as built (after M2) | under the bar only through S3 (2.3×) |
+| `draw_bezier` | 3.66× measured on x86-64 (graphics 0.9.8 with the keep-range clause) | under the bar only through S3 (2.3×) |
 | `check_request` | ≈ 5.5×, ≈ 17× aligned | a design: decoded texts and byte strings as views into the frame (§ 6) |
 | `build_walls` | ≈ 3.3× | no further lever named |
 
@@ -128,7 +129,7 @@ CLASS, not a row; the visible reason is a hypothesis until priced.
 | keyed (10) | `reload_and_record`, `index_fill_find`, `anim_of`, `index_build`, `composite_hash`, `hash_find`, `collect_dirty_inputs`, `hash_text_keys`, `word_count`, `blob_put` | six sit within 16 % of the bar: price keyed.md § What is left on them (the typed append, the arena's insert bookkeeping, the rebuild's re-hash, text keys copied into the record).  `index` as a tree of store records and the division in `home_bucket` are format work (§ 6).  @PLN185 D2 owes this class a named root mechanism |
 | text-build (5) | `map_json`, `render_inline`, `materialise`, `format_iso`, `char_roundtrip` | the per-character append (`out += "{c}"`) is the class-wide hypothesis (libraries-wide.md), and `slugify` is the same shape; `map_json` is `Map.parse` running the source lexer over JSON |
 | call (5) | `clock_pump`, `forms_upto`, `combine_cut`, `edges_cut`, `resolve_move` | @PLN185 D2: one hand-priced edit naming the mechanism; `resolve_move` is five hash lookups a call |
-| float-kernel (5) | `ease`, `terrain_fbm`, `terrain_surface_at`, `roof_match`, `roof_cone` | @PLN185 D2; settle `ease` on the reference host first (M1) |
+| float-kernel (5) | `ease`, `terrain_fbm`, `terrain_surface_at`, `roof_match`, `roof_cone` | @PLN185 D2; `ease` is over the bar on arm64 macOS only — it counts as over until both agree |
 | record-field (5) | `fill_polygon`, `stencil_rotate`, `locate`, `terrain_relief_pass`, cbor `encode` | a class with a median over the bar; `terrain_relief_pass` reads a type through a nullable record per cell |
 | text-scan (4) | `arguments/parse`, `mapfile_to_painted`, `seg`, `time/parse` | — |
 | record-build (3) | `slope_path_with_undo`, `sphere`, `pluginabi/request` | — |
