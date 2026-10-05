@@ -164,6 +164,10 @@ impl Output<'_> {
     /// from `crate::generation::ops::default::DefaultEmitter` when
     /// `def_fn.rust.is_empty()`.  Behaviour is byte-identical to the
     /// pre-phase-09 `output_call_user_fn`.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one call-body emission; each arm is a call shape the generator spells"
+    )]
     pub(super) fn user_fn_call_body(
         &mut self,
         w: &mut dyn Write,

@@ -3908,6 +3908,20 @@ impl Output<'_> {
 }
 
 impl Output<'_> {
+    /// `@FR-R-RefillText` — a release the pool statement left to its call and no call took
+    /// would be a text leaked per call; it is an emission fault, never a silent leak.
+    fn refill_text_unconsumed(&mut self) -> std::io::Result<()> {
+        if let Some((b, _, _)) = self.refill_text_pending.take() {
+            let def = self.data.def(self.def_nr);
+            return Err(std::io::Error::other(format!(
+                "refill-text: the release of `{}` in `{}` was left to a call that did not take it",
+                def.variables().name(b),
+                def.name()
+            )));
+        }
+        Ok(())
+    }
+
     /// The element-first MINT at a temp's declaration site (@PLN157 § V-z, @PLN164 E-2): the
     /// element is claimed where the first temp is declared, so every paired temp can be built in
     /// its field; the length bump stays at the append's finish.  A local vector is reserved
@@ -3925,20 +3939,6 @@ impl Output<'_> {
         clippy::too_many_lines,
         reason = "moved whole out of output_block: one match arm per element-first override"
     )]
-    /// `@FR-R-RefillText` — a release the pool statement left to its call and no call took
-    /// would be a text leaked per call; it is an emission fault, never a silent leak.
-    fn refill_text_unconsumed(&mut self) -> std::io::Result<()> {
-        if let Some((b, _, _)) = self.refill_text_pending.take() {
-            let def = self.data.def(self.def_nr);
-            return Err(std::io::Error::other(format!(
-                "refill-text: the release of `{}` in `{}` was left to a call that did not take it",
-                def.variables().name(b),
-                def.name()
-            )));
-        }
-        Ok(())
-    }
-
     fn elem_first_override(
         &mut self,
         w: &mut dyn Write,

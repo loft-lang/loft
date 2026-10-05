@@ -9178,6 +9178,10 @@ fn is_var(v: &Value, var: u16) -> bool {
 
 /// The pool statement of a call site: `if OpRefIsNull(b) { OpDatabase(b, tp) } else
 /// OpClear(b, tp)`, answered as `(b, tp)`.
+#[expect(
+    clippy::many_single_char_names,
+    reason = "the IR node's own parts — `c`/`t`/`f` an if's condition and arms, `b` the buffer, `e` the result — read as the shape they destructure"
+)]
 fn pool_of(stmt: &Value, data: &Data) -> Option<(u16, u16)> {
     let Value::If(c, t, f) = stmt.unspan() else {
         return None;
@@ -9225,6 +9229,17 @@ pub(crate) fn path_offset(v: &Value, b: u16, data: &Data) -> Option<u32> {
 /// `@FR-R-RefillText` (a) and (b) for a callee — its result type's heap is text only, and
 /// every exit is a record literal into its own buffer writing every text slot exactly once,
 /// with nothing else in the body naming the buffer.  Answers the type, or why it declines.
+///
+/// # Errors
+/// The reason the callee declines, as a short phrase for `LOFT_TRACE_REFILL_TEXT`.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one admission walk: each declining condition is a step of (a) or (b)"
+)]
+#[expect(
+    clippy::many_single_char_names,
+    reason = "the IR node's own parts — `c`/`t`/`f` an if's condition and arms, `b` the buffer, `e` the result — read as the shape they destructure"
+)]
 pub fn refill_text_callee(data: &Data, stores: &Stores, d: u32) -> Result<u16, &'static str> {
     let Some(b) = retbuf_var(data, d) else {
         return Err("no return buffer");
@@ -9365,6 +9380,10 @@ pub fn refill_text_callee(data: &Data, stores: &Stores, d: u32) -> Result<u16, &
 /// (through `OpGetField` steps) reads, the source of a copy that keeps it, or a release
 /// that leaves the pool's buffer alone?  A write, a move, a pass to a call, a rebind or a
 /// bare use declines.  Its binding (`Set(e, …)`) is counted by the caller, once.
+#[expect(
+    clippy::many_single_char_names,
+    reason = "the IR node's own parts — `c`/`t`/`f` an if's condition and arms, `b` the buffer, `e` the result — read as the shape they destructure"
+)]
 fn result_only_read(v: &Value, e: u16, b: u16, data: &Data) -> bool {
     let e_path = |p: &Value| path_offset(p, e, data).is_some();
     match v.unspan() {
@@ -9403,6 +9422,10 @@ fn result_only_read(v: &Value, e: u16, b: u16, data: &Data) -> bool {
 /// of the turn and the frame; and whose result is only READ.  `trace` prints each site's
 /// verdict (`LOFT_TRACE_REFILL_TEXT`); `callee_declines` is the emitter's own reason a callee
 /// cannot take a twin (a value-record callee has no buffer).
+#[expect(
+    clippy::too_many_lines,
+    reason = "one site walk: each declining condition is a step of invariant (c), traced"
+)]
 pub fn refill_text_sites(
     data: &Data,
     stores: &Stores,
