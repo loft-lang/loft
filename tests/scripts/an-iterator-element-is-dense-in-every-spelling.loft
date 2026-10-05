@@ -8,6 +8,14 @@
 // element test and admitted, so one spelling of the same element typed it nullable.
 //
 // `main` comes first so the expectation belongs to its function rather than to the file.
+//
+// @falsified-at: 029c50d4d — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 1/1 (the
+//   suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1
+//   -> 1/1.
+// @falsified-by: tests/falsified/an-iterator-element-is-dense-in-every-spelling.patch — the
+//   same channels.  Score it with `scripts/falsify.sh <this file> --patch <that patch>` once
+//   029c50d4d is out of reach.
+// HOLDS: nothing runs on either tree (a refusal file).
 
 fn main() {
   for y in ranged(3) {
