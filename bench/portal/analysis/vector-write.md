@@ -55,6 +55,37 @@ emitter rule, for every repeated element read.  formal/rewrites.md § (R-Cold), 
 Priced beside it and not built: the write's lock test is a further −19 % (1.62 → 1.31 M) when
 it is gone, and an unchecked write reaches 1.00 M — the second lever's prize.
 
+## The write-lock test, priced on x86-64 by a build without it
+
+`@FR-H-WriteLocked` is tested per element in two hoisted writers: `Stores::vec_set_at`
+(`!h.locked || write_allowed(…)`) and `vector::rec_set` (`locked && !write_allowed(…)`).  The
+flag is held beside the header or the address; the test is still in the loop.  Priced as a
+CEILING by a scratch build of the same tree with both tests deleted (`git archive` to disk,
+its own target directory, `bench/stats.py --routine … --loft … --lib-dir …`), both builds
+timed in one sitting on the x86-64 laptop, every Rust lane within 1 % between them:
+
+| row | this tree | no lock test | the test costs | ratio |
+|---|--:|--:|--:|---|
+| `10_sort` `sort` | 3.153 M | 2.370 M | 25 % | 3.53× → 2.65× |
+| graphics `blend_pixel` | 1.668 M | 1.245 M | 25 % | 1.85× → 1.38× |
+| `comprehension` | 10.48 k | 8.09 k | 23 % | 1.63× → 1.25× |
+| `index_write` | 7.49 k | 6.32 k | 16 % | 1.95× → 1.64× |
+| graphics `fill_rect` | 7.256 M | 6.519 M | 10 % | 2.68× → 2.44× |
+| `record_update` | 10.28 k | 9.48 k | 8 % | 1.37× → 1.27× |
+| `index_read` (control, no write) | 22.71 k | 22.64 k | 0 % | 1.91× |
+| `grid`, `remove_front`, random `indices`, `hash_update`, `mesh_aabb` | | | within ±3 % | not this test |
+
+So the test is all but 3–5 % of what `sort` and `blend_pixel` rose by on this host since the
+row measured at `7df5a4f4b`, and it takes `sort` back under the bar; it is 16 of the 95 points
+`index_write` rose by, and none of `grid`'s, `remove_front`'s or `indices`' — those rises
+have another cause, not found.
+
+The form to build, not priced beyond this ceiling: the push window already carries no test,
+because a locked store's window has capacity 0 and every push takes the outlined path, which
+refuses the write.  The same shape serves the two writers — a WRITE length held beside the
+header that is 0 for a locked store, and a write address that is null for a locked record —
+so the in-range test is the only test in the loop and the rule is kept by the cold path.
+
 ## Next — one lever, priced, not built
 
 1. **No bounds test where loft proves the index in range** — the rest of the gap

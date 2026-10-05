@@ -58,8 +58,8 @@ time against the row measured at `7df5a4f4b`:
 
 | host | rows | cause |
 |---|---|---|
-| x86-64 laptop | `index_write` +95 %, `10_sort` +37 %, `blend_pixel` +37 %, `indices` +16 %, `grid` +15 %, `remove_front` +14 %, `comprehension` +13 % | all element-write loops.  Established for `index_write` and `grid` (loft#1743): the write-lock test of `@FR-H-WriteLocked` inside the hoisted writers — the flag is held beside the header and still tested per element.  The fix is C9's first half: a locked store takes the unhoisted path, so the hoisted loop carries no test.  `10_sort` and `grid` are over the bar on this host and were under it |
-| x86-64 laptop | `mesh_aabb` +34 %, `time/parse` +28 %, `keys_near` +16 %, `collect_dirty_inputs` +15 %, `mapfile_to_painted` +13 %, `hash_text_keys`, `hash_find` and `hash_update` +10–12 % | not attributed |
+| x86-64 laptop | `10_sort` +37 %, `blend_pixel` +37 %, `comprehension` +13 %, and 16 of `index_write`'s +95 points | MEASURED: the write-lock test of `@FR-H-WriteLocked`, per element in `vec_set_at` and `rec_set`.  A build without it takes `sort` 3.53× → 2.65× (under the bar), `blend_pixel` 1.85× → 1.38×, `comprehension` 1.63× → 1.25×, `fill_rect` −10 % (vector-write.md § The write-lock test).  The fix is C9's first half, in the form the push window already has |
+| x86-64 laptop | `index_write` (+61 % with the lock test gone), `mesh_aabb` +34 %, `time/parse` +28 %, `indices` +16 %, `keys_near` +16 %, `grid` +15 %, `collect_dirty_inputs` +15 %, `remove_front` +13 %, `mapfile_to_painted` +13 %, `hash_text_keys`, `hash_find` and `hash_update` +10–12 % | not attributed; the lock test is ruled out for `index_write`'s remainder, `grid`, `remove_front`, `indices`, `hash_update` and `mesh_aabb` |
 | arm64 macOS | `clock_pump` 4.44× → 5.95×, `boundary_loops` 1.94× → 2.40× | not attributed |
 
 ## 3. Units with a price
@@ -92,7 +92,7 @@ Sizes are the analysis files' own (XS–M); "→" is the hand price, a ceiling f
 | C6 | `build_walls`: borrow the work buffer; admit a call writing only distinct stores | S/M, M | `build_walls` → ≈ 3.3× | under-10x.md |
 | C7 | a keyed insert into a frame-minted store does not block the header hoist (`mint_target`) | not sized | `build_index` −8 % | under-10x.md F8 |
 | C8 | a fixed-size scalar `f#read` without the runtime crossing; a leaner `OpReadFile` | not sized | `doc_read` ~−30 %, −15 % | under-10x.md |
-| C9 | the write's lock test out of the loop; then no bounds test where the index is proved in range | not sized; a design | `10_sort` −19 %, then to ~1.3×; `canvas`, `indices`, `fill_rect` not measured against it | vector-write.md |
+| C9 | the write's lock test out of the loop (a regression, § 2); then no bounds test where the index is proved in range | S; a design | `10_sort` −25 % on x86-64 (−19 % on arm64), then to ~1.3×; `blend_pixel` −25 %, `fill_rect` −10 %; `indices` does not move with it, `canvas` not measured | vector-write.md |
 
 ### Where the priced path stops
 
@@ -133,7 +133,7 @@ CLASS, not a row; the visible reason is a hypothesis until priced.
 | record-field (5) | `fill_polygon`, `stencil_rotate`, `locate`, `terrain_relief_pass`, cbor `encode` | a class with a median over the bar; `terrain_relief_pass` reads a type through a nullable record per cell |
 | text-scan (4) | `arguments/parse`, `mapfile_to_painted`, `seg`, `time/parse` | — |
 | record-build (3) | `slope_path_with_undo`, `sphere`, `pluginabi/request` | — |
-| vector-write (3) | `canvas`, `indices`, `fill_rect` | measure C9 on them first |
+| vector-write (3) | `canvas`, `indices`, `fill_rect` | C9's first half is 10 % of `fill_rect` and none of `indices` |
 | alloc-temp (3) | `draft_fit_p`, `catalog_churn`, `slugify` | `draft_fit_p` hands its temporary to callees in another library (apart.md triage) |
 | vector-build (2) | `emit_segment`, `field_union` | nine parallel narrow appends per segment |
 | vector-read (2) | `draw_quads`, `wall_chain_walk` | — |
@@ -156,7 +156,8 @@ CLASS, not a row; the visible reason is a hypothesis until priced.
 
 ## 7. Order
 
-1. M1–M3: they change which rows are on the list.
+1. M1–M3 and the regressions that stand: they change which rows are on the list.  The
+   write-lock test first — it is measured, small, and takes `10_sort` under the bar on x86-64.
 2. S1, then S2 and S3: the three units that take a row under the bar by removing a
    temporary; S1 is the mechanism four of the worst rows were priced against.
 3. M4 and one full run (the first since step 1), then § 5's pricing pass over the classes
