@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// `formal/closures.md` `(L-Apply)`: applying a closure binds its parameters exactly as a direct
+// @FR-L-Apply — `formal/closures.md`: applying a closure binds its parameters exactly as a direct
 // call does (calls.md `F-Param*`), so a `&` parameter reached through a fn-ref writes through
 // to the caller's place.  Two halves did not:
 //

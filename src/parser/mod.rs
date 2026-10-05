@@ -1253,8 +1253,6 @@ pub struct Parser {
     /// a header meeting an already-claimed spelling can tell "the same variable again" from
     /// "a second variable that happens to be spelled the same".
     pub(crate) type_var_bounds: std::collections::HashMap<u32, String>,
-    // maps fn-ref variable numbers to their closure record work variable numbers.
-    pub(crate) closure_vars: std::collections::HashMap<u16, u16>,
     // last closure work variable created by emit_lambda_code (transient).
     pub(crate) last_closure_work_var: u16,
     // closure allocation expression to inject at the call site.
@@ -1891,7 +1889,6 @@ impl Parser {
             context_type_template: u32::MAX,
             type_var_holders: std::collections::HashMap::new(),
             type_var_bounds: std::collections::HashMap::new(),
-            closure_vars: std::collections::HashMap::new(),
             last_closure_work_var: u16::MAX,
             last_closure_alloc: None,
             last_closure_captured_vars: vec![],
@@ -14700,7 +14697,7 @@ impl Parser {
                     Value::FnRef(d_nr, _, _) => Value::Int(d_nr),
                     Value::Var(v)
                         if matches!(self.vars.tp(v), Type::Function(..))
-                            && !self.closure_vars.contains_key(&v) =>
+                            && self.vars.closure_var_of(v).is_none() =>
                     {
                         Value::FnRefDnr(v)
                     }
@@ -22397,7 +22394,7 @@ fn emit_fn_ref_field_write(
                 false
             };
             let source_is_noncapturing =
-                matches!(p.vars.tp(v), Type::Function(..)) && !p.closure_vars.contains_key(&v);
+                matches!(p.vars.tp(v), Type::Function(..)) && p.vars.closure_var_of(v).is_none();
             if target_is_4b && source_is_noncapturing {
                 return p.cl("OpSetInt4", &[ref_code, pos_val, Value::FnRefDnr(v)]);
             }

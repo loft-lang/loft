@@ -1,0 +1,76 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @FR-L-Fn — `fn(…) -> R { body }` and `|…| { body }` build the same closure: its environment
+// captures every OUTER variable the body names and does not bind.  Walked as a matrix over the
+// two spellings and what is captured; it found no defect, and this file is that negative result
+// kept, so a change to either spelling's capture is measured against it.
+//
+// Axes this file MOVES:  the spelling (fn · `|…|` with its type from context), the captured
+//                        value (integer · text · struct · vector · hash · tuple · enum · fn-ref),
+//                        where it comes from (a local · a parameter · a match binding · a nested
+//                        closure's capture), and the names the body BINDS (a parameter or a
+//                        lambda parameter that shadows an outer name is not captured).
+// Axes it HOLDS FIXED:   a closure called in the frame that built it; escaping is
+//                        `@FR-L-Escape`'s, in the fn-ref guards.
+
+struct P { x: integer, y: integer }
+struct K { k: integer, v: integer }
+enum Col { Red, Green, Blue }
+
+fn mk(n: integer) -> fn(integer) -> integer {
+  fn(a: integer) -> integer { a + n }
+}
+
+fn spellings() -> text {
+  n = 5;
+  f = fn(a: integer) -> integer { a + n };
+  g: fn(integer) -> integer = |a| { a + n };
+  t = "ab";
+  ft = fn() -> text { t };
+  gt = || { t };
+  "{f(5)} {g(0)} {ft()}{gt()}"
+}
+
+fn heap_values() -> text {
+  p = P { x: 1, y: 2 };
+  v: vector<integer> = [1, 2, 3];
+  h: hash<K[k]> = [K { k: 1, v: 7 }];
+  fp = fn() -> integer { p.x + p.y };
+  fv = || { len(v) };
+  fh = fn() -> integer { h[1]?.v ?? 0 };
+  "{fp()} {fv()} {fh()}"
+}
+
+fn other_values() -> text {
+  tu = (9, "x");
+  c = Col.Green;
+  dbl: fn(integer) -> integer = |a| { a * 2 };
+  ft = fn() -> integer { tu.0 };
+  fc = || { c };
+  fd = fn(a: integer) -> integer { dbl(a) };
+  "{ft()} {fc()} {fd(6)}"
+}
+
+fn sources() -> text {
+  o: integer? = 8;
+  m = match o { null => 0, v => { f = || { v }; f() } };
+  n = 1;
+  nested = fn(a: integer) -> integer { g = fn(b: integer) -> integer { b + n + a }; g(4) };
+  "{mk(10)(1)} {m} {nested(1)}"
+}
+
+fn shadowing() -> text {
+  a = 100;
+  f = fn(a: integer) -> integer { a };
+  g: fn(integer) -> integer = |a| { a };
+  "{f(7)} {g(8)} {a}"
+}
+
+fn main() {
+  assert(spellings() == "10 5 abab", "both spellings capture alike: got {spellings()}");
+  assert(heap_values() == "3 3 7", "heap captures: got {heap_values()}");
+  assert(other_values() == "9 Green 12", "tuple, enum, fn-ref captures: got {other_values()}");
+  assert(sources() == "11 8 6", "parameter, match binding, nested: got {sources()}");
+  assert(shadowing() == "7 8 100", "a bound name is not captured: got {shadowing()}");
+}

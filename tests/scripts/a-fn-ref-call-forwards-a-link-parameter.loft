@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// `(L-Apply)` binds a closure's parameters as a direct call does, so a function that hands its
+// @FR-L-Apply — binds a closure's parameters as a direct call does, so a function that hands its
 // own `&` parameter on to a fn-ref's `&` parameter passes the LINK and the write reaches the
 // caller.  On --interpret it was pushed as a value where the callee reads a link: `q.x` stayed
 // 1 and the `&integer` read off the store and panicked.  Native was right.  The direct call

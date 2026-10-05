@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // A lambda `fn(p: &P) { … }` has the type `fn(&P)` — that is how the compiler prints it — and
-// `(B-Ref-Intro)` admits `&τ` for every τ.  The type could not be WRITTEN: the function-type
+// `(B-Ref-Intro)` admits `&τ` for every τ, and @FR-L-Escape lets a closure be passed.  The type could not be WRITTEN: the function-type
 // parser read `const` before a parameter and not `&`, so a parameter, a field or a local that
 // holds such a closure was "Expect token )", and no function could accept one (`(L-Escape)`:
 // a closure may be passed as an argument).  It now reads `&` through `ref_var_type`, the one

@@ -20031,7 +20031,7 @@ impl Parser {
             // Non-void returns are not handled here — they require a temp to hold
             // the return value while writing back, which is left for A5.6 (1.1+).
             if matches!(*ret_type, Type::Void)
-                && let Some(&closure_w) = self.closure_vars.get(&v_nr)
+                && let Some(closure_w) = self.vars.closure_var_of(v_nr)
                 && let Type::Reference(closure_rec_d, _) = self.vars.tp(closure_w).clone()
             {
                 let n_attrs = self.data.attributes(closure_rec_d);

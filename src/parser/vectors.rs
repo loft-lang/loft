@@ -5775,7 +5775,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         }
         match p.unspan() {
             Value::FnRef(_, clos_var, _) => *clos_var != u16::MAX,
-            Value::Var(v) => self.closure_vars.contains_key(v),
+            Value::Var(v) => self.vars.closure_var_of(*v).is_some(),
             Value::Call(d_nr, _) => matches!(
                 self.data.def(*d_nr).returned(),
                 Type::Function(_, _, deps, ..) if !deps.is_empty()

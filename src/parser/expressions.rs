@@ -9086,8 +9086,10 @@ use a separate collection or add after the loop"
                     self.math_sign_proven.retain(|(slot, _)| *slot != var_nr);
                 }
                 if op == "=" && self.last_closure_work_var != u16::MAX && var_nr != u16::MAX {
-                    self.closure_vars.insert(var_nr, self.last_closure_work_var);
-                    // store mapping in Function struct for native codegen.
+                    // The one home: the FUNCTION's own map.  A parser-wide map keyed by variable
+                    // number outlived the function that filled it, so a later function's
+                    // non-capturing fn-ref in the same slot read as capturing and was refused
+                    // (`… not yet supported when the source closure may capture`).
                     self.vars
                         .set_closure_var_of(var_nr, self.last_closure_work_var);
                     self.last_closure_work_var = u16::MAX;
