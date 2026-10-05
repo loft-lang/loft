@@ -24,6 +24,19 @@
 //   CHANNEL: an assertion, on BOTH backends.
 //   WITNESS: `m1 env shape grows: 31 -> 3001 records` (990 calls × 3 texts).
 //   HOLDS: c1–c4 green on both (the defect never moves a value).
+// @falsified-by: tests/falsified/a-pooled-buffers-texts-are-refilled-in-their-slots-twin.patch
+//   — the refill twin claiming fresh and releasing nothing (`refill_str` never reads its slot)
+//   while the pool's release stays dropped.
+//   CHANNEL: an assertion, on --native.
+//   WITNESS: `m1 env shape grows: 31 -> 3001 records`.
+//   HOLDS: --interpret green (it applies no rewrite), and --native under LOFT_NO_REFILL_TEXT=1.
+// @falsified-by: tests/falsified/a-pooled-buffers-texts-are-refilled-in-their-slots-callee.patch
+//   — (b)'s whole-body checks removed (the buffer named outside its literals, an exit that is
+//   not the literal), so the forwarded exit of c6's callee is admitted.
+//   CHANNEL: an assertion, on --native.
+//   WITNESS: `m1 forwarded shape grows: 11 -> 1001 records`.
+//   HOLDS: --interpret green, and every value cell on both — (b) guards the census, not a
+//   value: the parser writes every field of a literal, so no text slot is left unwritten.
 
 enum Kind { Ping, Pong }
 struct Msg { kind: Kind, payload: text }
