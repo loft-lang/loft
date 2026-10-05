@@ -83,6 +83,15 @@ Sizes are the analysis files' own (XS–M); "→" is the hand price, a ceiling f
 | S8 | `(R-ViewReturn)` — a lookup's found entry read in place | M | `check_request` −10 %; `pa_get` is the shape of the hex_* and markdown finders | over-9x.md |
 | S9 | destination-directed builds — `(R-Place)` widened to a local with ONE owning sink, the return buffer a host | not sized | `panel_build` (most of its 55 % lifecycle share), `emit_to_material` (`tri`, `up`, `centre`; no-prefill −17 % more), `encode_bytes` (`buf += encode(x)`) | records.md § Order item 2 |
 
+S1 re-priced on x86-64 (2026-10-05, today's emission, same hash): `msg_ping` 17.4 → 4.78 ms
+(7.47× → ~2.0×) with the per-message release walk of the pooled call buffer dropped and each text
+write reusing its slot's claim when the new text fits.  What the build must settle first (a design
+note before code): the walk dropped is the SCOPE PASS's `OpClear` on a pooled buffer
+(`@FR-H-ClearRelease`), on both backends, so the interpreter's text set into that buffer must
+refill too or it leaks; a refill may only read a slot known to hold zero or an owned block — a
+`(R-CompleteWrite)` no-prefill mint holds garbage there; and the callee must write every text
+field through the refill on every exit (a copy into the buffer would leak the old texts).
+
 ### Cycle units
 
 | | unit | size | rows and priced landing | priced in |
