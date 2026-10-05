@@ -1,0 +1,20 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The field-ASSIGNMENT cell of `a-cast-cure-refusals-name-the-written-type.loft`, apart because
+// beside the other cells it was not reported.  `s.a = f` into a `u8?` field is refused once, at
+// loft#893's chokepoint, naming `as u8?` — it was refused twice at one position, both times
+// naming `as integer(0, 255)?`, which does not parse.
+
+fn main() {
+  println("{field(2.5)}");
+}
+
+struct S { a: u8?, b: integer }
+
+// @EXPECT_ERROR: Cannot assign float to a field of type u8? — use 'as u8?' to cast explicitly
+fn field(f: float) -> integer {
+  s = S { b: 1 };
+  s.a = f;
+  s.b
+}

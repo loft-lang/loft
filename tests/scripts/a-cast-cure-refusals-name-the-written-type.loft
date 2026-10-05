@@ -1,0 +1,34 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The refusal half of `a-cast-cure-is-spelled-as-the-author-writes-it.loft`: each refusal of a
+// `float` into a narrow integer slot names the cast in the spelling the author wrote — `u8?`,
+// not `integer(0, 255)?` — and a declared local is told to cast, not to rename.
+//
+// `main` comes first so each expectation belongs to its function.  The field ASSIGNMENT is
+// `a-cast-cure-refusal-of-a-field-store.loft`: beside these cells it was not reported.
+
+fn main() {
+  println("{declared(2.5)} {literal(2.5)} {element(2.5)}");
+}
+
+struct S { a: u8?, b: integer }
+
+// @EXPECT_ERROR: Variable 'x' cannot change type from u8? to float; it is declared `u8?` — cast the value with `as u8?`
+fn declared(f: float) -> integer {
+  x: u8? = 1;
+  x = f;
+  x ?? 0
+}
+
+// @EXPECT_ERROR: Cannot assign float to field S.a of type u8? — use 'as u8?' to cast explicitly
+fn literal(f: float) -> integer {
+  s = S { a: f, b: 1 };
+  s.b
+}
+
+// @EXPECT_ERROR: cast each element explicitly with 'as u8?'
+fn element(f: float) -> integer {
+  v: vector<u8?> = [f];
+  len(v)
+}

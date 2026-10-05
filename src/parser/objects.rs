@@ -6966,7 +6966,7 @@ impl Parser {
                     // `vector<float>` field — was copied at the wrong width and read back as
                     // garbage here, where `g.c = v` refuses it.
                     if self.field_store_mismatch("=", u16::MAX, &td, exp_tp) {
-                        self.field_store_refusal(exp_tp, &td);
+                        self.field_store_refusal(exp_tp, &td, None);
                     }
                     let pos = self
                         .database
@@ -7156,22 +7156,8 @@ impl Parser {
                     // as "field declared as <value_type>" — backwards.
                     // A function type is rendered as the author spells it (`fn(const T)`), since
                     // the `const` of a parameter can be the whole difference (loft#1540).
-                    let (got, want) = if matches!(exp_tp.base(), Type::Function(..))
-                        || matches!(td.base(), Type::Function(..))
-                    {
-                        (exp_tp.source_name(&self.data), td.source_name(&self.data))
-                    } else {
-                        (
-                            exp_tp.show(&self.data, &self.vars),
-                            td.show(&self.data, &self.vars),
-                        )
-                    };
-                    diagnostic!(
-                        self.lexer,
-                        Level::Error,
-                        "Cannot assign {got} to field {}.{field} of type {want}",
-                        self.data.def(td_nr).name()
-                    );
+                    let named = format!("{}.{field}", self.data.def(td_nr).name());
+                    self.field_store_refusal(exp_tp, &td, Some(&named));
                 }
             }
             list.push(self.set_field_no_check(td_nr, nr, 0, code.clone(), value.clone()));

@@ -2619,22 +2619,39 @@ use a separate collection or add after the loop"
     /// so its cure is to give the value the field's type where the value is built.  One home
     /// for the assignment and the struct literal, which accept the same values (loft#1072)
     /// and so refuse the same ones in the same words.
-    pub(crate) fn field_store_refusal(&mut self, s_type: &Type, f_type: &Type) {
+    ///
+    /// `field` names the field when the site knows it (a struct literal: `S.a`).  The type a
+    /// cast cure names is spelled as the author writes it (`as u8?`): `source_name` spells a
+    /// ranged integer `integer(0, 255)`, which does not parse.  Only a SCALAR has a cast; a
+    /// record, a fn-ref or a text field is refused with the diagnosis alone.
+    pub(crate) fn field_store_refusal(
+        &mut self,
+        s_type: &Type,
+        f_type: &Type,
+        field: Option<&str>,
+    ) {
         let got = s_type.source_name(&self.data);
-        let want = f_type.source_name(&self.data);
+        let want = self.data.written_type_name(f_type);
+        let target = field.map_or_else(|| "a field".to_string(), |f| format!("field {f}"));
         if matches!(f_type.base(), Type::Vector(..)) {
             diagnostic!(
                 self.lexer,
                 Level::Error,
-                "Cannot assign {got} to a field of type {want} — build the value at the \
+                "Cannot assign {got} to {target} of type {want} — build the value at the \
                  field's type (declare it `: {want}` where it is made)"
+            );
+        } else if crate::data::is_scalar(f_type) && crate::data::is_scalar(s_type) {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "Cannot assign {got} to {target} of type {want} — use 'as {want}' to cast \
+                 explicitly"
             );
         } else {
             diagnostic!(
                 self.lexer,
                 Level::Error,
-                "Cannot assign {got} to a field of type {want} — use 'as {want}' to cast \
-                 explicitly"
+                "Cannot assign {got} to {target} of type {want}"
             );
         }
     }
@@ -5635,7 +5652,7 @@ use a separate collection or add after the loop"
                     f_type.source_name(&self.data),
                 );
             } else {
-                self.field_store_refusal(&s_type, f_type);
+                self.field_store_refusal(&s_type, f_type, None);
             }
         }
         // loft#1034 — a TUPLE target reaches `convert` too.
@@ -7303,15 +7320,11 @@ use a separate collection or add after the loop"
             && !matches!(s_type, Type::Null)
             && !f_type.is_equal(&s_type)
             && !self.convert_store(code, &s_type, f_type, "the assignment target", None)
+            // A FIELD target was already refused at loft#893's chokepoint above, in these
+            // words; reporting it here too printed the same error twice at one position.
+            && !self.field_store_mismatch(op, var_nr, f_type, &s_type)
         {
-            diagnostic!(
-                self.lexer,
-                Level::Error,
-                "Cannot assign {} to a field of type {} — use 'as {}' to cast explicitly",
-                s_type.source_name(&self.data),
-                f_type.source_name(&self.data),
-                f_type.source_name(&self.data),
-            );
+            self.field_store_refusal(&s_type, f_type, None);
         }
         // A write THROUGH a link stores into the linked slot, so the narrowing refusal and the
         // range guard below are asked of that slot's type (`linked_store_target`, loft#1604).

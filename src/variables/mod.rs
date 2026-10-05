@@ -3776,13 +3776,32 @@ impl Function {
             );
             return;
         }
+        // A DECLARED scalar keeps its type (`@FR-N-Decl`), so "a new variable name" is no cure
+        // there — the author asked for this type — and the cast that is one is spelled out,
+        // as the author would write it (`as u8`, not the unparseable `as integer(0, 255)`).
+        // The diagnosis half stays word for word, for the reason the arms above give.
+        if self.annotated.contains(&var_nr)
+            && crate::data::is_scalar(var_tp)
+            && crate::data::is_scalar(type_def)
+        {
+            let declared = data.written_type_name(var_tp);
+            diagnostic!(
+                lexer,
+                Level::Error,
+                "Variable '{}' cannot change type from {} to {}; it is declared `{declared}` — cast the value with `as {declared}`",
+                self.name(var_nr),
+                declared,
+                data.written_type_name(type_def)
+            );
+            return;
+        }
         diagnostic!(
             lexer,
             Level::Error,
             "Variable '{}' cannot change type from {} to {}; use a new variable name or cast with 'as'",
             self.name(var_nr),
-            var_tp.source_name(data),
-            type_def.source_name(data)
+            data.written_type_name(var_tp),
+            data.written_type_name(type_def)
         );
     }
 

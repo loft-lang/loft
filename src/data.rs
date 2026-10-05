@@ -13334,6 +13334,21 @@ impl Data {
         self.type_name_with(tp, false)
     }
 
+    /// A type as its author can write it back into the source — the spelling a refusal's
+    /// cure names (`cast with \`as u8?\``).  An integer, nullable or not, is named by its
+    /// alias or range ([`Self::display_type_name`]); every other type keeps its
+    /// [`Type::source_name`], which carries a keyed collection's keys.  `source_name` alone
+    /// spells a ranged integer `integer(0, 255)`, which does not parse, so a cure written
+    /// with it could not be pasted (loft#1786's class).
+    #[must_use]
+    pub fn written_type_name(&self, tp: &Type) -> String {
+        if matches!(tp.base(), Type::Integer(_)) {
+            self.display_type_name(tp)
+        } else {
+            tp.source_name(self)
+        }
+    }
+
     /// A type's name as a reader should see it — `type_name()`, advice, hover text: an
     /// integer is named by its alias (`u8`, `i16`, a user's `type Lim = …`) or its range
     /// (`integer limit(0, 10)`), inside a collection or a function type too (loft#1824).

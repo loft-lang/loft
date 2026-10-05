@@ -1,0 +1,28 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A refusal's cure must compile where it stands (loft#1786's class).  A `float` into an
+// integer slot is refused (`(C-Only)`: no implicit float-to-integer), and every refusal names
+// the cast — spelled as the author writes the type.  The cast used to be spelled through
+// `source_name`, which renders a ranged integer `integer(0, 255)`: `as integer(0, 255)?` does
+// not parse.  A DECLARED local was also told to "use a new variable name", which gives up the
+// type the author declared.  One field store was reported twice at one position.
+//
+// The cells are cures as printed, so each must compile and run; the refusal texts are pinned
+// by `a-cast-cure-refusals-name-the-written-type.loft`.
+
+struct S { a: u8?, b: u8 }
+
+fn cures(f: float) -> text {
+  x: u8? = 1;
+  x = f as u8?;
+  y: u8 = f as u8;
+  s = S { a: f as u8?, b: f as u8 };
+  s.a = f as u8?;
+  v: vector<u8?> = [f as u8?];
+  "{x} {y} {s.a} {s.b} {v}"
+}
+
+fn main() {
+  assert(cures(2.5) == "2 2 2 2 [2]", "every printed cure compiles and casts: got {cures(2.5)}");
+}

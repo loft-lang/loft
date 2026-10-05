@@ -5680,8 +5680,8 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                         "cannot store {} elements in a vector<{}> (would lose precision); \
                      cast each element explicitly with 'as {}'",
                         t.source_name(&self.data),
-                        in_t.source_name(&self.data),
-                        in_t.source_name(&self.data)
+                        self.data.written_type_name(in_t),
+                        self.data.written_type_name(in_t)
                     );
                 }
             } else if self.widen_literal_items(elm, in_t, &t, res) {
