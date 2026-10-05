@@ -223,6 +223,13 @@ control is scored.  Nothing outside the repository has to survive for it to be r
   guard keeps a marker saying its control is gone.  Score leak-channel receipts with
   `LOFT_STRICT_STORES=1` — unarmed gives a DIFFERENT channel, not a weaker one — and identify a
   leak by its store SHAPE (`St1295×42`); the `kt=` id shifts with the type table.
+- **A patch that applies may not BUILD.**  A receipt comes into reach only when it stops
+  applying.  A later change can add a call site the patch never touches, for example a new
+  caller of a function whose signature the patch reverts.  The patch then still applies over a
+  control that does not compile, and nothing reports it until the patch's context moves.  The
+  runner then reports a wild swing, `the control does not build`.  The cure is a hand
+  re-derivation: apply the patch in a scratch worktree, fix the new site the way the patch
+  fixes the others, write `git diff` back as the receipt, and re-score it.
 - **A guard covering TWO defects holds only ONE patch.**  Keep it for the receipt that moves on
   more channels and backends, record the other as its own `@falsified-at:` block with CHANNEL /
   WITNESS / HOLDS, and say in the file which receipt the patch belongs to
