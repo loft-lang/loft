@@ -5029,7 +5029,7 @@ pub trait LoftCoroutine {
     /// its own field, and the generated body only frees fields that are still set.
     fn drop_stores(&mut self, _stores: &mut Stores) {}
 
-    /// Has this generator reached its end (`(G-Done)`)?  Asked only when an advance
+    /// @FR-G-Next / @FR-G-Done — has this generator reached its end?  Asked only when an advance
     /// answered its channel's end sentinel, because that sentinel is also a value a
     /// generator may yield — `i64::MIN` is the integer null, `"\0"` the text null,
     /// `DbRef::NULL` a null reference — and `(G-Next)` produces it like any other.

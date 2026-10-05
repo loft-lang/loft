@@ -1449,7 +1449,7 @@ fn emit_struct_def(
 ) -> std::io::Result<()> {
     writeln!(w, "struct {struct_name} {{")?;
     writeln!(w, "    state: u32,")?;
-    // Set where the generator ENDS (`(G-Done)`), read by `LoftCoroutine::done`.  The value
+    // @FR-G-Done — set where the generator ENDS, read by `LoftCoroutine::done`.  The value
     // channels' end sentinel is also a value a generator may yield — `i64::MIN` is the
     // integer null, `"\0"` the text null — so the value alone cannot say which happened.
     writeln!(w, "    __done: bool,")?;
