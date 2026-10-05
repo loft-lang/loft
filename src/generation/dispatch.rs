@@ -413,11 +413,24 @@ impl Output<'_> {
                 // caller passed (an over-free / UAF).  Only a fn-owned
                 // intermediate (distinct from both the new value AND the witness)
                 // is freed.
-                let witness_guard = if is_retbuf_attr {
+                let mut witness_guard = if is_retbuf_attr {
                     format!(" && _old_{name}.store_nr != _rb_w_{name}.store_nr")
                 } else {
                     String::new()
                 };
+                // `@FR-O-Buffer` — nor the pooled buffer the call was handed: `v` held it from the
+                // previous pass, and a call answering another store displaces the buffer itself.
+                // A generator keeps the buffer as a coroutine field, as it keeps `var` below.
+                if let Some(buf) = variables.displaced_buffer_witness(var, to, self.data) {
+                    let buf_place = match self.coroutine_persistent_fields.get(&buf) {
+                        Some(field) => format!("self.var_{field}"),
+                        None => format!("var_{}", sanitize(variables.name(buf))),
+                    };
+                    let _ = std::fmt::Write::write_fmt(
+                        &mut witness_guard,
+                        format_args!(" && _old_{name}.store_nr != {buf_place}.store_nr"),
+                    );
+                }
                 let place = match self.coroutine_persistent_fields.get(&var) {
                     Some(field) => format!("self.var_{field}"),
                     None => format!("var_{name}"),

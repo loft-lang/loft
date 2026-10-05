@@ -12234,6 +12234,18 @@ pub fn loop_buffers(data: &Data, stores: &Stores, def_nr: u32) -> HashSet<u16> {
             }
             false
         });
+        // The store survives the iteration only while nothing ELSE releases it.
+        let freed_elsewhere = bound_to_a_releasing_local(data, body, v);
+        if freed_elsewhere {
+            if trace {
+                eprintln!(
+                    "[loop-buffer] {}: {} is bound to a local that releases its store",
+                    def.name(),
+                    vars.name(v)
+                );
+            }
+            continue;
+        }
         if mentions == accounted {
             if trace {
                 eprintln!(
@@ -12253,6 +12265,34 @@ pub fn loop_buffers(data: &Data, stores: &Stores, def_nr: u32) -> HashSet<u16> {
         }
     }
     out
+}
+
+/// `@FR-R-LoopBuffer` — is buffer `v`'s field bound to a local that releases the store itself?
+/// Such a local (an owner: a value branch's binding whose other arm mints) frees the buffer's
+/// store at its own scope end, so the store does not survive the iteration.
+fn bound_to_a_releasing_local(data: &Data, body: &Value, v: u16) -> bool {
+    let mut binders: HashSet<u16> = HashSet::new();
+    body.any_node(&mut |n| {
+        if let Value::Set(w, rhs) = n
+            && *w != v
+            && let Value::Call(d, args) = rhs.unspan()
+            && (*d as usize) < data.definitions.len()
+            && data.def(*d).name() == "OpGetField"
+            && matches!(args.first().map(Value::unspan), Some(Value::Var(b)) if *b == v)
+        {
+            binders.insert(*w);
+        }
+        false
+    });
+    !binders.is_empty()
+        && body.any_node(&mut |n| {
+            matches!(n, Value::Call(d, args)
+                if (*d as usize) < data.definitions.len()
+                    && matches!(data.def(*d).name(),
+                        "OpFreeRef" | "OpFreeRefIfDistinct" | "OpFreeRefTag")
+                    && matches!(args.first().map(Value::unspan),
+                        Some(Value::Var(w)) if binders.contains(w)))
+        })
 }
 
 /// `@FR-R-LoopRecord` — one admitted loop record: the loop that owns the reuse and the body

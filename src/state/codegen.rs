@@ -2631,33 +2631,9 @@ impl State {
             // into the buffer).  So the buffer is one more WITNESS of the displaced free below:
             // it keeps its position ahead of the call (the adopt pins read it there) and stops
             // firing exactly when the store it would release is the buffer's.
-            let buffer_witness: Option<u16> = {
-                let call = match value.unspan() {
-                    Value::Insert(steps) => steps.last().map(Value::unspan),
-                    other => Some(other),
-                };
-                match call {
-                    Some(Value::Call(f, args))
-                        if (*f as usize) < stack.data.definitions.len()
-                            && *stack.data.def(*f).code() != Value::Null =>
-                    {
-                        stack
-                            .data
-                            .def(*f)
-                            .hidden_return_buffer_attr()
-                            .and_then(|b| args.get(b))
-                            .and_then(|a| match a.unspan() {
-                                Value::Var(w)
-                                    if *w != v && stack.function.is_compiler_generated(*w) =>
-                                {
-                                    Some(*w)
-                                }
-                                _ => None,
-                            })
-                    }
-                    _ => None,
-                }
-            };
+            let buffer_witness = stack
+                .function
+                .displaced_buffer_witness(v, value, stack.data);
             let mut stash_old_for_post_free = false;
             if owned_ref && (rhs_reads_v || rhs_is_new_record || nullable_local) {
                 let free_pos = stack.var_pos(v);

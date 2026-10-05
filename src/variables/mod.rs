@@ -5191,6 +5191,37 @@ impl Function {
             && !crate::data::is_null_sentinel_detach(v, value, data, self)
     }
 
+    /// `@FR-O-Buffer` — the compiler-built buffer the CALL in `value` is handed for its result,
+    /// when `v = value` reassigns `v`: the one store the displaced free must never release.
+    ///
+    /// A POOLED buffer (one store per call site per activation, cleared on re-entry) comes back
+    /// as the call's result whenever the callee adopts it, so `v` holds the buffer's store from
+    /// the previous pass.  When this pass's call answers another store, the displaced store IS
+    /// the buffer, and releasing it freed the store the next pass hands the call again.  Both
+    /// backends ask this one question (@FR-O-NoDiverge): the interpreter guards its pre-`Set`
+    /// free with it, native its post-call `_old_` free.  `None` where the right-hand side is not
+    /// such a call, where its buffer is not a compiler local, or where the buffer is `v` itself.
+    #[must_use]
+    pub fn displaced_buffer_witness(&self, v: u16, value: &Value, data: &Data) -> Option<u16> {
+        let call = match value.unspan() {
+            Value::Insert(steps) => steps.last().map(Value::unspan),
+            other => Some(other),
+        };
+        let Some(Value::Call(f, args)) = call else {
+            return None;
+        };
+        if (*f as usize) >= data.definitions.len() || *data.def(*f).code() == Value::Null {
+            return None;
+        }
+        data.def(*f)
+            .hidden_return_buffer_attr()
+            .and_then(|b| args.get(b))
+            .and_then(|a| match a.unspan() {
+                Value::Var(w) if *w != v && self.is_compiler_generated(*w) => Some(*w),
+                _ => None,
+            })
+    }
+
     pub fn is_inline_ref(&self, v: u16) -> bool {
         self.inline_ref_vars.contains(&v)
     }
