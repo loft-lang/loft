@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @I60 — Scope & dependency/lifetime tracker (deps)
+
 //! `@FR-H-TextReplace` — which text-field ASSIGNMENTS release the text they replace.
 //!
 //! The parser spells every assignment to a text field `OpSetTextReplace`, which writes over or
