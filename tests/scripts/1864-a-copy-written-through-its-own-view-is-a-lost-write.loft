@@ -1,0 +1,77 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A copy written through a VIEW bound off it, and read only through such views, is still a
+// copy nothing reads: the write is lost and `lost-write` must say so (loft#1864).  `es = w.es`
+// copies (`(B-View-Base)`); `e = es[0]` binds a view of the copy's element (`(B-View)`), so
+// `e.awake = false` lands in `es`, and `es[0] = e` writes it back into `es` again — `w` never
+// changes, on both backends.  The two reads the lint counted — `es` read to bind `e`, `e` read
+// to write it back into `es` — observe nothing outside the copy.
+//
+// Each warning cell names its local after the cell; `tests/dead_code_lint.rs` runs this file
+// and asserts the EXACT set of locals warned — the silent cells are half the claim: a view read
+// for its value, a write-back into the SOURCE, a `&` bind, a copy read after the write, and a
+// borrowed base, where the same lines write through.
+//
+// CHANNEL: the `lost-write` warnings; every value assertion HOLDS on both backends.  One more
+// cell found a second defect: `view_of_a_view` wrote `w` — the copy `vv_es = w.es` off a plain
+// parameter was ELIDED because only its direct borrower `e` was checked for writes, and
+// `s = e.inn; s.x = 9` writes two views deep.  Its `inn.x == 1` assertion is that guard.
+
+struct In1864 { x: integer }
+struct E1864 { hp: integer, awake: boolean, inn: In1864 }
+struct W1864 { es: vector<E1864> }
+
+fn mk1864() -> W1864 {
+  W1864 { es: [E1864 { hp: 1, awake: true, inn: In1864 { x: 1 } }, E1864 { hp: 2, awake: true, inn: In1864 { x: 2 } }] }
+}
+
+// ------------------------------------------------------------------ the write is lost
+
+// @EXPECT_WARNING: 'rmw_es' is mutated but its value is never read
+fn read_modify_write(w: W1864) { rmw_es = w.es; e = rmw_es[0]; e.awake = false; rmw_es[0] = e; }
+// @EXPECT_WARNING: 'nv_es' is mutated but its value is never read
+fn view_never_read(w: W1864) { nv_es = w.es; _nv = nv_es[0]; nv_es[0] = E1864 { hp: 7, awake: false, inn: In1864 { x: 0 } }; }
+// @EXPECT_WARNING: 'th_es' is mutated but its value is never read
+fn through_the_view(w: W1864) { th_es = w.es; e = th_es[0]; e.awake = false; }
+// @EXPECT_WARNING: 'vv_es' is mutated but its value is never read
+fn view_of_a_view(w: W1864) { vv_es = w.es; e = vv_es[0]; s = e.inn; s.x = 9; }
+// @EXPECT_WARNING: 'cw_es' is mutated but its value is never read
+fn copy_within_the_copy(w: W1864) { cw_es = w.es; cw_es[1] = cw_es[0]; }
+// A `len` observes the count, which no element write changes.
+// @EXPECT_WARNING: 'ln_es' is mutated but its value is never read
+fn len_after(w: W1864) -> integer { ln_es = w.es; e = ln_es[0]; e.awake = false; ln_es[0] = e; len(ln_es) }
+
+// ------------------------------------------------------------------ the write is observed
+
+fn view_read(w: W1864) -> integer { vr_es = w.es; e = vr_es[0]; v = e.hp; vr_es[0] = E1864 { hp: 7, awake: false, inn: In1864 { x: 0 } }; v }
+fn written_to_source(w: W1864) { ws_es = w.es; e = ws_es[0]; e.awake = false; w.es[1] = e; }
+fn linked(w: W1864) { lk_es = &w.es; e = lk_es[0]; e.awake = false; lk_es[0] = e; }
+fn read_after(w: W1864) -> boolean { ra_es = w.es; e = ra_es[0]; e.awake = false; ra_es[0] = e; ra_es[0].awake }
+fn two_views(w: W1864) -> integer { tv_es = w.es; a = tv_es[0]; b = tv_es[1]; a.hp = 5; b.hp }
+fn borrowed_base(w: &W1864) { bb_es = w.es; e = bb_es[0]; e.awake = false; bb_es[0] = e; }
+
+fn main() {
+  w = mk1864();
+  read_modify_write(w);
+  view_never_read(w);
+  through_the_view(w);
+  view_of_a_view(w);
+  copy_within_the_copy(w);
+  assert(len_after(w) == 2, "len_after");
+  assert(w.es[0].awake, "a copy's write never reaches w: awake");
+  assert(w.es[0].hp == 1, "a copy's write never reaches w: hp");
+  assert(w.es[0].inn.x == 1, "a copy's write never reaches w: inn.x");
+  assert(w.es[1].hp == 2, "a copy's write never reaches w: es[1]");
+  assert(view_read(w) == 1, "view_read");
+  assert(!read_after(w), "read_after reads its own copy");
+  assert(two_views(w) == 2, "two_views");
+  assert(w.es[0].awake, "still unchanged after the observed cells");
+  written_to_source(w);
+  assert(!w.es[1].awake, "written_to_source reaches w");
+  linked(w);
+  assert(!w.es[0].awake, "a & bind writes through");
+  v = mk1864();
+  borrowed_base(v);
+  println("1864 ok");
+}

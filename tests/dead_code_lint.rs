@@ -1059,3 +1059,45 @@ fn an_append_to_an_unread_copy_is_a_lost_write_interpret() {
 fn an_append_to_an_unread_copy_is_a_lost_write_native() {
     assert_append_to_a_copy("--native");
 }
+
+/// loft#1864 — a copy written through a VIEW bound off it, and read only through such views,
+/// is a copy nothing reads.  Pins the EXACT set of locals warned, so the silent cells — a view
+/// read for its value, a write-back into the source, a `&` bind, a read after the write, a
+/// borrowed base — are half the claim, as in the 1840 fixture.
+fn assert_copy_through_its_view(backend: &str) {
+    let (stdout, diag, code) = run_env(
+        backend,
+        &workspace("tests/scripts/1864-a-copy-written-through-its-own-view-is-a-lost-write.loft"),
+        &[],
+    );
+    assert_eq!(
+        code,
+        Some(0),
+        "[{backend}] fixture did not exit 0\n{stdout}\n---\n{diag}"
+    );
+    assert!(
+        stdout.contains("1864 ok"),
+        "[{backend}] {stdout}\n---\n{diag}"
+    );
+    let mut warned: Vec<&str> = diag
+        .lines()
+        .filter_map(|l| l.strip_prefix("warning[lost-write]: '"))
+        .filter_map(|l| l.split('\'').next())
+        .collect();
+    warned.sort_unstable();
+    assert_eq!(
+        warned,
+        ["cw_es", "ln_es", "nv_es", "rmw_es", "th_es", "vv_es"],
+        "[{backend}] the copies written only through their own views, and nothing else\n{diag}"
+    );
+}
+
+#[test]
+fn a_copy_written_through_its_own_view_is_a_lost_write_interpret() {
+    assert_copy_through_its_view("--interpret");
+}
+
+#[test]
+fn a_copy_written_through_its_own_view_is_a_lost_write_native() {
+    assert_copy_through_its_view("--native");
+}
