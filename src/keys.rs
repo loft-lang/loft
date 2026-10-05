@@ -3238,6 +3238,16 @@ pub fn keep_range_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_KEEP_RANGE"))
 }
 
+/// `LOFT_NO_KEEP_RANGE_REFRESH=1` — `(R-Refresh)`'s keep-range clause off: `OpKeepRange`
+/// on a held path blocks the loop's hoist as every other length change does, instead of
+/// refreshing the held header at its own site.  The A/B of the clause; the first bisect
+/// step for a wrong read after a self-slice pop inside a hoisted loop.
+#[must_use]
+pub fn keep_range_refresh_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_KEEP_RANGE_REFRESH"))
+}
+
 /// `LOFT_KEYED_VERIFY=1` — the falsifier for the keyed fast paths: every pre-resolved
 /// comparison is checked against the general comparator, every exact `index` lookup
 /// against the boundary descent, and every one-probe `hash` insert against the slot and

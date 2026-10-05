@@ -932,6 +932,26 @@ pub struct PushHeader {
     pub cap: u32,
 }
 
+/// `LOFT_HOIST_VERIFY=1`'s check of `@FR-R-Refresh`'s keep-range clause: the header a
+/// self-slice pop refreshed in place must equal the one derived from the record.
+///
+/// # Panics
+/// When the held header's record or length differs from the derived one — the refresh
+/// is stale, and the message names both.
+pub fn verify_kept_header(held: &VecHeader, db: &DbRef, stores: &[Store]) {
+    let fresh = vec_header(db, stores);
+    assert!(
+        held.rec == fresh.rec && held.len == fresh.len && held.store_nr == fresh.store_nr,
+        "keep-range refresh stale: held rec {} len {} store {}, derived rec {} len {} store {}",
+        held.rec,
+        held.len,
+        held.store_nr,
+        fresh.rec,
+        fresh.len,
+        fresh.store_nr
+    );
+}
+
 /// Derive a [`PushHeader`] for `db`'s vector, as [`vec_header`] derives the plain one.
 #[must_use]
 pub fn push_header(db: &DbRef, stores: &[Store]) -> PushHeader {

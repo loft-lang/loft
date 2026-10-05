@@ -1252,6 +1252,21 @@ pub fn hoistable(
                 false
             });
         }
+        // `@FR-R-Refresh`'s keep-range clause — a popped path holds a push header too (the
+        // mutable holder its length refresh writes) and is judged for aliasing as a pushed
+        // one: an owned root, or the return buffer, else the loop declines.
+        for op in &body.operators {
+            op.any_node(&mut |n| {
+                if let Value::Call(d, args) = n
+                    && (*d as usize) < data.definitions.len()
+                    && let Some(path) = keep_range_path(data, data.def(*d).name(), args)
+                    && !pushes.iter().any(|(p, _)| *p == path)
+                {
+                    pushes.push((path, args[0].clone()));
+                }
+                false
+            });
+        }
     }
     // @PLN157 § V-s (`@FR-R-Mint`) — the paths the body MINTS a record element into.  A
     // mint is a mover like a push and joins the same (`@FR-R-Alias`) decision, but it
@@ -5867,6 +5882,21 @@ pub fn pre_alloc_path(data: &Data, op: &str, args: &[Value]) -> Option<PathKey> 
     vector_path(data, &args[0])
 }
 
+/// Recognise `OpKeepRange(P, lo, hi, tp)` over a pure path (`@FR-R-Refresh`'s keep-range
+/// clause) — the ONE definition of the admissible self-slice pop, asked by the gate, the
+/// collector and the emitter.  The op keeps the vector's record and writes its length, so
+/// it is a LENGTH refresh of P's holder, which the emitter performs at the op's site; the
+/// path takes a push header (a mutable holder) and joins the push paths' aliasing
+/// decision, since a second holder naming the same vector would keep the old length.
+/// Shape only; `None` for every other op, and under `LOFT_NO_KEEP_RANGE_REFRESH`.
+#[must_use]
+pub fn keep_range_path(data: &Data, op: &str, args: &[Value]) -> Option<PathKey> {
+    if op != "OpKeepRange" || args.len() != 4 || !crate::keys::keep_range_refresh_enabled() {
+        return None;
+    }
+    vector_path(data, &args[0])
+}
+
 /// Recognise `OpPush<Kind>(path, val)` for a fusable kind over a pure path (@PLN157 § V-q)
 /// — the ONE definition of the hoistable push, asked by the gate, the collector and the
 /// emitter.  Shape only; the caller confirms the loop hoisted a push header for the path.
@@ -6778,7 +6808,12 @@ fn blocks_header_hoist(
             let fusable_push = known
                 && tiers.push
                 && (fused_push(data, data.def(*d).name(), args).is_some()
-                    || pre_alloc_path(data, data.def(*d).name(), args).is_some());
+                    || pre_alloc_path(data, data.def(*d).name(), args).is_some()
+                    // `@FR-R-Refresh`'s keep-range clause — a self-slice pop keeps the
+                    // record and refreshes the held length at its own site; it takes the
+                    // push tier's holder and aliasing decision.  Its bound operands still
+                    // walk below this node.
+                    || keep_range_path(data, data.def(*d).name(), args).is_some());
             // @PLN157 § V-s (`@FR-R-Mint`) — a record MINT into a plain vector is a mover
             // like a push: it grows that one vector and initialises a record no variable
             // bound before the loop can name; `hoistable` decides the aliasing.  The

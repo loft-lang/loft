@@ -175,9 +175,12 @@ frames), `Output::bind_view_header` (a view copies a held path's holder).
                  the gate admitted for that purpose, and that op refreshes the holder
                  at its own site before anything else can read it: a push bumps its
                  header's length and re-derives the whole header after a growth; a
-                 scalar hoist is evicted at analysis time by the (type, offset) its
-                 writes reach (R-Scalar).  An op that could change a held fact and
-                 does not refresh it blocks the loop.
+                 self-slice pop (OpKeepRange, KEEP-RANGE CLAUSE) sets its header's
+                 length to what the runtime wrote and re-derives the header when the
+                 runtime moved the record instead; a scalar hoist is evicted at
+                 analysis time by the (type, offset) its writes reach (R-Scalar).  An
+                 op that could change a held fact and does not refresh it blocks the
+                 loop.
 ```
 
 **In words.** This is why a push may be admitted and an `OpAppendVector`, a remove or a
@@ -186,6 +189,28 @@ it changes.  The refresh includes the RECORD, not only the local: the length is 
 back per push so a runtime reader inside the loop (an admitted callee's `len(v)`) sees every
 push.  Sites: `Stores::push_hoisted` (bump, write-back, re-derive), `hoist::WriteSet::evicts`
 (the scalar half).
+
+**The keep-range clause.**  `OpKeepRange(P, lo, hi, tp)` — `v = v[lo..hi]` over a scalar
+element kind — on a pure path P is admitted under the push tier: the runtime keeps the
+vector's record (the kept span copied within it, the length written) and answers whether it
+did, so the emitter sets the held length at the op's site — the runtime's two clamps over
+the length the holder carries — and, where the runtime took the copy form instead (a
+foreign or read-only store released and re-appended, or `LOFT_NO_KEEP_RANGE`), re-derives
+the whole push header as a push's growth step does.  The popped path holds a PUSH header
+(the mutable holder) and joins the pushes' aliasing decision (`R-Alias`): an owned root or
+the return buffer, else the loop declines; its root is a mover, so no element base is bound
+over its store in that extent (`R-Base`'s growth clause).  A push window excludes it on its
+own: the op names the pushed root, which the window's parts may not.  Without the clause
+the op declined the WHOLE loop, and three rewrites with it — the stacks' headers, the push
+header's appends and the callee's invariant inputs.  Sites: `hoist::keep_range_path` (the
+one shape, asked by the gate, the collector and the emitter), `KeepRangeEmitter`,
+`Stores::vector_keep_range` (the answer).  Switch `LOFT_NO_KEEP_RANGE_REFRESH` (the loop
+declines as before); under `LOFT_NO_KEEP_RANGE` the runtime's copy form takes the
+re-derive branch.  Falsifier `LOFT_HOIST_VERIFY=1` (`vector::verify_kept_header`: the
+refreshed header against one derived from the record after every pop).  Guard
+`tests/scripts/1014-keep-range-refresh.loft` (a stack popped while read, a `hi` past the
+length, a pop to empty then pushes, two stacks in one body, a pop from both ends under
+`len(v)`, a negative bound).
 
 ### Two paths may name one vector only where ownership cannot rule it out
 
@@ -4335,18 +4360,6 @@ trace and falsifiers apply, plus the cells named here.  Priced in
   callee refills it under the text clause (otherwise the per-call release is what the pool
   was meant to remove); and a function's `__work_*` text local is the same buffer one level
   down, pooled per frame, with an assignment of the empty literal to it emitted as `clear()`.
-- **The keep-range clause, for `(R-Refresh)`.**  `OpKeepRange(P, lo, hi, tp)` on a held pure
-  path P is admitted as a refresher of P's LENGTH: it keeps the record (the kept span copied
-  within it, the length written, `src/database/structures.rs`), so every holder of P — a
-  header, a push header's `h.len` — takes `clamp(hi) − clamp(lo)` at the op's site, and the
-  element base stays valid.  Admitted only where the runtime keeps in place (the owned,
-  writable store a push already requires); a foreign or read-only store takes the
-  release-and-append path and declines the loop as today.  Without it the op declines the
-  WHOLE loop (`hoist::hoistable`) and three rewrites are lost at once — the stacks' headers,
-  the push window, the `__inv` call.  Under `LOFT_NO_KEEP_RANGE` the loop declines as today.
-  Cells: a pop to a `hi` past the length (clamped), a pop to 0 then a push (growth after a
-  keep), hand-computed on both backends; `LOFT_HOIST_VERIFY=1`.  graphics `draw_bezier`:
-  9.62 → 5.04 M.
 - **The function clause takes a base, for `(R-Base)`.**  Beside the function-clause header
   `(R-Header)` emits (`src/generation/mod.rs`), `vec_base` is emitted under the base's own
   condition — no growth of that vector anywhere in the function — and the `?? default`

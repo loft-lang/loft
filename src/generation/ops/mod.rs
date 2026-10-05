@@ -264,6 +264,7 @@ fn build_registry() -> std::collections::HashMap<&'static str, Box<dyn OpEmitter
         r.insert(op, Box::new(vector_ops::HoistedPushEmitter));
     }
     r.insert("OpPreAllocVector", Box::new(vector_ops::PreAllocEmitter));
+    r.insert("OpKeepRange", Box::new(vector_ops::KeepRangeEmitter));
     r.insert("OpNewRecord", Box::new(vector_ops::NewRecordEmitter));
     r.insert("OpFinishRecord", Box::new(vector_ops::FinishRecordEmitter));
 

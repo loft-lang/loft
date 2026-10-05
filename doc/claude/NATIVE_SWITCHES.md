@@ -61,6 +61,12 @@ callee a hoisting loop calls.
 a comprehension) hoist nothing — with it on, the pushed path keeps a PUSH header carrying the
 record's capacity, a push that fits is one store and a length bump, and every read of the path
 serves from it — and is the bisect step for a wrong element or length out of an appending loop.
+**`LOFT_NO_KEEP_RANGE_REFRESH=1`** (`(R-Refresh)`'s keep-range clause) makes a loop that POPS a
+vector by self-slice (`v = v[0..n]`, `OpKeepRange`) hoist nothing — with it on, the popped
+path keeps a push header whose length the op sets at its own site, so the loop's reads,
+pushes and callee inputs stay hoisted — and is the bisect step for a wrong element or length
+read after such a pop inside a loop.  `LOFT_HOIST_VERIFY=1` compares the refreshed header
+with one derived from the record at every pop.
 **`LOFT_NO_MINT_HOIST=1`** (@PLN157 § V-s) makes a loop that appends a RECORD element
 (`v += [Pt{…}]`, `v += [pt(…)]`) hoist nothing — with it on, the mint group is admitted as a
 mover and the loop's invariant record scalars are read once before it — and is the bisect step

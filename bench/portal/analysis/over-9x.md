@@ -142,6 +142,7 @@ is twelve commits.  Joining main into the bench branch is the first action.
 | the pinned bench branch | 13.25 M | 9.8× |
 | the 0.9.8 form | 9.62 M | 7.1× |
 | + the stacks' headers held across the keep-range, the `draw_line__inv` call | 5.04 M | **3.7×** |
+| **BUILT** — `(R-Refresh)`'s keep-range clause (`LOFT_NO_KEEP_RANGE_REFRESH` off → on, the 0.9.8 form, stats.py) | 10.12 → 5.32 M | 7.46× → **4.08×** |
 | ceiling: the two stacks as an `(R-Apart)` instance (a `Vec<i64>` no store observes) | 3.16 M | 2.3× |
 
 The mechanism: `LOFT_TRACE_HOIST_DECLINE=1` names `OpKeepRange` (def 353) at line 457 as

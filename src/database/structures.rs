@@ -1600,12 +1600,17 @@ impl Stores {
     /// a FOREIGN view, a locked store — takes the copy form instead: the span copied out, the
     /// vector cleared as `OpClearVector` clears it (a view is released), the span appended.
     ///
+    /// Answers whether the vector's record was KEPT — `true` on the in-place form, `false`
+    /// when the copy form released and re-appended it (`@FR-R-Refresh`'s keep-range clause
+    /// re-derives a held header on `false`, and only sets its length on `true`) and for an
+    /// absent vector, which nothing holds.
+    ///
     /// # Panics
     /// When `known` is an element kind that owns records — the parser never emits
     /// `OpKeepRange` for one.
-    pub fn vector_keep_range(&mut self, db: &DbRef, lo: i64, hi: i64, known: u16) {
+    pub fn vector_keep_range(&mut self, db: &DbRef, lo: i64, hi: i64, known: u16) -> bool {
         if db.is_null() || db.rec == 0 || db.pos == 0 {
-            return;
+            return false;
         }
         assert!(
             !self.is_linked(known) && !self.type_owns_heap(known),
@@ -1620,7 +1625,7 @@ impl Stores {
         let store = keys::mut_store(db, &mut self.allocations);
         let v_rec = store.collection_rec(db.rec, db.pos);
         if v_rec == 0 {
-            return;
+            return false;
         }
         if store.is_foreign() || store.read_only || !crate::keys::keep_range_enabled() {
             let span = store.bytes_of(v_rec)[from..to].to_vec();
@@ -1628,10 +1633,11 @@ impl Stores {
             if n > 0 {
                 self.append_span(db, &span, n, size);
             }
-            return;
+            return false;
         }
         store.buffer(v_rec).copy_within(from..to, 0);
         store.set_u32_raw(v_rec, 4, n);
+        true
     }
 
     /// @PLN174 F4b — `r = src[lo..hi]` bound to a local that owns its backing store (a
