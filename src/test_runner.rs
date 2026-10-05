@@ -2030,6 +2030,29 @@ pub(crate) fn run_tests(
                 // duration of this file's tests; the guard restores the cwd
                 // afterwards so the next file's parse/compile is unaffected.
                 let _cwd = enter_source_dir(&clean_db.source_dir, clean_db.program_relative);
+                // loft#1865 — compile the file ONCE and fork a fresh runtime per test
+                // (`State::fork_program`).  Cloning the checked `Data` and recompiling every
+                // function per test made a file's test time quadratic in its size (≈12 ms a
+                // test on a 3 600-line file whose cells ran in 0.13 s through `main`).  The
+                // per-test path stays for a `LOFT_LOG` dump, which needs the table mutable,
+                // for `LOFT_TEST_RECOMPILE=1` (the A/B against this), and when compiling
+                // panics — each test then reports it, as before.
+                let loft_log_active = std::env::var("LOFT_LOG").is_ok();
+                let compiled: Option<(State, std::sync::Arc<crate::data::Data>)> =
+                    if loft_log_active || std::env::var_os("LOFT_TEST_RECOMPILE").is_some() {
+                        None
+                    } else {
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            let mut data = clean_data.clone();
+                            let mut state = State::new(clean_db.clone());
+                            data.observes_entries = true;
+                            compile::byte_code(&mut state, &mut data);
+                            crate::extensions::load_all(&mut state, pending_native.clone());
+                            crate::extensions::wire_native_fns(&mut state, &data);
+                            (state, std::sync::Arc::new(data))
+                        }))
+                        .ok()
+                    };
                 for (_, fn_name) in &test_fns {
                     // Per-function @IGNORE: skip without running.
                     if ann.ignore_fn.contains(fn_name.as_str()) {
@@ -2049,20 +2072,29 @@ pub(crate) fn run_tests(
                     let production = ann.production;
                     let log_conf = ann.log_conf.clone();
 
-                    // Build a fresh State + bytecode for every function so tests
-                    // within a file cannot leak heap/store state into each other.
-                    let loft_log_active = std::env::var("LOFT_LOG").is_ok();
+                    // A fresh runtime for every function, so tests within a file cannot
+                    // leak heap/store state into each other.
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        let mut data_copy = clean_data.clone();
-                        let mut state = State::new(clean_db.clone());
-                        // Coverage is armed below and counts a function entered by a CALL, so
-                        // the calls stay calls (`@FR-R-InlineLeaf`).
-                        data_copy.observes_entries = true;
-                        compile::byte_code(&mut state, &mut data_copy);
-                        // Load native extensions for packages with #native functions.
-                        crate::extensions::load_all(&mut state, pending_native.clone());
-                        // PKG.5: wire auto-marshalled native functions.
-                        crate::extensions::wire_native_fns(&mut state, &data_copy);
+                        let (mut state, mut data_copy) = if let Some((program, data)) = &compiled {
+                            // SAFETY: `compiled` outlives this test's `state`, which is
+                            // dropped inside this closure.
+                            (
+                                unsafe { program.fork_program() },
+                                std::sync::Arc::clone(data),
+                            )
+                        } else {
+                            let mut data_copy = clean_data.clone();
+                            let mut state = State::new(clean_db.clone());
+                            // Coverage is armed below and counts a function entered by a
+                            // CALL, so the calls stay calls (`@FR-R-InlineLeaf`).
+                            data_copy.observes_entries = true;
+                            compile::byte_code(&mut state, &mut data_copy);
+                            // Load native extensions for packages with #native functions.
+                            crate::extensions::load_all(&mut state, pending_native.clone());
+                            // PKG.5: wire auto-marshalled native functions.
+                            crate::extensions::wire_native_fns(&mut state, &data_copy);
+                            (state, std::sync::Arc::new(data_copy))
+                        };
 
                         // Set up logger if @ARGS requested --production or --log-conf.
                         if production || log_conf.is_some() {
@@ -2083,8 +2115,6 @@ pub(crate) fn run_tests(
                         // Arm coverage for this run.  Sized to the definition table so
                         // the hook is a bounds-checked index, never a resize.
                         state.entered_fns = Some(vec![false; data_copy.definitions() as usize]);
-                        // The run co-owns this test's table, so it is shared, not copied again.
-                        let mut data_copy = std::sync::Arc::new(data_copy);
                         // loft#860 — and the profiler, if the environment asked for it.
                         // A no-op otherwise: `Profiler::from_env` returns `None`, so an
                         // ordinary test run pays a single `var_os` per test.

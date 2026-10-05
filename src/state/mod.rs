@@ -8306,6 +8306,56 @@ impl State {
         }
     }
 
+    /// A fresh RUNTIME for the program `self` compiled (loft#1865): the bytecode, the native
+    /// library and every table compiling filled, shared or copied, over a new heap.  The test
+    /// runner compiles a file once and forks one of these per test function, where it used to
+    /// clone the whole `Data` and recompile every function per test — quadratic in file size.
+    ///
+    /// The compiled stores are BORROWED read-only, as a `par` worker borrows its parent's
+    /// ([`Stores::clone_for_light_worker`]): compiling leaves only the constant store behind,
+    /// locked, and a test writes only to stores it allocates itself, so one test's heap never
+    /// reaches the next.  Everything else is what [`Self::new_worker`] gives a runtime that
+    /// has not run yet.
+    ///
+    /// # Safety
+    /// `self` must outlive the forked `State` — its stores are borrowed, not copied.
+    #[must_use]
+    pub unsafe fn fork_program(&self) -> State {
+        let stores = unsafe { self.database.clone_for_light_worker() };
+        let mut state = State::new_worker(
+            stores,
+            Arc::clone(&self.bytecode),
+            Arc::clone(&self.library),
+        );
+        state
+            .database
+            .user_args
+            .clone_from(&self.database.user_args);
+        state.library_names.clone_from(&self.library_names);
+        state
+            .native_stub_symbols
+            .clone_from(&self.native_stub_symbols);
+        state.stack.clone_from(&self.stack);
+        state.vars.clone_from(&self.vars);
+        state.calls.clone_from(&self.calls);
+        state.types.clone_from(&self.types);
+        state.text_positions.clone_from(&self.text_positions);
+        state.line_numbers.clone_from(&self.line_numbers);
+        state.scope_spans.clone_from(&self.scope_spans);
+        state.store_spans.clone_from(&self.store_spans);
+        state.source_spans.clone_from(&self.source_spans);
+        state.published_spans.clone_from(&self.published_spans);
+        state.fn_positions.clone_from(&self.fn_positions);
+        state.frame_headroom = Arc::clone(&self.frame_headroom);
+        state.gen_max_position = self.gen_max_position;
+        state.stack_trace_lib_nr = self.stack_trace_lib_nr;
+        state.walk_steps.clone_from(&self.walk_steps);
+        state.fused_away.clone_from(&self.fused_away);
+        state.const_refs.clone_from(&self.const_refs);
+        state.keep_entry_return = self.keep_entry_return;
+        state
+    }
+
     /// Create a `State` for use in a parallel worker thread.
     ///
     /// `worker` must be produced by [`Stores::clone_for_light_worker`]; the
