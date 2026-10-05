@@ -996,7 +996,8 @@ pub fn files(self: const File) -> vector<File> fs#read {
 fn write_text_raw(file: File, v: text) -> boolean fs#update;
 #rust"{{ let __wf_v = @v; stores.write_file(&@file, __wf_v) }}"
 #impure(io)
-/// Writes v as UTF-8 text to the file, overwriting existing content.  Returns
+/// Writes v as UTF-8 text at the file's position: the first write through a File
+/// replaces the file's content, later ones follow it.  Returns
 /// FileResult.Ok on success and FileResult.Other on an OS write failure (disk
 /// full, permission denied, a bad path) — a failed write is OBSERVABLE, not
 /// silently swallowed.  Discarding callers (`f.write(s)` as a statement) are

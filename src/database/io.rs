@@ -10,7 +10,7 @@ use crate::vector;
 #[cfg(not(host_fs))]
 use std::collections::BTreeMap;
 #[cfg(not(host_fs))]
-use std::io::Write as _;
+use std::io::{Seek as _, SeekFrom, Write as _};
 
 enum Format {
     TextFile = 1,
@@ -324,7 +324,7 @@ impl Stores {
 
     /// Return the number of bytes that `read_data` will append for the given type.
     /// Returns 0 for types whose binary size is variable (text) or unsupported (collections).
-    fn binary_size(&self, tp: u16) -> usize {
+    pub(crate) fn binary_size(&self, tp: u16) -> usize {
         match tp {
             2 | 6 => 4,     // single, character
             0 | 1 | 3 => 8, // integer (post-2c i64), long, float
@@ -741,8 +741,18 @@ impl Stores {
             };
             let s = self.store_mut(file);
             let mut file_ref = s.get_i32_raw(file.rec, file.pos + 28);
+            let raw_next = s.get_long(file.rec, file.pos + 16);
             if file_ref == i32::MIN {
-                match std::fs::File::create(&resolved_name) {
+                // Read-write, so a read through the same `File` after it sees what was
+                // written (loft#1861: `File::create` opened it write-only, and the read
+                // answered nothing on both backends).
+                match std::fs::OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .open(&resolved_name)
+                {
                     Ok(f) => {
                         s.set_i32_raw(file.rec, file.pos + 28, f_nr);
                         self.files
@@ -762,11 +772,24 @@ impl Stores {
                     }
                 }
             }
-            if let Some(Some(f)) = self.files.get_mut(file_ref as usize) {
-                f.write_all(v.as_bytes()).is_ok()
-            } else {
-                false
+            let Some(Some(f)) = self.files.get_mut(file_ref as usize) else {
+                return false;
+            };
+            // The write lands where the program's position is (`f#next`), as `+=` and a
+            // read do, and leaves `#index`/`#next` around what it wrote.
+            if raw_next != i64::MIN && f.seek(SeekFrom::Start(raw_next as u64)).is_err() {
+                return false;
             }
+            let Ok(start) = f.stream_position() else {
+                return false;
+            };
+            if f.write_all(v.as_bytes()).is_err() {
+                return false;
+            }
+            let s = self.store_mut(file);
+            s.set_long(file.rec, file.pos + 8, start as i64);
+            s.set_long(file.rec, file.pos + 16, (start + v.len() as u64) as i64);
+            true
         }
     }
 

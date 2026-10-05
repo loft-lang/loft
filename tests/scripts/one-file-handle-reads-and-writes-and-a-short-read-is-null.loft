@@ -1,0 +1,79 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1861 — a `File` is ONE handle whichever operation came first, and a binary read
+// that gets fewer bytes than its type is null.
+//
+// - `write()` opened its handle write-only: a read through the same `File` got nothing
+//   (null on --native, 0 on the interpreter) and `#next` stayed null after the write.
+// - A read opened its handle read-only: a `+=` through the same `File` was lost with
+//   `Bad file descriptor` on both backends.
+// - The interpreter decoded a short read's zero-padded buffer: two bytes left of a
+//   four-byte `i32` answered `14648` ("89" and two zeros), and `#read(4) as integer`
+//   (fewer bytes than the type) panicked in `write_data`.
+//
+// Values by hand: "0123" little-endian is 0x33323130 = 858927408; "4567" is
+// 0x37363534 = 926299444; 1094795585 is 0x41414141, written as "AAAA".
+
+fn scratch(tag: text) -> text {
+  "{temp_dir() ?? "/tmp"}/loft_one_handle_{tag}_{ticks()}.bin"
+}
+
+fn main() {
+  // write() then read on the same handle: the position is past the 10 bytes, so the read
+  // is at end-of-file and answers null.
+  p = scratch("wr");
+  h = file(p);
+  assert(h.write("0123456789").ok(), "write");
+  assert(h#next == 10, "next after write: {h#next}");
+  assert(h#index == 0, "index after write: {h#index}");
+  h#format = LittleEndian;
+  x = h#read(4) as i32;
+  assert(x == null, "read at end of file after write: {x}");
+  // ... and back at the start the same handle reads what it wrote.
+  h#next = 0;
+  y = h#read(4) as i32;
+  assert(y == 858927408, "read back after write: {y}");
+  assert(h#next == 4, "next after read back: {h#next}");
+  delete(p);
+
+  // A fresh handle over 10 bytes: two full reads, then 2 bytes left of 4.
+  p = scratch("short");
+  w = file(p);
+  w.write("0123456789");
+  g = file(p);
+  g#format = LittleEndian;
+  a = g#read(4) as i32;
+  b = g#read(4) as i32;
+  c = g#read(4) as i32;
+  assert(a == 858927408, "first read: {a}");
+  assert(b == 926299444, "second read: {b}");
+  assert(c == null, "short read: {c}");
+  assert(g#next == 8, "a short read does not move the position: {g#next}");
+  // Fewer bytes than the type's width: null, not a panic.
+  g#next = 0;
+  z = g#read(4) as integer;
+  assert(z == null, "4 bytes as an 8-byte integer: {z}");
+  delete(p);
+
+  // A read, then `+=` through the same handle: the write lands at the read's position.
+  p = scratch("rw");
+  w = file(p);
+  w.write("0123456789");
+  r = file(p);
+  r#format = LittleEndian;
+  d = r#read(4) as i32;
+  assert(d == 858927408, "read before the write: {d}");
+  r += 1094795585 as i32;
+  assert(file(p).content() == "0123AAAA89", "write after read: {file(p).content()}");
+  delete(p);
+
+  // write() twice through one handle: the second follows the first.
+  p = scratch("twice");
+  w = file(p);
+  w.write("abcdef");
+  w.write("XY");
+  assert(file(p).content() == "abcdefXY", "two writes: {file(p).content()}");
+  assert(w#next == 8, "next after two writes: {w#next}");
+  delete(p);
+}

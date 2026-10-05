@@ -25,9 +25,16 @@
 //! The handle therefore remembers its logical position after every operation that settles
 //! it, and a seek to exactly that position answers without asking the OS.  An error forgets
 //! the position, so the next seek goes to the OS again.
+//!
+//! A handle a READ opened is read-only, so that a program which only reads never opens a
+//! file for writing (a watcher sees a write-close for that, and a read-only file could not be
+//! read at all).  It keeps its path, and the first write or resize through it reopens the
+//! file read-write at the logical position — the program's `File` is one handle whichever
+//! operation came first (loft#1861: a write after a read failed with `Bad file descriptor`).
 
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::path::PathBuf;
 
 /// Bytes a refill asks for.  A request at least this large bypasses the buffer.
 const CAPACITY: usize = 64 * 1024;
@@ -41,9 +48,12 @@ pub struct LoftFile {
     pos: usize,
     /// The bytes `buf` holds.
     len: usize,
+    /// A read-only handle's path, kept to reopen it read-write on its first write.
+    reopen: Option<PathBuf>,
 }
 
 impl LoftFile {
+    /// A handle opened for writing (and reading).
     #[must_use]
     pub fn new(file: File) -> LoftFile {
         LoftFile {
@@ -52,7 +62,37 @@ impl LoftFile {
             buf: Vec::new(),
             pos: 0,
             len: 0,
+            reopen: None,
         }
+    }
+
+    /// A handle opened read-only from `path`; a write through it reopens `path` read-write.
+    #[must_use]
+    pub fn reader(file: File, path: impl Into<PathBuf>) -> LoftFile {
+        LoftFile {
+            reopen: Some(path.into()),
+            ..LoftFile::new(file)
+        }
+    }
+
+    /// Before a write: a read-only handle becomes a read-write one at the same logical
+    /// position.  A file that cannot be opened for writing answers the OS error, and the
+    /// handle stays a reader.
+    fn writable(&mut self) -> io::Result<()> {
+        let Some(path) = self.reopen.clone() else {
+            return Ok(());
+        };
+        self.realign()?;
+        let at = self.file.stream_position()?;
+        let mut file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)?;
+        file.seek(SeekFrom::Start(at))?;
+        self.file = file;
+        self.at = Some(at);
+        self.reopen = None;
+        Ok(())
     }
 
     /// Unread buffered bytes: how far the OS position runs ahead of the logical one.
@@ -93,6 +133,7 @@ impl LoftFile {
     /// # Errors
     /// The OS error of the realigning seek or of the resize.
     pub fn set_len(&mut self, size: u64) -> io::Result<()> {
+        self.writable()?;
         self.realign()?;
         self.file.set_len(size)
     }
@@ -182,7 +223,7 @@ impl LoftFile {
 
 impl Write for LoftFile {
     fn write(&mut self, data: &[u8]) -> io::Result<usize> {
-        if let Err(e) = self.realign() {
+        if let Err(e) = self.writable().and_then(|()| self.realign()) {
             self.at = None;
             return Err(e);
         }
@@ -270,6 +311,21 @@ mod tests {
     fn a_write_after_a_read_lands_at_the_logical_position() {
         let p = scratch("write", b"abcdefghij");
         let mut f = open(&p);
+        let mut three = [0u8; 3];
+        f.read_exact(&mut three).unwrap();
+        f.write_all(b"XY").unwrap();
+        let mut rest = [0u8; 5];
+        f.read_exact(&mut rest).unwrap();
+        assert_eq!(&rest, b"fghij");
+        drop(f);
+        assert_eq!(std::fs::read(&p).unwrap(), b"abcXYfghij");
+        std::fs::remove_file(p).unwrap();
+    }
+
+    #[test]
+    fn a_reader_written_through_reopens_at_the_logical_position() {
+        let p = scratch("reader", b"abcdefghij");
+        let mut f = LoftFile::reader(std::fs::File::open(&p).unwrap(), &p);
         let mut three = [0u8; 3];
         f.read_exact(&mut three).unwrap();
         f.write_all(b"XY").unwrap();

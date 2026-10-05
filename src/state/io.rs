@@ -319,8 +319,14 @@ impl State {
         data: Vec<u8>,
         n: usize,
     ) {
+        // `data` holds the bytes the read GOT.  Fewer than asked for, or fewer than the
+        // type's width (`#read(4) as integer`), leave the target as the read declared it —
+        // null — as on `--native` (loft#1861: the zero-padded buffer was decoded as a value).
         let actual = data.len();
         let is_text = self.database.is_text_type(db_tp);
+        if !is_text && actual < self.database.binary_size(db_tp) {
+            return;
+        }
         if is_text {
             let s = unsafe { String::from_utf8_unchecked(data) };
             *self
@@ -479,9 +485,9 @@ impl State {
                             let _ = f.seek(SeekFrom::Start(next_pos as u64));
                         }
                         store.set_i32_raw(file.rec, file.pos + 28, f_nr);
-                        self.database
-                            .files
-                            .push(Some(crate::database::loft_file::LoftFile::new(f)));
+                        self.database.files.push(Some(
+                            crate::database::loft_file::LoftFile::reader(f, shown.as_str()),
+                        ));
                         file_ref = f_nr;
                     }
                     Err(e) => {
@@ -520,9 +526,7 @@ impl State {
                 file.pos + 16,
                 next_pos + actual as i64,
             );
-            if is_text {
-                data.truncate(actual);
-            }
+            data.truncate(actual);
             self.dispatch_read_data(val, db_tp, little_endian, data, n);
         }
     }

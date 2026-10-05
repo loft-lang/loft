@@ -2065,7 +2065,9 @@ fn file_handle_read(stores: &mut Stores, file: &DbRef, initial_pos: i64) -> i32 
                 .set_i32_raw(file.rec, file.pos + 28, f_nr);
             stores
                 .files
-                .push(Some(crate::database::loft_file::LoftFile::new(f)));
+                .push(Some(crate::database::loft_file::LoftFile::reader(
+                    f, &file_name,
+                )));
             f_nr
         }
         Err(e) => {
