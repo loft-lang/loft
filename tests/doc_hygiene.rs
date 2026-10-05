@@ -186,6 +186,7 @@ fn the_falsify_scorer_reads_its_channels_on_this_platform() {
 /// tree and re-scored.  `tests/falsified_patches.baseline` lists the ones already stale when
 /// this landed, and only shrinks.
 #[test]
+#[ignore = "PR-time: .github/workflows/receipts.yml refreshes and scores stale receipts on a runner, then runs this with `--ignored`; a join does not stop on a receipt the code moved under"]
 fn every_patch_receipt_still_applies() {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let mut patches: Vec<std::path::PathBuf> = fs::read_dir(root.join("tests/falsified"))

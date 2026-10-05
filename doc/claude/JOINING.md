@@ -73,6 +73,10 @@ PR.  It refuses `main`, and it never force-pushes; when the branch moved during 
 fails and asks for a new dispatch.  A ratchet (a `pin`, the census, the drop gate) never
 carries `ci`: a moved count is a decision, so it stays with `join.py rederive`.
 
+The falsification patch receipts follow the same route: a join does not stop on a receipt the
+code moved under.  Before the PR, `scripts/derive-ci.sh --workflow receipts.yml` refreshes and
+re-scores the stale ones on a runner and commits them back (GUARDS.md § The patch receipt).
+
 ## Does this tree already have that change?
 
 Ancestry answers about COMMITS; a join asks about CHANGES, and the two diverge after the first
