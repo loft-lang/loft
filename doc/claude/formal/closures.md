@@ -239,7 +239,7 @@ with the closure's environment in scope.
   (`(L-CapOwn)`).  The adoption has to follow the closure out through a struct field as it does
   out through the return.  Until then the cure the refusal names works: return the closure and
   build the struct in the caller.
-- **D-clo-48 (OPEN, loft#1869)** — violates `(L-Fn)`: a closure cannot capture a fn-ref local
+- **D-clo-48 (OPEN, loft#1869)** — violates `(L-Fn)`: a closure cannot capture a fn-ref local <!-- doc-lint: ok -->
   that holds a CAPTURING closure — refused with the fn-ref struct-field message, because the
   closure record is the struct the capture is stored in.  A non-capturing fn-ref is captured.
   The inner record's ownership has to follow into the outer record (`(L-CapOwn)`), as a
