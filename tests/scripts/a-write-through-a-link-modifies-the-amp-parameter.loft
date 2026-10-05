@@ -1,0 +1,41 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-B-Ref-Write` — a write through a local link writes the place it names, so a `&`
+// parameter written through a link IS modified.  The check that refuses a needless `&`
+// ("Parameter 'p' has & but is never modified; remove the &") read writes by variable and never
+// carried a write on a link back to its source: a scalar link has no deps to carry it
+// (`@FR-O-Borrow-Scalar`).  It now reads each link's bind from the body and follows the chain.
+// The cells write through one link, through a chain of two, and through a link handed on to
+// another `&` parameter; the refusal for a parameter only READ through a link must stay, and
+// that control lives in the parse-error suite beside the other needless-`&` refusals.
+
+fn through_one(p: &integer) {
+  c = &p;
+  c += 10;
+}
+
+fn through_two(p: &integer) {
+  c = &p;
+  d = &c;
+  d = d * 2;
+}
+
+fn add5(q: &integer) {
+  q += 5;
+}
+
+fn handed_on(p: &integer) {
+  c = &p;
+  add5(c);
+}
+
+fn main() {
+  a = 250;
+  through_one(a);
+  b = 250;
+  through_two(b);
+  c = 250;
+  handed_on(c);
+  assert("{a} {b} {c}" == "260 500 255", "every write reaches the caller: got {a} {b} {c}");
+}

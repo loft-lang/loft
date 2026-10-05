@@ -10404,6 +10404,26 @@ at enhancement_ref_vector_readonly_loop_still_flags:2:20",
     );
 }
 
+/// `@FR-B-Ref-Write` — a `&` parameter only READ through a local link (and a link to that
+/// link) is still never modified, so the needless-`&` refusal still holds.  The control for the
+/// fix that carries a write on a link back to its source (`a-write-through-a-link-modifies-the-
+/// amp-parameter`): the link's own bind is a `Set` too, and counting it would silence this.
+#[test]
+fn a_link_only_read_leaves_the_amp_parameter_unmodified() {
+    code!(
+        "fn twice(p: &integer) -> integer {
+    c = &p;
+    d = &c;
+    d * 2
+}
+fn test() { }"
+    )
+    .error(
+        "Parameter 'p' has & but is never modified; remove the & \
+at a_link_only_read_leaves_the_amp_parameter_unmodified:1:13",
+    );
+}
+
 /// `break value` in void function → compile error.
 #[test]
 fn enhancement_break_value_in_void_function_errors() {
