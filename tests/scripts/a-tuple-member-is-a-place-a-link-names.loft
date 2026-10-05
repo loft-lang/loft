@@ -12,6 +12,12 @@
 // link to the link, an argument, and a loop.  The field and element spellings are the controls
 // and must not move.  Narrow, text and `&(…)`-reached members are still refused by name
 // (D-bind-70, loft#1875); their pins are in `tests/issues.rs`, since a refusal stops a file.
+//
+// @falsified-at: 22a136711 — interpret exit 1 -> 0, native exit 1 -> 0 (the control refuses
+//   `c = &t.0`: "`&` requires an addressable operand").
+// @falsified-by: tests/falsified/a-tuple-member-is-a-place-a-link-names.patch — the same channels.  Score it with
+//   `scripts/falsify.sh <this file> --patch <that patch>` once 22a136711 is out of reach.
+// HOLDS: leak, panic and asserts are clean on both trees and both backends.
 
 enum Col { Red, Green }
 
