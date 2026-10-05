@@ -108,7 +108,9 @@ or simple.
   the engine then has to step in, keep the rendering running and restart the embedded runtime,
   losing what it held. In loft the game's data lives in a store shared with the engine, so a
   failing or restarted script loses nothing. We take the state so seriously that the whole
-  program can be switched for a more optimised version while the game keeps running.
+  program can be switched for a more optimised version while the game keeps running. The
+  missing piece is converting the stores when a data definition changes: outlined, and it
+  needs few new routines but a lot of testing. A nice example of what we try to reach for loft.
 
 *4. Who it is for.*
 
