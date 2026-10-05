@@ -178,6 +178,10 @@ index becomes `nullref` plus a recoverable fault rather than a silent read.
                    DEVELOPMENT run halts with the lock report and a PRODUCTION run logs the
                    write and DISCARDS it — the store keeps its bytes (C80).  Never a silent
                    successful write.
+  (H-TextReplace)  an ASSIGNMENT to a text field (`o.s = t`, `v[i].s = t`, `o.s += t`)
+                   releases the text the slot held, or writes `t` over its block when `t`
+                   fits, once no borrow of that text is live.  A record LITERAL's write is
+                   an initialisation: it never reads the slot it fills.
 ```
 
 **In words.** A write updates the byte(s) at the target and yields the written value. A write
@@ -202,7 +206,19 @@ op that does is a writer it refuses), so the lock state is read with the vector 
 window or the record address the loop holds.  A locked store then has no room on any fast path —
 a window over it has no capacity, a header over it no writable element, a record address in it
 leaves the fast path by the same test as a null one — so every write to it takes the runtime's
-refusing path, and the fast path carries no lock test of its own. Crucially, a write's target ROOT decides whose state it touches: a
+refusing path, and the fast path carries no lock test of its own. An assignment to a text field frees what it replaces (`H-TextReplace`): the text a field held
+belongs to that field alone, so nothing else is left pointing at it — except a BORROW.  A
+`text` parameter is handed the field's bytes rather than a copy, and so is a walk over the
+field's characters, so `g(r.a, r)` whose body writes `q.a` would read its own parameter
+overwritten.  The release therefore waits for the borrows: it is taken where the function can
+SEE that none is live — the record's owner is a local of this function, no text variable of
+the frame borrows from it, and the write is not inside another call's arguments — and the
+other sites keep the old text until the store dies (D-heap-45).  The initialisation is a
+different write because the slot it fills can hold bytes that are not a block: a record minted
+without zero-filling (`(R-CompleteWrite)`) or an element slot handed to a callee
+(`(R-Place)`).  The guard is
+`tests/scripts/1873-an-assigned-text-field-releases-the-text-it-replaces.loft`.
+Crucially, a write's target ROOT decides whose state it touches: a
 write whose root is a **parameter** mutates the caller's value; a write to a **local** touches
 only that local's own store (see `H-Copy`) — the exact fact [capabilities.md](capabilities.md)'s
 `Cap-Own`/raw-write admission rests on.
@@ -723,10 +739,17 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **0**.  Every entry the register has carried is CLOSED; the entries and the story of how each
-closed are in [heap-history.md](heap-history.md).  `tests/ownership_drop_gate.rs` gives every
-generated cell a lease verdict and ties each cell that must release once, and does not, to exactly
-one open entry.
+OPEN: **1**.  The entries the register closed, and how each closed, are in
+[heap-history.md](heap-history.md).  `tests/ownership_drop_gate.rs` gives every generated cell
+a lease verdict and ties each cell that must release once, and does not, to exactly one open
+entry.
+
+- **D-heap-45 (OPEN, loft#1876)** — violates <!-- doc-lint: ok -->
+  (`H-TextReplace`): an assignment to a text field of a record reached through a PARAMETER
+  keeps the text it replaces until the store dies.  Whether a caller frame still borrows that
+  text is a fact about the callers, and the release is taken only where the function itself
+  shows there is no borrow.  A method rewriting `self.s` once per call grows the caller's store
+  by one record per call.
 
 Writing these rules **shrinks** [operational.md](operational.md)'s D-op-1 — the heap/store
 steps it named as *"unwritten … the interpreter remains their spec"* now have a written

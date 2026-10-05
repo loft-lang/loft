@@ -743,11 +743,13 @@ impl Output<'_> {
         // `@FR-R-RefillText` — in a refill twin, the literal's text sets into its own buffer
         // refill the slot: written over the block the slot owns when the text fits, released
         // and claimed anew when it does not; a null releases the block the slot held.
-        if def_fn.name() == "OpSetText"
-            && let Some(b) = self.refill_twin_buf
-            && vals
-                .first()
-                .is_some_and(|t| super::hoist::path_offset(t, b, self.data).is_some())
+        // `@FR-H-TextReplace` — an assignment's write is the same refill, at every site.
+        if (def_fn.name() == "OpSetTextReplace"
+            || (def_fn.name() == "OpSetText"
+                && self.refill_twin_buf.is_some_and(|b| {
+                    vals.first()
+                        .is_some_and(|t| super::hoist::path_offset(t, b, self.data).is_some())
+                })))
             && let Some(vi) = def_fn.attributes().iter().position(|a| a.name == "val")
         {
             let borrowed = !self.text_set_copy_kept

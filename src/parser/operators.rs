@@ -222,13 +222,13 @@ impl Parser {
             if op == "=" {
                 let mut p = parms.clone();
                 p.push(code.clone());
-                *code = self.cl("OpSetText", &p);
+                *code = self.cl("OpSetTextReplace", &p);
             } else {
                 let mut ls = vec![v_set(var_nr, to.clone())];
                 ls.extend(self.text_append_ops(code, tp, var_nr));
                 let mut p = parms.clone();
                 p.push(Value::Var(var_nr));
-                ls.push(self.cl("OpSetText", &p));
+                ls.push(self.cl("OpSetTextReplace", &p));
                 *code = Value::Insert(ls);
             }
         } else if let Value::Insert(ls) = code {

@@ -104,6 +104,7 @@ mod reshape_refusals;
 mod returns;
 mod scan;
 mod scan_set;
+mod text_replace;
 mod text_return_check;
 mod tuple_members;
 mod value_struct;
@@ -846,6 +847,9 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
     mark_borrowed_captures(data, database);
     // `(H-Copy-Lease)` — every copy of a type that declares `OpCopy` runs it on the new structure.
     crate::use_analysis::lease_calls(data);
+    // `@FR-H-TextReplace` — an assignment to a text field releases the text it replaces only
+    // where no borrow of that text can be live; every other site writes without releasing.
+    text_replace::admit(data);
     // `LOFT_VAR_TABLE=<fn substring>` — the variable table beside the IR dump, with
     // each type dep resolved to `name(index)`.  Observer only; a no-op when unset.
     crate::variables::dump_var_tables(data, 0);

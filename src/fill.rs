@@ -207,6 +207,7 @@ pub static OPERATORS: &[fn(&mut State)] = &[
     get_short_spare::<false>,
     get_short_full::<false>,
     set_text::<false>,
+    set_text_replace::<false>,
     var_vector::<false>,
     length_vector::<false>,
     vector_is_null::<false>,
@@ -554,6 +555,7 @@ pub static OPERATORS_FAST: &[fn(&mut State)] = &[
     get_short_spare::<true>,
     get_short_full::<true>,
     set_text::<true>,
+    set_text_replace::<true>,
     var_vector::<true>,
     length_vector::<true>,
     vector_is_null::<true>,
@@ -901,6 +903,7 @@ pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
     get_short_spare_r,
     get_short_full_r,
     set_text_r,
+    set_text_replace_r,
     var_vector_r,
     length_vector_r,
     vector_is_null_r,
@@ -1248,6 +1251,7 @@ pub const OPERATOR_NAMES: &[&str] = &[
     "OpGetShortSpare",
     "OpGetShortFull",
     "OpSetText",
+    "OpSetTextReplace",
     "OpVarVector",
     "OpLengthVector",
     "OpVectorIsNull",
@@ -1419,7 +1423,7 @@ pub const OPERATOR_NAMES: &[&str] = &[
 pub const OP_HOT: u16 = 36;
 /// How many operators are neither `#hot` nor `#cold` (the slots after the hot ones); the
 /// `#cold` operators follow them, into the two-byte opcodes.
-pub const OP_NORMAL: u16 = 219;
+pub const OP_NORMAL: u16 = 220;
 
 #[inline(always)]
 fn goto<const F: bool>(s: &mut State) {
@@ -5019,6 +5023,29 @@ fn set_text<const F: bool>(s: &mut State) {
 fn set_text_r(s: &mut State, r: Regs) -> Regs {
     s.regs_in(r);
     set_text::<true>(s);
+    s.regs_out()
+}
+
+#[inline(always)]
+fn set_text_replace<const F: bool>(s: &mut State) {
+    let operands = s.operands(2);
+    let v_fld = operands.get::<u16>(0);
+    let v_val = s.string();
+    let v_v1 = s.get_stack_m::<F, DbRef>();
+    {
+        let db = v_v1;
+        let s_val = v_val.str().to_string();
+        if db.rec != 0 {
+            s.database
+                .store_mut(&db)
+                .refill_str(db.rec, db.pos + u32::from(v_fld), &s_val);
+        }
+    }
+}
+
+fn set_text_replace_r(s: &mut State, r: Regs) -> Regs {
+    s.regs_in(r);
+    set_text_replace::<true>(s);
     s.regs_out()
 }
 

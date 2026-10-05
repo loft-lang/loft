@@ -1270,6 +1270,13 @@ fn OpGetShortFull(v1: reference, fld: const u16, min: const i32) -> integer;
 #rust"{{let db = @v1; if db.rec == 0 {{ i64::MIN }} else {{ i64::from(stores.store(&db).get_short_full(db.rec, db.pos + u32::from(@fld), (@min))) }} }}"
 fn OpSetText(v1: reference, fld: const u16, val: text);
 #rust"{{let db = @v1; let s_val = @val.to_string(); if db.rec != 0 {{ let store = stores.store_mut(&db); let s_pos = store.set_str(&s_val); store.set_u32_raw(db.rec, db.pos + u32::from(@fld), s_pos); }}}}"
+// `@FR-H-TextReplace` — an ASSIGNMENT to a text field (`o.s = t`, `v[i].s = t`, `o.s += t`):
+// the slot already holds 0 or a text block it owns, so the block is written over when `t`
+// fits its claim and released and claimed anew when it does not.  `OpSetText` stays the
+// INITIALISING write — a record literal into a fresh, possibly unfilled record — and never
+// reads the slot, because there it can hold bytes that are not a block.
+fn OpSetTextReplace(v1: reference, fld: const u16, val: text);
+#rust"{{let db = @v1; let s_val = @val.to_string(); if db.rec != 0 {{ stores.store_mut(&db).refill_str(db.rec, db.pos + u32::from(@fld), &s_val); }}}}"
 // --- Collections ---
 /// Operations on vector<T> — the primary ordered collection type.
 /// Vectors are grown by appending with += and elements are accessed by index.

@@ -7266,7 +7266,7 @@ fn copied_record_releases(data: &Data, tp: &Value) -> bool {
 }
 
 /// The root variable of a PLACE: the variable itself, or a projection's root.
-fn place_root(node: &Value, data: &Data) -> Option<u16> {
+pub(crate) fn place_root(node: &Value, data: &Data) -> Option<u16> {
     match node.unspan() {
         Value::Var(v) => Some(*v),
         _ => projection_root(node, data),
