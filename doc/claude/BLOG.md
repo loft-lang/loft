@@ -74,7 +74,9 @@ the closed, proprietary cage ([GOALS.md](GOALS.md) § the AS/400 passage,
 A performance section: why many modern machines feel slower even though they have many more and
 often faster cores. Their memory has grown a lot, and for many programs the processors are in
 fact waiting for memory — showing 100% activity, but only because they are not available for
-other work while they wait. Sources: [GOALS.md](GOALS.md) § Legible cost (the scattered
+other work while they wait. The only solution is to keep data that is used together close
+together in memory, preferably in the order it is needed, because memory retrieval is optimised
+for reading memory continuously. Sources: [GOALS.md](GOALS.md) § Legible cost (the scattered
 allocation that generated loft) and [OWNERSHIP_MODEL.md](OWNERSHIP_MODEL.md) § the control story.
 
 **Games that feel made by a person.** Candidate sources, for the owner to choose from: dryopea's
