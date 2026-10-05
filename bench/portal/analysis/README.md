@@ -6,6 +6,10 @@ The files here say WHY, price what could be done about it, and record what was b
 the twin winning by something loft cannot say, that is the unit to price — `(Perf-Gap)` in
 `doc/claude/formal/performance.md` — and the twin stays as written.
 
+**Start from [`worklist.md`](worklist.md)**: every routine over the 3× bar, sorted by what is
+known about it — a priced path under the bar, a priced path that ends above it, or no price —
+with the units in build order and the file below that priced each.
+
 | file | class | state |
 |---|---|---|
 | `keyed.md` | keyed (3.5×) | L1–L7 BUILT; what is left is store-format and data-structure work, priced there |
