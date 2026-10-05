@@ -3418,8 +3418,9 @@ fn nightly_gate_classes_drive_every_list_that_reads_them() {
         &lines[start..end]
     };
 
-    // The two CONSUMERS carry no class of their own: they are the readers, not gates.
-    let consumers = ["notify", "daily-status"];
+    // The CONSUMERS carry no class of their own: they are the readers, not gates
+    // (`red-steps-digest` hands the run to the red-steps issue).
+    let consumers = ["notify", "daily-status", "red-steps-digest"];
     let mut unsound: Vec<String> = Vec::new();
     let mut classified: Vec<String> = Vec::new();
     let mut unmarked: Vec<String> = Vec::new();
