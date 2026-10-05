@@ -31,7 +31,7 @@ if [ $# -ne 2 ]; then
 fi
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 rel="$root/target/release"
-ffi="$(ls "$rel"/deps/libloft_ffi-*.rlib 2>/dev/null | head -1 || true)"
+ffi="$(ls -t "$rel"/deps/libloft_ffi-*.rlib 2>/dev/null | head -1 || true)"
 ring="$(ls -d "$rel"/build/ring-*/out 2>/dev/null | head -1 || true)"
 if [ ! -f "$rel/deps/libloft.rlib" ] || [ -z "$ffi" ]; then
   echo "$0: no release rlib under $rel — run: cargo build --release --lib --bin loft" >&2

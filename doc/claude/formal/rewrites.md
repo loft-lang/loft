@@ -4161,6 +4161,208 @@ the type's parts and a disagreement stops the run naming the type.  Swept over a
 as text): without the verify the keyed bench panics deep in `allocation.rs`; with it, at the
 first lookup, `type 97 (hash<E[id]>) caches keys [5], its parts derive [0]`.
 
+### A text predicate over a case fold is answered without building the fold
+
+```
+  (R-FoldCompare) a text predicate P ∈ { ==, !=, starts_with, ends_with, contains }
+                 one of whose operands is a case FOLD F(t), F ∈ { to_lowercase,
+                 to_uppercase }, where the fold's value has that ONE mention (a
+                 synthesised temporary, or a local whose every binding is such a
+                 fold or `fold + literal` and whose every other mention is a text
+                 VALUE read as an operand of such a P), is answered WITHOUT
+                 building the folded text: over the span P inspects, F is applied
+                 byte by byte while every byte of that span and of the other
+                 operand is ASCII; the FIRST non-ASCII byte met in either operand
+                 takes the written form (the fold built, P applied) for that
+                 evaluation.  A `+ literal` on the folded operand is compared as
+                 the fold followed by the literal.  The other operand is read as
+                 written.  Any other mention of the fold — a bind read elsewhere,
+                 a return, a link, a capture, a non-text-value op — declines.
+```
+
+**In words.** `h.to_lowercase().starts_with(prefix)` is a question, not a text: the fold
+exists only to be compared.  Unicode case is not byte-local (U+212A KELVIN SIGN lowercases
+to ASCII `k`, `İ` lowercases to two scalars, `ß` uppercases to `SS`), so the byte-wise form
+is sound only while both operands' inspected bytes are ASCII — one `is_ascii()` over the
+span — and the fallback is the program as written, so no answer can change.  Reach: every
+case-insensitive lookup in the text-scan class.  Priced on server `header`
+(`bench/portal/analysis/over-9x.md`): with the walked line borrowed, 9.43 → 3.52 M ns/op.
+Generation time, `--native` first (`src/generation/ops/text_ops.rs`, beside the
+`starts_with` emitter; the folding helper beside `lazy_split` in `src/codegen_runtime.rs`);
+the IR phase only on broad evidence (`(Perf-Order)`).  Switch `LOFT_NO_FOLD_COMPARE`; trace
+`LOFT_TRACE_FOLD_COMPARE` names each admitted predicate and each declined fold.  Falsifier:
+hand-computed cells on both backends — ASCII hit and miss, a prefix longer than the line,
+the Kelvin sign in the line against an ASCII prefix (must match), `İ` within the span (two-
+scalar fold, the written form), `ß` under `to_uppercase` against `SS`, an empty operand, a
+fold bound to a local and read twice (declines); the switch A/B over `server`'s bench hash;
+`(R-TextBorrow)`'s pins with this rule off.
+
+### A call whose result is moved whole into an element builds it there
+
+```
+  (R-Destination) a call whose result record r the caller consumes ONLY by moving
+                 one heap-free field r.v (OpMoveField) into a fresh element e of a
+                 container the caller owns, and by reading r's remaining fields as
+                 scalars at most once each, is emitted as the callee's DESTINATION
+                 TWIN: the twin takes e's address for r.v — every write the body
+                 makes to r.v lands at e, every sub-record it places in r's store
+                 is placed in e's store — and answers the remaining fields as a
+                 tuple of scalars; the caller mints e before the call without its
+                 prefill (the twin's writes cover r.v whole, R-CompleteWrite) and
+                 makes it visible (OpFinishRecord) only on the path where it moved
+                 r.v.  Admission asks the CALLEE: on every return path r.v is
+                 written whole before r is returned, r.v's writes name no address
+                 but r's, and r is not read back by the body after a write to r.v.
+                 The twin receives e's address and no path through which the
+                 container's record can be reached, so the container's header
+                 stays valid across the call.
+```
+
+**In words.** `sub = read_value(…); if sub.ok { items += [sub.value]; p = sub.next }` builds
+`value` in a pooled buffer, reads `ok`, mints an element, prefills it, moves `value` in and
+reads `next`, where the twin does one `push`: this is `(R-Place)` one call deeper — the
+child built where it will live.  The ok-false path is the ownership question, and the
+answer is the one `(R-PushRec)` already gives a minted element: an element minted but not
+finished is NOT a member of the container (`vector_finish` is the one visibility step), its
+slot is capacity the next append reuses, and whatever heap the failed child placed is
+released by the CALLEE on its failing path exactly as it releases its own buffer today — the
+caller frees nothing.  A callee that answers `ok=false` after placing heap into r.v without
+releasing it is the deviation to guard.  Priced on cbor `decode` (over-9x.md): with D2, D3,
+D5 and D6 it takes the row 12.04 → 6.49 M ns/op, and it is the one step without which that
+ladder stops at 8.3×.  Sites: `(R-Callee)`'s admission (a second emission like
+`(R-Inputs)`' `__inv`), `Output::user_fn_call_body` for the tuple answer, the append
+lowering's mint, `src/exit_vector.rs` for the return-path analysis.  Switch
+`LOFT_NO_DESTINATION`; falsifier `LOFT_HOIST_VERIFY=1` (the twin re-reads e after each write
+and compares with the plain form's buffer).  Guard: a nested array and a map, each truncated
+at every byte position (ok=false at every depth), hand-computed on both backends, with the
+live-record count equal to the plain form's; a finish planted on the failing path must go red.
+
+### A fn-ref whose every target answers a value record answers the tuple
+
+```
+  (R-FnRefValue) a call through a fn-ref of type `fn(…) -> R`, R a record that
+                 (R-ValueRecord) admits, answers R's tuple when EVERY function of
+                 that signature in the program — the arms of the dispatch `match`
+                 the emitter writes — is (R-ValueRecord)-admitted; the `_ =>` arm
+                 answers the null tuple.  Decided per fn-ref TYPE over the whole
+                 program in a pre-pass: one unadmitted function of the signature
+                 keeps the buffer road for every call of that type, and a capture
+                 (a closure fn-ref) declines.  The interpreter is untouched: the
+                 tuple is native's representation of the same record (C122).
+```
+
+**In words.** `resolve(r.style)` minted a store, wrote four fields, adopted and freed it per
+call, to hand back a record `default_style` had already answered in registers (the fn-ref
+result ABI stops at the buffer road, `@FR-O-Unknown`).  The target set of a fn-ref is complete
+in the emitted binary (`src/generation/emit.rs:1766` writes the `match`), so the admission
+`(R-ValueRecord)` proves per function lifts to the signature.  Sound where every arm is
+admitted — the pre-pass reads the fixpoint `(R-ValueRecord)` already computes; a null fn-ref
+answers the null tuple exactly as the buffer road answers a null record.  Priced on zttext
+`flow_layout_full` (over-9x.md): −27 % alone.  Switch `LOFT_NO_FNREF_VALUE`.  Falsifier: a
+program with two functions of one signature, one admitted and one answering a heap record —
+the call must take the buffer road; the switch A/B on the flow row with hand-computed boxes;
+`make rewrite-census` with `(R-ValueRecord)`'s admissions unchanged.
+
+### A lookup's found entry is answered as a view the caller reads in place
+
+```
+  (R-ViewReturn) a function whose result at some exit is a VIEW V of a sub-record
+                 reached by a pure path rooted at a `const` (or never-written)
+                 PARAMETER p — `return e.value` for `e = p.entries[i]?`, or a match
+                 binding of such a view — answers that exit as V's address (the
+                 parser's materialised copy of the view is not emitted) when EVERY
+                 caller consumes the result INSIDE the statement that binds it: the
+                 result is the subject of a `match` (or a field read) whose arms
+                 read scalars, read texts as VALUES (R-TextBorrow's sense) or copy
+                 a field into their own slot, and no arm writes, grows, frees or
+                 rebinds any store reachable from p before its last read.  Every
+                 other exit keeps its form; a function with one caller that cannot
+                 be so proven is emitted as today.
+```
+
+**In words.** `(R-ReturnField)` answers a field of an OWNED local as its store at a position
+and declines a parameter, because a view of a parameter's record dangles the moment the
+caller frees or grows that record; here the referent is the caller's own argument and the
+whole use of the result is the one statement around the call, so the dangling window is
+empty by construction — the check is on the caller's consuming statement.  Conditions: p is
+reached only through pure paths in the callee and never written there; the consuming
+statement neither writes nor releases p's store before the bindings' last read (an
+`OpDatabase`, an `OpFreeRef`, an append, a rebind of the argument inside an arm each
+decline); the absent arm hands up `DbRef::NULL`, which the tag read answers as "no variant",
+so a caller that matches the null variant BY NAME declines.  Profitable where the found value
+holds heap.  Priced on pluginabi `check_request` (over-9x.md): −10 % — the mint, the deep copy
+and its text claim per lookup; `pa_get` is the shape of every `match`-based finder.  An
+ownership decision for the owner before it is built.  Switch `LOFT_NO_VIEW_RETURN`; trace
+`LOFT_TRACE_VIEW_RETURN` names the declining condition per call site.  Falsifier: the hash
+and `LOFT_NATIVE_LEAK_CHECK=1` on both backends (a view freed as if owned shows as a double
+release); a planted arm that appends to `p.entries` before reading the binding must decline;
+`LOFT_POISON=1` catches a read through a view whose record moved.
+
+### Proposed clauses on existing rules
+
+Each extends a rule above with one admission the measured rows need; the rule's own switch,
+trace and falsifiers apply, plus the cells named here.  Priced in
+`bench/portal/analysis/over-9x.md`.
+
+- **The split-table verdict, for `(R-TextBorrow)`.**  A `Set(t, split(…))` whose `t` is a
+  split table `(R-SplitTable)` lowered is not a store write: `borrowed_text_walks`
+  (`src/generation/hoist.rs`) takes the body's split tables, not only the walked vector's,
+  and `may_write_store` skips such a bind.  `(R-Header)`'s loop clause admits by the same
+  verdict.  Cell: a walk whose body splits the walked text and reads the pieces (borrows);
+  one that appends to the walked vector (declines).  server `header`: 9.43 → 7.30 M.
+- **The match-binding clause, for `(R-TextBorrow)`.**  A text bound by a match pattern that
+  the arm reads only as a text VALUE — an operand, a `text` argument the callee does not
+  store, the source of a format into another slot, `size`, a comparison, a `Str` result —
+  never writes, links, captures or stores it, and the arm writes no store of the subject's,
+  is a borrow of the field (`&str` from `get_str`): no `String` is built.  The walk clause
+  borrows an element for an iteration; this borrows a field for an arm under the same
+  value-only reading.  Cells: an arm that appends to the subject's vector after reading the
+  binding (declines); one that stores the binding into another record (copies).
+- **The text clause, for `(R-RefillBuffer)`.**  A text field of a KEPT record is refilled in
+  its slot when the new text fits the slot's claim (the block header's word count), else the
+  slot is released and claimed anew; a kept vector of such records keeps its records — a
+  refill writes element i over element i, mints only past the kept length, and a shorter
+  result truncates, releasing what it drops.  `refillable_plain` (`hoist.rs`) refuses any
+  heap-owning field today.  Sound where the buffer is a work buffer or a refillable return
+  buffer (nothing else references its records), the slot's claim is read from the store's
+  own header, and the truncation releases exactly the dropped elements' heap; the built
+  form uses the release walk's own text free.  Switch `LOFT_NO_REFILL_TEXT`.  Cells: a run
+  text longer than its previous slot (replacement), a result shorter than the previous
+  (truncation), hand-computed hashes; the leak census and `LOFT_POISON=1`.  zttext
+  `flow_layout_full`: 10.36 → 5.77 M on the other levers; `msg_ping` priced −83 % against it.
+- **Text-bearing elements and the work text, for `(R-WorkBuffer)`.**  `vector<τ>` with τ a
+  record of scalars and texts is admitted under the mention test unchanged PROVIDED the
+  callee refills it under the text clause (otherwise the per-call release is what the pool
+  was meant to remove); and a function's `__work_*` text local is the same buffer one level
+  down, pooled per frame, with an assignment of the empty literal to it emitted as `clear()`.
+- **The keep-range clause, for `(R-Refresh)`.**  `OpKeepRange(P, lo, hi, tp)` on a held pure
+  path P is admitted as a refresher of P's LENGTH: it keeps the record (the kept span copied
+  within it, the length written, `src/database/structures.rs`), so every holder of P — a
+  header, a push header's `h.len` — takes `clamp(hi) − clamp(lo)` at the op's site, and the
+  element base stays valid.  Admitted only where the runtime keeps in place (the owned,
+  writable store a push already requires); a foreign or read-only store takes the
+  release-and-append path and declines the loop as today.  Without it the op declines the
+  WHOLE loop (`hoist::hoistable`) and three rewrites are lost at once — the stacks' headers,
+  the push window, the `__inv` call.  Under `LOFT_NO_KEEP_RANGE` the loop declines as today.
+  Cells: a pop to a `hi` past the length (clamped), a pop to 0 then a push (growth after a
+  keep), hand-computed on both backends; `LOFT_HOIST_VERIFY=1`.  graphics `draw_bezier`:
+  9.62 → 5.04 M.
+- **The function clause takes a base, for `(R-Base)`.**  Beside the function-clause header
+  `(R-Header)` emits (`src/generation/mod.rs`), `vec_base` is emitted under the base's own
+  condition — no growth of that vector anywhere in the function — and the `?? default`
+  element read outside a loop takes it as the in-loop read does.  Cells: a read past the end
+  (the default answers); a function that appends to the vector it reads (declines).  cbor
+  `decode`: 36 byte-read sites, 6.49 → 5.15 M on the ladder.
+- **A field MOVE covers, for `(R-CompleteWrite)`.**  `group_covers_type` counts an
+  `OpMoveField` whose destination is the whole element (offset 0, the element's own type) as
+  covering every field, so the mint is the no-prefill form.  Cell: `LOFT_POISON_CLAIM=1` over
+  the `(R-MoveLast)` corpus — a prefill skipped wrongly shows as poison.
+- **A push window across an admitted recursive call, for `(R-Push)`.**  `(R-Callee)` answers
+  `None` to every question on a recursive edge (`hoist.rs`: a callee met while its own
+  verdict is open), which denies a recursive builder every call-crossing hoist at once; one
+  fixpoint over the callee's own write set admits them together, and `items += [sub.value]`
+  keeps its push header across `read_value`'s call to itself.  cbor `decode`: 5.15 → 4.06 M.
+
 ## Validating the emitted routines against their assumptions
 
 Every rule above is an ASSUMPTION the emitted Rust makes about the loop it sits in, and the
