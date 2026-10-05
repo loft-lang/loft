@@ -1,0 +1,13 @@
+diff --git a/src/database/allocation.rs b/src/database/allocation.rs
+index 6b07374c7..31fd1e3c6 100644
+--- a/src/database/allocation.rs
++++ b/src/database/allocation.rs
+@@ -1106,7 +1106,7 @@ impl Stores {
+         // A `par` worker's stores are merged back at the join, so a worker keeps none.
+         // A keyed rebind's released slot holds the OLD collection, which no buffer refill
+         // takes up (`spare_store` is a record buffer's): parked, it was still live at exit.
+-        if reset_dest || keyed || self.disable_slot_reuse || !crate::keys::refill_buffer_enabled() {
++        if reset_dest || self.disable_slot_reuse || !crate::keys::refill_buffer_enabled() {
+             self.free(data);
+         } else {
+             self.park_spare(data.store_nr);

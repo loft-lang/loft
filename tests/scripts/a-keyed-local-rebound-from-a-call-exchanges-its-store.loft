@@ -9,6 +9,16 @@
 // before the rebind that must keep the old content (`@FR-B-Copy`).  The leak channel is the
 // measurement: a released slot that is parked instead of freed stays live at exit.  The walk
 // found no defect.
+//
+// @falsified-at: none — the walk found no defect, so no earlier build answers wrong.  The
+//   control is the hand patch below.
+// @falsified-by: tests/falsified/a-keyed-local-rebound-from-a-call-exchanges-its-store.patch — the released slot of a keyed exchange is
+//   PARKED as a refill spare instead of freed: interpret leaked kt=101 spatial<E[k,j]>×1 ->
+//   clean (parking keeps one slot, so the last kind walked is the one left live at exit);
+//   native INERT.  Score it with `scripts/falsify.sh <this file> --patch <that patch>`.
+// ARMED: `LOFT_NATIVE_LEAK_CHECK=1`, which `scripts/falsify.sh` arms on every run of its own
+//   accord; the interpreter's store census prints at exit unasked.
+// HOLDS: exit, asserts and panic are unmoved on both trees.
 
 struct E { k: integer, n: text, j: integer }
 
