@@ -46,6 +46,16 @@ build with `cargo clean --manifest-path <worktree>/Cargo.toml` and remove scratc
 caches when the probes are done.  Build a scratch worktree OUTSIDE a RAM `/tmp` (under
 `~/.cache`) in the first place.
 
+**A direct run does not get the gate's redirect.**  `find_problems.sh` and the gate export
+`TMPDIR` and `LOFT_TMPDIR` as the checkout's `/var/tmp/loft-test-scratch-<checkout>.<cksum>`;
+a bare `cargo test`, `loft --native` probe or `perf record` started by hand inherits `/tmp`.
+On a RAM tmpfs that is where the large writers fail: `ownership_drop_gate`'s four native chunks
+write about 1.3 GB each at once and stop on `Disk quota exceeded (os error 122)`, and a chunk
+that panics leaves its directory behind.  Export the same two variables for a direct run
+(`TMPDIR=/var/tmp/loft-test-scratch-<tag> LOFT_TMPDIR=<same>`, the tag as `find_problems.sh`
+derives it), and keep profiles, emitted programs and their binaries in a disk directory, removed
+when the measurement is recorded.
+
 **The builds run the janitor.**  `scripts/disk_janitor.sh` starts, detached, beside whatever
 starts a build: `find_problems.sh`, `bench/stats.py`, and every build-shaped command an agent
 runs, through a user-level Claude Code hook (`make janitor-install`; the disk is a machine
