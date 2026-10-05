@@ -5733,7 +5733,13 @@ impl Parser {
         what: &str,
         at: Option<&Position>,
     ) -> bool {
-        self.convert_store_as(code, is_type, should, what, at, false, false)
+        let ctx = StoreCtx {
+            what: what.to_string(),
+            at: at.cloned(),
+            never_error: false,
+            dense: false,
+        };
+        self.convert_store_as(code, is_type, should, ctx)
     }
 
     /// [`convert_store`](Parser::convert_store) into a slot that can never be declared
@@ -5746,7 +5752,13 @@ impl Parser {
         should: &Type,
         what: &str,
     ) -> bool {
-        self.convert_store_as(code, is_type, should, what, None, false, true)
+        let ctx = StoreCtx {
+            what: what.to_string(),
+            at: None,
+            never_error: false,
+            dense: true,
+        };
+        self.convert_store_as(code, is_type, should, ctx)
     }
 
     /// [`convert_store`](Parser::convert_store) for a seam that warns at EVERY width — the
@@ -5762,7 +5774,13 @@ impl Parser {
         what: &str,
         at: Option<&Position>,
     ) -> bool {
-        self.convert_store_as(code, is_type, should, what, at, true, false)
+        let ctx = StoreCtx {
+            what: what.to_string(),
+            at: at.cloned(),
+            never_error: true,
+            dense: false,
+        };
+        self.convert_store_as(code, is_type, should, ctx)
     }
 
     fn convert_store_as(
@@ -5770,17 +5788,9 @@ impl Parser {
         code: &mut Value,
         is_type: &Type,
         should: &Type,
-        what: &str,
-        at: Option<&Position>,
-        never_error: bool,
-        dense: bool,
+        ctx: StoreCtx,
     ) -> bool {
-        self.store_ctx.push(StoreCtx {
-            what: what.to_string(),
-            at: at.cloned(),
-            never_error,
-            dense,
-        });
+        self.store_ctx.push(ctx);
         let accepted = self.convert(code, is_type, should);
         self.store_ctx.pop();
         accepted
