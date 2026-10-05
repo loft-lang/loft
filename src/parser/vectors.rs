@@ -3892,7 +3892,12 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             // was fine at any size (loft#869).
             lp.push(op);
         } else {
-            lp.push(self.set_field(ed_nr, usize::MAX, 0, Value::Var(elm), Value::Var(comp_var)));
+            // The element was minted just above: a record copy into it has no previous value
+            // to release (`COPY_FRESH_DEST`) — its bytes are not zero by any promise.
+            let mut write =
+                vec![self.set_field(ed_nr, usize::MAX, 0, Value::Var(elm), Value::Var(comp_var))];
+            self.mark_copies_fresh(&mut write);
+            lp.extend(write);
         }
         lp.push(self.cl(
             "OpFinishRecord",

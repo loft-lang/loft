@@ -15119,7 +15119,7 @@ impl Parser {
     /// Flag every record copy in `steps` as writing a FRESH destination
     /// (`keys::COPY_FRESH_DEST`): the payload of a slot the construction just minted has no
     /// previous value for the copy to release.
-    fn mark_copies_fresh(&self, steps: &mut [Value]) {
+    pub(crate) fn mark_copies_fresh(&self, steps: &mut [Value]) {
         fn mark(v: &mut Value, copy: u32) {
             if let Value::Call(d, args) = v
                 && *d == copy
