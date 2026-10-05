@@ -1,0 +1,47 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1870 — `formal/matching.md` `@FR-P-Point`: a field sub-pattern asks the RECORD the field
+// holds, inline or through `reference<T>`, and a plain struct `S { f… }` is a pattern there as
+// it is at the top level.  Over `l: reference<Expr>` the variant test asked the inline-enum
+// type alone, so `l: Lit { v: 0 }` fell to the scalar path, which BUILT a `Lit` and tested that
+// record: the arm never matched on `--interpret` (silently), `--native` refused its own output
+// (E0605), and `l: Lit { v }` did not parse.  `q: P { v: 0 }` failed the same way on an inline
+// struct field.
+//
+// Values by hand: z = Lit 0, s = Lit 7; a = z + s, b = s + z, n = a + s; p0 / p7 hold v = 0 / 7.
+//
+// Axes this file MOVES: the field's storage (inline · reference), the pattern (variant with a
+// literal · variant binding · plain struct with a literal · plain struct binding), depth (one ·
+// two references).  Axes it HOLDS FIXED: one-field payloads; integer leaves.
+
+enum Expr { Lit { v: integer }, Add { l: reference<Expr>, r: reference<Expr> } }
+enum In { ILit { v: integer }, INeg { n: integer } }
+enum Box2 { Wrap { i: In, k: integer } }
+struct P { v: integer }
+struct H { p: reference<P>, q: P }
+fn c1(e: Expr) -> integer { match e { Add { l: Lit { v: 0 }, r } => 1, Add { l, r: Lit { v: 0 } } => 2, _ => 0 } }
+fn c2(e: Expr) -> integer { match e { Add { l: Lit { v }, r } => v + 100, _ => -1 } }
+fn c3(e: Expr) -> integer { match e { Add { l: Add { l: Lit { v: 0 }, r }, r } => 1, _ => 0 } }
+fn c4(h: H) -> integer { match h { H { p: P { v: 0 }, q } => 1, _ => 0 } }
+fn c5(h: H) -> integer { match h { H { p, q: P { v: 0 } } => 1, _ => 0 } }
+fn c6(b: Box2) -> integer { match b { Wrap { i: ILit { v: 0 }, k } => 1, Wrap { i: ILit { v }, k } => v + k, _ => 0 } }
+fn c7(h: H) -> integer { match h { H { p: P { v }, q: P { v: w } } => v * 10 + w } }
+fn main() {
+  z: Expr = Lit { v: 0 };
+  s: Expr = Lit { v: 7 };
+  a: Expr = Add { l: &z, r: &s };
+  b: Expr = Add { l: &s, r: &z };
+  n: Expr = Add { l: &a, r: &s };
+  p0 = P { v: 0 };
+  p7 = P { v: 7 };
+  h1 = H { p: &p0, q: P { v: 7 } };
+  h2 = H { p: &p7, q: P { v: 0 } };
+  assert(c1(a) == 1 && c1(b) == 2 && c1(s) == 0, "reference<enum> variant with a literal: {c1(a)} {c1(b)} {c1(s)}");
+  assert(c2(a) == 100 && c2(b) == 107 && c2(s) == -1, "reference<enum> variant binding: {c2(a)} {c2(b)} {c2(s)}");
+  assert(c3(n) == 1 && c3(a) == 0, "two references deep: {c3(n)} {c3(a)}");
+  assert(c4(h1) == 1 && c4(h2) == 0, "reference<struct> with a literal: {c4(h1)} {c4(h2)}");
+  assert(c5(h1) == 0 && c5(h2) == 1, "inline struct with a literal: {c5(h1)} {c5(h2)}");
+  assert(c7(h1) == 7 && c7(h2) == 70, "struct bindings: {c7(h1)} {c7(h2)}");
+  assert(c6(Wrap { i: ILit { v: 0 }, k: 3 }) == 1 && c6(Wrap { i: ILit { v: 4 }, k: 3 }) == 7, "inline enum control");
+}

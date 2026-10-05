@@ -7241,6 +7241,67 @@ impl Parser {
         (arm, is_exhaustive)
     }
 
+    /// The fields of a plain-struct SUB-pattern `S { f: p, g }` over `subject` (loft#1870): each
+    /// `f: p` adds `p`'s condition, each bare `g` binds the field — the field loop of
+    /// [`Self::parse_match_struct_arm`], with the bindings and conditions going to the
+    /// enclosing arm.
+    fn parse_struct_sub_pattern(
+        &mut self,
+        s_nr: u32,
+        subject: &Value,
+        arm_stmts: &mut Vec<Value>,
+        field_conditions: &mut Vec<Value>,
+        name_aliases: &mut Vec<(String, Option<u16>)>,
+    ) {
+        if !self.lexer.has_token("{") {
+            return;
+        }
+        while !self.lexer.peek_token("}") {
+            if let Some(field_name) = self.lexer.has_identifier() {
+                let attr_idx = self.data.attr(s_nr, &field_name);
+                if attr_idx == usize::MAX {
+                    if !self.first_pass {
+                        diagnostic!(
+                            self.lexer,
+                            Level::Error,
+                            "unknown field '{}' on struct {}",
+                            field_name,
+                            self.data.def(s_nr).name()
+                        );
+                    }
+                } else {
+                    let field_val = self.get_field(s_nr, attr_idx, subject.clone());
+                    let field_type = self.data.attr_type(s_nr, attr_idx);
+                    if self.lexer.has_token(":") {
+                        if let Some(bind_name) = self.field_pattern_rename() {
+                            let v = self.pattern_binding(&bind_name, &field_type);
+                            self.vars.defined(v);
+                            let bound = self.pattern_field_value(s_nr, attr_idx, subject.clone());
+                            arm_stmts.push(v_set(v, bound));
+                        } else if let Some(cond) = self.parse_field_sub_pattern(
+                            field_val,
+                            &field_type,
+                            arm_stmts,
+                            field_conditions,
+                            name_aliases,
+                        ) {
+                            field_conditions.push(cond);
+                        }
+                    } else {
+                        let v = self.pattern_binding(&field_name, &field_type);
+                        self.vars.defined(v);
+                        let bound = self.pattern_field_value(s_nr, attr_idx, subject.clone());
+                        arm_stmts.push(v_set(v, bound));
+                    }
+                }
+            }
+            if !self.lexer.has_token(",") {
+                break;
+            }
+        }
+        self.lexer.token("}");
+    }
+
     /// Parse a plain-struct match arm (field bindings + body).
     /// Returns the arm and whether it is exhaustive.
     fn parse_match_struct_arm(
@@ -7859,6 +7920,22 @@ impl Parser {
             && self.data.def_type(*d_nr) == DefType::EnumValue
         {
             return Some((self.data.def(*d_nr).parent(), true));
+        }
+        // A `reference<E>` to a struct-enum (the recursive shape loft#1579's cycle refusal asks
+        // for, `Add { l: reference<Expr>, … }`) is a pointer to a record of `E`: its read is
+        // the record (`OpGetDbRef`), so a variant pattern asks it exactly as it asks an
+        // inline field.  Unrecognised, `l: Lit { v: 0 }` fell to the scalar path, which built
+        // a `Lit` and tested THAT: the arm never matched on the interpreter, `--native`
+        // refused its own output, and the binding form did not parse (loft#1870).
+        if let Type::Reference(d_nr, _) = tp.peel_link()
+            && self.data.def_type(*d_nr) == DefType::Enum
+            && self.data.def(*d_nr).attributes().iter().any(|a| {
+                matches!(a.value, Value::Enum(_, _))
+                    && self.data.def_type(self.data.variant_of(*d_nr, &a.name))
+                        == DefType::EnumValue
+            })
+        {
+            return Some((*d_nr, true));
         }
         let Type::Enum(e_nr, is_struct, _) = tp.peel_link() else {
             return None;
@@ -10182,6 +10259,27 @@ impl Parser {
                 }
             }
             return Some(cond);
+        }
+        // A plain STRUCT field — inline or through `reference<S>` — matched by the struct's own
+        // pattern `S { f: p, g }`, the spelling a top-level arm over `S` takes
+        // ([`Self::parse_match_struct_arm`]).  It has no tag, so it adds only its fields'
+        // conditions and bindings.  Unrecognised, the pattern fell to the scalar path below,
+        // which BUILT an `S` and tested that record: the arm never matched and `--native`
+        // refused its own output (loft#1870).
+        if let Type::Reference(s_nr, _) = field_type.peel_link()
+            && self.data.def_type(*s_nr) == DefType::Struct
+            && matches!(&self.lexer.peek().has, LexItem::Identifier(id) if *id == self.data.def(*s_nr).name())
+        {
+            let s_nr = *s_nr;
+            self.lexer.has_identifier();
+            self.parse_struct_sub_pattern(
+                s_nr,
+                &field_val,
+                arm_stmts,
+                field_conditions,
+                name_aliases,
+            );
+            return None;
         }
         // Wildcard for non-enum fields.
         if matches!(&self.lexer.peek().has, LexItem::Identifier(id) if id == "_") {

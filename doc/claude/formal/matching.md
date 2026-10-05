@@ -133,9 +133,11 @@ index `i` into a source `src`, with `elem(src,i)` / `len(src)` **null past the e
 ```
 
 ```
-  (P-Point)  a unit variant V, struct variant V{f…}, literal, `_`, or bare binding is a POINT
-             pattern over one value (today's M-Unit/M-Variant/M-Wild lifted into ⇓).  A struct /
-             variant FIELD may itself be a pattern (nested) — the recursion this extension adds.
+  (P-Point)  a unit variant V, struct variant V{f…}, plain struct S{f…}, literal, `_`, or bare
+             binding is a POINT pattern over one value (today's M-Unit/M-Variant/M-Wild lifted into
+             ⇓).  A struct / variant FIELD may itself be a pattern (nested) — the recursion this
+             extension adds — whether the field holds its record inline or points at it
+             (`reference<T>`): the pattern asks the record either way.
   (P-Range)  a RANGE pattern over a SCALAR value v (a non-enum subject — integer / character):
              `a..=b` (inclusive) matches iff a ≤ v ≤ b; `a..b` (half-open) matches iff a ≤ v < b —
              the upper bound is EXCLUSIVE.  A POINT pattern (one value, no extra cursor advance);
@@ -272,7 +274,7 @@ is a view; `..rest` / repetition are fresh vectors); the pattern grammar + prece
 
 ## Deviations
 
-OPEN: **0** — every entry, `D-match-1` to `-16`, is closed; the record is in
+OPEN: **0** — every entry, `D-match-1` to `-17`, is closed; the record is in
 [matching-history.md](matching-history.md).
 
 Cursor matches (a struct with a `vector` source and a `pos`, consumed as a PREFIX) and sub-rule

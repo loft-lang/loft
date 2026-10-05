@@ -30,6 +30,18 @@ after it.  The arm rule's "bare binding" wording stood for two months without th
 having it — corrected 2026-09-07, with the silence that hid it (an arm naming nothing was
 skipped without a diagnostic).
 
+- **D-match-17 — OPENED AND CLOSED 2026-10-05.** `(P-Point)`: a field sub-pattern over a
+  `reference<T>` field, and a plain-struct sub-pattern on any struct field (loft#1870).  The
+  variant test asked the inline-enum type alone, so `Add { l: Lit { v: 0 }, r }` over
+  `l: reference<Expr>` fell to the scalar path, which BUILT a `Lit` and tested that record:
+  the arm never matched on `--interpret` (silently — `0 + x` was never simplified),
+  `--native` refused its own output (`E0605`, `DbRef as u8`), and the binding form
+  (`l: Lit { v }`) did not parse.  `H { q: P { v: 0 } }` failed the same way on an INLINE
+  struct field, though a top-level `P { v: 0 }` over a `P` subject always worked.
+  `pattern_variant_enum` now also answers a reference to a struct-enum, and
+  `parse_field_sub_pattern` runs a plain struct's own field loop (`parse_struct_sub_pattern`,
+  `parse_match_struct_arm`'s).  Seven cells on both backends under strict stores; guard
+  `a-field-sub-pattern-asks-the-record-a-reference-field-points-at.loft`.
 - **D-match-16 — OPENED AND CLOSED 2026-10-02.** `(M-Match)`: a struct-enum or struct subject
   that was not a variable was spliced into every arm test and every field binding, so a call
   ran once for the variant and again for each field read.  `match next(lx) { Num { v } => … }`
