@@ -252,6 +252,9 @@ pub(crate) struct StoreCtx {
     pub what: String,
     pub at: Option<Position>,
     pub never_error: bool,
+    /// The slot can never be declared nullable — an `iterator<τ>` element is dense
+    /// (`?` on it is refused) — so a refusal must not offer `τ?` as the cure.
+    pub dense: bool,
 }
 
 /// loft#1382 — a recorded arm-agreement mismatch, reported only if the construct that
@@ -5730,7 +5733,20 @@ impl Parser {
         what: &str,
         at: Option<&Position>,
     ) -> bool {
-        self.convert_store_as(code, is_type, should, what, at, false)
+        self.convert_store_as(code, is_type, should, what, at, false, false)
+    }
+
+    /// [`convert_store`](Parser::convert_store) into a slot that can never be declared
+    /// nullable — a `yield` into its `iterator<τ>` element — so the refusals name only the
+    /// cures that compile there.
+    pub(crate) fn convert_store_dense(
+        &mut self,
+        code: &mut Value,
+        is_type: &Type,
+        should: &Type,
+        what: &str,
+    ) -> bool {
+        self.convert_store_as(code, is_type, should, what, None, false, true)
     }
 
     /// [`convert_store`](Parser::convert_store) for a seam that warns at EVERY width — the
@@ -5746,7 +5762,7 @@ impl Parser {
         what: &str,
         at: Option<&Position>,
     ) -> bool {
-        self.convert_store_as(code, is_type, should, what, at, true)
+        self.convert_store_as(code, is_type, should, what, at, true, false)
     }
 
     fn convert_store_as(
@@ -5757,11 +5773,13 @@ impl Parser {
         what: &str,
         at: Option<&Position>,
         never_error: bool,
+        dense: bool,
     ) -> bool {
         self.store_ctx.push(StoreCtx {
             what: what.to_string(),
             at: at.cloned(),
             never_error,
+            dense,
         });
         let accepted = self.convert(code, is_type, should);
         self.store_ctx.pop();
@@ -5972,7 +5990,8 @@ impl Parser {
         if !discharged && !self.first_pass && narrows && !self.int_value_fits(code, should) {
             let src = self.int_type_name(is_type);
             let dst = self.int_type_name(should);
-            let cures = Self::narrowing_cures(code, should, &dst);
+            let dense = self.store_ctx.last().is_some_and(|c| c.dense);
+            let cures = Self::narrowing_cures(code, should, &dst, dense);
             diagnostic!(
                 self.lexer,
                 Level::Error,
@@ -6249,9 +6268,9 @@ impl Parser {
             // error: `never_error` defaulted to true here, and `t: (integer, u8) = (1, x as
             // u8?)` warned and stored null into the non-null `u8` (loft#1815).  Only a narrow
             // integer member is affected — a heap member never escalates either way.
-            let (what, at, lenient) = match self.store_ctx.last() {
-                Some(c) => (c.what.clone(), c.at.clone(), c.never_error),
-                None => ("this tuple".to_string(), None, false),
+            let (what, at, lenient, dense) = match self.store_ctx.last() {
+                Some(c) => (c.what.clone(), c.at.clone(), c.never_error, c.dense),
+                None => ("this tuple".to_string(), None, false, false),
             };
             for (i, (s, d)) in src_elems.iter().zip(dst_elems.iter()).enumerate() {
                 let mut placeholder = Value::Null;
@@ -6260,6 +6279,7 @@ impl Parser {
                     what: format!("element {i} of {what}"),
                     at: at.clone(),
                     never_error: lenient,
+                    dense,
                 });
                 let ok = self.convert(elem, s, d);
                 self.store_ctx.pop();

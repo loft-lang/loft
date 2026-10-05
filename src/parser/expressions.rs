@@ -1442,8 +1442,24 @@ impl Parser {
                     let elem = (**elem_tp).clone();
                     self.seed_leaving_value_hint(&elem);
                 }
+                let expr_start = self.lexer.peek().clone();
                 let v_tp = self.expression(&mut v);
                 self.expected = saved_expected;
+                // @FR-G-Yield — and it is a STORE into the element type, as a `return` is into
+                // the return type, so it takes the same store face.  Without it nothing
+                // converted or refused the value: an `integer` yielded into `iterator<u8>`
+                // came out as 300 (`@FR-I-Narrow`), into `iterator<float>` as the integer's
+                // bits read as a float, a `null` or a `text` crashed the interpreter and broke
+                // the native build, and a nullable ended the loop early on `--native` only.
+                if let Type::Iterator(elem_tp, _) = &r_type {
+                    let elem = (**elem_tp).clone();
+                    if v_tp == Type::Null {
+                        self.n_store_violation(&v_tp, &elem, "the yielded value", None);
+                        v = self.null_value(&elem);
+                    } else if !self.convert_store_dense(&mut v, &v_tp, &elem, "the yielded value") {
+                        self.validate_convert("yield", &v_tp, &elem, &expr_start.position);
+                    }
+                }
                 // @P328 — when yielding a NON-CAPTURING closure into an
                 // `iterator<fn(...) -> ...>` generator, the expression
                 // parser leaves the lambda as a bare `Value::Int(d_nr)`
@@ -9107,12 +9123,18 @@ use a separate collection or add after the loop"
     /// - An `if` range check is not offered: loft does not narrow a value's type after a
     ///   test, so the store inside it is refused the same way (loft#1804).
     /// - The mask is spelled out, and only when one fits the range (`narrowing_mask`).
-    pub(crate) fn narrowing_cures(code: &Value, dst_tp: &Type, dst: &str) -> String {
+    /// - A `dense` slot — a `yield` into `iterator<τ>`, whose element cannot be `τ?` — is not
+    ///   offered the nullable destination.
+    pub(crate) fn narrowing_cures(code: &Value, dst_tp: &Type, dst: &str, dense: bool) -> String {
         use std::fmt::Write as _;
-        let mut out = format!(
-            "give it a fallback with `?? <value>`, or make the destination `{dst}?` so a value \
-             that does not fit reads null"
-        );
+        let mut out = if dense {
+            "give it a fallback with `?? <value>`".to_string()
+        } else {
+            format!(
+                "give it a fallback with `?? <value>`, or make the destination `{dst}?` so a \
+                 value that does not fit reads null"
+            )
+        };
         if let Some(mask) = Self::narrowing_mask(dst_tp) {
             let _ = write!(
                 out,
@@ -9181,7 +9203,7 @@ use a separate collection or add after the loop"
             } else if !self.int_value_fits(code, store_tp) {
                 // Refused where the author can choose what an unfitting value becomes (@C127).
                 let src = self.int_type_name(s_type);
-                let cures = Self::narrowing_cures(code, store_tp, &dst);
+                let cures = Self::narrowing_cures(code, store_tp, &dst, false);
                 diagnostic!(
                     self.lexer,
                     Level::Error,

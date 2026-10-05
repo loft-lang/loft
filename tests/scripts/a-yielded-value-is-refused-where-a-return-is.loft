@@ -1,0 +1,39 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The REFUSAL half of `a-yielded-value-converts-into-its-element-type.loft`: a value a `return`
+// of the element type refuses is refused when it is yielded, with the same message.  Before the
+// yield took the return's store face, none of these was refused:
+//
+//   iterator<u8>      ← integer  ran, and a `u8` loop variable held 300 (`@FR-I-Narrow`)
+//   iterator<integer> ← text     a store-access panic on --interpret, rustc E0606 on --native
+//   iterator<text>    ← integer  a crash on --interpret, the integer's digits on --native
+//
+// All three fire in pass 2, so one file holds them.
+
+// @EXPECT_ERROR: cannot implicitly narrow integer to u8
+fn narrowed(a: integer) -> iterator<u8> {
+  yield a;
+}
+
+// @EXPECT_ERROR: expected integer, got text on yield
+fn texts_as_ints() -> iterator<integer> {
+  yield "x";
+}
+
+// @EXPECT_ERROR: expected text, got integer on yield
+fn ints_as_texts(a: integer) -> iterator<text> {
+  yield a;
+}
+
+fn main() {
+  for y in narrowed(300) {
+    println("{y}");
+  }
+  for y in texts_as_ints() {
+    println("{y}");
+  }
+  for y in ints_as_texts(3) {
+    println("{y}");
+  }
+}
