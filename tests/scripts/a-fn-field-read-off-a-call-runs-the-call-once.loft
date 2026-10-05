@@ -15,6 +15,11 @@
 // Axes this file MOVES: the base (call result · local · call of a function returning a built
 // local), the call count, both backends.  Axes it HOLDS FIXED: non-capturing closures (a
 // capturing one cannot be returned in a struct yet — loft#1867).
+//
+// @falsified-by: tests/falsified/a-fn-field-read-off-a-call-runs-the-call-once.patch — native exit 1 -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   CHANNEL: exit on `--native` — the control's emitted Rust does not compile (E0308); the
+//   interpreter answered right on both trees, which is why only native moves.
+// HOLDS: leak and panic are clean on both trees and both backends.
 
 struct H { f: fn(integer) -> integer }
 fn dbl(a: integer) -> integer { a * 2 }
