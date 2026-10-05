@@ -1,8 +1,8 @@
 diff --git a/src/generation/hoist.rs b/src/generation/hoist.rs
-index e9b7587ae..baa819332 100644
+index 27670095a..fd2145c2f 100644
 --- a/src/generation/hoist.rs
 +++ b/src/generation/hoist.rs
-@@ -9334,7 +9334,7 @@ pub fn refill_text_callee(data: &Data, stores: &Stores, d: u32) -> Result<u16, &
+@@ -9349,7 +9349,7 @@ pub fn refill_text_callee(data: &Data, stores: &Stores, d: u32) -> Result<u16, &
      let Some(tp) = tp else {
          return Err("no literal into the buffer");
      };
@@ -10,8 +10,8 @@ index e9b7587ae..baa819332 100644
 +    if false && var_mentions(body, b) != admitted {
          return Err("the buffer is named outside its literals");
      }
-     let mut other_exit = false;
-@@ -9346,7 +9346,7 @@ pub fn refill_text_callee(data: &Data, stores: &Stores, d: u32) -> Result<u16, &
+     // An exit answers the buffer: `return b`, or a block whose value is `b` (the literal's
+@@ -9370,7 +9370,7 @@ pub fn refill_text_callee(data: &Data, stores: &Stores, d: u32) -> Result<u16, &
          }
          other_exit
      });

@@ -1,8 +1,8 @@
-diff --git b/src/parser/definitions.rs a/src/parser/definitions.rs
-index 63a2a9295..0e9f69b25 100644
---- b/src/parser/definitions.rs
-+++ a/src/parser/definitions.rs
-@@ -1590,17 +1590,6 @@ impl Parser {
+diff --git a/src/parser/definitions.rs b/src/parser/definitions.rs
+index aa119db8f..2649f095d 100644
+--- a/src/parser/definitions.rs
++++ b/src/parser/definitions.rs
+@@ -1745,17 +1745,6 @@ impl Parser {
          if crate::parser::vectors::is_collection(elem.base()) {
              return Some("a collection as its element".to_string());
          }
@@ -20,10 +20,10 @@ index 63a2a9295..0e9f69b25 100644
          let (Type::Reference(s_nr, _) | Type::Enum(s_nr, _, _)) = elem.base() else {
              return None;
          };
-diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
-index c8b92b0da..09d8702f4 100644
---- b/src/parser/expressions.rs
-+++ a/src/parser/expressions.rs
+diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
+index 8a61ac81e..85fbfbf9a 100644
+--- a/src/parser/expressions.rs
++++ b/src/parser/expressions.rs
 @@ -459,21 +459,6 @@ fn ir_mentions_var(val: &Value, target: u16) -> bool {
      }
  }
@@ -46,7 +46,7 @@ index c8b92b0da..09d8702f4 100644
  pub(crate) fn substitute_value(into: &mut Value, from: &Value, to: &Value) {
      if into == from {
          *into = to.clone();
-@@ -3774,7 +3759,7 @@ use a separate collection or add after the loop"
+@@ -4306,7 +4291,7 @@ use a separate collection or add after the loop"
          } else if op == "="
              && !self.amp_pending
              && matches!(to, Value::Var(_))
@@ -55,7 +55,7 @@ index c8b92b0da..09d8702f4 100644
              && let Type::Tuple(elems) = s_type.base().clone()
              && elems.iter().any(|e| !crate::data::is_scalar(e.base()))
          {
-@@ -3787,13 +3772,12 @@ use a separate collection or add after the loop"
+@@ -4319,13 +4304,12 @@ use a separate collection or add after the loop"
              // showed through `t`, and writing a member through the record panicked.  Each
              // member takes `@FR-T-Cons`'s copy, which is idempotent on a literal (its members
              // were copied, or are fresh, when it was parsed).  A COPY, not the `(H-Move)`
@@ -74,7 +74,7 @@ index c8b92b0da..09d8702f4 100644
              for (i, t) in elems.iter().enumerate() {
                  if let Some(m) = members.get_mut(i)
                      && let Some(owned) = self.tuple_member_owned_copy(m, t)
-@@ -3801,9 +3785,7 @@ use a separate collection or add after the loop"
+@@ -4333,9 +4317,7 @@ use a separate collection or add after the loop"
                      types[i] = owned;
                  }
              }
@@ -85,7 +85,7 @@ index c8b92b0da..09d8702f4 100644
              // `@FR-N-Shape`: the shape was read through `?`, so a `?` it carried is kept.
              s_type = if s_type.peel_optional().1 {
                  Type::optional(Type::Tuple(types))
-@@ -7272,17 +7254,8 @@ use a separate collection or add after the loop"
+@@ -8366,17 +8348,8 @@ use a separate collection or add after the loop"
                  // struct member VIEWS (`@FR-B-View`), and off a BORROWED base — a parameter, a
                  // linked local — every member views.  Decided on the source before the temp
                  // takes its place: the temp is never an argument. (loft#1361)
@@ -104,12 +104,12 @@ index c8b92b0da..09d8702f4 100644
                  // T1.4: create a temp variable for the RHS tuple, then read elements.
                  let tmp_tp = rhs_type.clone();
                  let tmp = self.vars.work_refs(&tmp_tp, &mut self.lexer);
-diff --git b/src/parser/fields.rs a/src/parser/fields.rs
-index 026afb284..67adb04ad 100644
---- b/src/parser/fields.rs
-+++ a/src/parser/fields.rs
-@@ -2475,80 +2475,6 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
-         }
+diff --git a/src/parser/fields.rs b/src/parser/fields.rs
+index 36c8817de..7179372be 100644
+--- a/src/parser/fields.rs
++++ b/src/parser/fields.rs
+@@ -2566,80 +2566,6 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
+         Some(self.get_field(open, idx, dbref))
      }
  
 -    /// `@FR-T-Proj`, loft#1698 — `v[i].k` on a `vector<(…)>` as the member's PLACE: the member read off the
@@ -189,14 +189,14 @@ index 026afb284..67adb04ad 100644
      /// loft#1072 — the PLACE a `fn_ref_field_read` block reads from: the host reference,
      /// the byte offset the 4-byte d_nr sits at, and whether the field carries a
      /// `__closure_rec` half at `pos + 4`.
-diff --git b/src/parser/operators.rs a/src/parser/operators.rs
-index 86c074b46..3afbd6915 100644
---- b/src/parser/operators.rs
-+++ a/src/parser/operators.rs
-@@ -1827,11 +1827,6 @@ impl Parser {
-                                 } else {
-                                     *code = Value::Null;
-                                 }
+diff --git a/src/parser/operators.rs b/src/parser/operators.rs
+index 50dd8a7e8..2b7f40bfe 100644
+--- a/src/parser/operators.rs
++++ b/src/parser/operators.rs
+@@ -2371,11 +2371,6 @@ impl Parser {
+                                 // loft#1868 — the member of an element of a tuple of a type
+                                 // variable: its record's field, deferred to each monomorph.
+                                 *code = place;
 -                            } else if let Some(place) =
 -                                self.stored_tuple_member_place(&unspanned, idx)
 -                            {

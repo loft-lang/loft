@@ -1,8 +1,8 @@
-diff --git b/src/compile.rs a/src/compile.rs
-index 999aff624..605766a9e 100644
---- b/src/compile.rs
-+++ a/src/compile.rs
-@@ -107,12 +107,7 @@ pub fn byte_code_from(
+diff --git a/src/compile.rs b/src/compile.rs
+index e377bb6bf..8a21eae8e 100644
+--- a/src/compile.rs
++++ b/src/compile.rs
+@@ -145,12 +145,7 @@ pub fn byte_code_from(
          None
      };
      for d_nr in start_d_nr..data.definitions() {
@@ -16,12 +16,12 @@ index 999aff624..605766a9e 100644
              continue;
          }
          // loft#665 piece 3 — publish which definition is being generated, so an
-diff --git b/src/data.rs a/src/data.rs
-index e1e3e4a0c..fb01443b5 100644
---- b/src/data.rs
-+++ a/src/data.rs
-@@ -10797,32 +10797,6 @@ impl Data {
-         d.instance_of != u32::MAX && d.instance_args.iter().any(|a| self.mentions_type_var(a))
+diff --git a/src/data.rs b/src/data.rs
+index 1b2f14acc..5144c8e2b 100644
+--- a/src/data.rs
++++ b/src/data.rs
+@@ -11186,32 +11186,6 @@ impl Data {
+         }
      }
  
 -    /// An instance of a generic FUNCTION bound to a type VARIABLE (`i_1U_n_hole`), minted while
@@ -53,10 +53,10 @@ index e1e3e4a0c..fb01443b5 100644
      /// A definition that is only a TEMPLATE's part and so never laid out (@PLN165 D8): a
      /// variant of a generic enum, whose payload is typed by the template's variables — each
      /// instance has variants of its own.
-diff --git b/src/generation/fnref.rs a/src/generation/fnref.rs
+diff --git a/src/generation/fnref.rs b/src/generation/fnref.rs
 index 178505ffc..fef497f18 100644
---- b/src/generation/fnref.rs
-+++ a/src/generation/fnref.rs
+--- a/src/generation/fnref.rs
++++ b/src/generation/fnref.rs
 @@ -64,11 +64,7 @@ pub fn dispatch_arms(
          if !matches!(def.def_type(), DefType::Function) {
              continue;
@@ -70,11 +70,11 @@ index 178505ffc..fef497f18 100644
              continue;
          }
          // A closure-capturing lambda has a hidden `__closure` param as its last
-diff --git b/src/generation/mod.rs a/src/generation/mod.rs
-index ea84adca8..bf04024c5 100644
---- b/src/generation/mod.rs
-+++ a/src/generation/mod.rs
-@@ -8426,10 +8426,7 @@ extern crate loft;"
+diff --git a/src/generation/mod.rs b/src/generation/mod.rs
+index ddc3be082..b529abe26 100644
+--- a/src/generation/mod.rs
++++ b/src/generation/mod.rs
+@@ -9043,10 +9043,7 @@ extern crate loft;"
              }
          }
          for dnr in from..till {
@@ -86,11 +86,11 @@ index ea84adca8..bf04024c5 100644
                  continue;
              }
              if let Some(r) = reachable
-diff --git b/src/parser/mod.rs a/src/parser/mod.rs
-index 00003054a..9e43a5b06 100644
---- b/src/parser/mod.rs
-+++ a/src/parser/mod.rs
-@@ -11267,17 +11267,21 @@ impl Parser {
+diff --git a/src/parser/mod.rs b/src/parser/mod.rs
+index 36853b768..8ff75a071 100644
+--- a/src/parser/mod.rs
++++ b/src/parser/mod.rs
+@@ -11569,17 +11569,21 @@ impl Parser {
      /// another template's body was parsed (`i_1S_n_inner`) — else `u32::MAX`.  An instance
      /// at a real type is its own answer; one at a variable stands for its template.
      fn placeholder_instance_template(&self, d: u32) -> u32 {
