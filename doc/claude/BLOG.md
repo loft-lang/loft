@@ -89,7 +89,9 @@ Frankly, that is close to the model MariaDB, and probably many other databases, 
 There is an optimiser, but that routine is often not really possible on a database in full use.
 Things are getting better there too, so loft should try a good algorithm in the future as well.
 (Examples to check before quoting: MariaDB's `OPTIMIZE TABLE` rebuilds the table; PostgreSQL's
-`VACUUM FULL` locks it, and tools like `pg_repack` exist to do the same online.) Sources: [GOALS.md](GOALS.md) § Legible cost (the scattered
+`VACUUM FULL` locks it, and tools like `pg_repack` exist to do the same online.) There are
+nuances, but deep down only simple records hold their exact space; a lot of data is pushed into a
+more general pool with blobs (InnoDB's overflow pages, PostgreSQL's TOAST). Sources: [GOALS.md](GOALS.md) § Legible cost (the scattered
 allocation that generated loft) and [OWNERSHIP_MODEL.md](OWNERSHIP_MODEL.md) § the control story.
 
 **Games that feel made by a person.** Candidate sources, for the owner to choose from: dryopea's
