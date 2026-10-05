@@ -333,7 +333,7 @@ impl Output<'_> {
         // run time like every other mention (`codegen_runtime::main_file_or`), so the binary
         // holds no path and two copies of one program at different paths are one binary.  Only
         // that parameter — a user's own string literal is never rewritten.
-        if !self.lean
+        if self.reads_main_file_at_run_time()
             && def_fn
                 .attributes()
                 .get(idx)

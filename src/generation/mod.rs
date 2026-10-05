@@ -2622,6 +2622,15 @@ fn collect_witness_vars(data: &crate::data::Data, def_nr: u32) -> HashSet<u16> {
 }
 
 impl Output<'_> {
+    /// Does the compiled program learn its own `.loft` path from its driver at run time
+    /// (`codegen_runtime::main_file_or`, fed `LOFT_NATIVE_MAIN_FILE`)?  Only a host-native
+    /// test/semantics build has a driver; a shipped (lean) binary, a browser page and a WASI
+    /// module run without one, so they keep the path baked — without it a browser `panic`
+    /// rendered no `--> file:line` at all.
+    pub(super) fn reads_main_file_at_run_time(&self) -> bool {
+        !self.lean && !self.wasm_browser && !self.wasm_wasi
+    }
+
     /// The program's own `.loft` path — the file `main` is defined in (empty without one).
     pub(super) fn main_file(&self) -> String {
         let d = self.data.def_nr("n_main");
@@ -7785,10 +7794,10 @@ extern crate loft;"
         // `log_info` / `log_warn` / `log_error` / `log_fatal`.
         // A test/semantics build bakes no path: `main()` reads it through `main_file_or`, which
         // takes the driver's `LOFT_NATIVE_MAIN_FILE`.  A shipped (lean) build keeps the literal.
-        let main_file = if self.lean {
-            self.main_file()
-        } else {
+        let main_file = if self.reads_main_file_at_run_time() {
             String::new()
+        } else {
+            self.main_file()
         };
         writeln!(w, "static LOFT_MAIN_FILE: &str = {main_file:?};")?;
         if self.emit_live {
@@ -10346,11 +10355,12 @@ extern crate loft;"
                     // The main file's path comes from the driver at run time
                     // (`main_file_or`), so a test/semantics build holds no path and the same
                     // program at another path is the same binary and cache entry.
-                    let file_expr = if **loft_file == *self.main_file() {
-                        "main_file_or(\"\")".to_string()
-                    } else {
-                        format!("\"{escaped_file}\"")
-                    };
+                    let file_expr =
+                        if self.reads_main_file_at_run_time() && **loft_file == *self.main_file() {
+                            "main_file_or(\"\")".to_string()
+                        } else {
+                            format!("\"{escaped_file}\"")
+                        };
                     format!(
                         "\n  cr_call_push(\"{loft_name}\", {file_expr}, {loft_line});\n  \
                          let _call_guard = codegen_runtime::CallGuard;"
