@@ -16,7 +16,9 @@
 // 0x37363534 = 926299444; 1094795585 is 0x41414141, written as "AAAA".
 //
 // @falsified-at: efa064884 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
-// native exit 1 -> 0, native 1 assertion failures -> 0
+// native exit 1 -> 0, native 1 assertion failures -> 0.  CHANNEL: exit and assertions — the
+//   first failing assertion stops the run, so each tree reports one.
+//   HOLDS: leak and panic are equal on both trees.
 // @falsified-by: tests/falsified/one-file-handle-reads-and-writes-and-a-short-read-is-null.patch
 
 fn scratch(tag: text) -> text {

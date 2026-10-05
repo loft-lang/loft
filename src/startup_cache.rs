@@ -32,7 +32,7 @@ fn cache_target(default_dir: &str) -> Option<std::path::PathBuf> {
         return None;
     }
     Some(crate::cache::stdlib_cache_path(
-        &crate::cache::stdlib_cache_key(&srcs),
+        &crate::cache::stdlib_cache_key(default_dir, &srcs),
     ))
 }
 
@@ -103,7 +103,7 @@ fn stdlib_key_hex(default_dir: &str) -> Option<String> {
     if srcs.is_empty() {
         return None;
     }
-    Some(hex32(&crate::cache::stdlib_cache_key(&srcs)))
+    Some(hex32(&crate::cache::stdlib_cache_key(default_dir, &srcs)))
 }
 
 #[cfg(feature = "mmap")]

@@ -261,6 +261,7 @@ fn cache_decision(no_cache: bool) -> bool {
 /// - [`BUILD_ID`] — same-version rebuild discriminator
 /// - the target triple — no cross-arch cache reuse
 /// - the active [`feature_signature`]
+/// - `default_dir` as the parse was given it — the spelling every position names
 /// - the concatenated `default/*.loft` source bytes (the
 ///   retirement-bug fix: a stdlib edit changes the key)
 ///
@@ -268,7 +269,7 @@ fn cache_decision(no_cache: bool) -> bool {
 /// passes them in a stable order (the loader collects them sorted);
 /// names are included so a rename also invalidates.
 #[must_use]
-pub fn stdlib_cache_key(stdlib_sources: &[(String, String)]) -> [u8; 32] {
+pub fn stdlib_cache_key(default_dir: &str, stdlib_sources: &[(String, String)]) -> [u8; 32] {
     let mut h = Sha256::new();
     // Each field is fed as (u64 little-endian length, bytes) so two
     // different field boundaries can never hash identically.
@@ -291,6 +292,11 @@ pub fn stdlib_cache_key(stdlib_sources: &[(String, String)]) -> [u8; 32] {
     put(target_triple().as_bytes());
     put(feature_signature().as_bytes());
     put(semantic_env_signature().as_bytes());
+    // The directory as the parse was GIVEN it: every position in the image names its file
+    // under this spelling, and a diagnostic or a go-to-definition renders it.  The loft binary
+    // reads `default/` by its absolute path and a test binary by a relative one, so once one
+    // build's binaries share an image (loft#1859) the spelling has to key it apart.
+    put(default_dir.as_bytes());
     // Number of stdlib files, then each (name, content).
     h.update((stdlib_sources.len() as u64).to_le_bytes());
     for (name, content) in stdlib_sources {
@@ -1190,44 +1196,44 @@ mod tests {
     #[test]
     fn key_is_deterministic() {
         // Identical inputs → identical key, across repeated calls.
-        let a = stdlib_cache_key(&sample());
-        let b = stdlib_cache_key(&sample());
+        let a = stdlib_cache_key("default", &sample());
+        let b = stdlib_cache_key("default", &sample());
         assert_eq!(a, b, "same inputs must yield the same key");
     }
 
     #[test]
     fn key_changes_on_stdlib_content() {
         // The retirement bug: a stdlib edit MUST change the key.
-        let base = stdlib_cache_key(&sample());
+        let base = stdlib_cache_key("default", &sample());
         let mut edited = sample();
         edited[0].1.push_str(" // tweak");
         assert_ne!(
             base,
-            stdlib_cache_key(&edited),
+            stdlib_cache_key("default", &edited),
             "editing default/*.loft content must invalidate the cache"
         );
     }
 
     #[test]
     fn key_changes_on_stdlib_name() {
-        let base = stdlib_cache_key(&sample());
+        let base = stdlib_cache_key("default", &sample());
         let mut renamed = sample();
         renamed[0].0 = "01_core.loft".to_string();
         assert_ne!(
             base,
-            stdlib_cache_key(&renamed),
+            stdlib_cache_key("default", &renamed),
             "renaming a stdlib file must invalidate the cache"
         );
     }
 
     #[test]
     fn key_changes_on_file_count() {
-        let base = stdlib_cache_key(&sample());
+        let base = stdlib_cache_key("default", &sample());
         let mut more = sample();
         more.push(("03_text.loft".to_string(), "fn c() {}".to_string()));
         assert_ne!(
             base,
-            stdlib_cache_key(&more),
+            stdlib_cache_key("default", &more),
             "adding a stdlib file must invalidate the cache"
         );
     }
@@ -1236,12 +1242,12 @@ mod tests {
     fn key_is_order_sensitive() {
         // Reordering files is a different stdlib (load order matters for
         // parse); the key must reflect it.
-        let base = stdlib_cache_key(&sample());
+        let base = stdlib_cache_key("default", &sample());
         let mut swapped = sample();
         swapped.swap(0, 1);
         assert_ne!(
             base,
-            stdlib_cache_key(&swapped),
+            stdlib_cache_key("default", &swapped),
             "stdlib file order is part of the key"
         );
     }
@@ -1250,8 +1256,8 @@ mod tests {
     fn boundary_shift_changes_key() {
         // Moving a byte across the name/content boundary must not
         // collide (length-prefixing guarantees this).
-        let a = stdlib_cache_key(&[("ab".to_string(), "c".to_string())]);
-        let b = stdlib_cache_key(&[("a".to_string(), "bc".to_string())]);
+        let a = stdlib_cache_key("default", &[("ab".to_string(), "c".to_string())]);
+        let b = stdlib_cache_key("default", &[("a".to_string(), "bc".to_string())]);
         assert_ne!(a, b, "field boundaries must not be ambiguous");
     }
 
@@ -1668,11 +1674,16 @@ mod tests {
 
     #[test]
     fn cache_path_is_deterministic_and_key_specific() {
-        let k1 = stdlib_cache_key(&[("x.loft".into(), "a".into())]);
-        let k2 = stdlib_cache_key(&[("x.loft".into(), "b".into())]);
+        let k1 = stdlib_cache_key("default", &[("x.loft".into(), "a".into())]);
+        let k2 = stdlib_cache_key("default", &[("x.loft".into(), "b".into())]);
         let p1 = stdlib_cache_path(&k1);
         assert_eq!(p1, stdlib_cache_path(&k1), "same key → same path");
         assert_ne!(p1, stdlib_cache_path(&k2), "different key → different path");
+        assert_ne!(
+            k1,
+            stdlib_cache_key("/abs/default", &[("x.loft".into(), "a".into())]),
+            "a different spelling of the stdlib directory → a different key (loft#1859)"
+        );
         let name = p1.file_name().unwrap().to_string_lossy();
         assert!(name.starts_with("stdlib-") && name.ends_with(".store"));
         assert!(
