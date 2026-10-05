@@ -83,6 +83,17 @@ curious reader without years of experience. That is not a slight against Rust; i
 language. Loft tries to prevent that as much as possible. (The libraries follow the same rule:
 a slow routine is work for the compiler, never a hand-written Rust shortcut, so nobody has to
 read Rust to read a library.)
+
+Why I am convinced loft will be useful in the end — not that it is useful today:
+
+- a hard but reachable goal: once reached, a whole class of problems that can halt a project
+  is solved. We take on the hard work so its users don't have to.
+- even at about 2.5× rustc, compiled loft is a very quick language. "Slower than Python" is true
+  only of the interpreter, and that is not how the games run, nor most code during development.
+- the interpreter is for turnaround: instant start, editing while the game runs, the debugger.
+- once native is close to rustc, the interpreter gets its own overhaul, to come closer to Python.
+- not useful today: that needs speed and stability, and stability will not come as long as the
+  model under the language keeps changing for speed.
 In my opinion C++ that is still the most common language for published games is not very helpful
 for them. Many things are in there that crashes games, and being one of the most efficient languages
 around still doesn't help against the actual reasons things get slow. Those reasons are:
