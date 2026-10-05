@@ -290,10 +290,28 @@ pub fn other_sep() -> &'static str {
 /// assume the directory exists before writing into it.
 #[must_use]
 pub fn scratch_dir() -> std::path::PathBuf {
-    let dir =
-        std::env::var_os("LOFT_TMPDIR").map_or_else(std::env::temp_dir, std::path::PathBuf::from);
+    let dir = scratch_from(std::env::var_os("LOFT_TMPDIR"), std::env::temp_dir());
     let _ = std::fs::create_dir_all(&dir);
     dir
+}
+
+/// [`scratch_dir`]'s choice, apart from the environment: `loft` (the `LOFT_TMPDIR` value) when
+/// it names something, else `system` (the temp dir), made ABSOLUTE.  An empty value counts as
+/// unset — a shell that expands `LOFT_TMPDIR=$TMPDIR` in the statement that sets `TMPDIR`
+/// hands `""` — and so does an empty `TMPDIR`, which `temp_dir` passes through.  A relative or
+/// empty scratch put a native binary in the working directory under a bare name, which the
+/// run then spawned through `PATH` from the program's directory: "failed to run native binary:
+/// No such file or directory".
+fn scratch_from(
+    loft: Option<std::ffi::OsString>,
+    system: std::path::PathBuf,
+) -> std::path::PathBuf {
+    let dir = loft
+        .filter(|v| !v.is_empty())
+        .map(std::path::PathBuf::from)
+        .or_else(|| (!system.as_os_str().is_empty()).then_some(system))
+        .unwrap_or_else(|| std::path::PathBuf::from(if cfg!(windows) { "." } else { "/tmp" }));
+    std::path::absolute(&dir).unwrap_or(dir)
 }
 
 /// A unique per-PROCESS build-scratch directory under [`scratch_dir`], holding
@@ -772,6 +790,26 @@ pub fn native_worker_count(
 #[cfg(test)]
 mod reclaim_tests {
     use super::*;
+
+    /// `scratch_from`: an empty `LOFT_TMPDIR` or `TMPDIR` is unset, and every answer is absolute
+    /// — the two ways a native binary ended up spawned under a bare name through `PATH`.
+    #[test]
+    fn the_scratch_dir_is_never_empty_or_relative() {
+        let sys = std::path::PathBuf::from("/var/tmp/sys");
+        assert_eq!(
+            scratch_from(Some("/x/y".into()), sys.clone()),
+            std::path::PathBuf::from("/x/y")
+        );
+        assert_eq!(scratch_from(Some("".into()), sys.clone()), sys);
+        assert_eq!(scratch_from(None, sys.clone()), sys);
+        let fallback = scratch_from(Some("".into()), std::path::PathBuf::new());
+        assert!(
+            fallback.is_absolute() && !fallback.as_os_str().is_empty(),
+            "{fallback:?}"
+        );
+        let rel = scratch_from(Some("rel/dir".into()), sys);
+        assert!(rel.is_absolute() && rel.ends_with("rel/dir"), "{rel:?}");
+    }
 
     /// `sweep_own_native_cache`: a changed build stamp removes the directory's `loft_native_*`
     /// entries older than two minutes and keeps a fresh one (a concurrent shard's) and every
