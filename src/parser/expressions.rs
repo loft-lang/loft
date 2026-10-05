@@ -8042,6 +8042,7 @@ use a separate collection or add after the loop"
                 );
             }
             let mut rhs = Value::Null;
+            let destr_rhs_pos = self.lexer.pos().clone();
             let mut rhs_type = self.expression(&mut rhs);
             // `@FR-T-Destr` / `@FR-T-Ref` / `@FR-B-Ref-Uniform` — a `&(…)` binding denotes the
             // bound tuple itself, so `(a, b) = p` unpacks it exactly as `a = p.0; b = p.1` does.  The
@@ -8147,12 +8148,26 @@ use a separate collection or add after the loop"
                         && !matches!(self.vars.tp(v_nr), Type::Optional(_) | Type::RefVar(_))
                         && !self.vars.tp(v_nr).is_unknown()
                         && self.vars.tp(v_nr).is_equal(elem_tp.base());
-                    let member_tp = if declared_nullable_member {
+                    // @FR-N-Decl / @FR-I-Narrow — a DECLARED scalar name keeps its declared
+                    // type, and the member is a STORE into it, exactly as `a = v` is: the
+                    // conversion, the narrowing refusal and the range check all come from the
+                    // store face.  Retyped to the member instead, `a: u8; (a, b) = (n, 1)` held
+                    // 300, an `i32?` held 5000000000, and `a: float` refused the integer `a = 3`
+                    // widens.  `is_equal` is width-blind, which is why the nullable test above
+                    // never asked a narrow declaration.
+                    let declared_scalar = self.vars.exists(v_nr)
+                        && self.author_declared(v_nr)
+                        && !self.vars.tp(v_nr).is_unknown()
+                        && crate::data::is_scalar(self.vars.tp(v_nr))
+                        && crate::data::is_scalar(&elem_tp);
+                    let member_tp = if declared_scalar {
+                        self.vars.tp(v_nr).clone()
+                    } else if declared_nullable_member {
                         elem_tp.base().clone()
                     } else {
                         elem_tp.clone()
                     };
-                    let member_what = if declared_nullable_member {
+                    let member_what = if declared_nullable_member || declared_scalar {
                         format!(
                             "{} `{}`",
                             if self.vars.is_argument(v_nr) {
@@ -8174,8 +8189,21 @@ use a separate collection or add after the loop"
                         if let Some((syn, _)) = tagged_member {
                             read = self.emit_nullable_slot_read(syn, read, &rhs_elems[i]);
                         }
-                        if declared_nullable_member {
-                            self.convert_store(&mut read, &elem_tp, &member_tp, &member_what, None);
+                        if (declared_nullable_member || declared_scalar)
+                            && !self.convert_store(
+                                &mut read,
+                                &elem_tp,
+                                &member_tp,
+                                &member_what,
+                                None,
+                            )
+                        {
+                            self.validate_convert(
+                                "assignment",
+                                &elem_tp,
+                                &member_tp,
+                                &destr_rhs_pos,
+                            );
                         }
                         if owned_base
                             && Self::is_collection_type(rhs_elems[i].base())
@@ -8214,8 +8242,21 @@ use a separate collection or add after the loop"
                         if let Some((syn, _)) = tagged_member {
                             view = self.emit_nullable_slot_read(syn, view, &rhs_elems[i]);
                         }
-                        if declared_nullable_member {
-                            self.convert_store(&mut view, &elem_tp, &member_tp, &member_what, None);
+                        if (declared_nullable_member || declared_scalar)
+                            && !self.convert_store(
+                                &mut view,
+                                &elem_tp,
+                                &member_tp,
+                                &member_what,
+                                None,
+                            )
+                        {
+                            self.validate_convert(
+                                "assignment",
+                                &elem_tp,
+                                &member_tp,
+                                &destr_rhs_pos,
+                            );
                         }
                         self.materialize_tuple_element(v_nr, tmp, &elem_tp, view)
                     };

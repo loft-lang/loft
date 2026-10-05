@@ -1,0 +1,33 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The refusal half of `a-destructured-name-keeps-its-declared-type.loft`: what `a = v` refuses
+// for a declared narrow local, `(a, b) = (v, …)` refuses with the same message.  Both used to
+// compile — the plain-integer cell stored 300 into a `u8`, and the nullable cell warned about
+// "the non-null type `integer`", the member's type, not the local's.
+//
+// `main` comes first so each expectation belongs to its function.
+
+fn main() {
+  println("{plain(300)} {nullable_member(null)}");
+}
+
+// @EXPECT_ERROR: cannot implicitly narrow integer to u8
+fn plain(n: integer) -> integer {
+  a: u8 = 1;
+  b = 0;
+  (a, b) = (n, 2);
+  a + b
+}
+
+fn maybe(m: integer?) -> (integer?, integer) {
+  (m, 1)
+}
+
+// @EXPECT_ERROR: a nullable `integer?` cannot be stored into the local `a` of the non-null type `integer(0, 255)`
+fn nullable_member(m: integer?) -> integer {
+  a: u8 = 1;
+  b = 0;
+  (a, b) = maybe(m);
+  a + b
+}

@@ -1,0 +1,64 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `(T-Destr)` binds each name to the i-th member; a name the author DECLARED keeps its type
+// (`@FR-N-Decl`), so the member is a STORE into it exactly as `a = v` is — converted, range
+// checked (`@FR-I-Narrow-Opt`), or refused.  The pattern used to retype the local to the
+// member's type instead and store the raw member:
+//
+//   a: u8?   (a, b) = (300, 1)        held 300, outside its own type, where `a = 300` is null
+//   a: i32?  (a, b) = (5000000000, 1) held 5000000000
+//   a: float (a, b) = (3, 1)          refused "cannot change type", where `a = 3` widens
+//
+// The refusal half is `a-destructured-narrow-name-is-refused-where-a-store-is.loft`.
+//
+// Axes this file MOVES:  the declared type (u8? · i32? · float · integer), the member source
+//                        (a tuple literal · a call), the value (in range · out of range).
+// Axes it HOLDS FIXED:   a two-member pattern, the narrow name first.  Field targets in a
+//                        pattern are not here: they are a separate question for (T-Destr).
+
+fn pair(n: integer) -> (integer, integer) {
+  (n, 1)
+}
+
+fn narrow_nullable(n: integer) -> text {
+  a: u8? = 1;
+  b = 0;
+  (a, b) = (n, 2);
+  "{a} {b}"
+}
+
+fn narrow_nullable_call(n: integer) -> text {
+  a: u8? = 1;
+  b = 0;
+  (a, b) = pair(n);
+  "{a} {b}"
+}
+
+fn wide_nullable(w: integer) -> text {
+  a: i32? = 1;
+  b = 0;
+  (a, b) = (w, 2);
+  "{a} {b}"
+}
+
+fn widened() -> float {
+  a: float = 1.5;
+  b = 0;
+  (a, b) = (3, 2);
+  a / 2.0
+}
+
+fn inferred(n: integer) -> integer {
+  (a, b) = (n, 2);
+  a + b
+}
+
+fn main() {
+  assert(narrow_nullable(300) == "null 2", "u8? out of range: got {narrow_nullable(300)}");
+  assert(narrow_nullable(100) == "100 2", "u8? in range: got {narrow_nullable(100)}");
+  assert(narrow_nullable_call(300) == "null 1", "u8? from a call: got {narrow_nullable_call(300)}");
+  assert(wide_nullable(5000000000) == "null 2", "i32? out of range: got {wide_nullable(5000000000)}");
+  assert(widened() == 1.5, "an integer widens into a declared float: got {widened()}");
+  assert(inferred(300) == 302, "an undeclared name takes the member as it is: got {inferred(300)}");
+}
