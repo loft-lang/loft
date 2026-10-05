@@ -20,6 +20,11 @@ cannot be corrected by the next commit.
   until he has approved it and made it something he would say himself. The subjects and
   outlines below are suggestions to draw on, not posts. The working rules are in the blog
   repository's `CLAUDE.md`.
+- **The blog is about the project** — loft, its games and its libraries. AI is a big part of how
+  they are built and runs through the posts, but general AI commentary is out of scope. Two of
+  the owner's convictions run under the series: using AI is a constant process, not a prompt
+  and a miracle; and a project's quality follows the person behind the keyboard. A post shows
+  them through what happened in the project. The blog's `CLAUDE.md` holds them in his words.
 
 - **Re-measure, then quote.** A figure carries the commit or date it was measured at.
 - **Name the ancestors.** A subject below that has precedent in another system says which; a
