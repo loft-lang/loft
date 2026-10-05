@@ -164,10 +164,6 @@ impl Output<'_> {
     /// from `crate::generation::ops::default::DefaultEmitter` when
     /// `def_fn.rust.is_empty()`.  Behaviour is byte-identical to the
     /// pre-phase-09 `output_call_user_fn`.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one call-body emission; each arm is a call shape the generator spells"
-    )]
     pub(super) fn user_fn_call_body(
         &mut self,
         w: &mut dyn Write,
@@ -220,36 +216,12 @@ impl Output<'_> {
             && (self.current_call_def as usize) < self.data.definitions.len()
             && std::ptr::eq(self.data.def(self.current_call_def), def_fn)
             && self.ranged_call(self.current_call_def, vals, twin_args.is_some());
-        // `@FR-R-RefillText` — the call its pool statement left the release to: the refill
-        // twin where the plain callee would be called; before an `__inv`/`__rg` twin, the
-        // release the pool statement did not emit.
-        let refill = match (
-            self.refill_text_pending,
-            self.refill_text.calls.get(&(vals.as_ptr() as usize)),
-        ) {
-            (Some((b, tp, _)), Some(&(cb, _))) if b == cb => {
-                self.refill_text_pending = None;
-                Some((b, tp))
-            }
-            _ => None,
-        };
-        let refill_twin = refill.is_some()
-            && twin_args.is_none()
-            && !ranged
-            && forward.is_none()
-            && std::ptr::eq(self.data.def(self.current_call_def), def_fn);
-        if refill.is_some() {
-            crate::rewrite_census::fired("R-RefillText", usize::from(refill_twin));
-        }
-        if let Some((b, tp)) = refill
-            && !refill_twin
-        {
-            let name = super::sanitize(self.data.def(self.def_nr).variables().name(b));
-            write!(w, "{{ stores.remove_claims(&(var_{name}), {tp}_u16); ")?;
-        }
-        if refill_twin && !self.rt_requests.contains(&self.current_call_def) {
-            self.rt_requests.push(self.current_call_def);
-        }
+        let (released_first, refill_twin) = self.refill_text_call(
+            w,
+            def_fn,
+            vals,
+            twin_args.is_some() || ranged || forward.is_some(),
+        )?;
         write!(
             w,
             "{}{}{}{}(",
@@ -263,6 +235,60 @@ impl Output<'_> {
             write!(w, "cell")?;
             first_arg = false;
         }
+        let callee_nr = self.current_call_def;
+        self.emit_user_call_args(w, def_fn, vals, first_arg)?;
+        if let Some(extra) = &twin_args {
+            for e in extra {
+                write!(w, ", {e}")?;
+            }
+        }
+        write!(w, ")")?;
+        if is_generator {
+            write!(w, ")")?; // close alloc_coroutine(...)
+        } else if narrow_int_cast(def_fn.returned()).is_some()
+            && !matches!(def_fn.returned().base(), Type::Boolean)
+        {
+            // Narrow integer return types (u8/u16/i8/i16) must be widened so that
+            // assignments and comparisons with default-Integer expressions type-check.
+            // Post-2c: widen to i64 (the default Integer width).
+            // @PLN17: boolean's expression form is u8/bool, never i64 — no widening
+            // (incl. `boolean?`: its slot is u8, so `.base()` excludes it here too).
+            write!(w, " as i64")?;
+        }
+        if let Some(buf) = forward {
+            let tp = self
+                .value_records
+                .fns
+                .get(&callee_nr)
+                .copied()
+                .unwrap_or(u16::MAX);
+            write!(w, "; let mut __vd = ")?;
+            self.output_code_inner(w, &Value::Var(buf))?;
+            // The callee's own allocate-or-reuse guard: a buffer that is absent or holds no
+            // record is minted here, as the callee's exit mints it.
+            write!(
+                w,
+                "; if !(__vd.store_nr != u16::MAX && __vd.rec != 0) {{ __vd = OpDatabase(cell, __vd, {tp}_i32); }} "
+            )?;
+            self.write_tuple_fields(w, tp, &Value::RawExpr("__vd".to_string()), "__vt")?;
+            write!(w, "__vd }}")?;
+        }
+        if released_first {
+            write!(w, " }}")?;
+        }
+        Ok(())
+    }
+
+    /// The arguments of a user-fn call, after `cell` when `first_arg` is false: each through
+    /// [`Self::emit_call_arg`], an element-placed buffer as its element's field, and an
+    /// admitted value-record callee's dropped buffer left out.
+    fn emit_user_call_args(
+        &mut self,
+        w: &mut dyn Write,
+        def_fn: &Definition,
+        vals: &[Value],
+        mut first_arg: bool,
+    ) -> std::io::Result<()> {
         // @PLN157 § V-aa (`@FR-R-ValueRecord`) — an admitted callee has no return buffer
         // parameter, so the site must not pass one: the buffer argument is the attribute
         // the signature dropped, in the same position.
@@ -304,46 +330,46 @@ impl Output<'_> {
             // parameter forms) are about this call, so it is restored per argument.
             self.current_call_def = callee_nr;
         }
-        if let Some(extra) = &twin_args {
-            for e in extra {
-                write!(w, ", {e}")?;
-            }
-        }
-        write!(w, ")")?;
-        if is_generator {
-            write!(w, ")")?; // close alloc_coroutine(...)
-        } else if narrow_int_cast(def_fn.returned()).is_some()
-            && !matches!(def_fn.returned().base(), Type::Boolean)
-        {
-            // Narrow integer return types (u8/u16/i8/i16) must be widened so that
-            // assignments and comparisons with default-Integer expressions type-check.
-            // Post-2c: widen to i64 (the default Integer width).
-            // @PLN17: boolean's expression form is u8/bool, never i64 — no widening
-            // (incl. `boolean?`: its slot is u8, so `.base()` excludes it here too).
-            write!(w, " as i64")?;
-        }
-        if let Some(buf) = forward {
-            let tp = self
-                .value_records
-                .fns
-                .get(&callee_nr)
-                .copied()
-                .unwrap_or(u16::MAX);
-            write!(w, "; let mut __vd = ")?;
-            self.output_code_inner(w, &Value::Var(buf))?;
-            // The callee's own allocate-or-reuse guard: a buffer that is absent or holds no
-            // record is minted here, as the callee's exit mints it.
-            write!(
-                w,
-                "; if !(__vd.store_nr != u16::MAX && __vd.rec != 0) {{ __vd = OpDatabase(cell, __vd, {tp}_i32); }} "
-            )?;
-            self.write_tuple_fields(w, tp, &Value::RawExpr("__vd".to_string()), "__vt")?;
-            write!(w, "__vd }}")?;
-        }
-        if refill.is_some() && !refill_twin {
-            write!(w, " }}")?;
-        }
         Ok(())
+    }
+
+    /// `@FR-R-RefillText` — the call its pool statement left the release to: the refill twin
+    /// where the plain callee would be called; before any other twin (`other_twin`), the
+    /// release the pool statement did not emit, opened here and closed after the call.
+    /// Answers whether that release was opened, and whether the call takes the refill twin.
+    fn refill_text_call(
+        &mut self,
+        w: &mut dyn Write,
+        def_fn: &Definition,
+        vals: &[Value],
+        other_twin: bool,
+    ) -> std::io::Result<(bool, bool)> {
+        let refill = match (
+            self.refill_text_pending,
+            self.refill_text.calls.get(&(vals.as_ptr() as usize)),
+        ) {
+            (Some((buf, tp, _)), Some(&(site_buf, _))) if buf == site_buf => {
+                self.refill_text_pending = None;
+                Some((buf, tp))
+            }
+            _ => None,
+        };
+        let Some((buf, tp)) = refill else {
+            return Ok((false, false));
+        };
+        let twin = !other_twin
+            && (self.current_call_def as usize) < self.data.definitions.len()
+            && std::ptr::eq(self.data.def(self.current_call_def), def_fn);
+        crate::rewrite_census::fired("R-RefillText", usize::from(twin));
+        if twin {
+            if !self.rt_requests.contains(&self.current_call_def) {
+                self.rt_requests.push(self.current_call_def);
+            }
+            return Ok((false, true));
+        }
+        let name = super::sanitize(self.data.def(self.def_nr).variables().name(buf));
+        write!(w, "{{ stores.remove_claims(&(var_{name}), {tp}_u16); ")?;
+        Ok((true, false))
     }
 
     /// Emit ONE call argument (no leading separator) — the argument at
