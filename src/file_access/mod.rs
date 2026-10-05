@@ -135,6 +135,16 @@ pub fn create(path: &PathText) -> io::Result<std::fs::File> {
     run(path, |p| std::fs::File::create(p))
 }
 
+/// Open an existing file for reading AND writing, without truncating it.
+///
+/// # Errors
+/// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
+pub fn open_read_write(path: &PathText) -> io::Result<std::fs::File> {
+    run(path, |p| {
+        std::fs::OpenOptions::new().read(true).write(true).open(p)
+    })
+}
+
 /// Open the file with `options` (append, create-new, …).
 ///
 /// # Errors

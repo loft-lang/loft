@@ -166,7 +166,7 @@ pub fn build_signature() -> String {
 #[must_use]
 fn build_identity_tag() -> String {
     format!(
-        "{}|{}|{}",
+        "{}/{}/{}",
         env!("LOFT_BUILD_STAMP"),
         env!("LOFT_BUILD_RUSTFLAGS"),
         cfg!(debug_assertions)
@@ -1108,24 +1108,24 @@ pub fn prune_stdlib_images() {
 /// [`prune_stdlib_images`] against an explicit directory, for the tests.  Only a
 /// `stdlib-<64 hex>.store` name is considered.
 fn prune_stdlib_dir(base: &std::path::Path, keep: usize) {
-    let Ok(entries) = std::fs::read_dir(base) else {
+    use crate::file_access as fa;
+    let Ok(entries) = fa::read_dir(&fa::PathText::from_os(base)) else {
         return;
     };
-    let mut images: Vec<(std::time::SystemTime, std::path::PathBuf)> = entries
-        .flatten()
-        .filter(|e| {
-            e.file_name().to_str().is_some_and(|n| {
+    let mut images: Vec<(std::time::SystemTime, fa::PathText)> = entries
+        .into_iter()
+        .filter(|p| {
+            p.parts().last().is_some_and(|n| {
                 n.strip_prefix("stdlib-")
                     .and_then(|r| r.strip_suffix(".store"))
                     .is_some_and(|k| k.len() == 64 && k.bytes().all(|b| b.is_ascii_hexdigit()))
             })
         })
-        .map(|e| {
-            let at = e
-                .metadata()
+        .map(|p| {
+            let at = fa::metadata(&p)
                 .and_then(|m| m.modified())
                 .unwrap_or(std::time::UNIX_EPOCH);
-            (at, e.path())
+            (at, p)
         })
         .collect();
     if images.len() <= keep {
@@ -1133,7 +1133,7 @@ fn prune_stdlib_dir(base: &std::path::Path, keep: usize) {
     }
     images.sort_by_key(|i| std::cmp::Reverse(i.0)); // newest first
     for (_, path) in &images[keep..] {
-        let _ = std::fs::remove_file(path);
+        let _ = fa::remove_file(path);
     }
 }
 
@@ -1633,40 +1633,37 @@ mod tests {
     /// nothing but a `stdlib-<64 hex>.store` is touched.
     #[test]
     fn stdlib_images_keep_the_newest_and_nothing_else() {
+        use crate::file_access as fa;
         use std::time::{Duration, SystemTime};
         let dir = std::env::temp_dir().join(format!("loft_stdlib_prune_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let root = fa::PathText::from_os(&dir);
+        let _ = fa::remove_dir_all(&root);
+        fa::create_dir_all(&root).unwrap();
         let name = |i: u8| format!("stdlib-{}.store", format!("{i:02x}").repeat(32));
         for i in 0..5u8 {
-            let p = dir.join(name(i));
-            std::fs::write(&p, b"img").unwrap();
+            let p = root.join(&name(i));
+            fa::write(&p, b"img").unwrap();
             let when = SystemTime::now() - Duration::from_secs(1000 - u64::from(i) * 100);
-            std::fs::OpenOptions::new()
-                .write(true)
-                .open(&p)
-                .unwrap()
-                .set_modified(when)
-                .unwrap();
+            fa::open_read_write(&p).unwrap().set_modified(when).unwrap();
         }
-        std::fs::write(dir.join("stdlib-zzz.store"), b"keepme").unwrap();
-        std::fs::write(dir.join("program-aaa.store"), b"keepme").unwrap();
+        fa::write(&root.join("stdlib-zzz.store"), b"keepme").unwrap();
+        fa::write(&root.join("program-aaa.store"), b"keepme").unwrap();
         prune_stdlib_dir(&dir, 2);
         for i in 0..3u8 {
-            assert!(!dir.join(name(i)).exists(), "older image {i} removed");
+            assert!(!fa::exists(&root.join(&name(i))), "older image {i} removed");
         }
         for i in 3..5u8 {
-            assert!(dir.join(name(i)).exists(), "newest image {i} kept");
+            assert!(fa::exists(&root.join(&name(i))), "newest image {i} kept");
         }
         assert!(
-            dir.join("stdlib-zzz.store").exists(),
+            fa::exists(&root.join("stdlib-zzz.store")),
             "a foreign name is left alone"
         );
         assert!(
-            dir.join("program-aaa.store").exists(),
+            fa::exists(&root.join("program-aaa.store")),
             "a program bundle is left alone"
         );
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = fa::remove_dir_all(&root);
     }
 
     #[test]

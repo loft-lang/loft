@@ -84,10 +84,8 @@ impl LoftFile {
         };
         self.realign()?;
         let at = self.file.stream_position()?;
-        let mut file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(&path)?;
+        let mut file =
+            crate::file_access::open_read_write(&crate::file_access::PathText::from_os(&path))?;
         file.seek(SeekFrom::Start(at))?;
         self.file = file;
         self.at = Some(at);
@@ -325,7 +323,8 @@ mod tests {
     #[test]
     fn a_reader_written_through_reopens_at_the_logical_position() {
         let p = scratch("reader", b"abcdefghij");
-        let mut f = LoftFile::reader(std::fs::File::open(&p).unwrap(), &p);
+        let text = crate::file_access::PathText::from_os(&p);
+        let mut f = LoftFile::reader(crate::file_access::open(&text).unwrap(), &p);
         let mut three = [0u8; 3];
         f.read_exact(&mut three).unwrap();
         f.write_all(b"XY").unwrap();
@@ -333,8 +332,8 @@ mod tests {
         f.read_exact(&mut rest).unwrap();
         assert_eq!(&rest, b"fghij");
         drop(f);
-        assert_eq!(std::fs::read(&p).unwrap(), b"abcXYfghij");
-        std::fs::remove_file(p).unwrap();
+        assert_eq!(crate::file_access::read(&text).unwrap(), b"abcXYfghij");
+        crate::file_access::remove_file(&text).unwrap();
     }
 
     #[test]
