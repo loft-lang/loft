@@ -12,6 +12,13 @@
 // the hole read as text ("Formatter error").  A queued piece now keeps the state the read
 // before it left.  The floats, the width spec and the tuple index beside them are the controls:
 // each is a dot after a digit that must keep its meaning.
+//
+// @falsified-at: a1c894ea7 — interpret exit 1 -> 0, native exit 1 -> 0 (the control refuses the
+//   file: "Problem parsing float" at `5.tri()`).
+// @falsified-by: tests/falsified/a-method-on-an-integer-literal-is-a-call.patch — the same
+//   channels.  Score it with `scripts/falsify.sh <this file> --patch <that patch>` once
+//   a1c894ea7 is out of reach.
+// HOLDS: leak, panic and asserts are clean on both trees and both backends.
 
 fn tri(self: integer) -> integer {
   if self == 0 {

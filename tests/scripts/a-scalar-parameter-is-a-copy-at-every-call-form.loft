@@ -12,6 +12,14 @@
 // an internal compiler error on both backends, because the template lowered `p = q` as the
 // heap-parameter rebind while `p` was still `T` (`@FR-G-Mono`: the instance answers as its
 // non-generic twin does).
+//
+// @falsified-at: 38b0a878e — interpret exit 101 -> 0, interpret panicked -> clean, native exit
+//   101 -> 0, native panicked -> clean (the internal error at src/state/codegen.rs, from the
+//   generic instance at integer).
+// @falsified-by: tests/falsified/a-scalar-parameter-is-a-copy-at-every-call-form.patch — the
+//   same channels.  Score it with `scripts/falsify.sh <this file> --patch <that patch>` once
+//   38b0a878e is out of reach.
+// HOLDS: leak and asserts are clean on both trees and both backends.
 
 struct S { x: integer, u: u8 }
 

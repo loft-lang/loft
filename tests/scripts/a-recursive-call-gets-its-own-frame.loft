@@ -13,6 +13,15 @@
 // returns (the deepest frame hands its parameter back) or not, and only the run knows which;
 // the frame kept every one it might return, so `r(s, 3)` leaked two records.  The exit now
 // releases it unless it is the store being returned (`(F-ParamRebind)`, loft#1871).
+//
+// @falsified-at: 1acb209e8 — interpret leaked kt=96 S×2 -> clean, native leaked kt=96 S×2 ->
+//   clean (the two intermediate frames of `passdown(s, 3)`).
+// @falsified-by: tests/falsified/a-recursive-call-gets-its-own-frame.patch — the same channels.
+//   Score it with `scripts/falsify.sh <this file> --patch <that patch>` once 1acb209e8 is out
+//   of reach.
+// ARMED: `LOFT_NATIVE_LEAK_CHECK=1`, which `scripts/falsify.sh` arms on every run of its own
+//   accord; the interpreter's store census prints at exit unasked.
+// HOLDS: exit, asserts and panic are unmoved on both trees; every other cell is a control.
 
 struct S { x: integer, u: integer }
 
