@@ -18,7 +18,7 @@ the index, the disposition vocabulary, and the record of what each bar has been 
 
 | bar | the question it asks | measured | entries |
 |---|---|---|---|
-| [OCAML_BAR.md](OCAML_BAR.md) | what can the type system SAY? generics, closures, patterns, dispatch, nullability | 2026-09-21 | 28 |
+| [OCAML_BAR.md](OCAML_BAR.md) | what can the type system SAY? generics, closures, patterns, dispatch, nullability | 2026-10-05 | 28 |
 | [LUA_BAR.md](LUA_BAR.md) | what does Lua's ABSENCE of declarations buy a game scripter, and is loft's typed answer as short at the use site? | 2026-09-21 | 22 |
 
 Julia has been engaged with, but not as a bar — see § Candidates.
@@ -70,6 +70,13 @@ closed**:
 | LUA_BAR LD3 | [loft#1584](https://github.com/loft-lang/loft/issues/1584) | `x = <nullable record> ?? return` did not build on `--native` |
 | LUA_BAR LB1 | [loft#1585](https://github.com/loft-lang/loft/issues/1585) | a generator could not be held in a vector or a struct field |
 | LUA_BAR LB3/LB4 | [loft#1586](https://github.com/loft-lang/loft/issues/1586) | an endless `while` generator ran eagerly on `--native` until the memory cap killed it |
+
+The re-measurement of OCAML_BAR surfaced two more, both `silent-wrong` and open:
+
+| from | issue | what it is |
+|---|---|---|
+| OCAML_BAR A3 | [loft#1868](https://github.com/loft-lang/loft/issues/1868) | a tuple holding a type variable, as a vector element, is never instantiated |
+| OCAML_BAR C1 | [loft#1870](https://github.com/loft-lang/loft/issues/1870) | a field sub-pattern through a `reference<T>` field never matches |
 
 Three of those are `silent-wrong` — the freeze axis — and two were found not by a probe but
 by correcting the reference pages the probes were written from. That second route is worth

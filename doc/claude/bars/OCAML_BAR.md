@@ -1,93 +1,85 @@
 # OCAML_BAR — expressiveness probes measured against OCaml
 
 **Status of this document:** a bar, not a plan. It lists things OCaml expresses
-directly that loft, as documented on 2026-09-21, does not (or does not
-verifiably). Every entry is a small program that either runs green on both
+directly, and whether loft does. Every entry is a small program that either runs green on both
 backends or is refused with a named diagnostic. Nothing here is a commitment to
 implement; it is a ruler the project can be held against, and re-measured after
 every change that touches generics, closures, patterns, dispatch or nullability.
 
 **Audience:** the coding agent. Read this whole file before touching any probe.
 
-**Method.** The surface was inspected from the public reference
-(`loft-lang.org/loft/`: `25-generics`, `26-closures`, `29-match`, `09-enum`,
-`33-features`, `stdlib-interfaces`). Statuses below are what those pages state
-or fail to state. The first job of the agent is to *re-measure* — run every
-probe, replace each `Status:` line with the real result, and commit that as the
-baseline. Where the docs and the compiler disagree, the compiler is the truth
-and the doc page is a bug to file.
-
-**That measurement has been taken** (§ Evaluation, below): every entry now carries a
-`Measured 2026-09-21:` line above the documentation-derived one, and where the
-measurement contradicts a rule in this file, the Evaluation's corrections win.
+**Method.** Every probe is run on both backends and scored by the CAPABILITY its "OCaml
+expresses" line names, in loft's real spelling. § Evaluation is the one home of each entry's
+status; an entry below holds only its probe and the question it asks.  Where the docs and the
+compiler disagree, the compiler is the truth and the doc page is a bug to file.  Earlier
+measurements, and the documentation-derived statuses they replaced, are in
+[OCAML_BAR-history.md](OCAML_BAR-history.md).
 
 ---
 
-## Evaluation — measured 2026-09-21
+## Evaluation
 
-Every probe was run on both backends against `9f5cf6a96` (origin/main) plus the loft#1572 fix,
-from a scratch directory; no probe file or harness is committed yet. **The two backends agreed on
-every cell**, so each row below is one answer. Where the probe's spelling was wrong for a
-capability loft already has, the row scores the capability in its real spelling and says so. The
-document's own rule — *a probe that cannot parse is a FAIL* — would otherwise have recorded four
-false FAILs (A7, B5, C8, F2).
+Measured at `b194678c` (origin/main), every probe on both backends, from a scratch directory.
+**The two backends agreed on every cell except where a cell says otherwise.**  A probe whose
+spelling is wrong for a capability loft has is scored in the real spelling, and the row names
+it.
 
 | entry | measured | what answered |
 |---|---|---|
-| A1 map, two variables | FAIL | `<T, U>` does not parse — @PLN165 arc C |
-| A2 fold | FAIL | same — arc C |
-| A3 variable not in first param | FAIL | same — arc C |
-| A4 generic struct | FAIL | `struct Pair<` does not parse — @PLN165 arc D |
-| A5 generic recursive enum | FAIL | arc D, and see A5b |
-| A5b recursive enum, monomorphic | FAIL | refused: *"Enum 'Expr' contains itself … use reference<Expr> to break the cycle"* — and a `reference<Expr>` field then refuses `&e` (**defect 3**, loft#1579). A `struct Box { e: Expr }` pointed at through `reference<Box>` builds and evaluates a tree on both backends |
-| A6 user `Result` | FAIL | arcs C + D |
-| A7 user-declared interface | **PASS** | the spelling is `fn area(self: Self) -> float` (INTERFACES.md); the probe's `fn area(self)` was the defect |
-| A8 associated type | PARTIAL | the companion works inside a generic (`type Rows: Cursor`, `Self.Rows`, @PLN125 — PASS); naming it in the generic's OWN signature (`-> S.Rows`) does not parse, as INTERFACES.md documents |
-| B1 closures in a vector | FAIL | named refusal: *"a capturing closure cannot be stored in a collection: a collection has one element layout and each capture set is its own record shape"* |
+| A1 map, two variables | **PASS** | `fn map2<T, U>(…)` as written |
+| A2 fold | **PASS** | as written |
+| A3 variable not in first param | FAIL | `zip<T, U>` building a `vector<(T, U)>`: the interpreter skips `main`, panics or segfaults, native fails `E0308` — [loft#1868](https://github.com/loft-lang/loft/issues/1868) (`silent-wrong`); a generic struct element (`vector<Two<T>>`) works.  `empty_of<T>() -> vector<T>` is refused: *"Generic function must have at least one parameter of type T"* |
+| A4 generic struct | **PASS** | as written |
+| A5 generic recursive enum | FAIL | `Node { left: reference<Tree<T> >, … }` is refused (*"variant Node has no field 'left'"*).  `>>` closing two type-argument lists in a variant field is read as comparison operators; write `> >` |
+| A5b recursive enum, monomorphic | **PASS** | `Add { l: reference<Expr>, r: reference<Expr> }`, each node bound to a local and linked with `&`; nesting the constructors inline is refused (*"Cannot assign ref(Lit) to field Add.l"*) |
+| A6 user `Result` | **PASS** | two spellings fixed: field-init shorthand does not exist (`Err { error: error }`), and a text parse is discharged at the cast (`s as integer ?? 0`) |
+| A7 user-declared interface | **PASS** | the spelling is `fn area(self: Self) -> float` (INTERFACES.md) |
+| A8 associated type | PARTIAL | the companion works inside a generic (`type Rows: Cursor`, `Self.Rows`, @PLN125); naming it in the generic's OWN signature (`-> vector<S.Item>`) does not parse, as INTERFACES.md documents |
+| B1 closures in a vector | FAIL | named refusal: *"a capturing closure cannot be stored in a collection …"* |
 | B2 handler table | FAIL | B1, and `hash<(…)>` has no tuple element type |
-| B3 two closures, one written scalar | FAIL | named refusal: *"mutated through a closure and captured by 2 closures"* — design-negotiable as the entry says |
-| B4 local recursive function | FAIL | *"'fn' definitions must be at file scope"*; the self-referencing-lambda spelling is an **internal compiler error** (**defect 2**) |
-| B5 capture a `&` parameter | **PASS as `pass`** | capturing and writing through a `&` parameter WORKS on both backends (`[1,10]` → `[2,11]`); the refusal the probe expects does not exist and 26-closures is stale (**doc bug 5**). The probe as written was also invalid (`bump_all(&xs)`, an untyped `\|i\|`) |
-| B6 compose | FAIL | arc C |
-| C1 nested constructor pattern | **PASS** | `W { i: A { v: 0 }, k } => …` over a NON-recursive nesting, both backends; the recursive shape is blocked on A5b only |
-| C2 literal in field position | **PASS** | `Circle { r: 0.0 } => "point"` works (the reference page does not show it) |
-| C3 field rename + as-binding | FAIL | `Rect { w: width, h }` → *"Unknown variable 'width'"*; `whole @ Rect {…}` → *"'whole' is not a variant"* |
-| C4 tuple of variants | **PASS** | `(Playing { hp }, Damage { amount }) if hp <= amount => …` works on both backends; the probe failed only on its arm BODY `Playing { hp }` — field-init shorthand, which loft does not have (`Playing { hp: hp }`) |
-| C5 or-pattern with bindings | FAIL | `Circle { r } \| Sphere { r }` does not parse |
-| C6 exhaustiveness through nesting | PARTIAL | over a non-recursive nesting the hole IS refused, but named by its outer variant (*"not exhaustive — missing: W"*), not as `W { i: B }` |
-| C7 scalar-match hole diagnosed | FAIL | silent, both backends |
-| C8 head/tail pattern | PASS with `_` | slice patterns exist (`[]`, `[x, ..rest]`); `[]` + `[x, ..rest]` is not seen as total (*"a slice pattern can fail … add a '_ =>'"*). The probe's own `fn sum` collides with the reserved stdlib name |
-| D1 generic return smuggles null | FAIL — a DECIDED edge | `formal/types.md` (N-Index) trusts a constant index *by contract* (C80, @PLN102 D1): `v[0]` reads `T` non-null and faults to null at run time. Moving this bar reopens that decision; it is not an unregistered hole |
+| B3 two closures, one written scalar | FAIL | named refusal: *"mutated through a closure and captured by 2 closures"* — design-negotiable |
+| B4 local recursive function | FAIL | `fn` only at file scope; the self-referencing lambda is refused naming the cure (*"'go' is not bound yet … declare a file-scope 'fn go(…)'"*) |
+| B5 capture a `&` parameter | **PASS** | capturing and writing through a `&` parameter works (`[1,10]` → `[2,11]`), written `fn(i: integer) { v[i] += 1; }` |
+| B6 compose | **PASS** | `compose<T, U, V>` returning `\|x\| { g(f(x)) }`, called with `fn(n: integer) -> integer { … }` lambdas or named functions.  An untyped `\|n\|` argument is not inferred through a generic parameter (*"No matching operator '+' on 'T'"*) |
+| C1 nested constructor pattern | PARTIAL | non-recursive nesting PASS; the recursive shape through a `reference<Expr>` field never matches on the interpreter and fails `E0605` on native — [loft#1870](https://github.com/loft-lang/loft/issues/1870) (`silent-wrong`) |
+| C2 literal in field position | **PASS** | `Circle { r: 0.0 } => "point"` |
+| C3 field rename + as-binding | PARTIAL | rename PASS (`Rect { w: width, h }`); `whole @ Rect {…}` → *"'whole' is not a variant"* |
+| C4 tuple of variants | **PASS** | as written once the arm BODY spells `Playing { hp: hp }` (no field-init shorthand) |
+| C5 or-pattern with bindings | **PASS** | the spelling is `,`: `Circle { r }, Sphere { r } => r` (`@FR-P-Multi`, LOFT_CONTROL.md § Match expressions).  `\|` joins variant names only; between patterns that bind it is refused (*"Expect token =>"*) |
+| C6 exhaustiveness through nesting | PARTIAL | the hole is refused, named by its outer variant (*"missing: X"*), not as `X { i: B }` |
+| C7 scalar-match hole diagnosed | PARTIAL | a warning, phrased as the null the hole produces (*"a nullable `text?` is stored into the return value"*), not naming the uncovered value |
+| C8 head/tail pattern | PASS with `_` | `[]` + `[x, ..rest]` is not seen as total (*"a slice pattern can fail …"*); the probe's `fn sum` collides with the reserved stdlib name |
+| D1 generic return smuggles null | FAIL — a DECIDED edge | `formal/types.md` (N-Index) trusts a constant index by contract (C80) |
 | D2 empty-stub default | FAIL | silent `0.0`, both backends |
-| E1, E2 structural sharing | BLOCKED | on A5b (no recursive enum can be built); `memory_used()` does not exist — `store_memory()`'s record count is the instrument the corpus uses |
-| F1 missing combination named | PARTIAL | refused at compile time: *"no definition of `beats` takes (Hand, Hand) — declared: beats(Rock, Scissors), …"* — names the declared set, not the missing pair |
-| F2 enum-level fallback | FAIL — **defect 1** | on a PLAIN enum every one of the nine combinations answers the fallback, silently; the same program over struct-enum variants dispatches correctly (`R>S`, `P>R`, `S>P`) |
-| G1–G13 regression floor | covered | every cited page IS a test: `tests/docs/*.loft` generate the reference pages and run in `make ci`, so the floor is already gated |
+| E1, E2 structural sharing | not measured | `memory_used()` does not exist; a recursive enum links nodes bound to locals (A5b), so the probes need a new design before they measure sharing |
+| F1 missing combination named | changed | a definition over a plain-enum VALUE is refused at the declaration (*"'Rock' is a value of the plain enum 'Hand', not a type … take a 'Hand' and 'match' on its value"*) |
+| F2 enum-level fallback | **PASS** | `match (a, b) { (Rock, Scissors) => true, …, _ => false }` over the plain enum |
+| G1–G13 regression floor | covered | every cited page is a test: `tests/docs/*.loft` generate the reference pages and run in `make ci` |
 
-**Score (capability, both backends):** A 1/8 + 1 partial · B 1/6 · C 4/8 + 1 partial · D 0/2 ·
-E blocked · F 0/2 + 1 partial.
+**Score (capability, both backends):** A 5/8 + 1 partial (and A5b's monomorphic form passes) · B 2/6 ·
+C 4/8 + 4 partial · D 0/2 · E not measured · F 1/2.
 
-### Defects the measurement surfaced (filed)
+### Open defects
 
-1. **loft#1577 — multiple dispatch ignores per-value definitions on a plain enum** — `silent-wrong`. `fn beats(a: Rock, b: Scissors)` on `enum Hand { Rock, Paper, Scissors }` is accepted and never chosen: with an enum-level `beats(a: Hand, b: Hand)` all nine combinations take it; without one, the call is refused although definitions match the runtime values. Struct-enum variants are unaffected. Either the declaration is refused or the dispatcher reads the value.
-2. **loft#1578 — a self-referencing lambda is an ICE** — `go = fn(acc: integer, i: integer) -> integer { … go(…) }` inside a function: *"var_pos underflow in fn 'n___lambda_0': variable 'go' … has no assigned slot"*.
-3. **loft#1579 — the cycle refusal's own cure does not work.** The real boundary is wider than recursion: ANY struct or variant field typed `reference<E>` over an ENUM refuses `&x` (*"Cannot assign ref(Shape)["c"] to field SH.s of type ref(Shape)["??"]"*), while a reference to a struct works everywhere and a LOCAL `reference<E>` works. So no recursive struct-enum is buildable the way the compiler suggests, which blocks A5, the recursive forms of C1 and C6, and tier E; the struct-wrapper above is the workaround.
+| entry | issue | what it is |
+|---|---|---|
+| A3 | [loft#1868](https://github.com/loft-lang/loft/issues/1868) | a tuple holding a type variable, as a vector element, is never instantiated — `silent-wrong` |
+| C1 | [loft#1870](https://github.com/loft-lang/loft/issues/1870) | a field sub-pattern through a `reference<T>` field never matches — `silent-wrong` |
 
-Two more surfaced while correcting the reference pages against these results: **loft#1580** —
-`==` on a `value struct` compares identity, not content (DESIGN_DECISIONS C91); **loft#1581** — a
-concrete `!=` ignores a user-defined `OpEq`, so `a == b` and `a != b` are both true. Both
-`silent-wrong`.
+### Spellings the probes got wrong
 
-### The document's own claims, corrected
+A probe that does not parse is a FAIL only when no current spelling expresses the capability.
+Rewrite it first:
 
-- **Doc bugs 1 and 2 held and are fixed** (`stdlib-interfaces.html` rendered only its heading because the renderer skipped every interface; `09-enum`'s `opposite()` is now a `match`). **3 changed**: D1 is a decided edge, and `25-generics` already states the behaviour and both remedies accurately, so it needs no change. **4 is fixed** ("Match inside an arm"), and `29-match` now also shows the patterns C1, C2 and C4 measured working. **5 was new and is fixed**: `26-closures` said *"A '&' parameter cannot be captured at all, in any shape"*; it now documents (L-CapRef).
-- **There is no `loop` keyword** (LUA_BAR's erratum, measured): A8's probe uses `loop { … }`, so rewrite it with `while true` — a `while` GENERATOR is lazy on `--native` when its one `yield` is on the loop body's straight line (loft#1586; COROUTINE.md CL-9).
-- **The expectation line cannot be `# bar: …`.** `#` opens a loft annotation (`#rust`, `#cwd`), not a comment. Use `// @BAR: pass` / `// @BAR: refuse "…"` / `// @BAR: measure …`, or reuse the corpus's `@EXPECT_ERROR:` and `@EXPECT_WARNING:` (C7's "a warning counts" is exactly `@EXPECT_WARNING`).
-- **A parse failure is a FAIL only when no current spelling expresses the capability.** Rewrite a probe into the existing spelling first (A7, B5, C8, F2 above) — the "syntax is a placeholder" rule cuts both ways.
-- **WONTFIX belongs in DESIGN_DECISIONS.md**, the declined-features register. COMPATIBILITY.md is the breaking-change policy; it is the right home only for the separate decision to make a tier a promise.
-- **Tier A's order is @PLN165's.** Arc C (several variables, a variable in any parameter — A1–A3, B6), arc D (generic structs and enums — A4–A6), arc E (`map`/`reduce` as library generics). Its STEPS.md already sequences them after the C110 → C126 revision; this file should track that plan, not set a second order.
-- **Tier G needs no lifted copies.** Point each row at its `tests/docs/*.loft` file; a copy would be a second home for the same example.
-
+- **No field-init shorthand** in an expression: `Playing { hp: hp }`, not `Playing { hp }`.
+  It exists in a PATTERN.
+- **One arm for several variants with bindings is `,`**, not `|`.
+- **A typed lambda is `fn(n: integer) -> integer { … }`**; `|n: integer|` is refused.
+- **`> >`** closes two type-argument lists in a variant field; `>>` there reads as two comparisons.
+- **There is no `loop` keyword** — `while true`.
+- **The expectation line is `// @BAR: …`** — `#` opens a file directive.
+- **A stdlib name is reserved** (`sum`).
+- **A text parse is discharged at the cast**: `s as integer ?? 0`.
 
 ---
 
@@ -143,9 +135,8 @@ not an omission.
 
 ## Tier A — Parametric polymorphism
 
-The largest gap. Documented state: one type variable per function, it must
-appear in the first parameter, `<T, U>` does not parse, generic structs do not
-exist (`struct Box<T>` is a parse error). Reference: `25-generics.html`.
+Several type variables, generic structs and generic enums exist (@PLN165); § Evaluation
+names what is still refused. Reference: `25-generics.html`.
 
 ### A1_map_two_type_vars
 
@@ -168,10 +159,6 @@ fn main() {
 }
 ```
 
-Measured 2026-09-21: FAIL — `<T, U>` does not parse; @PLN165 arc C.
-
-Documented 2026-09-21 (before measuring): **FAIL** — `<T, U>` does not parse (documented).
-
 ### A2_fold_accumulator_type
 
 OCaml expresses: `List.fold_left : ('a -> 'b -> 'a) -> 'a -> 'b list -> 'a`.
@@ -192,10 +179,6 @@ fn main() {
   assert(joined == "123", "fold integer into text: {joined}");
 }
 ```
-
-Measured 2026-09-21: FAIL — arc C.
-
-Documented 2026-09-21 (before measuring): **FAIL** — same root cause as A1.
 
 ### A3_type_var_not_in_first_param
 
@@ -221,11 +204,6 @@ fn main() {
 }
 ```
 
-Measured 2026-09-21: FAIL — `<T, U>` does not parse; arc C.
-
-Documented 2026-09-21 (before measuring): **FAIL** — "Type variable T must appear in the first
-parameter" (documented).
-
 ### A4_generic_struct
 
 OCaml expresses: `type ('a, 'b) pair = { first : 'a; second : 'b }`.
@@ -245,10 +223,6 @@ fn main() {
   assert(q.second == 1, "swapped second: {q.second}");
 }
 ```
-
-Measured 2026-09-21: FAIL — `struct Pair<` does not parse; @PLN165 arc D.
-
-Documented 2026-09-21 (before measuring): **FAIL** — generic structs do not exist (documented).
 
 ### A5_generic_recursive_enum
 
@@ -278,13 +252,6 @@ fn main() {
   assert(size(s) == 1, "instantiated at text: {size(s)}");
 }
 ```
-
-Measured 2026-09-21: FAIL — arc D, and A5b: a direct self-reference is refused naming `reference<Expr>` as the cure, which then refuses an `Expr` value (defect 3).
-
-Documented 2026-09-21 (before measuring): **FAIL** (A4 root cause). Also unverified: whether a
-*non-generic* struct-enum may hold its own type directly in a field (not via
-`vector<Self>`). If it may not, add probe `A5b_recursive_enum_mono` as a
-prerequisite with `enum Expr { Lit { v: integer }, Add { l: Expr, r: Expr } }`.
 
 ### A6_user_result_type
 
@@ -321,11 +288,6 @@ fn main() {
 }
 ```
 
-Measured 2026-09-21: FAIL — arcs C + D.
-
-Documented 2026-09-21 (before measuring): **FAIL** (A1 + A4 root causes). Note that `E` appears only
-in the enum, never in the function's first parameter directly — A3 must hold.
-
 ### A7_user_declared_interface
 
 OCaml expresses: a signature `module type ORDERED = sig type t val compare : t -> t -> int end`
@@ -358,12 +320,6 @@ fn main() {
 }
 ```
 
-Measured 2026-09-21: **PASS** both backends, spelled `fn area(self: Self) -> float`. Doc bug 1 (the empty Interfaces page) stands.
-
-Documented 2026-09-21 (before measuring): **UNKNOWN**. First action: determine the truth, then either
-(a) mark PASS and *fill the empty Interfaces reference page*, or (b) mark FAIL.
-Either outcome fixes a doc bug.
-
 ### A8_associated_type
 
 OCaml expresses: `module type CONTAINER = sig type 'a t val elt : 'a t -> 'a end`
@@ -395,11 +351,6 @@ fn main() {
 }
 ```
 
-Measured 2026-09-21: PARTIAL — the companion works inside a generic (`type Rows: Cursor`, `Self.Rows`, @PLN125); `-> S.Item` in the generic's own signature does not parse (documented).
-
-Documented 2026-09-21 (before measuring): **UNKNOWN** (feature listed, no reference page found).
-Depends on A3 (`S.Item` in the return type).
-
 ---
 
 ## Tier B — Closures
@@ -430,13 +381,6 @@ fn main() {
 }
 ```
 
-Measured 2026-09-21: FAIL — named refusal, as documented.
-
-Documented 2026-09-21 (before measuring): **FAIL** — "a capturing closure cannot be stored in a
-collection" (documented). This blocks handler tables, behaviour lists,
-combinator alternatives and thunk queues; it is the single most consequential
-closure limit.
-
 ### B2_handler_table
 
 OCaml expresses: `Hashtbl.add on_event "jump" (fun () -> player.vy <- -jump_v)`.
@@ -459,11 +403,6 @@ fn main() {
 }
 ```
 
-Measured 2026-09-21: FAIL — B1, and `hash<(…)>` has no tuple element type.
-
-Documented 2026-09-21 (before measuring): **FAIL** (B1 root cause). Keyed-collection syntax for a
-`(text, fn())` entry is illustrative.
-
 ### B3_two_closures_share_written_scalar  *(design-negotiable)*
 
 OCaml expresses: `let r = ref 0 in (fun () -> incr r), (fun () -> !r)` — two
@@ -480,13 +419,6 @@ fn main() {
   assert(read() == 2, "both closures see the same cell: {read()}");
 }
 ```
-
-Measured 2026-09-21: FAIL — named refusal (*"captured by 2 closures"*).
-
-Documented 2026-09-21 (before measuring): **FAIL** (documented refusal). Negotiable because the
-struct workaround is one line and the restriction has a clear no-GC rationale.
-If the decision is "never", record it in DESIGN_DECISIONS.md and mark this entry
-`WONTFIX` rather than deleting it.
 
 ### B4_recursive_local_function
 
@@ -508,12 +440,6 @@ fn main() {
 }
 ```
 
-Measured 2026-09-21: FAIL — *"'fn' definitions must be at file scope"*; the self-referencing lambda is an ICE (defect 2).
-
-Documented 2026-09-21 (before measuring): **UNKNOWN** — no local `fn` or self-referencing lambda
-appears in the reference. If refused, the criterion can also be met by a
-self-referencing lambda; either spelling passes.
-
 ### B5_closure_captures_ref_param  *(design-negotiable)*
 
 OCaml has no `&`; the analogue is capturing a mutable record passed in. loft
@@ -528,11 +454,6 @@ fn bump_all(v: &vector<integer>) {
 }
 fn main() { xs = [1]; bump_all(&xs); }
 ```
-
-Measured 2026-09-21: **works** — capture and write-through succeed on both backends, so the expectation flips to `pass` and 26-closures is stale (doc bug 5). The probe as written was invalid (`bump_all(&xs)`, untyped `|i|`).
-
-Documented 2026-09-21 (before measuring): **PASS as a refusal** (documented). Flip to `# bar: pass`
-only if the design changes.
 
 ### B6_compose  *(depends on A1, A3)*
 
@@ -549,11 +470,6 @@ fn main() {
   assert(h(1) == "2!", "composed: {h(1)}");
 }
 ```
-
-Measured 2026-09-21: FAIL — arc C.
-
-Documented 2026-09-21 (before measuring): **FAIL** (A1/A3 root causes; also `V` appears only in the
-second parameter and the return type).
 
 ---
 
@@ -593,11 +509,6 @@ fn main() {
 }
 ```
 
-Measured 2026-09-21: **PASS** over a non-recursive nesting, both backends; this recursive form is blocked on A5b.
-
-Documented 2026-09-21 (before measuring): **FAIL** — no nested constructor in field position exists.
-Prerequisite: a struct-enum field of its own enum type (see A5b note).
-
 ### C2_literal_in_field_position
 
 OCaml expresses: `| Circle 0.0 -> "point"`.
@@ -617,10 +528,6 @@ fn main() {
 }
 ```
 
-Measured 2026-09-21: **PASS** both backends.
-
-Documented 2026-09-21 (before measuring): **FAIL** (documented: bindings only).
-
 ### C3_field_rename_and_as_binding
 
 OCaml expresses: `| Rect { w = width; _ } as whole -> ...` — binding a field
@@ -639,10 +546,6 @@ fn main() {
   assert(d == "2x3 of 2", "rename + as-binding: {d}");
 }
 ```
-
-Measured 2026-09-21: FAIL — neither the rename nor `whole @` parses.
-
-Documented 2026-09-21 (before measuring): **FAIL** (documented: names must equal field names).
 
 ### C4_tuple_of_variants
 
@@ -672,12 +575,6 @@ fn main() {
 }
 ```
 
-Measured 2026-09-21: **PASS** both backends in the real spelling — the probe's arm body `Playing { hp }` uses field-init shorthand, which loft does not have; `Playing { hp: hp }` passes every assertion.
-
-Documented 2026-09-21 (before measuring): **FAIL** (tuple elements documented as scalars/`_` only).
-Note @F122 multiple dispatch covers the *dispatch* half of this; it does not
-give one arm access to both sides' fields plus a guard over both.
-
 ### C5_or_pattern_with_bindings
 
 OCaml expresses: `| Circle r | Sphere r -> r` when both sides bind the same
@@ -696,11 +593,6 @@ fn main() {
   assert(r == 2.0, "shared binding across or-pattern: {r}");
 }
 ```
-
-Measured 2026-09-21: FAIL — does not parse.
-
-Documented 2026-09-21 (before measuring): **UNKNOWN** — or-patterns are documented only over bare
-variants and scalars.
 
 ### C6_exhaustiveness_through_nesting
 
@@ -721,11 +613,6 @@ fn f(t: T) -> integer {
 fn main() { f(Leaf); }
 ```
 
-Measured 2026-09-21: PARTIAL — non-recursively nested, the hole is refused but named by its outer variant (*"missing: W"*); this recursive form is blocked on A5b.
-
-Documented 2026-09-21 (before measuring): **FAIL** (depends on C1; once nested patterns exist, the
-checker must see through them — this probe ensures the two land together).
-
 ### C7_scalar_match_hole_is_diagnosed
 
 OCaml refuses to be silent: a non-exhaustive match is a warning by default.
@@ -744,12 +631,6 @@ fn main() {
 }
 ```
 
-Measured 2026-09-21: FAIL — silent on both backends.
-
-Documented 2026-09-21 (before measuring): **FAIL** (documented silence). Treat `refuse` here as
-"emits a diagnostic containing the substring"; a warning that still compiles
-counts, and `bar.loft` should accept warnings for this entry.
-
 ### C8_vector_head_tail_pattern
 
 OCaml expresses: `| [] -> 0 | x :: xs -> x + sum xs`. loft's @F99 sequence
@@ -765,11 +646,6 @@ fn sum(v: vector<integer>) -> integer {
 }
 fn main() { assert(sum([1, 2, 3]) == 6, "head/tail: {sum([1,2,3])}"); }
 ```
-
-Measured 2026-09-21: PASS with a `_` arm (the probe's `sum` is a reserved name); `[]` + `[x, ..rest]` is not seen as total.
-
-Documented 2026-09-21 (before measuring): **UNKNOWN** — verify against the @F99 syntax and rewrite the
-probe in it if it differs.
 
 ---
 
@@ -793,13 +669,6 @@ fn main() {
 }
 ```
 
-Measured 2026-09-21: FAIL — a decided edge: (N-Index) trusts a constant index by contract (C80, @PLN102 D1).
-
-Documented 2026-09-21 (before measuring): **FAIL**. Acceptable fixes: (a) constant-index reads are
-typed `T?` like computed ones; (b) a returned expression whose static type is
-`T?` cannot satisfy a declared `T` without `??` or `?`; (c) a flow proof of
-`len(v) > 0`. Any of the three passes.
-
 ### D2_empty_stub_default_is_explicit
 
 Documented: an empty-body variant method "hands back the type's default", a
@@ -816,11 +685,6 @@ fn main() {
   assert(total == 1.0, "silent 0.0");
 }
 ```
-
-Measured 2026-09-21: FAIL — silent `0.0` on both backends.
-
-Documented 2026-09-21 (before measuring): **FAIL**. A warning at the *read site* (the result is used)
-satisfies this; an unused stub may stay silent.
 
 ---
 
@@ -855,11 +719,6 @@ fn main() {
 }
 ```
 
-Measured 2026-09-21: BLOCKED on A5b; `memory_used()` does not exist — use `store_memory()`'s record count.
-
-Documented 2026-09-21 (before measuring): **UNKNOWN** (recursive enum prerequisite; metric name
-illustrative).
-
 ### E2_persistent_tree_insert_is_Olog
 
 OCaml: `Map.add` into a map of n entries allocates O(log n) nodes and leaves the
@@ -875,10 +734,6 @@ one `insert` producing a *new root* while the *old root* remains a valid tree
 with 100k elements; report `bytes_delta` across the single insert; assert both
 roots answer `contains` correctly for a probe value. Write the body once A5 and
 C1 pass; until then this entry is blocked and reads `BLOCKED(A5,C1)`.
-
-Measured 2026-09-21: BLOCKED on A5b.
-
-Documented 2026-09-21 (before measuring): **BLOCKED**.
 
 ---
 
@@ -904,12 +759,6 @@ fn main() {
 }
 ```
 
-Measured 2026-09-21: PARTIAL — refused, naming the declared set rather than the missing pair.
-
-Documented 2026-09-21 (before measuring): **UNKNOWN** — verify the diagnostic exists and names the
-pair (either order of the two names is acceptable in the substring check;
-adjust the expectation to the real wording once known, but it must name both).
-
 ### F2_enum_level_fallback_covers_combinations
 
 ```
@@ -925,10 +774,6 @@ fn main() {
   assert(beats(Paper, Rock), "specific picked over fallback");
 }
 ```
-
-Measured 2026-09-21: FAIL — defect 1: on a plain enum all nine combinations take the fallback; struct-enum variants dispatch correctly.
-
-Documented 2026-09-21 (before measuring): **UNKNOWN**.
 
 ---
 
@@ -954,34 +799,14 @@ documented example; do not "improve" them.
 | G12_multiple_dispatch_basic | @F122 page | one name, two-parameter combination |
 | G13_enum_fallback_method | 09-enum | `fn area(self: Shape)` as the `_` arm |
 
-Measured 2026-09-21: covered — each cited page is generated from a `tests/docs/*.loft` file that `make ci` runs.
-
----
-
-## Documentation bugs found while measuring
-
-File these regardless of any implementation decision.
-
-1. `stdlib-interfaces.html` renders only its heading. Either the generator
-   dropped the body or the page was never written. It is the page A7/A8 need.
-2. `09-enum.html` implements `opposite()` with an if-chain where the page's own
-   later section shows `match`; the example teaches the pattern the page argues
-   against. Rewrite with `match`.
-3. `25-generics.html` states the `T`-typed `v[0]` null leak plainly and offers
-   only "check the length before calling". That is a documented soundness hole
-   (D1); the doc should link to the tracking issue.
-4. `29-match.html` "Nested match" heading describes nested *expressions*. Rename
-   to "Match inside an arm" so that "nested patterns" is not a term the docs
-   appear to already own.
-
 ---
 
 ## Working rules for the agent
 
-- Re-measure before believing this file. Each entry's `Measured <date>:` line is
-  the last measurement; replace it with today's when you run the probes again. The
-  probe files and `make bar` are the baseline PR still owed — "OCAML_BAR baseline",
-  no feature work in it.
+- Re-measure before believing this file. § Evaluation is the last measurement and names
+  its commit; when you run the probes again, move it to OCAML_BAR-history.md and write the
+  new one. The probe files and `make bar` are the baseline PR still owed — "OCAML_BAR
+  baseline", no feature work in it.
 - One probe file per entry, first line is the expectation, nothing else about
   the harness leaks into the probe.
 - When a probe's proposed syntax cannot even be parsed, that is still FAIL, not
@@ -992,7 +817,5 @@ File these regardless of any implementation decision.
 - A tier only becomes part of `make ci` by an explicit decision recorded in
   COMPATIBILITY.md. Until then `make bar` is a report.
 - Never mark PASS on one backend. Both or neither.
-- Tier A is @PLN165 (flexible generics): arc C gives A1–A3 and B6, arc D gives A4–A6,
-  arc E gives `map`/`reduce` as library generics. Follow its STEPS.md order; it already
-  puts several-variable *functions* before generic *types*, which is the order this entry
-  used to ask for.
+- Tier A's generics are @PLN165's (finished). What remains in tier A is a defect
+  (loft#1868) or a refusal § Evaluation names, not a plan arc.
