@@ -5617,7 +5617,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             // supplies the runtime null test this arm used to be written without, which is
             // what an `S?` source needs: the value is only dense when it is present.
             let syn = *syn;
-            let steps = self.emit_nullable_slot_write(syn, &Value::Var(elm), p.clone());
+            let steps = self.emit_nullable_slot_write(syn, &Value::Var(elm), p.clone(), true);
             p = Value::Insert(steps);
             t = in_t.clone();
         } else if matches!(t, Type::Null)
@@ -6515,7 +6515,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                                 "OpGetField",
                                 &[Value::Var(elm), Value::Int(pos), Value::Int(enum_kt)],
                             );
-                            let write = self.emit_nullable_slot_write(syn, &slot, val.clone());
+                            let write = self.emit_nullable_slot_write(syn, &slot, val.clone(), true);
                             ls.extend(write);
                             continue;
                         }

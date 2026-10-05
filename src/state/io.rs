@@ -1683,6 +1683,8 @@ impl State {
         // `__nullable<S>` element the parser emits the discriminant-0 store, not
         // OpCopyRecord, so this path is the can't-represent-null fallback.)
         if data.store_nr == u16::MAX {
+            // A FRESH destination is written absent instead (`Stores::copy_null_into`).
+            self.database.copy_null_into(&to, raw_tp);
             return;
         }
         // @FR-L-Null, the DESTINATION half of the same question (loft#1374's boundary).  A

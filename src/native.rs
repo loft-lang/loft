@@ -4602,7 +4602,9 @@ pub(crate) fn populate_struct_from_jsonvalue(
                         // Any other enum keeps the all-zero value it always answered — WRITTEN
                         // here: a claimed record's bytes are not zero by any promise.
                         let size = u32::from(stores.size(content_kt));
-                        stores.store_mut(dest).zero_range(dest.rec, dest_field_pos, size);
+                        stores
+                            .store_mut(dest)
+                            .zero_range(dest.rec, dest_field_pos, size);
                     }
                 }
                 Parts::Vector(elem_kt) => {
@@ -4612,7 +4614,9 @@ pub(crate) fn populate_struct_from_jsonvalue(
                     // `vector_append` machinery — into an EMPTY vector, written first: the
                     // claimed record holds no handle until this field writes one, and a source
                     // that is not an array leaves it empty.
-                    stores.store_mut(dest).set_u32_raw(dest.rec, dest_field_pos, 0);
+                    stores
+                        .store_mut(dest)
+                        .set_u32_raw(dest.rec, dest_field_pos, 0);
                     populate_vector_from_jarray(stores, &slot, elem_kt, &sub);
                 }
                 _ => {
@@ -4622,7 +4626,9 @@ pub(crate) fn populate_struct_from_jsonvalue(
                     // of them can be spelled in the document at all, so nothing is being
                     // dropped silently.
                     let size = u32::from(stores.size(content_kt));
-                    stores.store_mut(dest).zero_range(dest.rec, dest_field_pos, size);
+                    stores
+                        .store_mut(dest)
+                        .zero_range(dest.rec, dest_field_pos, size);
                 }
             }
         }

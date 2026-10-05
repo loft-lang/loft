@@ -6925,7 +6925,7 @@ impl Parser {
                 "OpGetField",
                 &[code.clone(), Value::Int(item_pos), Value::Int(enum_kt)],
             );
-            let write = self.emit_nullable_slot_write(syn, &field_ref, value.clone());
+            let write = self.emit_nullable_slot_write(syn, &field_ref, value.clone(), false);
             list.extend(write);
             return None;
         }

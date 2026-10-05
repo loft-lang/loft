@@ -1711,12 +1711,12 @@ impl Parser {
         {
             let syn = *syn;
             if let Some(ops) = self.group_elem_write(to, f_type.base(), true, |p, t, _| {
-                let write = p.emit_nullable_slot_write(syn, &t, val.clone());
+                let write = p.emit_nullable_slot_write(syn, &t, val.clone(), false);
                 v_block(write, Type::Void, "nullable_elem_convert")
             }) {
                 return Value::Insert(ops);
             }
-            let write = self.emit_nullable_slot_write(syn, to, val.clone());
+            let write = self.emit_nullable_slot_write(syn, to, val.clone(), false);
             return v_block(write, Type::Void, "nullable_elem_convert");
         }
         // loft#1529 — the writer half of `(L-Null)` for a nullable struct-enum slot.  A source

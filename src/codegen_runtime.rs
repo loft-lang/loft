@@ -1234,8 +1234,10 @@ pub fn OpCopyRecord(cell: &std::cell::UnsafeCell<Stores>, data: DbRef, to: DbRef
     // (`store_nr == u16::MAX`) has no store to read; `store(&data)` would index
     // `allocations[65535]` and panic (`allocation.rs:560`).  Guards the
     // pre-existing crash on `vec[i] = <runtime-null>` into a non-nullable inline
-    // element — leave the destination unchanged rather than crash.
+    // element — leave the destination unchanged rather than crash.  A FRESH destination is
+    // written absent instead (`Stores::copy_null_into`).
     if data.store_nr == u16::MAX {
+        stores.copy_null_into(&to, tp as u16);
         return;
     }
     // @FR-L-Null, the DESTINATION half — the twin of `state/io.rs::do_copy_record`'s.  An

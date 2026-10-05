@@ -14753,7 +14753,7 @@ impl Parser {
                 Value::Int(enum_kt),
             ],
         );
-        Some(self.emit_nullable_slot_write(syn, &slot, value.clone()))
+        Some(self.emit_nullable_slot_write(syn, &slot, value.clone(), false))
     }
 
     /// Whether `value` is a plain `vector<…>` — the source a keyed member must FILL from rather
@@ -15072,6 +15072,7 @@ impl Parser {
         syn: u32,
         slot_ref: &Value,
         value: Value,
+        fresh: bool,
     ) -> Vec<Value> {
         let Some(struct_d) = self.nullable_payload_struct(syn) else {
             return Vec::new();
@@ -15087,18 +15088,51 @@ impl Parser {
         let mut list = vec![v_set(src_var, value)];
         let kt = self.data.def(syn).known_type();
         let mut present = Vec::with_capacity(3);
-        if kt != u16::MAX {
+        // A FRESH slot — an element the construction just minted — holds no value yet, so
+        // there is nothing to release and nothing to read: its bytes are not zero by any
+        // promise.  Every other slot may hold a previous value whose payload is released.
+        if kt != u16::MAX && !fresh {
             present.push(self.cl(
                 "OpClearKeyed",
                 &[slot_ref.clone(), Value::Int(i32::from(kt))],
             ));
         }
-        present.extend(self.build_some_present(some_d, slot_ref.clone(), Value::Var(src_var)));
-        let absent = self.build_nullable_set_null(syn, slot_ref.clone());
+        let mut some = self.build_some_present(some_d, slot_ref.clone(), Value::Var(src_var));
+        if fresh {
+            self.mark_copies_fresh(&mut some);
+        }
+        present.extend(some);
+        let absent = if fresh {
+            self.cl(
+                "OpSetEnum",
+                &[slot_ref.clone(), Value::Int(0), Value::Enum(0, u16::MAX)],
+            )
+        } else {
+            self.build_nullable_set_null(syn, slot_ref.clone())
+        };
         let is_null = self.cl("OpRefIsNull", &[Value::Var(src_var)]);
         let not_null = self.cl("OpNot", &[is_null]);
         list.push(v_if(not_null, Value::Insert(present), absent));
         list
+    }
+
+    /// Flag every record copy in `steps` as writing a FRESH destination
+    /// (`keys::COPY_FRESH_DEST`): the payload of a slot the construction just minted has no
+    /// previous value for the copy to release.
+    fn mark_copies_fresh(&self, steps: &mut [Value]) {
+        fn mark(v: &mut Value, copy: u32) {
+            if let Value::Call(d, args) = v
+                && *d == copy
+                && let Some(Value::Int(tp)) = args.get_mut(2)
+            {
+                *tp |= i32::from(crate::keys::COPY_FRESH_DEST);
+            }
+            v.for_each_child_mut(&mut |c| mark(c, copy));
+        }
+        let copy = self.data.def_nr("OpCopyRecord");
+        for step in steps {
+            mark(step, copy);
+        }
     }
 
     /// The POINTER spelling a tagged `__nullable<S>` value takes once it leaves its slot:
@@ -15389,9 +15423,9 @@ impl Parser {
     ///
     /// A present `Some` carrying a heap payload (text, nested vector) is released FIRST via
     /// `OpClearKeyed` → `remove_claims`; without it the old payload leaks until the host store
-    /// dies. That op reads the discriminant and no-ops on an already-absent or payload-less
-    /// slot, so this is safe whatever the slot held — including a freshly allocated record,
-    /// which is why the construction path can share it with the assignment path.
+    /// dies. That op reads the discriminant, so it is for a slot that HOLDS a value — an
+    /// assignment's.  A slot the construction just minted holds none (its bytes are not zero
+    /// by any promise) and takes the fresh form of [`Self::emit_nullable_slot_write`].
     pub(crate) fn build_nullable_set_null(&mut self, syn: u32, to: Value) -> Value {
         let set_null = self.cl(
             "OpSetEnum",
