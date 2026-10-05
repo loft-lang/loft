@@ -19,6 +19,12 @@
 // comprehension, the field itself), the field type (vector, text, integer, float), the text
 // operand (literal, format, character), `T` (integer, text, float).  Axes it HOLDS FIXED: one
 // generic struct, written in the template that built it.
+//
+// @falsified-by: tests/falsified/a-compound-on-a-generic-structs-field-writes-that-field-once.patch — interpret exit 101 -> 0, interpret panicked -> clean, native exit 101 -> 0, native panicked -> clean
+//   CHANNEL: panic on both backends — the text compound's unwritten work text stops the
+//   control (`src/state/codegen.rs`); the doubled appends are the asserts above, which read
+//   six where two belong on a build without the vector half.
+// HOLDS: leak is clean on both trees and both backends.
 
 struct Bag<T> { items: vector<T>, name: text, n: integer, f: float }
 

@@ -19,6 +19,11 @@
 // index · member · destructuring · whole element), read and write, and a generic calling a
 // generic.  Axes it HOLDS FIXED: `vector` as the container (a keyed collection takes record
 // elements, not tuples); elements built by `+=` or a literal.
+//
+// @falsified-by: tests/falsified/a-generic-over-a-vector-of-tuples-of-its-type-variables.patch — interpret exit 101 -> 0, interpret panicked -> clean, native exit 101 -> 0, native panicked -> clean
+//   CHANNEL: panic on both backends — the control stops in the parser (`src/data.rs`) on a
+//   cell this file adds over the filed repro, before the silent `null(oob)` cells run.
+// HOLDS: leak is clean on both trees and both backends.
 
 enum Hue { Red, Blue }
 struct P { x: integer, y: integer }

@@ -14,6 +14,11 @@
 // Axes this file MOVES: the field's storage (inline · reference), the pattern (variant with a
 // literal · variant binding · plain struct with a literal · plain struct binding), depth (one ·
 // two references).  Axes it HOLDS FIXED: one-field payloads; integer leaves.
+//
+// @falsified-by: tests/falsified/a-field-sub-pattern-asks-the-record-a-reference-field-points-at.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — on the control the binding form `l: Lit { v }` does not
+//   parse ("Expect token }"), so the file is refused before any cell runs.
+// HOLDS: leak and panic are clean on both trees and both backends.
 
 enum Expr { Lit { v: integer }, Add { l: reference<Expr>, r: reference<Expr> } }
 enum In { ILit { v: integer }, INeg { n: integer } }
