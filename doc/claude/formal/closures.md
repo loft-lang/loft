@@ -230,7 +230,15 @@ with the closure's environment in scope.
 
 ## Deviations
 
-**OPEN: 0.**  Every closed entry is recorded in [closures-history.md](closures-history.md).
+**OPEN: 1.**  Every closed entry is recorded in [closures-history.md](closures-history.md).
+
+- **D-clo-47 (OPEN, loft#1867)** — violates
+  `(L-Escape)`: a function cannot return a struct whose field holds a CAPTURING closure — it is
+  refused at compile time (*"function returns a struct type that holds a capturing closure"*),
+  while the same closure returned BARE keeps its captures through the record's adoption
+  (`(L-CapOwn)`).  The adoption has to follow the closure out through a struct field as it does
+  out through the return.  Until then the cure the refusal names works: return the closure and
+  build the struct in the caller.
 
 > **An `OPEN: 0` is a claim to re-measure, and this one moved four times in a day** — 0 → 1 → 2
 > → 0 → 1, each step a probe pushed one axis off what the oracle below holds fixed, and each
