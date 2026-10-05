@@ -10424,6 +10424,49 @@ at a_link_only_read_leaves_the_amp_parameter_unmodified:1:13",
     );
 }
 
+/// D-bind-70 (loft#1875) — a tuple member no link can honour yet is REFUSED by name, at a `&`
+/// bind and at a `&` argument alike, and never handed a copy that would drop the write
+/// (`@FR-B-Ref-Reshape`).  Before the wide members linked, these took the work-copy route and the
+/// callee's write vanished; the pins say they cannot reach it again.
+#[test]
+fn a_narrow_tuple_member_link_is_refused() {
+    code!(
+        "fn nb(p: &u8) { p += 1; }
+fn test() { n: (u8, integer) = (5, 1); nb(n.0); assert(n.0 == 5, \"n\"); }"
+    )
+    .error(
+        "a `&` link to a tuple member of type `u8` is not supported — a narrow member is stored \
+at full width, and a link reads at the member's own width.  Bind the member to a local first \
+(`m = t.0; c = &m;`) and write it back at a_narrow_tuple_member_link_is_refused:2:48",
+    );
+}
+
+#[test]
+fn a_text_tuple_member_link_is_refused() {
+    code!(
+        "fn tb(p: &text) { p += \"!\"; }
+fn test() { s = (\"a\", 1); tb(s.0); assert(s.0 == \"a\", \"s\"); }"
+    )
+    .error(
+        "a `&` link to a tuple member of type `text` is not supported — a link to a member names \
+a scalar place, and this member is not a scalar.  Bind the member to a local first \
+(`m = t.0; c = &m;`) and write it back at a_text_tuple_member_link_is_refused:2:35",
+    );
+}
+
+#[test]
+fn a_member_of_a_linked_tuple_is_refused() {
+    code!(
+        "fn via(p: &(integer, integer)) -> integer { c = &p.0; c += 5; p.1 = c; p.1 }
+fn test() { t = (250, 1); assert(via(t) == 1, \"v\"); }"
+    )
+    .error(
+        "a `&` link to a tuple member of type `integer` is not supported — the tuple is itself \
+reached through a `&` link, and a link into it is not supported.  Bind the member to a local \
+first (`m = t.0; c = &m;`) and write it back at a_member_of_a_linked_tuple_is_refused:1:54",
+    );
+}
+
 /// `break value` in void function → compile error.
 #[test]
 fn enhancement_break_value_in_void_function_errors() {

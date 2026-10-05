@@ -77,7 +77,7 @@ resolves it by op name sees only the first.
 
 | functions ALSO handling the `TupleGet` spelling — must not shrink |
 |---:|
-| **18** |
+| **19** |
 
 `python3 scripts/ir_walker_audit.py spellings` prints three figures — functions resolving a
 projection by op name, those also handling `TupleGet`, those seeing only the call spelling.

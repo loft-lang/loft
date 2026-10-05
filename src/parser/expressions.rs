@@ -4661,7 +4661,39 @@ use a separate collection or add after the loop"
                 // spelling rather than as `Var(t)`.
                 _ => self.store_text_link_of(code),
             };
-            if let Some(src) = link_src {
+            // `@FR-B-Ref-Lvalue` — a MEMBER of a tuple LOCAL is an lvalue (`t.0 = 5` assigns it),
+            // so it is a place a link names, as a field or an element is: `c = &t.0`.  The link
+            // is the tuple's frame slot at the member's offset (`OpCreateStack(TupleGet(t, i))`),
+            // and the tuple must outlive it like any linked local.
+            let member_src = match *code.unspan() {
+                Value::TupleGet(t, i)
+                    if matches!(self.vars.tp(t).base(), Type::Tuple(_))
+                        || matches!(self.vars.tp(t).base(), Type::RefVar(inner)
+                            if matches!(inner.base(), Type::Tuple(_))) =>
+                {
+                    Some((t, i))
+                }
+                _ => None,
+            };
+            if let Some((t, i)) = member_src {
+                amp_unlowered = false;
+                match self.linkable_tuple_member(t, i) {
+                    Ok(elem) => {
+                        self.vars.record_amp_link(var_nr, t);
+                        *code = self.cl("OpCreateStack", &[Value::TupleGet(t, i)]);
+                        s_type = if var_nr != u16::MAX && self.vars.is_annotated(var_nr) {
+                            if matches!(self.vars.tp(var_nr), Type::RefVar(_)) {
+                                Type::RefVar(Box::new(elem))
+                            } else {
+                                elem
+                            }
+                        } else {
+                            self.ref_var_type(elem)
+                        };
+                    }
+                    Err(elem) => self.refuse_tuple_member_link(&elem, i),
+                }
+            } else if let Some(src) = link_src {
                 amp_unlowered = false;
                 // `@FR-O-Borrow-Scalar` — the link this one copies must live as long, and the
                 // place behind it with it: the slot allocator follows the chain from the
@@ -9866,6 +9898,55 @@ use a separate collection or add after the loop"
         let expected = self.coalesce_not_null(&Value::Var(v), &tp);
         (*cond.unspan() == expected).then_some(v)
     }
+    /// `@FR-B-Ref-Lvalue` — can a link name member `i` of the tuple local `t`?  `Ok` with the
+    /// member's type when it can, `Err` with it when it cannot: a member is stored at its full
+    /// width, so a link reads it at that width, and a NARROW member would need the narrow
+    /// encoding a linked LOCAL is given (`set_linked_narrow`), which a member's fixed layout
+    /// cannot take.  A heap member is not a scalar place at all.
+    pub(crate) fn linkable_tuple_member(&self, t: u16, i: u16) -> Result<Type, Type> {
+        let (elem, through_link) = match self.vars.tp(t).base() {
+            Type::Tuple(elems) => (elems.get(i as usize).cloned(), false),
+            Type::RefVar(inner) => match inner.base() {
+                Type::Tuple(elems) => (elems.get(i as usize).cloned(), true),
+                _ => (None, false),
+            },
+            _ => (None, false),
+        };
+        let elem = elem.unwrap_or(Type::Unknown(0));
+        // A member of a `&(…)` link (a parameter, or a local link) is the CALLER's tuple at the
+        // member's offset; no lowering reaches it yet, so it is declined with the others.
+        if !through_link
+            && crate::data::is_scalar(&elem)
+            && crate::data::NarrowSlot::of_type(&elem).is_none()
+        {
+            Ok(elem)
+        } else {
+            Err(elem)
+        }
+    }
+
+    /// The refusal for a tuple member [`Parser::linkable_tuple_member`] declines, at a `&` bind
+    /// and at a `&` argument alike.  `(B-Ref-Reshape)`: never downgraded to a copy that would
+    /// drop the write.
+    pub(crate) fn refuse_tuple_member_link(&mut self, elem: &Type, i: u16) {
+        if self.first_pass {
+            return;
+        }
+        let tp = self.data.written_type_name(elem);
+        let why = if !crate::data::is_scalar(elem) {
+            "a link to a member names a scalar place, and this member is not a scalar"
+        } else if crate::data::NarrowSlot::of_type(elem).is_some() {
+            "a narrow member is stored at full width, and a link reads at the member's own width"
+        } else {
+            "the tuple is itself reached through a `&` link, and a link into it is not supported"
+        };
+        diagnostic!(
+            self.lexer,
+            Level::Error,
+            "a `&` link to a tuple member of type `{tp}` is not supported — {why}.  Bind the \
+             member to a local first (`m = t.{i}; c = &m;`) and write it back"
+        );
+    }
 
     /// The place a scalar read names, as the reference a `&` link to it holds: a vector
     /// element's own `OpGetVector` / `OpVectorRef`, or `OpGetField(base, fld)` for a field read
@@ -9877,6 +9958,12 @@ use a separate collection or add after the loop"
     /// (a narrow store place may not: D-bind-39).
     pub(crate) fn scalar_place_ref(&mut self, code: &Value) -> Option<Value> {
         match code.unspan() {
+            // `@FR-B-Ref-Lvalue` — a tuple LOCAL's member: its frame slot at the member's
+            // offset.  A member no link can honour answers `None`; its callers refuse it.
+            Value::TupleGet(t, i) if matches!(self.vars.tp(*t).base(), Type::Tuple(_)) => self
+                .linkable_tuple_member(*t, *i)
+                .ok()
+                .map(|_| self.cl("OpCreateStack", &[Value::TupleGet(*t, *i)])),
             // The bare element op IS the place.  An enum element arrives in this spelling on
             // the first pass, before its enum getter wraps it; without this arm the first pass
             // typed the local as the enum and the second as its link.  It sits above the

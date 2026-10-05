@@ -898,6 +898,26 @@ impl Output<'_> {
             } else if let Value::Call(d_nr, cargs) = to.unspan()
                 && self.data.def(*d_nr).name() == "OpCreateStack"
                 && let [src_arg] = cargs.as_slice()
+                && let Value::TupleGet(src, idx) = src_arg.unspan()
+            {
+                // `@FR-B-Ref-Lvalue` — a link to a tuple local's MEMBER: a pointer into the
+                // Rust tuple's field, the same raw shape as a link to a whole local.
+                let src_name = sanitize(variables.name(*src));
+                if self.declared.contains(&var) {
+                    write!(
+                        w,
+                        "var_{name} = std::ptr::addr_of_mut!(var_{src_name}.{idx})"
+                    )?;
+                } else {
+                    self.declared.insert(var);
+                    write!(
+                        w,
+                        "let mut var_{name}: *mut {base} = std::ptr::addr_of_mut!(var_{src_name}.{idx})"
+                    )?;
+                }
+            } else if let Value::Call(d_nr, cargs) = to.unspan()
+                && self.data.def(*d_nr).name() == "OpCreateStack"
+                && let [src_arg] = cargs.as_slice()
                 && let Value::Var(src) = src_arg.unspan()
             {
                 let src_name = sanitize(variables.name(*src));

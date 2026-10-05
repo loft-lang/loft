@@ -6576,6 +6576,15 @@ impl Parser {
                     // reference the `&` bind would hold (@FR-B-Ref-Lvalue).  A copy in a work
                     // variable would take the callee's write and drop it.
                     *code = place;
+                } else if let Value::TupleGet(t, i) = orig.unspan()
+                    && let Err(elem) = self.linkable_tuple_member(*t, *i)
+                {
+                    // A tuple member no link can honour: refused, never copied (the copy would
+                    // take the callee's write and drop it).  The argument stays in the call, so
+                    // the refusal is the only diagnostic.
+                    let i = *i;
+                    self.refuse_tuple_member_link(&elem, i);
+                    *code = orig;
                 } else {
                     // produce a `Value::Insert` so that scope
                     // analysis (`scopes::scan_args`) hoists the
@@ -17104,6 +17113,16 @@ impl Parser {
                 all_types[nr] = tp.clone();
                 continue;
             }
+            // A tuple local's TEXT member is a place as well, and no `&text` link reaches it
+            // yet: refused rather than handed a work copy that would drop the callee's write
+            // (`(B-Ref-Reshape)`, as the `&` bind of the same member refuses).
+            if matches!(tp.base(), Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)))
+                && let Value::TupleGet(t, i) = actual_code.unspan()
+                && let Err(elem) = self.linkable_tuple_member(*t, *i)
+            {
+                let i = *i;
+                self.refuse_tuple_member_link(&elem, i);
+            }
             if let Type::RefVar(inner) = &tp
                 && !matches!(inner.as_ref(), Type::Text(_))
                 && !matches!(&actual_code, Value::Var(_))
@@ -21653,7 +21672,9 @@ impl Parser {
     /// and every arithmetic / `n_*` op out.
     fn is_amp_place(val: &Value, data: &Data) -> bool {
         match val.unspan() {
-            Value::Var(_) => true,
+            // A tuple local's member (`@FR-B-Ref-Lvalue`): the bind lowering decides which
+            // member types it can link, and refuses the rest by name.
+            Value::Var(_) | Value::TupleGet(_, _) => true,
             Value::Call(d_nr, args) => {
                 let name = data.def(*d_nr).name();
                 let listed = matches!(

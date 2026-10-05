@@ -435,6 +435,19 @@ impl Output<'_> {
             write!(w, "unsafe {{ ")?;
             self.output_place_pointer(w, v, &base)?;
             write!(w, " }}")?;
+        // `@FR-B-Ref-Lvalue` — a tuple local's MEMBER handed to a `&` parameter: a pointer
+        // into the Rust tuple's field, as a local link to it holds.
+        } else if let Value::Call(d_nr, args) = v.unspan()
+            && self.data.def(*d_nr).name() == "OpCreateStack"
+            && let [arg] = args.as_slice()
+            && let Value::TupleGet(t, i) = arg.unspan()
+        {
+            let name = sanitize(self.data.def(self.def_nr).variables().name(*t));
+            if raw_param {
+                write!(w, "std::ptr::addr_of_mut!(var_{name}.{i})")?;
+            } else {
+                write!(w, "&mut var_{name}.{i}")?;
+            }
         // OpCreateStack wrapping an addressable expression
         // (e.g. v[i] as & param).  Emit a temporary + &mut so the
         // callee can write through the DbRef into the store.

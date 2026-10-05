@@ -440,7 +440,14 @@ answered a value no statement had assigned (loft#1600, owner ruling).
 
 ## Deviations
 
-**OPEN: 0.**
+**OPEN: 1.**
+
+- **D-bind-70 (OPEN, loft#1875)** — violates <!-- doc-lint: ok -->
+  `(B-Ref-Lvalue)`: three tuple-member places are refused where the rule makes every lvalue
+  linkable — a NARROW member (`n: (u8, integer); c = &n.0`), a TEXT member (`c = &s.0`), and a
+  member of a tuple reached through a `&(…)` link (`fn via(p: &(integer, integer)) { c = &p.0 }`).
+  Each is refused by name at a bind and at a `&` argument; none is copied.  A wide scalar member
+  of a tuple local links, as field and element members do.
 
 **D-bind-28 CLOSED 2026-09-07, the collection half of `(B-Ref-Uniform)`.**
 The rule says a `&τ` variable is used *exactly* like a `τ` variable and that no operation is

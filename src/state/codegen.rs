@@ -4782,6 +4782,14 @@ impl State {
                 // Dep is the named variable at wv.stack_pos.
                 let dep_offset = stack.var_pos(*wv);
                 self.emit_push_create_stack(stack, dep_offset);
+            } else if let Value::TupleGet(tv, ti) = parameters[0].unspan()
+                && let Type::Tuple(elems) = stack.function.tp(*tv).base()
+            {
+                // `@FR-B-Ref-Lvalue` — a link to a tuple local's MEMBER: the tuple's slot at
+                // the member's offset, the address the `TupleGet` read itself uses.
+                let offset = crate::data::element_stack_offsets(elems)[*ti as usize] as u16;
+                let dep_offset = stack.position - (stack.function.stack(*tv) + offset);
+                self.emit_push_create_stack(stack, dep_offset);
             } else {
                 // OpCreateStack with a non-Var expression (e.g.
                 // OpGetVector result).  Generate the expression to push
