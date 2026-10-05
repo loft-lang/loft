@@ -12,8 +12,7 @@
 //   suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2
 //   -> 2/2.
 // @falsified-by: tests/falsified/a-function-type-link-refusals.patch — the same
-//   channels.  Score it with
-//   `scripts/falsify.sh <this file> --patch <that patch>` once c8cfeb402 is out of reach.
+//   channels, scored with `scripts/falsify.sh <this file> --patch <that patch>`.
 // HOLDS: nothing runs on either tree (a refusal file).
 
 fn main() {
