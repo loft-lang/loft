@@ -203,17 +203,26 @@ fn opt_out_silences_native() {
 /// source, so the lint must NOT fire — this locks the S4a ownership fix against regressions.
 #[test]
 fn s4a_aliases_stay_silent() {
+    // (script, dead-store reports it owes).  The two element-view scripts each carry ONE
+    // deliberate lost write: `mut_elem` binds `xs = g.c` (a copy), writes through `e = xs[i]`
+    // and returns the untouched source — their own comment: the write "hits the discarded
+    // snapshot".  loft#1864 made the lint see a copy read only through its views, so that one
+    // is reported, on `xs`; every alias in the scripts stays silent.
     let aliases = [
-        "tests/scripts/434-pln87-scalar-reference.loft", // & scalar reference
-        "tests/scripts/25-index-elision-borrower.loft",  // e = v[i] element view
-        "tests/scripts/85-borrow-elision-element-borrower.loft",
+        ("tests/scripts/434-pln87-scalar-reference.loft", 0), // & scalar reference
+        ("tests/scripts/25-index-elision-borrower.loft", 1),  // e = v[i] element view
+        ("tests/scripts/85-borrow-elision-element-borrower.loft", 1),
     ];
-    for rel in aliases {
+    for (rel, owed) in aliases {
         let (_o, diag, _c) = run_env("--interpret", &workspace(rel), &[]);
         assert_eq!(
             dead_stores(&diag),
-            0,
-            "alias script {rel} must emit NO dead-store warning (the write propagates)\n{diag}"
+            owed,
+            "alias script {rel} must emit {owed} dead-store warning(s) (an alias's write propagates)\n{diag}"
+        );
+        assert!(
+            owed == 0 || diag.contains("'xs' is mutated but its value is never read"),
+            "the one report in {rel} is mut_elem's copy `xs`\n{diag}"
         );
     }
 }
