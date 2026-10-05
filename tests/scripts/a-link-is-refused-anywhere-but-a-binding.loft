@@ -8,6 +8,13 @@
 // with *"Unknown variable 'b'"* beside it.
 //
 // `main` comes first so each expectation belongs to its function.
+//
+// @falsified-at: f551cdfc1 — interpret exit 1 -> 0, interpret expectations FAIL/6 -> 6/6 (the
+//   suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/6
+//   -> 6/6.
+// @falsified-by: tests/falsified/a-link-is-refused-anywhere-but-a-binding.patch — the same channels.  Score it with
+//   `scripts/falsify.sh <this file> --patch <that patch>` once f551cdfc1 is out of reach.
+// HOLDS: nothing runs on either tree (a refusal file).
 
 fn main() {
   println("{target()} {operand()} {argument()} {not_prefix()} {minus_prefix()} {tilde_prefix()}");

@@ -12,6 +12,13 @@
 //                        nullable), the place (a local · a field · an element · a caller's
 //                        local through a parameter), and the access (read after the place
 //                        moves · write · a later plain assignment).
+//
+// @falsified-at: f551cdfc1 — INERT on all four channels, both backends, and that is the correct
+//   answer for a CONTROL: these links already held.  What the file pins is the binding rules'
+//   values, so a later change to how a link reads or writes is measured against them.
+//   WITNESS: `scalars() "5 5"`, `heap_kinds() "z 9 [1,2] 2"`, `other_kinds() "Green null 7"`,
+//   `places() "9 [1,9] 8 7"` on both trees.
+// HOLDS: leak, panic and refusals are clean on both trees and both backends.
 
 struct P { x: integer, y: integer }
 struct K { k: integer, v: integer }
