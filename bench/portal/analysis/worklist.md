@@ -73,7 +73,7 @@ Sizes are the analysis files' own (XS–M); "→" is the hand price, a ceiling f
 
 | | unit | size | rows and priced landing | priced in |
 |---|---|---|---|---|
-| S1 | `(R-RefillBuffer)`'s text clause — a kept record's text is refilled in its slot; with it `(R-WorkBuffer)` for text-bearing elements and the work text | M + S | `msg_ping` → ~1.7×; `flow_layout_full` 6.5× → 3.6× (load-bearing, with S5); `check_request`'s and `decode`'s pooled texts | over-9x.md, under-10x.md F6 |
+| S1 | `(R-RefillText)` — a pooled call buffer's texts refilled in their slots through the callee's refill twin; the design and its five steps are in `formal/rewrites.md` § A pooled buffer's texts are refilled in their slots | M, in five steps | `msg_ping` 7.47× → ~2.0× priced on x86-64; the collection clause after it carries `flow_layout_full`, `check_request`, `decode` | that note |
 | S2 | `(R-Apart)` instance 2 — a fixed-length vector field inside a value record, across admitted calls | new gate over the IR | `mat4_mul` → 0.63× | apart.md |
 | S3 | `(R-Apart)` instance 3 — an inline buffer with a spill, never a bare `Vec` | after S2, same gate | `rig_world_frame3` → 2.75×; `draw_bezier`'s two stacks → 2.3× | apart.md |
 | S4 | `(R-Destination)` — a child built in its element (D7); beside it `(R-CompleteWrite)` counting a field MOVE (D6) and the fixed-width `move_field_out` (D2) | M + S + S | `decode` → 6.0× with C1's two XS steps (required: without D7 the ladder stops at 8.3×); `check_request` is 84 % the same `decode` | over-9x.md, under-10x.md § cbor |
@@ -85,12 +85,10 @@ Sizes are the analysis files' own (XS–M); "→" is the hand price, a ceiling f
 
 S1 re-priced on x86-64 (2026-10-05, today's emission, same hash): `msg_ping` 17.4 → 4.78 ms
 (7.47× → ~2.0×) with the per-message release walk of the pooled call buffer dropped and each text
-write reusing its slot's claim when the new text fits.  What the build must settle first (a design
-note before code): the walk dropped is the SCOPE PASS's `OpClear` on a pooled buffer
-(`@FR-H-ClearRelease`), on both backends, so the interpreter's text set into that buffer must
-refill too or it leaks; a refill may only read a slot known to hold zero or an owned block — a
-`(R-CompleteWrite)` no-prefill mint holds garbage there; and the callee must write every text
-field through the refill on every exit (a copy into the buffer would leak the old texts).
+write reusing its slot's claim when the new text fits.  The design settles the three questions
+the price raised — native first with the interpreter as oracle, the slot invariant decided at the
+call site through a refill twin, every text slot written by every exit — in `formal/rewrites.md`
+§ A pooled buffer's texts are refilled in their slots, with the five steps that build it.
 
 ### Cycle units
 
