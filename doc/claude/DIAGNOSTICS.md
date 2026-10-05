@@ -480,7 +480,14 @@ type's spelling wrong are exactly the ones nobody had a symptom for.
    none, and `every_offered_door_resolves_to_a_catalogue_entry` fails a `@F` that is not in
    the catalogue. If the fix genuinely cannot be offered yet, add a row to `FIX_BLOCKED`
    naming what blocks it — a listed exception, never a silent one.
-4. **Point the caret with `diagnostic_at!` whenever detection happens after parsing.**
+4. **Measure a new or widened `warning` over every program we can reach, off this box.** A
+   warning gates a library's CI, so its reach over loft, every `loft-libs-*` repo and the
+   consumers is known before it lands: push a commit carrying `Lint-sweep-base: <sha>` and
+   `Lint-sweep-code: <code>` trailers to the `lint-sweep` branch, and
+   `.github/workflows/lint-sweep.yml` lists every file whose count moved, with the new
+   build's diagnostics there (`scripts/lint_sweep.py` runs the same locally).
+
+5. **Point the caret with `diagnostic_at!` whenever detection happens after parsing.**
    `diagnostic!` uses the lexer's CURRENT cursor, which is only right while the offending
    construct is still under it. A whole-function judgement (complexity, parameter count,
    trailing booleans) needs the whole body first, and by then the cursor sits on the NEXT
@@ -491,7 +498,7 @@ type's spelling wrong are exactly the ones nobody had a symptom for.
    `tests/error_messages/cases/48_advice_points_at_the_function_it_names.loft`, whose
    fixture deliberately ends in a `next_function_marker` no caret may land on.
 
-5. **A seek to a diagnostic site is not free — it moves what every LATER position is read
+6. **A seek to a diagnostic site is not free — it moves what every LATER position is read
    from.** `Lexer::to` points the reporting position at a declaration a whole-body pass is
    complaining about; it does **not** move the read cursor, and the tokenizer keeps
    incrementing that reporting position on every physical line it pulls afterwards. So a
@@ -511,7 +518,7 @@ type's spelling wrong are exactly the ones nobody had a symptom for.
    ([GUARDS.md](GUARDS.md#the-set-a-suite-runs-is-not-the-set-it-contains-loft_trace_asserts)),
    which reads exactly this injected line.
 
-6. **The cursor is one token AHEAD of what the parser has decided about, and `diagnostic!`
+7. **The cursor is one token AHEAD of what the parser has decided about, and `diagnostic!`
    now attributes to the consumed source when that token has crossed a line.**
    `Lexer::position` is the scan cursor: the END of the token the parser is *holding*. A
    check that can only run once a construct is complete — a write to a `const` parameter, a
@@ -563,7 +570,7 @@ type's spelling wrong are exactly the ones nobody had a symptom for.
    current_token` pins the opt-out direction. All proven able to fail by disabling
    `report_pos`.
 
-7. **A whole-CONSTRUCT check must still name the part it is about, and `report_pos` cannot
+8. **A whole-CONSTRUCT check must still name the part it is about, and `report_pos` cannot
    guess which part.** The default of item 6 is right and not enough for a check that can only
    run once a whole construct is complete: its consumed source genuinely ends at the closing
    brace, so the caret lands there. That is correct and useless — a struct has many fields, and
