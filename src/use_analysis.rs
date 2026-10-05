@@ -1477,7 +1477,24 @@ fn analyze_fn_survival(
             let borrowers: Vec<u16> = (0..function.next_var())
                 .filter(|&e| e != v && function.tp(e).base().depend().contains(&v))
                 .collect();
-            if borrowers.iter().all(|e| !u.ineligible.contains(e)) {
+            // …and every borrower of a borrower, at any depth: `s = e.inn; s.x = 9` writes the
+            // element `e` views as surely as `e.x = 9` does.  Asked of the direct borrowers
+            // alone, a write two views deep reached the caller's argument through an elided
+            // `xs = b.items` (`(B-View-Base)`: off a plain parameter that bind is a COPY).
+            // Only the direct ones are re-pointed; a deeper one keeps its own base.
+            let mut reach = borrowers.clone();
+            let mut i = 0;
+            while i < reach.len() {
+                let b = reach[i];
+                for e in 0..function.next_var() {
+                    if e != v && !reach.contains(&e) && function.tp(e).base().depend().contains(&b)
+                    {
+                        reach.push(e);
+                    }
+                }
+                i += 1;
+            }
+            if reach.iter().all(|e| !u.ineligible.contains(e)) {
                 plans.push(ElidePlan {
                     var: v,
                     vdb: *vdb,
