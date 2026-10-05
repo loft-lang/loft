@@ -3730,14 +3730,19 @@ pub(crate) const JV_DISCR_INT: i32 = 7;
 
 /// Allocate a fresh `JsonValue` record in its own store and return
 /// the DbRef.  Caller writes the discriminant byte at pos+0 and any
-/// variant payload at pos + position(variant_tp, field_name).
+/// variant payload at pos + position(variant_tp, field_name).  The payload is
+/// WRITTEN all-zero first — the empty value of every variant field a caller leaves
+/// (an empty `JArray`'s items, an empty `JObject`'s fields): a claimed record is not
+/// zero by any promise.
 pub(crate) fn jv_alloc(stores: &mut Stores) -> DbRef {
     let jv_tp = stores.name("JsonValue");
     let size_bytes = u32::from(stores.size(jv_tp));
     // database(n) → claim(n) which expects 8-byte words; round up
     // and add 1 word for the record header.
     let words = size_bytes.div_ceil(8) + 1;
-    stores.database(words.max(2))
+    let r = stores.database(words.max(2));
+    stores.store_mut(&r).zero_range(r.rec, r.pos, size_bytes);
+    r
 }
 
 /// Shared `JsonValue::JNull` sentinel used by `n_field` / `n_item` fallback
@@ -4433,7 +4438,7 @@ fn n_struct_from_jsonvalue(stores: &mut Stores, stack: &mut DbRef) {
 /// `dest.pos = 8`) from the JsonValue at `src`.  Walks every declared
 /// field via `Stores::types[struct_kt].parts`, looks up each field by
 /// name in `src` (which must be a `JObject` for any field lookup to
-/// succeed — wrong-kind sources leave every field at zero-init), and
+/// succeed — wrong-kind sources leave every field absent), and
 /// dispatches on the field's declared type.
 #[expect(clippy::too_many_lines, reason = "inherited")]
 pub(crate) fn populate_struct_from_jsonvalue(
@@ -4593,20 +4598,31 @@ pub(crate) fn populate_struct_from_jsonvalue(
                     if inner_name == "JsonValue" {
                         let jv_size = u32::from(stores.size(content_kt));
                         copy_bytes(stores, &sub, dest, dest_field_pos, jv_size);
+                    } else {
+                        // Any other enum keeps the all-zero value it always answered — WRITTEN
+                        // here: a claimed record's bytes are not zero by any promise.
+                        let size = u32::from(stores.size(content_kt));
+                        stores.store_mut(dest).zero_range(dest.rec, dest_field_pos, size);
                     }
                 }
                 Parts::Vector(elem_kt) => {
                     // Vector field: the handle is a 4-byte rec-nr at
                     // `dest_field_pos`.  Iterate the JArray items and
                     // append per element via the existing
-                    // `vector_append` machinery.
+                    // `vector_append` machinery — into an EMPTY vector, written first: the
+                    // claimed record holds no handle until this field writes one, and a source
+                    // that is not an array leaves it empty.
+                    stores.store_mut(dest).set_u32_raw(dest.rec, dest_field_pos, 0);
                     populate_vector_from_jarray(stores, &slot, elem_kt, &sub);
                 }
                 _ => {
-                    // Hash, Sorted, Index, Radix, Array and Base fields have no JSON
-                    // form here yet, so the zero-init default stands.  Unlike the narrow
-                    // integers that used to share this arm, none of them can be spelled
-                    // in the document at all, so nothing is being dropped silently.
+                    // Hash, Sorted, Index, Radix, Array and Base fields have no JSON form here
+                    // yet, so the field is the EMPTY collection — written, not inherited from
+                    // the claim.  Unlike the narrow integers that used to share this arm, none
+                    // of them can be spelled in the document at all, so nothing is being
+                    // dropped silently.
+                    let size = u32::from(stores.size(content_kt));
+                    stores.store_mut(dest).zero_range(dest.rec, dest_field_pos, size);
                 }
             }
         }
