@@ -1052,8 +1052,19 @@ fn run_all(cells: &[Cell], mode: &str, timeout: &str, workers: usize) -> Vec<Ver
     })
 }
 
+/// A gate's scratch directory, removed however the call that made it ends: a cell that panics
+/// unwinds out of the worker scope past any removal written after it, and a native chunk's
+/// directory holds about 1.3 GB of compiled cells.
+struct ScratchDir(PathBuf);
+
+impl Drop for ScratchDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 /// Answers `run(dir, cell)` for every cell, `workers` at a time, in cell order.  `dir` is a
-/// scratch directory of its own, named by `tag`, removed afterwards.
+/// scratch directory of its own, named by `tag`, removed afterwards — on a panic too.
 fn for_each_cell<T: Send>(
     cells: &[Cell],
     tag: &str,
@@ -1070,6 +1081,8 @@ fn for_each_cell<T: Send>(
         NEXT_DIR.fetch_add(1, Ordering::Relaxed)
     ));
     std::fs::create_dir_all(&dir).expect("create the gate's scratch directory");
+    let scratch = ScratchDir(dir);
+    let dir = scratch.0.as_path();
     let next = AtomicUsize::new(0);
     let results: Mutex<Vec<Option<T>>> = Mutex::new(cells.iter().map(|_| None).collect());
     std::thread::scope(|s| {
@@ -1080,13 +1093,13 @@ fn for_each_cell<T: Send>(
                     if i >= cells.len() {
                         break;
                     }
-                    let v = run(&dir, &cells[i]);
+                    let v = run(dir, &cells[i]);
                     results.lock().unwrap()[i] = Some(v);
                 }
             });
         }
     });
-    let _ = std::fs::remove_dir_all(&dir);
+    drop(scratch);
     results
         .into_inner()
         .unwrap()
