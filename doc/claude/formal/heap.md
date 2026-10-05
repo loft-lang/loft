@@ -782,6 +782,14 @@ The rules are checkable directly, and every check is a program both backends mus
   possible host view.  The guard: `tests/scripts/201-bind-copies-projection-views.loft`, which
   reads every SOURCE back after the write (an unread source cannot tell a copy from an elided
   one), on both backends.
+- **An elided copy is unobservable (`H-Elide`)** — a copy off a parameter is elided only where
+  no write can reach a store the caller holds while the copy lives.  An aliasing parameter, a
+  view of one, a closure capture, a function reference and a generator's suspension each keep
+  the copy (`use_analysis::caller_stores_stable`), and an elided copy skips its `OpCopy` and its
+  drop together.  Guards: `tests/copy_lease.rs`
+  `an_elided_copy_reads_its_own_value_when_the_callers_store_is_written` (the value, with
+  controls that still elide) and `an_elided_copy_skips_its_hook_and_its_drop_together` (the
+  hooks), on both backends.
 - **A disturbed view materialises (`H-Materialise`)** — a removal, a re-key, a reassignment and
   a GROWTH of the container while the view is live take the copy step, in this frame
   (`tests/scripts/1373-growing-a-container-ends-the-places-inside-it.loft`) and one frame
