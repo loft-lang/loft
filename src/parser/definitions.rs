@@ -5027,6 +5027,20 @@ impl Parser {
                              elements are always dense (a key / slot denotes presence)"
                         );
                     }
+                } else if !nullable_elem
+                    && type_name != "vector"
+                    && matches!(tp, Type::Optional(_))
+                {
+                    // A `?` written after the element's own modifiers (`integer limit(0, 9)?`)
+                    // is read by `parse_type` itself, past the identifier-adjacent test above —
+                    // so ask the type it built.  Admitted, it typed an `iterator` element
+                    // nullable that every other spelling refuses.
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "`?` (nullable element) is only valid on `vector` — `{type_name}` \
+                         elements are always dense (a key / slot denotes presence)"
+                    );
                 }
                 let sub_nr = if let Type::Unknown(d) = tp {
                     d
