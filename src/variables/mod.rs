@@ -4234,6 +4234,12 @@ impl Function {
     /// @PLN87 P2.1 — record that visible heap parameter `param` is
     /// whole-binding-reassigned in the body and `orig` is its caller-store
     /// witness (see [`Function::rebind_orig`]).  Idempotent — keyed on `param`.
+    /// Forget `param`'s rebind witness — a generic instance whose parameter is not a heap
+    /// type undoes the rebind its template lowered (`Parser::strip_scalar_instance_rebinds`).
+    pub fn clear_rebind_orig(&mut self, param: u16) {
+        self.rebind_orig.remove(&param);
+    }
+
     pub fn set_rebind_orig(&mut self, param: u16, orig: u16) {
         self.rebind_orig.insert(param, orig);
     }

@@ -1,0 +1,29 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A generic's parameter of type `T` reassigned in the body (`p = q`), instantiated at a SCALAR:
+// the integer and float instances were an internal compiler error on both backends —
+// *"Incorrect var __ref_1[24] versus 16"*, the heap witness's slot in a scalar frame.
+// The template lowered `p = …` while `p` was still `T`, whose placeholder is spelled as a
+// record, so every instance carried the HEAP-parameter rebind (an entry witness, a guarded
+// release) — and a `text` instance missed the owned shadow a text parameter needs.  Now a
+// type variable takes no heap rebind, and an instance's assigned `text` parameter is promoted
+// as a plain function's is (`@FR-F-ParamScalar`, `@FR-G-Mono`: the instance takes the twin's
+// answer).  The sibling files hold the other instance types apart, because each failed on a
+// different channel and one channel stops a file before the next is read.
+
+fn setg<T>(p: T, q: T) -> T {
+  p = q;
+  p
+}
+
+fn last<T>(p: T, q: T) -> T {
+  p = q;
+  q
+}
+
+fn main() {
+  assert(setg(3, 9) == 9, "integer instance: got {setg(3, 9)}");
+  assert(setg(1.5, 2.5) == 2.5, "float instance: got {setg(1.5, 2.5)}");
+  assert(last(4, 7) == 7, "a reassigned parameter not returned: got {last(4, 7)}");
+}

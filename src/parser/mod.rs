@@ -9537,6 +9537,90 @@ impl Parser {
         }
         code.for_each_child_mut(&mut |c| self.resolve_content_eq(c, bindings));
     }
+    /// @FR-F-ParamScalar / @FR-G-Mono — a generic's `p: T` is spelled as a reference to `T`'s
+    /// placeholder, so the template lowered `p = …` as a HEAP-parameter rebind: an entry
+    /// witness, a guarded release and a detach of `p` (`rebind_local_heap_param`).  That is
+    /// the twin's answer for a record instance and the wrong one for any other: an `integer`
+    /// or `float` instance was an internal error on the witness's slot, and a `text` one wrote
+    /// the borrowed argument.  An instance whose parameter is not a heap type drops the
+    /// witness's statements and its mapping, so the scope pass adds no exit release either.
+    fn strip_scalar_instance_rebinds(&mut self, code: &mut Value) {
+        fn strip(code: &mut Value, data: &Data, p: u16, orig: u16) {
+            let is_var = |v: &Value, n: u16| matches!(v.unspan(), Value::Var(x) if *x == n);
+            let witness_op = |v: &Value| match v.unspan() {
+                Value::Call(op, a) => match data.def(*op).name() {
+                    "OpFreeRefIfDistinct" => {
+                        a.len() == 2 && is_var(&a[0], p) && is_var(&a[1], orig)
+                    }
+                    "OpInitRefSentinel" => a.len() == 1 && is_var(&a[0], p),
+                    "OpPutRef" => a.len() == 2 && is_var(&a[0], orig),
+                    _ => false,
+                },
+                Value::Set(v, _) => *v == orig,
+                _ => false,
+            };
+            match code {
+                Value::Block(bl) => bl.operators.retain(|o| !witness_op(o)),
+                Value::Insert(list) => list.retain(|o| !witness_op(o)),
+                _ => {}
+            }
+            code.for_each_child_mut(&mut |c| strip(c, data, p, orig));
+        }
+        for p in 0..self.vars.count() {
+            let Some(orig) = self.vars.rebind_orig(p) else {
+                continue;
+            };
+            let heap = matches!(
+                self.vars.tp(p).base(),
+                Type::Reference(_, _) | Type::Enum(_, true, _)
+            ) || crate::parser::vectors::is_keyed(self.vars.tp(p));
+            if heap {
+                continue;
+            }
+            strip(code, &self.data, p, orig);
+            self.vars.clear_rebind_orig(p);
+        }
+    }
+
+    /// @FR-F-ParamScalar / @FR-G-Mono — a `text` PARAMETER the instance body assigns gets the
+    /// owned shadow local a plain function's parse gives it (`__tp_<name>`, seeded from the
+    /// argument at entry, every use renamed).  The template decided its assignments while the
+    /// parameter was still `T`, so the instance wrote the BORROWED argument slot:
+    /// `fn g<T>(p: T, q: T) -> T { p = q; p }` at `T = text` answered the argument on
+    /// `--interpret` and did not build on `--native`.  The instance takes the twin's answer.
+    fn promote_assigned_text_params(&mut self, code: &mut Value) {
+        let params = self.vars.count();
+        for p in 0..params {
+            if !self.vars.is_argument(p)
+                || self.vars.name(p).starts_with("__")
+                || !matches!(self.vars.tp(p).base(), Type::Text(_))
+            {
+                continue;
+            }
+            let mut assigned = false;
+            code.walk(&mut |n| {
+                if let Value::Set(v, _) = n.unspan()
+                    && *v == p
+                {
+                    assigned = true;
+                }
+            });
+            if !assigned {
+                continue;
+            }
+            let name = self.vars.name(p).to_string();
+            let shadow = self.vars.add_variable(
+                &format!("__tp_{name}"),
+                &Type::Text(Deps::none()),
+                &mut self.lexer,
+            );
+            self.vars.set_promoted_from(shadow, p);
+            collections::rename_var(code, p, shadow);
+            if let Value::Block(bl) = code {
+                bl.operators.insert(0, v_set(shadow, Value::Var(p)));
+            }
+        }
+    }
 
     fn fill_monomorph_body(
         &mut self,
@@ -9652,6 +9736,8 @@ impl Parser {
                 }
             }
         }
+        self.strip_scalar_instance_rebinds(&mut code);
+        self.promote_assigned_text_params(&mut code);
         let vars = std::mem::replace(&mut self.vars, outer_vars);
         self.context = outer_context;
         self.data.definitions[d_nr as usize].code = code;
