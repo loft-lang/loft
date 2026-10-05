@@ -1,8 +1,8 @@
 # host=firewall02.lan.betterbe.com
 # arch=arm64-darwin
 # date=2026-10-05
-# commit=29d68fde2
-# dirty=yes
+# commit=0d40d53d0
+# dirty=no
 # rustc=rustc 1.97.0 (2d8144b78 2026-07-07)
 # samples=7
 # target_ms=400.0
@@ -76,8 +76,8 @@ cbor	rust-rustc	0.32	0.51	131408	5	29d68fde2	2026-10-05
 crypto	native-release	0.26	0.24	25856	5	29d68fde2	2026-10-05
 crypto	rust-rustc	0.26	0.36	125888	5	29d68fde2	2026-10-05
 drawing	native-release	0.14	0.12	46432	5	29d68fde2	2026-10-05
-fixstep	native-release	0.47	0.43	24816	5	29d68fde2	2026-10-05
-fixstep	rust-rustc	0.22	0.29	116416	5	29d68fde2	2026-10-05
+fixstep	native-release	0.43	0.40	21024	5	0d40d53d0	2026-10-05
+fixstep	rust-rustc	0.24	0.25	116496	5	0d40d53d0	2026-10-05
 game_protocol	native-release	0.09	0.08	22816	5	29d68fde2	2026-10-05
 game_protocol	rust-rustc	0.18	0.21	117840	5	29d68fde2	2026-10-05
 glb	native-release	0.29	0.24	79168	5	29d68fde2	2026-10-05
@@ -96,8 +96,8 @@ hex_field	native-release	0.36	0.34	30880	5	29d68fde2	2026-10-05
 hex_field	rust-rustc	0.58	0.67	132912	5	29d68fde2	2026-10-05
 hex_fit	native-release	0.67	0.64	101008	5	29d68fde2	2026-10-05
 hex_fit	rust-rustc	0.38	0.39	119392	5	29d68fde2	2026-10-05
-hex_form	native-release	0.43	0.41	82176	5	29d68fde2	2026-10-05
-hex_form	rust-rustc	0.45	0.56	129696	5	29d68fde2	2026-10-05
+hex_form	native-release	0.23	0.20	31152	5	0d40d53d0	2026-10-05
+hex_form	rust-rustc	0.45	0.55	129728	5	0d40d53d0	2026-10-05
 hex_grid	native-release	0.23	0.18	23552	5	29d68fde2	2026-10-05
 hex_grid	rust-rustc	0.20	0.22	114064	5	29d68fde2	2026-10-05
 hex_place	native-release	0.31	0.29	83344	5	29d68fde2	2026-10-05

@@ -18,7 +18,7 @@ interleaved samples; both lanes printed the same result hash or the row would no
 
 ## firewall02.lan.betterbe.com · arm64-darwin · 2026-10-05
 
-Commit `29d68fde2` (uncommitted changes in the tree), rustc 1.97.0 (2d8144b78 2026-07-07), reference `rustc -O`, 7 samples of ~400 ms, NOT pinned.
+Commit `0d40d53d0`, rustc 1.97.0 (2d8144b78 2026-07-07), reference `rustc -O`, 7 samples of ~400 ms, NOT pinned.
 
 ### Where we stand
 
@@ -43,7 +43,7 @@ class points at one part of the compiler or runtime rather than at one program.
 | **keyed** | hash, sorted and index collections: insert, find, update, remove, ordered walk | 22 | **3.28×** | 1.26× | 8.12× `reload_and_record` | 2 | 13 |
 | **vector-build** | making a scalar vector: push, comprehension, copy, a vector of vectors | 12 | **2.97×** | 0.33× | 8.39× `emit_segment` | 4 | 6 |
 | **record-build** | appending records to a vector, and returning built records | 13 | **2.65×** | 1.06× | 11.69× `decode` | 2 | 6 |
-| **call** | many small calls or recursion: the per-call frame and argument passing | 14 | **2.57×** | 1.74× | 6.10× `clock_pump` | 4 | 5 |
+| **call** | many small calls or recursion: the per-call frame and argument passing | 14 | **2.57×** | 1.74× | 5.95× `clock_pump` | 4 | 5 |
 | **vector-write** | element writes and fills of scalar vectors, in place | 14 | **2.52×** | 1.09× | 7.98× `canvas` | 5 | 3 |
 | **float-kernel** | float arithmetic in loops: the operators, libm calls, the null (NaN) handling | 16 | **2.42×** | 0.94× | 5.03× `rig_world_frame3` | 7 | 7 |
 | **native-boundary** | a native (Rust cdylib) routine: the cost of crossing into it | 9 | **2.16×** | 1.01× | 8.31× `doc_read` | 4 | 2 |
@@ -62,16 +62,16 @@ Why it is slow, priced, and what to build: [analysis/alloc-temp.md](../../bench/
 
 | routine | lane | population | × Rust | range | native | Rust | | what it stands for |
 |---|---|---|---:|---|---:|---:|---|---|
-| `check_request` | pluginabi | library:pluginabi | **12.03** | 11.99–12.12 | 3.00 ms | 249.0 µs | **over 3x** | the mandatory front door decodes the frame TWICE before six text compares |
-| `flow_layout_full` | zttext | library:zttext | **11.72** | 11.70–11.87 | 18.64 ms | 1.59 ms | **over 3x** | per line, per token a fresh `vector<Run>` with a freshly built text per run, discarded at once — and built twi |
-| `draw_bezier` | graphics | library:graphics | **10.00** | 9.98–10.04 | 13.56 ms | 1.36 ms | **over 3x** | two slice-copies of the whole explicit stack per subdivision |
-| `draft_fit_p` | hex_fit | library:hex_fit | **6.90** | 6.87–6.91 | 14.00 ms | 2.03 ms | **over 3x** | each of up to 24 trials allocates a fresh edge set, element by element into two vectors |
-| `surface_fitted_spread` | hex_draw | library:hex_draw | **6.70** | 6.69–6.72 | 272.7 µs | 40.7 µs | **over 3x** | FOUR full window sweeps, each returning a fresh five-vector run, for a result that needs one |
-| `msg_ping` | game_protocol | library:game_protocol | **6.12** | 6.09–6.29 | 13.24 ms | 2.16 ms | **over 3x** | a nested record pair built and returned by value, nothing else |
-| `slugify` | markdown | library:markdown | **4.06** | 4.02–4.09 | 7.38 ms | 1.82 ms | **over 3x** | a 1-character text and its lowercased copy per uppercase byte |
+| `check_request` | pluginabi | library:pluginabi | **12.03** | 11.99–12.12 †29d68fde2 | 3.00 ms | 249.0 µs | **over 3x** | the mandatory front door decodes the frame TWICE before six text compares |
+| `flow_layout_full` | zttext | library:zttext | **11.72** | 11.70–11.87 †29d68fde2 | 18.64 ms | 1.59 ms | **over 3x** | per line, per token a fresh `vector<Run>` with a freshly built text per run, discarded at once — and built twi |
+| `draw_bezier` | graphics | library:graphics | **10.00** | 9.98–10.04 †29d68fde2 | 13.56 ms | 1.36 ms | **over 3x** | two slice-copies of the whole explicit stack per subdivision |
+| `draft_fit_p` | hex_fit | library:hex_fit | **6.90** | 6.87–6.91 †29d68fde2 | 14.00 ms | 2.03 ms | **over 3x** | each of up to 24 trials allocates a fresh edge set, element by element into two vectors |
+| `surface_fitted_spread` | hex_draw | library:hex_draw | **6.70** | 6.69–6.72 †29d68fde2 | 272.7 µs | 40.7 µs | **over 3x** | FOUR full window sweeps, each returning a fresh five-vector run, for a result that needs one |
+| `msg_ping` | game_protocol | library:game_protocol | **6.12** | 6.09–6.29 †29d68fde2 | 13.24 ms | 2.16 ms | **over 3x** | a nested record pair built and returned by value, nothing else |
+| `slugify` | markdown | library:markdown | **4.06** | 4.02–4.09 †29d68fde2 | 7.38 ms | 1.82 ms | **over 3x** | a 1-character text and its lowercased copy per uppercase byte |
 | `catalog_churn` | 16_consumer_shapes | consumer:crawler | **3.43** | 3.40–3.45 †e2e031334 | 1.64 ms | 479.5 µs | **over 3x** | `game_items`: a 64-record catalogue with text fields REBUILT on every call, one field read |
-| `req_state_b64` | pluginabi | library:pluginabi | **2.90** | 2.89–2.91 | 273.4 µs | 94.2 µs | over 2x | a whole CBOR tree decoded and discarded for ONE field; a host reading three fields decodes three times |
-| `mat4_transform` | mesh3d | library:mesh3d | **0.94** | 0.94–0.94 | 1.87 ms | 2.00 ms | ok | 12 float operations and a FRESH `Vec3` record returned per call |
+| `req_state_b64` | pluginabi | library:pluginabi | **2.90** | 2.89–2.91 †29d68fde2 | 273.4 µs | 94.2 µs | over 2x | a whole CBOR tree decoded and discarded for ONE field; a host reading three fields decodes three times |
+| `mat4_transform` | mesh3d | library:mesh3d | **0.94** | 0.94–0.94 †29d68fde2 | 1.87 ms | 2.00 ms | ok | 12 float operations and a FRESH `Vec3` record returned per call |
 
 #### record-field — reading and writing fields of records reached through a vector
 
@@ -79,14 +79,14 @@ Why it is slow, priced, and what to build: [analysis/records.md](../../bench/por
 
 | routine | lane | population | × Rust | range | native | Rust | | what it stands for |
 |---|---|---|---:|---|---:|---:|---|---|
-| `mesh_to_floats` | mesh3d | library:mesh3d | **8.26** | 8.19–8.29 | 1.72 ms | 208.7 µs | **over 3x** | per triangle an index, a null test and six fields two structs deep |
-| `fill_polygon` | graphics | library:graphics | **5.19** | 5.17–5.22 | 1.32 ms | 254.7 µs | **over 3x** | per scanline a walk of `vector<Coord>` reading `.px/.py`, a FRESH crossings vector and an insertion sort |
-| `stencil_rotate` | hex_field | library:hex_field | **5.10** | 5.08–5.11 | 11.34 ms | 2.22 ms | **over 3x** | two full passes through four accessor families, then a halo pass of three calls per slot |
-| `locate` | zttext | library:zttext | **4.77** | 4.77–4.78 | 6.99 ms | 1.47 ms | **over 3x** | a linear scan reading `.count` off a record fetched through a vector, once per insert |
-| `terrain_relief_pass` | hex_terrain | library:hex_terrain | **4.75** | 4.74–4.76 | 6.94 ms | 1.46 ms | **over 3x** | the second pass reads a type through a NULLABLE record per cell |
-| `encode` | cbor | library:cbor | **4.63** | 4.62–4.65 | 8.48 ms | 1.83 ms | **over 3x** | canonical map order: since 0.1.5 each key is encoded ONCE into a flat buffer and ranked by an O(n^2) `key_lt`  |
-| `timer_spend` | fixstep | library:fixstep | **3.72** | 3.70–3.75 | 10.59 ms | 2.85 ms | **over 3x** | two fields read and written behind three branches per timer per tick |
-| `save_glb` | glb | library:glb | **3.47** | 3.36–3.53 | 1.18 ms | 339.2 µs | **over 3x** | four walks of `vector<Vertex>` reading NESTED `.pos.x / .normal.y / .uv.x` |
+| `mesh_to_floats` | mesh3d | library:mesh3d | **8.26** | 8.19–8.29 †29d68fde2 | 1.72 ms | 208.7 µs | **over 3x** | per triangle an index, a null test and six fields two structs deep |
+| `fill_polygon` | graphics | library:graphics | **5.19** | 5.17–5.22 †29d68fde2 | 1.32 ms | 254.7 µs | **over 3x** | per scanline a walk of `vector<Coord>` reading `.px/.py`, a FRESH crossings vector and an insertion sort |
+| `stencil_rotate` | hex_field | library:hex_field | **5.10** | 5.08–5.11 †29d68fde2 | 11.34 ms | 2.22 ms | **over 3x** | two full passes through four accessor families, then a halo pass of three calls per slot |
+| `locate` | zttext | library:zttext | **4.77** | 4.77–4.78 †29d68fde2 | 6.99 ms | 1.47 ms | **over 3x** | a linear scan reading `.count` off a record fetched through a vector, once per insert |
+| `terrain_relief_pass` | hex_terrain | library:hex_terrain | **4.75** | 4.74–4.76 †29d68fde2 | 6.94 ms | 1.46 ms | **over 3x** | the second pass reads a type through a NULLABLE record per cell |
+| `encode` | cbor | library:cbor | **4.63** | 4.62–4.65 †29d68fde2 | 8.48 ms | 1.83 ms | **over 3x** | canonical map order: since 0.1.5 each key is encoded ONCE into a flat buffer and ranked by an O(n^2) `key_lt`  |
+| `timer_spend` | fixstep | library:fixstep | **3.72** | 3.70–3.75 †29d68fde2 | 10.59 ms | 2.85 ms | **over 3x** | two fields read and written behind three branches per timer per tick |
+| `save_glb` | glb | library:glb | **3.47** | 3.36–3.53 †29d68fde2 | 1.18 ms | 339.2 µs | **over 3x** | four walks of `vector<Vertex>` reading NESTED `.pos.x / .normal.y / .uv.x` |
 | `chunk_lookup` | 16_consumer_shapes | consumer:moros | **2.35** | 2.33–2.36 †e2e031334 | 504.2 µs | 214.5 µs | over 2x | `map_get_hex` / `map_set_hex`: a linear chunk scan, then a record in a vector in a record |
 | `mesh_aabb` | 16_consumer_shapes | consumer:moros | **2.26** | 2.25–2.26 †e2e031334 | 17.8 µs | 7.9 µs | over 2x | `mesh_aabb`: a min/max over NESTED fields (`v.pos.x / .y / .z`) of 7,168 vertices |
 | `enum_match` | 16_consumer_shapes | consumer:moros | **1.85** | 1.81–1.91 †e2e031334 | 20.6 µs | 11.1 µs | ok | `EditKind`: 3,000 struct-ENUM values built, then matched and destructured |
@@ -101,26 +101,26 @@ Why it is slow, priced, and what to build: [analysis/keyed.md](../../bench/porta
 | routine | lane | population | × Rust | range | native | Rust | | what it stands for |
 |---|---|---|---:|---|---:|---:|---|---|
 | `reload_and_record` | 17_consumer_moros_dryopea | consumer:dryopea | **8.12** | 7.93–8.16 †e2e031334 | 1.57 ms | 193.9 µs | **over 3x** | a two-way hash diff with u8 fields: walk A probing B, walk B probing A |
-| `field_add_cell` | gridmesh | library:gridmesh | **7.04** | 7.04–7.06 | 16.53 ms | 2.35 ms | **over 3x** | a paint: an insert, a bucket probe and append, border dedup-inserts |
-| `build_index` | gridmesh | library:gridmesh | **6.33** | 6.32–6.35 | 13.01 ms | 2.05 ms | **over 3x** | 100,000 dedup-inserts of a record into a hash |
+| `field_add_cell` | gridmesh | library:gridmesh | **7.04** | 7.04–7.06 †29d68fde2 | 16.53 ms | 2.35 ms | **over 3x** | a paint: an insert, a bucket probe and append, border dedup-inserts |
+| `build_index` | gridmesh | library:gridmesh | **6.33** | 6.32–6.35 †29d68fde2 | 13.01 ms | 2.05 ms | **over 3x** | 100,000 dedup-inserts of a record into a hash |
 | `index_fill_find` | 15_stdlib_keyed | stdlib | **6.10** | 6.06–6.15 †e2e031334 | 1.57 ms | 257.5 µs | **over 3x** | `index<EI[id]>` filled out of order, then found in |
-| `anim_of` | assets | library:assets | **5.06** | 5.03–5.09 | 49.68 ms | 9.82 ms | **over 3x** | every lookup FORMATS its composite text key (`"{def}/{action}/{facing}"`) before it can hash it |
+| `anim_of` | assets | library:assets | **5.06** | 5.03–5.09 †29d68fde2 | 49.68 ms | 9.82 ms | **over 3x** | every lookup FORMATS its composite text key (`"{def}/{action}/{facing}"`) before it can hash it |
 | `build_walls` | 18_consumer_crawler | consumer:crawler | **4.63** | 4.37–4.73 †e2e031334 | 3.39 ms | 731.9 µs | **over 3x** | a corner rounded to two integers per wall face probing a hash, a record appended on a miss |
-| `index_build` | hex_recover | library:hex_recover | **4.53** | 4.50–4.59 | 2.38 ms | 525.7 µs | **over 3x** | a hash probe + insert per candidate, keyed on a freshly built text |
+| `index_build` | hex_recover | library:hex_recover | **4.53** | 4.50–4.59 †29d68fde2 | 2.38 ms | 525.7 µs | **over 3x** | a hash probe + insert per candidate, keyed on a freshly built text |
 | `composite_hash` | 16_consumer_shapes | consumer:dryopea | **3.55** | 3.53–3.59 †e2e031334 | 424.5 µs | 119.5 µs | **over 3x** | `paint_line`: a hash on a COMPOSITE two-integer key — find-or-insert, removal by null, probes |
 | `hash_find` | 15_stdlib_keyed | stdlib | **3.47** | 3.40–3.49 †e2e031334 | 292.4 µs | 84.3 µs | **over 3x** | 10k lookups, half of them misses |
-| `collect_dirty_inputs` | gridmesh | library:gridmesh | **3.44** | 3.43–3.46 | 6.21 ms | 1.80 ms | **over 3x** | halo-cell hash lookups plus a seen-set insert per dirty chunk |
+| `collect_dirty_inputs` | gridmesh | library:gridmesh | **3.44** | 3.43–3.46 †29d68fde2 | 6.21 ms | 1.80 ms | **over 3x** | halo-cell hash lookups plus a seen-set insert per dirty chunk |
 | `hash_text_keys` | 15_stdlib_keyed | stdlib | **3.39** | 3.36–4.11 (noisy) †e2e031334 | 467.3 µs | 138.0 µs | **over 3x** | find-or-insert and lookup on 2,000 text keys |
 | `word_count` | 08_word_count | engine | **3.17** | 3.14–3.20 †e2e031334 | 11.61 ms | 3.66 ms | **over 3x** | a text-keyed hash: find-or-insert on an 18-word cycle |
-| `blob_put` | assets | library:assets | **3.11** | 3.09–3.22 | 4.94 ms | 1.59 ms | **over 3x** | a record carrying a `vector<u8>` inserted under a text key |
+| `blob_put` | assets | library:assets | **3.11** | 3.09–3.22 †29d68fde2 | 4.94 ms | 1.59 ms | **over 3x** | a record carrying a `vector<u8>` inserted under a text key |
 | `hash_update` | 15_stdlib_keyed | stdlib | **2.71** | 2.45–3.47 (noisy) †e2e031334 | 140.3 µs | 51.8 µs | over 2x | a lookup followed by a field write |
 | `hash_remove` | 15_stdlib_keyed | stdlib | **2.69** | 2.68–2.71 †e2e031334 | 839.7 µs | 312.3 µs | over 2x | fill, remove every second key, count |
 | `grouped_fill_find` | 15_stdlib_keyed | stdlib | **2.66** | 2.63–2.74 †e2e031334 | 675.0 µs | 253.4 µs | over 2x | a `vector` + `hash` group over one record set: filled through the vector, found through the hash |
-| `keys_near` | assets | library:assets | **2.55** | 2.53–2.58 | 469.8 µs | 184.3 µs | over 2x | an `index` walk plus THREE hash lookups per surviving instance, then an O(n^2) linear dedup |
-| `get_cell` | hex_world | library:hex_world | **2.43** | 2.39–2.47 | 21.90 ms | 9.02 ms | over 2x | a linear scan of the chunk list comparing two fields, then a record returned BY VALUE |
+| `keys_near` | assets | library:assets | **2.55** | 2.53–2.58 †29d68fde2 | 469.8 µs | 184.3 µs | over 2x | an `index` walk plus THREE hash lookups per surviving instance, then an O(n^2) linear dedup |
+| `get_cell` | hex_world | library:hex_world | **2.43** | 2.39–2.47 †29d68fde2 | 21.90 ms | 9.02 ms | over 2x | a linear scan of the chunk list comparing two fields, then a record returned BY VALUE |
 | `hash_fill` | 15_stdlib_keyed | stdlib | **2.36** | 2.31–2.38 †e2e031334 | 493.0 µs | 208.5 µs | over 2x | `hash<E[id]>` filled from empty, 5k integer keys |
 | `hash_walk` | 15_stdlib_keyed | stdlib | **2.26** | 2.23–2.26 †e2e031334 | 166.1 µs | 73.6 µs | over 2x | `for e in hash`: 5k records walked in key order, the order built per walk |
-| `atlas_cell` | text2d | library:text2d | **1.75** | 1.73–1.76 | 1.30 ms | 742.9 µs | ok | a linear scan of the atlas codes per character |
+| `atlas_cell` | text2d | library:text2d | **1.75** | 1.73–1.76 †29d68fde2 | 1.30 ms | 742.9 µs | ok | a linear scan of the atlas codes per character |
 | `sorted_fill_walk` | 15_stdlib_keyed | stdlib | **1.26** | 1.26–1.26 †e2e031334 | 1.65 ms | 1.31 ms | ok | `sorted<ES[id]>` (inline elements) filled out of order, walked in order |
 
 #### vector-build — making a scalar vector: push, comprehension, copy, a vector of vectors
@@ -129,12 +129,12 @@ Why it is slow, priced, and what to build: [analysis/vector-build.md](../../benc
 
 | routine | lane | population | × Rust | range | native | Rust | | what it stands for |
 |---|---|---|---:|---|---:|---:|---|---|
-| `emit_segment` | gridmesh | library:gridmesh | **8.39** | 8.31–8.43 | 18.54 ms | 2.21 ms | **over 3x** | nine parallel narrow-vector appends per segment |
-| `insert_text` | zttext | library:zttext | **7.66** | 7.62–7.72 | 7.53 ms | 984.0 µs | **over 3x** | every keystroke copies the WHOLE append-only buffer element by element (`for c0 in d.buf { nb += [c0] }`): typ |
+| `emit_segment` | gridmesh | library:gridmesh | **8.39** | 8.31–8.43 †29d68fde2 | 18.54 ms | 2.21 ms | **over 3x** | nine parallel narrow-vector appends per segment |
+| `insert_text` | zttext | library:zttext | **7.66** | 7.62–7.72 †29d68fde2 | 7.53 ms | 984.0 µs | **over 3x** | every keystroke copies the WHOLE append-only buffer element by element (`for c0 in d.buf { nb += [c0] }`): typ |
 | `truncate_to` | 17_consumer_moros_dryopea | consumer:dryopea | **7.10** | 6.74–7.22 (noisy) †e2e031334 | 118.4 µs | 16.7 µs | **over 3x** | a timeline of records with inner vectors rebuilt element by element to drop a prefix |
 | `binary_read` | 18_consumer_crawler | consumer:crawler | **6.85** | 6.49–7.02 †e2e031334 | 1.97 ms | 287.8 µs | **over 3x** | a binary file read one i16 at a time (f#read(2) as i16) |
-| `encode_bytes` | cbor | library:cbor | **5.59** | 5.57–5.63 | 633.0 µs | 113.2 µs | **over 3x** | a text payload appended ONE byte at a time (`buf += [value.byte_at(i) as u8]`) |
-| `field_union` | hex_place | library:hex_place | **3.51** | 3.50–3.54 | 979.0 µs | 278.8 µs | **over 3x** | a set allocated by a push loop, then written one cell at a time through an accessor |
+| `encode_bytes` | cbor | library:cbor | **5.59** | 5.57–5.63 †29d68fde2 | 633.0 µs | 113.2 µs | **over 3x** | a text payload appended ONE byte at a time (`buf += [value.byte_at(i) as u8]`) |
+| `field_union` | hex_place | library:hex_place | **3.51** | 3.50–3.54 †29d68fde2 | 979.0 µs | 278.8 µs | **over 3x** | a set allocated by a push loop, then written one cell at a time through an accessor |
 | `grid` | 14_stdlib_vector | stdlib | **2.43** | 2.41–2.44 †e2e031334 | 22.4 µs | 9.2 µs | over 2x | a 128x128 vector of vectors by nested comprehension |
 | `build_vis` | 18_consumer_crawler | consumer:crawler | **2.22** | 2.14–2.34 (noisy) †e2e031334 | 404.5 µs | 182.4 µs | over 2x | per frame a 101x101 push loop, two indexed reads and a small call per pixel |
 | `comprehension` | 14_stdlib_vector | stdlib | **1.72** | 1.70–1.74 †e2e031334 | 5.6 µs | 3.2 µs | ok | `[for i in 0..n { … }]`, 20k |
@@ -148,38 +148,38 @@ Why it is slow, priced, and what to build: [analysis/records.md](../../bench/por
 
 | routine | lane | population | × Rust | range | native | Rust | | what it stands for |
 |---|---|---|---:|---|---:|---:|---|---|
-| `decode` | cbor | library:cbor | **11.69** | 11.65–11.72 | 12.58 ms | 1.08 ms | **over 3x** | one record appended per item, a fresh `Decoded` returned per node, recursion per element |
+| `decode` | cbor | library:cbor | **11.69** | 11.65–11.72 †29d68fde2 | 12.58 ms | 1.08 ms | **over 3x** | one record appended per item, a fresh `Decoded` returned per node, recursion per element |
 | `slope_path_with_undo` | 17_consumer_moros_dryopea | consumer:moros | **8.08** | 7.71–8.28 †e2e031334 | 338.0 µs | 41.9 µs | **over 3x** | per step a record read out of a nested container and appended by value into an undo stack |
-| `invert` | zttext | library:zttext | **7.51** | 7.49–7.56 | 9.64 ms | 1.28 ms | **over 3x** | undo REBUILDS the whole accumulated op vector on every op: quadratic in the op count |
-| `sphere` | mesh3d | library:mesh3d | **6.08** | 6.00–6.11 | 821.3 µs | 135.2 µs | **over 3x** | every vertex built from three nested records through `add_vertex` |
+| `invert` | zttext | library:zttext | **7.51** | 7.49–7.56 †29d68fde2 | 9.64 ms | 1.28 ms | **over 3x** | undo REBUILDS the whole accumulated op vector on every op: quadratic in the op count |
+| `sphere` | mesh3d | library:mesh3d | **6.08** | 6.00–6.11 †29d68fde2 | 821.3 µs | 135.2 µs | **over 3x** | every vertex built from three nested records through `add_vertex` |
 | `panel_build` | 17_consumer_moros_dryopea | consumer:moros | **5.32** | 4.94–5.47 (noisy) †e2e031334 | 4.81 ms | 903.4 µs | **over 3x** | one frame's panel: records with nested fields and texts, a hit test answering a struct-enum |
-| `request` | pluginabi | library:pluginabi | **4.06** | 4.04–4.08 | 4.59 ms | 1.13 ms | **over 3x** | three nested enum records built, two native base64 crossings, then a canonical encode |
+| `request` | pluginabi | library:pluginabi | **4.06** | 4.04–4.08 †29d68fde2 | 4.59 ms | 1.13 ms | **over 3x** | three nested enum records built, two native base64 crossings, then a canonical encode |
 | `mesh_emit` | 16_consumer_shapes | consumer:moros | **2.65** | 2.63–2.66 †e2e031334 | 57.8 µs | 21.8 µs | over 2x | `build_hex_meshes`: NESTED records (`Vec3 + Vec3 + Vec2`) appended, 7 vertices + 6 triangles per hex |
-| `patch` | zttext | library:zttext | **2.40** | 2.37–2.47 | 1.95 ms | 813.5 µs | over 2x | the "incremental" path scans every old box and rebuilds every tail box per keystroke |
-| `delete_range` | zttext | library:zttext | **2.27** | 2.21–2.27 | 1.12 ms | 496.3 µs | over 2x | a fresh `vector<Piece>` per edit, and the piece count only grows |
-| `side_edges` | hex_form | library:hex_form | **2.14** | 2.12–2.14 | 1.89 ms | 886.3 µs | over 2x | a window sweep appending into FIVE parallel vectors, re-run by every surface routine |
-| `extract_headings` | markdown | library:markdown | **2.11** | 2.10–2.12 | 797.7 µs | 377.5 µs | over 2x | a 3-field record with two built texts appended per heading |
-| `layout` | text2d | library:text2d | **1.55** | 1.54–1.56 | 1.71 ms | 1.10 ms | ok | one Quad record appended per character |
+| `patch` | zttext | library:zttext | **2.40** | 2.37–2.47 †29d68fde2 | 1.95 ms | 813.5 µs | over 2x | the "incremental" path scans every old box and rebuilds every tail box per keystroke |
+| `delete_range` | zttext | library:zttext | **2.27** | 2.21–2.27 †29d68fde2 | 1.12 ms | 496.3 µs | over 2x | a fresh `vector<Piece>` per edit, and the piece count only grows |
+| `side_edges` | hex_form | library:hex_form | **2.14** | 2.12–2.14 †29d68fde2 | 1.89 ms | 886.3 µs | over 2x | a window sweep appending into FIVE parallel vectors, re-run by every surface routine |
+| `extract_headings` | markdown | library:markdown | **2.11** | 2.10–2.12 †29d68fde2 | 797.7 µs | 377.5 µs | over 2x | a 3-field record with two built texts appended per heading |
+| `layout` | text2d | library:text2d | **1.55** | 1.54–1.56 †29d68fde2 | 1.71 ms | 1.10 ms | ok | one Quad record appended per character |
 | `record_append` | 14_stdlib_vector | stdlib | **1.06** | 1.06–1.07 †e2e031334 | 37.5 µs | 35.2 µs | ok | `v += [P {…}]`, 20k |
 
 #### call — many small calls or recursion: the per-call frame and argument passing
 
 | routine | lane | population | × Rust | range | native | Rust | | what it stands for |
 |---|---|---|---:|---|---:|---:|---|---|
-| `clock_pump` | fixstep | library:fixstep | **6.10** | 5.84–6.17 (noisy) | 48.48 ms | 7.94 ms | **over 3x** | three frames deep for about six integer operations |
-| `forms_upto` | hex_recover | library:hex_recover | **5.84** | 5.81–5.84 | 1.37 ms | 235.0 µs | **over 3x** | six nested loops x a deep predicate chain x `form_write` x a LINEAR text dedup; the source itself calls it "th |
-| `combine_cut` | hex_place | library:hex_place | **4.54** | 4.49–4.55 | 2.54 ms | 559.3 µs | **over 3x** | a fresh set allocated and swept, then four reads and a write per boundary edge |
-| `edges_cut` | hex_edge | library:hex_edge | **4.17** | 4.16–4.18 | 6.35 ms | 1.52 ms | **over 3x** | every boundary edge pays a 6-deep helper chain |
+| `clock_pump` | fixstep | library:fixstep | **5.95** | 5.93–6.05 | 46.31 ms | 7.78 ms | **over 3x** | three frames deep for about six integer operations |
+| `forms_upto` | hex_recover | library:hex_recover | **5.84** | 5.81–5.84 †29d68fde2 | 1.37 ms | 235.0 µs | **over 3x** | six nested loops x a deep predicate chain x `form_write` x a LINEAR text dedup; the source itself calls it "th |
+| `combine_cut` | hex_place | library:hex_place | **4.54** | 4.49–4.55 †29d68fde2 | 2.54 ms | 559.3 µs | **over 3x** | a fresh set allocated and swept, then four reads and a write per boundary edge |
+| `edges_cut` | hex_edge | library:hex_edge | **4.17** | 4.16–4.18 †29d68fde2 | 6.35 ms | 1.52 ms | **over 3x** | every boundary edge pays a 6-deep helper chain |
 | `resolve_move` | 17_consumer_moros_dryopea | consumer:moros | **4.11** | 4.00–4.30 (noisy) †e2e031334 | 1.39 ms | 337.4 µs | **over 3x** | per-frame physics: a chain of small functions passing small records by value |
-| `write_text` | text2d | library:text2d | **2.72** | 2.71–2.73 | 3.44 ms | 1.27 ms | over 2x | one set_pixel call per lit sub-pixel of every glyph |
-| `hex_neighbor` | hex_grid | library:hex_grid | **2.68** | 2.68–2.69 | 28.43 ms | 10.59 ms | over 2x | a branchy parity table returning a TUPLE: the innermost callee of every 6-direction sweep in the family |
-| `proxies_overlap` | shapes | library:shapes | **2.46** | 2.45–2.47 | 33.52 ms | 13.62 ms | over 2x | 16 x 16 nested predicate calls, each reading 8 fields off two records |
+| `write_text` | text2d | library:text2d | **2.72** | 2.71–2.73 †29d68fde2 | 3.44 ms | 1.27 ms | over 2x | one set_pixel call per lit sub-pixel of every glyph |
+| `hex_neighbor` | hex_grid | library:hex_grid | **2.68** | 2.68–2.69 †29d68fde2 | 28.43 ms | 10.59 ms | over 2x | a branchy parity table returning a TUPLE: the innermost callee of every 6-direction sweep in the family |
+| `proxies_overlap` | shapes | library:shapes | **2.46** | 2.45–2.47 †29d68fde2 | 33.52 ms | 13.62 ms | over 2x | 16 x 16 nested predicate calls, each reading 8 fields off two records |
 | `fibonacci` | 01_fibonacci | engine | **2.14** | 2.14–2.17 †e2e031334 | 6.29 ms | 2.93 ms | over 2x | recursive calls, two per frame |
-| `value` | tween | library:tween | **2.14** | 2.14–2.14 | 8.53 ms | 3.98 ms | over 2x | progress, ease and lerp: three calls and a record read per number |
-| `draw_line` | graphics | library:graphics | **2.00** | 1.98–2.03 | 8.58 ms | 4.28 ms | ok | Bresenham calling the METHOD `set_pixel` once per step |
-| `bone_shape_has` | hex_body | library:hex_body | **1.98** | 1.96–1.99 | 3.53 ms | 1.79 ms | ok | the whole chain re-walked on EVERY point query |
-| `edgeset_count` | hex_field | library:hex_field | **1.91** | 1.91–1.92 | 991.0 µs | 517.8 µs | ok | a triple loop through `edge_mat` -> `eg_index` -> `eg_dir_from`, which linear-scans six neighbours |
-| `passable` | hex_edge | library:hex_edge | **1.74** | 1.74–1.75 | 18.27 ms | 10.48 ms | ok | the movement loop's innermost query: four calls and a 6-iteration search to read one slot |
+| `value` | tween | library:tween | **2.14** | 2.14–2.14 †29d68fde2 | 8.53 ms | 3.98 ms | over 2x | progress, ease and lerp: three calls and a record read per number |
+| `draw_line` | graphics | library:graphics | **2.00** | 1.98–2.03 †29d68fde2 | 8.58 ms | 4.28 ms | ok | Bresenham calling the METHOD `set_pixel` once per step |
+| `bone_shape_has` | hex_body | library:hex_body | **1.98** | 1.96–1.99 †29d68fde2 | 3.53 ms | 1.79 ms | ok | the whole chain re-walked on EVERY point query |
+| `edgeset_count` | hex_field | library:hex_field | **1.91** | 1.91–1.92 †29d68fde2 | 991.0 µs | 517.8 µs | ok | a triple loop through `edge_mat` -> `eg_index` -> `eg_dir_from`, which linear-scans six neighbours |
+| `passable` | hex_edge | library:hex_edge | **1.74** | 1.74–1.75 †29d68fde2 | 18.27 ms | 10.48 ms | ok | the movement loop's innermost query: four calls and a 6-iteration search to read one slot |
 
 #### vector-write — element writes and fills of scalar vectors, in place
 
@@ -187,16 +187,16 @@ Why it is slow, priced, and what to build: [analysis/vector-write.md](../../benc
 
 | routine | lane | population | × Rust | range | native | Rust | | what it stands for |
 |---|---|---|---:|---|---:|---:|---|---|
-| `canvas` | graphics | library:graphics | **7.98** | 5.41–8.53 (noisy) | 633.8 µs | 79.4 µs | **over 3x** | every frame, atlas and layer allocates one through the doubling fill |
-| `indices` | random | library:random | **7.35** | 7.31–7.38 | 14.39 ms | 1.96 ms | **over 3x** | Fisher-Yates: two indexed reads and two writes per step |
-| `fill_rect` | graphics | library:graphics | **5.41** | 5.39–5.43 | 5.54 ms | 1.02 ms | **over 3x** | the commonest primitive: `y*width+x` and a bounds test per pixel |
+| `canvas` | graphics | library:graphics | **7.98** | 5.41–8.53 (noisy) †29d68fde2 | 633.8 µs | 79.4 µs | **over 3x** | every frame, atlas and layer allocates one through the doubling fill |
+| `indices` | random | library:random | **7.35** | 7.31–7.38 †29d68fde2 | 14.39 ms | 1.96 ms | **over 3x** | Fisher-Yates: two indexed reads and two writes per step |
+| `fill_rect` | graphics | library:graphics | **5.41** | 5.39–5.43 †29d68fde2 | 5.54 ms | 1.02 ms | **over 3x** | the commonest primitive: `y*width+x` and a bounds test per pixel |
 | `hydro_pitfill` | 18_consumer_crawler | consumer:crawler | **2.87** | 2.69–3.00 (noisy) †e2e031334 | 720.7 µs | 251.0 µs | over 2x | a priority flood on a min-heap of two parallel integer vectors |
 | `fov_rays` | 16_consumer_shapes | consumer:crawler | **2.77** | 2.77–2.79 †e2e031334 | 4.4 µs | 1.6 µs | over 2x | `sim_compute_fov`: cells in a radius, a short ray each, flags written |
 | `talus_relax` | 18_consumer_crawler | consumer:crawler | **2.74** | 2.60–2.81 †e2e031334 | 1.00 ms | 366.9 µs | over 2x | a 4-neighbour relaxation over const and & float vectors, 120 sweeps |
 | `sort` | 10_sort | engine | **2.54** | 2.52–2.55 †e2e031334 | 1.64 ms | 648.0 µs | over 2x | insertion sort: indexed read, compare, indexed write |
 | `index_write` | 14_stdlib_vector | stdlib | **2.49** | 2.48–2.49 †e2e031334 | 5.9 µs | 2.4 µs | over 2x | `v[i] = …` over 20k |
-| `field_digest` | hex_recover | library:hex_recover | **2.30** | 1.92–2.76 (noisy) | 2.71 ms | 1.18 ms | over 2x | twelve insertion sorts writing a growing vector in place |
-| `clear` | graphics | library:graphics | **2.00** | 1.81–2.05 (noisy) | 66.0 µs | 33.0 µs | ok | the per-frame wipe: one indexed store per pixel |
+| `field_digest` | hex_recover | library:hex_recover | **2.30** | 1.92–2.76 (noisy) †29d68fde2 | 2.71 ms | 1.18 ms | over 2x | twelve insertion sorts writing a growing vector in place |
+| `clear` | graphics | library:graphics | **2.00** | 1.81–2.05 (noisy) †29d68fde2 | 66.0 µs | 33.0 µs | ok | the per-frame wipe: one indexed store per pixel |
 | `lock` | 12_drawing | engine | **1.64** | 1.63–1.67 †e2e031334 | 1.30 ms | 791.8 µs | ok | the drawing library's brush-lock raster |
 | `remove_front` | 14_stdlib_vector | stdlib | **1.32** | 1.32–1.34 †e2e031334 | 64.5 µs | 48.7 µs | ok | `v.remove(0)` until empty, 1,024 |
 | `bfs_flow` | 16_consumer_shapes | consumer:crawler | **1.09** | 1.08–1.09 †e2e031334 | 150.6 µs | 138.1 µs | ok | `compute_flow`: a BFS over a flat vector, six TUPLE-returning neighbour probes per cell |
@@ -206,19 +206,19 @@ Why it is slow, priced, and what to build: [analysis/vector-write.md](../../benc
 
 | routine | lane | population | × Rust | range | native | Rust | | what it stands for |
 |---|---|---|---:|---|---:|---:|---|---|
-| `rig_world_frame3` | hex_body | library:hex_body | **5.03** | 5.02–5.06 | 11.17 ms | 2.22 ms | **over 3x** | TWELVE parallel float vectors allocated per call to carry a Rodrigues + 3x3 matmul chain |
-| `mat4_mul` | mesh3d | library:mesh3d | **4.55** | 4.54–4.55 | 3.91 ms | 860.6 µs | **over 3x** | 64 multiply-adds indexing a `vector<float>` INSIDE a record |
-| `ease` | tween | library:tween | **4.22** | 4.21–4.22 | 2.82 ms | 669.4 µs | **over 3x** | an 11-arm match with cos, pow, sin and sqrt |
-| `terrain_fbm` | hex_terrain | library:hex_terrain | **4.04** | 4.04–4.05 | 12.28 ms | 3.04 ms | **over 3x** | per octave four integer hashes and a smoothstep lerp: the densest per-op kernel in the tree |
-| `terrain_surface_at` | hex_terrain | library:hex_terrain | **4.03** | 4.02–4.03 | 7.84 ms | 1.95 ms | **over 3x** | per sample a weight vector ALLOCATED, a 3x4 kernel-tap loop, and hundreds of hashed-noise evaluations |
-| `roof_match` | hex_roof | library:hex_roof | **3.47** | 3.41–3.58 | 4.97 ms | 1.43 ms | **over 3x** | up to four fits; the ridge climb drives thousands of full-footprint sqrt sweeps |
-| `roof_cone` | hex_roof | library:hex_roof | **3.11** | 3.02–3.21 | 7.39 ms | 2.38 ms | **over 3x** | one sqrt plus two accessor calls per cell: the cleanest one-op-per-cell float lane |
-| `approach` | fixstep | library:fixstep | **2.72** | 2.71–2.73 | 36.75 ms | 13.50 ms | over 2x | one exp per eased value per frame |
+| `rig_world_frame3` | hex_body | library:hex_body | **5.03** | 5.02–5.06 †29d68fde2 | 11.17 ms | 2.22 ms | **over 3x** | TWELVE parallel float vectors allocated per call to carry a Rodrigues + 3x3 matmul chain |
+| `mat4_mul` | mesh3d | library:mesh3d | **4.55** | 4.54–4.55 †29d68fde2 | 3.91 ms | 860.6 µs | **over 3x** | 64 multiply-adds indexing a `vector<float>` INSIDE a record |
+| `ease` | tween | library:tween | **4.22** | 4.21–4.22 †29d68fde2 | 2.82 ms | 669.4 µs | **over 3x** | an 11-arm match with cos, pow, sin and sqrt |
+| `terrain_fbm` | hex_terrain | library:hex_terrain | **4.04** | 4.04–4.05 †29d68fde2 | 12.28 ms | 3.04 ms | **over 3x** | per octave four integer hashes and a smoothstep lerp: the densest per-op kernel in the tree |
+| `terrain_surface_at` | hex_terrain | library:hex_terrain | **4.03** | 4.02–4.03 †29d68fde2 | 7.84 ms | 1.95 ms | **over 3x** | per sample a weight vector ALLOCATED, a 3x4 kernel-tap loop, and hundreds of hashed-noise evaluations |
+| `roof_match` | hex_roof | library:hex_roof | **3.47** | 3.41–3.58 †29d68fde2 | 4.97 ms | 1.43 ms | **over 3x** | up to four fits; the ridge climb drives thousands of full-footprint sqrt sweeps |
+| `roof_cone` | hex_roof | library:hex_roof | **3.11** | 3.02–3.21 †29d68fde2 | 7.39 ms | 2.38 ms | **over 3x** | one sqrt plus two accessor calls per cell: the cleanest one-op-per-cell float lane |
+| `approach` | fixstep | library:fixstep | **2.72** | 2.71–2.73 †29d68fde2 | 36.75 ms | 13.50 ms | over 2x | one exp per eased value per frame |
 | `newton_sqrt` | 06_newton_sqrt | engine | **2.11** | 2.11–2.11 †e2e031334 | 19.98 ms | 9.46 ms | over 2x | float division, with the nullable quotient discharged |
-| `px_to_hex` | hex_grid | library:hex_grid | **1.95** | 1.95–1.96 | 17.80 ms | 9.11 ms | ok | two divides then a round with three `round`, three `abs` and a three-way branch |
-| `way_stamp` | hex_way | library:hex_way | **1.94** | 1.94–1.95 | 9.91 ms | 5.11 ms | ok | two full window sweeps of sqrt / atan2 per point per segment |
-| `track_distance` | hex_way | library:hex_way | **1.73** | 1.72–1.73 | 35.17 ms | 20.35 ms | ok | the innermost float primitive of hex_way AND hex_roof: a sqrt per straight, atan2 + wrap per arc |
-| `sweep_path_from` | hex_edge | library:hex_edge | **1.71** | 1.71–1.72 | 4.78 ms | 2.79 ms | ok | up to 256 lattice steps, each solving 6 bisector intersections in doubles |
+| `px_to_hex` | hex_grid | library:hex_grid | **1.95** | 1.95–1.96 †29d68fde2 | 17.80 ms | 9.11 ms | ok | two divides then a round with three `round`, three `abs` and a three-way branch |
+| `way_stamp` | hex_way | library:hex_way | **1.94** | 1.94–1.95 †29d68fde2 | 9.91 ms | 5.11 ms | ok | two full window sweeps of sqrt / atan2 per point per segment |
+| `track_distance` | hex_way | library:hex_way | **1.73** | 1.72–1.73 †29d68fde2 | 35.17 ms | 20.35 ms | ok | the innermost float primitive of hex_way AND hex_roof: a sqrt per straight, atan2 + wrap per arc |
+| `sweep_path_from` | hex_edge | library:hex_edge | **1.71** | 1.71–1.72 †29d68fde2 | 4.78 ms | 2.79 ms | ok | up to 256 lattice steps, each solving 6 bisector intersections in doubles |
 | `tuple_kernel` | 16_consumer_shapes | consumer:crawler | **1.59** | 1.58–1.59 †e2e031334 | 142.6 µs | 90.0 µs | ok | `ov_sample`: a leaf returning a TUPLE, scanning a polyline of records, 1,024 cells |
 | `mandelbrot` | 05_mandelbrot | engine | **0.99** | 0.99–0.99 †e2e031334 | 6.17 ms | 6.24 ms | ok | float multiply-add with an escape test |
 | `hash` | 12_drawing | engine | **0.94** | 0.91–1.00 (noisy) †e2e031334 | 62.6 µs | 66.4 µs | ok | the drawing library's seeded noise hash |
@@ -227,15 +227,15 @@ Why it is slow, priced, and what to build: [analysis/vector-write.md](../../benc
 
 | routine | lane | population | × Rust | range | native | Rust | | what it stands for |
 |---|---|---|---:|---|---:|---:|---|---|
-| `doc_read` | hex_field | library:hex_field | **8.31** | 8.27–8.35 | 3.01 ms | 361.6 µs | **over 3x** | one file-read builtin crossing PER CELL per section |
-| `rand_indices` | random | library:random | **5.38** | 5.37–5.39 | 3.94 ms | 731.8 µs | **over 3x** | a crossing that builds and returns a store vector |
-| `rand` | random | library:random | **2.70** | 2.70–2.71 | 3.93 ms | 1.45 ms | over 2x | the minimum crossing: two integers in, one out |
-| `byte_at` | web | library:web | **2.17** | 2.17–2.17 | 1.89 ms | 871.3 µs | over 2x | one cdylib crossing per byte read |
-| `byte_at` | ssh | library:ssh | **2.16** | 2.16–2.16 | 1.88 ms | 871.2 µs | over 2x | one cdylib crossing per received byte; the callee is one load |
-| `pack_u8` | web | library:web | **1.83** | 1.83–1.84 | 2.73 ms | 1.49 ms | ok | one cdylib crossing per byte packed: the calibration constant |
-| `base64_to_bytes` | crypto | library:crypto | **1.22** | 1.20–1.23 | 14.15 ms | 11.63 ms | ok | a crossing that ALLOCATES a store-owned `vector<u8>` |
-| `sha256_small` | crypto | library:crypto | **1.13** | 1.11–1.15 | 44.12 ms | 39.16 ms | ok | sha256 of a 64-byte text: the crossing around ~1 µs of work |
-| `sha256_1m` | crypto | library:crypto | **1.01** | 1.00–1.01 | 3.28 ms | 3.26 ms | ok | sha256 of 1 MiB: the boundary amortised |
+| `doc_read` | hex_field | library:hex_field | **8.31** | 8.27–8.35 †29d68fde2 | 3.01 ms | 361.6 µs | **over 3x** | one file-read builtin crossing PER CELL per section |
+| `rand_indices` | random | library:random | **5.38** | 5.37–5.39 †29d68fde2 | 3.94 ms | 731.8 µs | **over 3x** | a crossing that builds and returns a store vector |
+| `rand` | random | library:random | **2.70** | 2.70–2.71 †29d68fde2 | 3.93 ms | 1.45 ms | over 2x | the minimum crossing: two integers in, one out |
+| `byte_at` | web | library:web | **2.17** | 2.17–2.17 †29d68fde2 | 1.89 ms | 871.3 µs | over 2x | one cdylib crossing per byte read |
+| `byte_at` | ssh | library:ssh | **2.16** | 2.16–2.16 †29d68fde2 | 1.88 ms | 871.2 µs | over 2x | one cdylib crossing per received byte; the callee is one load |
+| `pack_u8` | web | library:web | **1.83** | 1.83–1.84 †29d68fde2 | 2.73 ms | 1.49 ms | ok | one cdylib crossing per byte packed: the calibration constant |
+| `base64_to_bytes` | crypto | library:crypto | **1.22** | 1.20–1.23 †29d68fde2 | 14.15 ms | 11.63 ms | ok | a crossing that ALLOCATES a store-owned `vector<u8>` |
+| `sha256_small` | crypto | library:crypto | **1.13** | 1.11–1.15 †29d68fde2 | 44.12 ms | 39.16 ms | ok | sha256 of a 64-byte text: the crossing around ~1 µs of work |
+| `sha256_1m` | crypto | library:crypto | **1.01** | 1.00–1.01 †29d68fde2 | 3.28 ms | 3.26 ms | ok | sha256 of 1 MiB: the boundary amortised |
 
 #### parallel — `par`: work split over threads and its results gathered
 
@@ -252,15 +252,15 @@ Why it is slow, priced, and what to build: [analysis/vector-write.md](../../benc
 
 | routine | lane | population | × Rust | range | native | Rust | | what it stands for |
 |---|---|---|---:|---|---:|---:|---|---|
-| `header` | server | library:server | **13.72** | 13.54–13.91 | 9.74 ms | 710.1 µs | **over 3x** | EVERY request header lowercased per lookup, the value rejoined piece by piece |
-| `parse` | arguments | library:arguments | **7.94** | 7.88–7.98 | 29.89 ms | 3.76 ms | **over 3x** | a linear scan of the options with a text compare per entry, per argv token |
+| `header` | server | library:server | **13.72** | 13.54–13.91 †29d68fde2 | 9.74 ms | 710.1 µs | **over 3x** | EVERY request header lowercased per lookup, the value rejoined piece by piece |
+| `parse` | arguments | library:arguments | **7.94** | 7.88–7.98 †29d68fde2 | 29.89 ms | 3.76 ms | **over 3x** | a linear scan of the options with a text compare per entry, per argv token |
 | `mapfile_to_painted` | 17_consumer_moros_dryopea | consumer:dryopea | **7.89** | 7.72–8.03 †e2e031334 | 1.83 ms | 232.4 µs | **over 3x** | per entry a linear palette scan comparing a text field, then a composite-key insert |
-| `seg` | zttext | library:zttext | **4.12** | 4.08–4.17 | 980.5 µs | 238.1 µs | **over 3x** | the choke point of six entry points: it MATERIALISES the whole document, explodes it to characters, then class |
-| `parse` | time | library:time | **3.03** | 3.03–3.04 | 1.76 ms | 581.2 µs | **over 3x** | an ISO timestamp parsed with a whole-text digit walk per field |
+| `seg` | zttext | library:zttext | **4.12** | 4.08–4.17 †29d68fde2 | 980.5 µs | 238.1 µs | **over 3x** | the choke point of six entry points: it MATERIALISES the whole document, explodes it to characters, then class |
+| `parse` | time | library:time | **3.03** | 3.03–3.04 †29d68fde2 | 1.76 ms | 581.2 µs | **over 3x** | an ISO timestamp parsed with a whole-text digit walk per field |
 | `byte_walk` | 13_stdlib_text | stdlib | **2.14** | 2.13–2.14 †e2e031334 | 2.6 µs | 1.2 µs | over 2x | `byte_at` over `0..size` |
-| `form_read` | hex_form | library:hex_form | **2.03** | 2.01–2.06 | 18.45 ms | 9.09 ms | over 2x | every word helper re-splits the line: a 12-field line is split a dozen times |
+| `form_read` | hex_form | library:hex_form | **2.03** | 2.01–2.06 †29d68fde2 | 18.45 ms | 9.09 ms | over 2x | every word helper re-splits the line: a 12-field line is split a dozen times |
 | `find_contains` | 13_stdlib_text | stdlib | **1.61** | 1.59–1.63 †e2e031334 | 14.9 µs | 9.3 µs | ok | `contains` and `find`, per line |
-| `rig_read` | hex_body | library:hex_body | **1.47** | 1.45–1.48 | 8.57 ms | 5.83 ms | ok | every word helper re-splits the line: a 12-field bone line is split ~15 times |
+| `rig_read` | hex_body | library:hex_body | **1.47** | 1.45–1.48 †29d68fde2 | 8.57 ms | 5.83 ms | ok | every word helper re-splits the line: a 12-field bone line is split ~15 times |
 | `split_walk` | 13_stdlib_text | stdlib | **1.08** | 1.07–1.10 †e2e031334 | 2.7 µs | 2.5 µs | ok | `for line in text.split(c)` |
 | `char_walk` | 13_stdlib_text | stdlib | **1.00** | 1.00–1.00 †e2e031334 | 7.2 µs | 7.2 µs | ok | `for c in text` |
 
@@ -269,23 +269,23 @@ Why it is slow, priced, and what to build: [analysis/vector-write.md](../../benc
 | routine | lane | population | × Rust | range | native | Rust | | what it stands for |
 |---|---|---|---:|---|---:|---:|---|---|
 | `map_json` | 17_consumer_moros_dryopea | consumer:moros | **8.45** | 8.33–8.65 †e2e031334 | 13.19 ms | 1.56 ms | **over 3x** | a whole map serialised with {m:j} and parsed back with Map.parse |
-| `render_inline` | markdown | library:markdown | **7.58** | 7.55–7.62 | 12.02 ms | 1.59 ms | **over 3x** | a 1-character text built and appended per character, recursing per span |
-| `materialise` | zttext | library:zttext | **6.54** | 6.52–6.58 | 509.3 µs | 77.9 µs | **over 3x** | every piece span concatenated ONE character at a time (`out += "{ch}"`) |
+| `render_inline` | markdown | library:markdown | **7.58** | 7.55–7.62 †29d68fde2 | 12.02 ms | 1.59 ms | **over 3x** | a 1-character text built and appended per character, recursing per span |
+| `materialise` | zttext | library:zttext | **6.54** | 6.52–6.58 †29d68fde2 | 509.3 µs | 77.9 µs | **over 3x** | every piece span concatenated ONE character at a time (`out += "{ch}"`) |
 | `emit_to_material` | 17_consumer_moros_dryopea | consumer:moros | **5.76** | 5.61–5.99 †e2e031334 | 427.3 µs | 74.2 µs | **over 3x** | per hex an integer formatted to text and a mesh list scanned comparing a text field |
-| `format_iso` | time | library:time | **5.32** | 5.31–5.35 | 5.01 ms | 940.9 µs | **over 3x** | three zero-padded interpolations through two helpers |
+| `format_iso` | time | library:time | **5.32** | 5.31–5.35 †29d68fde2 | 5.01 ms | 940.9 µs | **over 3x** | three zero-padded interpolations through two helpers |
 | `char_roundtrip` | 18_consumer_crawler | consumer:crawler | **4.31** | 4.11–4.47 †e2e031334 | 7.77 ms | 1.80 ms | **over 3x** | per character a code changed and formatted back as a character |
-| `render` | markdown | library:markdown | **2.80** | 2.78–2.82 | 3.61 ms | 1.29 ms | over 2x | the block state machine over a 107 KiB document |
+| `render` | markdown | library:markdown | **2.80** | 2.78–2.82 †29d68fde2 | 3.61 ms | 1.29 ms | over 2x | the block state machine over a 107 KiB document |
 | `string_build` | 07_string_build | engine | **2.66** | 2.56–2.69 †e2e031334 | 11.15 ms | 4.20 ms | over 2x | 200k formatted appends to one text |
-| `form_write` | hex_form | library:hex_form | **2.63** | 2.54–2.65 | 1.97 ms | 748.5 µs | over 2x | interpolation and `+=` per side, called once per proposal in the recovery enumeration |
-| `save_scene_glb` | glb | library:glb | **2.36** | 2.34–2.38 | 1.82 ms | 769.2 µs | over 2x | 170 lines of `result += "…{x:.6}…"` per node, material and light |
-| `escape_html` | html | library:html | **2.22** | 2.21–2.26 | 4.51 ms | 2.03 ms | over 2x | one per-character append loop over a 120-byte text |
-| `wrap` | text2d | library:text2d | **1.66** | 1.65–1.67 | 588.3 µs | 354.2 µs | ok | per character `word += c`, per word a concatenation and a re-measure |
+| `form_write` | hex_form | library:hex_form | **2.63** | 2.54–2.65 †29d68fde2 | 1.97 ms | 748.5 µs | over 2x | interpolation and `+=` per side, called once per proposal in the recovery enumeration |
+| `save_scene_glb` | glb | library:glb | **2.36** | 2.34–2.38 †29d68fde2 | 1.82 ms | 769.2 µs | over 2x | 170 lines of `result += "…{x:.6}…"` per node, material and light |
+| `escape_html` | html | library:html | **2.22** | 2.21–2.26 †29d68fde2 | 4.51 ms | 2.03 ms | over 2x | one per-character append loop over a 120-byte text |
+| `wrap` | text2d | library:text2d | **1.66** | 1.65–1.67 †29d68fde2 | 588.3 µs | 354.2 µs | ok | per character `word += c`, per word a concatenation and a re-measure |
 | `format_specs` | 18_consumer_crawler | consumer:crawler | **1.62** | 1.55–1.75 (noisy) †e2e031334 | 5.54 ms | 3.42 ms | ok | per-frame format widths and precisions, {x:4.1} {n:3} {m:X} |
-| `html_escape` | markdown | library:markdown | **1.57** | 1.56–1.58 | 5.67 ms | 3.61 ms | ok | a character walk appending an entity or the character |
+| `html_escape` | markdown | library:markdown | **1.57** | 1.56–1.58 †29d68fde2 | 5.67 ms | 3.61 ms | ok | a character walk appending an entity or the character |
 | `trim_lower` | 13_stdlib_text | stdlib | **1.55** | 1.54–1.56 †e2e031334 | 13.0 µs | 8.3 µs | ok | `trim` + `to_lowercase` + `starts_with`, per line |
 | `slice_shrink` | 18_consumer_crawler | consumer:crawler | **1.45** | 1.40–1.50 †e2e031334 | 7.01 ms | 4.84 ms | ok | a text shrunk one character at a time by slicing, and substrings sliced per line |
 | `format_num` | 13_stdlib_text | stdlib | **1.43** | 1.42–1.45 †e2e031334 | 389.7 µs | 272.8 µs | ok | integers and floats formatted into a text |
-| `escape_html_blob` | html | library:html | **1.40** | 1.40–1.40 | 1.98 ms | 1.42 ms | ok | the same loop over a 64 KiB blob |
+| `escape_html_blob` | html | library:html | **1.40** | 1.40–1.40 †29d68fde2 | 1.98 ms | 1.42 ms | ok | the same loop over a 64 KiB blob |
 | `quadratic_out` | 18_consumer_crawler | consumer:crawler | **1.25** | 1.21–1.31 †e2e031334 | 17.36 ms | 13.92 ms | ok | a 2 MB text grown by out = out + "{v:.9}" |
 | `join` | 13_stdlib_text | stdlib | **1.18** | 1.18–1.19 †e2e031334 | 8.5 µs | 7.2 µs | ok | `join` of 2,000 texts |
 | `split` | 13_stdlib_text | stdlib | **1.14** | 1.13–1.15 †e2e031334 | 3.2 µs | 2.8 µs | ok | `split` with its pieces collected into a vector |
@@ -295,12 +295,12 @@ Why it is slow, priced, and what to build: [analysis/vector-write.md](../../benc
 
 | routine | lane | population | × Rust | range | native | Rust | | what it stands for |
 |---|---|---|---:|---|---:|---:|---|---|
-| `clock_advance` | fixstep | library:fixstep | **3.11** | 3.08–3.12 | 26.85 ms | 8.63 ms | **over 3x** | divisions, two field writes and a nested call per frame |
-| `fill_triangle` | graphics | library:graphics | **3.06** | 3.05–3.06 | 12.12 ms | 3.96 ms | **over 3x** | two multiply-before-divide edge interpolations per scanline |
-| `get` | random | library:random | **2.80** | 2.79–2.81 | 12.89 ms | 4.60 ms | over 2x | a combined LCG in loft: two divisions and two field writes per draw |
+| `clock_advance` | fixstep | library:fixstep | **3.11** | 3.08–3.12 †29d68fde2 | 26.85 ms | 8.63 ms | **over 3x** | divisions, two field writes and a nested call per frame |
+| `fill_triangle` | graphics | library:graphics | **3.06** | 3.05–3.06 †29d68fde2 | 12.12 ms | 3.96 ms | **over 3x** | two multiply-before-divide edge interpolations per scanline |
+| `get` | random | library:random | **2.80** | 2.79–2.81 †29d68fde2 | 12.89 ms | 4.60 ms | over 2x | a combined LCG in loft: two divisions and two field writes per draw |
 | `collatz` | 04_collatz | engine | **1.86** | 1.85–1.87 †e2e031334 | 36.73 ms | 19.72 ms | ok | `%`, `/`, `*` on a data-dependent branch |
-| `iso_week` | time | library:time | **1.56** | 1.55–1.56 | 1.16 ms | 745.1 µs | ok | the ISO week: four helpers deep |
-| `day` | time | library:time | **1.55** | 1.54–1.55 | 1.18 ms | 761.0 µs | ok | civil-date arithmetic: two helper hops, four divisions, a tuple |
+| `iso_week` | time | library:time | **1.56** | 1.55–1.56 †29d68fde2 | 1.16 ms | 745.1 µs | ok | the ISO week: four helpers deep |
+| `day` | time | library:time | **1.55** | 1.54–1.55 †29d68fde2 | 1.18 ms | 761.0 µs | ok | civil-date arithmetic: two helper hops, four divisions, a tuple |
 | `sum_loop` | 02_sum_loop | engine | **1.38** | 1.38–1.38 †e2e031334 | 5.75 ms | 4.17 ms | ok | a loop-carried integer mix, 5M steps |
 | `sieve` | 03_sieve | engine | **0.87** | 0.87–0.87 †e2e031334 | 4.76 ms | 5.45 ms | ok | trial division: `%`, `*`, compare, a call per candidate |
 
@@ -308,19 +308,19 @@ Why it is slow, priced, and what to build: [analysis/vector-write.md](../../benc
 
 | routine | lane | population | × Rust | range | native | Rust | | what it stands for |
 |---|---|---|---:|---|---:|---:|---|---|
-| `draw_quads` | text2d | library:text2d | **4.34** | 4.32–4.35 | 590.7 µs | 136.1 µs | **over 3x** | get_pixel on the atlas and set_pixel on the target per texel |
-| `wall_chain_walk` | hex_shape | library:hex_shape | **3.42** | 3.41–3.46 | 5.70 ms | 1.67 ms | **over 3x** | triple-nested rescans of the endpoint table, two O(n) helpers inside |
-| `cell_proxy` | assets | library:assets | **2.59** | 2.58–2.59 | 6.71 ms | 2.59 ms | over 2x | two banded texel passes per sprite: a bounds-checked `vector<u8>` read, then up to four reads-plus-writes into |
+| `draw_quads` | text2d | library:text2d | **4.34** | 4.32–4.35 †29d68fde2 | 590.7 µs | 136.1 µs | **over 3x** | get_pixel on the atlas and set_pixel on the target per texel |
+| `wall_chain_walk` | hex_shape | library:hex_shape | **3.42** | 3.41–3.46 †29d68fde2 | 5.70 ms | 1.67 ms | **over 3x** | triple-nested rescans of the endpoint table, two O(n) helpers inside |
+| `cell_proxy` | assets | library:assets | **2.59** | 2.58–2.59 †29d68fde2 | 6.71 ms | 2.59 ms | over 2x | two banded texel passes per sprite: a bounds-checked `vector<u8>` read, then up to four reads-plus-writes into |
 | `binary_map` | 18_consumer_crawler | consumer:crawler | **2.45** | 2.33–2.65 (noisy) †e2e031334 | 1.10 ms | 450.1 µs | over 2x | the same 150 000 i16 off a MAPPED file (file_map): two byte reads per element, no copy of the file (@PLN174 F3) |
-| `boundary_loops` | hex_form | library:hex_form | **2.40** | 2.39–2.40 | 18.99 ms | 7.92 ms | over 2x | label propagation rescans all ORDERED pairs of boundary edges to a fixpoint |
+| `boundary_loops` | hex_form | library:hex_form | **2.40** | 2.40–2.41 | 18.63 ms | 7.75 ms | over 2x | label propagation rescans all ORDERED pairs of boundary edges to a fixpoint |
 | `sum` | 14_stdlib_vector | stdlib | **1.78** | 1.77–1.80 †e2e031334 | 2.9 µs | 1.6 µs | ok | the `sum` aggregate (a reduction the reference vectorises) |
-| `terrain_hydrology` | hex_terrain | library:hex_terrain | **1.37** | 1.36–1.37 | 34.60 ms | 25.34 ms | ok | a SELECTION-scan priority flood, O(n^2) by its own comment, over seven parallel vectors |
+| `terrain_hydrology` | hex_terrain | library:hex_terrain | **1.37** | 1.36–1.37 †29d68fde2 | 34.60 ms | 25.34 ms | ok | a SELECTION-scan priority flood, O(n^2) by its own comment, over seven parallel vectors |
 | `index_read` | 14_stdlib_vector | stdlib | **1.36** | 1.36–1.36 †e2e031334 | 22.6 µs | 16.6 µs | ok | `v[i]` with a loop-carried result |
-| `opaque_texels` | assets | library:assets | **1.30** | 1.29–1.30 | 1.50 ms | 1.15 ms | ok | the alpha-count pass: a nested loop calling `texel_alpha` per texel |
-| `trace` | hex_field | library:hex_field | **1.10** | 1.10–1.10 | 3.92 ms | 3.57 ms | ok | the loop stitcher rescans ALL edges to find each next one: O(n^2) reads over five parallel vectors |
+| `opaque_texels` | assets | library:assets | **1.30** | 1.29–1.30 †29d68fde2 | 1.50 ms | 1.15 ms | ok | the alpha-count pass: a nested loop calling `texel_alpha` per texel |
+| `trace` | hex_field | library:hex_field | **1.10** | 1.10–1.10 †29d68fde2 | 3.92 ms | 3.57 ms | ok | the loop stitcher rescans ALL edges to find each next one: O(n^2) reads over five parallel vectors |
 | `min_max_of` | 14_stdlib_vector | stdlib | **1.02** | 1.02–1.02 †e2e031334 | 22.9 µs | 22.4 µs | ok | the generic `min_of` / `max_of` |
 | `dot_product` | 09_matrix_mul | engine | **0.94** | 0.94–0.94 †e2e031334 | 1.44 ms | 1.54 ms | ok | a float dot product over two vectors |
-| `blend_pixel` | graphics | library:graphics | **0.47** | 0.47–0.47 | 940.4 µs | 2.02 ms | ok | read-modify-write plus a `blend` call: 4 unpacks, 3 multiply-adds, a repack |
+| `blend_pixel` | graphics | library:graphics | **0.47** | 0.47–0.47 †29d68fde2 | 940.4 µs | 2.02 ms | ok | read-modify-write plus a `blend` call: 4 unpacks, 3 multiply-adds, a repack |
 
 #### text-parse — numbers parsed out of text
 
@@ -328,7 +328,7 @@ Why it is slow, priced, and what to build: [analysis/vector-write.md](../../benc
 |---|---|---|---:|---|---:|---:|---|---|
 | `parse_num` | 13_stdlib_text | stdlib | **1.10** | 1.07–1.12 †e2e031334 | 38.0 µs | 34.5 µs | ok | `as float?` over 2,000 tokens |
 
-† measured at an earlier commit than `29d68fde2` (a partial run re-measures only what it names); the commit follows the mark.
+† measured at an earlier commit than `0d40d53d0` (a partial run re-measures only what it names); the commit follows the mark.
 
 ## laptop · x86_64-linux · 2026-09-29
 
