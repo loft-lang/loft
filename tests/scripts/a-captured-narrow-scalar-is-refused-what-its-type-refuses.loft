@@ -7,6 +7,11 @@
 // `a-captured-scalar-keeps-its-type-and-its-moment.loft`.
 //
 // `main` comes first so each expectation belongs to its function.
+//
+// @falsified-at: 6494bf787 — INERT, expectations 2/2 on both trees and both backends, and that
+//   is the correct answer for a CONTROL: the capture already refused what its type refuses.
+//   WITNESS: both cells report `cannot implicitly narrow integer to u8` on both trees.
+// HOLDS: nothing runs on either tree (a refusal file).
 
 fn main() {
   println("{captured(300)} {uncaptured(300)}");

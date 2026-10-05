@@ -16,6 +16,14 @@
 //                        range), the range (u8 · i32 · a `limit`, each with and without `?`),
 //                        and the call count.
 // Axes it HOLDS FIXED:   a closure called in the frame that built it.
+//
+// @falsified-at: 6494bf787 — INERT on all four channels, both backends, and that is the correct
+//   answer for a CONTROL: the walk found these rules holding.  What the file pins is their
+//   values, so a later change to capture or to a captured write is measured against them.
+//   WITNESS: `build_time() "3 3 3 1.5 1.5 true a Red 3 ab"`, `nullable_narrow() "null null
+//   null null null"`, `compound_steps() "0 0 null null 0 3"`, `successive_calls() "253 null 3
+//   200"` on both trees.
+// HOLDS: leak, panic and refusals are clean on both trees and both backends.
 
 enum Col { Red, Green }
 
