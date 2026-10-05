@@ -110,7 +110,13 @@ loft's bet is to win that reliability back **without the cage.** The AS/400 boug
 its stability partly with lock-in — closed, proprietary, conservative. The hard,
 unsolved problem is to keep the dependability of the integrated machine while being
 **open, statically typed, and live-editable**: the heap *is* the database, the
-language woven through the store, and it still does not fall over. (That integration
+language woven through the store, and it still does not fall over.  A loft program is at
+once a database-like script that defines how data is stored safely and a technical
+description of an algorithm, and the two are deliberately indistinguishable: one notation,
+so the programmer never decides which kind of structure a value is
+([C125](DESIGN_DECISIONS_OWNERSHIP.md#c125--the-store-model-stays-simple-performance-work-removes-objects-it-does-not-add-a-second-kind-of-object)),
+and the compiler, which knows every type, owner and lifetime outright, chooses the
+representation ([APART_VALUES.md](APART_VALUES.md)). (That integration
 is the same one the next subsection argues from the live-migration side.) Only one
 method earns it, and it is the one this document describes — reliability **by
 construction, not by testing**: find the one invariant, enforce it at the
