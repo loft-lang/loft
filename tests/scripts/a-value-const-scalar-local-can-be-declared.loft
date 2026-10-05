@@ -10,6 +10,12 @@
 // `tests/issues.rs`).  The cells declare one of each scalar kind, the plain enum included —
 // which the collapse now covers, through `is_scalar` — and the contents writes the rules still
 // allow beside them.
+//
+// @falsified-at: db4b19675 — interpret exit 1 -> 0, native exit 1 -> 0 (the control refuses
+//   `a: const integer = 1;` as a write to its own declaration).
+// @falsified-by: tests/falsified/a-value-const-scalar-local-can-be-declared.patch — the same channels.  Score it with
+//   `scripts/falsify.sh <this file> --patch <that patch>` once db4b19675 is out of reach.
+// HOLDS: leak, panic and asserts are clean on both trees and both backends.
 
 enum Col { Red, Green }
 
