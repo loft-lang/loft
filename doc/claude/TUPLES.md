@@ -340,10 +340,9 @@ it is refused for every name, including one nothing else declares. The annotatio
 on the tuple being destructured, as in the block above.
 
 `parse_match` dispatches on the subject type; a `Type::Tuple` subject goes to
-`parse_tuple_match`.  A `&(…)` binding takes a tuple pattern too, in both of its
-representations (`formal/tuples.md` `(T-Ref-Rep)`): the subject becomes the tuple of its
-element reads through the reference — `TupleGet` for a stack-backed tuple, the record's own
-fields for a `__tuple<…>` RECORD — and a heap member read that way borrows the binding.
+`parse_tuple_match`.  A `&(…)` binding takes a tuple pattern too: it names a `__tuple<…>`
+RECORD (`formal/tuples.md` `(T-Ref-Rep)`), so the subject becomes the tuple of the record's own
+field reads through the reference, and a heap member read that way borrows the binding.
 
 **Dependency on T1.8:** Tuple-returning functions (`-> (A, B)`) are deferred as T1.8.
 Tuple match on a function call result (`match foo() { ... }`) requires T1.8a first.

@@ -137,7 +137,9 @@ with `a = &b` or `a: &T = b`. A `&` reference cannot outlive its source.
 > **Status (2026-06, @PLN87):** every `&`-reference is live read- and write-through on both backends —
 > a scalar local (`a = &b`, `a: &T = b`), a **struct field** (`b = &s.x`), a **vector element**
 > (`c = &v[0]`), a **heap whole-value** (`p = &o`, aliases the struct — `p = o` without `&` still
-> copies), and a `&` **function parameter** (`fn f(b: &integer)`, called `f(a)`). The addressable-operand
+> copies), a **stored tuple** (`q = &rows[1]`, `p = &h.pair`, or `rows[1]` passed to a `&(…)`
+> parameter — it links like a struct), and a `&` **function parameter** (`fn f(b: &integer)`,
+> called `f(a)`). The addressable-operand
 > check and the general-operator ban (`&` only as a binding RHS; `&`-params called without `&`) are in
 > place. The edges are characterized too: a reference-to-reference works; a reference can't escape its
 > source (no `&T` return type, no `&` in a collection literal, no `&T` struct field). The ladder is

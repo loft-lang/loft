@@ -1,8 +1,8 @@
-diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
-index 6af879b08..3c933a560 100644
---- b/src/parser/expressions.rs
-+++ a/src/parser/expressions.rs
-@@ -8017,8 +8017,7 @@ use a separate collection or add after the loop"
+diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
+index d0e45a292..e7ee3cddb 100644
+--- a/src/parser/expressions.rs
++++ b/src/parser/expressions.rs
+@@ -8055,8 +8055,7 @@ use a separate collection or add after the loop"
                  || crate::data::element_stack_offsets(elems)[i] as u32,
                  |offs| u32::from(offs[i]),
              );
@@ -12,10 +12,10 @@ index 6af879b08..3c933a560 100644
          };
          let mut elem_tp = elem.clone();
          if let Some((syn, pointer)) = self.tagged_pointer_type(elem) {
-diff --git b/src/parser/fields.rs a/src/parser/fields.rs
-index b4392f7e6..36c8817de 100644
---- b/src/parser/fields.rs
-+++ a/src/parser/fields.rs
+diff --git a/src/parser/fields.rs b/src/parser/fields.rs
+index 38b6618a9..e0e157ff9 100644
+--- a/src/parser/fields.rs
++++ b/src/parser/fields.rs
 @@ -2485,11 +2485,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
              // loft#1503 — as in `get_val`'s own tuple arm: the STORED spelling decides the
              // read op, because that is what set the layout.
@@ -29,7 +29,7 @@ index b4392f7e6..36c8817de 100644
          }
          v_block(
              vec![v_set(tmp, dbref), Value::Tuple(tuple_elems)],
-@@ -2546,8 +2542,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
+@@ -2552,8 +2548,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
          } else {
              crate::data::element_stack_offsets(elems)[idx] as u32
          };
@@ -39,11 +39,11 @@ index b4392f7e6..36c8817de 100644
      }
  
      /// [`Self::stored_tuple_member_place`] for an element of a tuple of a TYPE VARIABLE
-diff --git b/src/parser/mod.rs a/src/parser/mod.rs
-index de634310f..4278d7611 100644
---- b/src/parser/mod.rs
-+++ a/src/parser/mod.rs
-@@ -14439,8 +14439,7 @@ impl Parser {
+diff --git a/src/parser/mod.rs b/src/parser/mod.rs
+index b1bb90606..fd5e0d982 100644
+--- a/src/parser/mod.rs
++++ b/src/parser/mod.rs
+@@ -14657,8 +14657,7 @@ impl Parser {
                      // in the caller's, whose inferred deps would pick the `OpGetDbRef` arm
                      // against bytes the def laid out inline.
                      let et = &crate::data::Data::tuple_member_stored(et);
@@ -52,8 +52,8 @@ index de634310f..4278d7611 100644
 +                    let elem_val = self.get_val(et, false, elem_pos, code.clone(), u32::MAX);
                      tuple_elems.push(elem_val);
                  }
-                 Value::Tuple(tuple_elems)
-@@ -14913,30 +14912,7 @@ impl Parser {
+                 if let Some(field) = field {
+@@ -15138,30 +15137,7 @@ impl Parser {
          // OpSet* (sentinel storage); without this it fell to `_` and was REJECTED with
          // "Tuple struct field cannot contain element of type integer?".
          let single = match elem_tp.base() {
@@ -85,11 +85,11 @@ index de634310f..4278d7611 100644
              Type::Function(..) => {
                  // P196: storage holds the 4-byte i32 d_nr only.  Reduce
                  // `Value::FnRef` to its bare `Value::Int(d_nr)` so the
-diff --git b/src/parser/operators.rs a/src/parser/operators.rs
-index 4b62e154d..779ffc1bd 100644
---- b/src/parser/operators.rs
-+++ a/src/parser/operators.rs
-@@ -3677,9 +3677,8 @@ impl Parser {
+diff --git a/src/parser/operators.rs b/src/parser/operators.rs
+index 1bfb5f884..983b2c925 100644
+--- a/src/parser/operators.rs
++++ b/src/parser/operators.rs
+@@ -3682,9 +3682,8 @@ impl Parser {
                  // PEELED for the reason the stack arm peels: the arms below match some types
                  // in their bare spelling only, so a `boolean?` member would miss its arm and
                  // fall to the generic truthiness convert, where `false` reads as absent.

@@ -897,6 +897,13 @@ pub struct Parser {
     /// T-Ref); every other tuple local keeps its stack form.  Recorded in pass 1 at the link
     /// and consulted at the bind in pass 2, the same shape as `adopted_ret_defs`.
     ref_linked_tuple_locals: std::collections::HashSet<(u32, String)>,
+    /// Pass 1's tuple-local call arguments, `(function, callee def name, argument index,
+    /// local)`, judged against the callee's signature between the passes
+    /// (`record_forward_ref_tuple_links`).
+    pending_tuple_args: Vec<(u32, String, usize, String)>,
+    /// Set while an argument for a record-backed `&(…)` parameter parses: a struct field of
+    /// tuple type is then read with its address, as under `amp_pending` (loft#1883).
+    pub(crate) tuple_place_wanted: bool,
     /// loft#1695 — `(function, root variable)` of every COLLECTION loop source a body
     /// replaced (`for p in d.rs { d = … }`), recorded on pass 1 so pass 2 walks a copy taken
     /// at loop start (`@FR-I-For`: the source is evaluated once).  Keyed by the root's NAME,
@@ -1815,6 +1822,8 @@ impl Parser {
             infer_ret_defs: std::collections::HashSet::new(),
             adopted_ret_defs: std::collections::HashSet::new(),
             ref_linked_tuple_locals: std::collections::HashSet::new(),
+            pending_tuple_args: Vec::new(),
+            tuple_place_wanted: false,
             loop_sources_replaced: std::collections::HashSet::new(),
             pattern_binds_pending: Vec::new(),
             pattern_bind_frames: Vec::new(),
@@ -2872,19 +2881,16 @@ impl Parser {
     /// here rather than repeating the check beside it: a second copy of the admitted list
     /// is the shape loft#1006 already was.
     ///
-    /// Which representation the `&(…)` names is decided here too (tuples.md T-Ref-Rep): the
-    /// stack for an all-scalar tuple, and a reference to the `__tuple<…>` RECORD — what a `&S`
-    /// is — for anything else.  The remaining refusal is for an element the record cannot
+    /// Which representation the `&(…)` names is decided here too (`@FR-T-Ref-Rep`): a
+    /// reference to the `__tuple<…>` RECORD — what a `&S` is — for every member list the
+    /// record can lay out, so a link to a tuple local, a vector element and a struct field is
+    /// one mechanism (loft#1883).  The remaining refusal is for an element the record cannot
     /// spell or lay out as a field.
     pub(crate) fn ref_var_type(&mut self, tp: Type) -> Type {
-        // A `&(…)` whose elements are not all scalars is a reference to the synthesized
-        // `__tuple<…>` RECORD — exactly what a `&S` is — rather than a stack link: a heap
-        // element has no stack form the reference ops can address (tuples.md T-Ref).  The
-        // record form already carries every element type a struct field can, which is what
-        // the loop variable over a `vector<(…)>` and a heap-tuple RETURN use.
+        // The record form carries every element type a struct field can, which is what the
+        // loop variable over a `vector<(…)>` and a heap-tuple RETURN already use.
         if let Type::Tuple(ref elems) = tp
-            && elems.iter().any(|e| !crate::data::ref_tuple_element_ok(e))
-            && elems.iter().all(crate::data::ref_tuple_record_element_ok)
+            && crate::data::ref_tuple_is_record(elems)
         {
             let elems = elems.clone();
             let d = self.data.tuple_def(&mut self.lexer, &elems);
@@ -2908,6 +2914,37 @@ impl Parser {
             );
         }
         Type::RefVar(Box::new(tp))
+    }
+
+    /// `@FR-T-Ref-Rep` — a tuple LOCAL handed to a record-backed `&(…)` parameter is built as the
+    /// `__tuple<…>` record, and the bind that builds it comes before the call.  Pass 1 records
+    /// the local at the call (`ref_linked_tuple_locals`), which it can only do when the
+    /// callee's signature is already known; a callee declared BELOW its caller was refused on
+    /// pass 2 as "a variable this function did not declare" (loft#1883).  Pass 1 leaves no IR
+    /// for a call to a name it cannot see yet, so the call site records each tuple-local
+    /// argument (`pending_tuple_args`) and every signature is known here to judge them.
+    fn record_forward_ref_tuple_links(&mut self) {
+        let pending = std::mem::take(&mut self.pending_tuple_args);
+        for (context, callee, index, local) in pending {
+            let d = self.data.def_nr(&callee);
+            if d == u32::MAX {
+                continue;
+            }
+            let Some(param) = self.data.def(d).attributes().get(index) else {
+                continue;
+            };
+            let record_param = match &param.typedef {
+                Type::RefVar(inner) => match inner.base() {
+                    Type::Reference(t, _) => self.data.def(*t).name().starts_with("__tuple<"),
+                    Type::Tuple(elems) => crate::data::ref_tuple_is_record(elems),
+                    _ => false,
+                },
+                _ => false,
+            };
+            if record_param {
+                self.ref_linked_tuple_locals.insert((context, local));
+            }
+        }
     }
 
     fn refuse_forward_tuple_returns(&mut self, adopted: &[(u32, Type)]) {
@@ -2966,7 +3003,7 @@ impl Parser {
                 let Type::Tuple(elems) = &**inner else {
                     return None;
                 };
-                if !elems.iter().any(|e| !crate::data::ref_tuple_element_ok(e)) {
+                if !crate::data::ref_tuple_is_record(elems) {
                     return None;
                 }
                 // `resolve_adopted_stubs` has already pointed the stub at the real type, so a
@@ -3058,6 +3095,7 @@ impl Parser {
         let adopted = self.data.resolve_adopted_stubs(&mut self.lexer);
         self.refuse_forward_tuple_returns(&adopted);
         self.refuse_forward_ref_tuple_params(&adopted);
+        self.record_forward_ref_tuple_links();
         // @PLN125 — the same class, one step earlier in the chain: a bound-method stub's
         // hidden parameters are decided from the INTERFACE method's return type, which on
         // pass 1 can still be an unresolved forward reference.  Re-derive here, before the
@@ -6503,8 +6541,30 @@ impl Parser {
             && let Type::Reference(d, _) = &**ref_tp
             && self.data.def(*d).name().starts_with("__tuple<")
             && let Type::Tuple(elems) = is_type
-            && elems.iter().all(crate::data::ref_tuple_record_element_ok)
+            && crate::data::ref_tuple_is_record(elems)
         {
+            // `@FR-T-Ref-Src` — a vector element or a struct field of tuple type, read with
+            // its address: the parameter names that record, through a borrowed work-ref as
+            // any `&S` argument that is not a variable is passed (loft#1883).
+            if !self.first_pass
+                && let Some(dbref) = Self::stored_tuple_dest(code)
+                && dbref.is_place_read(&self.data)
+            {
+                // Typed as the place's VIEW (it borrows the container), so neither backend
+                // copies the element into a store of its own.  Pass 2 only, so it draws from
+                // the pass-2 sequence (loft#848).
+                let mut rec = (**ref_tp).clone();
+                if let Some(root) = dbref.base_var() {
+                    rec = rec.depending(root);
+                }
+                let wv = self.vars.work_refs_p2(&rec, &mut self.lexer);
+                self.vars.set_skip_free(wv);
+                *code = Value::Insert(vec![
+                    v_set(wv, dbref),
+                    self.cl("OpCreateStack", &[Value::Var(wv)]),
+                ]);
+                return true;
+            }
             if let Value::Var(v) = code.unspan() {
                 self.ref_linked_tuple_locals
                     .insert((self.context, self.vars.name(*v).to_string()));
@@ -8644,6 +8704,9 @@ impl Parser {
     /// substitution cannot mint the unboxing temp (it has no frame), so it stamps the read and
     /// the monomorph lowers it through `unbox_tuple_from_dbref`.
     pub(crate) const TV_TUPLE_READ: &'static str = "tvtupleread";
+    /// A struct field of tuple type read while a `&` link parses: `[Drop(OpGetField(record,
+    /// pos, kt)), Tuple(member reads)]`, the address a link to the field names (loft#1883).
+    pub(crate) const TUPLE_FIELD_PLACE: &'static str = "tuple_field_place";
     /// The value [`Parser::null_value`] answers for a type still a TYPE VARIABLE — a `match`
     /// join's fallback, a branch with nothing to yield — asked again of the concrete type by
     /// each monomorph.  Apart from [`Self::TV_NULL_BLOCK`] because every type has this one:
@@ -14446,6 +14509,67 @@ impl Parser {
         crate::data::v_block(vec![read_dnr, read_clos], tp.clone(), "fn_ref_field_read")
     }
 
+    /// A struct field of tuple type, read member by member at the synthetic `__tuple<…>`
+    /// record's own offsets — [`Self::get_val`]'s tuple arm.
+    fn get_tuple_field(&mut self, tp: &Type, elems: &[Type], pos: u32, code: &Value) -> Value {
+        let p = Value::Int(pos as i32);
+        // Plan-06 phase 4d: tuple struct field read.  Each
+        // element is read from `pos + element_stack_offsets[i]`
+        // using the same OpGet* opcodes that ordinary struct
+        // fields use; the assembled stack tuple matches the
+        // shape `Type::Tuple(...)` consumers expect.
+        let elems_vec = elems.to_vec();
+        let tuple_d_nr = self.data.tuple_def(&mut self.lexer, &elems_vec);
+        // `@FR-T-Ref-Src` — while a `&` link parses, the field is read WITH its address:
+        // a `tuple_field_place` block holding the field's `OpGetField` beside the
+        // member-wise read, which `stored_tuple_dest` peels for the link (loft#1883).
+        // The same value, and no work-ref, so both passes allocate alike.
+        let place = (self.amp_pending || self.tuple_place_wanted)
+            && tuple_d_nr != u32::MAX
+            && crate::data::ref_tuple_is_record(&elems_vec);
+        let field = place.then(|| {
+            let kt = i32::from(self.data.def(tuple_d_nr).known_type());
+            self.cl("OpGetField", &[code.clone(), p.clone(), Value::Int(kt)])
+        });
+        let offsets: Vec<u16> = crate::data::stored_tuple_offsets_for_def(
+            &self.data,
+            &self.database,
+            tuple_d_nr,
+            elems_vec.len(),
+        )
+        .unwrap_or_else(|| {
+            crate::data::element_stack_offsets(&elems_vec)
+                .into_iter()
+                .map(|x| x as u16)
+                .collect()
+        });
+        let mut tuple_elems = Vec::with_capacity(elems_vec.len());
+        for (i, et) in elems_vec.iter().enumerate() {
+            let elem_pos = pos + u32::from(offsets[i]);
+            // @PLN25 — a member declared `S?` is stored behind its tag, so its bytes
+            // here are the discriminant followed by the payload.
+            if let Some(tagged) = self.tuple_elem_tag_read(tuple_d_nr, i, code, elem_pos, et) {
+                tuple_elems.push(tagged);
+                continue;
+            }
+            // loft#1503 — read the member in the spelling it was STORED under, not
+            // in the caller's, whose inferred deps would pick the `OpGetDbRef` arm
+            // against bytes the def laid out inline.
+            let et = &crate::data::Data::tuple_member_stored(et);
+            let nullable = matches!(et, Type::Optional(_));
+            let elem_val = self.get_val(et, nullable, elem_pos, code.clone(), u32::MAX);
+            tuple_elems.push(elem_val);
+        }
+        if let Some(field) = field {
+            return crate::data::v_block(
+                vec![Value::Drop(Box::new(field)), Value::Tuple(tuple_elems)],
+                tp.clone(),
+                Self::TUPLE_FIELD_PLACE,
+            );
+        }
+        Value::Tuple(tuple_elems)
+    }
+
     fn get_val(&mut self, tp: &Type, nullable: bool, pos: u32, code: Value, alias: u32) -> Value {
         let p = Value::Int(pos as i32);
         match tp {
@@ -14573,47 +14697,7 @@ impl Parser {
                 let read_clos = self.cl("OpNullRefSentinel", &[]);
                 crate::data::v_block(vec![read_dnr, read_clos], tp.clone(), "fn_ref_field_read")
             }
-            Type::Tuple(elems) => {
-                // Plan-06 phase 4d: tuple struct field read.  Each
-                // element is read from `pos + element_stack_offsets[i]`
-                // using the same OpGet* opcodes that ordinary struct
-                // fields use; the assembled stack tuple matches the
-                // shape `Type::Tuple(...)` consumers expect.
-                let elems_vec = elems.clone();
-                let tuple_d_nr = self.data.tuple_def(&mut self.lexer, &elems_vec);
-                let offsets: Vec<u16> = crate::data::stored_tuple_offsets_for_def(
-                    &self.data,
-                    &self.database,
-                    tuple_d_nr,
-                    elems_vec.len(),
-                )
-                .unwrap_or_else(|| {
-                    crate::data::element_stack_offsets(&elems_vec)
-                        .into_iter()
-                        .map(|x| x as u16)
-                        .collect()
-                });
-                let mut tuple_elems = Vec::with_capacity(elems_vec.len());
-                for (i, et) in elems_vec.iter().enumerate() {
-                    let elem_pos = pos + u32::from(offsets[i]);
-                    // @PLN25 — a member declared `S?` is stored behind its tag, so its bytes
-                    // here are the discriminant followed by the payload.
-                    if let Some(tagged) =
-                        self.tuple_elem_tag_read(tuple_d_nr, i, &code, elem_pos, et)
-                    {
-                        tuple_elems.push(tagged);
-                        continue;
-                    }
-                    // loft#1503 — read the member in the spelling it was STORED under, not
-                    // in the caller's, whose inferred deps would pick the `OpGetDbRef` arm
-                    // against bytes the def laid out inline.
-                    let et = &crate::data::Data::tuple_member_stored(et);
-                    let nullable = matches!(et, Type::Optional(_));
-                    let elem_val = self.get_val(et, nullable, elem_pos, code.clone(), u32::MAX);
-                    tuple_elems.push(elem_val);
-                }
-                Value::Tuple(tuple_elems)
-            }
+            Type::Tuple(elems) => self.get_tuple_field(tp, elems, pos, &code),
             // Pass-1 deferral: reading a field whose declared type is still
             // `Unknown` (a forward-referenced or cross-package field type, e.g.
             // `struct Box { inner: Cell }` parsed above `struct Cell`) must not
@@ -17419,6 +17503,8 @@ impl Parser {
                 && !matches!(&actual_code, Value::Var(_))
                 && !scalar_place
                 && !Self::is_addressable(&actual_code, &self.data)
+                && !Self::stored_tuple_dest(&actual_code)
+                    .is_some_and(|d| d.is_place_read(&self.data))
             {
                 // Defer on pass 1 (#375): a field access on a struct whose
                 // layout is not yet finalised — because one of its fields is a
@@ -17428,7 +17514,15 @@ impl Parser {
                 // complete and the access lowers to `OpGetField` (addressable),
                 // so the check passes.  A genuine literal-to-`&` is still an
                 // error: it is non-addressable on pass 2 too, where this fires.
-                if !self.first_pass {
+                let tuple_param = match inner.base() {
+                    Type::Tuple(_) => true,
+                    Type::Reference(t, _) => self.data.def(*t).name().starts_with("__tuple<"),
+                    _ => false,
+                };
+                if self.first_pass {
+                } else if tuple_param {
+                    self.refuse_tuple_value_link();
+                } else {
                     diagnostic!(
                         self.lexer,
                         Level::Error,
@@ -21962,6 +22056,12 @@ impl Parser {
     /// allowlist (place-GETTERS only) keeps temporary-builders like `OpGetTextSub`
     /// and every arithmetic / `n_*` op out.
     fn is_amp_place(val: &Value, data: &Data) -> bool {
+        // A stored tuple read with its address (`tuple_unbox`, built while a link parses): a
+        // vector element or a struct field of tuple type, the record a link names
+        // (`@FR-T-Ref-Src`, loft#1883).
+        if let Some(dbref) = Self::stored_tuple_dest(val) {
+            return dbref.is_place_read(data);
+        }
         match val.unspan() {
             // A tuple local's member (`@FR-B-Ref-Lvalue`): the bind lowering decides which
             // member types it can link, and refuses the rest by name.

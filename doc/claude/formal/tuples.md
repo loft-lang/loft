@@ -177,14 +177,17 @@ the same two cures. The gap between the rule and the model is
               rather than owning a copy.  Reading the binding as a tuple has ONE home,
               `Parser::ref_tuple_subject`; a site that tests the type for `Type::Tuple` instead
               answers no for both representations and refuses what this rule admits.
-  (T-Ref-Rep) the tuple a `&(…)` names is STACK-backed when every τᵢ is a scalar, and a
-              `__tuple<τ₁, …, τₙ>` RECORD otherwise — the same record a heap-tuple RETURN and
-              the loop variable over a `vector<(…)>` already are.  A tuple LOCAL that is the
-              source of such a link is built as that record; every other tuple local keeps its
-              stack form, so a program with no `&(…)` is unchanged by this rule.  The record's
-              members are the LOCAL's types, never the literal's: `w: (integer, Entity) =
-              (1, IceWall { … })` is a `__tuple<integer,Entity>`, because a variant widens
-              into its enum (types.md `(C-Var)`) and the link names the declared tuple.
+  (T-Ref-Rep) the tuple a `&(…)` names is a `__tuple<τ₁, …, τₙ>` RECORD — the same record a
+              heap-tuple RETURN, the loop variable over a `vector<(…)>`, a `vector<(…)>`
+              element and a struct's tuple field already are, so a link names each of them
+              the way a `&S` names a record.  A tuple LOCAL that is the source of such a link —
+              bound to a `&` local or passed to a `&(…)` parameter, declared above or below the
+              call — is built as that record; every other tuple local keeps its stack form, so
+              a program with no `&(…)` is unchanged by this rule.  The record's members are the
+              LOCAL's types, never the literal's: `w: (integer, Entity) = (1, IceWall { … })`
+              is a `__tuple<integer,Entity>`, because a variant widens into its enum (types.md
+              `(C-Var)`), and `t: (u8, integer) = (250, 5)` is a `__tuple<u8,integer>`, because
+              the link names the declared tuple.
   (T-Ref-El)  every τᵢ is a scalar (`integer` of any width, `float`, `single`, `character`,
               `boolean`, a value enum) or a type a struct FIELD can hold — `text`, a struct, a
               vector, a keyed collection, a struct-enum.  What the record cannot spell or lay
@@ -193,31 +196,22 @@ the same two cures. The gap between the rule and the model is
               refused the way a tuple return is.  Never a runtime fault and never an ICE, and
               asked wherever the `&` is WRITTEN, so a `&(…)` a signature refuses cannot be
               accepted at a local.
-  (T-Ref-Src) the source of a `&(…)` local is a tuple VARIABLE.  A tuple ELEMENT or FIELD
-              (`b = &v[0]`, `b = &s.pair`) is a STATIC error: a tuple place is read element by
-              element into a fresh by-value tuple, so no place survives for the link to name.
-              For a record-backed `&(…)` PARAMETER the argument is likewise a tuple LOCAL of the
-              caller (a return-bound local, a literal local, a loop variable); a by-value tuple
-              parameter passed on, or a field, is a STATIC error saying to bind it first.
-              Declining is binding.md B-Ref-Reshape's rule — where the link cannot be honoured
-              loft refuses the program rather than downgrading it to a copy.
+  (T-Ref-Src) the source of a `&(…)` is a tuple PLACE: a tuple variable, a vector element
+              (`b = &v[0]`, `b: &(…) = v[0]`, `f(v[0])`) or a struct field (`b = &s.pair`,
+              `f(s.pair)`), at any depth (`&h.rows[1]`).  The link names the record holding the
+              tuple, and a write through it lands there.  A tuple LITERAL or a CALL RESULT names
+              no place, so a `&` to one — a bind, an annotated bind, a `&(…)` argument — is a
+              STATIC error naming the places a link can take; declining is binding.md
+              B-Ref-Reshape's rule, where a link cannot be honoured loft refuses the program
+              rather than downgrading it to a copy.
 ```
 
 **In words.** `fn sw(p: &(integer, integer)) { t = p.0; p.0 = p.1; p.1 = t }` swaps the caller's
 tuple in place — that is what a reference tuple is for. The same annotation on a LOCAL means the
-same thing (`a = (1, 2); b: &(integer, integer) = a; b.0 = 5` leaves `a.0 == 5`), because both
-name a tuple sitting in a frame and reach it the same way. `fn sw(p: &(text, text))` swaps a
-`text` pair the same way; what differs is where the tuple lives — a scalar tuple sits on the
-stack, a tuple with a heap element is the `__tuple<…>` record a return of that shape already is —
-and the boundary is enforced wherever the `&` is written, so a program either compiles and
-behaves identically on both backends or is refused
-where it is written.
-
-The restriction belongs to the STACK-backed reference tuple this annotation builds. The
-record-backed one a `for` loop binds over a `vector<(…)>` is a different construction reaching a
-real record, and it admits any element type — `for t in [("a", "b")] { t.0 }` is correct on both
-backends, and writing `t.0` there reaches the vector. Reading `T-Ref-El` as a fact about tuples
-rather than about this binding is the mistake that boundary invites.
+same thing (`a = (1, 2); b: &(integer, integer) = a; b.0 = 5` leaves `a.0 == 5`), and so does a
+link to a stored tuple: `sw(rows[2])` swaps the vector's third element and `q = &h.pair; q.0 = 9`
+writes the struct's field. Every reference tuple is the record a `&S` would be, so a tuple and a
+struct with the same members link, read and write alike, on both backends and at the same cost.
 
 What stays refused is what the `__tuple<…>` record cannot spell or lay out as a field: a
 NULLABLE element, a fn-ref, a nested tuple. The refusal names the element type and the two
@@ -401,6 +395,14 @@ the companion [tuples-history.md](tuples-history.md).
   admitted element type — `integer`, `float`, `single`, `character`, `boolean` — uniform and
   mixed (`&(integer, boolean, character)`), and at width 3 so the last element is reached
   (`tests/scripts/1006-reference-tuple-element-types.loft`).
+- **A stored tuple is a place (`T-Ref-Src`, `T-Ref-Rep`)** — a vector element, a struct field, the
+  element of a vector held in a field, a member of such a link and a link forwarded on each link
+  by a `&` bind, an annotated bind and a `&(…)` argument, across a loop and a nine-member tuple of
+  every member kind, with a callee declared below its caller; every written place's neighbours
+  are asserted unchanged (`tests/scripts/a-stored-tuple-is-a-place-a-link-names.loft`).  A tuple
+  literal and a call result are refused once each, in all three spellings
+  (`a-tuple-value-has-no-place-to-link.loft`).  A program with no `&(…)` lowers to the same IR
+  as before the record form, measured over the corpus with `loft introspect`.
 - **Refused element types (`T-Ref-El`)** — a NULLABLE element (`&(text?, text)`), a fn-ref
   (`&(fn() -> τ, …)`) and a NESTED TUPLE are STATIC errors naming the element type, never an
   ICE (`tests/scripts/102-expected-errors.loft`). A bare `text` element and a struct element

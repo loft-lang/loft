@@ -6315,36 +6315,24 @@ pub fn v_if(test: Value, t: Value, f: Value) -> Value {
     Value::If(Box::new(test), Box::new(t), Box::new(f))
 }
 
-/// May a STACK-backed `&(…)` reference tuple hold an element of this type?
-///
-/// The scalar set is what the stack form addresses; a `&(…)` with any other element is
-/// record-backed instead and is admitted by [`ref_tuple_record_element_ok`].
-///
-/// Enforces @FR-T-Ref-Rep (which representation a `&(…)` names) and @FR-T-Ref-El (what each
-/// may hold), the pair binding.md's D-bind-11 was measured against.
-///
-/// A reference tuple's element is read and written through the tuple's stored DbRef with
-/// the same `(ref, offset)` opcodes an ordinary struct FIELD uses, so the admitted set is
-/// exactly the set those opcode pairs are laid out for.  This is the ONE list — the
-/// signature guard and both `RefTupleGet` / `RefTuplePut` arms read it, so the set the
-/// compiler ADMITS and the set codegen can EMIT cannot disagree.
-///
-/// `text` is not in this set because a stack tuple holds it as a 16-byte `Str` BORROW that the
-/// `(ref, offset)` opcodes — which speak the record form — would misread; the record-backed
-/// `&(…)` is where a `text` element lives, with a slot of its own.
-#[must_use]
-pub fn ref_tuple_element_ok(tp: &Type) -> bool {
-    is_scalar(tp.base())
-}
-
-/// May a RECORD-backed `&(…)` — the form a `&(…)` takes once an element is not a scalar —
-/// hold an element of this type?  Everything a struct field can hold, which is what the
+/// May a `&(…)` reference tuple — a `__tuple<…>` RECORD (`@FR-T-Ref-Rep`) — hold an element of
+/// this type?  Enforces @FR-T-Ref-El.  Everything a struct field can hold, which is what the
 /// `__tuple<…>` record is; what it cannot is what `tuple_def` cannot spell or lay out as a
 /// field: a nullable element (its `?` does not survive the synthetic name), a fn-ref, and a
 /// nested tuple.  Those stay refused, and the refusal names them (tuples.md T-Ref-El).
 #[must_use]
 pub fn ref_tuple_record_element_ok(tp: &Type) -> bool {
     !matches!(tp, Type::Optional(_) | Type::Function(..) | Type::Tuple(_))
+}
+
+/// `@FR-T-Ref-Rep` — is a `&(…)` over these members the `__tuple<…>` RECORD?  Every `&(…)` the
+/// record can lay out is (loft#1883): a scalar-only one as much as one with a heap member, so a
+/// link names a tuple local, a vector element and a struct field the same way, as a `&S` names
+/// a record.  What the record cannot spell ([`ref_tuple_record_element_ok`]) is refused where
+/// the `&` is written.  The ONE answer: the type, the local's build and the link bind ask it.
+#[must_use]
+pub fn ref_tuple_is_record(elems: &[Type]) -> bool {
+    !elems.is_empty() && elems.iter().all(ref_tuple_record_element_ok)
 }
 
 /// `@FR-N-Opt`'s side condition: does τ have a value to spend on ABSENCE?
@@ -6544,8 +6532,8 @@ pub fn holds_dbref(tp: &Type) -> bool {
 /// Is `tp` a SCALAR — a value that lives inline in its slot and owns no store?
 ///
 /// The one home for a membership test written at several sites and already drifted between
-/// them: `generation`'s two copies included `Enum(_, false, _)` and
-/// [`ref_tuple_element_ok`] did not, so `&(Col, Col)` over a value enum was refused while
+/// them: `generation`'s two copies included `Enum(_, false, _)` and the stack reference
+/// tuple's element list did not, so `&(Col, Col)` over a value enum was refused while
 /// `&(boolean, boolean)` was admitted — with an identical 1-byte layout
 /// (`element_stack_size`: `Boolean | Enum(_, false, _) => 1`).  Two spellings of one list
 /// disagreeing is the shape loft#1006 was.

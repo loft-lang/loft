@@ -502,7 +502,12 @@ impl Output<'_> {
                 // An argument RefVar is already &mut DbRef — pass it
                 // directly instead of dereferencing with *var_name.
                 write!(w, "var_{name}")?;
-            } else if crate::generation::is_raw_tuple_link(caller_vars, *nr) {
+            } else if crate::generation::is_raw_tuple_link(caller_vars, *nr)
+                || matches!(caller_vars.tp(*nr), Type::RefVar(inner)
+                    if matches!(inner.base(), Type::Reference(..) | Type::Enum(_, true, _)))
+            {
+                // A `&`-bound RECORD local (`b: &P = a`, and every `&(…)` since loft#1883) is
+                // the `*mut DbRef` its bind took of the source's slot, re-borrowed the same way.
                 // A `&`-bound tuple LOCAL holds a raw `*mut (…)`, so `&mut var_b` would
                 // hand the callee a reference to the POINTER.  Re-borrow through it to
                 // give the `&(…)` parameter the `&mut (…)` it declares — the caller's

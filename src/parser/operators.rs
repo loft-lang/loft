@@ -1891,6 +1891,11 @@ impl Parser {
                              (`p = &x` takes the target's type), or write `&{got}`"
                         );
                         self.amp_pending = false;
+                    } else if !Self::is_amp_place(code, &self.data)
+                        && matches!(t.base(), Type::Tuple(_))
+                    {
+                        self.refuse_tuple_value_link();
+                        self.amp_pending = false;
                     } else if !Self::is_amp_place(code, &self.data) {
                         // #1 — a valid binding RHS still needs a PLACE operand.
                         diagnostic!(
@@ -3590,7 +3595,7 @@ impl Parser {
                 // answers the FALLBACK for a PRESENT element, losing the scalar half with
                 // it, on `--interpret` only.  A `Reference` member hides it: that one does
                 // have a generic path.  Recursion is also what keeps the answers from
-                // drifting, which is the same reason `ref_tuple_element_ok` is one list.
+                // drifting, which is the same reason `data::is_scalar` is one list.
                 //
                 // A member that is ITSELF a tuple cannot be reached by recursing on the
                 // value: `TupleGet` addresses a VAR and an index, so `x.0.0` has no

@@ -19902,7 +19902,17 @@ impl Parser {
             // (in `process_call_args`) points the caret at the argument, not at
             // the cursor drifted to `)` / `,`.
             arg_pos.push(self.lexer.peek_pos().clone());
+            // loft#1883 — a record-backed `&(…)` parameter names its argument's record, so a
+            // struct field of tuple type is read with its address.
+            let prev_place = self.tuple_place_wanted;
+            self.tuple_place_wanted = fn_def_nr.is_some_and(|d| {
+                arg_idx < self.data.attributes(d)
+                    && matches!(self.data.attr_type(d, arg_idx), Type::RefVar(inner)
+                        if matches!(inner.base(), Type::Reference(t, _)
+                            if self.data.def(*t).name().starts_with("__tuple<")))
+            });
             let mut t = self.expression(&mut p);
+            self.tuple_place_wanted = prev_place;
             // A member of a call result handed on as an argument is read where it lives
             // (`call_member_view`): the argument binds without copying, so the copy the terminal
             // projection made would be a structure nobody wrote.
@@ -19927,6 +19937,24 @@ impl Parser {
             }
         }
         self.lexer.token(")");
+        // `@FR-T-Ref-Rep` — a tuple LOCAL handed to a callee pass 1 cannot see yet; whether its
+        // parameter is a record-backed `&(…)` is judged between the passes
+        // (`record_forward_ref_tuple_links`).  A call to an unknown name leaves no IR to walk.
+        if self.first_pass {
+            for (i, arg) in list.iter().enumerate() {
+                if let Value::Var(v) = arg.unspan()
+                    && !self.vars.is_argument(*v)
+                    && matches!(self.vars.tp(*v).base(), Type::Tuple(_))
+                {
+                    self.pending_tuple_args.push((
+                        self.context,
+                        format!("n_{name}"),
+                        i,
+                        self.vars.name(*v).to_string(),
+                    ));
+                }
+            }
+        }
         let ret = self.dispatch_call(
             val,
             source,

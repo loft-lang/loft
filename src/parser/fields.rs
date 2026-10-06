@@ -2515,6 +2515,12 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         if b.name == Self::TV_TUPLE_READ && b.operators.len() == 1 {
             return Some(b.operators[0].clone());
         }
+        // A struct field of tuple type read while a `&` link parses (loft#1883).
+        if b.name == Self::TUPLE_FIELD_PLACE
+            && let Some(Value::Drop(field)) = b.operators.first().map(Value::unspan)
+        {
+            return Some((**field).clone());
+        }
         if b.name != "tuple_unbox" {
             return None;
         }

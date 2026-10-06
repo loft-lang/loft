@@ -881,10 +881,9 @@ impl State {
                         Type::Character => stack.add_op("OpGetCharacter", self),
                         Type::Boolean => stack.add_op("OpGetBoolean", self),
                         Type::Enum(_, false, _) => stack.add_op("OpGetEnum", self),
-                        // Unreachable: `ref_tuple_element_ok` refuses anything this
-                        // match cannot emit, at the signature, with a message naming the
-                        // element type.  The two lists are one list on purpose —
-                        // loft#1006 was them disagreeing.
+                        // Unreachable: a stack reference tuple holds scalars only
+                        // (`data::is_scalar`), and every `&(…)` the parser builds is the
+                        // record form (`@FR-T-Ref-Rep`, loft#1883).
                         _ => panic!("RefTupleGet: unsupported element type {elem_tp:?}"),
                     }
                     self.code_add(elem_offset);

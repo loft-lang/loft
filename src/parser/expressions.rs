@@ -4426,8 +4426,7 @@ use a separate collection or add after the loop"
             && let Value::Var(lhs) = to
             && matches!(code.unspan(), Value::Tuple(_))
             && let Type::Tuple(ref types) = s_type
-            && types.iter().any(|t| !crate::data::is_scalar(t.base()))
-            && types.iter().all(crate::data::ref_tuple_record_element_ok)
+            && crate::data::ref_tuple_is_record(types)
             && self
                 .ref_linked_tuple_locals
                 .contains(&(self.context, self.vars.name(*lhs).to_string()))
@@ -4453,13 +4452,19 @@ use a separate collection or add after the loop"
                 _ => None,
             };
             let got = types.clone();
+            // An integer member takes the local's declared width whatever the literal's: the
+            // store of the value into it is the narrowing every integer store is
+            // (`@FR-L-Narrow`), checked where the member is written (loft#1883).
             let types = match local {
                 Some(want)
                     if want.len() == got.len()
-                        && want
-                            .iter()
-                            .zip(got.iter())
-                            .all(|(w, g)| self.can_convert(g, w)) =>
+                        && want.iter().zip(got.iter()).all(|(w, g)| {
+                            self.can_convert(g, w)
+                                || matches!(
+                                    (w.base(), g.base()),
+                                    (Type::Integer(_), Type::Integer(_))
+                                )
+                        }) =>
                 {
                     want
                 }
@@ -4692,8 +4697,7 @@ use a separate collection or add after the loop"
             // record; say so for pass 2's bind (see `ref_linked_tuple_locals`).
             if let Some(src) = stack_src
                 && let Type::Tuple(elems) = self.vars.tp(src)
-                && elems.iter().any(|e| !is_scalar(e.base()))
-                && elems.iter().all(crate::data::ref_tuple_record_element_ok)
+                && crate::data::ref_tuple_is_record(elems)
             {
                 let name = self.vars.name(src).to_string();
                 self.ref_linked_tuple_locals.insert((self.context, name));
@@ -4802,8 +4806,7 @@ use a separate collection or add after the loop"
                 // was recorded a moment ago), so derive the link's type from the record the
                 // bind WILL build, or an annotated `c: &(…) = a` disagrees with itself.
                 if let Type::Tuple(elems) = &inner
-                    && elems.iter().any(|e| !is_scalar(e.base()))
-                    && elems.iter().all(crate::data::ref_tuple_record_element_ok)
+                    && crate::data::ref_tuple_is_record(elems)
                 {
                     let elems = elems.clone();
                     let d = self.data.tuple_def(&mut self.lexer, &elems);
@@ -4877,18 +4880,51 @@ use a separate collection or add after the loop"
                 s_type = Type::RefVar(Box::new(s_type));
             }
         }
-        // A `&` of a tuple PLACE (`b = &v[0]`, `b = &s.pair`) reaches no lowering above,
-        // and unlike the struct projection below it cannot be left alone: a tuple place is
-        // read ELEMENT-WISE into a fresh by-value tuple before the `&` is ever seen, so
-        // there is no place left to link to.  Declining is what @FR-B-Ref-Reshape
-        // prescribes where the link cannot be honoured — *"loft will not quietly downgrade
-        // the reference to a copy"*.
-        //
-        // ⚠ The alternative is not a lesser `&`, it is a SILENT one: downgrading makes
-        // `b.0 = 9` write the copy while the source stands, with no diagnostic, and both
-        // backends agree — so the differential oracle cannot see it either (D-tup-2).
+        // `@FR-B-Ref-Lvalue` — a link to a heap PLACE (a vector element, a struct field) is that
+        // place's record VIEW, a `&` spelling and an annotated one alike: `b: &P = v[1]` IS
+        // `b = &v[1]`, as `pe: &vector<T> = e` is `pe = &e` above.  Kept as the annotation's
+        // `RefVar` over the bare `DbRef`, every read went through a deref with nothing behind
+        // it — the write was lost on the interpreter, a field panicked, and `--native` did not
+        // compile.  A tuple place arrives read WITH its address (`tuple_unbox`), and the link
+        // names that record (`@FR-T-Ref-Src`, loft#1883).
+        let mut place_linked = false;
+        if amp_unlowered {
+            let place = Self::stored_tuple_dest(code).unwrap_or_else(|| code.clone());
+            let record = match (self.vars.tp(var_nr).clone(), s_type.base()) {
+                (Type::RefVar(inner), _)
+                    if var_nr != u16::MAX
+                        && matches!(inner.base(), Type::Reference(..) | Type::Enum(_, true, _)) =>
+                {
+                    Some(*inner)
+                }
+                (_, Type::Tuple(elems)) if crate::data::ref_tuple_is_record(elems) => {
+                    let elems = elems.clone();
+                    let d = self.data.tuple_def(&mut self.lexer, &elems);
+                    (d != u32::MAX).then(|| Type::Reference(d, Deps::none()))
+                }
+                _ => None,
+            };
+            if let Some(record) = record
+                && !matches!(place.unspan(), Value::Var(_))
+                && place.is_place_read(&self.data)
+                && let Some(root) = place.base_var()
+            {
+                let view = record.base().clone().depending(root);
+                if var_nr != u16::MAX {
+                    // Pass 1 typed the variable from the stack read or the annotation; it IS the
+                    // place's record now, as the literal builder's linked local is.
+                    self.vars.set_type(var_nr, view.clone());
+                }
+                *code = place;
+                s_type = view;
+                place_linked = true;
+            }
+        }
+        // What is left of a tuple `&` here names no place — a literal, a call result: there is
+        // nothing to link, and `@FR-B-Ref-Reshape` declines rather than downgrade the link to a
+        // copy (`@FR-T-Ref-Src`).  A copy is the SILENT alternative: `b.0 = 9` would write it
+        // while the source stands, with both backends agreeing (D-tup-2).
         if amp_unlowered
-            && !self.first_pass
             && matches!(
                 s_type.base(),
                 Type::Tuple(_) | Type::RefVar(_) if matches!(
@@ -4897,14 +4933,14 @@ use a separate collection or add after the loop"
                 )
             )
         {
-            diagnostic!(
-                self.lexer,
-                Level::Error,
-                "a `&` reference to a tuple ELEMENT or FIELD is not a live link — a tuple \
-                 place is read element by element, so there is nothing left to point at. \
-                 Bind the tuple to a local first and take `&` of that, or write the \
-                 element back explicitly"
-            );
+            if !self.first_pass {
+                self.refuse_tuple_value_link();
+            }
+            // The refusal is the one diagnostic: an annotated link keeps its declared type, so
+            // the bind is not reported a second time as a retype.
+            if var_nr != u16::MAX && matches!(self.vars.tp(var_nr), Type::RefVar(_)) {
+                s_type = self.vars.tp(var_nr).clone();
+            }
         }
         // @PLN130 F9 step 2 — the `&` reached no lowering, so record it on the VARIABLE:
         // the IR is about to lose it entirely.  A marker rather than `Type::RefVar` on
@@ -5678,10 +5714,12 @@ use a separate collection or add after the loop"
         // tuples.md T-Ref — a linked tuple local IS the record now; pass 1 typed it as the
         // stack tuple, and unboxing the record back to that would undo the representation the
         // link needs.  `f_type` is pass 1's answer for it.
-        let keeps_record = var_nr != u16::MAX
-            && self
-                .ref_linked_tuple_locals
-                .contains(&(self.context, self.vars.name(var_nr).to_string()));
+        // A link to a stored tuple PLACE is that record too (loft#1883).
+        let keeps_record = place_linked
+            || var_nr != u16::MAX
+                && self
+                    .ref_linked_tuple_locals
+                    .contains(&(self.context, self.vars.name(var_nr).to_string()));
         if op == "="
             && !keeps_record
             && self.unboxes_stored_tuple(&s_type, f_type)
@@ -8317,7 +8355,17 @@ use a separate collection or add after the loop"
                     v_nr = self.rebind_after_block(v_nr, &tp);
                     *code = Value::Var(v_nr);
                 }
-                self.change_var_type(v_nr, &tp);
+                // `@FR-B-Ref-Lvalue` — pass 1 made a link to a heap PLACE the place's record
+                // VIEW (`b: &P = v[1]` IS `b = &v[1]`); the annotation names that record, so
+                // the view stands rather than being retyped back to a `RefVar` (loft#1883).
+                let place_view = is_ref
+                    && matches!((&tp, self.vars.tp(v_nr).base()),
+                        (Type::RefVar(inner), Type::Reference(have, _) | Type::Enum(have, true, _))
+                            if matches!(inner.base(), Type::Reference(want, _)
+                                | Type::Enum(want, true, _) if want == have));
+                if !place_view {
+                    self.change_var_type(v_nr, &tp);
+                }
                 // (I-Join) — an EXPLICIT `: Type` annotation pins the variable's type, so
                 // it stays constrained (a wider write is a narrowing error).  An inferred
                 // local (no annotation) widens to the join instead (see parse_assign_op).
@@ -10026,6 +10074,20 @@ use a separate collection or add after the loop"
         }
     }
 
+    /// `@FR-T-Ref-Src` — the source of a `&(…)` is a tuple PLACE: a variable, a vector element
+    /// or a struct field.  A literal or a call result is a value that names no place; refused
+    /// at a `&` bind and at a `&(…)` argument alike, with the cure, never copied
+    /// (`(B-Ref-Reshape)`).
+    pub(crate) fn refuse_tuple_value_link(&mut self) {
+        diagnostic!(
+            self.lexer,
+            Level::Error,
+            "a `&` to a tuple names a place — a tuple variable, a vector element or a struct \
+             field; a literal or a call result of tuple type is a value with no place for the \
+             link to name.  Bind it to a local and link that: `t = make(); c = &t;`"
+        );
+    }
+
     /// The refusal for a tuple member [`Parser::linkable_tuple_member`] declines, at a `&` bind
     /// and at a `&` argument alike.  `(B-Ref-Reshape)`: never downgraded to a copy that would
     /// drop the write.
@@ -10488,6 +10550,11 @@ use a separate collection or add after the loop"
         let Type::RefVar(inner) = f_type else {
             return false;
         };
+        // The bind that declares a link to a heap PLACE made the variable the place's VIEW
+        // (`b: &P = h.rec` IS `b = &h.rec`); that is the link, not a write through one.
+        if var_nr != u16::MAX && !matches!(self.vars.tp(var_nr), Type::RefVar(_)) {
+            return false;
+        }
         // A struct-ENUM is the same record shape one former over — `Type::Enum(_, true, _)` is
         // exactly what the write-back emitter's own allow-list names beside `Type::Reference`
         // — and it reached the identical defect: `x = o` left the caller aliasing the source

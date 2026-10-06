@@ -447,9 +447,10 @@ answered a value no statement had assigned (loft#1600, owner ruling).
   linkable — a NARROW member (`n: (u8, integer); c = &n.0`: stored at full width, read by a link
   at its own) and a TEXT member of a tuple local (`c = &s.0`: stored as a `Str` borrow, which a
   `&text` link cannot append to).  Each is refused by name at a bind and at a `&` argument; none
-  is copied.  A wide scalar member links, of a tuple local and of a `&(…)` alike, stack-backed
-  or record-backed (`a-member-of-a-linked-tuple-is-a-place.loft`,
-  `a-record-is-padded-to-its-alignment.loft`). <!-- doc-lint: ok -->
+  is copied.  A wide scalar member links, of a tuple local and of a `&(…)` alike
+  (`a-member-of-a-linked-tuple-is-a-place.loft`, `a-record-is-padded-to-its-alignment.loft`),
+  and so does a stored tuple as a whole — a vector element or a struct field of tuple type
+  (`a-stored-tuple-is-a-place-a-link-names.loft`). <!-- doc-lint: ok -->
 
 **D-bind-28 CLOSED 2026-09-07, the collection half of `(B-Ref-Uniform)`.**
 The rule says a `&τ` variable is used *exactly* like a `τ` variable and that no operation is

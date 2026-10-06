@@ -1,5 +1,5 @@
 diff --git a/src/generation/calls.rs b/src/generation/calls.rs
-index a7ea4cc56..669153275 100644
+index 7c8eb6e5b..f035d257a 100644
 --- a/src/generation/calls.rs
 +++ b/src/generation/calls.rs
 @@ -461,19 +461,6 @@ impl Output<'_> {
@@ -74,10 +74,10 @@ index 72bb1f50b..a645a5149 100644
                  && self.data.def(*d_nr).name() == "OpCreateStack"
                  && let [src_arg] = cargs.as_slice()
 diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
-index 3c933a560..95b0a04ba 100644
+index d0e45a292..aaa32e46f 100644
 --- a/src/parser/expressions.rs
 +++ b/src/parser/expressions.rs
-@@ -4673,39 +4673,7 @@ use a separate collection or add after the loop"
+@@ -4677,39 +4677,7 @@ use a separate collection or add after the loop"
                  // spelling rather than as `Var(t)`.
                  _ => self.store_text_link_of(code),
              };
@@ -118,7 +118,7 @@ index 3c933a560..95b0a04ba 100644
                  amp_unlowered = false;
                  // `@FR-O-Borrow-Scalar` — the link this one copies must live as long, and the
                  // place behind it with it: the slot allocator follows the chain from the
-@@ -9930,53 +9898,6 @@ use a separate collection or add after the loop"
+@@ -9979,31 +9947,6 @@ use a separate collection or add after the loop"
          let expected = self.coalesce_not_null(&Value::Var(v), &tp);
          (*cond.unspan() == expected).then_some(v)
      }
@@ -147,6 +147,13 @@ index 3c933a560..95b0a04ba 100644
 -        }
 -    }
 -
+     /// `@FR-T-Ref-Src` — the source of a `&(…)` is a tuple PLACE: a variable, a vector element
+     /// or a struct field.  A literal or a call result is a value that names no place; refused
+     /// at a `&` bind and at a `&(…)` argument alike, with the cure, never copied
+@@ -10018,28 +9961,6 @@ use a separate collection or add after the loop"
+         );
+     }
+ 
 -    /// The refusal for a tuple member [`Parser::linkable_tuple_member`] declines, at a `&` bind
 -    /// and at a `&` argument alike.  `(B-Ref-Reshape)`: never downgraded to a copy that would
 -    /// drop the write.
@@ -172,7 +179,7 @@ index 3c933a560..95b0a04ba 100644
  
      /// The place a scalar read names, as the reference a `&` link to it holds: a vector
      /// element's own `OpGetVector` / `OpVectorRef`, or `OpGetField(base, fld)` for a field read
-@@ -9988,18 +9909,6 @@ use a separate collection or add after the loop"
+@@ -10051,18 +9972,6 @@ use a separate collection or add after the loop"
      /// (a narrow store place may not: D-bind-39).
      pub(crate) fn scalar_place_ref(&mut self, code: &Value) -> Option<Value> {
          match code.unspan() {
@@ -192,10 +199,10 @@ index 3c933a560..95b0a04ba 100644
              // the first pass, before its enum getter wraps it; without this arm the first pass
              // typed the local as the enum and the second as its link.  It sits above the
 diff --git a/src/parser/mod.rs b/src/parser/mod.rs
-index 4278d7611..63dfe4370 100644
+index b1bb90606..61120366f 100644
 --- a/src/parser/mod.rs
 +++ b/src/parser/mod.rs
-@@ -6581,15 +6581,6 @@ impl Parser {
+@@ -6647,15 +6647,6 @@ impl Parser {
                      // reference the `&` bind would hold (@FR-B-Ref-Lvalue).  A copy in a work
                      // variable would take the callee's write and drop it.
                      *code = place;
@@ -211,7 +218,7 @@ index 4278d7611..63dfe4370 100644
                  } else {
                      // produce a `Value::Insert` so that scope
                      // analysis (`scopes::scan_args`) hoists the
-@@ -17213,16 +17204,6 @@ impl Parser {
+@@ -17460,16 +17451,6 @@ impl Parser {
                  all_types[nr] = tp.clone();
                  continue;
              }
@@ -228,9 +235,9 @@ index 4278d7611..63dfe4370 100644
              if let Type::RefVar(inner) = &tp
                  && !matches!(inner.as_ref(), Type::Text(_))
                  && !matches!(&actual_code, Value::Var(_))
-@@ -21772,9 +21753,7 @@ impl Parser {
-     /// and every arithmetic / `n_*` op out.
-     fn is_amp_place(val: &Value, data: &Data) -> bool {
+@@ -22035,9 +22016,7 @@ impl Parser {
+             return dbref.is_place_read(data);
+         }
          match val.unspan() {
 -            // A tuple local's member (`@FR-B-Ref-Lvalue`): the bind lowering decides which
 -            // member types it can link, and refuses the rest by name.
@@ -240,10 +247,10 @@ index 4278d7611..63dfe4370 100644
                  let name = data.def(*d_nr).name();
                  let listed = matches!(
 diff --git a/src/state/codegen.rs b/src/state/codegen.rs
-index a5745778b..0d5db381d 100644
+index d4e32e347..1bf41c9a5 100644
 --- a/src/state/codegen.rs
 +++ b/src/state/codegen.rs
-@@ -4758,27 +4758,6 @@ impl State {
+@@ -4757,27 +4757,6 @@ impl State {
                  // Dep is the named variable at wv.stack_pos.
                  let dep_offset = stack.var_pos(*wv);
                  self.emit_push_create_stack(stack, dep_offset);
