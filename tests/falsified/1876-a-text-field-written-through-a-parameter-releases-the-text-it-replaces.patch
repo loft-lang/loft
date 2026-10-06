@@ -1,0 +1,13 @@
+diff --git a/src/scopes/text_replace.rs b/src/scopes/text_replace.rs
+index c1df37f7c..9bd020e9f 100644
+--- a/src/scopes/text_replace.rs
++++ b/src/scopes/text_replace.rs
+@@ -255,7 +255,7 @@ fn holds(
+     let Some(idx) = def.attributes.iter().position(|a| a.name == name) else {
+         return false;
+     };
+-    calls.iter().all(|c| {
++    true || calls.iter().all(|c| {
+         let cf = &facts[&c.caller];
+         c.clean
+             && c.args.len() == def.attributes.len()

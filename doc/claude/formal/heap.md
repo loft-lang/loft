@@ -221,10 +221,16 @@ refusing path, and the fast path carries no lock test of its own. An assignment 
 belongs to that field alone, so nothing else is left pointing at it — except a BORROW.  A
 `text` parameter is handed the field's bytes rather than a copy, and so is a walk over the
 field's characters, so `g(r.a, r)` whose body writes `q.a` would read its own parameter
-overwritten.  The release therefore waits for the borrows: it is taken where the function can
-SEE that none is live — the record's owner is a local of this function, no text variable of
-the frame borrows from it, and the write is not inside another call's arguments — and the
-other sites keep the old text until the store dies (D-heap-45).  The initialisation is a
+overwritten.  The release therefore waits for the borrows: it is taken where no borrow can be
+live in this frame — no text variable of the frame borrows from the record's owner, and the
+write is not inside another call's arguments — and in no frame above it.  The owner is then a
+local of this function, or a parameter whose every caller is a visible direct call that keeps
+the same property: every `text` parameter of the writer is only the value written, and at each
+call the argument is not inside another call's arguments and is owned there by a local no text
+variable borrows, or by a parameter of a caller that holds the same (a greatest fixpoint over
+the program's calls, so recursion is covered).  A text variable that only COPIES the field
+still counts as a borrow there, so its frame keeps the old text (D-heap-45).  The
+initialisation is a
 different write because the slot it fills can hold bytes that are not a block: a record minted
 without zero-filling (`(R-CompleteWrite)`) or an element slot handed to a callee
 (`(R-Place)`).  The guard is
@@ -755,12 +761,11 @@ OPEN: **1**.  The entries the register closed, and how each closed, are in
 a lease verdict and ties each cell that must release once, and does not, to exactly one open
 entry.
 
-- **D-heap-45 (OPEN, loft#1876)** — violates <!-- doc-lint: ok -->
-  (`H-TextReplace`): an assignment to a text field of a record reached through a PARAMETER
-  keeps the text it replaces until the store dies.  Whether a caller frame still borrows that
-  text is a fact about the callers, and the release is taken only where the function itself
-  shows there is no borrow.  A method rewriting `self.s` once per call grows the caller's store
-  by one record per call.
+- **D-heap-45 (OPEN, loft#1879)** — violates <!-- doc-lint: ok -->
+  (`H-TextReplace`): a text variable whose deps reach a record (`old = r.a`) counts as a
+  borrow of its text, so every call of a method that writes that record's text through its
+  parameter keeps the text it replaces, though such a local is a copy on both backends.  The
+  walk temporary of `for c in r.a` is a real borrow, and the two are not yet told apart.
 
 Writing these rules **shrinks** [operational.md](operational.md)'s D-op-1 — the heap/store
 steps it named as *"unwritten … the interpreter remains their spec"* now have a written
