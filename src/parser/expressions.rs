@@ -1249,7 +1249,7 @@ impl Parser {
         // Start of the expression — an "Unknown variable" caret on a bare-Var
         // expression (e.g. a single call argument) must point here, not at the
         // cursor that has drifted to the closing `)` / `;` by detection time.
-        let expr_pos = self.lexer.peek_pos().clone();
+        let expr_pos = *self.lexer.peek_pos();
         if self.lexer.has_token("for") {
             self.parse_for(val);
             Type::Void
@@ -1589,12 +1589,12 @@ impl Parser {
     pub(crate) fn parse_while(&mut self, code: &mut Value) {
         // @PLN86 3.1 — the `while`'s position, taken before the condition so an
         // unbounded-loop diagnostic points at the `while` itself.
-        let while_pos = self.lexer.peek_pos().clone();
+        let while_pos = *self.lexer.peek_pos();
         let mut cond = Value::Null;
         // loft#986 — see `in_control_head`: the `{` after the condition opens the body.
         let outer_head = self.in_control_head;
         self.in_control_head = true;
-        let cond_at = self.lexer.peek().position.clone();
+        let cond_at = self.lexer.peek().position;
         let cond_tp = self.expression(&mut cond);
         self.in_control_head = outer_head;
         // The same coercion `if` performs — a `while` over a collection handle is the
@@ -4241,7 +4241,7 @@ use a separate collection or add after the loop"
             && self.vars.is_argument(var_nr)
             && self.lexer.peek_token("[");
         let prev_read_target = std::mem::replace(&mut self.expected, f_type.clone());
-        let rhs_pos = self.lexer.peek_pos().clone();
+        let rhs_pos = *self.lexer.peek_pos();
         // @PLN87 B-Ref-AnnotationOnly — a plain `=` RHS is the one expression position
         // where a leading `&` binds a reference, so open the head there.  A COMPOUND
         // assignment (`b += &a`) is excluded on purpose: it mutates `b`, it does not
@@ -8425,7 +8425,7 @@ use a separate collection or add after the loop"
         // would otherwise leak into it.  `&&` is its own token, so this never
         // mis-fires on logical-and.  The start position also points the caret below
         // at the `&` (the cursor has drifted to `;`/`}` by detection time).
-        let stmt_start_pos = self.lexer.peek_pos().clone();
+        let stmt_start_pos = *self.lexer.peek_pos();
         let started_with_amp = self.lexer.peek_token("&");
         // loft#756 — mark the names in a `( … ) =` LHS as bindings for the whole
         // LHS parse.  Only ever SET here (never cleared): a nested parse_assign
@@ -8618,7 +8618,7 @@ use a separate collection or add after the loop"
                         .collect()
                 });
                 let host_field_pos = (first_pos as u16).saturating_sub(offsets[0]);
-                let rhs_pos = self.lexer.pos().clone();
+                let rhs_pos = *self.lexer.pos();
                 let mut rhs = Value::Null;
                 let rhs_type = self.expression(&mut rhs);
                 // The store meets the field's type like every other store does (`@FR-C-Tuple`
@@ -8671,7 +8671,7 @@ use a separate collection or add after the loop"
                 );
             }
             let mut rhs = Value::Null;
-            let destr_rhs_pos = self.lexer.pos().clone();
+            let destr_rhs_pos = *self.lexer.pos();
             let mut rhs_type = self.expression(&mut rhs);
             let rhs_fact = std::mem::take(&mut self.operand_fact);
             self.bind_unpacked(&rhs_fact, &var_nrs); // @PLN187
@@ -9175,7 +9175,7 @@ use a separate collection or add after the loop"
                     && !matches!(code.unspan(), Value::Var(_))
                     && self.raw_write_is_host_owned(code)
                 {
-                    let pos = self.lexer.peek_pos().clone();
+                    let pos = *self.lexer.peek_pos();
                     // @PLN86 F5 — a ONE-LEVEL struct field write whose field carries an
                     // `#update` link is gated PER-FIELD (admission admits iff the token is
                     // granted).  A write to a field with NO update link, an index write, a

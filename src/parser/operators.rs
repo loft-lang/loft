@@ -1933,7 +1933,7 @@ impl Parser {
         // Start of the left operand — `known_var_or_type` below must point an
         // "Unknown variable" caret here, not at the cursor that has drifted to
         // the operator / statement terminator while the operand was parsed.
-        let operand_pos = self.lexer.peek_pos().clone();
+        let operand_pos = *self.lexer.peek_pos();
         let mut current_type = self.parse_operators(var_tp, code, parent_tp, precedence + 1);
         // @PLN102 pre-freeze — comparison operators are NON-ASSOCIATIVE.  A chain like
         // `a == b == c` (or `a < b < c`) parses as `(a == b) == c`, silently comparing a
@@ -1954,7 +1954,7 @@ impl Parser {
             // and three errors after it, and never that `f(v)` has no value.  Name it, and
             // read the right-hand side so the parse stays aligned.
             if matches!(current_type, Type::Void) {
-                let at = self.lexer.peek_pos().clone();
+                let at = *self.lexer.peek_pos();
                 let Some(op) = OPERATORS[precedence]
                     .iter()
                     .copied()
@@ -1987,7 +1987,7 @@ impl Parser {
             // threaded into `handle_operator` so the resulting Value::Span
             // points at the operator token (e.g. the `/`), not at whatever
             // the lexer drifted to while parsing the RHS.
-            let op_pos = self.lexer.pos().clone();
+            let op_pos = *self.lexer.pos();
             let op_start = {
                 let p = self.lexer.peek_pos();
                 (p.line, p.pos)
@@ -2329,7 +2329,7 @@ impl Parser {
             // (`.` field/method or `[` index — both can deref null or
             // out-of-bounds at runtime).  The `(` chained-call branch
             // is wrapped under step 1.13.
-            let chain_pos = self.lexer.pos().clone();
+            let chain_pos = *self.lexer.pos();
             let mut wrap_chain = false;
             if !self.first_pass
                 && t.is_unknown()
@@ -3841,7 +3841,7 @@ impl Parser {
         let mut ret_val = Value::Null;
         let r_type = self.data.def(self.context).returned().clone();
         if self.control_value_follows() {
-            let ret_pos = self.lexer.peek_pos().clone();
+            let ret_pos = *self.lexer.peek_pos();
             let t = self.expression(&mut ret_val);
             // @FR-N-Store: `lhs ?? return ret` returns `ret` into the caller's non-null return
             // slot — the store face asks; a bare `null` return takes the sentinel path below
@@ -3996,7 +3996,7 @@ impl Parser {
         lhs_type: &Type,
     ) {
         let mut rhs = Value::Null;
-        let rhs_pos = self.lexer.peek_pos().clone();
+        let rhs_pos = *self.lexer.peek_pos();
         // Thread the LHS BASE type as the default's hint when the context gives
         // none (`var_tp` unknown/null — e.g. a RETURN-TAIL `v[i] ?? []`, where
         // parse_return's `[`-led vector hint cannot fire).  Without it an EMPTY
@@ -5686,7 +5686,7 @@ impl Parser {
                 Type::Vector(elem, _) => Type::Vector(elem.clone(), crate::data::Deps::none()),
                 _ => ctp.clone(),
             };
-            let second_pos = self.lexer.peek_pos().clone();
+            let second_pos = *self.lexer.peek_pos();
             let is_eq = operator == "==" || operator == "!=";
             let left_amp = self.eq_amp_left.take();
             let outer_rhs = std::mem::replace(
@@ -6017,7 +6017,7 @@ impl Parser {
         } else {
             self.expr_not_null = false;
             let mut second_code = Value::Null;
-            let second_pos = self.lexer.peek_pos().clone();
+            let second_pos = *self.lexer.peek_pos();
             // Enforces @FR-G-Assoc — this is the ONE place associativity is decided, since
             // the level table (`parser/mod.rs::OPERATORS`) carries precedence only.
             //
@@ -6235,7 +6235,7 @@ impl Parser {
             }
             if !self.first_pass && matches!(operator, "+" | "-" | "*" | "/" | "%" | "<<" | ">>") {
                 let inner = std::mem::replace(code, Value::Null);
-                *code = Value::with_span(op_pos.clone(), inner);
+                *code = Value::with_span(*op_pos, inner);
             }
             // The result of a binary arithmetic op is a *computed value*, not
             // a `not null` field read — `/` and `%` can yield null on
@@ -6490,9 +6490,7 @@ impl Parser {
         // legitimate fallback) instead of leaking to the lexer's
         // current cursor — which is *past* the just-parsed body and
         // would otherwise point at the next function's start.
-        let fn_pos = self.data.definitions[self.context as usize]
-            .position
-            .clone();
+        let fn_pos = self.data.definitions[self.context as usize].position;
         ctx.last_pos = Some(fn_pos);
         let body = &self.data.definitions[self.context as usize].code;
         Self::walk_for_warnings(&self.data, &mut self.lexer, body, &mut ctx);
@@ -6622,8 +6620,8 @@ impl Parser {
     ) {
         match code {
             Value::Span(boxed) => {
-                let saved = ctx.last_pos.clone();
-                ctx.last_pos = Some(boxed.0.clone());
+                let saved = ctx.last_pos;
+                ctx.last_pos = Some(boxed.0);
                 Self::walk_for_warnings(data, lexer, &boxed.1, ctx);
                 ctx.last_pos = saved;
             }

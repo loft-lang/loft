@@ -413,7 +413,7 @@ pub fn source_loc_for_pc(pc: u32) -> Option<crate::lexer::Position> {
             m.range(..=pc)
                 .rev()
                 .find(|(_, (_, end))| *end > pc)
-                .map(|(_, (p, _))| p.clone())
+                .map(|(_, (p, _))| *p)
         })
     })
 }
@@ -428,11 +428,9 @@ pub fn source_loc_for_pc(pc: u32) -> Option<crate::lexer::Position> {
 pub fn nearest_source_loc_for_pc(pc: u32) -> Option<(u32, crate::lexer::Position)> {
     SOURCE_SPANS.with(|s| {
         let borrow = s.borrow();
-        borrow.as_ref().and_then(|m| {
-            m.range(..=pc)
-                .next_back()
-                .map(|(at, (p, _))| (*at, p.clone()))
-        })
+        borrow
+            .as_ref()
+            .and_then(|m| m.range(..=pc).next_back().map(|(at, (p, _))| (*at, *p)))
     })
 }
 
@@ -456,7 +454,7 @@ thread_local! {
 pub fn note_compile_pos(pos: &crate::lexer::Position) {
     COMPILE_POS.with(|p| {
         if let Ok(mut slot) = p.try_borrow_mut() {
-            *slot = Some(pos.clone());
+            *slot = Some(*pos);
         }
     });
 }
@@ -473,7 +471,7 @@ pub fn clear_compile_pos() {
 
 #[must_use]
 pub fn compile_pos() -> Option<crate::lexer::Position> {
-    COMPILE_POS.with(|p| p.try_borrow().ok().and_then(|b| b.clone()))
+    COMPILE_POS.with(|p| p.try_borrow().ok().and_then(|b| *b))
 }
 
 /// Render an internal compiler panic as a loft diagnostic pointing at the user's
@@ -518,7 +516,7 @@ pub fn install_panic_hook() {
             diags.add_at(
                 crate::diagnostics::Level::Fatal,
                 &msg,
-                &pos.file,
+                pos.file,
                 pos.line,
                 pos.pos,
             );
@@ -624,7 +622,7 @@ extern "C" fn handler(sig: libc::c_int, _info: *mut libc::siginfo_t, _ucontext: 
             borrow
                 .as_ref()
                 .and_then(|m| m.range(..=ctx.pc).next_back())
-                .map(|(at, (p, _))| (*at, p.clone()))
+                .map(|(at, (p, _))| (*at, *p))
         })
     });
     let sig_name = match sig {
@@ -665,7 +663,7 @@ extern "C" fn handler(sig: libc::c_int, _info: *mut libc::siginfo_t, _ucontext: 
         // user can still grep for it.
         if let Some((span_pc, pos)) = source_loc.as_ref() {
             let _ = w.str("  at:      ");
-            let _ = w.str(&pos.file);
+            let _ = w.str(pos.file);
             let _ = w.str(":");
             let _ = w.u32(pos.line);
             let _ = w.str(":");
@@ -897,7 +895,7 @@ mod tests {
         use std::collections::BTreeMap;
         use std::sync::Arc;
         let at = |line: u32| Position {
-            file: "a.loft".into(),
+            file: "a.loft",
             line,
             pos: 1,
         };
@@ -962,18 +960,18 @@ mod tests {
         assert!(compile_pos().is_none(), "starts unset");
 
         let pos = crate::lexer::Position {
-            file: "prog.loft".into(),
+            file: "prog.loft",
             line: 12,
             pos: 5,
         };
         note_compile_pos(&pos);
         let got = compile_pos().expect("published position is readable");
-        assert_eq!((&*got.file, got.line, got.pos), ("prog.loft", 12, 5));
+        assert_eq!((got.file, got.line, got.pos), ("prog.loft", 12, 5));
 
         // A later position replaces the earlier one — the report wants where the
         // compiler IS, not where it started.
         let later = crate::lexer::Position {
-            file: "prog.loft".into(),
+            file: "prog.loft",
             line: 30,
             pos: 1,
         };

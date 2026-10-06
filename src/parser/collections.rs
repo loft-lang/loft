@@ -2191,7 +2191,7 @@ impl Parser {
                         place: to.clone(),
                         spec: *spec,
                         fit_var: None,
-                        at: self.lexer.pos().clone(),
+                        at: *self.lexer.pos(),
                     }),
                     _ => None,
                 },
@@ -3548,7 +3548,7 @@ use #count instead"
         };
         let mut if_step = if self.lexer.has_token("if") {
             let mut if_expr = Value::Null;
-            let at = self.lexer.peek().position.clone();
+            let at = self.lexer.peek().position;
             let tp = self.expression(&mut if_expr);
             // The filter is a CONDITION, and it took the expression raw: a store there
             // (`for x in r if n = x`) read a corrupt stack reference and panicked the
@@ -4004,12 +4004,12 @@ use #count instead"
         // consumed, to record its DECLARATION once the loop var exists (only when
         // recording; destructure binders are synthesized, so they are excluded).
         let binder_pos = (destructure_names.is_none() && self.record_resolutions)
-            .then(|| self.lexer.peek_pos().clone());
+            .then(|| *self.lexer.peek_pos());
         // P235: when destructuring, synthesize a loop var name from
         // the source line/column; the user-named binders are defined
         // later as proper variables and prepended to the body.
         let id_opt: Option<String> = if destructure_names.is_some() {
-            let pos = self.lexer.peek().position.clone();
+            let pos = self.lexer.peek().position;
             Some(format!("__destructure_t_{}_{}", pos.line, pos.pos))
         } else {
             self.lexer.has_identifier()
@@ -5026,8 +5026,8 @@ use #count instead"
         };
 
         // Allocate wrapper def
-        let wrapper_pos = self.lexer.pos().clone();
-        let wrapper_file = wrapper_pos.file.clone();
+        let wrapper_pos = *self.lexer.pos();
+        let wrapper_file = wrapper_pos.file;
         // Use lexer line:col + work fn name for a stable, unique
         // synthetic name (avoids needing a Parser-level counter).
         let wrapper_name = format!(
@@ -5043,7 +5043,7 @@ use #count instead"
         self.data.set_returned(wrapper_d_nr, ret_type.clone());
 
         // Build wrapper variable table
-        let mut wrapper_vars = Function::new(&wrapper_name, &wrapper_file);
+        let mut wrapper_vars = Function::new(&wrapper_name, wrapper_file);
         let t_var = wrapper_vars.add_variable("t", tuple_tp, &mut self.lexer);
         wrapper_vars.become_argument(t_var);
         wrapper_vars.defined(t_var);

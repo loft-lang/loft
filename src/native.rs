@@ -908,7 +908,7 @@ fn n_assert(stores: &mut Stores, stack: &mut DbRef) {
     stores.raise_runtime_error(Box::new(
         crate::runtime_error::RuntimeError::assertion_failed(
             v_message.str().to_string(),
-            v_file.str().to_string(),
+            v_file.str(),
             v_line as u32,
         ),
     ));
@@ -933,7 +933,7 @@ fn n_panic(stores: &mut Stores, stack: &mut DbRef) {
     // variant.  See `RuntimeError::user_panic` for the constructor.
     stores.raise_runtime_error(Box::new(crate::runtime_error::RuntimeError::user_panic(
         v_message.str().to_string(),
-        v_file.str().to_string(),
+        v_file.str(),
         v_line as u32,
     )));
     stores.had_fatal = true;

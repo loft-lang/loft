@@ -165,7 +165,7 @@ impl Parser {
     fn mint_store_text_instance(&mut self, d: u32, mask: u64, caller: u32) -> u32 {
         if !matches!(self.data.def(d).code, Value::Block(_)) {
             let name = self.data.def(d).original_name();
-            let pos = self.data.def(caller).position.clone();
+            let pos = self.data.def(caller).position;
             diagnostic_at!(
                 self.lexer,
                 &pos,
@@ -278,7 +278,7 @@ impl Parser {
                             && matches!(a.as_slice(), [Value::Var(y)] if links.contains(y)))
                     {
                         let name = self.vars.name(x).to_string();
-                        let pos = self.data.def(self.context).position.clone();
+                        let pos = self.data.def(self.context).position;
                         diagnostic_at!(
                             self.lexer,
                             &pos,

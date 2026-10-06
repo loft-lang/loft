@@ -714,7 +714,7 @@ impl Scopes<'_> {
                 if is_lift_preamble {
                     scanned
                 } else {
-                    Value::with_span(b.0.clone(), scanned)
+                    Value::with_span(b.0, scanned)
                 }
             }
             _ => {

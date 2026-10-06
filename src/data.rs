@@ -3684,7 +3684,7 @@ impl Type {
             Type::Optional(tp) => format!("{}?", tp.argument(data, d_nr)),
             _ => {
                 let d = data.def(d_nr);
-                self.show(data, &Function::new(&d.name, &d.position.file))
+                self.show(data, &Function::new(&d.name, d.position.file))
             }
         }
     }
@@ -5381,7 +5381,7 @@ impl Definition {
     /// Declared in `default/` — the standard library.
     #[must_use]
     pub fn is_stdlib(&self) -> bool {
-        crate::file_access::is_stdlib_source(&self.position.file)
+        crate::file_access::is_stdlib_source(self.position.file)
     }
 
     #[must_use]
@@ -5392,7 +5392,7 @@ impl Definition {
         if !self.name.starts_with("n_") || self.name.starts_with("n___lambda_") {
             return false;
         }
-        if crate::file_access::is_stdlib_source(&self.position.file) {
+        if crate::file_access::is_stdlib_source(self.position.file) {
             return false;
         }
         // Only the AUTHOR's parameters count: `text_return` / `ref_return` add hidden buffers.
@@ -6436,7 +6436,7 @@ pub struct Data {
     /// The file each source was parsed from, as the parser met it.  A definition written
     /// in a source's own file is never a private import there — adoption can leave a
     /// declaration under the `source` of the file that first NAMED it (@C98).
-    source_files: HashMap<u16, std::sync::Arc<str>>,
+    source_files: HashMap<u16, &'static str>,
     /// loft#788 — bare names that MORE THAN ONE import binds, and to different
     /// definitions: `(name, importing_source) → the losing def_nrs`.
     ///
@@ -7784,7 +7784,7 @@ impl Data {
             bound_holder: false,
             name: name.to_string(),
             source: self.source,
-            position: position.clone(),
+            position: *position,
             def_type,
             parent: u32::MAX,
             first_child: u32::MAX,
@@ -7802,7 +7802,7 @@ impl Data {
             known_type: u16::MAX,
             code_position: 0,
             code_length: 0,
-            variables: Function::new(name, &position.file),
+            variables: Function::new(name, position.file),
             pub_visible: false,
             null_safe: false,
             op_priority: OP_NORMAL,
@@ -9085,8 +9085,8 @@ impl Data {
         let name = fn_name.strip_prefix("n_").unwrap_or(fn_name);
         let at = &self.def(winner).position;
         if self.def(winner).name.starts_with("n_")
-            && crate::file_access::is_stdlib_source(&at.file)
-            && !crate::file_access::is_stdlib_source(&lexer.pos().file)
+            && crate::file_access::is_stdlib_source(at.file)
+            && !crate::file_access::is_stdlib_source(lexer.pos().file)
         {
             format!(
                 "`{name}` is a standard-library function, and its name is reserved for it: a program cannot define its own `{name}` (the standard library's is at {at}); choose another name"
@@ -9841,7 +9841,7 @@ impl Data {
             // the first overload's pass-2 body then read *Unknown variable* for its own
             // parameter, and every program with three overloads lost its watcher
             // (measured, @PLN162 step 14).
-            && !crate::file_access::is_stdlib_source(&lexer.pos().file)
+            && !crate::file_access::is_stdlib_source(lexer.pos().file)
             && o_nr != u32::MAX
             && self.def(o_nr).def_type == DefType::Dynamic
             && self.def(o_nr).source == self.source
@@ -9863,7 +9863,7 @@ impl Data {
         } else if d_nr == u32::MAX
             && generic_members
             && crate::keys::method_in_set_enabled()
-            && !crate::file_access::is_stdlib_source(&lexer.pos().file)
+            && !crate::file_access::is_stdlib_source(lexer.pos().file)
             && (o_nr == u32::MAX
                 || (self.def(o_nr).def_type == DefType::Dynamic
                     && self.def(o_nr).source == self.source))
@@ -10771,7 +10771,7 @@ impl Data {
         if name.matches('<').count() > Self::MAX_INSTANCE_NESTING {
             return u32::MAX;
         }
-        let position = self.definitions[template as usize].position.clone();
+        let position = self.definitions[template as usize].position;
         let enum_mixed = match self.definitions[template as usize].returned.base() {
             Type::Enum(_, mixed, _) => Some(*mixed),
             _ => None,
@@ -10835,7 +10835,7 @@ impl Data {
             .children_of(template)
             .filter(|&c| self.def_type(c) == DefType::EnumValue)
             .collect();
-        let position = self.definitions[d as usize].position.clone();
+        let position = self.definitions[d as usize].position;
         for v in variants {
             let vname = self.definitions[v as usize].name.clone();
             let vd = self.add_def(&vname, &position, DefType::EnumValue);
@@ -11228,7 +11228,7 @@ impl Data {
         if let Some(nr) = self.def_names.get(&name, struct_source) {
             return nr;
         }
-        let pos = lexer.pos().clone();
+        let pos = *lexer.pos();
         // Create + register the synth under the STRUCT's source (not the current parse source),
         // so `add_def`'s `(name, source)` registration + dual-definition guard match the lookup
         // key above, and a `rebuild_indices` (cache-load path) re-derives the SAME key from the
@@ -13031,14 +13031,12 @@ impl Data {
             && self
                 .source_files
                 .get(&source)
-                .is_none_or(|f| *self.definitions[def_nr as usize].position.file != **f)
+                .is_none_or(|f| self.definitions[def_nr as usize].position.file != *f)
     }
 
     /// Record the file `source` is parsed from (see `source_files`).
-    pub fn note_source_file(&mut self, source: u16, file: &std::sync::Arc<str>) {
-        self.source_files
-            .entry(source)
-            .or_insert_with(|| std::sync::Arc::clone(file));
+    pub fn note_source_file(&mut self, source: u16, file: &'static str) {
+        self.source_files.entry(source).or_insert(file);
     }
 
     /// Bind an imported `def_nr` at `key` in `into_source` — only where the key is free,
@@ -14345,11 +14343,11 @@ fn span_clone_and_eq_roundtrip() {
     // debug-format it, assert round-trip equality.  Span is a transparent
     // wrapper, so the cloned tree must compare equal to the original.
     let pos = Position {
-        file: "x.loft".into(),
+        file: "x.loft",
         line: 17,
         pos: 4,
     };
-    let v = Value::Span(Box::new((pos.clone(), Value::Int(7))));
+    let v = Value::Span(Box::new((pos, Value::Int(7))));
     let v2 = v.clone();
     assert_eq!(v, v2, "clone must be Eq");
     let dbg = format!("{v:?}");
@@ -14364,16 +14362,16 @@ fn span_unspan_strips_wrapper() {
     // Plan-07 phase 1, step 1.B.0 acceptance: `unspan()` returns the
     // inner non-Span node, recursing through any number of wraps.
     let pos = Position {
-        file: "y.loft".into(),
+        file: "y.loft",
         line: 3,
         pos: 7,
     };
     let inner = Value::Int(42);
     // Single wrap.
-    let wrapped = Value::Span(Box::new((pos.clone(), inner.clone())));
+    let wrapped = Value::Span(Box::new((pos, inner.clone())));
     assert_eq!(wrapped.unspan(), &inner);
     // Doubly wrapped.
-    let double = Value::Span(Box::new((pos.clone(), wrapped.clone())));
+    let double = Value::Span(Box::new((pos, wrapped.clone())));
     assert_eq!(double.unspan(), &inner);
     // Non-Span passes through unchanged.
     assert_eq!(inner.unspan(), &inner);
@@ -15188,7 +15186,7 @@ mod children_index_tests {
     fn data_with(n: u32) -> Data {
         let mut data = Data::new();
         let pos = Position {
-            file: "t.loft".into(),
+            file: "t.loft",
             line: 1,
             pos: 1,
         };

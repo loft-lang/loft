@@ -262,7 +262,7 @@ fn def_reshape_refusals(
         return Vec::new();
     }
     let function = &def.variables;
-    let file = def.position.file.clone();
+    let file = def.position.file;
     let mut out: Vec<ReshapeRefusal> = Vec::new();
     // (1) — a `&` link this frame holds, still live where its container is disturbed. Every
     // cause the walk reports is refused: each one ends the place the reference names, and a

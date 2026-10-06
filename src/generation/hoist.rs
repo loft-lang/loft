@@ -2228,7 +2228,7 @@ pub fn substitute_root(v: &Value, from: u16, to: u16) -> Value {
 pub fn substitute_path(path: &Value, from: u16, arg: &Value) -> Value {
     match path {
         Value::Var(x) if *x == from => arg.clone(),
-        Value::Span(b) => Value::Span(Box::new((b.0.clone(), substitute_path(&b.1, from, arg)))),
+        Value::Span(b) => Value::Span(Box::new((b.0, substitute_path(&b.1, from, arg)))),
         Value::Call(d, args) => Value::Call(
             *d,
             args.iter().map(|a| substitute_path(a, from, arg)).collect(),
@@ -7499,7 +7499,7 @@ fn split_call(
     let Value::Call(d, _) = call.unspan() else {
         return Err("");
     };
-    if !crate::file_access::is_stdlib_source(&data.def(*d).position.file) {
+    if !crate::file_access::is_stdlib_source(data.def(*d).position.file) {
         return Err("`split` is not the standard library's");
     }
     let Some(code) = call_named(sep, data, "OpConvCharacterFromInt")
@@ -11629,7 +11629,7 @@ fn without_terminal_copies(ops: &[Value], data: &Data) -> Vec<Value> {
     }
     fn walk(v: &Value, data: &Data) -> Value {
         match v {
-            Value::Span(b) => Value::Span(Box::new((b.0.clone(), walk(&b.1, data)))),
+            Value::Span(b) => Value::Span(Box::new((b.0, walk(&b.1, data)))),
             Value::Block(bl) => {
                 let mut nb = (**bl).clone();
                 nb.operators = without_terminal_copies(&bl.operators, data);

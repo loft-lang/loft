@@ -766,7 +766,7 @@ mod tests {
 
     fn pos(file: &str, line: u32) -> Position {
         Position {
-            file: file.into(),
+            file: crate::lexer::intern_file(file),
             line,
             pos: 1,
         }

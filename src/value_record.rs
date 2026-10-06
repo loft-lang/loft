@@ -363,7 +363,7 @@ fn add_twin(data: &mut Data, d: u32) -> u32 {
         n += 1;
         name = format!("{base}_tuple{n}");
     }
-    let position = data.def(d).position.clone();
+    let position = data.def(d).position;
     let t = data.add_def(&name, &position, DefType::Function);
     let mut def = data.def(d).clone();
     def.name = name;

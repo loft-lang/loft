@@ -5824,7 +5824,7 @@ pub(crate) fn running_frame_position() -> Option<crate::lexer::Position> {
         frames
             .last()
             .map(|(_, file, line, _)| crate::lexer::Position {
-                file: std::sync::Arc::from(*file),
+                file: crate::lexer::intern_file(file),
                 line: *line,
                 pos: 1,
             })
@@ -5953,7 +5953,7 @@ pub const NATIVE_MAIN_STACK: usize = 512 * 1024 * 1024;
 #[cold]
 #[inline(never)]
 fn cr_stack_overflow(file: &str, line: u32) -> ! {
-    crate::runtime_error::RuntimeError::stack_overflow(file.to_string(), line).report_and_exit()
+    crate::runtime_error::RuntimeError::stack_overflow(file, line).report_and_exit()
 }
 
 /// The LEAN tier's frame entry (@PLN157, loft#1426 M1): the recursion cap

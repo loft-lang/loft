@@ -693,7 +693,7 @@ impl Parser {
             && self.type_arguments_then_call()
         {
             if !self.first_pass {
-                let at = self.lexer.peek_pos().clone();
+                let at = *self.lexer.peek_pos();
                 diagnostic_at!(
                     self.lexer,
                     &at,
@@ -2317,7 +2317,7 @@ impl Parser {
         // @PLN165 D8 — a unit variant of an OPEN instance (`Hole` in a template returning
         // `Slot<T>`) has no layout: built by each monomorph, as a literal of one is.
         if variant_nr != u32::MAX && self.data.is_open_instance(variant_nr) {
-            let pos = self.lexer.pos().clone();
+            let pos = *self.lexer.pos();
             *code = v_block(
                 vec![
                     Value::Int(variant_nr as i32),
@@ -2669,7 +2669,7 @@ impl Parser {
                 // * not a `Reference` — that struct-valued kind is refused at the
                 //   declaration with a message that names the real limitation, and one
                 //   rule keeps one home.
-                let decl_pos = self.data.def(d_nr).position().clone();
+                let decl_pos = *self.data.def(d_nr).position();
                 let use_pos = self.lexer.pos();
                 let reads_above_its_declaration = use_pos.file == decl_pos.file
                     && (use_pos.line, use_pos.pos) < (decl_pos.line, decl_pos.pos);
@@ -2748,7 +2748,7 @@ impl Parser {
             self.lexer.has_token("{");
             let mut depth = 1u32;
             while depth > 0 {
-                let before = self.lexer.peek().position.clone();
+                let before = self.lexer.peek().position;
                 if self.lexer.has_token("{") {
                     depth += 1;
                 } else if self.lexer.has_token("}") {
@@ -2835,7 +2835,7 @@ impl Parser {
             self.lexer.has_token("{");
             let mut depth = 1u32;
             while depth > 0 {
-                let before = self.lexer.peek().position.clone();
+                let before = self.lexer.peek().position;
                 if self.lexer.has_token("{") {
                     depth += 1;
                 } else if self.lexer.has_token("}") {
@@ -5050,9 +5050,9 @@ impl Parser {
                 // fix can spell `{}` -> `[]` as an edit.  Both are needed: `{ }` is the same
                 // construct with a gap, and a length assumed from the opener would leave the
                 // `}` behind.
-                let open = self.lexer.peek_pos().clone();
+                let open = *self.lexer.peek_pos();
                 let empty = self.lexer.has_token("{") && {
-                    let close = self.lexer.peek_pos().clone();
+                    let close = *self.lexer.peek_pos();
                     self.lexer.has_token("}") && {
                         braces_span = (open.line == close.line && close.pos >= open.pos)
                             .then(|| (open.line, open.pos, close.pos + 1 - open.pos));
@@ -5141,7 +5141,7 @@ impl Parser {
                         std::mem::replace(&mut self.rebuild_watch_hit, false),
                     )
                 });
-                let value_pos = self.lexer.peek_pos().clone();
+                let value_pos = *self.lexer.peek_pos();
                 let mut t = self.parse_operators(&td, &mut value, &mut parent_tp, 0);
                 if let Some((w, hit)) = outer_watch {
                     if self.rebuild_watch_hit {
@@ -5527,7 +5527,7 @@ impl Parser {
         self.lexer.token("}");
         // Where the literal is — what its field checks report, as the twin's do
         // (`parse_object` reads the position here too) — the lowering runs at the call.
-        let pos = self.lexer.pos().clone();
+        let pos = *self.lexer.pos();
         fields.insert(1, Value::Text(pos.file.to_string()));
         fields.insert(2, Value::Int(pos.line as i32));
         let tp = self.literal_type(open);
@@ -5597,7 +5597,7 @@ impl Parser {
                 if self.cyclic_instances.insert(inst) {
                     let shown =
                         Type::Reference(inst, crate::data::Deps::none()).source_name(&self.data);
-                    let at = self.data.def(inst).position().clone();
+                    let at = *self.data.def(inst).position();
                     self.lexer.pos_diagnostic(
                         Level::Error,
                         &at,
@@ -5743,7 +5743,7 @@ impl Parser {
         // the cursor sits past the closing `}` — on the next statement for a one-line literal.
         // Keep the opening brace's position to point the caret at the literal it names
         // (DIAGNOSTICS.md § Adding a code, step 4).
-        let literal_pos = self.lexer.pos().clone();
+        let literal_pos = *self.lexer.pos();
         let mut list = Vec::new();
         let mut new_object = false;
         let mut in_place_var: Option<u16> = None;

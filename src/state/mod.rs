@@ -4034,8 +4034,7 @@ impl State {
             if def.def_type != crate::data::DefType::Function {
                 continue;
             }
-            if crate::file_access::file_name(&*def.position.file).as_deref() != Some(want.as_str())
-            {
+            if crate::file_access::file_name(def.position.file).as_deref() != Some(want.as_str()) {
                 continue;
             }
             if let Some(off) = self.set_breakpoint_fn_line(d, line, data) {
@@ -4058,7 +4057,7 @@ impl State {
         for d in 0..data.definitions() {
             let def = data.def(d);
             if def.def_type != crate::data::DefType::Function
-                || crate::file_access::file_name(&*def.position.file).as_deref()
+                || crate::file_access::file_name(def.position.file).as_deref()
                     != Some(want.as_str())
             {
                 continue;
@@ -6687,7 +6686,7 @@ impl State {
     }
 
     pub fn raise(&mut self, kind: crate::runtime_error::RuntimeErrorKind) {
-        let position = self.source_loc_for(self.code_pos).cloned();
+        let position = self.source_loc_for(self.code_pos).copied();
         self.raise_at(kind, position);
     }
 
@@ -6731,7 +6730,7 @@ impl State {
         let frame = self.call_stack.last()?;
         let declared = &data.def(frame.d_nr).position;
         Some(Position {
-            file: declared.file.clone(),
+            file: declared.file,
             line: declared.line,
             pos: 1,
         })

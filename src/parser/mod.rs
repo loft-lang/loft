@@ -808,7 +808,7 @@ pub struct Parser {
     program_scope: Option<crate::resolution_scope::ResolutionScope>,
     /// The entry file, as the lexer already holds it (a shared handle, no copy), for
     /// `program_scope`.  `None` before the entry file is loaded.
-    program_entry: Option<std::sync::Arc<str>>,
+    program_entry: Option<&'static str>,
     /// loft#1687 — per package a declared scope could not satisfy from the cache: the
     /// constraint and the versions the cache holds, so "library not found" can say which
     /// declaration was unmet instead of implying nothing is there.
@@ -2488,7 +2488,7 @@ impl Parser {
         // drifted to the NEXT definition — the caret pointed at the following
         // `fn` while the prose named this one, which reads as a diagnostic about
         // a function that is fine.  Point at the definition's own position.
-        let at_pos = self.data.def(self.context).position.clone();
+        let at_pos = self.data.def(self.context).position;
         diagnostic_at!(
             self.lexer,
             &at_pos,
@@ -2543,7 +2543,7 @@ impl Parser {
         let name = def.original_name().clone();
         let at = crate::keys::PARAM_ADVICE_AT;
         // Emitted after the body is parsed — see `warn_function_complexity`.
-        let at_pos = def.position.clone();
+        let at_pos = def.position;
         diagnostic_at!(
             self.lexer,
             &at_pos,
@@ -2604,7 +2604,7 @@ impl Parser {
         }
         let name = def.original_name().clone();
         // Emitted after the body is parsed — see `warn_function_complexity`.
-        let at_pos = def.position.clone();
+        let at_pos = def.position;
         diagnostic_at!(
             self.lexer,
             &at_pos,
@@ -2749,7 +2749,7 @@ impl Parser {
         self.vars.logging = false;
         Self::load_main_file(&mut self.lexer, filename, content);
         if !default && self.program_entry.is_none() {
-            self.program_entry = Some(self.lexer.pos().file.clone());
+            self.program_entry = Some(self.lexer.pos().file);
         }
         self.first_pass = true;
         crate::diagnostics::set_first_pass(true);
@@ -3045,7 +3045,7 @@ impl Parser {
                 continue;
             };
             let fname = self.data.def(d).name().trim_start_matches("n_").to_string();
-            let pos = self.data.def(d).position.clone();
+            let pos = self.data.def(d).position;
             self.lexer.pos_diagnostic(
                 Level::Error,
                 &pos,
@@ -3098,7 +3098,7 @@ impl Parser {
                 continue;
             };
             let fname = self.data.def(d).name().trim_start_matches("n_").to_string();
-            let pos = self.data.def(d).position.clone();
+            let pos = self.data.def(d).position;
             self.lexer.pos_diagnostic(
                 Level::Error,
                 &pos,
@@ -3758,7 +3758,7 @@ impl Parser {
             }
             let struct_name = self.data.def(d_nr).name().to_string();
             let field_name = attr.name.clone();
-            let pos = self.data.def(d_nr).position().clone();
+            let pos = *self.data.def(d_nr).position();
             self.lexer.pos_diagnostic(
                 Level::Warning,
                 &pos,
@@ -3949,14 +3949,14 @@ impl Parser {
                 continue;
             }
             let sym = sym.to_string();
-            let file = def.position().file.clone();
+            let file = def.position().file;
             // Owner = the registered native package whose dir is the longest
             // prefix of this def's source file.
             if let Some((crate_name, _)) = self
                 .data
                 .native_packages
                 .iter()
-                .filter(|(_, pkg_dir)| crate::file_access::is_under(&file, pkg_dir))
+                .filter(|(_, pkg_dir)| crate::file_access::is_under(file, pkg_dir))
                 .max_by_key(|(_, pkg_dir)| pkg_dir.len())
             {
                 binds.push((sym, crate_name.replace('-', "_")));
@@ -4026,7 +4026,7 @@ impl Parser {
         self.fn_lambdas.clear();
         self.lexer.parse_string(content, filename);
         if !default && self.program_entry.is_none() {
-            self.program_entry = Some(self.lexer.pos().file.clone());
+            self.program_entry = Some(self.lexer.pos().file);
         }
         self.parse_file();
         self.resolve_deferred_unknowns();
@@ -5841,7 +5841,7 @@ impl Parser {
     ) -> bool {
         let ctx = StoreCtx {
             what: what.to_string(),
-            at: at.cloned(),
+            at: at.copied(),
             never_error: false,
             dense: false,
         };
@@ -5882,7 +5882,7 @@ impl Parser {
     ) -> bool {
         let ctx = StoreCtx {
             what: what.to_string(),
-            at: at.cloned(),
+            at: at.copied(),
             never_error: true,
             dense: false,
         };
@@ -5950,7 +5950,7 @@ impl Parser {
     /// has classified yet can only warn).
     fn store_slot(&self) -> (String, Option<Position>, bool) {
         match self.store_ctx.last() {
-            Some(c) => (c.what.clone(), c.at.clone(), c.never_error),
+            Some(c) => (c.what.clone(), c.at, c.never_error),
             None => ("a slot".to_string(), None, true),
         }
     }
@@ -6385,7 +6385,7 @@ impl Parser {
             // u8?)` warned and stored null into the non-null `u8` (loft#1815).  Only a narrow
             // integer member is affected — a heap member never escalates either way.
             let (what, at, lenient, dense) = match self.store_ctx.last() {
-                Some(c) => (c.what.clone(), c.at.clone(), c.never_error, c.dense),
+                Some(c) => (c.what.clone(), c.at, c.never_error, c.dense),
                 None => ("this tuple".to_string(), None, false, false),
             };
             for (i, (s, d)) in src_elems.iter().zip(dst_elems.iter()).enumerate() {
@@ -6393,7 +6393,7 @@ impl Parser {
                 let elem = items.get_mut(i).unwrap_or(&mut placeholder);
                 self.store_ctx.push(StoreCtx {
                     what: format!("element {i} of {what}"),
-                    at: at.clone(),
+                    at,
                     never_error: lenient,
                     dense,
                 });
@@ -7277,12 +7277,8 @@ impl Parser {
 
     /// loft#1382 — an arm-agreement mismatch deferred until statement position is known.
     pub(crate) fn arm_mismatch_report(&mut self, m: &ArmMismatch) {
-        let (test, should, context, at) = (
-            m.test.clone(),
-            m.should.clone(),
-            m.context.clone(),
-            m.at.clone(),
-        );
+        let (test, should, context, at) =
+            (m.test.clone(), m.should.clone(), m.context.clone(), m.at);
         self.validate_convert(&context, &test, &should, &at);
     }
 
@@ -9169,7 +9165,7 @@ impl Parser {
             .map(|a| a.hidden)
             .collect();
         let tmpl_vars = self.data.definitions[g_nr as usize].variables.clone();
-        let tmpl_pos = self.data.definitions[g_nr as usize].position.clone();
+        let tmpl_pos = self.data.definitions[g_nr as usize].position;
         // The per-element iteration stride for vector<T=concrete> — from the
         // ONE home (`vector_elem_iter_stride`), threaded into the fixup so the
         // generic path can never drift from the direct-emission stride again.
@@ -9445,7 +9441,7 @@ impl Parser {
         let mut inst = self.data.def_nr(&name);
         let rec = self.data.def(d).closure_record();
         if inst == u32::MAX {
-            let pos = self.data.definitions[d as usize].position.clone();
+            let pos = self.data.definitions[d as usize].position;
             let attrs: Vec<(String, Type, Value, bool, bool)> = self.data.definitions[d as usize]
                 .attributes
                 .iter()
@@ -9592,7 +9588,7 @@ impl Parser {
         if existing != u32::MAX {
             return existing;
         }
-        let pos = self.data.definitions[rec as usize].position.clone();
+        let pos = self.data.definitions[rec as usize].position;
         let fields: Vec<(String, Type, bool)> = self.data.definitions[rec as usize]
             .attributes
             .iter()
@@ -10246,7 +10242,7 @@ impl Parser {
         let (out, clashes) = self.infer_associated(g_nr, var_bindings);
         for text in clashes {
             let msg = crate::diagnostics::diagnostic_format(Level::Error, format_args!("{text}"));
-            let peek_pos = self.lexer.peek().position.clone();
+            let peek_pos = self.lexer.peek().position;
             self.lexer.pos_diagnostic(Level::Error, &peek_pos, &msg);
         }
         out
@@ -10737,7 +10733,7 @@ impl Parser {
         for message in &messages {
             let msg =
                 crate::diagnostics::diagnostic_format(Level::Error, format_args!("{message}"));
-            let peek_pos = self.lexer.peek().position.clone();
+            let peek_pos = self.lexer.peek().position;
             self.lexer.pos_diagnostic(Level::Error, &peek_pos, &msg);
         }
         messages.is_empty()
@@ -13165,8 +13161,8 @@ impl Parser {
                 _ => {}
             }
         }
-        let pos = self.lexer.pos().clone();
-        let arg_pos = vec![pos.clone(); list.len()];
+        let pos = *self.lexer.pos();
+        let arg_pos = vec![pos; list.len()];
         let saved = self.data.source;
         self.data.source = home;
         let before_refs: std::collections::HashSet<u16> =
@@ -17659,7 +17655,7 @@ impl Parser {
             if arg.unspan() == self.data.def(d_nr).attributes()[i].value.unspan() {
                 continue; // explicitly the default → not an override
             }
-            let pos = self.lexer.peek_pos().clone();
+            let pos = *self.lexer.peek_pos();
             self.sandbox_param_overrides
                 .entry(self.context)
                 .or_default()
@@ -17960,7 +17956,7 @@ impl Parser {
             // @FR-N-Store — the parameter is a slot when this binding is REPORTED and the callee
             // is not null-transparent; an overload TRIAL (`!report`) and a null-transparent
             // callee (`abs(x)` propagates the null through a runtime guard) only test the fit.
-            let arg_at = actual_code.span_pos().cloned();
+            let arg_at = actual_code.span_pos().copied();
             // A scalar PLACE is linked, not stored, so @FR-N-Store's "a nullable value becomes
             // null there" does not describe it, and its cure (`?`) would turn the place into a
             // value.  What can go wrong is that the element is absent: a link to an absent place
@@ -18024,8 +18020,8 @@ impl Parser {
                     // fall back to the cursor.
                     let pos = arg_pos
                         .get(nr)
-                        .cloned()
-                        .unwrap_or_else(|| self.lexer.pos().clone());
+                        .copied()
+                        .unwrap_or_else(|| *self.lexer.pos());
                     // loft#1008 — a `both`/`self` METHOD is registered only as
                     // `t_<len><Type>_<name>`, so its bare name has no value to bind. In a
                     // fn-ref ARGUMENT position it survives as an untyped placeholder and this
@@ -18914,7 +18910,7 @@ impl Parser {
         // Tier-0 lazy auto-`use`: the file the lexer is on right now, captured
         // before the use-loop may switch away.  Scanned for `lib::` references
         // after the use-region (see the load loop below).
-        let auto_use_scan_file = self.lexer.pos().file.clone();
+        let auto_use_scan_file = self.lexer.pos().file;
         self.claim_declared_type_names(&auto_use_scan_file);
         // A file that writes any `use` — or the stdlib, parsed with
         // `self.default` — is in *explicit* mode: the author manages their
@@ -19119,7 +19115,7 @@ impl Parser {
             // meet, it surfaced deep inside a third, published, CI-gated library
             // as `Unknown variable` on a tuple destructure or `Expect token ;` on
             // a tuple field, with nothing naming resolution.
-            let here = self.lexer.pos().file.clone();
+            let here = self.lexer.pos().file;
             if let Some(pos) = self
                 .pending_pkg_deps
                 .iter()
@@ -19171,14 +19167,13 @@ impl Parser {
         // entirely — the author manages their libraries by hand there.  Read +
         // scan each remaining file at most once (cache keyed by path).
         if !had_use && *self.lexer.pos().file == *auto_use_scan_file {
-            let (refs, calls) = if let Some(c) = self.auto_use_scan_cache.get(&*auto_use_scan_file)
-            {
+            let (refs, calls) = if let Some(c) = self.auto_use_scan_cache.get(auto_use_scan_file) {
                 c.clone()
             } else {
                 let src = self
                     .lexer
-                    .source_text(&auto_use_scan_file)
-                    .map_or_else(|| Self::read_source(&auto_use_scan_file), str::to_string);
+                    .source_text(auto_use_scan_file)
+                    .map_or_else(|| Self::read_source(auto_use_scan_file), str::to_string);
                 let pair = (
                     crate::libscan::scan_qualified_lib_refs(&src),
                     crate::libscan::scan_method_calls(&src),
@@ -19201,7 +19196,7 @@ impl Parser {
             // via the trigger surface of the current package (+ trigger-enabled
             // deps), derived once and cached.
             if !calls.is_empty() {
-                let map = self.trigger_map(&auto_use_scan_file);
+                let map = self.trigger_map(auto_use_scan_file);
                 // Catalog fallback is built lazily — only read index.json once a
                 // method misses the local (current package + deps) trigger map.
                 let mut catalog: Option<std::collections::HashMap<String, String>> = None;
@@ -19396,8 +19391,8 @@ impl Parser {
         if !to_apply.is_empty() {
             // The file these imports serve: a definition written in it is never one of its
             // private imports (see `Data::note_source_file`).
-            let here_file = std::sync::Arc::clone(&self.lexer.pos().file);
-            self.data.note_source_file(cur, &here_file);
+            let here_file = self.lexer.pos().file;
+            self.data.note_source_file(cur, here_file);
         }
         for pi in to_apply {
             // retain a copy so `resolve_deferred_unknowns` can re-apply
@@ -19428,7 +19423,7 @@ impl Parser {
                                     name.clone(),
                                     bind.clone(),
                                     pi.public,
-                                    self.lexer.pos().clone(),
+                                    *self.lexer.pos(),
                                 ));
                             }
                         } else {
@@ -19554,8 +19549,8 @@ impl Parser {
     /// probe directory — so `src/x.loft` and an absolute form must compare equal.
     fn is_current_source(&self, f: &str) -> bool {
         let canon = |p: &str| crate::file_access::plain_canonical(std::path::Path::new(p));
-        let cur = self.lexer.pos().file.clone();
-        !cur.is_empty() && canon(&cur) == canon(f)
+        let cur = self.lexer.pos().file;
+        !cur.is_empty() && canon(cur) == canon(f)
     }
 
     fn lib_path(&mut self, id: &str) -> String {
@@ -19645,9 +19640,9 @@ impl Parser {
         // would put the old three-sites-must-agree brittleness back with one extra step
         // between it and the reader.
         if self.program_scope.is_none() {
-            let entry = self.program_entry.clone();
+            let entry = self.program_entry;
             self.program_scope = Some(crate::resolution_scope::resolution_scope(
-                entry.as_deref().unwrap_or(&cur_script),
+                entry.unwrap_or(&cur_script),
             ));
         }
         let scope = self
@@ -21596,7 +21591,7 @@ impl Parser {
                     if !candidates.iter().any(|c| c == def.name()) {
                         continue;
                     }
-                    if !crate::file_access::is_under(&def.position().file, &pkg_dir) {
+                    if !crate::file_access::is_under(def.position().file, &pkg_dir) {
                         continue;
                     }
                     rust_symbol.clone_into(&mut self.data.definitions[d_nr as usize].native);
@@ -21613,7 +21608,7 @@ impl Parser {
                 if sym.is_empty() {
                     continue;
                 }
-                if !crate::file_access::is_under(&def.position().file, &pkg_dir) {
+                if !crate::file_access::is_under(def.position().file, &pkg_dir) {
                     continue;
                 }
                 if self.data.native_symbol_crates.contains_key(sym) {
@@ -21958,7 +21953,7 @@ impl Parser {
                     if !candidates.iter().any(|c| c == def.name()) {
                         continue;
                     }
-                    if !crate::file_access::is_under(&def.position().file, pkg_dir) {
+                    if !crate::file_access::is_under(def.position().file, pkg_dir) {
                         continue;
                     }
                     rust_symbol.clone_into(&mut self.data.definitions[d_nr as usize].native);
@@ -21982,7 +21977,7 @@ impl Parser {
                 if sym.is_empty() {
                     continue;
                 }
-                if !crate::file_access::is_under(&def.position().file, pkg_dir) {
+                if !crate::file_access::is_under(def.position().file, pkg_dir) {
                     continue;
                 }
                 if self.data.native_symbol_crates.contains_key(sym) {
@@ -24249,7 +24244,7 @@ mod p269_native_backfill_tests {
             .map(|d| p.data.def(d))
             .filter(|def| {
                 !def.native().is_empty()
-                    && crate::file_access::is_under(&def.position().file, &imaging_dir)
+                    && crate::file_access::is_under(def.position().file, &imaging_dir)
             })
             .map(|def| def.native().to_string())
             .collect();

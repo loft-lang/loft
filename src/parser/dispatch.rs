@@ -327,7 +327,7 @@ impl Parser {
         // it binds and its bounds hold.
         d != u32::MAX
             && matches!(self.data.def_type(d), DefType::Function | DefType::Generic)
-            && !crate::file_access::is_stdlib_source(&self.data.def(d).position().file)
+            && !crate::file_access::is_stdlib_source(self.data.def(d).position().file)
             && self.definition_ranks(d, &routed).is_some()
     }
 
@@ -341,7 +341,7 @@ impl Parser {
         self.data.definitions.iter().any(|d| {
             matches!(d.def_type, DefType::Function | DefType::Generic)
                 && d.original_name().as_str() == name
-                && !crate::file_access::is_stdlib_source(&d.position().file)
+                && !crate::file_access::is_stdlib_source(d.position().file)
         })
     }
 
@@ -435,15 +435,15 @@ impl Parser {
     /// — the words in a comment, a `fn(…)` type — only defers the special form to pass 2;
     /// the stdlib's own files are never scanned.
     pub(crate) fn file_has_pending_fn(&mut self, name: &str) -> bool {
-        let file = self.lexer.pos().file.clone();
-        if crate::file_access::is_stdlib_source(&file) {
+        let file = self.lexer.pos().file;
+        if crate::file_access::is_stdlib_source(file) {
             return false;
         }
-        if !self.declared_fn_names.contains_key(&*file) {
+        if !self.declared_fn_names.contains_key(file) {
             let text = self
                 .lexer
-                .source_text(&file)
-                .map_or_else(|| Self::read_source(&file), str::to_string);
+                .source_text(file)
+                .map_or_else(|| Self::read_source(file), str::to_string);
             let mut counts: std::collections::HashMap<String, usize> =
                 std::collections::HashMap::new();
             let mut after_fn = false;
@@ -460,7 +460,7 @@ impl Parser {
         }
         let declared = self
             .declared_fn_names
-            .get(&*file)
+            .get(file)
             .and_then(|counts| counts.get(name))
             .copied()
             .unwrap_or(0);
@@ -790,7 +790,7 @@ impl Parser {
     /// over a type parameter is the wrong shape (measured: the stdlib's `len(both: vector)`
     /// refused its own stub, *expected vector<T>, got vector<T>*).
     fn stub_admissible(&self, main: u32) -> bool {
-        if crate::file_access::is_stdlib_source(&self.data.def(main).position().file) {
+        if crate::file_access::is_stdlib_source(self.data.def(main).position().file) {
             return false;
         }
         if self.context == u32::MAX || self.data.def_type(self.context) == DefType::Generic {
@@ -1030,8 +1030,8 @@ impl Parser {
         // The dispatcher is built as its own function: the caller's parsing context is put
         // aside and restored, whatever the outcome.
         let saved_context = self.context;
-        let file = self.lexer.pos().file.clone();
-        let saved_vars = std::mem::replace(&mut self.vars, Function::new(dyn_name, &file));
+        let file = self.lexer.pos().file;
+        let saved_vars = std::mem::replace(&mut self.vars, Function::new(dyn_name, file));
         let saved_expected = std::mem::replace(&mut self.expected, Type::Unknown(0));
         let fn_nr = self.data.add_fn(&mut self.lexer, dyn_name, &args);
         let built = if fn_nr == u32::MAX {
@@ -1148,8 +1148,8 @@ impl Parser {
                 call_types.push(t.clone());
             }
         }
-        let at = self.lexer.pos().clone();
-        let arg_pos = vec![at.clone(); call_args.len()];
+        let at = *self.lexer.pos();
+        let arg_pos = vec![at; call_args.len()];
         let mut code = Value::Null;
         self.call_nr(
             &mut code,

@@ -581,7 +581,7 @@ impl Scopes<'_> {
                 // reaches it, one orphan per early exit (loft#1357).  Evaluate the condition
                 // into a boolean first, free what it consumed, then branch on the boolean.
                 let (pos, inner) = match stmt {
-                    Value::Span(b) => (Some(b.0.clone()), b.1.clone()),
+                    Value::Span(b) => (Some(b.0), b.1.clone()),
                     other => (None, other),
                 };
                 // A `parallel { … }` arm runs on a WORKER over a copy of this frame: the

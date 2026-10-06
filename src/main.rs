@@ -11389,7 +11389,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                     if !def.name.starts_with("n_") || def.name.starts_with("n___lambda_") {
                         continue;
                     }
-                    if file_access::is_stdlib_source(&def.position.file) {
+                    if file_access::is_stdlib_source(def.position.file) {
                         continue;
                     }
                     let has_user_params = def
@@ -12227,7 +12227,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                 && def.native.is_empty()
                 && def.attributes.is_empty()
                 && matches!(def.returned, data::Type::Void)
-                && !file_access::is_stdlib_source(&def.position.file)
+                && !file_access::is_stdlib_source(def.position.file)
             {
                 let name = def.name.strip_prefix("n_").unwrap_or(&def.name);
                 test_names.push(name.to_string());

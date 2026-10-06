@@ -2374,8 +2374,8 @@ impl ReplSession {
             if !def.name.starts_with("n_") || def.name.starts_with("n___lambda_") {
                 continue;
             }
-            if crate::file_access::is_stdlib_source(&def.position.file)
-                || !in_file(&def.position.file)
+            if crate::file_access::is_stdlib_source(def.position.file)
+                || !in_file(def.position.file)
             {
                 continue;
             }
@@ -5347,7 +5347,7 @@ impl ReplSession {
             if def.def_type != DefType::Function
                 || !def.name.starts_with("n_")
                 || def.name.starts_with("n_repl")
-                || &*def.position.file != "<repl>"
+                || def.position.file != "<repl>"
             {
                 continue;
             }
