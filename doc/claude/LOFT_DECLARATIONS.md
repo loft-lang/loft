@@ -20,7 +20,7 @@ fn function_name(param: type, other: type = default_value) -> return_type {
   item `lib` declares without `pub`, and not a name `lib` only imports for its own use (C98),
   which the error then names with its owner's qualifier
   (`tests/scripts/a-qualified-name-reaches-only-what-a-library-publishes.loft`).
-- **Everything a file declares is private to it; `pub` is consent** (C139, `formal/calls.md`
+- **Everything a file declares is private to it; `pub` is consent** (C140, `formal/calls.md`
   `(F-Visible)`).  Outside its file a type is *invisible* (not `pub`, named by no `pub`
   signature), *name only* (not `pub`, but named by a `pub` fn's signature or a `pub` field's type:
   it can be named, passed and stored, never built) or `pub` (built too — a struct literal when

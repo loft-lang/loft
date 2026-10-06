@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Jurjen Stellingwerff
 # SPDX-License-Identifier: LGPL-3.0-or-later
 #
-# @PLN187 / C139 — the census of what needs `pub` once fields, struct literals and enum variants
+# @PLN187 / C140 — the census of what needs `pub` once fields, struct literals and enum variants
 # are private to the file that declares them: every use, OUTSIDE that file, of a field (read,
 # write, pattern, literal field, key), of a struct literal and of an enum variant
 # (`LOFT_TRACE_VISIBILITY=1`, src/parser/mod.rs `trace_visibility`), over the corpus

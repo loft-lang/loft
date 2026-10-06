@@ -897,7 +897,7 @@ impl Parser {
                     } else {
                         false
                     };
-                    // @PLN187 (C139) — a variant field is private to its file, as a struct's is.
+                    // @PLN187 (C140) — a variant field is private to its file, as a struct's is.
                     let is_pub = self.lexer.has_token("pub");
                     // @PLN40 — a variant field may also be `const` (write-once).
                     let is_const = self.lexer.has_keyword("const");
@@ -5812,7 +5812,7 @@ impl Parser {
         // SHAPE of the declaration has to point at.
         let mut field_at: Vec<(String, crate::lexer::Position)> = Vec::new();
         loop {
-            // @PLN187 (C139) — a field is private to its file; `pub` shows it.
+            // @PLN187 (C140) — a field is private to its file; `pub` shows it.
             let is_pub = self.lexer.has_token("pub");
             // @PLN40 — a `const` field is write-once at construction.  Consume the
             // keyword (if present) and mark the field once it has parsed; see
@@ -6862,7 +6862,7 @@ impl Parser {
     /// after [`Self::parse_field`], once the field's attribute exists.  Rejects
     /// `const virtual(…)`: a virtual field is already computed and read-only, so
     /// `const` on it is redundant.  See doc/claude/plans/40-const-fields/.
-    /// @PLN187 (@C139, @FR-F-Visible) — `pub` on a field: readable and writable wherever its type is visible.
+    /// @PLN187 (@C140, @FR-F-Visible) — `pub` on a field: readable and writable wherever its type is visible.
     fn mark_pub_field(&mut self, on_d: u32, a_name: &str) {
         let idx = self.data.attr(on_d, a_name);
         if idx != usize::MAX {

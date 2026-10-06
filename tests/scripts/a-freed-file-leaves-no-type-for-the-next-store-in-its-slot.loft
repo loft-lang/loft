@@ -14,7 +14,7 @@
 //
 // Each cell keeps four files open and written (`"x"`), then, for every length `n` in `1..=8` —
 // wider than the handles those files hold, so the handle index is never read (`File.ref` is
-// private, C139) — frees a `File` (a fresh slot), mints a raw store of length `n` into that slot
+// private, C140) — frees a `File` (a fresh slot), mints a raw store of length `n` into that slot
 // and frees it, then writes `"y"` to every open file.  Hand-computed: each holds exactly
 // `"xy"`.  On the defect some `n` names an open file's handle and its `"y"` is lost.
 //

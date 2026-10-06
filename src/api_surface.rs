@@ -379,7 +379,7 @@ pub fn signature_of(data: &Data, d: u32, kind: &str) -> String {
 /// Every library def referenced through `d`'s SIGNATURE: a fn's return + params, a typedef's
 /// target, and a struct's or a variant's field types.  The body is never followed.  With
 /// `pub_fields_only`, a private field is not followed either — outside its file it cannot be
-/// read, so its type is not NAMEABLE through it (C139, [`name_only_defs`]).  The API surface
+/// read, so its type is not NAMEABLE through it (C140, [`name_only_defs`]).  The API surface
 /// follows every field: it lists every field, so that a field gaining `pub` reads as no change
 /// to a release's surface rather than as a field added.
 fn referenced_defs_of(data: &Data, d: u32, pub_fields_only: bool) -> Vec<u32> {
@@ -408,7 +408,7 @@ fn referenced_defs_of(data: &Data, d: u32, pub_fields_only: bool) -> Vec<u32> {
     out
 }
 
-/// @PLN187 (@C139, @FR-F-Visible) — every type that is NAME ONLY: not `pub`, but named by a `pub` item's
+/// @PLN187 (@C140, @FR-F-Visible) — every type that is NAME ONLY: not `pub`, but named by a `pub` item's
 /// signature in its own file, or by a `pub` field of a type visible there — transitively,
 /// through type arguments.  Outside its file such a type can be named, passed and stored,
 /// never built; it is the `Sealed` tier of [`surface`], computed for every file at once.

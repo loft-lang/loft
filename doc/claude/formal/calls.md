@@ -354,7 +354,7 @@ DESIGN_DECISIONS.md C123.
               L's own code reaches all of its items.  A package qualifying its OWN name
               (`L::name` inside L) means "in this file" and is not an outside reach.
 
-  (F-Visible) everything a file F declares is private to F; `pub` gives consent (C139).
+  (F-Visible) everything a file F declares is private to F; `pub` gives consent (C140).
               A TYPE T of F, outside F, is
                 - INVISIBLE when T is not `pub` and no `pub` item of F names it: not named;
                 - NAME ONLY when T is not `pub` but a `pub` fn's signature of F, or a `pub`
@@ -404,7 +404,7 @@ in `src/parser/mod.rs`) — `tests/scripts/a-type-named-above-its-*.loft` in one
   enum are refused only under `LOFT_PUB_ENFORCE=1`.  The published libraries carry their `pub`
   first (@PLN187 step 5), so no consumer of a published release breaks; then the refusal is the
   default.  Naming and the build refusal for a name-only type already hold on every build.
-  Guard `tests/pub_visibility.rs` (`@C139`).
+  Guard `tests/pub_visibility.rs` (`@C140`).
 
 > ⚠ **Both entries stood for three days over a fix that was already merged**, because an entry is
 > flipped by hand and nothing asked.  `rule_tags.py registers --issues` is what asks now: it reads

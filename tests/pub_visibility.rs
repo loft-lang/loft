@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! @C139 (@PLN187, @FR-F-Visible) — everything a file declares is private to it; `pub` gives consent.
+//! @C140 (@PLN187, @FR-F-Visible) — everything a file declares is private to it; `pub` gives consent.
 //!
 //! A type outside its file is INVISIBLE (not `pub`, named by no `pub` signature), NAME ONLY (not
 //! `pub`, but named by a `pub` signature of its file: named, passed, stored, never built) or
@@ -26,6 +26,9 @@ enum Mood { Calm, Angry }
 pub fn spawn(name: text) -> Unit { s = Seed { v: 1 }; Unit { name: name, hp: 100 + s.v } }
 pub fn hp_of(u: Unit) -> integer { u.hp }
 pub fn mood(angry: boolean) -> Mood { if angry { Angry } else { Calm } }
+pub struct Holder { pub pair: (u8, text), hidden: (integer, integer) }
+pub fn pair() -> (u8, text) { (7, \"seven\") }
+pub fn hold() -> Holder { Holder { pair: (3, \"three\"), hidden: (1, 2) } }
 ";
 
 fn scratch(tag: &str) -> PathBuf {
@@ -169,6 +172,33 @@ fn main() { m = units::mood(true); v = match m { Angry => 1, _ => 0 }; println(\
     let (_, err, ok) = run("mood-on", program, true);
     assert!(
         !ok && err.contains("`Angry` is a variant of `Mood`, which is not `pub` in `units`"),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_tuples_members_are_visible_wherever_the_tuple_is() {
+    // A tuple is structural: no file declares it, so its members are never private fields —
+    // returned by a `pub fn`, held in a `pub` field, read by index and destructured, a narrow
+    // member included.  A PRIVATE field that holds a tuple is still refused, at the field.
+    let program = "use units;
+fn main() {
+  p = units::pair();
+  (a, b) = units::pair();
+  q = units::hold().pair;
+  println(\"{p.0} {p.1} {a} {b} {q.0} {q.1}\");
+}
+";
+    for enforce in [false, true] {
+        let (out, err, ok) = run(&format!("tuple{enforce}"), program, enforce);
+        assert!(ok && out == "7 seven 7 seven 3 three\n", "enforce={enforce}: {out}{err}");
+    }
+    let hidden = "use units;
+fn main() { h = units::hold(); println(\"{h.hidden.0}\"); }
+";
+    let (_, err, ok) = run("tuple-hidden", hidden, true);
+    assert!(
+        !ok && err.contains("field `hidden` of `Holder` is not `pub` in `units`"),
         "{err}"
     );
 }

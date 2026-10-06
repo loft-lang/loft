@@ -16675,7 +16675,7 @@ impl Parser {
             .to_string()
     }
 
-    /// @PLN187 (@C139, @FR-F-Visible) — the one visibility check for a use, OUTSIDE its declaring file, of a
+    /// @PLN187 (@C140, @FR-F-Visible) — the one visibility check for a use, OUTSIDE its declaring file, of a
     /// struct or variant field (`field`: a read or a write; `literal-field`, `pattern-field`,
     /// `key`), of a struct literal (`literal`) and of an enum variant (`variant`, built or
     /// matched).  `d_nr` is the struct or the variant; `f_nr` its field, or `usize::MAX` for the
@@ -16777,7 +16777,7 @@ impl Parser {
         }
     }
 
-    /// @PLN187 (@C139, @FR-F-Visible) — a type that is NAME ONLY outside its file (not `pub`, but named by a
+    /// @PLN187 (@C140, @FR-F-Visible) — a type that is NAME ONLY outside its file (not `pub`, but named by a
     /// `pub` signature there) can be named, passed and stored there, never BUILT: a literal of it
     /// outside its file is refused.  Building a non-`pub` type was refused before name-only
     /// types existed, through the name itself; this keeps that refusal now the name is reachable.

@@ -9,7 +9,7 @@ DECLARING files under `--root`:
   field / literal-field / pattern-field / key   `pub` on that field, found inside the braces of
                                                 the struct or variant declared at that line;
   literal                                      `pub` on the struct, and on EVERY field of it —
-                                                a literal outside the file needs them all (C139);
+                                                a literal outside the file needs them all (C140);
   variant                                      `pub` on the enum.
 
 Paths outside `--root` (an installed registry copy, a sibling library) are reported and left
@@ -125,11 +125,23 @@ def make_pub_at(text, off, edits):
         edits.add(off)
 
 
-def migrate_file(path, rows, dry_run):
+def inside_enum(text, off):
+    """Is `off` inside the braces of an `enum` declaration (a variant's field)?"""
+    for m in re.finditer(r"\benum\b", text[:off]):
+        span = body_span(text, m.end())
+        if span and span[0] < off < span[1]:
+            return True
+    return False
+
+
+def migrate_file(path, rows, dry_run, skip_variant_fields=False):
     text = open(path, encoding="utf-8").read()
     edits = set()
     for line, kind, item in rows:
         start = line_offset(text, line)
+        if kind in FIELD_KINDS and skip_variant_fields and inside_enum(text, start):
+            print(f"pub_migrate: {path}:{line}: variant field `{item}` left for a loft that parses it")
+            continue
         if kind in FIELD_KINDS:
             field = item.rsplit(".", 1)[-1]
             span = body_span(text, start)
@@ -212,6 +224,8 @@ def main():
     ap.add_argument("--root", default=".")
     ap.add_argument("--only", default="")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--skip-variant-fields", action="store_true",
+                    help="leave a variant's fields alone: `pub` on one parses only from loft C140 on")
     ap.add_argument("--registry", default="",
                     help="map a row declared in an installed registry copy onto this checkout's "
                          "package of the same name (any tree), finding the line by type name")
@@ -243,7 +257,7 @@ def main():
             skipped.add(full)
             continue
         per_file[full].add((int(line), kind, item))
-    total = sum(migrate_file(f, sorted(r), a.dry_run) for f, r in sorted(per_file.items()))
+    total = sum(migrate_file(f, sorted(r), a.dry_run, a.skip_variant_fields) for f, r in sorted(per_file.items()))
     print(f"pub_migrate: {total} `pub` added in {len(per_file)} files; {len(skipped)} declaring files outside --root left alone")
     for s in sorted(skipped):
         print(f"  outside: {s}")

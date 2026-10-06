@@ -259,7 +259,7 @@ nothing).
 **Catalogue:** @F37 (operators) · `formal/operators.md` (Op-Eq) · @C91 (every type is
 `Equatable`).
 
-## C139 — private by default, `pub` is consent: fields, literals and variants
+## C140 — private by default, `pub` is consent: fields, literals and variants
 
 **Decision.** Everything a file declares is private to that file; `pub` gives consent to show
 it.  A TYPE outside its file has one of three levels: **invisible** (not `pub`, named by no `pub`
@@ -275,10 +275,16 @@ type with no `pub` field is OCaml's abstract type; with readable fields it is cl
 private type.  Printing, JSON and placement still carry every field: the rule is about code
 depending on internals, not about the data being seen.
 
+A TUPLE has no declaration: it is spelled inline where it is used, so its members are visible
+wherever it is, and the only way to hide a value's parts is a declared type whose fields lack
+`pub` — `pub` or not, the type is what owns them.  Privacy inside a tuple's spelling
+(`(pub integer, u8)`) was declined (owner, 2026-10-06): no file would own it, and destructuring,
+assignment to the plain spelling and type equality would each need a rule that rebuilds a struct.
+
 **Revisit when.** A fully hidden non-record type (`type meters` over `float`) or a read-only
 field outside its file is asked for — both were declined (a function covers the second).
-Decided 2026-10-06 (owner) — [record](DESIGN_DECISIONS-history.md#c139--private-by-default-pub-is-consent-fields-literals-and-variants).
-**Holds at:** `@C139` — `./scripts/idx tag:@C139`: `tests/pub_visibility.rs`; the naming and the
+Decided 2026-10-06 (owner) — [record](DESIGN_DECISIONS-history.md#c140--private-by-default-pub-is-consent-fields-literals-and-variants).
+**Holds at:** `@C140` — `./scripts/idx tag:@C140`: `tests/pub_visibility.rs`; the naming and the
 build refusal hold on every build, the field, literal and variant refusals under
 `LOFT_PUB_ENFORCE=1` until the published libraries carry their `pub` (`formal/calls.md` D-call).
 **Catalogue:** @F2 / modules.  Extends [C98](#c98--use-lib-binds-only-the-lib-namespace-unqualified-access-is-an-explicit-use-lib--use-lib-where-the-imported-name-wins) (`pub` items) to fields, literals and variants.

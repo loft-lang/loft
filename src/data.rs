@@ -4658,7 +4658,7 @@ pub struct Attribute {
     /// bridge, the engine host, placement) reads this mark to hand it a scratch store or
     /// the null sentinel — never the caller's offered result record.
     pub work_buffer: bool,
-    /// @PLN187 (C139) — a field declared `pub`: outside its file it can be read, written,
+    /// @PLN187 (C140) — a field declared `pub`: outside its file it can be read, written,
     /// matched and named in a literal.  Every field is private to its file without it.
     pub pub_field: bool,
     /// The initial value of this attribute if it is not given.
@@ -12739,7 +12739,7 @@ impl Data {
         d.pub_visible || matches!(d.def_type, DefType::Unknown) || self.is_name_only(d_nr)
     }
 
-    /// @PLN187 (@C139, @FR-F-Visible) — is `d_nr` a NAME-ONLY type: not `pub`, but named by a `pub` signature
+    /// @PLN187 (@C140, @FR-F-Visible) — is `d_nr` a NAME-ONLY type: not `pub`, but named by a `pub` signature
     /// (or a visible `pub` field) of its own file?  Outside that file it can be named, passed
     /// and stored, never built — [`crate::api_surface::name_only_defs`] is the closure.
     #[must_use]

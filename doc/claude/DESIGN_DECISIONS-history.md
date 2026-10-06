@@ -4704,7 +4704,7 @@ tuple is nothing other than a record, so its fields may change order with the la
 first, with no effect on their names or their text presentation.  Measured: `(u8, u32, u16)` is
 12 bytes today against 8 for the equivalent struct (loft#1898).
 
-## C139 — private by default, `pub` is consent: fields, literals and variants
+## C140 — private by default, `pub` is consent: fields, literals and variants
 
 **Question.** A library's struct fields were readable and writable by every importer (`pub` on a
 field was parsed and discarded), so no library could change a record's representation without
