@@ -745,6 +745,7 @@ impl Parser {
             self.data.def(self.context).returned().clone()
         };
         self.parse_block("return from block", &mut v, &result);
+        self.check_result(&v);
         self.finish_body(v, result)
     }
 
@@ -3673,7 +3674,11 @@ use a separate collection or add after the loop"
         let counted = target != u16::MAX && self.vars.reads(target) > 0;
         let outer_target = std::mem::replace(&mut self.assign_target_discounted, target);
         let outer_taken = std::mem::replace(&mut self.assign_target_taken, false);
+        // @PLN187 — the place's abstract alias (its read settled it) against the value's.
+        let place_alias = std::mem::replace(&mut self.operand_alias, u32::MAX);
         let tp = self.parse_assign_op_inner(code, op, f_type, to, parent_tp, var_nr, skip_validate);
+        let value_alias = std::mem::replace(&mut self.operand_alias, u32::MAX);
+        self.check_assignment(op, to, place_alias, value_alias);
         let taken = std::mem::replace(&mut self.assign_target_taken, outer_taken);
         self.assign_target_discounted = outer_target;
         // `x = x` is the identity (#330): the statement is erased and writes nothing, so it is
@@ -8375,9 +8380,11 @@ use a separate collection or add after the loop"
             // is a real annotation (`= …` follows), mirroring the param parser.
             let is_value_const = self.lexer.has_keyword("const");
             let mut got_annotation = false;
+            self.declared_alias = u32::MAX;
             if let Some(tp) = self.parse_type_full(u32::MAX, false)
                 && self.lexer.peek_token("=")
             {
+                self.declare_local_alias(v_nr);
                 // @PLN25 E2/E3 — the nullable-element rewrite now happens at the
                 // vector-type-resolution chokepoint (definitions.rs `sub_type`
                 // `vector` arm), so a `vector<S>` annotation already arrives
@@ -8540,6 +8547,7 @@ use a separate collection or add after the loop"
             let mut rhs = Value::Null;
             let destr_rhs_pos = self.lexer.pos().clone();
             let mut rhs_type = self.expression(&mut rhs);
+            self.check_unpacked();
             // `@FR-T-Destr` / `@FR-T-Ref` / `@FR-B-Ref-Uniform` — a `&(…)` binding denotes the
             // bound tuple itself, so `(a, b) = p` unpacks it exactly as `a = p.0; b = p.1` does.  The
             // shape test below asks the type for `Type::Tuple`, which answers NO for a `&`

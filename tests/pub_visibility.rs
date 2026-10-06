@@ -29,6 +29,13 @@ pub fn mood(angry: boolean) -> Mood { if angry { Angry } else { Calm } }
 pub struct Holder { pub pair: (u8, text), hidden: (integer, integer) }
 pub fn pair() -> (u8, text) { (7, \"seven\") }
 pub fn hold() -> Holder { Holder { pair: (3, \"three\"), hidden: (1, 2) } }
+type Handle = integer;
+type Data = (integer, text, boolean);
+pub type Open = (integer, text);
+pub fn open(path: text) -> Handle { len(path) }
+pub fn close(h: Handle, d: Data, plain: integer) -> integer { h + d.0 + plain }
+pub fn data(x: integer) -> Data { (x, \"x\", true) }
+pub fn opened() -> Open { (1, \"o\") }
 ";
 
 fn scratch(tag: &str) -> PathBuf {
@@ -204,4 +211,105 @@ fn main() { h = units::hold(); println(\"{h.hidden.0}\"); }
         !ok && err.contains("field `hidden` of `Holder` is not `pub` in `units`"),
         "{err}"
     );
+}
+
+#[test]
+fn an_abstract_alias_is_bound_passed_back_stored_compared_and_printed() {
+    // A non-`pub` alias named by a `pub` signature is ABSTRACT outside its file: held in a
+    // variable, a parameter, a local declared with it and a field of the program's own
+    // struct, handed back to the parameter declared with it, compared with `==`, printed.
+    // Inside `units`, `close` reads both representations (`h + d.0`): there it is transparent.
+    let program = "use units;
+struct Mine { h: units::Handle, tag: integer }
+fn keep(v: units::Handle) -> units::Handle { v }
+fn main() {
+  h = keep(units::open(\"abc\"));
+  h2: units::Handle = units::open(\"xy\");
+  m = Mine { h: h2, tag: 1 };
+  d = units::data(2);
+  same = h == units::open(\"def\");
+  println(\"{h} {h2} {m.h} {same} {units::close(m.h, d, 3)}\");
+}
+";
+    for enforce in [false, true] {
+        let (out, err, ok) = run(&format!("abstract{enforce}"), program, enforce);
+        assert!(
+            ok && out == "3 2 2 true 7\n",
+            "enforce={enforce}: {out}{err}"
+        );
+    }
+}
+
+#[test]
+fn an_abstract_alias_refuses_what_reads_its_representation() {
+    // Each cell reads the representation of a `Handle` or a `Data` outside `units` — an
+    // operator, a member, destructuring, a parameter or a place of the underlying type, a
+    // value built from a plain one, a result declared plain.  Switched off, each runs as it
+    // did before the rule (`ok`); enforced, each is refused naming the alias and its library.
+    let cells = [
+        (
+            "arith",
+            "n = h + 1; println(\"{n}\");",
+            "`+` reads its representation",
+        ),
+        ("member", "println(\"{d.0}\");", "reading a member"),
+        (
+            "destr",
+            "(i, t, b) = d; println(\"{i}{t}{b}\");",
+            "destructuring it",
+        ),
+        (
+            "plain-param",
+            "println(\"{abs(h)}\");",
+            "parameter `self` of `abs` takes its underlying type",
+        ),
+        (
+            "build",
+            "println(\"{units::close(7, d, 3)}\");",
+            "parameter `h` of `close` takes a `Handle`",
+        ),
+        (
+            "annotated",
+            "n: integer = h; println(\"{n}\");",
+            "this place takes its underlying type",
+        ),
+        (
+            "rebind",
+            "h = 5; println(\"{h}\");",
+            "this place takes a `Handle`",
+        ),
+    ];
+    for (tag, body, why) in cells {
+        let program = format!(
+            "use units;\nfn main() {{\n  h = units::open(\"abc\");\n  d = units::data(2);\n  {body}\n}}\n"
+        );
+        let (out, err, ok) = run(&format!("reveal-{tag}-off"), &program, false);
+        assert!(ok, "{tag} switched off runs as before: {out}{err}");
+        let (_, err, ok) = run(&format!("reveal-{tag}-on"), &program, true);
+        assert!(
+            !ok && err.contains("is abstract outside `units`") && err.contains(why),
+            "{tag}: {err}"
+        );
+    }
+    let returned = "use units;
+fn reveal() -> integer { units::open(\"abc\") }
+fn main() { println(\"{reveal()}\"); }
+";
+    let (_, err, ok) = run("reveal-result", returned, true);
+    assert!(
+        !ok && err.contains("`Handle` is abstract outside `units`: the result of `reveal`"),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_pub_alias_stays_transparent() {
+    // `pub type Open` is the substitution aliases always were: its members read anywhere.
+    let program = "use units;
+fn main() { o = units::opened(); (n, s) = o; println(\"{o.0 + 1} {o.1} {n} {s}\"); }
+";
+    for enforce in [false, true] {
+        let (out, err, ok) = run(&format!("pubalias{enforce}"), program, enforce);
+        assert!(ok && out == "2 o 1 o\n", "enforce={enforce}: {out}{err}");
+    }
 }

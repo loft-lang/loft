@@ -3377,6 +3377,8 @@ impl Parser {
                     }
                 }
             }
+            // @PLN187 — a parameter declared with an alias abstract here holds that alias.
+            self.seed_abstract_params();
             // @PLAN59 / H1 phase 1 — the unconditional heap-return buffer:
             // every BODY-carrying plain fn returning Reference / Vector /
             // struct-Enum gets its hidden `__retbuf` attribute + backing
@@ -6986,8 +6988,14 @@ impl Parser {
                     // limit()-based heuristic for `integer limit(0, 255)`.
                     // @PLN25: peel `Optional(τ)` so a nullable narrow field (`u8?`)
                     // captures its alias and stores at the narrow width like `u8`.
+                    // A QUALIFIED alias (`units::Coord`) reads its library's name as `id`: the
+                    // alias the type resolved to is the one recorded (@PLN187).
                     if matches!(tp.base(), Type::Integer(_)) && id != "integer" {
-                        alias_d_nr = self.data.def_nr(&id);
+                        alias_d_nr = if self.declared_alias == u32::MAX {
+                            self.data.def_nr(&id)
+                        } else {
+                            self.declared_alias
+                        };
                     } else if self.declared_alias != u32::MAX {
                         // @PLN187 — any other user alias is kept too: a non-`pub` one stays
                         // abstract outside its file (C140).  It has no `size(N)`, so the

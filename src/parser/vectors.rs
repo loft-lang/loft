@@ -559,6 +559,9 @@ impl Parser {
             self.refuse_amp_after_prefix();
             let mut t = self.parse_part(var_tp, val, parent_tp);
             self.prefix_operand = outer_prefix;
+            // @PLN187 — a unary operator reads an abstract operand's representation.
+            let unary_alias = std::mem::replace(&mut self.operand_alias, u32::MAX);
+            self.check_binary("!", unary_alias, u32::MAX);
             // A unary prefix operator must validate its operand like a binary
             // one does, else an undefined name (a pass-1 placeholder Var with no
             // slot) reaches codegen and panics instead of a clean "Unknown
@@ -647,6 +650,9 @@ impl Parser {
             self.refuse_amp_after_prefix();
             let t = self.parse_part(var_tp, val, parent_tp);
             self.prefix_operand = outer_prefix;
+            // @PLN187 — a unary operator reads an abstract operand's representation.
+            let unary_alias = std::mem::replace(&mut self.operand_alias, u32::MAX);
+            self.check_binary("~", unary_alias, u32::MAX);
             self.known_var_or_type(val, &operand_pos); // @PLN53 F1-1 (see `!` above)
             let arg = val.clone();
             self.call_op_as(val, "BitNot", "~", &[arg], &[t])
@@ -658,6 +664,9 @@ impl Parser {
             self.refuse_amp_after_prefix();
             let t = self.parse_part(var_tp, val, parent_tp);
             self.prefix_operand = outer_prefix;
+            // @PLN187 — a unary operator reads an abstract operand's representation.
+            let unary_alias = std::mem::replace(&mut self.operand_alias, u32::MAX);
+            self.check_binary("-", unary_alias, u32::MAX);
             self.known_var_or_type(val, &operand_pos); // @PLN53 F1-1 (see `!` above)
             // @PLN102 pre-freeze — the leading `-` binds tighter than `**` (loft's uniform
             // rule: a unary prefix binds tighter than any binary op — the `-` is the sign of

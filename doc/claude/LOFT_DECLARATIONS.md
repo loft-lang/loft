@@ -230,8 +230,11 @@ type Handler = fn(Request) -> Response;
 type Pair = (integer, text);
 ```
 
-Type aliases are purely compile-time substitutions — `Handler` and
-`fn(Request) -> Response` are the same type.  Aliases for `fn(...)` types
+Type aliases are compile-time substitutions — `Handler` and
+`fn(Request) -> Response` are the same type.  Outside its file, a non-`pub` alias that a
+`pub` function names is ABSTRACT: a caller holds, passes back, stores, compares (`==`) and
+prints its values, and never reads what is inside (an operator, a member, destructuring).
+`pub type` keeps it transparent everywhere (C140, `formal/calls.md` `(F-Visible)`).  Aliases for `fn(...)` types
 and tuple types are supported (C55).
 
 In library/default files, `size(n)` specifies the storage size in bytes:

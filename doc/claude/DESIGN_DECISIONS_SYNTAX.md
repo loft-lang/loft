@@ -281,8 +281,19 @@ wherever it is, and the only way to hide a value's parts is a declared type whos
 (`(pub integer, u8)`) was declined (owner, 2026-10-06): no file would own it, and destructuring,
 assignment to the plain spelling and type equality would each need a rule that rebuilds a struct.
 
-**Revisit when.** A fully hidden non-record type (`type meters` over `float`) or a read-only
-field outside its file is asked for — both were declined (a function covers the second).
+A `type` ALIAS is a declaration, so its file owns it: a non-`pub` alias that a `pub` signature
+names is ABSTRACT outside its file — abstract types with no new syntax (owner, 2026-10-07).
+`type Handle = integer; pub fn open(…) -> Handle` lets a caller bind a `Handle`, hand it back to
+a parameter declared `Handle`, keep it in a variable or field declared `Handle`, compare it with
+`==` and print it; an operator, a member or element read, a method or parameter of `integer`,
+destructuring, and a plain value handed where a `Handle` is declared are refused.  So
+`type Data = (integer, text, boolean)` keeps a tuple's members private the way a struct's own
+fields are.  In its own file, and as a `pub type`, an alias is the substitution it always was.
+The abstraction is a fact the checker tracks beside the type (`parser::abstract_alias`), never
+a change to it, so nothing emitted differs.
+
+**Revisit when.** A read-only field outside its file is asked for — declined (a function covers
+it).
 Decided 2026-10-06 (owner) — [record](DESIGN_DECISIONS-history.md#c140--private-by-default-pub-is-consent-fields-literals-and-variants).
 **Holds at:** `@C140` — `./scripts/idx tag:@C140`: `tests/pub_visibility.rs`; the naming and the
 build refusal hold on every build, the field, literal and variant refusals under

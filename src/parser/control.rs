@@ -19135,6 +19135,7 @@ impl Parser {
             } else {
                 self.expression(&mut v)
             };
+            self.check_returned("return");
             if r_type == Type::Void {
                 diagnostic!(
                     self.lexer,
@@ -19899,6 +19900,9 @@ impl Parser {
             (d_nr != u32::MAX).then_some(d_nr)
         };
         let mut arg_idx = 0usize;
+        // @PLN187 — each positional argument's abstract alias, checked against the callee's
+        // parameters once `dispatch_call` has chosen it.
+        let mut arg_aliases: Vec<u32> = Vec::new();
         let mut named_args: Vec<(String, Value, Type)> = Vec::new();
         let mut in_named = false;
         loop {
@@ -20048,6 +20052,7 @@ impl Parser {
                 t = view_tp;
             }
             self.expected = Type::Unknown(0);
+            arg_aliases.push(self.operand_alias);
             types.push(t);
             list.push(p);
             arg_idx += 1;
@@ -20087,6 +20092,7 @@ impl Parser {
             &arg_pos,
             name_pos,
         );
+        self.check_call_arguments(val, &arg_aliases);
         // Plan-07 phase 1, step 1.13 — wrap user-typed Call / CallRef
         // at the `(` token position so runtime errors inside the call
         // (panic, divide-by-zero in callee, etc.) can be reported with

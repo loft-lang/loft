@@ -367,6 +367,13 @@ DESIGN_DECISIONS.md C123.
               readable, writable and matchable wherever its type is visible.  A literal of a
               name-only type outside F is refused, naming the cure (build it with F's
               functions, or `pub` on the type).
+              An ALIAS `type A = τ` of F that is name only is ABSTRACT outside F: a value of
+              A is bound, handed to a parameter, variable, field or result declared A,
+              compared with `==` and printed; reading τ — an operator, a member or element
+              read, a method or parameter of τ, destructuring, a place or result declared
+              τ — is refused, and so is a plain τ handed where A is declared.  Inside F,
+              and as a `pub type`, A is τ.  A tuple spelled inline is no declaration: its
+              members are visible wherever it is.
 ```
 
 **`(F-Visible)` in words.** The levels are decided by what F's own `pub` items mention, so a
@@ -397,7 +404,7 @@ in `src/parser/mod.rs`) — `tests/scripts/a-type-named-above-its-*.loft` in one
 
 ## Deviations
 
-**OPEN: 1.**  The closed record is in [calls-history.md](calls-history.md).
+**OPEN: 2.**  The closed record is in [calls-history.md](calls-history.md).
 
 - **D-call-28 (OPEN, @PLN187)** — violates `(F-Visible)`: a private field read, written or matched
   outside its file, a literal of a `pub` type with a private field and a variant of a non-`pub`
@@ -405,6 +412,13 @@ in `src/parser/mod.rs`) — `tests/scripts/a-type-named-above-its-*.loft` in one
   first (@PLN187 step 5), so no consumer of a published release breaks; then the refusal is the
   default.  Naming and the build refusal for a name-only type already hold on every build.
   Guard `tests/pub_visibility.rs` (`@C140`).
+- **D-call-29 (OPEN, @PLN187)** — violates `(F-Visible)`'s alias clause where the checker does
+  not yet follow an abstract value (`parser::abstract_alias`): an alias NESTED in a type
+  (`vector<Handle>`, `(Handle, u8)`) carries no abstraction, so an element reads as τ; `for`,
+  `if` and `match` over an abstract value, a lambda's parameters and a NAMED argument are not
+  checked; a block or `if` that yields one reads as plain, so handing it on is refused rather
+  than accepted.  Enforced, like D-call-28, only under `LOFT_PUB_ENFORCE=1`.  Guard
+  `tests/pub_visibility.rs`.
 
 > ⚠ **Both entries stood for three days over a fix that was already merged**, because an entry is
 > flipped by hand and nothing asked.  `rule_tags.py registers --issues` is what asks now: it reads

@@ -270,10 +270,12 @@ fn determinism_corpus() {
         "pub struct W {  pub x : integer  }\n",
         "whitespace / formatting",
     );
-    same(
+    // A non-`pub` alias a `pub` signature names is ABSTRACT outside its file (C140): a caller
+    // of the first `f` cannot add to its result, so the two surfaces are not the same API.
+    differ(
         "type Score = integer;\npub fn f() -> Score { 1 }\n",
         "pub fn f() -> integer { 1 }\n",
-        "a transparent alias vs its expansion",
+        "an abstract alias vs its expansion",
     );
 
     // --- real changes MUST differ (positive controls — no vacuous determinism) ---

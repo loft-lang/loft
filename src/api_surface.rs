@@ -386,10 +386,19 @@ fn referenced_defs_of(data: &Data, d: u32, pub_fields_only: bool) -> Vec<u32> {
     let def = data.def(d);
     let mut out = Vec::new();
     collect_type_defs(&def.returned, &mut out); // return / typedef target
+    // @PLN187 — the `type` alias a result, a parameter or a field was declared WITH: the type
+    // above is the alias's target, and the alias itself is what the signature names.
+    let alias = |a: u32| a != u32::MAX && a != 0 && data.def(a).def_type == DefType::Type;
+    if alias(def.returned_alias) {
+        out.push(def.returned_alias);
+    }
     let record = matches!(def.def_type, DefType::Struct | DefType::EnumValue);
     for a in def.attributes() {
         if !a.hidden && (!record || !pub_fields_only || a.pub_field) {
             collect_type_defs(&a.typedef, &mut out); // `pub` fields / parameters
+            if alias(a.alias_d_nr) {
+                out.push(a.alias_d_nr);
+            }
         }
     }
     // An enum's variants are child defs; their `pub` fields are part of the enum's shape.

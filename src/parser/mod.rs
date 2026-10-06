@@ -505,6 +505,18 @@ pub struct Parser {
     /// @PLN187 — the user `type` alias the last outermost type was spelled with, or
     /// `u32::MAX`.  A site that wants it resets it before parsing the type.
     pub(crate) declared_alias: u32,
+    /// @PLN187 — the abstract alias of the operand just parsed, or `u32::MAX`
+    /// (`parser::abstract_alias`, the protocol).
+    pub(crate) operand_alias: u32,
+    /// @PLN187 — the locals that hold an abstract alias, by `(function, variable)`: a lambda's
+    /// body numbers its variables afresh under its own `context`.
+    pub(crate) abstract_vars: std::collections::HashMap<(u32, u16), u32>,
+    /// @PLN187 — the locals declared with a PLAIN type annotation: an abstract value is not
+    /// one of those.
+    pub(crate) plain_declared: std::collections::HashSet<(u32, u16)>,
+    /// @PLN187 — the abstract alias of a field the current postfix step read, taken by
+    /// `settle_operand`.
+    pub(crate) field_alias: u32,
     /// @PLN115 tail — a parameter's `(arg_index, name_pos, name_len)` captured while
     /// reading the signature (positions there, but the def_nr / var_nr are not yet
     /// established), ferried to `parse_function` to record each param's DECLARATION
@@ -1652,6 +1664,7 @@ pub(crate) const OUTPUT_DEFAULT: OutputState = OutputState {
 };
 
 // Sub-modules
+pub(super) mod abstract_alias;
 pub(super) mod builtins;
 pub(super) mod collections;
 pub(super) mod control;
@@ -1797,6 +1810,10 @@ impl Parser {
             pending_param_aliases: Vec::new(),
             type_nesting: 0,
             declared_alias: u32::MAX,
+            operand_alias: u32::MAX,
+            abstract_vars: std::collections::HashMap::new(),
+            plain_declared: std::collections::HashSet::new(),
+            field_alias: u32::MAX,
             pending_param_positions: Vec::new(),
             amp_pending: false,
             first_bind_targets: Vec::new(),

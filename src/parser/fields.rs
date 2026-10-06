@@ -563,6 +563,7 @@ impl Parser {
                     *code = self.get_field(found_d_nr, found_fnr, recv);
                     self.data.attr_used(found_d_nr, found_fnr);
                     self.check_visibility("field", found_d_nr, found_fnr);
+                    self.field_alias = self.abstract_attr_of(found_d_nr, found_fnr);
                 }
                 return t;
             } else if !self.first_pass {
@@ -848,6 +849,7 @@ impl Parser {
         }
         self.data.attr_used(dnr, fnr);
         self.check_visibility("field", dnr, fnr);
+        self.field_alias = self.abstract_attr_of(dnr, fnr);
         // `@FR-N-Chain` — the receiver's `?` reaches the RESULT TYPE, not just the lints above.
         self.wrap_projection_nullable(&mut t, receiver_optional);
         t
