@@ -8216,6 +8216,13 @@ impl Parser {
     /// patterns after the rest and `(P-Point)` makes a variant one of them, so the tail
     /// takes the forms the head does — it just reads at a negative index (loft#1419).
     fn peek_is_variant_subpattern(&mut self, elm_tp: &Type) -> bool {
+        // @FR-P-Point — a plain struct `S { f… }` is a point pattern too: the element's own
+        // struct name opens it, and `parse_field_sub_pattern` parses it as a field's would.
+        if let Type::Reference(s_nr, _) = elm_tp.peel_link()
+            && self.data.def_type(*s_nr) == DefType::Struct
+        {
+            return matches!(&self.lexer.peek().has, LexItem::Identifier(id) if *id == self.data.def(*s_nr).name());
+        }
         let Some((elm_e_nr, _)) = self.pattern_variant_enum(elm_tp) else {
             return false;
         };
@@ -8921,7 +8928,11 @@ impl Parser {
             // the `name:pat` path.  A real type name identifies the scalar capture.
             if matches!(&self.lexer.peek().has, LexItem::Identifier(id) if id != "_") {
                 self.lexer.cont(); // Type
-                res = Some(self.lexer.peek_token("*") || self.lexer.peek_token("+"));
+                // A `{` after the name opens a plain-struct PATTERN (`p: Pt { x: 3 }`): that is
+                // `name: pattern`, not a type annotation.
+                if !self.lexer.peek_token("{") {
+                    res = Some(self.lexer.peek_token("*") || self.lexer.peek_token("+"));
+                }
             }
         }
         self.lexer.revert(save);
@@ -10599,6 +10610,30 @@ impl Parser {
             self.expression(&mut hi);
             return (Value::Boolean(false), Type::Boolean);
         }
+        // @FR-G-Pat-Group — a `( … )` in a pattern is a GROUP: `(2 | 3)` is the alternation and
+        // `(2..=5)` the range, one condition either way.  Handed to `expression` it was a value:
+        // `2 | 3` the bitwise or (3), and a parenthesised range never finished parsing.
+        if self.lexer.has_token("(") {
+            let mut cond = Value::Null;
+            loop {
+                let (pat, _) = self.parse_match_pattern(subject_type, subject_var);
+                let mut one = Value::Null;
+                self.build_scalar_cond(&mut one, subject_var, subject_type, pat);
+                cond = if matches!(cond, Value::Null) {
+                    one
+                } else {
+                    v_if(cond, Value::Boolean(true), one)
+                };
+                if !self.lexer.has_token("|") {
+                    break;
+                }
+            }
+            self.lexer.token(")");
+            return (
+                v_block(vec![cond], Type::Boolean, "or_pattern"),
+                Type::Boolean,
+            );
+        }
         let pat_pos = self.lexer.pos().clone();
         let mut lit = Value::Null;
         let negate = self.lexer.has_token("-");
@@ -10755,15 +10790,21 @@ impl Parser {
             } else if let Some(id) = self.lexer.has_identifier() {
                 if id == "_" {
                     is_wildcard = true;
-                } else if self.lexer.has_token("@") {
-                    // binding pattern `name @ pattern` — bind the subject to
-                    // a variable and continue parsing the sub-pattern.
+                } else if self.lexer.has_token("@") || self.lexer.has_token(":") {
+                    // @FR-P-Cap at the arm root — `name: pattern` (and the older `name @ pattern`)
+                    // binds the subject and the sub-pattern still tests it; `name: _` is the
+                    // catch-all that binds it.
                     let bind_nr = self.pattern_binding(&id, subject_type);
                     self.vars.defined(bind_nr);
                     arm_bindings.push(v_set(bind_nr, Value::Var(v)));
-                    // Parse the sub-pattern after `@`.
-                    let (pat, _) = self.parse_match_pattern(subject_type, v);
-                    pattern_val = Some(pat);
+                    if matches!(&self.lexer.peek().has, crate::lexer::LexItem::Identifier(n) if n == "_")
+                    {
+                        self.lexer.has_identifier();
+                        is_wildcard = true;
+                    } else {
+                        let (pat, _) = self.parse_match_pattern(subject_type, v);
+                        pattern_val = Some(pat);
+                    }
                 } else {
                     // Bare identifier without `@` — wildcard binding (binds subject to name).
                     let bind_nr = self.pattern_binding(&id, subject_type);
@@ -12187,6 +12228,17 @@ impl Parser {
             }
             let elem_type = elem_type.clone();
             let elem_get = Value::TupleGet(tmp, i as u16);
+            // @FR-P-Cap at a tuple element — `(whole: Circle { r }, k)` binds the element as a
+            // bare name does, and the sub-pattern after the `:` still tests it.
+            if let Some(name) = self.lexer.peek_named_arg()
+                && Self::is_binding_name(&name)
+            {
+                self.lexer.has_identifier();
+                self.lexer.token(":");
+                let bind_nr = self.pattern_binding(&name, &elem_type);
+                self.vars.defined(bind_nr);
+                bindings.push(v_set(bind_nr, elem_get.clone()));
+            }
             if self.peek_is_variant_subpattern(&elem_type) {
                 // @FR-P-Point — a unit or struct variant is a point pattern over ONE
                 // value, and a tuple element is one value, so an enum element takes

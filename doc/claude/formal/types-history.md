@@ -1307,6 +1307,15 @@ integer.  The second failure mode again, on the axis the fixes' own guards had h
 
 Opened and closed in the same change; the chapter's `OPEN:` count never carried them.
 
+* **D-types-27** *(opened 2026-10-06, CLOSED 2026-10-06)* — `(P-Cap-Ty)` on `--native`: a
+  slice capture (or bare binding) of a `(integer, text)` element, handed whole to a tuple
+  parameter, emitted a member list over the binding's raw name — the name carries a numbered
+  suffix after a hash, which Rust reads as a prefixed literal — and the program did not
+  compile.  Both sites that spell a text-carrying tuple argument member by member formatted the
+  raw name; they ask `var_place`, the home that sanitises it.  Fourteen element and subject
+  types otherwise agree on the capture's type and value on both backends.  Guard
+  `tests/scripts/a-pattern-capture-takes-the-type-its-pattern-matched.loft`.
+
 * **D-types-26** *(opened 2026-10-06, CLOSED 2026-10-06)* — `(C-Refl)` for a vector element,
   decided on STORAGE: two element types are one when their bytes mean the same values, and an
   element is a place the callee may write, so bytes that mean other values never convert.  The

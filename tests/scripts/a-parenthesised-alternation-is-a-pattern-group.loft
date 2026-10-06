@@ -1,0 +1,19 @@
+// @FR-G-Pat-Group — a `( … )` inside a pattern is a GROUP: `(2 | 3)` is the alternation 2-or-3,
+// at an arm root, after a capture and in a field's pattern.  Read as an expression it was the
+// value `2 | 3` (the bitwise or, 3), and the arm silently missed 2.
+
+struct Box { n: integer, s: text }
+
+fn root(n: integer) -> integer { match n { (2 | 3) => 1, _ => 0 } }
+fn mixed(n: integer) -> integer { match n { (7 | 2) => 1, _ => 0 } }
+fn captured(n: integer) -> integer { match n { x: (2 | 3) => x * 10, _ => 0 } }
+fn field(b: Box) -> integer { match b { Box { n: (1 | 2), s } => len(s), _ => -1 } }
+fn one_alt(n: integer) -> integer { match n { (2) => 1, _ => 0 } }
+
+fn main() {
+  assert("{root(2)}{root(3)}{root(5)}" == "110", "root group: {root(2)}{root(3)}{root(5)}");
+  assert("{mixed(2)}{mixed(3)}{mixed(7)}" == "101", "mixed group: {mixed(2)}{mixed(3)}{mixed(7)}");
+  assert(captured(2) == 20 && captured(5) == 0, "captured group: {captured(2)} {captured(5)}");
+  assert(field(Box { n: 1, s: "ab" }) == 2 && field(Box { n: 3, s: "ab" }) == -1, "field group");
+  assert(one_alt(2) == 1 && one_alt(3) == 0, "a group of one");
+}
