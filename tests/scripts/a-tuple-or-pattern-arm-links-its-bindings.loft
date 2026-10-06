@@ -1,0 +1,96 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-P-Multi` over a TUPLE subject — `(Circle { r }, Square { s }) | (Square { s }, Circle { r })`
+// is one arm, and each name is one variable linked across the alternatives: whichever tuple
+// pattern matched writes it from ITS OWN positions, then the one body reads it.  `,` lists them
+// the same way.  `@FR-P-Alt-Diff`: a name only some alternatives bind is `τ?`, null in the others
+// (c7).  Each value is computed by hand, on both backends.
+//
+// Every body is ORDER-SENSITIVE (`r * 10 + s`, never `r * s`): a body that reads the first
+// pattern's positions for the second's match would swap `r` and `s`, and a symmetric body hides
+// exactly that.  What can go wrong is that read (c1, c2, c3 b), a guard that sees the first
+// pattern's bindings (c5), a text or vector capture copied without its store (c4, c10), and an
+// arm that matches a subject none of its alternatives describe (c1 fall through, c3 none).
+//
+// @falsified-at: 58407239c — interpret exit 1 -> 0, native exit 1 -> 0
+//   Before step 3 a tuple subject's second pattern did not parse.
+//   CHANNEL: a refusal (*"Expect token =>"*), on BOTH backends.
+//   ARMED: nothing.
+//   WITNESS: exit 1 with the parse error at the first `|` between tuple patterns.
+//   HOLDS: nothing runs; every cell is unreached.
+// @falsified-at: 60bec04f8 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   The first build of step 3: each alternative cloned the arm body AFTER the first pattern's
+//   bindings had folded into it, so the second alternative re-ran them over its own.
+//   CHANNEL: an assertion, on BOTH backends — the value channel, not a crash.
+//   ARMED: nothing.
+//   WITNESS: `c1 order 2` fails — `(Square { s: 5.0 }, Circle { r: 2.0 })` reads `r` and `s`
+//   from the first pattern's positions.
+//   HOLDS: c1 order 1 and every single-alternative cell pass; only the swap moves.
+// @falsified-by: tests/falsified/a-tuple-or-pattern-arm-links-its-bindings.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   Step 3 reverted whole (the durable receipt): the refusal above.
+//   CHANNEL: a refusal, on BOTH backends.
+//   ARMED: nothing.
+//   WITNESS: as the first control.
+//   HOLDS: as the first control.
+
+enum Sh { Circle { r: float }, Square { s: float }, Named { n: text }, Bag { items: vector<integer> }, Dot }
+
+fn both(a: Sh, b: Sh) -> float {
+  match (a, b) {
+    (Circle { r }, Square { s }) | (Square { s }, Circle { r }) => r * 10.0 + s,
+    _ => -1.0
+  }
+}
+fn comma(a: Sh, b: Sh) -> float {
+  match (a, b) {
+    (Circle { r }, Square { s }), (Square { s }, Circle { r }) => r * 100.0 + s,
+    _ => -1.0
+  }
+}
+fn scal(t: (integer, integer)) -> integer {
+  match t { (1, x) | (x, 1) => x, _ => -7 }
+}
+fn name_of(a: Sh, b: Sh) -> text {
+  match (a, b) { (Named { n }, _) | (_, Named { n }) => "{n}!", _ => "none" }
+}
+fn guarded(a: Sh, b: Sh) -> text {
+  match (a, b) { (Circle { r }, _) | (_, Circle { r }) if r > 1.5 => "big {r}", _ => "other" }
+}
+fn three(a: Sh, b: Sh) -> float {
+  match (a, b) {
+    (Circle { r }, Dot) | (Dot, Circle { r }) | (Circle { r }, Circle { r: _ }) => r,
+    _ => 0.0
+  }
+}
+fn partial(a: Sh, b: Sh) -> text {
+  match (a, b) {
+    (Circle { r }, Dot) | (Square { s }, Circle { r }) => "r {r} s {s ?? -1.0}",
+    _ => "no"
+  }
+}
+fn bag(a: Sh, b: Sh) -> integer {
+  match (a, b) { (Bag { items }, _) | (_, Bag { items }) => len(items) * 100 + items[0], _ => -1 }
+}
+
+fn main() {
+  assert(both(Circle { r: 2.0 }, Square { s: 5.0 }) == 25.0, "c1 order 1 {both(Circle { r: 2.0 }, Square { s: 5.0 })}");
+  assert(both(Square { s: 5.0 }, Circle { r: 2.0 }) == 25.0, "c1 order 2 {both(Square { s: 5.0 }, Circle { r: 2.0 })}");
+  assert(both(Circle { r: 2.0 }, Circle { r: 3.0 }) == -1.0, "c8 fall through");
+  assert(comma(Square { s: 5.0 }, Circle { r: 2.5 }) == 255.0, "c2 comma");
+  assert(scal((1, 42)) == 42, "c3 a {scal((1, 42))}");
+  assert(scal((43, 1)) == 43, "c3 b {scal((43, 1))}");
+  assert(scal((5, 6)) == -7, "c3 none");
+  assert(name_of(Named { n: "left" }, Dot) == "left!", "c4 a {name_of(Named { n: "left" }, Dot)}");
+  assert(name_of(Dot, Named { n: "right" }) == "right!", "c4 b {name_of(Dot, Named { n: "right" })}");
+  assert(name_of(Dot, Dot) == "none", "c4 none");
+  assert(guarded(Dot, Circle { r: 2.0 }) == "big 2", "c5 b {guarded(Dot, Circle { r: 2.0 })}");
+  assert(guarded(Circle { r: 1.0 }, Dot) == "other", "c5 guard rejects");
+  assert(three(Dot, Circle { r: 4.0 }) == 4.0, "c6 2nd {three(Dot, Circle { r: 4.0 })}");
+  assert(three(Circle { r: 6.0 }, Circle { r: 9.0 }) == 6.0, "c6 3rd {three(Circle { r: 6.0 }, Circle { r: 9.0 })}");
+  assert(partial(Circle { r: 1.5 }, Dot) == "r 1.5 s -1", "c7 first {partial(Circle { r: 1.5 }, Dot)}");
+  assert(partial(Square { s: 3.0 }, Circle { r: 2.0 }) == "r 2 s 3", "c7 second {partial(Square { s: 3.0 }, Circle { r: 2.0 })}");
+  assert(bag(Bag { items: [7, 8, 9] }, Dot) == 307, "c10 a {bag(Bag { items: [7, 8, 9] }, Dot)}");
+  assert(bag(Dot, Bag { items: [5, 1] }) == 205, "c10 b {bag(Dot, Bag { items: [5, 1] })}");
+  println("all ok");
+}

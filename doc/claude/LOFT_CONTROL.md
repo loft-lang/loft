@@ -319,9 +319,18 @@ every pattern binds takes the join of its types (`integer` and `u8` give `intege
 no join are refused, naming the capture (`@FR-P-Alt-Same`).  A name only some patterns bind is
 nullable in the body (`@FR-P-Alt-Diff`): `Circle { r } | Pt => r ?? 0`.  A rename links fields
 of different names into one variable: `Circle { r }, Rect { w: r, h } => r`.  A guard after the
-last pattern applies to whichever one matched.  A multi-pattern arm takes enum variants, at the
-top of the arm; a tuple subject, a plain struct, and an alternative nested inside a tuple element
-or a field are planned (@PLN186).
+last pattern applies to whichever one matched.  A multi-pattern arm takes enum variants and,
+over a tuple subject, whole tuple patterns — so one arm covers both orders of a pair:
+
+```
+match (a, b) {
+    (Circle { r }, Square { s }) | (Square { s }, Circle { r }) => r * 10.0 + s,
+    _ => 0.0
+}
+```
+
+A plain-struct subject, and an alternative nested inside a tuple element or a field, are planned
+(@PLN186).
 
 Whether a destructured field is a **view of the subject** or a **copy** depends on the
 field's type:

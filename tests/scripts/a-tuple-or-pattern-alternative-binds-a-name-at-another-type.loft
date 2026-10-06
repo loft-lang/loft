@@ -1,0 +1,27 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-P-Alt-Same` over a TUPLE subject's alternatives — a name every alternative binds is one
+// variable, so the alternatives must bind it at types that meet.  `r` is `float` in the first and
+// `text` in the second: refused, naming the capture and both types.
+//
+// @falsified-at: 58407239c — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 1/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 1/1 (the suite's verdict, not a count of matches)
+//   Before step 3 the file was refused too, but by the parse error at `|`, not by this message.
+//   CHANNEL: the expected diagnostic, on BOTH backends.
+//   ARMED: nothing.
+//   WITNESS: *"Expect token =>"* in place of the multi-pattern capture message.
+//   HOLDS: the program is refused either way; only WHICH refusal moves.
+// @falsified-by: tests/falsified/a-tuple-or-pattern-alternative-binds-a-name-at-another-type.patch — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 1/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 1/1 (the suite's verdict, not a count of matches)
+//   Step 3 reverted whole (the durable receipt).
+//   CHANNEL: the expected diagnostic, on BOTH backends.
+//   ARMED: nothing.
+//   WITNESS: as above.
+//   HOLDS: as above.
+
+enum Sh { Circle { r: float }, Named { n: text }, Dot }
+
+// @EXPECT_ERROR: multi-pattern arm: capture 'r' is text in this pattern but float in the first
+fn test_a_capture_at_another_type_is_refused() {
+  s = match (Sh.Dot, Sh.Dot) { (Circle { r }, _) | (Named { n: r }, _) => "x", _ => "y" };
+  assert(s == "y", "unreachable");
+}

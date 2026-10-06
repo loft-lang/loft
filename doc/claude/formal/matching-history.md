@@ -30,6 +30,16 @@ after it.  The arm rule's "bare binding" wording stood for two months without th
 having it — corrected 2026-09-07, with the silence that hid it (an arm naming nothing was
 skipped without a diagnostic).
 
+- **D-match-19 — CLOSED 2026-10-06 (@PLN186 step 3).** `(P-Multi)` over a tuple subject,
+  `(Circle { r }, Square { s }) | (Square { s }, Circle { r }) => r * 10.0 + s`, was refused
+  (*"Expect token =>"*).  Each further tuple pattern now parses into its own bindings and
+  conditions, a shared name is copied into the first pattern's slot (the enum arm's linking), and
+  each alternative runs the body taken BEFORE the first pattern's bindings fold into it — the
+  first build cloned the folded body, so the second alternative re-ran the first's bindings and
+  read `r` and `s` from the swapped positions, hidden by a symmetric `r * s`.  Guards:
+  `tests/scripts/a-tuple-or-pattern-arm-links-its-bindings.loft` (order-sensitive bodies) and
+  `…-alternative-binds-a-name-at-another-type.loft` (`@FR-P-Alt-Same`).
+
 - **D-match-17 — OPENED AND CLOSED 2026-10-05.** `(P-Point)`: a field sub-pattern over a
   `reference<T>` field, and a plain-struct sub-pattern on any struct field (loft#1870).  The
   variant test asked the inline-enum type alone, so `Add { l: Lit { v: 0 }, r }` over
