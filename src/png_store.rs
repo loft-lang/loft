@@ -47,7 +47,8 @@ fn decode_into_store<R: std::io::Read>(
 /// Read a PNG from the filesystem (native path).
 #[cfg(not(feature = "wasm"))]
 pub fn read(file_path: &str, store: &mut Store) -> std::io::Result<(u32, u32, u32)> {
-    decode_into_store(BufReader::new(File::open(file_path)?), store)
+    let file = crate::file_access::open(&crate::file_access::at(file_path))?;
+    decode_into_store(BufReader::new(file), store)
 }
 
 /// Read a PNG via the WASM host bridge (wasm path).

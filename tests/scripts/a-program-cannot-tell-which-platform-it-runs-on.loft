@@ -107,6 +107,8 @@ fn test_a_backslash_separates() {
   file("{d}/x.txt").write("x");
   assert(exists("{d}/x.txt"), "the slash path");
   assert(exists("{d}\\x.txt"), "the backslash spelling names the same file");
+  // loft#1902: `mtime` took the path as text, past the rules every other builtin applies.
+  assert(mtime("{d}\\x.txt") > 0, "mtime reads the backslash spelling too");
   clean(d);
 }
 

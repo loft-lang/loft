@@ -1259,7 +1259,7 @@ fn n_store_memory_dest(stores: &mut Stores, stack: &mut DbRef) {
 
 fn n_mtime(stores: &mut Stores, stack: &mut DbRef) {
     let v_path = stores.get::<Str>(stack);
-    let result = Stores::os_mtime_native(v_path.str());
+    let result = stores.fs_mtime_at(v_path.str());
     stores.put(stack, result);
 }
 

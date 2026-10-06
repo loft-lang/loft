@@ -9,12 +9,11 @@
 11 src/c_shim.rs
 71 src/cache.rs
 47 src/cache_gc.rs
-16 src/codegen_runtime.rs
+3 src/codegen_runtime.rs
 1 src/crash_report.rs
 4 src/create.rs
 8 src/database/allocation.rs
-1 src/database/format.rs
-13 src/database/io.rs
+7 src/database/io.rs
 3 src/database/journal.rs
 5 src/database/loft_file.rs
 6 src/database/spans.rs
@@ -54,7 +53,7 @@
 2 src/parser/control.rs
 82 src/parser/mod.rs
 49 src/platform.rs
-2 src/png_store.rs
+1 src/png_store.rs
 1 src/radix_db/pages.rs
 16 src/registry.rs
 4 src/registry_advisories.rs
@@ -68,7 +67,7 @@
 83 src/self_update.rs
 1 src/serve.rs
 24 src/startup_cache.rs
-5 src/state/io.rs
+3 src/state/io.rs
 4 src/state/mod.rs
 23 src/store.rs
 1 src/store_census.rs

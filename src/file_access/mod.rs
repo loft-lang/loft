@@ -228,10 +228,26 @@ pub fn metadata(path: &PathText) -> io::Result<std::fs::Metadata> {
 /// # Errors
 /// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
 pub fn read_dir(path: &PathText) -> io::Result<Vec<PathText>> {
+    list(path, false)
+}
+
+/// [`read_dir`] without the entries whose name is not UTF-8 — the listing a PROGRAM gets,
+/// where such a name could not be spelled back to the file it came from.
+///
+/// # Errors
+/// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
+pub fn read_dir_utf8(path: &PathText) -> io::Result<Vec<PathText>> {
+    list(path, true)
+}
+
+fn list(path: &PathText, utf8_only: bool) -> io::Result<Vec<PathText>> {
     run(path, |p| {
         let mut out = Vec::new();
         for entry in std::fs::read_dir(p)? {
             let entry = entry?.path();
+            if utf8_only && entry.file_name().and_then(|n| n.to_str()).is_none() {
+                continue;
+            }
             if path.flavor() != Flavor::HOST && emulated::is_stream(&entry) {
                 continue;
             }
@@ -325,7 +341,8 @@ pub fn log_refusal_once(raw: &str, why: &str) {
 /// # Errors
 /// The OS's error, or the refusal.
 pub fn open_resolved(path: Option<&str>) -> std::io::Result<std::fs::File> {
-    path.ok_or_else(path_refused).and_then(std::fs::File::open)
+    path.ok_or_else(path_refused)
+        .and_then(|p| open(&at(p)))
 }
 
 /// `@FR-Path-Refuse` — the error a refused path opens with, so an open site's existing error

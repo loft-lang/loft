@@ -394,7 +394,7 @@ pub fn write_bytes(path: text, bytes: const vector<u8>) -> boolean fs#update;
 /// Use for date-window filters: convert the returned seconds to YYYY-MM-DD and
 /// compare lexicographically against `ymd_days_ago(N)`.
 pub fn mtime(path: text) -> integer fs#read;
-#rust"Stores::os_mtime_native(@path)"
+#rust"s.database.fs_mtime_at(@path)"
 #impure(host_io)
 
 // --- Persistent stores ---

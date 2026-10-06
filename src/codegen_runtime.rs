@@ -336,7 +336,7 @@ pub fn from_loft_ref(stores: &mut Stores, r: loft_ffi::LoftRef) -> DbRef {
 use crate::vector;
 use std::cell::{Cell, RefCell, UnsafeCell};
 #[cfg(not(host_fs))]
-use std::fs::{File, OpenOptions};
+use std::fs::OpenOptions;
 #[cfg(not(host_fs))]
 use std::io::{Read, Seek, SeekFrom, Write as _};
 // #620 — see `n_now`: `wasm32-wasip2` shares the real-clock path.
@@ -1733,12 +1733,15 @@ pub fn OpStep(
 #[cfg(not(host_fs))]
 pub fn read_file_text_into(path: &str, buf: &mut String) {
     buf.clear();
-    let Ok(mut f) = File::open(path) else { return };
+    let at = crate::file_access::at(path);
+    let Ok(mut f) = crate::file_access::open(&at) else {
+        return;
+    };
     match f.read_to_string(buf) {
         Ok(_) => {}
         Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
             buf.clear();
-            let size = std::fs::metadata(path).map_or(0, |m| m.len());
+            let size = crate::file_access::metadata(&at).map_or(0, |m| m.len());
             crate::loft_eprintln!(
                 "warning: file({path:?}).content() got non-UTF-8 bytes ({size} bytes in \
                  file) — returning null. Read the bytes exactly with `read_bytes(path)`, \
@@ -1877,7 +1880,7 @@ pub fn OpSizeFile(cell: &std::cell::UnsafeCell<Stores>, file: DbRef) -> i64 {
     let Some(file_path) = stores.resolve_path(&file_path) else {
         return i64::MIN;
     };
-    if let Ok(meta) = std::fs::metadata(&file_path) {
+    if let Ok(meta) = crate::file_access::metadata(&crate::file_access::at(&file_path)) {
         meta.len().cast_signed()
     } else {
         i64::MIN
@@ -1932,10 +1935,11 @@ pub fn OpTruncateFile(cell: &std::cell::UnsafeCell<Stores>, file: DbRef, size: i
             .store_mut(&file)
             .set_long(file.rec, file.pos + 16, i64::MIN);
     }
-    OpenOptions::new()
-        .write(true)
-        .open(&file_path)
-        .and_then(|f| f.set_len(size as u64))
+    crate::file_access::open_with(
+        &crate::file_access::at(&file_path),
+        OpenOptions::new().write(true),
+    )
+    .and_then(|f| f.set_len(size as u64))
         .is_ok()
 }
 
@@ -2016,13 +2020,14 @@ fn file_handle_write(stores: &mut Stores, file: &DbRef) -> i32 {
     let Some(file_name) = stores.resolve_path(&file_name) else {
         return i32::MIN;
     };
-    match OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(&file_name)
-    {
+    match crate::file_access::open_with(
+        &crate::file_access::at(&file_name),
+        OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false),
+    ) {
         Ok(f) => {
             stores
                 .store_mut(file)
@@ -2039,7 +2044,7 @@ fn file_handle_write(stores: &mut Stores, file: &DbRef) -> i32 {
             f_nr
         }
         Err(e) => {
-            crate::loft_eprintln!("file open error for {file_name:?}: {e}");
+            crate::loft_eprintln!("file open error: {e}");
             i32::MIN
         }
     }
@@ -2064,7 +2069,7 @@ fn file_handle_read(stores: &mut Stores, file: &DbRef, initial_pos: i64) -> i32 
     let Some(file_name) = stores.resolve_path(&file_name) else {
         return i32::MIN;
     };
-    match OpenOptions::new().read(true).open(&file_name) {
+    match crate::file_access::open(&crate::file_access::at(&file_name)) {
         Ok(mut f) => {
             if initial_pos > 0 {
                 let _ = f.seek(SeekFrom::Start(initial_pos as u64));
@@ -2080,7 +2085,7 @@ fn file_handle_read(stores: &mut Stores, file: &DbRef, initial_pos: i64) -> i32 
             f_nr
         }
         Err(e) => {
-            crate::loft_eprintln!("file open error for {file_name:?}: {e}");
+            crate::loft_eprintln!("file open error: {e}");
             i32::MIN
         }
     }
@@ -5471,13 +5476,14 @@ pub fn fs_rmdir(path: &str) -> i64 {
     }
     #[cfg(not(host_fs))]
     {
-        match std::fs::remove_dir(path) {
+        let at = crate::file_access::at(path);
+        match crate::file_access::remove_dir(&at) {
             Ok(()) => FS_OK,
             Err(e) => match e.kind() {
                 std::io::ErrorKind::NotFound => FS_NOT_FOUND,
                 std::io::ErrorKind::PermissionDenied => FS_PERMISSION_DENIED,
                 _ if fs_is_dir(path)
-                    && std::fs::read_dir(path).is_ok_and(|mut d| d.next().is_some()) =>
+                    && crate::file_access::read_dir(&at).is_ok_and(|d| !d.is_empty()) =>
                 {
                     FS_NOT_EMPTY
                 }
@@ -5500,7 +5506,11 @@ pub fn fs_delete(path: &str) -> i64 {
     }
     #[cfg(not(host_fs))]
     {
-        fs_classify(std::fs::remove_file(path), path, true)
+        fs_classify(
+            crate::file_access::remove_file(&crate::file_access::at(path)),
+            path,
+            true,
+        )
     }
 }
 
@@ -5517,7 +5527,11 @@ pub fn fs_move(from: &str, to: &str) -> i64 {
     }
     #[cfg(not(host_fs))]
     {
-        fs_classify(std::fs::rename(from, to), from, false)
+        fs_classify(
+            crate::file_access::rename(&crate::file_access::at(from), &crate::file_access::at(to)),
+            from,
+            false,
+        )
     }
 }
 
@@ -5534,7 +5548,11 @@ pub fn fs_mkdir(path: &str) -> i64 {
     }
     #[cfg(not(host_fs))]
     {
-        fs_classify(std::fs::create_dir(path), path, false)
+        fs_classify(
+            crate::file_access::create_dir(&crate::file_access::at(path)),
+            path,
+            false,
+        )
     }
 }
 
@@ -5551,7 +5569,11 @@ pub fn fs_mkdir_all(path: &str) -> i64 {
     }
     #[cfg(not(host_fs))]
     {
-        fs_classify(std::fs::create_dir_all(path), path, false)
+        fs_classify(
+            crate::file_access::create_dir_all(&crate::file_access::at(path)),
+            path,
+            false,
+        )
     }
 }
 
@@ -5564,7 +5586,7 @@ pub fn fs_is_dir(path: &str) -> bool {
     }
     #[cfg(not(host_fs))]
     {
-        std::path::Path::new(path).is_dir()
+        crate::file_access::is_dir(&crate::file_access::at(path))
     }
 }
 
@@ -5580,7 +5602,7 @@ pub fn fs_is_symlink(path: &str) -> bool {
     }
     #[cfg(not(host_fs))]
     {
-        std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink())
+        crate::file_access::is_symlink(&crate::file_access::at(path))
     }
 }
 
@@ -5593,7 +5615,7 @@ pub fn fs_is_file(path: &str) -> bool {
     }
     #[cfg(not(host_fs))]
     {
-        std::path::Path::new(path).is_file()
+        crate::file_access::is_file(&crate::file_access::at(path))
     }
 }
 
@@ -5642,6 +5664,12 @@ impl Stores {
     #[must_use]
     pub fn fs_is_file_at(&self, raw: &str) -> bool {
         self.resolve_path(raw).is_some_and(|p| fs_is_file(&p))
+    }
+
+    /// `mtime(path)`: 0 for a refused path, as for a missing one.
+    #[must_use]
+    pub fn fs_mtime_at(&self, raw: &str) -> i64 {
+        self.resolve_path(raw).map_or(0, |p| Stores::os_mtime_native(&p))
     }
 
     #[must_use]

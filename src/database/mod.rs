@@ -1626,23 +1626,31 @@ impl Stores {
     /// own failure, and the one log line is written here (`@FR-Path-Refuse`).
     #[must_use]
     pub fn resolve_path(&self, raw: &str) -> Option<String> {
-        let norm = match crate::file_access::program_path(raw) {
+        let anchored = self.program_relative && !self.source_dir.is_empty();
+        if raw.is_empty() {
+            // No name to judge: the anchor itself, or nothing.
+            return Some(if anchored {
+                crate::file_access::at(&self.source_dir).for_program().native()
+            } else {
+                String::new()
+            });
+        }
+        let norm = match crate::file_access::PathText::program(raw) {
             Ok(norm) => norm,
             Err(why) => {
                 crate::file_access::log_refusal_once(raw, &why);
                 return None;
             }
         };
-        let full = if !self.program_relative
-            || self.source_dir.is_empty()
-            || std::path::Path::new(&norm).is_absolute()
-        {
-            norm
+        // `norm` is in the spelling of the program's host (@PLN184 Track W), and so is the
+        // anchor it joins.
+        let full = if !anchored || norm.is_absolute() {
+            norm.native()
         } else {
-            std::path::Path::new(&self.source_dir)
-                .join(&norm)
-                .to_string_lossy()
-                .into_owned()
+            crate::file_access::at(&self.source_dir)
+                .for_program()
+                .join(&norm.native())
+                .native()
         };
         if let Err(why) = crate::file_access::case_clash(&full) {
             crate::file_access::log_refusal_once(raw, &why);

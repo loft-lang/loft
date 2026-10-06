@@ -213,7 +213,10 @@ impl State {
                 };
                 // #255 / @PLN9: re-home against the program anchor.
                 let path = self.database.resolve_path(&path);
-                path.map_or(0, |p| std::fs::metadata(&p).map_or(0, |m| m.len() as i64))
+                path.map_or(0, |p| {
+                    crate::file_access::metadata(&crate::file_access::at(&p))
+                        .map_or(0, |m| m.len() as i64)
+                })
             }
         } else {
             raw_next
@@ -251,7 +254,6 @@ impl State {
                 };
                 // #255 / @PLN9: re-home against the program anchor.
                 let file_name = self.database.resolve_path(&file_name);
-                let shown = file_name.clone().unwrap_or_default();
                 // Open for read+write without truncating so that earlier
                 // bytes are preserved.  Create the file if it does not
                 // exist yet.  Explicit truncation happens via
@@ -260,12 +262,14 @@ impl State {
                     .as_deref()
                     .ok_or_else(crate::file_access::path_refused)
                     .and_then(|n| {
-                        OpenOptions::new()
-                            .read(true)
-                            .write(true)
-                            .create(true)
-                            .truncate(false)
-                            .open(n)
+                        crate::file_access::open_with(
+                            &crate::file_access::at(n),
+                            OpenOptions::new()
+                                .read(true)
+                                .write(true)
+                                .create(true)
+                                .truncate(false),
+                        )
                     }) {
                     Ok(mut f) => {
                         // Seek to the stored write position (end of file
@@ -286,7 +290,7 @@ impl State {
                         f_nr
                     }
                     Err(e) => {
-                        eprintln!("file open error for {shown}: {e}");
+                        eprintln!("file open error: {e}");
                         return;
                     }
                 }
@@ -496,7 +500,7 @@ impl State {
                         // recoverable-fault posture), mirroring both the write
                         // path's create fix and the native runtime
                         // (`file_handle_read` → i32::MIN → return).
-                        eprintln!("file open error for {shown}: {e}");
+                        eprintln!("file open error: {e}");
                         return;
                     }
                 }
@@ -598,7 +602,8 @@ impl State {
             // #255 / @PLN9: re-home against the program anchor.
             let file_path = self.database.resolve_path(&file_path);
             let size = file_path.map_or(i64::MIN, |p| {
-                std::fs::metadata(&p).map_or(i64::MIN, |meta| meta.len() as i64)
+                crate::file_access::metadata(&crate::file_access::at(&p))
+                    .map_or(i64::MIN, |meta| meta.len() as i64)
             });
             self.put_stack(size);
         }
@@ -690,7 +695,12 @@ impl State {
             let ok = path
                 .as_deref()
                 .ok_or_else(crate::file_access::path_refused)
-                .and_then(|p| OpenOptions::new().write(true).open(p))
+                .and_then(|p| {
+                    crate::file_access::open_with(
+                        &crate::file_access::at(p),
+                        OpenOptions::new().write(true),
+                    )
+                })
                 .and_then(|f| f.set_len(size as u64))
                 .is_ok();
             self.put_stack(ok);
