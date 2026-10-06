@@ -227,7 +227,10 @@ fix time — whenever the work does any of:
   ([COMPATIBILITY.md § Before the flip](../doc/claude/COMPATIBILITY.md)).
 
 Purely additive work — a new feature, a library, a speed-up, tooling, a refusal turned into an
-answer — does not get it, however urgent: the promise allows all of that after the flip.  Nor
+answer — does not get it, however urgent: the promise allows all of that after the flip.  Nor does a bug
+whose only claim is that it answers wrong: `silent-wrong` already blocks the freeze (§ `silent-wrong`
+above), so a bug that is `silent-wrong` and nothing more does not also get this label — it gets it
+only when its FIX is one of (a)–(d), e.g. the fix refuses a program that compiles today.  Nor
 does a FORMAT change (a store layout, a file or wire format): a format may change after the flip
 too, provided the new code still reads the old data — which is `contract:compat`'s second job,
 the reader for the old format beside the writer of the new one.  A plan
