@@ -34,8 +34,11 @@ const RB: &str = "struct Rb { name: text, n: integer }\n\
                   fn rb_cond(c: integer) -> Rb { \
                   if c > 0 { r = rb_mk(1); if r.n > 99 { return r; } } rb_mk(3) }\n";
 
-/// Run `body` in `mode` with both instruments armed; answer the `R` line, or what went wrong.
-fn run(tag: &str, body: &str, mode: &str) -> String {
+/// Run `body` in `mode` with `LOFT_POISON` and either `LOFT_STRICT_STORES` (no slot is ever
+/// reused, so a stale read is named) or the plain exit leak check (slots ARE reused, which is
+/// the only way to see a free decided by a slot NUMBER that a newer store now carries); answer
+/// the `R` line, or what went wrong.
+fn run_armed(tag: &str, body: &str, mode: &str, strict: bool) -> String {
     static NEXT: AtomicU32 = AtomicU32::new(0);
     let path = std::env::temp_dir().join(format!(
         "loft_heap_sound_{tag}_{}_{}.loft",
@@ -48,7 +51,14 @@ fn run(tag: &str, body: &str, mode: &str) -> String {
         .arg(&path)
         .env("LOFT_TIMEOUT", "240")
         .env("LOFT_POISON", "1")
-        .env("LOFT_STRICT_STORES", "1")
+        .env(
+            if strict {
+                "LOFT_STRICT_STORES"
+            } else {
+                "LOFT_NATIVE_LEAK_CHECK"
+            },
+            "1",
+        )
         .output()
         .expect("run loft");
     let _ = std::fs::remove_file(&path);
@@ -57,17 +67,28 @@ fn run(tag: &str, body: &str, mode: &str) -> String {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    let uaf = text.matches("USE AFTER FREE").count() + text.matches("out of bounds").count();
+    let uaf = text.matches("USE AFTER FREE").count()
+        + text.matches("out of bounds").count()
+        + text.matches("not freed").count();
     let value = text.lines().find(|l| l.starts_with('R')).unwrap_or("");
     format!("{value} exit={} uaf={uaf}", out.status.code().unwrap_or(-1))
 }
 
 fn check(cells: &[(&str, String, &str)]) {
+    check_armed(cells, true);
+}
+
+/// [`check`] with slots reused, for a defect only a recycled slot number can show.
+fn check_reusing(cells: &[(&str, String, &str)]) {
+    check_armed(cells, false);
+}
+
+fn check_armed(cells: &[(&str, String, &str)], strict: bool) {
     let mut wrong = Vec::new();
     for (tag, body, want) in cells {
         let want = format!("{want} exit=0 uaf=0");
         for mode in ["--interpret", "--native"] {
-            let got = run(tag, body, mode);
+            let got = run_armed(tag, body, mode, strict);
             if got != want {
                 wrong.push(format!("{tag} {mode}: got `{got}`, want `{want}`"));
             }
@@ -297,10 +318,20 @@ fn a_vector_buffer_bound_to_a_forwarding_call_is_filled() {
             main("fn f() -> vector<R> { o = J as vector<R>; o += [R { n: 9 }]; o }"),
             "R15",
         ),
-        // CONTROL: the tail spelling, which was already copied in.
+        // CONTROLS: the tail spelling, which was already copied in, and a projection out of a
+        // call result (chained, as `zt12` c7), which is a view the clear would empty first.
         (
             "tail",
             main("fn f() -> vector<R> { J as vector<R> }"),
+            "R12",
+        ),
+        (
+            "projection",
+            main(
+                "struct I { rs: vector<R> }\nstruct W { inner: I }\n\
+                 fn mkw() -> W { W { inner: I { rs: J as vector<R> } } }\n\
+                 fn f() -> vector<R> { return mkw().inner.rs; }",
+            ),
             "R12",
         ),
     ]);
@@ -389,6 +420,37 @@ fn a_copied_call_result_is_released_when_rebound() {
                  c = VB { items: [It { name: \"d\", n: 9 }] }; println(\"R{c.items[0].n}\");",
             ),
             "R9",
+        ),
+    ]);
+}
+
+/// `(H-FreeAll)` — a store a closure call mints is handed up for its frame to release, and one
+/// ALLOCATION is one entry on that list.  The entry a freed store left behind (`k2 = hc(0)`
+/// rebound: its owner released the first result) names the same slot as the next result minted
+/// into it, and refusing that one on the slot number left it to nobody.  Only a reused slot
+/// shows it, so this runs with slots reused.
+#[test]
+fn a_minted_store_in_a_reused_slot_is_still_released() {
+    const P: &str = "struct P { x: integer, y: integer }\n";
+    check_reusing(&[
+        (
+            "rebound_then_called",
+            format!(
+                "{P}fn main() {{ cap: P? = P {{ x: 11, y: 1 }}; hc = fn(n: integer) -> P? {{ cap }}; \
+                 k2: P? = null; k2 = hc(0); k2 = hc(0); \
+                 println(\"R{{(k2 ?? P {{ x: 0, y: 0 }}).x}} {{(hc(0) ?? P {{ x: 0, y: 0 }}).x}}\"); }}"
+            ),
+            "R11 11",
+        ),
+        // CONTROL: no rebind, so no stale entry shares the slot.
+        (
+            "called_twice",
+            format!(
+                "{P}fn main() {{ cap: P? = P {{ x: 11, y: 1 }}; hc = fn(n: integer) -> P? {{ cap }}; \
+                 k: P? = null; k = hc(0); \
+                 println(\"R{{(k ?? P {{ x: 0, y: 0 }}).x}} {{(hc(0) ?? P {{ x: 0, y: 0 }}).x}}\"); }}"
+            ),
+            "R11 11",
         ),
     ]);
 }

@@ -6083,7 +6083,13 @@ pub fn cr_fnref_minted(
     let serial = slot.alloc_serial;
     FNREF_BUFS.with(|b| {
         let mut list = b.borrow_mut();
-        if list.iter().any(|(d, _)| d.store_nr == returned.store_nr) {
+        // One ALLOCATION is one entry, and a slot number is not an allocation: an entry left
+        // by a store its owner already freed names the same slot as a new store minted into
+        // it, and refusing the new one on the number alone left it to nobody.
+        if list
+            .iter()
+            .any(|(d, s)| d.store_nr == returned.store_nr && *s == serial)
+        {
             return;
         }
         list.push((returned, serial));

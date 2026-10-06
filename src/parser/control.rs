@@ -3919,6 +3919,16 @@ impl Parser {
         self.set_delivered_vector_return(elm_ty, buf_attr);
     }
 
+    /// Does `Set(w, rhs)` bind the return buffer `buf` to a store the call MINTS?  Never a
+    /// projection (`OpGet…` answers a view into a store that already exists) and never a value
+    /// read out of the buffer itself, which clearing the buffer would empty before the adopt.
+    fn mints_into_buffer(data: &crate::data::Data, buf: u16, w: u16, rhs: &Value) -> bool {
+        w == buf
+            && Self::tail_forwards_own_store(rhs, data)
+            && !matches!(rhs.unspan(), Value::Call(d, _) if data.def(*d).name().starts_with("OpGet"))
+            && !rhs.reads_var(buf)
+    }
+
     /// `@FR-O-Buffer` — a vector return buffer BOUND to a call that delivers its own store
     /// (#409's forwarder, `o = text as vector<R>` with `o` promoted onto the buffer) is
     /// filled, not rebound: the call runs into a `__fwd` local and its elements are adopted
@@ -3935,10 +3945,9 @@ impl Parser {
         let Type::Vector(elm, _) = self.vars.tp(buf_var).base().clone() else {
             return;
         };
-        let bound = body.any_node(&mut |n| {
-            matches!(n, Value::Set(w, rhs)
-                if *w == buf_var && Self::tail_forwards_own_store(rhs, &self.data))
-        });
+        let data = &self.data;
+        let fills = |w: u16, rhs: &Value| Self::mints_into_buffer(data, buf_var, w, rhs);
+        let bound = body.any_node(&mut |n| matches!(n, Value::Set(w, rhs) if fills(*w, rhs)));
         if !bound {
             return;
         }
@@ -3953,10 +3962,10 @@ impl Parser {
             &[Value::Var(buf_var), Value::Var(fwd), Value::Int(rec_tp)],
         );
         let data = &self.data;
+        let fills = |w: u16, rhs: &Value| Self::mints_into_buffer(data, buf_var, w, rhs);
         body.map_nodes(&mut |n| {
             if let Value::Set(w, rhs) = n
-                && *w == buf_var
-                && Self::tail_forwards_own_store(rhs, data)
+                && fills(*w, rhs)
             {
                 let call = std::mem::replace(rhs.as_mut(), Value::Null);
                 *n = crate::data::v_block(
