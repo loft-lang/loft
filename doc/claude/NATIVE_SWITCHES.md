@@ -96,8 +96,8 @@ the finish.  **`LOFT_NO_HEAP_RECORD_PUSH=1`** (`@FR-R-PushRec`'s heap clause) ke
 that OWNS heap (a `Frond { fpts, fwid }`) on its templates — with it off, such an element goes
 through the header too, its slot ZEROED at the mint, which is the whole of what the prefill did
 for its handles — and is the bisect step for a wrong or stale handle in an appended record
-whose fields own heap; `LOFT_POISON_CLAIM=1` is the falsifier (the plain run's zero-on-claim
-hides a missing zero).  **`LOFT_NO_REBOUND_MOVER=1`** (`@FR-R-Mint`'s rebound clause) makes a
+whose fields own heap; `LOFT_POISON_CLAIM=1` is the falsifier (a plain run's stale bytes can
+hide a missing zero).  **`LOFT_NO_REBOUND_MOVER=1`** (`@FR-R-Mint`'s rebound clause) makes a
 loop whose body REBINDS a pushed or minted vector decline every hoist again — with it off, a
 mover rebound to a § V-al loop buffer's or a § V-z element slot's projection simply takes no
 holder, the loop keeps its other headers and scalars, and the buffer's own mint, a loop

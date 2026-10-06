@@ -1522,29 +1522,31 @@ impl Store {
     /// deterministic, reproducible failures.  Read once (cached); zero cost
     /// when off.  See `doc/claude/DEBUG_STORES.md` § store-ownership debugging.
     fn zero_claim_enabled() -> bool {
-        // Default ON: a claimed block's PAYLOAD must read as zero.  `claim` reuses freed blocks
-        // WITHOUT clearing them, so a caller that relies on zero-init — e.g. an empty `[]`
-        // collection placeholder (`V{a:[]}` / `parts: vector<T> = []`), which assumes the field/
-        // var handle is already 0 — instead inherits the freed block's STALE bytes.  That stale
-        // collection handle then resolves to a non-claimed record in `remove_claims`/`length_vector`
-        // → a use-after-free SIGSEGV (135-vector-u8-concat gate-on; @PLN25).  Zeroing the payload at
-        // the single claim chokepoint makes the invariant hold for every caller (interpreter only;
-        // native uses Rust ownership and never hits this).  `LOFT_NO_ZERO_CLAIM` disables it for
-        // perf benchmarking only.
+        // `@FR-H-Claim` (`@C137`) — OFF: a claim promises no value, so it writes none.  Every
+        // value is written by the code that builds it (its source, else its type's default),
+        // and a reader of a slot nothing wrote is the defect, found by `LOFT_POISON_CLAIM=1`
+        // and fixed where it reads — never papered over here.  The one zeroing that remains is
+        // a WRITE the program asks for (`[0; n]`, an all-zero-default record built in place),
+        // made at that site.  `LOFT_ZERO_CLAIM=1` (or `LOFT_LOG=zero_claim`) zeroes every claim
+        // again: a debugging lever that turns a read of stale bytes into a read of zeros.
         static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        *FLAG.get_or_init(|| std::env::var("LOFT_NO_ZERO_CLAIM").is_err())
+        *FLAG.get_or_init(|| {
+            std::env::var("LOFT_ZERO_CLAIM").is_ok_and(|v| v != "0")
+                || std::env::var("LOFT_LOG").is_ok_and(|v| v.split(',').any(|p| p == "zero_claim"))
+        })
     }
 
-    /// Common tail of every `claim` path: zero the claimed payload when
-    /// `zero_claim` is enabled (@P317 debugging lever).  No-op otherwise.
+    /// Common tail of every `claim` path: nothing by default (`@FR-H-Claim`); the claimed
+    /// payload poisoned under `LOFT_POISON_CLAIM=1`, zeroed under `LOFT_ZERO_CLAIM=1`.
     #[inline]
     fn finish_claim(&mut self, pos: u32) -> u32 {
         // `LOFT_POISON_CLAIM=1` — the dual of `LOFT_POISON`'s poison-on-FREE, and the
         // falsifier for the zero-on-claim question: fill a freshly claimed payload with
         // `0xDEADBEEF` instead of zeros, so a caller that RELIES on zero-init breaks
         // loudly and deterministically instead of inheriting recycled bytes that happen
-        // to look like zeros.  `LOFT_NO_ZERO_CLAIM=1` is the weak form of the same test
-        // (stale data is often benign); this one cannot be passed by luck.
+        // to look like zeros.  Without it a claim holds whatever the block held last — the
+        // weak form of the same test (stale data is often benign); this one cannot be passed
+        // by luck.
         if Self::poison_claim_enabled() {
             self.poison_fill(pos);
         } else if Self::zero_claim_enabled() {
@@ -1663,9 +1665,14 @@ impl Store {
             words -= nh;
         }
         if start > PRIMARY {
+            // The word before `start` is a free FOOTER only when the predecessor is free; a
+            // CLAIMED predecessor's last word is its payload, which holds any value
+            // (`@FR-H-Claim`) — `i32::MIN` included, which `-f` cannot negate.  The checks
+            // below reject a payload that merely looks like a footer.
             let f = self.read::<i32>(start - 1, 4);
-            if f < 0 {
-                let pw = -f;
+            if f < 0
+                && let Some(pw) = f.checked_neg()
+            {
                 if let Some(prev) = start.checked_sub(pw as u32)
                     && prev >= PRIMARY
                     && self.read::<i32>(prev, 0) == f
@@ -1910,17 +1917,17 @@ impl Store {
                     self.write(rec, 0, claim - next_size);
                     claim - next_size
                 };
-                // The absorbed region (old end `claim` .. new end) held the freed block's
-                // STALE bytes.  `claim`/`finish_claim` zero a payload on allocation so a
-                // freshly-exposed slot reads as 0 (the invariant `set_default_value` and the
-                // vector/text readers rely on); an in-place grow must uphold the SAME
-                // invariant or a newly-exposed vector element carries garbage text/vec
-                // handles that `remove_claims`/`length_vector` then follow into a UAF
-                // (cluster-462, #462 @ sim.loft:3546).  Zero only the grown tail; the old
-                // payload (words 1..claim) is preserved.  Same flag as `claim` so
-                // `LOFT_NO_ZERO_CLAIM` toggles both together.
-                if Self::zero_claim_enabled() {
-                    self.zero_range(rec, claim as u32 * 8, (new_size - claim) as u32 * 8);
+                // The absorbed region (old end `claim` .. new end) holds the freed block's
+                // stale bytes, and that is all it promises (`@FR-H-Claim`): a grown vector's
+                // new slots are written by the append that makes them live.  Treated exactly
+                // as a claim's payload — poisoned under `LOFT_POISON_CLAIM=1`, so a reader of a
+                // newly exposed slot fails loudly (cluster-462 was one), zeroed under
+                // `LOFT_ZERO_CLAIM=1`.  The old payload (words 1..claim) is preserved.
+                let (from, len) = (claim as u32 * 8, (new_size - claim) as u32 * 8);
+                if Self::poison_claim_enabled() {
+                    self.poison_range(rec, from, len);
+                } else if Self::zero_claim_enabled() {
+                    self.zero_range(rec, from, len);
                 }
                 return rec;
             }
@@ -1966,11 +1973,13 @@ impl Store {
         if rec <= PRIMARY {
             return None;
         }
+        // A claimed predecessor's last word is payload and holds any value (`@FR-H-Claim`):
+        // a "footer" that cannot be negated is not one.
         let f = self.read::<i32>(rec - 1, 4);
         if f >= 0 {
             return None;
         }
-        let words = -f;
+        let words = f.checked_neg()?;
         let prev = rec.checked_sub(words as u32)?;
         if prev < PRIMARY || words < MIN_FREE_TREE {
             return None;
@@ -4441,6 +4450,18 @@ impl Store {
         }
         // The tail below four bytes keeps whatever it had: a sub-word payload cannot
         // hold a handle, and writing past `bytes` would leave the block.
+    }
+
+    /// [`Self::poison_fill`] over `len` bytes at byte `pos` of record `rec` — a grown block's
+    /// newly exposed tail.  Whole words only; a sub-word remainder keeps what it had.
+    pub fn poison_range(&self, rec: u32, pos: u32, len: u32) {
+        let base = unsafe { self.ptr.offset(rec as isize * 8 + pos as isize) };
+        for i in 0..(len / 4) as usize {
+            unsafe {
+                base.add(i * 4)
+                    .copy_from_nonoverlapping(0xDEAD_BEEF_u32.to_ne_bytes().as_ptr(), 4);
+            }
+        }
     }
 
     pub fn zero_fill(&self, rec: u32) {

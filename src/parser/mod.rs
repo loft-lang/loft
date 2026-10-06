@@ -15121,13 +15121,16 @@ impl Parser {
     /// previous value for the copy to release.
     pub(crate) fn mark_copies_fresh(&self, steps: &mut [Value]) {
         fn mark(v: &mut Value, copy: u32) {
-            if let Value::Call(d, args) = v
-                && *d == copy
-                && let Some(Value::Int(tp)) = args.get_mut(2)
-            {
-                *tp |= i32::from(crate::keys::COPY_FRESH_DEST);
+            match v {
+                Value::Span(b) => mark(&mut b.1, copy),
+                Value::Call(d, args) if *d == copy => {
+                    if let Some(Value::Int(tp)) = args.get_mut(2) {
+                        *tp |= i32::from(crate::keys::COPY_FRESH_DEST);
+                    }
+                    v.for_each_child_mut(&mut |c| mark(c, copy));
+                }
+                _ => v.for_each_child_mut(&mut |c| mark(c, copy)),
             }
-            v.for_each_child_mut(&mut |c| mark(c, copy));
         }
         let copy = self.data.def_nr("OpCopyRecord");
         for step in steps {

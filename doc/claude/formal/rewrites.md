@@ -1465,8 +1465,9 @@ handles, so every one of its 1 272 mints per call paid the dispatch and a `set_d
 walk whose whole effect was two zero words.  Falsified by sabotage: `push_record_hoisted_zero`
 made to skip its `zero_range` turns the reused-buffer cell red on `--native` under
 `LOFT_POISON_CLAIM=1` — the slot's poisoned handle is read as the element's `xs` vector, a
-store guard panic naming record `3735928559` — while the plain run (zero-on-claim) stays
-green, which is why that falsifier and not the plain run guards the clause.  Switch
+store guard panic naming record `3735928559` — while a plain run can stay green on stale
+bytes that happen to read as an empty handle, which is why that falsifier and not the plain
+run guards the clause.  Switch
 `LOFT_NO_HEAP_RECORD_PUSH`; cells `tests/scripts/157-group-push.loft` g2, g3, g8–g10; pins
 `tests/group_push.rs`.  Sites: `hoist::mint_push_qualifies` (`heap`), `NewRecordEmitter`,
 `Output::write_elem_first_mint`, `Stores::push_record_hoisted_zero`.
@@ -2709,8 +2710,8 @@ line in `Output::output_function`'s prelude.
                  null sentinel of a nullable, `false`, the variant TAG — so where
                  the emitter proves coverage of every schema field position by the
                  group's contiguous `OpSet*`s (the tag through `OpSetEnum` at 0),
-                 `set_default_value`'s walk (or its all-zero `zero_range`, which
-                 duplicates the zero-on-claim) writes nothing that survives, and
+                 `set_default_value`'s walk (or its all-zero `zero_range`) writes
+                 nothing that survives, and
                  the site calls the no-prefill twin (`OpDatabaseNP` /
                  `OpNewRecordNP`).  A WHOLE-record `OpCopyRecord` into the element
                  itself (`self.items += [p]`, `p` a value of the element type)

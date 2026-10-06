@@ -568,13 +568,16 @@ entry too, and checks a removal's recognised slot against the entry's own index.
 
 ## Runtime: store claims, clears and prefill
 
-**`LOFT_POISON_CLAIM=1`** (`Store::poison_fill`) fills a freshly CLAIMED payload with
-`0xDEADBEEF` instead of zeros — the claim-side twin of `LOFT_POISON`'s poison-on-free, and
-the falsifier for *"does this caller rely on zero-init?"*: a handle or length read out of
-unwritten space becomes a loud out-of-range value the store's guards refuse, where
-`LOFT_NO_ZERO_CLAIM=1` only leaves stale bytes that often look enough like zeros to pass.
-Census 2026-09-12: 1 232 of 1 261 `tests/scripts` clean on the interpreter, 29 dependent
-(the buffer/delivery family), every @PLN157 cell corpus clean on both backends.
+**A claim writes nothing** (`@FR-H-Claim`, `@C137`): a claimed payload, and the tail an
+in-place grow exposes, hold whatever the block held last; every value is written by the code
+that builds it.  **`LOFT_POISON_CLAIM=1`** (`Store::poison_fill` / `poison_range`) fills both
+with `0xDEADBEEF` instead — the claim-side twin of `LOFT_POISON`'s poison-on-free, and the
+falsifier for *"does this reader rely on bytes nothing wrote?"*: a handle or length read out of
+unwritten space becomes a loud out-of-range value the store's guards refuse, where the default's
+stale bytes often look enough like valid data to pass.  The nightly `poison-claim` job runs the
+suite under it on both backends, and `tests/poison_claim.rs` keeps the interpreter corpus at
+zero dependents.  **`LOFT_ZERO_CLAIM=1`** zeroes every claim again — a debugging lever, never a
+fix (DEBUG_STORES.md).
 
 **`LOFT_NO_CLEAR_RELEASE=1`** (`@FR-H-ClearRelease`, runtime, BOTH backends) makes a
 vector's entry clear a pure length reset again — with it off, clearing a REUSED
