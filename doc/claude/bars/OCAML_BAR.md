@@ -19,7 +19,9 @@ measurements, and the documentation-derived statuses they replaced, are in
 
 ## Evaluation
 
-Measured at `b194678c` (origin/main), every probe on both backends, from a scratch directory. <!-- doc-lint: ok -->
+Every probe re-run as written at `58601f08a` (`tuxedo-pr1866-next`), both backends, from a scratch directory; <!-- doc-lint: ok -->
+A3 and C1 re-measured in their real spelling through their guards, and tier H measured new.  The
+other rows answer as they did at `b194678c`. <!-- doc-lint: ok -->
 **The two backends agreed on every cell except where a cell says otherwise.**  A probe whose
 spelling is wrong for a capability loft has is scored in the real spelling, and the row names
 it.
@@ -28,7 +30,7 @@ it.
 |---|---|---|
 | A1 map, two variables | **PASS** | `fn map2<T, U>(…)` as written |
 | A2 fold | **PASS** | as written |
-| A3 variable not in first param | FAIL | `zip<T, U>` building a `vector<(T, U)>`: the interpreter skips `main`, panics or segfaults, native fails `E0308` — [loft#1868](https://github.com/loft-lang/loft/issues/1868) (`silent-wrong`); a generic struct element (`vector<Two<T>>`) works.  `empty_of<T>() -> vector<T>` is refused: *"Generic function must have at least one parameter of type T"* <!-- doc-lint: ok --> |
+| A3 variable not in first param | **PASS** | `zip<T, U>` building a `vector<(T, U)>`, both backends (guard `a-generic-over-a-vector-of-tuples-of-its-type-variables.loft`; loft#1868, fixed pending merge).  `empty_of<T>() -> vector<T>` stays refused: *"Generic function must have at least one parameter of type T"* <!-- doc-lint: ok --> |
 | A4 generic struct | **PASS** | as written |
 | A5 generic recursive enum | FAIL | `Node { left: reference<Tree<T> >, … }` is refused (*"variant Node has no field 'left'"*).  `>>` closing two type-argument lists in a variant field is read as comparison operators; write `> >` |
 | A5b recursive enum, monomorphic | **PASS** | `Add { l: reference<Expr>, r: reference<Expr> }`, each node bound to a local and linked with `&`; nesting the constructors inline is refused (*"Cannot assign ref(Lit) to field Add.l"*) |
@@ -41,11 +43,11 @@ it.
 | B4 local recursive function | FAIL | `fn` only at file scope; the self-referencing lambda is refused naming the cure (*"'go' is not bound yet … declare a file-scope 'fn go(…)'"*) |
 | B5 capture a `&` parameter | **PASS** | capturing and writing through a `&` parameter works (`[1,10]` → `[2,11]`), written `fn(i: integer) { v[i] += 1; }` |
 | B6 compose | **PASS** | `compose<T, U, V>` returning `\|x\| { g(f(x)) }`, called with `fn(n: integer) -> integer { … }` lambdas or named functions.  An untyped `\|n\|` argument is not inferred through a generic parameter (*"No matching operator '+' on 'T'"*) |
-| C1 nested constructor pattern | PARTIAL | non-recursive nesting PASS; the recursive shape through a `reference<Expr>` field never matches on the interpreter and fails `E0605` on native — [loft#1870](https://github.com/loft-lang/loft/issues/1870) (`silent-wrong`) <!-- doc-lint: ok --> |
+| C1 nested constructor pattern | **PASS** | non-recursive nesting, and the recursive shape through a `reference<Expr>` field, both backends (guard `a-field-sub-pattern-asks-the-record-a-reference-field-points-at.loft`; loft#1870, fixed pending merge) <!-- doc-lint: ok --> |
 | C2 literal in field position | **PASS** | `Circle { r: 0.0 } => "point"` |
 | C3 field rename + as-binding | PARTIAL | rename PASS (`Rect { w: width, h }`); `whole @ Rect {…}` → *"'whole' is not a variant"* |
 | C4 tuple of variants | **PASS** | as written once the arm BODY spells `Playing { hp: hp }` (no field-init shorthand) |
-| C5 or-pattern with bindings | **PASS** | the spelling is `,`: `Circle { r }, Sphere { r } => r` (`@FR-P-Multi`, LOFT_CONTROL.md § Match expressions).  `\|` joins variant names only; between patterns that bind it is refused (*"Expect token =>"*) |
+| C5 or-pattern with bindings | **PASS** | as written: `Circle { r } \| Sphere { r } => r` (`@FR-P-Multi`; `\|` and `,` are one separator, LOFT_CONTROL.md § Match expressions).  Or-patterns inside a tuple subject or a field are @PLN186's next steps |
 | C6 exhaustiveness through nesting | PARTIAL | the hole is refused, named by its outer variant (*"missing: X"*), not as `X { i: B }` |
 | C7 scalar-match hole diagnosed | PARTIAL | a warning, phrased as the null the hole produces (*"a nullable `text?` is stored into the return value"*), not naming the uncovered value |
 | C8 head/tail pattern | PASS with `_` | `[]` + `[x, ..rest]` is not seen as total (*"a slice pattern can fail …"*); the probe's `fn sum` collides with the reserved stdlib name |
@@ -54,17 +56,27 @@ it.
 | E1, E2 structural sharing | not measured | `memory_used()` does not exist; a recursive enum links nodes bound to locals (A5b), so the probes need a new design before they measure sharing |
 | F1 missing combination named | changed | a definition over a plain-enum VALUE is refused at the declaration (*"'Rock' is a value of the plain enum 'Hand', not a type … take a 'Hand' and 'match' on its value"*) |
 | F2 enum-level fallback | **PASS** | `match (a, b) { (Rock, Scissors) => true, …, _ => false }` over the plain enum |
+| H1 functional record update | PARTIAL | `Unit { hp: 0, ..u }` is refused (*"Expect token ;"*); the capability is two statements — `d = u; d.hp = 0;` copies the record, `u` keeps its value |
+| H2 immutable binding | **PASS** | `total: const integer = 5; total = 6;` → *"Cannot modify const variable 'total'"*.  The default is the opposite of OCaml's: a binding is mutable unless declared `const` |
+| H3 abstract type | FAIL | a library's struct fields are readable by every importer: `p.x` on a `geo::Pt` compiles; no form hides a type's representation behind its functions |
+| H4 phantom type parameter | **PASS** | `Door<Closed>` into a `Door<Open>` parameter → *"expected Door<Open>, got Door<Closed>"* |
+| H5 structural equality | **PASS** | `==` on structs and on enum variants with fields compares by value |
+| H6 recursion as the loop | FAIL | a self-call in tail position still takes a frame: `count(100000, 0)` stops with *"call stack overflow — exceeded 10000 stack frames"* |
+| H7 match guard | **PASS** | `Circle { r } if r > 10 => …` |
+| H8 option chaining | **PASS** | `h = half(n)?;` returns null from the function when `half` does — OCaml's `let*` over `option` |
+| H9 mutually recursive types | **PASS** | `Dir` holds `vector<Entry>`, `Entry` holds `Dir?`, either declared first.  The first spelling named the type `File` and hit [loft#1882](https://github.com/loft-lang/loft/issues/1882) <!-- doc-lint: ok --> |
 | G1–G13 regression floor | covered | every cited page is a test: `tests/docs/*.loft` generate the reference pages and run in `make ci` |
 
-**Score (capability, both backends):** A 5/8 + 1 partial (and A5b's monomorphic form passes) · B 2/6 ·
-C 4/8 + 4 partial · D 0/2 · E not measured · F 1/2.
+**Score (capability, both backends):** A 6/8 + 1 partial (and A5b's monomorphic form passes) · B 2/6 ·
+C 5/8 + 3 partial · D 0/2 · E not measured · F 1/2 · H 6/9 + 1 partial.
 
 ### Open defects
 
 | entry | issue | what it is |
 |---|---|---|
-| A3 | [loft#1868](https://github.com/loft-lang/loft/issues/1868) | a tuple holding a type variable, as a vector element, is never instantiated — `silent-wrong` <!-- doc-lint: ok --> |
-| C1 | [loft#1870](https://github.com/loft-lang/loft/issues/1870) | a field sub-pattern through a `reference<T>` field never matches — `silent-wrong` <!-- doc-lint: ok --> |
+| A3 | [loft#1868](https://github.com/loft-lang/loft/issues/1868) | a tuple holding a type variable, as a vector element, is never instantiated — `silent-wrong`; fixed pending merge <!-- doc-lint: ok --> |
+| C1 | [loft#1870](https://github.com/loft-lang/loft/issues/1870) | a field sub-pattern through a `reference<T>` field never matches — `silent-wrong`; fixed pending merge <!-- doc-lint: ok --> |
+| H9 | [loft#1882](https://github.com/loft-lang/loft/issues/1882) | a name written above the program's own type of a stdlib type's name (`File`) binds to the stdlib type, so every use is refused naming the same type twice <!-- doc-lint: ok --> |
 
 ### Spellings the probes got wrong
 
@@ -73,13 +85,14 @@ Rewrite it first:
 
 - **No field-init shorthand** in an expression: `Playing { hp: hp }`, not `Playing { hp }`.
   It exists in a PATTERN.
-- **One arm for several variants with bindings is `,`**, not `|`.
+- **One arm for several variants with bindings is `|` or `,`** — the same separator.
 - **A typed lambda is `fn(n: integer) -> integer { … }`**; `|n: integer|` is refused.
 - **`> >`** closes two type-argument lists in a variant field; `>>` there reads as two comparisons.
 - **There is no `loop` keyword** — `while true`.
 - **The expectation line is `// @BAR: …`** — `#` opens a file directive.
 - **A stdlib name is reserved** (`sum`).
 - **A text parse is discharged at the cast**: `s as integer ?? 0`.
+- **A type named like a stdlib type** (`File`) must be declared above its first use until loft#1882 closes. <!-- doc-lint: ok -->
 
 ---
 
@@ -772,6 +785,130 @@ fn main() {
   x: Hand = Rock; y: Hand = Paper;
   assert(!beats(x, y), "fallback picked");
   assert(beats(Paper, Rock), "specific picked over fallback");
+}
+```
+
+---
+
+## Scope — OCaml's semantics, not its syntax
+
+The bar takes what an OCaml program can SAY and leaves the notation behind.  Currying and
+application by juxtaposition (`f x y`), `let … in` chains, `fun x ->` and `function`, `;` /
+`;;` sequencing, `'a` type variables and the operator spellings (`::`, `@`, `|>`) are not
+entries: each tier writes its capability in loft's own spelling, and a probe is never a
+request for OCaml's notation.
+
+---
+
+## Tier H — Semantics a game author can use
+
+What OCaml's type system makes a program state or refuse, outside generics, closures and
+patterns (tiers A–C).
+
+### H1_functional_record_update
+
+OCaml expresses: `{ u with hp = 0 }` — a copy with one field changed, as one expression.
+
+```loft
+// @BAR: pass
+struct Unit { hp: integer, x: integer, y: integer }
+fn main() { u = Unit { hp: 10, x: 3, y: 4 }; d = Unit { hp: 0, ..u }; assert(d.hp == 0 && d.x == 3 && u.hp == 10, "update"); }
+```
+
+### H2_immutable_binding
+
+OCaml expresses: every `let` binding is immutable; mutation needs a `ref` or a `mutable` field.
+
+```loft
+// @BAR: refuse "const"
+fn main() { total: const integer = 5; total = 6; assert(total == 6, "rebound"); }
+```
+
+### H3_abstract_type
+
+OCaml expresses: a signature `type t` hides the record behind the module's functions, so a
+caller cannot read or build `t` except through them.  The probe imports a library `geo` whose
+`pub struct Pt { x, y }` is built by `origin()` and changed by `moved(p)`.
+
+```loft
+// @BAR: refuse "x"
+use geo;
+fn main() { p = geo::moved(geo::origin()); assert(p.x == 1, "a field read from outside its library"); }
+```
+
+### H4_phantom_type_parameter
+
+OCaml expresses: `type 'state door`, with `close : open door -> closed door` — a state that
+exists only in the type.
+
+```loft
+// @BAR: refuse "Closed"
+struct Open { u: integer }
+struct Closed { u: integer }
+struct Door<S> { name: text, state: S }
+fn close(d: Door<Open>) -> Door<Closed> { Door { name: d.name, state: Closed { u: 0 } } }
+fn main() { d = Door { name: "front", state: Closed { u: 0 } }; e = close(d); assert(e.name == "front", "closed twice"); }
+```
+
+### H5_structural_equality
+
+OCaml expresses: `=` compares records and variants by value.
+
+```loft
+// @BAR: pass
+struct Pt { x: integer, y: integer }
+enum Shape { Circle { r: integer }, Dot }
+fn main() {
+  assert(Pt { x: 1, y: 2 } == Pt { x: 1, y: 2 }, "struct eq");
+  a: Shape = Circle { r: 3 }; b: Shape = Circle { r: 3 }; c: Shape = Shape.Dot;
+  assert(a == b && a != c, "variant eq");
+}
+```
+
+### H6_recursion_as_the_loop
+
+OCaml expresses: a call in tail position reuses the frame, so recursion runs to any depth.
+
+```loft
+// @BAR: pass
+fn count(n: integer, acc: integer) -> integer { if n == 0 { acc } else { count(n - 1, acc + 1) } }
+fn main() { assert(count(100000, 0) == 100000, "deep"); }
+```
+
+### H7_match_guard
+
+OCaml expresses: `| Circle r when r > 10 -> "big"`.
+
+```loft
+// @BAR: pass
+enum Shape { Circle { r: integer }, Dot }
+fn size(s: Shape) -> text { match s { Circle { r } if r > 10 => "big", Circle { r } => "small {r}", Dot => "dot" } }
+fn main() { assert(size(Circle { r: 20 }) == "big" && size(Circle { r: 2 }) == "small 2", "guard"); }
+```
+
+### H8_option_chaining
+
+OCaml expresses: `let* h = half n in half h` over `option`.
+
+```loft
+// @BAR: pass
+fn half(n: integer) -> integer? { if n % 2 == 0 { n / 2 } else { null } }
+fn quarter(n: integer) -> integer? { h = half(n)?; half(h) }
+fn main() { assert(quarter(12) == 3, "12"); assert(!quarter(6), "6 is not a quarter"); }
+```
+
+### H9_mutually_recursive_types
+
+OCaml expresses: `type dir = { entries : entry list } and entry = { sub : dir option }`.
+
+```loft
+// @BAR: pass
+struct Dir { name: text, entries: vector<Entry> }
+struct Entry { name: text, sub: Dir? }
+fn count(d: const Dir) -> integer { n = 0; for e in d.entries { n += 1; if e.sub { n += count(e.sub) } } n }
+fn main() {
+  d = Dir { name: "root", entries: [Entry { name: "a" }, Entry { name: "b", sub: Dir { name: "b", entries: [Entry { name: "c" }] } }] };
+  assert(count(d) == 3, "count {count(d)}");
 }
 ```
 

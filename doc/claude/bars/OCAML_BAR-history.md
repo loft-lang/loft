@@ -297,3 +297,11 @@ File these regardless of any implementation decision.
 4. `29-match.html` "Nested match" heading describes nested *expressions*. Rename
    to "Match inside an arm" so that "nested patterns" is not a term the docs
    appear to already own.
+
+## Evaluation rows changed at `58601f08a` (as measured at `b194678c`)
+
+| entry | measured | what answered |
+|---|---|---|
+| A3 variable not in first param | FAIL | `zip<T, U>` building a `vector<(T, U)>`: the interpreter skips `main`, panics or segfaults, native fails `E0308` — [loft#1868](https://github.com/loft-lang/loft/issues/1868) (`silent-wrong`); a generic struct element (`vector<Two<T>>`) works.  `empty_of<T>() -> vector<T>` is refused: *"Generic function must have at least one parameter of type T"* <!-- doc-lint: ok --> |
+| C1 nested constructor pattern | PARTIAL | non-recursive nesting PASS; the recursive shape through a `reference<Expr>` field never matches on the interpreter and fails `E0605` on native — [loft#1870](https://github.com/loft-lang/loft/issues/1870) (`silent-wrong`) <!-- doc-lint: ok --> |
+| C5 or-pattern with bindings | **PASS** | the spelling is `,`: `Circle { r }, Sphere { r } => r` (`@FR-P-Multi`, LOFT_CONTROL.md § Match expressions).  `\|` joins variant names only; between patterns that bind it is refused (*"Expect token =>"*) |
