@@ -996,9 +996,14 @@ fn code_action_offers_the_did_you_mean_fix() {
     // as the legacy `data.suggestion`, and offering both listed the same rename twice under
     // different titles — so the code-action path prefers `fixes` and skips the legacy one
     // where a fix exists (@PLN131).
-    assert_eq!(actions.len(), 1, "one quick-fix: {actions:?}");
-    let a = &actions[0];
-    assert_eq!(field_str(a, "kind").as_deref(), Some("quickfix"));
+    // Counted among the QUICK-FIXES: the list also carries the overview action (@PLN183 P3),
+    // which is offered at every position by design.
+    let fixes: Vec<&Parsed> = actions
+        .iter()
+        .filter(|a| field_str(a, "kind").as_deref() == Some("quickfix"))
+        .collect();
+    assert_eq!(fixes.len(), 1, "one quick-fix: {actions:?}");
+    let a = fixes[0];
     assert!(
         field_str(a, "title").unwrap_or_default().contains("move"),
         "title names the fix: {a:?}"

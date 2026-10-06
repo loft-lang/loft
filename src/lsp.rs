@@ -497,6 +497,27 @@ fn name_col_on_line(src: &str, decl_line: u32, name: &str) -> Option<u32> {
     Some(line[..byte_idx].chars().count() as u32 + 1)
 }
 
+/// @PLN183 P3 — what the type named at `line:col` (1-based) can do, read from this buffer's
+/// own program: the editor's type page.  `None` when the word there names no type in scope.
+#[must_use]
+pub fn type_capabilities_at(
+    text: &str,
+    name: &str,
+    stdlib_dir: &str,
+    line: u32,
+    col: u32,
+) -> Option<crate::doc_site::TypeCaps> {
+    let ident = identifier_at(text, line, col)?;
+    let parser = parse_lsp_buffer(text, name, stdlib_dir);
+    let caps = crate::doc_site::type_capabilities(&parser, &ident)?;
+    let kind = &parser.data.def(parser.data.def_nr(&ident)).def_type;
+    matches!(
+        kind,
+        crate::data::DefType::Struct | crate::data::DefType::Enum | crate::data::DefType::Type
+    )
+    .then_some(caps)
+}
+
 /// The identifier under a 1-based (`line`, `col`) cursor — the token that
 /// find-references / rename resolve.  Public wrapper over `identifier_span_at`.
 #[must_use]

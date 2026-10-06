@@ -26,6 +26,7 @@ capabilities to `nvim-dap` API.
 | Rename (locals + cross-file; refuses stdlib) | renameProvider + prepare | `vim.lsp.buf.rename` | `grn` | ✅ |
 | Code actions (quick-fix, `#superseded` steer) | codeActionProvider | `vim.lsp.buf.code_action` | `gra` | ✅ |
 | **Extract function** | codeActionProvider (`refactor.extract`) | `code_action` on a **visual** selection | `gra` (visual) | ✅ verified (`Extract to function`) |
+| **What can I use here?** — every language feature, every library, and what the type under the cursor can do, as linked Markdown pages | codeActionProvider (`source.loft.overview`) + executeCommand `loft.overview` → `window/showDocument` | `code_action` anywhere; on a type name for its own page | `gra` | ✅ verified (Neovim 0.11: opens `index.md`, and `type-<T>.md` on a type) |
 | Outline / document symbols | documentSymbolProvider | `vim.lsp.buf.document_symbol` | `gO` | ✅ |
 | Format (`loft fmt`) | documentFormattingProvider | `vim.lsp.buf.format` | `<leader>f` | ✅ |
 | Completion | completionProvider | omni-complete / autotrigger / `nvim-cmp` | `<C-x><C-o>` | ✅ (nicer with a cmp plugin) |

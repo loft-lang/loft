@@ -23,7 +23,7 @@
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::io::{self, BufRead, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use loft::diagnostics::{DiagEntry, Level};
 use loft::json::{self, Parsed};
@@ -89,6 +89,9 @@ fn main() {
     // overlaid at query time so unsaved edits are reflected.
     let mut workspace_index: Option<loft::lsp::WorkspaceIndex> = None;
     let mut workspace_index_tried = false;
+    // Ids of the requests the SERVER sends (`window/showDocument`); the client's replies
+    // carry them back and are ignored.
+    let mut server_request_id: i64 = 0;
 
     while let Some(body) = read_message(&mut stdin) {
         // A frame that isn't valid JSON is skipped, not fatal — a robust server
@@ -397,6 +400,19 @@ fn main() {
                     .unwrap_or(Parsed::Null); // unresolved → null
                 send(&stdout, &response(id, location));
             }
+            ("workspace/executeCommand", Some(id)) => {
+                // @PLN183 P3 — `loft.overview`: write the overview site and ask the editor to
+                // open it (a type's own page when the action was invoked on a type name).
+                match execute_overview(&msg, &documents, &stdlib_dir) {
+                    Some(Ok(page)) => {
+                        send(&stdout, &response(id, Parsed::Null));
+                        server_request_id += 1;
+                        send(&stdout, &show_document(server_request_id, &page));
+                    }
+                    Some(Err(why)) => send(&stdout, &error_response(id, -32603, &why)),
+                    None => send(&stdout, &error_response(id, -32602, "unknown command")),
+                }
+            }
             ("shutdown", Some(id)) => {
                 shutdown_requested = true;
                 send(&stdout, &response(id, Parsed::Null));
@@ -404,6 +420,11 @@ fn main() {
             ("exit", _) => {
                 // LSP: exit 0 iff `shutdown` came first, else 1.
                 std::process::exit(i32::from(!shutdown_requested));
+            }
+            ("", Some(_)) => {
+                // A REPLY from the client to a request this server sent (`window/showDocument`,
+                // @PLN183): it has an `id` and no `method`, and it must not be answered — an
+                // error response to a response is a protocol violation.
             }
             (_, Some(id)) => {
                 // Unknown REQUEST → JSON-RPC MethodNotFound; a request must always
@@ -695,7 +716,183 @@ fn code_actions(
     {
         actions.push(action);
     }
+    // @PLN183 P3 — "what can I use here?", at any position: a command, not an edit, so the
+    // client runs it through `workspace/executeCommand` and the server opens the overview.
+    if wants_kind(params, OVERVIEW_KIND) {
+        let start = obj_get(params, "range").and_then(|r| obj_get(r, "start"));
+        let at = |k: &str| {
+            start
+                .and_then(|p| obj_get(p, k))
+                .and_then(Parsed::as_i64)
+                .unwrap_or(0)
+        };
+        actions.push(obj(vec![
+            ("title", Parsed::Str(OVERVIEW_TITLE.into())),
+            ("kind", Parsed::Str(OVERVIEW_KIND.into())),
+            (
+                "command",
+                obj(vec![
+                    ("title", Parsed::Str(OVERVIEW_TITLE.into())),
+                    ("command", Parsed::Str(OVERVIEW_COMMAND.into())),
+                    (
+                        "arguments",
+                        Parsed::Array(vec![
+                            Parsed::Str(uri.clone()),
+                            Parsed::Int(at("line")),
+                            Parsed::Int(at("character")),
+                        ]),
+                    ),
+                ]),
+            ),
+        ]));
+    }
     actions
+}
+
+const OVERVIEW_KIND: &str = "source.loft.overview";
+const OVERVIEW_COMMAND: &str = "loft.overview";
+const OVERVIEW_TITLE: &str = "loft: what can I use here?";
+
+/// Whether a code-action request admits `kind`: no `context.only`, or an entry of it that is
+/// `kind` or a dotted prefix of it (`source` admits `source.loft.overview`).
+fn wants_kind(params: &Parsed, kind: &str) -> bool {
+    match obj_get(params, "context").and_then(|c| obj_get(c, "only")) {
+        Some(Parsed::Array(only)) => only.iter().any(|k| match k {
+            Parsed::Str(k) => kind == k || kind.starts_with(&format!("{k}.")),
+            _ => false,
+        }),
+        _ => true,
+    }
+}
+
+/// `workspace/executeCommand loft.overview [uri, line, character]`: write the overview site
+/// and answer the page to open — the type's own page when the word at the position names a
+/// type of the buffer's program, else the root.  `None` for any other command.
+fn execute_overview(
+    msg: &Parsed,
+    documents: &HashMap<String, String>,
+    stdlib_dir: &str,
+) -> Option<Result<PathBuf, String>> {
+    let params = obj_get(msg, "params")?;
+    if obj_str(params, "command").as_deref() != Some(OVERVIEW_COMMAND) {
+        return None;
+    }
+    let args = match obj_get(params, "arguments") {
+        Some(Parsed::Array(a)) => a.clone(),
+        _ => Vec::new(),
+    };
+    let uri = args.first().and_then(|a| match a {
+        Parsed::Str(s) => Some(s.clone()),
+        _ => None,
+    });
+    let num = |i: usize| {
+        args.get(i)
+            .and_then(Parsed::as_i64)
+            .and_then(|n| u32::try_from(n).ok())
+    };
+    let dir = loft::doc_site::site_dir();
+    let project = uri.as_deref().map(uri_to_path);
+    let (pages, stamp) = overview_pages(project.as_deref());
+    if let Err(e) = loft::doc_site::write_site(&dir, &pages, &stamp) {
+        return Some(Err(format!(
+            "the overview could not be written to {}: {e}",
+            dir.display()
+        )));
+    }
+    if let (Some(uri), Some(line), Some(ch)) = (uri, num(1), num(2))
+        && let Some(text) = documents.get(&uri)
+        && let Some(caps) =
+            loft::lsp::type_capabilities_at(text, "buf.loft", stdlib_dir, line + 1, ch + 1)
+    {
+        let page = loft::doc_site::type_page(&caps);
+        let path = dir.join(&page.name);
+        return Some(
+            std::fs::write(&path, &page.text)
+                .map(|()| path)
+                .map_err(|e| e.to_string()),
+        );
+    }
+    Some(Ok(dir.join(loft::doc_site::ROOT)))
+}
+
+/// Every page of the overview and the stamp that says what they depend on: the loft version
+/// (the embedded catalogue is fixed per build), the `loft.lock` of the project `file` sits in,
+/// and the registry index on this machine.
+fn overview_pages(file: Option<&str>) -> (Vec<loft::doc_site::Page>, String) {
+    let mut pages = loft::doc_site::feature_pages();
+    let lock_path = file.and_then(|f| {
+        Path::new(f)
+            .ancestors()
+            .skip(1)
+            .map(|d| d.join("loft.lock"))
+            .find(|p| p.is_file())
+    });
+    let lock_text = lock_path
+        .as_ref()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .unwrap_or_default();
+    let locked: Vec<(String, String)> = loft::lockfile::parse(&lock_text)
+        .map(|l| {
+            l.packages
+                .into_iter()
+                .map(|p| (p.name, p.version))
+                .collect()
+        })
+        .unwrap_or_default();
+    #[cfg(feature = "registry")]
+    let index_stamp = {
+        let (idx_path, _, _) = loft::registry_index::index_paths();
+        let index_stamp = std::fs::metadata(&idx_path)
+            .map(|m| format!("{} {:?}", m.len(), m.modified().ok()))
+            .unwrap_or_default();
+        let installed: Vec<(String, String)> = loft::registry_index::installed_packages()
+            .into_iter()
+            .map(|(n, v, _)| (n, v))
+            .collect();
+        let index = loft::install::cached_index();
+        pages.extend(loft::doc_site::library_pages(
+            index.as_ref().map_err(String::as_str),
+            &locked,
+            &installed,
+        ));
+        format!("{index_stamp}\n{installed:?}")
+    };
+    // Built without the registry, the libraries page says so rather than going missing.
+    #[cfg(not(feature = "registry"))]
+    let index_stamp = {
+        let _ = &locked;
+        pages.push(loft::doc_site::Page {
+            name: "libraries.md".to_string(),
+            text: "[← what you can use](index.md)\n\n# Libraries\n\nThis loft was built \
+                   without the package registry, so it lists no libraries.\n"
+                .to_string(),
+        });
+        String::new()
+    };
+    let stamp = format!(
+        "{}\n{}\n{lock_text}\n{index_stamp}",
+        loft::manifest::LOFT_RUNNING_VERSION,
+        lock_path
+            .map(|p| p.display().to_string())
+            .unwrap_or_default()
+    );
+    (pages, stamp)
+}
+
+/// The `window/showDocument` request (LSP 3.16) that opens `page` in the editor.
+fn show_document(id: i64, page: &Path) -> Parsed {
+    obj(vec![
+        ("jsonrpc", Parsed::Str("2.0".into())),
+        ("id", Parsed::Int(id)),
+        ("method", Parsed::Str("window/showDocument".into())),
+        (
+            "params",
+            obj(vec![
+                ("uri", Parsed::Str(file_uri(page))),
+                ("takeFocus", Parsed::Bool(true)),
+            ]),
+        ),
+    ])
 }
 
 /// One "Change to `X`" quick-fix from a diagnostic carrying `data.suggestion`.
@@ -1454,7 +1651,16 @@ fn initialize_result() -> Parsed {
                     // this to fix-on-save, so it runs unattended: exactly the lane a
                     // conditional fix is barred from.
                     Parsed::Str("source.fixAll".into()),
+                    // @PLN183 P3 — the overview ("loft: what can I use here?").
+                    Parsed::Str(OVERVIEW_KIND.into()),
                 ]),
+            )]),
+        ),
+        (
+            "executeCommandProvider",
+            obj(vec![(
+                "commands",
+                Parsed::Array(vec![Parsed::Str(OVERVIEW_COMMAND.into())]),
             )]),
         ),
         ("inlayHintProvider", Parsed::Bool(true)),

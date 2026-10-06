@@ -5250,91 +5250,14 @@ impl ReplSession {
     /// type), the `[ ]` forms it supports, and the interfaces it meets.  Text, for the REPL.
     #[must_use]
     pub fn ops_text(&self, ty: &str) -> String {
-        use std::fmt::Write as _;
-        let data = &self.parser.data;
-        let ty_nr = data.def_nr(ty);
-        if ty.is_empty() || ty_nr == u32::MAX {
-            return format!(
-                "no type `{ty}` in scope — `:ops integer`, `:ops text`, `:ops <YourType>`\n"
-            );
-        }
-        let mut out = format!("{ty}\n");
-        let prefix = format!("t_{}{ty}_", ty.len());
-        let mut rows: Vec<(String, String)> = Vec::new();
-        for d in 0..data.definitions() {
-            let def = data.def(d);
-            if !def.operator_form || def.def_type != DefType::Function {
-                continue;
-            }
-            let Some(rest) = def.name.strip_prefix(&prefix) else {
-                continue;
-            };
-            let form = rest.split('#').next().unwrap_or(rest);
-            let symbol = match form {
-                "compare" => "<  <=  >  >=".to_string(),
-                "plus" => "+  +=".to_string(),
-                "minus" => "-  -=".to_string(),
-                "times" => "*  *=".to_string(),
-                "divided_by" => "/  /=".to_string(),
-                "remainder" => "%  %=".to_string(),
-                "negate" => "-x".to_string(),
-                "next" => "for e in x".to_string(),
-                "to_text" => "\"{x}\"".to_string(),
-                f => f
-                    .strip_prefix("to_")
-                    .map_or_else(|| f.to_string(), |t| format!("x as {t}")),
-            };
-            let sig = format!(
-                "operator {form}{}",
-                crate::api_surface::signature_of(data, d, "fn")
-            );
-            if !rows.iter().any(|(_, s)| *s == sig) {
-                rows.push((symbol, sig));
-            }
-        }
-        let _ = writeln!(out, "  operators");
-        for (symbol, sig) in &rows {
-            let _ = writeln!(out, "    {symbol:<14} {sig}");
-        }
-        let _ = writeln!(
-            out,
-            "    {:<14} compare by value — a record field by field; no type redefines them",
-            "==  !="
-        );
-        let index_forms = match ty {
-            "vector" => "v[i] an element · v[a..b] a slice",
-            "text" => "s[i] one character · s[a..b] a slice (byte offsets)",
-            "hash" | "sorted" | "index" | "spatial" | "trie" => "c[key] the record with that key",
-            _ if matches!(data.def(ty_nr).def_type, DefType::Struct | DefType::Enum)
-                && !data.def(ty_nr).is_stdlib() =>
-            {
-                "none — a type of its own reads an element through a named method (@F114)"
-            }
-            _ => "none",
-        };
-        let _ = writeln!(out, "  [ ]\n    {index_forms}");
-        let mut met = Vec::new();
-        for d in 0..data.definitions() {
-            let def = data.def(d);
-            if def.def_type == DefType::Interface
-                && !def.name.starts_with("__")
-                && self.parser.satisfaction_failures(d, ty_nr).is_empty()
-            {
-                met.push(def.name.clone());
-            }
-        }
-        met.sort();
-        met.dedup();
-        let _ = writeln!(
-            out,
-            "  meets\n    {}",
-            if met.is_empty() {
-                "no interface".to_string()
-            } else {
-                met.join(", ")
-            }
-        );
-        out
+        crate::doc_site::type_capabilities(&self.parser, ty).map_or_else(
+            || {
+                format!(
+                    "no type `{ty}` in scope — `:ops integer`, `:ops text`, `:ops <YourType>`\n"
+                )
+            },
+            |c| crate::doc_site::caps_text(&c),
+        )
     }
 
     /// `:doc <name>` (@PLN183) — a feature (`@F2`, `??`, `match`), then a function, type or

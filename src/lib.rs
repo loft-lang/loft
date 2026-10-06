@@ -468,6 +468,7 @@ pub mod verify_self;
 
 pub mod doc_catalogue;
 pub mod doc_render;
+pub mod doc_site;
 pub mod documentation;
 pub mod migrate_long;
 pub mod stdlib_sources;
