@@ -2,6 +2,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // A library that declares; `c98_facade` passes it on and `c98_private` does not (@C98).
-pub struct C98Vec { cx: integer, cy: integer, cz: integer }
+pub struct C98Vec { pub cx: integer, pub cy: integer, pub cz: integer }
 pub fn c98_len(v: C98Vec) -> integer { v.cx + v.cy + v.cz }
 pub fn c98_unit() -> integer { 1 }

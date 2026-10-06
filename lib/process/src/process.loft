@@ -35,7 +35,7 @@ pub fn args(words: vector<text>) -> Args {
 /// A program and its arguments, built from a format string.
 pub struct Command {
   /// The words handed to the program: `argv[0]` is the program itself.
-  argv: vector<text>,
+  pub argv: vector<text>,
   /// The last word may still grow: the literal or hole before touched no whitespace.
   open: boolean,
   /// The word being built held a null hole: what still touches it is dropped with it.
@@ -43,7 +43,7 @@ pub struct Command {
   /// The quote a literal opened and has not yet closed: "" outside a quoted span.
   quote: text,
   /// Why this command must not run; "" when it may.
-  refused: text
+  pub refused: text
 }
 
 fn refuse(self: Command, why: text) {
@@ -149,10 +149,10 @@ pub fn hole_args(self: Command, v: Args) {
 /// `n` ended it, -1 when it could not be started — `stderr` then says why), and both
 /// streams as they arrived.
 pub struct Run {
-  ok: boolean,
-  code: integer,
-  stdout: text,
-  stderr: text
+  pub ok: boolean,
+  pub code: integer,
+  pub stdout: text,
+  pub stderr: text
 }
 
 // The mechanics, in the loft binary (`src/process_run.rs`): one reader per pipe from the

@@ -21,18 +21,18 @@ pub enum MsgType {
 
 // A WebSocket message wrapper for game communication.
 pub struct WsMessage {
-  msg_type: MsgType,
-  payload: text
+  pub msg_type: MsgType,
+  pub payload: text
 }
 
 // The outer envelope for all game messages.
 // Contains routing info + the actual message.
 pub struct GameEnvelope {
-  sender: text,
+  pub sender: text,
   recipient: text,
-  sequence: integer,
+  pub sequence: integer,
   timestamp: integer,
-  message: WsMessage
+  pub message: WsMessage
 }
 
 // --- Message constructors ---

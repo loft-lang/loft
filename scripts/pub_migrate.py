@@ -65,8 +65,28 @@ def field_offsets(text, span):
     open_, close = span
     out = {}
     depth, j, item_start = 0, open_ + 1, open_ + 1
+    in_str = False
     while j < close:
         c = text[j]
+        if in_str:
+            if c == "\\":
+                j += 2
+                continue
+            if c == '"':
+                in_str = False
+            j += 1
+            continue
+        if c == '"':
+            in_str = True
+        elif c == "/" and text.startswith("//", j):
+            nl = text.find("\n", j)
+            j = close if nl < 0 else nl
+            # a comment line separates nothing: the next item starts after it
+            if depth == 0 and item_start >= close:
+                pass
+            elif depth == 0 and text[item_start:j].strip().startswith("//"):
+                item_start = j + 1
+            continue
         if c in "{([<":
             depth += 1
         elif c in "})]" or (c == ">" and text[j - 1] != "-"):
@@ -74,10 +94,14 @@ def field_offsets(text, span):
         elif c == "," and depth == 0:
             item_start = j + 1
         elif c == ":" and depth == 0:
-            head = text[item_start:j]
+            head = re.sub(r"//[^\n]*", "", text[item_start:j])
             m = re.search(r"(?:pub\s+)?(?:const\s+)?([A-Za-z_]\w*)\s*$", head)
             if m:
-                start = item_start + m.start()
+                # the name's offset in the ORIGINAL text: the last match of the field head
+                # before the `:`, comments excluded
+                raw = text[item_start:j]
+                hits = [h for h in re.finditer(r"(?:pub\s+)?(?:const\s+)?" + re.escape(m.group(1)) + r"\s*$", raw)]
+                start = item_start + (hits[-1].start() if hits else m.start())
                 out.setdefault(m.group(1), start)
             # skip to the end of this field's type/default
             item_start = close

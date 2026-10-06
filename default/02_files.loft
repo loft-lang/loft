@@ -12,8 +12,8 @@ capability env
 /// One entry of the process environment, as `env_variables()` answers them:
 /// the variable's name and its value, both as plain text.
 pub struct EnvVariable {
-  name: text,
-  value: text,
+  pub name: text,
+  pub value: text,
 }
 /// Describes how a file is opened.
 /// TextFile: read or write as UTF-8 text (default).
@@ -72,14 +72,14 @@ fn fs_result(code: integer) -> FileResult {
 /// current (byte position after last read), next (byte position to read next).
 
 pub struct File {
-  path: text,
+  pub path: text,
   // 24
-  size: integer,
+  pub size: integer,
   // 0
   // A fresh File reads as `NotExists` until `file()` has determined the real format for
   // the path, so this default is a placeholder rather than a claim about the path — it is
   // overwritten before any read.
-  format: Format = NotExists,
+  pub format: Format = NotExists,
   // 32
   ref: i32?,
   // 28

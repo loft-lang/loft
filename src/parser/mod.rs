@@ -16664,9 +16664,18 @@ impl Parser {
             return;
         }
         let attr = def.attributes.get(f_nr);
-        if attr.is_some_and(|a| a.name.starts_with("__") || a.hidden) {
+        // A METHOD is stored as a `Routine` member: its visibility is its function's `pub`.
+        if attr.is_some_and(|a| {
+            a.name.starts_with("__") || a.hidden || matches!(a.typedef.base(), Type::Routine(_))
+        }) {
             return;
         }
+        // An enum's members are its VALUES (`Format.NotExists`): using one is using a variant.
+        let kind = if matches!(def.def_type, DefType::Enum) && attr.is_some() {
+            "variant"
+        } else {
+            kind
+        };
         let lib = std::path::Path::new(&*owner.position.file)
             .file_stem()
             .map_or_else(String::new, |f| f.to_string_lossy().to_string());
@@ -16686,7 +16695,11 @@ impl Parser {
             }
             ("literal", _) => {
                 let Some(private) = def.attributes.iter().find(|a| {
-                    !a.pub_field && !a.hidden && !a.name.starts_with("__") && a.name != "enum"
+                    !a.pub_field
+                        && !a.hidden
+                        && !a.name.starts_with("__")
+                        && a.name != "enum"
+                        && !matches!(a.typedef.base(), Type::Routine(_))
                 }) else {
                     return;
                 };

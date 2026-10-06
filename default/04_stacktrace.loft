@@ -14,12 +14,12 @@
 pub enum ArgValue {
   NullVal,
   BoolVal { b: boolean },
-  IntVal { n: integer },
-  LongVal { n: integer },
+  IntVal { pub n: integer },
+  LongVal { pub n: integer },
   FloatVal { f: float },
   SingleVal { f: single },
   CharVal { c: character },
-  TextVal { t: text },
+  TextVal { pub t: text },
   RefVal { store: integer, rec: integer, pos: integer },
   FnVal { d_nr: integer },
   OtherVal { description: text },
@@ -27,25 +27,25 @@ pub enum ArgValue {
 
 /// One function argument in a stack frame.
 pub struct ArgInfo {
-  name: text,
-  type_name: text,
-  value: ArgValue,
+  pub name: text,
+  pub type_name: text,
+  pub value: ArgValue,
 }
 
 /// One local variable or parameter in a stack frame (see `stack_trace`).
 pub struct VarInfo {
-  name: text,
+  pub name: text,
   type_name: text,
-  value: ArgValue,
+  pub value: ArgValue,
 }
 
 /// One call frame in the stack trace.
 pub struct StackFrame {
-  function: text,
+  pub function: text,
   file: text,
-  line: integer,
-  arguments: vector<ArgInfo>,
-  variables: vector<VarInfo>,
+  pub line: integer,
+  pub arguments: vector<ArgInfo>,
+  pub variables: vector<VarInfo>,
 }
 
 /// Return the current call stack as a vector of frames, outermost first.

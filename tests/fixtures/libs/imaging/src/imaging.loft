@@ -6,9 +6,9 @@
 // Data per pixel of a PNG image.
 // Fields r, g, b hold red, green and blue intensity, each 0–255.
 pub struct Pixel {
-  r: integer limit(0, 255) not null,
-  g: integer limit(0, 255) not null,
-  b: integer limit(0, 255) not null
+  pub r: integer limit(0, 255) not null,
+  pub g: integer limit(0, 255) not null,
+  pub b: integer limit(0, 255) not null
 }
 
 // Returns the pixel colour as a packed 24-bit integer (0xRRGGBB).
@@ -20,15 +20,15 @@ pub fn value(self: Pixel) -> integer {
 // Database structure with image data.
 // The actual data is in height rows of width length.
 pub struct Image {
-  name: text,
-  width: integer,
-  height: integer,
+  pub name: text,
+  pub width: integer,
+  pub height: integer,
   // `not null` (dense) is REQUIRED: the `#native` `n_load_png` bulk-creates this vector with
   // `alloc_vector_from_bytes(3, …)` (3 contiguous bytes per Pixel) and `n_save_png` reads it back
   // by raw pointer at the same 3-byte stride.  A native-managed raw-byte vector must keep the dense
   // element layout the extension assumes — the nullable-by-default wrapping would change the stride
   // and crash the FFI byte-copy.
-  data: vector<Pixel not null>
+  pub data: vector<Pixel not null>
 }
 
 // Native function: decode a PNG file into an Image struct.

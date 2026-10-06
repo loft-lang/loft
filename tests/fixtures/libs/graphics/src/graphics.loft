@@ -35,9 +35,9 @@ pub fn color_a(color: integer) -> integer {
 // Pixels are stored row-major: data[y * width + x].
 
 pub struct Canvas {
-  width: integer not null,
-  height: integer not null,
-  data: vector<integer> not null
+  pub width: integer not null,
+  pub height: integer not null,
+  pub data: vector<integer> not null
 }
 
 // Create a canvas filled with a solid color.

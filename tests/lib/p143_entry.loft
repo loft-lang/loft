@@ -11,7 +11,7 @@
 pub use p143_types::*;
 
 pub struct Map {
-  m_chunks: vector<Chunk>
+  pub m_chunks: vector<Chunk>
 }
 
 // Iterate nested `vector<Chunk>` containing `vector<Hex>`; on match,

@@ -67,28 +67,28 @@ pub const SQL_NAMED = 2;    // p1 p2 …   inside a mariadb procedure body
 
 // One interpolated value, carried beside the statement rather than inside it.
 pub struct Bound {
-  kind: integer,
-  t: text,
-  i: integer,
-  f: float,
+  pub kind: integer,
+  pub t: text,
+  pub i: integer,
+  pub f: float,
 }
 
 pub struct SqlText {
   // The author's literal chunk that comes BEFORE each piece, so
   // `len(chunks) == len(kinds)` always.
-  const chunks: vector<text>,
+  pub const chunks: vector<text>,
   // What each chunk is followed by: `SQL_BIND` or `SQL_IDENT`. The two payload
   // vectors below are per-kind and in order, so `binds` stays a values-only list
   // a backend can walk straight down its bind API with the index it needs.
-  const kinds: vector<integer>,
-  const binds: vector<Bound>,
-  const idents: vector<text>,
+  pub const kinds: vector<integer>,
+  pub const binds: vector<Bound>,
+  pub const idents: vector<text>,
   // The literal after the last piece — the only chunk with nothing after it.
-  tail: text,
+  pub tail: text,
   // An identifier was REFUSED, so this statement has no text at all. Carried
   // rather than acted on here, because the accumulator is built by the parser
   // and has no way to raise; `statement` is where it becomes an answer.
-  refused: boolean,
+  pub refused: boolean,
 }
 
 // A literal chunk the author wrote.

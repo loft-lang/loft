@@ -2510,8 +2510,8 @@ pub enum FieldValue {
 
 /// Represents a single struct field during compile-time iteration.
 pub struct StructField {
-  name: text,
-  value: FieldValue,
+  pub name: text,
+  pub value: FieldValue,
   // Was the field DECLARED nullable (`text?` rather than `text`)?
   //
   // The payload variants above are typed non-null, and `τ?` shares `τ`'s
@@ -2522,7 +2522,7 @@ pub struct StructField {
   //
   // Mirrors `FieldInfo.nullable` from `type_of` (07_reflect.loft) on purpose:
   // the two field lists describe the same declaration and must agree.
-  nullable: boolean,
+  pub nullable: boolean,
 }
 
 /// Converts an integer to its decimal text. Built-in types define `to_text` so

@@ -5,6 +5,6 @@
 // (or TypeA).
 use p173_b::*;
 
-pub struct TypeA { x: integer }
+pub struct TypeA { pub x: integer }
 
 pub fn consumes_b(b: TypeB) -> integer { b.y }
