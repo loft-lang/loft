@@ -19705,6 +19705,17 @@ impl Parser {
         let mut types: Vec<Type> = Vec::new();
         let mut arg_pos: Vec<Position> = Vec::new();
         if self.lexer.has_token(")") {
+            // `@FR-L-Fn` — a fn-ref captured from an enclosing scope is called through the one
+            // home every other arity takes, which registers the capture and reads the value out
+            // of the closure record; resolved here as a plain local it was `Unknown function`.
+            if self
+                .capture_context
+                .iter()
+                .any(|(n, t)| n == name && matches!(t, Type::Function(..)))
+                && let Some(tp) = self.try_fn_ref_call(val, name, &[], &[], name_pos)
+            {
+                return tp;
+            }
             // Check for zero-argument fn-ref call
             if self.vars.name_exists(name) {
                 let v_nr = self.vars.var(name);
@@ -20566,6 +20577,13 @@ impl Parser {
             {
                 let f_nr = self.capture_attr(self.context, closure_rec_d, name);
                 if f_nr != usize::MAX {
+                    // loft#1869, `@FR-L-CapOwn` — the local is a VIEW of the captured fn-ref:
+                    // the closure record it names belongs to this closure's record, never to
+                    // the call that reads it.
+                    if !self.first_pass {
+                        let tp = self.vars.tp(v_nr).depending(self.closure_param);
+                        self.change_var_type(v_nr, &tp);
+                    }
                     let load = self.closure_capture_read(closure_rec_d, f_nr);
                     *val = v_block(
                         vec![crate::data::v_set(v_nr, load), call_ir],

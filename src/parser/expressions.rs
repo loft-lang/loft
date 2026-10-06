@@ -9228,6 +9228,14 @@ use a separate collection or add after the loop"
                     self.divisor_nonzero.retain(|&x| x != var_nr);
                     self.math_sign_proven.retain(|(slot, _)| *slot != var_nr);
                 }
+                if var_nr != u16::MAX && matches!(self.vars.tp(var_nr), Type::Function(..)) {
+                    let lambda = self.last_closure_lambda;
+                    self.vars.note_fn_lambda(
+                        var_nr,
+                        (op == "=" && lambda != u32::MAX).then_some(lambda),
+                    );
+                }
+                self.last_closure_lambda = u32::MAX;
                 if op == "=" && self.last_closure_work_var != u16::MAX && var_nr != u16::MAX {
                     // The one home: the FUNCTION's own map.  A parser-wide map keyed by variable
                     // number outlived the function that filled it, so a later function's

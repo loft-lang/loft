@@ -679,6 +679,9 @@ pub struct Function {
     pub logging: bool,
     // maps fn_ref_var_nr → closure_var_nr for native codegen.
     closure_var_map: HashMap<u16, u16>,
+    /// fn-ref local → the one capturing lambda it is assigned (`u32::MAX`: several, or another
+    /// value) — [`Function::note_fn_lambda`], loft#1869.
+    fn_lambda_map: HashMap<u16, u32>,
     /// @PLN87 P2.1 — reassignment-locality.  Maps a user-visible heap PARAMETER
     /// (whole-binding-reassigned in the body) → its `__orig` witness var, a
     /// skip-free work-ref holding the param's caller-supplied DbRef captured at
@@ -815,6 +818,7 @@ impl Function {
             logging: false,
             done: false,
             closure_var_map: HashMap::new(),
+            fn_lambda_map: HashMap::new(),
             rebind_orig: BTreeMap::new(),
             owner_witness: HashMap::new(),
         }
@@ -1049,6 +1053,9 @@ impl Function {
         self.closure_var_map.clear();
         self.closure_var_map.clone_from(&other.closure_var_map);
         other.closure_var_map.clear();
+        self.fn_lambda_map.clear();
+        self.fn_lambda_map.clone_from(&other.fn_lambda_map);
+        other.fn_lambda_map.clear();
         // @PLN87 P2.1 — carry the parsed pass's rebind-witness map into the
         // stored function so `scopes::check` can emit the function-exit
         // `OpFreeRefIfDistinct`.  Cleared first so a re-parse can't leave a
@@ -1141,6 +1148,7 @@ impl Function {
             logging: other.logging,
             done: other.done,
             closure_var_map: other.closure_var_map.clone(),
+            fn_lambda_map: other.fn_lambda_map.clone(),
             rebind_orig: other.rebind_orig.clone(),
             owner_witness: other.owner_witness.clone(),
         }
@@ -3848,6 +3856,22 @@ impl Function {
         swap_in_bset(&mut self.inline_ref_vars, a, b);
         swap_in_hset(&mut self.annotated, a, b);
         swap_map_indices(&mut self.closure_var_map, a, b);
+        // Only the KEY is a variable here; the value is a definition.
+        self.fn_lambda_map = std::mem::take(&mut self.fn_lambda_map)
+            .into_iter()
+            .map(|(k, l)| {
+                (
+                    if k == a {
+                        b
+                    } else if k == b {
+                        a
+                    } else {
+                        k
+                    },
+                    l,
+                )
+            })
+            .collect();
         swap_map_indices(&mut self.rebind_orig, a, b);
         swap_map_indices(&mut self.owner_witness, a, b);
     }
@@ -5626,6 +5650,29 @@ impl Function {
     }
 
     /// Return the closure variable number for a fn_ref variable, if any.
+    /// loft#1869 — note that fn-ref local `fn_ref` is assigned `lambda` (a capturing lambda's
+    /// definition), or `None` for any other value.  A local assigned one lambda only, in every
+    /// assignment, keeps it; any other mix marks it as holding no one known lambda.
+    pub fn note_fn_lambda(&mut self, fn_ref: u16, lambda: Option<u32>) {
+        let l = lambda.unwrap_or(u32::MAX);
+        self.fn_lambda_map
+            .entry(fn_ref)
+            .and_modify(|x| {
+                if *x != l {
+                    *x = u32::MAX;
+                }
+            })
+            .or_insert(l);
+    }
+
+    /// The one capturing lambda fn-ref local `fn_ref` is ever assigned, if that is all it holds.
+    pub fn fn_lambda_of(&self, fn_ref: u16) -> Option<u32> {
+        self.fn_lambda_map
+            .get(&fn_ref)
+            .copied()
+            .filter(|l| *l != u32::MAX)
+    }
+
     pub fn closure_var_of(&self, fn_ref: u16) -> Option<u16> {
         self.closure_var_map.get(&fn_ref).copied()
     }

@@ -1169,6 +1169,15 @@ pub struct Parser {
     pub(crate) capture_const: std::collections::HashSet<String>,
     /// The `capture_const` of each enclosing lambda, restored where `capture_context` is.
     pub(crate) capture_const_saved: Vec<std::collections::HashSet<String>>,
+    /// loft#1869 — the closure LAMBDA each fn-ref local of the enclosing scope holds, by name,
+    /// where the local is backed by a closure record built in that scope.  A lambda capturing
+    /// such a fn-ref keeps the inner closure in a fn field of its own record, laid out for that
+    /// lambda's record.  Saved and restored with `capture_const`.
+    pub(crate) capture_fn_lambda: std::collections::HashMap<String, u32>,
+    /// The capturing lambda the expression just parsed built, both passes — what an assignment
+    /// of it to a fn-ref local notes ([`Function::note_fn_lambda`], loft#1869).
+    pub(crate) last_closure_lambda: u32,
+    pub(crate) capture_fn_lambda_saved: Vec<std::collections::HashMap<String, u32>>,
     /// Captures a lambda REBINDS whole-value (`p = [..]`), keyed by the lambda's def.
     ///
     /// Recorded where the assignment is parsed, because by the time the lambda closes its
@@ -1880,6 +1889,9 @@ impl Parser {
             capture_owner: std::collections::HashMap::new(),
             capture_const: std::collections::HashSet::new(),
             capture_const_saved: Vec::new(),
+            capture_fn_lambda: std::collections::HashMap::new(),
+            last_closure_lambda: u32::MAX,
+            capture_fn_lambda_saved: Vec::new(),
             rebound_captures: std::collections::HashMap::new(),
             captured_names: Vec::new(),
             branch_sunk_vectors: std::collections::HashSet::new(),
@@ -14080,8 +14092,21 @@ impl Parser {
             let read = if self.fn_ref_field_is_split(d_nr, f_nr) {
                 self.read_fn_ref_split(&tp, u32::from(pos), code)
             } else {
+                // loft#1869 — a closure record's fn-ref capture reads its closure half from the
+                // `<name>__clos` capture beside it.
+                let clos_pos = self.database.position(
+                    self.data.def(d_nr).known_type(),
+                    &format!("{}__clos", self.data.attr_name(d_nr, f_nr)),
+                );
+                let read_clos = if clos_pos == u16::MAX || self.first_pass {
+                    self.cl("OpNullRefSentinel", &[])
+                } else {
+                    self.cl(
+                        "OpGetDbRef",
+                        &[code.clone(), Value::Int(i32::from(clos_pos))],
+                    )
+                };
                 let read_dnr = self.cl("OpGetInt4", &[code, Value::Int(i32::from(pos))]);
-                let read_clos = self.cl("OpNullRefSentinel", &[]);
                 crate::data::v_block(vec![read_dnr, read_clos], tp.clone(), "fn_ref_field_read")
             };
             return match bind {
@@ -23008,6 +23033,15 @@ fn emit_fn_ref_field_write(
             if target_is_4b && source_is_noncapturing {
                 return p.cl("OpSetInt4", &[ref_code, pos_val, Value::FnRefDnr(v)]);
             }
+            // loft#1869, `@FR-L-Fn` — a closure record's capture of a fn-ref keeps the d_nr here
+            // and the closure half in the `<name>__clos` capture beside it.
+            if target_is_4b
+                && p.data
+                    .attr(d_nr, &format!("{}__clos", p.data.attr_name(d_nr, f_nr)))
+                    != usize::MAX
+            {
+                return p.cl("OpSetInt4", &[ref_code, pos_val, Value::FnRefDnr(v)]);
+            }
             if !p.first_pass {
                 diagnostic!(
                     p.lexer,
@@ -23046,7 +23080,22 @@ fn emit_fn_ref_field_write(
             // different arms of the same program.  The two spellings that WERE enumerated
             // got a diagnostic; the ones nobody thought of got the crash, which is the
             // difference this arm removes.
+            // loft#1869 — a closure record relaying a captured fn-ref from the record of the
+            // lambda it is built in: the d_nr half of that record's read lands here, and the
+            // closure half fills the `<name>__clos` capture beside it.
+            let relays_fn_ref = (d_nr as usize) < p.data.definitions.len()
+                && f_nr < p.data.def(d_nr).attributes().len()
+                && p.data
+                    .attr(d_nr, &format!("{}__clos", p.data.attr_name(d_nr, f_nr)))
+                    != usize::MAX;
             let d_nr_only = match other {
+                Value::Block(bl)
+                    if relays_fn_ref
+                        && bl.name == "fn_ref_field_read"
+                        && !bl.operators.is_empty() =>
+                {
+                    bl.operators[0].clone()
+                }
                 Value::FnRef(d, _, _) => Value::Int(d),
                 Value::Int(n) => Value::Int(n),
                 Value::Null => Value::Int(0),

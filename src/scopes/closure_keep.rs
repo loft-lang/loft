@@ -773,97 +773,148 @@ pub(super) fn pass_confined_records(
     function: &Function,
     code: &Value,
 ) -> HashSet<u32> {
-    let release_ops: HashSet<u32> = [
-        "OpFreeRef",
-        "OpFreeRefIfDistinct",
-        "OpConvBoolFromRef",
-        "OpRefIsNull",
-    ]
-    .iter()
-    .map(|n| data.def_nr(n))
-    .filter(|&d| d != u32::MAX)
-    .collect();
-    // (fn-ref local, record local, loop id) for every closure build inside a loop.
-    let mut builds: Vec<(u16, u16, usize)> = Vec::new();
-    // Per local: the loop ids of every `Set` of it (usize::MAX outside any loop).
-    let mut sets: HashMap<u16, HashSet<usize>> = HashMap::default();
-    // Locals read as a VALUE somewhere that is not a release operand.
-    let mut read_as_value: HashSet<u16> = HashSet::default();
+    let ops = |names: &[&str]| -> HashSet<u32> {
+        names
+            .iter()
+            .map(|n| data.def_nr(n))
+            .filter(|&d| d != u32::MAX)
+            .collect()
+    };
+    let mut walk = ConfinementWalk {
+        release_ops: ops(&[
+            "OpFreeRef",
+            "OpFreeRefIfDistinct",
+            "OpConvBoolFromRef",
+            "OpRefIsNull",
+            // The `(L-CapKeep)` store-identity tests and a fn-ref's own release (loft#1869):
+            // they compare or release what a local names and hand it nowhere.
+            "OpDistinctStore",
+            "OpFnRefDetachShared",
+            "OpDropFnRef",
+        ]),
+        fn_closure: ops(&["OpFnRefClosure"]),
+        // The `(L-CapKeep)` holders the scope pass itself binds (`__fkeep_N = f`,
+        // `__fklink_N`) only compare stores: their bind is no escape, or the reading after the
+        // scope pass would disagree with the one before it.
+        keep_temps: (0..function.count())
+            .filter(|&v| {
+                let n = function.name(v);
+                n.starts_with("__fkeep_") || n.starts_with("__fklink_")
+            })
+            .collect(),
+        next_id: 0,
+        builds: Vec::new(),
+        sets: HashMap::default(),
+        read_as_value: HashSet::default(),
+        held_in: Vec::new(),
+    };
+    walk.walk(code, usize::MAX);
+    // A fn-ref held in a record that is not confined escapes with it; repeat until nothing
+    // more escapes (each round only grows `read_as_value`).
+    loop {
+        let out = walk.confined(data, function);
+        let mut grew = false;
+        for &(f, r) in &walk.held_in {
+            let holder_confined =
+                matches!(function.tp(r).base(), Type::Reference(rec, _) if out.contains(rec));
+            if !holder_confined && walk.read_as_value.insert(f) {
+                grew = true;
+            }
+        }
+        if !grew {
+            return out;
+        }
+    }
+}
+
+/// The one walk [`pass_confined_records`] reads its facts from.
+struct ConfinementWalk {
+    release_ops: HashSet<u32>,
+    fn_closure: HashSet<u32>,
+    keep_temps: HashSet<u16>,
+    next_id: usize,
+    /// (fn-ref local, record local, loop id) for every closure build inside a loop.
+    builds: Vec<(u16, u16, usize)>,
+    /// Per local: the loop ids of every `Set` of it (usize::MAX outside any loop).
+    sets: HashMap<u16, HashSet<usize>>,
+    /// Locals read as a VALUE somewhere that is not a release operand.
+    read_as_value: HashSet<u16>,
+    /// `(fn-ref, record local)`: a build that captured the fn-ref's closure (loft#1869).
+    held_in: Vec<(u16, u16)>,
+}
+
+impl ConfinementWalk {
     fn built_record(v: &Value) -> Option<u16> {
         match v.unspan() {
             Value::FnRef(_, rec, _) if *rec != u16::MAX => Some(*rec),
-            Value::Block(bl) => bl.operators.last().and_then(built_record),
-            Value::Insert(ops) => ops.last().and_then(built_record),
+            Value::Block(bl) => bl.operators.last().and_then(Self::built_record),
+            Value::Insert(ops) => ops.last().and_then(Self::built_record),
             _ => None,
         }
     }
-    #[allow(clippy::too_many_arguments)]
-    fn walk(
-        node: &Value,
-        loop_id: usize,
-        next_id: &mut usize,
-        release_ops: &HashSet<u32>,
-        builds: &mut Vec<(u16, u16, usize)>,
-        sets: &mut HashMap<u16, HashSet<usize>>,
-        read_as_value: &mut HashSet<u16>,
-    ) {
+
+    fn walk(&mut self, node: &Value, loop_id: usize) {
+        // loft#1869 — a closure build that captures fn-ref `f` (`OpSetDbRef(r, _,
+        // OpFnRefClosure(f))`) hands `f`'s record to record `r`: an escape only where `r`'s own
+        // record escapes, settled once every build is known.
+        if let Value::Call(_, args) = node.unspan()
+            && let (Some(Value::Var(r)), Some(Value::Call(c, inner))) = (
+                args.first().map(Value::unspan),
+                args.get(2).map(Value::unspan),
+            )
+            && self.fn_closure.contains(c)
+            && let Some(Value::Var(f)) = inner.first().map(Value::unspan)
+        {
+            self.held_in.push((*f, *r));
+            return;
+        }
+        let mut loop_id = loop_id;
         match node.unspan() {
-            Value::Loop(_) => {
-                let id = *next_id;
-                *next_id += 1;
-                node.unspan().for_each_child(&mut |c| {
-                    walk(c, id, next_id, release_ops, builds, sets, read_as_value);
-                });
+            Value::Set(v, rhs)
+                if self.keep_temps.contains(v) && matches!(rhs.unspan(), Value::Var(_)) =>
+            {
                 return;
             }
+            Value::Loop(_) => {
+                loop_id = self.next_id;
+                self.next_id += 1;
+            }
+            // A null write stores no record — the scope pass writes them at a head and after a
+            // loop, and the reading after it must agree with the one before (loft#1869).
+            Value::Set(_, rhs) if matches!(rhs.unspan(), Value::Null) => return,
             Value::Set(v, rhs) => {
-                sets.entry(*v).or_default().insert(loop_id);
+                self.sets.entry(*v).or_default().insert(loop_id);
                 if loop_id != usize::MAX
-                    && let Some(rec) = built_record(rhs)
+                    && let Some(rec) = Self::built_record(rhs)
                 {
-                    builds.push((*v, rec, loop_id));
+                    self.builds.push((*v, rec, loop_id));
                 }
             }
             Value::Var(v) => {
-                read_as_value.insert(*v);
+                self.read_as_value.insert(*v);
             }
-            Value::Call(d, _) if release_ops.contains(d) => return,
+            Value::Call(d, _) if self.release_ops.contains(d) => return,
             _ => {}
         }
-        node.unspan().for_each_child(&mut |c| {
-            walk(
-                c,
-                loop_id,
-                next_id,
-                release_ops,
-                builds,
-                sets,
-                read_as_value,
-            );
-        });
+        node.unspan().for_each_child(&mut |c| self.walk(c, loop_id));
     }
-    let mut next_id = 0;
-    walk(
-        code,
-        usize::MAX,
-        &mut next_id,
-        &release_ops,
-        &mut builds,
-        &mut sets,
-        &mut read_as_value,
-    );
-    let mut out = HashSet::default();
-    for (f, rec, loop_id) in builds {
-        let only_this_loop = sets
-            .get(&f)
-            .is_some_and(|ids| ids.len() == 1 && ids.contains(&loop_id));
-        if only_this_loop
-            && !read_as_value.contains(&f)
-            && let Type::Reference(record, _) = function.tp(rec).base()
-            && data.def(*record).name.starts_with("__closure_")
-        {
-            out.insert(*record);
+
+    /// The record types every build of which is confined, given what is read as a value.
+    fn confined(&self, data: &Data, function: &Function) -> HashSet<u32> {
+        let mut out = HashSet::default();
+        for &(f, rec, loop_id) in &self.builds {
+            let only_this_loop = self
+                .sets
+                .get(&f)
+                .is_some_and(|ids| ids.len() == 1 && ids.contains(&loop_id));
+            if only_this_loop
+                && !self.read_as_value.contains(&f)
+                && let Type::Reference(record, _) = function.tp(rec).base()
+                && data.def(*record).name.starts_with("__closure_")
+            {
+                out.insert(*record);
+            }
         }
+        out
     }
-    out
 }

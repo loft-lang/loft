@@ -466,7 +466,10 @@ impl Scopes<'_> {
                     // reference local.
                     || (matches!(function.tp(v), Type::Reference(r, _)
                             if data.def(*r).name.starts_with("__closure_"))
-                        && record_store_leaves_frame(data, function, self.d_nr, v));
+                        && (record_store_leaves_frame(data, function, self.d_nr, v)
+                            || super::capture_adoption::record_held_by_a_leaving_record(
+                                data, function, self.d_nr, v,
+                            )));
                 // H2 step 5 (DEPS_INVENTORY): the BLOCK-RESULT type's deps were
                 // read here for years under the positional guess.  That read is
                 // RETIRED: the declared-return (`ret_borrows_v`, a TYPED decode),
@@ -1029,7 +1032,12 @@ impl Scopes<'_> {
                         && (r as usize) < function.count() as usize
                         && self.var_scope.get(&r) != self.var_scope.get(&v)
                 });
-                let emit = !leaves_frame && !function.is_skip_free(v) && !record_outlives;
+                // loft#1869, `@FR-L-CapOwn` — a closure record that captured this fn-ref adopts
+                // the record it holds, and its cascade is the release.
+                let adopted =
+                    capture_adoption_owns_free(data, function, &self.capture_build_backing, v);
+                let emit =
+                    !leaves_frame && !function.is_skip_free(v) && !record_outlives && !adopted;
                 if emit {
                     if scope_debug {
                         eprintln!(

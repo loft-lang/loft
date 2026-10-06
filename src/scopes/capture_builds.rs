@@ -119,7 +119,22 @@ pub(crate) fn capture_adoption_owns_free(
     !built_with.reassigned_after_build.contains(&v)
         && ((function.is_captured(v) && !captured_only_by_confined(data, function, built_with, v))
             || backs_an_adopted_capture(data, function, built_with, v))
-        && crate::data::is_dbref(function.tp(v).base())
+        && (crate::data::is_dbref(function.tp(v).base()) || fn_ref_half_captured(data, function, v))
+}
+
+/// loft#1869 — is fn-ref local `v`'s closure record captured by a record this frame builds, as
+/// the `<name>__clos` half of a captured fn-ref?  Then that record adopts it exactly as it adopts
+/// a captured struct, and the frame's release of `v` is the one it takes over.
+fn fn_ref_half_captured(data: &Data, function: &Function, v: u16) -> bool {
+    if !matches!(function.tp(v).base(), Type::Function(..)) {
+        return false;
+    }
+    let half = format!("{}__clos", function.name(v));
+    (0..function.next_var()).any(|w| {
+        is_record_local(function, w)
+            && matches!(function.tp(w).base(), Type::Reference(rec, _)
+                if data.attr(*rec, &half) != usize::MAX)
+    })
 }
 
 /// loft#1610 — is every closure record that captures local `v` confined to one loop pass
@@ -395,12 +410,12 @@ pub(crate) fn capture_build_backings(
             }
         }
         Value::Call(d, args) if *d == set_dbref => {
-            if let Some(Value::Var(c)) = args.get(2).map(Value::unspan) {
+            if let Some((c, fn_half)) = &filled_capture(data, args.get(2)) {
                 if resolved_in_rhs.remove(c) {
                     return;
                 }
                 built.insert(*c);
-                if let Some(&backing) = latest.get(c) {
+                if !fn_half && let Some(&backing) = latest.get(c) {
                     out.backing.insert(*c, backing);
                     built.insert(backing);
                 }
@@ -452,11 +467,19 @@ fn captures_built_in(
             // The RECORD is args[0] and the capture args[2].  Both are needed: which local a
             // record adopted decides ownership, and one local may be adopted by several
             // records (@FR-L-CapOwn, loft#1440).
-            if let (Some(Value::Var(record)), Some(Value::Var(c))) = (
+            if let (Some(Value::Var(record)), Some((c, fn_half))) = (
                 args.first().map(Value::unspan),
-                args.get(2).map(Value::unspan),
+                filled_capture(data, args.get(2)),
             ) {
-                found.push((*record, *c, latest.get(c).copied()));
+                found.push((
+                    *record,
+                    c,
+                    if fn_half {
+                        None
+                    } else {
+                        latest.get(&c).copied()
+                    },
+                ));
             }
         }
         _ => {}
@@ -751,6 +774,9 @@ pub(crate) fn backs_an_adopted_capture(
     (0..function.next_var()).any(|c| {
         c != v
             && function.is_captured(c)
+            // loft#1869 — a captured FN-REF's store is its closure record, released through the
+            // fn-ref itself; its type deps name what it viewed, never a store it backs.
+            && !matches!(function.tp(c).base(), Type::Function(..))
             // @FR-O-Latest, the collection half of the same sentence — and only where the
             // record REBUILDS.  A build inside a loop rewrites its capture slot on every pass,
             // so the backing the FIRST pass adopted is not what the record holds at the end
@@ -811,7 +837,11 @@ fn capture_is_adopted(data: &Data, function: &Function, builds: &CaptureBuilds, 
             continue;
         }
         for a in 0..data.attributes(record) {
-            if data.attr_name(record, a) != name {
+            if capture_name(data, record, a) != name {
+                continue;
+            }
+            // A fn-ref capture's d_nr half shares the name and holds no store (loft#1869).
+            if matches!(data.attr_type(record, a), Type::Function(..)) {
                 continue;
             }
             if !capture_attr_is_cascade_relevant(data, record, a) {
@@ -1066,6 +1096,33 @@ pub(super) fn free_unless_record_built(
 /// its cascade, and a displaced field record (`___oldrec_N`, loft#1877), bound to run its
 /// cascade — none is a record a capture lives in, and read as one it decided the record type
 /// never adopts its capture, which strips that release for every record of the type.
+/// The name of the local closure record `record`'s capture attribute `a` holds: the attribute's
+/// own name, or — for the `<name>__clos` half of a captured fn-ref (loft#1869) — the fn-ref
+/// local `<name>`, through which the frame holds that closure's record.
+pub(crate) fn capture_name(data: &Data, record: u32, a: usize) -> String {
+    let name = data.attr_name(record, a);
+    match name.strip_suffix("__clos") {
+        Some(base) if data.attr(record, base) != usize::MAX => base.to_string(),
+        _ => name,
+    }
+}
+
+/// The local a build's `OpSetDbRef(record, pos, fill)` captures: a bare `Var`, or the
+/// closure half of a fn-ref local (`OpFnRefClosure(Var)`, loft#1869) — `true` for the latter,
+/// whose store is the fn-ref's closure record and never a view of the local's backing.
+fn filled_capture(data: &Data, fill: Option<&Value>) -> Option<(u16, bool)> {
+    match fill.map(Value::unspan)? {
+        Value::Var(c) => Some((*c, false)),
+        Value::Call(d, args) if data.def(*d).name() == "OpFnRefClosure" => {
+            match args.first()?.unspan() {
+                Value::Var(c) => Some((*c, true)),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
 pub(super) fn is_record_local(function: &Function, w: u16) -> bool {
     !function.is_argument(w) && function.name(w).starts_with("___clos_")
 }

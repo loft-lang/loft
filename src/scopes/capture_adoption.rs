@@ -645,8 +645,9 @@ pub(super) fn capture_store_adopters(
             }
             if united
                 && !builds.adopted.get(&v).is_some_and(|caps| {
-                    caps.iter()
-                        .any(|(c, _)| function.name(*c) == data.attr_name(record, a))
+                    caps.iter().any(|(c, _)| {
+                        function.name(*c) == super::capture_builds::capture_name(data, record, a)
+                    })
                 })
             {
                 continue;
@@ -718,7 +719,7 @@ pub(super) fn owning_record_locals(
         let mut locals = Vec::new();
         for owner in owners {
             let (local, record, a) = group[owner];
-            let attr = data.attr_name(record, a).clone();
+            let attr = super::capture_builds::capture_name(data, record, a);
             if attr == name || builds.backing.get(&function.var(&attr)) == Some(&v) {
                 locals.push(local);
             }
@@ -755,7 +756,7 @@ fn adopted_store_key(
         u16::MAX,
         (u32::from(record_local) << 16) | (a as u32 & 0xFFFF),
     );
-    let capture = function.var(&data.attr_name(record, a).clone());
+    let capture = function.var(&super::capture_builds::capture_name(data, record, a));
     if capture == u16::MAX || builds.rebuilt_in_loop.contains(&capture) {
         return unique;
     }
@@ -788,8 +789,97 @@ fn adopted_store_key(
 /// in RETURN POSITION instead, and the note is asked only where that finds nothing — the
 /// `return fn() { … }` written straight out, where the two agree.
 pub(super) fn record_leaves_frame(data: &Data, function: &Function, d_nr: u32, v: u16) -> bool {
+    record_leaves_frame_at(data, function, d_nr, v, 0)
+}
+
+/// [`record_leaves_frame`], `depth` records deep into the records that hold one another.
+fn record_leaves_frame_at(data: &Data, function: &Function, d_nr: u32, v: u16, depth: u8) -> bool {
     record_store_leaves_frame(data, function, d_nr, v)
         || claimed_into_delivered(data, function, d_nr).contains(&v)
+        // loft#1869, `@FR-L-CapOwn` — a record held by a captured fn-ref leaves with the record
+        // that captured it.  The bound is a guard against a cycle, not a depth the language sets.
+        || (depth < 8
+            && records_holding(data, function, d_nr, v)
+                .into_iter()
+                .any(|w| w != v && record_leaves_frame_at(data, function, d_nr, w, depth + 1)))
+}
+
+/// loft#1869, `@FR-L-CapOwn` — is record local `v` held, through a captured fn-ref, by a record
+/// that leaves the frame?  Then it leaves with it, and the frame's release of it is that
+/// record's cascade.  The frame-side half of [`record_leaves_frame`]'s holding clause.
+pub(super) fn record_held_by_a_leaving_record(
+    data: &Data,
+    function: &Function,
+    d_nr: u32,
+    v: u16,
+) -> bool {
+    records_holding(data, function, d_nr, v)
+        .into_iter()
+        .any(|w| w != v && record_leaves_frame_at(data, function, d_nr, w, 1))
+}
+
+/// loft#1869 — the closure-record locals whose build captured a fn-ref (`OpSetDbRef(w, _,
+/// OpFnRefClosure(f))`) while that fn-ref held record local `v`.  Which record a fn-ref holds
+/// is followed in program order through its binds, so a fn-ref rebound before the build
+/// answers with the record it holds there (`@FR-O-Latest`).
+fn records_holding(data: &Data, function: &Function, d_nr: u32, v: u16) -> Vec<u16> {
+    // Every record a value can deliver: a build's, or any arm's of a branch — at most one arm
+    // runs, and whichever did is the record the fn-ref holds.
+    fn built(v: &Value, out: &mut Vec<u16>) {
+        match v.unspan() {
+            Value::FnRef(_, rec, _) if *rec != u16::MAX => out.push(*rec),
+            Value::Block(bl) => {
+                if let Some(last) = bl.operators.last() {
+                    built(last, out);
+                }
+            }
+            Value::Insert(ops) => {
+                if let Some(last) = ops.last() {
+                    built(last, out);
+                }
+            }
+            Value::If(_, then, other) => {
+                built(then, out);
+                built(other, out);
+            }
+            _ => {}
+        }
+    }
+    let set_dbref = data.def_nr("OpSetDbRef");
+    let fn_closure = data.def_nr("OpFnRefClosure");
+    let mut latest: HashMap<u16, Vec<u16>> = HashMap::default();
+    let mut out = Vec::new();
+    data.def(d_nr).code().walk(&mut |n| match n.unspan() {
+        Value::Set(f, rhs) if matches!(function.tp(*f).base(), Type::Function(..)) => {
+            let held = match rhs.unspan() {
+                Value::Var(g) => latest.get(g).cloned().unwrap_or_default(),
+                other => {
+                    let mut recs = Vec::new();
+                    built(other, &mut recs);
+                    recs
+                }
+            };
+            if held.is_empty() {
+                latest.remove(f);
+            } else {
+                latest.insert(*f, held);
+            }
+        }
+        Value::Call(d, args) if *d == set_dbref => {
+            if let (Some(Value::Var(w)), Some(Value::Call(c, inner))) = (
+                args.first().map(Value::unspan),
+                args.get(2).map(Value::unspan),
+            ) && *c == fn_closure
+                && let Some(Value::Var(f)) = inner.first().map(Value::unspan)
+                && latest.get(f).is_some_and(|recs| recs.contains(&v))
+                && !out.contains(w)
+            {
+                out.push(*w);
+            }
+        }
+        _ => {}
+    });
+    out
 }
 
 /// The closure records CLAIMED into a struct the return delivers (loft#1867,
@@ -1158,7 +1248,7 @@ pub(super) fn record_adopts_capture(
     if builds.pass_confined.contains(&record) {
         return false;
     }
-    let v = function.var(&data.attr_name(record, a));
+    let v = function.var(&super::capture_builds::capture_name(data, record, a));
     // An unresolvable name defaults to BORROW: an unfreed store is a leak the
     // store checker reports, while an extra free silently corrupts a caller.
     // A parameter never enters the scope-exit sweep at all (`variables()`:

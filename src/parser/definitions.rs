@@ -8319,6 +8319,14 @@ impl Parser {
     }
 
     pub(crate) fn cascade_captures(&self, d_nr: u32) -> Vec<u16> {
+        self.cascade_captures_held(d_nr)
+            .into_iter()
+            .map(|(off, _, _)| off)
+            .collect()
+    }
+
+    /// [`Self::cascade_captures`] with the definition each slot's store holds.
+    fn cascade_captures_held(&self, d_nr: u32) -> Vec<(u16, u32, String)> {
         let def = self.data.def(d_nr);
         if def.def_type != DefType::Struct || !def.name.starts_with("__closure_") {
             return Vec::new();
@@ -8329,10 +8337,12 @@ impl Parser {
         }
         let mut out = Vec::new();
         for a in def.attributes() {
-            if matches!(a.typedef.base(), Type::Reference(_, deps) if !deps.is_empty()) {
+            if let Type::Reference(held, deps) = a.typedef.base()
+                && !deps.is_empty()
+            {
                 let off = self.database.position(kt, &a.name);
                 if off != u16::MAX {
-                    out.push(off);
+                    out.push((off, *held, a.name.clone()));
                 }
             }
         }
@@ -8734,14 +8744,47 @@ impl Parser {
         }
         // `@FR-L-CapOwn` — last, after every walk over what they hold: the stores the record
         // adopted are released by its cascade, and by nothing in the store runtime.
-        for off in self.cascade_captures(t) {
+        let kt = self.data.def(t).known_type();
+        for (off, held, name) in self.cascade_captures_held(t) {
             let slot = self.cl(
                 "OpGetDbRef",
                 &[Value::Var(self_var), Value::Int(i32::from(off))],
             );
             let live = self.cl("OpConvBoolFromRef", std::slice::from_ref(&slot));
-            let free = self.cl("OpFreeRef", &[slot]);
-            ops.push(v_if(live, free, Value::Null));
+            let free = self.cl("OpFreeRef", std::slice::from_ref(&slot));
+            // loft#1869 — an adopted closure RECORD (a captured fn-ref's) releases what it
+            // adopted first: through its own cascade where the lambda is known, and where it is
+            // a run-time fact through the d_nr beside it, as a fn-ref local's release is.
+            let mut release = vec![];
+            if self.data.def(held).name.starts_with("__closure_") {
+                let inner = self.data.drop_cascade_nr(held);
+                if inner != u32::MAX {
+                    release.push(Value::Call(inner, vec![slot.clone()]));
+                }
+            } else if self.data.def(held).name == crate::parser::vectors::FN_RECORD
+                && let Some(base) = name.strip_suffix("__clos")
+                && let a = self.data.attr(t, base)
+                && a != usize::MAX
+                && let dnr_off = self.database.position(kt, base)
+                && dnr_off != u16::MAX
+                && self.data.any_closure_drop()
+            {
+                let fn_tp = self.data.attr_type(t, a);
+                let tmp = self.vars.add_variable("__held_fn", &fn_tp, &mut self.lexer);
+                let read_dnr = self.cl(
+                    "OpGetInt4",
+                    &[Value::Var(self_var), Value::Int(i32::from(dnr_off))],
+                );
+                let pair = v_block(vec![read_dnr, slot.clone()], fn_tp, "fn_ref_field_read");
+                release.push(crate::data::v_set(tmp, pair));
+                release.push(self.cl("OpDropFnRef", &[Value::Var(tmp)]));
+            }
+            release.push(free);
+            ops.push(v_if(
+                live,
+                v_block(release, Type::Void, "release"),
+                Value::Null,
+            ));
         }
     }
 
