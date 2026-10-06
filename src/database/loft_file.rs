@@ -170,6 +170,24 @@ impl Read for LoftFile {
 }
 
 impl LoftFile {
+    /// `W` bytes taken BY VALUE: from the buffer when it holds them whole, else through
+    /// [`Read::read_exact`].  A fixed-width scalar read decodes them from a register; copied
+    /// through a slice on the stack, every read paid a store-forwarding stall on reloading
+    /// the bytes `copy_from_slice` had just written.  `None` is a short read, answered as
+    /// `read_exact` answers it.
+    #[inline]
+    pub fn take_array<const W: usize>(&mut self) -> Option<[u8; W]> {
+        if W > 0 && self.len - self.pos >= W {
+            let mut out = [0u8; W];
+            out.copy_from_slice(&self.buf[self.pos..self.pos + W]);
+            self.pos += W;
+            self.at = self.at.map(|a| a + W as u64);
+            return Some(out);
+        }
+        let mut out = [0u8; W];
+        self.read_exact(&mut out).ok().map(|()| out)
+    }
+
     /// A request the buffer already holds whole: copied, and the logical position moved by
     /// it — exactly what `fill` and `settle` do for it, without their loop.  `false` leaves
     /// everything as it was.

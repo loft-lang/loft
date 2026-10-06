@@ -2709,6 +2709,109 @@ pub fn OpReadFile<T: FileVal>(
         .set_long(file.rec, file.pos + 16, next_pos + nread as i64);
 }
 
+/// [`OpReadFile`] for a fixed-width INTEGER read whose width and sign the call site knows
+/// (`f#read(2) as i16`), with `OpReadFile`'s own parameters so the generator only renames the
+/// callee (`generation::ops::file_ops`): the same format test, cursor and handle walk, without
+/// the text test and the type-table lookup the generic decode makes per read, and the bytes
+/// taken by value (`LoftFile::take_array`).  `W` is 1, 2, 4 or 8 bytes;
+/// `SIGNED` is the sign the type's range gives (`State::dispatch_read_data`'s rule), and a
+/// 4- or 8-byte read is signed as the generic decode reads it.  A short read leaves `val`
+/// unchanged and advances `#next` by what arrived, exactly as the generic path does.
+#[cfg(not(host_fs))]
+pub fn OpReadFileInt<const W: usize, const SIGNED: bool>(
+    cell: &std::cell::UnsafeCell<Stores>,
+    file: DbRef,
+    val: &mut i64,
+    _bytes: i64,
+    _db_tp: i32,
+) {
+    let stores: &mut Stores = unsafe { &mut *cell.get() };
+    if file.rec == 0 {
+        return;
+    }
+    let format = stores.store(&file).get_byte(file.rec, file.pos + 32, 0);
+    if format != 1 && format != 2 && format != 3 && format != 5 {
+        return;
+    }
+    let little_endian = format == 2;
+    let raw_next = stores.store(&file).get_long(file.rec, file.pos + 16);
+    let next_pos = if raw_next == i64::MIN { 0 } else { raw_next };
+    stores
+        .store_mut(&file)
+        .set_long(file.rec, file.pos + 8, next_pos);
+    let file_ref = file_handle_read(stores, &file, next_pos);
+    if file_ref == i32::MIN {
+        return;
+    }
+    let bytes = stores
+        .files
+        .get_mut(file_ref as usize)
+        .and_then(|x| x.as_mut())
+        .and_then(loft_file_take::<W>);
+    let nread = if let Some(b) = bytes {
+        *val = decode_int::<W, SIGNED>(&b, little_endian);
+        W
+    } else {
+        0
+    };
+    stores
+        .store_mut(&file)
+        .set_long(file.rec, file.pos + 16, next_pos + nread as i64);
+}
+
+/// The host-bridge build reads through [`OpReadFile`]; the specialisation is the native file's.
+#[cfg(host_fs)]
+pub fn OpReadFileInt<const W: usize, const SIGNED: bool>(
+    cell: &std::cell::UnsafeCell<Stores>,
+    file: DbRef,
+    val: &mut i64,
+    bytes: i64,
+    db_tp: i32,
+) {
+    OpReadFile(cell, file, val, bytes, db_tp);
+}
+
+#[cfg(not(host_fs))]
+#[inline]
+fn loft_file_take<const W: usize>(f: &mut crate::database::loft_file::LoftFile) -> Option<[u8; W]> {
+    f.take_array::<W>()
+}
+
+/// The integer `W` bytes encode, in the file's byte order, sign-extended when `SIGNED`.
+#[cfg(not(host_fs))]
+#[inline]
+fn decode_int<const W: usize, const SIGNED: bool>(b: &[u8; W], little_endian: bool) -> i64 {
+    match W {
+        1 if SIGNED => i64::from(b[0] as i8),
+        1 => i64::from(b[0]),
+        2 => {
+            let d = [b[0], b[1]];
+            match (little_endian, SIGNED) {
+                (true, true) => i64::from(i16::from_le_bytes(d)),
+                (true, false) => i64::from(u16::from_le_bytes(d)),
+                (false, true) => i64::from(i16::from_be_bytes(d)),
+                (false, false) => i64::from(u16::from_be_bytes(d)),
+            }
+        }
+        4 => {
+            let d = [b[0], b[1], b[2], b[3]];
+            i64::from(if little_endian {
+                i32::from_le_bytes(d)
+            } else {
+                i32::from_be_bytes(d)
+            })
+        }
+        _ => {
+            let d = [b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]];
+            if little_endian {
+                i64::from_le_bytes(d)
+            } else {
+                i64::from_be_bytes(d)
+            }
+        }
+    }
+}
+
 /// Read through the host bridge from the position `#next` names.
 #[cfg(host_fs)]
 pub fn OpReadFile<T: FileVal>(

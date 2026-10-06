@@ -341,6 +341,13 @@ second pushed vector keep the header mints.
 
 ## Guarded reads and integer arithmetic
 
+**`LOFT_NO_TYPED_READ=1`** (`@FR-R-TypedRead`, default-ON, generation time, `--native` only)
+sends every `f#read` through the generic `OpReadFile` again — with it off, a read that lands a
+fixed-width integer whole in an `integer` local (`f#read(2) as i16`) calls
+`OpReadFileInt::<W, SIGNED>`, width and sign fixed at the site and the bytes taken by value
+from the file's buffer (`binary_read` 2.54 → 1.91 ms).  The first bisect step for a wrong
+value or a wrong `#next` out of such a read; the interpreter's read is the reference.
+
 **`LOFT_NO_JOIN_READ=1`** (`@FR-R-Base`'s join clause, default-ON, generation time, `--native`
 only) makes `v[i]?.f` run its join on every pass and read the result through the store again
 — with it off, a scalar field of a `?`-discharged element (`i` a variable) in a loop that

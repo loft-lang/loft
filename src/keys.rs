@@ -1644,6 +1644,14 @@ pub fn rebind_own_buffer_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_REBIND_OWN_BUFFER"))
 }
 
+/// `LOFT_NO_TYPED_READ=1` — every native `f#read` goes through the generic `OpReadFile`
+/// (`@FR-R-TypedRead` off): the first bisect step for a wrong value or a wrong `#next` out of
+/// a fixed-width integer read.
+pub fn typed_read_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_TYPED_READ"))
+}
+
 /// `LOFT_NO_VEC_COPY=1` — a vector copied into another one element at a time keeps its loop
 /// (`@FR-R-VecCopy` off): the first bisect step for a wrong, missing or extra element out of
 /// such a copy.
