@@ -223,12 +223,14 @@ fix time — whenever the work does any of:
   depend on, and a breaking change is a new release they opt into (`api_compatible_with`), so a
   library's own API change is never this label's.  A language change that forces the libraries
   to change is a different question, `libs:migration` below;
-- **(d)** changes a covered format: a stored store layout, a file format, a wire format;
-- **(e)** is an item of the pre-freeze audit
+- **(d)** is an item of the pre-freeze audit
   ([COMPATIBILITY.md § Before the flip](../doc/claude/COMPATIBILITY.md)).
 
 Purely additive work — a new feature, a library, a speed-up, tooling, a refusal turned into an
-answer — does not get it, however urgent: the promise allows all of that after the flip.  A plan
+answer — does not get it, however urgent: the promise allows all of that after the flip.  Nor
+does a FORMAT change (a store layout, a file or wire format): a format may change after the flip
+too, provided the new code still reads the old data — which is `contract:compat`'s second job,
+the reader for the old format beside the writer of the new one.  A plan
 that needs it for one track only says which track in its body.
 
 **After contract 1 it becomes `contract:compat`.**  The same kinds of change are still possible
