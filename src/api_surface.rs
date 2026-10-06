@@ -320,8 +320,12 @@ pub fn signature_of(data: &Data, d: u32, kind: &str) -> String {
             .iter()
             // A method of a generic struct is a MEMBER of its template (@PLN165 D6), not a
             // field: it is its own surface entry.
+            // A record's field without `pub` is private to its file (C139): not observable.
             .filter(|a| {
-                !a.hidden && a.name != "enum" && !matches!(a.typedef.base(), Type::Routine(_))
+                !a.hidden
+                    && a.name != "enum"
+                    && !matches!(a.typedef.base(), Type::Routine(_))
+                    && (!sort || a.pub_field)
             })
             .map(|a| {
                 let opt = if defaults && !matches!(a.value, crate::data::Value::Null) {

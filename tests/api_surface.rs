@@ -150,9 +150,9 @@ fn emit_and_check(released: &str, current: &str) -> (String, i32) {
 #[test]
 fn surface_membership_and_tiers() {
     let s = api_surface(
-        "struct Widget { x: integer }\n\
-         struct Hidden { z: integer }\n\
-         pub struct Public { v: integer }\n\
+        "struct Widget { pub x: integer }\n\
+         struct Hidden { pub z: integer }\n\
+         pub struct Public { pub v: integer }\n\
          pub fn make() -> Widget { Widget { x: 5 } }\n\
          pub fn plain(a: integer) -> integer { a + 1 }\n\
          fn helper() -> Hidden { Hidden { z: 0 } }\n",
@@ -176,11 +176,11 @@ fn surface_membership_and_tiers() {
 
 #[test]
 fn closure_is_transitive() {
-    // `build` returns `Outer` (sealed); `Outer` has a field of non-`pub` `Inner` → `Inner`
-    // is sealed too. Proves the closure follows struct field types, transitively.
+    // `build` returns `Outer` (sealed); `Outer` has a `pub` field of non-`pub` `Inner` → `Inner`
+    // is sealed too. Proves the closure follows `pub` struct field types, transitively.
     let s = api_surface(
-        "struct Inner { n: integer }\n\
-         struct Outer { i: Inner }\n\
+        "struct Inner { pub n: integer }\n\
+         struct Outer { pub i: Inner }\n\
          pub fn build() -> Outer { Outer { i: Inner { n: 1 } } }\n",
     );
     assert!(s.contains("build · fn · public"), "build missing:\n{s}");
@@ -195,12 +195,28 @@ fn closure_is_transitive() {
 }
 
 #[test]
+fn a_private_field_carries_no_type_into_the_surface() {
+    // C139 (@PLN187) — a field without `pub` cannot be read outside its file, so the type it
+    // holds is not reachable through it: `Inner` stays off the surface.
+    let s = api_surface(
+        "struct Inner { n: integer }\n\
+         struct Outer { i: Inner }\n\
+         pub fn build() -> Outer { Outer { i: Inner { n: 1 } } }\n",
+    );
+    assert!(
+        s.contains("Outer · struct · sealed"),
+        "Outer not sealed:\n{s}"
+    );
+    assert!(!s.contains("Inner"), "Inner reached through a private field:\n{s}");
+}
+
+#[test]
 fn signatures_over_every_kind() {
     // Commit 2 — resolved signatures attached, in the clean user-facing type spelling.
     let s = api_surface(
-        "struct Widget { x: integer, tag: text }\n\
-         enum Shape { Circle { r: integer }, Square { side: integer }, Point }\n\
-         pub struct Public { v: integer }\n\
+        "struct Widget { pub x: integer, pub tag: text }\n\
+         enum Shape { Circle { pub r: integer }, Square { pub side: integer }, Point }\n\
+         pub struct Public { pub v: integer }\n\
          pub fn make(n: integer, label: text) -> Widget { Widget { x: n, tag: label } }\n\
          pub fn maybe(a: integer) -> Widget? { if a > 0 { Widget { x: a, tag: \"\" } } else { null } }\n\
          pub fn area(s: Shape) -> integer { 0 }\n",
@@ -251,23 +267,23 @@ fn determinism_corpus() {
 
     // --- invariances: a cosmetic edit is NOT a diff ---
     same(
-        "pub fn f() -> integer { 1 }\nstruct S { a: integer }\npub fn g() -> S { S{a:1} }\n",
-        "struct S { a: integer }\npub fn g() -> S { S{a:1} }\npub fn f() -> integer { 1 }\n",
+        "pub fn f() -> integer { 1 }\nstruct S { pub a: integer }\npub fn g() -> S { S{a:1} }\n",
+        "struct S { pub a: integer }\npub fn g() -> S { S{a:1} }\npub fn f() -> integer { 1 }\n",
         "reordered top-level defs",
     );
     same(
-        "pub struct W { x: integer, tag: text }\n",
-        "pub struct W { tag: text, x: integer }\n",
+        "pub struct W { pub x: integer, pub tag: text }\n",
+        "pub struct W { pub tag: text, pub x: integer }\n",
         "reordered struct fields (named construction → not API)",
     );
     same(
-        "pub enum E { A { p: integer, q: text }, B }\n",
-        "pub enum E { B, A { q: text, p: integer } }\n",
+        "pub enum E { A { pub p: integer, pub q: text }, B }\n",
+        "pub enum E { B, A { pub q: text, pub p: integer } }\n",
         "reordered enum variants + variant fields",
     );
     same(
-        "pub struct W{x:integer}\n",
-        "pub struct W {  x : integer  }\n",
+        "pub struct W{pub x:integer}\n",
+        "pub struct W {  pub x : integer  }\n",
         "whitespace / formatting",
     );
     same(
@@ -288,13 +304,13 @@ fn determinism_corpus() {
         "fn param REORDER (positional — a real API change, must NOT be canonicalised away)",
     );
     differ(
-        "pub struct W { x: integer }\n",
-        "pub struct W { x: text }\n",
+        "pub struct W { pub x: integer }\n",
+        "pub struct W { pub x: text }\n",
         "field type change",
     );
     differ(
-        "pub struct W { x: integer }\n",
-        "pub struct W { x: integer, y: text }\n",
+        "pub struct W { pub x: integer }\n",
+        "pub struct W { pub x: integer, pub y: text }\n",
         "added field",
     );
 }
@@ -349,9 +365,9 @@ fn diff_cli_json() {
 }
 
 // Commit 5 — the @PLN97 LAYOUT axis: a second verdict beside the API axis.
-const POINT_V1: &str = "pub struct Point { x: integer, y: integer }\n\
+const POINT_V1: &str = "pub struct Point { pub x: integer, pub y: integer }\n\
                         pub fn make() -> Point { Point{x:1,y:2} }\n";
-const POINT_REORDERED: &str = "pub struct Point { y: integer, x: integer }\n\
+const POINT_REORDERED: &str = "pub struct Point { pub y: integer, pub x: integer }\n\
                                pub fn make() -> Point { Point{x:1,y:2} }\n";
 
 #[test]
@@ -394,7 +410,7 @@ fn pr_check_baseline_round_trip() {
     // Commit 7 — the deliverable. Emit a baseline of the released source, then check current
     // against it: a drop-in stays green (exit 0); an injected API break OR layout reshape reds
     // (exit 1) — the positive control per axis, no vacuous green.
-    let released = "pub struct Point { x: integer, y: integer }\npub fn make(a: integer) -> Point { Point{x:a,y:0} }\n";
+    let released = "pub struct Point { pub x: integer, pub y: integer }\npub fn make(a: integer) -> Point { Point{x:a,y:0} }\n";
 
     // drop-in: add a fn
     let (out, code) = emit_and_check(
@@ -410,7 +426,7 @@ fn pr_check_baseline_round_trip() {
     // injected API break: drop a param
     let (out, code) = emit_and_check(
         released,
-        "pub struct Point { x: integer, y: integer }\npub fn make() -> Point { Point{x:0,y:0} }\n",
+        "pub struct Point { pub x: integer, pub y: integer }\npub fn make() -> Point { Point{x:0,y:0} }\n",
     );
     assert_eq!(code, 1, "an API break reds:\n{out}");
     assert!(
@@ -421,7 +437,7 @@ fn pr_check_baseline_round_trip() {
     // injected layout reshape: reorder fields (an API drop-in but a data break)
     let (out, code) = emit_and_check(
         released,
-        "pub struct Point { y: integer, x: integer }\npub fn make(a: integer) -> Point { Point{x:a,y:0} }\n",
+        "pub struct Point { pub y: integer, pub x: integer }\npub fn make(a: integer) -> Point { Point{x:a,y:0} }\n",
     );
     assert_eq!(code, 1, "a layout reshape reds:\n{out}");
     assert!(
@@ -493,8 +509,8 @@ fn a_trailing_defaulted_parameter_is_additive_and_nothing_else_is() {
 
     // A receiver does not change the rule.
     let (out, code) = api_diff_cli(
-        "pub struct S { n: integer }\npub fn m(self: S, a: integer) -> integer { a }\n",
-        "pub struct S { n: integer }\npub fn m(self: S, a: integer, b: boolean = false) -> integer { a }\n",
+        "pub struct S { pub n: integer }\npub fn m(self: S, a: integer) -> integer { a }\n",
+        "pub struct S { pub n: integer }\npub fn m(self: S, a: integer, b: boolean = false) -> integer { a }\n",
         false,
     );
     assert_eq!(code, 0, "a method's trailing default is a drop-in:\n{out}");
@@ -543,12 +559,12 @@ fn a_trailing_defaulted_parameter_is_additive_and_nothing_else_is() {
 #[test]
 fn a_generic_library_lists_its_templates_not_its_instances() {
     let out = api_surface(
-        "pub struct Grid<T> { cells: vector<T>, w: integer }\n\
+        "pub struct Grid<T> { pub cells: vector<T>, pub w: integer }\n\
          pub fn grid<T>(cells: vector<T>, w: integer) -> Grid<T> { Grid { cells: cells, w: w } }\n\
          pub fn at<T>(self: Grid<T>, i: integer) -> T? { self.cells[i] }\n\
-         pub enum Slot<T> { Full { v: T }, Hole }\n\
+         pub enum Slot<T> { Full { pub v: T }, Hole }\n\
          pub fn fulls(v: vector<Slot<integer>>) -> integer { len(v) }\n\
-         pub struct Pair<K, V> { k: K, v: V }\n\
+         pub struct Pair<K, V> { pub k: K, pub v: V }\n\
          pub fn swap<K, V>(self: Pair<K, V>) -> Pair<V, K> { Pair { k: self.v, v: self.k } }\n",
     );
     assert_eq!(
@@ -569,7 +585,7 @@ fn a_generic_library_lists_its_templates_not_its_instances() {
 #[test]
 fn a_vector_parameter_lists_no_wrapper_struct() {
     let out = api_surface(
-        "pub struct Mine { n: integer }\npub fn total(v: vector<Mine>) -> integer { len(v) }\n",
+        "pub struct Mine { pub n: integer }\npub fn total(v: vector<Mine>) -> integer { len(v) }\n",
     );
     assert!(!out.contains("main_vector"), "{out}");
     assert!(
@@ -583,13 +599,13 @@ fn a_vector_parameter_lists_no_wrapper_struct() {
 /// naming the type).
 #[test]
 fn a_generic_librarys_baseline_round_trips() {
-    let lib = "pub struct Grid<T> { cells: vector<T>, w: integer }\n\
+    let lib = "pub struct Grid<T> { pub cells: vector<T>, pub w: integer }\n\
                pub fn grid<T>(cells: vector<T>, w: integer) -> Grid<T> { Grid { cells: cells, w: w } }\n";
     let (out, code) = emit_and_check(lib, lib);
     assert_eq!(code, 0, "an unchanged generic library checks clean:\n{out}");
     let (out, code) = emit_and_check(
         lib,
-        "pub struct Grid<T, U> { cells: vector<T>, w: integer, u: U }\n",
+        "pub struct Grid<T, U> { pub cells: vector<T>, pub w: integer, pub u: U }\n",
     );
     assert_ne!(code, 0, "a second type variable is a break:\n{out}");
 }
