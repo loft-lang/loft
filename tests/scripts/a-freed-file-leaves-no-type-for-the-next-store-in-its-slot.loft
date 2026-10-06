@@ -12,9 +12,11 @@
 // under `-C debug-assertions=on` the read itself stopped the run (`Fld 36 is outside of
 // record 1 size 32`, tests/scripts/19-files.loft).
 //
-// Each cell frees a `File` (a fresh slot), mints a raw store into that slot whose length is the
-// live file's handle index, frees it, and then writes to the live file.  Hand-computed: the
-// live file holds exactly what was written to it, `"x"` then `"y"` -> `"xy"`.
+// Each cell keeps four files open and written (`"x"`), then, for every length `n` in `1..=8` —
+// wider than the handles those files hold, so the handle index is never read (`File.ref` is
+// private, C139) — frees a `File` (a fresh slot), mints a raw store of length `n` into that slot
+// and frees it, then writes `"y"` to every open file.  Hand-computed: each holds exactly
+// `"xy"`.  On the defect some `n` names an open file's handle and its `"y"` is lost.
 //
 // @falsified-at: 4ffa0ef90 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
 // @falsified-by: tests/falsified/a-freed-file-leaves-no-type-for-the-next-store-in-its-slot.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
@@ -51,40 +53,51 @@ fn bait(p: text, n: integer) {
   file(p).write(s);
 }
 
+// Every open file written a second time, then read back from disk.  The files are opened in
+// each test's own frame: one returned from a helper inside a vector loses its writes (loft#1896).
+fn each_holds_xy(d: text, fs: vector<File>) -> text {
+  for g in fs { g += "y"; }
+  out = "";
+  for i in 0..4 { out += "{file("{d}/live{i}.txt").content()} "; }
+  out
+}
+
 fn test_a_byte_vector_in_a_freed_files_slot() {
   d = scratch("bytes");
-  pad = file("{d}/pad.txt");
-  pad += "p";
-  live = file("{d}/live.txt");
-  live += "x";
-  k = live.ref ?? -1;
-  assert(k >= 1, "the live file holds a handle: {k}");
-  bait("{d}/bait.txt", k);
-  assert(touch("{d}/bait.txt"), "the bait is a text file");
-  assert(by_bytes("{d}/bait.txt") == k, "the bait's length names the live handle");
-  live += "y";
-  got = file("{d}/live.txt").content();
-  assert(got == "xy", "live file holds {got}, want xy");
+  fs: vector<File> = [];
+  for i in 0..4 {
+    fs += [file("{d}/live{i}.txt")];
+  }
+  for g in fs { g += "x"; }
+  total = 0;
+  for n in 1..9 {
+    bait("{d}/bait{n}.txt", n);
+    assert(touch("{d}/bait{n}.txt"), "bait {n} is a text file");
+    total += by_bytes("{d}/bait{n}.txt");
+  }
+  got = each_holds_xy(d, fs);
+  assert(total == 36 && got == "xy xy xy xy ", "bytes: total {total}, files {got}");
   clean(d);
 }
 
 fn test_a_listing_in_a_freed_files_slot() {
   d = scratch("listing");
-  pad = file("{d}/pad.txt");
-  pad += "p";
-  live = file("{d}/live.txt");
-  live += "x";
-  k = live.ref ?? -1;
-  assert(k >= 1, "the live file holds a handle: {k}");
-  sub = "{d}/sub";
-  mkdir_all(sub);
-  for i in 0..k { file("{sub}/e{i}.txt").write("e"); }
-  assert(touch("{d}/pad.txt"), "pad is a text file");
-  assert(by_listing(sub) == k, "the listing's length names the live handle");
-  live += "y";
-  got = file("{d}/live.txt").content();
-  assert(got == "xy", "live file holds {got}, want xy");
-  clean(sub);
+  fs: vector<File> = [];
+  for i in 0..4 {
+    fs += [file("{d}/live{i}.txt")];
+  }
+  for g in fs { g += "x"; }
+  total = 0;
+  for n in 1..9 {
+    sub = "{d}/sub{n}";
+    mkdir_all(sub);
+    for i in 0..n { file("{sub}/e{i}.txt").write("e"); }
+    assert(touch("{d}/live0.txt"), "live0 is a text file");
+    total += by_listing(sub);
+    clean(sub);
+  }
+  got = each_holds_xy(d, fs);
+  assert(total == 36 && got == "xy xy xy xy ", "listing: total {total}, files {got}");
   clean(d);
 }
 
