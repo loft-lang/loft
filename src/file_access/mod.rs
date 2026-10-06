@@ -94,9 +94,8 @@ pub fn read(path: &PathText) -> io::Result<Vec<u8>> {
 /// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
 pub fn write(path: &PathText, contents: impl AsRef<[u8]>) -> io::Result<()> {
     run(path, |p| {
-        let opened = std::fs::write(p, contents)?;
-        emulated::stream_base(path, p)?;
-        Ok(opened)
+        std::fs::write(p, contents)?;
+        emulated::stream_base(path, p)
     })
 }
 

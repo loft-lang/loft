@@ -167,7 +167,7 @@ mod tests {
                 let e = write(&d.join(bad), "x").unwrap_err();
                 assert_eq!(e.kind(), io::ErrorKind::InvalidFilename, "{bad}: {e}");
             }
-            assert!(names(&d).is_empty());
+            assert_eq!(names(&d), Vec::<String>::new());
             remove_dir_all(&d).unwrap();
         });
     }
