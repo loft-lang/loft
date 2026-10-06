@@ -1,98 +1,12 @@
-diff --git b/src/parser/control.rs a/src/parser/control.rs
-index d046c306f..6581b47ec 100644
---- b/src/parser/control.rs
-+++ a/src/parser/control.rs
-@@ -9788,7 +9788,7 @@ impl Parser {
-         &mut self,
-         e_nr: u32,
-         elem: &Value,
--        borrow_src: Option<u16>,
-+        borrow_src: u16,
-         bindings: &mut Vec<Value>,
-         elem_conds: &mut Vec<Value>,
-         parens: bool,
-@@ -9970,10 +9970,8 @@ impl Parser {
-             if !matches!(ftype.base(), Type::Text(_)) {
-                 self.vars.set_skip_free(v_nr);
-             }
--            if let Some(src) = borrow_src {
--                let bound_tp = Self::element_view_of(&self.vars.tp(v_nr).clone(), src);
--                self.vars.set_type(v_nr, bound_tp);
--            }
-+            let bound_tp = Self::element_view_of(&self.vars.tp(v_nr).clone(), borrow_src);
-+            self.vars.set_type(v_nr, bound_tp);
-         }
-     }
- 
-@@ -10321,26 +10319,6 @@ impl Parser {
-         field_conditions: &mut Vec<Value>,
-         name_aliases: &mut Vec<(String, Option<u16>)>,
-     ) -> Option<Value> {
--        // `@FR-P-Alt` at a field or tuple-element position — `Box { s: Circle { r } | Square
--        // { r }, n }`, `(Circle { r } | Square { r }, k)`: the value matches when any
--        // alternative's tag does, each name is read from whichever variant matched, `τ?` where
--        // only some bind it (the slice element's alternation, without its parentheses).  The
--        // names borrow what the value borrows (`match_borrow_source`, a tuple member's own
--        // source included).  A PLAIN enum's `Red | Green` is the value-test loop below.
--        if let Some((e_nr, true)) = self.pattern_variant_enum(field_type)
--            && self.sub_pattern_lists_alternatives()
--        {
--            let src = self.match_borrow_source(&field_val);
--            self.parse_slice_alternation_element(
--                e_nr,
--                &field_val,
--                src,
--                arm_stmts,
--                field_conditions,
--                false,
--            );
--            return None;
--        }
-         // @PLN35 L2 — Struct-enum field: the sub-pattern is `Variant { subfields }` (or a bare
-         // `Variant`).  Tag-test the field's discriminant and recurse into the variant's payload
-         // bindings — the same tag-test + payload-bind a top-level struct-enum arm emits, applied to
-@@ -11667,7 +11645,7 @@ impl Parser {
-                             self.parse_slice_alternation_element(
-                                 e_nr,
-                                 &read,
--                                Some(borrow_src),
-+                                borrow_src,
-                                 &mut bindings,
-                                 &mut elem_conds,
-                                 true,
-@@ -12070,12 +12048,11 @@ impl Parser {
-         result_type
-     }
- 
--    /// Does the sub-pattern at the cursor list alternatives — a `|` before the `,`, `)`, `}`
--    /// or `=>` that ends it, outside any group?  Looks ahead and puts the cursor back.
--    fn sub_pattern_lists_alternatives(&mut self) -> bool {
-+    /// Does the tuple element at the cursor list alternatives — a `|` before the `,` or `)`
-+    /// that ends it, outside any group?  Looks ahead and puts the cursor back.
-+    fn tuple_element_has_alternatives(&mut self) -> bool {
-         let at = self.lexer.link();
--        let found =
--            self.lexer.recover_to(&[",", ")", "}", "=>", "|"]) && self.lexer.peek_token("|");
-+        let found = self.lexer.recover_to(&[",", ")", "|"]) && self.lexer.peek_token("|");
-         self.lexer.revert(at);
-         found
-     }
-@@ -12137,7 +12114,17 @@ impl Parser {
-             }
-             let elem_type = elem_type.clone();
-             let elem_get = Value::TupleGet(tmp, i as u16);
--            if self.peek_is_variant_subpattern(&elem_type) {
-+            if let Some((e_nr, true)) = self.pattern_variant_enum(&elem_type)
-+                && self.tuple_element_has_alternatives()
-+            {
-+                // `@FR-P-Alt` in a tuple element — `(Circle { r } | Square { r }, k)`: the
-+                // element matches when any alternative's tag does, and each name is read from
-+                // whichever variant matched (the slice element's alternation, without its
-+                // parentheses).
-+                self.parse_slice_alternation_element(
-+                    e_nr, &elem_get, tmp, bindings, elem_conds, false,
-+                );
-+            } else if self.peek_is_variant_subpattern(&elem_type) {
-                 // @FR-P-Point — a unit or struct variant is a point pattern over ONE
-                 // value, and a tuple element is one value, so an enum element takes
-                 // the forms a slice element takes: `(Fire, Wall { hp })` tag-tests
+diff --git a/src/parser/control.rs b/src/parser/control.rs
+index b62b4dbb1..6dbb051b6 100644
+--- a/src/parser/control.rs
++++ b/src/parser/control.rs
+@@ -10389,6 +10389,7 @@ impl Parser {
+         // names borrow what the value borrows (`match_borrow_source`, a tuple member's own
+         // source included).  A PLAIN enum's `Red | Green` is the value-test loop below.
+         if let Some((e_nr, true)) = self.pattern_variant_enum(field_type)
++            && false
+             && self.sub_pattern_lists_alternatives()
+         {
+             let src = self.match_borrow_source(&field_val);

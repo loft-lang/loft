@@ -17,7 +17,7 @@
 //   WITNESS: exit 1 at the field's `|`.
 //   HOLDS: nothing runs; every cell is unreached.
 // @falsified-by: tests/falsified/a-field-sub-pattern-lists-alternatives.patch — interpret exit 1 -> 0, native exit 1 -> 0
-//   Step 5 reverted whole (the durable receipt): the same refusal.
+//   The field alternation switched off (the durable receipt: `sub_pattern_lists_alternatives` answers no): the same refusal.
 //   CHANNEL: a refusal, on BOTH backends.
 //   ARMED: nothing.
 //   WITNESS: as above.

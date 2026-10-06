@@ -12,7 +12,7 @@
 //   WITNESS: *"Expect token }"* in place of the capture message.
 //   HOLDS: the program is refused either way; only WHICH refusal moves.
 // @falsified-by: tests/falsified/a-field-alternative-binds-a-name-at-another-type.patch — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 1/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 1/1 (the suite's verdict, not a count of matches)
-//   Step 5 reverted whole (the durable receipt).
+//   The field alternation switched off (the durable receipt: `sub_pattern_lists_alternatives` answers no).
 //   CHANNEL: the expected diagnostic, on BOTH backends.
 //   ARMED: nothing.
 //   WITNESS: as above.
