@@ -105,43 +105,24 @@ fn cascade_before_record_frees(data: &mut Data) {
         conv: data.def_nr("OpConvBoolFromRef"),
         clear_keyed: data.def_nr("OpClearKeyed"),
     };
-    if ops.free_ref == u32::MAX || ops.live == u32::MAX {
+    // Paid only where a closure record can owe a release: this runs over every function the
+    // scope pass checked — the whole stdlib on every compile — so a program, or a function,
+    // with no closure record of a type that has a cascade is left untouched and unread.
+    if ops.free_ref == u32::MAX || ops.live == u32::MAX || !data.any_closure_drop() {
         return;
     }
-    let mut patch_list = |list: &mut Vec<Value>, data: &Data, vars: &Function| {
-        let mut out: Vec<Value> = Vec::with_capacity(list.len());
-        for op in std::mem::take(list) {
-            if let Some((t, c)) = ops.old_record(out.last(), &op, data, vars) {
-                out.push(v_if(
-                    Value::Call(ops.conv, vec![Value::Var(t)]),
-                    Value::Call(c, vec![Value::Var(t)]),
-                    Value::Null,
-                ));
-            }
-            if let Some((v, c)) = ops.owed(data, vars, &op) {
-                // A cascade the scope pass already placed ahead of this free is re-guarded on
-                // the store rather than run a second time beside a new one.
-                if out.last().is_some_and(|prev| runs_cascade(prev, v, c)) {
-                    let prev = out.pop().unwrap_or(Value::Null);
-                    let reguard = matches!(prev.unspan(), Value::If(test, _, _)
-                        if matches!(test.unspan(), Value::Call(d, _)
-                            if *d == ops.conv || *d == ops.live));
-                    out.push(if reguard { ops.guarded(v, c) } else { prev });
-                } else {
-                    out.push(ops.guarded(v, c));
-                }
-            }
-            out.push(op);
-        }
-        *list = out;
-    };
     for d in 0..data.definitions() {
-        if data.def(d).def_type != DefType::Function {
+        if data.def(d).def_type != DefType::Function
+            || !ReleaseOps::holds_a_record(data, &data.def(d).variables)
+        {
             continue;
         }
-        let vars = data.def(d).variables.clone();
         let mut code = std::mem::replace(&mut data.definitions[d as usize].code, Value::Null);
-        patch_statement_lists(&mut code, data, &vars, &mut patch_list);
+        {
+            let data: &Data = data;
+            let vars = &data.def(d).variables;
+            patch_statement_lists(&mut code, &mut |list| ops.patch(list, data, vars));
+        }
         data.definitions[d as usize].code = code;
     }
 }
@@ -157,6 +138,54 @@ struct ReleaseOps {
 }
 
 impl ReleaseOps {
+    /// Does function `vars` have a local of a closure-record type with a cascade — the only
+    /// kind of local a release in it can owe a cascade for?
+    fn holds_a_record(data: &Data, vars: &Function) -> bool {
+        (0..vars.count()).any(|v| {
+            matches!(vars.tp(v).base(), Type::Reference(r, _)
+                if data.def(*r).name.starts_with("__closure_")
+                    && data.drop_cascade_nr(*r) != u32::MAX)
+        })
+    }
+
+    /// Place the cascades one statement list owes: before each release of a closure record,
+    /// and before the clear of a fn field's old record.  The list is rebuilt only when it
+    /// holds such a statement.
+    fn patch(&self, list: &mut Vec<Value>, data: &Data, vars: &Function) {
+        let owes = list.iter().enumerate().any(|(i, op)| {
+            self.owed(data, vars, op).is_some()
+                || (i > 0 && self.old_record(list.get(i - 1), op, data, vars).is_some())
+        });
+        if !owes {
+            return;
+        }
+        let mut out: Vec<Value> = Vec::with_capacity(list.len() + 2);
+        for op in std::mem::take(list) {
+            if let Some((t, c)) = self.old_record(out.last(), &op, data, vars) {
+                out.push(v_if(
+                    Value::Call(self.conv, vec![Value::Var(t)]),
+                    Value::Call(c, vec![Value::Var(t)]),
+                    Value::Null,
+                ));
+            }
+            if let Some((v, c)) = self.owed(data, vars, &op) {
+                // A cascade the scope pass already placed ahead of this free is re-guarded on
+                // the store rather than run a second time beside a new one.
+                if out.last().is_some_and(|prev| runs_cascade(prev, v, c)) {
+                    let prev = out.pop().unwrap_or(Value::Null);
+                    let reguard = matches!(prev.unspan(), Value::If(test, _, _)
+                        if matches!(test.unspan(), Value::Call(d, _)
+                            if *d == self.conv || *d == self.live));
+                    out.push(if reguard { self.guarded(v, c) } else { prev });
+                } else {
+                    out.push(self.guarded(v, c));
+                }
+            }
+            out.push(op);
+        }
+        *list = out;
+    }
+
     /// The cascade a free of local `v` owes: `v`'s type is a closure record with a cascade.
     fn owed(&self, data: &Data, vars: &Function, op: &Value) -> Option<(u16, u32)> {
         let Value::Call(d, args) = op.unspan() else {
@@ -235,16 +264,11 @@ fn runs_cascade(op: &Value, v: u16, c: u32) -> bool {
 
 /// Hand every statement list in `v` — a block's, a loop's, an `Insert`'s — to `patch`,
 /// innermost first.
-fn patch_statement_lists(
-    v: &mut Value,
-    data: &Data,
-    vars: &Function,
-    patch: &mut dyn FnMut(&mut Vec<Value>, &Data, &Function),
-) {
-    v.for_each_child_mut(&mut |c| patch_statement_lists(c, data, vars, patch));
+fn patch_statement_lists(v: &mut Value, patch: &mut dyn FnMut(&mut Vec<Value>)) {
+    v.for_each_child_mut(&mut |c| patch_statement_lists(c, patch));
     match v {
-        Value::Block(bl) | Value::Loop(bl) => patch(&mut bl.operators, data, vars),
-        Value::Insert(ops) => patch(ops, data, vars),
+        Value::Block(bl) | Value::Loop(bl) => patch(&mut bl.operators),
+        Value::Insert(ops) => patch(ops),
         // The value a `Span` wraps is one of its children, patched by the walk above.
         Value::Span(_) => {}
         _ => {}
