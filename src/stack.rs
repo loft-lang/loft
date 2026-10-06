@@ -52,6 +52,9 @@ pub struct Stack<'a> {
     /// native's unconditional post-free reset (`generation/ops/ref_ops.rs`), scoped
     /// to the vars that actually need it.
     pub owned_reassigned: std::collections::HashSet<u16>,
+    /// `@FR-T-Record` — per tuple local, the narrow members a `&` names, which hold their field
+    /// encoding (`tuple_links::linked_narrow_members`, derived once from the function's IR).
+    pub linked_members: std::collections::HashMap<u16, u64>,
 }
 
 impl<'a> Stack<'a> {
@@ -64,6 +67,7 @@ impl<'a> Stack<'a> {
             loops: Vec::new(),
             function,
             owned_reassigned: std::collections::HashSet::new(),
+            linked_members: crate::tuple_links::linked_narrow_members(data, def_nr),
         }
     }
 

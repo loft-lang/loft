@@ -6125,7 +6125,7 @@ pub fn owns_literal_backing_store(name: &str) -> bool {
 /// `LOFT_LINK_ALL_NARROW=1`: treat every narrow integer local as linked, so the linked
 /// representation is exercised by every program rather than by the few that write a `&` to
 /// one.  Read once per process.
-fn link_all_narrow() -> bool {
+pub(crate) fn link_all_narrow() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| {
         crate::env_once!(std::env::var("LOFT_LINK_ALL_NARROW").is_ok_and(|v| v == "1"))
