@@ -12,6 +12,8 @@
 // The tuple half (stride + mixed-width round-trip) is still WRONG and is tracked as
 // the ignored specs `pln114_tuple_stride_matches_record` /
 // `pln114_mixed_width_tuple_round_trip` in tests/issues.rs.
+// @falsified-at: none — the planted defect is recorded with `@falsified-by:` below.
+// @falsified-by: tests/falsified/a-record-is-padded-to-its-alignment.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 2 assertion failures -> 0
 
 struct Small { a: u8, b: u16, c: character, d: single }
 struct Mixed { a: u8, b: u32, c: u16 }

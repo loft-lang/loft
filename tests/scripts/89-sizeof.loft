@@ -1,6 +1,8 @@
 // Copyright (c) 2023-2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // sizeof() operator on primitives, enums, structs, and collections.
+// @falsified-at: none — the planted defect is recorded with `@falsified-by:` below.
+// @falsified-by: tests/falsified/a-record-is-padded-to-its-alignment.patch — interpret exit 1 -> 0, interpret 2 assertion failures -> 0, native exit 1 -> 0, native 4 assertion failures -> 0
 
 // @FTR-035 — `sizeof` over primitives, enums, structs and collections
 fn test_sizeof_integer() {

@@ -17,9 +17,11 @@
 // for an even `i` and 50 for an odd one.
 //
 // @falsified-at: cce3ba0d1 — interpret leaked kt=96 Pt×6 -> clean, native exit 1 -> 0, native 1 assertion failures -> 0
-// @falsified-by: tests/falsified/1880-a-recursive-generic-returns-a-view-its-caller-copies.patch — interpret leaked kt=96 Pt×6 -> clean, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1880-a-recursive-generic-returns-a-view-its-caller-copies.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native leaked kt=96 Pt×6 -> clean
 //   CHANNEL: the VALUE on native — a bound result's free released `p`, which then read as the
 //   records that reused its store; the LEAK on the interpreter.
+//   The planted patch (a self call no longer counted as a view) shows them swapped: the
+//   interpreter answers a wrong value and native leaks.
 //   HOLDS: every cell is clean under `LOFT_STRICT_STORES=1`, `LOFT_POISON=1` and
 //   `LOFT_POISON_CLAIM=1` with the exit leak check on this tree, both backends.
 
