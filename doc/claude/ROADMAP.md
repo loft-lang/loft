@@ -120,7 +120,6 @@ open plan.  Silent-wrong defects are issues, not plans: `gh issue list --label s
 
 | Plan | status | What it is |
 |---|---|---|
-| [@PLN172](https://github.com/loft-lang/plans/issues/172) | active | Documentation workflow — one contract, enforced by tools, reviewed on the existing beat |
 | [@PLN175](https://github.com/loft-lang/plans/issues/175) | active | Design decisions with teeth — every C### names the code, docs and guard that keep it |
 | [@PLN180](https://github.com/loft-lang/plans/issues/180) | active | Small records as tuples in the IR phase, decided once for both backends |
 | [@PLN185](https://github.com/loft-lang/plans/issues/185) | next | A slow routine is an ordinary bug — the measurement, the 3× bar and the classes before issue-driven performance work |
