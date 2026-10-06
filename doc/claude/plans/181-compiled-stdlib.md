@@ -9,10 +9,12 @@ Tracker: [@PLN181](https://github.com/loft-lang/plans/issues/181).
 
 ## Status
 
-Active on `laptop-superinstructions`.  **P0, P1 and P2 are built.**  An interpreted program
-dispatches the standard library's looping loft functions (13) to their compiled bodies, built
-into the loft binary, with no rustc at run time; the `split` and `lines` kernels are retired
-(KERNELS.md § Removed).  What stays open is below.
+**Finished (2026-10-06).  P0, P1 and P2 are built and on `main`.**  An interpreted program
+dispatches the standard library's looping loft functions to their compiled bodies, built into the
+loft binary, with no rustc at run time; the `split` and `lines` kernels are retired.  How it works
+now lives in [INTERPRETER_PERFORMANCE.md § The compiled standard library](../INTERPRETER_PERFORMANCE.md#the-compiled-standard-library),
+with the open work (the test runner, the REPL, the debugger, embedding, the browser).  What
+follows is the record.
 
 ## Goal
 
