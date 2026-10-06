@@ -5511,7 +5511,15 @@ impl Definition {
                 sites.push((**inner).clone());
             }
         });
-        if let Value::Block(bl) = &self.code
+        // The body is a `Block`, or an `Insert` whose last element is one: the scope pass
+        // hoists a join's declaration out in front of the body it binds (loft#1872's
+        // `___ret_join`).  Read only as a `Block`, such a body had no tail at all, and the
+        // proofs that read these sites answered "not proven" for a body ending in a local.
+        let body = match &self.code {
+            Value::Insert(ops) => ops.last().unwrap_or(&self.code),
+            other => other,
+        };
+        if let Value::Block(bl) = body
             && let Some(tail) = bl.operators.last()
             && !matches!(tail.unspan(), Value::Return(_))
         {

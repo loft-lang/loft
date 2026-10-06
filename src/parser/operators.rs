@@ -739,7 +739,15 @@ impl Parser {
                 Value::Var(w) if self.vars.is_caller_hidden_buf(*w) => Some(*w),
                 _ => None,
             })
-            .unwrap_or_else(|| self.vars.work_refs_p2(&tp.without_deps(), &mut self.lexer));
+            .unwrap_or_else(|| {
+                // loft#1872 — the work-ref is written by the call before its one read, so it
+                // is an inline ref: its null-init is a sentinel, not a store.  An eager store
+                // is a COLLECTION's default, and on the path where the join hands back its
+                // other arm nothing names it — one leaked vector per call.
+                let w = self.vars.work_refs_p2(&tp.without_deps(), &mut self.lexer);
+                self.vars.mark_inline_ref(w);
+                w
+            });
         Some(v_block(
             vec![v_set(buf, val.clone()), Value::Var(buf)],
             tp.clone(),

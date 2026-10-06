@@ -1,0 +1,176 @@
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index 7881621e5..c88afe2af 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -13569,56 +13569,22 @@ impl Parser {
+             for op in &mut bl.operators {
+                 self.rewrite_generic_vector_binds(op, &tv_typed, &mut declared);
+             }
+-            // F-Ret: a returned parameter is copied.  Every visible vector parameter a return
+-            // leaf yields, not only the one a pure borrow names: a JOIN — the argument on one
+-            // arm, a recursive call on the other (loft#1872) — handed the caller's own vector
+-            // up on its borrow arm, and the call site's lift then freed the argument through
+-            // the result.  The concrete twin copies that arm into its return buffer; this is
+-            // the same copy, into one fresh local every such arm fills.
+-            let n_attrs = self.data.def(d_nr).attributes().len();
+-            let mut yielded: Vec<u16> = (0..n_attrs)
+-                .filter(|&a| !self.data.def(d_nr).attributes()[a].hidden)
+-                .filter_map(|a| u16::try_from(a).ok())
+-                .filter(|&a| {
+-                    (a as usize) < self.vars.count() as usize
+-                        && self.vars.is_argument(a)
+-                        && matches!(self.vars.tp(a).base(), Type::Vector(_, _))
+-                        && Self::yields_var(&bl.operators, a)
+-                })
+-                .collect();
++            // F-Ret: the borrowed return.
+             if let Some(param) = borrowed_param
+-                && !yielded.contains(&param)
+                 && (param as usize) < self.vars.count() as usize
+-                && matches!(self.vars.tp(param).base(), Type::Vector(_, _))
++                && let Type::Vector(elm, _) = self.vars.tp(param).base().clone()
+                 && Self::yields_var(&bl.operators, param)
+-            {
+-                yielded.push(param);
+-            }
+-            if let Some(&first) = yielded.first()
+-                && let Type::Vector(elm, _) = self.vars.tp(first).base().clone()
+             {
+                 let owned = Type::Vector(elm.clone(), Deps::none());
+                 let copy = self.create_unique("__ret_copy", &owned);
+                 if copy != u16::MAX {
+                     self.vars.defined(copy);
+                     let rec_tp = self.append_elem_tp(&elm);
+-                    for &param in &yielded {
+-                        for op in &mut bl.operators {
+-                            self.copy_returned_var_into(op, param, copy, rec_tp, false);
+-                        }
+-                        if let Some(last) = bl.operators.last_mut() {
+-                            self.copy_returned_var_into(last, param, copy, rec_tp, true);
+-                        }
+-                    }
+-                    // A Join's other leaves — a local holding the recursive call's result
+-                    // (the join's arm owner) — fill the same copy, so the return has ONE
+-                    // source.  Two sources are each exempt from the frees on both paths, and
+-                    // the one the path did not return was nobody's (loft#1872).
+                     for op in &mut bl.operators {
+-                        self.copy_other_returned_locals(op, &yielded, copy, rec_tp, false);
++                        self.copy_returned_var_into(op, param, copy, rec_tp, false);
+                     }
+                     if let Some(last) = bl.operators.last_mut() {
+-                        self.copy_other_returned_locals(last, &yielded, copy, rec_tp, true);
++                        self.copy_returned_var_into(last, param, copy, rec_tp, true);
+                     }
+                     bl.operators
+                         .insert(0, crate::data::v_set(copy, Value::Null));
+@@ -13964,67 +13930,6 @@ impl Parser {
+             _ => {}
+         }
+     }
+-    /// The other half of a copied return: a return leaf that is a LOCAL other than a copied
+-    /// parameter (and other than `copy` itself) is copied into `copy` too, so every leaf hands
+-    /// up the one store.  The local stays its own owner and is released at its scope's end.
+-    fn copy_other_returned_locals(
+-        &mut self,
+-        node: &mut Value,
+-        params: &[u16],
+-        copy: u16,
+-        rec_tp: i32,
+-        tail: bool,
+-    ) {
+-        let other = |y: u16, this: &Self| {
+-            y != copy
+-                && !params.contains(&y)
+-                && !this.vars.is_argument(y)
+-                && matches!(this.vars.tp(y).base(), Type::Vector(_, _))
+-        };
+-        match node {
+-            Value::Span(b) => self.copy_other_returned_locals(&mut b.1, params, copy, rec_tp, tail),
+-            Value::Return(inner) => {
+-                if let Value::Var(y) = inner.unspan()
+-                    && other(*y, self)
+-                {
+-                    let y = *y;
+-                    let replace = self.cl(
+-                        "OpReplaceVector",
+-                        &[Value::Var(copy), Value::Var(y), Value::Int(rec_tp)],
+-                    );
+-                    *node = Value::Insert(vec![replace, Value::Return(Box::new(Value::Var(copy)))]);
+-                } else {
+-                    self.copy_other_returned_locals(inner, params, copy, rec_tp, true);
+-                }
+-            }
+-            Value::Var(y) if tail && other(*y, self) => {
+-                let y = *y;
+-                let replace = self.cl(
+-                    "OpReplaceVector",
+-                    &[Value::Var(copy), Value::Var(y), Value::Int(rec_tp)],
+-                );
+-                *node = Value::Insert(vec![replace, Value::Var(copy)]);
+-            }
+-            Value::If(_, t, e) => {
+-                self.copy_other_returned_locals(t, params, copy, rec_tp, tail);
+-                self.copy_other_returned_locals(e, params, copy, rec_tp, tail);
+-            }
+-            Value::Block(b) | Value::Loop(b) => {
+-                let n = b.operators.len();
+-                for (i, op) in b.operators.iter_mut().enumerate() {
+-                    self.copy_other_returned_locals(op, params, copy, rec_tp, tail && i + 1 == n);
+-                }
+-            }
+-            Value::Insert(ops) => {
+-                let n = ops.len();
+-                for (i, op) in ops.iter_mut().enumerate() {
+-                    self.copy_other_returned_locals(op, params, copy, rec_tp, tail && i + 1 == n);
+-                }
+-            }
+-            _ => {}
+-        }
+-    }
+-
+     /// @PLN165 D5 — a template returning an OPEN instance (`-> Box<T>`) declares the
+     /// `__retbuf` its twin has (a record whatever `T` becomes), but its literal tail was a
+     /// deferred `TV_OBJECT` the template's own parse could not deliver.  Lowered, it is the
+diff --git b/src/parser/operators.rs a/src/parser/operators.rs
+index 3a83f6b62..59187826d 100644
+--- b/src/parser/operators.rs
++++ a/src/parser/operators.rs
+@@ -739,15 +739,7 @@ impl Parser {
+                 Value::Var(w) if self.vars.is_caller_hidden_buf(*w) => Some(*w),
+                 _ => None,
+             })
+-            .unwrap_or_else(|| {
+-                // loft#1872 — the work-ref is written by the call before its one read, so it
+-                // is an inline ref: its null-init is a sentinel, not a store.  An eager store
+-                // is a COLLECTION's default, and on the path where the join hands back its
+-                // other arm nothing names it — one leaked vector per call.
+-                let w = self.vars.work_refs_p2(&tp.without_deps(), &mut self.lexer);
+-                self.vars.mark_inline_ref(w);
+-                w
+-            });
++            .unwrap_or_else(|| self.vars.work_refs_p2(&tp.without_deps(), &mut self.lexer));
+         Some(v_block(
+             vec![v_set(buf, val.clone()), Value::Var(buf)],
+             tp.clone(),
+diff --git b/src/scopes/inline_returns.rs a/src/scopes/inline_returns.rs
+index 854dcb2c7..af3d1e780 100644
+--- b/src/scopes/inline_returns.rs
++++ a/src/scopes/inline_returns.rs
+@@ -702,16 +702,7 @@ impl Scopes<'_> {
+                     || def.is_free_overload()
+                     || def.is_method()
+                     || monomorph_returns_a_borrow
+-                    // loft#1872, `@FR-G-Mono` — an instance lifts as its twin does, whatever
+-                    // its body's return shape.  The bind is the one the named spelling gets
+-                    // (`r = pick(…)`): a return that may hand back an argument's own store is
+-                    // bound through `OpBindOrCopy` against that argument, so the temp owns a
+-                    // copy where it would have aliased, and its free releases only that.  The
+-                    // gate below was written before that bind existed; it left a recursive
+-                    // instance's Join — the argument on one arm, a mint on the other — read
+-                    // inline with nobody owning the mint.
+-                    || def.is_instance()
+-                    || (def.name.starts_with("t_")
++                    || ((def.name.starts_with("t_") || def.is_instance())
+                         && (def.attr_names.contains_key("__retbuf")
+                             || def.monomorph_return_is_fresh(data.def_nr("OpNullRefSentinel"))
+                             // loft#1273 — a tail that DELEGATES (`a + b` is `Call(n_OpAdd)`)

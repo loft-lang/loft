@@ -13494,8 +13494,12 @@ impl Parser {
             // The tail arrives either already wrapped in a `Return` or as the bare branch —
             // a monomorph's body is the substituted TEMPLATE's, whose delivery has not run.
             let branch_is_tail = match bl.operators[last].unspan() {
-                Value::Return(inner) => self.is_borrowing_branch(inner),
-                other => self.is_borrowing_branch(other),
+                Value::Return(inner) => {
+                    self.is_borrowing_branch(inner) || self.is_borrowed_and_minted_branch(inner)
+                }
+                other => {
+                    self.is_borrowing_branch(other) || self.is_borrowed_and_minted_branch(other)
+                }
             };
             if branch_is_tail {
                 let tmp = self.create_unique("__ret_join", &ret);
@@ -13519,6 +13523,60 @@ impl Parser {
             &mut self.data.definitions[d_nr as usize].variables,
         );
         self.context = saved_ctx;
+    }
+
+    /// loft#1872, `@FR-F-Ret` — a value branch whose leaves hand back a PARAMETER on one arm
+    /// and a CALL's result on another: a recursive or delegating instance's Join.  Bound whole
+    /// into one owned local, the parameter arm is copied at that bind (both backends guard a
+    /// parameter's store there), and the result is a store the instance owns — so its caller
+    /// lifts it and frees it like the twin's.
+    fn is_borrowed_and_minted_branch(&self, tail: &Value) -> bool {
+        #[derive(Default)]
+        struct Leaves {
+            borrowed: bool,
+            minted: bool,
+            view: bool,
+        }
+        fn walk(
+            node: &Value,
+            data: &crate::data::Data,
+            vars: &crate::variables::Function,
+            seen: &mut Leaves,
+        ) {
+            match node.unspan() {
+                Value::If(_, then, els) => {
+                    walk(then, data, vars, seen);
+                    walk(els, data, vars, seen);
+                }
+                Value::Block(bl) => {
+                    if let Some(last) = bl.operators.last() {
+                        walk(last, data, vars, seen);
+                    }
+                }
+                Value::Var(x) if vars.is_argument(*x) => seen.borrowed = true,
+                // A local in a leaf owns what it holds: the join's arm owner
+                // (`{ __ref = call; __ref }`) holds a call's result.
+                Value::Var(_) => seen.minted = true,
+                // A VIEW into a parameter (`v[0]`) is neither: binding it into the owned local
+                // aliases it on native, where only a return buffer's copy would make it fresh
+                // (loft#1880).
+                Value::Call(d, _) if data.def(*d).name().starts_with("Op") => seen.view = true,
+                Value::Call(_, _) => seen.minted = true,
+                _ => {}
+            }
+        }
+        let mut top = tail.unspan();
+        while let Value::Block(bl) = top
+            && let Some(last) = bl.operators.last()
+        {
+            top = last.unspan();
+        }
+        if !matches!(top, Value::If(..)) {
+            return false;
+        }
+        let mut seen = Leaves::default();
+        walk(tail, &self.data, &self.vars, &mut seen);
+        seen.borrowed && seen.minted && !seen.view
     }
 
     pub(crate) fn promote_monomorph_vector_return(
@@ -13569,22 +13627,56 @@ impl Parser {
             for op in &mut bl.operators {
                 self.rewrite_generic_vector_binds(op, &tv_typed, &mut declared);
             }
-            // F-Ret: the borrowed return.
+            // F-Ret: a returned parameter is copied.  Every visible vector parameter a return
+            // leaf yields, not only the one a pure borrow names: a JOIN — the argument on one
+            // arm, a recursive call on the other (loft#1872) — handed the caller's own vector
+            // up on its borrow arm, and the call site's lift then freed the argument through
+            // the result.  The concrete twin copies that arm into its return buffer; this is
+            // the same copy, into one fresh local every such arm fills.
+            let n_attrs = self.data.def(d_nr).attributes().len();
+            let mut yielded: Vec<u16> = (0..n_attrs)
+                .filter(|&a| !self.data.def(d_nr).attributes()[a].hidden)
+                .filter_map(|a| u16::try_from(a).ok())
+                .filter(|&a| {
+                    (a as usize) < self.vars.count() as usize
+                        && self.vars.is_argument(a)
+                        && matches!(self.vars.tp(a).base(), Type::Vector(_, _))
+                        && Self::yields_var(&bl.operators, a)
+                })
+                .collect();
             if let Some(param) = borrowed_param
+                && !yielded.contains(&param)
                 && (param as usize) < self.vars.count() as usize
-                && let Type::Vector(elm, _) = self.vars.tp(param).base().clone()
+                && matches!(self.vars.tp(param).base(), Type::Vector(_, _))
                 && Self::yields_var(&bl.operators, param)
+            {
+                yielded.push(param);
+            }
+            if let Some(&first) = yielded.first()
+                && let Type::Vector(elm, _) = self.vars.tp(first).base().clone()
             {
                 let owned = Type::Vector(elm.clone(), Deps::none());
                 let copy = self.create_unique("__ret_copy", &owned);
                 if copy != u16::MAX {
                     self.vars.defined(copy);
                     let rec_tp = self.append_elem_tp(&elm);
+                    for &param in &yielded {
+                        for op in &mut bl.operators {
+                            self.copy_returned_var_into(op, param, copy, rec_tp, false);
+                        }
+                        if let Some(last) = bl.operators.last_mut() {
+                            self.copy_returned_var_into(last, param, copy, rec_tp, true);
+                        }
+                    }
+                    // A Join's other leaves — a local holding the recursive call's result
+                    // (the join's arm owner) — fill the same copy, so the return has ONE
+                    // source.  Two sources are each exempt from the frees on both paths, and
+                    // the one the path did not return was nobody's (loft#1872).
                     for op in &mut bl.operators {
-                        self.copy_returned_var_into(op, param, copy, rec_tp, false);
+                        self.copy_other_returned_locals(op, &yielded, copy, rec_tp, false);
                     }
                     if let Some(last) = bl.operators.last_mut() {
-                        self.copy_returned_var_into(last, param, copy, rec_tp, true);
+                        self.copy_other_returned_locals(last, &yielded, copy, rec_tp, true);
                     }
                     bl.operators
                         .insert(0, crate::data::v_set(copy, Value::Null));
@@ -13930,6 +14022,67 @@ impl Parser {
             _ => {}
         }
     }
+    /// The other half of a copied return: a return leaf that is a LOCAL other than a copied
+    /// parameter (and other than `copy` itself) is copied into `copy` too, so every leaf hands
+    /// up the one store.  The local stays its own owner and is released at its scope's end.
+    fn copy_other_returned_locals(
+        &mut self,
+        node: &mut Value,
+        params: &[u16],
+        copy: u16,
+        rec_tp: i32,
+        tail: bool,
+    ) {
+        let other = |y: u16, this: &Self| {
+            y != copy
+                && !params.contains(&y)
+                && !this.vars.is_argument(y)
+                && matches!(this.vars.tp(y).base(), Type::Vector(_, _))
+        };
+        match node {
+            Value::Span(b) => self.copy_other_returned_locals(&mut b.1, params, copy, rec_tp, tail),
+            Value::Return(inner) => {
+                if let Value::Var(y) = inner.unspan()
+                    && other(*y, self)
+                {
+                    let y = *y;
+                    let replace = self.cl(
+                        "OpReplaceVector",
+                        &[Value::Var(copy), Value::Var(y), Value::Int(rec_tp)],
+                    );
+                    *node = Value::Insert(vec![replace, Value::Return(Box::new(Value::Var(copy)))]);
+                } else {
+                    self.copy_other_returned_locals(inner, params, copy, rec_tp, true);
+                }
+            }
+            Value::Var(y) if tail && other(*y, self) => {
+                let y = *y;
+                let replace = self.cl(
+                    "OpReplaceVector",
+                    &[Value::Var(copy), Value::Var(y), Value::Int(rec_tp)],
+                );
+                *node = Value::Insert(vec![replace, Value::Var(copy)]);
+            }
+            Value::If(_, t, e) => {
+                self.copy_other_returned_locals(t, params, copy, rec_tp, tail);
+                self.copy_other_returned_locals(e, params, copy, rec_tp, tail);
+            }
+            Value::Block(b) | Value::Loop(b) => {
+                let n = b.operators.len();
+                for (i, op) in b.operators.iter_mut().enumerate() {
+                    self.copy_other_returned_locals(op, params, copy, rec_tp, tail && i + 1 == n);
+                }
+            }
+            Value::Insert(ops) => {
+                let n = ops.len();
+                for (i, op) in ops.iter_mut().enumerate() {
+                    self.copy_other_returned_locals(op, params, copy, rec_tp, tail && i + 1 == n);
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// @PLN165 D5 — a template returning an OPEN instance (`-> Box<T>`) declares the
     /// `__retbuf` its twin has (a record whatever `T` becomes), but its literal tail was a
     /// deferred `TV_OBJECT` the template's own parse could not deliver.  Lowered, it is the
