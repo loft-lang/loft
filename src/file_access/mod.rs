@@ -17,6 +17,7 @@
 //! path is parsed once under an explicit flavor ([`path`]), so every Windows rule is a unit
 //! test on any host, and every operation's error names its path.
 
+mod emulated;
 pub mod path;
 
 pub use path::{EMULATED_DRIVE, Flavor, PathText, with_program_host};
@@ -40,9 +41,7 @@ impl PathText {
         if self.flavor() == Flavor::HOST {
             Ok(PathBuf::from(self.native()))
         } else if self.flavor() == Flavor::program_host() {
-            self.from_emulated()
-                .map(|real| PathBuf::from(real.native()))
-                .map_err(|why| io::Error::new(io::ErrorKind::NotFound, why))
+            emulated::os(self)
         } else {
             Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -94,7 +93,11 @@ pub fn read(path: &PathText) -> io::Result<Vec<u8>> {
 /// # Errors
 /// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
 pub fn write(path: &PathText, contents: impl AsRef<[u8]>) -> io::Result<()> {
-    run(path, |p| std::fs::write(p, contents))
+    run(path, |p| {
+        let opened = std::fs::write(p, contents)?;
+        emulated::stream_base(path, p)?;
+        Ok(opened)
+    })
 }
 
 /// Create the directory and every missing parent.
@@ -149,7 +152,11 @@ pub fn open(path: &PathText) -> io::Result<std::fs::File> {
 /// # Errors
 /// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
 pub fn create(path: &PathText) -> io::Result<std::fs::File> {
-    run(path, |p| std::fs::File::create(p))
+    run(path, |p| {
+        let opened = std::fs::File::create(p)?;
+        emulated::stream_base(path, p)?;
+        Ok(opened)
+    })
 }
 
 /// Open an existing file for reading AND writing, neither creating nor truncating it.
@@ -185,7 +192,11 @@ pub fn set_modified(path: &PathText, when: std::time::SystemTime) -> io::Result<
 /// # Errors
 /// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
 pub fn open_with(path: &PathText, options: &std::fs::OpenOptions) -> io::Result<std::fs::File> {
-    run(path, |p| options.open(p))
+    run(path, |p| {
+        let opened = options.open(p)?;
+        emulated::stream_base(path, p)?;
+        Ok(opened)
+    })
 }
 
 ///
@@ -205,7 +216,11 @@ pub fn read_dir(path: &PathText) -> io::Result<Vec<PathText>> {
     run(path, |p| {
         let mut out = Vec::new();
         for entry in std::fs::read_dir(p)? {
-            out.push(PathText::from_os_as(&entry?.path(), path));
+            let entry = entry?.path();
+            if path.flavor() != Flavor::HOST && emulated::is_stream(&entry) {
+                continue;
+            }
+            out.push(PathText::from_os_as(&entry, path));
         }
         out.sort_by_key(PathText::portable);
         Ok(out)
@@ -312,7 +327,7 @@ pub fn path_refused() -> std::io::Error {
 /// # Errors
 /// The clash, naming both spellings.
 pub fn case_clash(full: &str) -> Result<(), String> {
-    let want = PathText::host(full);
+    let want = PathText::parse(full, Flavor::program_host());
     // The longest prefix that exists, and the first name below it that does not.
     let mut existing = want.clone();
     let mut missing: Option<String> = None;
@@ -325,7 +340,7 @@ pub fn case_clash(full: &str) -> Result<(), String> {
             None => return Ok(()),
         }
     }
-    let folding = cfg!(any(windows, target_os = "macos"));
+    let folding = cfg!(any(windows, target_os = "macos")) || Flavor::emulating();
     if folding && let Some(on_disk) = canonical(&existing) {
         // Compare the trailing names: a pair equal without case but not with it is a clash.
         for (asked, real) in existing
