@@ -14,9 +14,17 @@
 //
 // @falsified-at: a2e060c6f — interpret exit 1 -> 0, interpret 6 assertion failures -> 0, native
 //   exit 1 -> 0, native 12 assertion failures -> 0.
-// @falsified-by: tests/falsified/a-stored-tuple-member-is-written-in-its-own-width.patch — the
-//   same channels.
-// HOLDS: leak, panic and refusals are clean on both trees and both backends.
+// @falsified-by: tests/falsified/a-stored-tuple-member-is-written-in-its-own-width.patch — interpret exit 1 -> 0, native exit 1 -> 0, native 4 assertion failures -> 0, native panicked -> clean
+//   Not the @falsified-at channels: since C138 every store access checks its alignment, so
+//   the wide write now trips that check before most value assertions can read it.
+//   CHANNEL: the exit on BOTH backends; the suite fails 9 of the 11 tests on the
+//   interpreter, each as a misaligned store access, and native adds 4 value assertions and
+//   the alignment panic.
+//   WITNESS: *"Store access misaligned: rec=3 fld=9 needs 8-byte alignment"* (src/store.rs);
+//   on native also `null member: 4` from `test_a_nullable_member`.
+//   HOLDS: leak and refusals are clean on both trees and both backends.
+// HOLDS: leak, panic and refusals are clean on both trees and both backends (the @falsified-at
+//   control).
 
 struct H { k: u8, p: (u16, u8) }
 struct W { k: u8, p: (integer, u8) }

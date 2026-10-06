@@ -28,7 +28,9 @@
 //   from the first pattern's positions.
 //   HOLDS: c1 order 1 and every single-alternative cell pass; only the swap moves.
 // @falsified-by: tests/falsified/a-tuple-or-pattern-arm-links-its-bindings.patch — interpret exit 1 -> 0, native exit 1 -> 0
-//   Step 3 reverted whole (the durable receipt): the refusal above.
+//   Step 3 reverted in its current form (the durable receipt): `parse_tuple_alternatives`
+//   answers no alternatives (its `opens` never opens), so an arm's second tuple pattern is
+//   left unparsed — the refusal above.
 //   CHANNEL: a refusal, on BOTH backends.
 //   ARMED: nothing.
 //   WITNESS: as the first control.

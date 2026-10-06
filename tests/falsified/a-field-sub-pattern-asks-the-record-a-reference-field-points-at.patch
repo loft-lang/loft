@@ -1,8 +1,8 @@
 diff --git a/src/parser/control.rs b/src/parser/control.rs
-index 35a6e0612..ce4582a67 100644
+index 07f65a620..8af11db69 100644
 --- a/src/parser/control.rs
 +++ b/src/parser/control.rs
-@@ -7241,67 +7241,6 @@ impl Parser {
+@@ -7331,67 +7331,6 @@ impl Parser {
          (arm, is_exhaustive)
      }
  
@@ -67,10 +67,10 @@ index 35a6e0612..ce4582a67 100644
 -        self.lexer.token("}");
 -    }
 -
-     /// Parse a plain-struct match arm (field bindings + body).
-     /// Returns the arm and whether it is exhaustive.
-     fn parse_match_struct_arm(
-@@ -7921,22 +7860,6 @@ impl Parser {
+     /// `@FR-P-Cap` at a match arm's ROOT: `whole: Rect { w, h }`, and `other: _` for the
+     /// catch-all.  The name binds the matched subject — the same value whichever arm runs, so
+     /// the binding is hoisted ahead of the arm chain with the others.  Like every pattern
+@@ -8143,22 +8082,6 @@ impl Parser {
          {
              return Some((self.data.def(*d_nr).parent(), true));
          }
@@ -93,7 +93,7 @@ index 35a6e0612..ce4582a67 100644
          let Type::Enum(e_nr, is_struct, _) = tp.peel_link() else {
              return None;
          };
-@@ -10260,27 +10183,6 @@ impl Parser {
+@@ -10516,27 +10439,6 @@ impl Parser {
              }
              return Some(cond);
          }

@@ -1,8 +1,8 @@
 diff --git a/src/parser/mod.rs b/src/parser/mod.rs
-index 633aafbb0..3afb4c19c 100644
+index 65b5159c4..8716f87ef 100644
 --- a/src/parser/mod.rs
 +++ b/src/parser/mod.rs
-@@ -14151,86 +14151,6 @@ impl Parser {
+@@ -14239,86 +14239,6 @@ impl Parser {
      /// leaves dangling DbRefs — silent cross-object corruption once
      /// the store slot is reused.  The three escape sinks reject on
      /// this predicate; locals and downward argument passing stay free.
@@ -89,7 +89,7 @@ index 633aafbb0..3afb4c19c 100644
      /// loft#1880 — the visible heap parameters an instance's every return leaf is a VIEW into
      /// (`v[0]`, `w.h`), with self calls read by induction
      /// ([`Self::every_return_leaf_views_one_of`]), or `None`.  A leaf that is a bare parameter
-@@ -15720,10 +15640,29 @@ impl Parser {
+@@ -15829,10 +15749,29 @@ impl Parser {
          // transparent to it (nullability is read separately via `attr_nullable`).
          let tp = tp.base().clone();
          let nm = self.data.attr_name(d_nr, f_nr);
@@ -124,7 +124,7 @@ index 633aafbb0..3afb4c19c 100644
              .database
              .position(self.data.def(d_nr).known_type(), &nm);
 diff --git a/src/parser/operators.rs b/src/parser/operators.rs
-index 4b62e154d..2c8043a45 100644
+index 1bfb5f884..909100d94 100644
 --- a/src/parser/operators.rs
 +++ b/src/parser/operators.rs
 @@ -1202,10 +1202,10 @@ impl Parser {
@@ -143,7 +143,7 @@ index 4b62e154d..2c8043a45 100644
  
      /// `@FR-Op-Back` (@PLN182) — the form an `operator` definition backs, the symbol it is
 diff --git a/src/scopes/capture_adoption.rs b/src/scopes/capture_adoption.rs
-index 7446fc08a..fc376240b 100644
+index 8a93b2c22..55103838f 100644
 --- a/src/scopes/capture_adoption.rs
 +++ b/src/scopes/capture_adoption.rs
 @@ -103,6 +103,7 @@ fn cascade_before_record_frees(data: &mut Data) {
@@ -238,10 +238,10 @@ index 7446fc08a..fc376240b 100644
          }
          let Type::Reference(record, _) = function.tp(v) else {
 diff --git a/src/scopes/capture_builds.rs b/src/scopes/capture_builds.rs
-index 7c5ddf13a..d0dd79078 100644
+index 1ff13ecff..1c3c53a45 100644
 --- a/src/scopes/capture_builds.rs
 +++ b/src/scopes/capture_builds.rs
-@@ -800,7 +800,7 @@ pub(crate) fn backs_an_adopted_capture(
+@@ -826,7 +826,7 @@ pub(crate) fn backs_an_adopted_capture(
  fn capture_is_adopted(data: &Data, function: &Function, builds: &CaptureBuilds, c: u16) -> bool {
      let name = function.name(c);
      for w in 0..function.next_var() {
@@ -250,7 +250,7 @@ index 7c5ddf13a..d0dd79078 100644
              continue;
          }
          let Type::Reference(record, _) = function.tp(w) else {
-@@ -1061,11 +1061,9 @@ pub(super) fn free_unless_record_built(
+@@ -1091,11 +1091,9 @@ pub(super) fn free_unless_record_built(
  }
  
  /// Is local `w` a closure record this frame BUILDS (`___clos_N`, `emit_lambda_code`)?  The
@@ -259,10 +259,17 @@ index 7c5ddf13a..d0dd79078 100644
 -/// its cascade, and a displaced field record (`___oldrec_N`, loft#1877), bound to run its
 -/// cascade — none is a record a capture lives in, and read as one it decided the record type
 -/// never adopts its capture, which strips that release for every record of the type.
--pub(super) fn is_record_local(function: &Function, w: u16) -> bool {
 +/// other locals of a closure-record type are not: the lambda's own `__closure` parameter, and
 +/// a rebuild's snapshot (`__disp_N`, `Scopes::displaced_drop`), which copies a record to run
 +/// its cascade and is never the record a capture lives in.
+ /// The name of the local closure record `record`'s capture attribute `a` holds: the attribute's
+ /// own name, or — for the `<name>__clos` half of a captured fn-ref (loft#1869) — the fn-ref
+ /// local `<name>`, through which the frame holds that closure's record.
+@@ -1123,6 +1121,6 @@ fn filled_capture(data: &Data, fill: Option<&Value>) -> Option<(u16, bool)> {
+     }
+ }
+ 
+-pub(super) fn is_record_local(function: &Function, w: u16) -> bool {
 +fn is_record_local(function: &Function, w: u16) -> bool {
      !function.is_argument(w) && function.name(w).starts_with("___clos_")
  }

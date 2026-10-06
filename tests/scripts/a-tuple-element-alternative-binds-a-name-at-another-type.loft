@@ -12,7 +12,9 @@
 //   WITNESS: *"expected ',' between tuple pattern elements"* in place of the capture message.
 //   HOLDS: the program is refused either way; only WHICH refusal moves.
 // @falsified-by: tests/falsified/a-tuple-element-alternative-binds-a-name-at-another-type.patch — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 1/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 1/1 (the suite's verdict, not a count of matches)
-//   Step 4 reverted whole (the durable receipt).
+//   Step 4 reverted in its current form (the durable receipt): `parse_field_sub_pattern`
+//   skips its alternation branch for a tuple element (a `TupleGet` value), keeping a struct
+//   field's (step 5).
 //   CHANNEL: the expected diagnostic, on BOTH backends.
 //   ARMED: nothing.
 //   WITNESS: as above.

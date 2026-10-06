@@ -1,8 +1,8 @@
-diff --git b/src/parser/control.rs a/src/parser/control.rs
-index 766e8530e..07f5c1624 100644
---- b/src/parser/control.rs
-+++ a/src/parser/control.rs
-@@ -6387,34 +6387,18 @@ impl Parser {
+diff --git a/src/parser/control.rs b/src/parser/control.rs
+index 07f65a620..272641fcb 100644
+--- a/src/parser/control.rs
++++ b/src/parser/control.rs
+@@ -6390,34 +6390,18 @@ impl Parser {
                          self.data.def(e_nr).name()
                      );
                  }
@@ -40,8 +40,8 @@ index 766e8530e..07f5c1624 100644
                  continue;
              }
  
-@@ -7389,168 +7373,91 @@ impl Parser {
-         self.lexer.token("}");
+@@ -7439,176 +7423,91 @@ impl Parser {
+         }
      }
  
 -    /// The `{ field, field: pattern, … }` of a plain-struct pattern: a bare field binds a new
@@ -105,7 +105,8 @@ index 766e8530e..07f5c1624 100644
 +                        } else {
 +                            let v = self.pattern_binding(&field_name, &field_type);
                              self.vars.defined(v);
--                            let bound = self.pattern_field_value(e_nr, attr_idx, subject_val.clone());
+                             let bound =
+                                 self.pattern_field_value(e_nr, attr_idx, subject_val.clone());
 -                            binds.push(v_set(v, bound));
 -                        } else if let Some(cond) = self.parse_field_sub_pattern(
 -                            field_val,
@@ -115,8 +116,6 @@ index 766e8530e..07f5c1624 100644
 -                            &mut name_aliases,
 -                        ) {
 -                            conds.push(cond);
-+                            let bound =
-+                                self.pattern_field_value(e_nr, attr_idx, subject_val.clone());
 +                            hoisted_bindings.push(v_set(v, bound));
                          }
 -                        // The names a sub-pattern bound belong to this arm; its end
@@ -172,7 +171,12 @@ index 766e8530e..07f5c1624 100644
 -        let mut field_conditions: Vec<Value> = Vec::new();
 -        let first_names = self.pattern_binds_pending.len();
 -        let mut first_binds: Vec<Value> = Vec::new();
--        self.parse_struct_pattern_fields(e_nr, subject_val, &mut first_binds, &mut field_conditions);
+-        self.parse_struct_pattern_fields(
+-            e_nr,
+-            subject_val,
+-            &mut first_binds,
+-            &mut field_conditions,
+-        );
 -        let struct_name = self.data.def(e_nr).name().to_string();
 -        let alternatives = self.parse_pattern_alternatives(
 -            first_names,
@@ -220,17 +224,19 @@ index 766e8530e..07f5c1624 100644
 -        }
 -        // Several patterns write the same slots, so none is hoisted: each pattern's arm runs
 -        // its OWN bindings, then its literal-field test, then a clone of the body.
--        let pattern_arm = |binds: Vec<Value>, guard: Option<Value>| match guard {
--            // `cond: true` takes the chain's tested path, which runs `bindings` before the guard.
--            Some(g) => EnumArm {
--                discs: vec![],
--                code: v_block(vec![arm_code.clone()], arm_type.clone(), "struct_match"),
--                tp: result_type.clone(),
--                guard: Some(g),
--                bindings: binds,
--                cond: Some(Value::Boolean(true)),
--            },
--            None => {
+-        let pattern_arm = |binds: Vec<Value>, guard: Option<Value>| {
+-            if let Some(g) = guard {
+-                // `cond: true` takes the chain's tested path, which runs `bindings` before the
+-                // guard.
+-                EnumArm {
+-                    discs: vec![],
+-                    code: v_block(vec![arm_code.clone()], arm_type.clone(), "struct_match"),
+-                    tp: result_type.clone(),
+-                    guard: Some(g),
+-                    bindings: binds,
+-                    cond: Some(Value::Boolean(true)),
+-                }
+-            } else {
 -                let mut stmts = binds;
 -                stmts.push(arm_code.clone());
 -                EnumArm {
@@ -272,9 +278,9 @@ index 766e8530e..07f5c1624 100644
      }
  
      /// The element reads a tuple VALUE read takes over a `&(…)` binding, with the element
-@@ -12254,7 +12161,13 @@ impl Parser {
-     /// Arms are separated by `,` or `;` (optional after the last arm).
-     #[expect(clippy::too_many_lines, reason = "inherited")]
+@@ -12314,7 +12213,13 @@ impl Parser {
+     }
+ 
      /// `@FR-P-Multi` over a tuple subject — the further tuple patterns of one arm, after `|`
 -    /// or `,` (`(Circle { r }, Square { s }) | (Square { s }, Circle { r }) => r * s`).
 +    /// or `,` (`(Circle { r }, Square { s }) | (Square { s }, Circle { r }) => r * s`).  Each
@@ -287,7 +293,7 @@ index 766e8530e..07f5c1624 100644
      fn parse_tuple_alternatives(
          &mut self,
          tmp: u16,
-@@ -12262,39 +12175,6 @@ impl Parser {
+@@ -12322,39 +12227,6 @@ impl Parser {
          first_names: usize,
          first_bindings: &mut Vec<Value>,
          bad_pattern: &mut bool,
@@ -327,7 +333,7 @@ index 766e8530e..07f5c1624 100644
      ) -> Vec<(Vec<Value>, Vec<Value>)> {
          let mut alternatives: Vec<(Vec<Value>, Vec<Value>, HashSet<String>)> = Vec::new();
          // name → (shared slot, its type); the first pattern's names, then each new one.
-@@ -12312,14 +12192,16 @@ impl Parser {
+@@ -12372,14 +12244,16 @@ impl Parser {
              let at = self.lexer.link();
              self.lexer.has_token("|");
              self.lexer.has_token(",");

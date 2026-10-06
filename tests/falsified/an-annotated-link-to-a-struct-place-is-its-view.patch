@@ -1,7 +1,7 @@
-diff --git b/src/data.rs a/src/data.rs
+diff --git a/src/data.rs b/src/data.rs
 index 00c0a8533..cf0f5b4bc 100644
---- b/src/data.rs
-+++ a/src/data.rs
+--- a/src/data.rs
++++ b/src/data.rs
 @@ -6315,8 +6315,30 @@ pub fn v_if(test: Value, t: Value, f: Value) -> Value {
      Value::If(Box::new(test), Box::new(t), Box::new(f))
  }
@@ -63,16 +63,16 @@ index 00c0a8533..cf0f5b4bc 100644
  /// `&(boolean, boolean)` was admitted — with an identical 1-byte layout
  /// (`element_stack_size`: `Boolean | Enum(_, false, _) => 1`).  Two spellings of one list
  /// disagreeing is the shape loft#1006 was.
-diff --git b/src/generation/calls.rs a/src/generation/calls.rs
-index 7c8eb6e5b..a7ea4cc56 100644
---- b/src/generation/calls.rs
-+++ a/src/generation/calls.rs
+diff --git a/src/generation/calls.rs b/src/generation/calls.rs
+index 45742e239..a7ea4cc56 100644
+--- a/src/generation/calls.rs
++++ b/src/generation/calls.rs
 @@ -502,12 +502,7 @@ impl Output<'_> {
                  // An argument RefVar is already &mut DbRef — pass it
                  // directly instead of dereferencing with *var_name.
                  write!(w, "var_{name}")?;
 -            } else if crate::generation::is_raw_tuple_link(caller_vars, *nr)
--                || matches!(caller_vars.tp(*nr), Type::RefVar(inner)
+-                || matches!(caller_vars.tp(*nr).base(), Type::RefVar(inner)
 -                    if matches!(inner.base(), Type::Reference(..) | Type::Enum(_, true, _)))
 -            {
 -                // A `&`-bound RECORD local (`b: &P = a`, and every `&(…)` since loft#1883) is
@@ -81,11 +81,11 @@ index 7c8eb6e5b..a7ea4cc56 100644
                  // A `&`-bound tuple LOCAL holds a raw `*mut (…)`, so `&mut var_b` would
                  // hand the callee a reference to the POINTER.  Re-borrow through it to
                  // give the `&(…)` parameter the `&mut (…)` it declares — the caller's
-diff --git b/src/parser/control.rs a/src/parser/control.rs
-index 07e5e8405..766e8530e 100644
---- b/src/parser/control.rs
-+++ a/src/parser/control.rs
-@@ -19873,17 +19873,7 @@ impl Parser {
+diff --git a/src/parser/control.rs b/src/parser/control.rs
+index 07f65a620..39a12f425 100644
+--- a/src/parser/control.rs
++++ b/src/parser/control.rs
+@@ -19952,17 +19952,7 @@ impl Parser {
              // (in `process_call_args`) points the caret at the argument, not at
              // the cursor drifted to `)` / `,`.
              arg_pos.push(self.lexer.peek_pos().clone());
@@ -94,7 +94,7 @@ index 07e5e8405..766e8530e 100644
 -            let prev_place = self.tuple_place_wanted;
 -            self.tuple_place_wanted = fn_def_nr.is_some_and(|d| {
 -                arg_idx < self.data.attributes(d)
--                    && matches!(self.data.attr_type(d, arg_idx), Type::RefVar(inner)
+-                    && matches!(self.data.attr_type(d, arg_idx).base(), Type::RefVar(inner)
 -                        if matches!(inner.base(), Type::Reference(t, _)
 -                            if self.data.def(*t).name().starts_with("__tuple<")))
 -            });
@@ -103,7 +103,7 @@ index 07e5e8405..766e8530e 100644
              // A member of a call result handed on as an argument is read where it lives
              // (`call_member_view`): the argument binds without copying, so the copy the terminal
              // projection made would be a structure nobody wrote.
-@@ -19908,24 +19898,6 @@ impl Parser {
+@@ -19987,24 +19977,6 @@ impl Parser {
              }
          }
          self.lexer.token(")");
@@ -128,11 +128,11 @@ index 07e5e8405..766e8530e 100644
          let ret = self.dispatch_call(
              val,
              source,
-diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
-index d0e45a292..6af879b08 100644
---- b/src/parser/expressions.rs
-+++ a/src/parser/expressions.rs
-@@ -4364,7 +4364,8 @@ use a separate collection or add after the loop"
+diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
+index 17c4d6ac3..c7613fa22 100644
+--- a/src/parser/expressions.rs
++++ b/src/parser/expressions.rs
+@@ -4426,7 +4426,8 @@ use a separate collection or add after the loop"
              && let Value::Var(lhs) = to
              && matches!(code.unspan(), Value::Tuple(_))
              && let Type::Tuple(ref types) = s_type
@@ -142,7 +142,7 @@ index d0e45a292..6af879b08 100644
              && self
                  .ref_linked_tuple_locals
                  .contains(&(self.context, self.vars.name(*lhs).to_string()))
-@@ -4390,19 +4391,13 @@ use a separate collection or add after the loop"
+@@ -4452,19 +4453,13 @@ use a separate collection or add after the loop"
                  _ => None,
              };
              let got = types.clone();
@@ -166,7 +166,7 @@ index d0e45a292..6af879b08 100644
                  {
                      want
                  }
-@@ -4635,7 +4630,8 @@ use a separate collection or add after the loop"
+@@ -4697,7 +4692,8 @@ use a separate collection or add after the loop"
              // record; say so for pass 2's bind (see `ref_linked_tuple_locals`).
              if let Some(src) = stack_src
                  && let Type::Tuple(elems) = self.vars.tp(src)
@@ -176,7 +176,7 @@ index d0e45a292..6af879b08 100644
              {
                  let name = self.vars.name(src).to_string();
                  self.ref_linked_tuple_locals.insert((self.context, name));
-@@ -4744,7 +4740,8 @@ use a separate collection or add after the loop"
+@@ -4806,7 +4802,8 @@ use a separate collection or add after the loop"
                  // was recorded a moment ago), so derive the link's type from the record the
                  // bind WILL build, or an annotated `c: &(…) = a` disagrees with itself.
                  if let Type::Tuple(elems) = &inner
@@ -186,7 +186,7 @@ index d0e45a292..6af879b08 100644
                  {
                      let elems = elems.clone();
                      let d = self.data.tuple_def(&mut self.lexer, &elems);
-@@ -4818,51 +4815,18 @@ use a separate collection or add after the loop"
+@@ -4880,51 +4877,18 @@ use a separate collection or add after the loop"
                  s_type = Type::RefVar(Box::new(s_type));
              }
          }
@@ -249,7 +249,7 @@ index d0e45a292..6af879b08 100644
              && matches!(
                  s_type.base(),
                  Type::Tuple(_) | Type::RefVar(_) if matches!(
-@@ -4871,14 +4835,14 @@ use a separate collection or add after the loop"
+@@ -4933,14 +4897,14 @@ use a separate collection or add after the loop"
                  )
              )
          {
@@ -258,7 +258,7 @@ index d0e45a292..6af879b08 100644
 -            }
 -            // The refusal is the one diagnostic: an annotated link keeps its declared type, so
 -            // the bind is not reported a second time as a retype.
--            if var_nr != u16::MAX && matches!(self.vars.tp(var_nr), Type::RefVar(_)) {
+-            if var_nr != u16::MAX && matches!(self.vars.tp(var_nr).base(), Type::RefVar(_)) {
 -                s_type = self.vars.tp(var_nr).clone();
 -            }
 +            diagnostic!(
@@ -272,7 +272,7 @@ index d0e45a292..6af879b08 100644
          }
          // @PLN130 F9 step 2 — the `&` reached no lowering, so record it on the VARIABLE:
          // the IR is about to lose it entirely.  A marker rather than `Type::RefVar` on
-@@ -5652,12 +5616,10 @@ use a separate collection or add after the loop"
+@@ -5714,12 +5678,10 @@ use a separate collection or add after the loop"
          // tuples.md T-Ref — a linked tuple local IS the record now; pass 1 typed it as the
          // stack tuple, and unboxing the record back to that would undo the representation the
          // link needs.  `f_type` is pass 1's answer for it.
@@ -289,7 +289,7 @@ index d0e45a292..6af879b08 100644
          if op == "="
              && !keeps_record
              && self.unboxes_stored_tuple(&s_type, f_type)
-@@ -8293,17 +8255,7 @@ use a separate collection or add after the loop"
+@@ -8355,17 +8317,7 @@ use a separate collection or add after the loop"
                      v_nr = self.rebind_after_block(v_nr, &tp);
                      *code = Value::Var(v_nr);
                  }
@@ -308,7 +308,7 @@ index d0e45a292..6af879b08 100644
                  // (I-Join) — an EXPLICIT `: Type` annotation pins the variable's type, so
                  // it stays constrained (a wider write is a narrowing error).  An inferred
                  // local (no annotation) widens to the join instead (see parse_assign_op).
-@@ -10004,20 +9956,6 @@ use a separate collection or add after the loop"
+@@ -10074,20 +10026,6 @@ use a separate collection or add after the loop"
          }
      }
  
@@ -329,22 +329,22 @@ index d0e45a292..6af879b08 100644
      /// The refusal for a tuple member [`Parser::linkable_tuple_member`] declines, at a `&` bind
      /// and at a `&` argument alike.  `(B-Ref-Reshape)`: never downgraded to a copy that would
      /// drop the write.
-@@ -10480,11 +10418,6 @@ use a separate collection or add after the loop"
+@@ -10550,11 +10488,6 @@ use a separate collection or add after the loop"
          let Type::RefVar(inner) = f_type else {
              return false;
          };
 -        // The bind that declares a link to a heap PLACE made the variable the place's VIEW
 -        // (`b: &P = h.rec` IS `b = &h.rec`); that is the link, not a write through one.
--        if var_nr != u16::MAX && !matches!(self.vars.tp(var_nr), Type::RefVar(_)) {
+-        if var_nr != u16::MAX && !matches!(self.vars.tp(var_nr).base(), Type::RefVar(_)) {
 -            return false;
 -        }
          // A struct-ENUM is the same record shape one former over — `Type::Enum(_, true, _)` is
          // exactly what the write-back emitter's own allow-list names beside `Type::Reference`
          // — and it reached the identical defect: `x = o` left the caller aliasing the source
-diff --git b/src/parser/fields.rs a/src/parser/fields.rs
+diff --git a/src/parser/fields.rs b/src/parser/fields.rs
 index 38b6618a9..b4392f7e6 100644
---- b/src/parser/fields.rs
-+++ a/src/parser/fields.rs
+--- a/src/parser/fields.rs
++++ b/src/parser/fields.rs
 @@ -2515,12 +2515,6 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
          if b.name == Self::TV_TUPLE_READ && b.operators.len() == 1 {
              return Some(b.operators[0].clone());
@@ -358,10 +358,10 @@ index 38b6618a9..b4392f7e6 100644
          if b.name != "tuple_unbox" {
              return None;
          }
-diff --git b/src/parser/mod.rs a/src/parser/mod.rs
-index b1bb90606..633aafbb0 100644
---- b/src/parser/mod.rs
-+++ a/src/parser/mod.rs
+diff --git a/src/parser/mod.rs b/src/parser/mod.rs
+index 65b5159c4..c44acab43 100644
+--- a/src/parser/mod.rs
++++ b/src/parser/mod.rs
 @@ -897,13 +897,6 @@ pub struct Parser {
      /// T-Ref); every other tuple local keeps its stack form.  Recorded in pass 1 at the link
      /// and consulted at the bind in pass 2, the same shape as `adopted_ret_defs`.
@@ -376,7 +376,7 @@ index b1bb90606..633aafbb0 100644
      /// loft#1695 — `(function, root variable)` of every COLLECTION loop source a body
      /// replaced (`for p in d.rs { d = … }`), recorded on pass 1 so pass 2 walks a copy taken
      /// at loop start (`@FR-I-For`: the source is evaluated once).  Keyed by the root's NAME,
-@@ -1813,8 +1806,6 @@ impl Parser {
+@@ -1822,8 +1815,6 @@ impl Parser {
              infer_ret_defs: std::collections::HashSet::new(),
              adopted_ret_defs: std::collections::HashSet::new(),
              ref_linked_tuple_locals: std::collections::HashSet::new(),
@@ -385,7 +385,7 @@ index b1bb90606..633aafbb0 100644
              loop_sources_replaced: std::collections::HashSet::new(),
              pattern_binds_pending: Vec::new(),
              pattern_bind_frames: Vec::new(),
-@@ -2869,16 +2860,19 @@ impl Parser {
+@@ -2881,16 +2872,19 @@ impl Parser {
      /// here rather than repeating the check beside it: a second copy of the admitted list
      /// is the shape loft#1006 already was.
      ///
@@ -412,7 +412,7 @@ index b1bb90606..633aafbb0 100644
          {
              let elems = elems.clone();
              let d = self.data.tuple_def(&mut self.lexer, &elems);
-@@ -2904,37 +2898,6 @@ impl Parser {
+@@ -2916,37 +2910,6 @@ impl Parser {
          Type::RefVar(Box::new(tp))
      }
  
@@ -433,7 +433,7 @@ index b1bb90606..633aafbb0 100644
 -            let Some(param) = self.data.def(d).attributes().get(index) else {
 -                continue;
 -            };
--            let record_param = match &param.typedef {
+-            let record_param = match param.typedef.base() {
 -                Type::RefVar(inner) => match inner.base() {
 -                    Type::Reference(t, _) => self.data.def(*t).name().starts_with("__tuple<"),
 -                    Type::Tuple(elems) => crate::data::ref_tuple_is_record(elems),
@@ -450,7 +450,7 @@ index b1bb90606..633aafbb0 100644
      fn refuse_forward_tuple_returns(&mut self, adopted: &[(u32, Type)]) {
          if adopted.is_empty() {
              return;
-@@ -2991,7 +2954,7 @@ impl Parser {
+@@ -3003,7 +2966,7 @@ impl Parser {
                  let Type::Tuple(elems) = &**inner else {
                      return None;
                  };
@@ -459,7 +459,7 @@ index b1bb90606..633aafbb0 100644
                      return None;
                  }
                  // `resolve_adopted_stubs` has already pointed the stub at the real type, so a
-@@ -3083,7 +3046,6 @@ impl Parser {
+@@ -3095,7 +3058,6 @@ impl Parser {
          let adopted = self.data.resolve_adopted_stubs(&mut self.lexer);
          self.refuse_forward_tuple_returns(&adopted);
          self.refuse_forward_ref_tuple_params(&adopted);
@@ -467,7 +467,7 @@ index b1bb90606..633aafbb0 100644
          // @PLN125 — the same class, one step earlier in the chain: a bound-method stub's
          // hidden parameters are decided from the INTERFACE method's return type, which on
          // pass 1 can still be an unresolved forward reference.  Re-derive here, before the
-@@ -6529,30 +6491,8 @@ impl Parser {
+@@ -6541,30 +6503,8 @@ impl Parser {
              && let Type::Reference(d, _) = &**ref_tp
              && self.data.def(*d).name().starts_with("__tuple<")
              && let Type::Tuple(elems) = is_type
@@ -499,7 +499,7 @@ index b1bb90606..633aafbb0 100644
              if let Value::Var(v) = code.unspan() {
                  self.ref_linked_tuple_locals
                      .insert((self.context, self.vars.name(*v).to_string()));
-@@ -8692,9 +8632,6 @@ impl Parser {
+@@ -8704,9 +8644,6 @@ impl Parser {
      /// substitution cannot mint the unboxing temp (it has no frame), so it stamps the read and
      /// the monomorph lowers it through `unbox_tuple_from_dbref`.
      pub(crate) const TV_TUPLE_READ: &'static str = "tvtupleread";
@@ -509,39 +509,49 @@ index b1bb90606..633aafbb0 100644
      /// The value [`Parser::null_value`] answers for a type still a TYPE VARIABLE — a `match`
      /// join's fallback, a branch with nothing to yield — asked again of the concrete type by
      /// each monomorph.  Apart from [`Self::TV_NULL_BLOCK`] because every type has this one:
-@@ -14619,17 +14556,6 @@ impl Parser {
-                 // shape `Type::Tuple(...)` consumers expect.
-                 let elems_vec = elems.clone();
-                 let tuple_d_nr = self.data.tuple_def(&mut self.lexer, &elems_vec);
--                // `@FR-T-Ref-Src` — while a `&` link parses, the field is read WITH its address:
--                // a `tuple_field_place` block holding the field's `OpGetField` beside the
--                // member-wise read, which `stored_tuple_dest` peels for the link (loft#1883).
--                // The same value, and no work-ref, so both passes allocate alike.
--                let place = (self.amp_pending || self.tuple_place_wanted)
--                    && tuple_d_nr != u32::MAX
--                    && crate::data::ref_tuple_is_record(&elems_vec);
--                let field = place.then(|| {
--                    let kt = i32::from(self.data.def(tuple_d_nr).known_type());
--                    self.cl("OpGetField", &[code.clone(), p.clone(), Value::Int(kt)])
--                });
-                 let offsets: Vec<u16> = crate::data::stored_tuple_offsets_for_def(
-                     &self.data,
-                     &self.database,
-@@ -14661,13 +14587,6 @@ impl Parser {
-                     let elem_val = self.get_val(et, nullable, elem_pos, code.clone(), u32::MAX);
-                     tuple_elems.push(elem_val);
-                 }
--                if let Some(field) = field {
--                    return crate::data::v_block(
--                        vec![Value::Drop(Box::new(field)), Value::Tuple(tuple_elems)],
--                        tp.clone(),
--                        Self::TUPLE_FIELD_PLACE,
--                    );
--                }
-                 Value::Tuple(tuple_elems)
-             }
-             // Pass-1 deferral: reading a field whose declared type is still
-@@ -17475,8 +17394,6 @@ impl Parser {
+@@ -14511,8 +14448,7 @@ impl Parser {
+ 
+     /// A struct field of tuple type, read member by member at the synthetic `__tuple<…>`
+     /// record's own offsets — [`Self::get_val`]'s tuple arm.
+-    fn get_tuple_field(&mut self, tp: &Type, elems: &[Type], pos: u32, code: &Value) -> Value {
+-        let p = Value::Int(pos as i32);
++    fn get_tuple_field(&mut self, _tp: &Type, elems: &[Type], pos: u32, code: &Value) -> Value {
+         // Plan-06 phase 4d: tuple struct field read.  Each
+         // element is read from `pos + element_stack_offsets[i]`
+         // using the same OpGet* opcodes that ordinary struct
+@@ -14520,17 +14456,6 @@ impl Parser {
+         // shape `Type::Tuple(...)` consumers expect.
+         let elems_vec = elems.to_vec();
+         let tuple_d_nr = self.data.tuple_def(&mut self.lexer, &elems_vec);
+-        // `@FR-T-Ref-Src` — while a `&` link parses, the field is read WITH its address:
+-        // a `tuple_field_place` block holding the field's `OpGetField` beside the
+-        // member-wise read, which `stored_tuple_dest` peels for the link (loft#1883).
+-        // The same value, and no work-ref, so both passes allocate alike.
+-        let place = (self.amp_pending || self.tuple_place_wanted)
+-            && tuple_d_nr != u32::MAX
+-            && crate::data::ref_tuple_is_record(&elems_vec);
+-        let field = place.then(|| {
+-            let kt = i32::from(self.data.def(tuple_d_nr).known_type());
+-            self.cl("OpGetField", &[code.clone(), p.clone(), Value::Int(kt)])
+-        });
+         let offsets: Vec<u16> = crate::data::stored_tuple_offsets_for_def(
+             &self.data,
+             &self.database,
+@@ -14560,13 +14485,6 @@ impl Parser {
+             let elem_val = self.get_val(et, nullable, elem_pos, code.clone(), u32::MAX);
+             tuple_elems.push(elem_val);
+         }
+-        if let Some(field) = field {
+-            return crate::data::v_block(
+-                vec![Value::Drop(Box::new(field)), Value::Tuple(tuple_elems)],
+-                tp.clone(),
+-                Self::TUPLE_FIELD_PLACE,
+-            );
+-        }
+         Value::Tuple(tuple_elems)
+     }
+ 
+@@ -17503,8 +17421,6 @@ impl Parser {
                  && !matches!(&actual_code, Value::Var(_))
                  && !scalar_place
                  && !Self::is_addressable(&actual_code, &self.data)
@@ -550,7 +560,7 @@ index b1bb90606..633aafbb0 100644
              {
                  // Defer on pass 1 (#375): a field access on a struct whose
                  // layout is not yet finalised — because one of its fields is a
-@@ -17486,15 +17403,7 @@ impl Parser {
+@@ -17514,15 +17430,7 @@ impl Parser {
                  // complete and the access lowers to `OpGetField` (addressable),
                  // so the check passes.  A genuine literal-to-`&` is still an
                  // error: it is non-addressable on pass 2 too, where this fires.
@@ -567,7 +577,7 @@ index b1bb90606..633aafbb0 100644
                      diagnostic!(
                          self.lexer,
                          Level::Error,
-@@ -22028,12 +21937,6 @@ impl Parser {
+@@ -22056,12 +21964,6 @@ impl Parser {
      /// allowlist (place-GETTERS only) keeps temporary-builders like `OpGetTextSub`
      /// and every arithmetic / `n_*` op out.
      fn is_amp_place(val: &Value, data: &Data) -> bool {
@@ -580,10 +590,10 @@ index b1bb90606..633aafbb0 100644
          match val.unspan() {
              // A tuple local's member (`@FR-B-Ref-Lvalue`): the bind lowering decides which
              // member types it can link, and refuses the rest by name.
-diff --git b/src/parser/operators.rs a/src/parser/operators.rs
+diff --git a/src/parser/operators.rs b/src/parser/operators.rs
 index 1bfb5f884..4b62e154d 100644
---- b/src/parser/operators.rs
-+++ a/src/parser/operators.rs
+--- a/src/parser/operators.rs
++++ b/src/parser/operators.rs
 @@ -1891,11 +1891,6 @@ impl Parser {
                               (`p = &x` takes the target's type), or write `&{got}`"
                          );
@@ -605,10 +615,10 @@ index 1bfb5f884..4b62e154d 100644
                  //
                  // A member that is ITSELF a tuple cannot be reached by recursing on the
                  // value: `TupleGet` addresses a VAR and an index, so `x.0.0` has no
-diff --git b/src/state/codegen.rs a/src/state/codegen.rs
+diff --git a/src/state/codegen.rs b/src/state/codegen.rs
 index d4e32e347..a5745778b 100644
---- b/src/state/codegen.rs
-+++ a/src/state/codegen.rs
+--- a/src/state/codegen.rs
++++ b/src/state/codegen.rs
 @@ -881,9 +881,10 @@ impl State {
                          Type::Character => stack.add_op("OpGetCharacter", self),
                          Type::Boolean => stack.add_op("OpGetBoolean", self),

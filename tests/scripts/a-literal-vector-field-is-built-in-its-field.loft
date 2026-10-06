@@ -21,10 +21,12 @@
 //
 // @falsified-at: none — a rewrite with no earlier build to catch; the planted defect is recorded
 //   with `@falsified-by:` below.
-// @falsified-by: tests/falsified/a-literal-vector-field-is-built-in-its-field.patch — the
-//   admission no longer declines a callee that mints into its buffer.
-//   CHANNEL: an assertion or a store panic, on BOTH backends.
-//   WITNESS: c2 — the projection's minted record lands where the field does not name it.
+// @falsified-by: tests/falsified/a-literal-vector-field-is-built-in-its-field.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   The admission (`callee_fills_its_buffer`) no longer declines a callee that mints into
+//   its buffer.
+//   CHANNEL: an assertion, on BOTH backends.
+//   WITNESS: c2 — the projection's minted record lands where the field does not name it:
+//   on the interpreter `a.v` answers `[]` where the file says `[7,8,9]`.
 //   HOLDS: LOFT_NO_BUFFER_IS_PLACE=1 green on both (the copy).
 //   The runtime half is falsified the same way by hand: `mint_at_place` answering false (the
 //   literal's mint clears the store the place lives in) turns c2l red on both backends.

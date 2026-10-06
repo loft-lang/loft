@@ -1,10 +1,10 @@
 diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
-index 7a609d692..3ae5a98d7 100644
+index 17c4d6ac3..970eab105 100644
 --- a/src/parser/expressions.rs
 +++ b/src/parser/expressions.rs
-@@ -3080,7 +3080,7 @@ use a separate collection or add after the loop"
-         let mint = self.data.def_nr("OpDatabase");
+@@ -3120,7 +3120,7 @@ use a separate collection or add after the loop"
          let cvars = &callee.variables;
+         let mint = self.data.def_nr("OpDatabase");
          let database = &self.database;
 -        if callee.code.any_node(&mut |n| {
 +        if false && callee.code.any_node(&mut |n| {

@@ -1,8 +1,8 @@
 diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
-index d0e45a292..e7ee3cddb 100644
+index 17c4d6ac3..052a6a096 100644
 --- a/src/parser/expressions.rs
 +++ b/src/parser/expressions.rs
-@@ -8055,8 +8055,7 @@ use a separate collection or add after the loop"
+@@ -8117,8 +8117,7 @@ use a separate collection or add after the loop"
                  || crate::data::element_stack_offsets(elems)[i] as u32,
                  |offs| u32::from(offs[i]),
              );
@@ -40,20 +40,20 @@ index 38b6618a9..e0e157ff9 100644
  
      /// [`Self::stored_tuple_member_place`] for an element of a tuple of a TYPE VARIABLE
 diff --git a/src/parser/mod.rs b/src/parser/mod.rs
-index b1bb90606..fd5e0d982 100644
+index 65b5159c4..b250fd757 100644
 --- a/src/parser/mod.rs
 +++ b/src/parser/mod.rs
-@@ -14657,8 +14657,7 @@ impl Parser {
-                     // in the caller's, whose inferred deps would pick the `OpGetDbRef` arm
-                     // against bytes the def laid out inline.
-                     let et = &crate::data::Data::tuple_member_stored(et);
--                    let nullable = matches!(et, Type::Optional(_));
--                    let elem_val = self.get_val(et, nullable, elem_pos, code.clone(), u32::MAX);
-+                    let elem_val = self.get_val(et, false, elem_pos, code.clone(), u32::MAX);
-                     tuple_elems.push(elem_val);
-                 }
-                 if let Some(field) = field {
-@@ -15138,30 +15137,7 @@ impl Parser {
+@@ -14556,8 +14556,7 @@ impl Parser {
+             // in the caller's, whose inferred deps would pick the `OpGetDbRef` arm
+             // against bytes the def laid out inline.
+             let et = &crate::data::Data::tuple_member_stored(et);
+-            let nullable = matches!(et, Type::Optional(_));
+-            let elem_val = self.get_val(et, nullable, elem_pos, code.clone(), u32::MAX);
++            let elem_val = self.get_val(et, false, elem_pos, code.clone(), u32::MAX);
+             tuple_elems.push(elem_val);
+         }
+         if let Some(field) = field {
+@@ -15166,30 +15165,7 @@ impl Parser {
          // OpSet* (sentinel storage); without this it fell to `_` and was REJECTED with
          // "Tuple struct field cannot contain element of type integer?".
          let single = match elem_tp.base() {

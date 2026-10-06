@@ -16,7 +16,9 @@
 //   WITNESS: exit 1 with the parse error at the element's `|`.
 //   HOLDS: nothing runs; every cell is unreached.
 // @falsified-by: tests/falsified/a-tuple-element-lists-alternatives.patch — interpret exit 1 -> 0, native exit 1 -> 0
-//   Step 4 reverted whole (the durable receipt): the same refusal.
+//   Step 4 reverted in its current form (the durable receipt): `parse_field_sub_pattern`
+//   skips its alternation branch for a tuple element (a `TupleGet` value), keeping a struct
+//   field's (step 5).  The same refusal.
 //   CHANNEL: a refusal, on BOTH backends.
 //   ARMED: nothing.
 //   WITNESS: as above.

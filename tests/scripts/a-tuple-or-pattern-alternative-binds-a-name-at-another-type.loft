@@ -12,7 +12,8 @@
 //   WITNESS: *"Expect token =>"* in place of the multi-pattern capture message.
 //   HOLDS: the program is refused either way; only WHICH refusal moves.
 // @falsified-by: tests/falsified/a-tuple-or-pattern-alternative-binds-a-name-at-another-type.patch — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 1/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 1/1 (the suite's verdict, not a count of matches)
-//   Step 3 reverted whole (the durable receipt).
+//   Step 3 reverted in its current form (the durable receipt): `parse_tuple_alternatives`
+//   answers no alternatives (its `opens` never opens).
 //   CHANNEL: the expected diagnostic, on BOTH backends.
 //   ARMED: nothing.
 //   WITNESS: as above.
