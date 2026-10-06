@@ -1256,6 +1256,7 @@ fn run_leak_scan(name: &str, body: &Value, data: &Data, d_nr: u32) -> usize {
     let append = data.def_nr("OpAppendVector");
     let copy = data.def_nr("OpCopyRecord");
     let set_dbref = data.def_nr("OpSetDbRef");
+    let fn_closure = data.def_nr("OpFnRefClosure");
     let (mut returns, mut consumes): (Vec<u16>, Vec<u16>) = (Vec::new(), Vec::new());
     body.walk(&mut |x| match x {
         Value::Return(inner) => inner.walk(&mut |y| {
@@ -1273,10 +1274,17 @@ fn run_leak_scan(name: &str, body: &Value, data: &Data, d_nr: u32) -> usize {
             } else {
                 None
             };
-            if let Some(i) = idx
-                && let Some(Value::Var(v)) = args.get(i).map(Value::unspan)
-            {
-                consumes.push(*v);
+            match idx.and_then(|i| args.get(i)).map(Value::unspan) {
+                Some(Value::Var(v)) => consumes.push(*v),
+                // loft#1869 — a closure's capture of a fn-ref stores its closure HALF
+                // (`OpSetDbRef(rec, pos, OpFnRefClosure(f))`): the record `f`'s deps name moves
+                // into the capturing closure's record, whose drop releases it.
+                Some(Value::Call(c, inner)) if *c == fn_closure => {
+                    if let Some(Value::Var(f)) = inner.first().map(Value::unspan) {
+                        consumes.extend(func.tp(*f).depend().iter().copied());
+                    }
+                }
+                _ => {}
             }
         }
         _ => {}
