@@ -356,6 +356,12 @@ Each is one rule; the measured incident behind it is in
   A clean refusal traded for an ICE is the one direction a fix must not move.  When a refusal
   goes, rewrite its guard rather than deleting it: its cells are a survey of the shapes that
   reach the site.
+- **A write wider than its slot needs a cell whose NEIGHBOURS were written first.**  A build in
+  order repairs the spill: the next member, field or element is written after it, so every
+  construction cell reads right.  Only a write INTO an existing container — an element assigned
+  in the middle of a vector, a tuple field assigned ahead of another field — leaves the spill
+  standing; assert the neighbours (`a-stored-tuple-member-is-written-in-its-own-width.loft`:
+  five construction cells passed on the defective build, six in-place cells failed).
 - **A flag-driven feature needs a cell with something PARSED AFTER it.**  A parser-global set
   and read around `parse()` is erased when `parse()` re-enters for a sub-expression; the minimal
   spelling has nothing after the construct and hides it (loft#1214).
