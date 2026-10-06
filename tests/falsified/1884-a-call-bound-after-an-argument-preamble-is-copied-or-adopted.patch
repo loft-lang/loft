@@ -1,0 +1,13 @@
+diff --git a/src/scopes/scan_set.rs b/src/scopes/scan_set.rs
+index 6671d0ed5..db0eabaa2 100644
+--- a/src/scopes/scan_set.rs
++++ b/src/scopes/scan_set.rs
+@@ -1460,7 +1460,7 @@ impl Scopes<'_> {
+         // ALIASED and then freed as the local's own (loft#1884).  The position stays on the
+         // final value.
+         let scanned = match scanned {
+-            Value::Span(b) if matches!(&b.1, Value::Insert(ops) if ops.len() >= 2) => {
++            Value::Span(b) if false && matches!(&b.1, Value::Insert(ops) if ops.len() >= 2) => {
+                 let (pos, inner) = *b;
+                 let Value::Insert(mut ops) = inner else {
+                     unreachable!("matched as an Insert above")
