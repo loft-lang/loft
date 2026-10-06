@@ -6483,10 +6483,16 @@ impl Parser {
                 }
             };
 
-            // or-patterns — collect additional variants separated by `|`.
-            // Only for plain enum arms without field bindings.
+            // or-patterns — collect additional BARE variants separated by `|`.  A variant
+            // that opens `{` binds fields, so it is not bare: the lexer is rewound to its
+            // `|` and the multi-pattern loop below takes it with its bindings (`@FR-P-Multi`,
+            // where `|` and `,` are the same separator).
             let mut all_discs = vec![disc];
-            while self.lexer.has_token("|") {
+            loop {
+                let before_or = self.lexer.link();
+                if !self.lexer.has_token("|") {
+                    break;
+                }
                 let Some(first_or) = self.lexer.has_identifier() else {
                     if !self.first_pass {
                         diagnostic!(self.lexer, Level::Error, "expect variant name after '|'");
@@ -6505,6 +6511,10 @@ impl Parser {
                 } else {
                     first_or.clone()
                 };
+                if self.lexer.peek_token("{") {
+                    self.lexer.revert(before_or);
+                    break;
+                }
                 // @PLN22 Phase 1 — or-pattern variant resolves against the
                 // subject enum via the variant_of chokepoint (or-patterns are
                 // plain-enum only, so no struct fallback is needed).
@@ -6589,7 +6599,10 @@ impl Parser {
             // The variants this arm's EXTRA patterns marked covered, so a guard parsed after
             // them can take the marks back (`@FR-M-Total`: a guarded arm covers nothing).
             let mut multi_covered: Vec<u32> = Vec::new();
-            if self.lexer.peek_token(",") && valid_enum && e_nr != u32::MAX {
+            if (self.lexer.peek_token(",") || self.lexer.peek_token("|"))
+                && valid_enum
+                && e_nr != u32::MAX
+            {
                 let mut shared: std::collections::HashMap<String, (u16, Type)> = name_aliases
                     .iter()
                     .filter_map(|(name, _)| {
@@ -6599,7 +6612,7 @@ impl Parser {
                     .collect();
                 let first_names: HashSet<String> = shared.keys().cloned().collect();
                 let mut branch_names: Vec<HashSet<String>> = Vec::new();
-                while self.lexer.has_token(",") {
+                while self.lexer.has_token(",") || self.lexer.has_token("|") {
                     if self.lexer.peek_token("=>") || self.lexer.peek_token("}") {
                         break; // dangling comma / trailing arm separator
                     }

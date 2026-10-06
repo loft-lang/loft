@@ -303,23 +303,25 @@ binding under that name, even when a variable of that name is in scope (`@FR-P-P
 literal, a range or `_` in that position tests the field instead (`Circle { radius: 0 }`,
 `Circle { radius: 1..4 }`).
 
-**One arm for several variants — two spellings.**  `|` joins variant names that bind nothing
-(`North | South =>`).  When the variants carry fields, list the whole patterns with `,` — a
-*multi-pattern arm* (`@FR-P-Multi`):
+**One arm for several variants.**  `|` and `,` both list the patterns of one arm — a
+*multi-pattern arm* (`@FR-P-Multi`) — whether the variants bind fields or not:
 
 ```
 match s {
-    Circle { r }, Sphere { r } => r,
+    Circle { r } | Sphere { r } => r,     // or: Circle { r }, Sphere { r } => r
+    North | South => 0,
     Pt => 0
 }
 ```
 
 Each pattern binds from its own variant, and the body runs for whichever one matched.  A name
-every pattern binds must have one type in all of them (a different type is refused); a name only
-some patterns bind is nullable in the body (`@FR-P-Alt-Diff`).  A guard after the last pattern
-applies to whichever one matched.  `|` between patterns that carry bindings is refused (*"Expect
-token =>"*); write `,`.  A multi-pattern arm takes enum variants only, at the top of the arm —
-not slice patterns, and not inside a tuple element.
+every pattern binds takes the join of its types (`integer` and `u8` give `integer`); types with
+no join are refused, naming the capture (`@FR-P-Alt-Same`).  A name only some patterns bind is
+nullable in the body (`@FR-P-Alt-Diff`): `Circle { r } | Pt => r ?? 0`.  A rename links fields
+of different names into one variable: `Circle { r }, Rect { w: r, h } => r`.  A guard after the
+last pattern applies to whichever one matched.  A multi-pattern arm takes enum variants, at the
+top of the arm; a tuple subject, a plain struct, and an alternative nested inside a tuple element
+or a field are planned (@PLN186).
 
 Whether a destructured field is a **view of the subject** or a **copy** depends on the
 field's type:

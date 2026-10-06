@@ -166,8 +166,10 @@ index `i` into a source `src`, with `elem(src,i)` / `len(src)` **null past the e
              the slice's ONE rest, typed: `xs:T*` ≡ `..xs`, and `xs:T+` ≡ `..xs` with ≥ 1
              element.  Whatever follows it is (P-Rest)'s fixed tail, read from the END — a
              literal, `_`, a bare name, a variant: `[xs:integer*, last]` binds last = v[len−1].
-  (P-Multi)  a MULTI-PATTERN arm `pat_a, pat_b => body`: try pat_a from ⟨0,v⟩ (whole-match); else
-             pat_b; the FIRST whole-match commits.  (P-Alt at arm granularity — no new cursor work.)
+  (P-Multi)  a MULTI-PATTERN arm `pat_a | pat_b => body` (or `pat_a, pat_b`, the same arm): try
+             pat_a from ⟨0,v⟩ (whole-match); else pat_b; the FIRST whole-match commits.  (P-Alt at
+             arm granularity — no new cursor work.)  P-Alt holds at EVERY pattern position: the
+             arm, a tuple element, a field sub-pattern, a slice element.
   (P-Guard)  a GUARDED arm `pat if cond => body`: run `pat` from κ; on Match(binds,κ') evaluate
              `cond` under σ extended with `binds`.  cond true ⟹ the arm commits (Match(binds,κ'));
              cond false ⟹ the arm ⇓ Fail — exactly as if `pat` had not matched (P-Atomic keeps the
@@ -274,8 +276,23 @@ is a view; `..rest` / repetition are fresh vectors); the pattern grammar + prece
 
 ## Deviations
 
-OPEN: **0** — every entry, `D-match-1` to `-17`, is closed; the record is in
-[matching-history.md](matching-history.md).
+OPEN: **5** — the closed entries, `D-match-1` to `-17`, are in
+[matching-history.md](matching-history.md).  The five below are P-Alt / P-Cap positions the parser
+does not reach yet, each refused with a parse error (no wrong answer); @PLN186 closes them one
+step each, and `tests/scripts/an-or-pattern-arm-links-its-bindings.loft` lists them.
+
+- **D-match-18 (OPEN, @PLN186)** — `(P-Multi)` on a plain-struct subject, <!-- doc-lint: ok -->
+  `P { x: 0, y: v } | P { x: v, y: 0 } => v`, is refused (*"Unknown variable 'v'"*).
+- **D-match-19 (OPEN, @PLN186)** — `(P-Multi)` over a tuple subject, <!-- doc-lint: ok -->
+  `(Circle { r }, Square { s }) | (Square { s }, Circle { r }) => r * s`, is refused (*"Expect
+  token =>"*).
+- **D-match-20 (OPEN, @PLN186)** — `(P-Alt)` inside a tuple element, <!-- doc-lint: ok -->
+  `(Circle { r } | Square { r }, k) => r + k`, is refused (*"expected ',' between tuple pattern
+  elements"*).
+- **D-match-21 (OPEN, @PLN186)** — `(P-Alt)` inside a field sub-pattern, <!-- doc-lint: ok -->
+  `Box { s: Circle | Square, n } => n`, is refused (*"Expect token }"*).
+- **D-match-22 (OPEN, @PLN186)** — `(P-Cap)` at the arm root, <!-- doc-lint: ok -->
+  `whole: Rect { w, h } => …`, is refused (*"'whole' is not a variant"*).
 
 Cursor matches (a struct with a `vector` source and a `pos`, consumed as a PREFIX) and sub-rule
 invocation `[ name: rule ]` are shipped but have no rules here yet; a cursor match's tail
