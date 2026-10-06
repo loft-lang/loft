@@ -6520,7 +6520,8 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                                 "OpGetField",
                                 &[Value::Var(elm), Value::Int(pos), Value::Int(enum_kt)],
                             );
-                            let write = self.emit_nullable_slot_write(syn, &slot, val.clone(), true);
+                            let write =
+                                self.emit_nullable_slot_write(syn, &slot, val.clone(), true);
                             ls.extend(write);
                             continue;
                         }
