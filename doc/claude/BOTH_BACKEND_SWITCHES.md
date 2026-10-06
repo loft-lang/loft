@@ -297,6 +297,16 @@ null again and mints no snapshot — the first bisect step for a use-after-free 
 field out of a callee that rebinds or returns past a local it promoted onto its buffer.
 `LOFT_TRACE_POOL=1` names the gate that keeps each witnessed buffer out of the pool.
 
+**Detach a literal buffer its owner took (`@FR-O-Owner`, default-ON, both backends, after
+the scope pass):** a collection literal or copy is built in a `__vdb_N` buffer and handed to
+its local through the buffer's field.  Where that local is an OWNER that releases the store
+itself (a value branch whose other arm mints, `r = if c { m(0) } else { cp }`), the buffer is
+set to the null sentinel after its last use in the block, so its next mint is fresh and its
+exit free a no-op.  **`LOFT_NO_BUFFER_DETACH=1`** keeps the buffer naming the store; it is the
+first bisect step for a store released twice, or cleared under another owner, out of a
+branch's literal arm.  The store timeline (`LOFT_STORES=timeline`, more frees than
+allocations) and `LOFT_STRICT_STORES=1` are the falsifiers.
+
 **A reduction loop as one kernel call (@PLN180 § Kernels, `@FR-R-BoundedNest`'s reduction
 clause, default-ON, both backends, scope pass):** `acc = acc + v[i]` over `0..v.len()` of an
 integer vector — the stdlib `sum` over integers — is one call of the loop kernel

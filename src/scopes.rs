@@ -852,7 +852,9 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
     // `LOFT_OWN_ORACLE=check-dev`; observer only (SI-1), a no-op on the default `check` path.
     // `@FR-O-Owner` — a literal buffer whose store a local owner takes over is detached, now
     // that the deps say who owns and the frees say who releases.
-    buffer_detach::detach_owned_buffers(data);
+    if crate::keys::buffer_detach_enabled() {
+        buffer_detach::detach_owned_buffers(data);
+    }
     crate::ownership_cfg::oracle_free_checks(data);
     // #682 — record which closure captures the record ADOPTS, now that every dep
     // rewrite above has settled.  Must run after the loop, not inside it: the

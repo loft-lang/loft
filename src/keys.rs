@@ -1807,6 +1807,15 @@ pub fn vector_base_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_VECTOR_BASE"))
 }
 
+/// `@FR-O-Owner` — a literal buffer whose store a local OWNER takes over is detached from it
+/// (`scopes::buffer_detach`) — **DEFAULT ON**, both backends.  Opt OUT with
+/// `LOFT_NO_BUFFER_DETACH`: the buffer keeps naming the store, the bisect step for a store
+/// released twice, or cleared under another owner, out of a value branch's literal arm.
+pub fn buffer_detach_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_BUFFER_DETACH"))
+}
+
 /// @PLN157 § V-al (`@FR-R-LoopBuffer`): a per-site vector buffer minted INSIDE a loop keeps
 /// its store and its vector across iterations — every mint after the first is a length
 /// reset that keeps the capacity — **DEFAULT ON**.  Opt OUT with
