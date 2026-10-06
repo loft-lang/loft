@@ -1,8 +1,8 @@
 diff --git a/src/data.rs b/src/data.rs
-index 1b2f14ac..483c12a1 100644
+index 9e687de6a..272426f5b 100644
 --- a/src/data.rs
 +++ b/src/data.rs
-@@ -10544,21 +10544,6 @@ impl Data {
+@@ -10581,21 +10581,6 @@ impl Data {
          bindings: &[(u32, Type)],
      ) {
          let tp = self.close_open(lexer, &f.typedef, bindings);
@@ -24,7 +24,7 @@ index 1b2f14ac..483c12a1 100644
          let a_nr = self.add_attribute(lexer, d, &f.name, tp);
          let a = &mut self.definitions[d as usize].attributes[a_nr];
          a.mutable = f.mutable;
-@@ -10596,13 +10581,14 @@ impl Data {
+@@ -10633,13 +10618,14 @@ impl Data {
          });
          let mut pairs: Vec<(u32, Type)> = Vec::new();
          for o in opens {
@@ -40,7 +40,7 @@ index 1b2f14ac..483c12a1 100644
              if closed != u32::MAX && closed != o {
                  pairs.push((o, Type::Reference(closed, Deps::none())));
              }
-@@ -10751,12 +10737,6 @@ impl Data {
+@@ -10788,12 +10774,6 @@ impl Data {
                  alignment,
                  size,
              });
@@ -53,7 +53,7 @@ index 1b2f14ac..483c12a1 100644
          d
      }
  
-@@ -11128,62 +11108,7 @@ impl Data {
+@@ -11165,62 +11145,7 @@ impl Data {
                  .is_some_and(|p| p.def_type == DefType::Enum)
                  && self.is_open_instance(d.parent);
          }
@@ -117,7 +117,7 @@ index 1b2f14ac..483c12a1 100644
      }
  
      /// An instance of a generic FUNCTION bound to a type VARIABLE (`i_1U_n_hole`), minted while
-@@ -11281,17 +11206,10 @@ impl Data {
+@@ -11318,17 +11243,10 @@ impl Data {
          &mut self,
          lexer: &mut Lexer,
          bindings: &[(u32, Type)],
@@ -136,7 +136,7 @@ index 1b2f14ac..483c12a1 100644
                  || !bindings.iter().any(|(h, _)| {
                      self.definitions[d as usize]
                          .instance_args
-@@ -11301,6 +11219,7 @@ impl Data {
+@@ -11338,6 +11256,7 @@ impl Data {
              {
                  continue;
              }
@@ -144,7 +144,7 @@ index 1b2f14ac..483c12a1 100644
              let all: Vec<(u32, Type)> = bindings.iter().chain(pairs.iter()).cloned().collect();
              let args: Vec<Type> = self.definitions[d as usize]
                  .instance_args
-@@ -11308,7 +11227,7 @@ impl Data {
+@@ -11345,7 +11264,7 @@ impl Data {
                  .into_iter()
                  .map(|a| a.substitute_all(&all))
                  .collect();
@@ -154,7 +154,7 @@ index 1b2f14ac..483c12a1 100644
                  pairs.push((d, Type::Reference(bound, Deps::none())));
              }
 diff --git a/src/parser/collections.rs b/src/parser/collections.rs
-index 4a930c1b..29fd903f 100644
+index 8516c2138..65b0f6caf 100644
 --- a/src/parser/collections.rs
 +++ b/src/parser/collections.rs
 @@ -661,11 +661,8 @@ impl Parser {
@@ -171,7 +171,7 @@ index 4a930c1b..29fd903f 100644
                              if (size == 0 && self.data.is_type_var_placeholder(*tv))
                                  || self.data.is_open_instance(*tv) =>
                          {
-@@ -4170,11 +4167,23 @@ use #count instead"
+@@ -4197,11 +4194,23 @@ use #count instead"
                                  let read = if ref_def_nr == u32::MAX {
                                      Value::TupleGet(for_var, i as u16)
                                  } else {
@@ -200,7 +200,7 @@ index 4a930c1b..29fd903f 100644
                                  };
                                  v_set(var, read)
 diff --git a/src/parser/dispatch.rs b/src/parser/dispatch.rs
-index 06c82ae0..3730e148 100644
+index 06c82ae0a..3730e1481 100644
 --- a/src/parser/dispatch.rs
 +++ b/src/parser/dispatch.rs
 @@ -198,7 +198,7 @@ impl Parser {
@@ -213,10 +213,10 @@ index 06c82ae0..3730e148 100644
          let declared: Vec<Type> = self
              .data
 diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
-index 1de2245a..a8972339 100644
+index 94a031222..2fcf341e2 100644
 --- a/src/parser/expressions.rs
 +++ b/src/parser/expressions.rs
-@@ -7102,21 +7102,10 @@ use a separate collection or add after the loop"
+@@ -7103,21 +7103,10 @@ use a separate collection or add after the loop"
          // `t.0 += [7]` was fixed while `n.0.0 += [7]` still answered `[7, 7]`.  QUALITY.md's
          // `spellings` screen is what named it — the audit row moved, and the cell built to
          // answer *why* found the half-fix.
@@ -242,7 +242,7 @@ index 1de2245a..a8972339 100644
              && op == "+="
              && let Type::Vector(elm_tp, _) = &f_type.base().clone()
 diff --git a/src/parser/fields.rs b/src/parser/fields.rs
-index 36c8817d..d33e574c 100644
+index 36c8817de..d33e574c5 100644
 --- a/src/parser/fields.rs
 +++ b/src/parser/fields.rs
 @@ -2121,9 +2121,6 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
@@ -352,7 +352,7 @@ index 36c8817d..d33e574c 100644
      /// element's own `__tuple<…>` record, the shape `r[i].b` has for a struct element.
      ///
 diff --git a/src/parser/mod.rs b/src/parser/mod.rs
-index df456d2e..379b648d 100644
+index 9c6e71d55..028d4761a 100644
 --- a/src/parser/mod.rs
 +++ b/src/parser/mod.rs
 @@ -8526,7 +8526,7 @@ impl Parser {
@@ -468,7 +468,7 @@ index df456d2e..379b648d 100644
                  let type_nr = if self.first_pass {
                      Value::Int(i32::from(u16::MAX))
 diff --git a/src/parser/objects.rs b/src/parser/objects.rs
-index bd080528..17ef3b90 100644
+index 36399fb4d..e0f0b48d3 100644
 --- a/src/parser/objects.rs
 +++ b/src/parser/objects.rs
 @@ -5535,14 +5535,8 @@ impl Parser {
@@ -489,7 +489,7 @@ index bd080528..17ef3b90 100644
              if let Type::Reference(d, _) = bound.base() {
                  self.lay_out_instance(*d);
 diff --git a/src/parser/operators.rs b/src/parser/operators.rs
-index 081c4bfd..bbd026de 100644
+index 59187826d..d18f81704 100644
 --- a/src/parser/operators.rs
 +++ b/src/parser/operators.rs
 @@ -163,23 +163,6 @@ impl Parser {
@@ -623,10 +623,10 @@ index 081c4bfd..bbd026de 100644
                              // Same `@FR-O-Oracle` reading as the stack-tuple site above.  When the
                              // base is a VARIABLE that variable IS the base, so it alone is the
 diff --git a/src/parser/vectors.rs b/src/parser/vectors.rs
-index 0e3385ea..9bdea0bc 100644
+index 732bd06c7..f1359c23f 100644
 --- a/src/parser/vectors.rs
 +++ b/src/parser/vectors.rs
-@@ -6492,35 +6492,27 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+@@ -6497,36 +6497,27 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                  // `emit_nullable_slot_write` is the shared home; a struct field holding the
                  // same slot goes through it too.
                  let src_elems = self.tuple_elements(in_t).unwrap_or_default();
@@ -653,7 +653,8 @@ index 0e3385ea..9bdea0bc 100644
 -                                "OpGetField",
 -                                &[Value::Var(elm), Value::Int(pos), Value::Int(enum_kt)],
 -                            );
--                            let write = self.emit_nullable_slot_write(syn, &slot, val.clone());
+-                            let write =
+-                                self.emit_nullable_slot_write(syn, &slot, val.clone(), true);
 -                            ls.extend(write);
 -                            continue;
 -                        }
@@ -674,7 +675,7 @@ index 0e3385ea..9bdea0bc 100644
 +                            "OpGetField",
 +                            &[Value::Var(elm), Value::Int(pos), Value::Int(enum_kt)],
 +                        );
-+                        let write = self.emit_nullable_slot_write(syn, &slot, val.clone());
++                        let write = self.emit_nullable_slot_write(syn, &slot, val.clone(), true);
 +                        ls.extend(write);
 +                        continue;
                      }
