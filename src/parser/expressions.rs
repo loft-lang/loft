@@ -3139,7 +3139,8 @@ use a separate collection or add after the loop"
         let Value::Block(body) = callee.code.unspan() else {
             return false;
         };
-        let mut assigns: std::collections::HashMap<u16, Vec<&Value>> = std::collections::HashMap::new();
+        let mut assigns: std::collections::HashMap<u16, Vec<&Value>> =
+            std::collections::HashMap::new();
         let mut exits: Vec<&Value> = Vec::new();
         callee.code.any_node(&mut |n| {
             match n {

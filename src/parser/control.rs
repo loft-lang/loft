@@ -7420,7 +7420,8 @@ impl Parser {
                         if let Some(bind_name) = self.field_pattern_rename() {
                             let v = self.pattern_binding(&bind_name, &field_type);
                             self.vars.defined(v);
-                            let bound = self.pattern_field_value(e_nr, attr_idx, subject_val.clone());
+                            let bound =
+                                self.pattern_field_value(e_nr, attr_idx, subject_val.clone());
                             binds.push(v_set(v, bound));
                         } else if let Some(cond) = self.parse_field_sub_pattern(
                             field_val,
@@ -7472,7 +7473,12 @@ impl Parser {
         let mut field_conditions: Vec<Value> = Vec::new();
         let first_names = self.pattern_binds_pending.len();
         let mut first_binds: Vec<Value> = Vec::new();
-        self.parse_struct_pattern_fields(e_nr, subject_val, &mut first_binds, &mut field_conditions);
+        self.parse_struct_pattern_fields(
+            e_nr,
+            subject_val,
+            &mut first_binds,
+            &mut field_conditions,
+        );
         let struct_name = self.data.def(e_nr).name().to_string();
         let alternatives = self.parse_pattern_alternatives(
             first_names,
@@ -7518,17 +7524,19 @@ impl Parser {
         }
         // Several patterns write the same slots, so none is hoisted: each pattern's arm runs
         // its OWN bindings, then its literal-field test, then a clone of the body.
-        let pattern_arm = |binds: Vec<Value>, guard: Option<Value>| match guard {
-            // `cond: true` takes the chain's tested path, which runs `bindings` before the guard.
-            Some(g) => EnumArm {
-                discs: vec![],
-                code: v_block(vec![arm_code.clone()], arm_type.clone(), "struct_match"),
-                tp: result_type.clone(),
-                guard: Some(g),
-                bindings: binds,
-                cond: Some(Value::Boolean(true)),
-            },
-            None => {
+        let pattern_arm = |binds: Vec<Value>, guard: Option<Value>| {
+            if let Some(g) = guard {
+                // `cond: true` takes the chain's tested path, which runs `bindings` before the
+                // guard.
+                EnumArm {
+                    discs: vec![],
+                    code: v_block(vec![arm_code.clone()], arm_type.clone(), "struct_match"),
+                    tp: result_type.clone(),
+                    guard: Some(g),
+                    bindings: binds,
+                    cond: Some(Value::Boolean(true)),
+                }
+            } else {
                 let mut stmts = binds;
                 stmts.push(arm_code.clone());
                 EnumArm {
@@ -12040,6 +12048,15 @@ impl Parser {
         result_type
     }
 
+    /// Does the tuple element at the cursor list alternatives — a `|` before the `,` or `)`
+    /// that ends it, outside any group?  Looks ahead and puts the cursor back.
+    fn tuple_element_has_alternatives(&mut self) -> bool {
+        let at = self.lexer.link();
+        let found = self.lexer.recover_to(&[",", ")", "|"]) && self.lexer.peek_token("|");
+        self.lexer.revert(at);
+        found
+    }
+
     /// The elements of a tuple pattern `( p₀, p₁, … )` over the tuple held in `tmp`, the lexer just
     /// past the `(`; consumes through the `)`.  Each position is `_`, a binding, a literal or a
     /// variant sub-pattern — `@FR-P-Point`: a tuple element is ONE value.  A binding lands in
@@ -12050,15 +12067,6 @@ impl Parser {
         clippy::too_many_lines,
         reason = "moved whole out of `parse_tuple_match`"
     )]
-    /// Does the tuple element at the cursor list alternatives — a `|` before the `,` or `)`
-    /// that ends it, outside any group?  Looks ahead and puts the cursor back.
-    fn tuple_element_has_alternatives(&mut self) -> bool {
-        let at = self.lexer.link();
-        let found = self.lexer.recover_to(&[",", ")", "|"]) && self.lexer.peek_token("|");
-        self.lexer.revert(at);
-        found
-    }
-
     fn parse_tuple_pattern_elements(
         &mut self,
         tmp: u16,
@@ -12114,12 +12122,7 @@ impl Parser {
                 // whichever variant matched (the slice element's alternation, without its
                 // parentheses).
                 self.parse_slice_alternation_element(
-                    e_nr,
-                    &elem_get,
-                    tmp,
-                    bindings,
-                    elem_conds,
-                    false,
+                    e_nr, &elem_get, tmp, bindings, elem_conds, false,
                 );
             } else if self.peek_is_variant_subpattern(&elem_type) {
                 // @FR-P-Point — a unit or struct variant is a point pattern over ONE
@@ -12247,12 +12250,6 @@ impl Parser {
         bad_pattern
     }
 
-    /// Parse a `match` expression whose subject is a `Type::Tuple`.
-    ///
-    /// Arm syntax: `_ => expr` (wildcard) or `(pat0, pat1, ...) => expr` (element patterns).
-    /// Element patterns: `_` (wildcard), `identifier` (binding), or a literal value.
-    /// Arms are separated by `,` or `;` (optional after the last arm).
-    #[expect(clippy::too_many_lines, reason = "inherited")]
     /// `@FR-P-Multi` over a tuple subject — the further tuple patterns of one arm, after `|`
     /// or `,` (`(Circle { r }, Square { s }) | (Square { s }, Circle { r }) => r * s`).
     fn parse_tuple_alternatives(
@@ -12351,7 +12348,9 @@ impl Parser {
         // `@FR-P-Alt-Diff`: a name some alternative does not bind is `τ?`, null there.
         for (name, slot, tp) in &shared {
             let everywhere = first_set.contains(name)
-                && alternatives.iter().all(|(_, _, names)| names.contains(name));
+                && alternatives
+                    .iter()
+                    .all(|(_, _, names)| names.contains(name));
             if everywhere {
                 continue;
             }
@@ -12372,6 +12371,12 @@ impl Parser {
             .collect()
     }
 
+    /// Parse a `match` expression whose subject is a `Type::Tuple`.
+    ///
+    /// Arm syntax: `_ => expr` (wildcard) or `(pat0, pat1, ...) => expr` (element patterns).
+    /// Element patterns: `_` (wildcard), `identifier` (binding), or a literal value.
+    /// Arms are separated by `,` or `;` (optional after the last arm).
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn parse_tuple_match(&mut self, subject: Value, subject_type: &Type, code: &mut Value) -> Type {
         let Type::Tuple(elem_types) = subject_type.base() else {
             unreachable!("parse_tuple_match called with non-tuple subject")
