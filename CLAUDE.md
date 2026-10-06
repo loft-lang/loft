@@ -656,8 +656,9 @@ between a library's guide and its copy in this repo, the REPL+debugger panel for
 pages (`src/wasm_debug.rs` is built and the pages expose only ▶ Run), and the README's
 repositioning from one-game project to distribution ·
 [LAVITION.md](doc/claude/LAVITION.md) · [PROMPTS.md](doc/PROMPTS.md) ·
-[BLOG.md](doc/claude/BLOG.md) the blog's subjects, each with where its evidence lives and the
-command that re-measures it.
+**the owner's notes live OUTSIDE git** (`$LOFT_NOTES`, a folder on the owner's machine):
+his thoughts on what we build, blog subjects and ideas.  They can steer a feature or become a
+post, so read them when one is in question; never commit them, and never publish from them.
 
 **Skills** (`.claude/skills/`): `loft-write` (.loft authoring) · `loft-debug` (runtime crashes) ·
 `loft-test` · `loft-codegen` · `loft-optimize` (making code faster, both backends) · `loft-ship` (library cross-target + publish) · `engineering-rigor` /
