@@ -149,7 +149,7 @@ pub fn surface(data: &Data, lib_file: &str) -> Vec<Member> {
         } else {
             Tier::Sealed
         };
-        let signature = signature_of(data, d, kind);
+        let signature = signature_with(data, d, kind, true);
         members.push(Member {
             name,
             kind,
@@ -284,6 +284,13 @@ fn method_name(raw: &str) -> String {
 /// renders the same clean signature the API surface does — one spelling, one home.
 #[must_use]
 pub fn signature_of(data: &Data, d: u32, kind: &str) -> String {
+    signature_with(data, d, kind, false)
+}
+
+/// [`signature_of`], and with `observable_only` a record lists only its `pub` fields: the
+/// API surface's view, where a private field is not observable outside its file (C139).
+/// A hover or a REPL listing shows the declaration as written.
+fn signature_with(data: &Data, d: u32, kind: &str, observable_only: bool) -> String {
     let def = data.def(d);
     // A generic type is spelled as its author writes it — `Grid<T>`, `Slot<integer>` — where
     // the key carries the placeholder's number (`T#4`) or an argument's width.
@@ -325,7 +332,7 @@ pub fn signature_of(data: &Data, d: u32, kind: &str) -> String {
                 !a.hidden
                     && a.name != "enum"
                     && !matches!(a.typedef.base(), Type::Routine(_))
-                    && (!sort || a.pub_field)
+                    && (!sort || !observable_only || a.pub_field)
             })
             .map(|a| {
                 let opt = if defaults && !matches!(a.value, crate::data::Value::Null) {

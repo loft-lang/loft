@@ -16728,7 +16728,8 @@ impl Parser {
             // run from any directory names the same file.
             let at = if f_nr == usize::MAX { &owner.position } else { &def.position };
             let canon = |f: &str| {
-                std::fs::canonicalize(f).map_or_else(|_| f.to_string(), |p| p.display().to_string())
+                let path = crate::file_access::PathText::host(f);
+                crate::file_access::canonical(&path).map_or_else(|| f.to_string(), |p| p.native())
             };
             let here = self.lexer.pos();
             eprintln!(
