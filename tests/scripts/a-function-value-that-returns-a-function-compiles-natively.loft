@@ -3,6 +3,12 @@
 // function (`@FR-L-FnAbsent`).  `--native` emitted the integer argument as a function value
 // (`(3_i32 as u32, DbRef::NULL)` — the call's function-typed RESULT leaked its context into its
 // arguments) and the absent arm as `()`, so none of these compiled; the interpreter ran them.
+// @falsified-at: df902ad64 — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/a-function-value-that-returns-a-function-compiles-natively.patch — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// HOLDS: the interpreter answers every cell on both trees; leak and panic are clean.
+// CHANNEL: the native exit — rustc refuses the control's argument and absent arm.
 
 fn mk(n: integer) -> fn(integer) -> integer { |y| { n * y } }
 fn adder() -> fn(integer) -> fn(integer) -> integer { |x| { |y| { x + y } } }
