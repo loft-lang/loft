@@ -707,6 +707,10 @@ pub struct Output<'a> {
     /// hand the displaced store to that buffer instead of freeing it.
     pub rebind_buffer: Option<(u16, String, Option<String>)>,
     pub rebind_buffer_used: bool,
+    /// Set by the call-return bind arm (`output_set_inner`) when the local it binds ends up
+    /// holding a store of its OWN — an adopted null or same-store result, or a copy — so an
+    /// owner witness can be pointed at it (`output_set_witnessed`).
+    pub call_bind_owns: bool,
     /// `@FR-R-RebindBuffer` — the hidden buffer locals a rebind hands stores to; their
     /// scope-exit release parks the store instead of freeing it.
     pub rebind_handed: HashSet<u16>,
@@ -2419,6 +2423,7 @@ impl<'a> Output<'a> {
             refill_in_place: crate::keys::refill_in_place_enabled(),
             rebind_buffer: None,
             rebind_buffer_used: false,
+            call_bind_owns: false,
             rebind_handed: HashSet::new(),
             inline_hint: crate::keys::inline_hint_enabled(),
             push_window_disabled: !crate::keys::push_window_enabled(),

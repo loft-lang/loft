@@ -305,3 +305,90 @@ fn a_vector_buffer_bound_to_a_forwarding_call_is_filled() {
         ),
     ]);
 }
+
+/// `(H-FreeAll)` — a call result bound to a lifted local is released even when nothing reads it.
+/// With a value-record function anywhere in the program (`mks`, a flat record returned as a
+/// tuple), the dead-buffer judgement counted only a local's MENTIONS and its frees; a `Set`
+/// target is no mention, so `__lift_1 = mk()` read as a buffer never minted and its free was
+/// emitted as nothing.
+#[test]
+fn a_discarded_record_result_is_released_beside_a_value_record() {
+    const DOC: &str = "struct Doc { buf: vector<integer>, n: integer }\n\
+                       struct S { a: integer, b: integer }\n\
+                       fn mk() -> Doc { return Doc { buf: [1, 2], n: 1 }; }\n\
+                       fn mks() -> S { return S { a: 1, b: 2 }; }\n\
+                       fn nd(d: Doc) -> Doc { return Doc { buf: d.buf, n: d.n + 1 }; }\n";
+    let main = |body: &str| format!("{DOC}fn main() {{ {body} }}");
+    check(&[
+        ("fresh", main("mk(); println(\"R{mks().a}\");"), "R1"),
+        (
+            "derived",
+            main("d = mk(); nd(d); println(\"R{d.n}\");"),
+            "R1",
+        ),
+        (
+            "loop",
+            main("d = mk(); for i in 0..3 { nd(d); } println(\"R{len(d.buf)}\");"),
+            "R2",
+        ),
+        // CONTROLS: the result bound and read, and a flat record discarded.
+        (
+            "bound",
+            main("d = mk(); e = nd(d); println(\"R{e.n}\");"),
+            "R2",
+        ),
+        ("flat", main("mks(); println(\"R{mks().b}\");"), "R2"),
+    ]);
+}
+
+/// `(H-FreeAll)` with `@FR-O-Witness` — a call that returns its argument is COPIED into the
+/// local it binds (`c = id(b)`), and a later rebind of `c` releases that copy.  The oracle read
+/// the callee's return as a borrow, so the owner tracker was never pointed at the copy, and the
+/// rebind dropped it.
+#[test]
+fn a_copied_call_result_is_released_when_rebound() {
+    const BOX: &str = "struct It { name: text, n: integer }\n\
+                       struct HE { k: text, v: integer }\n\
+                       struct VB { items: vector<It> }\n\
+                       struct HB { by: hash<HE[k]> }\n\
+                       fn id_v(b: VB) -> VB { return b; }\n\
+                       fn id_h(b: HB) -> HB { return b; }\n";
+    let main = |body: &str| format!("{BOX}fn main() {{ {body} }}");
+    check(&[
+        (
+            "vector_field",
+            main(
+                "b = VB { items: [It { name: \"a\", n: 1 }] }; c = id_v(b); \
+                 c = VB { items: [It { name: \"d\", n: 9 }] }; \
+                 println(\"R{c.items[0].n} {b.items[0].n}\");",
+            ),
+            "R9 1",
+        ),
+        (
+            "hash_field",
+            main(
+                "b = HB { by: [HE { k: \"a\", v: 1 }] }; c = id_h(b); \
+                 c = HB { by: [HE { k: \"d\", v: 9 }] }; \
+                 println(\"R{c.by[\"d\"].v} {b.by[\"a\"].v}\");",
+            ),
+            "R9 1",
+        ),
+        // CONTROLS: the copy never rebound, and a plain whole-value copy rebound.
+        (
+            "not_rebound",
+            main(
+                "b = VB { items: [It { name: \"a\", n: 1 }] }; c = id_v(b); \
+                 println(\"R{c.items[0].n}\");",
+            ),
+            "R1",
+        ),
+        (
+            "plain_copy",
+            main(
+                "b = VB { items: [It { name: \"a\", n: 1 }] }; c = b; \
+                 c = VB { items: [It { name: \"d\", n: 9 }] }; println(\"R{c.items[0].n}\");",
+            ),
+            "R9",
+        ),
+    ]);
+}

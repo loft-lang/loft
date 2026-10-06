@@ -15067,9 +15067,16 @@ pub fn dead_buffers(data: &Data, def_nr: u32, vr: &ValueRecords) -> HashSet<u16>
     let mut minted: HashSet<u16> = HashSet::new();
     let mut mentions: HashMap<u16, u32> = HashMap::new();
     let mut dropped: HashMap<u16, u32> = HashMap::new();
+    let mut assigned: HashSet<u16> = HashSet::new();
     def.code().any_node(&mut |n| {
         match n {
             Value::Var(w) => *mentions.entry(*w).or_insert(0) += 1,
+            // A buffer BOUND to a value holds whatever that value is — a call result is a
+            // store (`__lift_1 = mk(…)` of a record that owns a collection), and its free is
+            // its owner's release, not an empty one.
+            Value::Set(w, rhs) if !matches!(rhs.unspan(), Value::Null) => {
+                assigned.insert(*w);
+            }
             Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
                 let arg_var = |i: usize| match args.get(i).map(Value::unspan) {
                     Some(Value::Var(w)) => Some(*w),
@@ -15143,6 +15150,7 @@ pub fn dead_buffers(data: &Data, def_nr: u32, vr: &ValueRecords) -> HashSet<u16>
     for w in minted.iter().copied().chain(dropped.keys().copied()) {
         if !vars.is_argument(w)
             && !locals.contains_key(&w)
+            && !assigned.contains(&w)
             && crate::data::is_dbref(vars.tp(w).base())
             && mentions.get(&w).copied().unwrap_or(0) == dropped.get(&w).copied().unwrap_or(0)
         {

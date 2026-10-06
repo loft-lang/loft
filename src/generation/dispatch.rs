@@ -212,7 +212,9 @@ impl Output<'_> {
         let reassign = self.declared.contains(&var);
         if reassign && !owned {
             write!(w, "{{ ")?;
+            self.call_bind_owns = false;
             self.output_set_inner(w, var, to)?;
+            let copied = std::mem::take(&mut self.call_bind_owns);
             write!(
                 w,
                 // Clear the tracker only on the branch that actually freed.  A
@@ -232,7 +234,7 @@ impl Output<'_> {
             // store — the owner the first-decl branch below teaches the tracker about.  Name
             // it here too: where a displacement free emptied the slot before the bind, the
             // copy lands in a FRESH store, and a tracker left null releases nobody.
-            if self.materialises_element(var, to) {
+            if copied || self.materialises_element(var, to) {
                 write!(w, " _own_store_{name} = var_{name};")?;
             }
             write!(w, " }}")?;
@@ -299,8 +301,14 @@ impl Output<'_> {
         // rebound).  Asking `materialises_element` rather than widening the oracle keeps
         // this to the store that was actually allocated.
         let materialised = self.materialises_element(var, to);
+        self.call_bind_owns = false;
         self.output_set_body(w, var, to)?;
-        if owned || materialised {
+        // `@FR-O-Witness` — the call-return arm COPIES a borrowed result into a store of the
+        // local's own, an owner the oracle (which read the callee's return as a borrow) never
+        // saw: without the tracker the first owned reassignment nulled `var` over it, and the
+        // copy was released by nobody (one record per such local).
+        let copied = std::mem::take(&mut self.call_bind_owns);
+        if owned || materialised || copied {
             write!(w, "; _own_store_{name} = var_{name}")?;
         }
         Ok(())
@@ -1536,6 +1544,9 @@ impl Output<'_> {
                 w,
                 "; if {adopt} {{ {disp}var_{name} = _src; }} {rebind}else {{ {copy} }}{unprotect} }}"
             )?;
+            // Adopted or copied, the local now holds its own store — unless the bind is an
+            // elided VIEW, which aliases on purpose.
+            self.call_bind_owns = !variables.is_view_elided(var);
             // @PLN130 — a MAY-copy site: the emitted code branches on store identity at
             // runtime and copies on the non-adopting arm.  Recorded regardless, because the
             // guard asks whether the diagnostic ACCOUNTS for the site, not whether this
