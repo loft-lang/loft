@@ -276,13 +276,10 @@ is a view; `..rest` / repetition are fresh vectors); the pattern grammar + prece
 
 ## Deviations
 
-OPEN: **1** — the closed entries, `D-match-1` to `-21`, are in
-[matching-history.md](matching-history.md).  The one below is a P-Cap position the parser does
-not reach yet, refused with a parse error (no wrong answer); @PLN186 closes it, and
-`tests/scripts/an-or-pattern-arm-links-its-bindings.loft` lists it.
-
-- **D-match-22 (OPEN, @PLN186)** — `(P-Cap)` at the arm root, <!-- doc-lint: ok -->
-  `whole: Rect { w, h } => …`, is refused (*"'whole' is not a variant"*).
+OPEN: **0** — the closed entries, `D-match-1` to `-22`, are in
+[matching-history.md](matching-history.md).  P-Alt and P-Cap hold at every pattern position: the
+arm (`|` and `,` alike), a tuple subject, a tuple element, a field, a slice element, and the arm
+root's `name: pattern`.
 
 Cursor matches (a struct with a `vector` source and a `pos`, consumed as a PREFIX) and sub-rule
 invocation `[ name: rule ]` are shipped but have no rules here yet; a cursor match's tail

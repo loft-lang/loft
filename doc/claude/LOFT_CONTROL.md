@@ -334,6 +334,11 @@ r + k` — and a plain-struct subject lists patterns the same way: `P { x: 0, y:
 y: 0 } => v` (a field's bare name, `y: v`, binds it).  A field's pattern lists alternatives the
 same way as a tuple element's: `Box { s: Circle { r } | Square { r }, n } => r + n`.
 
+`name:` before an arm's pattern binds the matched value itself, beside the pattern's own names —
+`whole: Rect { w, h } => w * h + area(whole)` — and `other: _ => area(other)` is the catch-all that
+binds it.  The name is a view of the subject, not a copy: a write through it reaches the subject.
+A bare lowercase name at the arm root is not a binding; it is refused as a misspelled variant.
+
 Whether a destructured field is a **view of the subject** or a **copy** depends on the
 field's type:
 

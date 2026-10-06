@@ -12,8 +12,8 @@
 // another pattern's bindings (c6), a text payload written back to the first pattern's field
 // (c11, #673), and a bare variant after `|` swallowing the next pattern's braces (c4's `Dot |`).
 //
-// Still refused, the deviation @PLN186 closes last (formal/matching.md D-match-22): `name:
-// pattern` at the arm root.  A tuple subject's alternatives are
+// The other positions have guards of their own: `name: pattern` at the arm root is
+// `a-match-arm-captures-its-subject.loft`'s; a tuple subject's alternatives are
 // `a-tuple-or-pattern-arm-links-its-bindings.loft`'s, an alternative inside a tuple element
 // `a-tuple-element-lists-alternatives.loft`'s, inside a field `a-field-sub-pattern-lists-
 // alternatives.loft`'s, a plain-struct subject's `a-struct-or-pattern-arm-links-its-bindings.loft`'s.

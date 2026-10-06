@@ -30,6 +30,18 @@ after it.  The arm rule's "bare binding" wording stood for two months without th
 having it — corrected 2026-09-07, with the silence that hid it (an arm naming nothing was
 skipped without a diagnostic).
 
+- **D-match-22 — CLOSED 2026-10-06 (@PLN186 step 6).** `(P-Cap)` at the arm root, `whole: Rect
+  { w, h } => …`, was refused (*"'whole' is not a variant"*).  The arm head now reads `name:` before
+  the pattern (`root_capture`) and binds the subject, hoisted with the other bindings since it is the
+  same value whichever arm runs; `other: _` is the catch-all that binds it.  The capture is a VIEW
+  (`(P-Cap-View)`, extended to the subject's own place in binding.md), spelled as the projection a
+  view is (`OpGetField(subject, 0)`): a first build bound it with a plain `Set`, which codegen
+  copies for a record, and a write through `whole` did not reach the subject (r5 answered 23 for
+  93).  A BARE lowercase root name stays a refused misspelling (`@FR-M-Unit`,
+  a-match-arm-names-a-variant-that-exists.loft) — a first build read it as a catch-all binding,
+  which would have let a typo after full coverage compile as dead code.  Guard:
+  `tests/scripts/a-match-arm-captures-its-subject.loft`.
+
 - **D-match-21 — CLOSED 2026-10-06 (@PLN186 step 5).** `(P-Alt)` inside a field sub-pattern,
   `Box { s: Circle | Square, n } => n`, was refused (*"Expect token }"*).  The alternation now lives
   in `parse_field_sub_pattern`, the one path a struct field, a variant's field and a tuple element

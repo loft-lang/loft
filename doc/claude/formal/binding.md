@@ -398,7 +398,9 @@ different lowering path (`Value::Insert`) that the reassignment guard never sees
   (P-Cap-View)   a SINGLE structural capture that names an INTERIOR place of the subject (a struct
                  field, a struct-typed element) is a VIEW (B-View / heap.md H-View): it aliases
                  WITHOUT `&`, and carries the subject's borrow-dep (`Deps::frame1(subject)`) so both
-                 backends agree on free.
+                 backends agree on free.  A capture of the WHOLE subject at the arm root
+                 (`whole: Rect { w, h }`, `other: _`) names the subject's own place and is a view
+                 on the same terms: a write through it reaches the subject.
   (P-Cap-Fresh)  a `..rest` sub-slice and a repetition `(a)*` accumulator are FRESH vectors
                  (heap.md H-Alloc), INDEPENDENT of the subject (B-Copy / iteration.md I-Comp).
 ```

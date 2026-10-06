@@ -6294,6 +6294,9 @@ impl Parser {
                 self.end_pattern_arm();
                 continue;
             }
+            // `@FR-P-Cap` at the arm root — `whole: Rect { w, h } => …` binds the matched subject
+            // beside the pattern's own names; `other: _ => …` is the catch-all that binds it.
+            self.root_capture(&subject_val, &subject_type, &mut hoisted_bindings);
             let Some(first_ident) = self.lexer.has_identifier() else {
                 if !self.first_pass {
                     diagnostic!(
@@ -7387,6 +7390,53 @@ impl Parser {
             }
         }
         self.lexer.token("}");
+    }
+
+    /// `@FR-P-Cap` at a match arm's ROOT: `whole: Rect { w, h }`, and `other: _` for the
+    /// catch-all.  The name binds the matched subject — the same value whichever arm runs, so
+    /// the binding is hoisted ahead of the arm chain with the others.  Like every pattern
+    /// capture it is a VIEW of what it names (`@FR-P-Cap-View`, here of the subject's own
+    /// place): a heap subject's capture skips its free and records the borrow of the subject's
+    /// source.  Consumes `name:`; anything else is left for the variant parse.  A BARE lowercase
+    /// name at the root stays what `@FR-M-Unit` makes it — a misspelled variant, refused — so a
+    /// typo never turns into a catch-all (a-match-arm-names-a-variant-that-exists.loft).
+    fn root_capture(&mut self, subject_val: &Value, subject_type: &Type, hoisted: &mut Vec<Value>) {
+        let Some(name) = self.lexer.peek_named_arg() else {
+            return;
+        };
+        if !Self::is_binding_name(&name) {
+            return;
+        }
+        self.lexer.has_identifier();
+        self.lexer.token(":");
+        let v = self.pattern_binding(&name, subject_type);
+        if v != u16::MAX {
+            self.vars.defined(v);
+            // A record subject is bound through the projection node a view is spelled as
+            // (`s = o.inner`, `@FR-R-CopyView`'s `OpGetField(a, 0)`): a plain `Set` from a
+            // record variable is a COPY at codegen (`@FR-B-Copy`), and the capture is a view.
+            let bound = match subject_type.base() {
+                Type::Reference(d, _) | Type::Enum(d, true, _) => {
+                    let kt = i32::from(self.data.def(*d).known_type());
+                    let get_field = self.data.def_nr("OpGetField");
+                    Value::Call(
+                        get_field,
+                        vec![subject_val.clone(), Value::Int(0), Value::Int(kt)],
+                    )
+                }
+                _ => subject_val.clone(),
+            };
+            hoisted.push(v_set(v, bound));
+            if !matches!(subject_type.base(), Type::Text(_))
+                && !crate::data::is_scalar(subject_type.base())
+            {
+                self.vars.set_skip_free(v);
+                if let Some(src) = self.match_borrow_source(subject_val) {
+                    let bound_tp = Self::element_view_of(&self.vars.tp(v).clone(), src);
+                    self.vars.set_type(v, bound_tp);
+                }
+            }
+        }
     }
 
     /// The `{ field, field: pattern, … }` of a plain-struct pattern: a bare field binds a new

@@ -45,9 +45,9 @@ it.
 | B6 compose | **PASS** | `compose<T, U, V>` returning `\|x\| { g(f(x)) }`, called with `fn(n: integer) -> integer { … }` lambdas or named functions.  An untyped `\|n\|` argument is not inferred through a generic parameter (*"No matching operator '+' on 'T'"*) |
 | C1 nested constructor pattern | **PASS** | non-recursive nesting, and the recursive shape through a `reference<Expr>` field, both backends (guard `a-field-sub-pattern-asks-the-record-a-reference-field-points-at.loft`; loft#1870, fixed pending merge) <!-- doc-lint: ok --> |
 | C2 literal in field position | **PASS** | `Circle { r: 0.0 } => "point"` |
-| C3 field rename + as-binding | PARTIAL | rename PASS (`Rect { w: width, h }`); `whole @ Rect {…}` → *"'whole' is not a variant"* |
+| C3 field rename + as-binding | **PASS** | the as-binding is spelled `whole: Rect { w: width, h }` (`@FR-P-Cap` at the arm root, @PLN186): a view of the subject beside its renamed field.  `@` is not loft's spelling |
 | C4 tuple of variants | **PASS** | as written once the arm BODY spells `Playing { hp: hp }` (no field-init shorthand) |
-| C5 or-pattern with bindings | **PASS** | as written: `Circle { r } \| Sphere { r } => r` (`@FR-P-Multi`; `\|` and `,` are one separator, LOFT_CONTROL.md § Match expressions).  Or-patterns inside a tuple subject or a field are @PLN186's next steps |
+| C5 or-pattern with bindings | **PASS** | as written: `Circle { r } \| Sphere { r } => r` (`@FR-P-Multi`; `\|` and `,` are one separator, LOFT_CONTROL.md § Match expressions).  An or-pattern stands at every position: a tuple subject, a tuple element, a field, a plain-struct subject (@PLN186) |
 | C6 exhaustiveness through nesting | PARTIAL | the hole is refused, named by its outer variant (*"missing: X"*), not as `X { i: B }` |
 | C7 scalar-match hole diagnosed | PARTIAL | a warning, phrased as the null the hole produces (*"a nullable `text?` is stored into the return value"*), not naming the uncovered value |
 | C8 head/tail pattern | PASS with `_` | `[]` + `[x, ..rest]` is not seen as total (*"a slice pattern can fail …"*); the probe's `fn sum` collides with the reserved stdlib name |
@@ -69,7 +69,7 @@ it.
 | G1–G13 regression floor | covered | every cited page is a test: `tests/docs/*.loft` generate the reference pages and run in `make ci` |
 
 **Score (capability, both backends):** A 6/8 + 1 partial (and A5b's monomorphic form passes) · B 2/6 ·
-C 5/8 + 3 partial · D 0/2 · E not measured · F 1/2 · H 6/10 + 1 partial.
+C 6/8 + 2 partial · D 0/2 · E not measured · F 1/2 · H 6/10 + 1 partial.
 
 ### Open defects
 
@@ -87,6 +87,7 @@ Rewrite it first:
 - **No field-init shorthand** in an expression: `Playing { hp: hp }`, not `Playing { hp }`.
   It exists in a PATTERN.
 - **One arm for several variants with bindings is `|` or `,`** — the same separator.
+- **An as-binding is `whole: Pattern`**, not `whole @ Pattern`.
 - **A typed lambda is `fn(n: integer) -> integer { … }`**; `|n: integer|` is refused.
 - **`> >`** closes two type-argument lists in a variant field; `>>` there reads as two comparisons.
 - **There is no `loop` keyword** — `while true`.
