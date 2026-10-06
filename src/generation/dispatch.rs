@@ -1326,7 +1326,7 @@ impl Output<'_> {
             // Cluster-A A.4: ONE return-ownership query, shared with the
             // interpreter (`state/codegen.rs`).  Both backends read the same
             // fact, so they cannot diverge on the hidden-only / out-of-range edge.
-            let is_borrowed_view = self.data.def(fn_nr).returns_borrowed_view();
+            let is_borrowed_view = crate::use_analysis::may_return_a_borrow(self.data, fn_nr);
             // loft#981/#982 — a borrowed-view return is not always a borrow: the callee
             // may hand back the parameter's store OR one it minted (a `??` whose arms
             // split, a `return o` the return hoist materialises into a fresh `__ret_N`),

@@ -1,0 +1,95 @@
+diff --git b/src/generation/dispatch.rs a/src/generation/dispatch.rs
+index 84c8bc243..771ea5222 100644
+--- b/src/generation/dispatch.rs
++++ a/src/generation/dispatch.rs
+@@ -1326,7 +1326,7 @@ impl Output<'_> {
+             // Cluster-A A.4: ONE return-ownership query, shared with the
+             // interpreter (`state/codegen.rs`).  Both backends read the same
+             // fact, so they cannot diverge on the hidden-only / out-of-range edge.
+-            let is_borrowed_view = crate::use_analysis::may_return_a_borrow(self.data, fn_nr);
++            let is_borrowed_view = self.data.def(fn_nr).returns_borrowed_view();
+             // loft#981/#982 — a borrowed-view return is not always a borrow: the callee
+             // may hand back the parameter's store OR one it minted (a `??` whose arms
+             // split, a `return o` the return hoist materialises into a fresh `__ret_N`),
+diff --git b/src/state/codegen.rs a/src/state/codegen.rs
+index 55611228d..d4e32e347 100644
+--- b/src/state/codegen.rs
++++ a/src/state/codegen.rs
+@@ -2721,14 +2721,22 @@ impl State {
+                 && let Type::Reference(d_nr, _) = stack.function.tp(v).clone()
+             {
+                 let tp_nr = stack.data.def(d_nr).known_type();
+-                // The DISPLACED old store is already released: this branch is reached only
+-                // past the plain owned-reassign free above (`owned_ref && !s1_substituted`, not
+-                // the stashed post-free), whose witnesses — the entry's, and the hidden buffer
+-                // the call is handed (`@FR-O-Buffer`) — keep it off a store `v` shares with
+-                // either.  A second, unwitnessed free here released the caller's POOLED buffer
+-                // whenever the previous pass adopted the record the callee built into it: the
+-                // next pass's callee wrote into a freed store and the read answered 0
+-                // (`if n == 1 { y = b; return y; }` beside `return a`, in a loop, loft#1884).
++                // Free the DISPLACED old store first — this branch REPLACES the
++                // plain owned-reassign path (which frees it just above), and
++                // `OpBindOrCopy` overwrites `v` without releasing its previous
++                // store: each conditional reassign otherwise orphans one store
++                // (the p462_cond_reassign_retbuf gate-ON leak, M×N per call
++                // site).  Safe here: `\!stash_old_for_post_free` means the RHS
++                // does not read `v`, and a first-Set's null ref free is a no-op.
++                let old_pos = stack.var_pos(v);
++                stack.add_op("OpVarRef", self);
++                self.code_add(old_pos);
++                if let Some(entry) = entry_w {
++                    self.push_var_ref(stack, entry);
++                    stack.add_op("OpFreeRefIfDistinct", self);
++                } else {
++                    stack.add_op("OpFreeRef", self);
++                }
+                 // The call result (`src`) FIRST, then the witness on top — so the
+                 // witness's frame-relative `var_pos` accounts for `src` already on the
+                 // eval stack. `OpBindOrCopy` pops witness (top) then src.
+diff --git b/src/use_analysis.rs a/src/use_analysis.rs
+index 006e481cc..1dcc309a7 100644
+--- b/src/use_analysis.rs
++++ a/src/use_analysis.rs
+@@ -3689,24 +3689,7 @@ pub fn call_return_frees_source(data: &Data, d_nr: u32, call: &Value) -> bool {
+     if callref_captures(data, d_nr, call) && capture_can_be_returned(data, d_nr, call) {
+         return false;
+     }
+-    !may_return_a_borrow(data, fn_nr) || protectable_ref_args(data, d_nr, call).1
+-}
+-
+-/// May `fn_nr`'s result be a borrow of something the caller holds — the question both the
+-/// source-free bit ([`call_return_frees_source`]) and native's argument bracket ask, so they
+-/// ask it here and cannot answer it apart.
+-///
+-/// The return dep is the proxy (`@FR-O-Proxy`) and the oracle reads every return site
+-/// (`@FR-O-Oracle`); either saying "borrow" is a borrow.  A `return a` beside a copy the hoist
+-/// materialised into the buffer leaves a dep naming only the buffer, so the proxy alone set
+-/// the bit on the copy of `a` and the copy freed the caller's record (loft#1884).
+-#[must_use]
+-pub fn may_return_a_borrow(data: &Data, fn_nr: u32) -> bool {
+-    data.def(fn_nr).returns_borrowed_view()
+-        || matches!(
+-            return_ownership(data, fn_nr),
+-            Own::Borrowed { .. } | Own::Join { .. }
+-        )
++    !data.def(fn_nr).returns_borrowed_view() || protectable_ref_args(data, d_nr, call).1
+ }
+ 
+ /// loft#1550 — does `callee`'s return name MORE THAN ONE of its visible parameters?  Then a
+@@ -4251,16 +4234,6 @@ pub fn binds_the_callees_minted_store(
+     if deps.len() != 1 || usize::from(deps[0]) != buf {
+         return false;
+     }
+-    // The dep says every return is the buffer; the oracle reads every return SITE
+-    // (`@FR-O-Oracle`).  A `return a` beside a copy materialised into the buffer keeps a dep
+-    // naming only the buffer, and adopted plainly the caller freed its own record on the run
+-    // that answered `a` (loft#1884).  A borrow on any path is the copy-or-adopt split's.
+-    if matches!(
+-        return_ownership(data, *fn_nr),
+-        Own::Borrowed { .. } | Own::Join { .. }
+-    ) {
+-        return false;
+-    }
+     if function.is_argument(v) || function.is_caller_hidden_buf(v) || function.is_skip_free(v) {
+         return false;
+     }

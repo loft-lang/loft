@@ -2721,22 +2721,14 @@ impl State {
                 && let Type::Reference(d_nr, _) = stack.function.tp(v).clone()
             {
                 let tp_nr = stack.data.def(d_nr).known_type();
-                // Free the DISPLACED old store first — this branch REPLACES the
-                // plain owned-reassign path (which frees it just above), and
-                // `OpBindOrCopy` overwrites `v` without releasing its previous
-                // store: each conditional reassign otherwise orphans one store
-                // (the p462_cond_reassign_retbuf gate-ON leak, M×N per call
-                // site).  Safe here: `\!stash_old_for_post_free` means the RHS
-                // does not read `v`, and a first-Set's null ref free is a no-op.
-                let old_pos = stack.var_pos(v);
-                stack.add_op("OpVarRef", self);
-                self.code_add(old_pos);
-                if let Some(entry) = entry_w {
-                    self.push_var_ref(stack, entry);
-                    stack.add_op("OpFreeRefIfDistinct", self);
-                } else {
-                    stack.add_op("OpFreeRef", self);
-                }
+                // The DISPLACED old store is already released: this branch is reached only
+                // past the plain owned-reassign free above (`owned_ref && !s1_substituted`, not
+                // the stashed post-free), whose witnesses — the entry's, and the hidden buffer
+                // the call is handed (`@FR-O-Buffer`) — keep it off a store `v` shares with
+                // either.  A second, unwitnessed free here released the caller's POOLED buffer
+                // whenever the previous pass adopted the record the callee built into it: the
+                // next pass's callee wrote into a freed store and the read answered 0
+                // (`if n == 1 { y = b; return y; }` beside `return a`, in a loop, loft#1884).
                 // The call result (`src`) FIRST, then the witness on top — so the
                 // witness's frame-relative `var_pos` accounts for `src` already on the
                 // eval stack. `OpBindOrCopy` pops witness (top) then src.
