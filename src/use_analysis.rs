@@ -1301,6 +1301,7 @@ pub fn dump_link_observability(data: &Data) {
 /// follows a parameter into a mutating callee); or when it field-writes, or hands to a call, a
 /// local whose dep chain reaches a parameter — a view of one (`w = t.inn; w.v[0] = 9`).
 fn caller_stores_stable(
+    d_nr: u32,
     code: &Value,
     function: &Function,
     data: &Data,
@@ -1326,6 +1327,22 @@ fn caller_stores_stable(
     if opaque {
         return false;
     }
+    // The hidden buffers by their attribute FLAG, not their name: a local promoted onto the
+    // return buffer RENAMES that parameter after itself (`out` rather than `__retbuf`), and a
+    // name test then took the frame's own result for a caller's store the body writes.  A
+    // caller never hands a buffer that one of its other arguments reaches (loft#1895 closed
+    // the one rebind that did), so writing it cannot change what a parameter reads.
+    let hidden: HashSet<u16> = if d_nr == u32::MAX {
+        HashSet::default()
+    } else {
+        data.def(d_nr)
+            .attributes()
+            .iter()
+            .filter(|a| a.hidden)
+            .map(|a| function.var(&a.name))
+            .filter(|&v| v != u16::MAX)
+            .collect()
+    };
     let mut field_written = HashSet::default();
     crate::parser::find_field_written_vars(code, data, &mut field_written);
     let reaches_argument = |v: u16| {
@@ -1335,7 +1352,10 @@ fn caller_stores_stable(
             if !seen.insert(d) || d >= function.next_var() {
                 continue;
             }
-            if function.is_argument(d) && !function.name(d).starts_with("__") {
+            if function.is_argument(d)
+                && !function.name(d).starts_with("__")
+                && !hidden.contains(&d)
+            {
                 return true;
             }
             todo.extend(function.tp(d).depend());
@@ -1345,6 +1365,7 @@ fn caller_stores_stable(
     !(0..function.next_var()).any(|v| {
         if function.is_argument(v) {
             !function.name(v).starts_with("__")
+                && !hidden.contains(&v)
                 && !crate::data::is_scalar(function.tp(v).base())
                 && written.contains(&v)
         } else {
@@ -1354,12 +1375,13 @@ fn caller_stores_stable(
 }
 
 fn analyze_fn(
+    d_nr: u32,
     code: &Value,
     function: &Function,
     data: &Data,
     max_tier: u8,
 ) -> (Vec<VerdictRow>, Vec<ElidePlan>, Vec<MovePlan>) {
-    analyze_fn_survival(code, function, data, max_tier, false)
+    analyze_fn_survival(d_nr, code, function, data, max_tier, false)
 }
 
 /// [`analyze_fn`] with the survival split forced on.
@@ -1371,6 +1393,7 @@ fn analyze_fn(
 /// `use_analysis` tests pin (4 failures, measured).
 #[expect(clippy::too_many_lines, reason = "inherited")]
 fn analyze_fn_survival(
+    d_nr: u32,
     code: &Value,
     function: &Function,
     data: &Data,
@@ -1398,7 +1421,7 @@ fn analyze_fn_survival(
         w
     };
     // A parameter's store may still be written by a route `written` does not name.
-    let caller_stable = caller_stores_stable(code, function, data, &written);
+    let caller_stable = caller_stores_stable(d_nr, code, function, data, &written);
 
     let mut vars: Vec<u16> = u.append_src.keys().copied().collect();
     vars.sort_unstable();
@@ -1887,7 +1910,7 @@ fn move_elidable_source(
 #[must_use]
 pub fn move_plans(data: &Data, d_nr: u32) -> Vec<MovePlan> {
     let def = data.def(d_nr);
-    analyze_fn(&def.code, &def.variables, data, env_tier()).2
+    analyze_fn(d_nr, &def.code, &def.variables, data, env_tier()).2
 }
 
 /// @PLN90 phase B — dump every move-elidable site when `LOFT_MOVE_ELIDE` is set (the opt-in
@@ -1904,7 +1927,7 @@ pub fn dump_move_plans(data: &Data) {
         if !matches!(def.def_type, DefType::Function) {
             continue;
         }
-        for p in analyze_fn(&def.code, &def.variables, data, env_tier()).2 {
+        for p in analyze_fn(d_nr, &def.code, &def.variables, data, env_tier()).2 {
             total += 1;
             let at = p
                 .loc
@@ -1957,14 +1980,14 @@ pub fn verdicts_for(data: &Data, d_nr: u32) -> Vec<VerdictRow> {
 #[must_use]
 pub fn verdicts_for_tier(data: &Data, d_nr: u32, max_tier: u8) -> Vec<VerdictRow> {
     let def = data.def(d_nr);
-    analyze_fn(&def.code, &def.variables, data, max_tier).0
+    analyze_fn(d_nr, &def.code, &def.variables, data, max_tier).0
 }
 
 /// The elision plans (Borrow verdicts) for one function — what the borrow rewrite
 /// consumes — at the env-selected tier.
 #[must_use]
-pub fn elision_plans(code: &Value, function: &Function, data: &Data) -> Vec<ElidePlan> {
-    analyze_fn(code, function, data, env_tier()).1
+pub fn elision_plans(d_nr: u32, code: &Value, function: &Function, data: &Data) -> Vec<ElidePlan> {
+    analyze_fn(d_nr, code, function, data, env_tier()).1
 }
 
 // ============================================================================
@@ -5309,7 +5332,7 @@ pub fn dump_all(data: &Data) {
         if !matches!(def.def_type, DefType::Function) {
             continue;
         }
-        for r in analyze_fn(&def.code, &def.variables, data, env_tier()).0 {
+        for r in analyze_fn(d_nr, &def.code, &def.variables, data, env_tier()).0 {
             let bucket = match r.class {
                 CopyClass::Eliminated => "eliminated",
                 CopyClass::Avoidable => {
@@ -8439,7 +8462,7 @@ pub fn warn_copies(data: &Data, diags: &mut crate::diagnostics::Diagnostics, fal
         if !matches!(def.def_type, DefType::Function) {
             continue;
         }
-        for r in analyze_fn_survival(&def.code, &def.variables, data, env_tier(), true).0 {
+        for r in analyze_fn_survival(d_nr, &def.code, &def.variables, data, env_tier(), true).0 {
             // Only survival-split (source-duplicating) copies are user-facing, and only the
             // Avoidable class is the actionable worklist — mirror `report_copies`'s filter.
             if !r.survival || !matches!(r.class, CopyClass::Avoidable) {
@@ -8599,7 +8622,7 @@ pub fn report_copies(data: &Data) {
         if !matches!(def.def_type, DefType::Function) {
             continue;
         }
-        for r in analyze_fn(&def.code, &def.variables, data, env_tier()).0 {
+        for r in analyze_fn(d_nr, &def.code, &def.variables, data, env_tier()).0 {
             // Only survival-split copies (source duplications) are user-facing; the var-buffer /
             // return-buffer copies are a separate elision class (and where the stdlib's copies
             // land — the survival baseline is 0), kept to the developer dump.

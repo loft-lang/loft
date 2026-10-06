@@ -456,6 +456,24 @@ fn an_elided_copy_reads_its_own_value_when_the_callers_store_is_written() {
              fn main() { w: vector<H> = [mk(1), mk(2)]; cp(w, 3); println(\"back {w[0].id}\"); }",
             "R2 1 4 back 1 D1 D2",
         ),
+        // The frame's own hidden buffers are not a caller's store: a returned local promoted
+        // onto the return buffer is RENAMED after itself (`out`, `s`), and the gate still
+        // elides beside it.  A vector buffer, then a text one.
+        (
+            "control_beside_vector_return_buffer",
+            "struct SV { v: vector<H>, n: integer }\n\
+             fn ids(s: SV) -> vector<integer> { u = s.v; out: vector<integer> = []; \
+             for i in 0..len(u) { out += [u[i].id]; } out }\n\
+             fn main() { w = SV { v: [mk(1), mk(2)], n: 0 }; r = ids(w); \
+             println(\"R{r} back {w.v[0].id}\"); }",
+            "R[1,2] back 1 D1 D2",
+        ),
+        (
+            "control_beside_text_buffer",
+            "fn key(p: vector<H>) -> text { s = \"k\"; u = p; s = s + \"{u[0].id},{u[1].id}\"; s }\n\
+             fn main() { w: vector<H> = [mk(1), mk(2)]; println(\"R{key(w)} back {w[0].id}\"); }",
+            "Rk1,2 back 1 D1 D2",
+        ),
     ]
     .into_iter()
     .map(|(t, b, w)| (t.to_string(), format!("{SI}{b}"), w))
