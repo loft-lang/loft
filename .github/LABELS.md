@@ -221,8 +221,8 @@ fix time — whenever the work does any of:
 - **(c)** changes or removes a STANDARD-LIBRARY API (`default/*.loft`), which ships with loft and
   freezes with it.  A published library does not freeze: its consumers declare the version they
   depend on, and a breaking change is a new release they opt into (`api_compatible_with`), so a
-  library's own API change is never this label's.  What does count is a LANGUAGE change that
-  forces every library to change — that is (a) or (b);
+  library's own API change is never this label's.  A language change that forces the libraries
+  to change is a different question, `libs:migration` below;
 - **(d)** changes a covered format: a stored store layout, a file format, a wire format;
 - **(e)** is an item of the pre-freeze audit
   ([COMPATIBILITY.md § Before the flip](../doc/claude/COMPATIBILITY.md)).
@@ -242,6 +242,20 @@ the old one has no users filing bugs against it — so the item's body names the
 old behaviour it keeps, and the guard that proves it still holds.  At the flip, open
 `contract:before-1` items are either finished or relabelled `contract:compat`; the label then
 retires.
+
+## `libs:migration` — closing it forces the published libraries to change
+
+On issues and plans alike.  Set it when closing the item requires the published `loft-libs-*`
+libraries to change and be republished, whatever the timing: a new refusal their code hits (`pub`
+on every field a consumer reads, @PLN187), a retired spelling they use (the user-written
+`fn Op…`, @PLN182), a changed default they rely on.  It is a question about WORK, not about the
+freeze — the same item can carry `contract:before-1` too, and then both halves are owed.
+
+The label is what a library sweep is built from: the migration lands as one pass over every
+library (a branch, a PR with auto-merge, a republish per library — the loft-ship skill), in the
+order the item's own steps need, usually before the change that enforces it.  The item's body
+names the libraries it touches and how the change is computed (a census, a rewrite), so the sweep
+does not depend on someone remembering which libraries use the old form.
 
 ## `area:` — which part of loft (plain-English, with orienting files — NOT required reading)
 
