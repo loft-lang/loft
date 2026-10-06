@@ -8017,7 +8017,8 @@ use a separate collection or add after the loop"
                 || crate::data::element_stack_offsets(elems)[i] as u32,
                 |offs| u32::from(offs[i]),
             );
-            self.get_val(elem, false, offset, Value::Var(tmp), u32::MAX)
+            let nullable = matches!(elem, Type::Optional(_));
+            self.get_val(elem, nullable, offset, Value::Var(tmp), u32::MAX)
         };
         let mut elem_tp = elem.clone();
         if let Some((syn, pointer)) = self.tagged_pointer_type(elem) {

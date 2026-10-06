@@ -14507,7 +14507,8 @@ impl Parser {
                     // in the caller's, whose inferred deps would pick the `OpGetDbRef` arm
                     // against bytes the def laid out inline.
                     let et = &crate::data::Data::tuple_member_stored(et);
-                    let elem_val = self.get_val(et, false, elem_pos, code.clone(), u32::MAX);
+                    let nullable = matches!(et, Type::Optional(_));
+                    let elem_val = self.get_val(et, nullable, elem_pos, code.clone(), u32::MAX);
                     tuple_elems.push(elem_val);
                 }
                 Value::Tuple(tuple_elems)
@@ -14980,7 +14981,30 @@ impl Parser {
         // OpSet* (sentinel storage); without this it fell to `_` and was REJECTED with
         // "Tuple struct field cannot contain element of type integer?".
         let single = match elem_tp.base() {
-            Type::Integer(_) => self.cl("OpSetInt", &[ref_code.clone(), pos_v, value]),
+            // The member's slot is the twin of its READ (`unbox_tuple_from_dbref` → `get_val`
+            // with the member's own nullability and no alias): the same `NarrowSlot`, so a
+            // `u8` member is written in its one byte and a `u8?` member spells absence.  A
+            // wide `OpSetInt` here wrote eight bytes into a one-byte member, over the members
+            // and fields after it (`@FR-L-Narrow`: a narrow slot is its declared width).
+            Type::Integer(spec) => {
+                let nullable = matches!(elem_tp, Type::Optional(_));
+                let narrow_vec =
+                    spec.forced_size.is_some() && spec.vector_narrow_width(nullable).is_some();
+                let slot = crate::data::NarrowSlot::of_slot(
+                    spec.byte_width(nullable),
+                    nullable,
+                    narrow_vec,
+                    spec,
+                );
+                if slot.kind.takes_min() {
+                    self.cl(
+                        slot.set_op(),
+                        &[ref_code.clone(), pos_v, Value::Int(slot.min), value],
+                    )
+                } else {
+                    self.cl(slot.set_op(), &[ref_code.clone(), pos_v, value])
+                }
+            }
             Type::Function(..) => {
                 // P196: storage holds the 4-byte i32 d_nr only.  Reduce
                 // `Value::FnRef` to its bare `Value::Int(d_nr)` so the

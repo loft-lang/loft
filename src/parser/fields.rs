@@ -2485,7 +2485,11 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             // loft#1503 — as in `get_val`'s own tuple arm: the STORED spelling decides the
             // read op, because that is what set the layout.
             let et = &crate::data::Data::tuple_member_stored(et);
-            tuple_elems.push(self.get_val(et, false, off, Value::Var(tmp), u32::MAX));
+            // A `τ?` member spells absence in its own bytes (`@FR-L-Null`), so it is read with
+            // its nullability — the one encoding its write (`set_field`, `emit_set_one_element`)
+            // stores.
+            let nullable = matches!(et, Type::Optional(_));
+            tuple_elems.push(self.get_val(et, nullable, off, Value::Var(tmp), u32::MAX));
         }
         v_block(
             vec![v_set(tmp, dbref), Value::Tuple(tuple_elems)],
@@ -2542,7 +2546,8 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         } else {
             crate::data::element_stack_offsets(elems)[idx] as u32
         };
-        self.get_val(&elems[idx], false, offset, base, u32::MAX)
+        let nullable = matches!(elems[idx], Type::Optional(_));
+        self.get_val(&elems[idx], nullable, offset, base, u32::MAX)
     }
 
     /// [`Self::stored_tuple_member_place`] for an element of a tuple of a TYPE VARIABLE

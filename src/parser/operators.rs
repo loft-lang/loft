@@ -3677,8 +3677,9 @@ impl Parser {
                 // PEELED for the reason the stack arm peels: the arms below match some types
                 // in their bare spelling only, so a `boolean?` member would miss its arm and
                 // fall to the generic truthiness convert, where `false` reads as absent.
+                let nullable = matches!(elem_tp, Type::Optional(_));
                 let elem_tp = elem_tp.base();
-                let member = self.get_val(elem_tp, false, off, src.clone(), u32::MAX);
+                let member = self.get_val(elem_tp, nullable, off, src.clone(), u32::MAX);
                 // A member that is itself a tuple is bound first, for the reason the stack
                 // arm binds one: the tuple arms address members through a VAR, and a member
                 // read is a call.

@@ -1,0 +1,102 @@
+diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
+index 6af879b08..3c933a560 100644
+--- b/src/parser/expressions.rs
++++ a/src/parser/expressions.rs
+@@ -8017,8 +8017,7 @@ use a separate collection or add after the loop"
+                 || crate::data::element_stack_offsets(elems)[i] as u32,
+                 |offs| u32::from(offs[i]),
+             );
+-            let nullable = matches!(elem, Type::Optional(_));
+-            self.get_val(elem, nullable, offset, Value::Var(tmp), u32::MAX)
++            self.get_val(elem, false, offset, Value::Var(tmp), u32::MAX)
+         };
+         let mut elem_tp = elem.clone();
+         if let Some((syn, pointer)) = self.tagged_pointer_type(elem) {
+diff --git b/src/parser/fields.rs a/src/parser/fields.rs
+index b4392f7e6..36c8817de 100644
+--- b/src/parser/fields.rs
++++ a/src/parser/fields.rs
+@@ -2485,11 +2485,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
+             // loft#1503 — as in `get_val`'s own tuple arm: the STORED spelling decides the
+             // read op, because that is what set the layout.
+             let et = &crate::data::Data::tuple_member_stored(et);
+-            // A `τ?` member spells absence in its own bytes (`@FR-L-Null`), so it is read with
+-            // its nullability — the one encoding its write (`set_field`, `emit_set_one_element`)
+-            // stores.
+-            let nullable = matches!(et, Type::Optional(_));
+-            tuple_elems.push(self.get_val(et, nullable, off, Value::Var(tmp), u32::MAX));
++            tuple_elems.push(self.get_val(et, false, off, Value::Var(tmp), u32::MAX));
+         }
+         v_block(
+             vec![v_set(tmp, dbref), Value::Tuple(tuple_elems)],
+@@ -2546,8 +2542,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
+         } else {
+             crate::data::element_stack_offsets(elems)[idx] as u32
+         };
+-        let nullable = matches!(elems[idx], Type::Optional(_));
+-        self.get_val(&elems[idx], nullable, offset, base, u32::MAX)
++        self.get_val(&elems[idx], false, offset, base, u32::MAX)
+     }
+ 
+     /// [`Self::stored_tuple_member_place`] for an element of a tuple of a TYPE VARIABLE
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index de634310f..4278d7611 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -14439,8 +14439,7 @@ impl Parser {
+                     // in the caller's, whose inferred deps would pick the `OpGetDbRef` arm
+                     // against bytes the def laid out inline.
+                     let et = &crate::data::Data::tuple_member_stored(et);
+-                    let nullable = matches!(et, Type::Optional(_));
+-                    let elem_val = self.get_val(et, nullable, elem_pos, code.clone(), u32::MAX);
++                    let elem_val = self.get_val(et, false, elem_pos, code.clone(), u32::MAX);
+                     tuple_elems.push(elem_val);
+                 }
+                 Value::Tuple(tuple_elems)
+@@ -14913,30 +14912,7 @@ impl Parser {
+         // OpSet* (sentinel storage); without this it fell to `_` and was REJECTED with
+         // "Tuple struct field cannot contain element of type integer?".
+         let single = match elem_tp.base() {
+-            // The member's slot is the twin of its READ (`unbox_tuple_from_dbref` → `get_val`
+-            // with the member's own nullability and no alias): the same `NarrowSlot`, so a
+-            // `u8` member is written in its one byte and a `u8?` member spells absence.  A
+-            // wide `OpSetInt` here wrote eight bytes into a one-byte member, over the members
+-            // and fields after it (`@FR-L-Narrow`: a narrow slot is its declared width).
+-            Type::Integer(spec) => {
+-                let nullable = matches!(elem_tp, Type::Optional(_));
+-                let narrow_vec =
+-                    spec.forced_size.is_some() && spec.vector_narrow_width(nullable).is_some();
+-                let slot = crate::data::NarrowSlot::of_slot(
+-                    spec.byte_width(nullable),
+-                    nullable,
+-                    narrow_vec,
+-                    spec,
+-                );
+-                if slot.kind.takes_min() {
+-                    self.cl(
+-                        slot.set_op(),
+-                        &[ref_code.clone(), pos_v, Value::Int(slot.min), value],
+-                    )
+-                } else {
+-                    self.cl(slot.set_op(), &[ref_code.clone(), pos_v, value])
+-                }
+-            }
++            Type::Integer(_) => self.cl("OpSetInt", &[ref_code.clone(), pos_v, value]),
+             Type::Function(..) => {
+                 // P196: storage holds the 4-byte i32 d_nr only.  Reduce
+                 // `Value::FnRef` to its bare `Value::Int(d_nr)` so the
+diff --git b/src/parser/operators.rs a/src/parser/operators.rs
+index 4b62e154d..779ffc1bd 100644
+--- b/src/parser/operators.rs
++++ a/src/parser/operators.rs
+@@ -3677,9 +3677,8 @@ impl Parser {
+                 // PEELED for the reason the stack arm peels: the arms below match some types
+                 // in their bare spelling only, so a `boolean?` member would miss its arm and
+                 // fall to the generic truthiness convert, where `false` reads as absent.
+-                let nullable = matches!(elem_tp, Type::Optional(_));
+                 let elem_tp = elem_tp.base();
+-                let member = self.get_val(elem_tp, nullable, off, src.clone(), u32::MAX);
++                let member = self.get_val(elem_tp, false, off, src.clone(), u32::MAX);
+                 // A member that is itself a tuple is bound first, for the reason the stack
+                 // arm binds one: the tuple arms address members through a VAR, and a member
+                 // read is a call.
