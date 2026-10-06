@@ -1307,27 +1307,31 @@ integer.  The second failure mode again, on the axis the fixes' own guards had h
 
 Opened and closed in the same change; the chapter's `OPEN:` count never carried them.
 
-* **D-types-26** *(opened 2026-10-06, CLOSED 2026-10-06)* — `(C-Refl)` for a vector element:
-  an integer's identity is its range, so one range spelled two ways is one type, and an
-  element is a place the callee may write, so no OTHER range converts.  Both halves failed at
-  the one predicate that answers it, `Type::same_element_storage`.  It asked the element's
-  width with `!spec.not_null` as the nullability, where the storage home
-  (`Data::narrow_vector_element`) reserves a null code for a `τ?` element only: a user range
-  alias without `size` (`type Byte = integer limit(0, 255)`, one byte in every position)
-  read as two, so `vector<u8>` and `vector<Byte>` were refused against each other —
-  *"expected `vector<integer(0, 255)>`, got `vector<integer(0, 255)>`"* — and so were
-  `vector<i16>` / `vector<Coord>` and the narrow tuples.  And it compared only the width and
-  the SIGN of `min`: `vector<integer limit(100, 355) size(1)>` met `vector<u8>` in both
-  directions and each side read the other's bytes as its own (355 for `[100, 200, 355]`, 303
-  for `[0, 1, 2]`), silently, on both backends.  **Fix.**  `IntegerSpec::same_range` (the full
-  integer is one range in both template encodings, `IntegerSpec::is_full_integer`, now also
-  the home of the three copies `parser/mod.rs` spelled) and the storage the home derives.
-  `u8?` and `Byte?` stay two types: the sized one gives its top code to null and the unsized
-  one widens (`(N-Reserve)`), so their usable ranges differ.  Guards
+* **D-types-26** *(opened 2026-10-06, CLOSED 2026-10-06)* — `(C-Refl)` for a vector element,
+  decided on STORAGE: two element types are one when their bytes mean the same values, and an
+  element is a place the callee may write, so bytes that mean other values never convert.  The
+  one predicate that answers it, `Type::same_element_storage`, was wrong both ways.  It took an
+  element's nullability from `!spec.not_null`, where the storage home
+  (`Data::narrow_vector_element`) reserves a null code for a `τ?` element only, so a user range
+  alias without `size` (`type Byte = integer limit(0, 255)`, one byte in every position) read
+  as two, and `vector<u8>` / `vector<Byte>` were refused against each other — *"expected
+  `vector<integer(0, 255)>`, got `vector<integer(0, 255)>`"* — as were `vector<i16>` /
+  `vector<Coord>` and the narrow tuples.  And it compared only the width and the SIGN of `min`,
+  while a narrow element is stored as `value - part_min`: `vector<integer limit(100, 355)
+  size(1)>` met `vector<u8>` in both directions and each read the other's bytes as its own (355
+  for `[100, 200, 355]`, 303 for `[0, 1, 2]`), silently, on both backends.  **Fix.**  The same
+  nullability and width, and below 8 bytes the same `part_min`; an 8-byte element is stored raw
+  and is one storage whatever range it declares.  A first version compared the declared RANGE
+  instead, and refused `vector<integer limit(-99999, 99999)>` into `vector<integer>` — a
+  program that ran (bench/10_sort) and whose bytes mean the same; storage is the basis, and a
+  callee writing outside a declared range it received this way is the range's promise, not a
+  misread.  `u8?` and `Byte?` stay two storages (the sized one gives its top code to null, the
+  unsized one widens, `(N-Reserve)`).  `IntegerSpec::is_full_integer` now answers the three
+  identical copies `parser/mod.rs` spelled.  Guards
   `tests/scripts/a-vector-element-of-one-range-meets-every-spelling-of-it.loft`,
-  `tests/scripts/a-vector-element-of-another-range-is-refused.loft`.  Published libraries:
-  41 pass, 0 compile-break (`assets` 0.3.1's layout-hash test fails identically without this
-  change).  `Contract: strained` — a conversion that compiled is refused.
+  `tests/scripts/a-vector-element-of-another-range-is-refused.loft`.  Published libraries: 41
+  pass, 0 compile-break.  `Contract: strained` — a misreading conversion that compiled is
+  refused.
 
 * **D-types-25** *(opened 2026-10-06, CLOSED 2026-10-06)* — `(C-Never)`: a jump is a `Never` that
   fits wherever a value is expected, and four positions disagreed.  (1) Whether a VALUE follows

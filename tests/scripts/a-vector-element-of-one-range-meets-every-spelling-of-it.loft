@@ -1,14 +1,16 @@
-// @FR-C-Refl — an integer's identity is its RANGE, so a range spelled two ways is one type and
-// a vector of it meets a parameter, a local and a return written the other way.  `u8` (a
+// @FR-C-Refl — a range spelled two ways is one type, and a vector of it meets a parameter, a
+// local and a return written the other way: element identity is decided on STORAGE, the bytes
+// and what they mean (width, nullability and the `value - part_min` base of a narrow element).  `u8` (a
 // `size(1)` alias) and `integer limit(0, 255)` store one byte each, as the storage home derives
 // it: a null code is reserved for a `τ?` element only, never for a plain one.  (`u8?` and
 // `Byte?` are NOT one type: a sized slot gives its top code to null and an unsized one widens,
 // so their usable ranges differ — @FR-N-Reserve.)  The full `integer` has two bound encodings
 // (formal/types.md D2) and is one range in both.
-// @falsified-at: df3d077ad — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-at: 4ffa0ef90 — interpret exit 1 -> 0, native exit 1 -> 0 (a range rule refusing the 8-byte cell)
 // @falsified-by: tests/falsified/a-vector-element-of-one-range-meets-every-spelling-of-it.patch — interpret exit 1 -> 0, native exit 1 -> 0
 // HOLDS: leak, panic and refusals are clean on both trees and both backends.
-// CHANNEL: the exit — the control refuses one range spelled two ways.
+// CHANNEL: the exit — the control refuses a vector whose bytes mean the same values
+// (df3d077ad: `u8` against `Byte`; 4ffa0ef90: an 8-byte ranged element against `integer`).
 
 type Byte = integer limit(0, 255);
 type Coord = integer limit(-32768, 32767);
@@ -21,6 +23,7 @@ fn pairs_u8(v: vector<(u8, u8)>) -> integer { s = 0; for (a, b) in v { s += a * 
 fn rows_u8(v: vector<vector<u8>>) -> integer { s = 0; for r in v { for x in r { s += x } }; s * 100 + len(v) }
 fn sum_int(v: vector<integer>) -> integer { s = 0; for x in v { s += x }; s }
 fn as_bytes(v: vector<u8>) -> vector<Byte> { v }
+fn total(v: vector<integer>) -> integer { s = 0; for x in v { s += x }; s }
 
 fn main() {
   vu: vector<u8> = [1, 2, 250];
@@ -37,6 +40,10 @@ fn main() {
   assert(rows_u8(nb) == 20302, "a nested vector of one range: {rows_u8(nb)}");
   wide = [9223372036854775806, 1];
   assert(sum_int(wide) == 9223372036854775807, "the full integer in both encodings: {sum_int(wide)}");
+  // An 8-byte element is stored raw, so a declared range wider than two bytes is the same
+  // storage as `integer` (bench/10_sort's `insertion_sort(data)` is this shape).
+  d: vector<integer limit(-99999, 99999)> = [5, -7, 99999];
+  assert(total(d) == 99997, "an 8-byte ranged vector into vector<integer>: {total(d)}");
   back = as_bytes(vu);
   assert(sum_byte(back) == 253003, "returned as the other spelling: {sum_byte(back)}");
 }
