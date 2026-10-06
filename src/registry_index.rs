@@ -496,6 +496,17 @@ pub fn is_exact_pin(constraint: &str) -> bool {
 /// it on an EXACT pin broke that promise — `loft install glb@0.1.1` refused a version the
 /// index plainly carries, which is the same retention failure `web 0.2.2` suffered one layer
 /// down. A range or `*` still skips yanked, so nothing new ever picks one up by accident.
+/// Does `ver`'s `loft` floor admit the running loft?  The same test the loader makes
+/// (`manifest::check_version`, as `loft_floor_holds` and [`newest_cached_loadable_satisfying`]
+/// do), so resolution never picks a release the load would then refuse (loft#1890).  A
+/// version with no floor, or one whose floor cannot be read, is judged by the loader as it
+/// always was: an unreadable floor is not satisfied, so it is skipped here too.
+fn floor_admits(ver: &Version) -> bool {
+    ver.loft.is_empty()
+        || crate::manifest::check_version(&ver.loft, crate::manifest::LOFT_RUNNING_VERSION)
+            == crate::manifest::VersionCheck::Satisfied
+}
+
 #[must_use]
 pub fn find_best_version<'a>(
     pkg: &'a Package,
@@ -515,6 +526,12 @@ pub fn find_best_version<'a>(
             continue;
         }
         if !satisfies(&ver.semver, constraint) {
+            continue;
+        }
+        // A release this loft cannot load is not a candidate — the newest one it CAN load is
+        // (PACKAGES.md § The `loft` floor).  An exact pin still names its release: the load then
+        // says why it refuses, as it does for a yanked pin's retention.
+        if !exact_pin && !floor_admits(ver) {
             continue;
         }
         if best
@@ -588,6 +605,7 @@ pub fn find_compatible_version<'a>(
         if yanked.contains(ver.semver.as_str())
             || (ver.prerelease && !allow_prerelease)
             || !satisfies(&ver.semver, constraint)
+            || !floor_admits(ver)
         {
             continue;
         }
@@ -2297,6 +2315,59 @@ mod tests {
         // 0.1.0 is yanked; 0.1.1 is non-prerelease; 0.2.0-beta is prerelease.
         let best = find_best_version(crypto, "^0.1", false).expect("Some");
         assert_eq!(best.semver, "0.1.1");
+    }
+
+    /// loft#1890 — a release whose `loft` floor the running loft does not meet is not a
+    /// candidate: resolution answers the newest release this loft CAN load, as PACKAGES.md
+    /// promises, instead of one the load then refuses.  The floor here (`>=9999.1`) is above
+    /// every loft, the other (`>=0.8`) below every loft; an exact pin still names its release
+    /// (the load says why it refuses), and a version with no floor stays a candidate.
+    #[test]
+    fn resolution_skips_a_release_this_loft_cannot_load() {
+        let idx = parse_index(
+            r#"{ "schema_version": 1, "updated": "2026-10-06T00:00:00Z", "packages": {
+                "assets": { "description": "packs", "categories": ["io"], "yanked": [],
+                  "versions": {
+                    "0.3.1": { "url": "u", "sha256": "a", "size": 1, "loft": ">=0.8", "published": "2026-09-01T00:00:00Z" },
+                    "0.4.1": { "url": "u", "sha256": "b", "size": 1, "loft": ">=9999.1", "published": "2026-10-06T00:00:00Z" }
+                  } },
+                "plain": { "description": "no floor", "categories": ["io"], "yanked": [],
+                  "versions": {
+                    "1.0.0": { "url": "u", "sha256": "c", "size": 1, "loft": "", "published": "2026-10-06T00:00:00Z" }
+                  } }
+            } }"#,
+        )
+        .expect("parse");
+        let assets = idx.packages.get("assets").expect("assets");
+        for c in ["*", ">=0.3", "^0.3"] {
+            assert_eq!(
+                find_best_version(assets, c, false).map(|v| v.semver.as_str()),
+                Some("0.3.1"),
+                "constraint `{c}` must pass over the release this loft cannot load"
+            );
+        }
+        assert_eq!(
+            find_best_version(assets, "^0.4", false).map(|v| v.semver.as_str()),
+            None,
+            "no loadable release in the range answers none, not the unloadable one"
+        );
+        assert_eq!(
+            find_best_version(assets, "0.4.1", false).map(|v| v.semver.as_str()),
+            Some("0.4.1"),
+            "an exact pin still names its release; the load explains the refusal"
+        );
+        let held = find_compatible_version(assets, ">=0.3", false, Some("0.3.1"));
+        assert_eq!(
+            held.best.map(|v| v.semver.as_str()),
+            Some("0.3.1"),
+            "the held-version path agrees"
+        );
+        let plain = idx.packages.get("plain").expect("plain");
+        assert_eq!(
+            find_best_version(plain, "*", false).map(|v| v.semver.as_str()),
+            Some("1.0.0"),
+            "a version with no floor stays a candidate"
+        );
     }
 
     /// A yanked version stays INSTALLABLE by exact pin — that is the whole reason
