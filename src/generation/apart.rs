@@ -267,7 +267,9 @@ fn shape_of(data: &Data, d_nr: u32, types: &HashMap<u16, ApartLayout>) -> Shape 
             }
             continue;
         }
-        if matches!(a.typedef.peel_link(), Type::Reference(_, _)) || matches!(a.typedef, Type::RefVar(_)) {
+        if matches!(a.typedef.peel_link(), Type::Reference(_, _))
+            || matches!(a.typedef, Type::RefVar(_))
+        {
             let inner = match &a.typedef {
                 Type::RefVar(t) => t.as_ref(),
                 t => t,
@@ -386,7 +388,10 @@ impl Walk<'_> {
                         if let [Value::Var(v), Value::Int(off), Value::Int(0)] =
                             [args[0].unspan(), args[1].unspan(), args[2].unspan()]
                             && self.is_apart(*v)
-                            && self.layout(*v).and_then(|l| l.vector_at(i64::from(*off))).is_some()
+                            && self
+                                .layout(*v)
+                                .and_then(|l| l.vector_at(i64::from(*off)))
+                                .is_some()
                         {
                             self.open.insert((*v, i64::from(*off)), 0);
                             return true;
@@ -419,7 +424,9 @@ impl Walk<'_> {
                                 (Some(n), Some(Value::Int(0))) if *n > 0 => {
                                     *n -= 1;
                                 }
-                                (Some(_), _) => self.fail(v, "a repeat whose count is not a constant"),
+                                (Some(_), _) => {
+                                    self.fail(v, "a repeat whose count is not a constant")
+                                }
                                 (None, _) => self.fail(v, "a vector grown after its literal"),
                             }
                             return true;
@@ -502,14 +509,16 @@ impl Walk<'_> {
         let Some((params, _)) = self.twins.get(&d) else {
             return false;
         };
-        params.iter().all(|&p| {
-            matches!(args.get(p).map(Value::unspan), Some(Value::Var(v)) if self.is_apart(*v))
-        })
+        params.iter().all(
+            |&p| matches!(args.get(p).map(Value::unspan), Some(Value::Var(v)) if self.is_apart(*v)),
+        )
     }
 
     fn node(&mut self, node: &Value) {
         match node.unspan() {
-            Value::Var(v) if self.is_apart(*v) => self.fail(*v, "a use the apart form does not serve"),
+            Value::Var(v) if self.is_apart(*v) => {
+                self.fail(*v, "a use the apart form does not serve")
+            }
             Value::Block(bl) => {
                 let saved = std::mem::take(&mut self.open);
                 for s in &bl.operators {
@@ -534,7 +543,8 @@ impl Walk<'_> {
             Value::Set(x, rhs) if self.is_apart(*x) => self.assign(*x, rhs),
             // A rebind witness nothing reads (`__rbw_x = OpRefAlias(x)`): emitted as nothing.
             Value::Set(w, _) if self.witnesses.contains(w) => {}
-            Value::Set(_, rhs) if matches!(rhs.unspan(), Value::Call(d, a)
+            Value::Set(_, rhs)
+                if matches!(rhs.unspan(), Value::Call(d, a)
                 if op_name(self.data, *d) == "OpRefAlias" && a.len() == 1
                     && matches!(a[0].unspan(), Value::Var(v) if self.is_apart(*v))) =>
             {
@@ -630,7 +640,9 @@ impl Walk<'_> {
         }
         // Frees: a free of an apart variable is nothing, and a store test against one is
         // always distinct.
-        if name == "OpFreeRef" && args.len() == 1 && matches!(args[0].unspan(), Value::Var(v) if self.is_apart(*v))
+        if name == "OpFreeRef"
+            && args.len() == 1
+            && matches!(args[0].unspan(), Value::Var(v) if self.is_apart(*v))
         {
             return;
         }
@@ -655,7 +667,10 @@ impl Walk<'_> {
                     self.fail(v, "an element of a field that is not an apart vector");
                     return;
                 };
-                if ert != rt || width != w || !matches!(args.get(1).map(Value::unspan), Some(Value::Int(0))) {
+                if ert != rt
+                    || width != w
+                    || !matches!(args.get(1).map(Value::unspan), Some(Value::Int(0)))
+                {
                     self.fail(v, "an element read at another width");
                     return;
                 }
@@ -873,6 +888,7 @@ fn judge(
 
 /// `@FR-R-Apart` instance 2 — the gate (module docs).  Empty under `LOFT_NO_APART`.
 #[must_use]
+#[expect(clippy::too_many_lines, reason = "WIP: the gate is split when the twin emission lands")]
 pub fn apart_values(data: &Data, stores: &Stores) -> ApartValues {
     let mut out = ApartValues::default();
     if apart_disabled() {
@@ -904,7 +920,9 @@ pub fn apart_values(data: &Data, stores: &Stores) -> ApartValues {
             continue;
         }
         let vars = def.variables();
-        if (0..vars.count()).any(|v| record_of(data, vars.tp(v)).is_some_and(|t| types.contains_key(&t))) {
+        if (0..vars.count())
+            .any(|v| record_of(data, vars.tp(v)).is_some_and(|t| types.contains_key(&t)))
+        {
             fns.push(d_nr);
         }
     }
@@ -982,11 +1000,14 @@ pub fn apart_values(data: &Data, stores: &Stores) -> ApartValues {
     // A type no construction counted has no `N`: nothing of it is apart.
     let unknown: HashSet<u16> = types
         .iter()
-        .filter(|(_, l)| l.parts.iter().any(|p| matches!(p, ApartPart::Vector { n: None, .. })))
+        .filter(|(_, l)| {
+            l.parts
+                .iter()
+                .any(|p| matches!(p, ApartPart::Vector { n: None, .. }))
+        })
         .map(|(tp, _)| *tp)
         .collect();
-    let uses_unknown =
-        |j: &Judged| j.frame.vars.values().any(|tp| unknown.contains(tp));
+    let uses_unknown = |j: &Judged| j.frame.vars.values().any(|tp| unknown.contains(tp));
     for (d_nr, j) in twin_frames {
         if !uses_unknown(&j) {
             out.twins.insert(d_nr, j.frame);
@@ -1014,7 +1035,10 @@ fn trace(data: &Data, out: &ApartValues) {
             .map(|p| match p {
                 ApartPart::Scalar { off, rt } => format!("@{off}:{rt}"),
                 ApartPart::Vector { off, rt, n, .. } => {
-                    format!("@{off}:[{rt}; {}]", n.map_or("?".to_string(), |n| n.to_string()))
+                    format!(
+                        "@{off}:[{rt}; {}]",
+                        n.map_or("?".to_string(), |n| n.to_string())
+                    )
                 }
             })
             .collect();
