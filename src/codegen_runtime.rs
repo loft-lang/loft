@@ -2639,18 +2639,29 @@ pub fn OpReadFile<T: FileVal>(
     if file.rec == 0 {
         return;
     }
-    let format = stores.store(&file).get_byte(file.rec, file.pos + 32, 0);
+    // The File record's fields read through one resolve of its store (`OpReadFileInt`'s
+    // reason).  `#next` holds the byte offset to read from.
+    let (format, raw_next, open_ref) = {
+        let st = stores.store(&file);
+        (
+            st.get_byte(file.rec, file.pos + 32, 0),
+            st.get_long(file.rec, file.pos + 16),
+            st.get_i32_raw(file.rec, file.pos + 28),
+        )
+    };
     if format != 1 && format != 2 && format != 3 && format != 5 {
         return;
     }
     let little_endian = format == 2;
-    // Track read position: #next holds the byte offset to read from.
-    let raw_next = stores.store(&file).get_long(file.rec, file.pos + 16);
     let next_pos = if raw_next == i64::MIN { 0 } else { raw_next };
     stores
         .store_mut(&file)
         .set_long(file.rec, file.pos + 8, next_pos);
-    let file_ref = file_handle_read(stores, &file, next_pos);
+    let file_ref = if open_ref == i32::MIN {
+        file_handle_read(stores, &file, next_pos)
+    } else {
+        open_ref
+    };
     if file_ref == i32::MIN {
         return;
     }
@@ -2707,18 +2718,30 @@ pub fn OpReadFileInt<const W: usize, const SIGNED: bool>(
     if file.rec == 0 {
         return;
     }
-    let format = stores.store(&file).get_byte(file.rec, file.pos + 32, 0);
+    // The File record's fields read through ONE resolve of its store, and written through one
+    // more after the read: five lookups per read were most of what was left of it.
+    let (format, raw_next, open_ref) = {
+        let st = stores.store(&file);
+        (
+            st.get_byte(file.rec, file.pos + 32, 0),
+            st.get_long(file.rec, file.pos + 16),
+            st.get_i32_raw(file.rec, file.pos + 28),
+        )
+    };
     if format != 1 && format != 2 && format != 3 && format != 5 {
         return;
     }
     let little_endian = format == 2;
-    let raw_next = stores.store(&file).get_long(file.rec, file.pos + 16);
     let next_pos = if raw_next == i64::MIN { 0 } else { raw_next };
-    stores
-        .store_mut(&file)
-        .set_long(file.rec, file.pos + 8, next_pos);
-    let file_ref = file_handle_read(stores, &file, next_pos);
+    let file_ref = if open_ref == i32::MIN {
+        file_handle_read(stores, &file, next_pos)
+    } else {
+        open_ref
+    };
     if file_ref == i32::MIN {
+        stores
+            .store_mut(&file)
+            .set_long(file.rec, file.pos + 8, next_pos);
         return;
     }
     let bytes = stores
@@ -2732,9 +2755,9 @@ pub fn OpReadFileInt<const W: usize, const SIGNED: bool>(
     } else {
         0
     };
-    stores
-        .store_mut(&file)
-        .set_long(file.rec, file.pos + 16, next_pos + nread as i64);
+    let st = stores.store_mut(&file);
+    st.set_long(file.rec, file.pos + 8, next_pos);
+    st.set_long(file.rec, file.pos + 16, next_pos + nread as i64);
 }
 
 /// The host-bridge build reads through [`OpReadFile`]; the specialisation is the native file's.
