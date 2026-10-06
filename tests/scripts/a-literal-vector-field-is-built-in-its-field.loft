@@ -5,7 +5,7 @@
 // literal's field as its return buffer, so the vector is built where it lives instead of in a
 // buffer store copied in and freed (the assignment `h.v = f(…)` already did this).  The cells
 // cross what the admission reads: a callee that FILLS its buffer (placed) against one that MINTS
-// a record into it (c2, a projection `mk().v`, declined — handed the field it would mint over
+// a record into it (c2, a projection `wrap(c).inner.v`, declined — handed the field it would mint over
 // it); a returned collection LITERAL, which mints only into a null buffer and so is placed
 // (c10: `[x; c]`, a list, a comprehension, `[]`, text elements, a nullable return, literals on
 // two branches, a literal exit beside a filled one, a field holding values before); a chain (c3); two
@@ -40,7 +40,10 @@ fn fill(c: integer, x: integer) -> vector<integer> {
   out
 }
 fn lit3(x: integer) -> vector<integer> { [x, x + 1, x + 2] }
-fn proj(c: integer) -> vector<integer> { return mk(c).v; }
+struct In { v: vector<integer> }
+struct Wr { k: integer, inner: In }
+fn wrap(c: integer) -> Wr { Wr { k: c, inner: In { v: fill(c, 7) } } }
+fn proj(c: integer) -> vector<integer> { return wrap(c).inner.v; }
 fn rep(c: integer, x: integer) -> vector<integer> { [x; c] }
 fn comp(c: integer) -> vector<integer> { [for i in 0..c { i * 2 }] }
 fn none() -> vector<integer> { [] }

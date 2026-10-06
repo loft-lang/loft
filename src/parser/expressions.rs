@@ -3111,13 +3111,12 @@ use a separate collection or add after the loop"
         }
         // The callee must FILL the buffer it is handed, never MINT into it.  `(R-Place)` says
         // so — *"a callee that may hand back a store it did not mint"* — and it is not the
-        // vacuous clause three sampled callees suggested: one that returns a vector LITERAL
-        // lowers to `OpDatabase(__vdb_1)` INTO its buffer parameter, replacing whatever DbRef
-        // the caller put there.  Handed the destination, it mints over it, and the write lands
-        // in a record the destination does not name: measured, `payload_bytes` refused with
-        // *"record N claims size 0 … freed or never written"* (loft#810's guard catching this
-        // unit).  So the admission READS THE CALLEE and declines a body that mints into any
-        // argument slot — the positive form of the rule's decline, as B2 unit 1 is for records.
+        // vacuous clause it looks: a projection chain (`return g().inner.v`) lowers to
+        // `OpDatabase(__retbuf)` INTO its buffer parameter, replacing whatever DbRef the caller
+        // put there.  Handed the destination, it mints over it and the record holding the place
+        // takes the callee's writes — the caller's other fields answer the callee's values.  So
+        // the admission READS THE CALLEE and declines a body that mints into any argument slot
+        // — the positive form of the rule's decline, as B2 unit 1 is for records.
         // A mint under `if OpRefIsNull(b)` on the same buffer is the guarded literal
         // (`guard_buffer_literal_mints`): it never runs on a place it was handed, so it FILLS.
         let callee = self.data.def(*d_nr);
@@ -11503,39 +11502,6 @@ use a separate collection or add after the loop"
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::inline_ref_set_in;
-    use crate::data::{Block, Type, Value};
-
-    /// Deep nesting must neither overflow the stack nor change the answer.
-    #[test]
-    fn inline_ref_set_in_deep_nesting_is_safe() {
-        let mut v: Value = Value::Null;
-        for _ in 0..1100 {
-            v = Value::Block(Box::new(Block {
-                name: "",
-                operators: vec![v],
-                result: Type::Void,
-                scope: 0,
-                var_size: 0,
-            }));
-        }
-        assert!(!inline_ref_set_in(&v, 0), "no Set node anywhere");
-        let mut w: Value = Value::Set(7, Box::new(Value::Null));
-        for _ in 0..1100 {
-            w = Value::Block(Box::new(Block {
-                name: "",
-                operators: vec![w],
-                result: Type::Void,
-                scope: 0,
-                var_size: 0,
-            }));
-        }
-        assert!(inline_ref_set_in(&w, 7), "deeply nested Set must be found");
-    }
-}
-
 /// The operators [`Parser::guard_buffer_literal_mints`] matches and writes.
 struct BufferMintOps {
     mint: u32,
@@ -11599,37 +11565,69 @@ fn mints_into_argument(
     mints: [u32; 2],
     is_null: u32,
 ) -> bool {
-    let arg = |v: &Value| match v.unspan() {
-        Value::Var(w) if vars.is_argument(*w) => Some(*w),
+    let arg = |node: &Value| match node.unspan() {
+        Value::Var(var) if vars.is_argument(*var) => Some(*var),
         _ => None,
     };
     match code.unspan() {
-        Value::Call(d, a) if mints.contains(d) && a.first().and_then(arg).is_some() => true,
-        Value::If(c, t, e) => {
-            let guarded = match c.unspan() {
-                Value::Call(d, a) if *d == is_null => a.first().and_then(arg),
+        Value::Call(op, args) if mints.contains(op) && args.first().and_then(arg).is_some() => true,
+        Value::If(test, then, other) => {
+            let guarded = match test.unspan() {
+                Value::Call(op, args) if *op == is_null => args.first().and_then(arg),
                 _ => None,
             };
             match guarded {
-                Some(w) => {
-                    let other = |v: &Value| {
-                        v.any_node(&mut |n| {
-                            matches!(n, Value::Call(d, a) if mints.contains(d)
-                            && a.first().and_then(arg).is_some_and(|x| x != w))
-                        })
-                    };
-                    other(t) || mints_into_argument(e, vars, mints, is_null)
+                // Under the null test only a mint into ANOTHER argument still counts.
+                Some(buf) => {
+                    then.any_node(&mut |node| {
+                        matches!(node, Value::Call(op, args) if mints.contains(op)
+                            && args.first().and_then(arg).is_some_and(|var| var != buf))
+                    }) || mints_into_argument(other, vars, mints, is_null)
                 }
-                None => [c, t, e]
+                None => [test, then, other]
                     .iter()
-                    .any(|x| mints_into_argument(x, vars, mints, is_null)),
+                    .any(|part| mints_into_argument(part, vars, mints, is_null)),
             }
         }
-        other => {
+        node => {
             let mut hit = false;
-            other
-                .for_each_child(&mut |c| hit = hit || mints_into_argument(c, vars, mints, is_null));
+            node.for_each_child(&mut |child| {
+                hit = hit || mints_into_argument(child, vars, mints, is_null);
+            });
             hit
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::inline_ref_set_in;
+    use crate::data::{Block, Type, Value};
+
+    /// Deep nesting must neither overflow the stack nor change the answer.
+    #[test]
+    fn inline_ref_set_in_deep_nesting_is_safe() {
+        let mut v: Value = Value::Null;
+        for _ in 0..1100 {
+            v = Value::Block(Box::new(Block {
+                name: "",
+                operators: vec![v],
+                result: Type::Void,
+                scope: 0,
+                var_size: 0,
+            }));
+        }
+        assert!(!inline_ref_set_in(&v, 0), "no Set node anywhere");
+        let mut w: Value = Value::Set(7, Box::new(Value::Null));
+        for _ in 0..1100 {
+            w = Value::Block(Box::new(Block {
+                name: "",
+                operators: vec![w],
+                result: Type::Void,
+                scope: 0,
+                var_size: 0,
+            }));
+        }
+        assert!(inline_ref_set_in(&w, 7), "deeply nested Set must be found");
     }
 }

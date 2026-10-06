@@ -2958,8 +2958,10 @@ on the drawing bench).
                  argument that reaches the destination's store (source and destination
                  alias); a callee that may hand back a store it did not mint (O-Opaque:
                  empty deps license nothing), and, where the buffer IS the place, a
-                 callee that MINTS into its buffer on some exit (a returned vector
-                 literal does), which would mint over the place it was handed; a callee
+                 callee that MINTS into its buffer on some exit (a projection chain
+                 `return g().inner.v` does), which would mint over the place it was
+                 handed — a returned collection LITERAL is not one: it mints only into a
+                 NULL buffer and builds in a live one where it stands; a callee
                  that on some exit answers a store other than the buffer it was handed
                  (the destination would hold the writes of the exit not taken); a
                  `?`/`??` discharge on the result; a destination that does not
