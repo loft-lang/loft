@@ -1,0 +1,62 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @FR-B-Ref-AnnotationOnly / @FR-B-Ref-NotTarget — `&` is a type annotation at a binding and
+// never an operator, so every other position is refused, each in the binding rule's own words.
+// A `&` straight after a PREFIX operator (`!&a`, `-&n`, `~&n`) slipped past the operand-start
+// check and read as a binary `&` — *"No matching operator '&' on 'boolean' and 'boolean'"*,
+// with *"Unknown variable 'b'"* beside it.
+//
+// `main` comes first so each expectation belongs to its function.
+//
+// @falsified-at: f551cdfc1 — interpret exit 1 -> 0, interpret expectations FAIL/6 -> 6/6 (the
+//   suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/6
+//   -> 6/6.
+// @falsified-by: tests/falsified/a-link-is-refused-anywhere-but-a-binding.patch — the same channels.  Score it with
+//   `scripts/falsify.sh <this file> --patch <that patch>` once f551cdfc1 is out of reach.
+// HOLDS: nothing runs on either tree (a refusal file).
+
+fn main() {
+  println("{target()} {operand()} {argument()} {not_prefix()} {minus_prefix()} {tilde_prefix()}");
+}
+
+fn id(n: integer) -> integer {
+  n
+}
+
+// @EXPECT_ERROR: `&` cannot appear on the left of an assignment
+fn target() -> integer {
+  x = 1;
+  &x = 3;
+  x
+}
+
+// @EXPECT_ERROR: `&` is not a general operator
+fn operand() -> integer {
+  y = 2;
+  1 + &y
+}
+
+// @EXPECT_ERROR: `&` is not a general operator
+fn argument() -> integer {
+  a = 1;
+  id(&a)
+}
+
+// @EXPECT_ERROR: `&` is not a general operator
+fn not_prefix() -> boolean {
+  a = true;
+  !&a
+}
+
+// @EXPECT_ERROR: `&` is not a general operator
+fn minus_prefix() -> integer {
+  n = 1;
+  -&n
+}
+
+// @EXPECT_ERROR: `&` is not a general operator
+fn tilde_prefix() -> integer {
+  n = 1;
+  ~&n
+}

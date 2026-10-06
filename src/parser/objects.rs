@@ -736,14 +736,15 @@ impl Parser {
         } else if self.closure_param != u16::MAX
             && !self.first_pass
             && self.data.def(self.context).closure_record() != u32::MAX
-            && self
-                .data
-                .attr(self.data.def(self.context).closure_record(), name)
-                != usize::MAX
+            && self.capture_attr(
+                self.context,
+                self.data.def(self.context).closure_record(),
+                name,
+            ) != usize::MAX
         {
             // A5.3/A5.4: redirect captured variable reads to closure record field.
             let closure_d_nr = self.data.def(self.context).closure_record();
-            let fnr = self.data.attr(closure_d_nr, name);
+            let fnr = self.capture_attr(self.context, closure_d_nr, name);
             *code = self.closure_capture_read(closure_d_nr, fnr);
             // @PLN93 (#511): a collection capture's stored attr is a `Reference` DbRef,
             // but the body must see the ORIGINAL collection type (from capture_context)
@@ -1002,7 +1003,7 @@ impl Parser {
             let fnr = if closure_d_nr == u32::MAX {
                 usize::MAX
             } else {
-                self.data.attr(closure_d_nr, name)
+                self.capture_attr(self.context, closure_d_nr, name)
             };
             if fnr == usize::MAX {
                 // First pass, no closure param, or field not found — placeholder variable.
@@ -1863,9 +1864,11 @@ impl Parser {
                         } else if matches!(tp, Type::Text(_)) {
                             None
                         } else {
+                            // The WIRE width, not the padded store size (@C138).
                             let db_sz = self
                                 .database
-                                .size(self.data.def(self.data.type_elm(&tp)).known_type());
+                                .binary_size(self.data.def(self.data.type_elm(&tp)).known_type())
+                                as u16;
                             if db_sz == 0 {
                                 None
                             } else {
@@ -1902,9 +1905,13 @@ impl Parser {
                     if packed > 0 {
                         Some(i64::from(packed))
                     } else {
+                        // The WIRE width — the fields walked one after another, as `#write` and
+                        // `read_data` lay them out — not the record's size in the store, which
+                        // carries `@FR-L-Align`'s padding (@C138).
                         let db_sz = self
                             .database
-                            .size(self.data.def(self.data.type_elm(&hint)).known_type());
+                            .binary_size(self.data.def(self.data.type_elm(&hint)).known_type())
+                            as u16;
                         if db_sz == 0 {
                             None
                         } else {
@@ -1969,7 +1976,8 @@ impl Parser {
                 && matches!(read_type, Type::Vector(_, _))
                 && let Value::Int(n) = n_code
             {
-                let elem = i32::from(self.database.size(self.database.content(db_tp)));
+                // The element's WIRE width, not its padded stride in the store (@C138).
+                let elem = self.database.binary_size(self.database.content(db_tp)) as i32;
                 if elem > 1 && n % elem != 0 {
                     diagnostic!(
                         self.lexer,
@@ -5535,8 +5543,14 @@ impl Parser {
 
     /// [`Data::open_instance_bindings`](crate::data::Data::open_instance_bindings), with each
     /// concrete instance it mints on pass 2 laid out as [`Parser::instance_def`] lays one out.
-    pub(crate) fn open_instance_bindings(&mut self, bindings: &[(u32, Type)]) -> Vec<(u32, Type)> {
-        let pairs = self.data.open_instance_bindings(&mut self.lexer, bindings);
+    pub(crate) fn open_instance_bindings(
+        &mut self,
+        bindings: &[(u32, Type)],
+        template: u32,
+    ) -> Vec<(u32, Type)> {
+        let pairs = self
+            .data
+            .open_instance_bindings(&mut self.lexer, bindings, template);
         for (_, bound) in &pairs {
             if let Type::Reference(d, _) = bound.base() {
                 self.lay_out_instance(*d);
@@ -6919,7 +6933,7 @@ impl Parser {
                 "OpGetField",
                 &[code.clone(), Value::Int(item_pos), Value::Int(enum_kt)],
             );
-            let write = self.emit_nullable_slot_write(syn, &field_ref, value.clone());
+            let write = self.emit_nullable_slot_write(syn, &field_ref, value.clone(), false);
             list.extend(write);
             return None;
         }
@@ -7004,6 +7018,21 @@ impl Parser {
                     } else {
                         "OpAppendVector"
                     };
+                    // `@FR-R-Place` — "the buffer IS the place": the literal's field exists (the
+                    // header prime wrote its empty handle) and a call that fills its buffer is
+                    // handed the field itself, so the result is built where it lives and the
+                    // bulk copy, with the buffer's mint and free, is gone.  The assignment's
+                    // twin is `buffer_is_the_place`; a `?` field keeps the replace, which is
+                    // what leaves it absent.
+                    if whole == "OpAppendVector"
+                        && let Some(vr) = self.place_buffer_of(&field_ref, value)
+                    {
+                        self.vars.mark_inline_ref(vr);
+                        self.vars.set_skip_free(vr);
+                        list.push(v_set(vr, field_ref.clone()));
+                        list.push(value.clone());
+                        return Some(field_ref);
+                    }
                     list.push(self.cl(
                         whole,
                         &[

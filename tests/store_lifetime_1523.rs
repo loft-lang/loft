@@ -88,12 +88,17 @@ fn displaced_free_asks_the_container_strict_native() {
 /// Without it the tests above keep passing against an emission that has stopped asking anything —
 /// a guard whose subject was optimised away reads exactly like a guard whose subject is fixed.
 /// This is also the file's re-runnable falsification receipt.
+///
+/// The buffer detach (`LOFT_NO_BUFFER_DETACH`, `@FR-O-Owner`) is a second defence of the same
+/// store: a literal buffer whose store its local took no longer names it, so the displaced free
+/// cannot release it either.  Each alone keeps this file green, so the control turns both off.
 #[test]
 fn the_container_witness_is_load_bearing() {
     let (ok, stdout, stderr) = run(
         "--interpret",
         &[
             ("LOFT_NO_DISPLACED_WITNESS", "1"),
+            ("LOFT_NO_BUFFER_DETACH", "1"),
             ("LOFT_STRICT_STORES", "1"),
         ],
     );

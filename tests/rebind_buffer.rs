@@ -10,15 +10,17 @@ use std::process::Command;
 const CELLS: &str = "tests/scripts/a-rebind-hands-the-displaced-store-to-the-call.loft";
 
 /// `(function, hands the store on)` in the emitted Rust.  `b3`'s rebind is a text-holding
-/// record answered through a plain assignment, which this rule does not reach.
+/// record answered through a plain assignment, which this rule does not reach.  `b4`, `b7` and
+/// `b8` call a function that hands an ARGUMENT back on one path, so the result is not fresh
+/// and the rule declines (loft#1884: the return's ownership is the join of every `return`).
 const SITES: &[(&str, bool)] = &[
     ("n_b1", true),
     ("n_b2", true),
     ("n_b3", false),
-    ("n_b4", true),
+    ("n_b4", false),
     ("n_b5", true),
-    ("n_b7", true),
-    ("n_b8", true),
+    ("n_b7", false),
+    ("n_b8", false),
     ("n_b9", true),
     ("n_acc", true),
 ];

@@ -37,7 +37,7 @@ Every entry, by the subject it decides.  Ids are one flat sequence across the su
 
 - [C38](DESIGN_DECISIONS_OWNERSHIP.md#c38--closure-capture-is-copy-at-definition) — Closure capture is copy-at-definition
 - [C74](DESIGN_DECISIONS_OWNERSHIP.md#c74--a-mutated-scalar-may-be-captured-by-only-one-closure) — A mutated scalar may be captured by only ONE closure
-- [C75](DESIGN_DECISIONS_OWNERSHIP.md#c75--closure-carrying-struct-values-are-frame-bound) — Closure-carrying struct values are frame-bound
+- [C75](DESIGN_DECISIONS_OWNERSHIP.md#c75--a-closure-carrying-struct-owns-what-its-closures-adopted) — A closure-carrying struct owns what its closures adopted
 - [C77](DESIGN_DECISIONS_OWNERSHIP.md#c77--binding-ownership-heap-aliases-by-default--binds-a-live-reference) — Binding ownership: heap aliases by default; `&` binds a live reference
 - [C79](DESIGN_DECISIONS_OWNERSHIP.md#c79--ownership-is-internal-no-user-facing-borrow-checker) — Ownership is internal; no user-facing borrow checker
 - [C83](DESIGN_DECISIONS_OWNERSHIP.md#c83--the-internal-representation-follows-the-user-visible-contract-never-widen-storage-for-implementation-convenience) — The internal representation follows the user-visible contract; never widen storage for implementation convenience
@@ -50,6 +50,7 @@ Every entry, by the subject it decides.  Ids are one flat sequence across the su
 - [C124](DESIGN_DECISIONS_OWNERSHIP.md#c124--a-const-value-reaches-only-a-const-parameter-semantics-is-judged-by-the-line-optimisation-by-the-proof) — a `const` value reaches only a `const` parameter; semantics is judged by the line, optimisation by the proof
 - [C125](DESIGN_DECISIONS_OWNERSHIP.md#c125--the-store-model-stays-simple-performance-work-removes-objects-it-does-not-add-a-second-kind-of-object) — The store model stays simple: performance work removes objects, it does not add a second kind of object
 - [C128](DESIGN_DECISIONS_OWNERSHIP.md#c128--a-yielded-lambda-owns-copies-of-what-it-captures) — a yielded lambda owns copies of what it captures
+- [C137](DESIGN_DECISIONS_OWNERSHIP.md#c137--a-claim-promises-no-value-a-slot-is-read-only-after-it-is-written) — A claim promises no value; a slot is read only after it is written
 
 ## Syntax, names and calls — [DESIGN_DECISIONS_SYNTAX.md](DESIGN_DECISIONS_SYNTAX.md)
 - [C132](DESIGN_DECISIONS_SYNTAX.md#c132--operators-are-defined-by-the-stdlib-only-a-user-fn-op-is-an-ordinary-function) — operators are defined by the stdlib only; a user `fn Op…` is an ordinary function
@@ -111,3 +112,4 @@ Every entry, by the subject it decides.  Ids are one flat sequence across the su
 - [C109](DESIGN_DECISIONS_PLATFORM.md#c109--a-float-return-crosses-c-a-float-argument-still-does-not) — a float RETURN crosses `#c`; a float ARGUMENT still does not
 - [C122](DESIGN_DECISIONS_PLATFORM.md#c122--the-contract-is-semantics-a-rewrite-is-free-wherever-its-conditions-are-validated-and-a-library-api-is-the-one-boundary) — The contract is semantics; a rewrite is free wherever its conditions are validated, and a library API is the one boundary
 - [C133](DESIGN_DECISIONS_PLATFORM.md#c133--a-development-build-uses-the-startup-cache-loft_no_cache1-turns-it-off) — A development build uses the startup cache; `LOFT_NO_CACHE=1` turns it off
+- [C138](DESIGN_DECISIONS_PLATFORM.md#c138--every-scalar-in-a-store-sits-on-its-natural-boundary-the-bytecode-stays-byte-packed) — Every scalar in a store sits on its natural boundary; the bytecode stays byte-packed

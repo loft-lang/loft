@@ -91,7 +91,7 @@ stdlib_fresh() {
 }
 step stdlib stdlib_fresh
 if [ "${CI_PREFLIGHT:-}" = full ]; then
-  step "hygiene" cargo nextest run --release -E 'binary(doc_hygiene)'
+  step "hygiene" cargo nextest run --release --test doc_hygiene
 fi
 
 if [ ${#failed[@]} -gt 0 ]; then

@@ -1,0 +1,260 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-H-TextReplace` — an ASSIGNMENT to a text field (`r.a = t`, `v[i].a = t`, `h.inner.a = t`,
+// `r.a += t`) releases the text it replaces, or writes over its block when the new text fits,
+// wherever no borrow of the old text can still be live.  Where the function cannot see that —
+// the record is reached through a PARAMETER, a text variable of the frame borrows from its
+// owner, the write sits inside another call's arguments — the old text is kept until its store
+// dies.  Every value below is computed by hand, on both backends.
+//
+// What can go wrong is a borrow reading the block after it was written over or released: a
+// `text` parameter is handed the field's bytes, not a copy (c1), a walk over the field's
+// characters (c12), an argument evaluated before a nested write (c15).  And a text left
+// unreleased per assignment grows the store without bound — m1 counts the live records of every
+// store (`store_memory()`'s census) after 10 and after 1 000 assignments of each admitted shape,
+// with the record still alive; a store-level leak check sees nothing, since the store is freed
+// whole at the end.  `LOFT_POISON=1`, `LOFT_POISON_CLAIM=1` and `LOFT_STRICT_STORES=1` must
+// answer identically.
+//
+// @falsified-at: cf107d449 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native
+//   exit 1 -> 0, native 1 assertion failures -> 0.  The assignment wrote a fresh block and
+//   released nothing.
+//   CHANNEL: an assertion in m1, the census, on BOTH backends.
+//   ARMED: nothing beyond the run itself — the census is `store_memory()`'s live-record count,
+//   read by the program; no `LOFT_*` switch is needed to see it.
+//   WITNESS: `m1 literal grows: 15 -> 1005` (`13 -> 1003` on --native).
+//   HOLDS: every value cell c1–c15 passes on both trees (the leak never moves a value).
+// @falsified-by: tests/falsified/1873-an-assigned-text-field-releases-the-text-it-replaces.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   The admission accepting every site, so a parameter's field releases while the caller's
+//   argument still borrows it.
+//   CHANNEL: an assertion in c1, on BOTH backends.
+//   ARMED: nothing — the borrowed parameter reads the overwritten block in an ordinary run.
+//   WITNESS: `c1 zzllo world, a long first text|zz`.
+//   HOLDS: m1 passes on both trees (the leak cells are admitted either way).
+
+struct T2 { a: text, b: text, n: integer }
+struct N { a: text?, n: integer }
+struct H { inner: T2, k: integer }
+struct K { key: text, a: text }
+struct Bag<T> { name: text, item: T }
+enum E { V { s: text, m: integer }, W }
+
+fn g(p: text, q: T2) -> text { q.a = "zz"; "{p}" }
+fn gen(p: text) -> iterator<text> { for i in 0..2 { yield "{p}-{i}"; } }
+fn own_gen() -> iterator<text> {
+  r = T2 { a: "s", b: "b", n: 0 };
+  for i in 0..3 { r.a = "gen-{i}-a-long-enough-text"; yield r.a; }
+}
+fn pick(a: text, n: integer) -> text { "{a}:{n}" }
+fn mk(i: integer) -> T2 { T2 { a: "made-{i}-long-enough-text", b: "b", n: i } }
+
+// c1: the parameter keeps the text it was handed; the field holds the callee's write.
+fn c1() -> text { r = T2 { a: "hello world, a long first text", b: "y", n: 1 }; p = g(r.a, r); "{p}|{r.a}" }
+
+// c2: a local read of the field keeps the old text.
+fn c2() -> text { r = T2 { a: "old text that is long enough", b: "y", n: 1 }; x = r.a; r.a = "new"; "{x}|{r.a}" }
+
+// c3: 26 letters; the slice drops 3 → 23; "{x}!{x}" → 47; `+=` itself → 94.
+fn c3() -> text {
+  r = T2 { a: "abcdefghijklmnopqrstuvwxyz", b: "y", n: 1 };
+  r.a = r.a;
+  s1 = r.a;
+  r.a = r.a[3..];
+  r.a = "{r.a}!{r.a}";
+  s2 = r.a;
+  r.a += r.a;
+  "{s1}|{s2}|{len(r.a)}"
+}
+
+// c4: grow past the block, shrink, empty, grow back; the sibling field untouched.
+fn c4() -> text {
+  r = T2 { a: "x", b: "y", n: 1 };
+  r.a = "a much longer text than before, past the block";
+  t1 = r.a;
+  r.a = "sh";
+  t2 = r.a;
+  r.a = "";
+  t3 = r.a;
+  r.a = "back again";
+  "{t1}|{t2}|{t3}|{r.a}|{r.b}"
+}
+
+// c5: a nullable field written null and back.
+fn c5() -> text { r = N { a: "x", n: 1 }; r.a = null; was = if r.a { "set" } else { "null" }; r.a = "again"; "{was}|{r.a}" }
+
+// c6: each element's write reads the element's own old text.
+fn c6() -> text {
+  v: vector<T2> = [T2 { a: "a0", b: "b", n: 0 }, T2 { a: "a1", b: "b", n: 1 }];
+  for e in v { e.a = "w{e.n}-{e.a}-longer"; }
+  "{v[0].a}|{v[1].a}"
+}
+
+// c7: a copy owns its own text: writing either side leaves the other.
+fn c7() -> text {
+  r = T2 { a: "shared? long enough text", b: "y", n: 1 };
+  s = r;
+  s.a = "s-side";
+  was = r.a;
+  r.a = "r-side";
+  "{was}|{s.a}|{r.a}"
+}
+
+// c8: an element appended from a record is a copy as well.
+fn c8() -> text {
+  r = T2 { a: "pushed text long enough", b: "y", n: 1 };
+  v: vector<T2> = [];
+  v += [r];
+  v[0].a = "elem";
+  was = r.a;
+  r.a = "rr";
+  "{was}|{v[0].a}|{r.a}"
+}
+
+// c9: a struct-enum variant's text field.
+fn c9() -> text {
+  e = V { s: "variant text long enough", m: 2 };
+  if e is V { e.s = "changed"; }
+  match e { V { s, m } => "{s}:{m}", W => "w" }
+}
+
+// c10: a hash element's non-key text, longer and then shorter.
+fn c10() -> text {
+  h: hash<K[key]> = [K { key: "k1", a: "one" }];
+  h["k1"].a = "uno-and-longer";
+  t1 = h["k1"].a;
+  h["k1"].a = "u";
+  "{t1}|{h["k1"].a}"
+}
+
+// c11: a generator keeps the text it was started with.
+fn c11() -> text {
+  r = T2 { a: "generator input, a long text", b: "y", n: 1 };
+  it = gen(r.a);
+  r.a = "zz";
+  out = "";
+  for s in it { out += s; out += ";"; }
+  out
+}
+
+// c12: 16 characters walked while the field is rewritten each turn; the last write is q15.
+fn c12() -> text {
+  r = T2 { a: "abcdefghijklmnop", b: "y", n: 1 };
+  n = 0;
+  w = "";
+  for c in r.a { w += c; r.a = "q{n}"; n += 1; }
+  "{n}|{w}|{r.a}"
+}
+
+// c13: a closure's write reaches the captured record.
+fn c13() -> text {
+  r = T2 { a: "closure start long text", b: "y", n: 1 };
+  f = fn(s: text) { r.a = s; };
+  f("from-closure");
+  r.a
+}
+
+// c14: a generator writes its own record's text between yields.
+fn c14() -> text { out = ""; for s in own_gen() { out += s; out += ";"; } out }
+
+// c15: the first argument is evaluated before the second writes the field.
+fn c15() -> text {
+  r = T2 { a: "argument text, long enough", b: "y", n: 1 };
+  x = pick(r.a, if r.n > 0 { r.a = "w"; 5 } else { 6 });
+  "{x}|{r.a}"
+}
+
+fn census_records() -> integer {
+  cr_t = store_memory();
+  cr_i = cr_t.find("records ");
+  if !cr_i { return -1 }
+  cr_j = cr_i + 8;
+  cr_n = 0;
+  while cr_j < len(cr_t) && cr_t[cr_j] >= '0' && cr_t[cr_j] <= '9' {
+    cr_n = cr_n * 10 + (cr_t[cr_j] as integer - '0' as integer);
+    cr_j += 1;
+  }
+  cr_n
+}
+
+// Each shape's loop in its own function, so its record is alive when the census is taken.
+fn m_lit(n: integer) -> integer {
+  r = T2 { a: "x", b: "y", n: 1 };
+  t = 0;
+  for i in 0..n { r.a = "lit"; t += size(r.a); }
+  assert(t > 0, "m_lit ran");
+  census_records()
+}
+fn m_fmt(n: integer) -> integer {
+  r = T2 { a: "x", b: "y", n: 1 };
+  t = 0;
+  for i in 0..n { r.a = "w{i}"; r.b = "b{i}"; t += size(r.a) + size(r.b); }
+  assert(t > 0, "m_fmt ran");
+  census_records()
+}
+fn m_append(n: integer) -> integer {
+  r = T2 { a: "x", b: "y", n: 1 };
+  t = 0;
+  for i in 0..n { r.a = ""; r.a += "w{i}"; t += size(r.a); }
+  assert(t > 0, "m_append ran");
+  census_records()
+}
+fn m_nested(n: integer) -> integer {
+  h = H { inner: T2 { a: "x", b: "y", n: 1 }, k: 2 };
+  t = 0;
+  for i in 0..n { h.inner.a = "w{i}"; t += size(h.inner.a); }
+  assert(t > 0, "m_nested ran");
+  census_records()
+}
+fn m_elem(n: integer) -> integer {
+  v: vector<T2> = [T2 { a: "x", b: "y", n: 1 }];
+  t = 0;
+  for i in 0..n { v[0].a = "w{i}"; t += size(v[0].a); }
+  assert(t > 0, "m_elem ran");
+  census_records()
+}
+fn m_generic(n: integer) -> integer {
+  b: Bag<integer> = Bag { name: "x", item: 1 };
+  t = 0;
+  for i in 0..n { b.name = "w{i}"; t += size(b.name); }
+  assert(t > 0, "m_generic ran");
+  census_records()
+}
+fn m_result(n: integer) -> integer {
+  t = 0;
+  for i in 0..n { e = mk(i); e.a = "w{i}"; t += size(e.a); }
+  assert(t > 0, "m_result ran");
+  census_records()
+}
+
+// m1 — the live records after 1 000 assignments equal those after 10, for each shape.
+fn m1() {
+  assert(census_records() >= 0, "m1: the census answers");
+  assert(m_lit(1000) == m_lit(10), "m1 literal grows: {m_lit(10)} -> {m_lit(1000)}");
+  assert(m_fmt(1000) == m_fmt(10), "m1 format grows: {m_fmt(10)} -> {m_fmt(1000)}");
+  assert(m_append(1000) == m_append(10), "m1 append grows: {m_append(10)} -> {m_append(1000)}");
+  assert(m_nested(1000) == m_nested(10), "m1 nested grows: {m_nested(10)} -> {m_nested(1000)}");
+  assert(m_elem(1000) == m_elem(10), "m1 element grows: {m_elem(10)} -> {m_elem(1000)}");
+  assert(m_generic(1000) == m_generic(10), "m1 generic grows: {m_generic(10)} -> {m_generic(1000)}");
+  assert(m_result(1000) == m_result(10), "m1 call result grows: {m_result(10)} -> {m_result(1000)}");
+}
+
+fn main() {
+  assert(c1() == "hello world, a long first text|zz", "c1 {c1()}");
+  assert(c2() == "old text that is long enough|new", "c2 {c2()}");
+  assert(c3() == "abcdefghijklmnopqrstuvwxyz|defghijklmnopqrstuvwxyz!defghijklmnopqrstuvwxyz|94", "c3 {c3()}");
+  assert(c4() == "a much longer text than before, past the block|sh||back again|y", "c4 {c4()}");
+  assert(c5() == "null|again", "c5 {c5()}");
+  assert(c6() == "w0-a0-longer|w1-a1-longer", "c6 {c6()}");
+  assert(c7() == "shared? long enough text|s-side|r-side", "c7 {c7()}");
+  assert(c8() == "pushed text long enough|elem|rr", "c8 {c8()}");
+  assert(c9() == "changed:2", "c9 {c9()}");
+  assert(c10() == "uno-and-longer|u", "c10 {c10()}");
+  assert(c11() == "generator input, a long text-0;generator input, a long text-1;", "c11 {c11()}");
+  assert(c12() == "16|abcdefghijklmnop|q15", "c12 {c12()}");
+  assert(c13() == "from-closure", "c13 {c13()}");
+  assert(c14() == "gen-0-a-long-enough-text;gen-1-a-long-enough-text;gen-2-a-long-enough-text;", "c14 {c14()}");
+  assert(c15() == "argument text, long enough:5|w", "c15 {c15()}");
+  m1();
+  println("ok");
+}

@@ -1,0 +1,127 @@
+// `@FR-R-Refresh`'s keep-range clause — `v = v[lo..hi]` over a scalar element kind
+// (`OpKeepRange`) inside a loop keeps the vector's record and writes its length, so the
+// loop's hoist is admitted and the held header takes the clamped length at the op's own
+// site instead of the op declining the whole loop.  The path holds a push header (the
+// mutable holder) and joins the pushes' aliasing decision.  The interpreter is the oracle:
+// every cell hand-computes its value and must answer the same under
+// `LOFT_NO_KEEP_RANGE_REFRESH=1` (the loop declines, every read back on its template),
+// under `LOFT_NO_KEEP_RANGE=1` (the runtime takes the copy form, so the header is
+// RE-DERIVED at the op) and under `LOFT_HOIST_VERIFY=1` (the refreshed header compared
+// with one derived from the record after every pop).  The cells: a stack popped one at a
+// time while its top is read (k1); a pop to a `hi` past the length — clamped, nothing
+// dropped (k2); a pop to 0 followed by pushes — growth after a keep (k3); two stacks
+// pushed and popped in one body, the bench's shape (k4); a pop that drops from both ends
+// while `len(v)` is read in the loop's test and the last element after it (k5); and a pop
+// whose bounds come from a computed index that goes negative — clamped to empty (k6).
+//
+// @falsified-at: hand-measured (2026-10-05) — with the emitter's length refresh planted one
+// too high (`+ 1`), k2 fails with `k2 90` (the stale length keeps the dropped head
+// readable: every `v[2]` answers 30) and `LOFT_HOIST_VERIFY=1` panics at the first pop,
+// `keep-range refresh stale: held rec 3 len 5 store 0, derived rec 3 len 4 store 0`; k1
+// still answers, because its reads stay under the true length.  Restored, every cell
+// answers its value under `LOFT_HOIST_VERIFY=1`, `LOFT_NO_KEEP_RANGE_REFRESH=1` and
+// `LOFT_NO_KEEP_RANGE=1`, and `LOFT_NATIVE_LEAK_CHECK=1` is silent.  The build before the
+// clause (`802cefbcb`) answers every cell too — the values do not see the rewrite's
+// absence, only its defect — so the planted run is the receipt.
+
+// k1 — a stack popped while its top is read.
+fn k1() {
+  v = [1, 2, 3, 4, 5];
+  top = 5;
+  s = 0;
+  while top > 0 {
+    s = s * 10 + (v[top - 1] ?? 0);
+    top -= 1;
+    v = v[0..top];
+  }
+  assert(s == 54321, "k1 {s}");
+  assert(len(v) == 0, "k1 len {len(v)}");
+  println("k1 {s} {len(v)}");
+}
+
+// k2 — a hi past the length is clamped: the first keep drops nothing, the second drops the
+// head; a read past the new end answers its default.
+fn k2() {
+  v = [10, 20, 30];
+  t = 0;
+  for _i in 0..3 {
+    v = v[0..9];
+    t += v[2] ?? 0;
+    v = v[1..9];
+  }
+  assert(t == 30, "k2 {t}");
+  assert(len(v) == 0, "k2 len {len(v)}");
+  println("k2 {t} {len(v)}");
+}
+
+// k3 — a pop to empty, then two pushes: the push header's length and capacity after a keep.
+fn k3() {
+  v = [1, 2];
+  acc = 0;
+  for i in 0..4 {
+    v = v[0..0];
+    v += [i * 2];
+    v += [i * 2 + 1];
+    acc = acc * 100 + (v[1] ?? -1) * 10 + (v[0] ?? -1);
+  }
+  assert(acc == 10325476, "k3 {acc}");
+  assert(len(v) == 2, "k3 len {len(v)}");
+  println("k3 {acc} {len(v)}");
+}
+
+// k4 — two stacks pushed twice and popped once per trip, both read at the top: the
+// subdivision loop's shape.
+fn k4() {
+  sx = [1];
+  sy = [2];
+  top = 1;
+  s = 0;
+  for _i in 0..3 {
+    a = sx[top - 1] ?? 0;
+    b = sy[top - 1] ?? 0;
+    s += a * b;
+    sx += [a + 1];
+    sx += [a + 2];
+    sy += [b + 1];
+    sy += [b + 2];
+    top += 2;
+    top -= 1;
+    sx = sx[0..top];
+    sy = sy[0..top];
+  }
+  sum = 0;
+  for x in sx { sum += x; }
+  assert(s == 20, "k4 {s}");
+  assert(len(sx) == 4 && len(sy) == 4, "k4 len {len(sx)} {len(sy)}");
+  assert(sum == 10, "k4 sum {sum}");
+  println("k4 {s} {len(sx)} {sum}");
+}
+
+// k5 — a keep that drops from both ends, with `len(v)` in the loop's own test.
+fn k5() {
+  v = [1, 2, 3, 4, 5, 6, 7, 8];
+  s = 0;
+  while len(v) > 2 {
+    v = v[1..len(v) - 1];
+    s = s * 10 + (v[len(v) - 1] ?? 0);
+  }
+  assert(s == 765, "k5 {s}");
+  assert(len(v) == 2, "k5 len {len(v)}");
+  println("k5 {s} {len(v)}");
+}
+
+// k6 — bounds from a computed index that goes negative: clamped to 0, the vector empties
+// on the third trip and later reads answer their default.
+fn k6() {
+  v = [4, 5, 6, 7];
+  s = 0;
+  for i in 0..4 {
+    s = s * 10 + (v[0] ?? 9);
+    v = v[0..2 - i];
+  }
+  assert(s == 4449, "k6 {s}");
+  assert(len(v) == 0, "k6 len {len(v)}");
+  println("k6 {s} {len(v)}");
+}
+
+fn main() { k1(); k2(); k3(); k4(); k5(); k6(); }

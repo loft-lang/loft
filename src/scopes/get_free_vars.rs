@@ -8,7 +8,7 @@
 use super::backings::{member_backing, outer_collection_backing};
 use super::capture_adoption::{
     closure_records_of_source, link_written_closure_records, owning_record_locals,
-    record_leaves_frame,
+    record_store_leaves_frame,
 };
 use super::capture_builds::{
     adoption_build_is_conditional, capture_adoption_owns_free, escaping_record_holds,
@@ -466,7 +466,10 @@ impl Scopes<'_> {
                     // reference local.
                     || (matches!(function.tp(v), Type::Reference(r, _)
                             if data.def(*r).name.starts_with("__closure_"))
-                        && record_leaves_frame(data, function, self.d_nr, v));
+                        && (record_store_leaves_frame(data, function, self.d_nr, v)
+                            || super::capture_adoption::record_held_by_a_leaving_record(
+                                data, function, self.d_nr, v,
+                            )));
                 // H2 step 5 (DEPS_INVENTORY): the BLOCK-RESULT type's deps were
                 // read here for years under the positional guess.  That read is
                 // RETIRED: the declared-return (`ret_borrows_v`, a TYPED decode),
@@ -1029,7 +1032,12 @@ impl Scopes<'_> {
                         && (r as usize) < function.count() as usize
                         && self.var_scope.get(&r) != self.var_scope.get(&v)
                 });
-                let emit = !leaves_frame && !function.is_skip_free(v) && !record_outlives;
+                // loft#1869, `@FR-L-CapOwn` — a closure record that captured this fn-ref adopts
+                // the record it holds, and its cascade is the release.
+                let adopted =
+                    capture_adoption_owns_free(data, function, &self.capture_build_backing, v);
+                let emit =
+                    !leaves_frame && !function.is_skip_free(v) && !record_outlives && !adopted;
                 if emit {
                     if scope_debug {
                         eprintln!(
@@ -1054,7 +1062,13 @@ impl Scopes<'_> {
                     if keep {
                         ls.extend(self.closure_keep_stand_down(v, function, data));
                     }
-                    if (keep || !local_record) && data.any_closure_drop() {
+                    // A fn-ref with a local record of its own may hold ANOTHER record by now — a
+                    // closure written into it through a `&fn` link (loft#1463) — so its release
+                    // dispatches on what it holds.  The cascade runs only on a live store
+                    // (`OpDropFnRef` asks, as `OpStoreLive` does at a record's own release), so
+                    // where the local record already released this store nothing runs twice.
+                    let _ = (keep, local_record);
+                    if data.any_closure_drop() {
                         ls.push(call("OpDropFnRef", v, data));
                     }
                     ls.push(call("OpFreeRef", v, data));
@@ -1127,6 +1141,15 @@ impl Scopes<'_> {
         if to_scope == 1 {
             let free_distinct = data.def_nr("OpFreeRefIfDistinct");
             for (param, orig) in function.rebind_params() {
+                // A rebound parameter this exit HANDS OUT is not released here: the caller
+                // takes it (`(F-ParamRebind)`).  Its call site already decides per run — it
+                // copies a fresh store with `COPY_FREE_SOURCE` and protects its own argument
+                // — so a release here freed the store the return was about to read
+                // (`fn f(p: S) -> S { p = S { x: 5 }; p }`: a use-after-free on
+                // `--interpret`, a panic on `--native`, loft#1871).
+                if param == ret_var || return_sources.contains(&param) {
+                    continue;
+                }
                 ls.push(Value::Call(
                     free_distinct,
                     vec![Value::Var(param), Value::Var(orig)],

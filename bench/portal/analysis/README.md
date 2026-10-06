@@ -6,6 +6,10 @@ The files here say WHY, price what could be done about it, and record what was b
 the twin winning by something loft cannot say, that is the unit to price — `(Perf-Gap)` in
 `doc/claude/formal/performance.md` — and the twin stays as written.
 
+**Start from [`worklist.md`](worklist.md)**: every routine over the 3× bar, sorted by what is
+known about it — a priced path under the bar, a priced path that ends above it, or no price —
+with the units in build order and the file below that priced each.
+
 | file | class | state |
 |---|---|---|
 | `keyed.md` | keyed (3.5×) | L1–L7 BUILT; what is left is store-format and data-structure work, priced there |
@@ -162,6 +166,15 @@ remainder is structural; `mesh_aabb`'s rest is the null-aware float compare.
 - **The measuring laptop runs ONE heavy job at a time**, and `/tmp` is RAM: a build tree
   there is memory.  `scripts/find_problems.sh --changed` falls back to the long curated set
   while `loft-ffi/Cargo.lock` sits untracked in the tree; run named test binaries instead.
+
+- **A slow path that takes a `&DbRef` keeps the record in memory for the whole loop.**  An
+  outlined (`#[cold]`, `#[inline(never)]`) helper the optimiser cannot see into makes every
+  `DbRef` handed to it by reference live in a stack slot; on x86-64 its fields are then
+  written narrow and read back wide every pass, a store-forwarding stall per element that
+  arm64 barely shows.  `rec_set`'s refusal path took one: `timer_spend` 13.9× on x86-64
+  against 3.7× on the Mac, 3.2× once it took the fields by value.  A host gap in loft's own
+  lane with the twin level is the tell; `perf annotate` shows the stall as the load after a
+  narrower store to the same slot.
 
 ## Tools used here
 

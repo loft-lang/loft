@@ -1,0 +1,159 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-Place` — "the buffer IS the place", in a struct LITERAL: `H { v: f(…) }` hands `f` the
+// literal's field as its return buffer, so the vector is built where it lives instead of in a
+// buffer store copied in and freed (the assignment `h.v = f(…)` already did this).  The cells
+// cross what the admission reads: a callee that FILLS its buffer (placed) against one that MINTS
+// a record into it (c2, a projection `wrap(c).inner.v`, declined — handed the field it would mint over
+// it); a returned collection LITERAL, whose `main_vector<T>` mint on a place answers the place
+// (`Stores::mint_at_place`) and so is placed (c11: a callee with an exit that answers ANOTHER
+// store — a global constant, directly, through a chain or in a value `if` — declines, because a
+// placed call's answer is never read; one that answers its buffer on every exit, a copied
+// parameter or field included, is placed; c2l, c10: `[x; c]`, a list, a comprehension, `[]`, text elements, a nullable return, literals on
+// two branches, a literal exit beside a filled one, a field holding values before); a chain (c3); two
+// placed fields in one literal (c4); a `?` field, which keeps the replace (c5); the field of a
+// vector ELEMENT and of a nested literal (c6); a struct-enum variant (c7); an argument reading
+// the record being rebuilt (c8); text and record elements, which own heap (c9); a count of 0
+// (the callee's early return) and a literal rebuilt in a loop through a refilled return buffer
+// (c1).  Every value by hand; run under `LOFT_STORES=warn` / `LOFT_NATIVE_LEAK_CHECK=1` it leaks
+// nothing, and `LOFT_NO_BUFFER_IS_PLACE=1` (the copy) answers the same.
+//
+// @falsified-at: none — a rewrite with no earlier build to catch; the planted defect is recorded
+//   with `@falsified-by:` below.
+// @falsified-by: tests/falsified/a-literal-vector-field-is-built-in-its-field.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   The admission (`callee_fills_its_buffer`) no longer declines a callee that mints into
+//   its buffer.
+//   CHANNEL: an assertion, on BOTH backends.
+//   WITNESS: c2 — the projection's minted record lands where the field does not name it:
+//   on the interpreter `a.v` answers `[]` where the file says `[7,8,9]`.
+//   HOLDS: LOFT_NO_BUFFER_IS_PLACE=1 green on both (the copy).
+//   The runtime half is falsified the same way by hand: `mint_at_place` answering false (the
+//   literal's mint clears the store the place lives in) turns c2l red on both backends.
+
+struct H { n: integer, v: vector<integer> }
+struct T { v: vector<integer>, w: vector<integer> }
+struct O { v: vector<integer>? }
+struct S { t: vector<text> }
+struct P { a: integer, b: text }
+struct R { ps: vector<P> }
+struct Outer { h: H, k: integer }
+enum E { Leaf { v: vector<integer> }, Empty }
+
+fn fill(c: integer, x: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  if c <= 0 { return out; }
+  for i in 0..c { out += [x + i]; }
+  out
+}
+fn lit3(x: integer) -> vector<integer> { [x, x + 1, x + 2] }
+struct In { v: vector<integer> }
+struct Wr { k: integer, inner: In }
+fn wrap(c: integer) -> Wr { Wr { k: c, inner: In { v: fill(c, 7) } } }
+fn proj(c: integer) -> vector<integer> { return wrap(c).inner.v; }
+fn rep(c: integer, x: integer) -> vector<integer> { [x; c] }
+fn comp(c: integer) -> vector<integer> { [for i in 0..c { i * 2 }] }
+fn none() -> vector<integer> { [] }
+fn either(c: integer) -> vector<integer> { if c > 2 { [1, 2] } else { [c; 3] } }
+fn exits(c: integer) -> vector<integer> { if c < 0 { return [9]; } o: vector<integer> = []; for i in 0..c { o += [i]; } o }
+fn opt(c: integer) -> vector<integer>? { if c < 0 { return null; } [c, c] }
+fn tags(c: integer) -> vector<text> { ["t{c}"; 2] }
+struct P11 { items: vector<text> }
+NAMES: vector<text> = ["a", "b"];
+fn glob(k: integer) -> vector<text> { if k == 1 { return NAMES; } o: vector<text> = []; for i in 0..k { o += ["x{i}"]; } o }
+fn pass(v: vector<text>) -> vector<text> { v }
+fn two(k: integer) -> vector<text> { if k < 0 { return ["neg"]; } o: vector<text> = []; for i in 0..k { o += ["t{i}"]; } o }
+fn sfill(c: integer) -> vector<text> { o: vector<text> = []; for i in 0..c { o += ["f{i}"]; } o }
+fn schain(c: integer) -> vector<text> { sfill(c) }
+fn chain_glob(k: integer) -> vector<text> { glob(k) }
+fn vif(k: integer) -> vector<text> { o: vector<text> = ["z"]; if k == 1 { NAMES } else { o } }
+fn pfield(p: P11) -> vector<text> { return p.items; }
+fn chain(c: integer) -> vector<integer> { fill(c, 100) }
+fn words(c: integer) -> vector<text> { out: vector<text> = []; for i in 0..c { out += ["w{i}"]; } out }
+fn recs(c: integer) -> vector<P> { out: vector<P> = []; for i in 0..c { out += [P { a: i * 3, b: "p{i}" }]; } out }
+fn total_of(v: vector<integer>) -> integer { s = 0; for e in v { s += e; } s }
+fn mk(c: integer) -> H { H { n: c, v: fill(c, 7) } }
+fn grow(v: vector<integer>) -> vector<integer> { out: vector<integer> = []; for e in v { out += [e * 2]; } out += [1]; out }
+
+fn main() {
+  // 1: the canvas shape; count 0; rebuilt in a loop through a refilled buffer.
+  h = mk(4);
+  assert(len(h.v) == 4 && total_of(h.v) == 7 + 8 + 9 + 10, "c1 {h.v}");
+  z = mk(0);
+  assert(len(z.v) == 0, "c1z {z.v}");
+  tot = 0;
+  for k in 1..5 { m = mk(k); tot += len(m.v) * 1000 + total_of(m.v); }
+  // k=1: 1000+7; k=2: 2000+15; k=3: 3000+24; k=4: 4000+34  ->  10000+80
+  assert(tot == 10080, "c1loop {tot}");
+  // 2: a callee that mints a record into its buffer (declined); and a literal (placed).
+  a = H { n: 1, v: proj(3) };
+  assert("{a.v}" == "[7,8,9]", "c2 {a.v}");
+  a2 = H { n: 1, v: lit3(5) };
+  assert("{a2.v}" == "[5,6,7]", "c2l {a2.v}");
+  // 3: a chain.
+  b = H { n: 2, v: chain(3) };
+  assert("{b.v}" == "[100,101,102]", "c3 {b.v}");
+  // 4: two fields from calls.
+  t = T { v: fill(2, 1), w: fill(3, 10) };
+  assert("{t.v} {t.w}" == "[1,2] [10,11,12]", "c4 {t.v} {t.w}");
+  // 5: a `?` field.
+  o = O { v: fill(2, 4) };
+  assert("{o.v}" == "[4,5]", "c5 {o.v}");
+  // 6: an element, and a nested literal.
+  vs: vector<H> = [];
+  for k in 1..4 { vs += [H { n: k, v: fill(k, k * 10) }]; }
+  assert("{vs[0].v}|{vs[1].v}|{vs[2].v}" == "[10]|[20,21]|[30,31,32]", "c6 {vs[0].v}|{vs[1].v}|{vs[2].v}");
+  ou = Outer { h: H { n: 9, v: fill(2, 90) }, k: 3 };
+  assert("{ou.h.v} {ou.k}" == "[90,91] 3", "c6n {ou.h.v}");
+  // 7: a variant.
+  e = E::Leaf { v: fill(3, 20) };
+  s7 = match e { Leaf { v } => "{v}", Empty => "empty" };
+  assert(s7 == "[20,21,22]", "c7 {s7}");
+  // 8: the argument reads the record being rebuilt.
+  g = H { n: 1, v: fill(2, 3) };
+  g = H { n: 2, v: grow(g.v) };
+  assert("{g.v}" == "[6,8,1]", "c8 {g.v}");
+  // 9: heap elements.
+  st = S { t: words(3) };
+  assert("{st.t}" == "[\"w0\",\"w1\",\"w2\"]", "c9t {st.t}");
+  r = R { ps: recs(3) };
+  assert(len(r.ps) == 3 && r.ps[2].a == 6 && r.ps[1].b == "p1", "c9r");
+  rt = 0;
+  for k in 0..20 { q = R { ps: recs(k % 4) }; rt += len(q.ps); }
+  // k%4 over 0..19: five of each of 0,1,2,3  ->  30
+  assert(rt == 30, "c9loop {rt}");
+  // 10: returned literals of every shape, placed.
+  assert("{H { n: 0, v: rep(3, 4) }.v}" == "[4,4,4]", "c10 rep");
+  assert("{H { n: 0, v: comp(4) }.v}" == "[0,2,4,6]", "c10 comp");
+  assert("{H { n: 0, v: none() }.v}" == "[]", "c10 none");
+  assert("{H { n: 0, v: either(5) }.v}|{H { n: 0, v: either(1) }.v}" == "[1,2]|[1,1,1]", "c10 either");
+  assert("{H { n: 0, v: exits(-1) }.v}|{H { n: 0, v: exits(3) }.v}" == "[9]|[0,1,2]", "c10 exits");
+  assert("{O { v: opt(2) }.v}|{O { v: opt(-1) }.v}" == "[2,2]|null", "c10 opt");
+  assert("{S { t: tags(5) }.t}" == "[\"t5\",\"t5\"]", "c10 tags");
+  // A field holding values first: the assignment, then a loop of literals of text.
+  re = H { n: 0, v: rep(5, 1) };
+  re.v = rep(2, 8);
+  assert("{re.v}" == "[8,8]", "c10 reassign {re.v}");
+  st2 = S { t: tags(1) };
+  ln = 0;
+  for k in 0..10 { st2.t = tags(k); ln += len(st2.t[1]); }
+  // "t0".."t9" are 2 bytes each  ->  20
+  assert(ln == 20 && "{st2.t}" == "[\"t9\",\"t9\"]", "c10 tags loop {ln} {st2.t}");
+  sm = 0;
+  for k in 0..6 { q = H { n: k, v: rep(k, k) }; sm += total_of(q.v); }
+  // k*k summed over 0..5  ->  0+1+4+9+16+25 = 55
+  assert(sm == 55, "c10 loop {sm}");
+  // 11: what each exit answers.
+  pp = P11 { items: ["p1", "p2"] };
+  e11 = "";
+  e11 += "1l {S { t: glob(1) }.t} 1L {S { t: glob(2) }.t} ";
+  m11 = S { t: ["old"] }; m11.t = glob(1); e11 += "1a {m11.t} ";
+  e11 += "2 {S { t: pass(["q"]) }.t} ";
+  e11 += "3n {S { t: two(-1) }.t} 3p {S { t: two(2) }.t} ";
+  e11 += "4 {S { t: schain(2) }.t} ";
+  e11 += "5g {S { t: chain_glob(1) }.t} 5f {S { t: chain_glob(3) }.t} ";
+  e11 += "6g {S { t: vif(1) }.t} 6o {S { t: vif(0) }.t} ";
+  e11 += "7 {S { t: pfield(pp) }.t} {pp.items}";
+  assert(e11 == "1l [\"a\",\"b\"] 1L [\"x0\",\"x1\"] 1a [\"a\",\"b\"] 2 [\"q\"] 3n [\"neg\"] 3p [\"t0\",\"t1\"] 4 [\"f0\",\"f1\"] 5g [\"a\",\"b\"] 5f [\"x0\",\"x1\",\"x2\"] 6g [\"a\",\"b\"] 6o [\"z\"] 7 [\"p1\",\"p2\"] [\"p1\",\"p2\"]", "c11 {e11}");
+  println("ok");
+}

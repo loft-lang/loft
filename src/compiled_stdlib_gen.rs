@@ -1672,7 +1672,7 @@ pub extern "C" fn loft_shared_t_6vector_join(
     unsafe { (*ret).text_ptr = std::ptr::null(); (*ret).text_len = 0; }
 }
 
-pub extern "C" fn loft_type_layout_fp_v1() -> u64 { 8210252831944374008u64 }
+pub extern "C" fn loft_type_layout_fp_v1() -> u64 { 2598374647381934984u64 }
 
 /// `(function, bridge symbol, bridge)` for every compiled function, sorted by name.
 pub(crate) static BRIDGES: &[(&str, &str, super::Bridge)] = &[
@@ -1693,6 +1693,6 @@ pub(crate) static BRIDGES: &[(&str, &str, super::Bridge)] = &[
 
 /// The standard library's type table this was generated against: its length and fingerprint.
 pub(crate) const PREFIX_TYPES: usize = 96;
-pub(crate) const PREFIX_FINGERPRINT: u64 = 11768752842490065367;
+pub(crate) const PREFIX_FINGERPRINT: u64 = 13106178954628645925;
 /// The hash of the `default/*.loft` source these bodies were compiled from.
-pub(crate) const SOURCE_HASH: u64 = 14693797914932547510;
+pub(crate) const SOURCE_HASH: u64 = 8494925563378724926;

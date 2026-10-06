@@ -31,12 +31,12 @@ fn main() {
   // --- a record: name, size, and every field with its offset ----------------
   //
   // The offsets are the store's own, hand-checked: two 8-byte integers then a
-  // 4-byte text handle, so 0 / 8 / 16 and a 20-byte record.
+  // 4-byte text handle, so 0 / 8 / 16 and a 20-byte record padded to 24 (@C138).
   p = Point { x: 1, y: 2, label: "a" };
   tp = type_of(p);
   assert(tp.name == "Point", "record name: {tp.name}");
   assert(tp.kind == RecordKind, "record kind");
-  assert(tp.size == 20, "record size: {tp.size}");
+  assert(tp.size == 24, "record size: {tp.size}");
   assert(len(tp.fields) == 3, "field count: {len(tp.fields)}");
   assert(len(tp.variants) == 0, "a record has no variants");
   assert(tp.element == "", "a record holds no element type");

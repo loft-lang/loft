@@ -2121,6 +2121,9 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         // change (`known` / is_base / is_linked / deref type are untouched).
         let elm_size = if matches!(elm_type, Type::Vector(_, _)) {
             elm_size_raw.max(4)
+        } else if let Some(open) = self.open_tuple_of(elm_type) {
+            // An element that is a tuple of a type variable names its open tuple (loft#1868).
+            Self::type_var_stride(open)
         } else if let Type::Reference(tv, _) | Type::Enum(tv, _, _) = elm_type.base()
             && ((elm_size_raw == 0 && self.data.is_type_var_placeholder(*tv))
                 || self.data.is_open_instance(*tv))
@@ -2373,7 +2376,30 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
     /// Whether that work-ref BORROWS what it points at or owns it is
     /// [`Parser::vector_element_cursor_deps`]' question — it decides both the deps the
     /// cursor is typed with and whether the scope-exit free applies (loft#857/#858).
+    /// The OPEN tuple a type is, when it is a tuple of a type variable — `(T, U)` inside a
+    /// template, whose record has no layout until a monomorph closes it (loft#1868, `(G-Type)`
+    /// read for the anonymous tuple template).
+    pub(crate) fn open_tuple_of(&mut self, tp: &Type) -> Option<u32> {
+        let Type::Tuple(elems) = tp.base() else {
+            return None;
+        };
+        if !elems.iter().any(|t| self.data.mentions_type_var(t)) {
+            return None;
+        }
+        let d = self.data.tuple_def(&mut self.lexer, elems);
+        (d != u32::MAX && self.data.is_open_instance(d)).then_some(d)
+    }
+
     pub(crate) fn unbox_tuple_from_dbref(&mut self, dbref: Value, elems: &[Type]) -> Value {
+        // A tuple of a type variable has no member offsets yet: the read is unboxed by each
+        // monomorph at the tuple it closes to (loft#1868).
+        if self.open_tuple_of(&Type::Tuple(elems.to_vec())).is_some() {
+            return v_block(
+                vec![dbref],
+                Type::Tuple(elems.to_vec()),
+                Self::TV_TUPLE_READ,
+            );
+        }
         let elems_vec = elems.to_vec();
         let tuple_d_nr = self.data.tuple_def(&mut self.lexer, &elems_vec);
         if tuple_d_nr == u32::MAX {
@@ -2459,7 +2485,11 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             // loft#1503 — as in `get_val`'s own tuple arm: the STORED spelling decides the
             // read op, because that is what set the layout.
             let et = &crate::data::Data::tuple_member_stored(et);
-            tuple_elems.push(self.get_val(et, false, off, Value::Var(tmp), u32::MAX));
+            // A `τ?` member spells absence in its own bytes (`@FR-L-Null`), so it is read with
+            // its nullability — the one encoding its write (`set_field`, `emit_set_one_element`)
+            // stores.
+            let nullable = matches!(et, Type::Optional(_));
+            tuple_elems.push(self.get_val(et, nullable, off, Value::Var(tmp), u32::MAX));
         }
         v_block(
             vec![v_set(tmp, dbref), Value::Tuple(tuple_elems)],
@@ -2480,6 +2510,17 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         let Value::Block(b) = code.unspan() else {
             return None;
         };
+        // A tuple of a type variable defers its unbox (`TV_TUPLE_READ`, loft#1868), whose one
+        // operand is the element's address.
+        if b.name == Self::TV_TUPLE_READ && b.operators.len() == 1 {
+            return Some(b.operators[0].clone());
+        }
+        // A struct field of tuple type read while a `&` link parses (loft#1883).
+        if b.name == Self::TUPLE_FIELD_PLACE
+            && let Some(Value::Drop(field)) = b.operators.first().map(Value::unspan)
+        {
+            return Some((**field).clone());
+        }
         if b.name != "tuple_unbox" {
             return None;
         }
@@ -2487,6 +2528,53 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             Value::Set(_, dbref) => Some((**dbref).clone()),
             _ => None,
         }
+    }
+
+    /// Member `idx` of a record-backed tuple `d_nr` (`__tuple<…>`, members `elems`) read off
+    /// `base` — the ONE read the projection `t.i` and the destructuring `for (a, b) in v`
+    /// share.  At the synthetic struct's own field offset; for an OPEN tuple (a tuple of a
+    /// type variable, which has no offsets yet) deferred to each monomorph as an open
+    /// instance's field is (`Parser::TV_FIELD`, loft#1868).
+    pub(crate) fn stored_tuple_member_read(
+        &mut self,
+        d_nr: u32,
+        idx: usize,
+        elems: &[Type],
+        base: Value,
+    ) -> Value {
+        if self.data.is_open_instance(d_nr) {
+            return self.get_field(d_nr, idx, base);
+        }
+        let offset = if let Some(v) =
+            crate::data::stored_tuple_offsets_for_def(&self.data, &self.database, d_nr, elems.len())
+        {
+            u32::from(v[idx])
+        } else {
+            crate::data::element_stack_offsets(elems)[idx] as u32
+        };
+        let nullable = matches!(elems[idx], Type::Optional(_));
+        self.get_val(&elems[idx], nullable, offset, base, u32::MAX)
+    }
+
+    /// [`Self::stored_tuple_member_place`] for an element of a tuple of a TYPE VARIABLE
+    /// (loft#1868): the read is a deferred unbox (`TV_TUPLE_READ`), and `.k` of it is the
+    /// element record's field `k`, deferred to each monomorph as an open instance's field is
+    /// — a place a write reaches, where the unboxed copy was not.  Only for an element READ
+    /// FROM A PLACE, as there.
+    pub(crate) fn open_tuple_member_place(&mut self, code: &Value, idx: usize) -> Option<Value> {
+        let Value::Block(b) = code.unspan() else {
+            return None;
+        };
+        if b.name != Self::TV_TUPLE_READ || b.operators.len() != 1 {
+            return None;
+        }
+        let open = self.open_tuple_of(&b.result)?;
+        let dbref = b.operators[0].clone();
+        self.vector_element_cursor_deps(&dbref)?;
+        if idx >= self.data.def(open).attributes.len() {
+            return None;
+        }
+        Some(self.get_field(open, idx, dbref))
     }
 
     /// `@FR-T-Proj`, loft#1698 — `v[i].k` on a `vector<(…)>` as the member's PLACE: the member read off the

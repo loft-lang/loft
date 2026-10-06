@@ -77,6 +77,9 @@ drawing	resize	vector-read	library:drawing	Lanczos resample 1024 to 256
 16_consumer_shapes	composite_hash	keyed	consumer:dryopea	`paint_line`: a hash on a COMPOSITE two-integer key — find-or-insert, removal by null, probes
 16_consumer_shapes	f32_build	vector-build	consumer:crawler	`emit_hex_tris`: `vector<single>` built six values at a time, 331,776 pushes
 16_consumer_shapes	catalog_churn	alloc-temp	consumer:crawler	`game_items`: a 64-record catalogue with text fields REBUILT on every call, one field read
+16_consumer_shapes	tuple_link_small	record-field	engine	a `&` link to a stored `(integer, integer)` element and a `&(…)` parameter, 8,192 member updates (loft#1883)
+16_consumer_shapes	tuple_link_big	record-field	engine	a `&(…)` parameter over a nine-member tuple with a text, every member kind written, 2,048 calls
+16_consumer_shapes	tuple_link_grows	record-field	engine	a link to `rows[0]` while `rows` grows: the declined case, each member access resolves the store
 gridmesh	collect_dirty_inputs	keyed	library:gridmesh	halo-cell hash lookups plus a seen-set insert per dirty chunk
 gridmesh	build_index	keyed	library:gridmesh	100,000 dedup-inserts of a record into a hash
 gridmesh	field_add_cell	keyed	library:gridmesh	a paint: an insert, a bucket probe and append, border dedup-inserts

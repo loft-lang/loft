@@ -7,7 +7,7 @@
 
 use super::capture_adoption::{
     capture_store_adopters, free_record_in_omitting_arms, link_written_closure_records,
-    record_leaves_frame,
+    record_store_leaves_frame,
 };
 use super::handoff::promoted_ret_buffer;
 use super::insert_free::{
@@ -168,7 +168,7 @@ impl Scopes<'_> {
                         continue;
                     };
                     if !data.def(*rec_def).name.starts_with("__closure_")
-                        || !record_leaves_frame(data, function, self.d_nr, v)
+                        || !record_store_leaves_frame(data, function, self.d_nr, v)
                         || link_delivered.contains(&v)
                     {
                         continue;
@@ -581,6 +581,19 @@ impl Scopes<'_> {
         } else {
             HashSet::default()
         };
+        // `(F-ParamRebind)`, loft#1871 — a rebound record parameter this return MAY hand out:
+        // `get_free_vars` leaves it to this leg, which releases it on the runs where the value
+        // returned is another store.  `r(p, n - 1)` after `p = S { … }` returns `p`'s own store
+        // from the deepest frame and a fresh one from every other, so the answer is per run.
+        let rebound_sources: Vec<(u16, u16)> = if is_return && to_scope == 1 {
+            function
+                .rebind_params()
+                .into_iter()
+                .filter(|(p, _)| *p == ret_var || return_sources.contains(p))
+                .collect()
+        } else {
+            Vec::new()
+        };
         // Kept for the null-arm join leg below, which releases its sources after this sweep.
         let join_arm_dropped = arm_dropped.clone();
         let mut ls = self.get_free_vars(
@@ -651,7 +664,10 @@ impl Scopes<'_> {
         // otherwise emit `Return(expr)` with the sources leaking on the null
         // path (frees suppressed above), and the legacy path would re-open the
         // eval-stack UAF.
-        if is_return && !expr_is_terminal && !null_arm_record_sources.is_empty() {
+        if is_return
+            && !expr_is_terminal
+            && (!null_arm_record_sources.is_empty() || !rebound_sources.is_empty())
+        {
             self.ret_temp_counter += 1;
             let name = format!("__ret_{}", self.ret_temp_counter);
             let tmp = function.add_temp_var(&name, tp);
@@ -706,6 +722,18 @@ impl Scopes<'_> {
                     ),
                     _ => free,
                 });
+            }
+            // A rebound parameter's own store (distinct from the one the caller handed, which
+            // its entry witness names) is released unless it is the value returned.
+            for &(param, orig) in &rebound_sources {
+                result.push(v_if(
+                    Value::Call(distinct, vec![Value::Var(param), Value::Var(orig)]),
+                    Value::Call(
+                        data.def_nr("OpFreeRefIfDistinct"),
+                        vec![Value::Var(param), Value::Var(tmp)],
+                    ),
+                    Value::Null,
+                ));
             }
             result.append(&mut ls);
             result.push(Value::Return(Box::new(Value::Var(tmp))));

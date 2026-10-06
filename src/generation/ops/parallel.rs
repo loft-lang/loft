@@ -420,11 +420,7 @@ impl OpEmitter for ParallelForEmitter {
                         Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)
                     )
                 {
-                    write!(
-                        prep,
-                        "let _pd{i}: DbRef = unsafe {{ &mut *cell.get() }}.database(100); "
-                    )
-                    .unwrap();
+                    write!(prep, "let _pd{i}: DbRef = DbRef::NULL; ").unwrap();
                     write!(dests, ", _pd{i}").unwrap();
                 }
             }
@@ -584,11 +580,7 @@ impl OpEmitter for ParallelQueueEmitter {
                         Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)
                     )
                 {
-                    write!(
-                        prep,
-                        "let _pd{i}: DbRef = unsafe {{ &mut *cell.get() }}.database(100); "
-                    )
-                    .unwrap();
+                    write!(prep, "let _pd{i}: DbRef = DbRef::NULL; ").unwrap();
                     write!(dests, ", _pd{i}").unwrap();
                 }
             }
@@ -724,11 +716,7 @@ impl OpEmitter for ParallelDiscardEmitter {
                         Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)
                     )
                 {
-                    write!(
-                        prep,
-                        "let _pd{i}: DbRef = unsafe {{ &mut *cell.get() }}.database(100); "
-                    )
-                    .unwrap();
+                    write!(prep, "let _pd{i}: DbRef = DbRef::NULL; ").unwrap();
                     write!(dests, ", _pd{i}").unwrap();
                 }
             }

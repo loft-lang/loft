@@ -1,0 +1,79 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@C138` `(L-Align)` — every scalar in a store sits on its natural boundary: a record's size is
+// a multiple of its alignment, and a tuple keeps its member order with each member on its own
+// boundary.  So a collection's n-th element is aligned, and a `&` link to an 8-byte member of a
+// record-backed `&(text, integer)` is an aligned 8-byte place, which `--native` dereferences
+// as a `*mut i64` (it panicked at the packed offset 4).  Crossed: an odd-sized record (stride
+// 9), a record nested in a tuple, a tuple whose members leave gaps, and the record-backed
+// `&(text, integer)` by a bind, a `&` argument, an element write and a field write.  The value
+// cells pass on a packed layout too; the size pins and the link are the subject.
+//
+// @falsified-at: 3b80d5dae — interpret exit 1 -> 0, interpret 3 assertion failures -> 0, native
+//   exit 1 -> 0, native 6 assertion failures -> 0, native panicked -> clean.
+// @falsified-by: tests/falsified/a-record-is-padded-to-its-alignment.patch — the same channels.
+// HOLDS: leak and refusals are clean on both trees and both backends.
+
+struct S9 { n: integer, b: u8 }
+struct Lab { name: text, n: integer }
+struct Host { tag: u8, pair: (text, integer), tail: u16 }
+
+fn bump_pair(p: &(text, integer)) {
+  p.1 += 5;
+  c = &p.1;
+  c += 1;
+}
+
+fn bump(p: &integer) { p += 1; }
+fn arg_pair(p: &(text, integer)) { bump(p.1); }
+
+fn test_a_stride_9_element() {
+  // 8 + 1 = 9 bytes, padded to 16: element i at 16 * i.
+  vs: vector<S9> = [S9 { n: 10, b: 1 }, S9 { n: 20, b: 2 }, S9 { n: 30, b: 3 }];
+  assert(sizeof(S9) == 16 && size(vs) == 48, "stride: {sizeof(S9)} {size(vs)}");
+  vs[1].n += 7;
+  vs[2].b = 250;
+  assert(vs[0].n == 10 && vs[0].b == 1 && vs[1].n == 27 && vs[1].b == 2 && vs[2].n == 30 && vs[2].b == 250,
+    "values: {vs[1].n} {vs[2].b}");
+  t = 0;
+  for e in vs { t += e.n + e.b; }
+  assert(t == 10 + 1 + 27 + 2 + 30 + 250, "sum {t}");
+}
+
+fn test_a_record_backed_text_integer_member() {
+  // `&(text, integer)` is a reference to the `__tuple<text,integer>` RECORD (T-Ref-Rep): the
+  // integer sits at 8 after the 4-byte text handle, and a link to it is an 8-byte place.
+  t: (text, integer) = ("s", 1);
+  bump_pair(t);
+  assert(t.0 == "s" && t.1 == 7, "bind: {t.1}");
+  u: (text, integer) = ("ab", 3);
+  arg_pair(u);
+  assert(u.0 == "ab" && u.1 == 4, "argument: {u.0} {u.1}");
+  // The same record as a vector element and a struct field, written in place.
+  rows: vector<(text, integer)> = [("a", 1), ("bb", 2)];
+  rows[1].1 += 6;
+  assert(rows[1].0 == "bb" && rows[1].1 == 8 && rows[0].1 == 1, "element: {rows[1].0} {rows[1].1} {rows[0].1}");
+  h = Host { tag: 7, pair: ("x", 100), tail: 65000 };
+  h.pair.1 += 6;
+  assert(h.tag == 7 && h.pair.0 == "x" && h.pair.1 == 106 && h.tail == 65000, "field: {h.tag} {h.pair.1} {h.tail}");
+}
+
+fn test_a_struct_nested_in_a_tuple() {
+  // (Lab, u8): Lab inline at 0 (16 bytes, aligned 8), the u8 at 16 -> 24.
+  vs: vector<(Lab, u8)> = [(Lab { name: "p", n: 1 }, 5), (Lab { name: "q", n: 2 }, 6)];
+  assert(sizeof((Lab, u8)) == 24 && size(vs) == 48, "nested: {sizeof((Lab, u8))} {size(vs)}");
+  assert(vs[0].0.name == "p" && vs[1].0.n == 2 && vs[1].1 == 6 && vs[0].1 == 5, "nested values");
+}
+
+fn test_a_vector_of_mixed_tuples() {
+  // (u8, integer, u16): 0, 8, 16 -> 18, padded to 24.
+  vs: vector<(u8, integer, u16)> = [(1, 100000000000, 2), (3, -5, 65535)];
+  vs += [(9, 7, 8)];
+  assert(sizeof((u8, integer, u16)) == 24 && size(vs) == 72, "mixed: {size(vs)}");
+  assert(vs[0].1 == 100000000000 && vs[1].0 == 3 && vs[1].1 == -5 && vs[1].2 == 65535 && vs[2].2 == 8,
+    "mixed values");
+  t = 0;
+  for (a, b, c) in vs { t += a + b + c; }
+  assert(t == 1 + 100000000000 + 2 + 3 - 5 + 65535 + 9 + 7 + 8, "sum {t}");
+}

@@ -77,6 +77,7 @@ mod args;
 mod arm_lift;
 mod backings;
 mod branches;
+mod buffer_detach;
 mod buffers;
 mod capture_adoption;
 mod capture_builds;
@@ -104,6 +105,7 @@ mod reshape_refusals;
 mod returns;
 mod scan;
 mod scan_set;
+mod text_replace;
 mod text_return_check;
 mod tuple_members;
 mod value_struct;
@@ -384,6 +386,10 @@ struct Scopes<'s> {
     /// itself is never freed.  Keyed on every id the local is known by (the original and
     /// any scope copy `scan_set` makes of it).  [`owner_witness_locals`] picks them.
     owner_witness: HashMap<u16, u16>,
+    /// `@FR-L-CapRebind` — the closure records the statement being scanned releases in its
+    /// prefix (the record a rebuild is about to overwrite, loft#1388).  The rebuild's own
+    /// snapshot (`displaced_drop`) skips them: one release per displaced record.
+    prefix_released: Vec<u16>,
     /// @PLN85 `local_source` over-free fix (gated by `LOFT_JOIN_OWN`): heap slots
     /// that hold an OWNED store displaced by a later `Borrowed`/`Join` reassignment
     /// (`use_analysis::displaced_owned_slots`). For these, `scan_set` strips the
@@ -616,6 +622,12 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
     let disturbed =
         crate::keys::callee_disturb_enabled().then(|| disturbed_params_map(data, Some(database)));
     let disturbed = disturbed.as_ref();
+    // The functions this call checks: `text_replace::admit` decides only theirs.
+    let fresh: Vec<u32> = (0..data.definitions())
+        .filter(|&d| {
+            matches!(data.def(d).def_type, DefType::Function) && !data.def(d).variables.done
+        })
+        .collect();
     for d_nr in 0..data.definitions() {
         if !matches!(data.def(d_nr).def_type, DefType::Function) || data.def(d_nr).variables.done {
             continue;
@@ -838,6 +850,11 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
     // @PLN94 C.0 (DEV tier) — the POST-codegen free-based checks (over-free / under-free), now that
     // `get_free_vars` has inserted the frees into `def.code` above. Self-gates on
     // `LOFT_OWN_ORACLE=check-dev`; observer only (SI-1), a no-op on the default `check` path.
+    // `@FR-O-Owner` — a literal buffer whose store a local owner takes over is detached, now
+    // that the deps say who owns and the frees say who releases.
+    if crate::keys::buffer_detach_enabled() {
+        buffer_detach::detach_owned_buffers(data);
+    }
     crate::ownership_cfg::oracle_free_checks(data);
     // #682 — record which closure captures the record ADOPTS, now that every dep
     // rewrite above has settled.  Must run after the loop, not inside it: the
@@ -846,6 +863,9 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
     mark_borrowed_captures(data, database);
     // `(H-Copy-Lease)` — every copy of a type that declares `OpCopy` runs it on the new structure.
     crate::use_analysis::lease_calls(data);
+    // `@FR-H-TextReplace` — an assignment to a text field releases the text it replaces only
+    // where no borrow of that text can be live; every other site writes without releasing.
+    text_replace::admit(data, &fresh);
     // `LOFT_VAR_TABLE=<fn substring>` — the variable table beside the IR dump, with
     // each type dep resolved to `name(index)`.  Observer only; a no-op when unset.
     crate::variables::dump_var_tables(data, 0);

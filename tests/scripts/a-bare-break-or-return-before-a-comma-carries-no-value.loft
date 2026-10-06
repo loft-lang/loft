@@ -1,0 +1,41 @@
+// @FR-C-Never — a bare `break` / `continue` / `return` is a `Never` that stands wherever a
+// value does, a match arm included.  Whether a VALUE follows the word is answered by the next
+// token: `,` `)` `]` end an arm, an argument or an element exactly as `;` and `}` end a
+// statement, so `4 => break, _ => i` breaks the loop and never reads `, _ => i` as a value.
+// One channel, the VALUE: the void-function `4 => return,` refusal is guarded beside `?? break`
+// (a-null-can-leave-the-loop-through-a-coalesce.loft), because a refusal in this file would
+// stop it compiling on the control and leave this answer unscored.
+// @falsified-at: d84ebf7bb — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-bare-break-or-return-before-a-comma-carries-no-value.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// HOLDS: leak, panic and refusals are clean on both trees and both backends.
+// CHANNEL: the assertions — the program compiles on the control and answers wrong.
+
+fn break_in_arm() -> integer {
+  s = 0;
+  for i in 0..10 {
+    k = match i { 4 => break, _ => i };
+    s += k
+  }
+  s
+}
+
+fn continue_in_arm(n: integer) -> integer {
+  s = 0;
+  for i in 0..n {
+    k = match i { 2 => continue, _ => i };
+    s += k
+  }
+  s
+}
+
+fn return_value_in_arm(n: integer) -> text {
+  k = match n { 4 => return "early", _ => n };
+  "a{k}"
+}
+
+fn main() {
+  assert(break_in_arm() == 6, "break in an arm leaves the loop, not the function: {break_in_arm()}");
+  assert(continue_in_arm(5) == 8, "continue in an arm: {continue_in_arm(5)}");
+  assert(return_value_in_arm(4) == "early", "return with a value in an arm: {return_value_in_arm(4)}");
+  assert(return_value_in_arm(7) == "a7", "the other arm: {return_value_in_arm(7)}");
+}

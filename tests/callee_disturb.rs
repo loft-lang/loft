@@ -86,9 +86,14 @@ fn the_switch_restores_the_defect_the_guard_catches() {
             "{mode} with LOFT_NO_CALLEE_DISTURB=1 must fail the guard — without that the guard \
              measures nothing:\n{err}"
         );
+        // The stale read answers whatever the reused memory held — a value of the store's
+        // reuse, not of the program, and no promise of the claim (a poisoned claim reads
+        // another) — so the cell is pinned by WHERE it fails and that the answer is not 3.
         let (exact_ok, _, exact_err) = run(mode, OFF_EXACT);
         assert!(
-            !exact_ok && exact_err.contains("c2 grow, realloc: callee 4294967401, want 3"),
+            !exact_ok
+                && exact_err.contains("c2 grow, realloc: callee ")
+                && !exact_err.contains("c2 grow, realloc: callee 3, want 3"),
             "{mode} must fail on c2 with the stale read the unit removes:\n{exact_err}"
         );
     }

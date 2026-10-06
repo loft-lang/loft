@@ -1680,7 +1680,7 @@ fn test() {
     .result(loft::data::Value::Null);
 }
 
-/// @PLN40: `const virtual(…)` is rejected — a virtual field is already computed
+/// @FR-Const-VirtualReject (@PLN40): `const virtual(…)` is rejected — a virtual field is already computed
 /// and read-only, so `const` on it is redundant.
 #[test]
 fn pln40_const_virtual_field_rejected() {
@@ -10404,6 +10404,262 @@ at enhancement_ref_vector_readonly_loop_still_flags:2:20",
     );
 }
 
+/// `@FR-B-Ref-Write` — a `&` parameter only READ through a local link (and a link to that
+/// link) is still never modified, so the needless-`&` refusal still holds.  The control for the
+/// fix that carries a write on a link back to its source (`a-write-through-a-link-modifies-the-
+/// amp-parameter`): the link's own bind is a `Set` too, and counting it would silence this.
+#[test]
+fn a_link_only_read_leaves_the_amp_parameter_unmodified() {
+    code!(
+        "fn twice(p: &integer) -> integer {
+    c = &p;
+    d = &c;
+    d * 2
+}
+fn test() { }"
+    )
+    .error(
+        "Parameter 'p' has & but is never modified; remove the & \
+at a_link_only_read_leaves_the_amp_parameter_unmodified:1:13",
+    );
+}
+
+/// D-bind-70 (loft#1875) — a tuple member no link can honour yet is REFUSED by name, at a `&`
+/// bind and at a `&` argument alike, and never handed a copy that would drop the write
+/// (`@FR-B-Ref-Reshape`).  Before the wide members linked, these took the work-copy route and the
+/// callee's write vanished; the pins say they cannot reach it again.
+#[test]
+fn a_narrow_tuple_member_link_is_refused() {
+    code!(
+        "fn nb(p: &u8) { p += 1; }
+fn test() { n: (u8, integer) = (5, 1); nb(n.0); assert(n.0 == 5, \"n\"); }"
+    )
+    .error(
+        "a `&` link to a tuple member of type `u8` is not supported — a narrow member is stored \
+at full width, and a link reads at the member's own width.  Bind the member to a local first \
+(`m = t.0; c = &m;`) and write it back at a_narrow_tuple_member_link_is_refused:2:48",
+    );
+}
+
+#[test]
+fn a_text_tuple_member_link_is_refused() {
+    code!(
+        "fn tb(p: &text) { p += \"!\"; }
+fn test() { s = (\"a\", 1); tb(s.0); assert(s.0 == \"a\", \"s\"); }"
+    )
+    .error(
+        "a `&` link to a tuple member of type `text` is not supported — a link to a member names \
+a scalar place, and this member is not a scalar.  Bind the member to a local first \
+(`m = t.0; c = &m;`) and write it back at a_text_tuple_member_link_is_refused:2:35",
+    );
+}
+
+/// `@FR-B-Ref-Lvalue` — a member of a tuple reached through a `&(…)` link is a place a link
+/// names: the link's reference at the member's offset.  `c = &p.0; c += 5` writes the CALLER's
+/// tuple, and the write reaches it on both backends.
+#[test]
+fn a_member_of_a_linked_tuple_is_a_place() {
+    code!(
+        "fn via(p: &(integer, integer)) -> integer { c = &p.0; c += 5; p.1 = c; p.1 }
+fn run() -> integer { t = (250, 1); r = via(t); r * 1000000 + t.0 * 1000 + t.1 }"
+    )
+    .expr("run()")
+    .result(Value::Long(255_255_255));
+}
+
+/// `@FR-Const-ScalarCollapse` / `@FR-Const-Value` — every spelling that writes past a `const`
+/// scalar or a value-const field is refused.  Each wrote in silence on both backends before: a
+/// `&` link to a binding-const scalar field or local, the same handed to a `&` parameter, a
+/// link to a value-const scalar field, a rebind of a value-const ENUM (the collapse list named
+/// five scalar types and not the enum), and an append to a value-const `text` field (routed
+/// through a working variable that skipped the component check).
+#[test]
+fn a_link_to_a_const_scalar_field_is_refused() {
+    code!(
+        "struct H { const v: integer }
+fn test() { h = H { v: 1 }; c = &h.v; c = 7; assert(h.v == 1, \"h\"); }"
+    )
+    .error(
+        "Cannot modify 'c': it is a view of const field 'H.v', whose value is read-only; remove \
+'const' there, or copy what you change into a local at a_link_to_a_const_scalar_field_is_refused:2:44",
+    );
+}
+
+#[test]
+fn a_const_scalar_local_to_an_amp_parameter_is_refused() {
+    code!(
+        "fn bump(p: &integer) { p += 1; }
+fn test() { const x: integer = 1; bump(x); assert(x == 1, \"x\"); }"
+    )
+    .error(
+        "Cannot pass const variable 'x' to the `&` parameter 1 of `bump`, which may modify it; its \
+value is read-only — pass a local copy, or make the parameter `const` if `bump` only reads it \
+at a_const_scalar_local_to_an_amp_parameter_is_refused:2:43",
+    );
+}
+
+#[test]
+fn a_link_to_a_value_const_scalar_field_is_refused() {
+    code!(
+        "struct H { v: const integer }
+fn test() { h = H { v: 1 }; c = &h.v; c = 7; assert(h.v == 1, \"h\"); }"
+    )
+    .error(
+        "Cannot modify 'c': it is a view of value-const field 'H.v', whose value is read-only; \
+remove 'const' there, or copy what you change into a local at \
+a_link_to_a_value_const_scalar_field_is_refused:2:44",
+    );
+}
+
+#[test]
+fn a_value_const_enum_field_rebind_is_refused() {
+    code!(
+        "enum Col { Red, Green }
+struct H { v: const Col }
+fn test() { h = H { v: Col.Red }; h.v = Col.Green; assert(h.v == Col.Red, \"h\"); }"
+    )
+    .error(
+        "cannot mutate value-const field 'v' of struct 'H' — its value is read-only (rebind with \
+'=' to re-point, or drop 'const') at a_value_const_enum_field_rebind_is_refused:3:51",
+    );
+}
+
+#[test]
+fn a_value_const_text_field_append_is_refused() {
+    code!(
+        "struct H { v: const text }
+fn test() { h = H { v: \"a\" }; h.v += \"z\"; assert(h.v == \"a\", \"h\"); }"
+    )
+    .error(
+        "cannot mutate value-const field 'v' of struct 'H' — its value is read-only (rebind with \
+'=' to re-point, or drop 'const') at a_value_const_text_field_append_is_refused:2:41",
+    );
+}
+
+/// `@FR-Const-Bind` — a binding-const field's SLOT never re-points (a rebind is refused) while
+/// its contents stay mutable (`a-value-const-scalar-local-can-be-declared` holds the append and
+/// the element write).  `@FR-Const-Compose` — `const v: const T` refuses the rebind AND every
+/// write beneath it: the append and the element write that Const-Bind alone allows.
+#[test]
+fn a_binding_const_field_rebind_is_refused() {
+    code!(
+        "struct H { const v: vector<integer> }
+fn test() { h = H { v: [1] }; h.v = [2]; }"
+    )
+    .error(
+        "cannot reassign const field 'v' of struct 'H' — const fields are write-once-at-construction \
+at a_binding_const_field_rebind_is_refused:2:41",
+    );
+}
+
+#[test]
+fn a_composed_const_field_refuses_its_rebind() {
+    code!(
+        "struct H { const v: const vector<integer> }
+fn test() { h = H { v: [1] }; h.v = [2]; }"
+    )
+    .error(
+        "cannot reassign const field 'v' of struct 'H' — const fields are write-once-at-construction \
+at a_composed_const_field_refuses_its_rebind:2:41",
+    );
+}
+
+#[test]
+fn a_composed_const_field_refuses_its_append() {
+    code!(
+        "struct H { const v: const vector<integer> }
+fn test() { h = H { v: [1] }; h.v += [2]; }"
+    )
+    .error(
+        "cannot mutate value-const field 'v' of struct 'H' — its value is read-only (rebind with \
+'=' to re-point, or drop 'const') at a_composed_const_field_refuses_its_append:2:42",
+    );
+}
+
+#[test]
+fn a_composed_const_field_refuses_an_element_write() {
+    code!(
+        "struct H { const v: const vector<integer> }
+fn test() { h = H { v: [1] }; h.v[0] = 5; }"
+    )
+    .error(
+        "Cannot modify value-const field 'H.v'; its value is read-only \
+at a_composed_const_field_refuses_an_element_write:2:42",
+    );
+}
+
+/// `@FR-F-Arity` — a compiler-inserted slot (a text return's buffer, a record's `__retbuf`) is
+/// not a user parameter: an argument past the declared ones is too many.  Counted as one, the
+/// extra `"c"` filled `txt`'s text buffer and the call answered `ab` in silence; a record
+/// return's extra argument was refused as a type mismatch on its buffer; and a generic's refusal
+/// named its mangled instance (`i_7integer_n_gen`) instead of `gen`.
+#[test]
+fn an_argument_past_the_parameters_never_fills_a_text_buffer() {
+    code!(
+        "fn txt(a: text, b: text = \"z\") -> text { \"{a}{b}\" }
+fn test() { t = txt(\"a\", \"b\", \"c\"); }"
+    )
+    .error("Too many parameters for txt at an_argument_past_the_parameters_never_fills_a_text_buffer:2:36");
+}
+
+#[test]
+fn an_argument_past_the_parameters_never_fills_a_record_buffer() {
+    code!(
+        "struct P { x: integer }
+fn rec(a: integer) -> P { P { x: a } }
+fn test() { r = rec(1, 2); }"
+    )
+    .error("Too many parameters for rec at an_argument_past_the_parameters_never_fills_a_record_buffer:3:27");
+}
+
+#[test]
+fn a_generic_called_with_too_many_arguments_is_named_as_written() {
+    code!(
+        "fn gen<T>(a: T) -> T { a }
+fn test() { gen(8, 1); }"
+    )
+    .error("Too many parameters for gen at a_generic_called_with_too_many_arguments_is_named_as_written:2:23");
+}
+
+/// `@FR-F-OneBody` with `@FR-N-Shape` — `τ` and `τ?` are one receiver for the one-body question:
+/// `(F-Recv)` sends both call spellings to whichever of `m(τ)` / `m(τ?)` is a method, so a plain
+/// `m(p: P?)` beside `fn m(self: P)` was reached by neither, dead in silence.  Refused in either
+/// order; a `self`/`self` pair over `P` and `P?` is untouched
+/// (`a-method-and-its-nullable-twin-are-two-bodies`).
+#[test]
+fn a_plain_function_on_the_nullable_receiver_of_a_method_is_refused() {
+    code!(
+        "struct P { x: integer }
+fn m(self: P) -> integer { 1 }
+fn m(p: P?) -> integer { 2 }
+fn test() { }"
+    )
+    .error(
+        "Cannot redefine 'm' (already defined at \
+a_plain_function_on_the_nullable_receiver_of_a_method_is_refused:2:17) — a name has one body per \
+receiver type, and `x.m(…)` and `m(x, …)` would reach different functions; declare it once as a \
+`self` method, which takes both spellings, or rename one at \
+a_plain_function_on_the_nullable_receiver_of_a_method_is_refused:3:15",
+    );
+}
+
+#[test]
+fn a_method_after_a_plain_function_on_its_nullable_receiver_is_refused() {
+    code!(
+        "struct P { x: integer }
+fn m(p: P?) -> integer { 2 }
+fn m(self: P) -> integer { 1 }
+fn test() { }"
+    )
+    .error(
+        "Cannot redefine 'm' (already defined at \
+a_method_after_a_plain_function_on_its_nullable_receiver_is_refused:2:15) — a name has one body \
+per receiver type, and `x.m(…)` and `m(x, …)` would reach different functions; declare it once \
+as a `self` method, which takes both spellings, or rename one at \
+a_method_after_a_plain_function_on_its_nullable_receiver_is_refused:3:17",
+    );
+}
+
 /// `break value` in void function → compile error.
 #[test]
 fn enhancement_break_value_in_void_function_errors() {
@@ -16076,47 +16332,66 @@ fn run_it() -> integer {
 
 /// @C75 — closure-carrying struct values are frame-bound.
 #[test]
-fn issue_318_returning_closure_carrying_struct_rejected() {
+fn a_field_after_a_capturing_fn_field_is_written_by_name() {
+    // A struct with a capturing fn field lays out a hidden `<f>__closure_rec` field with no
+    // attribute, so a layout field's index is not its attribute index: the write's const check
+    // resolves the attribute by name.  By index it read past the attribute list (an ICE).
     code!(
-        "struct Counter { n: integer }
-struct K { cb: fn() }
-fn make() -> K {
-    w = Counter { n: 7 };
-    K { cb: fn() { w.n = w.n + 1; } }
-}
-fn test_it() { k = make(); c = k.cb; c(); }"
+        "struct V { a: integer }
+struct H1 { f: fn(integer) -> integer, tag: integer }
+fn run() -> integer {
+    v = V { a: 3 };
+    a = H1 { f: fn(x: integer) -> integer { v.a * 10 + x }, tag: 1 };
+    a.tag = 9;
+    a.tag * 100 + a.f(1)
+}"
     )
-    .error(
-        "function returns a struct type that holds a capturing closure; the \
-         closure references state owned by this function's frame, so the value \
-         cannot outlive it — construct the struct in the frame that owns the \
-         captured state and pass it down, or return the closure itself \
-         at issue_318_returning_closure_carrying_struct_rejected:3:17",
-    );
+    .expr("run()")
+    .result(Value::Int(931));
 }
 
 #[test]
-fn issue_318_closure_into_argument_struct_rejected() {
+fn issue_1867_a_returned_struct_keeps_its_closure_capture() {
+    // `@FR-L-Escape`, `@FR-L-CapOwn` — the struct's closure record is built in its own store
+    // and adopts `w`, so the capture outlives `make`'s frame: 8 and 9 through a fn-ref read
+    // out of the field, then 10 through the field itself.
     code!(
         "struct Counter { n: integer }
-struct K { cb: fn() }
-struct H { k: K }
-fn attach(h: H) {
+struct K { cb: fn() -> integer }
+fn make() -> K {
     w = Counter { n: 7 };
-    h.k = K { cb: fn() { w.n = w.n + 1; } };
+    K { cb: fn() -> integer { w.n = w.n + 1; w.n } }
 }
-fn test_it() {
-    h = H { k: K { cb: fn() { print(\"orig\"); } } };
-    attach(h);
+fn run() -> integer { k = make(); c = k.cb; c(); c() * 100 + k.cb() }"
+    )
+    .expr("run()")
+    .result(Value::Int(910));
+}
+
+#[test]
+fn issue_1867_a_closure_written_into_an_argument_struct_keeps_its_capture() {
+    // `@FR-L-Escape` — the closure record is built in the caller's struct, adopts `w`, and the
+    // second `attach` releases the record it displaces: 8, then 21 and 22 from the new one.
+    code!(
+        "struct Counter { n: integer }
+struct K { cb: fn() -> integer }
+struct H { k: K }
+fn orig() -> integer { 0 }
+fn attach(h: H, n: integer) {
+    w = Counter { n: n };
+    h.k = K { cb: fn() -> integer { w.n = w.n + 1; w.n } };
+}
+fn run() -> integer {
+    h = H { k: K { cb: orig } };
+    attach(h, 7);
+    a = (h.k.cb)();
+    attach(h, 20);
+    b = (h.k.cb)();
+    a * 10000 + b * 100 + (h.k.cb)()
 }"
     )
-    .error(
-        "cannot store a capturing closure into a struct received as an argument \
-         — the closure references state owned by this function's frame, which \
-         the argument's struct outlives; construct the closure in the frame \
-         that owns the captured state \
-         at issue_318_closure_into_argument_struct_rejected:6:44",
-    );
+    .expr("run()")
+    .result(Value::Int(82122));
 }
 
 #[test]
@@ -16136,13 +16411,6 @@ fn test_it() {
          function's frame; keep closure holders in local variables and pass \
          them down as arguments \
          at issue_318_vector_of_closure_carrying_struct_rejected:5:19",
-    )
-    .error(
-        "field `vector` would store a value of a type that holds a capturing \
-         closure; such values are bound to the function frame that owns the \
-         captures and cannot be copied into another struct — keep the closure \
-         holder in a local variable and pass it down as an argument \
-         at issue_318_vector_of_closure_carrying_struct_rejected:5:55",
     );
 }
 
@@ -17128,12 +17396,18 @@ fn pln102_boolean_integer_comparison_rejected() {
 /// `forced_size`) where storage needs database widths.
 #[test]
 fn pln114_tuple_stride_matches_record() {
+    // `@C138` — every member sits on its natural boundary.  A struct reorders its fields
+    // largest-first (u32, u16, u8: 7 bytes, padded to 8); a tuple keeps its order (u8, three
+    // bytes of padding, u32 at 4, u16 at 8: 10 bytes, padded to 12).  Each stride is a multiple
+    // of its 4-byte alignment, so element 1 of either vector is aligned.
     code!(
         "struct M { a: u8, b: u32, c: u16 }
 fn test() {
     vs: vector<M> = [M{a:1,b:2,c:3}, M{a:4,b:5,c:6}];
     vt: vector<(u8, u32, u16)> = [(1,2,3), (4,5,6)];
-    assert(size(vt) == size(vs), \"tuple stride must equal record stride\");
+    assert(sizeof(M) == 8, \"struct stride {sizeof(M)}\");
+    assert(sizeof((u8, u32, u16)) == 12, \"tuple stride {sizeof((u8, u32, u16))}\");
+    assert(vs[1].b == 5 && vt[1].1 == 5 && vt[1].2 == 6, \"element 1 of each\");
 }"
     );
 }

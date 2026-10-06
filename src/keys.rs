@@ -1807,6 +1807,15 @@ pub fn vector_base_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_VECTOR_BASE"))
 }
 
+/// `@FR-O-Owner` — a literal buffer whose store a local OWNER takes over is detached from it
+/// (`scopes::buffer_detach`) — **DEFAULT ON**, both backends.  Opt OUT with
+/// `LOFT_NO_BUFFER_DETACH`: the buffer keeps naming the store, the bisect step for a store
+/// released twice, or cleared under another owner, out of a value branch's literal arm.
+pub fn buffer_detach_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_BUFFER_DETACH"))
+}
+
 /// @PLN157 § V-al (`@FR-R-LoopBuffer`): a per-site vector buffer minted INSIDE a loop keeps
 /// its store and its vector across iterations — every mint after the first is a length
 /// reset that keeps the capacity — **DEFAULT ON**.  Opt OUT with
@@ -3238,6 +3247,16 @@ pub fn keep_range_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_KEEP_RANGE"))
 }
 
+/// `LOFT_NO_KEEP_RANGE_REFRESH=1` — `(R-Refresh)`'s keep-range clause off: `OpKeepRange`
+/// on a held path blocks the loop's hoist as every other length change does, instead of
+/// refreshing the held header at its own site.  The A/B of the clause; the first bisect
+/// step for a wrong read after a self-slice pop inside a hoisted loop.
+#[must_use]
+pub fn keep_range_refresh_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_KEEP_RANGE_REFRESH"))
+}
+
 /// `LOFT_KEYED_VERIFY=1` — the falsifier for the keyed fast paths: every pre-resolved
 /// comparison is checked against the general comparator, every exact `index` lookup
 /// against the boundary descent, and every one-probe `hash` insert against the slot and
@@ -3330,7 +3349,9 @@ impl FastOrder<'_> {
 /// on the key's kind per comparison — 54 % of a `for e in hash` walk, whose order is built
 /// per pass (`bench/portal/analysis/keyed.md` L8).  The index is the tie-break, so equal keys
 /// keep their input order exactly as the stable sort kept it (a hash has none: its keys are
-/// unique).  A compound key, a float key, a partial or a 1-byte key take the comparator.
+/// unique).  A COMPOUND key of two to four integer parts is decorated the same way, its parts
+/// read into one array per record ([`compound_order`]).  A float or text part, a single 1-byte
+/// key and a longer key take the comparator.
 ///
 /// `LOFT_NO_FAST_ORDER=1` takes the comparator for every key; `LOFT_KEYED_VERIFY=1` checks
 /// the decorated order against [`compare`] pair by pair.
@@ -3339,10 +3360,18 @@ impl FastOrder<'_> {
 /// Under `LOFT_KEYED_VERIFY=1`, when the decorated order disagrees with [`compare`] — the
 /// falsifier, naming both records.
 pub fn sort_records(recs: &mut Vec<DbRef>, stores: &[Store], keys: &[Key]) {
-    if fast_order_enabled()
-        && let [k] = keys
-        && let Some(order) = decorated_order(recs, stores, k)
-    {
+    let order = if fast_order_enabled() {
+        match keys {
+            [k] => decorated_order(recs, stores, k),
+            [_, _] => compound_order::<2>(recs, stores, keys),
+            [_, _, _] => compound_order::<3>(recs, stores, keys),
+            [_, _, _, _] => compound_order::<4>(recs, stores, keys),
+            _ => None,
+        }
+    } else {
+        None
+    };
+    if let Some(order) = order {
         let sorted: Vec<DbRef> = order.iter().map(|&i| recs[i as usize]).collect();
         if keyed_verify() {
             for w in sorted.windows(2) {
@@ -3363,6 +3392,53 @@ pub fn sort_records(recs: &mut Vec<DbRef>, stores: &[Store], keys: &[Key]) {
 
 /// The order of `recs` under the one key `k`, as indices into `recs`, or `None` for a key
 /// width [`fast_key_of`] does not read.
+/// One part of a compound key as an `i64` that orders the way [`compare_ref`] orders the
+/// part — the same read, widened — with a descending part as `!v`, which reverses the order
+/// of every `i64` without overflow (the null sentinel `i64::MIN` lands last, where the
+/// reversed comparison puts it).  `None` for a kind not read as an integer.
+fn int_key_part(s: &Store, rec: &DbRef, k: &Key) -> Option<i64> {
+    let at = rec.pos + u32::from(k.position);
+    let v = match k.type_nr.abs() {
+        1 => s.get_int(rec.rec, at),
+        2 => s.get_long(rec.rec, at),
+        8 => i64::from(s.get_i32_raw(rec.rec, at)),
+        12 => i64::from(s.get_u32_raw(rec.rec, at)),
+        9 => i64::from(s.get_short(rec.rec, at, k.start)),
+        10 => i64::from(s.get_byte(rec.rec, at, k.start)),
+        11 => i64::from(s.get_short_full(rec.rec, at, k.start)),
+        _ => return None,
+    };
+    Some(if k.type_nr < 0 { !v } else { v })
+}
+
+/// [`decorated_order`] for a compound key of `N` integer parts: each record's parts read once
+/// into `([i64; N], index)`, the arrays sorted lexicographically — [`compare`]'s order, part by
+/// part, each in its own direction — with the index as the tie-break.  `None` when a part is
+/// not an integer kind, decided before any record is read.
+fn compound_order<const N: usize>(
+    recs: &[DbRef],
+    stores: &[Store],
+    keys: &[Key],
+) -> Option<Vec<u32>> {
+    if !keys
+        .iter()
+        .all(|k| matches!(k.type_nr.abs(), 1 | 2 | 8 | 9 | 10 | 11 | 12))
+    {
+        return None;
+    }
+    let mut pairs: Vec<([i64; N], u32)> = Vec::with_capacity(recs.len());
+    for (i, r) in recs.iter().enumerate() {
+        let s = store(r, stores);
+        let mut key = [0_i64; N];
+        for (part, k) in key.iter_mut().zip(keys) {
+            *part = int_key_part(s, r, k)?;
+        }
+        pairs.push((key, i as u32));
+    }
+    pairs.sort_unstable();
+    Some(pairs.into_iter().map(|(_, i)| i).collect())
+}
+
 fn decorated_order(recs: &[DbRef], stores: &[Store], k: &Key) -> Option<Vec<u32>> {
     let keys = std::slice::from_ref(k);
     let descending = k.type_nr < 0;

@@ -1,0 +1,13 @@
+diff --git a/src/parser/operators.rs b/src/parser/operators.rs
+index 081c4bfdb..0e1e8bdc7 100644
+--- a/src/parser/operators.rs
++++ b/src/parser/operators.rs
+@@ -94,7 +94,7 @@ impl Parser {
+             return false;
+         }
+         // The declaration's own initialising bind (`x: const T = …`) sets the value.
+-        if op == "=" && nr == self.declaring_const {
++        if false && op == "=" && nr == self.declaring_const {
+             return false;
+         }
+         let binding = self.vars.is_const_binding(nr);

@@ -705,9 +705,11 @@ cross_mode!(
 // (probe e4b in #318; cross-mode equality cannot see both backends dangling
 // identically).  The cell now locks the REJECTION on both backends.
 #[test]
-fn c_d3_factory_into_struct_field_rejected() {
-    crate::common::cross_mode::run_cross_mode_rejected(
-        "c_d3_factory_into_struct_field_rejected",
+fn c_d3_factory_into_struct_field() {
+    // `@FR-L-Escape` — a struct returned with a capturing closure in its field keeps the
+    // capture: the counter's cell lives on in the returned struct's closure record (loft#1867).
+    crate::common::cross_mode::run_cross_mode(
+        "c_d3_factory_into_struct_field",
         r#"
     struct Counter { cb: fn() -> integer }
     fn make_counter() -> Counter {
@@ -717,10 +719,11 @@ fn c_d3_factory_into_struct_field_rejected() {
     fn test() {
         c = make_counter();
         a = (c.cb)();
-        print("{a}\n");
+        b = (c.cb)();
+        assert(a == 1 && b == 2, "counter {a} {b}, want 1 2");
+        print("{a} {b}\n");
     }
     "#,
-        "function returns a struct type that holds a capturing closure",
     );
 }
 

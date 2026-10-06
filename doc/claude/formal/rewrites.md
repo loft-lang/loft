@@ -175,9 +175,12 @@ frames), `Output::bind_view_header` (a view copies a held path's holder).
                  the gate admitted for that purpose, and that op refreshes the holder
                  at its own site before anything else can read it: a push bumps its
                  header's length and re-derives the whole header after a growth; a
-                 scalar hoist is evicted at analysis time by the (type, offset) its
-                 writes reach (R-Scalar).  An op that could change a held fact and
-                 does not refresh it blocks the loop.
+                 self-slice pop (OpKeepRange, KEEP-RANGE CLAUSE) sets its header's
+                 length to what the runtime wrote and re-derives the header when the
+                 runtime moved the record instead; a scalar hoist is evicted at
+                 analysis time by the (type, offset) its writes reach (R-Scalar).  An
+                 op that could change a held fact and does not refresh it blocks the
+                 loop.
 ```
 
 **In words.** This is why a push may be admitted and an `OpAppendVector`, a remove or a
@@ -186,6 +189,28 @@ it changes.  The refresh includes the RECORD, not only the local: the length is 
 back per push so a runtime reader inside the loop (an admitted callee's `len(v)`) sees every
 push.  Sites: `Stores::push_hoisted` (bump, write-back, re-derive), `hoist::WriteSet::evicts`
 (the scalar half).
+
+**The keep-range clause.**  `OpKeepRange(P, lo, hi, tp)` — `v = v[lo..hi]` over a scalar
+element kind — on a pure path P is admitted under the push tier: the runtime keeps the
+vector's record (the kept span copied within it, the length written) and answers whether it
+did, so the emitter sets the held length at the op's site — the runtime's two clamps over
+the length the holder carries — and, where the runtime took the copy form instead (a
+foreign or read-only store released and re-appended, or `LOFT_NO_KEEP_RANGE`), re-derives
+the whole push header as a push's growth step does.  The popped path holds a PUSH header
+(the mutable holder) and joins the pushes' aliasing decision (`R-Alias`): an owned root or
+the return buffer, else the loop declines; its root is a mover, so no element base is bound
+over its store in that extent (`R-Base`'s growth clause).  A push window excludes it on its
+own: the op names the pushed root, which the window's parts may not.  Without the clause
+the op declined the WHOLE loop, and three rewrites with it — the stacks' headers, the push
+header's appends and the callee's invariant inputs.  Sites: `hoist::keep_range_path` (the
+one shape, asked by the gate, the collector and the emitter), `KeepRangeEmitter`,
+`Stores::vector_keep_range` (the answer).  Switch `LOFT_NO_KEEP_RANGE_REFRESH` (the loop
+declines as before); under `LOFT_NO_KEEP_RANGE` the runtime's copy form takes the
+re-derive branch.  Falsifier `LOFT_HOIST_VERIFY=1` (`vector::verify_kept_header`: the
+refreshed header against one derived from the record after every pop).  Guard
+`tests/scripts/1014-keep-range-refresh.loft` (a stack popped while read, a `hi` past the
+length, a pop to empty then pushes, two stacks in one body, a pop from both ends under
+`len(v)`, a negative bound).
 
 ### Two paths may name one vector only where ownership cannot rule it out
 
@@ -652,6 +677,142 @@ fill whose length the kept vector already has: `mat4_mul` −17 % (priced −24 
 `tests/scripts/a-return-buffer-refills-the-store-a-rebind-released.loft`, pin
 `tests/refill_buffer.rs`.
 
+### A pooled buffer's texts are refilled in their slots
+
+```
+  (R-RefillText) at a call site whose result buffer b is a POOLED call buffer —
+                 minted once per activation by a zero-filling OpDatabase and
+                 released before every later call by OpClear(b, tp) (the
+                 (R-Reuse) pool, @FR-H-ClearRelease) — the release is not
+                 emitted, and the call goes to the callee's REFILL TWIN, whose
+                 text sets into its own return buffer refill the slot: the
+                 slot's block is written over when the new text fits its claim
+                 (len + 8 ≤ 8 × the block's header words), released and claimed
+                 anew when it does not, claimed when the slot is 0; a null text
+                 releases the slot's block.  Admitted where (a) tp's heap is
+                 TEXT ONLY — every heap slot of the type, nested inline records
+                 flattened, is a text (no collection, no reference, no enum
+                 payload that owns heap); (b) the callee builds its result as a
+                 record LITERAL into its own buffer on EVERY exit — `return b`,
+                 or a block whose value is b — the literal writing every text
+                 slot of tp exactly once, and nothing else in the callee names
+                 the buffer; and (c) b is named by nothing but its pool
+                 statement, this call's buffer argument and its releases, and
+                 the result bound from the call is only READ (a reading OpGet*,
+                 the source of a copy that keeps its source).  Where the site
+                 would call an `__inv` or `__rg` twin it releases first instead,
+                 in the pool statement's order.
+```
+
+**In words.**  A pooled buffer's release walk frees every text the previous result held, and
+the callee then claims a fresh block for every text of the new one: per call, one walk and
+one claim-and-free per text field, for blocks that are the same size each time more often
+than not.  Writing over the old block when the new text fits keeps the bytes where they are
+and drops both halves.  What makes it sound is ONE invariant, enforced at three points:
+**a text slot read by the refill holds 0 or a text block that slot owns.**
+
+- *The buffer's history* — (c): its mint zero-fills it (a slot is 0) and every later write
+  is the refill twin's literal (a slot owns its block).  A no-prefill mint
+  (`OpDatabaseNP`, `(R-CompleteWrite)`) or an element slot handed in as the buffer
+  (`(R-Place)`, `(R-ElemFirst)`) leaves BYTES there, which a refill would read as a block
+  number; neither is a pooled buffer, and neither can reach a refill twin, because the
+  decision is the SITE's, not the callee's.  A twin that mints its own buffer keeps the
+  zero-filling mint for the same reason.
+- *The callee* — (b): every exit is a literal writing every text slot, so after the call no
+  slot still holds the previous result's text (no stale value is visible, none leaks); a
+  forwarded exit (`return g(…)`), a copy into the buffer (`OpCopyRecord`, which claims fresh
+  blocks over the old ones) or an early exit that writes nothing declines.  The parser
+  writes every field of a literal, a defaulted text included, so what (b) protects is the
+  live-record count, not a value.
+- *The type* — (a): a refilled text slot is the only heap the walk would have freed; a
+  collection or a heap-owning enum payload would be left for the walk and is out of scope
+  until a clause of its own (vector-build.md's text-bearing elements).
+
+Why a TWIN and not the callee itself: the same callee is also called with buffers that do
+not keep the invariant (a fresh element slot, a no-prefill mint), and one emitted body cannot
+tell them apart; a twin, chosen where the buffer's history is known, can.  It is the shape
+`(R-Inputs)` (`__inv`) and `(R-RangedCall)` (`__rg`) emit.  A previous result read through a
+borrow after the next call is no new hazard: the release walk freed its block at the same
+point, and the scope pass never pools a site whose result a later text still depends on (it
+mints per call there instead).
+
+Native only; the interpreter keeps the walk and the fresh claims and is the oracle.  An
+armed release no call takes is an emission error, never a silent leak.  Effect on
+game_protocol `msg_ping` (x86-64): 18.0 → 4.89 ms, 7.55× → 2.05× Rust, hash unchanged.
+`flow_layout_full`, pluginabi `check_request` and cbor `decode` need the collection clause
+after it (vectors of text-bearing records).  Switch `LOFT_NO_REFILL_TEXT=1`; trace
+`LOFT_TRACE_REFILL_TEXT=1` names each pooled site's verdict.  Sites: `hoist::refill_text_sites`
+and `hoist::refill_text_callee` (the admission), `Stores::text_slots` (a), the block loop in
+`emit.rs` (the pool statement), `user_fn_call_body` (the call), `substitute_template_body`
+(the twin's text set), `Store::refill_str` (the write).  Guard
+`tests/scripts/a-pooled-buffers-texts-are-refilled-in-their-slots.loft` — value cells and a
+live-record census (`m1`), with three planted defects under `tests/falsified/` — and pin
+`tests/refill_text.rs`.
+
+```
+  (R-RefillText), the collection clause: a function whose hidden return buffer b is
+                 a (R-RefillBuffer) heap-element buffer — a one-field wrapper of
+                 vector<E>, E a record of scalars and texts — KEEPS b's elements
+                 where the mint keeps b (refill_keeps, the test OpDatabaseRefill
+                 asks): the entry sets the length to 0 and keeps K, the old length,
+                 in place of the releasing clear; a text set into an element the
+                 build appended refills the block its slot owns when the slot is
+                 under K and claims past it; and every exit releases the texts of
+                 the kept slots [len, K) the call did not reuse.  Admitted where the
+                 buffer is cleared once, at entry; every append mints its element
+                 with OpNewRecord, emitted without the prefill (R-CompleteWrite);
+                 and every other mention of b, its field views and its appended
+                 elements is a reservation, a length, an element read, an
+                 append's finish, an element's own set or read, the field's zero,
+                 a self-replace, a release or a return.
+```
+
+**In words.**  The same invariant, one level down: a text slot read by the refill holds 0 or
+a block that slot owns.  Slots under the length at entry are live elements, which own their
+texts; past the length a removal can leave a stale copy of a live element's handle, and fresh
+capacity holds whatever the store left there, so neither is trusted and K is the length, not
+the capacity.  The length stays true during the build — a read of the vector mid-build sees
+only what this call appended — which is why each kept slot still goes through the append (a
+form that overwrote kept elements in place under the old length priced −20 % against this
+form's −16.5 %, and answers a mid-build read with stale elements).  The vector grows only
+when its length reaches its capacity, which is at least K, so a slot past K is never one a
+growth copied.  A second clear inside the build would reset the store under the kept slots;
+a prefilling mint would write 0 over a kept text and strand its block; a removal, an insert
+or any use the whitelist does not name declines.  Effect on zttext `flow_layout_full`
+(x86-64): 26.0 → 22.7 ms, 14.15× → 12.35× Rust, hash unchanged.  Switch
+`LOFT_NO_REFILL_ELEMENTS=1`; `LOFT_TRACE_REFILL_TEXT=1` names each heap-element buffer's
+verdict.  Sites: `hoist::keep_elements` (the admission), `Stores::refill_keep_open` /
+`refill_keep_close` (entry and exit), `codegen_runtime::RefillKeepGuard` (the exit on every
+return), `clear_vector` in `text.rs` (the entry), `substitute_template_body` (the element's
+text set).  Guard `tests/scripts/a-kept-buffers-elements-are-refilled-in-their-slots.loft`,
+with two planted defects under `tests/falsified/`; pin `tests/refill_text.rs`.
+
+```
+  (R-RefillText), the vector clause: at a pooled call site whose buffer b's type has
+                 for heap only vector fields of plain elements (no text, no
+                 collection, no linked group in an element; no other heap field —
+                 Stores::vector_slots), and whose callee (R-RefillBuffer) refills its
+                 buffer with elements that own no heap, the release is not emitted
+                 and the plain callee is called.  Admitted under (c) without its
+                 "only READ": the buffer named by nothing but its pool statement,
+                 the call's buffer argument and its releases, the result bound once.
+```
+
+**In words.**  The refilling callee keeps a live buffer (`refill_keeps`) and empties each
+vector field where it stands; the release before the call freed exactly the vectors it would
+have kept, and the callee's appends then claimed new ones.  The invariant the emptying reads
+is that a vector slot holds 0, the absent mark, or a vector that slot owns — and every write
+the language makes to a vector field keeps that, which is why the result may be written,
+grown or passed on between calls, unlike a text clause's refilled slot.  No twin is needed:
+an emission of the callee that does not refill mints over the live buffer, and that mint
+clears its store.  Native only; the interpreter keeps the release and is the oracle.  Effect
+on hex_recover `forms_upto` (x86-64): 2.00 → 1.02 ms, 12.96× → 6.62× Rust, hash unchanged.
+Switch `LOFT_NO_REFILL_VECTORS=1`; `LOFT_TRACE_REFILL_TEXT=1` prints `admitted (vectors)`.
+Sites: `hoist::refill_vector_callee`, the clause choice in `refill_text_site_declines`,
+`RefillTextSites::vectors`, `refill_text_call` in `calls.rs`.  Guard
+`tests/scripts/a-pooled-buffers-vectors-are-emptied-in-place.loft`; pin
+`tests/refill_text.rs` (the values pass either way, so the pin is the falsifier).
+
 ### A rebind hands the displaced store to the call
 
 ```
@@ -963,6 +1124,13 @@ the same gate admits it once the `Optional` is peeled — the loop body reads ev
 element and then resolved the store a second time to turn that `DbRef` back into an address
 — per element, in a loop that already held the address of element 0.  An explicit index binding (`e = v[i]?`)
 is a JOIN — the element, or a discharge buffer in another store — and keeps `rec_ptr`.
+Inside the in-range test the address is NOT NULL, and the emitted code says so
+(`vector::held_elem_ptr`): a held base is null only for an absent vector, whose length is 0,
+so `index < len` proves it real.  Every field read through the address tests it for the null
+record; with the fact stated, those tests and the absent value they guard fold away for the
+loop body — and with them the cost the null-aware float compare showed (`mesh_aabb` 28.3 →
+17.0 µs, `entity_tick` −19 %).  Under `LOFT_HOIST_VERIFY=1` the fact is checked, not assumed:
+an address built without its range test panics at the first empty or absent vector (cell w16).
 Switch `LOFT_NO_BASE_RECPTR`; falsifier `LOFT_HOIST_VERIFY=1` (`rec_get`/`rec_set` compare
 the address with a fresh `rec_ptr` at every use — a sabotaged `index + 1` panics there, and
 answers `0 0 162 135 243` for `0 -7 155 135 250` without it).  Cells
@@ -973,8 +1141,7 @@ answers `0 0 162 135 243` for `0 -7 155 135 250` without it).  Cells
 *The path clause.*  Only a DIRECT field of a view counted as a
 fusable access, so a loop over records of records — `for v in m.verts { … v.pos.x … }` —
 bound no address at all, and each of its reads rebuilt a `DbRef` with two offset additions
-and resolved the store (`mesh_aabb`: twelve per vertex, 9.2× the Rust reference).  What is left there is the null-aware float comparison, which is the language's
-semantics on operands no proof says are non-null.  **Emitter-local by design:** the fold
+and resolved the store (`mesh_aabb`: twelve per vertex, 9.2× the Rust reference).  **Emitter-local by design:** the fold
 is sound for an ADDRESS, which loads the bytes where they are each time.  Done in the
 parser it would turn `v.pos.x` into `OpGetFloat(v, 8)`, a `(R-Scalar)` candidate typed
 `(Vertex, 8)` — and a write through a sub-record view (`p = v.pos; p.x = …`) is typed
@@ -1324,8 +1491,9 @@ handles, so every one of its 1 272 mints per call paid the dispatch and a `set_d
 walk whose whole effect was two zero words.  Falsified by sabotage: `push_record_hoisted_zero`
 made to skip its `zero_range` turns the reused-buffer cell red on `--native` under
 `LOFT_POISON_CLAIM=1` — the slot's poisoned handle is read as the element's `xs` vector, a
-store guard panic naming record `3735928559` — while the plain run (zero-on-claim) stays
-green, which is why that falsifier and not the plain run guards the clause.  Switch
+store guard panic naming record `3735928559` — while a plain run can stay green on stale
+bytes that happen to read as an empty handle, which is why that falsifier and not the plain
+run guards the clause.  Switch
 `LOFT_NO_HEAP_RECORD_PUSH`; cells `tests/scripts/157-group-push.loft` g2, g3, g8–g10; pins
 `tests/group_push.rs`.  Sites: `hoist::mint_push_qualifies` (`heap`), `NewRecordEmitter`,
 `Output::write_elem_first_mint`, `Stores::push_record_hoisted_zero`.
@@ -2568,8 +2736,8 @@ line in `Output::output_function`'s prelude.
                  null sentinel of a nullable, `false`, the variant TAG — so where
                  the emitter proves coverage of every schema field position by the
                  group's contiguous `OpSet*`s (the tag through `OpSetEnum` at 0),
-                 `set_default_value`'s walk (or its all-zero `zero_range`, which
-                 duplicates the zero-on-claim) writes nothing that survives, and
+                 `set_default_value`'s walk (or its all-zero `zero_range`) writes
+                 nothing that survives, and
                  the site calls the no-prefill twin (`OpDatabaseNP` /
                  `OpNewRecordNP`).  A WHOLE-record `OpCopyRecord` into the element
                  itself (`self.items += [p]`, `p` a value of the element type)
@@ -2635,6 +2803,23 @@ line in `Output::output_function`'s prelude.
                  argument condition — no other argument names `out`.  A value the
                  list does not declare keeps its copy into the early element.  The interpreter keeps the
                  temp-store build and is the oracle.
+                 THE COMPREHENSION CLAUSE: a row built by a comprehension and appended
+                 as a WHOLE element of a local vector of vectors (`[for y { [for x {
+                 … }] }]`) is the same build with a third declaration shape and a
+                 whole-element destination — the row's vector, declared through its
+                 `__vdb` buffer INSIDE the comprehension's block, is bound to the
+                 element (the element of a vector of vectors IS the inner vector's
+                 handle) and the `OpCopyRecord` into the element vanishes.  Gates: the
+                 block's value is read by the copy alone, the row's vector and its
+                 buffer are named only inside the block (the buffer also by its
+                 declaration and frees), the block names neither `out` nor a view of
+                 its elements and jumps nowhere outside itself, and the block LOOPS —
+                 a body that loops again holds no push window on `out` (R-PushFill),
+                 the one raw address into `out`'s store the row's growth could leave
+                 stale; everything else held on that store is refreshed or declined per
+                 pass already, because the element's own mint grows it.  The append
+                 group stands in the body of the LOOP that builds the outer vector, so
+                 a loop body's statements consult the same overrides a block's do.
 
   (R-ValueRecord) a function whose result is a PLAIN NO-HEAP RECORD of at most eight
                  scalars (an `integer` only at its 8-byte width), an INLINE sub-record
@@ -2788,15 +2973,22 @@ on the drawing bench).
                  (asked recursively; a cycle declines) — a chain function's buffer is
                  the `__ref_N` the chain renamed it to.  When the
                  destination place EXISTS at the call and no argument of the call
-                 reaches it, the buffer IS the place and nothing moves.  Declines: a
+                 reaches it, the buffer IS the place and nothing moves — a field
+                 assigned (`h.v = f(…)`) and a field of the record a struct literal
+                 is building (`H { v: f(…) }`, which exists once the literal has
+                 written its empty handle; a `?` field keeps the replace that leaves
+                 it absent).  Declines: a
                  path that reads the result after a RELOCATING store (the destination
                  owns it then, and B-Copy would show — where the buffer IS the place, a
                  read of the result reads what was written and needs nothing); an
                  argument that reaches the destination's store (source and destination
                  alias); a callee that may hand back a store it did not mint (O-Opaque:
                  empty deps license nothing), and, where the buffer IS the place, a
-                 callee that MINTS into its buffer on some exit (a returned vector
-                 literal does), which would mint over the place it was handed; a callee
+                 callee that MINTS into its buffer on some exit (a projection chain
+                 `return g().inner.v` does), which would mint over the place it was
+                 handed — a returned collection LITERAL is not one: its wrapper mint
+                 on a place answers the place, the collection it held released, so it
+                 builds where it lives; a callee
                  that on some exit answers a store other than the buffer it was handed
                  (the destination would hold the writes of the exit not taken); a
                  `?`/`??` discharge on the result; a destination that does not
@@ -2859,8 +3051,9 @@ on the drawing bench).
                  buffer and copies nothing on the way up.  The move is same-store and
                  into an empty slot by construction; the runtime keeps the copy for any
                  other pair, and `LOFT_HOIST_VERIFY=1` makes that pair fatal.
-  (R-ReturnField) the returned FIELD of an OWNED local — `p = mk(…); return p.a`, or its
-                 view-local spelling `v = p.a; return v` — is answered as the local's own
+  (R-ReturnField) the returned FIELD of an OWNED local — `p = mk(…); return p.a`, its
+                 view-local spelling `v = p.a; return v`, or the natural spelling
+                 `mk(…).a`, whose call the parser lifts into a local — is answered as the local's own
                  store at the field's position, instead of a store minted for the return
                  and the field deep-copied into it.  The parser's copy stands where a view
                  of a frame local would dangle once the frame's free ran; here the local is
@@ -2875,8 +3068,11 @@ on the drawing bench).
                  own free is dropped.  Admitted only where the returned record OWNS HEAP (a
                  scalar-only record is the native value form's to answer as a tuple, and its
                  copy is a few words), the exit block is the parser's materialised copy over
-                 the function's own buffer, and every statement between the copy and the
-                 return is a store or text free.  Declines keep the copy: a parameter's or a
+                 the function's own buffer, every statement between its mint and the copy
+                 is a bind or the mint-or-release guard of a hidden buffer the lifted call is
+                 handed (`@FR-O-LazyBuffer` — it names neither the function's buffer nor the
+                 root), and every statement between the copy and the return is a store or
+                 text free.  Declines keep the copy: a parameter's or a
                  view's field, an ELEMENT (`p.items[i]` — a slot inside a claimed block, not
                  a field of the root record), any other statement in the exit, a buffer that
                  is not the function's own.  A caller is not consulted: it binds what comes
@@ -4041,8 +4237,10 @@ header), pin `tests/start_step.rs`.
                  calls no function value, yields nothing and names no native outside a
                  short list of known value-only ones.  A PROJECTION WRAPPER is a function
                  whose body is one call of an effect-free function on its parameters
-                 followed by a read of the result: `d = f(…); return d.k`, or
-                 `d = f(…); v = d.k; return v`.  In one block, two calls of projection
+                 followed by a read of the result: `d = f(…); return d.k`,
+                 `d = f(…); v = d.k; return v`, or the natural spelling, the read
+                 written on the call (`f(…).k`, returned or as the body's value — a
+                 record field through its materialised copy).  In one block, two calls of projection
                  wrappers of the same `f` on the same argument variables — the first in a
                  position its statement always evaluates (the statement, an `if`'s test,
                  an assignment's value, a call's arguments), nothing between them
@@ -4318,35 +4516,19 @@ trace and falsifiers apply, plus the cells named here.  Priced in
   borrows an element for an iteration; this borrows a field for an arm under the same
   value-only reading.  Cells: an arm that appends to the subject's vector after reading the
   binding (declines); one that stores the binding into another record (copies).
-- **The text clause, for `(R-RefillBuffer)`.**  A text field of a KEPT record is refilled in
-  its slot when the new text fits the slot's claim (the block header's word count), else the
-  slot is released and claimed anew; a kept vector of such records keeps its records — a
-  refill writes element i over element i, mints only past the kept length, and a shorter
-  result truncates, releasing what it drops.  `refillable_plain` (`hoist.rs`) refuses any
-  heap-owning field today.  Sound where the buffer is a work buffer or a refillable return
-  buffer (nothing else references its records), the slot's claim is read from the store's
-  own header, and the truncation releases exactly the dropped elements' heap; the built
-  form uses the release walk's own text free.  Switch `LOFT_NO_REFILL_TEXT`.  Cells: a run
-  text longer than its previous slot (replacement), a result shorter than the previous
-  (truncation), hand-computed hashes; the leak census and `LOFT_POISON=1`.  zttext
-  `flow_layout_full`: 10.36 → 5.77 M on the other levers; `msg_ping` priced −83 % against it.
+- **The pooled clause, for `(R-RefillText)`'s collection clause.**  A return buffer whose
+  elements the callee keeps is only kept across calls the CALLER's buffer survives: a
+  caller that mints it per activation and is itself called per token (zttext's
+  `token_width`) hands a fresh store each time.  Lifting that work-ref into the caller's
+  caller, as `(R-WorkBuffer)`'s transitive clause lifts a work buffer, is the next unit:
+  priced −8 % alone and −31 % with the collection clause on `flow_layout_full`.
+  `check_request` and `decode` build their vectors by other operations than appends and are
+  not admitted.
 - **Text-bearing elements and the work text, for `(R-WorkBuffer)`.**  `vector<τ>` with τ a
   record of scalars and texts is admitted under the mention test unchanged PROVIDED the
   callee refills it under the text clause (otherwise the per-call release is what the pool
   was meant to remove); and a function's `__work_*` text local is the same buffer one level
   down, pooled per frame, with an assignment of the empty literal to it emitted as `clear()`.
-- **The keep-range clause, for `(R-Refresh)`.**  `OpKeepRange(P, lo, hi, tp)` on a held pure
-  path P is admitted as a refresher of P's LENGTH: it keeps the record (the kept span copied
-  within it, the length written, `src/database/structures.rs`), so every holder of P — a
-  header, a push header's `h.len` — takes `clamp(hi) − clamp(lo)` at the op's site, and the
-  element base stays valid.  Admitted only where the runtime keeps in place (the owned,
-  writable store a push already requires); a foreign or read-only store takes the
-  release-and-append path and declines the loop as today.  Without it the op declines the
-  WHOLE loop (`hoist::hoistable`) and three rewrites are lost at once — the stacks' headers,
-  the push window, the `__inv` call.  Under `LOFT_NO_KEEP_RANGE` the loop declines as today.
-  Cells: a pop to a `hi` past the length (clamped), a pop to 0 then a push (growth after a
-  keep), hand-computed on both backends; `LOFT_HOIST_VERIFY=1`.  graphics `draw_bezier`:
-  9.62 → 5.04 M.
 - **The function clause takes a base, for `(R-Base)`.**  Beside the function-clause header
   `(R-Header)` emits (`src/generation/mod.rs`), `vec_base` is emitted under the base's own
   condition — no growth of that vector anywhere in the function — and the `?? default`

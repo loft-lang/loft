@@ -55,6 +55,40 @@ emitter rule, for every repeated element read.  formal/rewrites.md § (R-Cold), 
 Priced beside it and not built: the write's lock test is a further −19 % (1.62 → 1.31 M) when
 it is gone, and an unchecked write reaches 1.00 M — the second lever's prize.
 
+## The write-lock test, priced on x86-64 by a build without it
+
+`@FR-H-WriteLocked` is tested per element in two hoisted writers: `Stores::vec_set_at`
+(`!h.locked || write_allowed(…)`) and `vector::rec_set` (`locked && !write_allowed(…)`).  The
+flag is held beside the header or the address; the test is still in the loop.  Priced as a
+CEILING by a scratch build of the same tree with both tests deleted (`git archive` to disk,
+its own target directory, `bench/stats.py --routine … --loft … --lib-dir …`), both builds
+timed in one sitting on the x86-64 laptop, every Rust lane within 1 % between them:
+
+| row | this tree | no lock test | the test costs | ratio |
+|---|--:|--:|--:|---|
+| `10_sort` `sort` | 3.153 M | 2.370 M | 25 % | 3.53× → 2.65× |
+| graphics `blend_pixel` | 1.668 M | 1.245 M | 25 % | 1.85× → 1.38× |
+| `comprehension` | 10.48 k | 8.09 k | 23 % | 1.63× → 1.25× |
+| `index_write` | 7.49 k | 6.32 k | 16 % | 1.95× → 1.64× |
+| graphics `fill_rect` | 7.256 M | 6.519 M | 10 % | 2.68× → 2.44× |
+| `record_update` | 10.28 k | 9.48 k | 8 % | 1.37× → 1.27× |
+| `index_read` (control, no write) | 22.71 k | 22.64 k | 0 % | 1.91× |
+| `grid`, `remove_front`, random `indices`, `hash_update`, `mesh_aabb` | | | within ±3 % | not this test |
+
+So the test is all but 3–5 % of what `sort` and `blend_pixel` rose by on this host since the
+row measured at `7df5a4f4b`, and it takes `sort` back under the bar; it is 16 of the 95 points
+`index_write` rose by, and none of `grid`'s, `remove_front`'s or `indices`' — those rises
+have another cause, not found.
+
+**Built** in the push window's form: a locked header has no writable element
+(`vec_set_at`'s bound is 0 for it) and a locked record address leaves `rec_set`'s fast path
+by the same test as a null one, so the write carries no call and the cold path refuses it.
+The emitted Rust is unchanged; measured on x86-64 against the tree before it, same sitting:
+`10_sort` 3.53× → **2.77×**, `blend_pixel` 1.84× → 1.44×, `comprehension` 1.62× → 1.34×,
+`index_write` 1.97× → 1.64×, `fill_rect` −9 %, `index_read` flat — most of the ceiling above.
+Guard `tests/locked_writes.rs` (cells from the end and past the end of a locked vector, and
+the record writer in a development run).
+
 ## Next — one lever, priced, not built
 
 1. **No bounds test where loft proves the index in range** — the rest of the gap

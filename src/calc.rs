@@ -92,6 +92,13 @@ pub fn calculate_positions(
             }
         }
     }
+    // `@FR-L-Align` (@C138) — a record's size is a multiple of its alignment, so the record is
+    // aligned wherever it is placed: as a collection element its size is the stride, and as an
+    // inline field of another record its size is how far the next field starts.  Without this
+    // tail padding `{ integer, boolean }` was 9 bytes, and element 1 of a vector of it put its
+    // `integer` at byte 9.
+    let al = u16::from((*alignment).max(1));
+    *size = size.div_ceil(al) * al;
     let mut result = Vec::new();
     for (_, pos) in positions {
         result.push(pos);

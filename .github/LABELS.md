@@ -207,6 +207,61 @@ the ratio and folds it into neither side.
 gh issue list --state all --label contract:strained
 ```
 
+## `contract:before-1` — must land before the freeze; later, `contract:compat`
+
+On **issues and plans alike** (`loft-lang/loft` and `loft-lang/plans`).  It marks work that
+the contract-1 freeze would otherwise forbid, because after the flip loft may never add a refusal,
+change what existing code means, or break a covered surface
+([COMPATIBILITY.md § The promise](../doc/claude/COMPATIBILITY.md)).  Set it when the item is FILED
+or triaged — unlike `contract:settled` / `contract:strained`, which describe a fix and are set at
+fix time — whenever the work does any of:
+
+- **(a)** adds a refusal or compile error that some program compiling today would hit;
+- **(b)** changes the observable meaning of existing code (an operator, a default, a value);
+- **(c)** changes or removes a STANDARD-LIBRARY API (`default/*.loft`), which ships with loft and
+  freezes with it.  A published library does not freeze: its consumers declare the version they
+  depend on, and a breaking change is a new release they opt into (`api_compatible_with`), so a
+  library's own API change is never this label's.  A language change that forces the libraries
+  to change is a different question, `libs:migration` below;
+- **(d)** is an item of the pre-freeze audit
+  ([COMPATIBILITY.md § Before the flip](../doc/claude/COMPATIBILITY.md)).
+
+Purely additive work — a new feature, a library, a speed-up, tooling, a refusal turned into an
+answer — does not get it, however urgent: the promise allows all of that after the flip.  Nor does a bug
+whose only claim is that it answers wrong: `silent-wrong` already blocks the freeze (§ `silent-wrong`
+above), so a bug that is `silent-wrong` and nothing more does not also get this label — it gets it
+only when its FIX is one of (a)–(d), e.g. the fix refuses a program that compiles today.  Nor
+does a FORMAT change (a store layout, a file or wire format): a format may change after the flip
+too, provided the new code still reads the old data — which is `contract:compat`'s second job,
+the reader for the old format beside the writer of the new one.  A plan
+that needs it for one track only says which track in its body.
+
+**After contract 1 it becomes `contract:compat`.**  The same kinds of change are still possible
+then, but only through the escape valve
+([COMPATIBILITY.md § The escape valve](../doc/claude/COMPATIBILITY.md)): the new behaviour is
+keyed on the `contract` a program declares, and every older program keeps the old one.  So an item
+labelled `contract:compat` is TWO jobs, and the label is there so neither is forgotten: build the
+new behaviour, and keep the old one working beside it, each with its own guard.  Carrying two
+behaviours brings its own problems — they share code, they must not leak into each other, and
+the old one has no users filing bugs against it — so the item's body names the contract key, the
+old behaviour it keeps, and the guard that proves it still holds.  At the flip, open
+`contract:before-1` items are either finished or relabelled `contract:compat`; the label then
+retires.
+
+## `libs:migration` — closing it forces the published libraries to change
+
+On issues and plans alike.  Set it when closing the item requires the published `loft-libs-*`
+libraries to change and be republished, whatever the timing: a new refusal their code hits (`pub`
+on every field a consumer reads, @PLN187), a retired spelling they use (the user-written
+`fn Op…`, @PLN182), a changed default they rely on.  It is a question about WORK, not about the
+freeze — the same item can carry `contract:before-1` too, and then both halves are owed.
+
+The label is what a library sweep is built from: the migration lands as one pass over every
+library (a branch, a PR with auto-merge, a republish per library — the loft-ship skill), in the
+order the item's own steps need, usually before the change that enforces it.  The item's body
+names the libraries it touches and how the change is computed (a census, a rewrite), so the sweep
+does not depend on someone remembering which libraries use the old form.
+
 ## `area:` — which part of loft (plain-English, with orienting files — NOT required reading)
 
 loft is a tree-walking interpreter **and** a native code generator for a
@@ -288,6 +343,7 @@ this convention carry no `hit-by:`; treat any count over that period as a floor,
 |---|---|
 | `both-backends` | reproduces on BOTH `--interpret` and `--native` (vs a single-backend divergence) |
 | `needs-design` | the fix needs a design decision, not a mechanical change — don't just patch it |
+| `in-progress` | a stream has CLAIMED it and is fixing it now — set and cleared by [`scripts/claim.py`](../scripts/claim.py), never by hand; `make work` skips it ([ISSUE_TRACKING.md § Claiming an issue](../doc/claude/ISSUE_TRACKING.md)) |
 | `steered` | **owner-applied only.** The owner had to step in to get this fixed, or fixed thoroughly — a shallow first fix, a missed sibling, a matrix that needed asking for. One click, no prose: it is a *counter*, not a complaint, and it pairs with [`scripts/steering_rate.py`](../scripts/steering_rate.py) (see [STABILITY_ROADMAP § how much STEERING the fixing took](../doc/claude/STABILITY_ROADMAP.md)). **An agent must never apply or remove it** — the agent that needed steering is the least likely to notice, so self-reporting would bias exactly where the signal lives. Absence therefore means "not marked", never "no steering needed". |
 | `bug` / `enhancement` / `documentation` / … | the GitHub defaults; keep `bug` on every bug |
 | `proposal` | a proposed new library or API change/rewrite (the `library_proposal` intake → the @PLN112 provenance view) |

@@ -138,14 +138,17 @@ asymmetry stays recorded.
 
 ### Storing a scalar: `Store::write`, never a reference into the slot
 
-An element's offset is `index * stride + fld`, so any stride the scalar's alignment does not
-divide puts that slot at a misaligned address — `Lay`'s element 1 puts an `i64` at 34, and
-`34 % 8 != 0`. A **reference** to a misaligned address is undefined behaviour even if it is never
-read through, which is why storing a scalar goes through `Store::write` (a `write_unaligned`) and
-not through `&mut *ptr.cast::<T>()` (loft#1481). `Store::addr_mut` exists for the values `write`
-cannot store by value — a `String` or a `Str` whose heap buffer the caller mutates in place — and
-it asserts the alignment rather than assuming it, with a plain `assert!` under no `cfg`, so a
-wrong call panics in a release build too.
+Every field and element offset is a multiple of its scalar's alignment (`(L-Align)`, @C138), and a
+record starts on an 8-byte word, so `Store::read` / `Store::write` are aligned `ptr::read` /
+`ptr::write` behind one alignment test that panics, in a release build too, on an offset the layout
+did not produce. Two kinds of bytes the layout does not place are read unaligned: a foreign store's,
+which are a producer's buffer, and the interpreter's stack frames, which the frame allocator lays out
+as it lays out the bytecode. Store a scalar through `Store::write` rather than
+`&mut *ptr.cast::<T>()` all the same — the write is where the lock refusal, the bounds check and the
+shadow hook live. `Store::addr_mut` exists
+for the values `write` cannot store by value — a `String` or a `Str` whose heap buffer the caller
+mutates in place — and it asserts the alignment rather than assuming it, with a plain `assert!`
+under no `cfg`.
 
 ⚠ **If you are resolving a MERGE or a REBASE and this line is the conflict, the `addr_mut` side is
 the unsound one.** The note is here because every other note about this rule — the comment at

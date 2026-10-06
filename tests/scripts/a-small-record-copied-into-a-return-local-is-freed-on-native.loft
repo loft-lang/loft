@@ -24,7 +24,7 @@
 // such a write never reaches the copy.  The interpreter never had the rewrite and was clean.
 //
 // (Measured on the `fn Op…` spelling: @C132 re-spelled the cells to `operator` methods, same values.)
-// @falsified-by: tests/falsified/a-small-record-copied-into-a-return-local-is-freed-on-native.patch — native leaked kt=91 Vs×80 -> clean; interpret INERT (expected for a
+// @falsified-by: tests/falsified/a-small-record-copied-into-a-return-local-is-freed-on-native.patch — native leaked kt=96 Vs×80 -> clean; interpret INERT (expected for a
 //   backend-divergence guard — only one side can move)
 
 value struct Vs { x: integer }

@@ -881,10 +881,9 @@ impl State {
                         Type::Character => stack.add_op("OpGetCharacter", self),
                         Type::Boolean => stack.add_op("OpGetBoolean", self),
                         Type::Enum(_, false, _) => stack.add_op("OpGetEnum", self),
-                        // Unreachable: `ref_tuple_element_ok` refuses anything this
-                        // match cannot emit, at the signature, with a message naming the
-                        // element type.  The two lists are one list on purpose —
-                        // loft#1006 was them disagreeing.
+                        // Unreachable: a stack reference tuple holds scalars only
+                        // (`data::is_scalar`), and every `&(…)` the parser builds is the
+                        // record form (`@FR-T-Ref-Rep`, loft#1883).
                         _ => panic!("RefTupleGet: unsupported element type {elem_tp:?}"),
                     }
                     self.code_add(elem_offset);
@@ -2631,33 +2630,9 @@ impl State {
             // into the buffer).  So the buffer is one more WITNESS of the displaced free below:
             // it keeps its position ahead of the call (the adopt pins read it there) and stops
             // firing exactly when the store it would release is the buffer's.
-            let buffer_witness: Option<u16> = {
-                let call = match value.unspan() {
-                    Value::Insert(steps) => steps.last().map(Value::unspan),
-                    other => Some(other),
-                };
-                match call {
-                    Some(Value::Call(f, args))
-                        if (*f as usize) < stack.data.definitions.len()
-                            && *stack.data.def(*f).code() != Value::Null =>
-                    {
-                        stack
-                            .data
-                            .def(*f)
-                            .hidden_return_buffer_attr()
-                            .and_then(|b| args.get(b))
-                            .and_then(|a| match a.unspan() {
-                                Value::Var(w)
-                                    if *w != v && stack.function.is_compiler_generated(*w) =>
-                                {
-                                    Some(*w)
-                                }
-                                _ => None,
-                            })
-                    }
-                    _ => None,
-                }
-            };
+            let buffer_witness = stack
+                .function
+                .displaced_buffer_witness(v, value, stack.data);
             let mut stash_old_for_post_free = false;
             if owned_ref && (rhs_reads_v || rhs_is_new_record || nullable_local) {
                 let free_pos = stack.var_pos(v);
@@ -2746,22 +2721,14 @@ impl State {
                 && let Type::Reference(d_nr, _) = stack.function.tp(v).clone()
             {
                 let tp_nr = stack.data.def(d_nr).known_type();
-                // Free the DISPLACED old store first — this branch REPLACES the
-                // plain owned-reassign path (which frees it just above), and
-                // `OpBindOrCopy` overwrites `v` without releasing its previous
-                // store: each conditional reassign otherwise orphans one store
-                // (the p462_cond_reassign_retbuf gate-ON leak, M×N per call
-                // site).  Safe here: `\!stash_old_for_post_free` means the RHS
-                // does not read `v`, and a first-Set's null ref free is a no-op.
-                let old_pos = stack.var_pos(v);
-                stack.add_op("OpVarRef", self);
-                self.code_add(old_pos);
-                if let Some(entry) = entry_w {
-                    self.push_var_ref(stack, entry);
-                    stack.add_op("OpFreeRefIfDistinct", self);
-                } else {
-                    stack.add_op("OpFreeRef", self);
-                }
+                // The DISPLACED old store is already released: this branch is reached only
+                // past the plain owned-reassign free above (`owned_ref && !s1_substituted`, not
+                // the stashed post-free), whose witnesses — the entry's, and the hidden buffer
+                // the call is handed (`@FR-O-Buffer`) — keep it off a store `v` shares with
+                // either.  A second, unwitnessed free here released the caller's POOLED buffer
+                // whenever the previous pass adopted the record the callee built into it: the
+                // next pass's callee wrote into a freed store and the read answered 0
+                // (`if n == 1 { y = b; return y; }` beside `return a`, in a loop, loft#1884).
                 // The call result (`src`) FIRST, then the witness on top — so the
                 // witness's frame-relative `var_pos` accounts for `src` already on the
                 // eval stack. `OpBindOrCopy` pops witness (top) then src.
@@ -4782,6 +4749,27 @@ impl State {
                 // Dep is the named variable at wv.stack_pos.
                 let dep_offset = stack.var_pos(*wv);
                 self.emit_push_create_stack(stack, dep_offset);
+            } else if let Value::TupleGet(tv, ti) = parameters[0].unspan()
+                && let Type::Tuple(elems) = stack.function.tp(*tv).base()
+            {
+                // `@FR-B-Ref-Lvalue` — a link to a tuple local's MEMBER: the tuple's slot at
+                // the member's offset, the address the `TupleGet` read itself uses.
+                let offset = crate::data::element_stack_offsets(elems)[*ti as usize] as u16;
+                let dep_offset = stack.position - (stack.function.stack(*tv) + offset);
+                self.emit_push_create_stack(stack, dep_offset);
+            } else if let Value::TupleGet(tv, ti) = parameters[0].unspan()
+                && let Type::RefVar(inner) = stack.function.tp(*tv).base()
+                && let Type::Tuple(elems) = inner.base()
+            {
+                // `@FR-B-Ref-Lvalue` — a member of a tuple reached through a `&(…)` link: the
+                // link's reference at the member's offset, the address the member READ through
+                // the link uses (`OpVarRef` + the field offset).
+                let offset = ref_tuple_field_offset(elems, *ti as usize);
+                let var_pos = stack.var_pos(*tv);
+                stack.add_op("OpVarRef", self);
+                self.code_add(var_pos);
+                stack.add_op("OpGetField", self);
+                self.code_add(offset);
             } else {
                 // OpCreateStack with a non-Var expression (e.g.
                 // OpGetVector result).  Generate the expression to push

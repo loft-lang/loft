@@ -24,6 +24,9 @@
 //   the loop: k in 0..400 of runs(k % 10, k % 6), Σ over every call (by the formula below).
 //
 // @falsified-by: tests/falsified/a-buffer-of-text-records-is-refilled-where-it-is.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   ARMED: LOFT_NO_REFILL_ELEMENTS=1.  `@FR-R-RefillText`'s collection clause takes these
+//   buffers before the plain refill branch the patch weakens, so an unarmed run never reaches
+//   the planted defect and scores INERT; with the clause off they reach it again.
 
 struct R { s: text, n: integer }
 

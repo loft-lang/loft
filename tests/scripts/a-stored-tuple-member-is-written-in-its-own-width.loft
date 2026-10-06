@@ -1,0 +1,116 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-L-Narrow` — a stored tuple member is written in its own width and read with its own
+// nullability, whatever spells the tuple.  A tuple VARIABLE or a call copied into a
+// `vector<(…)>` element or a struct's tuple field is written member by member; each narrow
+// member took a wide 8-byte `OpSetInt`, over the members and fields after it, and every
+// stored-member read decoded a `u8?` as a plain byte, so a null member read as present.
+// The spill is seen only where the bytes after the member were written FIRST — an element
+// assigned in the middle of a vector, a tuple field assigned after construction; a build in
+// order overwrites it again.  Crossed: the source (a variable, a parameter, a call), the host
+// (a vector element, a struct field, an element's field), the write (construction, assignment,
+// in a loop), the member width (u8, u16, i32, integer) and its nullability.
+//
+// @falsified-at: a2e060c6f — interpret exit 1 -> 0, interpret 6 assertion failures -> 0, native
+//   exit 1 -> 0, native 12 assertion failures -> 0.
+// @falsified-by: tests/falsified/a-stored-tuple-member-is-written-in-its-own-width.patch — interpret exit 1 -> 0, native exit 1 -> 0, native 4 assertion failures -> 0, native panicked -> clean
+//   Not the @falsified-at channels: since C138 every store access checks its alignment, so
+//   the wide write now trips that check before most value assertions can read it.
+//   CHANNEL: the exit on BOTH backends; the suite fails 9 of the 11 tests on the
+//   interpreter, each as a misaligned store access, and native adds 4 value assertions and
+//   the alignment panic.
+//   WITNESS: *"Store access misaligned: rec=3 fld=9 needs 8-byte alignment"* (src/store.rs);
+//   on native also `null member: 4` from `test_a_nullable_member`.
+//   HOLDS: leak and refusals are clean on both trees and both backends.
+// HOLDS: leak, panic and refusals are clean on both trees and both backends (the @falsified-at
+//   control).
+
+struct H { k: u8, p: (u16, u8) }
+struct W { k: u8, p: (integer, u8) }
+struct I { k: u16, p: (i32, u8) }
+struct G { p: (u16, u8), k: u8 }
+struct E { id: integer, p: (u8, u16), z: u8 }
+
+fn put_first(v: &vector<(u8, u8)>, t: (u8, u8)) { v[0] = t; }
+
+fn mk() -> (u8, u8) { (31, 32) }
+
+fn test_a_vector_built_from_a_tuple_variable() {
+  t: (u8, u8) = (200, 7);
+  u: (u8, u8) = (9, 250);
+  vs: vector<(u8, u8)> = [t, u];
+  assert(len(vs) == 2, "length {len(vs)}");
+  assert(vs[0].0 == 200 && vs[0].1 == 7, "element 0: {vs[0].0} {vs[0].1}");
+  assert(vs[1].0 == 9 && vs[1].1 == 250, "element 1: {vs[1].0} {vs[1].1}");
+}
+
+fn test_a_vector_built_from_calls() {
+  vs: vector<(u8, u8)> = [mk(), mk()];
+  assert(len(vs) == 2 && vs[0].0 == 31 && vs[1].1 == 32, "call: {vs[0].0} {vs[1].1}");
+}
+
+fn test_a_struct_field_after_a_narrow_member() {
+  t: (u16, u8) = (60000, 77);
+  h = H { k: 201, p: t };
+  assert(h.k == 201, "the field the member's write spilled into: {h.k}");
+  assert(h.p.0 == 60000 && h.p.1 == 77, "the members: {h.p.0} {h.p.1}");
+}
+
+fn test_a_wide_member_before_a_narrow_one() {
+  t: (integer, u8) = (123456789012, 5);
+  w = W { k: 202, p: t };
+  assert(w.k == 202 && w.p.0 == 123456789012 && w.p.1 == 5, "wide: {w.k} {w.p.0} {w.p.1}");
+}
+
+fn test_a_four_byte_member() {
+  t: (i32, u8) = (-70000, 66);
+  i = I { k: 65000, p: t };
+  assert(i.k == 65000 && i.p.0 == -70000 && i.p.1 == 66, "i32: {i.k} {i.p.0} {i.p.1}");
+}
+
+fn test_a_nullable_member() {
+  t: (u8?, u8) = (null, 4);
+  vs: vector<(u8?, u8)> = [t, (3, 5)];
+  assert(vs[0].0 == null && vs[0].1 == 4, "null member: {vs[0].1}");
+  assert(vs[1].0 == 3 && vs[1].1 == 5, "present member: {vs[1].0} {vs[1].1}");
+}
+
+fn test_an_element_assigned_in_the_middle() {
+  t: (u8, u8) = (200, 7);
+  vs: vector<(u8, u8)> = [(1, 2), (3, 4), (5, 6)];
+  vs[0] = t;
+  assert(len(vs) == 3 && vs[0].0 == 200 && vs[0].1 == 7, "the element: {vs[0].0} {vs[0].1}");
+  assert(vs[1].0 == 3 && vs[1].1 == 4 && vs[2].0 == 5 && vs[2].1 == 6,
+    "its neighbours: {vs[1].0} {vs[1].1} {vs[2].0} {vs[2].1}");
+}
+
+fn test_a_tuple_field_assigned_before_a_field() {
+  u: (u16, u8) = (60000, 77);
+  g = G { p: (1, 2), k: 99 };
+  g.p = u;
+  assert(g.p.0 == 60000 && g.p.1 == 77 && g.k == 99, "field: {g.p.0} {g.p.1} {g.k}");
+}
+
+fn test_a_parameter_tuple_assigned_through_a_link() {
+  vs: vector<(u8, u8)> = [(1, 2), (3, 4)];
+  put_first(vs, (250, 251));
+  assert(vs[0].0 == 250 && vs[0].1 == 251 && vs[1].0 == 3 && vs[1].1 == 4,
+    "parameter: {vs[0].0} {vs[0].1} {vs[1].0} {vs[1].1}");
+}
+
+fn test_elements_assigned_in_a_loop() {
+  t: (u8, u8) = (200, 7);
+  vs: vector<(u8, u8)> = [(1, 2), (3, 4), (5, 6), (8, 9)];
+  for i in 0..2 { vs[i * 2] = t; }
+  assert(vs[0].1 == 7 && vs[1].0 == 3 && vs[1].1 == 4 && vs[2].0 == 200 && vs[3].0 == 8 && vs[3].1 == 9,
+    "loop: {vs[1].0} {vs[1].1} {vs[3].0} {vs[3].1}");
+}
+
+fn test_an_element_field_assigned_in_place() {
+  t: (u8, u16) = (17, 4000);
+  es: vector<E> = [E { id: 1, p: (1, 2), z: 33 }, E { id: 2, p: (3, 4), z: 44 }];
+  es[0].p = t;
+  assert(es[0].p.0 == 17 && es[0].p.1 == 4000 && es[0].z == 33 && es[1].z == 44,
+    "element field: {es[0].p.0} {es[0].p.1} {es[0].z} {es[1].z}");
+}

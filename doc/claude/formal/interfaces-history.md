@@ -7,7 +7,7 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **0** (D-gen-5 — C91's content `==` reaching `Equatable` — and D-gen-6 — a tuple bound to it, loft#1738 — both opened and closed 2026-09-29 by @PLN175 step 8 and its follow-up).  `D-gen-1` and `D-gen-2` were opened and closed on 2026-08-29, `D-gen-3` and
+OPEN: **0** (D-gen-7 and D-gen-8 opened and closed 2026-10-05, loft#1868; D-gen-5 — C91's content `==` reaching `Equatable` — and D-gen-6 — a tuple bound to it, loft#1738 — both opened and closed 2026-09-29 by @PLN175 step 8 and its follow-up).  `D-gen-1` and `D-gen-2` were opened and closed on 2026-08-29, `D-gen-3` and
 `D-gen-4` on 2026-09-02.
 
 ⚠ **This line read `OPEN: 0` because *"a rules doc adds no code deviation"* — a claim about the
@@ -16,6 +16,37 @@ until the walk that first asked found four defects there.  It has now produced o
 The oracle under it (`86-interfaces.loft`, `48-generics.loft`, and the numbered scripts) is real,
 but it is an oracle for the shapes those files happen to write; `D-gen-1` is what it could not
 see.
+
+### D-gen-8 — OPENED AND CLOSED (2026-10-05, found by loft#1868's matrix): a compound on an open instance's field
+
+`(G-Type)` says an open instance's field behaves as its twin's.  Three compounds on a
+`Bag<T>` field inside the template did not: `b.items += [x]` built the literal INTO the field
+and then appended that vector to the field again, so every append doubled it (two one-element
+appends left six); `b.name += "x"` appended to a work text that nothing read the field into
+or wrote back (a panic on `--interpret`, E0425 on `--native`).  The append test that
+recognises a literal built through its place (`rhs_built_into_place`) knew only the tuple
+place; it now knows the deferred field too, and a block is "built into the place" only when
+its accumulator is never re-pointed, which a comprehension does.  The text compound writes
+back through the deferred field write (`assign_text`).  Guard:
+`a-compound-on-a-generic-structs-field-writes-that-field-once.loft`.
+
+### D-gen-7 — OPENED AND CLOSED (2026-10-05, loft#1868): a tuple of a type variable held in a collection
+
+`(G-Mono)` applies `[T ↦ C]` to every constant derived from a type.  A template's
+`vector<(T, U)>` kept one: the record `__tuple<T,U>`, laid out once with zero-width members
+and named by every instance.  A parameter of that type read `null(oob)` silently, a built one
+ran without output, text members panicked in the allocator, `--native` refused every cell
+(E0308), and `v[0] = (x, y)` was refused outright.  A tuple of a type variable is now an OPEN
+instance of the anonymous tuple template, read as `(G-Type)` reads `Box<T>`: each monomorph
+closes it to the concrete tuple's record (`Data::close_instance`), its element stride names it,
+and its unbox, member reads, member and element writes and destructuring are deferred to the
+monomorph.  The tuple member writer also gained the plain-enum arm a deferred write needed.
+Two things the closing taught: an open tuple is anonymous, so another template's `(T?, integer)`
+shares this one's placeholder — only the open tuples a template's own types name are closed
+(closing the rest minted `__nullable<S>` on pass 2, which H5 refused); and an instance whose
+field holds a tuple mints that tuple's record with the field, or its layout waited and the
+record took a later id than the generated `init()` gives it (`--native` schema drift).
+Guard: `a-generic-over-a-vector-of-tuples-of-its-type-variables.loft`.
 
 ### D-gen-4 — OPENED AND CLOSED (2026-09-02, loft#1275): the stub key spelled a NAME, not a signature
 

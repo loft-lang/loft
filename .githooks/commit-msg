@@ -51,6 +51,21 @@ if [ -n "$deliberate" ]; then
   echo "  amend to \`Fixes #N\` so it gets fixed-pending-merge and closes on merge." >&2
 fi
 
+# A claim (scripts/claim.py) is the issue's own record of who is fixing it.  An agent does
+# not reread an issue it did not file, so the one moment a duplicate fix can still be noticed
+# without anyone remembering is this one: a `Fixes #N` for an issue another stream holds.
+# Reports only — a commit that carries another stream's fix forward is legitimate — and stays
+# quiet when the tracker cannot be reached.
+if [ -n "$closes" ] && command -v gh >/dev/null 2>&1 && [ -x scripts/claim.py ]; then
+  for n in $closes; do
+    held=$(timeout 8 python3 scripts/claim.py check "$n" 2>/dev/null)
+    if [ $? -eq 1 ]; then
+      echo "commit-msg: #$n is CLAIMED by another stream — you may be duplicating its fix:" >&2
+      printf '%s\n' "$held" | sed 's/^/  /' >&2
+    fi
+  done
+fi
+
 # The `contract:` axis (.github/LABELS.md) records whether closing a bug had to MOVE the
 # written standard.  That is not knowable when the bug is filed — it is what the fix turned
 # out to need — so the one moment it can be written is this one, in the commit that says

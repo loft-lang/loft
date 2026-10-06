@@ -1,0 +1,438 @@
+diff --git a/src/generation/emit.rs b/src/generation/emit.rs
+index 481dc6016..4361a106d 100644
+--- a/src/generation/emit.rs
++++ b/src/generation/emit.rs
+@@ -2859,26 +2859,6 @@ impl Output<'_> {
+             write!(w, ")")?;
+             return Ok(());
+         }
+-        // The same pair with statements between its halves: the scope pass places a scope's
+-        // exit frees in front of a block's LAST operator, and a read off a call result whose
+-        // record type owns a release binds that result through a displaced-record snapshot,
+-        // whose frees then land here (loft#1874's inline `mk().f(x)`).  The interpreter runs
+-        // the operators in order, so this keeps that order: the d_nr, the statements, the
+-        // closure.
+-        if bl.name == "fn_ref_field_read" && bl.operators.len() > 2 {
+-            let last = bl.operators.len() - 1;
+-            write!(w, "{{ let __fn_d = (")?;
+-            self.output_code_inner(w, &bl.operators[0])?;
+-            write!(w, ") as u32; ")?;
+-            for op in &bl.operators[1..last] {
+-                self.output_code_inner(w, op)?;
+-                write!(w, "; ")?;
+-            }
+-            write!(w, "(__fn_d, ")?;
+-            self.output_code_inner(w, &bl.operators[last])?;
+-            write!(w, ") }}")?;
+-            return Ok(());
+-        }
+         writeln!(
+             w,
+             "{{ //{}_{}: {}",
+diff --git a/src/parser/control.rs b/src/parser/control.rs
+index 07f65a620..98223f4f2 100644
+--- a/src/parser/control.rs
++++ b/src/parser/control.rs
+@@ -20653,7 +20653,7 @@ impl Parser {
+                 && let closure_rec_d = self.data.def(self.context).closure_record()
+                 && closure_rec_d != u32::MAX
+             {
+-                let f_nr = self.capture_attr(self.context, closure_rec_d, name);
++                let f_nr = self.data.attr(closure_rec_d, name);
+                 if f_nr != usize::MAX {
+                     // loft#1869, `@FR-L-CapOwn` — the local is a VIEW of the captured fn-ref:
+                     // the closure record it names belongs to this closure's record, never to
+diff --git a/src/parser/mod.rs b/src/parser/mod.rs
+index 65b5159c4..2914e9021 100644
+--- a/src/parser/mod.rs
++++ b/src/parser/mod.rs
+@@ -1211,11 +1211,6 @@ pub struct Parser {
+     /// drop cascade reads this to walk the vector rather than release one element-typed
+     /// record at the vector's slot (loft#1606).
+     pub(crate) closure_shared_vectors: std::collections::HashMap<(u32, String), Type>,
+-    /// loft#1874 — `(lambda, captured name)` → the attribute of the fn field's UNION closure
+-    /// record that holds it, where another lambda of the field captures the same name as a
+-    /// different type ([`Parser::unite_field_closure_records`]).  Read through
+-    /// [`Parser::capture_attr`].
+-    pub(crate) capture_alias: std::collections::HashMap<(u32, String), String>,
+     /// Variable number of the __closure parameter inside a lambda body (second pass).
+     /// `u16::MAX` when not inside a capturing lambda.
+     pub(crate) closure_param: u16,
+@@ -1905,7 +1900,6 @@ impl Parser {
+             captured_names: Vec::new(),
+             branch_sunk_vectors: std::collections::HashSet::new(),
+             closure_shared_vectors: std::collections::HashMap::new(),
+-            capture_alias: std::collections::HashMap::new(),
+             fn_lambdas: std::collections::HashMap::new(),
+             closure_param: u16::MAX,
+             cur_type_vars: Vec::new(),
+@@ -14370,76 +14364,6 @@ impl Parser {
+             .then_some(params)
+     }
+ 
+-    /// loft#1874 — point lambda `b` at the closure record lambda `a` already shares with any
+-    /// other lambda written into the same fn field, growing that union record by `b`'s captures
+-    /// (by name).  The first union gets a record of its own, `__closure_u_<a's record>`, so
+-    /// neither lambda's own record changes shape.  A captured name the two type differently
+-    /// gets a slot per lambda ([`Self::capture_alias`]).
+-    fn unite_field_closure_records(&mut self, a: u32, b: u32) {
+-        let ra = self.data.def(a).closure_record();
+-        let rb = self.data.def(b).closure_record();
+-        if ra == u32::MAX || rb == u32::MAX || ra == rb {
+-            return;
+-        }
+-        let union = if self.data.def(ra).name.starts_with("__closure_u_") {
+-            ra
+-        } else {
+-            let name = format!("__closure_u_{}", self.data.def(ra).name);
+-            let pos = self.data.def(ra).position().clone();
+-            let u = self.data.add_def(&name, &pos, DefType::Struct);
+-            self.merge_closure_attrs(u, ra, a);
+-            u
+-        };
+-        self.merge_closure_attrs(union, rb, b);
+-        for l in [a, b] {
+-            self.data.definitions[l as usize].closure_record = union;
+-        }
+-    }
+-
+-    /// Add closure record `from`'s attributes — lambda `lambda`'s captures — to `into` by name.
+-    /// A name `into` already holds as another type gets an attribute of its own for this
+-    /// lambda, `<name>__<lambda>`, recorded in [`Self::capture_alias`].
+-    fn merge_closure_attrs(&mut self, into: u32, from: u32, lambda: u32) {
+-        let attrs: Vec<(String, Type, bool)> = self
+-            .data
+-            .def(from)
+-            .attributes()
+-            .iter()
+-            .map(|a| (a.name.clone(), a.typedef.clone(), a.value_const))
+-            .collect();
+-        for (name, tp, value_const) in attrs {
+-            let at = self.data.attr(into, &name);
+-            let slot = if at == usize::MAX {
+-                name.clone()
+-            } else if self.data.attr_type(into, at) == tp {
+-                continue;
+-            } else {
+-                let alias = format!("{name}__{lambda}");
+-                self.capture_alias
+-                    .insert((lambda, name.clone()), alias.clone());
+-                alias
+-            };
+-            let at = self.data.add_attribute(&mut self.lexer, into, &slot, tp);
+-            self.data.definitions[into as usize].attributes[at].value_const = value_const;
+-            if let Some(shared) = self
+-                .closure_shared_vectors
+-                .get(&(from, name.clone()))
+-                .cloned()
+-            {
+-                self.closure_shared_vectors.insert((into, slot), shared);
+-            }
+-        }
+-    }
+-
+-    /// The attribute of closure record `rec` that holds lambda `lambda`'s capture `name` —
+-    /// `name` itself, or the alias a fn field's union record gave it (loft#1874).
+-    pub(crate) fn capture_attr(&self, lambda: u32, rec: u32, name: &str) -> usize {
+-        match self.capture_alias.get(&(lambda, name.to_string())) {
+-            Some(alias) => self.data.attr(rec, alias),
+-            None => self.data.attr(rec, name),
+-        }
+-    }
+-
+     pub(crate) fn type_carries_closure(&self, tp: &Type) -> bool {
+         // Like `fn_ref_field_is_split`, derive from the registered
+         // database layout (built from the COMPLETE first pass) rather
+@@ -16032,12 +15956,14 @@ impl Parser {
+                     if prev == u32::MAX {
+                         self.data.definitions[d_nr as usize].attributes[f_nr]
+                             .assigned_lambda_d_nr = lambda_d_u;
+-                    } else if prev != lambda_d_u && self.first_pass {
+-                        // `@FR-L-Escape` (loft#1874) — a field holds any closure, so every lambda
+-                        // written into it shares ONE closure record: the union of their captures,
+-                        // each lambda reading its own by name.  The field's child record then has
+-                        // one layout whatever closure it holds.
+-                        self.unite_field_closure_records(prev, lambda_d_u);
++                    } else if prev != lambda_d_u && !self.first_pass {
++                        diagnostic!(
++                            self.lexer,
++                            Level::Error,
++                            "heterogeneous capture shapes per fn-ref struct field are not supported \
++                             (this lambda's captured environment differs from the previously-assigned \
++                              lambda's); split into two structs or unify the captures"
++                        );
+                     }
+                     // `@FR-L-Escape` (loft#1867): a host rooted in an ARGUMENT is the caller's
+                     // struct, and the closure record is built in its store (`OpChildRec`).  The
+@@ -22859,63 +22785,6 @@ pub(crate) fn widen_bare_fn_ref(v: &mut Value, tp: &Type) -> bool {
+     }
+ }
+ 
+-/// loft#1874 — for a lambda whose closure record is a fn field's UNION, the releases of the
+-/// old record's capture slots this lambda's build does NOT write — `if old is live and the
+-/// slot holds a store { free it }` — and those slots' positions, which the new record must
+-/// start empty in.  The slots it does write are released against the new capture by the
+-/// build's own leading ops, as for any rebuild.
+-fn displaced_union_captures(
+-    p: &mut Parser,
+-    lambda_d: u32,
+-    ops: &[Value],
+-    w_var: u16,
+-    old: &Value,
+-) -> (Vec<Value>, Vec<i32>) {
+-    let record = p.data.def(lambda_d).closure_record();
+-    if record == u32::MAX || !p.data.def(record).name.starts_with("__closure_u_") {
+-        return (Vec::new(), Vec::new());
+-    }
+-    let set_dbref = p.data.def_nr("OpSetDbRef");
+-    let mut written: Vec<i32> = Vec::new();
+-    for op in ops {
+-        op.walk(&mut |n| {
+-            if let Value::Call(d, args) = n.unspan()
+-                && *d == set_dbref
+-                && matches!(args.first().map(Value::unspan), Some(Value::Var(x)) if *x == w_var)
+-                && let Some(Value::Int(pos)) = args.get(1).map(Value::unspan)
+-            {
+-                written.push(*pos);
+-            }
+-        });
+-    }
+-    let kt = p.data.def(record).known_type();
+-    let attrs: Vec<(String, Type)> = p
+-        .data
+-        .def(record)
+-        .attributes()
+-        .iter()
+-        .map(|a| (a.name.clone(), a.typedef.clone()))
+-        .collect();
+-    let mut out = Vec::new();
+-    let mut unwritten = Vec::new();
+-    for (name, tp) in attrs {
+-        if !matches!(tp.base(), Type::Reference(_, deps) if !deps.is_empty()) {
+-            continue;
+-        }
+-        let pos = i32::from(p.database.position(kt, &name));
+-        if pos == i32::from(u16::MAX) || written.contains(&pos) {
+-            continue;
+-        }
+-        unwritten.push(pos);
+-        let slot = p.cl("OpGetDbRef", &[old.clone(), Value::Int(pos)]);
+-        let held = p.cl("OpConvBoolFromRef", std::slice::from_ref(&slot));
+-        let free = p.cl("OpFreeRef", &[slot]);
+-        let live = p.cl("OpConvBoolFromRef", std::slice::from_ref(old));
+-        out.push(v_if(live, v_if(held, free, Value::Null), Value::Null));
+-    }
+-    (out, unwritten)
+-}
+-
+ /// Every read of variable `v` in `code` becomes `with`.
+ fn replace_var(code: &mut Value, v: u16, with: &Value) {
+     if matches!(code.unspan(), Value::Var(x) if *x == v) {
+@@ -23052,31 +22921,6 @@ fn emit_fn_ref_field_write(
+                     for op in &mut ops[..at] {
+                         replace_var(op, w_var, &old);
+                     }
+-                    // loft#1874 — a fn field's UNION record (`unite_field_closure_records`) may
+-                    // hold another lambda's captures: each capture slot this build does not
+-                    // write is released from the old record as well, so the closure it replaces
+-                    // gives up what it held whichever lambda that was.
+-                    let (releases, unwritten) =
+-                        displaced_union_captures(p, lambda_d as u32, &ops, w_var, &old);
+-                    let n = releases.len();
+-                    for (i, r) in releases.into_iter().enumerate() {
+-                        ops.insert(at + i, r);
+-                    }
+-                    // …and the slots it does not write start as nothing: the new record is
+-                    // claimed with whatever bytes the store held there (C137), and its cascade
+-                    // reads every capture slot of the union.
+-                    let null = p.data.def_nr("OpNullRefSentinel");
+-                    for (i, pos) in unwritten.into_iter().enumerate() {
+-                        let clear = p.cl(
+-                            "OpSetDbRef",
+-                            &[
+-                                Value::Var(w_var),
+-                                Value::Int(pos),
+-                                Value::Call(null, Vec::new()),
+-                            ],
+-                        );
+-                        ops.insert(at + n + 1 + i, clear);
+-                    }
+                 }
+                 for op in &mut ops {
+                     if matches!(op.unspan(), Value::Call(d, args) if *d == database
+diff --git a/src/parser/objects.rs b/src/parser/objects.rs
+index baa800ce8..6d7bcf632 100644
+--- a/src/parser/objects.rs
++++ b/src/parser/objects.rs
+@@ -736,15 +736,14 @@ impl Parser {
+         } else if self.closure_param != u16::MAX
+             && !self.first_pass
+             && self.data.def(self.context).closure_record() != u32::MAX
+-            && self.capture_attr(
+-                self.context,
+-                self.data.def(self.context).closure_record(),
+-                name,
+-            ) != usize::MAX
++            && self
++                .data
++                .attr(self.data.def(self.context).closure_record(), name)
++                != usize::MAX
+         {
+             // A5.3/A5.4: redirect captured variable reads to closure record field.
+             let closure_d_nr = self.data.def(self.context).closure_record();
+-            let fnr = self.capture_attr(self.context, closure_d_nr, name);
++            let fnr = self.data.attr(closure_d_nr, name);
+             *code = self.closure_capture_read(closure_d_nr, fnr);
+             // @PLN93 (#511): a collection capture's stored attr is a `Reference` DbRef,
+             // but the body must see the ORIGINAL collection type (from capture_context)
+@@ -1003,7 +1002,7 @@ impl Parser {
+             let fnr = if closure_d_nr == u32::MAX {
+                 usize::MAX
+             } else {
+-                self.capture_attr(self.context, closure_d_nr, name)
++                self.data.attr(closure_d_nr, name)
+             };
+             if fnr == usize::MAX {
+                 // First pass, no closure param, or field not found — placeholder variable.
+diff --git a/src/parser/vectors.rs b/src/parser/vectors.rs
+index 07f735673..59a40ff34 100644
+--- a/src/parser/vectors.rs
++++ b/src/parser/vectors.rs
+@@ -1215,7 +1215,7 @@ impl Parser {
+         if rec == u32::MAX {
+             return None;
+         }
+-        let fnr = self.capture_attr(self.context, rec, name);
++        let fnr = self.data.attr(rec, name);
+         if fnr == usize::MAX {
+             return None;
+         }
+@@ -1243,7 +1243,7 @@ impl Parser {
+         if rec == u32::MAX {
+             return None;
+         }
+-        let fnr = self.capture_attr(self.context, rec, name);
++        let fnr = self.data.attr(rec, name);
+         if fnr == usize::MAX {
+             return None;
+         }
+@@ -2146,40 +2146,10 @@ or build a local and use that."
+             alloc_steps.push(self.cl("OpDatabase", &[Value::Var(w), Value::Int(tp_nr)]));
+             let n_attrs = self.data.attributes(closure_rec_d);
+             let mut captured_var_nrs: Vec<u16> = Vec::new();
+-            // loft#1874 — a fn field's UNION record carries every lambda's captures; this build
+-            // fills only its own lambda's, which are the attributes of that lambda's own record.
+-            // Filled by name from this scope, another lambda's capture would be taken too
+-            // wherever a local happens to share its name.
+-            let own_rec = if self
+-                .data
+-                .def(closure_rec_d)
+-                .name
+-                .starts_with("__closure_u_")
+-            {
+-                let lambda = &self.data.def(d_nr).name;
+-                let bare = lambda.strip_prefix("n_").unwrap_or(lambda);
+-                self.data
+-                    .def_nr(&bare.replacen("__lambda_", "__closure_", 1))
+-            } else {
+-                u32::MAX
+-            };
+             for aid in 0..n_attrs {
+-                let slot_name = self.data.attr_name(closure_rec_d, aid);
+-                // The name this lambda captures the slot as: the slot's own, or the one its
+-                // alias stands for (loft#1874).
+-                let cap_name = self
+-                    .capture_alias
+-                    .iter()
+-                    .find(|((l, _), alias)| *l == d_nr && **alias == slot_name)
+-                    .map_or(slot_name.clone(), |((_, orig), _)| orig.clone());
+-                if own_rec != u32::MAX
+-                    && (self.data.attr(own_rec, &cap_name) == usize::MAX
+-                        || self.capture_attr(d_nr, closure_rec_d, &cap_name) != aid)
+-                {
+-                    continue;
+-                }
++                let cap_name = self.data.attr_name(closure_rec_d, aid);
+                 // loft#1869 — a fn-ref's closure half fills from the record local behind it.
+-                let fn_ref_half = slot_name
++                let fn_ref_half = cap_name
+                     .strip_suffix("__clos")
+                     .filter(|base| self.data.attr(closure_rec_d, base) != usize::MAX)
+                     .map(str::to_string);
+@@ -2239,7 +2209,7 @@ or build a local and use that."
+                     {
+                         let pos = self
+                             .database
+-                            .position(self.data.def(closure_rec_d).known_type(), &slot_name);
++                            .position(self.data.def(closure_rec_d).known_type(), &cap_name);
+                         let held =
+                             self.cl("OpGetDbRef", &[Value::Var(w), Value::Int(i32::from(pos))]);
+                         let release = self.cl("OpFreeRefIfDistinct", &[held, fill.clone()]);
+@@ -2258,7 +2228,7 @@ or build a local and use that."
+                     if v_nr != u16::MAX && self.vars.rebind_must_mint(v_nr) {
+                         let pos = self
+                             .database
+-                            .position(self.data.def(closure_rec_d).known_type(), &slot_name);
++                            .position(self.data.def(closure_rec_d).known_type(), &cap_name);
+                         let held = self
+                             .capture_records
+                             .entry((self.first_pass, self.context, v_nr))
+@@ -2892,7 +2862,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+                 if rec == u32::MAX {
+                     continue;
+                 }
+-                let a_nr = self.capture_attr(*lam, rec, &name);
++                let a_nr = self.data.attr(rec, &name);
+                 if a_nr == usize::MAX {
+                     continue;
+                 }
+@@ -2964,7 +2934,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+                 if rec == u32::MAX {
+                     continue;
+                 }
+-                let a_nr = self.capture_attr(*lam, rec, name);
++                let a_nr = self.data.attr(rec, name);
+                 if a_nr == usize::MAX {
+                     continue;
+                 }
+@@ -3242,12 +3212,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+             self.data.definitions[lambda_d_nr as usize].closure_record = record_d_nr;
+         } else {
+             let record_d_nr = self.data.def_nr(&record_name);
+-            // A lambda written into a fn field beside others keeps the union record pass 1
+-            // gave it (loft#1874, `Parser::unite_field_closure_records`).
+-            let current = self.data.def(lambda_d_nr).closure_record();
+-            let united =
+-                current != u32::MAX && self.data.def(current).name.starts_with("__closure_u_");
+-            if record_d_nr != u32::MAX && !united {
++            if record_d_nr != u32::MAX {
+                 self.data.definitions[lambda_d_nr as usize].closure_record = record_d_nr;
+             }
+         }
+diff --git a/src/scopes/capture_adoption.rs b/src/scopes/capture_adoption.rs
+index 8a93b2c22..354ebc7e6 100644
+--- a/src/scopes/capture_adoption.rs
++++ b/src/scopes/capture_adoption.rs
+@@ -636,22 +636,10 @@ pub(super) fn capture_store_adopters(
+         if !data.def(record).name.starts_with("__closure_") {
+             continue;
+         }
+-        // loft#1874 — a fn field's UNION record carries every lambda's captures; this local's
+-        // build writes only its own, and an attribute it does not write is not its question.
+-        let united = data.def(record).name.starts_with("__closure_u_");
+         for a in 0..data.attributes(record) {
+             if !capture_attr_is_cascade_relevant(data, record, a) {
+                 continue;
+             }
+-            if united
+-                && !builds.adopted.get(&v).is_some_and(|caps| {
+-                    caps.iter().any(|(c, _)| {
+-                        function.name(*c) == super::capture_builds::capture_name(data, record, a)
+-                    })
+-                })
+-            {
+-                continue;
+-            }
+             if record_adopts_capture(data, function, builds, record, a) {
+                 adopters
+                     .entry(adopted_store_key(data, function, builds, v, record, a))

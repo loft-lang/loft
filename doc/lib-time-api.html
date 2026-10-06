@@ -23,8 +23,8 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>time API</h1>
 <article>
-<p><a href="lib-time.html">← time</a> · version 0.3.2</p>
-<p class="lib-legend">79 public items, in source order. Generated from the registry index, which re-derives them from the package source at publish time — so a signature here is the one that version actually ships.</p>
+<p><a href="lib-time.html">← time</a> · version 0.4.1</p>
+<p class="lib-legend">74 public items, in source order. Generated from the registry index, which re-derives them from the package source at publish time — so a signature here is the one that version actually ships.</p>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">from_ymd</span>(fy: <span class="ty"><a href="stdlib-types.html">integer</a></span>, fmo: <span class="ty"><a href="stdlib-types.html">integer</a></span>, fd: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
 <p>Epoch-ms at UTC midnight of the given calendar date.</p>
@@ -59,7 +59,7 @@
 <p>The day of the month, 1..31.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">hour</span>(ht: <span class="ty"><a href="stdlib-types.html">integer</a></span>)   -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">hour</span>(ht: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
 <p>The hour of the day, 0..23, in UTC.</p>
 </div>
 <div class="item">
@@ -67,7 +67,7 @@
 <p>The minute of the hour, 0..59.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">second</span>(st: <span class="ty"><a href="stdlib-types.html">integer</a></span>)  -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">second</span>(st: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
 <p>The second of the minute, 0..59.</p>
 </div>
 <div class="item">
@@ -75,15 +75,15 @@
 <p>0 = Monday .. 6 = Sunday.  1970-01-01 was a Thursday (weekday 3).</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">add_days</span>(adt: <span class="ty"><a href="stdlib-types.html">integer</a></span>, days: <span class="ty"><a href="stdlib-types.html">integer</a></span>)     -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">add_days</span>(adt: <span class="ty"><a href="stdlib-types.html">integer</a></span>, days: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
 <p>Step by whole days / weeks / seconds.  These exist because the raw value is MILLISECONDS: <code>t + 3</code> is three thousandths of a second, and reads at the call site like three of whatever the reader had in mind.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">add_weeks</span>(awt: <span class="ty"><a href="stdlib-types.html">integer</a></span>, weeks: <span class="ty"><a href="stdlib-types.html">integer</a></span>)   -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">add_weeks</span>(awt: <span class="ty"><a href="stdlib-types.html">integer</a></span>, weeks: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
 <p>Move by whole weeks.  Calendar-safe like <code>add_days</code>: no hour drifts, because there is no daylight saving in this model.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">add_seconds</span>(ast: <span class="ty"><a href="stdlib-types.html">integer</a></span>, secs: <span class="ty"><a href="stdlib-types.html">integer</a></span>)  -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">add_seconds</span>(ast: <span class="ty"><a href="stdlib-types.html">integer</a></span>, secs: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
 <p>Move by whole seconds.</p>
 </div>
 <div class="item">
@@ -157,11 +157,19 @@
 <p>The month's short English name (&quot;Jan&quot; … &quot;Dec&quot;), for display only.</p>
 </div>
 <div class="item">
+<pre><code><span class="kw">pub</span> value <span class="kw">struct</span> <span class="en">DateTime</span> { ms: <span class="ty"><a href="stdlib-types.html">integer</a></span> }</code></pre>
+<p>A point in time: milliseconds since the epoch, UTC.  <code>date</code> and <code>datetime</code> make one, and <code>&quot;2026-07-08&quot; as DateTime</code> parses one; subtracting two gives a <code>Duration</code>.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> value <span class="kw">struct</span> <span class="en">Duration</span> { ms: <span class="ty"><a href="stdlib-types.html">integer</a></span> }</code></pre>
+<p>A span of time in milliseconds, negative when it runs backwards.  <code>milliseconds</code>, <code>seconds</code>, <code>minutes</code>, <code>hours</code>, <code>days</code> and <code>weeks</code> make one.</p>
+</div>
+<div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">date</span>(dcy: <span class="ty"><a href="stdlib-types.html">integer</a></span>, dcmo: <span class="ty"><a href="stdlib-types.html">integer</a></span>, dcd: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">DateTime</span></code></pre>
 <p>── DateTime construction ── A DateTime at midnight UTC on this calendar date — the usual way into the typed layer.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">datetime</span>(tcy: <span class="ty"><a href="stdlib-types.html">integer</a></span>, tcmo: <span class="ty"><a href="stdlib-types.html">integer</a></span>, tcd: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">datetime</span>(tcy: <span class="ty"><a href="stdlib-types.html">integer</a></span>, tcmo: <span class="ty"><a href="stdlib-types.html">integer</a></span>, tcd: <span class="ty"><a href="stdlib-types.html">integer</a></span>, tch: <span class="ty"><a href="stdlib-types.html">integer</a></span>, tcmi: <span class="ty"><a href="stdlib-types.html">integer</a></span>, tcs: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">DateTime</span></code></pre>
 <p>A DateTime at an exact calendar date and time of day, UTC.</p>
 </div>
 <div class="item">
@@ -169,59 +177,59 @@
 <p>── Duration construction ── A Duration of this many milliseconds.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">seconds</span>(nsec: <span class="ty"><a href="stdlib-types.html">integer</a></span>)     -&gt; <span class="en">Duration</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">seconds</span>(nsec: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Duration</span></code></pre>
 <p>A Duration of this many seconds.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">minutes</span>(nmin: <span class="ty"><a href="stdlib-types.html">integer</a></span>)     -&gt; <span class="en">Duration</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">minutes</span>(nmin: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Duration</span></code></pre>
 <p>A Duration of this many minutes.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">hours</span>(nhr: <span class="ty"><a href="stdlib-types.html">integer</a></span>)        -&gt; <span class="en">Duration</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">hours</span>(nhr: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Duration</span></code></pre>
 <p>A Duration of this many hours.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">days</span>(nday: <span class="ty"><a href="stdlib-types.html">integer</a></span>)        -&gt; <span class="en">Duration</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">days</span>(nday: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Duration</span></code></pre>
 <p>A Duration of this many days.  Add it to a DateTime rather than doing the arithmetic yourself, so the unit is in the code instead of in your head.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">weeks</span>(nwk: <span class="ty"><a href="stdlib-types.html">integer</a></span>)        -&gt; <span class="en">Duration</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">weeks</span>(nwk: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Duration</span></code></pre>
 <p>A Duration of this many weeks.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">year</span>(self: <span class="en">DateTime</span>)         -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">year</span>(self: <span class="en">DateTime</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
 <p>── DateTime field accessors (methods; delegate to the integer API above) ── This value's year.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">month</span>(self: <span class="en">DateTime</span>)        -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">month</span>(self: <span class="en">DateTime</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
 <p>This value's month.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">day</span>(self: <span class="en">DateTime</span>)          -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">day</span>(self: <span class="en">DateTime</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
 <p>This value's day.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">hour</span>(self: <span class="en">DateTime</span>)         -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">hour</span>(self: <span class="en">DateTime</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
 <p>This DateTime's hour, the method form of the free function above.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">minute</span>(self: <span class="en">DateTime</span>)       -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">minute</span>(self: <span class="en">DateTime</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
 <p>This DateTime's minute, the method form of the free function above.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">second</span>(self: <span class="en">DateTime</span>)       -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">second</span>(self: <span class="en">DateTime</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
 <p>This DateTime's second, the method form of the free function above.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">weekday</span>(self: <span class="en">DateTime</span>)      -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">weekday</span>(self: <span class="en">DateTime</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
 <p>This value's weekday.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">iso_year</span>(self: <span class="en">DateTime</span>)     -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">iso_year</span>(self: <span class="en">DateTime</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
 <p>This value's iso year.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">iso_week</span>(self: <span class="en">DateTime</span>)     -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">iso_week</span>(self: <span class="en">DateTime</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
 <p>This value's iso week.</p>
 </div>
 <div class="item">
@@ -229,15 +237,15 @@
 <p>This DateTime's weekday name, the method form of the free function above.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">month_name</span>(self: <span class="en">DateTime</span>)   -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">month_name</span>(self: <span class="en">DateTime</span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span></code></pre>
 <p>This DateTime's month name, the method form of the free function above.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">to_millis</span>(self: <span class="en">DateTime</span>)    -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">to_millis</span>(self: <span class="en">DateTime</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
 <p>This DateTime as milliseconds since the epoch — the way OUT of the typed layer, for storage, a wire format, or the plain-integer routines above.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">total_millis</span>(self: <span class="en">Duration</span>)  -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">total_millis</span>(self: <span class="en">Duration</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
 <p>── Duration accessors ── The span in whole milliseconds — its exact value.</p>
 </div>
 <div class="item">
@@ -249,96 +257,68 @@
 <p>The span in whole minutes, truncated toward zero.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">total_hours</span>(self: <span class="en">Duration</span>)   -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">total_hours</span>(self: <span class="en">Duration</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
 <p>The span in whole hours, truncated toward zero.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">total_days</span>(self: <span class="en">Duration</span>)    -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">total_days</span>(self: <span class="en">Duration</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
 <p>The span in whole days, truncated toward zero.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="en">OpLt</span>(self: <span class="en">DateTime</span>, other: <span class="en">DateTime</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
-<p>── DateTime operators (comparison + typed arithmetic) ── Is this DateTime earlier?  Defined so dates compare with <code>&lt;</code> like numbers.</p>
+<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">compare</span>(self: <span class="en">DateTime</span>, other: <span class="en">DateTime</span>) -&gt; <span class="en"><a href="stdlib-types.html">Ordering</a></span></code></pre>
+<p>── DateTime operators (comparison + typed arithmetic) ── <code>==</code> and <code>!=</code> compare the one field, so two DateTimes are equal at the same millisecond. Orders instants, so dates compare with <code>&lt;</code>, <code>&lt;=</code>, <code>&gt;</code>, <code>&gt;=</code> like numbers.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="en">OpLe</span>(self: <span class="en">DateTime</span>, other: <span class="en">DateTime</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
-<p>Earlier or the same instant.</p>
-</div>
-<div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="en">OpGt</span>(self: <span class="en">DateTime</span>, other: <span class="en">DateTime</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
-<p>Later.</p>
-</div>
-<div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="en">OpGe</span>(self: <span class="en">DateTime</span>, other: <span class="en">DateTime</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
-<p>Later or the same instant.</p>
-</div>
-<div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="en">OpEq</span>(self: <span class="en">DateTime</span>, other: <span class="en">DateTime</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
-<p>The same instant — to the millisecond, not to the day.</p>
-</div>
-<div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="en">OpNe</span>(self: <span class="en">DateTime</span>, other: <span class="en">DateTime</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
-<p>A different instant.</p>
-</div>
-<div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="en">OpMin</span>(self: <span class="en">DateTime</span>, other: <span class="en">DateTime</span>) -&gt; <span class="en">Duration</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">minus</span>(self: <span class="en">DateTime</span>, other: <span class="en">DateTime</span>) -&gt; <span class="en">Duration</span></code></pre>
 <p>DateTime - DateTime is the Duration BETWEEN them, which is why a span never has to be spelled as a bare integer.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="en">OpAdd</span>(self: <span class="en">DateTime</span>, span: <span class="en">Duration</span>)  -&gt; <span class="en">DateTime</span></code></pre>
-<p>DateTime + Duration moves forward by the span; subtract by adding <code>negate(span)</code>.</p>
+<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">minus</span>(self: <span class="en">DateTime</span>, span: <span class="en">Duration</span>) -&gt; <span class="en">DateTime</span></code></pre>
+<p>DateTime - Duration moves backward by the span; <code>dt.minus(span)</code> is the same call.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">minus</span>(self: <span class="en">DateTime</span>, span: <span class="en">Duration</span>) -&gt; <span class="en">DateTime</span></code></pre>
-<p><code>-</code> on a DateTime is the difference <code>dt - dt</code> (above); operators key on the receiver type, so subtracting a Duration is the <code>minus</code> method (or <code>dt + (-span)</code>).</p>
+<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">plus</span>(self: <span class="en">DateTime</span>, span: <span class="en">Duration</span>) -&gt; <span class="en">DateTime</span></code></pre>
+<p>DateTime + Duration moves forward by the span.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">negate</span>(self: <span class="en">Duration</span>) -&gt; <span class="en">Duration</span></code></pre>
-<p>The same span, backwards.  Subtracting a Duration is adding its negation.</p>
+<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">negate</span>(self: <span class="en">Duration</span>) -&gt; <span class="en">Duration</span></code></pre>
+<p>The same span, backwards: <code>-span</code>, or <code>span.negate()</code>.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="en">OpAdd</span>(self: <span class="en">Duration</span>, other: <span class="en">Duration</span>) -&gt; <span class="en">Duration</span></code></pre>
-<p>── Duration operators ── Two spans add.</p>
+<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">compare</span>(self: <span class="en">Duration</span>, other: <span class="en">Duration</span>) -&gt; <span class="en"><a href="stdlib-types.html">Ordering</a></span></code></pre>
+<p>── Duration operators ── <code>==</code> and <code>!=</code> compare the length. Orders spans by length.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="en">OpMin</span>(self: <span class="en">Duration</span>, other: <span class="en">Duration</span>) -&gt; <span class="en">Duration</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">plus</span>(self: <span class="en">Duration</span>, other: <span class="en">Duration</span>) -&gt; <span class="en">Duration</span></code></pre>
+<p>Two spans add.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">minus</span>(self: <span class="en">Duration</span>, other: <span class="en">Duration</span>) -&gt; <span class="en">Duration</span></code></pre>
 <p>One span less another.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="en">OpMul</span>(self: <span class="en">Duration</span>, factor: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Duration</span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">times</span>(self: <span class="en">Duration</span>, factor: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Duration</span></code></pre>
 <p>A span scaled by a whole number — <code>minutes(5) * 3</code> is fifteen minutes.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="en">OpLt</span>(self: <span class="en">Duration</span>, other: <span class="en">Duration</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
-<p>Is this span shorter?</p>
+<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">to_text</span>(self: <span class="en">DateTime</span>, spec: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span></code></pre>
+<p>── custom formatting (<code>operator to_text</code>: &quot;{dt}&quot; and &quot;{dt:spec}&quot;) ── &quot;&quot; / &quot;datetime&quot; -&gt; YYYY-MM-DD HH:MM · &quot;date&quot; -&gt; YYYY-MM-DD · &quot;time&quot; -&gt; HH:MM &quot;seconds&quot; -&gt; HH:MM:SS · &quot;iso&quot; -&gt; …THH:MM:SSZ · &quot;wday&quot; -&gt; Mon · &quot;month&quot; -&gt; May</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="en">OpLe</span>(self: <span class="en">Duration</span>, other: <span class="en">Duration</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
-<p>Shorter or equal.</p>
-</div>
-<div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="en">OpGt</span>(self: <span class="en">Duration</span>, other: <span class="en">Duration</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
-<p>Longer.</p>
-</div>
-<div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="en">OpGe</span>(self: <span class="en">Duration</span>, other: <span class="en">Duration</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
-<p>Longer or equal.</p>
-</div>
-<div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="en">OpEq</span>(self: <span class="en">Duration</span>, other: <span class="en">Duration</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
-<p>The same length.</p>
-</div>
-<div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="en">OpNe</span>(self: <span class="en">Duration</span>, other: <span class="en">Duration</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
-<p>A different length.</p>
-</div>
-<div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">to_text</span>(self: <span class="en">DateTime</span>, spec: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span></code></pre>
-<p>── custom formatting (the per-type to_text hook) ── &quot;&quot; / &quot;datetime&quot; -&gt; YYYY-MM-DD HH:MM · &quot;date&quot; -&gt; YYYY-MM-DD · &quot;time&quot; -&gt; HH:MM &quot;seconds&quot; -&gt; HH:MM:SS · &quot;iso&quot; -&gt; …THH:MM:SSZ · &quot;wday&quot; -&gt; Mon · &quot;month&quot; -&gt; May</p>
-</div>
-<div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">to_text</span>(self: <span class="en">Duration</span>, _spec: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">to_text</span>(self: <span class="en">Duration</span>, _spec: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span></code></pre>
 <p>A Duration renders as [-]H:MM:SS (hours may exceed 24).</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">to_integer</span>(self: <span class="en">DateTime</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<p>── conversions (<code>as</code>) ── <code>dt as integer</code>: the point in time as milliseconds since the epoch, UTC.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">to_date_time</span>(self: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">DateTime</span></code></pre>
+<p><code>ms as DateTime</code>: milliseconds since the epoch, UTC, as a point in time — the way back from <code>as integer</code>, and the checked path from <code>parse</code> (see FALLIBILITY above).</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">to_date_time</span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="en">DateTime</span></code></pre>
+<p>text -&gt; DateTime: a TOTAL best-effort parse (bad input -&gt; epoch); see the FALLIBILITY note above for the checked path via <code>parse</code>.</p>
 </div>
 
   </article>

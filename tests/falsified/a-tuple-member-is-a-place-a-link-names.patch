@@ -1,0 +1,280 @@
+diff --git a/src/generation/calls.rs b/src/generation/calls.rs
+index 7c8eb6e5b..f035d257a 100644
+--- a/src/generation/calls.rs
++++ b/src/generation/calls.rs
+@@ -461,19 +461,6 @@ impl Output<'_> {
+             write!(w, "unsafe {{ ")?;
+             self.output_place_pointer(w, v, &base)?;
+             write!(w, " }}")?;
+-        // `@FR-B-Ref-Lvalue` — a tuple local's MEMBER handed to a `&` parameter: a pointer
+-        // into the Rust tuple's field, as a local link to it holds.
+-        } else if let Value::Call(d_nr, args) = v.unspan()
+-            && self.data.def(*d_nr).name() == "OpCreateStack"
+-            && let [arg] = args.as_slice()
+-            && let Value::TupleGet(t, i) = arg.unspan()
+-        {
+-            let place = self.tuple_member_place(*t, *i);
+-            if raw_param {
+-                write!(w, "unsafe {{ std::ptr::addr_of_mut!({place}) }}")?;
+-            } else {
+-                write!(w, "unsafe {{ &mut *std::ptr::addr_of_mut!({place}) }}")?;
+-            }
+         // OpCreateStack wrapping an addressable expression
+         // (e.g. v[i] as & param).  Emit a temporary + &mut so the
+         // callee can write through the DbRef into the store.
+diff --git a/src/generation/dispatch.rs b/src/generation/dispatch.rs
+index 72bb1f50b..a645a5149 100644
+--- a/src/generation/dispatch.rs
++++ b/src/generation/dispatch.rs
+@@ -314,19 +314,6 @@ impl Output<'_> {
+         Ok(())
+     }
+ 
+-    /// `@FR-B-Ref-Lvalue` — the Rust place of member `i` of tuple `t`: a tuple local's field, a
+-    /// `&(…)` parameter's (a `&mut` tuple, reached by auto-deref), or a LOCAL link's, which is a
+-    /// raw pointer to the tuple and is dereferenced.  Used inside `unsafe`.
+-    pub(super) fn tuple_member_place(&self, t: u16, i: u16) -> String {
+-        let variables = self.data.def(self.def_nr).variables();
+-        let name = sanitize(variables.name(t));
+-        if matches!(variables.tp(t).base(), Type::RefVar(_)) && !variables.is_argument(t) {
+-            format!("(*var_{name}).{i}")
+-        } else {
+-            format!("var_{name}.{i}")
+-        }
+-    }
+-
+     /// Does a bind of `to` into `var` take the @PLN130 F1/F2 arm — the one that allocates a
+     /// record for `var` and deep-copies a container element into it?
+     ///
+@@ -929,26 +916,6 @@ impl Output<'_> {
+                 write!(w, "unsafe {{ ")?;
+                 self.output_place_pointer(w, to, &base)?;
+                 write!(w, " }}")?;
+-            } else if let Value::Call(d_nr, cargs) = to.unspan()
+-                && self.data.def(*d_nr).name() == "OpCreateStack"
+-                && let [src_arg] = cargs.as_slice()
+-                && let Value::TupleGet(src, idx) = src_arg.unspan()
+-            {
+-                // `@FR-B-Ref-Lvalue` — a link to a tuple local's MEMBER: a pointer into the
+-                // Rust tuple's field, the same raw shape as a link to a whole local.
+-                let place = self.tuple_member_place(*src, *idx);
+-                if self.declared.contains(&var) {
+-                    write!(
+-                        w,
+-                        "var_{name} = unsafe {{ std::ptr::addr_of_mut!({place}) }}"
+-                    )?;
+-                } else {
+-                    self.declared.insert(var);
+-                    write!(
+-                        w,
+-                        "let mut var_{name}: *mut {base} = unsafe {{ std::ptr::addr_of_mut!({place}) }}"
+-                    )?;
+-                }
+             } else if let Value::Call(d_nr, cargs) = to.unspan()
+                 && self.data.def(*d_nr).name() == "OpCreateStack"
+                 && let [src_arg] = cargs.as_slice()
+diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
+index d0e45a292..aaa32e46f 100644
+--- a/src/parser/expressions.rs
++++ b/src/parser/expressions.rs
+@@ -4677,39 +4677,7 @@ use a separate collection or add after the loop"
+                 // spelling rather than as `Var(t)`.
+                 _ => self.store_text_link_of(code),
+             };
+-            // `@FR-B-Ref-Lvalue` — a MEMBER of a tuple LOCAL is an lvalue (`t.0 = 5` assigns it),
+-            // so it is a place a link names, as a field or an element is: `c = &t.0`.  The link
+-            // is the tuple's frame slot at the member's offset (`OpCreateStack(TupleGet(t, i))`),
+-            // and the tuple must outlive it like any linked local.
+-            let member_src = match *code.unspan() {
+-                Value::TupleGet(t, i)
+-                    if matches!(self.vars.tp(t).base(), Type::Tuple(_))
+-                        || matches!(self.vars.tp(t).base(), Type::RefVar(inner)
+-                            if matches!(inner.base(), Type::Tuple(_))) =>
+-                {
+-                    Some((t, i))
+-                }
+-                _ => None,
+-            };
+-            if let Some((t, i)) = member_src {
+-                amp_unlowered = false;
+-                match self.linkable_tuple_member(t, i) {
+-                    Ok(elem) => {
+-                        self.vars.record_amp_link(var_nr, t);
+-                        *code = self.cl("OpCreateStack", &[Value::TupleGet(t, i)]);
+-                        s_type = if var_nr != u16::MAX && self.vars.is_annotated(var_nr) {
+-                            if matches!(self.vars.tp(var_nr), Type::RefVar(_)) {
+-                                Type::RefVar(Box::new(elem))
+-                            } else {
+-                                elem
+-                            }
+-                        } else {
+-                            self.ref_var_type(elem)
+-                        };
+-                    }
+-                    Err(elem) => self.refuse_tuple_member_link(&elem, i),
+-                }
+-            } else if let Some(src) = link_src {
++            if let Some(src) = link_src {
+                 amp_unlowered = false;
+                 // `@FR-O-Borrow-Scalar` — the link this one copies must live as long, and the
+                 // place behind it with it: the slot allocator follows the chain from the
+@@ -9979,31 +9947,6 @@ use a separate collection or add after the loop"
+         let expected = self.coalesce_not_null(&Value::Var(v), &tp);
+         (*cond.unspan() == expected).then_some(v)
+     }
+-    /// `@FR-B-Ref-Lvalue` — can a link name member `i` of the tuple local `t`?  `Ok` with the
+-    /// member's type when it can, `Err` with it when it cannot: a member is stored at its full
+-    /// width, so a link reads it at that width, and a NARROW member would need the narrow
+-    /// encoding a linked LOCAL is given (`set_linked_narrow`), which a member's fixed layout
+-    /// cannot take.  A heap member is not a scalar place at all.
+-    pub(crate) fn linkable_tuple_member(&self, t: u16, i: u16) -> Result<Type, Type> {
+-        // A member of a `&(…)` link (a parameter, or a local link) is the CALLER's tuple at the
+-        // member's offset: the link's reference plus that offset, as the member read through
+-        // the link addresses it.
+-        let elem = match self.vars.tp(t).base() {
+-            Type::Tuple(elems) => elems.get(i as usize).cloned(),
+-            Type::RefVar(inner) => match inner.base() {
+-                Type::Tuple(elems) => elems.get(i as usize).cloned(),
+-                _ => None,
+-            },
+-            _ => None,
+-        };
+-        let elem = elem.unwrap_or(Type::Unknown(0));
+-        if crate::data::is_scalar(&elem) && crate::data::NarrowSlot::of_type(&elem).is_none() {
+-            Ok(elem)
+-        } else {
+-            Err(elem)
+-        }
+-    }
+-
+     /// `@FR-T-Ref-Src` — the source of a `&(…)` is a tuple PLACE: a variable, a vector element
+     /// or a struct field.  A literal or a call result is a value that names no place; refused
+     /// at a `&` bind and at a `&(…)` argument alike, with the cure, never copied
+@@ -10018,28 +9961,6 @@ use a separate collection or add after the loop"
+         );
+     }
+ 
+-    /// The refusal for a tuple member [`Parser::linkable_tuple_member`] declines, at a `&` bind
+-    /// and at a `&` argument alike.  `(B-Ref-Reshape)`: never downgraded to a copy that would
+-    /// drop the write.
+-    pub(crate) fn refuse_tuple_member_link(&mut self, elem: &Type, i: u16) {
+-        if self.first_pass {
+-            return;
+-        }
+-        let tp = self.data.written_type_name(elem);
+-        let why = if !crate::data::is_scalar(elem) {
+-            "a link to a member names a scalar place, and this member is not a scalar"
+-        } else if crate::data::NarrowSlot::of_type(elem).is_some() {
+-            "a narrow member is stored at full width, and a link reads at the member's own width"
+-        } else {
+-            "the tuple is itself reached through a `&` link, and a link into it is not supported"
+-        };
+-        diagnostic!(
+-            self.lexer,
+-            Level::Error,
+-            "a `&` link to a tuple member of type `{tp}` is not supported — {why}.  Bind the \
+-             member to a local first (`m = t.{i}; c = &m;`) and write it back"
+-        );
+-    }
+ 
+     /// The place a scalar read names, as the reference a `&` link to it holds: a vector
+     /// element's own `OpGetVector` / `OpVectorRef`, or `OpGetField(base, fld)` for a field read
+@@ -10051,18 +9972,6 @@ use a separate collection or add after the loop"
+     /// (a narrow store place may not: D-bind-39).
+     pub(crate) fn scalar_place_ref(&mut self, code: &Value) -> Option<Value> {
+         match code.unspan() {
+-            // `@FR-B-Ref-Lvalue` — a tuple member: a LOCAL's frame slot at the member's offset,
+-            // or a `&(…)` link's reference at it.  A member no link can honour answers `None`;
+-            // its callers refuse it.
+-            Value::TupleGet(t, i)
+-                if matches!(self.vars.tp(*t).base(), Type::Tuple(_))
+-                    || matches!(self.vars.tp(*t).base(), Type::RefVar(inner)
+-                        if matches!(inner.base(), Type::Tuple(_))) =>
+-            {
+-                self.linkable_tuple_member(*t, *i)
+-                    .ok()
+-                    .map(|_| self.cl("OpCreateStack", &[Value::TupleGet(*t, *i)]))
+-            }
+             // The bare element op IS the place.  An enum element arrives in this spelling on
+             // the first pass, before its enum getter wraps it; without this arm the first pass
+             // typed the local as the enum and the second as its link.  It sits above the
+diff --git a/src/parser/mod.rs b/src/parser/mod.rs
+index b1bb90606..61120366f 100644
+--- a/src/parser/mod.rs
++++ b/src/parser/mod.rs
+@@ -6647,15 +6647,6 @@ impl Parser {
+                     // reference the `&` bind would hold (@FR-B-Ref-Lvalue).  A copy in a work
+                     // variable would take the callee's write and drop it.
+                     *code = place;
+-                } else if let Value::TupleGet(t, i) = orig.unspan()
+-                    && let Err(elem) = self.linkable_tuple_member(*t, *i)
+-                {
+-                    // A tuple member no link can honour: refused, never copied (the copy would
+-                    // take the callee's write and drop it).  The argument stays in the call, so
+-                    // the refusal is the only diagnostic.
+-                    let i = *i;
+-                    self.refuse_tuple_member_link(&elem, i);
+-                    *code = orig;
+                 } else {
+                     // produce a `Value::Insert` so that scope
+                     // analysis (`scopes::scan_args`) hoists the
+@@ -17460,16 +17451,6 @@ impl Parser {
+                 all_types[nr] = tp.clone();
+                 continue;
+             }
+-            // A tuple local's TEXT member is a place as well, and no `&text` link reaches it
+-            // yet: refused rather than handed a work copy that would drop the callee's write
+-            // (`(B-Ref-Reshape)`, as the `&` bind of the same member refuses).
+-            if matches!(tp.base(), Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)))
+-                && let Value::TupleGet(t, i) = actual_code.unspan()
+-                && let Err(elem) = self.linkable_tuple_member(*t, *i)
+-            {
+-                let i = *i;
+-                self.refuse_tuple_member_link(&elem, i);
+-            }
+             if let Type::RefVar(inner) = &tp
+                 && !matches!(inner.as_ref(), Type::Text(_))
+                 && !matches!(&actual_code, Value::Var(_))
+@@ -22035,9 +22016,7 @@ impl Parser {
+             return dbref.is_place_read(data);
+         }
+         match val.unspan() {
+-            // A tuple local's member (`@FR-B-Ref-Lvalue`): the bind lowering decides which
+-            // member types it can link, and refuses the rest by name.
+-            Value::Var(_) | Value::TupleGet(_, _) => true,
++            Value::Var(_) => true,
+             Value::Call(d_nr, args) => {
+                 let name = data.def(*d_nr).name();
+                 let listed = matches!(
+diff --git a/src/state/codegen.rs b/src/state/codegen.rs
+index d4e32e347..1bf41c9a5 100644
+--- a/src/state/codegen.rs
++++ b/src/state/codegen.rs
+@@ -4757,27 +4757,6 @@ impl State {
+                 // Dep is the named variable at wv.stack_pos.
+                 let dep_offset = stack.var_pos(*wv);
+                 self.emit_push_create_stack(stack, dep_offset);
+-            } else if let Value::TupleGet(tv, ti) = parameters[0].unspan()
+-                && let Type::Tuple(elems) = stack.function.tp(*tv).base()
+-            {
+-                // `@FR-B-Ref-Lvalue` — a link to a tuple local's MEMBER: the tuple's slot at
+-                // the member's offset, the address the `TupleGet` read itself uses.
+-                let offset = crate::data::element_stack_offsets(elems)[*ti as usize] as u16;
+-                let dep_offset = stack.position - (stack.function.stack(*tv) + offset);
+-                self.emit_push_create_stack(stack, dep_offset);
+-            } else if let Value::TupleGet(tv, ti) = parameters[0].unspan()
+-                && let Type::RefVar(inner) = stack.function.tp(*tv).base()
+-                && let Type::Tuple(elems) = inner.base()
+-            {
+-                // `@FR-B-Ref-Lvalue` — a member of a tuple reached through a `&(…)` link: the
+-                // link's reference at the member's offset, the address the member READ through
+-                // the link uses (`OpVarRef` + the field offset).
+-                let offset = ref_tuple_field_offset(elems, *ti as usize);
+-                let var_pos = stack.var_pos(*tv);
+-                stack.add_op("OpVarRef", self);
+-                self.code_add(var_pos);
+-                stack.add_op("OpGetField", self);
+-                self.code_add(offset);
+             } else {
+                 // OpCreateStack with a non-Var expression (e.g.
+                 // OpGetVector result).  Generate the expression to push

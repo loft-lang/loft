@@ -1,0 +1,40 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-F-Recv` — `m(self: P)` and `m(self: P?)` are two definitions, and a call reaches the one
+// spelled for its receiver's own nullability, whichever order they are declared in and whichever
+// spelling the call uses (`x.m()`, `m(x)`); an absent receiver reaches `m(P?)`.  The control for
+// `@FR-F-OneBody`'s nullability-insensitive refusal: it refuses a PLAIN function beside a method
+// over the other nullability (pinned in `tests/issues.rs`), and must leave this pair alone.
+//
+// @falsified-at: 84120b0b1 — INERT on every channel, both backends, and that is this CONTROL's
+//   assertion: the fix that refuses a plain function beside a method over the other nullability
+//   must not move the `self`/`self` pair, and it does not.  The refusals it guards are scored by
+//   their pins in `tests/issues.rs`, which fail on that build.
+// HOLDS: exit, asserts, leak, panic and refusals are equal on both trees.
+
+struct P { x: integer }
+
+fn m(self: P) -> integer {
+  self.x + 1
+}
+
+fn m(self: P?) -> integer {
+  if self == null { 200 } else { 201 }
+}
+
+fn k(self: P?) -> integer {
+  if self == null { 300 } else { 301 }
+}
+
+fn k(self: P) -> integer {
+  self.x + 2
+}
+
+fn main() {
+  a = P { x: 10 };
+  n: P? = P { x: 20 };
+  z: P? = null;
+  assert("{a.m()} {m(a)} {n.m()} {m(n)} {z.m()} {m(z)}" == "11 11 201 201 200 200", "m, declared P first");
+  assert("{a.k()} {k(a)} {n.k()} {k(n)} {z.k()}" == "12 12 301 301 300", "k, declared P? first");
+}

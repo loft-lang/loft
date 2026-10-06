@@ -17,13 +17,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// The scripts that still read un-initialised store words, by name.  Each is a PRODUCER
 /// that does not initialise what it hands out; the fix is at that site, never a wider
-/// memset.  Shrink this list; do not grow it.
-const KNOWN_DEPENDENT: &[&str] = &[
-    "75-native-stub",
-    "945-stdlib-worked-examples",
-    "a-keyed-view-joins-a-nullable-element-vector",
-    "json-walker-absent-field",
-];
+/// memset (`@FR-H-Claim`, `@C137`).  Empty, and it stays empty.
+const KNOWN_DEPENDENT: &[&str] = &[];
 
 fn scripts() -> Vec<PathBuf> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/scripts");
@@ -40,15 +35,17 @@ fn scripts() -> Vec<PathBuf> {
     out
 }
 
-/// True when `script` fails under a poisoned claim — it read a word nothing initialised.
-fn depends_on_zero_claim(script: &Path) -> bool {
-    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
-        .arg("--interpret")
-        .arg(script)
-        .env("LOFT_POISON_CLAIM", "1")
-        .env("LOFT_TIMEOUT", "60")
-        .output()
-        .expect("spawn loft");
+/// Does `script` fail the way a read of un-initialised words fails, with claims `poisoned`
+/// or not?
+fn fails(script: &Path, poisoned: bool) -> bool {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_loft"));
+    cmd.arg("--interpret").arg(script).env("LOFT_TIMEOUT", "60");
+    if poisoned {
+        cmd.env("LOFT_POISON_CLAIM", "1");
+    } else {
+        cmd.env_remove("LOFT_POISON_CLAIM");
+    }
+    let out = cmd.output().expect("spawn loft");
     let text = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -58,6 +55,13 @@ fn depends_on_zero_claim(script: &Path) -> bool {
         || text.contains("BUG (#")
         || text.contains("refused to walk")
         || text.contains("out of bounds")
+}
+
+/// True when `script` fails under a poisoned claim AND NOT without it — it read a word nothing
+/// initialised.  A script that fails either way (an `@EXPECT_FAIL` cell's deliberate panic) is
+/// not the claim's.
+fn depends_on_zero_claim(script: &Path) -> bool {
+    fails(script, true) && !fails(script, false)
 }
 
 /// The names of the dependent scripts, in corpus order.  Each script is its own process, so

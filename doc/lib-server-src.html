@@ -23,54 +23,52 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>server source</h1>
 <article>
-<p><a href="lib-server.html">← server</a> · <a href="lib-server-api.html">API reference</a> · version 0.7.2</p>
-<p class="lib-legend">4 file(s), 883 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<p><a href="lib-server.html">← server</a> · <a href="lib-server-api.html">API reference</a> · version 0.7.3</p>
+<p class="lib-legend">4 file(s), 881 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
 <table class="lib-table">
 <tr><th>Item</th><th>Defined</th><th>Worked example</th><th>Call sites</th></tr>
-<tr><td><code>Server</code> <span class="search-kind">struct</span></td><td><a href="#src-server-loft-L51">51</a></td><td>—</td><td><a href="#src-server-loft-L176">176</a> <a href="#src-server-loft-L188">188</a> <a href="#src-server-loft-L189">189</a> <a href="#src-server-loft-L197">197</a> <a href="#src-server-loft-L206">206</a> <a href="#src-server-loft-L207">207</a> … (24 total)</td></tr>
-<tr><td><code>WebSocket</code> <span class="search-kind">struct</span></td><td><a href="#src-server-loft-L57">57</a></td><td>—</td><td><a href="#src-server-loft-L477">477</a> <a href="#src-server-loft-L480">480</a> <a href="#src-server-loft-L487">487</a> <a href="#src-server-loft-L494">494</a> <a href="#src-server-loft-L501">501</a> <a href="#src-server-loft-L508">508</a> … (8 total)</td></tr>
-<tr><td><code>Request</code> <span class="search-kind">struct</span></td><td><a href="#src-server-loft-L63">63</a></td><td>—</td><td><a href="#src-server-loft-L246">246</a> <a href="#src-server-loft-L248">248</a> <a href="#src-server-loft-L262">262</a> <a href="#src-server-loft-L264">264</a> <a href="#src-server-loft-L275">275</a> <a href="#src-server-loft-L283">283</a> … (25 total)</td></tr>
-<tr><td><code>listen</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L176">176</a></td><td><a href="#tests-server-loft-L12">SRV-001</a></td><td><a href="#src-server-loft-L179">179</a> <a href="#tests-c84-surface-loft-L25">25</a> <a href="#tests-server-loft-L23">23</a> <a href="#tests-server-loft-L24">24</a> <a href="#tests-server-loft-L25">25</a></td></tr>
-<tr><td><code>try_listen</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L188">188</a></td><td><a href="#tests-server-loft-L12">SRV-001</a></td><td><a href="#src-server-loft-L177">177</a> <a href="#src-server-loft-L179">179</a> <a href="#tests-c84-surface-loft-L25">25</a> <a href="#tests-server-loft-L38">38</a> <a href="#tests-server-loft-L39">39</a> <a href="#tests-server-loft-L43">43</a> … (7 total)</td></tr>
-<tr><td><code>listen_on</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L197">197</a></td><td>—</td><td><a href="#src-server-loft-L200">200</a> <a href="#tests-c84-surface-loft-L25">25</a></td></tr>
-<tr><td><code>try_listen_on</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L206">206</a></td><td>—</td><td><a href="#src-server-loft-L198">198</a> <a href="#src-server-loft-L200">200</a> <a href="#tests-c84-surface-loft-L25">25</a></td></tr>
-<tr><td><code>listen_tls</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L217">217</a></td><td>—</td><td><a href="#src-server-loft-L220">220</a> <a href="#tests-c84-surface-loft-L25">25</a></td></tr>
-<tr><td><code>try_listen_tls</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L226">226</a></td><td>—</td><td><a href="#src-server-loft-L218">218</a> <a href="#src-server-loft-L220">220</a> <a href="#tests-c84-surface-loft-L25">25</a></td></tr>
-<tr><td><code>try_listen_tls_on</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L232">232</a></td><td>—</td><td><a href="#tests-c84-surface-loft-L26">26</a></td></tr>
-<tr><td><code>bound</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L238">238</a></td><td>—</td><td><a href="#src-server-loft-L178">178</a> <a href="#src-server-loft-L199">199</a> <a href="#src-server-loft-L219">219</a> <a href="#tests-c84-surface-loft-L26">26</a> <a href="#tests-server-loft-L25">25</a> <a href="#tests-server-loft-L39">39</a> … (7 total)</td></tr>
-<tr><td><code>next_nonblocking</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L246">246</a></td><td>—</td><td><a href="#tests-c84-surface-loft-L26">26</a></td></tr>
-<tr><td><code>next</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L262">262</a></td><td>—</td><td><a href="#src-server-loft-L487">487</a> <a href="#tests-c84-surface-loft-L26">26</a></td></tr>
-<tr><td><code>respond</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L275">275</a></td><td>—</td><td><a href="#tests-c84-surface-loft-L27">27</a></td></tr>
-<tr><td><code>respond_typed</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L283">283</a></td><td>—</td><td><a href="#src-server-loft-L658">658</a> <a href="#tests-c84-surface-loft-L27">27</a></td></tr>
-<tr><td><code>respond_bytes</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L301">301</a></td><td>—</td><td><a href="#tests-c84-surface-loft-L27">27</a></td></tr>
-<tr><td><code>header</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L312">312</a></td><td><a href="#tests-worked-examples-loft-L18">SRV-002</a></td><td><a href="#src-server-loft-L357">357</a> <a href="#src-server-loft-L406">406</a> <a href="#tests-c84-surface-loft-L28">28</a> <a href="#tests-worked-examples-loft-L35">35</a> <a href="#tests-worked-examples-loft-L36">36</a> <a href="#tests-worked-examples-loft-L38">38</a> … (12 total)</td></tr>
-<tr><td><code>respond_with_headers</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L334">334</a></td><td>—</td><td><a href="#src-server-loft-L363">363</a> <a href="#src-server-loft-L368">368</a> <a href="#src-server-loft-L376">376</a> <a href="#src-server-loft-L383">383</a> <a href="#src-server-loft-L398">398</a> <a href="#src-server-loft-L408">408</a> … (9 total)</td></tr>
-<tr><td><code>cors_headers</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L342">342</a></td><td>—</td><td><a href="#src-server-loft-L394">394</a> <a href="#tests-c84-surface-loft-L28">28</a></td></tr>
-<tr><td><code>serve_range</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L356">356</a></td><td><a href="#tests-worked-examples-loft-L48">SRV-003</a></td><td><a href="#src-server-loft-L412">412</a> <a href="#tests-c84-surface-loft-L29">29</a> <a href="#tests-worked-examples-loft-L62">62</a> <a href="#tests-worked-examples-loft-L63">63</a> <a href="#tests-worked-examples-loft-L67">67</a> <a href="#tests-worked-examples-loft-L68">68</a> … (7 total)</td></tr>
-<tr><td><code>serve_data</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L391">391</a></td><td><a href="#tests-worked-examples-loft-L48">SRV-003</a></td><td><a href="#tests-c84-surface-loft-L29">29</a> <a href="#tests-worked-examples-loft-L78">78</a> <a href="#tests-worked-examples-loft-L80">80</a> <a href="#tests-worked-examples-loft-L83">83</a> <a href="#tests-worked-examples-loft-L85">85</a></td></tr>
-<tr><td><code>respond_html</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L425">425</a></td><td>—</td><td><a href="#src-server-loft-L652">652</a> <a href="#tests-c84-surface-loft-L27">27</a></td></tr>
-<tr><td><code>respond_css</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L435">435</a></td><td>—</td><td><a href="#tests-c84-surface-loft-L28">28</a></td></tr>
-<tr><td><code>respond_js</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L442">442</a></td><td>—</td><td><a href="#tests-c84-surface-loft-L28">28</a></td></tr>
-<tr><td><code>respond_loft</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L450">450</a></td><td>—</td><td><a href="#tests-c84-surface-loft-L28">28</a></td></tr>
-<tr><td><code>respond_404</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L459">459</a></td><td>—</td><td><a href="#src-server-loft-L663">663</a> <a href="#tests-c84-surface-loft-L28">28</a></td></tr>
-<tr><td><code>close</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L466">466</a></td><td>—</td><td><a href="#src-server-loft-L515">515</a> <a href="#tests-c84-surface-loft-L26">26</a> <a href="#tests-server-loft-L45">45</a> <a href="#tests-server-loft-L48">48</a></td></tr>
-<tr><td><code>ws_upgrade</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L477">477</a></td><td>—</td><td><a href="#tests-c84-surface-loft-L30">30</a></td></tr>
-<tr><td><code>next</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L487">487</a></td><td>—</td><td><a href="#src-server-loft-L262">262</a> <a href="#tests-c84-surface-loft-L26">26</a></td></tr>
-<tr><td><code>send</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L494">494</a></td><td>—</td><td><a href="#tests-c84-surface-loft-L30">30</a></td></tr>
-<tr><td><code>send_binary</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L501">501</a></td><td>—</td><td><a href="#tests-c84-surface-loft-L30">30</a></td></tr>
-<tr><td><code>last_opcode</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L508">508</a></td><td>—</td><td><a href="#tests-c84-surface-loft-L30">30</a></td></tr>
-<tr><td><code>close</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L515">515</a></td><td>—</td><td><a href="#src-server-loft-L466">466</a> <a href="#tests-c84-surface-loft-L26">26</a> <a href="#tests-server-loft-L45">45</a> <a href="#tests-server-loft-L48">48</a></td></tr>
-<tr><td><code>WsEvent</code> <span class="search-kind">struct</span></td><td><a href="#src-server-loft-L584">584</a></td><td>—</td><td><a href="#src-server-loft-L597">597</a> <a href="#src-server-loft-L619">619</a> <a href="#src-server-loft-L624">624</a> <a href="#src-server-loft-L628">628</a> <a href="#src-server-loft-L638">638</a> <a href="#tests-c84-surface-loft-L24">24</a></td></tr>
-<tr><td><code>run</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L597">597</a></td><td>—</td><td><a href="#tests-c84-surface-loft-L31">31</a></td></tr>
-<tr><td><code>poll_event</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L619">619</a></td><td>—</td><td><a href="#src-server-loft-L601">601</a> <a href="#tests-c84-surface-loft-L31">31</a></td></tr>
-<tr><td><code>respond_html</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L652">652</a></td><td>—</td><td><a href="#src-server-loft-L425">425</a> <a href="#tests-c84-surface-loft-L27">27</a></td></tr>
-<tr><td><code>respond_typed</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L658">658</a></td><td>—</td><td><a href="#src-server-loft-L283">283</a> <a href="#tests-c84-surface-loft-L27">27</a></td></tr>
-<tr><td><code>respond_404</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L663">663</a></td><td>—</td><td><a href="#src-server-loft-L459">459</a> <a href="#tests-c84-surface-loft-L28">28</a></td></tr>
-<tr><td><code>send_to</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L669">669</a></td><td>—</td><td><a href="#tests-c84-surface-loft-L31">31</a></td></tr>
-<tr><td><code>broadcast</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L676">676</a></td><td>—</td><td><a href="#tests-c84-surface-loft-L31">31</a></td></tr>
-<tr><td><code>disconnect</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L682">682</a></td><td>—</td><td><a href="#tests-c84-surface-loft-L31">31</a></td></tr>
+<tr><td><code>Server</code> <span class="search-kind">struct</span></td><td><a href="#src-server-loft-L49">49</a></td><td>—</td><td><a href="#src-server-loft-L174">174</a> <a href="#src-server-loft-L186">186</a> <a href="#src-server-loft-L187">187</a> <a href="#src-server-loft-L195">195</a> <a href="#src-server-loft-L204">204</a> <a href="#src-server-loft-L205">205</a> … (24 total)</td></tr>
+<tr><td><code>WebSocket</code> <span class="search-kind">struct</span></td><td><a href="#src-server-loft-L55">55</a></td><td>—</td><td><a href="#src-server-loft-L475">475</a> <a href="#src-server-loft-L478">478</a> <a href="#src-server-loft-L485">485</a> <a href="#src-server-loft-L492">492</a> <a href="#src-server-loft-L499">499</a> <a href="#src-server-loft-L506">506</a> … (8 total)</td></tr>
+<tr><td><code>Request</code> <span class="search-kind">struct</span></td><td><a href="#src-server-loft-L61">61</a></td><td>—</td><td><a href="#src-server-loft-L244">244</a> <a href="#src-server-loft-L246">246</a> <a href="#src-server-loft-L260">260</a> <a href="#src-server-loft-L262">262</a> <a href="#src-server-loft-L273">273</a> <a href="#src-server-loft-L281">281</a> … (25 total)</td></tr>
+<tr><td><code>listen</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L174">174</a></td><td><a href="#tests-server-loft-L12">SRV-001</a></td><td><a href="#src-server-loft-L177">177</a> <a href="#tests-c84-surface-loft-L25">25</a> <a href="#tests-server-loft-L23">23</a> <a href="#tests-server-loft-L24">24</a> <a href="#tests-server-loft-L25">25</a></td></tr>
+<tr><td><code>try_listen</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L186">186</a></td><td><a href="#tests-server-loft-L12">SRV-001</a></td><td><a href="#src-server-loft-L175">175</a> <a href="#src-server-loft-L177">177</a> <a href="#tests-c84-surface-loft-L25">25</a> <a href="#tests-server-loft-L38">38</a> <a href="#tests-server-loft-L39">39</a> <a href="#tests-server-loft-L43">43</a> … (7 total)</td></tr>
+<tr><td><code>listen_on</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L195">195</a></td><td>—</td><td><a href="#src-server-loft-L198">198</a> <a href="#tests-c84-surface-loft-L25">25</a></td></tr>
+<tr><td><code>try_listen_on</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L204">204</a></td><td>—</td><td><a href="#src-server-loft-L196">196</a> <a href="#src-server-loft-L198">198</a> <a href="#tests-c84-surface-loft-L25">25</a></td></tr>
+<tr><td><code>listen_tls</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L215">215</a></td><td>—</td><td><a href="#src-server-loft-L218">218</a> <a href="#tests-c84-surface-loft-L25">25</a></td></tr>
+<tr><td><code>try_listen_tls</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L224">224</a></td><td>—</td><td><a href="#src-server-loft-L216">216</a> <a href="#src-server-loft-L218">218</a> <a href="#tests-c84-surface-loft-L25">25</a></td></tr>
+<tr><td><code>try_listen_tls_on</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L230">230</a></td><td>—</td><td><a href="#tests-c84-surface-loft-L26">26</a></td></tr>
+<tr><td><code>bound</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L236">236</a></td><td>—</td><td><a href="#src-server-loft-L176">176</a> <a href="#src-server-loft-L197">197</a> <a href="#src-server-loft-L217">217</a> <a href="#tests-c84-surface-loft-L26">26</a> <a href="#tests-server-loft-L25">25</a> <a href="#tests-server-loft-L39">39</a> … (7 total)</td></tr>
+<tr><td><code>next_nonblocking</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L244">244</a></td><td>—</td><td><a href="#tests-c84-surface-loft-L26">26</a></td></tr>
+<tr><td><code>respond</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L273">273</a></td><td>—</td><td><a href="#tests-c84-surface-loft-L27">27</a></td></tr>
+<tr><td><code>respond_typed</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L281">281</a></td><td>—</td><td><a href="#src-server-loft-L656">656</a> <a href="#tests-c84-surface-loft-L27">27</a></td></tr>
+<tr><td><code>respond_bytes</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L299">299</a></td><td>—</td><td><a href="#tests-c84-surface-loft-L27">27</a></td></tr>
+<tr><td><code>header</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L310">310</a></td><td><a href="#tests-worked-examples-loft-L18">SRV-002</a></td><td><a href="#src-server-loft-L355">355</a> <a href="#src-server-loft-L404">404</a> <a href="#tests-c84-surface-loft-L28">28</a> <a href="#tests-worked-examples-loft-L35">35</a> <a href="#tests-worked-examples-loft-L36">36</a> <a href="#tests-worked-examples-loft-L38">38</a> … (12 total)</td></tr>
+<tr><td><code>respond_with_headers</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L332">332</a></td><td>—</td><td><a href="#src-server-loft-L361">361</a> <a href="#src-server-loft-L366">366</a> <a href="#src-server-loft-L374">374</a> <a href="#src-server-loft-L381">381</a> <a href="#src-server-loft-L396">396</a> <a href="#src-server-loft-L406">406</a> … (9 total)</td></tr>
+<tr><td><code>cors_headers</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L340">340</a></td><td>—</td><td><a href="#src-server-loft-L392">392</a> <a href="#tests-c84-surface-loft-L28">28</a></td></tr>
+<tr><td><code>serve_range</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L354">354</a></td><td><a href="#tests-worked-examples-loft-L48">SRV-003</a></td><td><a href="#src-server-loft-L410">410</a> <a href="#tests-c84-surface-loft-L29">29</a> <a href="#tests-worked-examples-loft-L62">62</a> <a href="#tests-worked-examples-loft-L63">63</a> <a href="#tests-worked-examples-loft-L67">67</a> <a href="#tests-worked-examples-loft-L68">68</a> … (7 total)</td></tr>
+<tr><td><code>serve_data</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L389">389</a></td><td><a href="#tests-worked-examples-loft-L48">SRV-003</a></td><td><a href="#tests-c84-surface-loft-L29">29</a> <a href="#tests-worked-examples-loft-L78">78</a> <a href="#tests-worked-examples-loft-L80">80</a> <a href="#tests-worked-examples-loft-L83">83</a> <a href="#tests-worked-examples-loft-L85">85</a></td></tr>
+<tr><td><code>respond_html</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L423">423</a></td><td>—</td><td><a href="#src-server-loft-L650">650</a> <a href="#tests-c84-surface-loft-L27">27</a></td></tr>
+<tr><td><code>respond_css</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L433">433</a></td><td>—</td><td><a href="#tests-c84-surface-loft-L28">28</a></td></tr>
+<tr><td><code>respond_js</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L440">440</a></td><td>—</td><td><a href="#tests-c84-surface-loft-L28">28</a></td></tr>
+<tr><td><code>respond_loft</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L448">448</a></td><td>—</td><td><a href="#tests-c84-surface-loft-L28">28</a></td></tr>
+<tr><td><code>respond_404</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L457">457</a></td><td>—</td><td><a href="#src-server-loft-L661">661</a> <a href="#tests-c84-surface-loft-L28">28</a></td></tr>
+<tr><td><code>close</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L464">464</a></td><td>—</td><td><a href="#src-server-loft-L513">513</a> <a href="#tests-c84-surface-loft-L26">26</a> <a href="#tests-server-loft-L45">45</a> <a href="#tests-server-loft-L48">48</a></td></tr>
+<tr><td><code>ws_upgrade</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L475">475</a></td><td>—</td><td><a href="#tests-c84-surface-loft-L30">30</a></td></tr>
+<tr><td><code>send</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L492">492</a></td><td>—</td><td><a href="#tests-c84-surface-loft-L30">30</a></td></tr>
+<tr><td><code>send_binary</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L499">499</a></td><td>—</td><td><a href="#tests-c84-surface-loft-L30">30</a></td></tr>
+<tr><td><code>last_opcode</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L506">506</a></td><td>—</td><td><a href="#tests-c84-surface-loft-L30">30</a></td></tr>
+<tr><td><code>close</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L513">513</a></td><td>—</td><td><a href="#src-server-loft-L464">464</a> <a href="#tests-c84-surface-loft-L26">26</a> <a href="#tests-server-loft-L45">45</a> <a href="#tests-server-loft-L48">48</a></td></tr>
+<tr><td><code>WsEvent</code> <span class="search-kind">struct</span></td><td><a href="#src-server-loft-L582">582</a></td><td>—</td><td><a href="#src-server-loft-L595">595</a> <a href="#src-server-loft-L617">617</a> <a href="#src-server-loft-L622">622</a> <a href="#src-server-loft-L626">626</a> <a href="#src-server-loft-L636">636</a> <a href="#tests-c84-surface-loft-L24">24</a></td></tr>
+<tr><td><code>run</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L595">595</a></td><td>—</td><td><a href="#tests-c84-surface-loft-L31">31</a></td></tr>
+<tr><td><code>poll_event</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L617">617</a></td><td>—</td><td><a href="#src-server-loft-L599">599</a> <a href="#tests-c84-surface-loft-L31">31</a></td></tr>
+<tr><td><code>respond_html</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L650">650</a></td><td>—</td><td><a href="#src-server-loft-L423">423</a> <a href="#tests-c84-surface-loft-L27">27</a></td></tr>
+<tr><td><code>respond_typed</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L656">656</a></td><td>—</td><td><a href="#src-server-loft-L281">281</a> <a href="#tests-c84-surface-loft-L27">27</a></td></tr>
+<tr><td><code>respond_404</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L661">661</a></td><td>—</td><td><a href="#src-server-loft-L457">457</a> <a href="#tests-c84-surface-loft-L28">28</a></td></tr>
+<tr><td><code>send_to</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L667">667</a></td><td>—</td><td><a href="#tests-c84-surface-loft-L31">31</a></td></tr>
+<tr><td><code>broadcast</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L674">674</a></td><td>—</td><td><a href="#tests-c84-surface-loft-L31">31</a></td></tr>
+<tr><td><code>disconnect</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L680">680</a></td><td>—</td><td><a href="#tests-c84-surface-loft-L31">31</a></td></tr>
 </table>
 <h2 id="src-server-loft">src/server.loft</h2>
 <pre class="src"><code><span id="src-server-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -114,650 +112,648 @@
 <span id="src-server-loft-L39"><span class="cm">// `"body {{ color: red }}"` is the string above.  This bites `respond_css` and</span></span>
 <span id="src-server-loft-L40"><span class="cm">// `respond_js` hardest, because those bodies are mostly braces.</span></span>
 <span id="src-server-loft-L41"><span class="cm">//</span></span>
-<span id="src-server-loft-L42"><span class="cm">// ⚠ `for req in srv` DOES NOT COMPILE, though this header used to advertise it.</span></span>
-<span id="src-server-loft-L43"><span class="cm">// The loop wants `fn next(self: T) -&gt; Item?` and `next` here is declared</span></span>
-<span id="src-server-loft-L44"><span class="cm">// `-&gt; Request`, which aborts the compiler rather than refusing (loft#1310).  Use</span></span>
-<span id="src-server-loft-L45"><span class="cm">// the `while` above until that is fixed.</span></span>
+<span id="src-server-loft-L42"><span class="cm">// `for req in srv { … }` is the same loop: `next` is an `operator next`, the one</span></span>
+<span id="src-server-loft-L43"><span class="cm">// `for` calls, and the walk ends when it answers null.</span></span>
+<span id="src-server-loft-L44"></span>
+<span id="src-server-loft-L45"><span class="cm">// --- Types (must come before all functions) ---</span></span>
 <span id="src-server-loft-L46"></span>
-<span id="src-server-loft-L47"><span class="cm">// --- Types (must come before all functions) ---</span></span>
-<span id="src-server-loft-L48"></span>
-<span id="src-server-loft-L49"><span class="cm">// A listening server, as a native socket handle.  `listen` opens one (`listen_on`,</span></span>
-<span id="src-server-loft-L50"><span class="cm">// `listen_tls` and the `try_` forms too), and `next` waits for its next request.</span></span>
-<span id="src-server-loft-L51"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Server</span> {</span>
-<span id="src-server-loft-L52">  handle: <span class="ty"><a href="stdlib-types.html">integer</a></span></span>
-<span id="src-server-loft-L53">}</span>
-<span id="src-server-loft-L54"></span>
-<span id="src-server-loft-L55"><span class="cm">// An upgraded WebSocket connection, as a native handle.  `ws_upgrade` makes one from the</span></span>
-<span id="src-server-loft-L56"><span class="cm">// current request; `next` reads a message and `send` writes one.</span></span>
-<span id="src-server-loft-L57"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">WebSocket</span> {</span>
-<span id="src-server-loft-L58">  ws_id: <span class="ty"><a href="stdlib-types.html">integer</a></span></span>
-<span id="src-server-loft-L59">}</span>
-<span id="src-server-loft-L60"></span>
-<span id="src-server-loft-L61"><span class="cm">// One HTTP request: its method, path and body, and its headers as `Key: Value` lines.</span></span>
-<span id="src-server-loft-L62"><span class="cm">// `next` on a `Server` answers one, and `respond` or one of its variants answers it.</span></span>
-<span id="src-server-loft-L63"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Request</span> {</span>
-<span id="src-server-loft-L64">  method: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
-<span id="src-server-loft-L65">  path: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
-<span id="src-server-loft-L66">  body: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
-<span id="src-server-loft-L67">  headers: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt;</span>
-<span id="src-server-loft-L68">}</span>
+<span id="src-server-loft-L47"><span class="cm">// A listening server, as a native socket handle.  `listen` opens one (`listen_on`,</span></span>
+<span id="src-server-loft-L48"><span class="cm">// `listen_tls` and the `try_` forms too), and `next` waits for its next request.</span></span>
+<span id="src-server-loft-L49"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Server</span> {</span>
+<span id="src-server-loft-L50">  handle: <span class="ty"><a href="stdlib-types.html">integer</a></span></span>
+<span id="src-server-loft-L51">}</span>
+<span id="src-server-loft-L52"></span>
+<span id="src-server-loft-L53"><span class="cm">// An upgraded WebSocket connection, as a native handle.  `ws_upgrade` makes one from the</span></span>
+<span id="src-server-loft-L54"><span class="cm">// current request; `next` reads a message and `send` writes one.</span></span>
+<span id="src-server-loft-L55"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">WebSocket</span> {</span>
+<span id="src-server-loft-L56">  ws_id: <span class="ty"><a href="stdlib-types.html">integer</a></span></span>
+<span id="src-server-loft-L57">}</span>
+<span id="src-server-loft-L58"></span>
+<span id="src-server-loft-L59"><span class="cm">// One HTTP request: its method, path and body, and its headers as `Key: Value` lines.</span></span>
+<span id="src-server-loft-L60"><span class="cm">// `next` on a `Server` answers one, and `respond` or one of its variants answers it.</span></span>
+<span id="src-server-loft-L61"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Request</span> {</span>
+<span id="src-server-loft-L62">  method: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
+<span id="src-server-loft-L63">  path: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
+<span id="src-server-loft-L64">  body: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
+<span id="src-server-loft-L65">  headers: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt;</span>
+<span id="src-server-loft-L66">}</span>
+<span id="src-server-loft-L67"></span>
+<span id="src-server-loft-L68"><span class="cm">// --- Internal natives ---</span></span>
 <span id="src-server-loft-L69"></span>
-<span id="src-server-loft-L70"><span class="cm">// --- Internal natives ---</span></span>
-<span id="src-server-loft-L71"></span>
-<span id="src-server-loft-L72"><span class="kw">fn</span> <span class="fn-call">tcp_listen</span>(port: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
-<span id="src-server-loft-L73">#native</span>
-<span id="src-server-loft-L74"></span>
-<span id="src-server-loft-L75"><span class="kw">fn</span> <span class="fn-call">tcp_listen_on</span>(addr: <span class="ty"><a href="stdlib-types.html">text</a></span>, port: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
-<span id="src-server-loft-L76">#native</span>
-<span id="src-server-loft-L77"></span>
-<span id="src-server-loft-L78"><span class="kw">fn</span> <span class="fn-call">tcp_listen_tls</span>(port: <span class="ty"><a href="stdlib-types.html">integer</a></span>, cert: <span class="ty"><a href="stdlib-types.html">text</a></span>, key: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
-<span id="src-server-loft-L79">#native</span>
-<span id="src-server-loft-L80"></span>
-<span id="src-server-loft-L81"><span class="kw">fn</span> <span class="fn-call">tcp_listen_tls_on</span>(addr: <span class="ty"><a href="stdlib-types.html">text</a></span>, port: <span class="ty"><a href="stdlib-types.html">integer</a></span>, cert: <span class="ty"><a href="stdlib-types.html">text</a></span>, key: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
-<span id="src-server-loft-L82">#native</span>
-<span id="src-server-loft-L83"></span>
-<span id="src-server-loft-L84"><span class="kw">fn</span> <span class="fn-call">tcp_accept</span>(handle: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span>;</span>
-<span id="src-server-loft-L85">#native</span>
-<span id="src-server-loft-L86"></span>
-<span id="src-server-loft-L87"><span class="kw">fn</span> <span class="fn-call">tcp_accept_nonblocking</span>(handle: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span>;</span>
-<span id="src-server-loft-L88">#native</span>
-<span id="src-server-loft-L89"></span>
-<span id="src-server-loft-L90"><span class="kw">fn</span> <span class="fn-call">tcp_method</span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
-<span id="src-server-loft-L91">#native</span>
-<span id="src-server-loft-L92"></span>
-<span id="src-server-loft-L93"><span class="kw">fn</span> <span class="fn-call">tcp_path</span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
-<span id="src-server-loft-L94">#native</span>
-<span id="src-server-loft-L95"></span>
-<span id="src-server-loft-L96"><span class="kw">fn</span> <span class="fn-call">tcp_body</span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
-<span id="src-server-loft-L97">#native</span>
-<span id="src-server-loft-L98"></span>
-<span id="src-server-loft-L99"><span class="cm">// Request headers of the current request as newline "Key: Value" text.</span></span>
-<span id="src-server-loft-L100"><span class="kw">fn</span> <span class="fn-call">tcp_headers</span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
-<span id="src-server-loft-L101">#native</span>
-<span id="src-server-loft-L102"></span>
-<span id="src-server-loft-L103"><span class="kw">fn</span> <span class="fn-call">tcp_respond</span>(status: <span class="ty"><a href="stdlib-types.html">integer</a></span>, body: <span class="ty"><a href="stdlib-types.html">text</a></span>);</span>
-<span id="src-server-loft-L104">#native</span>
-<span id="src-server-loft-L105"></span>
-<span id="src-server-loft-L106"><span class="cm">// Same as `n_tcp_respond` but the caller picks the Content-Type</span></span>
-<span id="src-server-loft-L107"><span class="cm">// header (e.g. `"text/html; charset=utf-8"`).  Empty string falls</span></span>
-<span id="src-server-loft-L108"><span class="cm">// back to `"text/plain; charset=utf-8"`.  TTT v3 needs this to</span></span>
-<span id="src-server-loft-L109"><span class="cm">// serve the index HTML, the loft client source, and the WASM</span></span>
-<span id="src-server-loft-L110"><span class="cm">// payload from the same loft program that hosts the WebSocket</span></span>
-<span id="src-server-loft-L111"><span class="cm">// game protocol.</span></span>
-<span id="src-server-loft-L112"><span class="kw">fn</span> <span class="fn-call">tcp_respond_typed</span>(status: <span class="ty"><a href="stdlib-types.html">integer</a></span>, body: <span class="ty"><a href="stdlib-types.html">text</a></span>, content_type: <span class="ty"><a href="stdlib-types.html">text</a></span>);</span>
-<span id="src-server-loft-L113">#native</span>
-<span id="src-server-loft-L114"></span>
-<span id="src-server-loft-L115"><span class="cm">// Respond with a RAW BYTE body — the one response that does not go through `text`.</span></span>
-<span id="src-server-loft-L116"><span class="kw">fn</span> <span class="fn-call">tcp_respond_bytes</span>(status: <span class="ty"><a href="stdlib-types.html">integer</a></span>, body: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt;, content_type: <span class="ty"><a href="stdlib-types.html">text</a></span>);</span>
-<span id="src-server-loft-L117">#native</span>
-<span id="src-server-loft-L118"></span>
-<span id="src-server-loft-L119"><span class="cm">// Respond with caller-controlled headers (a vector serialized to newline text).</span></span>
-<span id="src-server-loft-L120"><span class="kw">fn</span> <span class="fn-call">tcp_respond_full</span>(status: <span class="ty"><a href="stdlib-types.html">integer</a></span>, body: <span class="ty"><a href="stdlib-types.html">text</a></span>, headers: <span class="ty"><a href="stdlib-types.html">text</a></span>);</span>
-<span id="src-server-loft-L121">#native</span>
-<span id="src-server-loft-L122"></span>
-<span id="src-server-loft-L123"><span class="cm">// Binary-safe byte slice [off, off+len) of body — for cutting range slices.</span></span>
-<span id="src-server-loft-L124"><span class="kw">fn</span> <span class="fn-call">tcp_slice</span>(body: <span class="ty"><a href="stdlib-types.html">text</a></span>, off: <span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="bi"><a href="stdlib-text.html">len</a></span>: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
-<span id="src-server-loft-L125">#native</span>
-<span id="src-server-loft-L126"></span>
-<span id="src-server-loft-L127"><span class="kw">fn</span> <span class="fn-call">tcp_close</span>(handle: <span class="ty"><a href="stdlib-types.html">integer</a></span>);</span>
-<span id="src-server-loft-L128">#native</span>
-<span id="src-server-loft-L129"></span>
-<span id="src-server-loft-L130"><span class="kw">fn</span> <span class="fn-call">ws_upgrade_native</span>() -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
-<span id="src-server-loft-L131">#native <span class="st">"n_ws_upgrade"</span></span>
-<span id="src-server-loft-L132"></span>
-<span id="src-server-loft-L133"><span class="kw">fn</span> <span class="fn-call">ws_recv_native</span>(handle: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span>;</span>
-<span id="src-server-loft-L134">#native <span class="st">"n_ws_recv"</span></span>
-<span id="src-server-loft-L135"></span>
-<span id="src-server-loft-L136"><span class="kw">fn</span> <span class="fn-call">ws_message_native</span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
-<span id="src-server-loft-L137">#native <span class="st">"n_ws_message"</span></span>
-<span id="src-server-loft-L138"></span>
-<span id="src-server-loft-L139"><span class="cm">// Opcode of the last frame surfaced by `ws_recv_native`.</span></span>
-<span id="src-server-loft-L140"><span class="cm">// 1 = text, 2 = binary, 8 = close, 9 = ping, 10 = pong.</span></span>
-<span id="src-server-loft-L141"><span class="cm">// Loft programs that handle binary frames check this after a</span></span>
-<span id="src-server-loft-L142"><span class="cm">// successful recv to decide whether the message bytes are text</span></span>
-<span id="src-server-loft-L143"><span class="cm">// (utf-8) or a binary blob.</span></span>
-<span id="src-server-loft-L144"><span class="kw">fn</span> <span class="fn-call">ws_opcode_native</span>() -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
-<span id="src-server-loft-L145">#native <span class="st">"n_ws_opcode"</span></span>
-<span id="src-server-loft-L146"></span>
-<span id="src-server-loft-L147"><span class="kw">fn</span> <span class="fn-call">ws_send_native</span>(handle: <span class="ty"><a href="stdlib-types.html">integer</a></span>, msg: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span>;</span>
-<span id="src-server-loft-L148">#native <span class="st">"n_ws_send"</span></span>
-<span id="src-server-loft-L149"></span>
-<span id="src-server-loft-L150"><span class="cm">// Send the byte buffer as a binary WebSocket frame (opcode 2)</span></span>
-<span id="src-server-loft-L151"><span class="cm">// instead of a text frame (opcode 1).  Same payload encoding —</span></span>
-<span id="src-server-loft-L152"><span class="cm">// loft `text` is a byte buffer; this just changes the frame</span></span>
-<span id="src-server-loft-L153"><span class="cm">// type the peer sees.  Used by TTT v5 + plan-36 for</span></span>
-<span id="src-server-loft-L154"><span class="cm">// world_snapshot / world_delta blobs.</span></span>
-<span id="src-server-loft-L155"><span class="kw">fn</span> <span class="fn-call">ws_send_binary_native</span>(handle: <span class="ty"><a href="stdlib-types.html">integer</a></span>, msg: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span>;</span>
-<span id="src-server-loft-L156">#native <span class="st">"n_ws_send_binary"</span></span>
-<span id="src-server-loft-L157"></span>
-<span id="src-server-loft-L158"><span class="kw">fn</span> <span class="fn-call">ws_close_native</span>(handle: <span class="ty"><a href="stdlib-types.html">integer</a></span>);</span>
-<span id="src-server-loft-L159">#native <span class="st">"n_ws_close"</span></span>
+<span id="src-server-loft-L70"><span class="kw">fn</span> <span class="fn-call">tcp_listen</span>(port: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-server-loft-L71">#native</span>
+<span id="src-server-loft-L72"></span>
+<span id="src-server-loft-L73"><span class="kw">fn</span> <span class="fn-call">tcp_listen_on</span>(addr: <span class="ty"><a href="stdlib-types.html">text</a></span>, port: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-server-loft-L74">#native</span>
+<span id="src-server-loft-L75"></span>
+<span id="src-server-loft-L76"><span class="kw">fn</span> <span class="fn-call">tcp_listen_tls</span>(port: <span class="ty"><a href="stdlib-types.html">integer</a></span>, cert: <span class="ty"><a href="stdlib-types.html">text</a></span>, key: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-server-loft-L77">#native</span>
+<span id="src-server-loft-L78"></span>
+<span id="src-server-loft-L79"><span class="kw">fn</span> <span class="fn-call">tcp_listen_tls_on</span>(addr: <span class="ty"><a href="stdlib-types.html">text</a></span>, port: <span class="ty"><a href="stdlib-types.html">integer</a></span>, cert: <span class="ty"><a href="stdlib-types.html">text</a></span>, key: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-server-loft-L80">#native</span>
+<span id="src-server-loft-L81"></span>
+<span id="src-server-loft-L82"><span class="kw">fn</span> <span class="fn-call">tcp_accept</span>(handle: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span>;</span>
+<span id="src-server-loft-L83">#native</span>
+<span id="src-server-loft-L84"></span>
+<span id="src-server-loft-L85"><span class="kw">fn</span> <span class="fn-call">tcp_accept_nonblocking</span>(handle: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span>;</span>
+<span id="src-server-loft-L86">#native</span>
+<span id="src-server-loft-L87"></span>
+<span id="src-server-loft-L88"><span class="kw">fn</span> <span class="fn-call">tcp_method</span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
+<span id="src-server-loft-L89">#native</span>
+<span id="src-server-loft-L90"></span>
+<span id="src-server-loft-L91"><span class="kw">fn</span> <span class="fn-call">tcp_path</span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
+<span id="src-server-loft-L92">#native</span>
+<span id="src-server-loft-L93"></span>
+<span id="src-server-loft-L94"><span class="kw">fn</span> <span class="fn-call">tcp_body</span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
+<span id="src-server-loft-L95">#native</span>
+<span id="src-server-loft-L96"></span>
+<span id="src-server-loft-L97"><span class="cm">// Request headers of the current request as newline "Key: Value" text.</span></span>
+<span id="src-server-loft-L98"><span class="kw">fn</span> <span class="fn-call">tcp_headers</span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
+<span id="src-server-loft-L99">#native</span>
+<span id="src-server-loft-L100"></span>
+<span id="src-server-loft-L101"><span class="kw">fn</span> <span class="fn-call">tcp_respond</span>(status: <span class="ty"><a href="stdlib-types.html">integer</a></span>, body: <span class="ty"><a href="stdlib-types.html">text</a></span>);</span>
+<span id="src-server-loft-L102">#native</span>
+<span id="src-server-loft-L103"></span>
+<span id="src-server-loft-L104"><span class="cm">// Same as `n_tcp_respond` but the caller picks the Content-Type</span></span>
+<span id="src-server-loft-L105"><span class="cm">// header (e.g. `"text/html; charset=utf-8"`).  Empty string falls</span></span>
+<span id="src-server-loft-L106"><span class="cm">// back to `"text/plain; charset=utf-8"`.  TTT v3 needs this to</span></span>
+<span id="src-server-loft-L107"><span class="cm">// serve the index HTML, the loft client source, and the WASM</span></span>
+<span id="src-server-loft-L108"><span class="cm">// payload from the same loft program that hosts the WebSocket</span></span>
+<span id="src-server-loft-L109"><span class="cm">// game protocol.</span></span>
+<span id="src-server-loft-L110"><span class="kw">fn</span> <span class="fn-call">tcp_respond_typed</span>(status: <span class="ty"><a href="stdlib-types.html">integer</a></span>, body: <span class="ty"><a href="stdlib-types.html">text</a></span>, content_type: <span class="ty"><a href="stdlib-types.html">text</a></span>);</span>
+<span id="src-server-loft-L111">#native</span>
+<span id="src-server-loft-L112"></span>
+<span id="src-server-loft-L113"><span class="cm">// Respond with a RAW BYTE body — the one response that does not go through `text`.</span></span>
+<span id="src-server-loft-L114"><span class="kw">fn</span> <span class="fn-call">tcp_respond_bytes</span>(status: <span class="ty"><a href="stdlib-types.html">integer</a></span>, body: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt;, content_type: <span class="ty"><a href="stdlib-types.html">text</a></span>);</span>
+<span id="src-server-loft-L115">#native</span>
+<span id="src-server-loft-L116"></span>
+<span id="src-server-loft-L117"><span class="cm">// Respond with caller-controlled headers (a vector serialized to newline text).</span></span>
+<span id="src-server-loft-L118"><span class="kw">fn</span> <span class="fn-call">tcp_respond_full</span>(status: <span class="ty"><a href="stdlib-types.html">integer</a></span>, body: <span class="ty"><a href="stdlib-types.html">text</a></span>, headers: <span class="ty"><a href="stdlib-types.html">text</a></span>);</span>
+<span id="src-server-loft-L119">#native</span>
+<span id="src-server-loft-L120"></span>
+<span id="src-server-loft-L121"><span class="cm">// Binary-safe byte slice [off, off+len) of body — for cutting range slices.</span></span>
+<span id="src-server-loft-L122"><span class="kw">fn</span> <span class="fn-call">tcp_slice</span>(body: <span class="ty"><a href="stdlib-types.html">text</a></span>, off: <span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="bi"><a href="stdlib-text.html">len</a></span>: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
+<span id="src-server-loft-L123">#native</span>
+<span id="src-server-loft-L124"></span>
+<span id="src-server-loft-L125"><span class="kw">fn</span> <span class="fn-call">tcp_close</span>(handle: <span class="ty"><a href="stdlib-types.html">integer</a></span>);</span>
+<span id="src-server-loft-L126">#native</span>
+<span id="src-server-loft-L127"></span>
+<span id="src-server-loft-L128"><span class="kw">fn</span> <span class="fn-call">ws_upgrade_native</span>() -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-server-loft-L129">#native <span class="st">"n_ws_upgrade"</span></span>
+<span id="src-server-loft-L130"></span>
+<span id="src-server-loft-L131"><span class="kw">fn</span> <span class="fn-call">ws_recv_native</span>(handle: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span>;</span>
+<span id="src-server-loft-L132">#native <span class="st">"n_ws_recv"</span></span>
+<span id="src-server-loft-L133"></span>
+<span id="src-server-loft-L134"><span class="kw">fn</span> <span class="fn-call">ws_message_native</span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
+<span id="src-server-loft-L135">#native <span class="st">"n_ws_message"</span></span>
+<span id="src-server-loft-L136"></span>
+<span id="src-server-loft-L137"><span class="cm">// Opcode of the last frame surfaced by `ws_recv_native`.</span></span>
+<span id="src-server-loft-L138"><span class="cm">// 1 = text, 2 = binary, 8 = close, 9 = ping, 10 = pong.</span></span>
+<span id="src-server-loft-L139"><span class="cm">// Loft programs that handle binary frames check this after a</span></span>
+<span id="src-server-loft-L140"><span class="cm">// successful recv to decide whether the message bytes are text</span></span>
+<span id="src-server-loft-L141"><span class="cm">// (utf-8) or a binary blob.</span></span>
+<span id="src-server-loft-L142"><span class="kw">fn</span> <span class="fn-call">ws_opcode_native</span>() -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-server-loft-L143">#native <span class="st">"n_ws_opcode"</span></span>
+<span id="src-server-loft-L144"></span>
+<span id="src-server-loft-L145"><span class="kw">fn</span> <span class="fn-call">ws_send_native</span>(handle: <span class="ty"><a href="stdlib-types.html">integer</a></span>, msg: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span>;</span>
+<span id="src-server-loft-L146">#native <span class="st">"n_ws_send"</span></span>
+<span id="src-server-loft-L147"></span>
+<span id="src-server-loft-L148"><span class="cm">// Send the byte buffer as a binary WebSocket frame (opcode 2)</span></span>
+<span id="src-server-loft-L149"><span class="cm">// instead of a text frame (opcode 1).  Same payload encoding —</span></span>
+<span id="src-server-loft-L150"><span class="cm">// loft `text` is a byte buffer; this just changes the frame</span></span>
+<span id="src-server-loft-L151"><span class="cm">// type the peer sees.  Used by TTT v5 + plan-36 for</span></span>
+<span id="src-server-loft-L152"><span class="cm">// world_snapshot / world_delta blobs.</span></span>
+<span id="src-server-loft-L153"><span class="kw">fn</span> <span class="fn-call">ws_send_binary_native</span>(handle: <span class="ty"><a href="stdlib-types.html">integer</a></span>, msg: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span>;</span>
+<span id="src-server-loft-L154">#native <span class="st">"n_ws_send_binary"</span></span>
+<span id="src-server-loft-L155"></span>
+<span id="src-server-loft-L156"><span class="kw">fn</span> <span class="fn-call">ws_close_native</span>(handle: <span class="ty"><a href="stdlib-types.html">integer</a></span>);</span>
+<span id="src-server-loft-L157">#native <span class="st">"n_ws_close"</span></span>
+<span id="src-server-loft-L158"></span>
+<span id="src-server-loft-L159"><span class="cm">// --- HTTP Server API ---</span></span>
 <span id="src-server-loft-L160"></span>
-<span id="src-server-loft-L161"><span class="cm">// --- HTTP Server API ---</span></span>
-<span id="src-server-loft-L162"></span>
-<span id="src-server-loft-L163"><span class="cm">// Bind a TCP listener on `port` and return the server.</span></span>
-<span id="src-server-loft-L164"><span class="cm">//</span></span>
-<span id="src-server-loft-L165"><span class="cm">// Failing to take the port is FATAL here, deliberately.  The native listener answers</span></span>
-<span id="src-server-loft-L166"><span class="cm">// -1 when the bind fails, and a `Server` built on -1 is indistinguishable from a</span></span>
-<span id="src-server-loft-L167"><span class="cm">// healthy one at every call site: `run` spins forever on an empty event pump, so the</span></span>
-<span id="src-server-loft-L168"><span class="cm">// process reports itself up and serves nobody.  Worse, that state is invisible from</span></span>
-<span id="src-server-loft-L169"><span class="cm">// OUTSIDE the process too — a readiness probe that connects to the port reaches</span></span>
-<span id="src-server-loft-L170"><span class="cm">// whoever DID win the bind and reports success — so the failure surfaces somewhere</span></span>
-<span id="src-server-loft-L171"><span class="cm">// else entirely, as a client that hangs or talks to a stranger's server.</span></span>
-<span id="src-server-loft-L172"><span class="cm">//</span></span>
-<span id="src-server-loft-L173"><span class="cm">// Use `try_listen` when losing the port is an outcome you mean to handle: retrying on</span></span>
-<span id="src-server-loft-L174"><span class="cm">// another port, or scanning a range.</span></span>
-<span id="src-server-loft-L175"><span class="cm">// Example: @SRV-001 — halting door vs recoverable door, and why `bound()` is not optional.</span></span>
-<span id="src-server-loft-L176"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">listen</span>(port: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Server</span> {</span>
-<span id="src-server-loft-L177">  srv = <span class="fn-call">try_listen</span>(port);</span>
-<span id="src-server-loft-L178">  <span class="kw">if</span> !srv.<span class="fn-call">bound</span>() {</span>
-<span id="src-server-loft-L179">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">panic</a></span>(<span class="st">"server::listen: cannot bind port {port} (already in use, or not permitted) — use try_listen() to handle this"</span>);</span>
-<span id="src-server-loft-L180">  }</span>
-<span id="src-server-loft-L181">  srv</span>
-<span id="src-server-loft-L182">}</span>
-<span id="src-server-loft-L183"></span>
-<span id="src-server-loft-L184"><span class="cm">// Like `listen`, but hands back an UNBOUND server instead of halting when the port</span></span>
-<span id="src-server-loft-L185"><span class="cm">// cannot be taken.  Check `bound()` before using it: every other method on an unbound</span></span>
-<span id="src-server-loft-L186"><span class="cm">// server does nothing, quietly.</span></span>
-<span id="src-server-loft-L187"><span class="cm">// Example: @SRV-001 — the retry shape: try_listen, then bound(), then use it.</span></span>
-<span id="src-server-loft-L188"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">try_listen</span>(port: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Server</span> {</span>
-<span id="src-server-loft-L189">  <span class="en">Server</span> { handle: <span class="fn-call">tcp_listen</span>(port) }</span>
-<span id="src-server-loft-L190">}</span>
-<span id="src-server-loft-L191"></span>
-<span id="src-server-loft-L192"><span class="cm">// Bind on a chosen address rather than the wildcard `0.0.0.0` that plain `listen` uses.</span></span>
-<span id="src-server-loft-L193"><span class="cm">// `"127.0.0.1"` restricts the server to loopback — unreachable from the network — which is</span></span>
-<span id="src-server-loft-L194"><span class="cm">// the safe default a machine sitting behind a reverse proxy or an SSH tunnel wants, and the</span></span>
-<span id="src-server-loft-L195"><span class="cm">// one `listen` deliberately does NOT give (it binds every interface). An empty `addr` means</span></span>
-<span id="src-server-loft-L196"><span class="cm">// `0.0.0.0`. Halts if the bind fails; `try_listen_on` hands back an unbound server instead.</span></span>
-<span id="src-server-loft-L197"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">listen_on</span>(addr: <span class="ty"><a href="stdlib-types.html">text</a></span>, port: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Server</span> {</span>
-<span id="src-server-loft-L198">  srv = <span class="fn-call">try_listen_on</span>(addr, port);</span>
-<span id="src-server-loft-L199">  <span class="kw">if</span> !srv.<span class="fn-call">bound</span>() {</span>
-<span id="src-server-loft-L200">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">panic</a></span>(<span class="st">"server::listen_on: cannot bind {addr}:{port} (in use, or not permitted) — use try_listen_on() to handle this"</span>);</span>
-<span id="src-server-loft-L201">  }</span>
-<span id="src-server-loft-L202">  srv</span>
-<span id="src-server-loft-L203">}</span>
-<span id="src-server-loft-L204"><span class="cm">// `listen_on` without the halt: an unbound server comes back instead.  Check</span></span>
-<span id="src-server-loft-L205"><span class="cm">// `bound()` — every other method on an unbound server does nothing, quietly.</span></span>
-<span id="src-server-loft-L206"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">try_listen_on</span>(addr: <span class="ty"><a href="stdlib-types.html">text</a></span>, port: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Server</span> {</span>
-<span id="src-server-loft-L207">  <span class="en">Server</span> { handle: <span class="fn-call">tcp_listen_on</span>(addr, port) }</span>
-<span id="src-server-loft-L208">}</span>
-<span id="src-server-loft-L209"></span>
-<span id="src-server-loft-L210"><span class="cm">// Serve TLS (https:// / wss://). `cert` is a PEM certificate CHAIN (leaf first, then any</span></span>
-<span id="src-server-loft-L211"><span class="cm">// intermediates — what an ACME client writes as fullchain.pem); `key` is the PEM private</span></span>
-<span id="src-server-loft-L212"><span class="cm">// key. Both are the file CONTENTS, not paths, so the caller reads them however it likes</span></span>
-<span id="src-server-loft-L213"><span class="cm">// (`file(path).content()`), keeping this layer free of any filesystem policy. The op surface</span></span>
-<span id="src-server-loft-L214"><span class="cm">// is identical to a plaintext server — accept, respond, WebSocket upgrade all work the same,</span></span>
-<span id="src-server-loft-L215"><span class="cm">// just over TLS. Halts if the certificate/key is unusable or the bind fails (never a silent</span></span>
-<span id="src-server-loft-L216"><span class="cm">// fallback to cleartext — a TLS server that quietly served http would be the worst surprise).</span></span>
-<span id="src-server-loft-L217"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">listen_tls</span>(port: <span class="ty"><a href="stdlib-types.html">integer</a></span>, cert: <span class="ty"><a href="stdlib-types.html">text</a></span>, key: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="en">Server</span> {</span>
-<span id="src-server-loft-L218">  srv = <span class="fn-call">try_listen_tls</span>(port, cert, key);</span>
-<span id="src-server-loft-L219">  <span class="kw">if</span> !srv.<span class="fn-call">bound</span>() {</span>
-<span id="src-server-loft-L220">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">panic</a></span>(<span class="st">"server::listen_tls: cannot bind port {port} over TLS (bad cert/key, port in use, or not permitted) — use try_listen_tls() to handle this"</span>);</span>
-<span id="src-server-loft-L221">  }</span>
-<span id="src-server-loft-L222">  srv</span>
-<span id="src-server-loft-L223">}</span>
-<span id="src-server-loft-L224"><span class="cm">// `listen_tls` without the halt.  Check `bound()`; a bad certificate and a taken</span></span>
-<span id="src-server-loft-L225"><span class="cm">// port are the same answer here, so log the port before deciding which it was.</span></span>
-<span id="src-server-loft-L226"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">try_listen_tls</span>(port: <span class="ty"><a href="stdlib-types.html">integer</a></span>, cert: <span class="ty"><a href="stdlib-types.html">text</a></span>, key: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="en">Server</span> {</span>
-<span id="src-server-loft-L227">  <span class="en">Server</span> { handle: <span class="fn-call">tcp_listen_tls</span>(port, cert, key) }</span>
-<span id="src-server-loft-L228">}</span>
-<span id="src-server-loft-L229"></span>
-<span id="src-server-loft-L230"><span class="cm">// TLS on a chosen bind address — `listen_tls` + `listen_on` combined. An empty `addr` means</span></span>
-<span id="src-server-loft-L231"><span class="cm">// `0.0.0.0`.</span></span>
-<span id="src-server-loft-L232"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">try_listen_tls_on</span>(addr: <span class="ty"><a href="stdlib-types.html">text</a></span>, port: <span class="ty"><a href="stdlib-types.html">integer</a></span>, cert: <span class="ty"><a href="stdlib-types.html">text</a></span>, key: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="en">Server</span> {</span>
-<span id="src-server-loft-L233">  <span class="en">Server</span> { handle: <span class="fn-call">tcp_listen_tls_on</span>(addr, port, cert, key) }</span>
-<span id="src-server-loft-L234">}</span>
-<span id="src-server-loft-L235"></span>
-<span id="src-server-loft-L236"><span class="cm">// True when this server actually owns its port.  Always true for a `listen()` result</span></span>
-<span id="src-server-loft-L237"><span class="cm">// (that halts otherwise) — it is the check that makes a `try_listen()` result usable.</span></span>
-<span id="src-server-loft-L238"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">bound</span>(self: <span class="en">Server</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
-<span id="src-server-loft-L239">  self.handle &gt;= <span class="nm">0</span></span>
-<span id="src-server-loft-L240">}</span>
-<span id="src-server-loft-L241"></span>
-<span id="src-server-loft-L242"><span class="cm">// Non-blocking variant of `next()`.  Returns null immediately if no</span></span>
-<span id="src-server-loft-L243"><span class="cm">// connection is pending.  Use this when the server interleaves HTTP</span></span>
-<span id="src-server-loft-L244"><span class="cm">// accept with multi-client WS polling on a single port (single_port</span></span>
-<span id="src-server-loft-L245"><span class="cm">// audience demo / future TTT-style multi-tab apps).</span></span>
-<span id="src-server-loft-L246"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">next_nonblocking</span>(self: <span class="en">Server</span>) -&gt; <span class="en">Request</span>? {</span>
-<span id="src-server-loft-L247">  <span class="kw">if</span> !<span class="fn-call">tcp_accept_nonblocking</span>(self.handle) { <span class="kw">return</span> <span class="kw">null</span>; }</span>
-<span id="src-server-loft-L248">  <span class="en">Request</span> {</span>
-<span id="src-server-loft-L249">    method: <span class="fn-call">tcp_method</span>(),</span>
-<span id="src-server-loft-L250">    path: <span class="fn-call">tcp_path</span>(),</span>
-<span id="src-server-loft-L251">    body: <span class="fn-call">tcp_body</span>(),</span>
-<span id="src-server-loft-L252">    headers: <span class="fn-call">tcp_headers</span>().<span class="fn-call"><a href="stdlib-text.html">split</a></span>(<span class="ch">'\n'</span>)</span>
-<span id="src-server-loft-L253">  }</span>
-<span id="src-server-loft-L254">}</span>
-<span id="src-server-loft-L255"></span>
-<span id="src-server-loft-L256"><span class="cm">// BLOCK until a client connects, and answer its request.  The heart of stack 1:</span></span>
-<span id="src-server-loft-L257"><span class="cm">// call it in a loop, respond exactly once, and the connection closes.</span></span>
-<span id="src-server-loft-L258"><span class="cm">//</span></span>
-<span id="src-server-loft-L259"><span class="cm">// ⚠ Declared `-&gt; Request` rather than `-&gt; Request?`, which is why `for req in</span></span>
-<span id="src-server-loft-L260"><span class="cm">// srv` does not compile (loft#1310).  `next_nonblocking` is the variant that</span></span>
-<span id="src-server-loft-L261"><span class="cm">// answers null immediately when nobody is waiting.</span></span>
-<span id="src-server-loft-L262"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">next</span>(self: <span class="en">Server</span>) -&gt; <span class="en">Request</span>? {</span>
-<span id="src-server-loft-L263">  <span class="kw">if</span> !<span class="fn-call">tcp_accept</span>(self.handle) { <span class="kw">return</span> <span class="kw">null</span>; }</span>
-<span id="src-server-loft-L264">  <span class="en">Request</span> {</span>
-<span id="src-server-loft-L265">    method: <span class="fn-call">tcp_method</span>(),</span>
-<span id="src-server-loft-L266">    path: <span class="fn-call">tcp_path</span>(),</span>
-<span id="src-server-loft-L267">    body: <span class="fn-call">tcp_body</span>(),</span>
-<span id="src-server-loft-L268">    headers: <span class="fn-call">tcp_headers</span>().<span class="fn-call"><a href="stdlib-text.html">split</a></span>(<span class="ch">'\n'</span>)</span>
-<span id="src-server-loft-L269">  }</span>
-<span id="src-server-loft-L270">}</span>
-<span id="src-server-loft-L271"></span>
-<span id="src-server-loft-L272"><span class="cm">// Answer with `text/plain` and CLOSE the connection.  Exactly one respond per</span></span>
-<span id="src-server-loft-L273"><span class="cm">// request — a second is not an error, it just has no connection left to write</span></span>
-<span id="src-server-loft-L274"><span class="cm">// to.  `respond_typed` is this with a Content-Type you choose.</span></span>
-<span id="src-server-loft-L275"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">respond</span>(self: <span class="en">Request</span>, status: <span class="ty"><a href="stdlib-types.html">integer</a></span>, body: <span class="ty"><a href="stdlib-types.html">text</a></span>) {</span>
-<span id="src-server-loft-L276">  _ = self;</span>
-<span id="src-server-loft-L277">  <span class="fn-call">tcp_respond</span>(status, body);</span>
-<span id="src-server-loft-L278">}</span>
-<span id="src-server-loft-L279"></span>
-<span id="src-server-loft-L280"><span class="cm">// Send an HTTP response with a caller-specified Content-Type and</span></span>
-<span id="src-server-loft-L281"><span class="cm">// close the connection.  Use for HTML / CSS / JSON / WASM payloads;</span></span>
-<span id="src-server-loft-L282"><span class="cm">// `respond` defaults to `text/plain`.</span></span>
-<span id="src-server-loft-L283"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">respond_typed</span>(self: <span class="en">Request</span>, status: <span class="ty"><a href="stdlib-types.html">integer</a></span>, body: <span class="ty"><a href="stdlib-types.html">text</a></span>, content_type: <span class="ty"><a href="stdlib-types.html">text</a></span>) {</span>
-<span id="src-server-loft-L284">  _ = self;</span>
-<span id="src-server-loft-L285">  <span class="fn-call">tcp_respond_typed</span>(status, body, content_type);</span>
-<span id="src-server-loft-L286">}</span>
-<span id="src-server-loft-L287"></span>
-<span id="src-server-loft-L288"><span class="cm">// Send a response whose body is RAW BYTES — an image, a font, a wasm module, any</span></span>
-<span id="src-server-loft-L289"><span class="cm">// payload that is not text.</span></span>
-<span id="src-server-loft-L290"><span class="cm">//</span></span>
-<span id="src-server-loft-L291"><span class="cm">// ⚠⚠ USE THIS FOR ANYTHING BINARY; the text responses cannot carry it and FAIL SILENTLY.</span></span>
-<span id="src-server-loft-L292"><span class="cm">// `respond`/`respond_typed` take loft `text`, and a `text` built from non-UTF-8 bytes is</span></span>
-<span id="src-server-loft-L293"><span class="cm">// the EMPTY text (`text_from_bytes` documents exactly that). So serving a PNG through</span></span>
-<span id="src-server-loft-L294"><span class="cm">// them answers **200 OK with Content-Length: 0** — a success the caller cannot</span></span>
-<span id="src-server-loft-L295"><span class="cm">// distinguish from an empty file, and a broken image with no error anywhere. Measured</span></span>
-<span id="src-server-loft-L296"><span class="cm">// 2026-08-21: the loft review viewer had been serving every `doc/images/*.png` that way.</span></span>
-<span id="src-server-loft-L297"><span class="cm">//</span></span>
-<span id="src-server-loft-L298"><span class="cm">// `content_type` empty defaults to `application/octet-stream`, which is the honest</span></span>
-<span id="src-server-loft-L299"><span class="cm">// answer for bytes of unknown kind — name the real type when you know it</span></span>
-<span id="src-server-loft-L300"><span class="cm">// (`image/png`, `font/woff2`, `application/wasm`).</span></span>
-<span id="src-server-loft-L301"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">respond_bytes</span>(self: <span class="en">Request</span>, status: <span class="ty"><a href="stdlib-types.html">integer</a></span>, body: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt;, content_type: <span class="ty"><a href="stdlib-types.html">text</a></span>) {</span>
-<span id="src-server-loft-L302">  _ = self;</span>
-<span id="src-server-loft-L303">  <span class="fn-call">tcp_respond_bytes</span>(status, body, content_type);</span>
-<span id="src-server-loft-L304">}</span>
+<span id="src-server-loft-L161"><span class="cm">// Bind a TCP listener on `port` and return the server.</span></span>
+<span id="src-server-loft-L162"><span class="cm">//</span></span>
+<span id="src-server-loft-L163"><span class="cm">// Failing to take the port is FATAL here, deliberately.  The native listener answers</span></span>
+<span id="src-server-loft-L164"><span class="cm">// -1 when the bind fails, and a `Server` built on -1 is indistinguishable from a</span></span>
+<span id="src-server-loft-L165"><span class="cm">// healthy one at every call site: `run` spins forever on an empty event pump, so the</span></span>
+<span id="src-server-loft-L166"><span class="cm">// process reports itself up and serves nobody.  Worse, that state is invisible from</span></span>
+<span id="src-server-loft-L167"><span class="cm">// OUTSIDE the process too — a readiness probe that connects to the port reaches</span></span>
+<span id="src-server-loft-L168"><span class="cm">// whoever DID win the bind and reports success — so the failure surfaces somewhere</span></span>
+<span id="src-server-loft-L169"><span class="cm">// else entirely, as a client that hangs or talks to a stranger's server.</span></span>
+<span id="src-server-loft-L170"><span class="cm">//</span></span>
+<span id="src-server-loft-L171"><span class="cm">// Use `try_listen` when losing the port is an outcome you mean to handle: retrying on</span></span>
+<span id="src-server-loft-L172"><span class="cm">// another port, or scanning a range.</span></span>
+<span id="src-server-loft-L173"><span class="cm">// Example: @SRV-001 — halting door vs recoverable door, and why `bound()` is not optional.</span></span>
+<span id="src-server-loft-L174"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">listen</span>(port: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Server</span> {</span>
+<span id="src-server-loft-L175">  srv = <span class="fn-call">try_listen</span>(port);</span>
+<span id="src-server-loft-L176">  <span class="kw">if</span> !srv.<span class="fn-call">bound</span>() {</span>
+<span id="src-server-loft-L177">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">panic</a></span>(<span class="st">"server::listen: cannot bind port {port} (already in use, or not permitted) — use try_listen() to handle this"</span>);</span>
+<span id="src-server-loft-L178">  }</span>
+<span id="src-server-loft-L179">  srv</span>
+<span id="src-server-loft-L180">}</span>
+<span id="src-server-loft-L181"></span>
+<span id="src-server-loft-L182"><span class="cm">// Like `listen`, but hands back an UNBOUND server instead of halting when the port</span></span>
+<span id="src-server-loft-L183"><span class="cm">// cannot be taken.  Check `bound()` before using it: every other method on an unbound</span></span>
+<span id="src-server-loft-L184"><span class="cm">// server does nothing, quietly.</span></span>
+<span id="src-server-loft-L185"><span class="cm">// Example: @SRV-001 — the retry shape: try_listen, then bound(), then use it.</span></span>
+<span id="src-server-loft-L186"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">try_listen</span>(port: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Server</span> {</span>
+<span id="src-server-loft-L187">  <span class="en">Server</span> { handle: <span class="fn-call">tcp_listen</span>(port) }</span>
+<span id="src-server-loft-L188">}</span>
+<span id="src-server-loft-L189"></span>
+<span id="src-server-loft-L190"><span class="cm">// Bind on a chosen address rather than the wildcard `0.0.0.0` that plain `listen` uses.</span></span>
+<span id="src-server-loft-L191"><span class="cm">// `"127.0.0.1"` restricts the server to loopback — unreachable from the network — which is</span></span>
+<span id="src-server-loft-L192"><span class="cm">// the safe default a machine sitting behind a reverse proxy or an SSH tunnel wants, and the</span></span>
+<span id="src-server-loft-L193"><span class="cm">// one `listen` deliberately does NOT give (it binds every interface). An empty `addr` means</span></span>
+<span id="src-server-loft-L194"><span class="cm">// `0.0.0.0`. Halts if the bind fails; `try_listen_on` hands back an unbound server instead.</span></span>
+<span id="src-server-loft-L195"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">listen_on</span>(addr: <span class="ty"><a href="stdlib-types.html">text</a></span>, port: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Server</span> {</span>
+<span id="src-server-loft-L196">  srv = <span class="fn-call">try_listen_on</span>(addr, port);</span>
+<span id="src-server-loft-L197">  <span class="kw">if</span> !srv.<span class="fn-call">bound</span>() {</span>
+<span id="src-server-loft-L198">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">panic</a></span>(<span class="st">"server::listen_on: cannot bind {addr}:{port} (in use, or not permitted) — use try_listen_on() to handle this"</span>);</span>
+<span id="src-server-loft-L199">  }</span>
+<span id="src-server-loft-L200">  srv</span>
+<span id="src-server-loft-L201">}</span>
+<span id="src-server-loft-L202"><span class="cm">// `listen_on` without the halt: an unbound server comes back instead.  Check</span></span>
+<span id="src-server-loft-L203"><span class="cm">// `bound()` — every other method on an unbound server does nothing, quietly.</span></span>
+<span id="src-server-loft-L204"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">try_listen_on</span>(addr: <span class="ty"><a href="stdlib-types.html">text</a></span>, port: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Server</span> {</span>
+<span id="src-server-loft-L205">  <span class="en">Server</span> { handle: <span class="fn-call">tcp_listen_on</span>(addr, port) }</span>
+<span id="src-server-loft-L206">}</span>
+<span id="src-server-loft-L207"></span>
+<span id="src-server-loft-L208"><span class="cm">// Serve TLS (https:// / wss://). `cert` is a PEM certificate CHAIN (leaf first, then any</span></span>
+<span id="src-server-loft-L209"><span class="cm">// intermediates — what an ACME client writes as fullchain.pem); `key` is the PEM private</span></span>
+<span id="src-server-loft-L210"><span class="cm">// key. Both are the file CONTENTS, not paths, so the caller reads them however it likes</span></span>
+<span id="src-server-loft-L211"><span class="cm">// (`file(path).content()`), keeping this layer free of any filesystem policy. The op surface</span></span>
+<span id="src-server-loft-L212"><span class="cm">// is identical to a plaintext server — accept, respond, WebSocket upgrade all work the same,</span></span>
+<span id="src-server-loft-L213"><span class="cm">// just over TLS. Halts if the certificate/key is unusable or the bind fails (never a silent</span></span>
+<span id="src-server-loft-L214"><span class="cm">// fallback to cleartext — a TLS server that quietly served http would be the worst surprise).</span></span>
+<span id="src-server-loft-L215"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">listen_tls</span>(port: <span class="ty"><a href="stdlib-types.html">integer</a></span>, cert: <span class="ty"><a href="stdlib-types.html">text</a></span>, key: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="en">Server</span> {</span>
+<span id="src-server-loft-L216">  srv = <span class="fn-call">try_listen_tls</span>(port, cert, key);</span>
+<span id="src-server-loft-L217">  <span class="kw">if</span> !srv.<span class="fn-call">bound</span>() {</span>
+<span id="src-server-loft-L218">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">panic</a></span>(<span class="st">"server::listen_tls: cannot bind port {port} over TLS (bad cert/key, port in use, or not permitted) — use try_listen_tls() to handle this"</span>);</span>
+<span id="src-server-loft-L219">  }</span>
+<span id="src-server-loft-L220">  srv</span>
+<span id="src-server-loft-L221">}</span>
+<span id="src-server-loft-L222"><span class="cm">// `listen_tls` without the halt.  Check `bound()`; a bad certificate and a taken</span></span>
+<span id="src-server-loft-L223"><span class="cm">// port are the same answer here, so log the port before deciding which it was.</span></span>
+<span id="src-server-loft-L224"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">try_listen_tls</span>(port: <span class="ty"><a href="stdlib-types.html">integer</a></span>, cert: <span class="ty"><a href="stdlib-types.html">text</a></span>, key: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="en">Server</span> {</span>
+<span id="src-server-loft-L225">  <span class="en">Server</span> { handle: <span class="fn-call">tcp_listen_tls</span>(port, cert, key) }</span>
+<span id="src-server-loft-L226">}</span>
+<span id="src-server-loft-L227"></span>
+<span id="src-server-loft-L228"><span class="cm">// TLS on a chosen bind address — `listen_tls` + `listen_on` combined. An empty `addr` means</span></span>
+<span id="src-server-loft-L229"><span class="cm">// `0.0.0.0`.</span></span>
+<span id="src-server-loft-L230"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">try_listen_tls_on</span>(addr: <span class="ty"><a href="stdlib-types.html">text</a></span>, port: <span class="ty"><a href="stdlib-types.html">integer</a></span>, cert: <span class="ty"><a href="stdlib-types.html">text</a></span>, key: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="en">Server</span> {</span>
+<span id="src-server-loft-L231">  <span class="en">Server</span> { handle: <span class="fn-call">tcp_listen_tls_on</span>(addr, port, cert, key) }</span>
+<span id="src-server-loft-L232">}</span>
+<span id="src-server-loft-L233"></span>
+<span id="src-server-loft-L234"><span class="cm">// True when this server actually owns its port.  Always true for a `listen()` result</span></span>
+<span id="src-server-loft-L235"><span class="cm">// (that halts otherwise) — it is the check that makes a `try_listen()` result usable.</span></span>
+<span id="src-server-loft-L236"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">bound</span>(self: <span class="en">Server</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-server-loft-L237">  self.handle &gt;= <span class="nm">0</span></span>
+<span id="src-server-loft-L238">}</span>
+<span id="src-server-loft-L239"></span>
+<span id="src-server-loft-L240"><span class="cm">// Non-blocking variant of `next()`.  Returns null immediately if no</span></span>
+<span id="src-server-loft-L241"><span class="cm">// connection is pending.  Use this when the server interleaves HTTP</span></span>
+<span id="src-server-loft-L242"><span class="cm">// accept with multi-client WS polling on a single port (single_port</span></span>
+<span id="src-server-loft-L243"><span class="cm">// audience demo / future TTT-style multi-tab apps).</span></span>
+<span id="src-server-loft-L244"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">next_nonblocking</span>(self: <span class="en">Server</span>) -&gt; <span class="en">Request</span>? {</span>
+<span id="src-server-loft-L245">  <span class="kw">if</span> !<span class="fn-call">tcp_accept_nonblocking</span>(self.handle) { <span class="kw">return</span> <span class="kw">null</span>; }</span>
+<span id="src-server-loft-L246">  <span class="en">Request</span> {</span>
+<span id="src-server-loft-L247">    method: <span class="fn-call">tcp_method</span>(),</span>
+<span id="src-server-loft-L248">    path: <span class="fn-call">tcp_path</span>(),</span>
+<span id="src-server-loft-L249">    body: <span class="fn-call">tcp_body</span>(),</span>
+<span id="src-server-loft-L250">    headers: <span class="fn-call">tcp_headers</span>().<span class="fn-call"><a href="stdlib-text.html">split</a></span>(<span class="ch">'\n'</span>)</span>
+<span id="src-server-loft-L251">  }</span>
+<span id="src-server-loft-L252">}</span>
+<span id="src-server-loft-L253"></span>
+<span id="src-server-loft-L254"><span class="cm">// BLOCK until a client connects, and answer its request.  The heart of stack 1:</span></span>
+<span id="src-server-loft-L255"><span class="cm">// call it in a loop, respond exactly once, and the connection closes.</span></span>
+<span id="src-server-loft-L256"><span class="cm">//</span></span>
+<span id="src-server-loft-L257"><span class="cm">// Null when the listener can no longer accept, which ends a `for req in srv`.</span></span>
+<span id="src-server-loft-L258"><span class="cm">// `next_nonblocking` is the variant that answers null immediately when nobody is</span></span>
+<span id="src-server-loft-L259"><span class="cm">// waiting.</span></span>
+<span id="src-server-loft-L260"><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">next</span>(self: <span class="en">Server</span>) -&gt; <span class="en">Request</span>? {</span>
+<span id="src-server-loft-L261">  <span class="kw">if</span> !<span class="fn-call">tcp_accept</span>(self.handle) { <span class="kw">return</span> <span class="kw">null</span>; }</span>
+<span id="src-server-loft-L262">  <span class="en">Request</span> {</span>
+<span id="src-server-loft-L263">    method: <span class="fn-call">tcp_method</span>(),</span>
+<span id="src-server-loft-L264">    path: <span class="fn-call">tcp_path</span>(),</span>
+<span id="src-server-loft-L265">    body: <span class="fn-call">tcp_body</span>(),</span>
+<span id="src-server-loft-L266">    headers: <span class="fn-call">tcp_headers</span>().<span class="fn-call"><a href="stdlib-text.html">split</a></span>(<span class="ch">'\n'</span>)</span>
+<span id="src-server-loft-L267">  }</span>
+<span id="src-server-loft-L268">}</span>
+<span id="src-server-loft-L269"></span>
+<span id="src-server-loft-L270"><span class="cm">// Answer with `text/plain` and CLOSE the connection.  Exactly one respond per</span></span>
+<span id="src-server-loft-L271"><span class="cm">// request — a second is not an error, it just has no connection left to write</span></span>
+<span id="src-server-loft-L272"><span class="cm">// to.  `respond_typed` is this with a Content-Type you choose.</span></span>
+<span id="src-server-loft-L273"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">respond</span>(self: <span class="en">Request</span>, status: <span class="ty"><a href="stdlib-types.html">integer</a></span>, body: <span class="ty"><a href="stdlib-types.html">text</a></span>) {</span>
+<span id="src-server-loft-L274">  _ = self;</span>
+<span id="src-server-loft-L275">  <span class="fn-call">tcp_respond</span>(status, body);</span>
+<span id="src-server-loft-L276">}</span>
+<span id="src-server-loft-L277"></span>
+<span id="src-server-loft-L278"><span class="cm">// Send an HTTP response with a caller-specified Content-Type and</span></span>
+<span id="src-server-loft-L279"><span class="cm">// close the connection.  Use for HTML / CSS / JSON / WASM payloads;</span></span>
+<span id="src-server-loft-L280"><span class="cm">// `respond` defaults to `text/plain`.</span></span>
+<span id="src-server-loft-L281"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">respond_typed</span>(self: <span class="en">Request</span>, status: <span class="ty"><a href="stdlib-types.html">integer</a></span>, body: <span class="ty"><a href="stdlib-types.html">text</a></span>, content_type: <span class="ty"><a href="stdlib-types.html">text</a></span>) {</span>
+<span id="src-server-loft-L282">  _ = self;</span>
+<span id="src-server-loft-L283">  <span class="fn-call">tcp_respond_typed</span>(status, body, content_type);</span>
+<span id="src-server-loft-L284">}</span>
+<span id="src-server-loft-L285"></span>
+<span id="src-server-loft-L286"><span class="cm">// Send a response whose body is RAW BYTES — an image, a font, a wasm module, any</span></span>
+<span id="src-server-loft-L287"><span class="cm">// payload that is not text.</span></span>
+<span id="src-server-loft-L288"><span class="cm">//</span></span>
+<span id="src-server-loft-L289"><span class="cm">// ⚠⚠ USE THIS FOR ANYTHING BINARY; the text responses cannot carry it and FAIL SILENTLY.</span></span>
+<span id="src-server-loft-L290"><span class="cm">// `respond`/`respond_typed` take loft `text`, and a `text` built from non-UTF-8 bytes is</span></span>
+<span id="src-server-loft-L291"><span class="cm">// the EMPTY text (`text_from_bytes` documents exactly that). So serving a PNG through</span></span>
+<span id="src-server-loft-L292"><span class="cm">// them answers **200 OK with Content-Length: 0** — a success the caller cannot</span></span>
+<span id="src-server-loft-L293"><span class="cm">// distinguish from an empty file, and a broken image with no error anywhere. Measured</span></span>
+<span id="src-server-loft-L294"><span class="cm">// 2026-08-21: the loft review viewer had been serving every `doc/images/*.png` that way.</span></span>
+<span id="src-server-loft-L295"><span class="cm">//</span></span>
+<span id="src-server-loft-L296"><span class="cm">// `content_type` empty defaults to `application/octet-stream`, which is the honest</span></span>
+<span id="src-server-loft-L297"><span class="cm">// answer for bytes of unknown kind — name the real type when you know it</span></span>
+<span id="src-server-loft-L298"><span class="cm">// (`image/png`, `font/woff2`, `application/wasm`).</span></span>
+<span id="src-server-loft-L299"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">respond_bytes</span>(self: <span class="en">Request</span>, status: <span class="ty"><a href="stdlib-types.html">integer</a></span>, body: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt;, content_type: <span class="ty"><a href="stdlib-types.html">text</a></span>) {</span>
+<span id="src-server-loft-L300">  _ = self;</span>
+<span id="src-server-loft-L301">  <span class="fn-call">tcp_respond_bytes</span>(status, body, content_type);</span>
+<span id="src-server-loft-L302">}</span>
+<span id="src-server-loft-L303"></span>
+<span id="src-server-loft-L304"><span class="cm">// --- #517 server: request-header lookup + full-header responses ---</span></span>
 <span id="src-server-loft-L305"></span>
-<span id="src-server-loft-L306"><span class="cm">// --- #517 server: request-header lookup + full-header responses ---</span></span>
-<span id="src-server-loft-L307"></span>
-<span id="src-server-loft-L308"><span class="cm">// Look up a request header case-insensitively (e.g. "Range", "Origin",</span></span>
-<span id="src-server-loft-L309"><span class="cm">// "If-None-Match"); returns "" if absent. Values containing ':' (an Origin URL,</span></span>
-<span id="src-server-loft-L310"><span class="cm">// a date) are rejoined intact.</span></span>
-<span id="src-server-loft-L311"><span class="cm">// Example: @SRV-002 — why a hand-rolled `h.split(':')[1]` over `headers` loses the port.</span></span>
-<span id="src-server-loft-L312"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">header</span>(self: <span class="en">Request</span>, name: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
-<span id="src-server-loft-L313">  prefix = name.<span class="fn-call"><a href="stdlib-text-case-and-classification.html">to_lowercase</a></span>() + <span class="st">":"</span>;</span>
-<span id="src-server-loft-L314">  <span class="kw">for</span> h <span class="kw">in</span> self.headers {</span>
-<span id="src-server-loft-L315">    <span class="kw">if</span> h.<span class="fn-call"><a href="stdlib-text-case-and-classification.html">to_lowercase</a></span>().<span class="fn-call"><a href="stdlib-path-helpers.html">starts_with</a></span>(prefix) {</span>
-<span id="src-server-loft-L316">      parts = h.<span class="fn-call"><a href="stdlib-text.html">split</a></span>(<span class="ch">':'</span>);</span>
-<span id="src-server-loft-L317">      value = <span class="st">""</span>;</span>
-<span id="src-server-loft-L318">      i = <span class="nm">1</span>;</span>
-<span id="src-server-loft-L319">      while i &lt; parts.<span class="bi"><a href="stdlib-text.html">len</a></span>() {</span>
-<span id="src-server-loft-L320">        <span class="kw">if</span> i &gt; <span class="nm">1</span> { value += <span class="st">":"</span>; }</span>
-<span id="src-server-loft-L321">        value += parts[i] ?? <span class="st">""</span>;</span>
-<span id="src-server-loft-L322">        i += <span class="nm">1</span>;</span>
-<span id="src-server-loft-L323">      }</span>
-<span id="src-server-loft-L324">      <span class="kw">return</span> value.<span class="fn-call"><a href="stdlib-text.html">trim</a></span>();</span>
-<span id="src-server-loft-L325">    }</span>
-<span id="src-server-loft-L326">  }</span>
-<span id="src-server-loft-L327">  <span class="st">""</span></span>
-<span id="src-server-loft-L328">}</span>
-<span id="src-server-loft-L329"></span>
-<span id="src-server-loft-L330"><span class="cm">// Send a response with caller-controlled headers (Content-Range, ETag, the CORS</span></span>
-<span id="src-server-loft-L331"><span class="cm">// headers, …). `headers` is a vector of "Key: Value" lines; Content-Length is</span></span>
-<span id="src-server-loft-L332"><span class="cm">// auto-added from the body unless a header supplies one; the body is written</span></span>
-<span id="src-server-loft-L333"><span class="cm">// verbatim (binary-safe).</span></span>
-<span id="src-server-loft-L334"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">respond_with_headers</span>(self: <span class="en">Request</span>, status: <span class="ty"><a href="stdlib-types.html">integer</a></span>, body: <span class="ty"><a href="stdlib-types.html">text</a></span>, headers: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt;) {</span>
-<span id="src-server-loft-L335">  _ = self;</span>
-<span id="src-server-loft-L336">  <span class="fn-call">tcp_respond_full</span>(status, body, headers.<span class="fn-call"><a href="stdlib-path-helpers.html">join</a></span>(<span class="st">"\n"</span>));</span>
-<span id="src-server-loft-L337">}</span>
-<span id="src-server-loft-L338"></span>
-<span id="src-server-loft-L339"><span class="cm">// Standard CORS headers so a browser client can read Content-Range /</span></span>
-<span id="src-server-loft-L340"><span class="cm">// Content-Length / ETag on a cross-origin byte-range fetch. `origin` is the</span></span>
-<span id="src-server-loft-L341"><span class="cm">// allowed origin ("*" for any).</span></span>
-<span id="src-server-loft-L342"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">cors_headers</span>(origin: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt; {</span>
-<span id="src-server-loft-L343">  [</span>
-<span id="src-server-loft-L344">    <span class="st">"Access-Control-Allow-Origin: {origin}"</span>,</span>
-<span id="src-server-loft-L345">    <span class="st">"Access-Control-Expose-Headers: Content-Range, Content-Length, ETag, Accept-Ranges"</span>,</span>
-<span id="src-server-loft-L346">    <span class="st">"Access-Control-Allow-Headers: Range, If-Range, If-None-Match"</span>,</span>
-<span id="src-server-loft-L347">    <span class="st">"Access-Control-Allow-Methods: GET, HEAD, OPTIONS"</span></span>
-<span id="src-server-loft-L348">  ]</span>
-<span id="src-server-loft-L349">}</span>
-<span id="src-server-loft-L350"></span>
-<span id="src-server-loft-L351"><span class="cm">// Serve a byte range of `body` when the request carries a Range header, adding</span></span>
-<span id="src-server-loft-L352"><span class="cm">// `extra` headers (CORS / ETag) to the 206 or 416. Returns true if a range</span></span>
-<span id="src-server-loft-L353"><span class="cm">// response was sent; false when there is no Range header (the caller serves the</span></span>
-<span id="src-server-loft-L354"><span class="cm">// full body). Single-range "bytes=off-last" / open-ended "bytes=off-" only.</span></span>
-<span id="src-server-loft-L355"><span class="cm">// Example: @SRV-003 — the boolean says WHO answered; false is the case you must handle.</span></span>
-<span id="src-server-loft-L356"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">serve_range</span>(self: <span class="en">Request</span>, body: <span class="ty"><a href="stdlib-types.html">text</a></span>, extra: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
-<span id="src-server-loft-L357">  spec = self.<span class="fn-call">header</span>(<span class="st">"Range"</span>);</span>
-<span id="src-server-loft-L358">  <span class="kw">if</span> spec.<span class="bi"><a href="stdlib-text.html">len</a></span>() == <span class="nm">0</span> { <span class="kw">return</span> <span class="kw">false</span>; }</span>
-<span id="src-server-loft-L359">  total = body.<span class="bi"><a href="stdlib-text.html">len</a></span>();</span>
-<span id="src-server-loft-L360">  bad: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt; = [<span class="st">"Content-Range: bytes */{total}"</span>];</span>
-<span id="src-server-loft-L361">  <span class="kw">for</span> e <span class="kw">in</span> extra { bad += [e]; }</span>
-<span id="src-server-loft-L362">  <span class="kw">if</span> !spec.<span class="fn-call"><a href="stdlib-path-helpers.html">starts_with</a></span>(<span class="st">"bytes="</span>) {</span>
-<span id="src-server-loft-L363">    self.<span class="fn-call">respond_with_headers</span>(<span class="nm">416</span>, <span class="st">""</span>, bad);</span>
-<span id="src-server-loft-L364">    <span class="kw">return</span> <span class="kw">true</span>;</span>
-<span id="src-server-loft-L365">  }</span>
-<span id="src-server-loft-L366">  bounds = spec.<span class="fn-call"><a href="stdlib-text.html">replace</a></span>(<span class="st">"bytes="</span>, <span class="st">""</span>).<span class="fn-call"><a href="stdlib-text.html">split</a></span>(<span class="ch">'-'</span>);</span>
-<span id="src-server-loft-L367">  <span class="kw">if</span> bounds.<span class="bi"><a href="stdlib-text.html">len</a></span>() &lt; <span class="nm">2</span> {</span>
-<span id="src-server-loft-L368">    self.<span class="fn-call">respond_with_headers</span>(<span class="nm">416</span>, <span class="st">""</span>, bad);</span>
-<span id="src-server-loft-L369">    <span class="kw">return</span> <span class="kw">true</span>;</span>
-<span id="src-server-loft-L370">  }</span>
-<span id="src-server-loft-L371">  off = ((bounds[<span class="nm">0</span>] ?? <span class="st">""</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>?) ?? -<span class="nm">1</span>;</span>
-<span id="src-server-loft-L372">  lt = bounds[<span class="nm">1</span>] ?? <span class="st">""</span>;</span>
-<span id="src-server-loft-L373">  last = -<span class="nm">1</span>;</span>
-<span id="src-server-loft-L374">  <span class="kw">if</span> lt.<span class="bi"><a href="stdlib-text.html">len</a></span>() == <span class="nm">0</span> { last = total - <span class="nm">1</span>; } <span class="kw">else</span> { last = (lt <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>?) ?? -<span class="nm">1</span>; }</span>
-<span id="src-server-loft-L375">  <span class="kw">if</span> off &lt; <span class="nm">0</span> || last &lt; off || off &gt;= total {</span>
-<span id="src-server-loft-L376">    self.<span class="fn-call">respond_with_headers</span>(<span class="nm">416</span>, <span class="st">""</span>, bad);</span>
-<span id="src-server-loft-L377">    <span class="kw">return</span> <span class="kw">true</span>;</span>
-<span id="src-server-loft-L378">  }</span>
-<span id="src-server-loft-L379">  <span class="kw">if</span> last &gt;= total { last = total - <span class="nm">1</span>; }</span>
-<span id="src-server-loft-L380">  slice = <span class="fn-call">tcp_slice</span>(body, off, last - off + <span class="nm">1</span>);</span>
-<span id="src-server-loft-L381">  hdrs: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt; = [<span class="st">"Content-Range: bytes {off}-{last}/{total}"</span>, <span class="st">"Accept-Ranges: bytes"</span>];</span>
-<span id="src-server-loft-L382">  <span class="kw">for</span> e <span class="kw">in</span> extra { hdrs += [e]; }</span>
-<span id="src-server-loft-L383">  self.<span class="fn-call">respond_with_headers</span>(<span class="nm">206</span>, slice, hdrs);</span>
-<span id="src-server-loft-L384">  <span class="kw">true</span></span>
-<span id="src-server-loft-L385">}</span>
-<span id="src-server-loft-L386"></span>
-<span id="src-server-loft-L387"><span class="cm">// One-call helper to serve a (possibly binary) resource with full byte-range +</span></span>
-<span id="src-server-loft-L388"><span class="cm">// CORS + HEAD + conditional support — the server counterpart to the web client's</span></span>
-<span id="src-server-loft-L389"><span class="cm">// http_get_range / http_size. `etag` "" skips conditional; `origin` "" skips CORS.</span></span>
-<span id="src-server-loft-L390"><span class="cm">// Example: @SRV-003 — this one takes every branch, so it is always true and always final.</span></span>
-<span id="src-server-loft-L391"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">serve_data</span>(self: <span class="en">Request</span>, body: <span class="ty"><a href="stdlib-types.html">text</a></span>, etag: <span class="ty"><a href="stdlib-types.html">text</a></span>, origin: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
-<span id="src-server-loft-L392">  cors: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt; = [];</span>
-<span id="src-server-loft-L393">  <span class="kw">if</span> origin.<span class="bi"><a href="stdlib-text.html">len</a></span>() &gt; <span class="nm">0</span> {</span>
-<span id="src-server-loft-L394">    <span class="kw">for</span> h <span class="kw">in</span> <span class="fn-call">cors_headers</span>(origin) { cors += [h]; }</span>
-<span id="src-server-loft-L395">  }</span>
-<span id="src-server-loft-L396">  m = self.method;</span>
-<span id="src-server-loft-L397">  <span class="kw">if</span> m == <span class="st">"OPTIONS"</span> {</span>
-<span id="src-server-loft-L398">    self.<span class="fn-call">respond_with_headers</span>(<span class="nm">204</span>, <span class="st">""</span>, cors);</span>
-<span id="src-server-loft-L399">    <span class="kw">return</span> <span class="kw">true</span>;</span>
-<span id="src-server-loft-L400">  }</span>
-<span id="src-server-loft-L401">  total = body.<span class="bi"><a href="stdlib-text.html">len</a></span>();</span>
-<span id="src-server-loft-L402">  base: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt; = [];</span>
-<span id="src-server-loft-L403">  <span class="kw">for</span> h <span class="kw">in</span> cors { base += [h]; }</span>
-<span id="src-server-loft-L404">  <span class="kw">if</span> etag.<span class="bi"><a href="stdlib-text.html">len</a></span>() &gt; <span class="nm">0</span> {</span>
-<span id="src-server-loft-L405">    base += [<span class="st">"ETag: {etag}"</span>];</span>
-<span id="src-server-loft-L406">    inm = self.<span class="fn-call">header</span>(<span class="st">"If-None-Match"</span>);</span>
-<span id="src-server-loft-L407">    <span class="kw">if</span> inm.<span class="bi"><a href="stdlib-text.html">len</a></span>() &gt; <span class="nm">0</span> &amp;&amp; inm == etag {</span>
-<span id="src-server-loft-L408">      self.<span class="fn-call">respond_with_headers</span>(<span class="nm">304</span>, <span class="st">""</span>, base);</span>
-<span id="src-server-loft-L409">      <span class="kw">return</span> <span class="kw">true</span>;</span>
-<span id="src-server-loft-L410">    }</span>
-<span id="src-server-loft-L411">  }</span>
-<span id="src-server-loft-L412">  <span class="kw">if</span> self.<span class="fn-call">serve_range</span>(body, base) { <span class="kw">return</span> <span class="kw">true</span>; }</span>
-<span id="src-server-loft-L413">  hdrs: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt; = [<span class="st">"Accept-Ranges: bytes"</span>];</span>
-<span id="src-server-loft-L414">  <span class="kw">for</span> h <span class="kw">in</span> base { hdrs += [h]; }</span>
-<span id="src-server-loft-L415">  <span class="kw">if</span> m == <span class="st">"HEAD"</span> {</span>
-<span id="src-server-loft-L416">    hdrs += [<span class="st">"Content-Length: {total}"</span>];</span>
-<span id="src-server-loft-L417">    self.<span class="fn-call">respond_with_headers</span>(<span class="nm">200</span>, <span class="st">""</span>, hdrs);</span>
-<span id="src-server-loft-L418">    <span class="kw">return</span> <span class="kw">true</span>;</span>
-<span id="src-server-loft-L419">  }</span>
-<span id="src-server-loft-L420">  self.<span class="fn-call">respond_with_headers</span>(<span class="nm">200</span>, body, hdrs);</span>
-<span id="src-server-loft-L421">  <span class="kw">true</span></span>
-<span id="src-server-loft-L422">}</span>
-<span id="src-server-loft-L423"></span>
-<span id="src-server-loft-L424"><span class="cm">// Convenience wrappers for the common cases TTT v3 needs.</span></span>
-<span id="src-server-loft-L425"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">respond_html</span>(self: <span class="en">Request</span>, body: <span class="ty"><a href="stdlib-types.html">text</a></span>) {</span>
-<span id="src-server-loft-L426">  _ = self;</span>
-<span id="src-server-loft-L427">  <span class="fn-call">tcp_respond_typed</span>(<span class="nm">200</span>, body, <span class="st">"text/html; charset=utf-8"</span>);</span>
-<span id="src-server-loft-L428">}</span>
-<span id="src-server-loft-L429"></span>
-<span id="src-server-loft-L430"><span class="cm">// 200 as `text/css`.</span></span>
-<span id="src-server-loft-L431"><span class="cm">//</span></span>
-<span id="src-server-loft-L432"><span class="cm">// ⚠ A stylesheet written as a loft literal needs its braces DOUBLED — `{` opens</span></span>
-<span id="src-server-loft-L433"><span class="cm">// an interpolation, so `"body {{ color: red }}"` is what produces `body {`.</span></span>
-<span id="src-server-loft-L434"><span class="cm">// Reading the file instead (`file(path).content()`) sidesteps it entirely.</span></span>
-<span id="src-server-loft-L435"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">respond_css</span>(self: <span class="en">Request</span>, body: <span class="ty"><a href="stdlib-types.html">text</a></span>) {</span>
-<span id="src-server-loft-L436">  _ = self;</span>
-<span id="src-server-loft-L437">  <span class="fn-call">tcp_respond_typed</span>(<span class="nm">200</span>, body, <span class="st">"text/css; charset=utf-8"</span>);</span>
-<span id="src-server-loft-L438">}</span>
-<span id="src-server-loft-L439"></span>
-<span id="src-server-loft-L440"><span class="cm">// 200 as `application/javascript`.  Same brace-doubling trap as `respond_css`,</span></span>
-<span id="src-server-loft-L441"><span class="cm">// and script bodies hit it on the first function they declare.</span></span>
-<span id="src-server-loft-L442"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">respond_js</span>(self: <span class="en">Request</span>, body: <span class="ty"><a href="stdlib-types.html">text</a></span>) {</span>
-<span id="src-server-loft-L443">  _ = self;</span>
-<span id="src-server-loft-L444">  <span class="fn-call">tcp_respond_typed</span>(<span class="nm">200</span>, body, <span class="st">"application/javascript; charset=utf-8"</span>);</span>
-<span id="src-server-loft-L445">}</span>
-<span id="src-server-loft-L446"></span>
-<span id="src-server-loft-L447"><span class="cm">// 200, serving loft SOURCE.  There is no registered MIME type for it, so this</span></span>
-<span id="src-server-loft-L448"><span class="cm">// goes out as `text/plain` — which is what makes it read in a browser tab</span></span>
-<span id="src-server-loft-L449"><span class="cm">// rather than download.</span></span>
-<span id="src-server-loft-L450"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">respond_loft</span>(self: <span class="en">Request</span>, body: <span class="ty"><a href="stdlib-types.html">text</a></span>) {</span>
-<span id="src-server-loft-L451">  _ = self;</span>
-<span id="src-server-loft-L452">  <span class="cm">// No registered MIME for loft source; text/plain reads cleanly in a</span></span>
-<span id="src-server-loft-L453">  <span class="cm">// browser tab and matches what `curl` / fetch consumers expect.</span></span>
-<span id="src-server-loft-L454">  <span class="fn-call">tcp_respond_typed</span>(<span class="nm">200</span>, body, <span class="st">"text/plain; charset=utf-8"</span>);</span>
-<span id="src-server-loft-L455">}</span>
-<span id="src-server-loft-L456"></span>
-<span id="src-server-loft-L457"><span class="cm">// The not-found answer.  Worth calling on every unmatched path: a request with</span></span>
-<span id="src-server-loft-L458"><span class="cm">// no respond at all leaves the client waiting for a body that never comes.</span></span>
-<span id="src-server-loft-L459"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">respond_404</span>(self: <span class="en">Request</span>) {</span>
-<span id="src-server-loft-L460">  _ = self;</span>
-<span id="src-server-loft-L461">  <span class="fn-call">tcp_respond</span>(<span class="nm">404</span>, <span class="st">"Not Found"</span>);</span>
-<span id="src-server-loft-L462">}</span>
-<span id="src-server-loft-L463"></span>
-<span id="src-server-loft-L464"><span class="cm">// Give the port back.  A server that is never closed holds its port until the</span></span>
-<span id="src-server-loft-L465"><span class="cm">// process exits, which is what makes a restarted program fail to bind.</span></span>
-<span id="src-server-loft-L466"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">close</span>(self: <span class="en">Server</span>) {</span>
-<span id="src-server-loft-L467">  <span class="fn-call">tcp_close</span>(self.handle);</span>
-<span id="src-server-loft-L468">}</span>
+<span id="src-server-loft-L306"><span class="cm">// Look up a request header case-insensitively (e.g. "Range", "Origin",</span></span>
+<span id="src-server-loft-L307"><span class="cm">// "If-None-Match"); returns "" if absent. Values containing ':' (an Origin URL,</span></span>
+<span id="src-server-loft-L308"><span class="cm">// a date) are rejoined intact.</span></span>
+<span id="src-server-loft-L309"><span class="cm">// Example: @SRV-002 — why a hand-rolled `h.split(':')[1]` over `headers` loses the port.</span></span>
+<span id="src-server-loft-L310"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">header</span>(self: <span class="en">Request</span>, name: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-server-loft-L311">  prefix = name.<span class="fn-call"><a href="stdlib-text-case-and-classification.html">to_lowercase</a></span>() + <span class="st">":"</span>;</span>
+<span id="src-server-loft-L312">  <span class="kw">for</span> h <span class="kw">in</span> self.headers {</span>
+<span id="src-server-loft-L313">    <span class="kw">if</span> h.<span class="fn-call"><a href="stdlib-text-case-and-classification.html">to_lowercase</a></span>().<span class="fn-call"><a href="stdlib-path-helpers.html">starts_with</a></span>(prefix) {</span>
+<span id="src-server-loft-L314">      parts = h.<span class="fn-call"><a href="stdlib-text.html">split</a></span>(<span class="ch">':'</span>);</span>
+<span id="src-server-loft-L315">      value = <span class="st">""</span>;</span>
+<span id="src-server-loft-L316">      i = <span class="nm">1</span>;</span>
+<span id="src-server-loft-L317">      while i &lt; parts.<span class="bi"><a href="stdlib-text.html">len</a></span>() {</span>
+<span id="src-server-loft-L318">        <span class="kw">if</span> i &gt; <span class="nm">1</span> { value += <span class="st">":"</span>; }</span>
+<span id="src-server-loft-L319">        value += parts[i] ?? <span class="st">""</span>;</span>
+<span id="src-server-loft-L320">        i += <span class="nm">1</span>;</span>
+<span id="src-server-loft-L321">      }</span>
+<span id="src-server-loft-L322">      <span class="kw">return</span> value.<span class="fn-call"><a href="stdlib-text.html">trim</a></span>();</span>
+<span id="src-server-loft-L323">    }</span>
+<span id="src-server-loft-L324">  }</span>
+<span id="src-server-loft-L325">  <span class="st">""</span></span>
+<span id="src-server-loft-L326">}</span>
+<span id="src-server-loft-L327"></span>
+<span id="src-server-loft-L328"><span class="cm">// Send a response with caller-controlled headers (Content-Range, ETag, the CORS</span></span>
+<span id="src-server-loft-L329"><span class="cm">// headers, …). `headers` is a vector of "Key: Value" lines; Content-Length is</span></span>
+<span id="src-server-loft-L330"><span class="cm">// auto-added from the body unless a header supplies one; the body is written</span></span>
+<span id="src-server-loft-L331"><span class="cm">// verbatim (binary-safe).</span></span>
+<span id="src-server-loft-L332"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">respond_with_headers</span>(self: <span class="en">Request</span>, status: <span class="ty"><a href="stdlib-types.html">integer</a></span>, body: <span class="ty"><a href="stdlib-types.html">text</a></span>, headers: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt;) {</span>
+<span id="src-server-loft-L333">  _ = self;</span>
+<span id="src-server-loft-L334">  <span class="fn-call">tcp_respond_full</span>(status, body, headers.<span class="fn-call"><a href="stdlib-path-helpers.html">join</a></span>(<span class="st">"\n"</span>));</span>
+<span id="src-server-loft-L335">}</span>
+<span id="src-server-loft-L336"></span>
+<span id="src-server-loft-L337"><span class="cm">// Standard CORS headers so a browser client can read Content-Range /</span></span>
+<span id="src-server-loft-L338"><span class="cm">// Content-Length / ETag on a cross-origin byte-range fetch. `origin` is the</span></span>
+<span id="src-server-loft-L339"><span class="cm">// allowed origin ("*" for any).</span></span>
+<span id="src-server-loft-L340"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">cors_headers</span>(origin: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt; {</span>
+<span id="src-server-loft-L341">  [</span>
+<span id="src-server-loft-L342">    <span class="st">"Access-Control-Allow-Origin: {origin}"</span>,</span>
+<span id="src-server-loft-L343">    <span class="st">"Access-Control-Expose-Headers: Content-Range, Content-Length, ETag, Accept-Ranges"</span>,</span>
+<span id="src-server-loft-L344">    <span class="st">"Access-Control-Allow-Headers: Range, If-Range, If-None-Match"</span>,</span>
+<span id="src-server-loft-L345">    <span class="st">"Access-Control-Allow-Methods: GET, HEAD, OPTIONS"</span></span>
+<span id="src-server-loft-L346">  ]</span>
+<span id="src-server-loft-L347">}</span>
+<span id="src-server-loft-L348"></span>
+<span id="src-server-loft-L349"><span class="cm">// Serve a byte range of `body` when the request carries a Range header, adding</span></span>
+<span id="src-server-loft-L350"><span class="cm">// `extra` headers (CORS / ETag) to the 206 or 416. Returns true if a range</span></span>
+<span id="src-server-loft-L351"><span class="cm">// response was sent; false when there is no Range header (the caller serves the</span></span>
+<span id="src-server-loft-L352"><span class="cm">// full body). Single-range "bytes=off-last" / open-ended "bytes=off-" only.</span></span>
+<span id="src-server-loft-L353"><span class="cm">// Example: @SRV-003 — the boolean says WHO answered; false is the case you must handle.</span></span>
+<span id="src-server-loft-L354"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">serve_range</span>(self: <span class="en">Request</span>, body: <span class="ty"><a href="stdlib-types.html">text</a></span>, extra: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-server-loft-L355">  spec = self.<span class="fn-call">header</span>(<span class="st">"Range"</span>);</span>
+<span id="src-server-loft-L356">  <span class="kw">if</span> spec.<span class="bi"><a href="stdlib-text.html">len</a></span>() == <span class="nm">0</span> { <span class="kw">return</span> <span class="kw">false</span>; }</span>
+<span id="src-server-loft-L357">  total = body.<span class="bi"><a href="stdlib-text.html">len</a></span>();</span>
+<span id="src-server-loft-L358">  bad: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt; = [<span class="st">"Content-Range: bytes */{total}"</span>];</span>
+<span id="src-server-loft-L359">  <span class="kw">for</span> e <span class="kw">in</span> extra { bad += [e]; }</span>
+<span id="src-server-loft-L360">  <span class="kw">if</span> !spec.<span class="fn-call"><a href="stdlib-path-helpers.html">starts_with</a></span>(<span class="st">"bytes="</span>) {</span>
+<span id="src-server-loft-L361">    self.<span class="fn-call">respond_with_headers</span>(<span class="nm">416</span>, <span class="st">""</span>, bad);</span>
+<span id="src-server-loft-L362">    <span class="kw">return</span> <span class="kw">true</span>;</span>
+<span id="src-server-loft-L363">  }</span>
+<span id="src-server-loft-L364">  bounds = spec.<span class="fn-call"><a href="stdlib-text.html">replace</a></span>(<span class="st">"bytes="</span>, <span class="st">""</span>).<span class="fn-call"><a href="stdlib-text.html">split</a></span>(<span class="ch">'-'</span>);</span>
+<span id="src-server-loft-L365">  <span class="kw">if</span> bounds.<span class="bi"><a href="stdlib-text.html">len</a></span>() &lt; <span class="nm">2</span> {</span>
+<span id="src-server-loft-L366">    self.<span class="fn-call">respond_with_headers</span>(<span class="nm">416</span>, <span class="st">""</span>, bad);</span>
+<span id="src-server-loft-L367">    <span class="kw">return</span> <span class="kw">true</span>;</span>
+<span id="src-server-loft-L368">  }</span>
+<span id="src-server-loft-L369">  off = ((bounds[<span class="nm">0</span>] ?? <span class="st">""</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>?) ?? -<span class="nm">1</span>;</span>
+<span id="src-server-loft-L370">  lt = bounds[<span class="nm">1</span>] ?? <span class="st">""</span>;</span>
+<span id="src-server-loft-L371">  last = -<span class="nm">1</span>;</span>
+<span id="src-server-loft-L372">  <span class="kw">if</span> lt.<span class="bi"><a href="stdlib-text.html">len</a></span>() == <span class="nm">0</span> { last = total - <span class="nm">1</span>; } <span class="kw">else</span> { last = (lt <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>?) ?? -<span class="nm">1</span>; }</span>
+<span id="src-server-loft-L373">  <span class="kw">if</span> off &lt; <span class="nm">0</span> || last &lt; off || off &gt;= total {</span>
+<span id="src-server-loft-L374">    self.<span class="fn-call">respond_with_headers</span>(<span class="nm">416</span>, <span class="st">""</span>, bad);</span>
+<span id="src-server-loft-L375">    <span class="kw">return</span> <span class="kw">true</span>;</span>
+<span id="src-server-loft-L376">  }</span>
+<span id="src-server-loft-L377">  <span class="kw">if</span> last &gt;= total { last = total - <span class="nm">1</span>; }</span>
+<span id="src-server-loft-L378">  slice = <span class="fn-call">tcp_slice</span>(body, off, last - off + <span class="nm">1</span>);</span>
+<span id="src-server-loft-L379">  hdrs: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt; = [<span class="st">"Content-Range: bytes {off}-{last}/{total}"</span>, <span class="st">"Accept-Ranges: bytes"</span>];</span>
+<span id="src-server-loft-L380">  <span class="kw">for</span> e <span class="kw">in</span> extra { hdrs += [e]; }</span>
+<span id="src-server-loft-L381">  self.<span class="fn-call">respond_with_headers</span>(<span class="nm">206</span>, slice, hdrs);</span>
+<span id="src-server-loft-L382">  <span class="kw">true</span></span>
+<span id="src-server-loft-L383">}</span>
+<span id="src-server-loft-L384"></span>
+<span id="src-server-loft-L385"><span class="cm">// One-call helper to serve a (possibly binary) resource with full byte-range +</span></span>
+<span id="src-server-loft-L386"><span class="cm">// CORS + HEAD + conditional support — the server counterpart to the web client's</span></span>
+<span id="src-server-loft-L387"><span class="cm">// http_get_range / http_size. `etag` "" skips conditional; `origin` "" skips CORS.</span></span>
+<span id="src-server-loft-L388"><span class="cm">// Example: @SRV-003 — this one takes every branch, so it is always true and always final.</span></span>
+<span id="src-server-loft-L389"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">serve_data</span>(self: <span class="en">Request</span>, body: <span class="ty"><a href="stdlib-types.html">text</a></span>, etag: <span class="ty"><a href="stdlib-types.html">text</a></span>, origin: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-server-loft-L390">  cors: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt; = [];</span>
+<span id="src-server-loft-L391">  <span class="kw">if</span> origin.<span class="bi"><a href="stdlib-text.html">len</a></span>() &gt; <span class="nm">0</span> {</span>
+<span id="src-server-loft-L392">    <span class="kw">for</span> h <span class="kw">in</span> <span class="fn-call">cors_headers</span>(origin) { cors += [h]; }</span>
+<span id="src-server-loft-L393">  }</span>
+<span id="src-server-loft-L394">  m = self.method;</span>
+<span id="src-server-loft-L395">  <span class="kw">if</span> m == <span class="st">"OPTIONS"</span> {</span>
+<span id="src-server-loft-L396">    self.<span class="fn-call">respond_with_headers</span>(<span class="nm">204</span>, <span class="st">""</span>, cors);</span>
+<span id="src-server-loft-L397">    <span class="kw">return</span> <span class="kw">true</span>;</span>
+<span id="src-server-loft-L398">  }</span>
+<span id="src-server-loft-L399">  total = body.<span class="bi"><a href="stdlib-text.html">len</a></span>();</span>
+<span id="src-server-loft-L400">  base: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt; = [];</span>
+<span id="src-server-loft-L401">  <span class="kw">for</span> h <span class="kw">in</span> cors { base += [h]; }</span>
+<span id="src-server-loft-L402">  <span class="kw">if</span> etag.<span class="bi"><a href="stdlib-text.html">len</a></span>() &gt; <span class="nm">0</span> {</span>
+<span id="src-server-loft-L403">    base += [<span class="st">"ETag: {etag}"</span>];</span>
+<span id="src-server-loft-L404">    inm = self.<span class="fn-call">header</span>(<span class="st">"If-None-Match"</span>);</span>
+<span id="src-server-loft-L405">    <span class="kw">if</span> inm.<span class="bi"><a href="stdlib-text.html">len</a></span>() &gt; <span class="nm">0</span> &amp;&amp; inm == etag {</span>
+<span id="src-server-loft-L406">      self.<span class="fn-call">respond_with_headers</span>(<span class="nm">304</span>, <span class="st">""</span>, base);</span>
+<span id="src-server-loft-L407">      <span class="kw">return</span> <span class="kw">true</span>;</span>
+<span id="src-server-loft-L408">    }</span>
+<span id="src-server-loft-L409">  }</span>
+<span id="src-server-loft-L410">  <span class="kw">if</span> self.<span class="fn-call">serve_range</span>(body, base) { <span class="kw">return</span> <span class="kw">true</span>; }</span>
+<span id="src-server-loft-L411">  hdrs: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt; = [<span class="st">"Accept-Ranges: bytes"</span>];</span>
+<span id="src-server-loft-L412">  <span class="kw">for</span> h <span class="kw">in</span> base { hdrs += [h]; }</span>
+<span id="src-server-loft-L413">  <span class="kw">if</span> m == <span class="st">"HEAD"</span> {</span>
+<span id="src-server-loft-L414">    hdrs += [<span class="st">"Content-Length: {total}"</span>];</span>
+<span id="src-server-loft-L415">    self.<span class="fn-call">respond_with_headers</span>(<span class="nm">200</span>, <span class="st">""</span>, hdrs);</span>
+<span id="src-server-loft-L416">    <span class="kw">return</span> <span class="kw">true</span>;</span>
+<span id="src-server-loft-L417">  }</span>
+<span id="src-server-loft-L418">  self.<span class="fn-call">respond_with_headers</span>(<span class="nm">200</span>, body, hdrs);</span>
+<span id="src-server-loft-L419">  <span class="kw">true</span></span>
+<span id="src-server-loft-L420">}</span>
+<span id="src-server-loft-L421"></span>
+<span id="src-server-loft-L422"><span class="cm">// Convenience wrappers for the common cases TTT v3 needs.</span></span>
+<span id="src-server-loft-L423"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">respond_html</span>(self: <span class="en">Request</span>, body: <span class="ty"><a href="stdlib-types.html">text</a></span>) {</span>
+<span id="src-server-loft-L424">  _ = self;</span>
+<span id="src-server-loft-L425">  <span class="fn-call">tcp_respond_typed</span>(<span class="nm">200</span>, body, <span class="st">"text/html; charset=utf-8"</span>);</span>
+<span id="src-server-loft-L426">}</span>
+<span id="src-server-loft-L427"></span>
+<span id="src-server-loft-L428"><span class="cm">// 200 as `text/css`.</span></span>
+<span id="src-server-loft-L429"><span class="cm">//</span></span>
+<span id="src-server-loft-L430"><span class="cm">// ⚠ A stylesheet written as a loft literal needs its braces DOUBLED — `{` opens</span></span>
+<span id="src-server-loft-L431"><span class="cm">// an interpolation, so `"body {{ color: red }}"` is what produces `body {`.</span></span>
+<span id="src-server-loft-L432"><span class="cm">// Reading the file instead (`file(path).content()`) sidesteps it entirely.</span></span>
+<span id="src-server-loft-L433"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">respond_css</span>(self: <span class="en">Request</span>, body: <span class="ty"><a href="stdlib-types.html">text</a></span>) {</span>
+<span id="src-server-loft-L434">  _ = self;</span>
+<span id="src-server-loft-L435">  <span class="fn-call">tcp_respond_typed</span>(<span class="nm">200</span>, body, <span class="st">"text/css; charset=utf-8"</span>);</span>
+<span id="src-server-loft-L436">}</span>
+<span id="src-server-loft-L437"></span>
+<span id="src-server-loft-L438"><span class="cm">// 200 as `application/javascript`.  Same brace-doubling trap as `respond_css`,</span></span>
+<span id="src-server-loft-L439"><span class="cm">// and script bodies hit it on the first function they declare.</span></span>
+<span id="src-server-loft-L440"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">respond_js</span>(self: <span class="en">Request</span>, body: <span class="ty"><a href="stdlib-types.html">text</a></span>) {</span>
+<span id="src-server-loft-L441">  _ = self;</span>
+<span id="src-server-loft-L442">  <span class="fn-call">tcp_respond_typed</span>(<span class="nm">200</span>, body, <span class="st">"application/javascript; charset=utf-8"</span>);</span>
+<span id="src-server-loft-L443">}</span>
+<span id="src-server-loft-L444"></span>
+<span id="src-server-loft-L445"><span class="cm">// 200, serving loft SOURCE.  There is no registered MIME type for it, so this</span></span>
+<span id="src-server-loft-L446"><span class="cm">// goes out as `text/plain` — which is what makes it read in a browser tab</span></span>
+<span id="src-server-loft-L447"><span class="cm">// rather than download.</span></span>
+<span id="src-server-loft-L448"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">respond_loft</span>(self: <span class="en">Request</span>, body: <span class="ty"><a href="stdlib-types.html">text</a></span>) {</span>
+<span id="src-server-loft-L449">  _ = self;</span>
+<span id="src-server-loft-L450">  <span class="cm">// No registered MIME for loft source; text/plain reads cleanly in a</span></span>
+<span id="src-server-loft-L451">  <span class="cm">// browser tab and matches what `curl` / fetch consumers expect.</span></span>
+<span id="src-server-loft-L452">  <span class="fn-call">tcp_respond_typed</span>(<span class="nm">200</span>, body, <span class="st">"text/plain; charset=utf-8"</span>);</span>
+<span id="src-server-loft-L453">}</span>
+<span id="src-server-loft-L454"></span>
+<span id="src-server-loft-L455"><span class="cm">// The not-found answer.  Worth calling on every unmatched path: a request with</span></span>
+<span id="src-server-loft-L456"><span class="cm">// no respond at all leaves the client waiting for a body that never comes.</span></span>
+<span id="src-server-loft-L457"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">respond_404</span>(self: <span class="en">Request</span>) {</span>
+<span id="src-server-loft-L458">  _ = self;</span>
+<span id="src-server-loft-L459">  <span class="fn-call">tcp_respond</span>(<span class="nm">404</span>, <span class="st">"Not Found"</span>);</span>
+<span id="src-server-loft-L460">}</span>
+<span id="src-server-loft-L461"></span>
+<span id="src-server-loft-L462"><span class="cm">// Give the port back.  A server that is never closed holds its port until the</span></span>
+<span id="src-server-loft-L463"><span class="cm">// process exits, which is what makes a restarted program fail to bind.</span></span>
+<span id="src-server-loft-L464"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">close</span>(self: <span class="en">Server</span>) {</span>
+<span id="src-server-loft-L465">  <span class="fn-call">tcp_close</span>(self.handle);</span>
+<span id="src-server-loft-L466">}</span>
+<span id="src-server-loft-L467"></span>
+<span id="src-server-loft-L468"><span class="cm">// --- Single-client WebSocket API ---</span></span>
 <span id="src-server-loft-L469"></span>
-<span id="src-server-loft-L470"><span class="cm">// --- Single-client WebSocket API ---</span></span>
-<span id="src-server-loft-L471"></span>
-<span id="src-server-loft-L472"><span class="cm">// Turn the connection the last `next` handed over into a WebSocket.  Answers</span></span>
-<span id="src-server-loft-L473"><span class="cm">// null if the request was not a valid upgrade — check before using it.</span></span>
-<span id="src-server-loft-L474"><span class="cm">//</span></span>
-<span id="src-server-loft-L475"><span class="cm">// Takes no request argument because it acts on the one parked connection: this</span></span>
-<span id="src-server-loft-L476"><span class="cm">// is the single-client stack, where there is only ever one.</span></span>
-<span id="src-server-loft-L477"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">ws_upgrade</span>() -&gt; <span class="en">WebSocket</span>? {</span>
-<span id="src-server-loft-L478">  h = <span class="fn-call">ws_upgrade_native</span>();</span>
-<span id="src-server-loft-L479">  <span class="kw">if</span> h &lt; <span class="nm">0</span> { <span class="kw">return</span> <span class="kw">null</span>; }</span>
-<span id="src-server-loft-L480">  <span class="en">WebSocket</span> { ws_id: h }</span>
-<span id="src-server-loft-L481">}</span>
-<span id="src-server-loft-L482"></span>
-<span id="src-server-loft-L483"><span class="cm">// The next frame's payload, or null when the socket is done.  Nullable here,</span></span>
-<span id="src-server-loft-L484"><span class="cm">// which is what lets a `while` over it end cleanly.</span></span>
-<span id="src-server-loft-L485"><span class="cm">//</span></span>
-<span id="src-server-loft-L486"><span class="cm">// Ask `last_opcode()` afterwards to tell a text frame from a binary one.</span></span>
-<span id="src-server-loft-L487"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">next</span>(self: <span class="en">WebSocket</span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>? {</span>
-<span id="src-server-loft-L488">  <span class="kw">if</span> !<span class="fn-call">ws_recv_native</span>(self.ws_id) { <span class="kw">return</span> <span class="kw">null</span>; }</span>
-<span id="src-server-loft-L489">  <span class="fn-call">ws_message_native</span>()</span>
-<span id="src-server-loft-L490">}</span>
-<span id="src-server-loft-L491"></span>
-<span id="src-server-loft-L492"><span class="cm">// Send a TEXT frame.  False means the peer is gone — the return is the</span></span>
-<span id="src-server-loft-L493"><span class="cm">// disconnect notice, since nothing else reports one.</span></span>
-<span id="src-server-loft-L494"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">send</span>(self: <span class="en">WebSocket</span>, msg: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
-<span id="src-server-loft-L495">  <span class="fn-call">ws_send_native</span>(self.ws_id, msg)</span>
-<span id="src-server-loft-L496">}</span>
-<span id="src-server-loft-L497"></span>
-<span id="src-server-loft-L498"><span class="cm">// Send `msg` as a binary WebSocket frame (opcode 2).  Loft</span></span>
-<span id="src-server-loft-L499"><span class="cm">// `text` is a byte buffer — pack u8/u16/i32/etc. into it via</span></span>
-<span id="src-server-loft-L500"><span class="cm">// `to_bytes` style code, then ship it.</span></span>
-<span id="src-server-loft-L501"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">send_binary</span>(self: <span class="en">WebSocket</span>, msg: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
-<span id="src-server-loft-L502">  <span class="fn-call">ws_send_binary_native</span>(self.ws_id, msg)</span>
-<span id="src-server-loft-L503">}</span>
-<span id="src-server-loft-L504"></span>
-<span id="src-server-loft-L505"><span class="cm">// Opcode of the last frame returned by `next` on this socket.</span></span>
-<span id="src-server-loft-L506"><span class="cm">// Use after `next` to decide whether to interpret the payload</span></span>
-<span id="src-server-loft-L507"><span class="cm">// as utf-8 text or as a binary blob.</span></span>
-<span id="src-server-loft-L508"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">last_opcode</span>(self: <span class="en">WebSocket</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-server-loft-L509">  _ = self;</span>
-<span id="src-server-loft-L510">  <span class="fn-call">ws_opcode_native</span>()</span>
-<span id="src-server-loft-L511">}</span>
-<span id="src-server-loft-L512"></span>
-<span id="src-server-loft-L513"><span class="cm">// Close the socket.  The peer sees a clean close rather than a dropped</span></span>
-<span id="src-server-loft-L514"><span class="cm">// connection, which is the difference between a reconnect and an error.</span></span>
-<span id="src-server-loft-L515"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">close</span>(self: <span class="en">WebSocket</span>) {</span>
-<span id="src-server-loft-L516">  <span class="fn-call">ws_close_native</span>(self.ws_id);</span>
-<span id="src-server-loft-L517">}</span>
-<span id="src-server-loft-L518"></span>
-<span id="src-server-loft-L519"><span class="cm">// --- Multi-client WebSocket primitives (internal) ---</span></span>
-<span id="src-server-loft-L520"><span class="cm">//</span></span>
-<span id="src-server-loft-L521"><span class="cm">// These wrap the per-slot accept / poll / iterate primitives that</span></span>
-<span id="src-server-loft-L522"><span class="cm">// the event pump uses internally.  They are NOT part of the public</span></span>
-<span id="src-server-loft-L523"><span class="cm">// surface — multi-client servers use `Server::run` instead.</span></span>
-<span id="src-server-loft-L524"></span>
-<span id="src-server-loft-L525"><span class="kw">fn</span> <span class="fn-call">ws_accept_native</span>(handle: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
-<span id="src-server-loft-L526">#native <span class="st">"n_ws_accept_nonblocking"</span></span>
-<span id="src-server-loft-L527"></span>
-<span id="src-server-loft-L528"><span class="kw">fn</span> <span class="fn-call">ws_clients_len_native</span>() -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
-<span id="src-server-loft-L529">#native <span class="st">"n_ws_clients_len"</span></span>
-<span id="src-server-loft-L530"></span>
-<span id="src-server-loft-L531"><span class="kw">fn</span> <span class="fn-call">ws_client_active_native</span>(id: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span>;</span>
-<span id="src-server-loft-L532">#native <span class="st">"n_ws_client_active"</span></span>
-<span id="src-server-loft-L533"></span>
-<span id="src-server-loft-L534"><span class="cm">// Event-pump primitives.  `ws_next_event_native` returns true if</span></span>
-<span id="src-server-loft-L535"><span class="cm">// it loaded an event into the thread-local slots (kind / cid /</span></span>
-<span id="src-server-loft-L536"><span class="cm">// payload), false if nothing was pending.  `ws_idle_sleep_ms`</span></span>
-<span id="src-server-loft-L537"><span class="cm">// yields the CPU briefly when a drain pass produced zero events.</span></span>
-<span id="src-server-loft-L538"><span class="kw">fn</span> <span class="fn-call">ws_next_event_native</span>(handle: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span>;</span>
-<span id="src-server-loft-L539">#native <span class="st">"n_ws_next_event"</span></span>
-<span id="src-server-loft-L540"></span>
-<span id="src-server-loft-L541"><span class="kw">fn</span> <span class="fn-call">ws_event_kind_native</span>() -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
-<span id="src-server-loft-L542">#native <span class="st">"n_ws_event_kind"</span></span>
-<span id="src-server-loft-L543"></span>
-<span id="src-server-loft-L544"><span class="kw">fn</span> <span class="fn-call">ws_event_client_id_native</span>() -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
-<span id="src-server-loft-L545">#native <span class="st">"n_ws_event_client_id"</span></span>
-<span id="src-server-loft-L546"></span>
-<span id="src-server-loft-L547"><span class="kw">fn</span> <span class="fn-call">ws_event_payload_native</span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
-<span id="src-server-loft-L548">#native <span class="st">"n_ws_event_payload"</span></span>
-<span id="src-server-loft-L549"></span>
-<span id="src-server-loft-L550"><span class="kw">fn</span> <span class="fn-call">ws_broadcast_native</span>(handle: <span class="ty"><a href="stdlib-types.html">integer</a></span>, msg: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
-<span id="src-server-loft-L551">#native <span class="st">"n_ws_broadcast"</span></span>
-<span id="src-server-loft-L552"></span>
-<span id="src-server-loft-L553"><span class="kw">fn</span> <span class="fn-call">ws_idle_sleep_ms_native</span>(ms: <span class="ty"><a href="stdlib-types.html">integer</a></span>);</span>
-<span id="src-server-loft-L554">#native <span class="st">"n_ws_idle_sleep_ms"</span></span>
-<span id="src-server-loft-L555"></span>
-<span id="src-server-loft-L556"><span class="cm">// --- Multi-client WebSocket API (clean) ---</span></span>
-<span id="src-server-loft-L557"><span class="cm">//</span></span>
-<span id="src-server-loft-L558"><span class="cm">// The public surface for multi-client servers.  Loft programs</span></span>
-<span id="src-server-loft-L559"><span class="cm">// register a single event handler via `run` and Rust drives the</span></span>
-<span id="src-server-loft-L560"><span class="cm">// rest: accept, per-client polling, frame parsing, disconnect</span></span>
-<span id="src-server-loft-L561"><span class="cm">// detection.</span></span>
-<span id="src-server-loft-L562"><span class="cm">//</span></span>
-<span id="src-server-loft-L563"><span class="cm">//   srv.run(fn(ev: WsEvent) {</span></span>
-<span id="src-server-loft-L564"><span class="cm">//     if ev.connected {</span></span>
-<span id="src-server-loft-L565"><span class="cm">//       /* welcome / MAP send / seat */</span></span>
-<span id="src-server-loft-L566"><span class="cm">//     } else if ev.message {</span></span>
-<span id="src-server-loft-L567"><span class="cm">//       /* dispatch by ev.msg_id */</span></span>
-<span id="src-server-loft-L568"><span class="cm">//     }</span></span>
-<span id="src-server-loft-L569"><span class="cm">//   });</span></span>
-<span id="src-server-loft-L570"><span class="cm">//</span></span>
-<span id="src-server-loft-L571"><span class="cm">// One handler instead of two means the application's `state`</span></span>
-<span id="src-server-loft-L572"><span class="cm">// capture lives in a single closure — mutations through that</span></span>
-<span id="src-server-loft-L573"><span class="cm">// closure are visible across every invocation.</span></span>
-<span id="src-server-loft-L574"><span class="cm">//</span></span>
-<span id="src-server-loft-L575"><span class="cm">// Disconnects are absorbed silently — the loft program is never</span></span>
-<span id="src-server-loft-L576"><span class="cm">// notified.  This was an explicit design choice: per-client state</span></span>
-<span id="src-server-loft-L577"><span class="cm">// cleanup happens lazily on next access, not on a disconnect</span></span>
-<span id="src-server-loft-L578"><span class="cm">// callback.</span></span>
-<span id="src-server-loft-L579"></span>
-<span id="src-server-loft-L580"><span class="cm">// Event delivered to the on_event handler.  `connected` and</span></span>
-<span id="src-server-loft-L581"><span class="cm">// `message` are mutually-exclusive booleans for fast dispatch</span></span>
-<span id="src-server-loft-L582"><span class="cm">// without an integer enum.  Wire format `&lt;msg_id&gt;:&lt;payload&gt;`</span></span>
-<span id="src-server-loft-L583"><span class="cm">// is parsed by `run` so msg_id and payload come pre-split.</span></span>
-<span id="src-server-loft-L584"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">WsEvent</span> {</span>
-<span id="src-server-loft-L585">  connected: <span class="ty"><a href="stdlib-types.html">boolean</a></span>,</span>
-<span id="src-server-loft-L586">  message:   <span class="ty"><a href="stdlib-types.html">boolean</a></span>,</span>
-<span id="src-server-loft-L587">  http:      <span class="ty"><a href="stdlib-types.html">boolean</a></span>,    <span class="cm">// true for a plain HTTP request (serve a page etc.)</span></span>
-<span id="src-server-loft-L588">  cid:       <span class="ty"><a href="stdlib-types.html">integer</a></span>,    <span class="cm">// WS client id; -1 for http events</span></span>
-<span id="src-server-loft-L589">  msg_id:    <span class="ty"><a href="stdlib-types.html">integer</a></span>,    <span class="cm">// 0 for connected / http events</span></span>
-<span id="src-server-loft-L590">  payload:   <span class="ty"><a href="stdlib-types.html">text</a></span>,       <span class="cm">// "" for connected / http events</span></span>
-<span id="src-server-loft-L591">  path:      <span class="ty"><a href="stdlib-types.html">text</a></span>        <span class="cm">// request path for http events; "" otherwise</span></span>
-<span id="src-server-loft-L592">}</span>
-<span id="src-server-loft-L593"></span>
-<span id="src-server-loft-L594"><span class="cm">// Block forever, draining events and calling the handler.</span></span>
-<span id="src-server-loft-L595"><span class="cm">// Malformed message frames are logged at warn level and silently</span></span>
-<span id="src-server-loft-L596"><span class="cm">// dropped — the handler never sees them.</span></span>
-<span id="src-server-loft-L597"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">run</span>(self: <span class="en">Server</span>, on_event: <span class="kw">fn</span>(<span class="en">WsEvent</span>)) {</span>
-<span id="src-server-loft-L598">  while <span class="kw">true</span> {</span>
-<span id="src-server-loft-L599">    drained = <span class="nm">0</span>;</span>
-<span id="src-server-loft-L600">    while <span class="kw">true</span> {</span>
-<span id="src-server-loft-L601">      ev = self.<span class="fn-call">poll_event</span>();</span>
-<span id="src-server-loft-L602">      <span class="kw">if</span> ev == <span class="kw">null</span> { <span class="kw">break</span>; }</span>
-<span id="src-server-loft-L603">      <span class="fn-call">on_event</span>(ev);</span>
-<span id="src-server-loft-L604">      drained = drained + <span class="nm">1</span>;</span>
-<span id="src-server-loft-L605">    }</span>
-<span id="src-server-loft-L606">    <span class="kw">if</span> drained == <span class="nm">0</span> { <span class="fn-call">ws_idle_sleep_ms_native</span>(<span class="nm">2</span>); }</span>
-<span id="src-server-loft-L607">  }</span>
-<span id="src-server-loft-L608">}</span>
-<span id="src-server-loft-L609"></span>
-<span id="src-server-loft-L610"><span class="cm">// Non-blocking single-event drain — returns the next WsEvent, or null</span></span>
-<span id="src-server-loft-L611"><span class="cm">// when nothing is pending.  Lets a server that also needs a periodic</span></span>
-<span id="src-server-loft-L612"><span class="cm">// tick (timers, decay, snapshots) run its OWN loop while still using the</span></span>
-<span id="src-server-loft-L613"><span class="cm">// efficient Rust-side event pump: drain `poll_event` in a batch, do the</span></span>
-<span id="src-server-loft-L614"><span class="cm">// periodic work, idle-sleep when a pass produced nothing.  `run` above is</span></span>
-<span id="src-server-loft-L615"><span class="cm">// the convenience wrapper for servers that only react to events.</span></span>
-<span id="src-server-loft-L616"><span class="cm">//</span></span>
-<span id="src-server-loft-L617"><span class="cm">// Disconnect (kind 2) and malformed message frames are skipped internally</span></span>
-<span id="src-server-loft-L618"><span class="cm">// (the caller never sees them), so a null return always means "idle".</span></span>
-<span id="src-server-loft-L619"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">poll_event</span>(self: <span class="en">Server</span>) -&gt; <span class="en">WsEvent</span>? {</span>
-<span id="src-server-loft-L620">  while <span class="fn-call">ws_next_event_native</span>(self.handle) {</span>
-<span id="src-server-loft-L621">    kind = <span class="fn-call">ws_event_kind_native</span>();</span>
-<span id="src-server-loft-L622">    cid  = <span class="fn-call">ws_event_client_id_native</span>();</span>
-<span id="src-server-loft-L623">    <span class="kw">if</span> kind == <span class="nm">0</span> {</span>
-<span id="src-server-loft-L624">      <span class="kw">return</span> <span class="en">WsEvent</span> { connected: <span class="kw">true</span>, message: <span class="kw">false</span>, http: <span class="kw">false</span>,</span>
-<span id="src-server-loft-L625">                       cid: cid, msg_id: <span class="nm">0</span>, payload: <span class="st">""</span>, path: <span class="st">""</span> };</span>
-<span id="src-server-loft-L626">    } <span class="kw">else</span> <span class="kw">if</span> kind == <span class="nm">3</span> {</span>
-<span id="src-server-loft-L627">      <span class="cm">// HTTP request — payload carries the path; reply via respond_*.</span></span>
-<span id="src-server-loft-L628">      <span class="kw">return</span> <span class="en">WsEvent</span> { connected: <span class="kw">false</span>, message: <span class="kw">false</span>, http: <span class="kw">true</span>,</span>
-<span id="src-server-loft-L629">                       cid: cid, msg_id: <span class="nm">0</span>, payload: <span class="st">""</span>, path: <span class="fn-call">ws_event_payload_native</span>() };</span>
-<span id="src-server-loft-L630">    } <span class="kw">else</span> <span class="kw">if</span> kind == <span class="nm">1</span> {</span>
-<span id="src-server-loft-L631">      raw = <span class="fn-call">ws_event_payload_native</span>();</span>
-<span id="src-server-loft-L632">      i   = raw.<span class="fn-call"><a href="stdlib-text.html">find</a></span>(<span class="st">":"</span>);</span>
-<span id="src-server-loft-L633">      <span class="kw">if</span> i != <span class="kw">null</span> {</span>
-<span id="src-server-loft-L634">        <span class="cm">// A non-numeric id prefix is as malformed as a missing ":" —</span></span>
-<span id="src-server-loft-L635">        <span class="cm">// warn-and-drop below rather than masking it as id 0.</span></span>
-<span id="src-server-loft-L636">        mid = raw[..i] <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>?;</span>
-<span id="src-server-loft-L637">        <span class="kw">if</span> mid != <span class="kw">null</span> {</span>
-<span id="src-server-loft-L638">          <span class="kw">return</span> <span class="en">WsEvent</span> { connected: <span class="kw">false</span>, message: <span class="kw">true</span>, http: <span class="kw">false</span>,</span>
-<span id="src-server-loft-L639">                           cid: cid, msg_id: mid ?? <span class="nm">0</span>,</span>
-<span id="src-server-loft-L640">                           payload: raw[i + <span class="nm">1..</span>], path: <span class="st">""</span> };</span>
-<span id="src-server-loft-L641">        }</span>
-<span id="src-server-loft-L642">      }</span>
-<span id="src-server-loft-L643">      <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">log_warn</a></span>(<span class="st">"server: dropped malformed frame from {cid}: {raw}"</span>);</span>
-<span id="src-server-loft-L644">    }</span>
-<span id="src-server-loft-L645">    <span class="cm">// kind == 2 (Disconnected) absorbed silently; keep draining.</span></span>
-<span id="src-server-loft-L646">  }</span>
-<span id="src-server-loft-L647">  <span class="kw">null</span></span>
-<span id="src-server-loft-L648">}</span>
-<span id="src-server-loft-L649"></span>
-<span id="src-server-loft-L650"><span class="cm">// Reply to the HTTP request currently parked by a `http` WsEvent and</span></span>
-<span id="src-server-loft-L651"><span class="cm">// close it.  Call exactly once from the handler for an `ev.http` event.</span></span>
-<span id="src-server-loft-L652"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">respond_html</span>(self: <span class="en">Server</span>, body: <span class="ty"><a href="stdlib-types.html">text</a></span>) {</span>
-<span id="src-server-loft-L653">  _ = self;</span>
-<span id="src-server-loft-L654">  <span class="fn-call">tcp_respond_typed</span>(<span class="nm">200</span>, body, <span class="st">"text/html; charset=utf-8"</span>);</span>
-<span id="src-server-loft-L655">}</span>
-<span id="src-server-loft-L656"><span class="cm">// The `Server` twin of `Request::respond_typed`, for replying to the request</span></span>
-<span id="src-server-loft-L657"><span class="cm">// parked by an `http` WsEvent inside a `run` handler.</span></span>
-<span id="src-server-loft-L658"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">respond_typed</span>(self: <span class="en">Server</span>, status: <span class="ty"><a href="stdlib-types.html">integer</a></span>, body: <span class="ty"><a href="stdlib-types.html">text</a></span>, content_type: <span class="ty"><a href="stdlib-types.html">text</a></span>) {</span>
-<span id="src-server-loft-L659">  _ = self;</span>
-<span id="src-server-loft-L660">  <span class="fn-call">tcp_respond_typed</span>(status, body, content_type);</span>
-<span id="src-server-loft-L661">}</span>
-<span id="src-server-loft-L662"><span class="cm">// The same not-found answer, from inside a `run` handler.</span></span>
-<span id="src-server-loft-L663"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">respond_404</span>(self: <span class="en">Server</span>) {</span>
-<span id="src-server-loft-L664">  _ = self;</span>
-<span id="src-server-loft-L665">  <span class="fn-call">tcp_respond_typed</span>(<span class="nm">404</span>, <span class="st">"Not Found"</span>, <span class="st">"text/plain; charset=utf-8"</span>);</span>
-<span id="src-server-loft-L666">}</span>
-<span id="src-server-loft-L667"></span>
-<span id="src-server-loft-L668"><span class="cm">// Send a frame to a specific client.  Returns true on success.</span></span>
-<span id="src-server-loft-L669"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">send_to</span>(self: <span class="en">Server</span>, client_id: <span class="ty"><a href="stdlib-types.html">integer</a></span>, msg: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
-<span id="src-server-loft-L670">  _ = self;</span>
-<span id="src-server-loft-L671">  <span class="fn-call">ws_send_native</span>(client_id, msg)</span>
-<span id="src-server-loft-L672">}</span>
-<span id="src-server-loft-L673"></span>
-<span id="src-server-loft-L674"><span class="cm">// Send a frame to every active client.  Returns the count of</span></span>
-<span id="src-server-loft-L675"><span class="cm">// successful sends.  Iteration happens entirely in Rust.</span></span>
-<span id="src-server-loft-L676"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">broadcast</span>(self: <span class="en">Server</span>, msg: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-server-loft-L677">  <span class="fn-call">ws_broadcast_native</span>(self.handle, msg)</span>
-<span id="src-server-loft-L678">}</span>
-<span id="src-server-loft-L679"></span>
-<span id="src-server-loft-L680"><span class="cm">// Forcefully close one client's connection.  The slot is freed</span></span>
-<span id="src-server-loft-L681"><span class="cm">// for reuse by future accepts.</span></span>
-<span id="src-server-loft-L682"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">disconnect</span>(self: <span class="en">Server</span>, client_id: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
-<span id="src-server-loft-L683">  _ = self;</span>
-<span id="src-server-loft-L684">  <span class="fn-call">ws_close_native</span>(client_id);</span>
-<span id="src-server-loft-L685">}</span>
+<span id="src-server-loft-L470"><span class="cm">// Turn the connection the last `next` handed over into a WebSocket.  Answers</span></span>
+<span id="src-server-loft-L471"><span class="cm">// null if the request was not a valid upgrade — check before using it.</span></span>
+<span id="src-server-loft-L472"><span class="cm">//</span></span>
+<span id="src-server-loft-L473"><span class="cm">// Takes no request argument because it acts on the one parked connection: this</span></span>
+<span id="src-server-loft-L474"><span class="cm">// is the single-client stack, where there is only ever one.</span></span>
+<span id="src-server-loft-L475"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">ws_upgrade</span>() -&gt; <span class="en">WebSocket</span>? {</span>
+<span id="src-server-loft-L476">  h = <span class="fn-call">ws_upgrade_native</span>();</span>
+<span id="src-server-loft-L477">  <span class="kw">if</span> h &lt; <span class="nm">0</span> { <span class="kw">return</span> <span class="kw">null</span>; }</span>
+<span id="src-server-loft-L478">  <span class="en">WebSocket</span> { ws_id: h }</span>
+<span id="src-server-loft-L479">}</span>
+<span id="src-server-loft-L480"></span>
+<span id="src-server-loft-L481"><span class="cm">// The next frame's payload, or null when the socket is done.  Nullable here,</span></span>
+<span id="src-server-loft-L482"><span class="cm">// which is what lets a `while` over it end cleanly.</span></span>
+<span id="src-server-loft-L483"><span class="cm">//</span></span>
+<span id="src-server-loft-L484"><span class="cm">// Ask `last_opcode()` afterwards to tell a text frame from a binary one.</span></span>
+<span id="src-server-loft-L485"><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">next</span>(self: <span class="en">WebSocket</span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>? {</span>
+<span id="src-server-loft-L486">  <span class="kw">if</span> !<span class="fn-call">ws_recv_native</span>(self.ws_id) { <span class="kw">return</span> <span class="kw">null</span>; }</span>
+<span id="src-server-loft-L487">  <span class="fn-call">ws_message_native</span>()</span>
+<span id="src-server-loft-L488">}</span>
+<span id="src-server-loft-L489"></span>
+<span id="src-server-loft-L490"><span class="cm">// Send a TEXT frame.  False means the peer is gone — the return is the</span></span>
+<span id="src-server-loft-L491"><span class="cm">// disconnect notice, since nothing else reports one.</span></span>
+<span id="src-server-loft-L492"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">send</span>(self: <span class="en">WebSocket</span>, msg: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-server-loft-L493">  <span class="fn-call">ws_send_native</span>(self.ws_id, msg)</span>
+<span id="src-server-loft-L494">}</span>
+<span id="src-server-loft-L495"></span>
+<span id="src-server-loft-L496"><span class="cm">// Send `msg` as a binary WebSocket frame (opcode 2).  Loft</span></span>
+<span id="src-server-loft-L497"><span class="cm">// `text` is a byte buffer — pack u8/u16/i32/etc. into it via</span></span>
+<span id="src-server-loft-L498"><span class="cm">// `to_bytes` style code, then ship it.</span></span>
+<span id="src-server-loft-L499"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">send_binary</span>(self: <span class="en">WebSocket</span>, msg: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-server-loft-L500">  <span class="fn-call">ws_send_binary_native</span>(self.ws_id, msg)</span>
+<span id="src-server-loft-L501">}</span>
+<span id="src-server-loft-L502"></span>
+<span id="src-server-loft-L503"><span class="cm">// Opcode of the last frame returned by `next` on this socket.</span></span>
+<span id="src-server-loft-L504"><span class="cm">// Use after `next` to decide whether to interpret the payload</span></span>
+<span id="src-server-loft-L505"><span class="cm">// as utf-8 text or as a binary blob.</span></span>
+<span id="src-server-loft-L506"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">last_opcode</span>(self: <span class="en">WebSocket</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-server-loft-L507">  _ = self;</span>
+<span id="src-server-loft-L508">  <span class="fn-call">ws_opcode_native</span>()</span>
+<span id="src-server-loft-L509">}</span>
+<span id="src-server-loft-L510"></span>
+<span id="src-server-loft-L511"><span class="cm">// Close the socket.  The peer sees a clean close rather than a dropped</span></span>
+<span id="src-server-loft-L512"><span class="cm">// connection, which is the difference between a reconnect and an error.</span></span>
+<span id="src-server-loft-L513"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">close</span>(self: <span class="en">WebSocket</span>) {</span>
+<span id="src-server-loft-L514">  <span class="fn-call">ws_close_native</span>(self.ws_id);</span>
+<span id="src-server-loft-L515">}</span>
+<span id="src-server-loft-L516"></span>
+<span id="src-server-loft-L517"><span class="cm">// --- Multi-client WebSocket primitives (internal) ---</span></span>
+<span id="src-server-loft-L518"><span class="cm">//</span></span>
+<span id="src-server-loft-L519"><span class="cm">// These wrap the per-slot accept / poll / iterate primitives that</span></span>
+<span id="src-server-loft-L520"><span class="cm">// the event pump uses internally.  They are NOT part of the public</span></span>
+<span id="src-server-loft-L521"><span class="cm">// surface — multi-client servers use `Server::run` instead.</span></span>
+<span id="src-server-loft-L522"></span>
+<span id="src-server-loft-L523"><span class="kw">fn</span> <span class="fn-call">ws_accept_native</span>(handle: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-server-loft-L524">#native <span class="st">"n_ws_accept_nonblocking"</span></span>
+<span id="src-server-loft-L525"></span>
+<span id="src-server-loft-L526"><span class="kw">fn</span> <span class="fn-call">ws_clients_len_native</span>() -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-server-loft-L527">#native <span class="st">"n_ws_clients_len"</span></span>
+<span id="src-server-loft-L528"></span>
+<span id="src-server-loft-L529"><span class="kw">fn</span> <span class="fn-call">ws_client_active_native</span>(id: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span>;</span>
+<span id="src-server-loft-L530">#native <span class="st">"n_ws_client_active"</span></span>
+<span id="src-server-loft-L531"></span>
+<span id="src-server-loft-L532"><span class="cm">// Event-pump primitives.  `ws_next_event_native` returns true if</span></span>
+<span id="src-server-loft-L533"><span class="cm">// it loaded an event into the thread-local slots (kind / cid /</span></span>
+<span id="src-server-loft-L534"><span class="cm">// payload), false if nothing was pending.  `ws_idle_sleep_ms`</span></span>
+<span id="src-server-loft-L535"><span class="cm">// yields the CPU briefly when a drain pass produced zero events.</span></span>
+<span id="src-server-loft-L536"><span class="kw">fn</span> <span class="fn-call">ws_next_event_native</span>(handle: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span>;</span>
+<span id="src-server-loft-L537">#native <span class="st">"n_ws_next_event"</span></span>
+<span id="src-server-loft-L538"></span>
+<span id="src-server-loft-L539"><span class="kw">fn</span> <span class="fn-call">ws_event_kind_native</span>() -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-server-loft-L540">#native <span class="st">"n_ws_event_kind"</span></span>
+<span id="src-server-loft-L541"></span>
+<span id="src-server-loft-L542"><span class="kw">fn</span> <span class="fn-call">ws_event_client_id_native</span>() -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-server-loft-L543">#native <span class="st">"n_ws_event_client_id"</span></span>
+<span id="src-server-loft-L544"></span>
+<span id="src-server-loft-L545"><span class="kw">fn</span> <span class="fn-call">ws_event_payload_native</span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
+<span id="src-server-loft-L546">#native <span class="st">"n_ws_event_payload"</span></span>
+<span id="src-server-loft-L547"></span>
+<span id="src-server-loft-L548"><span class="kw">fn</span> <span class="fn-call">ws_broadcast_native</span>(handle: <span class="ty"><a href="stdlib-types.html">integer</a></span>, msg: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-server-loft-L549">#native <span class="st">"n_ws_broadcast"</span></span>
+<span id="src-server-loft-L550"></span>
+<span id="src-server-loft-L551"><span class="kw">fn</span> <span class="fn-call">ws_idle_sleep_ms_native</span>(ms: <span class="ty"><a href="stdlib-types.html">integer</a></span>);</span>
+<span id="src-server-loft-L552">#native <span class="st">"n_ws_idle_sleep_ms"</span></span>
+<span id="src-server-loft-L553"></span>
+<span id="src-server-loft-L554"><span class="cm">// --- Multi-client WebSocket API (clean) ---</span></span>
+<span id="src-server-loft-L555"><span class="cm">//</span></span>
+<span id="src-server-loft-L556"><span class="cm">// The public surface for multi-client servers.  Loft programs</span></span>
+<span id="src-server-loft-L557"><span class="cm">// register a single event handler via `run` and Rust drives the</span></span>
+<span id="src-server-loft-L558"><span class="cm">// rest: accept, per-client polling, frame parsing, disconnect</span></span>
+<span id="src-server-loft-L559"><span class="cm">// detection.</span></span>
+<span id="src-server-loft-L560"><span class="cm">//</span></span>
+<span id="src-server-loft-L561"><span class="cm">//   srv.run(fn(ev: WsEvent) {</span></span>
+<span id="src-server-loft-L562"><span class="cm">//     if ev.connected {</span></span>
+<span id="src-server-loft-L563"><span class="cm">//       /* welcome / MAP send / seat */</span></span>
+<span id="src-server-loft-L564"><span class="cm">//     } else if ev.message {</span></span>
+<span id="src-server-loft-L565"><span class="cm">//       /* dispatch by ev.msg_id */</span></span>
+<span id="src-server-loft-L566"><span class="cm">//     }</span></span>
+<span id="src-server-loft-L567"><span class="cm">//   });</span></span>
+<span id="src-server-loft-L568"><span class="cm">//</span></span>
+<span id="src-server-loft-L569"><span class="cm">// One handler instead of two means the application's `state`</span></span>
+<span id="src-server-loft-L570"><span class="cm">// capture lives in a single closure — mutations through that</span></span>
+<span id="src-server-loft-L571"><span class="cm">// closure are visible across every invocation.</span></span>
+<span id="src-server-loft-L572"><span class="cm">//</span></span>
+<span id="src-server-loft-L573"><span class="cm">// Disconnects are absorbed silently — the loft program is never</span></span>
+<span id="src-server-loft-L574"><span class="cm">// notified.  This was an explicit design choice: per-client state</span></span>
+<span id="src-server-loft-L575"><span class="cm">// cleanup happens lazily on next access, not on a disconnect</span></span>
+<span id="src-server-loft-L576"><span class="cm">// callback.</span></span>
+<span id="src-server-loft-L577"></span>
+<span id="src-server-loft-L578"><span class="cm">// Event delivered to the on_event handler.  `connected` and</span></span>
+<span id="src-server-loft-L579"><span class="cm">// `message` are mutually-exclusive booleans for fast dispatch</span></span>
+<span id="src-server-loft-L580"><span class="cm">// without an integer enum.  Wire format `&lt;msg_id&gt;:&lt;payload&gt;`</span></span>
+<span id="src-server-loft-L581"><span class="cm">// is parsed by `run` so msg_id and payload come pre-split.</span></span>
+<span id="src-server-loft-L582"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">WsEvent</span> {</span>
+<span id="src-server-loft-L583">  connected: <span class="ty"><a href="stdlib-types.html">boolean</a></span>,</span>
+<span id="src-server-loft-L584">  message:   <span class="ty"><a href="stdlib-types.html">boolean</a></span>,</span>
+<span id="src-server-loft-L585">  http:      <span class="ty"><a href="stdlib-types.html">boolean</a></span>,    <span class="cm">// true for a plain HTTP request (serve a page etc.)</span></span>
+<span id="src-server-loft-L586">  cid:       <span class="ty"><a href="stdlib-types.html">integer</a></span>,    <span class="cm">// WS client id; -1 for http events</span></span>
+<span id="src-server-loft-L587">  msg_id:    <span class="ty"><a href="stdlib-types.html">integer</a></span>,    <span class="cm">// 0 for connected / http events</span></span>
+<span id="src-server-loft-L588">  payload:   <span class="ty"><a href="stdlib-types.html">text</a></span>,       <span class="cm">// "" for connected / http events</span></span>
+<span id="src-server-loft-L589">  path:      <span class="ty"><a href="stdlib-types.html">text</a></span>        <span class="cm">// request path for http events; "" otherwise</span></span>
+<span id="src-server-loft-L590">}</span>
+<span id="src-server-loft-L591"></span>
+<span id="src-server-loft-L592"><span class="cm">// Block forever, draining events and calling the handler.</span></span>
+<span id="src-server-loft-L593"><span class="cm">// Malformed message frames are logged at warn level and silently</span></span>
+<span id="src-server-loft-L594"><span class="cm">// dropped — the handler never sees them.</span></span>
+<span id="src-server-loft-L595"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">run</span>(self: <span class="en">Server</span>, on_event: <span class="kw">fn</span>(<span class="en">WsEvent</span>)) {</span>
+<span id="src-server-loft-L596">  while <span class="kw">true</span> {</span>
+<span id="src-server-loft-L597">    drained = <span class="nm">0</span>;</span>
+<span id="src-server-loft-L598">    while <span class="kw">true</span> {</span>
+<span id="src-server-loft-L599">      ev = self.<span class="fn-call">poll_event</span>();</span>
+<span id="src-server-loft-L600">      <span class="kw">if</span> ev == <span class="kw">null</span> { <span class="kw">break</span>; }</span>
+<span id="src-server-loft-L601">      <span class="fn-call">on_event</span>(ev);</span>
+<span id="src-server-loft-L602">      drained = drained + <span class="nm">1</span>;</span>
+<span id="src-server-loft-L603">    }</span>
+<span id="src-server-loft-L604">    <span class="kw">if</span> drained == <span class="nm">0</span> { <span class="fn-call">ws_idle_sleep_ms_native</span>(<span class="nm">2</span>); }</span>
+<span id="src-server-loft-L605">  }</span>
+<span id="src-server-loft-L606">}</span>
+<span id="src-server-loft-L607"></span>
+<span id="src-server-loft-L608"><span class="cm">// Non-blocking single-event drain — returns the next WsEvent, or null</span></span>
+<span id="src-server-loft-L609"><span class="cm">// when nothing is pending.  Lets a server that also needs a periodic</span></span>
+<span id="src-server-loft-L610"><span class="cm">// tick (timers, decay, snapshots) run its OWN loop while still using the</span></span>
+<span id="src-server-loft-L611"><span class="cm">// efficient Rust-side event pump: drain `poll_event` in a batch, do the</span></span>
+<span id="src-server-loft-L612"><span class="cm">// periodic work, idle-sleep when a pass produced nothing.  `run` above is</span></span>
+<span id="src-server-loft-L613"><span class="cm">// the convenience wrapper for servers that only react to events.</span></span>
+<span id="src-server-loft-L614"><span class="cm">//</span></span>
+<span id="src-server-loft-L615"><span class="cm">// Disconnect (kind 2) and malformed message frames are skipped internally</span></span>
+<span id="src-server-loft-L616"><span class="cm">// (the caller never sees them), so a null return always means "idle".</span></span>
+<span id="src-server-loft-L617"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">poll_event</span>(self: <span class="en">Server</span>) -&gt; <span class="en">WsEvent</span>? {</span>
+<span id="src-server-loft-L618">  while <span class="fn-call">ws_next_event_native</span>(self.handle) {</span>
+<span id="src-server-loft-L619">    kind = <span class="fn-call">ws_event_kind_native</span>();</span>
+<span id="src-server-loft-L620">    cid  = <span class="fn-call">ws_event_client_id_native</span>();</span>
+<span id="src-server-loft-L621">    <span class="kw">if</span> kind == <span class="nm">0</span> {</span>
+<span id="src-server-loft-L622">      <span class="kw">return</span> <span class="en">WsEvent</span> { connected: <span class="kw">true</span>, message: <span class="kw">false</span>, http: <span class="kw">false</span>,</span>
+<span id="src-server-loft-L623">                       cid: cid, msg_id: <span class="nm">0</span>, payload: <span class="st">""</span>, path: <span class="st">""</span> };</span>
+<span id="src-server-loft-L624">    } <span class="kw">else</span> <span class="kw">if</span> kind == <span class="nm">3</span> {</span>
+<span id="src-server-loft-L625">      <span class="cm">// HTTP request — payload carries the path; reply via respond_*.</span></span>
+<span id="src-server-loft-L626">      <span class="kw">return</span> <span class="en">WsEvent</span> { connected: <span class="kw">false</span>, message: <span class="kw">false</span>, http: <span class="kw">true</span>,</span>
+<span id="src-server-loft-L627">                       cid: cid, msg_id: <span class="nm">0</span>, payload: <span class="st">""</span>, path: <span class="fn-call">ws_event_payload_native</span>() };</span>
+<span id="src-server-loft-L628">    } <span class="kw">else</span> <span class="kw">if</span> kind == <span class="nm">1</span> {</span>
+<span id="src-server-loft-L629">      raw = <span class="fn-call">ws_event_payload_native</span>();</span>
+<span id="src-server-loft-L630">      i   = raw.<span class="fn-call"><a href="stdlib-text.html">find</a></span>(<span class="st">":"</span>);</span>
+<span id="src-server-loft-L631">      <span class="kw">if</span> i != <span class="kw">null</span> {</span>
+<span id="src-server-loft-L632">        <span class="cm">// A non-numeric id prefix is as malformed as a missing ":" —</span></span>
+<span id="src-server-loft-L633">        <span class="cm">// warn-and-drop below rather than masking it as id 0.</span></span>
+<span id="src-server-loft-L634">        mid = raw[..i] <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>?;</span>
+<span id="src-server-loft-L635">        <span class="kw">if</span> mid != <span class="kw">null</span> {</span>
+<span id="src-server-loft-L636">          <span class="kw">return</span> <span class="en">WsEvent</span> { connected: <span class="kw">false</span>, message: <span class="kw">true</span>, http: <span class="kw">false</span>,</span>
+<span id="src-server-loft-L637">                           cid: cid, msg_id: mid ?? <span class="nm">0</span>,</span>
+<span id="src-server-loft-L638">                           payload: raw[i + <span class="nm">1..</span>], path: <span class="st">""</span> };</span>
+<span id="src-server-loft-L639">        }</span>
+<span id="src-server-loft-L640">      }</span>
+<span id="src-server-loft-L641">      <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">log_warn</a></span>(<span class="st">"server: dropped malformed frame from {cid}: {raw}"</span>);</span>
+<span id="src-server-loft-L642">    }</span>
+<span id="src-server-loft-L643">    <span class="cm">// kind == 2 (Disconnected) absorbed silently; keep draining.</span></span>
+<span id="src-server-loft-L644">  }</span>
+<span id="src-server-loft-L645">  <span class="kw">null</span></span>
+<span id="src-server-loft-L646">}</span>
+<span id="src-server-loft-L647"></span>
+<span id="src-server-loft-L648"><span class="cm">// Reply to the HTTP request currently parked by a `http` WsEvent and</span></span>
+<span id="src-server-loft-L649"><span class="cm">// close it.  Call exactly once from the handler for an `ev.http` event.</span></span>
+<span id="src-server-loft-L650"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">respond_html</span>(self: <span class="en">Server</span>, body: <span class="ty"><a href="stdlib-types.html">text</a></span>) {</span>
+<span id="src-server-loft-L651">  _ = self;</span>
+<span id="src-server-loft-L652">  <span class="fn-call">tcp_respond_typed</span>(<span class="nm">200</span>, body, <span class="st">"text/html; charset=utf-8"</span>);</span>
+<span id="src-server-loft-L653">}</span>
+<span id="src-server-loft-L654"><span class="cm">// The `Server` twin of `Request::respond_typed`, for replying to the request</span></span>
+<span id="src-server-loft-L655"><span class="cm">// parked by an `http` WsEvent inside a `run` handler.</span></span>
+<span id="src-server-loft-L656"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">respond_typed</span>(self: <span class="en">Server</span>, status: <span class="ty"><a href="stdlib-types.html">integer</a></span>, body: <span class="ty"><a href="stdlib-types.html">text</a></span>, content_type: <span class="ty"><a href="stdlib-types.html">text</a></span>) {</span>
+<span id="src-server-loft-L657">  _ = self;</span>
+<span id="src-server-loft-L658">  <span class="fn-call">tcp_respond_typed</span>(status, body, content_type);</span>
+<span id="src-server-loft-L659">}</span>
+<span id="src-server-loft-L660"><span class="cm">// The same not-found answer, from inside a `run` handler.</span></span>
+<span id="src-server-loft-L661"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">respond_404</span>(self: <span class="en">Server</span>) {</span>
+<span id="src-server-loft-L662">  _ = self;</span>
+<span id="src-server-loft-L663">  <span class="fn-call">tcp_respond_typed</span>(<span class="nm">404</span>, <span class="st">"Not Found"</span>, <span class="st">"text/plain; charset=utf-8"</span>);</span>
+<span id="src-server-loft-L664">}</span>
+<span id="src-server-loft-L665"></span>
+<span id="src-server-loft-L666"><span class="cm">// Send a frame to a specific client.  Returns true on success.</span></span>
+<span id="src-server-loft-L667"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">send_to</span>(self: <span class="en">Server</span>, client_id: <span class="ty"><a href="stdlib-types.html">integer</a></span>, msg: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-server-loft-L668">  _ = self;</span>
+<span id="src-server-loft-L669">  <span class="fn-call">ws_send_native</span>(client_id, msg)</span>
+<span id="src-server-loft-L670">}</span>
+<span id="src-server-loft-L671"></span>
+<span id="src-server-loft-L672"><span class="cm">// Send a frame to every active client.  Returns the count of</span></span>
+<span id="src-server-loft-L673"><span class="cm">// successful sends.  Iteration happens entirely in Rust.</span></span>
+<span id="src-server-loft-L674"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">broadcast</span>(self: <span class="en">Server</span>, msg: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-server-loft-L675">  <span class="fn-call">ws_broadcast_native</span>(self.handle, msg)</span>
+<span id="src-server-loft-L676">}</span>
+<span id="src-server-loft-L677"></span>
+<span id="src-server-loft-L678"><span class="cm">// Forcefully close one client's connection.  The slot is freed</span></span>
+<span id="src-server-loft-L679"><span class="cm">// for reuse by future accepts.</span></span>
+<span id="src-server-loft-L680"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">disconnect</span>(self: <span class="en">Server</span>, client_id: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-server-loft-L681">  _ = self;</span>
+<span id="src-server-loft-L682">  <span class="fn-call">ws_close_native</span>(client_id);</span>
+<span id="src-server-loft-L683">}</span>
 </code></pre>
 <h2 id="tests-c84-surface-loft">tests/c84_surface.loft</h2>
 <pre class="src"><code><span id="tests-c84-surface-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -802,7 +798,7 @@
 <span id="tests-c84-surface-loft-L40">  outside = <span class="st">""</span>;</span>
 <span id="tests-c84-surface-loft-L41">  seen = <span class="nm">0</span>;</span>
 <span id="tests-c84-surface-loft-L42">  <span class="kw">for</span> l <span class="kw">in</span> <span class="bi"><a href="stdlib-files-and-directories.html">file</a></span>(<span class="st">"../src/server.loft"</span>).<span class="fn-call"><a href="stdlib-file-system.html">lines</a></span>() {</span>
-<span id="tests-c84-surface-loft-L43">    <span class="kw">for</span> kw <span class="kw">in</span> [<span class="st">"pub fn "</span>, <span class="st">"pub struct "</span>, <span class="st">"pub enum "</span>, <span class="st">"pub type "</span>] {</span>
+<span id="tests-c84-surface-loft-L43">    <span class="kw">for</span> kw <span class="kw">in</span> [<span class="st">"pub fn "</span>, <span class="st">"pub operator "</span>, <span class="st">"pub struct "</span>, <span class="st">"pub enum "</span>, <span class="st">"pub type "</span>] {</span>
 <span id="tests-c84-surface-loft-L44">      <span class="kw">if</span> l.<span class="fn-call"><a href="stdlib-path-helpers.html">starts_with</a></span>(kw) {</span>
 <span id="tests-c84-surface-loft-L45">        rest = l[<span class="bi"><a href="stdlib-text.html">len</a></span>(kw)..];</span>
 <span id="tests-c84-surface-loft-L46">        stop = <span class="bi"><a href="stdlib-text.html">len</a></span>(rest);</span>

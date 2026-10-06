@@ -1,0 +1,53 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-O-Borrow-Scalar` — a `&` link at a scalar local carries no deps; the obligation that the
+// place it names outlives it is recorded on the TARGET, read by the slot allocator.  A link
+// bound from another link (`d = &c`, the link copy `OpVarRef(c)`) took the place without
+// recording the pair, so the allocator never chained `x -> c -> d`: once `c` was last named, a
+// later local was given `x`'s slot, and the interpreter read — and wrote — the usurper through
+// `d`.  `x = 250; c = &x; d = &c; u = 7; v = 8` answered 8; a loop of them summed 27 for 306.
+// `--native` was right throughout (a link there is a raw pointer to a live Rust local), so the
+// backends disagreed as well (`@FR-O-NoDiverge`).
+//
+// Every target here is used only THROUGH a link after its bind, and each is followed by locals
+// that would take a freed slot.  The same bind's other defect — a write through it was not
+// seen as a write to a `&` parameter — is a refusal, so it has its own file
+// (`a-write-through-a-link-modifies-the-amp-parameter`).
+//
+// @falsified-at: 3c979e3a1 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0 (the
+//   first read through `d` answered 8, the usurper's value); native INERT, which is the
+//   divergence: a native link is a raw pointer to a live Rust local.
+// @falsified-by: tests/falsified/a-link-to-a-link-keeps-the-place-alive.patch — the same
+//   channels.  Score it with `scripts/falsify.sh <this file> --patch <that patch>` once
+//   3c979e3a1 is out of reach.
+// HOLDS: leak, panic and refusals are clean on both trees and both backends.
+
+fn main() {
+  x = 250;
+  c = &x;
+  d = &c;
+  u = 7;
+  v = 8;
+  r = "{d}";
+  assert(r == "250", "a link to a link reads the place: got {r}");
+  y = 250;
+  e = &y;
+  f = &e;
+  g = &f;
+  w = 7;
+  q = "{g}";
+  g = 9;
+  assert(q == "250" && "{g} {w}" == "9 7", "three deep, read then written: got {q} {g} {w}");
+  acc = 0;
+  for i in 0..3 {
+    z = 100 + i;
+    l1 = &z;
+    l2 = &l1;
+    k = 7 + i;
+    l2 += 1;
+    acc += l2 + k - k;
+  }
+  assert(acc == 306, "a chain per loop pass: got {acc}");
+  assert("{u}{v}" == "78", "the later locals keep their own values");
+}

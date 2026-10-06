@@ -824,6 +824,53 @@ impl OpEmitter for FinishRecordEmitter {
 /// § V-q): the push grows the vector on demand, and the reservation would cost a store
 /// resolution per iteration for a record that is either already there or about to be
 /// claimed by the push's own growth step.  Everywhere else the `#rust` template stands.
+/// `OpKeepRange(P, lo, hi, tp)` on a path whose push header the loop holds — `@FR-R-Refresh`'s
+/// keep-range clause.  The runtime keeps the vector's record and writes its length, so the
+/// held header is refreshed at the op's own site: its `len` set to what the runtime wrote
+/// (the same two clamps, over the length the holder carries), the record and capacity
+/// untouched.  When the runtime took the copy form instead (a foreign or read-only store
+/// released and re-appended, or `LOFT_NO_KEEP_RANGE`), the record moved and the whole
+/// push header is re-derived, as a push's growth step re-derives it.  Under
+/// `LOFT_HOIST_VERIFY=1` the in-place refresh is compared with a re-derived header.
+/// Without a held push header the op keeps its template.
+pub struct KeepRangeEmitter;
+
+impl OpEmitter for KeepRangeEmitter {
+    fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
+        let held = if ctx.output.push_hoist_disabled {
+            None
+        } else {
+            crate::generation::hoist::keep_range_path(ctx.output.data, ctx.def_fn.name(), args)
+                .and_then(|path| ctx.output.active_push_header(&path).map(str::to_owned))
+        };
+        let (Some(hdr), Some(Value::Int(tp))) = (held, args.get(3).map(Value::unspan)) else {
+            return super::default::DefaultEmitter.emit(ctx, args);
+        };
+        crate::rewrite_census::fired("R-Refresh", 1);
+        let verify = verify(ctx);
+        write!(ctx.w, "{{ let _kl: i64 = (")?;
+        ctx.emit(&args[1])?;
+        write!(ctx.w, "); let _kh: i64 = (")?;
+        ctx.emit(&args[2])?;
+        write!(ctx.w, "); if stores.vector_keep_range(&(")?;
+        ctx.emit(&args[0])?;
+        write!(
+            ctx.w,
+            "), _kl, _kh, {tp}_u16) {{ let _l = i64::from({hdr}.h.len); let _lo = _kl.clamp(0, _l); {hdr}.h.len = (_kh.clamp(_lo, _l) - _lo) as u32; if {verify} {{ vector::verify_kept_header(&{hdr}.h, &("
+        )?;
+        ctx.emit(&args[0])?;
+        write!(
+            ctx.w,
+            "), &stores.allocations); }} }} else {{ {hdr} = vector::push_header(&("
+        )?;
+        ctx.emit(&args[0])?;
+        write!(
+            ctx.w,
+            "), &stores.allocations); }} }} //@FR-R-Refresh keep-range"
+        )
+    }
+}
+
 pub struct PreAllocEmitter;
 
 impl OpEmitter for PreAllocEmitter {

@@ -19,8 +19,7 @@
 // @falsified-at: c8cfeb402 — interpret exit 1 -> 0, native exit 1 -> 0 (the control does
 //   not parse `fn(&P)`: "Expect token )").
 // @falsified-by: tests/falsified/a-function-type-can-name-a-link-parameter.patch — the same
-//   channels.  Score it with
-//   `scripts/falsify.sh <this file> --patch <that patch>` once c8cfeb402 is out of reach.
+//   channels, scored with `scripts/falsify.sh <this file> --patch <that patch>`.
 // HOLDS: leak, panic and refusals are clean on both trees and both backends.
 
 struct P { x: integer, y: integer }

@@ -93,6 +93,10 @@ impl Parser {
         if self.first_pass || nr == u16::MAX {
             return false;
         }
+        // The declaration's own initialising bind (`x: const T = …`) sets the value.
+        if op == "=" && nr == self.declaring_const {
+            return false;
+        }
         let binding = self.vars.is_const_binding(nr);
         let value = self.vars.is_value_const(nr);
         if !binding && !value {
@@ -104,11 +108,9 @@ impl Parser {
         // A `&`-reference binding writes THROUGH to its referent, so a value-const `&`
         // param (`& const T`) has no local rebind either — every write mutates the
         // referent — and is likewise fully blocked.
-        let tp = self.vars.var_type(nr).base();
-        let collapses = matches!(
-            tp,
-            Type::Integer(_) | Type::Float | Type::Single | Type::Boolean | Type::Character
-        ) || matches!(self.vars.var_type(nr), Type::RefVar(_));
+        // `is_scalar` is the one home for which types collapse — the plain enum among them.
+        let collapses = crate::data::is_scalar(self.vars.var_type(nr))
+            || matches!(self.vars.var_type(nr).base(), Type::RefVar(_));
         // binding-const rejects a rebind (`=`); value-const rejects contents mutation
         // (`+=`) while allowing a `=` rebind that re-points the slot.  Under collapse both
         // reject everything.
@@ -161,6 +163,23 @@ impl Parser {
         );
     }
 
+    /// The appends a text compound `place += code` makes on its work text `var_nr` — the
+    /// one spelling the getter place and the deferred field place share.
+    fn text_append_ops(&mut self, code: &Value, tp: &Type, var_nr: u16) -> Vec<Value> {
+        if let Value::Insert(cd) = code {
+            cd.clone()
+        } else if Self::appends_rendering(tp) {
+            match self.append_rendering(var_nr, tp, code) {
+                Value::Insert(parts) => parts,
+                _ => Vec::new(),
+            }
+        } else if *tp == Type::Character {
+            vec![self.cl("OpAppendCharacter", &[Value::Var(var_nr), code.clone()])]
+        } else {
+            vec![self.cl("OpAppendText", &[Value::Var(var_nr), code.clone()])]
+        }
+    }
+
     pub(crate) fn assign_text(
         &mut self,
         code: &mut Value,
@@ -170,30 +189,48 @@ impl Parser {
         var_nr: u16,
     ) {
         // The const guard is `parse_assign_op_inner`'s, run before it routed here.
+        // A text field of a generic struct (`Parser::TV_FIELD`, deferred to each monomorph)
+        // is a place too: its compound reads into the work text and writes it back through
+        // the deferred field write, as a plain field's does through `OpSetText`.  Without it
+        // the append ran on a work text nothing had read or would write back — a panic on the
+        // interpreter and E0425 on `--native` for `b.name += "x"` in a `Bag<T>` template.
+        if op != "="
+            && let Value::Block(bl) = to.unspan()
+            && bl.name == Self::TV_FIELD
+            && let [Value::Int(open), Value::Int(f_nr), receiver] = &bl.operators[..]
+        {
+            let (open, f_nr, receiver) = (*open, *f_nr, receiver.clone());
+            let mut ls = vec![v_set(var_nr, to.clone())];
+            ls.extend(self.text_append_ops(code, tp, var_nr));
+            ls.push(v_block(
+                vec![
+                    Value::Int(open),
+                    Value::Int(f_nr),
+                    Value::Text("=".to_string()),
+                    receiver,
+                    v_block(
+                        vec![Value::Var(var_nr)],
+                        self.vars.tp(var_nr).clone(),
+                        Self::TV_SELECT_ARG,
+                    ),
+                ],
+                Type::Void,
+                Self::TV_FIELD_SET,
+            ));
+            *code = Value::Insert(ls);
+            return;
+        }
         if let Value::Call(_, parms) = to.unspan().clone() {
             if op == "=" {
                 let mut p = parms.clone();
                 p.push(code.clone());
-                *code = self.cl("OpSetText", &p);
+                *code = self.cl("OpSetTextReplace", &p);
             } else {
-                let mut ls = Vec::new();
-                ls.push(v_set(var_nr, to.clone()));
-                if let Value::Insert(cd) = code {
-                    for c in cd {
-                        ls.push(c.clone());
-                    }
-                } else if Self::appends_rendering(tp) {
-                    if let Value::Insert(parts) = self.append_rendering(var_nr, tp, code) {
-                        ls.extend(parts);
-                    }
-                } else if *tp == Type::Character {
-                    ls.push(self.cl("OpAppendCharacter", &[Value::Var(var_nr), code.clone()]));
-                } else {
-                    ls.push(self.cl("OpAppendText", &[Value::Var(var_nr), code.clone()]));
-                }
+                let mut ls = vec![v_set(var_nr, to.clone())];
+                ls.extend(self.text_append_ops(code, tp, var_nr));
                 let mut p = parms.clone();
                 p.push(Value::Var(var_nr));
-                ls.push(self.cl("OpSetText", &p));
+                ls.push(self.cl("OpSetTextReplace", &p));
                 *code = Value::Insert(ls);
             }
         } else if let Value::Insert(ls) = code {
@@ -702,7 +739,15 @@ impl Parser {
                 Value::Var(w) if self.vars.is_caller_hidden_buf(*w) => Some(*w),
                 _ => None,
             })
-            .unwrap_or_else(|| self.vars.work_refs_p2(&tp.without_deps(), &mut self.lexer));
+            .unwrap_or_else(|| {
+                // loft#1872 — the work-ref is written by the call before its one read, so it
+                // is an inline ref: its null-init is a sentinel, not a store.  An eager store
+                // is a COLLECTION's default, and on the path where the join hands back its
+                // other arm nothing names it — one leaked vector per call.
+                let w = self.vars.work_refs_p2(&tp.without_deps(), &mut self.lexer);
+                self.vars.mark_inline_ref(w);
+                w
+            });
         Some(v_block(
             vec![v_set(buf, val.clone()), Value::Var(buf)],
             tp.clone(),
@@ -1157,10 +1202,10 @@ impl Parser {
             };
         #[cfg(feature = "wasm")]
         let tp_val = i32::from(tp);
-        self.cl(
-            "OpCopyRecord",
-            &[code.clone(), to.clone(), Value::Int(tp_val)],
-        )
+        // loft#1877 — the closure records the overwrite displaces release what they adopted,
+        // between the right-hand side (argument one) and the copy.
+        let place = self.release_displaced_closures(to, f_type);
+        self.cl("OpCopyRecord", &[code.clone(), place, Value::Int(tp_val)])
     }
 
     /// `@FR-Op-Back` (@PLN182) — the form an `operator` definition backs, the symbol it is
@@ -1846,6 +1891,11 @@ impl Parser {
                              (`p = &x` takes the target's type), or write `&{got}`"
                         );
                         self.amp_pending = false;
+                    } else if !Self::is_amp_place(code, &self.data)
+                        && matches!(t.base(), Type::Tuple(_))
+                    {
+                        self.refuse_tuple_value_link();
+                        self.amp_pending = false;
                     } else if !Self::is_amp_place(code, &self.data) {
                         // #1 — a valid binding RHS still needs a PLACE operand.
                         diagnostic!(
@@ -2331,6 +2381,12 @@ impl Parser {
                                     *code = Value::Null;
                                 }
                             } else if let Some(place) =
+                                self.open_tuple_member_place(&unspanned, idx)
+                            {
+                                // loft#1868 — the member of an element of a tuple of a type
+                                // variable: its record's field, deferred to each monomorph.
+                                *code = place;
+                            } else if let Some(place) =
                                 self.stored_tuple_member_place(&unspanned, idx)
                             {
                                 // loft#1698 — a stored tuple's member is its record's field.
@@ -2401,21 +2457,6 @@ impl Parser {
                         if self.tuple_index_out_of_range(idx, elems.len()) {
                             t = Type::Unknown(0);
                         } else {
-                            // Stored-tuple field offset goes through the
-                            // synthetic struct's post-finish layout — same
-                            // offsets `OpGetInt` uses for an ordinary
-                            // struct field.
-                            let elem_offset = if let Some(v) =
-                                crate::data::stored_tuple_offsets_for_def(
-                                    &self.data,
-                                    &self.database,
-                                    d_nr,
-                                    elems.len(),
-                                ) {
-                                u32::from(v[idx])
-                            } else {
-                                crate::data::element_stack_offsets(&elems)[idx] as u32
-                            };
                             let elem_tp = elems[idx].clone();
                             // Carry the BASE's lifetime into the element, exactly as the
                             // plain-tuple site above (P197) and the struct-field read in
@@ -2432,8 +2473,7 @@ impl Parser {
                                 Value::Var(nr) => Some(*nr),
                                 _ => None,
                             };
-                            *code =
-                                self.get_val(&elem_tp, false, elem_offset, code.clone(), u32::MAX);
+                            *code = self.stored_tuple_member_read(d_nr, idx, &elems, code.clone());
                             t = elem_tp;
                             // Same `@FR-O-Oracle` reading as the stack-tuple site above.  When the
                             // base is a VARIABLE that variable IS the base, so it alone is the
@@ -3282,30 +3322,6 @@ impl Parser {
             if matches!(self.data.def(*d).returned(), Type::Optional(_)))
     }
 
-    /// `return` is the one control word `??` takes (@F2): a `continue` or `break` after it
-    /// was read as a missing default and reported only as "Expect token ;", which names
-    /// neither the rule nor the spelling that works.  Refuses it by name, with the cure, and
-    /// consumes the keyword so the statement ends where the author ended it.  Answers
-    /// whether it refused.
-    fn refuse_coalesce_loop_control(&mut self) -> bool {
-        let Some(kw) = ["continue", "break"]
-            .into_iter()
-            .find(|kw| self.lexer.peek_token(kw))
-        else {
-            return false;
-        };
-        self.lexer.has_token(kw);
-        if !self.first_pass {
-            diagnostic!(
-                self.lexer,
-                Level::Error,
-                "`?? {kw}` is not supported — after `??` comes a value or `return`.  To \
-                 {kw} on a null, test it first: `if v == null {{ {kw}; }}`"
-            );
-        }
-        true
-    }
-
     /// Desugar `lhs ?? ...` — both the plain-default form and the
     /// `?? return ret_expr` early-return form.  Lifted out of
     /// [`Self::handle_operator`] so each shape has its own focused helper.
@@ -3462,8 +3478,14 @@ impl Parser {
         // `false ?? x` stays `false` (false is not null); `null ?? x` → x.
         if self.lexer.has_token("return") {
             self.build_null_coalesce_return(code, ctp, &lhs_type);
-        } else if self.refuse_coalesce_loop_control() {
-            // the operand stands as written; the refusal is reported
+        } else if self.lexer.peek_token("break") || self.lexer.peek_token("continue") {
+            // `?? break` / `?? continue` leave the loop on a null exactly as `?? return` leaves
+            // the function: the word is parsed as the expression it is anywhere else, which
+            // checks it stands in a loop and answers `Never` (@FR-N-Coal's `d ⇐ τ` through
+            // @FR-C-Never).
+            let mut exit = Value::Null;
+            self.expression(&mut exit);
+            self.null_coalesce_exit(code, ctp, &lhs_type, exit);
         } else {
             self.build_null_coalesce_default(var_tp, code, parent_tp, precedence, ctp, &lhs_type);
         }
@@ -3555,7 +3577,7 @@ impl Parser {
                 // answers the FALLBACK for a PRESENT element, losing the scalar half with
                 // it, on `--interpret` only.  A `Reference` member hides it: that one does
                 // have a generic path.  Recursion is also what keeps the answers from
-                // drifting, which is the same reason `ref_tuple_element_ok` is one list.
+                // drifting, which is the same reason `data::is_scalar` is one list.
                 //
                 // A member that is ITSELF a tuple cannot be reached by recursing on the
                 // value: `TupleGet` addresses a VAR and an index, so `x.0.0` has no
@@ -3642,8 +3664,9 @@ impl Parser {
                 // PEELED for the reason the stack arm peels: the arms below match some types
                 // in their bare spelling only, so a `boolean?` member would miss its arm and
                 // fall to the generic truthiness convert, where `false` reads as absent.
+                let nullable = matches!(elem_tp, Type::Optional(_));
                 let elem_tp = elem_tp.base();
-                let member = self.get_val(elem_tp, false, off, src.clone(), u32::MAX);
+                let member = self.get_val(elem_tp, nullable, off, src.clone(), u32::MAX);
                 // A member that is itself a tuple is bound first, for the reason the stack
                 // arm binds one: the tuple arms address members through a VAR, and a member
                 // read is a call.
@@ -3754,7 +3777,7 @@ impl Parser {
         // produces the typed null sentinel.
         let mut ret_val = Value::Null;
         let r_type = self.data.def(self.context).returned().clone();
-        if !self.lexer.peek_token(";") && !self.lexer.peek_token("}") {
+        if self.control_value_follows() {
             let ret_pos = self.lexer.peek_pos().clone();
             let t = self.expression(&mut ret_val);
             // @FR-N-Store: `lhs ?? return ret` returns `ret` into the caller's non-null return
@@ -3773,8 +3796,21 @@ impl Parser {
             ret_val = self.null_value(&r_type);
         }
         let ret_stmt = Value::Return(Box::new(ret_val));
+        self.null_coalesce_exit(code, ctp, lhs_type, ret_stmt);
+    }
 
-        // { tmp = lhs; if (tmp == null) { return ret_expr; }; tmp }
+    /// `lhs ?? <exit>` — the block that leaves by `exit` (a `return`, `break` or `continue`)
+    /// when `lhs` is null and otherwise evaluates to `lhs`.  The exit is a `Never`, so the
+    /// block's type is `lhs`'s present type whatever the exit is (@FR-C-Never, @FR-N-Coal).
+    fn null_coalesce_exit(
+        &mut self,
+        code: &mut Value,
+        ctp: &mut Type,
+        lhs_type: &Type,
+        exit: Value,
+    ) {
+        let ret_stmt = exit;
+        // { tmp = lhs; if (tmp == null) { <exit>; }; tmp }
         let tmp = self.create_unique("ncr", lhs_type);
         let set_tmp = v_set(tmp, code.clone());
         let is_null = if self.is_type_var_operand(lhs_type) {
@@ -4366,6 +4402,12 @@ impl Parser {
                 || (matches!(lhs_type, Type::Vector(_, _)) && !owned_vector)
             {
                 self.vars.set_skip_free(tmp);
+            } else {
+                // The hoist is the same variable on both passes, and pass 1 may not have
+                // resolved the subject yet — a closure call reads as `Null` there — so the
+                // never-free mark it left would outlive the call that is owned.  The pass that
+                // sees the subject decides: one record per `??` was held to frame exit.
+                self.vars.clear_skip_free(tmp);
             }
             // An OWNED Vector subject OWNS the value `code` produced (typically
             // `mkv()`'s returned store) and MUST be freed at scope exit —
@@ -6149,7 +6191,7 @@ impl Parser {
     /// A `&<operand>` recorded as a possible side of `&a == &b` that turned out to be part of
     /// a wider operand (`x + &a == y`, `&a + 1 == y`): the sub-expression `&` the binding rule
     /// refuses.
-    fn refuse_amp_operand(&mut self) {
+    pub(crate) fn refuse_amp_operand(&mut self) {
         if !self.first_pass {
             diagnostic!(
                 self.lexer,

@@ -1,0 +1,215 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-RefillText`'s collection clause — a callee that builds a `vector<E>` result (E a
+// record of scalars and texts) by appending record literals, refilling the return buffer it
+// is handed, KEEPS that buffer's elements on `--native`: element i's texts are written over
+// the blocks its slot already owns when i is under the kept length, claimed past it, and the
+// texts of the kept slots the call did not reuse are released at its exit.  The interpreter
+// applies no rewrite and is the oracle; every value below is computed by hand.
+//
+// What can go wrong is a text left from the previous call (a slot reused and not written), a
+// block written past its claim (a text that grows), a slot past the kept length read as a
+// block (fresh capacity), the surplus of a longer previous result never released (a shorter
+// result, or an early return), and a stale copy past the length released twice (c4: the
+// caller removes from the result).  So m1 counts the live records of every store
+// (`store_memory()`'s census) after 10 and after 1 000 calls with the buffer alive.
+// `LOFT_NO_REFILL_ELEMENTS=1`, `LOFT_HOIST_VERIFY=1`, `LOFT_POISON=1`, `LOFT_POISON_CLAIM=1`
+// and `LOFT_STRICT_STORES=1` must answer identically.
+//
+// @falsified-at: none — written before the rewrite it guards; the planted defects are recorded
+//   with `@falsified-by:` below.
+// @falsified-by: tests/falsified/a-kept-buffers-elements-are-refilled-in-their-slots-close.patch
+//   — the exit releasing nothing: the kept slots a shorter result did not reuse keep their texts.
+//   CHANNEL: an assertion, on --native.
+//   WITNESS: `m1 runs grow: 15 -> 1170 records` — which also shows the kept path runs.
+//   HOLDS: --interpret green, --native under LOFT_NO_REFILL_ELEMENTS=1 green, every value cell.
+// @falsified-by: tests/falsified/a-kept-buffers-elements-are-refilled-in-their-slots-past-keep.patch
+//   — every appended slot refilled, past the kept length too, where the slot holds no block.
+//   CHANNEL: a panic, on --native (plain and LOFT_POISON_CLAIM=1).
+//   WITNESS: `panicked at src/store.rs` — a capacity slot's bytes read as a block number.
+//   HOLDS: --interpret green.
+
+struct Run { str: text, style: integer }
+struct Two { a: text, n: integer, b: text }
+
+// The four texts the runs cycle through: 1, 22, 0 and 3 bytes.
+fn word(j: integer) -> text {
+  if j % 4 == 0 { return "a" }
+  if j % 4 == 1 { return "a longer word than two" }
+  if j % 4 == 2 { return "" }
+  "mid"
+}
+
+// `slice_runs`' shape: an early return of the empty result, then one append per step.
+fn runs_of(shift: integer, k: integer) -> vector<Run> {
+  runs: vector<Run> = [];
+  if k <= 0 { return runs; }
+  for i in 0..k {
+    runs += [Run { str: word(i + shift), style: i }];
+  }
+  return runs;
+}
+
+// Two texts and a scalar per element, and two append sites.
+fn twos_of(shift: integer, k: integer) -> vector<Two> {
+  out: vector<Two> = [];
+  for i in 0..k {
+    if (i + shift) % 2 == 0 {
+      out += [Two { a: word(i + shift), n: i, b: "e{i}" }];
+    } else {
+      out += [Two { a: "o", n: 10 * i, b: word(i + shift + 1) }];
+    }
+  }
+  return out;
+}
+
+// A builder that also removes from its own result: declined (the vector is used another
+// way than appended to), so it keeps the whole-store release.
+fn trimmed_of(shift: integer, k: integer) -> vector<Run> {
+  runs: vector<Run> = [];
+  for i in 0..k {
+    runs += [Run { str: word(i + shift), style: i }];
+  }
+  if len(runs) > 1 { runs.remove(0); }
+  return runs;
+}
+
+fn ks(c: integer) -> integer {
+  if c == 0 { return 3 }
+  if c == 1 { return 1 }
+  if c == 2 { return 4 }
+  if c == 3 { return 0 }
+  if c == 4 { return 2 }
+  4
+}
+
+// c1: call c returns ks(c) = 3, 1, 4, 0, 2, 4 runs whose texts start at word(c).  Per call
+// 10·Σsize + Σstyle: 10·23 + 3, 10·22 + 0, 10·26 + 6, 0, 10·23 + 1, 10·26 + 6
+// = 233 + 220 + 266 + 0 + 231 + 266 = 1216; 14 runs in all.
+fn c1() -> integer {
+  t = 0;
+  n = 0;
+  for c in 0..6 {
+    rs = runs_of(c, ks(c));
+    assert(len(rs) == ks(c), "c1 length at {c}: {len(rs)}");
+    for r in rs {
+      t += 10 * size(r.str) + r.style;
+      n += 1;
+    }
+  }
+  assert(n == 14, "c1 runs {n}");
+  t
+}
+
+// c2: the last call's texts, read whole: word(5..8) joined.
+fn c2() -> text {
+  last = "";
+  for c in 0..6 {
+    rs = runs_of(c, ks(c));
+    if c == 5 {
+      for r in rs { last += "{r.str}|"; }
+    }
+  }
+  last
+}
+
+// c3: two texts per element.  shift 0, k 3: i0 even (a, e0), i1 odd (o, word 2 = ""), i2 even
+// (word 2 = "", e2) → a 1 + 1 + 0, b 2 + 0 + 2, n 0 + 10 + 2 = 18;  shift 1, k 2: i0 odd (o,
+// word 2 = ""), i1 even (word 2 = "", e1) → a 1 + 0, b 0 + 2, n 0 + 1 = 4;  shift 2, k 4: i0
+// even (word 2 = "", e0), i1 odd (o, word 4 = "a"), i2 even (word 4 = "a", e2), i3 odd (o,
+// word 6 = "") → a 0 + 1 + 1 + 1, b 2 + 1 + 2 + 0, n 0 + 10 + 2 + 30 = 50.  Σ = 18 + 4 + 50 = 72.
+fn c3() -> integer {
+  t = 0;
+  for c in 0..3 {
+    k = 3;
+    if c == 1 { k = 2 }
+    if c == 2 { k = 4 }
+    ts = twos_of(c, k);
+    for x in ts { t += size(x.a) + size(x.b) + x.n; }
+  }
+  t
+}
+
+// c4: the caller removes the first run of each result before reading it.  Runs left per
+// call: 2, 0, 3, 0, 1, 3, their sizes 22 + 0, —, 3 + 1 + 22, —, 22, 0 + 3 + 1 → 74.
+fn c4() -> integer {
+  t = 0;
+  for c in 0..6 {
+    rs = runs_of(c, ks(c));
+    if len(rs) > 0 { rs.remove(0); }
+    for r in rs { t += size(r.str); }
+  }
+  t
+}
+
+// c5: trimmed_of over the same six calls: the first run goes when there are two or more.
+// Left: words 1, 2 (22 + 0); word 1 (22, one run, kept); words 3, 4, 5 (3 + 1 + 22); none;
+// word 5 (22); words 6, 7, 8 (0 + 3 + 1)  →  22 + 22 + 26 + 22 + 4 = 96.
+fn c5() -> integer {
+  t = 0;
+  for c in 0..6 {
+    rs = trimmed_of(c, ks(c));
+    for r in rs { t += size(r.str); }
+  }
+  t
+}
+
+fn census_records() -> integer {
+  cr_t = store_memory();
+  cr_i = cr_t.find("records ");
+  if !cr_i { return -1 }
+  cr_j = cr_i + 8;
+  cr_n = 0;
+  while cr_j < len(cr_t) && cr_t[cr_j] >= '0' && cr_t[cr_j] <= '9' {
+    cr_n = cr_n * 10 + (cr_t[cr_j] as integer - '0' as integer);
+    cr_j += 1;
+  }
+  cr_n
+}
+
+// Each shape's loop in its own function, so its buffer is alive when the census is taken.
+// The sizes cycle with the call, so every call after the first meets a longer, a shorter or
+// an empty previous result.
+fn m1_runs(n: integer) -> integer {
+  t = 0;
+  for c in 0..n { rs = runs_of(c, ks(c % 6)); t += len(rs) + 1; }
+  assert(t > 0, "m1_runs ran");
+  census_records()
+}
+fn m1_twos(n: integer) -> integer {
+  t = 0;
+  for c in 0..n { ts = twos_of(c, ks(c % 6)); t += len(ts) + 1; }
+  assert(t > 0, "m1_twos ran");
+  census_records()
+}
+fn m1_removed(n: integer) -> integer {
+  t = 0;
+  for c in 0..n {
+    rs = runs_of(c, ks(c % 6));
+    if len(rs) > 0 { rs.remove(0); }
+    t += len(rs) + 1;
+  }
+  assert(t > 0, "m1_removed ran");
+  census_records()
+}
+
+// m1 — the live records after 1 000 calls equal those after 10 (both a multiple of the
+// six-call cycle's end state: call 9 and call 999 are both c % 6 == 3, the empty result).
+fn m1() {
+  assert(census_records() >= 0, "m1: the census answers");
+  assert(m1_runs(1000) == m1_runs(10), "m1 runs grow: {m1_runs(10)} -> {m1_runs(1000)} records");
+  assert(m1_twos(1000) == m1_twos(10), "m1 twos grow: {m1_twos(10)} -> {m1_twos(1000)} records");
+  assert(m1_removed(1000) == m1_removed(10), "m1 removed grows: {m1_removed(10)} -> {m1_removed(1000)} records");
+  println("m1 true");
+}
+
+fn main() {
+  assert(c1() == 1216, "c1 {c1()}");
+  assert(c2() == "a longer word than two||mid|a|", "c2 {c2()}");
+  assert(c3() == 72, "c3 {c3()}");
+  assert(c4() == 74, "c4 {c4()}");
+  assert(c5() == 96, "c5 {c5()}");
+  m1();
+  println("ok");
+}

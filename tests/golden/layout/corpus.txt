@@ -3,38 +3,38 @@ Bag	size=4	struct{items@0:hash<Item[ik]>}
 Circle	size=16	enumvalue[1]{enum@0:byte, radius@8:integer}
 Color	size=1	enum{Red, Green, Blue}
 IndexBag	size=4	struct{items@0:index<Item[ik]>}
-Item	size=17	struct{ik@0:integer, #left_1@8:int<0,false>, #right_1@12:int<0,false>, #color_1@16:boolean}
-Narrow	size=7	struct{a@0:int<-2147483647,false>, b@6:byte, c@4:short_raw<0,false>}
+Item	size=24	struct{ik@0:integer, #left_1@8:int<0,false>, #right_1@12:int<0,false>, #color_1@16:boolean}
+Narrow	size=8	struct{a@0:int<-2147483647,false>, b@6:byte, c@4:short_raw<0,false>}
 NarrowRange	size=8	struct{a@6:byte<10,false>, b@4:short_raw<10,false>, c@7:byte<10,true>, v@0:vector<byte<10,false>>}
-NotNull	size=12	struct{i@0:integer, t@8:text}
+NotNull	size=16	struct{i@0:integer, t@8:text}
 Nullable	size=16	struct{n@0:integer, f@8:float}
 Rect	size=24	enumvalue[2]{enum@0:byte, width@8:integer, height@16:integer}
-RefHost	size=29	struct{child@0:Scalars}
-Scalars	size=29	struct{b@28:boolean, c@16:character, s@20:single, f@0:float, i@8:integer, t@24:text}
+RefHost	size=32	struct{child@0:Scalars}
+Scalars	size=32	struct{b@28:boolean, c@16:character, s@20:single, f@0:float, i@8:integer, t@24:text}
 Shape	size=24	enum{Circle, Rect}
 SortedBag	size=4	struct{items@0:ordered<Item[ik]>}
-Tup	size=12	struct{pair@0:__tuple<integer,text>}
+Tup	size=16	struct{pair@0:__tuple<integer,text>}
 Unsigned	size=12	struct{a@0:int_raw<0,false>, b@4:int_raw<0,true>, v@8:vector<int_raw<0,false>>}
 Vec1	size=4	struct{v@0:vector<integer>}
 VecNest	size=4	struct{vv@0:vector<vector<integer>>}
 VecNestNarrow	size=4	struct{vv@0:vector<vector<byte>>}
 VecText	size=4	struct{v@0:vector<text>}
 Wide	size=2	struct{s@0:short_raw<-32768,false>}
-__tuple<integer,text>	size=12	struct{_0@0:integer, _1@8:text}
+__tuple<integer,text>	size=16	struct{_0@0:integer, _1@8:text}
 boolean	size=1	base
 byte	size=1	byte(start=0,null=false)
 byte<10,false>	size=1	byte(start=10,null=false)
 byte<10,true>	size=1	byte(start=10,null=true)
 character	size=4	base
 float	size=8	base
-hash<Item[ik]>	size=4	hash<Item>(keys=[0],elem_size=17,placement=2)
-index<Item[ik]>	size=4	index<Item>(keys=[(0, true)],left=1,elem_size=17)
+hash<Item[ik]>	size=4	hash<Item>(keys=[0],elem_size=24,placement=2)
+index<Item[ik]>	size=4	index<Item>(keys=[(0, true)],left=1,elem_size=24)
 int<-2147483647,false>	size=4	int4(start=-2147483647,null=false)
 int<0,false>	size=4	int4(start=0,null=false)
 int_raw<0,false>	size=4	int4raw(start=0,null=false)
 int_raw<0,true>	size=4	int4raw(start=0,null=true)
 integer	size=8	base
-ordered<Item[ik]>	size=4	ordered<Item>(keys=[(0, true)],elem_size=17)
+ordered<Item[ik]>	size=4	ordered<Item>(keys=[(0, true)],elem_size=24)
 short_raw<-32768,false>	size=2	shortraw(start=-32768,null=false)
 short_raw<0,false>	size=2	shortraw(start=0,null=false)
 short_raw<10,false>	size=2	shortraw(start=10,null=false)

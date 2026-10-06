@@ -116,6 +116,8 @@ step feeding one shared IR to both backends, generics behave identically under `
              Inside a template, `Grid<T>` at the template's own variables is an OPEN instance:
              it has no layout, and each monomorph reads the instance its bindings close it to —
              its fields, its variants, its element width, the records it builds (G-Mono).
+             A tuple of the template's variables (`vector<(T, U)>`) is an open instance of the
+             anonymous tuple template, closed the same way to the tuple of their bindings.
              A literal takes its instance from the type expected of it (an annotation, a
              parameter), or else binds each variable from the field values that name it; a
              variable bound nowhere — or only by `null` — is refused naming it.  A call binds a
@@ -218,9 +220,17 @@ decided boundary, so it belongs here as a scope rule, not as a deviation to clos
 
 ## Deviations
 
-**OPEN: 0.**
+**OPEN: 1.**
 The record, and every closed deviation, are in the companion
 [interfaces-history.md](interfaces-history.md).
+
+- **D-gen-7 (OPEN, loft#1872)** — violates <!-- doc-lint: ok -->
+  `(G-Mono)`: a recursive generic instance returning a struct is not given its twin's return
+  protocol.  The twin `fn pick(n, a: S, b: S) -> S` returns `S["a", "b"]` through a caller's
+  buffer; the instance returns a bare `S` with no buffer, and its recursive arm's result is a
+  store of its own that a caller reading a field straight off the call (`pick(1, a, b).x`)
+  never releases — one record per call on `--interpret`.  Binding the result first
+  (`r = pick(1, a, b); r.x`) is clean.
 
 ## Conformance
 

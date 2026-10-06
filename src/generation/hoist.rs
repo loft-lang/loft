@@ -43,7 +43,7 @@ pub const ELEMENT_ADDRESS_OPS: [&str; 2] = ["OpGetVector", "OpGetVectorNullable"
 /// reaches state through the frame (`OpParallelJoin`), and the signature cannot tell them
 /// apart. `OpConvIntFromNull` is the one that matters in practice — it initialises the
 /// index of a `for` loop, so a nested loop carries it inside its parent's body.
-const PURE_NULLARY_OPS: [&str; 18] = [
+const PURE_NULLARY_OPS: [&str; 19] = [
     "OpConvIntFromNull",
     "OpConvBoolFromNull",
     "OpConvCharacterFromNull",
@@ -71,6 +71,12 @@ const PURE_NULLARY_OPS: [&str; 18] = [
     "OpMathFunc2Single",
     // `sizeof` of a scalar expression: consumes the value, answers the `const` size.
     "OpSizeScalar",
+    // The checked narrowing into a ranged integer (`z: integer(lo, hi)`): its `const`
+    // parameters are the BOUNDS and the default, not a slot or type id, and its one effect
+    // outside its value is a recoverable-error report through the logger — no store is
+    // touched.  Missing here, one ranged local in a callee (random's `get`) declined the
+    // hoist of every loop that called it (`indices` −43 % priced).
+    "OpRangeDefault",
 ];
 
 /// Ops that take a collection or a reference and only READ it.
@@ -1248,6 +1254,21 @@ pub fn hoistable(
                     && !pushes.iter().any(|(p, _)| *p == fp.path)
                 {
                     pushes.push((fp.path, fp.vector.clone()));
+                }
+                false
+            });
+        }
+        // `@FR-R-Refresh`'s keep-range clause — a popped path holds a push header too (the
+        // mutable holder its length refresh writes) and is judged for aliasing as a pushed
+        // one: an owned root, or the return buffer, else the loop declines.
+        for op in &body.operators {
+            op.any_node(&mut |n| {
+                if let Value::Call(d, args) = n
+                    && (*d as usize) < data.definitions.len()
+                    && let Some(path) = keep_range_path(data, data.def(*d).name(), args)
+                    && !pushes.iter().any(|(p, _)| *p == path)
+                {
+                    pushes.push((path, args[0].clone()));
                 }
                 false
             });
@@ -5867,6 +5888,21 @@ pub fn pre_alloc_path(data: &Data, op: &str, args: &[Value]) -> Option<PathKey> 
     vector_path(data, &args[0])
 }
 
+/// Recognise `OpKeepRange(P, lo, hi, tp)` over a pure path (`@FR-R-Refresh`'s keep-range
+/// clause) — the ONE definition of the admissible self-slice pop, asked by the gate, the
+/// collector and the emitter.  The op keeps the vector's record and writes its length, so
+/// it is a LENGTH refresh of P's holder, which the emitter performs at the op's site; the
+/// path takes a push header (a mutable holder) and joins the push paths' aliasing
+/// decision, since a second holder naming the same vector would keep the old length.
+/// Shape only; `None` for every other op, and under `LOFT_NO_KEEP_RANGE_REFRESH`.
+#[must_use]
+pub fn keep_range_path(data: &Data, op: &str, args: &[Value]) -> Option<PathKey> {
+    if op != "OpKeepRange" || args.len() != 4 || !crate::keys::keep_range_refresh_enabled() {
+        return None;
+    }
+    vector_path(data, &args[0])
+}
+
 /// Recognise `OpPush<Kind>(path, val)` for a fusable kind over a pure path (@PLN157 § V-q)
 /// — the ONE definition of the hoistable push, asked by the gate, the collector and the
 /// emitter.  Shape only; the caller confirms the loop hoisted a push header for the path.
@@ -6778,7 +6814,12 @@ fn blocks_header_hoist(
             let fusable_push = known
                 && tiers.push
                 && (fused_push(data, data.def(*d).name(), args).is_some()
-                    || pre_alloc_path(data, data.def(*d).name(), args).is_some());
+                    || pre_alloc_path(data, data.def(*d).name(), args).is_some()
+                    // `@FR-R-Refresh`'s keep-range clause — a self-slice pop keeps the
+                    // record and refreshes the held length at its own site; it takes the
+                    // push tier's holder and aliasing decision.  Its bound operands still
+                    // walk below this node.
+                    || keep_range_path(data, data.def(*d).name(), args).is_some());
             // @PLN157 § V-s (`@FR-R-Mint`) — a record MINT into a plain vector is a mover
             // like a push: it grows that one vector and initialises a record no variable
             // bound before the loop can name; `hoistable` decides the aliasing.  The
@@ -8899,6 +8940,26 @@ pub struct RefillBuffers {
     /// store whole and keeps the vector's capacity (`@FR-H-ClearRelease`, § V-ag / V-ai) —
     /// never the bare length reset, which would strand the elements' texts.
     pub heap_elems: bool,
+    /// `@FR-R-RefillText`'s collection clause — the heap-element buffer keeps its elements
+    /// across calls and the build refills their texts ([`keep_elements`]).
+    pub keep: Option<KeepElems>,
+}
+
+/// `@FR-R-RefillText`'s collection clause, admitted for a heap-element refill buffer: the
+/// wrapper's type and its vector field's byte position, the element type with its width and
+/// text slots, and the element locals an append mints into the buffer's vector — the only
+/// targets of the build's text sets.
+#[derive(Clone, Debug)]
+pub struct KeepElems {
+    pub wrapper_tp: u16,
+    pub field: u32,
+    pub elem_tp: u16,
+    pub size: u32,
+    pub texts: Vec<u32>,
+    pub elems: HashSet<u16>,
+    /// The type operands of the appends' `OpNewRecord` mints — what `(R-CompleteWrite)`'s
+    /// `mint_tps` is keyed by.
+    pub mint_tps: HashSet<u16>,
 }
 
 /// Can a refilled record of type `tp` be rewritten whole by a complete literal, leaving
@@ -9117,6 +9178,703 @@ pub fn refill_buffers(data: &Data, stores: &Stores, def_nr: u32) -> RefillBuffer
         out.var = Some(b);
         out.heap_elems = heap_elems;
         out.field_zeros = zeros;
+        if heap_elems && let Some(tp) = heap_tp {
+            out.keep = keep_elements(data, stores, def_nr, b, tp).ok();
+        }
+    }
+    out
+}
+
+/// The type `buf`'s mint names in `def_nr` — the first `OpDatabase(buf, tp)` found.
+pub fn mint_type_of(data: &Data, def_nr: u32, buf: u16) -> Option<u16> {
+    let mut tp = None;
+    data.def(def_nr).code().any_node(&mut |n| {
+        if let Some([b, Value::Int(t)]) = call_named(n, data, "OpDatabase")
+            && is_var(b, buf)
+        {
+            tp = u16::try_from(*t).ok();
+        }
+        tp.is_some()
+    });
+    tp
+}
+
+/// The variables a kept-element build names: the buffer, its field views and the elements
+/// minted into it.
+struct KeepVars {
+    buf: u16,
+    field: u32,
+    views: HashSet<u16>,
+    elems: HashSet<u16>,
+}
+
+impl KeepVars {
+    /// The buffer's vector: a field view, or the field read in place.
+    fn is_view(&self, v: &Value, data: &Data) -> bool {
+        match v.unspan() {
+            Value::Var(var) => self.views.contains(var),
+            _ => matches!(call_named(v, data, "OpGetField"),
+                Some([b, Value::Int(off), _]) if is_var(b, self.buf) && *off as u32 == self.field),
+        }
+    }
+
+    fn is_elem(&self, v: &Value) -> bool {
+        matches!(v.unspan(), Value::Var(var) if self.elems.contains(var))
+    }
+
+    /// Is every mention of the buffer, a view or an element under `node` one the kept
+    /// elements survive: the entry clear and the mint, the field's zero, a self-replace, a
+    /// release, a return; on the vector a reservation, a length, an element read, an append's
+    /// mint and finish; on an element its own sets and reads.
+    fn admits(&self, node: &Value, data: &Data) -> bool {
+        let rest = |args: &[Value], from: usize| args[from..].iter().all(|a| self.admits(a, data));
+        match node.unspan() {
+            Value::Var(var) => {
+                *var != self.buf && !self.views.contains(var) && !self.elems.contains(var)
+            }
+            Value::Set(var, rhs) if *var == self.buf => matches!(rhs.unspan(), Value::Null),
+            Value::Set(var, rhs) if self.views.contains(var) => self.is_view(rhs, data),
+            Value::Set(var, rhs) if self.elems.contains(var) => match rhs.unspan() {
+                Value::Null => true,
+                _ => matches!(call_named(rhs, data, "OpNewRecord"),
+                    Some(args) if self.is_view(&args[0], data) && rest(args, 1)),
+            },
+            Value::Return(r) if is_var(r, self.buf) || self.is_view(r, data) => true,
+            Value::Call(op, args)
+                if (*op as usize) < data.definitions.len() && !args.is_empty() =>
+            {
+                let name = data.def(*op).name();
+                let on_buf = is_var(&args[0], self.buf);
+                match name {
+                    "OpRefAlias" | "OpClearVector" | "OpDatabase" if on_buf => rest(args, 1),
+                    "OpSetInt4" => {
+                        (on_buf
+                            && matches!(&args[1..], [Value::Int(off), Value::Int(0)] if *off as u32 == self.field))
+                            || (!on_buf && args.iter().all(|a| self.admits(a, data)))
+                    }
+                    "OpReplaceVector"
+                        if on_buf && args.len() > 1 && self.is_view(&args[1], data) =>
+                    {
+                        rest(args, 2)
+                    }
+                    "OpFreeRef" | "OpFreeRefIfDistinct" => {
+                        args.iter().all(|a| matches!(a.unspan(), Value::Var(_)))
+                    }
+                    "OpPreAllocVector"
+                    | "OpLengthVector"
+                    | "t_6vector_len"
+                    | "OpGetVector"
+                    | "OpGetVectorNullable"
+                        if self.is_view(&args[0], data) =>
+                    {
+                        rest(args, 1)
+                    }
+                    "OpFinishRecord"
+                        if self.is_view(&args[0], data)
+                            && args.len() > 1
+                            && self.is_elem(&args[1]) =>
+                    {
+                        rest(args, 2)
+                    }
+                    "OpSetText" if self.is_elem(&args[0]) => {
+                        matches!(args.get(1).map(Value::unspan), Some(Value::Int(_)))
+                            && rest(args, 2)
+                    }
+                    n if (n.starts_with("OpSet") || n.starts_with("OpGet"))
+                        && self.is_elem(&args[0]) =>
+                    {
+                        rest(args, 1)
+                    }
+                    _ => args.iter().all(|a| self.admits(a, data)),
+                }
+            }
+            _ => {
+                let mut ok = true;
+                node.for_each_child(&mut |c| {
+                    if ok && !self.admits(c, data) {
+                        ok = false;
+                    }
+                });
+                ok
+            }
+        }
+    }
+}
+
+/// `@FR-R-RefillText`'s collection clause — may the heap-element buffer `buf` (a one-field
+/// `wrapper_tp` around `vector<E>`) keep its elements across calls, the build refilling each
+/// element's texts in its slot?  The element is a record of scalars and texts; its build
+/// appends through `OpNewRecord` minted elements only; the buffer is cleared once, at entry
+/// (a second clear would reset the store under the kept slots); and every other mention is
+/// one [`KeepVars::admits`] names.  Answers the facts the emitter needs, or why it declines.
+///
+/// # Errors
+/// The condition the build fails, in the words `LOFT_TRACE_REFILL_TEXT` prints.
+pub fn keep_elements(
+    data: &Data,
+    stores: &Stores,
+    def_nr: u32,
+    buf: u16,
+    wrapper_tp: u16,
+) -> Result<KeepElems, &'static str> {
+    let Some(crate::database::Parts::Struct(fields)) =
+        stores.types.get(wrapper_tp as usize).map(|t| &t.parts)
+    else {
+        return Err("the buffer is not a wrapper record");
+    };
+    let [field] = &fields[..] else {
+        return Err("the buffer is not a one-field wrapper");
+    };
+    let Some(crate::database::Parts::Vector(elem_tp)) =
+        stores.types.get(field.content as usize).map(|c| &c.parts)
+    else {
+        return Err("the wrapper's field is not a vector");
+    };
+    let Some(texts) = stores.text_slots(*elem_tp) else {
+        return Err("an element owns heap other than text");
+    };
+    let body = data.def(def_nr).code();
+    let mut k = KeepVars {
+        buf,
+        field: u32::from(field.position),
+        views: HashSet::new(),
+        elems: HashSet::new(),
+    };
+    let mut clears = 0usize;
+    body.any_node(&mut |n| {
+        match n {
+            Value::Set(var, rhs) if k.is_view(rhs, data) => {
+                k.views.insert(*var);
+            }
+            Value::Call(..) if matches!(call_named(n, data, "OpClearVector"), Some([b]) if is_var(b, buf)) => {
+                clears += 1;
+            }
+            _ => {}
+        }
+        false
+    });
+    let mut mint_tps = HashSet::new();
+    body.any_node(&mut |n| {
+        if let Value::Set(var, rhs) = n
+            && let Some(args) = call_named(rhs, data, "OpNewRecord")
+            && k.is_view(&args[0], data)
+        {
+            k.elems.insert(*var);
+            if let Some(Value::Int(tp)) = args.get(1).map(Value::unspan) {
+                mint_tps.insert(*tp as u16);
+            }
+        }
+        false
+    });
+    if clears != 1 {
+        return Err("the buffer is cleared again after its entry");
+    }
+    if k.elems.is_empty() {
+        return Err("no element is appended");
+    }
+    if !k.admits(body, data) {
+        return Err("the vector or an element is used another way");
+    }
+    Ok(KeepElems {
+        wrapper_tp,
+        field: k.field,
+        elem_tp: *elem_tp,
+        size: u32::from(stores.size(*elem_tp)),
+        texts,
+        elems: k.elems,
+        mint_tps,
+    })
+}
+
+/// `@FR-R-RefillText` — the pooled call sites of one function whose release is not emitted
+/// and whose call goes to the callee's refill twin (`__rt`): each pool statement
+/// (`if OpRefIsNull(b) { OpDatabase(b, tp) } else OpClear(b, tp)`) and each call's argument
+/// slice, by address, with the buffer variable and its type.
+#[derive(Default, Debug)]
+pub struct RefillTextSites {
+    pub pools: HashMap<usize, (u16, u16)>,
+    pub calls: HashMap<usize, (u16, u16)>,
+    /// The calls admitted under the VECTOR clause, by argument-slice address: the plain
+    /// callee empties each vector field in place, so the call takes no twin and no release.
+    pub vectors: HashSet<usize>,
+}
+
+/// Which clause of `@FR-R-RefillText` a pooled site is admitted under.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum RefillClause {
+    /// The callee's refill twin writes each text over its slot's block.
+    Text,
+    /// The plain callee empties each vector field in place (`(R-RefillBuffer)`).
+    Vectors,
+}
+
+/// `LOFT_NO_REFILL_VECTORS=1` — the vector clause off: a pooled buffer whose type holds
+/// vectors of plain elements is released before every call again.  The first bisect step
+/// for a wrong or stale vector field of a result built in a reused call buffer.
+fn refill_vectors_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !std::env::var("LOFT_NO_REFILL_VECTORS").is_ok_and(|v| v != "0"))
+}
+
+/// `@FR-R-RefillText`'s vector clause for a callee: `(R-RefillBuffer)` refills its return
+/// buffer — every mint heads a literal writing every field, each vector field's zero an
+/// in-place emptying — its vector elements own no heap, and the result type's heap is
+/// those vectors and nothing else ([`Stores::vector_slots`]).  Answers the result type.
+///
+/// # Errors
+/// The condition the callee fails, in the words `LOFT_TRACE_REFILL_TEXT` prints.
+pub fn refill_vector_callee(
+    data: &Data,
+    stores: &Stores,
+    callee: u32,
+) -> Result<u16, &'static str> {
+    if !refill_vectors_enabled() {
+        return Err("the vector clause is switched off");
+    }
+    let Some(buf) = retbuf_var(data, callee) else {
+        return Err("no return buffer");
+    };
+    let refill = refill_buffers(data, stores, callee);
+    if refill.var != Some(buf) {
+        return Err("the callee does not refill its buffer");
+    }
+    if refill.heap_elems {
+        return Err("the callee's elements own heap");
+    }
+    let Some(tp) = mint_type_of(data, callee, buf) else {
+        return Err("no mint of the buffer");
+    };
+    match stores.vector_slots(tp) {
+        Some(found) if !found.is_empty() => Ok(tp),
+        Some(_) => Err("the result holds no vector"),
+        None => Err("the result owns heap other than vectors of plain elements"),
+    }
+}
+
+fn is_var(v: &Value, var: u16) -> bool {
+    matches!(v.unspan(), Value::Var(x) if *x == var)
+}
+
+/// The one statement of a mint branch: a bare call, or a block or insert holding only it.
+fn only_statement(branch: &Value) -> Option<&Value> {
+    let ops = match branch.unspan() {
+        Value::Block(bl) => &bl.operators[..],
+        Value::Insert(ops) => &ops[..],
+        other => return Some(other),
+    };
+    match ops {
+        [stmt] => Some(stmt),
+        _ => None,
+    }
+}
+
+/// The pool statement of a call site: `if OpRefIsNull(b) { OpDatabase(b, tp) } else
+/// OpClear(b, tp)`, answered as `(b, tp)`.
+fn pool_of(stmt: &Value, data: &Data) -> Option<(u16, u16)> {
+    let Value::If(cond, mint_branch, release) = stmt.unspan() else {
+        return None;
+    };
+    let buf = match call_named(cond, data, "OpRefIsNull")? {
+        [arg] => match arg.unspan() {
+            Value::Var(var) => *var,
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let mint = only_statement(mint_branch)?;
+    let tp = match call_named(mint, data, "OpDatabase")? {
+        [arg, Value::Int(tp)] if is_var(arg, buf) => u16::try_from(*tp).ok()?,
+        _ => return None,
+    };
+    match call_named(release, data, "OpClear")? {
+        [arg, Value::Int(clear_tp)] if is_var(arg, buf) && i32::from(tp) == *clear_tp => {
+            Some((buf, tp))
+        }
+        _ => None,
+    }
+}
+
+/// The byte offset of a record path rooted at `b` — `b` itself, or `OpGetField` steps into
+/// its inline sub-records.
+pub(crate) fn path_offset(v: &Value, b: u16, data: &Data) -> Option<u32> {
+    if is_var(v, b) {
+        return Some(0);
+    }
+    match call_named(v, data, "OpGetField")? {
+        [p, Value::Int(off), _] => Some(path_offset(p, b, data)? + u32::try_from(*off).ok()?),
+        _ => None,
+    }
+}
+
+/// The literal a mint at `ops[at]` heads, read for `@FR-R-RefillText` (b): its contiguous
+/// `OpSet*`s into `buf` (or its inline sub-records), then the frees of its own work texts,
+/// then the exit — `return buf`, or `buf` as the block's value.  Answers how many mentions
+/// of `buf` the literal accounts for and the byte offsets of the texts it writes, or why it
+/// is not such a literal.
+fn literal_text_writes(
+    ops: &[Value],
+    at: usize,
+    buf: u16,
+    data: &Data,
+) -> Result<(u32, Vec<u32>), &'static str> {
+    let mut mentions = var_mentions(&ops[at], buf);
+    let mut written: Vec<u32> = Vec::new();
+    let mut next = at + 1;
+    while let Some(stmt) = ops.get(next) {
+        if matches!(stmt.unspan(), Value::Line(_)) {
+            next += 1;
+            continue;
+        }
+        let Value::Call(setter, args) = stmt.unspan() else {
+            break;
+        };
+        if (*setter as usize) >= data.definitions.len()
+            || !data.def(*setter).name().starts_with("OpSet")
+        {
+            break;
+        }
+        let Some(base) = args.first().and_then(|t| path_offset(t, buf, data)) else {
+            break;
+        };
+        if args.iter().skip(1).any(|a| var_mentions(a, buf) > 0) {
+            return Err("a literal value reads the buffer");
+        }
+        if data.def(*setter).name() == "OpSetText" {
+            let Some(Value::Int(off)) = args.get(1).map(Value::unspan) else {
+                return Err("a text set at a computed offset");
+            };
+            written.push(base + u32::try_from(*off).unwrap_or(u32::MAX));
+        }
+        mentions += 1;
+        next += 1;
+    }
+    for stmt in &ops[next..] {
+        match stmt.unspan() {
+            Value::Line(_) => {}
+            Value::Return(r) if is_var(r, buf) => return Ok((mentions + 1, written)),
+            Value::Var(var) if *var == buf => return Ok((mentions + 1, written)),
+            _ if call_named(stmt, data, "OpFreeText").is_some() && var_mentions(stmt, buf) == 0 => {
+            }
+            _ => break,
+        }
+    }
+    Err("a literal that is not the exit")
+}
+
+/// Does this exit answer the buffer: `buf`, or a block whose value is `buf` (the literal's
+/// own block, `return { …; buf }`)?
+fn answers_buffer(v: &Value, buf: u16) -> bool {
+    match v.unspan() {
+        Value::Var(var) => *var == buf,
+        Value::Block(bl) => bl.operators.last().is_some_and(|l| answers_buffer(l, buf)),
+        _ => false,
+    }
+}
+
+/// `@FR-R-RefillText` (a) and (b) for a callee — its result type's heap is text only, and
+/// every exit is a record literal into its own buffer writing every text slot exactly once,
+/// with nothing else in the body naming the buffer.  Answers the result type.
+///
+/// # Errors
+/// The condition the callee fails, in the words `LOFT_TRACE_REFILL_TEXT` prints.
+pub fn refill_text_callee(data: &Data, stores: &Stores, callee: u32) -> Result<u16, &'static str> {
+    let Some(buf) = retbuf_var(data, callee) else {
+        return Err("no return buffer");
+    };
+    let body = data.def(callee).code();
+    let mut result_tp: Option<u16> = None;
+    let mut admitted = 0u32;
+    let mut failed: Option<&'static str> = None;
+    let mut slots: Vec<u32> = Vec::new();
+    body.any_node(&mut |n| {
+        let Value::Block(bl) = n else {
+            return false;
+        };
+        for at in 0..bl.operators.len() {
+            let Some(tp) = mint_of(&bl.operators[at], buf, data) else {
+                continue;
+            };
+            if result_tp.is_some_and(|known| known != tp) {
+                failed = Some("two result types");
+                return true;
+            }
+            if result_tp.is_none() {
+                match stores.text_slots(tp) {
+                    Some(found) if !found.is_empty() => slots = found,
+                    Some(_) => failed = Some("the result holds no text"),
+                    None => failed = Some("the result owns heap other than text"),
+                }
+                if failed.is_some() {
+                    return true;
+                }
+                slots.sort_unstable();
+                result_tp = Some(tp);
+            }
+            match literal_text_writes(&bl.operators, at, buf, data) {
+                Ok((mentions, mut written)) => {
+                    written.sort_unstable();
+                    if written != slots {
+                        failed = Some("a literal does not write every text once");
+                        return true;
+                    }
+                    admitted += mentions;
+                }
+                Err(why) => {
+                    failed = Some(why);
+                    return true;
+                }
+            }
+        }
+        false
+    });
+    if let Some(why) = failed {
+        return Err(why);
+    }
+    let Some(tp) = result_tp else {
+        return Err("no literal into the buffer");
+    };
+    if var_mentions(body, buf) != admitted {
+        return Err("the buffer is named outside its literals");
+    }
+    let other_exit =
+        body.any_node(&mut |n| matches!(n, Value::Return(r) if !answers_buffer(r, buf)));
+    if other_exit {
+        return Err("an exit that is not the literal");
+    }
+    Ok(tp)
+}
+
+/// Is every mention of the pooled result `res` in `node` a READ — the record a reading
+/// `OpGet*` (through `OpGetField` steps) reads, the source of a copy that keeps it, or a
+/// release that leaves the pool's buffer alone?  A write, a move, a pass to a call, a rebind
+/// or a bare use declines.  Its binding (`Set(res, …)`) is counted by the caller, once.
+fn result_only_read(node: &Value, res: u16, buf: u16, data: &Data) -> bool {
+    match node.unspan() {
+        Value::Var(var) => *var != res,
+        Value::Set(_, val) => result_only_read(val, res, buf, data),
+        Value::Call(op, args) if (*op as usize) < data.definitions.len() => {
+            let name = data.def(*op).name();
+            let reads_first = (name.starts_with("OpGet") && name != "OpGetField")
+                || (name == "OpCopyRecord"
+                    && matches!(args.get(2).map(Value::unspan), Some(Value::Int(flags))
+                        if (*flags as u16) & crate::keys::COPY_FREE_SOURCE == 0));
+            if name == "OpFreeRefIfDistinct"
+                && matches!(&args[..], [first, second] if is_var(first, res) && is_var(second, buf))
+            {
+                return true;
+            }
+            args.iter().enumerate().all(|(pos, arg)| {
+                (pos == 0 && reads_first && path_offset(arg, res, data).is_some())
+                    || result_only_read(arg, res, buf, data)
+            })
+        }
+        _ => {
+            let mut ok = true;
+            node.for_each_child(&mut |child| {
+                if ok && !result_only_read(child, res, buf, data) {
+                    ok = false;
+                }
+            });
+            ok
+        }
+    }
+}
+
+/// One pooled call site as `refill_text_sites` finds it: the pool statement, the call's
+/// arguments, the buffer and its type, the local bound from the call, and the callee.
+struct PoolSite<'a> {
+    pool: &'a Value,
+    args: &'a [Value],
+    buf: u16,
+    tp: u16,
+    res: u16,
+    callee: u32,
+}
+
+/// The clause `site` is admitted under, or why it is not: the callee's conditions
+/// ([`refill_text_callee`], [`refill_vector_callee`]) and (c) — the buffer named by nothing
+/// but its pool statement, this call's buffer argument and its releases, the result bound
+/// once.  The text clause also asks that the result be only READ; the vector clause does
+/// not, because every write the language makes to a vector field leaves it owning its vector
+/// (or empty), which is all the in-place emptying reads.
+fn refill_text_site_declines(
+    data: &Data,
+    stores: &Stores,
+    body: &Value,
+    site: &PoolSite,
+    callee_declines: &dyn Fn(u32) -> Option<&'static str>,
+) -> Result<RefillClause, &'static str> {
+    let PoolSite {
+        pool,
+        args,
+        buf,
+        tp,
+        res,
+        callee,
+    } = *site;
+    if (callee as usize) >= data.definitions.len()
+        || !matches!(data.def(callee).def_type(), DefType::Function)
+    {
+        return Err("not a loft function");
+    }
+    // The buffer ARGUMENT's position is its attribute's, not its variable number: a renamed
+    // buffer (`(R-Rebind)`'s `__ref_1`) sits behind locals of its own.
+    let Some(buf_arg) = data.def(callee).hidden_return_buffer_attr() else {
+        return Err("no return buffer");
+    };
+    if let Some(why) = callee_declines(callee) {
+        return Err(why);
+    }
+    if args.iter().enumerate().any(|(pos, arg)| {
+        if pos == buf_arg {
+            !is_var(arg, buf)
+        } else {
+            var_mentions(arg, buf) > 0 || var_mentions(arg, res) > 0
+        }
+    }) {
+        return Err("the call's arguments name the buffer or the result");
+    }
+    let clause = match refill_text_callee(data, stores, callee) {
+        Ok(callee_tp) if callee_tp != tp => return Err("the pool's type is not the callee's"),
+        Ok(_) => RefillClause::Text,
+        Err(text_why) => match refill_vector_callee(data, stores, callee) {
+            Ok(callee_tp) if callee_tp == tp => RefillClause::Vectors,
+            Ok(_) => return Err("the pool's type is not the callee's"),
+            // The reason of the clause the pool's type belongs to.
+            Err(vector_why) if stores.vector_slots(tp).is_some_and(|v| !v.is_empty()) => {
+                return Err(vector_why);
+            }
+            Err(_) => return Err(text_why),
+        },
+    };
+    let mut allowed = var_mentions(pool, buf) + 1;
+    let mut binds = 0usize;
+    body.any_node(&mut |n| {
+        match n {
+            Value::Call(op, op_args)
+                if (*op as usize) < data.definitions.len()
+                    && matches!(data.def(*op).name(), "OpFreeRef" | "OpFreeRefIfDistinct") =>
+            {
+                allowed += op_args.iter().filter(|a| is_var(a, buf)).count() as u32;
+            }
+            Value::Set(var, val) if *var == buf && matches!(val.unspan(), Value::Null) => {
+                allowed += 1;
+            }
+            Value::Set(var, val) if *var == res && !matches!(val.unspan(), Value::Null) => {
+                binds += 1;
+            }
+            _ => {}
+        }
+        false
+    });
+    if var_mentions(body, buf) != allowed {
+        return Err("the buffer is named outside its pool");
+    }
+    if binds != 1 {
+        return Err("the result is bound more than once");
+    }
+    if clause == RefillClause::Text && !result_only_read(body, res, buf, data) {
+        return Err("the result is not only read");
+    }
+    Ok(clause)
+}
+
+/// `LOFT_TRACE_REFILL_TEXT`'s line for one site, printed once: a function is emitted more
+/// than once (its twins, a second pass) and its sites are named the first time.
+/// Print a `LOFT_TRACE_REFILL_TEXT` line once: a function is emitted more than once (its
+/// twins, a second pass) and each verdict is named the first time.
+pub fn trace_refill_text_once(line: &str) {
+    thread_local! {
+        static SEEN: std::cell::RefCell<HashSet<String>> =
+            std::cell::RefCell::new(HashSet::new());
+    }
+    if SEEN.with(|seen| seen.borrow_mut().insert(line.to_string())) {
+        eprintln!("{line}");
+    }
+}
+
+fn trace_refill_text_site(
+    data: &Data,
+    site_fn: u32,
+    target: u32,
+    verdict: Result<RefillClause, &str>,
+) {
+    let to = if (target as usize) < data.definitions.len() {
+        data.def(target).name()
+    } else {
+        "?"
+    };
+    let from = data.def(site_fn).name();
+    let line = match verdict {
+        Ok(RefillClause::Text) => format!("refill-text: {from} → {to} admitted"),
+        Ok(RefillClause::Vectors) => format!("refill-text: {from} → {to} admitted (vectors)"),
+        Err(why) => format!("refill-text: {from} → {to} declined — {why}"),
+    };
+    trace_refill_text_once(&line);
+}
+
+/// `@FR-R-RefillText` — the pooled call sites of `def_nr` whose callee refills its texts in
+/// place and whose buffer keeps the slot invariant ([`refill_text_site_declines`]).  `trace`
+/// prints each site's verdict (`LOFT_TRACE_REFILL_TEXT`); `callee_declines` is the emitter's
+/// own reason a callee cannot take a twin (a value-record callee has no buffer).
+pub fn refill_text_sites(
+    data: &Data,
+    stores: &Stores,
+    def_nr: u32,
+    callee_declines: &dyn Fn(u32) -> Option<&'static str>,
+    trace: bool,
+) -> RefillTextSites {
+    let mut out = RefillTextSites::default();
+    let body = data.def(def_nr).code();
+    let mut sites: Vec<PoolSite> = Vec::new();
+    body.any_node(&mut |n| {
+        let Value::Block(bl) = n else {
+            return false;
+        };
+        let ops = &bl.operators;
+        for (at, pool) in ops.iter().enumerate() {
+            let Some((buf, tp)) = pool_of(pool, data) else {
+                continue;
+            };
+            let Some(next) = ops[at + 1..]
+                .iter()
+                .find(|o| !matches!(o.unspan(), Value::Line(_)))
+            else {
+                continue;
+            };
+            let Value::Set(res, call) = next.unspan() else {
+                continue;
+            };
+            let Value::Call(callee, args) = call.unspan() else {
+                continue;
+            };
+            sites.push(PoolSite {
+                pool,
+                args: args.as_slice(),
+                buf,
+                tp,
+                res: *res,
+                callee: *callee,
+            });
+        }
+        false
+    });
+    for site in &sites {
+        let verdict = refill_text_site_declines(data, stores, body, site, callee_declines);
+        if trace {
+            trace_refill_text_site(data, def_nr, site.callee, verdict);
+        }
+        if let Ok(clause) = verdict {
+            out.pools.insert(
+                std::ptr::from_ref(site.pool.unspan()) as usize,
+                (site.buf, site.tp),
+            );
+            out.calls
+                .insert(site.args.as_ptr() as usize, (site.buf, site.tp));
+            if clause == RefillClause::Vectors {
+                out.vectors.insert(site.args.as_ptr() as usize);
+            }
+        }
     }
     out
 }
@@ -9253,6 +10011,9 @@ pub struct ElemFirstMap {
     /// @PLN164 E-2 — a call-filled temp's hidden buffer → the element and the field offset the
     /// call is handed in its place.
     pub buf_place: HashMap<u16, (u16, i32)>,
+    /// The comprehension clause — `(block value, element)` pairs whose `OpCopyRecord(c, elm, tp)`
+    /// is emitted as nothing: the block's vector was built in the element ([`comprehension_rows`]).
+    pub whole_copies: HashSet<(u16, u16)>,
 }
 
 fn call_named<'v>(stmt: &'v Value, data: &Data, name: &str) -> Option<&'v [Value]> {
@@ -10018,6 +10779,7 @@ pub fn element_first(
         }
         false
     });
+    comprehension_rows(data, stores, vars, body, &mut out_map, trace);
     // A temp or an element serving TWO admitted pairs is beyond this keying.
     let mut vdb_seen: HashMap<u16, u32> = HashMap::new();
     for p in &out_map.pairs {
@@ -10029,6 +10791,321 @@ pub fn element_first(
         return ElemFirstMap::default();
     }
     out_map
+}
+
+/// `@FR-R-ElemFirst`'s comprehension clause — a vector built by a block (a comprehension,
+/// `[for x in … { … }]`) and appended as a WHOLE element of a local vector of vectors is built
+/// in that element:
+///
+/// ```text
+/// c = { …  OpDatabase[NP](vdb, tp) · vec = OpGetField(vdb, 0, tp) · … pushes into vec … · vec }
+/// [OpPreAllocVector(out, 1, size)] · elm = OpNewRecord(out, etp, 65535) · [OpSetInt4(elm, 0, 0)]
+/// OpCopyRecord(c, elm, vtp) · OpFinishRecord(out, elm, etp, 65535)
+/// ```
+///
+/// becomes the element minted where `vdb` was, `vec` bound to the element's slot, and the copy
+/// emitted as nothing: the row is written once, in the store it lives in, instead of built in a
+/// loop-buffer store and copied across.  Admitted where `c` is named by its bind and the copy
+/// alone, `vec` only inside its block, `vdb` only there and by frees; the block names neither
+/// `out` nor a view of its elements and jumps nowhere outside itself (an unfinished element
+/// would be stranded); and the block LOOPS — a body that loops again holds no push window on
+/// `out` (`@FR-R-PushFill`), the one raw address into `out`'s store the growth of the row's
+/// vector could leave stale.  Everything else held on that store is already refreshed or
+/// declined per pass, because the element's own mint grows it.
+fn comprehension_rows(
+    data: &Data,
+    stores: &Stores,
+    vars: &crate::variables::Function,
+    body: &Value,
+    out_map: &mut ElemFirstMap,
+    trace: bool,
+) {
+    let mut found: Vec<(ElemFirst, u16)> = Vec::new();
+    body.any_node(&mut |n| {
+        // A comprehension's append group stands in the body of the LOOP that builds the outer
+        // vector, so a loop body is searched as a block is.
+        let (Value::Block(bl) | Value::Loop(bl)) = n else {
+            return false;
+        };
+        let ops = &bl.operators;
+        let idx: Vec<usize> = (0..ops.len())
+            .filter(|p| !matches!(ops[*p].unspan(), Value::Line(_)))
+            .collect();
+        for ki in 0..idx.len() {
+            let Value::Set(comp, cv) = ops[idx[ki]].unspan() else {
+                continue;
+            };
+            let Some(row) = comprehension_block(data, vars, cv) else {
+                continue;
+            };
+            let Some(group) = row_append_group(data, ops, &idx, ki, *comp, row.vtp) else {
+                continue;
+            };
+            if let Err(why) =
+                admit_row(data, vars, body, ops[idx[ki]].unspan(), &row, &group, *comp)
+            {
+                if trace {
+                    eprintln!(
+                        "elemfirst: comprehension {} -> {}: DECLINED — {why}",
+                        vars.name(row.vec),
+                        vars.name(group.out)
+                    );
+                }
+                continue;
+            }
+            if trace {
+                eprintln!(
+                    "elemfirst: comprehension {} built in its element of {}",
+                    vars.name(row.vec),
+                    vars.name(group.out)
+                );
+            }
+            let size = group.size.unwrap_or_else(|| {
+                u16::try_from(group.etp).map_or(0, |t| i32::from(stores.size(t)))
+            });
+            found.push((
+                ElemFirst {
+                    out: group.out,
+                    out_tp: group.etp,
+                    out_fld: 65535,
+                    elm: group.elm,
+                    aliases: Vec::new(),
+                    prealloc_size: size,
+                    binds: vec![ElemBind {
+                        tmp: row.vec,
+                        vdb: row.vdb,
+                        field_off: 0,
+                        first: true,
+                        from_call: false,
+                    }],
+                },
+                *comp,
+            ));
+        }
+        false
+    });
+    for (pair, comp) in found {
+        if out_map.by_vdb.contains_key(&pair.binds[0].vdb) || out_map.by_elm.contains_key(&pair.elm)
+        {
+            continue;
+        }
+        let at = out_map.pairs.len();
+        out_map.by_vdb.insert(pair.binds[0].vdb, at);
+        out_map.by_elm.insert(pair.elm, at);
+        out_map.elms.insert(pair.elm);
+        out_map.whole_copies.insert((comp, pair.elm));
+        out_map.pairs.push(pair);
+    }
+}
+
+/// The comprehension clause's ROW: the block that builds it, the vector local it builds, the
+/// buffer that vector is declared through, and the vector's type.
+struct RowBlock<'a> {
+    inner: &'a Value,
+    vec: u16,
+    vdb: u16,
+    vtp: i32,
+}
+
+/// The block a bind's value descends to through value blocks, when its value is a vector
+/// declared through a `__vdb` buffer: `OpDatabase[NP](vdb, …) · vec = OpGetField(vdb, 0, vtp)`.
+fn comprehension_block<'a>(
+    data: &Data,
+    vars: &crate::variables::Function,
+    value: &'a Value,
+) -> Option<RowBlock<'a>> {
+    let mut inner = value.unspan();
+    while let Value::Block(outer) = inner
+        && let Some(Value::Block(_)) = outer.operators.last().map(Value::unspan)
+    {
+        inner = outer.operators.last().map(Value::unspan)?;
+    }
+    let Value::Block(vblock) = inner else {
+        return None;
+    };
+    let vec = as_var(vblock.operators.last())?;
+    let code: Vec<&Value> = vblock
+        .operators
+        .iter()
+        .filter(|o| !matches!(o.unspan(), Value::Line(_)))
+        .collect();
+    let di = code.iter().position(|o| {
+        call_named(o, data, "OpDatabase").is_some() || call_named(o, data, "OpDatabaseNP").is_some()
+    })?;
+    let dargs = call_named(code[di], data, "OpDatabase")
+        .or_else(|| call_named(code[di], data, "OpDatabaseNP"))?;
+    let vdb = as_var(dargs.first())?;
+    if !vars.name(vdb).starts_with("__vdb") {
+        return None;
+    }
+    let Value::Set(t, x) = code.get(di + 1)?.unspan() else {
+        return None;
+    };
+    let ga = call_named(x, data, "OpGetField")?;
+    if *t != vec
+        || as_var(ga.first()) != Some(vdb)
+        || !matches!(ga.get(1).map(Value::unspan), Some(Value::Int(0)))
+    {
+        return None;
+    }
+    let Some(Value::Int(vtp)) = ga.get(2).map(Value::unspan) else {
+        return None;
+    };
+    Some(RowBlock {
+        inner,
+        vec,
+        vdb,
+        vtp: *vtp,
+    })
+}
+
+/// The append group that consumes the row bound to `comp` at `idx[ki]`, right after it:
+/// `[OpPreAllocVector(out, 1, size)] · elm = OpNewRecord(out, etp, 65535) · [OpSetInt4(elm,
+/// 0, 0)] · OpCopyRecord(comp, elm, vtp) · OpFinishRecord(out, elm, …)`.  The copy writes the
+/// element itself — the element of a vector of vectors IS the inner vector's handle, at offset
+/// 0 — and copies the row's own vector type.
+struct RowGroup {
+    out: u16,
+    elm: u16,
+    etp: i32,
+    size: Option<i32>,
+}
+
+fn row_append_group(
+    data: &Data,
+    ops: &[Value],
+    idx: &[usize],
+    ki: usize,
+    comp: u16,
+    vtp: i32,
+) -> Option<RowGroup> {
+    let at = |g: usize| idx.get(g).map(|&p| &ops[p]);
+    let mut gi = ki + 1;
+    let mut size = None;
+    if let Some(pa) = at(gi).and_then(|o| call_named(o, data, "OpPreAllocVector")) {
+        if let Some(Value::Int(sz)) = pa.get(2).map(Value::unspan) {
+            size = Some(*sz);
+        }
+        gi += 1;
+    }
+    let Value::Set(elm, mv) = at(gi)?.unspan() else {
+        return None;
+    };
+    let margs = call_named(mv, data, "OpNewRecord")?;
+    let (Some(out), Some(Value::Int(etp)), Some(Value::Int(65535))) = (
+        as_var(margs.first()),
+        margs.get(1).map(Value::unspan),
+        margs.get(2).map(Value::unspan),
+    ) else {
+        return None;
+    };
+    gi += 1;
+    if at(gi)
+        .and_then(|o| call_named(o, data, "OpSetInt4"))
+        .is_some_and(|a| {
+            as_var(a.first()) == Some(*elm)
+                && matches!(a.get(1).map(Value::unspan), Some(Value::Int(0)))
+        })
+    {
+        gi += 1;
+    }
+    let copies = at(gi)
+        .and_then(|o| call_named(o, data, "OpCopyRecord"))
+        .is_some_and(|a| {
+            as_var(a.first()) == Some(comp)
+                && as_var(a.get(1)) == Some(*elm)
+                && matches!(a.get(2).map(Value::unspan), Some(Value::Int(t)) if *t == vtp)
+        });
+    let finishes = at(gi + 1)
+        .and_then(|o| call_named(o, data, "OpFinishRecord"))
+        .is_some_and(|a| as_var(a.first()) == Some(out) && as_var(a.get(1)) == Some(*elm));
+    (copies && finishes).then_some(RowGroup {
+        out,
+        elm: *elm,
+        etp: *etp,
+        size,
+    })
+}
+
+/// Every mention of `w` in `within`: a read, or a bind of it.
+fn var_mentions(within: &Value, w: u16) -> u32 {
+    let mut n = 0;
+    within.any_node(&mut |x| {
+        match x {
+            Value::Var(v) | Value::Set(v, _) if *v == w => n += 1,
+            _ => {}
+        }
+        false
+    });
+    n
+}
+
+/// `w`'s null declarations and frees in `body` — the only mentions a never-minted buffer
+/// answers as nothing.
+fn decl_and_free_mentions(data: &Data, body: &Value, w: u16) -> u32 {
+    let mut n = 0;
+    body.any_node(&mut |x| {
+        match x {
+            Value::Set(v, init) if *v == w && matches!(init.unspan(), Value::Null) => n += 1,
+            Value::Call(d, args)
+                if (*d as usize) < data.definitions.len()
+                    && matches!(
+                        data.def(*d).name(),
+                        "OpFreeRef" | "OpFreeRefIfDistinct" | "OpClear"
+                    )
+                    && as_var(args.first()) == Some(w) =>
+            {
+                n += 1;
+            }
+            _ => {}
+        }
+        false
+    });
+    n
+}
+
+/// The comprehension clause's admission, per `comprehension_rows`' doc: `Err` names the
+/// condition that declines.
+fn admit_row(
+    data: &Data,
+    vars: &crate::variables::Function,
+    body: &Value,
+    bind: &Value,
+    row: &RowBlock,
+    group: &RowGroup,
+    comp: u16,
+) -> Result<(), &'static str> {
+    if !matches!(vars.tp(group.out).base(), Type::Vector(_, _)) || vars.is_argument(group.out) {
+        return Err("the destination is not a local vector");
+    }
+    if u16::try_from(group.etp).is_err() {
+        return Err("the element type is out of range");
+    }
+    if var_mentions(body, comp) != 2 {
+        return Err("the block's value is read elsewhere");
+    }
+    if var_mentions(body, row.vec) != var_mentions(row.inner, row.vec) {
+        return Err("the vector is named outside its block");
+    }
+    if var_mentions(body, row.vdb)
+        != var_mentions(row.inner, row.vdb) + decl_and_free_mentions(data, body, row.vdb)
+    {
+        return Err("the buffer is named outside its block");
+    }
+    if !row.inner.any_node(&mut |x| matches!(x, Value::Loop(_))) {
+        return Err("the block does not loop");
+    }
+    if row.inner.reads_var(group.out) || jumps_out(bind) {
+        return Err("the block names the destination or jumps out");
+    }
+    let moved = destination_views(data, body, vars, group.out, None);
+    if moved
+        .iter()
+        .any(|w| *w != group.elm && row.inner.reads_var(*w))
+    {
+        return Err("the block reads a view of the destination's elements");
+    }
+    Ok(())
 }
 
 /// @PLN157 § V-aa (`@FR-R-ValueRecord`) — the functions whose NO-HEAP RECORD result is
@@ -11232,6 +12309,18 @@ pub fn loop_buffers(data: &Data, stores: &Stores, def_nr: u32) -> HashSet<u16> {
             }
             false
         });
+        // The store survives the iteration only while nothing ELSE releases it.
+        let freed_elsewhere = bound_to_a_releasing_local(data, body, v);
+        if freed_elsewhere {
+            if trace {
+                eprintln!(
+                    "[loop-buffer] {}: {} is bound to a local that releases its store",
+                    def.name(),
+                    vars.name(v)
+                );
+            }
+            continue;
+        }
         if mentions == accounted {
             if trace {
                 eprintln!(
@@ -11251,6 +12340,34 @@ pub fn loop_buffers(data: &Data, stores: &Stores, def_nr: u32) -> HashSet<u16> {
         }
     }
     out
+}
+
+/// `@FR-R-LoopBuffer` — is buffer `v`'s field bound to a local that releases the store itself?
+/// Such a local (an owner: a value branch's binding whose other arm mints) frees the buffer's
+/// store at its own scope end, so the store does not survive the iteration.
+fn bound_to_a_releasing_local(data: &Data, body: &Value, v: u16) -> bool {
+    let mut binders: HashSet<u16> = HashSet::new();
+    body.any_node(&mut |n| {
+        if let Value::Set(w, rhs) = n
+            && *w != v
+            && let Value::Call(d, args) = rhs.unspan()
+            && (*d as usize) < data.definitions.len()
+            && data.def(*d).name() == "OpGetField"
+            && matches!(args.first().map(Value::unspan), Some(Value::Var(b)) if *b == v)
+        {
+            binders.insert(*w);
+        }
+        false
+    });
+    !binders.is_empty()
+        && body.any_node(&mut |n| {
+            matches!(n, Value::Call(d, args)
+                if (*d as usize) < data.definitions.len()
+                    && matches!(data.def(*d).name(),
+                        "OpFreeRef" | "OpFreeRefIfDistinct" | "OpFreeRefTag")
+                    && matches!(args.first().map(Value::unspan),
+                        Some(Value::Var(w)) if binders.contains(w)))
+        })
 }
 
 /// `@FR-R-LoopRecord` — one admitted loop record: the loop that owns the reuse and the body
@@ -13084,8 +14201,13 @@ fn value_shape(node: &Value, ctx: &ShapeCtx) -> Option<u16> {
             // the oracle reads it through the call as Borrowed of `a`: read as a view the copy
             // was freed by nobody, one record per call on `--native` alone, in a concrete
             // function and an instance alike (Found-via loft#1820).  A parameter is exempt —
-            // the frame never owns it.
-            if !vars.is_argument(*var) && !vars.is_skip_free(*var) {
+            // the frame never owns it — unless the body REBINDS it: then it may hold a store
+            // of its own (`@FR-F-ParamRebind`), which the record form hands to the caller to
+            // release and the tuple form hands to nobody (`fn f(p: S, q: S) -> S { p = q; p }`,
+            // one record per call, loft#1871).
+            if !vars.is_argument(*var) && !vars.is_skip_free(*var)
+                || vars.rebind_orig(*var).is_some()
+            {
                 return None;
             }
             // A VIEW by the ownership oracle (`@FR-O-Oracle`), not by the dep list: then_v
@@ -14020,9 +15142,16 @@ pub fn dead_buffers(data: &Data, def_nr: u32, vr: &ValueRecords) -> HashSet<u16>
     let mut minted: HashSet<u16> = HashSet::new();
     let mut mentions: HashMap<u16, u32> = HashMap::new();
     let mut dropped: HashMap<u16, u32> = HashMap::new();
+    let mut assigned: HashSet<u16> = HashSet::new();
     def.code().any_node(&mut |n| {
         match n {
             Value::Var(w) => *mentions.entry(*w).or_insert(0) += 1,
+            // A buffer BOUND to a value holds whatever that value is — a call result is a
+            // store (`__lift_1 = mk(…)` of a record that owns a collection), and its free is
+            // its owner's release, not an empty one.
+            Value::Set(w, rhs) if !matches!(rhs.unspan(), Value::Null) => {
+                assigned.insert(*w);
+            }
             Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
                 let arg_var = |i: usize| match args.get(i).map(Value::unspan) {
                     Some(Value::Var(w)) => Some(*w),
@@ -14096,6 +15225,7 @@ pub fn dead_buffers(data: &Data, def_nr: u32, vr: &ValueRecords) -> HashSet<u16>
     for w in minted.iter().copied().chain(dropped.keys().copied()) {
         if !vars.is_argument(w)
             && !locals.contains_key(&w)
+            && !assigned.contains(&w)
             && crate::data::is_dbref(vars.tp(w).base())
             && mentions.get(&w).copied().unwrap_or(0) == dropped.get(&w).copied().unwrap_or(0)
         {
@@ -14446,7 +15576,6 @@ mod store_free_sentinel {
         // Reach a store, a fault slot or another frame through the `const` channel.
         "OpDatabase",
         "OpTagFault",
-        "OpRangeDefault",
         "OpDropFnRef",
         "OpFnRefDetachShared",
         "OpParallelBegin",

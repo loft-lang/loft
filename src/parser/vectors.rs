@@ -7,6 +7,9 @@ use super::{
 };
 use crate::data::Deps;
 
+/// The neutral record type of a captured fn-ref's closure half (loft#1869).
+pub(crate) const FN_RECORD: &str = "__fn_record";
+
 /// The narrow-integer element KIND of a vector element type, with the `min` its ops take —
 /// `None` for a wide (8-byte) element and for anything that is not an integer.
 ///
@@ -495,6 +498,19 @@ impl Parser {
         );
     }
 
+    /// `@FR-B-Ref-AnnotationOnly` — a `&` right after a prefix operator (`!&a`, `-&n`, `~&m`)
+    /// is the sub-expression `&` the binding rule refuses.  The prefix parses its operand
+    /// directly, past the operand-start check in `parse_operators`, so the `&` was left for
+    /// the binary loop: it read as a BINARY `&` (*"No matching operator '&' on 'boolean'
+    /// and 'boolean'"*) with an *"Unknown variable"* for the binding beside it.  Refused here
+    /// in the binding rule's own words, and consumed, so the operand still parses.
+    fn refuse_amp_after_prefix(&mut self) {
+        if self.lexer.peek_token("&") && !self.lexer.peek_token("&&") {
+            self.lexer.has_token("&");
+            self.refuse_amp_operand();
+        }
+    }
+
     // <single> ::= '!' <expression> |
     //              '(' <expression> ')' |
     //              <vector> |
@@ -540,6 +556,7 @@ impl Parser {
             // The operand is a SUB-expression, so the assignment's destination hint does not
             // reach it (loft#1304 — see `Parser::prefix_operand`).
             let outer_prefix = std::mem::replace(&mut self.prefix_operand, true);
+            self.refuse_amp_after_prefix();
             let mut t = self.parse_part(var_tp, val, parent_tp);
             self.prefix_operand = outer_prefix;
             // A unary prefix operator must validate its operand like a binary
@@ -627,6 +644,7 @@ impl Parser {
             // The operand is a SUB-expression, so the assignment's destination hint does not
             // reach it (loft#1304 — see `Parser::prefix_operand`).
             let outer_prefix = std::mem::replace(&mut self.prefix_operand, true);
+            self.refuse_amp_after_prefix();
             let t = self.parse_part(var_tp, val, parent_tp);
             self.prefix_operand = outer_prefix;
             self.known_var_or_type(val, &operand_pos); // @PLN53 F1-1 (see `!` above)
@@ -637,6 +655,7 @@ impl Parser {
             // The operand is a SUB-expression, so the assignment's destination hint does not
             // reach it (loft#1304 — see `Parser::prefix_operand`).
             let outer_prefix = std::mem::replace(&mut self.prefix_operand, true);
+            self.refuse_amp_after_prefix();
             let t = self.parse_part(var_tp, val, parent_tp);
             self.prefix_operand = outer_prefix;
             self.known_var_or_type(val, &operand_pos); // @PLN53 F1-1 (see `!` above)
@@ -1196,7 +1215,7 @@ impl Parser {
         if rec == u32::MAX {
             return None;
         }
-        let fnr = self.data.attr(rec, name);
+        let fnr = self.capture_attr(self.context, rec, name);
         if fnr == usize::MAX {
             return None;
         }
@@ -1224,7 +1243,7 @@ impl Parser {
         if rec == u32::MAX {
             return None;
         }
-        let fnr = self.data.attr(rec, name);
+        let fnr = self.capture_attr(self.context, rec, name);
         if fnr == usize::MAX {
             return None;
         }
@@ -1308,6 +1327,22 @@ impl Parser {
             .collect();
         let saved = std::mem::replace(&mut self.capture_const, consts);
         self.capture_const_saved.push(saved);
+        // loft#1869 — which lambda each captured fn-ref local holds, read where the outer table is.
+        let mut fn_lambdas = self.capture_fn_lambda.clone();
+        for (name, tp) in &ctx {
+            if !matches!(tp.base(), Type::Function(..)) {
+                continue;
+            }
+            let v = outer_vars.var(name);
+            if v == u16::MAX {
+                continue;
+            }
+            // `u32::MAX`: a parameter, or a local not always assigned one known lambda — the
+            // record it holds is a run-time fact.
+            fn_lambdas.insert(name.clone(), outer_vars.fn_lambda_of(v).unwrap_or(u32::MAX));
+        }
+        let saved_fn = std::mem::replace(&mut self.capture_fn_lambda, fn_lambdas);
+        self.capture_fn_lambda_saved.push(saved_fn);
         (
             std::mem::replace(&mut self.capture_context, ctx),
             std::mem::replace(&mut self.capture_owner, owner),
@@ -1443,6 +1478,7 @@ or build a local and use that."
             // its enclosing scope.
             self.capture_context = outer_capture;
             self.capture_const = self.capture_const_saved.pop().unwrap_or_default();
+            self.capture_fn_lambda = self.capture_fn_lambda_saved.pop().unwrap_or_default();
             self.capture_owner = outer_owner;
             self.captured_names = outer_captured;
             return Type::Unknown(0);
@@ -1584,6 +1620,7 @@ or build a local and use that."
         self.in_loop = outer_loop;
         self.capture_context = outer_capture;
         self.capture_const = self.capture_const_saved.pop().unwrap_or_default();
+        self.capture_fn_lambda = self.capture_fn_lambda_saved.pop().unwrap_or_default();
         self.capture_owner = outer_owner;
         // The enclosing table is back, so a captured name can finally be asked what it is
         // bound to out here (loft#1281).
@@ -1810,6 +1847,7 @@ or build a local and use that."
             self.in_loop = outer_loop;
             self.capture_context = outer_capture;
             self.capture_const = self.capture_const_saved.pop().unwrap_or_default();
+            self.capture_fn_lambda = self.capture_fn_lambda_saved.pop().unwrap_or_default();
             self.capture_owner = outer_owner;
             self.captured_names = outer_captured;
             return Type::Unknown(0);
@@ -1989,6 +2027,7 @@ or build a local and use that."
         self.in_loop = outer_loop;
         self.capture_context = outer_capture;
         self.capture_const = self.capture_const_saved.pop().unwrap_or_default();
+        self.capture_fn_lambda = self.capture_fn_lambda_saved.pop().unwrap_or_default();
         self.capture_owner = outer_owner;
         // The enclosing table is back, so a captured name can finally be asked what it is
         // bound to out here (loft#1281).
@@ -2040,6 +2079,11 @@ or build a local and use that."
         reuse_w: Option<u16>,
     ) {
         let closure_rec_d = self.data.def(d_nr).closure_record();
+        self.last_closure_lambda = if closure_rec_d == u32::MAX {
+            u32::MAX
+        } else {
+            d_nr
+        };
         if closure_rec_d != u32::MAX && !self.first_pass {
             // A5.6-1/2 (16-byte fn-ref + embedded closure):
             // Allocate and populate the closure record at lambda DEFINITION time.
@@ -2102,9 +2146,44 @@ or build a local and use that."
             alloc_steps.push(self.cl("OpDatabase", &[Value::Var(w), Value::Int(tp_nr)]));
             let n_attrs = self.data.attributes(closure_rec_d);
             let mut captured_var_nrs: Vec<u16> = Vec::new();
+            // loft#1874 — a fn field's UNION record carries every lambda's captures; this build
+            // fills only its own lambda's, which are the attributes of that lambda's own record.
+            // Filled by name from this scope, another lambda's capture would be taken too
+            // wherever a local happens to share its name.
+            let own_rec = if self
+                .data
+                .def(closure_rec_d)
+                .name
+                .starts_with("__closure_u_")
+            {
+                let lambda = &self.data.def(d_nr).name;
+                let bare = lambda.strip_prefix("n_").unwrap_or(lambda);
+                self.data
+                    .def_nr(&bare.replacen("__lambda_", "__closure_", 1))
+            } else {
+                u32::MAX
+            };
             for aid in 0..n_attrs {
-                let cap_name = self.data.attr_name(closure_rec_d, aid);
-                let v_nr = self.vars.var(&cap_name);
+                let slot_name = self.data.attr_name(closure_rec_d, aid);
+                // The name this lambda captures the slot as: the slot's own, or the one its
+                // alias stands for (loft#1874).
+                let cap_name = self
+                    .capture_alias
+                    .iter()
+                    .find(|((l, _), alias)| *l == d_nr && **alias == slot_name)
+                    .map_or(slot_name.clone(), |((_, orig), _)| orig.clone());
+                if own_rec != u32::MAX
+                    && (self.data.attr(own_rec, &cap_name) == usize::MAX
+                        || self.capture_attr(d_nr, closure_rec_d, &cap_name) != aid)
+                {
+                    continue;
+                }
+                // loft#1869 — a fn-ref's closure half fills from the record local behind it.
+                let fn_ref_half = slot_name
+                    .strip_suffix("__clos")
+                    .filter(|base| self.data.attr(closure_rec_d, base) != usize::MAX)
+                    .map(str::to_string);
+                let v_nr = self.vars.var(fn_ref_half.as_deref().unwrap_or(&cap_name));
                 if v_nr != u16::MAX {
                     captured_var_nrs.push(v_nr);
                     *self
@@ -2124,9 +2203,15 @@ or build a local and use that."
                 // survived, an inline scalar where the outer half had a boxed cell.  A name
                 // this scope really OWNS is not in its record, so it falls through to the
                 // local — which is every one-level capture.
-                let fill = self
-                    .relayed_capture_read(&cap_name)
-                    .or_else(|| (v_nr != u16::MAX).then_some(Value::Var(v_nr)));
+                let fill = self.relayed_capture_read(&cap_name).or_else(|| {
+                    (v_nr != u16::MAX).then(|| {
+                        if fn_ref_half.is_some() {
+                            self.cl("OpFnRefClosure", &[Value::Var(v_nr)])
+                        } else {
+                            Value::Var(v_nr)
+                        }
+                    })
+                });
                 if let Some(fill) = fill {
                     if v_nr != u16::MAX {
                         // loft#1218 — give a NULL collection capture its slot BEFORE the fill
@@ -2154,7 +2239,7 @@ or build a local and use that."
                     {
                         let pos = self
                             .database
-                            .position(self.data.def(closure_rec_d).known_type(), &cap_name);
+                            .position(self.data.def(closure_rec_d).known_type(), &slot_name);
                         let held =
                             self.cl("OpGetDbRef", &[Value::Var(w), Value::Int(i32::from(pos))]);
                         let release = self.cl("OpFreeRefIfDistinct", &[held, fill.clone()]);
@@ -2173,7 +2258,7 @@ or build a local and use that."
                     if v_nr != u16::MAX && self.vars.rebind_must_mint(v_nr) {
                         let pos = self
                             .database
-                            .position(self.data.def(closure_rec_d).known_type(), &cap_name);
+                            .position(self.data.def(closure_rec_d).known_type(), &slot_name);
                         let held = self
                             .capture_records
                             .entry((self.first_pass, self.context, v_nr))
@@ -2807,7 +2892,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 if rec == u32::MAX {
                     continue;
                 }
-                let a_nr = self.data.attr(rec, &name);
+                let a_nr = self.capture_attr(*lam, rec, &name);
                 if a_nr == usize::MAX {
                     continue;
                 }
@@ -2879,7 +2964,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 if rec == u32::MAX {
                     continue;
                 }
-                let a_nr = self.data.attr(rec, name);
+                let a_nr = self.capture_attr(*lam, rec, name);
                 if a_nr == usize::MAX {
                     continue;
                 }
@@ -3085,6 +3170,19 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         }
     }
 
+    /// The record type a captured fn-ref's closure half is typed with when the lambda it holds
+    /// is a run-time fact (loft#1869): a parameter, or a local assigned more than one closure.
+    /// It owns nothing, so nothing is released through the type; an adopted one is released by
+    /// the d_nr it holds (`push_closure_releases`).
+    pub(crate) fn fn_record_def(&mut self) -> u32 {
+        let d = self.data.def_nr(FN_RECORD);
+        if d != u32::MAX {
+            return d;
+        }
+        let pos = self.lexer.pos().clone();
+        self.data.add_def(FN_RECORD, &pos, DefType::Struct)
+    }
+
     fn synthesize_closure_record(&mut self, lambda_d_nr: u32, lambda_name: &str) {
         let record_name = lambda_name.replace("__lambda_", "__closure_");
         let captures = self.captured_names.clone();
@@ -3106,9 +3204,29 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 // `src/store.rs:227`.
                 ensure_tuple_defs_for_capture(&mut self.data, &mut self.lexer, tp);
                 let attr_tp = self.closure_attr_type(tp);
-                self.data
+                let a_nr = self
+                    .data
                     .add_attribute(&mut self.lexer, record_d_nr, name, attr_tp);
                 self.note_shared_vector(record_d_nr, name, tp);
+                // loft#1869, `@FR-L-CapHeap` — a captured fn-ref that holds a closure keeps its
+                // d_nr in the attribute and its closure RECORD beside it, a shared heap capture
+                // like any struct: `<name>__clos`, adopted or borrowed as `(L-CapOwn)` says.
+                if let Some(&inner) = self.capture_fn_lambda.get(name) {
+                    let rec = if inner == u32::MAX {
+                        self.fn_record_def()
+                    } else {
+                        self.data.def(inner).closure_record()
+                    };
+                    let clos = format!("{name}__clos");
+                    let c = self.data.add_attribute(
+                        &mut self.lexer,
+                        record_d_nr,
+                        &clos,
+                        Type::Reference(rec, Deps::share_sentinel()),
+                    );
+                    self.data.definitions[record_d_nr as usize].attributes[c].hidden = true;
+                }
+                let _ = a_nr;
                 // loft#1540 — a capture of a read-only value is a read-only FIELD of the
                 // record: the body reaches it through `__closure.<name>`, and a write through
                 // a value-const field is refused at the write (`frozen_through`).
@@ -3124,7 +3242,12 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             self.data.definitions[lambda_d_nr as usize].closure_record = record_d_nr;
         } else {
             let record_d_nr = self.data.def_nr(&record_name);
-            if record_d_nr != u32::MAX {
+            // A lambda written into a fn field beside others keeps the union record pass 1
+            // gave it (loft#1874, `Parser::unite_field_closure_records`).
+            let current = self.data.def(lambda_d_nr).closure_record();
+            let united =
+                current != u32::MAX && self.data.def(current).name.starts_with("__closure_u_");
+            if record_d_nr != u32::MAX && !united {
                 self.data.definitions[lambda_d_nr as usize].closure_record = record_d_nr;
             }
         }
@@ -3876,7 +3999,12 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             // was fine at any size (loft#869).
             lp.push(op);
         } else {
-            lp.push(self.set_field(ed_nr, usize::MAX, 0, Value::Var(elm), Value::Var(comp_var)));
+            // The element was minted just above: a record copy into it has no previous value
+            // to release (`COPY_FRESH_DEST`) — its bytes are not zero by any promise.
+            let mut write =
+                vec![self.set_field(ed_nr, usize::MAX, 0, Value::Var(elm), Value::Var(comp_var))];
+            self.mark_copies_fresh(&mut write);
+            lp.extend(write);
         }
         lp.push(self.cl(
             "OpFinishRecord",
@@ -5601,7 +5729,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             // supplies the runtime null test this arm used to be written without, which is
             // what an `S?` source needs: the value is only dense when it is present.
             let syn = *syn;
-            let steps = self.emit_nullable_slot_write(syn, &Value::Var(elm), p.clone());
+            let steps = self.emit_nullable_slot_write(syn, &Value::Var(elm), p.clone(), true);
             p = Value::Insert(steps);
             t = in_t.clone();
         } else if matches!(t, Type::Null)
@@ -6476,27 +6604,36 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 // `emit_nullable_slot_write` is the shared home; a struct field holding the
                 // same slot goes through it too.
                 let src_elems = self.tuple_elements(in_t).unwrap_or_default();
-                for (i, val) in values.iter().enumerate() {
-                    if !self.first_pass
-                        && let Type::Enum(syn, true, _) = self.data.attr_type(ed_nr, i)
-                        && let Some(src_tp) = src_elems.get(i)
-                        && self.needs_nullable_wrap(syn, src_tp)
-                    {
-                        let enum_kt = i32::from(self.data.def(syn).known_type());
-                        let name = self.data.def(ed_nr).attributes[i].name.clone();
-                        let pos = i32::from(
-                            self.database
-                                .position(self.data.def(ed_nr).known_type(), &name),
-                        );
-                        let slot = self.cl(
-                            "OpGetField",
-                            &[Value::Var(elm), Value::Int(pos), Value::Int(enum_kt)],
-                        );
-                        let write = self.emit_nullable_slot_write(syn, &slot, val.clone());
-                        ls.extend(write);
-                        continue;
+                // A tuple of a type variable has no member offsets yet: each monomorph writes
+                // the tuple it closes to (loft#1868).
+                let open_members = (!self.first_pass && self.data.is_open_instance(ed_nr))
+                    .then(|| self.data.def(ed_nr).instance_args.clone());
+                if let Some(members) = open_members {
+                    ls.extend(self.emit_tuple_set_ops(&Value::Var(elm), 0, &members, p.clone()));
+                } else {
+                    for (i, val) in values.iter().enumerate() {
+                        if !self.first_pass
+                            && let Type::Enum(syn, true, _) = self.data.attr_type(ed_nr, i)
+                            && let Some(src_tp) = src_elems.get(i)
+                            && self.needs_nullable_wrap(syn, src_tp)
+                        {
+                            let enum_kt = i32::from(self.data.def(syn).known_type());
+                            let name = self.data.def(ed_nr).attributes[i].name.clone();
+                            let pos = i32::from(
+                                self.database
+                                    .position(self.data.def(ed_nr).known_type(), &name),
+                            );
+                            let slot = self.cl(
+                                "OpGetField",
+                                &[Value::Var(elm), Value::Int(pos), Value::Int(enum_kt)],
+                            );
+                            let write =
+                                self.emit_nullable_slot_write(syn, &slot, val.clone(), true);
+                            ls.extend(write);
+                            continue;
+                        }
+                        ls.push(self.set_field(ed_nr, i, 0, Value::Var(elm), val.clone()));
                     }
-                    ls.push(self.set_field(ed_nr, i, 0, Value::Var(elm), val.clone()));
                 }
             } else if let Value::Insert(steps) = p {
                 for l in steps {

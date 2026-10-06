@@ -1270,6 +1270,13 @@ fn OpGetShortFull(v1: reference, fld: const u16, min: const i32) -> integer;
 #rust"{{let db = @v1; if db.rec == 0 {{ i64::MIN }} else {{ i64::from(stores.store(&db).get_short_full(db.rec, db.pos + u32::from(@fld), (@min))) }} }}"
 fn OpSetText(v1: reference, fld: const u16, val: text);
 #rust"{{let db = @v1; let s_val = @val.to_string(); if db.rec != 0 {{ let store = stores.store_mut(&db); let s_pos = store.set_str(&s_val); store.set_u32_raw(db.rec, db.pos + u32::from(@fld), s_pos); }}}}"
+// `@FR-H-TextReplace` — an ASSIGNMENT to a text field (`o.s = t`, `v[i].s = t`, `o.s += t`):
+// the slot already holds 0 or a text block it owns, so the block is written over when `t`
+// fits its claim and released and claimed anew when it does not.  `OpSetText` stays the
+// INITIALISING write — a record literal into a fresh, possibly unfilled record — and never
+// reads the slot, because there it can hold bytes that are not a block.
+fn OpSetTextReplace(v1: reference, fld: const u16, val: text);
+#rust"{{let db = @v1; let s_val = @val.to_string(); if db.rec != 0 {{ stores.store_mut(&db).refill_str(db.rec, db.pos + u32::from(@fld), &s_val); }}}}"
 // --- Collections ---
 /// Operations on vector<T> — the primary ordered collection type.
 /// Vectors are grown by appending with += and elements are accessed by index.
@@ -1312,6 +1319,12 @@ fn OpRefIsNull(r: reference) -> boolean;
 // store and a local that holds none read as one and release nothing.
 fn OpDistinctStore(a: reference, b: reference) -> boolean;
 #rust"@a.store_nr != @b.store_nr"
+// `@FR-L-CapOwn` — is the store `r` names still allocated?  The guard of a closure record's
+// cascade at a release: the release protocol frees some stores twice (a branch join frees per
+// arm, `@FR-H-FreeTwice`), so the cascade runs with the free that actually releases — the
+// question `Stores::free_named` asks before it frees, and `OpDropFnRef` asks before it runs one.
+fn OpStoreLive(r: reference) -> boolean;
+#rust"s.database.store_live(&@r)"
 // A reference as a VALUE: `w = OpRefAlias(v)` makes `w` name the store `v` names, where
 // the plain bind `w = v` COPIES the record (@FR-B-Copy).  Emitted only for the compiler's
 // own owner witness, which has to point at the local's store rather than own a second one.
@@ -1541,6 +1554,15 @@ fn OpClaimChildRec(field: reference, src: reference, tp: const u16);
 fn OpRefFromChildRec(field: reference) -> reference[field];
 #rust"s.database.ref_from_child_rec(&@field)"
 #pure
+// `@FR-L-Escape`, `@FR-L-CapOwn` — build a closure record IN PLACE in a host's child-record
+// field (loft#1867): a fresh `tp` record in the field's store, filled with the type's
+// defaults, its rec-id written into the field, answered.  The record is the host's own: its
+// captures are written straight into it, and its adopted captures are released by the host's
+// drop cascade — no separate record, no copy, no move.  The bytes of a record the field held
+// before are released here; what that record ADOPTED is released by the emitted code first.
+fn OpChildRec(field: reference, tp: const u16) -> reference[field];
+#rust"s.database.new_child_rec(&@field, @tp)"
+#impure(parent_write)
 // Get a record from a structure. This operator also reads a dynamic key from stack (not shown here)
 fn OpGetRecord(data: reference, db_tp: const u16, no_keys: const u8) -> reference[data];
 fn OpValidate(data: reference, db_tp: const u16);

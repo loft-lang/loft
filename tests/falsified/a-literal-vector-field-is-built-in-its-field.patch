@@ -1,0 +1,13 @@
+diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
+index 17c4d6ac3..970eab105 100644
+--- a/src/parser/expressions.rs
++++ b/src/parser/expressions.rs
+@@ -3120,7 +3120,7 @@ use a separate collection or add after the loop"
+         let cvars = &callee.variables;
+         let mint = self.data.def_nr("OpDatabase");
+         let database = &self.database;
+-        if callee.code.any_node(&mut |n| {
++        if false && callee.code.any_node(&mut |n| {
+             matches!(n, Value::Call(d, a) if *d == mint
+                 && matches!(a.first().map(Value::unspan), Some(Value::Var(w)) if cvars.is_argument(*w))
+                 && !matches!(a.get(1).map(Value::unspan),

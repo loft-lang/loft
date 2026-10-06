@@ -18,10 +18,11 @@ the index, the disposition vocabulary, and the record of what each bar has been 
 
 | bar | the question it asks | measured | entries |
 |---|---|---|---|
-| [OCAML_BAR.md](OCAML_BAR.md) | what can the type system SAY? generics, closures, patterns, dispatch, nullability | 2026-09-21 | 28 |
+| [OCAML_BAR.md](OCAML_BAR.md) | what can the type system SAY? generics, closures, patterns, dispatch, nullability, and the semantics OCaml carries without its syntax | 2026-10-06 | 38 <!-- doc-lint: ok --> |
 | [LUA_BAR.md](LUA_BAR.md) | what does Lua's ABSENCE of declarations buy a game scripter, and is loft's typed answer as short at the use site? | 2026-09-21 | 22 |
+| [JULIA_BAR.md](JULIA_BAR.md) | what can a Julia program SAY that loft cannot — units, iteration spaces, library composition — leaving its speed-only constructs to the engine? | 2026-10-06 | 17 <!-- doc-lint: ok --> |
 
-Julia has been engaged with, but not as a bar — see § Candidates.
+Julia was first engaged as a design comparison (§ Candidates); JULIA_BAR.md measures the rest of it.
 
 ## Disposition — the one word each entry carries
 
@@ -71,6 +72,13 @@ closed**:
 | LUA_BAR LB1 | [loft#1585](https://github.com/loft-lang/loft/issues/1585) | a generator could not be held in a vector or a struct field |
 | LUA_BAR LB3/LB4 | [loft#1586](https://github.com/loft-lang/loft/issues/1586) | an endless `while` generator ran eagerly on `--native` until the memory cap killed it |
 
+The re-measurement of OCAML_BAR surfaced two more, both `silent-wrong` and open:
+
+| from | issue | what it is |
+|---|---|---|
+| OCAML_BAR A3 | [loft#1868](https://github.com/loft-lang/loft/issues/1868) | a tuple holding a type variable, as a vector element, is never instantiated <!-- doc-lint: ok --> |
+| OCAML_BAR C1 | [loft#1870](https://github.com/loft-lang/loft/issues/1870) | a field sub-pattern through a `reference<T>` field never matches <!-- doc-lint: ok --> |
+
 Three of those are `silent-wrong` — the freeze axis — and two were found not by a probe but
 by correcting the reference pages the probes were written from. That second route is worth
 naming: a bar makes someone read the documentation adversarially, and that reading found
@@ -106,16 +114,18 @@ OCAML_BAR's original FAILs were the probe's own spelling.
 
 But **the rationale does not go in the new file.** It goes in the subject it belongs to
 ([SUBJECTS.md](../SUBJECTS.md)), and the bar links there. A bar is evidence about one language;
-the position is the project's and is stated once. Adding a fourth lens must not add a fourth
-rationale — which is why there is no Julia file here even though the Julia comparison produced
-more than either of these two.
+the position is the project's and is stated once. Adding another lens must not add another
+rationale: JULIA_BAR.md carries probes and dispositions, and its one scope statement points at
+`formal/performance.md` instead of arguing it.
 
 **Julia.** Engaged with as a design comparison rather than a bar:
 [plans/162-multiple-dispatch/](../plans/162-multiple-dispatch/) weighed multiple dispatch,
 generated functions, broadcasting and world age against loft's commitments, under the rule
 *adopt the constructs that exploit compile-time type knowledge; refuse the ones that demand
 runtime type flexibility*. @PLN162 is FINISHED with deviations at OPEN: 0, and multiple
-dispatch ships as `@F122`. The one axis a Julia *bar* would add is array and numerical
-expressiveness, and [BROADENING.md](../BROADENING.md) § Domain fit already judges that domain
-bindable rather than a gap — so it is a `low`, and the reason is recorded there rather than
-argued here.
+dispatch ships as `@F122`. [JULIA_BAR.md](JULIA_BAR.md) measures what that comparison left: the
+constructs whose gain is SEMANTIC (distinct types and units, ranges as values, multi-source
+iteration, package extensions, elementwise notation).  Constructs whose only gain is speed —
+value-parameterised array types, `@inbounds`, loop fusion — are out of its scope, because a slow
+routine is the engine's to close (`(Perf-Cure)`); array and numerical expressiveness as a DOMAIN
+is judged bindable rather than a gap in [BROADENING.md](../BROADENING.md) § Domain fit.

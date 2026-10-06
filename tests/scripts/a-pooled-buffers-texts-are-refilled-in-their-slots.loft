@@ -1,0 +1,268 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-RefillText` — a POOLED call buffer whose type's only heap is text is refilled by the
+// callee's refill twin on `--native`: each text slot is written over the block it already owns
+// when the new text fits, released and claimed anew when it does not, and the pool's release
+// walk (`OpClear`, `@FR-H-ClearRelease`) is not emitted.  The interpreter applies no rewrite and
+// is the oracle; every value below is computed by hand.
+//
+// What can go wrong is a text left from the previous call (a slot the literal skipped), a block
+// written past its claim (a text that grows), a text released twice or not at all (the walk
+// dropped with nothing refilling), and a previous result read after the next call through
+// something that still points at its block (c3 keeps whole results by copy, c4 keeps a text).
+// So m1 counts the live records of every store (`store_memory()`'s census) after 10 and after
+// 1 000 calls of each shape, with the pooled buffer still alive: a text leaked per call is
+// ~2 000 records more, which no store-level leak check sees — the pooled store is freed whole.
+// `LOFT_NO_REFILL_TEXT=1`, `LOFT_HOIST_VERIFY=1`, `LOFT_POISON=1`, `LOFT_POISON_CLAIM=1` and
+// `LOFT_STRICT_STORES=1` must answer identically.
+//
+// @falsified-at: none — written before the rewrite it guards; the planted defects are recorded
+//   with `@falsified-by:` below.
+// @falsified-by: tests/falsified/a-pooled-buffers-texts-are-refilled-in-their-slots.patch — the
+//   release walk's text leaf zeroing the slot without releasing the block, nothing refilling.
+//   CHANNEL: an assertion, on BOTH backends.
+//   WITNESS: `m1 env shape grows: 31 -> 3001 records` (990 calls × 3 texts).
+//   HOLDS: c1–c4 green on both (the defect never moves a value).
+// @falsified-by: tests/falsified/a-pooled-buffers-texts-are-refilled-in-their-slots-twin.patch
+//   — the refill twin claiming fresh and releasing nothing (`refill_str` never reads its slot)
+//   while the pool's release stays dropped.
+//   CHANNEL: an assertion, on --native.
+//   WITNESS: `m1 env shape grows: 31 -> 3001 records`.
+//   HOLDS: --interpret green (it applies no rewrite), and --native under LOFT_NO_REFILL_TEXT=1.
+// @falsified-by: tests/falsified/a-pooled-buffers-texts-are-refilled-in-their-slots-callee.patch
+//   — (b)'s whole-body checks removed (the buffer named outside its literals, an exit that is
+//   not the literal), so the forwarded exit of c6's callee is admitted.
+//   CHANNEL: an assertion, on --native.
+//   WITNESS: `m1 forwarded shape grows: 11 -> 1001 records`.
+//   HOLDS: --interpret green, and every value cell on both — (b) guards the census, not a
+//   value: the parser writes every field of a literal, so no text slot is left unwritten.
+
+enum Kind { Ping, Pong }
+struct Msg { kind: Kind, payload: text }
+struct Env { sender: text, recipient: text, seq: integer, message: Msg }
+struct T2 { a: text, b: text, n: integer }
+
+// msg_ping's shape: a nested record pair, three texts, one of them inside the inner record.
+fn mk_env(i: integer) -> Env {
+  Env { sender: "s{i % 3}", recipient: "", seq: i,
+        message: Msg { kind: if i % 2 == 0 { Kind.Ping } else { Kind.Pong }, payload: "pl{i}" } }
+}
+
+// Texts that shrink, grow past their block (21 and 22 bytes against a 3-byte or empty block),
+// become empty and come back.
+fn mk_sz(i: integer) -> T2 {
+  if i % 4 == 0 { return T2 { a: "abc", b: "", n: i } }
+  if i % 4 == 1 { return T2 { a: "longer than two words", b: "b", n: i } }
+  if i % 4 == 2 { return T2 { a: "", b: "longer than two words!", n: i } }
+  T2 { a: "x{i}", b: "yy", n: i }
+}
+
+fn want_a(i: integer) -> text {
+  if i == 3 { return "x3" }
+  if i == 7 { return "x7" }
+  if i == 11 { return "x11" }
+  if i % 4 == 0 { return "abc" }
+  if i % 4 == 1 { return "longer than two words" }
+  ""
+}
+
+// c1: a over 0..11 = 3·3 + 21·3 + 0 + (2 + 2 + 3) = 79; b = 0 + 1·3 + 22·3 + 2·3 = 75;
+// n = 66  →  220.  Every a is checked against its literal on the turn it is returned.
+fn c1() -> integer {
+  t = 0;
+  for i in 0..12 {
+    e = mk_sz(i);
+    assert(e.a == want_a(i), "c1 a at {i}: '{e.a}'");
+    t += size(e.a) + size(e.b) + e.n;
+  }
+  t
+}
+
+// c2: seq 0..19 = 190; pings at the even i = 10; bytes: sender 2·20 = 40, recipient 0,
+// payload "pl0".."pl9" 3·10 + "pl10".."pl19" 4·10 = 70  →  110.  The last turn is read whole.
+fn c2() -> text {
+  seq = 0;
+  pings = 0;
+  bytes = 0;
+  last = "";
+  for i in 0..20 {
+    e = mk_env(i);
+    seq += e.seq;
+    if e.message.kind == Kind.Ping { pings += 1; }
+    bytes += size(e.sender) + size(e.recipient) + size(e.message.payload);
+    last = "{e.sender}/{e.recipient}/{e.message.payload}";
+  }
+  "{seq} {pings} {bytes} {last}"
+}
+
+// c3: whole results kept by copy across the next call.  a over 0..7 = 3 + 21 + 0 + 2 + 3 +
+// 21 + 0 + 2 = 52; b = 0 + 1 + 22 + 2 + 0 + 1 + 22 + 2 = 50  →  102.
+fn c3() -> integer {
+  kept: vector<T2> = [];
+  for i in 0..8 { e = mk_sz(i); kept += [e]; }
+  assert(len(kept) == 8, "c3 len {len(kept)}");
+  assert(kept[1]?.a == "longer than two words" && kept[2]?.b == "longer than two words!",
+         "c3 grown texts '{kept[1]?.a}' '{kept[2]?.b}'");
+  assert(kept[3]?.a == "x3" && kept[7]?.a == "x7" && kept[0]?.b == "" && kept[2]?.a == "",
+         "c3 kept texts");
+  t = 0;
+  for k in kept { t += size(k.a) + size(k.b); }
+  t
+}
+
+// c4: a text of the previous result kept as a text across the next call — the a of turns
+// 0..6, each followed by "|": "abc|longer than two words||x3|abc|longer than two words||".
+fn c4() -> text {
+  prev = "";
+  joined = "";
+  for i in 0..8 {
+    e = mk_sz(i);
+    if i > 0 { joined += prev + "|"; }
+    prev = e.a;
+  }
+  joined
+}
+
+// The declines (`tests/refill_text.rs` pins each site's verdict): a result owning a vector
+// (c5), a callee with a forwarded exit (c6) and a caller that writes its result (c9).  c7's
+// callee returns its argument, which the scope pass never pools — no site.  c8's literal
+// omits a defaulted text, which the parser writes as the default: every text slot is still
+// written once, so it is admitted.
+struct TV { t: text, v: vector<integer> }
+struct TD { a: text, b: text = "dflt", n: integer }
+
+fn mk_tv(i: integer) -> TV { TV { t: "v{i}", v: [i, i + 1] } }
+fn mk_fwd(i: integer) -> T2 {
+  if i % 2 == 0 { return mk_sz(i) }
+  T2 { a: "f", b: "fw{i}", n: i }
+}
+fn mk_cp(x: const T2) -> T2 { x }
+fn mk_td(i: integer) -> TD { TD { a: "d{i}", n: i } }
+
+// c5: size("v{i}") 2·5 = 10, len 2·5 = 10, v[1] = 1 + … + 5 = 15  →  35.
+fn c5() -> integer {
+  t = 0;
+  for i in 0..5 { e = mk_tv(i); t += size(e.t) + len(e.v) + e.v[1]?; }
+  t
+}
+
+// c6: the even turns are mk_sz's (3, 22, 3), the odd ones "f" + "fw{i}" (4 each, 12), and
+// n = 0 + … + 5 = 15  →  55.
+fn c6() -> integer {
+  t = 0;
+  for i in 0..6 { e = mk_fwd(i); t += size(e.a) + size(e.b) + e.n; }
+  t
+}
+
+// c7: (3 + 4 + 7)·4  →  56.
+fn c7() -> integer {
+  src = T2 { a: "src", b: "copy", n: 7 };
+  t = 0;
+  for i in 0..4 { e = mk_cp(src); t += size(e.a) + size(e.b) + e.n; }
+  t
+}
+
+// c8: (2 + 4)·4 + (0 + 1 + 2 + 3)  →  30.
+fn c8() -> integer {
+  t = 0;
+  for i in 0..4 {
+    e = mk_td(i);
+    assert(e.b == "dflt", "c8 default at {i}: '{e.b}'");
+    t += size(e.a) + size(e.b) + e.n;
+  }
+  t
+}
+
+// c9: a = "w{i}" 2·4 = 8; b of turns 0..3 = 0 + 1 + 22 + 2 = 25  →  33.
+fn c9() -> integer {
+  t = 0;
+  for i in 0..4 { e = mk_sz(i); e.a = "w{i}"; t += size(e.a) + size(e.b); }
+  t
+}
+
+// msg_ping's own lowering: a literal with no work text is the function's value, `return {
+// …; b }`, an exit that is a block answering the buffer.
+fn mk_lit(i: integer) -> Env {
+  Env { sender: "lit", recipient: "", seq: i,
+        message: Msg { kind: Kind.Ping, payload: "p" } }
+}
+
+// c10: seq 0 + … + 4 = 10; sizes (3 + 0 + 1)·5 = 20  →  30.
+fn c10() -> integer {
+  t = 0;
+  for i in 0..5 {
+    e = mk_lit(i);
+    t += e.seq + size(e.sender) + size(e.recipient) + size(e.message.payload);
+  }
+  t
+}
+
+fn census_records() -> integer {
+  cr_t = store_memory();
+  cr_i = cr_t.find("records ");
+  if !cr_i { return -1 }
+  cr_j = cr_i + 8;
+  cr_n = 0;
+  while cr_j < len(cr_t) && cr_t[cr_j] >= '0' && cr_t[cr_j] <= '9' {
+    cr_n = cr_n * 10 + (cr_t[cr_j] as integer - '0' as integer);
+    cr_j += 1;
+  }
+  cr_n
+}
+
+// Each shape's loop in its own function, so its pooled buffer is alive when the census is
+// taken.
+fn m1_env(n: integer) -> integer {
+  t = 0;
+  for i in 0..n { e = mk_env(i); t += size(e.message.payload); }
+  assert(t > 0, "m1_env ran");
+  census_records()
+}
+fn m1_sz(n: integer) -> integer {
+  t = 0;
+  for i in 0..n { e = mk_sz(i); t += size(e.a) + size(e.b) + 1; }
+  assert(t > 0, "m1_sz ran");
+  census_records()
+}
+
+// The forwarded exit (c6's callee): declined by (b), so it keeps the release.  Admitting it
+// hands half the turns to the plain `mk_sz`, whose fresh claims over a kept buffer leak.
+fn m1_fwd(n: integer) -> integer {
+  t = 0;
+  for i in 0..n { e = mk_fwd(i); t += size(e.a) + 1; }
+  assert(t > 0, "m1_fwd ran");
+  census_records()
+}
+
+fn m1_lit(n: integer) -> integer {
+  t = 0;
+  for i in 0..n { e = mk_lit(i); t += size(e.sender) + e.seq; }
+  assert(t > 0, "m1_lit ran");
+  census_records()
+}
+
+// m1 — the live records after 1 000 calls equal those after 10, for each shape.
+fn m1() {
+  assert(census_records() >= 0, "m1: the census answers");
+  assert(m1_env(1000) == m1_env(10), "m1 env shape grows: {m1_env(10)} -> {m1_env(1000)} records");
+  assert(m1_sz(1000) == m1_sz(10), "m1 sized shape grows: {m1_sz(10)} -> {m1_sz(1000)} records");
+  assert(m1_fwd(1000) == m1_fwd(10), "m1 forwarded shape grows: {m1_fwd(10)} -> {m1_fwd(1000)} records");
+  assert(m1_lit(1000) == m1_lit(10), "m1 literal shape grows: {m1_lit(10)} -> {m1_lit(1000)} records");
+  println("m1 true");
+}
+
+fn main() {
+  assert(c1() == 220, "c1 {c1()}");
+  assert(c2() == "190 10 110 s1//pl19", "c2 {c2()}");
+  assert(c3() == 102, "c3 {c3()}");
+  assert(c4() == "abc|longer than two words||x3|abc|longer than two words||", "c4 {c4()}");
+  assert(c5() == 35, "c5 {c5()}");
+  assert(c6() == 55, "c6 {c6()}");
+  assert(c7() == 56, "c7 {c7()}");
+  assert(c8() == 30, "c8 {c8()}");
+  assert(c9() == 33, "c9 {c9()}");
+  assert(c10() == 30, "c10 {c10()}");
+  m1();
+  println("ok");
+}

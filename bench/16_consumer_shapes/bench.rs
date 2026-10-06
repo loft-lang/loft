@@ -334,6 +334,71 @@ fn c_catalog(salt: i64) -> i64 {
     acc
 }
 
+// ── tuple links (loft#1883): members read and written through a `&mut` to a stored tuple ──
+fn link_step(p: &mut (i64, i64), k: i64) {
+    p.0 += k;
+    p.1 += p.0 % 7;
+}
+
+fn c_tuple_link_small(salt: i64) -> i64 {
+    let mut rows: Vec<(i64, i64)> = (0..1024i64).map(|i| (i, salt)).collect();
+    for pass in 0..8i64 {
+        for i in 0..1024usize {
+            let q = &mut rows[i];
+            q.0 += pass;
+            q.1 += q.0 % 5;
+            link_step(&mut rows[i], 1);
+        }
+    }
+    rows.iter().map(|r| r.0 * 3 + r.1).sum()
+}
+
+type Big = (i64, f64, u8, bool, String, i64, u16, char, i64);
+
+fn big_step(p: &mut Big, k: i64) {
+    p.0 += k;
+    p.1 += 0.5;
+    p.2 = (((i64::from(p.2) + 1) % 200) & 255) as u8;
+    p.3 = !p.3;
+    p.5 += p.4.len() as i64;
+    p.7 = if p.3 { 'y' } else { 'n' };
+    p.8 += p.5 % 3;
+}
+
+fn c_tuple_link_big(salt: i64) -> i64 {
+    let mut rows: Vec<Big> = (0..256i64)
+        .map(|i| (i + salt, i as f64, ((i % 200) & 255) as u8, false, format!("t{}", i % 10), salt, 7, 'a', 0))
+        .collect();
+    for pass in 0..8i64 {
+        for r in rows.iter_mut() {
+            big_step(r, pass);
+        }
+    }
+    let mut acc = 0i64;
+    for r in &rows {
+        acc += r.0 + r.1 as i64 + i64::from(r.2) + r.5 + r.8;
+        if r.3 {
+            acc += 1;
+        }
+        if r.7 == 'y' {
+            acc += 2;
+        }
+    }
+    acc
+}
+
+fn c_tuple_link_grows(salt: i64) -> i64 {
+    let mut rows: Vec<(i64, i64)> = vec![(salt, 0)];
+    for i in 0..1024i64 {
+        let q = &mut rows[0];
+        q.0 += i;
+        q.1 += 1;
+        let v = q.0 % 1000;
+        rows.push((i, v));
+    }
+    rows[0].0 + rows[0].1 + rows[1023].1 + rows.len() as i64
+}
+
 fn arg_n(dflt: i64) -> i64 {
     let args: Vec<String> = std::env::args().collect();
     let mut n = dflt;
@@ -406,6 +471,15 @@ fn main() {
     let (us, s) = timed(n, |r| c_catalog(r & 1));
     sink = sink.wrapping_add(s);
     row("catalog_churn", n, us, 64, c_catalog(0));
+    let (us, s) = timed(n, |r| c_tuple_link_small(r & 1));
+    sink = sink.wrapping_add(s);
+    row("tuple_link_small", n, us, 1024 * 8, c_tuple_link_small(0));
+    let (us, s) = timed(n, |r| c_tuple_link_big(r & 1));
+    sink = sink.wrapping_add(s);
+    row("tuple_link_big", n, us, 256 * 8, c_tuple_link_big(0));
+    let (us, s) = timed(n, |r| c_tuple_link_grows(r & 1));
+    sink = sink.wrapping_add(s);
+    row("tuple_link_grows", n, us, 1024, c_tuple_link_grows(0));
 
     println!("time: 0ms sink={}", black_box(sink));
 }

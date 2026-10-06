@@ -161,13 +161,17 @@ first bisect step for a wrong element, a leak or a double free at an element ass
 literal.  A computed index keeps the copy (the receiver is re-derived per field write), as do
 a collection-TYPED field and a linked-group member.
 **`LOFT_NO_BUFFER_IS_PLACE=1`** (@PLN164 C2, `@FR-R-Place`, `@FR-O-Buffer`, parse time, BOTH
-backends) makes `h.v = mkints(n)` mint a buffer store, fill it, clear `h.v` and copy every
-element in again — with it off, the call is handed the destination AS its return buffer: the
+backends) makes `h.v = mkints(n)` and the literal `H { v: mkints(n) }` mint a buffer store,
+fill it and copy every element into the field again — with it off, the call is handed the destination AS its return buffer: the
 buffer stays the variable the call site mints and only what it holds changes, so the result's
 deps and the free sweep are untouched, and `(O-Buffer)` gains the clause that such a buffer is
 never freed — and is the first bisect step for a wrong, empty or stale vector field after an
-assignment from a call.  Declined where an argument reaches the destination, where the callee
-MINTS into its buffer (a returned vector literal does), and for a struct-enum variant's field.
+assignment or a literal field from a call.  Declined where an argument reaches the destination,
+where the callee MINTS a record into its buffer (a projection chain does; a returned
+collection literal's wrapper mint answers the place, so it is placed), for a struct-enum
+variant's field read through a variant check, and for a literal's `?` field (the replace is
+what leaves it absent).  `tests/scripts/a-literal-vector-field-is-built-in-its-field.loft` is
+the literal's guard.
 Measured on the drawing bench's parse row: the consumer spells this nowhere — the emission is
 byte-identical under the switch — so the gain is structural.  The callee clause admits a CHAIN exit
 (`return mk(n)` hands the buffer through; asked recursively, a cycle declines), so a result
@@ -296,6 +300,16 @@ first bound inside an `if` (whose pre-init makes the bind a rebind) adopts at th
 null again and mints no snapshot — the first bisect step for a use-after-free or a wrong
 field out of a callee that rebinds or returns past a local it promoted onto its buffer.
 `LOFT_TRACE_POOL=1` names the gate that keeps each witnessed buffer out of the pool.
+
+**Detach a literal buffer its owner took (`@FR-O-Owner`, default-ON, both backends, after
+the scope pass):** a collection literal or copy is built in a `__vdb_N` buffer and handed to
+its local through the buffer's field.  Where that local is an OWNER that releases the store
+itself (a value branch whose other arm mints, `r = if c { m(0) } else { cp }`), the buffer is
+set to the null sentinel after its last use in the block, so its next mint is fresh and its
+exit free a no-op.  **`LOFT_NO_BUFFER_DETACH=1`** keeps the buffer naming the store; it is the
+first bisect step for a store released twice, or cleared under another owner, out of a
+branch's literal arm.  The store timeline (`LOFT_STORES=timeline`, more frees than
+allocations) and `LOFT_STRICT_STORES=1` are the falsifiers.
 
 **A reduction loop as one kernel call (@PLN180 § Kernels, `@FR-R-BoundedNest`'s reduction
 clause, default-ON, both backends, scope pass):** `acc = acc + v[i]` over `0..v.len()` of an
@@ -509,7 +523,10 @@ and an `index` insert look its duplicate up before it descends — with it off, 
 resolved once per search (`keys::FastOrder`), a full-key lookup stops at the equal node
 (`tree::find_exact`), and a refused `tree::add` names the duplicate its own descent met
 (`index` fill-and-find −33 %) — and is the first bisect step for a wrong element, order or
-lookup out of a `sorted`, `ordered` or `index`.  **`LOFT_NO_ONE_PROBE_INSERT=1`** makes a
+lookup out of a `sorted`, `ordered` or `index`.  It also sorts a `for e in hash` walk through
+`keys::compare` again, where with it off a single key, or a compound key of two to four
+integer parts, is read once per record and the reads sorted (`keys::sort_records`) — the
+first bisect step for a hash walk visiting in the wrong order.  **`LOFT_NO_ONE_PROBE_INSERT=1`** makes a
 `hash` insert look its duplicate up and then file the entry as two hash-and-probe walks again
 — with it off, one walk answers both (`hash::probe_for_insert`; a 5,000-key fill −37 %) — and
 is the first bisect step for a lost, duplicated or unfindable `hash` entry.
@@ -555,13 +572,16 @@ entry too, and checks a removal's recognised slot against the entry's own index.
 
 ## Runtime: store claims, clears and prefill
 
-**`LOFT_POISON_CLAIM=1`** (`Store::poison_fill`) fills a freshly CLAIMED payload with
-`0xDEADBEEF` instead of zeros — the claim-side twin of `LOFT_POISON`'s poison-on-free, and
-the falsifier for *"does this caller rely on zero-init?"*: a handle or length read out of
-unwritten space becomes a loud out-of-range value the store's guards refuse, where
-`LOFT_NO_ZERO_CLAIM=1` only leaves stale bytes that often look enough like zeros to pass.
-Census 2026-09-12: 1 232 of 1 261 `tests/scripts` clean on the interpreter, 29 dependent
-(the buffer/delivery family), every @PLN157 cell corpus clean on both backends.
+**A claim writes nothing** (`@FR-H-Claim`, `@C137`): a claimed payload, and the tail an
+in-place grow exposes, hold whatever the block held last; every value is written by the code
+that builds it.  **`LOFT_POISON_CLAIM=1`** (`Store::poison_fill` / `poison_range`) fills both
+with `0xDEADBEEF` instead — the claim-side twin of `LOFT_POISON`'s poison-on-free, and the
+falsifier for *"does this reader rely on bytes nothing wrote?"*: a handle or length read out of
+unwritten space becomes a loud out-of-range value the store's guards refuse, where the default's
+stale bytes often look enough like valid data to pass.  The nightly `poison-claim` job runs the
+suite under it on both backends, and `tests/poison_claim.rs` keeps the interpreter corpus at
+zero dependents.  **`LOFT_ZERO_CLAIM=1`** zeroes every claim again — a debugging lever, never a
+fix (DEBUG_STORES.md).
 
 **`LOFT_NO_CLEAR_RELEASE=1`** (`@FR-H-ClearRelease`, runtime, BOTH backends) makes a
 vector's entry clear a pure length reset again — with it off, clearing a REUSED

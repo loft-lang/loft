@@ -920,7 +920,7 @@ jobs:
       - name: Browser asyncify (nightly — off the flaky PR path)
         if: (github.event_name == 'schedule' || github.event_name == 'push') && matrix.os == 'ubuntu-latest'
         shell: bash
-        run: cargo nextest run --profile ci -E 'binary(html_asyncify)'
+        run: cargo nextest run --profile ci --test html_asyncify
 
       # @PLN89 differential oracle (formal/operational.md D-op-1/2): the full
       # cross-backend agreement sweep — every `tests/oracle/*.loft` run on BOTH
@@ -1264,7 +1264,7 @@ jobs:
         # panics with `make index exited 2 / host loft binary missing`.
         run: cargo build --release --bin loft
       - name: Index hygiene (broken @-tags + markdown links)
-        run: cargo nextest run --profile ci -E 'binary(index_hygiene)'
+        run: cargo nextest run --profile ci --test index_hygiene
       - name: Feature-catalogue shadow in sync (@PLN92 strand 3)
         # Regenerates doc/features/ + tests/docs/features/ from the committed
         # index/features.json snapshot and fails on any diff — the no-drift
@@ -1473,7 +1473,7 @@ jobs:
       - name: Build release loft binary
         run: cargo build --release --bin loft
       - name: Markdown viewer smoke (isolated — no native-build contention)
-        run: cargo nextest run --profile ci -E 'binary(viewer_markdown)'
+        run: cargo nextest run --profile ci --test viewer_markdown
 
   fixtures-check:
     name: lib fixtures vs pinned tags (ubuntu, advisory)
@@ -1853,7 +1853,7 @@ jobs:
 
       - name: Browser render (nightly — off the flaky PR path)
         if: github.event_name != 'pull_request'
-        run: cargo nextest run --profile ci -E 'binary(html_render)'
+        run: cargo nextest run --profile ci --test html_render
 
       # NOTE: we deliberately do NOT byte-compare the CI rebuild to
       # the committed doc/pkg/ + doc/brick-buster.html.  Different

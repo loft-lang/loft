@@ -1,0 +1,68 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1888, `@FR-O-Oracle` / `@FR-F-Ret` — a function that returns its by-value PARAMETER on
+// one path and a COPY on another (`y = b; return y`, materialised into its hidden buffer)
+// declares a return dep naming only that buffer.  The oracle reads every return site and says
+// the result may be the parameter; the readers that decide the caller's bind — "does this
+// adopt the callee's minted store" and "may the copy free its source" — read the dep alone,
+// adopted the parameter's store and freed it, so the caller's record read poison on the next
+// pass.  A call to ITSELF on a third path reaches the same readers with no nameable witness.
+// They ask the oracle now, and the bind is the copy-or-adopt split with its arguments
+// protected; a second, unwitnessed free of the displaced store, which released the caller's
+// pooled buffer once a pass had adopted the copy built into it, is gone.
+//
+// Every value is hand-computed: `q` is `5 q`, `w` is `9 w`, `fresh()` is `1 f`, and both
+// must stay so.
+//
+// @falsified-at: 699e24014 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1888-a-parameter-returned-beside-a-copy-is-never-adopted.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the VALUE — the caller's record read back freed, or a pass read a released buffer.
+//   HOLDS: every cell is clean under `LOFT_STRICT_STORES=1`, `LOFT_POISON=1` and
+//   `LOFT_POISON_CLAIM=1` with the exit leak check on this tree, both backends.
+
+struct Pt { x: integer, s: text }
+
+fn fresh() -> Pt { Pt { x: 1, s: "f" } }
+fn mx_c(a: Pt, b: Pt, n: integer) -> Pt { if n == 0 { return a; } if n == 1 { y = b; return y; } fresh() }
+fn mx_r(a: Pt, b: Pt, n: integer) -> Pt { if n == 0 { return a; } if n == 1 { y = b; return y; } mx_r(a, b, n - 2) }
+fn mx_p(a: Pt, b: Pt, n: integer) -> Pt { if n == 0 { return a; } if n == 1 { y = b; return y; } mx_p(b, a, n - 2) }
+
+fn test_a_copy_beside_the_parameter_read_inline() {
+  q = Pt { x: 5, s: "q" };
+  w = Pt { x: 9, s: "w" };
+  o = "";
+  for k in [0, 1, 2, 0, 1] { o += "{mx_c(q, w, k).x} "; }
+  assert(o == "5 9 1 5 9 " && q.x == 5 && q.s == "q" && w.x == 9 && w.s == "w", "{o}q {q.x} {q.s} w {w.x} {w.s}");
+}
+
+fn test_a_self_call_beside_them() {
+  q = Pt { x: 5, s: "q" };
+  w = Pt { x: 9, s: "w" };
+  o = "";
+  for k in [2, 3, 0, 1, 4] { o += "{mx_r(q, w, k).x} "; }
+  assert(o == "5 9 5 9 5 " && q.x == 5 && q.s == "q" && w.x == 9 && w.s == "w", "{o}q {q.x} {q.s} w {w.x} {w.s}");
+}
+
+fn test_a_self_call_that_swaps_its_arguments() {
+  q = Pt { x: 5, s: "q" };
+  w = Pt { x: 9, s: "w" };
+  o = "";
+  for k in [2, 3, 4, 0, 1] { o += "{mx_p(q, w, k).x} "; }
+  assert(o == "9 5 5 5 9 " && q.x == 5 && q.s == "q" && w.x == 9 && w.s == "w", "{o}q {q.x} {q.s} w {w.x} {w.s}");
+}
+
+fn test_a_bound_result_written_through() {
+  q = Pt { x: 5, s: "q" };
+  w = Pt { x: 9, s: "w" };
+  o = "";
+  for k in [2, 3, 0] { r = mx_r(q, w, k); r.x += 100; r.s = "z"; o += "{r.x}{r.s} "; }
+  assert(o == "105z 109z 105z " && q.x == 5 && q.s == "q" && w.x == 9 && w.s == "w", "{o}q {q.x} {q.s} w {w.x} {w.s}");
+}
+
+fn main() {
+  test_a_copy_beside_the_parameter_read_inline();
+  test_a_self_call_beside_them();
+  test_a_self_call_that_swaps_its_arguments();
+  test_a_bound_result_written_through();
+}

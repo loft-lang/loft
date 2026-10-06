@@ -491,7 +491,7 @@ it, so a lower level groups last (outermost) and a higher level groups first (in
 
 | Precedence | Operators                              | Notes                   |
 |------------|----------------------------------------|-------------------------|
-| 0 (loosest)| `??`, `?? return`                      | null-coalescing / early return (C56) |
+| 0 (loosest)| `??`, `?? return`, `?? break`, `?? continue` | null-coalescing / early exit (C56) |
 | 1          | `\|\|`, `or`                           | logical OR              |
 | 2          | `&&`, `and`                            | logical AND             |
 | 3          | `==`, `!=`, `<`, `<=`, `>`, `>=`       | comparison              |

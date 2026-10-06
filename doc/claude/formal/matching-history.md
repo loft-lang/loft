@@ -30,6 +30,71 @@ after it.  The arm rule's "bare binding" wording stood for two months without th
 having it — corrected 2026-09-07, with the silence that hid it (an arm naming nothing was
 skipped without a diagnostic).
 
+- **D-match-22 — CLOSED 2026-10-06 (@PLN186 step 6).** `(P-Cap)` at the arm root, `whole: Rect
+  { w, h } => …`, was refused (*"'whole' is not a variant"*).  The arm head now reads `name:` before
+  the pattern (`root_capture`) and binds the subject, hoisted with the other bindings since it is the
+  same value whichever arm runs; `other: _` is the catch-all that binds it.  The capture is a VIEW
+  (`(P-Cap-View)`, extended to the subject's own place in binding.md), spelled as the projection a
+  view is (`OpGetField(subject, 0)`): a first build bound it with a plain `Set`, which codegen
+  copies for a record, and a write through `whole` did not reach the subject (r5 answered 23 for
+  93).  A BARE lowercase root name stays a refused misspelling (`@FR-M-Unit`,
+  a-match-arm-names-a-variant-that-exists.loft) — a first build read it as a catch-all binding,
+  which would have let a typo after full coverage compile as dead code.  Guard:
+  `tests/scripts/a-match-arm-captures-its-subject.loft`.
+
+- **D-match-21 — CLOSED 2026-10-06 (@PLN186 step 5).** `(P-Alt)` inside a field sub-pattern,
+  `Box { s: Circle | Square, n } => n`, was refused (*"Expect token }"*).  The alternation now lives
+  in `parse_field_sub_pattern`, the one path a struct field, a variant's field and a tuple element
+  all take: a `|` before the sub-pattern's end selects the slice element's alternation without its
+  parentheses.  Step 4's tuple-element branch folded into it, and with it a borrow-source slip:
+  step 4 gave the names the tuple TEMPORARY as their borrow source, where `match_borrow_source`
+  answers the member's own (loft#1526's lesson).  Guards:
+  `tests/scripts/a-field-sub-pattern-lists-alternatives.loft`,
+  `a-field-alternative-binds-a-name-at-another-type.loft`.
+
+- **D-match-18 — CLOSED 2026-10-06 (@PLN186 step 2).** `(P-Multi)` on a plain-struct subject,
+  `P { x: 0, y: v } | P { x: v, y: 0 } => v`, was refused (*"Unknown variable 'v'"*).  The
+  refusal was not about `|`: a struct arm read a field's bare-name pattern (`y: v`) as a VALUE,
+  against `(P-Point)` — refused when no `v` was in scope, and a silent comparison with an outer `v`
+  when one was (loft#1885).  Closed by both halves: the struct arm binds a bare name through the
+  variant arm's `field_pattern_rename`, and its further patterns are parsed by the tuple arm's
+  `parse_pattern_alternatives` — each its own arm with its own bindings (nothing hoisted when an
+  arm lists alternatives) and literal-field test.  Alongside, an arm after a total struct pattern
+  is refused by name (`@FR-M-Wild`), where the loop's `break` left it to "Expect token }".
+  Guards: `tests/scripts/a-struct-or-pattern-arm-links-its-bindings.loft`,
+  `a-struct-pattern-arm-refusals.loft`.
+
+- **D-match-20 — CLOSED 2026-10-06 (@PLN186 step 4).** `(P-Alt)` inside a tuple element,
+  `(Circle { r } | Square { r }, k) => r + k`, was refused (*"expected ',' between tuple pattern
+  elements"*).  A tuple element that lists alternatives (a `|` before the `,` or `)` that ends it)
+  now takes the slice element's alternation without its parentheses: a tag disjunction, each name
+  read from whichever variant matched, `τ?` where only some bind it, and the names joined to the
+  arm's pending set so its end restores them.  Guards:
+  `tests/scripts/a-tuple-element-lists-alternatives.loft` and
+  `…-element-alternative-binds-a-name-at-another-type.loft`.
+
+- **D-match-19 — CLOSED 2026-10-06 (@PLN186 step 3).** `(P-Multi)` over a tuple subject,
+  `(Circle { r }, Square { s }) | (Square { s }, Circle { r }) => r * 10.0 + s`, was refused
+  (*"Expect token =>"*).  Each further tuple pattern now parses into its own bindings and
+  conditions, a shared name is copied into the first pattern's slot (the enum arm's linking), and
+  each alternative runs the body taken BEFORE the first pattern's bindings fold into it — the
+  first build cloned the folded body, so the second alternative re-ran the first's bindings and
+  read `r` and `s` from the swapped positions, hidden by a symmetric `r * s`.  Guards:
+  `tests/scripts/a-tuple-or-pattern-arm-links-its-bindings.loft` (order-sensitive bodies) and
+  `…-alternative-binds-a-name-at-another-type.loft` (`@FR-P-Alt-Same`).
+
+- **D-match-17 — OPENED AND CLOSED 2026-10-05.** `(P-Point)`: a field sub-pattern over a
+  `reference<T>` field, and a plain-struct sub-pattern on any struct field (loft#1870).  The
+  variant test asked the inline-enum type alone, so `Add { l: Lit { v: 0 }, r }` over
+  `l: reference<Expr>` fell to the scalar path, which BUILT a `Lit` and tested that record:
+  the arm never matched on `--interpret` (silently — `0 + x` was never simplified),
+  `--native` refused its own output (`E0605`, `DbRef as u8`), and the binding form
+  (`l: Lit { v }`) did not parse.  `H { q: P { v: 0 } }` failed the same way on an INLINE
+  struct field, though a top-level `P { v: 0 }` over a `P` subject always worked.
+  `pattern_variant_enum` now also answers a reference to a struct-enum, and
+  `parse_field_sub_pattern` runs a plain struct's own field loop (`parse_struct_sub_pattern`,
+  `parse_match_struct_arm`'s).  Seven cells on both backends under strict stores; guard
+  `a-field-sub-pattern-asks-the-record-a-reference-field-points-at.loft`.
 - **D-match-16 — OPENED AND CLOSED 2026-10-02.** `(M-Match)`: a struct-enum or struct subject
   that was not a variable was spliced into every arm test and every field binding, so a call
   ran once for the variant and again for each field read.  `match next(lx) { Num { v } => … }`

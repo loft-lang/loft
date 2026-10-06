@@ -1272,6 +1272,40 @@ impl Stores {
         }
     }
 
+    /// `OpChildRec` — a fresh `tp` child record in `host_field`'s store, default-filled, its
+    /// rec-id written into the field (loft#1867).  In-store mechanics only: a record the field
+    /// held before is released as BYTES of this store; what it adopted outside the store is
+    /// the emitted cascade's to release (CODEGEN_METHOD.md § Ownership and copy semantics are
+    /// emitted code).
+    pub fn new_child_rec(&mut self, host_field: &DbRef, tp: u16) -> DbRef {
+        if host_field.store_nr == u16::MAX || host_field.rec == 0 {
+            return DbRef::NULL;
+        }
+        let old = self
+            .store(host_field)
+            .get_u32_raw(host_field.rec, host_field.pos);
+        if old != 0 {
+            let old_db = DbRef {
+                store_nr: host_field.store_nr,
+                rec: old,
+                pos: 8,
+            };
+            self.remove_claims(&old_db, tp);
+            self.store_mut(host_field).delete(old);
+        }
+        let size = u32::from(self.size(tp));
+        let rec = self.allocations[host_field.store_nr as usize].claim(size);
+        let db = DbRef {
+            store_nr: host_field.store_nr,
+            rec,
+            pos: 8,
+        };
+        self.set_default_value(tp, &db);
+        self.store_mut(host_field)
+            .set_u32_raw(host_field.rec, host_field.pos, rec);
+        db
+    }
+
     /// Make `db` (dest) hold `o_db` (src)'s content — the aliasing-safe vector
     /// "deliver into buffer" the return machinery needs.  When `db` and `o_db`
     /// name the SAME backing vector (the NRVO case where a returned local still
@@ -1460,6 +1494,21 @@ impl Stores {
         });
     }
 
+    /// `@FR-H-Claim` (`@C137`) — a NULL source copied into a destination `OpNewRecord` just created
+    /// (`keys::COPY_FRESH_DEST` in `raw_tp`) leaves the destination ABSENT: its bytes WRITTEN
+    /// all-zero — a nullable struct-enum's discriminant 0, the only null encoding a fresh slot
+    /// has — because a claimed slot holds no value until one is written.  An existing
+    /// destination keeps what it held (`vec[i] = <runtime-null>` into a non-nullable element,
+    /// which has no null to write).  Both backends' copy calls this from their null-source
+    /// branch.
+    pub fn copy_null_into(&mut self, to: &DbRef, raw_tp: u16) {
+        if raw_tp & crate::keys::COPY_FRESH_DEST == 0 || to.store_nr == u16::MAX {
+            return;
+        }
+        let size = u32::from(self.size(raw_tp & crate::keys::COPY_TP_MASK));
+        keys::mut_store(to, &mut self.allocations).zero_range(to.rec, to.pos, size);
+    }
+
     /// The fill behind `[x; n]` (and the comprehension of a constant, which lowers to it):
     /// `extra` more copies of the TEMPLATE — the vector's last element, at `length - 1` —
     /// written into the `extra` slots that follow it, which `vector_set_size` has already
@@ -1600,12 +1649,17 @@ impl Stores {
     /// a FOREIGN view, a locked store — takes the copy form instead: the span copied out, the
     /// vector cleared as `OpClearVector` clears it (a view is released), the span appended.
     ///
+    /// Answers whether the vector's record was KEPT — `true` on the in-place form, `false`
+    /// when the copy form released and re-appended it (`@FR-R-Refresh`'s keep-range clause
+    /// re-derives a held header on `false`, and only sets its length on `true`) and for an
+    /// absent vector, which nothing holds.
+    ///
     /// # Panics
     /// When `known` is an element kind that owns records — the parser never emits
     /// `OpKeepRange` for one.
-    pub fn vector_keep_range(&mut self, db: &DbRef, lo: i64, hi: i64, known: u16) {
+    pub fn vector_keep_range(&mut self, db: &DbRef, lo: i64, hi: i64, known: u16) -> bool {
         if db.is_null() || db.rec == 0 || db.pos == 0 {
-            return;
+            return false;
         }
         assert!(
             !self.is_linked(known) && !self.type_owns_heap(known),
@@ -1620,7 +1674,7 @@ impl Stores {
         let store = keys::mut_store(db, &mut self.allocations);
         let v_rec = store.collection_rec(db.rec, db.pos);
         if v_rec == 0 {
-            return;
+            return false;
         }
         if store.is_foreign() || store.read_only || !crate::keys::keep_range_enabled() {
             let span = store.bytes_of(v_rec)[from..to].to_vec();
@@ -1628,10 +1682,11 @@ impl Stores {
             if n > 0 {
                 self.append_span(db, &span, n, size);
             }
-            return;
+            return false;
         }
         store.buffer(v_rec).copy_within(from..to, 0);
         store.set_u32_raw(v_rec, 4, n);
+        true
     }
 
     /// @PLN174 F4b — `r = src[lo..hi]` bound to a local that owns its backing store (a
@@ -2180,17 +2235,15 @@ impl Stores {
                 let crate::json::Parsed::Array(items) = parsed else {
                     return Err(mismatch());
                 };
-                // @P357: an EMPTY JSON array must still zero the collection
-                // header.  The per-item loop below is the ONLY thing that
-                // initialises the vector/array field (the first `record_new`
-                // writes its header) — so with zero items the field keeps
-                // whatever bytes the recycled store record held, reading back
-                // as a phantom non-zero length (e.g. `json_parse("[]").item(0)`
-                // returning a garbage object, and `len` reporting 8 after a
-                // run of earlier parses populated then freed that block).  The
-                // `Parts::Null` arm above already calls `set_default_value` for
-                // exactly this reason; do the same when the array is empty.
-                if items.is_empty() {
+                // @P357: the collection field is WRITTEN empty before any item is
+                // appended, whatever the item count.  Nothing else initialises it: the
+                // first `record_new` READS the field's handle to find the vector, so a
+                // field holding the claim's bytes — an element the loop above just
+                // minted, whose own vector field is walked here — appended into a
+                // handle that was never written (`LOFT_POISON_CLAIM=1` reads it as
+                // 0xDEADBEEF), and an empty array read back a phantom length.  The
+                // `Parts::Null` arm above writes the same default for the same reason.
+                {
                     // @P373: write the default to the COLLECTION FIELD's slot,
                     // not to `to` — which for a struct field is the struct base
                     // (field 0), so `set_default_value(tp, to)` zeroed the FIRST

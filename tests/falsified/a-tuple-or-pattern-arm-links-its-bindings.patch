@@ -1,0 +1,13 @@
+diff --git a/src/parser/control.rs b/src/parser/control.rs
+index 07f65a620..3b8ddda9e 100644
+--- a/src/parser/control.rs
++++ b/src/parser/control.rs
+@@ -12327,7 +12327,7 @@ impl Parser {
+         let alternatives = self.parse_pattern_alternatives(
+             first_names,
+             first_bindings,
+-            |p| p.lexer.has_token("("),
++            |_| false,
+             |p, binds, conds| {
+                 if p.parse_tuple_pattern_elements(tmp, elem_types, binds, conds) {
+                     bad = true;

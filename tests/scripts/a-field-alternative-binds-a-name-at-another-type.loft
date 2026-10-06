@@ -1,0 +1,28 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-P-Alt-Same` at a field position — a name every alternative binds is one variable, so the
+// alternatives must bind it at types that meet: `r` is `float` in `Circle` and `text` in `Named`.
+// Refused, naming the capture and both types.
+//
+// @falsified-at: 7138dfe64 — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 1/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 1/1 (the suite's verdict, not a count of matches)
+//   Before step 5 the file was refused by the parse error at the field's `|`, not by this message.
+//   CHANNEL: the expected diagnostic, on BOTH backends.
+//   ARMED: nothing.
+//   WITNESS: *"Expect token }"* in place of the capture message.
+//   HOLDS: the program is refused either way; only WHICH refusal moves.
+// @falsified-by: tests/falsified/a-field-alternative-binds-a-name-at-another-type.patch — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 1/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 1/1 (the suite's verdict, not a count of matches)
+//   Step 5 reverted whole (the durable receipt).
+//   CHANNEL: the expected diagnostic, on BOTH backends.
+//   ARMED: nothing.
+//   WITNESS: as above.
+//   HOLDS: as above.
+
+enum Sh { Circle { r: float }, Named { r: text }, Dot }
+struct Box { s: Sh }
+
+// @EXPECT_ERROR: alternation capture 'r' is text in one branch but float in another
+fn test_a_field_capture_at_another_type_is_refused() {
+  t = match (Box { s: Sh.Dot }) { Box { s: Circle { r } | Named { r } } => "x", Box { s: _ } => "y" };
+  assert(t == "y", "unreachable");
+}

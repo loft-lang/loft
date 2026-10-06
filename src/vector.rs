@@ -833,8 +833,10 @@ pub struct FillSpan {
 ///
 /// `locked` is the store's lock state, read with the rest: no loop the hoist admits can
 /// lock or unlock a store (every op that does is a writer the hoist refuses), so it holds
-/// for the loop too, and a hoisted writer tests this local instead of the store —
-/// `@FR-H-WriteLocked` once per loop, not once per element.
+/// for the loop too, and a hoisted writer reads this local instead of the store —
+/// `@FR-H-WriteLocked` once per loop, not once per element.  A locked header has no
+/// writable element ([`crate::database::Stores::vec_set_at`]): its writes leave the fast
+/// path by the bounds test and are refused by the runtime's own setter.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct VecHeader {
     pub store_nr: u16,
@@ -930,6 +932,26 @@ pub struct PushHeader {
     pub h: VecHeader,
     /// Elements the record can hold before it must grow (0 for an absent vector).
     pub cap: u32,
+}
+
+/// `LOFT_HOIST_VERIFY=1`'s check of `@FR-R-Refresh`'s keep-range clause: the header a
+/// self-slice pop refreshed in place must equal the one derived from the record.
+///
+/// # Panics
+/// When the held header's record or length differs from the derived one — the refresh
+/// is stale, and the message names both.
+pub fn verify_kept_header(held: &VecHeader, db: &DbRef, stores: &[Store]) {
+    let fresh = vec_header(db, stores);
+    assert!(
+        held.rec == fresh.rec && held.len == fresh.len && held.store_nr == fresh.store_nr,
+        "keep-range refresh stale: held rec {} len {} store {}, derived rec {} len {} store {}",
+        held.rec,
+        held.len,
+        held.store_nr,
+        fresh.rec,
+        fresh.len,
+        fresh.store_nr
+    );
 }
 
 /// Derive a [`PushHeader`] for `db`'s vector, as [`vec_header`] derives the plain one.
@@ -1097,6 +1119,42 @@ pub fn vec_base(h: &VecHeader, stores: &[Store]) -> *const u8 {
     }
 }
 
+/// `@FR-R-RecPtr`'s base clause — the address of the element `at` bytes past a held element
+/// BASE, for an index the caller has already tested against the held header's length.  The
+/// result is never null, and saying so is the point: a field read through it ([`rec_get`])
+/// tests its address for the null record, and once the compiler knows the address cannot be
+/// null that test and the absent value it guards fold away for the whole loop body.
+///
+/// # Safety
+///
+/// `base` must be [`vec_base`] of a header whose `len` is above zero, and `at` inside that
+/// vector's elements.  Such a base is never null: [`vec_base`] answers null only for an
+/// absent vector (`rec == 0`), whose header length is 0, and otherwise the live store's own
+/// buffer plus an offset, or a foreign store's span, which exists whenever its length is.
+///
+/// # Panics
+///
+/// Under `verify` (`LOFT_HOIST_VERIFY=1`), when the address IS null — the fact is checked
+/// instead of assumed.  Never in the emitted default.
+#[must_use]
+#[allow(clippy::inline_always)] // the fact is only seen where the body is: inlined, or it states nothing
+#[inline(always)]
+pub unsafe fn held_elem_ptr(base: *const u8, at: usize, verify: bool) -> *const u8 {
+    // SAFETY: the caller's contract — `at` is inside the vector `base` is element 0 of.
+    let p = unsafe { base.add(at) };
+    if verify {
+        assert!(
+            !p.is_null(),
+            "held element address is null — a base taken for an empty or absent vector"
+        );
+    } else {
+        // SAFETY: a base of a non-empty vector is not null (above), and neither is an
+        // offset inside its allocation.
+        unsafe { std::hint::assert_unchecked(!p.is_null()) };
+    }
+    p
+}
+
 /// `@FR-R-RecPtr` — the address of a record's first byte: what every scalar field read
 /// and in-place write of a record VIEW (`e = tbl[i]?`, `s = o.inner`) may go through for
 /// the rest of its block, derived ONCE after the binding.  Null for the null record, so
@@ -1196,10 +1254,11 @@ pub unsafe fn rec_set<T: Copy>(
     verify: bool,
 ) {
     // `@FR-H-WriteLocked` — `locked` is [`rec_locked`] (or the header's, or the window's)
-    // held beside the address; only a locked store is asked, and it refuses the write.
-    if ptr.is_null()
-        || (locked && !stores[db.store_nr as usize].write_allowed(db.rec, db.pos + fld))
-    {
+    // held beside the address.  The null record and the locked store leave the fast path
+    // by ONE test; [`rec_set_refused`] tells them apart and asks the locked store, which
+    // refuses the write.
+    if ptr.is_null() | locked {
+        rec_set_refused(ptr.is_null(), db.store_nr, db.rec, db.pos + fld, stores);
         return;
     }
     if verify {
@@ -1216,6 +1275,22 @@ pub unsafe fn rec_set<T: Copy>(
             .cast::<T>()
             .write_unaligned(val)
     };
+}
+
+/// The slow half of [`rec_set`]: nothing for the null record (`@FR-H-WriteNull`), and for a
+/// record in a locked store the store's own refusal (`@FR-H-WriteLocked`) — a development
+/// run halts in it, a production run logs the write, and the caller drops it either way.
+/// Enforces `@FR-R-Cold`: outlined, so the write itself is a test and a store.  It takes the
+/// record's fields BY VALUE: a `&DbRef` handed to a function the optimiser cannot see into
+/// makes the caller's `DbRef` live in memory for the whole loop, and on x86-64 its fields are
+/// then written narrow and read back wide every pass — a store-forwarding stall per element
+/// (`timer_spend` 45.5 → 11.7 ms when this took a reference).
+#[cold]
+#[inline(never)]
+fn rec_set_refused(null: bool, store_nr: u16, rec: u32, at: u32, stores: &[Store]) {
+    if !null {
+        let _ = stores[store_nr as usize].write_allowed(rec, at);
+    }
 }
 
 /// `@FR-R-BoundedNest` — the largest magnitude among a vector's `integer` elements, or

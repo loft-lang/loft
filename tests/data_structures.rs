@@ -29,7 +29,8 @@ pub fn record() {
     stores.field(s, "percentage", stores.name("single"));
     stores.field(s, "calc", stores.name("long"));
     stores.finish();
-    assert_eq!(stores.size(stores.name("Data")), 33);
+    // 8 + 8 + 8 + 4 + 4 + 1 = 33 bytes, padded to 40 (`@FR-L-Align`, @C138).
+    assert_eq!(stores.size(stores.name("Data")), 40);
     assert_eq!(stores.enum_val(e, 2), "Hourly");
     assert_eq!(stores.position(s, "size"), 0);
     assert_eq!(stores.position(s, "amount"), 8);
@@ -540,7 +541,7 @@ pub fn array_record() {
     stores.finish();
     assert_eq!(
         stores.dump_type("Elm"),
-        "Elm[12/8]: parents [Main 10]{n:text[8], c:integer[0]}"
+        "Elm[16/8]: parents [Main 10]{n:text[8], c:integer[0]}"
     );
     // `other [65535, 0]`: the leading 65535 marks `search` as a VIEW of records
     // `list` also holds; the `0` is the back-link to `list` itself. Both
@@ -582,7 +583,7 @@ pub fn ordered_record() {
     stores.finish();
     assert_eq!(
         stores.dump_type("Elm"),
-        "Elm[12/8]: parents [Main 10]{n:text[8], c:integer[0]}"
+        "Elm[16/8]: parents [Main 10]{n:text[8], c:integer[0]}"
     );
     // `other [65535, 0]`: the leading 65535 marks `search` as a VIEW of records
     // `list` also holds; the `0` is the back-link to `list` itself. Both
@@ -633,7 +634,7 @@ pub fn index() {
     // per indexed record.
     assert_eq!(
         stores.dump_type("Elm"),
-        "Elm[21/8]: parents [Main 10]{n:text[8], c:integer[0], #left_1:int<0,false>[12], #right_1:int<0,false>[16], #color_1:boolean[20]}"
+        "Elm[24/8]: parents [Main 10]{n:text[8], c:integer[0], #left_1:int<0,false>[12], #right_1:int<0,false>[16], #color_1:boolean[20]}"
     );
     assert_eq!(
         stores.dump_type("Main"),
@@ -686,10 +687,10 @@ pub fn index_deletions() {
     stores.field(m, "index", v);
     stores.finish();
     // P191: bookkeeping shrunk to 4-byte int<0,false> (was 8-byte
-    // integer); record size 33→25 user bytes.
+    // integer); 25 user bytes, padded to 32 (`@FR-L-Align`, @C138).
     assert_eq!(
         stores.dump_type("Elm"),
-        "Elm[25/8]: parents [Main 10]{k:integer[0], c:integer[8], #left_1:int<0,false>[16], #right_1:int<0,false>[20], #color_1:boolean[24]}"
+        "Elm[32/8]: parents [Main 10]{k:integer[0], c:integer[8], #left_1:int<0,false>[16], #right_1:int<0,false>[20], #color_1:boolean[24]}"
     );
     let db = stores.database(2);
     let into = DbRef {
@@ -742,7 +743,7 @@ pub fn index_find() {
     // P191: bookkeeping shrunk to 4-byte int<0,false>.
     assert_eq!(
         stores.dump_type("Elm"),
-        "Elm[29/8]:{cat:integer[0], name:text[16], value:float[8], #left_1:int<0,false>[20], #right_1:int<0,false>[24], #color_1:boolean[28]}"
+        "Elm[32/8]:{cat:integer[0], name:text[16], value:float[8], #left_1:int<0,false>[20], #right_1:int<0,false>[24], #color_1:boolean[28]}"
     );
     let db = stores.database(8);
     let into = DbRef {

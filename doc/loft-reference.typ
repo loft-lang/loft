@@ -2462,14 +2462,14 @@ Write '&' to get a live link where a bind would otherwise copy.
 
 === sizeof
 
-'sizeof(Type)' returns the packed byte size used when the type is stored as a struct field or vector element. Range-constrained integer types like u8 and u16 report their packed size, not the 8-byte stack slot a local takes.
+'sizeof(Type)' returns the byte size used when the type is stored as a struct field or vector element: fields packed largest first, then padded so the size is a multiple of the largest field's alignment. Range-constrained integer types like u8 and u16 report their packed size, not the 8-byte stack slot a local takes.
 
 ```rust
   assert(sizeof(integer) == 8, "integer: 8 bytes (i64 storage)");
   assert(sizeof(u8) == 1, "u8: 1 byte (packed)");
   assert(sizeof(u16) == 2, "u16: 2 bytes (packed)");
   assert(sizeof(Colour) == 3, "Colour: 3 × u8 = 3 bytes");
-  assert(sizeof(Area) == 5, "Area: u16 + 3 × u8 = 5 bytes");
+  assert(sizeof(Area) == 6, "Area: u16 + 3 × u8 = 5 bytes, padded to 6");
 }
 ```
 
@@ -6421,6 +6421,16 @@ Combine patterns with `|` to share the same arm body.
     East | West   => "horizontal",
   };
   assert(axis == "vertical", "multi-pattern: {axis}");
+```
+
+`|` joins variant NAMES.  To bind fields in several variants with one arm, list the whole patterns separated by `,` instead: each pattern binds from its own variant, and the arm body runs for whichever one matched.  A name every pattern binds must have the same type in each; a name only some patterns bind is nullable in the body, `null` when a pattern without it matched.
+
+```rust
+  long_side = match Rect { w: 3, h: 8 } {
+    Circle { radius }, Rect { h: radius } => radius,
+    _ => 0,
+  };
+  assert(long_side == 8, "a field bound from either variant: {long_side}");
 ```
 
 === Tuple patterns

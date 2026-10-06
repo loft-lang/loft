@@ -661,8 +661,11 @@ impl Parser {
                     let db_tp = self.data.def(vec_tp).known_type();
                     let size = self.vector_elem_iter_stride(vtp);
                     // A type variable's element names its variable (@PLN165 C2).
-                    let stride = match vtp.base() {
-                        Type::Reference(tv, _) | Type::Enum(tv, _, _)
+                    // A tuple of a type variable names its open tuple (loft#1868).
+                    let open_tuple = self.open_tuple_of(vtp);
+                    let stride = match (open_tuple, vtp.base()) {
+                        (Some(open), _) => Self::type_var_stride(open),
+                        (_, Type::Reference(tv, _) | Type::Enum(tv, _, _))
                             if (size == 0 && self.data.is_type_var_placeholder(*tv))
                                 || self.data.is_open_instance(*tv) =>
                         {
@@ -1708,12 +1711,12 @@ impl Parser {
         {
             let syn = *syn;
             if let Some(ops) = self.group_elem_write(to, f_type.base(), true, |p, t, _| {
-                let write = p.emit_nullable_slot_write(syn, &t, val.clone());
+                let write = p.emit_nullable_slot_write(syn, &t, val.clone(), false);
                 v_block(write, Type::Void, "nullable_elem_convert")
             }) {
                 return Value::Insert(ops);
             }
-            let write = self.emit_nullable_slot_write(syn, to, val.clone());
+            let write = self.emit_nullable_slot_write(syn, to, val.clone(), false);
             return v_block(write, Type::Void, "nullable_elem_convert");
         }
         // loft#1529 — the writer half of `(L-Null)` for a nullable struct-enum slot.  A source
@@ -1948,7 +1951,13 @@ impl Parser {
                     // freshly claimed record whose pointer is already zero, so the
                     // literal's emit stays exactly what it was.
                     let mut ops = Vec::new();
+                    // `@FR-L-CapOwn` (loft#1867) — a CAPTURING source builds its record in this
+                    // slot (`OpChildRec`), which replaces the old one there, after releasing
+                    // what the old one captured by reading it out of the field.  Cleared first,
+                    // that read would find nothing.
+                    let in_place = super::find_capturing_fn_ref(&self.data, val).is_some();
                     if split
+                        && !in_place
                         && let Ok(crec_off) = u16::try_from(offset + 4)
                         && let Some(crec_tp) = self
                             .database
@@ -1959,6 +1968,27 @@ impl Parser {
                             "OpGetField",
                             &[host.clone(), Value::Int(offset + 4), tp_val.clone()],
                         );
+                        // The old record's cascade releases what it adopted before the clear
+                        // frees its bytes: bound here, run by the scope pass once adoption is
+                        // decided (`capture_adoption::cascade_before_record_frees`).
+                        let lambda = self.data.def(d_nr).attributes()[f_nr].assigned_lambda_d_nr;
+                        let record = if lambda == u32::MAX {
+                            u32::MAX
+                        } else {
+                            self.data.def(lambda).closure_record()
+                        };
+                        if record != u32::MAX && !self.first_pass {
+                            let old = self.create_unique(
+                                "__oldrec",
+                                &Type::Reference(record, crate::data::Deps::none()),
+                            );
+                            self.vars.set_skip_free(old);
+                            let read = self.cl(
+                                "OpGetField",
+                                &[host.clone(), Value::Int(offset + 4), Value::Int(0)],
+                            );
+                            ops.push(v_set(old, self.cl("OpRefFromChildRec", &[read])));
+                        }
                         ops.push(self.cl("OpClearKeyed", &[field, tp_val]));
                     }
                     let write = self.set_field(d_nr, f_nr, 0, host, val.clone());
@@ -2391,7 +2421,7 @@ use #count instead"
             }
         } else if self.lexer.has_token("break") {
             if !self.in_loop {
-                diagnostic!(self.lexer, Level::Error, "Cannot continue outside a loop");
+                diagnostic!(self.lexer, Level::Error, "Cannot break outside a loop");
             }
             // loft#998 — `x#break` names the loop to leave by its VARIABLE, so a name that
             // is not one has no level to jump. `Value::Null` rather than a level: every
@@ -2402,7 +2432,10 @@ use #count instead"
                 Some(lv) => Value::Break(lv),
                 None => self.not_a_loop_variable(name, "break"),
             };
-            *t = Type::Void;
+            // A labelled jump leaves as the plain word does, so it is the same `Never` and fits
+            // wherever a value is expected (@FR-C-Never): typed `void`, `p = f() ?? i#break`
+            // was refused as a default of the wrong type.
+            *t = Type::Never;
         } else if self.lexer.has_token("continue") {
             if !self.in_loop {
                 diagnostic!(self.lexer, Level::Error, "Cannot continue outside a loop");
@@ -2411,7 +2444,7 @@ use #count instead"
                 Some(lv) => Value::Continue(lv),
                 None => self.not_a_loop_variable(name, "continue"),
             };
-            *t = Type::Void;
+            *t = Type::Never;
         } else if self.lexer.has_keyword("count") {
             self.iter_op_count_or_first(code, name, t, false, index_var);
         } else if self.lexer.has_keyword("first") {
@@ -4167,23 +4200,11 @@ use #count instead"
                                 let read = if ref_def_nr == u32::MAX {
                                     Value::TupleGet(for_var, i as u16)
                                 } else {
-                                    let elem_offset = if let Some(offs) =
-                                        crate::data::stored_tuple_offsets_for_def(
-                                            &self.data,
-                                            &self.database,
-                                            ref_def_nr,
-                                            elem_types.len(),
-                                        ) {
-                                        u32::from(offs[i])
-                                    } else {
-                                        crate::data::element_stack_offsets(&elem_types)[i] as u32
-                                    };
-                                    self.get_val(
-                                        &elem_tp,
-                                        false,
-                                        elem_offset,
+                                    self.stored_tuple_member_read(
+                                        ref_def_nr,
+                                        i,
+                                        &elem_types,
                                         Value::Var(for_var),
-                                        u32::MAX,
                                     )
                                 };
                                 v_set(var, read)

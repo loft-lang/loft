@@ -35,6 +35,11 @@ pub struct SpentRead {
     pub name: String,
     /// The line of the statement that moved the value away.
     pub moved_line: u32,
+    /// The record type that moved.  The read is raised only if that type still releases
+    /// something once the scope pass has run: a closure record's capture is decided ADOPTED or
+    /// BORROWED there, and a struct whose fn field only borrows releases nothing, so a copy of
+    /// it is a copy of plain data (`@FR-L-CapOwn`).
+    pub tp: u32,
 }
 
 /// Which function a finding belongs to: its file, line and name.  NOT the definition number —
@@ -59,7 +64,7 @@ static FOUND: Mutex<Option<HashMap<Key, Vec<SpentRead>>>> = Mutex::new(None);
 /// Record the spent reads of every function not yet through the scope pass.  Called at the top
 /// of `scopes::check`, while each body is still the parser's.
 pub fn record_all(data: &Data) {
-    if !crate::keys::lease_refuse_enabled() || !data.any_drop_hook() {
+    if !crate::keys::lease_refuse_enabled() || !data.any_release() {
         return;
     }
     let mut found = Vec::new();
@@ -294,6 +299,7 @@ impl Flow<'_> {
                     line: self.line,
                     name: self.func.name(v).to_string(),
                     moved_line,
+                    tp: self.func.tp(v).base().heap_def_nr().unwrap_or(u32::MAX),
                 });
             }
         }

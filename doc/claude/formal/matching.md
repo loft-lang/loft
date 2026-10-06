@@ -133,9 +133,11 @@ index `i` into a source `src`, with `elem(src,i)` / `len(src)` **null past the e
 ```
 
 ```
-  (P-Point)  a unit variant V, struct variant V{f…}, literal, `_`, or bare binding is a POINT
-             pattern over one value (today's M-Unit/M-Variant/M-Wild lifted into ⇓).  A struct /
-             variant FIELD may itself be a pattern (nested) — the recursion this extension adds.
+  (P-Point)  a unit variant V, struct variant V{f…}, plain struct S{f…}, literal, `_`, or bare
+             binding is a POINT pattern over one value (today's M-Unit/M-Variant/M-Wild lifted into
+             ⇓).  A struct / variant FIELD may itself be a pattern (nested) — the recursion this
+             extension adds — whether the field holds its record inline or points at it
+             (`reference<T>`): the pattern asks the record either way.
   (P-Range)  a RANGE pattern over a SCALAR value v (a non-enum subject — integer / character):
              `a..=b` (inclusive) matches iff a ≤ v ≤ b; `a..b` (half-open) matches iff a ≤ v < b —
              the upper bound is EXCLUSIVE.  A POINT pattern (one value, no extra cursor advance);
@@ -164,8 +166,10 @@ index `i` into a source `src`, with `elem(src,i)` / `len(src)` **null past the e
              the slice's ONE rest, typed: `xs:T*` ≡ `..xs`, and `xs:T+` ≡ `..xs` with ≥ 1
              element.  Whatever follows it is (P-Rest)'s fixed tail, read from the END — a
              literal, `_`, a bare name, a variant: `[xs:integer*, last]` binds last = v[len−1].
-  (P-Multi)  a MULTI-PATTERN arm `pat_a, pat_b => body`: try pat_a from ⟨0,v⟩ (whole-match); else
-             pat_b; the FIRST whole-match commits.  (P-Alt at arm granularity — no new cursor work.)
+  (P-Multi)  a MULTI-PATTERN arm `pat_a | pat_b => body` (or `pat_a, pat_b`, the same arm): try
+             pat_a from ⟨0,v⟩ (whole-match); else pat_b; the FIRST whole-match commits.  (P-Alt at
+             arm granularity — no new cursor work.)  P-Alt holds at EVERY pattern position: the
+             arm, a tuple element, a field sub-pattern, a slice element.
   (P-Guard)  a GUARDED arm `pat if cond => body`: run `pat` from κ; on Match(binds,κ') evaluate
              `cond` under σ extended with `binds`.  cond true ⟹ the arm commits (Match(binds,κ'));
              cond false ⟹ the arm ⇓ Fail — exactly as if `pat` had not matched (P-Atomic keeps the
@@ -272,8 +276,10 @@ is a view; `..rest` / repetition are fresh vectors); the pattern grammar + prece
 
 ## Deviations
 
-OPEN: **0** — every entry, `D-match-1` to `-16`, is closed; the record is in
-[matching-history.md](matching-history.md).
+OPEN: **0** — the closed entries, `D-match-1` to `-22`, are in
+[matching-history.md](matching-history.md).  P-Alt and P-Cap hold at every pattern position: the
+arm (`|` and `,` alike), a tuple subject, a tuple element, a field, a slice element, and the arm
+root's `name: pattern`.
 
 Cursor matches (a struct with a `vector` source and a `pos`, consumed as a PREFIX) and sub-rule
 invocation `[ name: rule ]` are shipped but have no rules here yet; a cursor match's tail

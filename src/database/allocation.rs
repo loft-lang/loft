@@ -1153,12 +1153,104 @@ impl Stores {
     /// is: it is its store's root (`1@8`) of exactly the type being minted, in an ordinary
     /// store nothing pins (no file, foreign bytes, lock or recording), so it is a previous
     /// value of the same type that the admitted group rewrites whole.
+    /// Is `tp` a vector WRAPPER — the one-field `main_vector<T>` record a collection literal
+    /// is built in?  Its mint into a live place is [`Self::mint_at_place`].
+    #[must_use]
+    pub fn is_vector_wrapper(&self, tp: u16) -> bool {
+        self.types
+            .get(tp as usize)
+            .is_some_and(|t| t.name.starts_with("main_vector<"))
+    }
+
+    /// `@FR-R-Place` — a wrapper mint (`OpDatabase(b, main_vector<T>)`, a returned collection
+    /// literal's) into a LIVE buffer that is not that wrapper's own store: the caller handed
+    /// the callee a PLACE, a collection field of a record of its own ("the buffer IS the
+    /// place").  The mint answers the place itself, with the collection it held released and
+    /// its handle empty, so the literal that follows builds where it lives.  The ordinary
+    /// mint would clear the STORE the place lives in — every record of the caller's beside
+    /// it.  A buffer is the wrapper's own store when it addresses that store's first record
+    /// and the store was minted as that wrapper (the offset into the record differs between
+    /// the backends); every other live buffer is a place.
+    /// `false` (mint as usual) for a null buffer, the own store, or any other type.
+    pub fn mint_at_place(&mut self, db: &DbRef, tp: u16) -> bool {
+        if db.store_nr == u16::MAX
+            || db.rec == 0
+            || (db.store_nr as usize) >= self.allocations.len()
+            || !self.is_vector_wrapper(tp)
+            || (db.rec == 1 && self.allocations[db.store_nr as usize].known_type == tp)
+        {
+            return false;
+        }
+        self.remove_claims(db, tp);
+        self.store_mut(db).set_u32_raw(db.rec, db.pos, 0);
+        true
+    }
+
     pub fn refill_keeps(&self, db: &DbRef, tp: u16) -> bool {
         (db.rec, db.pos) == (1, 8)
             && (db.store_nr as usize) < self.allocations.len()
             && !self.is_stack_store(db.store_nr)
             && self.allocations[db.store_nr as usize].known_type == tp
             && self.allocations[db.store_nr as usize].content_swappable(false)
+    }
+
+    /// `@FR-R-RefillText`'s collection clause — the entry of a refilling callee whose return
+    /// buffer is a one-field wrapper of `vector<E>`, `E` a record of scalars and texts, with its
+    /// vector field at byte `field`.  A live buffer the mint keeps (`refill_keeps`, the test
+    /// `OpDatabaseRefill` asks) keeps its ELEMENTS: the length becomes 0 and the old length `K`
+    /// is answered — slot `i < K` still owns its texts, and the build's element text sets refill
+    /// them.  Only slots under the length are trusted: past it, a removal leaves a stale copy
+    /// of a live element.  Any other buffer is released as the clause's absence releases it
+    /// (the releasing clear) and answers 0.
+    pub fn refill_keep_open(&mut self, buf: &DbRef, tp: u16, field: u32) -> u32 {
+        if buf.store_nr == u16::MAX || buf.rec == 0 {
+            return 0;
+        }
+        if !(crate::keys::refill_buffer_enabled() && self.refill_keeps(buf, tp)) {
+            self.clear_vector_release(buf);
+            return 0;
+        }
+        let store = self.store_mut(buf);
+        let v_rec = store.collection_rec(buf.rec, buf.pos + field);
+        if v_rec == 0 {
+            return 0;
+        }
+        let keep = store.get_u32_raw(v_rec, 4);
+        store.set_u32_raw(v_rec, 4, 0);
+        keep
+    }
+
+    /// The exit of [`Self::refill_keep_open`]'s build: the texts the kept slots `[len, keep)`
+    /// still own — the slots this call did not refill — are released and their slots zeroed,
+    /// so nothing past the length owns heap again.  `size` is the element's width, `texts`
+    /// its text slots' offsets.  A vector that grew past `keep` has no such slot.
+    pub fn refill_keep_close(
+        &mut self,
+        buf: &DbRef,
+        field: u32,
+        keep: u32,
+        size: u32,
+        texts: &[u32],
+    ) {
+        if keep == 0 || buf.store_nr == u16::MAX || buf.rec == 0 {
+            return;
+        }
+        let store = self.store_mut(buf);
+        let v_rec = store.collection_rec(buf.rec, buf.pos + field);
+        if v_rec == 0 {
+            return;
+        }
+        let len = store.get_u32_raw(v_rec, 4);
+        for i in len..keep {
+            for off in texts {
+                let at = 8 + i * size + off;
+                let old = store.get_u32_raw(v_rec, at);
+                if old != 0 {
+                    store.delete(old);
+                    store.set_u32_raw(v_rec, at, 0);
+                }
+            }
+        }
     }
 
     pub(crate) fn take_spare(&mut self, tp: u16) -> Option<DbRef> {
@@ -1291,6 +1383,19 @@ impl Stores {
         if file_ref != i32::MIN && (file_ref as usize) < self.files.len() {
             self.files[file_ref as usize] = None;
         }
+    }
+
+    /// `@FR-L-CapOwn` — does `db` name a store that is still allocated (`OpStoreLive`)?  The
+    /// question [`Self::free_named`] asks before it releases one: a closure record's cascade
+    /// is emitted ahead of each free of the record and runs only where that free releases.
+    #[must_use]
+    pub fn store_live(&self, db: &DbRef) -> bool {
+        db.rec != 0
+            && db.store_nr != u16::MAX
+            && self
+                .allocations
+                .get(db.store_nr as usize)
+                .is_some_and(|s| !s.is_free())
     }
 
     /**
@@ -1448,64 +1553,10 @@ impl Stores {
         // store is single-owner (closure-captured cells are owned by the closure
         // record's cascade, not rc — see Phase B), so `free_named` always frees.
         // (Pinned const/global stores returned above.)
-        // P259 commit 4: cascade-free closure-record DbRef attributes.
-        // When the store being freed holds a `__closure_*` record, each
-        // ADOPTED `DbRef` field references a store the record is the sole
-        // owner of: the closure's captured `__cell_<T>` (C74 limits a mutated
-        // cell to one capturing closure), or a `Reference` / collection
-        // capture the defining frame owned and handed over — the frame's own
-        // `OpFreeRef` is suppressed for exactly those (`scopes.rs`
-        // `captured_ref`), so this cascade is their single free, and that is
-        // what lets an escaping factory closure outlive the frame (#323).
-        // Walk those fields, read each 12-byte stored DbRef, and recursively
-        // free_named.  There is no ref-count (plan-57 phase C removed it):
-        // when the target was already freed the recursive call hits the
-        // `store.free` no-op above.
-        //
-        // A BORROWED capture (`dbref_borrow`, #682) is skipped: its store
-        // belongs to a parameter's caller or to the vector a projection local
-        // views into, both of which outlive this record.  Freeing it here
-        // handed the caller a dangling World and surfaced as a panic thousands
-        // of ops later in whatever function next touched it.
-        //
-        // Gated on the type name's `__closure_` prefix because:
-        // - Only closure records hold cells via Parts::DbRef.
-        // - User code can't define identifiers with `__` prefix
-        //   (loft parser rejects), so the prefix check is leak-free.
-        // - Cascading every Parts::DbRef field would break P213
-        //   ChildRec storage and any future DbRef-holding struct.
-        let cascade_targets: Vec<DbRef> = {
-            let store_ref = &self.allocations[al as usize];
-            let known_type = store_ref.known_type;
-            if known_type != u16::MAX
-                && self.types[known_type as usize]
-                    .name
-                    .starts_with("__closure_")
-            {
-                let dbref_positions: Vec<u16> =
-                    if let Parts::Struct(fields) = &self.types[known_type as usize].parts {
-                        fields
-                            .iter()
-                            .filter(|f| self.dbref_is_adopted(f.content))
-                            .map(|f| f.position)
-                            .collect()
-                    } else {
-                        Vec::new()
-                    };
-                dbref_positions
-                    .iter()
-                    .map(|&fpos| {
-                        let off = db.pos + u32::from(fpos);
-                        let store_nr = store_ref.get_u32_raw(db.rec, off) as u16;
-                        let rec = store_ref.get_u32_raw(db.rec, off + 4);
-                        let pos = store_ref.get_u32_raw(db.rec, off + 8);
-                        DbRef { store_nr, rec, pos }
-                    })
-                    .collect()
-            } else {
-                Vec::new()
-            }
-        };
+        // A closure record's captured stores are released by the record's synthesized drop
+        // cascade, which the compiler emits at every release of the record (`@FR-L-CapOwn`,
+        // CODEGEN_METHOD.md § Ownership and copy semantics are emitted code).  Freeing a
+        // store releases that store and nothing it points at.
         match crate::keys::stores_mode() {
             Some("log") => {
                 let active = self.allocations.iter().filter(|s| !s.free).count();
@@ -1611,22 +1662,6 @@ impl Stores {
         // can reuse it without LIFO ordering.
         self.set_free_bit(al);
         self.trim_free_top(al);
-        // P259 commit 4: cascade-free the captured-cell DbRefs collected
-        // above.  Done AFTER the closure record's own free so that
-        // a recursive cascade on a closure-record cell sees this slot
-        // as already-freed and does not re-enter.  Skip the null
-        // sentinel pattern (store_nr=0, rec=0) which is the default
-        // value written by `set_default_value` for unset DbRef fields.
-        for target in cascade_targets {
-            // A captured GENERATOR handle is no store: the closure's drop hook gives its hold
-            // back (`(G-Hold)`), and here it named `--native`'s coroutine table as a store.
-            if crate::database::format::is_generator_handle(target.store_nr) {
-                continue;
-            }
-            if target.store_nr != 0 || target.rec != 0 {
-                self.free_named(&target, "<cascade>");
-            }
-        }
     }
 
     /// S29: Find the lowest free slot index below `max` using the `free_bits` bitmap.
@@ -4889,14 +4924,7 @@ impl Stores {
     /// Never `Some(false)`: a non-empty slot is the walk's to release.
     #[inline]
     pub(crate) fn holds_no_heap_fast(&self, rec: &DbRef, tp: u16) -> Option<bool> {
-        let row = self.types.get(tp as usize)?;
-        if row.heap_slots.get().is_none() {
-            let derived = self
-                .derive_heap_slots(tp, 0, &mut Vec::new())
-                .map(Vec::into_boxed_slice);
-            row.heap_slots.set(derived);
-        }
-        let slots = row.heap_slots.get()?.as_deref()?;
+        let slots = self.heap_slots_of(tp)?;
         if slots.is_empty() {
             return Some(true);
         }
@@ -4935,6 +4963,58 @@ impl Stores {
             }
         }
         Some(true)
+    }
+
+    /// `@FR-R-RefillText` (a) — the byte offsets of a `tp` record's TEXT slots, nested inline
+    /// records flattened, when text is the only heap the type can own: `None` for a
+    /// collection, a heap-owning enum payload or a field the heap-slot plan cannot express.
+    #[must_use]
+    pub fn text_slots(&self, tp: u16) -> Option<Vec<u32>> {
+        self.heap_slots_of(tp)?
+            .iter()
+            .map(|s| match *s {
+                HeapSlot::Text(off) => Some(off),
+                HeapSlot::Collection(_) | HeapSlot::Tag(..) => None,
+            })
+            .collect()
+    }
+
+    /// `@FR-R-RefillText`'s vector clause — the offsets of `tp`'s vector fields when every
+    /// field that owns heap is a plain `vector<E>` whose elements own none (no text, no
+    /// collection, no linked group); `None` for any other heap, inline sub-records included.
+    #[must_use]
+    pub fn vector_slots(&self, tp: u16) -> Option<Vec<u32>> {
+        let Parts::Struct(fields) = &self.types.get(tp as usize)?.parts else {
+            return None;
+        };
+        let mut out = Vec::new();
+        for f in fields {
+            if !self.type_owns_heap(f.content) {
+                continue;
+            }
+            if !f.other_indexes.is_empty() {
+                return None;
+            }
+            match &self.types.get(f.content as usize)?.parts {
+                Parts::Vector(elem) if !self.type_owns_heap(*elem) && !self.is_linked(*elem) => {
+                    out.push(u32::from(f.position));
+                }
+                _ => return None,
+            }
+        }
+        Some(out)
+    }
+
+    /// A type's heap slots, derived on the first ask and cached on its row.
+    fn heap_slots_of(&self, tp: u16) -> Option<&[HeapSlot]> {
+        let row = self.types.get(tp as usize)?;
+        if row.heap_slots.get().is_none() {
+            let derived = self
+                .derive_heap_slots(tp, 0, &mut Vec::new())
+                .map(Vec::into_boxed_slice);
+            row.heap_slots.set(derived);
+        }
+        row.heap_slots.get()?.as_deref()
     }
 
     /// The heap slots of a `tp` record placed `base` bytes into its parent, nested inline
@@ -7766,7 +7846,7 @@ mod p318_hash_deepcopy {
             pos: src.pos + list_pos,
         };
         let elem = stores.store_mut(&src).claim(cell_words);
-        stores.store_mut(&src).set_int(elem, 4, 7); // element payload
+        stores.store_mut(&src).set_int(elem, 8, 7); // element payload: field `k`
         let cur = stores.store_mut(&src).claim(2); // container: header word + one slot word (len 2)
         stores.store_mut(&src).set_u32_raw(cur, 4, 2); // length header = 2
         stores.store_mut(&src).set_u32_raw(cur, 8, elem); // slot0 → real element

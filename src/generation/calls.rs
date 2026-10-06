@@ -216,18 +216,79 @@ impl Output<'_> {
             && (self.current_call_def as usize) < self.data.definitions.len()
             && std::ptr::eq(self.data.def(self.current_call_def), def_fn)
             && self.ranged_call(self.current_call_def, vals, twin_args.is_some());
+        let (released_first, refill_twin) = self.refill_text_call(
+            w,
+            def_fn,
+            vals,
+            twin_args.is_some() || ranged || forward.is_some(),
+        )?;
         write!(
             w,
-            "{}{}{}(",
+            "{}{}{}{}(",
             self.fn_ident(def_fn),
             if twin_args.is_some() { "__inv" } else { "" },
-            if ranged { "__rg" } else { "" }
+            if ranged { "__rg" } else { "" },
+            if refill_twin { "__rt" } else { "" }
         )?;
         let mut first_arg = true;
         if matches!(abi, crate::codegen_runtime::Abi::Cell) {
             write!(w, "cell")?;
             first_arg = false;
         }
+        let callee_nr = self.current_call_def;
+        self.emit_user_call_args(w, def_fn, vals, first_arg)?;
+        if let Some(extra) = &twin_args {
+            for e in extra {
+                write!(w, ", {e}")?;
+            }
+        }
+        write!(w, ")")?;
+        if is_generator {
+            write!(w, ")")?; // close alloc_coroutine(...)
+        } else if narrow_int_cast(def_fn.returned()).is_some()
+            && !matches!(def_fn.returned().base(), Type::Boolean)
+        {
+            // Narrow integer return types (u8/u16/i8/i16) must be widened so that
+            // assignments and comparisons with default-Integer expressions type-check.
+            // Post-2c: widen to i64 (the default Integer width).
+            // @PLN17: boolean's expression form is u8/bool, never i64 — no widening
+            // (incl. `boolean?`: its slot is u8, so `.base()` excludes it here too).
+            write!(w, " as i64")?;
+        }
+        if let Some(buf) = forward {
+            let tp = self
+                .value_records
+                .fns
+                .get(&callee_nr)
+                .copied()
+                .unwrap_or(u16::MAX);
+            write!(w, "; let mut __vd = ")?;
+            self.output_code_inner(w, &Value::Var(buf))?;
+            // The callee's own allocate-or-reuse guard: a buffer that is absent or holds no
+            // record is minted here, as the callee's exit mints it.
+            write!(
+                w,
+                "; if !(__vd.store_nr != u16::MAX && __vd.rec != 0) {{ __vd = OpDatabase(cell, __vd, {tp}_i32); }} "
+            )?;
+            self.write_tuple_fields(w, tp, &Value::RawExpr("__vd".to_string()), "__vt")?;
+            write!(w, "__vd }}")?;
+        }
+        if released_first {
+            write!(w, " }}")?;
+        }
+        Ok(())
+    }
+
+    /// The arguments of a user-fn call, after `cell` when `first_arg` is false: each through
+    /// [`Self::emit_call_arg`], an element-placed buffer as its element's field, and an
+    /// admitted value-record callee's dropped buffer left out.
+    fn emit_user_call_args(
+        &mut self,
+        w: &mut dyn Write,
+        def_fn: &Definition,
+        vals: &[Value],
+        mut first_arg: bool,
+    ) -> std::io::Result<()> {
         // @PLN157 § V-aa (`@FR-R-ValueRecord`) — an admitted callee has no return buffer
         // parameter, so the site must not pass one: the buffer argument is the attribute
         // the signature dropped, in the same position.
@@ -269,43 +330,53 @@ impl Output<'_> {
             // parameter forms) are about this call, so it is restored per argument.
             self.current_call_def = callee_nr;
         }
-        if let Some(extra) = &twin_args {
-            for e in extra {
-                write!(w, ", {e}")?;
-            }
-        }
-        write!(w, ")")?;
-        if is_generator {
-            write!(w, ")")?; // close alloc_coroutine(...)
-        } else if narrow_int_cast(def_fn.returned()).is_some()
-            && !matches!(def_fn.returned().base(), Type::Boolean)
-        {
-            // Narrow integer return types (u8/u16/i8/i16) must be widened so that
-            // assignments and comparisons with default-Integer expressions type-check.
-            // Post-2c: widen to i64 (the default Integer width).
-            // @PLN17: boolean's expression form is u8/bool, never i64 — no widening
-            // (incl. `boolean?`: its slot is u8, so `.base()` excludes it here too).
-            write!(w, " as i64")?;
-        }
-        if let Some(buf) = forward {
-            let tp = self
-                .value_records
-                .fns
-                .get(&callee_nr)
-                .copied()
-                .unwrap_or(u16::MAX);
-            write!(w, "; let mut __vd = ")?;
-            self.output_code_inner(w, &Value::Var(buf))?;
-            // The callee's own allocate-or-reuse guard: a buffer that is absent or holds no
-            // record is minted here, as the callee's exit mints it.
-            write!(
-                w,
-                "; if !(__vd.store_nr != u16::MAX && __vd.rec != 0) {{ __vd = OpDatabase(cell, __vd, {tp}_i32); }} "
-            )?;
-            self.write_tuple_fields(w, tp, &Value::RawExpr("__vd".to_string()), "__vt")?;
-            write!(w, "__vd }}")?;
-        }
         Ok(())
+    }
+
+    /// `@FR-R-RefillText` — the call its pool statement left the release to: the refill twin
+    /// where the plain callee would be called; before any other twin (`other_twin`), the
+    /// release the pool statement did not emit, opened here and closed after the call.
+    /// Answers whether that release was opened, and whether the call takes the refill twin.
+    fn refill_text_call(
+        &mut self,
+        w: &mut dyn Write,
+        def_fn: &Definition,
+        vals: &[Value],
+        other_twin: bool,
+    ) -> std::io::Result<(bool, bool)> {
+        let refill = match (
+            self.refill_text_pending,
+            self.refill_text.calls.get(&(vals.as_ptr() as usize)),
+        ) {
+            (Some((buf, tp, _)), Some(&(site_buf, _))) if buf == site_buf => {
+                self.refill_text_pending = None;
+                Some((buf, tp))
+            }
+            _ => None,
+        };
+        let Some((buf, tp)) = refill else {
+            return Ok((false, false));
+        };
+        // The vector clause: the callee empties each vector field of the buffer in place
+        // (`(R-RefillBuffer)`) — and any emission of it that does not mints over the live
+        // buffer, which clears its store — so neither a twin nor the release is owed.
+        if self.refill_text.vectors.contains(&(vals.as_ptr() as usize)) {
+            crate::rewrite_census::fired("R-RefillText", 1);
+            return Ok((false, false));
+        }
+        let twin = !other_twin
+            && (self.current_call_def as usize) < self.data.definitions.len()
+            && std::ptr::eq(self.data.def(self.current_call_def), def_fn);
+        crate::rewrite_census::fired("R-RefillText", usize::from(twin));
+        if twin {
+            if !self.rt_requests.contains(&self.current_call_def) {
+                self.rt_requests.push(self.current_call_def);
+            }
+            return Ok((false, true));
+        }
+        let name = super::sanitize(self.data.def(self.def_nr).variables().name(buf));
+        write!(w, "{{ stores.remove_claims(&(var_{name}), {tp}_u16); ")?;
+        Ok((true, false))
     }
 
     /// Emit ONE call argument (no leading separator) — the argument at
@@ -397,6 +468,19 @@ impl Output<'_> {
             write!(w, "unsafe {{ ")?;
             self.output_place_pointer(w, v, &base)?;
             write!(w, " }}")?;
+        // `@FR-B-Ref-Lvalue` — a tuple local's MEMBER handed to a `&` parameter: a pointer
+        // into the Rust tuple's field, as a local link to it holds.
+        } else if let Value::Call(d_nr, args) = v.unspan()
+            && self.data.def(*d_nr).name() == "OpCreateStack"
+            && let [arg] = args.as_slice()
+            && let Value::TupleGet(t, i) = arg.unspan()
+        {
+            let place = self.tuple_member_place(*t, *i);
+            if raw_param {
+                write!(w, "unsafe {{ std::ptr::addr_of_mut!({place}) }}")?;
+            } else {
+                write!(w, "unsafe {{ &mut *std::ptr::addr_of_mut!({place}) }}")?;
+            }
         // OpCreateStack wrapping an addressable expression
         // (e.g. v[i] as & param).  Emit a temporary + &mut so the
         // callee can write through the DbRef into the store.
@@ -425,7 +509,12 @@ impl Output<'_> {
                 // An argument RefVar is already &mut DbRef — pass it
                 // directly instead of dereferencing with *var_name.
                 write!(w, "var_{name}")?;
-            } else if crate::generation::is_raw_tuple_link(caller_vars, *nr) {
+            } else if crate::generation::is_raw_tuple_link(caller_vars, *nr)
+                || matches!(caller_vars.tp(*nr).base(), Type::RefVar(inner)
+                    if matches!(inner.base(), Type::Reference(..) | Type::Enum(_, true, _)))
+            {
+                // A `&`-bound RECORD local (`b: &P = a`, and every `&(…)` since loft#1883) is
+                // the `*mut DbRef` its bind took of the source's slot, re-borrowed the same way.
                 // A `&`-bound tuple LOCAL holds a raw `*mut (…)`, so `&mut var_b` would
                 // hand the callee a reference to the POINTER.  Re-borrow through it to
                 // give the `&(…)` parameter the `&mut (…)` it declares — the caller's
@@ -701,6 +790,56 @@ impl Output<'_> {
             }
         {
             res = "{{let db = @v1; let s_val = AsRef::<str>::as_ref(&*@val); if db.rec != 0 {{ let store = stores.store_mut(&db); let s_pos = store.set_str(s_val); store.set_u32_raw(db.rec, db.pos + u32::from(@fld), s_pos); }}}}".to_string();
+        }
+        // `@FR-R-RefillText` — in a refill twin, the literal's text sets into its own buffer
+        // refill the slot: written over the block the slot owns when the text fits, released
+        // and claimed anew when it does not; a null releases the block the slot held.
+        // `@FR-H-TextReplace` — an assignment's write is the same refill, at every site.
+        if (def_fn.name() == "OpSetTextReplace"
+            || (def_fn.name() == "OpSetText"
+                && self.refill_twin_buf.is_some_and(|b| {
+                    vals.first()
+                        .is_some_and(|t| super::hoist::path_offset(t, b, self.data).is_some())
+                })))
+            && let Some(vi) = def_fn.attributes().iter().position(|a| a.name == "val")
+        {
+            let borrowed = !self.text_set_copy_kept
+                && match vals.get(vi).map(Value::unspan) {
+                    Some(Value::Text(_)) => true,
+                    Some(Value::Var(v)) => self.text_owned(*v),
+                    _ => false,
+                };
+            res = if matches!(vals.get(vi), Some(Value::Null)) {
+                "{{let db = @v1; if db.rec != 0 {{ let store = stores.store_mut(&db); let fld = db.pos + u32::from(@fld); let old = store.get_u32_raw(db.rec, fld); if old != 0 {{ store.delete(old); }} store.set_u32_raw(db.rec, fld, 0u32); }}}}"
+            } else if borrowed {
+                "{{let db = @v1; let s_val = AsRef::<str>::as_ref(&*@val); if db.rec != 0 {{ stores.store_mut(&db).refill_str(db.rec, db.pos + u32::from(@fld), s_val); }}}}"
+            } else {
+                "{{let db = @v1; let s_val = @val.to_string(); if db.rec != 0 {{ stores.store_mut(&db).refill_str(db.rec, db.pos + u32::from(@fld), &s_val); }}}}"
+            }
+            .to_string();
+        }
+        // `@FR-R-RefillText`'s collection clause — a text set into an element the build
+        // appended: a slot under the kept length refills the block it owns, a slot past it
+        // claims (fresh capacity holds no block).
+        if def_fn.name() == "OpSetText"
+            && let Some(k) = &self.refill.keep
+            && matches!(vals.first().map(Value::unspan), Some(Value::Var(e)) if k.elems.contains(e))
+            && let Some(vi) = def_fn.attributes().iter().position(|a| a.name == "val")
+        {
+            let borrowed = !self.text_set_copy_kept
+                && match vals.get(vi).map(Value::unspan) {
+                    Some(Value::Text(_)) => true,
+                    Some(Value::Var(v)) => self.text_owned(*v),
+                    _ => false,
+                };
+            res = if matches!(vals.get(vi), Some(Value::Null)) {
+                "{{let db = @v1; if db.rec != 0 {{ let store = stores.store_mut(&db); let fld = db.pos + u32::from(@fld); if db.pos < __rk_end {{ let old = store.get_u32_raw(db.rec, fld); if old != 0 {{ store.delete(old); }} }} store.set_u32_raw(db.rec, fld, 0u32); }}}}"
+            } else if borrowed {
+                "{{let db = @v1; let s_val = AsRef::<str>::as_ref(&*@val); if db.rec != 0 {{ let store = stores.store_mut(&db); let fld = db.pos + u32::from(@fld); if db.pos < __rk_end {{ store.refill_str(db.rec, fld, s_val); }} else {{ let s_pos = store.set_str(s_val); store.set_u32_raw(db.rec, fld, s_pos); }} }}}}"
+            } else {
+                "{{let db = @v1; let s_val = @val.to_string(); if db.rec != 0 {{ let store = stores.store_mut(&db); let fld = db.pos + u32::from(@fld); if db.pos < __rk_end {{ store.refill_str(db.rec, fld, &s_val); }} else {{ let s_pos = store.set_str(&s_val); store.set_u32_raw(db.rec, fld, s_pos); }} }}}}"
+            }
+            .to_string();
         }
         // Bytecode templates wrap text values in Str::new(...) for put_stack compatibility.
         // Native code uses &str directly — strip the wrapper by extracting its argument.

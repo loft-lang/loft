@@ -1,0 +1,128 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-H-TextReplace` across frames — an assignment to a text field of a record reached
+// through a PARAMETER releases the text it replaces when no frame on the stack can still
+// borrow that text: every `text` parameter of the writer is only the value written, no text
+// variable of the writer borrows the record, every caller is a visible direct call, and at
+// each call the record's owner is a local no text variable there borrows, or a parameter of a
+// caller that holds the same.  Every value below is computed by hand, on both backends.
+//
+// What can go wrong is a borrow above the writer reading the released block: a `text`
+// parameter of the writer read after the write (p3), of a caller holding the borrow across
+// the call (p4), a caller's walk over the field (p5), an argument an enclosing call has
+// already evaluated (p6), and a writer also reached through a fn-ref, whose callers cannot be
+// seen (p7).  A self-assignment through a parameter (p10) copies its value before the
+// release; a generator keeps its own copy of the text it was started with (p12); a caller's
+// text local read from the record before the call is an owned copy and keeps its text (p13).  The census
+// cells count every store's live records after 10 and after 1 000 calls of each admitted
+// shape — a method, recursion, two levels, an element loop — with the record still alive.
+// `LOFT_POISON=1`, `LOFT_POISON_CLAIM=1` and `LOFT_STRICT_STORES=1` must answer identically.
+//
+// @falsified-at: 89da26e59 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native
+//   exit 1 -> 0, native 1 assertion failures -> 0.  Every write through a parameter kept the
+//   text it replaced.
+//   CHANNEL: an assertion in the census, on BOTH backends.
+//   ARMED: nothing beyond the run itself — the census is `store_memory()`'s live-record count.
+//   WITNESS: `c_setp grows: 15 -> 1005` (`13 -> 1003` on --native).
+//   HOLDS: every value cell, on both trees (the leak never moves a value).
+// @falsified-by: tests/falsified/1876-a-text-field-written-through-a-parameter-releases-the-text-it-replaces.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   Every candidate parameter admitted without its call sites, so a caller's borrow is
+//   released under it.
+//   CHANNEL: an assertion in a value cell, on BOTH backends.
+//   ARMED: nothing — the borrowed text reads the released block in an ordinary run.
+//   WITNESS: `p4 w7cond record text, long enough|w7` (the caller's parameter overwritten).
+//   HOLDS: the census cells (the admitted shapes are admitted either way).
+// @falsified-by: tests/falsified/1879-a-callers-text-local-is-a-copy-not-a-borrow.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   A text local counted as a borrow again when it is an argument evaluated before the
+//   writing call.
+//   CHANNEL: an assertion in the census, on BOTH backends.
+//   ARMED: nothing beyond the run itself.
+//   WITNESS: `c_inflight grows: 15 -> 1005` (`13 -> 1003` on --native).
+//   HOLDS: every value cell, on both trees (declining a release never moves a value).
+
+struct T2 { a: text, b: text, n: integer }
+
+fn census_records() -> integer {
+  cr_t = store_memory();
+  cr_i = cr_t.find("records ");
+  if !cr_i { return -1 }
+  cr_j = cr_i + 8;
+  cr_n = 0;
+  while cr_j < len(cr_t) && cr_t[cr_j] >= '0' && cr_t[cr_j] <= '9' {
+    cr_n = cr_n * 10 + (cr_t[cr_j] as integer - '0' as integer);
+    cr_j += 1;
+  }
+  cr_n
+}
+
+fn setp(q: T2, i: integer) { q.a = "w{i}"; }
+fn set_name(self: T2, name: text) { self.a = name; }
+fn g(p: text, q: T2) -> text { q.a = "zz"; "{p}" }
+fn big(p: text, q: T2) -> text { setp(q, 7); "{p}" }
+fn setp_n(q: T2) -> integer { q.a = "inflight"; 5 }
+fn pick(a: text, n: integer) -> text { "{a}:{n}" }
+fn rec(q: T2, n: integer) { q.a = "r{n}"; if n > 0 { rec(q, n - 1); } }
+fn inner(q: T2, i: integer) { q.a = "in{i}"; }
+fn outer(q: T2, i: integer) { inner(q, i); }
+fn fr_set(q: T2, i: integer) { q.a = "fr{i}"; }
+fn gen(p: text) -> iterator<text> { for i in 0..2 { yield "{p}-{i}"; } }
+
+fn m_rec(n: integer) -> integer { r = T2 { a: "x", b: "y", n: 1 }; for _ in 0..n { rec(r, 3); } assert(r.a == "r0", "m_rec {r.a}"); census_records() }
+fn m_two(n: integer) -> integer { r = T2 { a: "x", b: "y", n: 1 }; for i in 0..n { outer(r, i); } assert(r.a == "in{n - 1}", "m_two {r.a}"); census_records() }
+
+fn p3() -> text { r = T2 { a: "hello world, a long first text", b: "y", n: 1 }; "{g(r.a, r)}|{r.a}" }
+fn p4() -> text { r = T2 { a: "second record text, long enough", b: "y", n: 1 }; "{big(r.a, r)}|{r.a}" }
+fn p5() -> text { r = T2 { a: "abcdefghij", b: "y", n: 1 }; w = ""; for c in r.a { w += c; setp(r, 1); } "{w}|{r.a}" }
+fn p6() -> text { r = T2 { a: "argument text long enough", b: "y", n: 1 }; x = pick(r.a, setp_n(r)); "{x}|{r.a}" }
+fn p7() -> text { r = T2 { a: "fnref start text long enough", b: "y", n: 1 }; f = fr_set; x = r.a; fr_set(r, 1); f(r, 2); "{x}|{r.a}" }
+fn p10() -> text { r = T2 { a: "self assign text, long enough", b: "y", n: 1 }; set_name(r, r.a); a1 = r.a; set_name(r, r.a[5..]); "{a1}|{r.a}" }
+fn p12() -> text { r = T2 { a: "generator input, a long text", b: "y", n: 1 }; it = gen(r.a); setp(r, 3); out = ""; for s in it { out += s; out += ";"; } "{out}|{r.a}" }
+
+
+// #1879: a caller that keeps a text read from the record before the call.  `old` is an owned
+// copy, so the write through the parameter still releases, and `old` keeps the first text.
+fn k_name(self: T2, name: text) { self.a = name; }
+fn keep_old(r: T2) -> text { old = r.a; k_name(r, "new"); old }
+fn p13() -> text { r = T2 { a: "first text, long enough to own a block", b: "y", n: 1 }; "{keep_old(r)}|{r.a}" }
+fn c_keep(n: integer) -> integer { r = T2 { a: "x", b: "y", n: 1 }; for i in 0..n { k_name(r, "w{i}"); } assert(r.a == "w{n - 1}", "c_keep {r.a}"); census_records() }
+
+// #1879's in-flight half: a text LOCAL evaluated as an earlier argument is an owned copy, so
+// it holds no borrow while `setcount` writes through its parameter.
+fn setcount(q: T2, i: integer) -> integer { q.a = "s{i}"; i }
+fn tag(label: text, n: integer) -> integer { len(label) + n }
+fn c_inflight(n: integer) -> integer {
+  r = T2 { a: "x", b: "y", n: 1 };
+  t = 0;
+  for i in 0..n { lbl = "L{i % 10}"; t += tag(lbl, setcount(r, i)); }
+  assert(t == n * 2 + n * (n - 1) / 2, "c_inflight sum {t}");
+  census_records()
+}
+
+// Census helpers: each is called only from its own loop, so every caller is a safe frame.
+fn s_setp(q: T2, i: integer) { q.a = "w{i}"; }
+fn s_name(self: T2, name: text) { self.a = name; }
+fn s_elem(q: T2, i: integer) { q.a = "e{i}"; }
+fn c_setp(n: integer) -> integer { r = T2 { a: "x", b: "y", n: 1 }; for i in 0..n { s_setp(r, i); } assert(r.a == "w{n - 1}", "c_setp {r.a}"); census_records() }
+fn c_name(n: integer) -> integer { r = T2 { a: "x", b: "y", n: 1 }; for i in 0..n { s_name(r, "nm{i}"); } assert(r.a == "nm{n - 1}", "c_name {r.a}"); census_records() }
+fn c_elem(n: integer) -> integer { v: vector<T2> = [T2 { a: "x", b: "y", n: 1 }, T2 { a: "x", b: "y", n: 2 }]; for i in 0..n { for e in v { s_elem(e, i); } } assert(v[1].a == "e{n - 1}", "c_elem {v[1].a}"); census_records() }
+
+fn main() {
+  assert(p3() == "hello world, a long first text|zz", "p3 {p3()}");
+  assert(p4() == "second record text, long enough|w7", "p4 {p4()}");
+  assert(p5() == "abcdefghij|w1", "p5 {p5()}");
+  assert(p6() == "argument text long enough:5|inflight", "p6 {p6()}");
+  assert(p7() == "fnref start text long enough|fr2", "p7 {p7()}");
+  assert(p10() == "self assign text, long enough|assign text, long enough", "p10 {p10()}");
+  assert(p12() == "generator input, a long text-0;generator input, a long text-1;|w3", "p12 {p12()}");
+  assert(p13() == "first text, long enough to own a block|new", "p13 {p13()}");
+  assert(census_records() >= 0, "the census answers");
+  assert(c_keep(1000) == c_keep(10), "c_keep grows: {c_keep(10)} -> {c_keep(1000)}");
+  assert(c_inflight(1000) == c_inflight(10), "c_inflight grows: {c_inflight(10)} -> {c_inflight(1000)}");
+  assert(c_setp(1000) == c_setp(10), "c_setp grows: {c_setp(10)} -> {c_setp(1000)}");
+  assert(c_name(1000) == c_name(10), "c_name grows: {c_name(10)} -> {c_name(1000)}");
+  assert(m_rec(1000) == m_rec(10), "m_rec grows: {m_rec(10)} -> {m_rec(1000)}");
+  assert(m_two(1000) == m_two(10), "m_two grows: {m_two(10)} -> {m_two(1000)}");
+  assert(c_elem(1000) == c_elem(10), "c_elem grows: {c_elem(10)} -> {c_elem(1000)}");
+  println("ok");
+}

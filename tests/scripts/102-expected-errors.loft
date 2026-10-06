@@ -411,26 +411,6 @@ fn dtup2_nested_tuple_element_at_a_local() {
   b.1 = 5;
 }
 
-// A `&` of a tuple ELEMENT or FIELD has no place to link to — both are read element by
-// element into a fresh by-value tuple before the `&` is seen.  binding.md B-Ref-Reshape
-// is what settles it: where the link cannot be honoured loft declines the program rather
-// than downgrading it to a copy.  Downgrading is what it silently did — `b.0 = 9` wrote
-// the copy, the source was unchanged, and both backends agreed.
-// @EXPECT_ERROR: reference to a tuple ELEMENT or FIELD is not a live link
-fn dtup2_amp_of_a_tuple_vector_element() {
-  v = [(1, 2), (3, 4)];
-  b: &(integer, integer) = v[0];
-  b.0 = 9;
-}
-
-struct Dtup2Holder { pair: (integer, integer) }
-// @EXPECT_ERROR: reference to a tuple ELEMENT or FIELD is not a live link
-fn dtup2_amp_of_a_tuple_struct_field() {
-  s = Dtup2Holder { pair: (1, 2) };
-  b: &(integer, integer) = s.pair;
-  b.0 = 9;
-}
-
 // A generator's `return` carries no value, and both spellings of "return a value from a
 // generator" used to be accepted and DISCARDED — `--interpret` answered an empty sequence
 // with no diagnostic, `--native` panicked in `alloc_coroutine`.  `formal/coroutines.md`

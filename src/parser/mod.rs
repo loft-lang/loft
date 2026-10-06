@@ -391,6 +391,10 @@ pub struct Parser {
     /// `(T-Destr)` over places — the value the next `parse_assign_op` stores, read off the
     /// pattern's temp, in place of a right-hand side it would otherwise parse itself.
     pub(crate) preset_rhs: Option<(Value, Type)>,
+    /// The variable whose `x: const T = …` declaration is being parsed: its own initialising
+    /// bind sets the value and is not a write `const` forbids (`@FR-Const-ConstructExempt`).
+    /// `u16::MAX` outside one.
+    pub(crate) declaring_const: u16,
     /// @PLN86 — the host-supplied sandbox policy (profiles + designations).
     /// Empty by default; set by the embedder before parsing.  A script cannot
     /// designate itself — the designation is read from here, not the source.
@@ -893,6 +897,13 @@ pub struct Parser {
     /// T-Ref); every other tuple local keeps its stack form.  Recorded in pass 1 at the link
     /// and consulted at the bind in pass 2, the same shape as `adopted_ret_defs`.
     ref_linked_tuple_locals: std::collections::HashSet<(u32, String)>,
+    /// Pass 1's tuple-local call arguments, `(function, callee def name, argument index,
+    /// local)`, judged against the callee's signature between the passes
+    /// (`record_forward_ref_tuple_links`).
+    pending_tuple_args: Vec<(u32, String, usize, String)>,
+    /// Set while an argument for a record-backed `&(…)` parameter parses: a struct field of
+    /// tuple type is then read with its address, as under `amp_pending` (loft#1883).
+    pub(crate) tuple_place_wanted: bool,
     /// loft#1695 — `(function, root variable)` of every COLLECTION loop source a body
     /// replaced (`for p in d.rs { d = … }`), recorded on pass 1 so pass 2 walks a copy taken
     /// at loop start (`@FR-I-For`: the source is evaluated once).  Keyed by the root's NAME,
@@ -1165,6 +1176,15 @@ pub struct Parser {
     pub(crate) capture_const: std::collections::HashSet<String>,
     /// The `capture_const` of each enclosing lambda, restored where `capture_context` is.
     pub(crate) capture_const_saved: Vec<std::collections::HashSet<String>>,
+    /// loft#1869 — the closure LAMBDA each fn-ref local of the enclosing scope holds, by name,
+    /// where the local is backed by a closure record built in that scope.  A lambda capturing
+    /// such a fn-ref keeps the inner closure in a fn field of its own record, laid out for that
+    /// lambda's record.  Saved and restored with `capture_const`.
+    pub(crate) capture_fn_lambda: std::collections::HashMap<String, u32>,
+    /// The capturing lambda the expression just parsed built, both passes — what an assignment
+    /// of it to a fn-ref local notes ([`Function::note_fn_lambda`], loft#1869).
+    pub(crate) last_closure_lambda: u32,
+    pub(crate) capture_fn_lambda_saved: Vec<std::collections::HashMap<String, u32>>,
     /// Captures a lambda REBINDS whole-value (`p = [..]`), keyed by the lambda's def.
     ///
     /// Recorded where the assignment is parsed, because by the time the lambda closes its
@@ -1191,6 +1211,11 @@ pub struct Parser {
     /// drop cascade reads this to walk the vector rather than release one element-typed
     /// record at the vector's slot (loft#1606).
     pub(crate) closure_shared_vectors: std::collections::HashMap<(u32, String), Type>,
+    /// loft#1874 — `(lambda, captured name)` → the attribute of the fn field's UNION closure
+    /// record that holds it, where another lambda of the field captures the same name as a
+    /// different type ([`Parser::unite_field_closure_records`]).  Read through
+    /// [`Parser::capture_attr`].
+    pub(crate) capture_alias: std::collections::HashMap<(u32, String), String>,
     /// Variable number of the __closure parameter inside a lambda body (second pass).
     /// `u16::MAX` when not inside a capturing lambda.
     pub(crate) closure_param: u16,
@@ -1737,6 +1762,7 @@ impl Parser {
             rebuild_watch_hit: false,
             in_tuple_lhs: false,
             preset_rhs: None,
+            declaring_const: u16::MAX,
             sandbox: crate::sandbox::SandboxConfig::default(),
             def_sandbox: HashMap::new(),
             sandbox_unbounded_loops: HashMap::new(),
@@ -1796,6 +1822,8 @@ impl Parser {
             infer_ret_defs: std::collections::HashSet::new(),
             adopted_ret_defs: std::collections::HashSet::new(),
             ref_linked_tuple_locals: std::collections::HashSet::new(),
+            pending_tuple_args: Vec::new(),
+            tuple_place_wanted: false,
             loop_sources_replaced: std::collections::HashSet::new(),
             pattern_binds_pending: Vec::new(),
             pattern_bind_frames: Vec::new(),
@@ -1870,10 +1898,14 @@ impl Parser {
             capture_owner: std::collections::HashMap::new(),
             capture_const: std::collections::HashSet::new(),
             capture_const_saved: Vec::new(),
+            capture_fn_lambda: std::collections::HashMap::new(),
+            last_closure_lambda: u32::MAX,
+            capture_fn_lambda_saved: Vec::new(),
             rebound_captures: std::collections::HashMap::new(),
             captured_names: Vec::new(),
             branch_sunk_vectors: std::collections::HashSet::new(),
             closure_shared_vectors: std::collections::HashMap::new(),
+            capture_alias: std::collections::HashMap::new(),
             fn_lambdas: std::collections::HashMap::new(),
             closure_param: u16::MAX,
             cur_type_vars: Vec::new(),
@@ -2849,19 +2881,16 @@ impl Parser {
     /// here rather than repeating the check beside it: a second copy of the admitted list
     /// is the shape loft#1006 already was.
     ///
-    /// Which representation the `&(…)` names is decided here too (tuples.md T-Ref-Rep): the
-    /// stack for an all-scalar tuple, and a reference to the `__tuple<…>` RECORD — what a `&S`
-    /// is — for anything else.  The remaining refusal is for an element the record cannot
+    /// Which representation the `&(…)` names is decided here too (`@FR-T-Ref-Rep`): a
+    /// reference to the `__tuple<…>` RECORD — what a `&S` is — for every member list the
+    /// record can lay out, so a link to a tuple local, a vector element and a struct field is
+    /// one mechanism (loft#1883).  The remaining refusal is for an element the record cannot
     /// spell or lay out as a field.
     pub(crate) fn ref_var_type(&mut self, tp: Type) -> Type {
-        // A `&(…)` whose elements are not all scalars is a reference to the synthesized
-        // `__tuple<…>` RECORD — exactly what a `&S` is — rather than a stack link: a heap
-        // element has no stack form the reference ops can address (tuples.md T-Ref).  The
-        // record form already carries every element type a struct field can, which is what
-        // the loop variable over a `vector<(…)>` and a heap-tuple RETURN use.
+        // The record form carries every element type a struct field can, which is what the
+        // loop variable over a `vector<(…)>` and a heap-tuple RETURN already use.
         if let Type::Tuple(ref elems) = tp
-            && elems.iter().any(|e| !crate::data::ref_tuple_element_ok(e))
-            && elems.iter().all(crate::data::ref_tuple_record_element_ok)
+            && crate::data::ref_tuple_is_record(elems)
         {
             let elems = elems.clone();
             let d = self.data.tuple_def(&mut self.lexer, &elems);
@@ -2885,6 +2914,37 @@ impl Parser {
             );
         }
         Type::RefVar(Box::new(tp))
+    }
+
+    /// `@FR-T-Ref-Rep` — a tuple LOCAL handed to a record-backed `&(…)` parameter is built as the
+    /// `__tuple<…>` record, and the bind that builds it comes before the call.  Pass 1 records
+    /// the local at the call (`ref_linked_tuple_locals`), which it can only do when the
+    /// callee's signature is already known; a callee declared BELOW its caller was refused on
+    /// pass 2 as "a variable this function did not declare" (loft#1883).  Pass 1 leaves no IR
+    /// for a call to a name it cannot see yet, so the call site records each tuple-local
+    /// argument (`pending_tuple_args`) and every signature is known here to judge them.
+    fn record_forward_ref_tuple_links(&mut self) {
+        let pending = std::mem::take(&mut self.pending_tuple_args);
+        for (context, callee, index, local) in pending {
+            let d = self.data.def_nr(&callee);
+            if d == u32::MAX {
+                continue;
+            }
+            let Some(param) = self.data.def(d).attributes().get(index) else {
+                continue;
+            };
+            let record_param = match param.typedef.base() {
+                Type::RefVar(inner) => match inner.base() {
+                    Type::Reference(t, _) => self.data.def(*t).name().starts_with("__tuple<"),
+                    Type::Tuple(elems) => crate::data::ref_tuple_is_record(elems),
+                    _ => false,
+                },
+                _ => false,
+            };
+            if record_param {
+                self.ref_linked_tuple_locals.insert((context, local));
+            }
+        }
     }
 
     fn refuse_forward_tuple_returns(&mut self, adopted: &[(u32, Type)]) {
@@ -2943,7 +3003,7 @@ impl Parser {
                 let Type::Tuple(elems) = &**inner else {
                     return None;
                 };
-                if !elems.iter().any(|e| !crate::data::ref_tuple_element_ok(e)) {
+                if !crate::data::ref_tuple_is_record(elems) {
                     return None;
                 }
                 // `resolve_adopted_stubs` has already pointed the stub at the real type, so a
@@ -3035,6 +3095,7 @@ impl Parser {
         let adopted = self.data.resolve_adopted_stubs(&mut self.lexer);
         self.refuse_forward_tuple_returns(&adopted);
         self.refuse_forward_ref_tuple_params(&adopted);
+        self.record_forward_ref_tuple_links();
         // @PLN125 — the same class, one step earlier in the chain: a bound-method stub's
         // hidden parameters are decided from the INTERFACE method's return type, which on
         // pass 1 can still be an unresolved forward reference.  Re-derive here, before the
@@ -6480,8 +6541,30 @@ impl Parser {
             && let Type::Reference(d, _) = &**ref_tp
             && self.data.def(*d).name().starts_with("__tuple<")
             && let Type::Tuple(elems) = is_type
-            && elems.iter().all(crate::data::ref_tuple_record_element_ok)
+            && crate::data::ref_tuple_is_record(elems)
         {
+            // `@FR-T-Ref-Src` — a vector element or a struct field of tuple type, read with
+            // its address: the parameter names that record, through a borrowed work-ref as
+            // any `&S` argument that is not a variable is passed (loft#1883).
+            if !self.first_pass
+                && let Some(dbref) = Self::stored_tuple_dest(code)
+                && dbref.is_place_read(&self.data)
+            {
+                // Typed as the place's VIEW (it borrows the container), so neither backend
+                // copies the element into a store of its own.  Pass 2 only, so it draws from
+                // the pass-2 sequence (loft#848).
+                let mut rec = (**ref_tp).clone();
+                if let Some(root) = dbref.base_var() {
+                    rec = rec.depending(root);
+                }
+                let wv = self.vars.work_refs_p2(&rec, &mut self.lexer);
+                self.vars.set_skip_free(wv);
+                *code = Value::Insert(vec![
+                    v_set(wv, dbref),
+                    self.cl("OpCreateStack", &[Value::Var(wv)]),
+                ]);
+                return true;
+            }
             if let Value::Var(v) = code.unspan() {
                 self.ref_linked_tuple_locals
                     .insert((self.context, self.vars.name(*v).to_string()));
@@ -6576,6 +6659,15 @@ impl Parser {
                     // reference the `&` bind would hold (@FR-B-Ref-Lvalue).  A copy in a work
                     // variable would take the callee's write and drop it.
                     *code = place;
+                } else if let Value::TupleGet(t, i) = orig.unspan()
+                    && let Err(elem) = self.linkable_tuple_member(*t, *i)
+                {
+                    // A tuple member no link can honour: refused, never copied (the copy would
+                    // take the callee's write and drop it).  The argument stays in the call, so
+                    // the refusal is the only diagnostic.
+                    let i = *i;
+                    self.refuse_tuple_member_link(&elem, i);
+                    *code = orig;
                 } else {
                     // produce a `Value::Insert` so that scope
                     // analysis (`scopes::scan_args`) hoists the
@@ -7129,12 +7221,24 @@ impl Parser {
                 self.data.type_def_nr(test_type),
             );
             if want == have && want_nr != have_nr && want_nr != u32::MAX && have_nr != u32::MAX {
+                // C101 — the program's type shadows a standard-library one wherever the bare
+                // name is written; `std::` names the standard library's (loft#1882).
+                let std_cure = if self.data.def(have_nr).source == crate::data::STD_SOURCE
+                    || self.data.def(want_nr).source == crate::data::STD_SOURCE
+                {
+                    format!(
+                        "; the program's `{want}` shadows the standard library's — write \
+                         `std::{want}` where the standard library's is meant"
+                    )
+                } else {
+                    String::new()
+                };
                 diagnostic_at!(
                     self.lexer,
                     pos,
                     Level::Error,
                     "expected the `{want}` declared at {}, got the one declared at {} — two \
-                     different types share this name on {context}",
+                     different types share this name on {context}{std_cure}",
                     self.data.def(want_nr).position(),
                     self.data.def(have_nr).position()
                 );
@@ -8512,7 +8616,7 @@ impl Parser {
             return Type::Unknown(0);
         }
         // `-> Box<T>` predicts the instance the binding names, as the monomorph declares it.
-        let open = self.open_instance_bindings(&bindings);
+        let open = self.open_instance_bindings(&bindings, g_nr);
         bindings.extend(open);
         let tmpl_returned = self.data.definitions[g_nr as usize].returned.clone();
         let from_tv = bindings
@@ -8612,6 +8716,9 @@ impl Parser {
     /// substitution cannot mint the unboxing temp (it has no frame), so it stamps the read and
     /// the monomorph lowers it through `unbox_tuple_from_dbref`.
     pub(crate) const TV_TUPLE_READ: &'static str = "tvtupleread";
+    /// A struct field of tuple type read while a `&` link parses: `[Drop(OpGetField(record,
+    /// pos, kt)), Tuple(member reads)]`, the address a link to the field names (loft#1883).
+    pub(crate) const TUPLE_FIELD_PLACE: &'static str = "tuple_field_place";
     /// The value [`Parser::null_value`] answers for a type still a TYPE VARIABLE — a `match`
     /// join's fallback, a branch with nothing to yield — asked again of the concrete type by
     /// each monomorph.  Apart from [`Self::TV_NULL_BLOCK`] because every type has this one:
@@ -8937,7 +9044,7 @@ impl Parser {
         bindings.extend(self.associated_bindings(g_nr, &var_bindings));
         // @PLN165 D5 — each open instance the bindings close (`Box<T>` ↦ `Box<integer>`),
         // substituted wherever the template's types mention it.
-        let open = self.open_instance_bindings(&bindings);
+        let open = self.open_instance_bindings(&bindings, g_nr);
         bindings.extend(open);
         // Clone the template data before mutating self.data.
         let tmpl_code = self.data.definitions[g_nr as usize].code.clone();
@@ -9075,12 +9182,18 @@ impl Parser {
         // local is owned, and the caller adopts it as before.
         if new_returned.depend().is_empty() && crate::data::has_lifetime_concern(&new_returned) {
             let attrs_n = self.data.def(d_nr).attributes().len();
-            if let crate::use_analysis::Own::Borrowed { base } =
+            // loft#1880 — the oracle reads a SELF call as a mint, so a recursive instance that
+            // only ever hands its argument's view along (`el(v, i - 1)`, base case `v[0]`)
+            // reads as a `Join`; the leaf walk settles it by the induction the recursion is.
+            // The self call still names the TEMPLATE here (`instantiate_nested_generics` runs
+            // below), and handed the same parameter it can only reach this instance.
+            if let crate::use_analysis::Own::Borrowed { base }
+            | crate::use_analysis::Own::Join { base } =
                 crate::use_analysis::return_ownership(&self.data, d_nr)
                 && (base as usize) < attrs_n
                 && !self.data.def(d_nr).attributes()[base as usize].hidden
                 && matches!(&self.data.def(d_nr).code, Value::Block(bl)
-                    if Self::every_return_leaf_views_var(&self.data, &bl.operators, base))
+                    if Self::every_return_leaf_views_var(&self.data, &bl.operators, base, g_nr))
             {
                 // Written directly: `set_returned` refuses a second write on purpose (a return
                 // type must not change), and this does not change it — it adds the deps the
@@ -9097,6 +9210,17 @@ impl Parser {
                     .returned()
                     .clone()
                     .with_deps(&crate::data::Deps::attrs(vec![base]));
+                self.data.definitions[d_nr as usize].returned = with_dep;
+            } else if let Some(params) = self.monomorph_views_of_params(d_nr, g_nr) {
+                // loft#1880 — no ONE parameter, but a SET of them: a recursion that swaps its
+                // arguments (`sw(b, a, i - 1)`, base case `a[0]`) hands back a view of `a` or of
+                // `b`, which its twin declares `-> T["a", "b"]`.
+                let with_dep = self
+                    .data
+                    .def(d_nr)
+                    .returned()
+                    .clone()
+                    .with_deps(&crate::data::Deps::attrs(params));
                 self.data.definitions[d_nr as usize].returned = with_dep;
             }
         }
@@ -9537,6 +9661,90 @@ impl Parser {
         }
         code.for_each_child_mut(&mut |c| self.resolve_content_eq(c, bindings));
     }
+    /// @FR-F-ParamScalar / @FR-G-Mono — a generic's `p: T` is spelled as a reference to `T`'s
+    /// placeholder, so the template lowered `p = …` as a HEAP-parameter rebind: an entry
+    /// witness, a guarded release and a detach of `p` (`rebind_local_heap_param`).  That is
+    /// the twin's answer for a record instance and the wrong one for any other: an `integer`
+    /// or `float` instance was an internal error on the witness's slot, and a `text` one wrote
+    /// the borrowed argument.  An instance whose parameter is not a heap type drops the
+    /// witness's statements and its mapping, so the scope pass adds no exit release either.
+    fn strip_scalar_instance_rebinds(&mut self, code: &mut Value) {
+        fn strip(code: &mut Value, data: &Data, p: u16, orig: u16) {
+            let is_var = |v: &Value, n: u16| matches!(v.unspan(), Value::Var(x) if *x == n);
+            let witness_op = |v: &Value| match v.unspan() {
+                Value::Call(op, a) => match data.def(*op).name() {
+                    "OpFreeRefIfDistinct" => {
+                        a.len() == 2 && is_var(&a[0], p) && is_var(&a[1], orig)
+                    }
+                    "OpInitRefSentinel" => a.len() == 1 && is_var(&a[0], p),
+                    "OpPutRef" => a.len() == 2 && is_var(&a[0], orig),
+                    _ => false,
+                },
+                Value::Set(v, _) => *v == orig,
+                _ => false,
+            };
+            match code {
+                Value::Block(bl) => bl.operators.retain(|o| !witness_op(o)),
+                Value::Insert(list) => list.retain(|o| !witness_op(o)),
+                _ => {}
+            }
+            code.for_each_child_mut(&mut |c| strip(c, data, p, orig));
+        }
+        for p in 0..self.vars.count() {
+            let Some(orig) = self.vars.rebind_orig(p) else {
+                continue;
+            };
+            let heap = matches!(
+                self.vars.tp(p).base(),
+                Type::Reference(_, _) | Type::Enum(_, true, _)
+            ) || crate::parser::vectors::is_keyed(self.vars.tp(p));
+            if heap {
+                continue;
+            }
+            strip(code, &self.data, p, orig);
+            self.vars.clear_rebind_orig(p);
+        }
+    }
+
+    /// @FR-F-ParamScalar / @FR-G-Mono — a `text` PARAMETER the instance body assigns gets the
+    /// owned shadow local a plain function's parse gives it (`__tp_<name>`, seeded from the
+    /// argument at entry, every use renamed).  The template decided its assignments while the
+    /// parameter was still `T`, so the instance wrote the BORROWED argument slot:
+    /// `fn g<T>(p: T, q: T) -> T { p = q; p }` at `T = text` answered the argument on
+    /// `--interpret` and did not build on `--native`.  The instance takes the twin's answer.
+    fn promote_assigned_text_params(&mut self, code: &mut Value) {
+        let params = self.vars.count();
+        for p in 0..params {
+            if !self.vars.is_argument(p)
+                || self.vars.name(p).starts_with("__")
+                || !matches!(self.vars.tp(p).base(), Type::Text(_))
+            {
+                continue;
+            }
+            let mut assigned = false;
+            code.walk(&mut |n| {
+                if let Value::Set(v, _) = n.unspan()
+                    && *v == p
+                {
+                    assigned = true;
+                }
+            });
+            if !assigned {
+                continue;
+            }
+            let name = self.vars.name(p).to_string();
+            let shadow = self.vars.add_variable(
+                &format!("__tp_{name}"),
+                &Type::Text(Deps::none()),
+                &mut self.lexer,
+            );
+            self.vars.set_promoted_from(shadow, p);
+            collections::rename_var(code, p, shadow);
+            if let Value::Block(bl) = code {
+                bl.operators.insert(0, v_set(shadow, Value::Var(p)));
+            }
+        }
+    }
 
     fn fill_monomorph_body(
         &mut self,
@@ -9652,6 +9860,8 @@ impl Parser {
                 }
             }
         }
+        self.strip_scalar_instance_rebinds(&mut code);
+        self.promote_assigned_text_params(&mut code);
         let vars = std::mem::replace(&mut self.vars, outer_vars);
         self.context = outer_context;
         self.data.definitions[d_nr as usize].code = code;
@@ -10856,8 +11066,31 @@ impl Parser {
             // their recorded arguments: `Box<T>` against `Box<integer>` binds `T` to
             // `integer`.  The arguments live in `Data`, where the keystone pairing below
             // does not look.  A generic enum's instance is an `Enum` (@PLN165 D8).
+            // An open TUPLE (loft#1868) against a tuple — stack or stored — pairs its members.
+            Type::Reference(o, _)
+                if data.is_open_instance(*o) && data.def(*o).instance_of == u32::MAX =>
+            {
+                let members: Vec<Type> = match concrete_tp.base() {
+                    Type::Tuple(ts) => ts.clone(),
+                    Type::Reference(c, _) if data.is_tuple_def(*c) => data
+                        .def(*c)
+                        .attributes()
+                        .iter()
+                        .map(|a| a.typedef.clone())
+                        .collect(),
+                    _ => return Type::Unknown(0),
+                };
+                data.def(*o)
+                    .instance_args
+                    .iter()
+                    .zip(&members)
+                    .map(|(t, a)| Self::resolve_type_var(data, t, tv_nr, a))
+                    .find(|r| !r.is_unknown())
+                    .unwrap_or(Type::Unknown(0))
+            }
             Type::Reference(o, _) | Type::Enum(o, _, _)
                 if data.is_open_instance(*o)
+                    && data.def(*o).instance_of != u32::MAX
                     && matches!(concrete_tp.base(), Type::Reference(c, _) | Type::Enum(c, _, _)
                         if data.def(*c).instance_of == data.def(*o).instance_of) =>
             {
@@ -12373,14 +12606,21 @@ impl Parser {
                 };
                 self.rewrite_generic_type_defaults(args.swap_remove(0))
             }
-            Value::Block(bl) if bl.name == Self::TV_TUPLE_ELEM && bl.operators.len() == 2 => {
+            Value::Block(bl)
+                if bl.name == Self::TV_TUPLE_ELEM && matches!(bl.operators.len(), 2 | 3) =>
+            {
                 let mut bl = *bl;
+                // The member offset a template's tuple FIELD write sits at (loft#1868).
+                let base_pos = match bl.operators.get(2) {
+                    Some(Value::Int(p)) => u16::try_from(*p).unwrap_or(0),
+                    _ => 0,
+                };
                 let src = self.rewrite_generic_type_defaults(bl.operators.remove(1));
-                let elm = bl.operators.remove(0);
+                let elm = self.rewrite_generic_type_defaults(bl.operators.remove(0));
                 let Type::Tuple(elems) = bl.result.base().clone() else {
                     return Value::Null;
                 };
-                let ops = self.emit_tuple_set_ops(&elm, 0, &elems, src);
+                let ops = self.emit_tuple_set_ops(&elm, base_pos, &elems, src);
                 v_block(ops, Type::Void, "tuple_elem_set")
             }
             // loft#1020 — the deferred `== null` / `!= null`.  `bl.result` came through
@@ -13903,17 +14143,50 @@ impl Parser {
             // (loft#1072). The read carries a byte offset, and on pass 1 that offset is
             // `u16::MAX` for every field of a struct whose layout does not exist yet.
             self.fn_ref_read_attr = Some((d_nr, f_nr));
+            // The pair is TWO reads of one record, so a record a call returns is bound once
+            // and both halves read the binding: spliced into each read, `mk().f(21)` ran `mk`
+            // twice on `--native`, and the call lifted out of the pair broke the pair's own
+            // shape there (E0308, a `DbRef` where `(u32, DbRef)` belongs).
+            let (code, bind) = if matches!(code.unspan(), Value::Call(c, _)
+                if !self.data.def(*c).name().starts_with("Op"))
+            {
+                let host = Type::Reference(d_nr, crate::data::Deps::none());
+                let w = self.vars.work_refs(&host, &mut self.lexer);
+                if !self.first_pass {
+                    self.change_var_type(w, &host);
+                }
+                (Value::Var(w), Some(v_set(w, code)))
+            } else {
+                (code, None)
+            };
             // @PLN114 — the layout decides the reader, and BOTH answers are now
             // explicit: a split field reads its closure_rec child, a legacy one
             // synthesises a NULL closure.  `get_val`'s Function arm is the legacy
             // read (tuple / vector elements), so a split field must not fall
             // through to it.
-            return if self.fn_ref_field_is_split(d_nr, f_nr) {
+            let read = if self.fn_ref_field_is_split(d_nr, f_nr) {
                 self.read_fn_ref_split(&tp, u32::from(pos), code)
             } else {
+                // loft#1869 — a closure record's fn-ref capture reads its closure half from the
+                // `<name>__clos` capture beside it.
+                let clos_pos = self.database.position(
+                    self.data.def(d_nr).known_type(),
+                    &format!("{}__clos", self.data.attr_name(d_nr, f_nr)),
+                );
+                let read_clos = if clos_pos == u16::MAX || self.first_pass {
+                    self.cl("OpNullRefSentinel", &[])
+                } else {
+                    self.cl(
+                        "OpGetDbRef",
+                        &[code.clone(), Value::Int(i32::from(clos_pos))],
+                    )
+                };
                 let read_dnr = self.cl("OpGetInt4", &[code, Value::Int(i32::from(pos))]);
-                let read_clos = self.cl("OpNullRefSentinel", &[]);
                 crate::data::v_block(vec![read_dnr, read_clos], tp.clone(), "fn_ref_field_read")
+            };
+            return match bind {
+                Some(bind) => v_block(vec![bind, read], tp, "fn_ref_field_base"),
+                None => read,
             };
         }
         self.get_val(&tp, nullable, u32::from(pos), code, alias)
@@ -13978,6 +14251,215 @@ impl Parser {
     /// leaves dangling DbRefs — silent cross-object corruption once
     /// the store slot is reused.  The three escape sinks reject on
     /// this predicate; locals and downward argument passing stay free.
+    /// loft#1877, `@FR-L-CapOwn` — the closure records an overwrite of the place `to` (a
+    /// field holding a value of type `tp`) displaces, bound so their cascades run: `to`
+    /// itself when the value holds none.  Each fn field of the value, and of every INLINE
+    /// struct member of it, keeps its closure record as a child record in the host's store;
+    /// the copy that overwrites the place frees those records' bytes, and what they ADOPTED
+    /// is released by their cascades, which the scope pass places after each `___oldrec`
+    /// bind (`capture_adoption::cascade_before_record_frees`).  Hooks do not run:
+    /// `(H-Drop-Not)` leaves an overwritten field's droppables to the author, and adopted
+    /// captures are not droppables but stores the closure owns.
+    ///
+    /// Built as the place argument of the overwriting copy, so it runs after the right-hand
+    /// side is computed — which may read the old value — and before the copy replaces it.
+    pub(crate) fn release_displaced_closures(&mut self, to: &Value, tp: &Type) -> Value {
+        fn collect(
+            p: &Parser,
+            tp: &Type,
+            path: &[(u16, u16)],
+            out: &mut Vec<(Vec<(u16, u16)>, u16, u32)>,
+            seen: &mut Vec<u32>,
+        ) {
+            let Type::Reference(d, deps) = tp.base() else {
+                return;
+            };
+            if deps.contains(&u16::MAX) || seen.contains(d) {
+                return;
+            }
+            seen.push(*d);
+            let kt = p.data.def(*d).known_type();
+            for a in p.data.def(*d).attributes() {
+                let crec = p.database.position(kt, &format!("{}__closure_rec", a.name));
+                if crec != u16::MAX && a.assigned_lambda_d_nr != u32::MAX {
+                    let record = p.data.def(a.assigned_lambda_d_nr).closure_record();
+                    if record != u32::MAX {
+                        out.push((path.to_vec(), crec, record));
+                    }
+                } else if let Type::Reference(m, mdeps) = a.typedef.base()
+                    && !mdeps.contains(&u16::MAX)
+                {
+                    let pos = p.database.position(kt, &a.name);
+                    if pos != u16::MAX {
+                        let mut deeper = path.to_vec();
+                        deeper.push((pos, p.data.def(*m).known_type()));
+                        collect(p, &a.typedef, &deeper, out, seen);
+                    }
+                }
+            }
+            seen.pop();
+        }
+        if self.first_pass || !to.is_place_read(&self.data) {
+            return to.clone();
+        }
+        let mut fields = Vec::new();
+        collect(self, tp, &[], &mut fields, &mut Vec::new());
+        if fields.is_empty() {
+            return to.clone();
+        }
+        let mut ops = Vec::new();
+        for (path, crec, record) in fields {
+            let mut place = to.clone();
+            for (pos, kt) in path {
+                place = self.cl(
+                    "OpGetField",
+                    &[place, Value::Int(i32::from(pos)), Value::Int(i32::from(kt))],
+                );
+            }
+            let field = self.cl(
+                "OpGetField",
+                &[place, Value::Int(i32::from(crec)), Value::Int(0)],
+            );
+            let old = self.create_unique(
+                "__oldrec",
+                &Type::Reference(record, crate::data::Deps::none()),
+            );
+            self.vars.set_skip_free(old);
+            ops.push(v_set(old, self.cl("OpRefFromChildRec", &[field])));
+        }
+        ops.push(to.clone());
+        v_block(ops, tp.clone(), "displaced_closures")
+    }
+
+    /// loft#1880 — the visible heap parameters an instance's every return leaf is a VIEW into
+    /// (`v[0]`, `w.h`), with self calls read by induction
+    /// ([`Self::every_return_leaf_views_one_of`]), or `None`.  A leaf that is a bare parameter
+    /// is left to `bind_monomorph_join_return`, which binds that Join into an owned local: the
+    /// result is then the instance's own, and declaring it a borrow too would make the caller
+    /// copy it and drop the instance's copy.
+    fn monomorph_views_of_params(&self, d_nr: u32, g_nr: u32) -> Option<Vec<u16>> {
+        let def = self.data.def(d_nr);
+        let Value::Block(bl) = &def.code else {
+            return None;
+        };
+        let params: Vec<u16> = def
+            .attributes()
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| !a.hidden && crate::data::has_lifetime_concern(&a.typedef))
+            .filter_map(|(i, _)| u16::try_from(i).ok())
+            .collect();
+        if params.is_empty() {
+            return None;
+        }
+        fn bare_param_leaf(v: &Value, vars: &crate::variables::Function, tail: bool) -> bool {
+            match v.unspan() {
+                Value::Return(inner) => bare_param_leaf(inner, vars, true),
+                Value::If(_, t, e) => {
+                    bare_param_leaf(t, vars, tail) || bare_param_leaf(e, vars, tail)
+                }
+                Value::Block(b) | Value::Loop(b) => {
+                    let n = b.operators.len();
+                    b.operators
+                        .iter()
+                        .enumerate()
+                        .any(|(i, op)| bare_param_leaf(op, vars, tail && i + 1 == n))
+                }
+                Value::Var(x) => tail && vars.is_argument(*x),
+                _ => false,
+            }
+        }
+        // …a Join only: where no leaf mints (`if c { return a; } b`, a BORROW of one of
+        // several parameters), nothing binds an owned local, and the instance declares the set
+        // its twin does (`-> F["a", "b"]`) so the caller copies (loft#1884).
+        let n = bl.operators.len();
+        let borrows_only = matches!(
+            crate::use_analysis::return_ownership(&self.data, d_nr),
+            crate::use_analysis::Own::Borrowed { .. }
+        );
+        if !borrows_only
+            && bl
+                .operators
+                .iter()
+                .enumerate()
+                .any(|(i, op)| bare_param_leaf(op, &def.variables, i + 1 == n))
+        {
+            return None;
+        }
+        Self::every_return_leaf_views_one_of(&self.data, &bl.operators, &params, g_nr)
+            .then_some(params)
+    }
+
+    /// loft#1874 — point lambda `b` at the closure record lambda `a` already shares with any
+    /// other lambda written into the same fn field, growing that union record by `b`'s captures
+    /// (by name).  The first union gets a record of its own, `__closure_u_<a's record>`, so
+    /// neither lambda's own record changes shape.  A captured name the two type differently
+    /// gets a slot per lambda ([`Self::capture_alias`]).
+    fn unite_field_closure_records(&mut self, a: u32, b: u32) {
+        let ra = self.data.def(a).closure_record();
+        let rb = self.data.def(b).closure_record();
+        if ra == u32::MAX || rb == u32::MAX || ra == rb {
+            return;
+        }
+        let union = if self.data.def(ra).name.starts_with("__closure_u_") {
+            ra
+        } else {
+            let name = format!("__closure_u_{}", self.data.def(ra).name);
+            let pos = self.data.def(ra).position().clone();
+            let u = self.data.add_def(&name, &pos, DefType::Struct);
+            self.merge_closure_attrs(u, ra, a);
+            u
+        };
+        self.merge_closure_attrs(union, rb, b);
+        for l in [a, b] {
+            self.data.definitions[l as usize].closure_record = union;
+        }
+    }
+
+    /// Add closure record `from`'s attributes — lambda `lambda`'s captures — to `into` by name.
+    /// A name `into` already holds as another type gets an attribute of its own for this
+    /// lambda, `<name>__<lambda>`, recorded in [`Self::capture_alias`].
+    fn merge_closure_attrs(&mut self, into: u32, from: u32, lambda: u32) {
+        let attrs: Vec<(String, Type, bool)> = self
+            .data
+            .def(from)
+            .attributes()
+            .iter()
+            .map(|a| (a.name.clone(), a.typedef.clone(), a.value_const))
+            .collect();
+        for (name, tp, value_const) in attrs {
+            let at = self.data.attr(into, &name);
+            let slot = if at == usize::MAX {
+                name.clone()
+            } else if self.data.attr_type(into, at) == tp {
+                continue;
+            } else {
+                let alias = format!("{name}__{lambda}");
+                self.capture_alias
+                    .insert((lambda, name.clone()), alias.clone());
+                alias
+            };
+            let at = self.data.add_attribute(&mut self.lexer, into, &slot, tp);
+            self.data.definitions[into as usize].attributes[at].value_const = value_const;
+            if let Some(shared) = self
+                .closure_shared_vectors
+                .get(&(from, name.clone()))
+                .cloned()
+            {
+                self.closure_shared_vectors.insert((into, slot), shared);
+            }
+        }
+    }
+
+    /// The attribute of closure record `rec` that holds lambda `lambda`'s capture `name` —
+    /// `name` itself, or the alias a fn field's union record gave it (loft#1874).
+    pub(crate) fn capture_attr(&self, lambda: u32, rec: u32, name: &str) -> usize {
+        match self.capture_alias.get(&(lambda, name.to_string())) {
+            Some(alias) => self.data.attr(rec, alias),
+            None => self.data.attr(rec, name),
+        }
+    }
+
     pub(crate) fn type_carries_closure(&self, tp: &Type) -> bool {
         // Like `fn_ref_field_is_split`, derive from the registered
         // database layout (built from the COMPLETE first pass) rather
@@ -14045,6 +14527,67 @@ impl Parser {
         );
         let read_clos = self.cl("OpRefFromChildRec", &[crec_field]);
         crate::data::v_block(vec![read_dnr, read_clos], tp.clone(), "fn_ref_field_read")
+    }
+
+    /// A struct field of tuple type, read member by member at the synthetic `__tuple<…>`
+    /// record's own offsets — [`Self::get_val`]'s tuple arm.
+    fn get_tuple_field(&mut self, tp: &Type, elems: &[Type], pos: u32, code: &Value) -> Value {
+        let p = Value::Int(pos as i32);
+        // Plan-06 phase 4d: tuple struct field read.  Each
+        // element is read from `pos + element_stack_offsets[i]`
+        // using the same OpGet* opcodes that ordinary struct
+        // fields use; the assembled stack tuple matches the
+        // shape `Type::Tuple(...)` consumers expect.
+        let elems_vec = elems.to_vec();
+        let tuple_d_nr = self.data.tuple_def(&mut self.lexer, &elems_vec);
+        // `@FR-T-Ref-Src` — while a `&` link parses, the field is read WITH its address:
+        // a `tuple_field_place` block holding the field's `OpGetField` beside the
+        // member-wise read, which `stored_tuple_dest` peels for the link (loft#1883).
+        // The same value, and no work-ref, so both passes allocate alike.
+        let place = (self.amp_pending || self.tuple_place_wanted)
+            && tuple_d_nr != u32::MAX
+            && crate::data::ref_tuple_is_record(&elems_vec);
+        let field = place.then(|| {
+            let kt = i32::from(self.data.def(tuple_d_nr).known_type());
+            self.cl("OpGetField", &[code.clone(), p.clone(), Value::Int(kt)])
+        });
+        let offsets: Vec<u16> = crate::data::stored_tuple_offsets_for_def(
+            &self.data,
+            &self.database,
+            tuple_d_nr,
+            elems_vec.len(),
+        )
+        .unwrap_or_else(|| {
+            crate::data::element_stack_offsets(&elems_vec)
+                .into_iter()
+                .map(|x| x as u16)
+                .collect()
+        });
+        let mut tuple_elems = Vec::with_capacity(elems_vec.len());
+        for (i, et) in elems_vec.iter().enumerate() {
+            let elem_pos = pos + u32::from(offsets[i]);
+            // @PLN25 — a member declared `S?` is stored behind its tag, so its bytes
+            // here are the discriminant followed by the payload.
+            if let Some(tagged) = self.tuple_elem_tag_read(tuple_d_nr, i, code, elem_pos, et) {
+                tuple_elems.push(tagged);
+                continue;
+            }
+            // loft#1503 — read the member in the spelling it was STORED under, not
+            // in the caller's, whose inferred deps would pick the `OpGetDbRef` arm
+            // against bytes the def laid out inline.
+            let et = &crate::data::Data::tuple_member_stored(et);
+            let nullable = matches!(et, Type::Optional(_));
+            let elem_val = self.get_val(et, nullable, elem_pos, code.clone(), u32::MAX);
+            tuple_elems.push(elem_val);
+        }
+        if let Some(field) = field {
+            return crate::data::v_block(
+                vec![Value::Drop(Box::new(field)), Value::Tuple(tuple_elems)],
+                tp.clone(),
+                Self::TUPLE_FIELD_PLACE,
+            );
+        }
+        Value::Tuple(tuple_elems)
     }
 
     fn get_val(&mut self, tp: &Type, nullable: bool, pos: u32, code: Value, alias: u32) -> Value {
@@ -14174,46 +14717,7 @@ impl Parser {
                 let read_clos = self.cl("OpNullRefSentinel", &[]);
                 crate::data::v_block(vec![read_dnr, read_clos], tp.clone(), "fn_ref_field_read")
             }
-            Type::Tuple(elems) => {
-                // Plan-06 phase 4d: tuple struct field read.  Each
-                // element is read from `pos + element_stack_offsets[i]`
-                // using the same OpGet* opcodes that ordinary struct
-                // fields use; the assembled stack tuple matches the
-                // shape `Type::Tuple(...)` consumers expect.
-                let elems_vec = elems.clone();
-                let tuple_d_nr = self.data.tuple_def(&mut self.lexer, &elems_vec);
-                let offsets: Vec<u16> = crate::data::stored_tuple_offsets_for_def(
-                    &self.data,
-                    &self.database,
-                    tuple_d_nr,
-                    elems_vec.len(),
-                )
-                .unwrap_or_else(|| {
-                    crate::data::element_stack_offsets(&elems_vec)
-                        .into_iter()
-                        .map(|x| x as u16)
-                        .collect()
-                });
-                let mut tuple_elems = Vec::with_capacity(elems_vec.len());
-                for (i, et) in elems_vec.iter().enumerate() {
-                    let elem_pos = pos + u32::from(offsets[i]);
-                    // @PLN25 — a member declared `S?` is stored behind its tag, so its bytes
-                    // here are the discriminant followed by the payload.
-                    if let Some(tagged) =
-                        self.tuple_elem_tag_read(tuple_d_nr, i, &code, elem_pos, et)
-                    {
-                        tuple_elems.push(tagged);
-                        continue;
-                    }
-                    // loft#1503 — read the member in the spelling it was STORED under, not
-                    // in the caller's, whose inferred deps would pick the `OpGetDbRef` arm
-                    // against bytes the def laid out inline.
-                    let et = &crate::data::Data::tuple_member_stored(et);
-                    let elem_val = self.get_val(et, false, elem_pos, code.clone(), u32::MAX);
-                    tuple_elems.push(elem_val);
-                }
-                Value::Tuple(tuple_elems)
-            }
+            Type::Tuple(elems) => self.get_tuple_field(tp, elems, pos, &code),
             // Pass-1 deferral: reading a field whose declared type is still
             // `Unknown` (a forward-referenced or cross-package field type, e.g.
             // `struct Box { inner: Cell }` parsed above `struct Cell`) must not
@@ -14408,6 +14912,15 @@ impl Parser {
     ) -> Vec<Value> {
         let elems_vec = elems.to_vec();
         let tuple_d_nr = self.data.tuple_def(&mut self.lexer, &elems_vec);
+        // A tuple of a type variable has no member offsets yet: each monomorph writes the
+        // tuple it closes to, member by member (loft#1868).
+        if tuple_d_nr != u32::MAX && self.data.is_open_instance(tuple_d_nr) {
+            let mut ops = vec![ref_code.clone(), val_code];
+            if base_pos != 0 {
+                ops.push(Value::Int(i32::from(base_pos)));
+            }
+            return vec![v_block(ops, Type::Tuple(elems_vec), Self::TV_TUPLE_ELEM)];
+        }
         let offsets: Vec<u16> = crate::data::stored_tuple_offsets_for_def(
             &self.data,
             &self.database,
@@ -14594,7 +15107,7 @@ impl Parser {
                 Value::Int(enum_kt),
             ],
         );
-        Some(self.emit_nullable_slot_write(syn, &slot, value.clone()))
+        Some(self.emit_nullable_slot_write(syn, &slot, value.clone(), false))
     }
 
     /// Whether `value` is a plain `vector<…>` — the source a keyed member must FILL from rather
@@ -14657,6 +15170,10 @@ impl Parser {
     /// element at a fixed byte offset within the host record.
     /// Returns a vec because nested-tuple elements expand to multiple
     /// per-leaf set ops.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one arm per member type, the exhaustive match"
+    )]
     fn emit_set_one_element(
         &mut self,
         ref_code: &Value,
@@ -14669,7 +15186,30 @@ impl Parser {
         // OpSet* (sentinel storage); without this it fell to `_` and was REJECTED with
         // "Tuple struct field cannot contain element of type integer?".
         let single = match elem_tp.base() {
-            Type::Integer(_) => self.cl("OpSetInt", &[ref_code.clone(), pos_v, value]),
+            // The member's slot is the twin of its READ (`unbox_tuple_from_dbref` → `get_val`
+            // with the member's own nullability and no alias): the same `NarrowSlot`, so a
+            // `u8` member is written in its one byte and a `u8?` member spells absence.  A
+            // wide `OpSetInt` here wrote eight bytes into a one-byte member, over the members
+            // and fields after it (`@FR-L-Narrow`: a narrow slot is its declared width).
+            Type::Integer(spec) => {
+                let nullable = matches!(elem_tp, Type::Optional(_));
+                let narrow_vec =
+                    spec.forced_size.is_some() && spec.vector_narrow_width(nullable).is_some();
+                let slot = crate::data::NarrowSlot::of_slot(
+                    spec.byte_width(nullable),
+                    nullable,
+                    narrow_vec,
+                    spec,
+                );
+                if slot.kind.takes_min() {
+                    self.cl(
+                        slot.set_op(),
+                        &[ref_code.clone(), pos_v, Value::Int(slot.min), value],
+                    )
+                } else {
+                    self.cl(slot.set_op(), &[ref_code.clone(), pos_v, value])
+                }
+            }
             Type::Function(..) => {
                 // P196: storage holds the 4-byte i32 d_nr only.  Reduce
                 // `Value::FnRef` to its bare `Value::Int(d_nr)` so the
@@ -14713,6 +15253,9 @@ impl Parser {
                 self.cl("OpSetByte", &[ref_code.clone(), pos_v, Value::Int(0), v])
             }
             Type::Text(_) => self.cl("OpSetText", &[ref_code.clone(), pos_v, value]),
+            // A plain enum member is its tag byte, as a struct's enum field is (loft#1868: a
+            // generic's tuple element of an enum type was refused here).
+            Type::Enum(_, false, _) => self.cl("OpSetEnum", &[ref_code.clone(), pos_v, value]),
             Type::Reference(inner_d_nr, _) | Type::Enum(inner_d_nr, true, _) => {
                 let type_nr = if self.first_pass {
                     Value::Int(i32::from(u16::MAX))
@@ -14906,6 +15449,7 @@ impl Parser {
         syn: u32,
         slot_ref: &Value,
         value: Value,
+        fresh: bool,
     ) -> Vec<Value> {
         let Some(struct_d) = self.nullable_payload_struct(syn) else {
             return Vec::new();
@@ -14921,18 +15465,54 @@ impl Parser {
         let mut list = vec![v_set(src_var, value)];
         let kt = self.data.def(syn).known_type();
         let mut present = Vec::with_capacity(3);
-        if kt != u16::MAX {
+        // `@FR-H-Claim` — a FRESH slot, an element the construction just minted, holds no value yet, so
+        // there is nothing to release and nothing to read: its bytes are not zero by any
+        // promise.  Every other slot may hold a previous value whose payload is released.
+        if kt != u16::MAX && !fresh {
             present.push(self.cl(
                 "OpClearKeyed",
                 &[slot_ref.clone(), Value::Int(i32::from(kt))],
             ));
         }
-        present.extend(self.build_some_present(some_d, slot_ref.clone(), Value::Var(src_var)));
-        let absent = self.build_nullable_set_null(syn, slot_ref.clone());
+        let mut some = self.build_some_present(some_d, slot_ref.clone(), Value::Var(src_var));
+        if fresh {
+            self.mark_copies_fresh(&mut some);
+        }
+        present.extend(some);
+        let absent = if fresh {
+            self.cl(
+                "OpSetEnum",
+                &[slot_ref.clone(), Value::Int(0), Value::Enum(0, u16::MAX)],
+            )
+        } else {
+            self.build_nullable_set_null(syn, slot_ref.clone())
+        };
         let is_null = self.cl("OpRefIsNull", &[Value::Var(src_var)]);
         let not_null = self.cl("OpNot", &[is_null]);
         list.push(v_if(not_null, Value::Insert(present), absent));
         list
+    }
+
+    /// Flag every record copy in `steps` as writing a FRESH destination
+    /// (`keys::COPY_FRESH_DEST`): the payload of a slot the construction just minted has no
+    /// previous value for the copy to release.
+    pub(crate) fn mark_copies_fresh(&self, steps: &mut [Value]) {
+        fn mark(v: &mut Value, copy: u32) {
+            match v {
+                Value::Span(b) => mark(&mut b.1, copy),
+                Value::Call(d, args) if *d == copy => {
+                    if let Some(Value::Int(tp)) = args.get_mut(2) {
+                        *tp |= i32::from(crate::keys::COPY_FRESH_DEST);
+                    }
+                    v.for_each_child_mut(&mut |c| mark(c, copy));
+                }
+                _ => v.for_each_child_mut(&mut |c| mark(c, copy)),
+            }
+        }
+        let copy = self.data.def_nr("OpCopyRecord");
+        for step in steps {
+            mark(step, copy);
+        }
     }
 
     /// The POINTER spelling a tagged `__nullable<S>` value takes once it leaves its slot:
@@ -15223,9 +15803,9 @@ impl Parser {
     ///
     /// A present `Some` carrying a heap payload (text, nested vector) is released FIRST via
     /// `OpClearKeyed` → `remove_claims`; without it the old payload leaks until the host store
-    /// dies. That op reads the discriminant and no-ops on an already-absent or payload-less
-    /// slot, so this is safe whatever the slot held — including a freshly allocated record,
-    /// which is why the construction path can share it with the assignment path.
+    /// dies. That op reads the discriminant, so it is for a slot that HOLDS a value — an
+    /// assignment's.  A slot the construction just minted holds none (its bytes are not zero
+    /// by any promise) and takes the fresh form of [`Self::emit_nullable_slot_write`].
     pub(crate) fn build_nullable_set_null(&mut self, syn: u32, to: Value) -> Value {
         let set_null = self.cl(
             "OpSetEnum",
@@ -15269,29 +15849,10 @@ impl Parser {
         // transparent to it (nullability is read separately via `attr_nullable`).
         let tp = tp.base().clone();
         let nm = self.data.attr_name(d_nr, f_nr);
-        // #318 sink R2: a closure-carrying struct value cannot be
-        // copied into another struct's field — the copy's closure
-        // record keeps raw DbRefs into the constructing frame, which
-        // the field's host may outlive (silent corruption on slot
-        // reuse).  The direct fn-field write (Type::Function arm) IS
-        // the supported feature and stays; `emit_check == false` is
-        // the closure-record population path (captures share by
-        // DbRef, no copy) and is exempt.
-        if emit_check
-            && !self.first_pass
-            && !matches!(tp, Type::Function(..))
-            && self.type_carries_closure(&tp)
-        {
-            diagnostic!(
-                self.lexer,
-                Level::Error,
-                "field `{nm}` would store a value of a type that holds a capturing \
-                 closure; such values are bound to the function frame that owns the \
-                 captures and cannot be copied into another struct — keep the closure \
-                 holder in a local variable and pass it down as an argument"
-            );
-            return Value::Null;
-        }
+        // `@FR-L-Escape` (loft#1877) — a struct holding a capturing closure may be placed into
+        // another struct's field: a fresh value or an owned one placed once moves its closure
+        // records into the field's store, and a copy of a value this function does not own is
+        // refused by `(H-Copy-Refuse)`, since such a type owns a release (C75).
         let pos = self
             .database
             .position(self.data.def(d_nr).known_type(), &nm);
@@ -15491,37 +16052,17 @@ impl Parser {
                     if prev == u32::MAX {
                         self.data.definitions[d_nr as usize].attributes[f_nr]
                             .assigned_lambda_d_nr = lambda_d_u;
-                    } else if prev != lambda_d_u && !self.first_pass {
-                        diagnostic!(
-                            self.lexer,
-                            Level::Error,
-                            "heterogeneous capture shapes per fn-ref struct field are not supported \
-                             (this lambda's captured environment differs from the previously-assigned \
-                              lambda's); split into two structs or unify the captures"
-                        );
+                    } else if prev != lambda_d_u && self.first_pass {
+                        // `@FR-L-Escape` (loft#1874) — a field holds any closure, so every lambda
+                        // written into it shares ONE closure record: the union of their captures,
+                        // each lambda reading its own by name.  The field's child record then has
+                        // one layout whatever closure it holds.
+                        self.unite_field_closure_records(prev, lambda_d_u);
                     }
-                    // #318 sink R2: the host being written must be
-                    // rooted in a frame-local — writing a capturing
-                    // closure into (a field of) an ARGUMENT claims the
-                    // closure record into a store that outlives this
-                    // frame, while the record's DbRefs point at this
-                    // frame's captures (silent corruption on slot
-                    // reuse once the frame dies).
-                    if !self.first_pass
-                        && let Some(base) = ref_code.base_var()
-                        && self.vars.is_argument(base)
-                    {
-                        diagnostic!(
-                            self.lexer,
-                            Level::Error,
-                            "cannot store a capturing closure into a struct received as an \
-                             argument — the closure references state owned by this \
-                             function's frame, which the argument's struct outlives; \
-                             construct the closure in the frame that owns the captured \
-                             state"
-                        );
-                        return Value::Null;
-                    }
+                    // `@FR-L-Escape` (loft#1867): a host rooted in an ARGUMENT is the caller's
+                    // struct, and the closure record is built in its store (`OpChildRec`).  The
+                    // record leaves this frame with it and adopts its captures, as it does for
+                    // a struct this function returns (`claimed_into_delivered`).
                 }
                 emit_fn_ref_field_write(self, d_nr, f_nr, ref_code, pos_val, &val_code)
             }
@@ -16844,7 +17385,22 @@ impl Parser {
         if types.is_empty() {
             return actual;
         }
-        if list.len() > self.data.attributes(d_nr) {
+        // `@FR-F-Arity` — a compiler-inserted slot (a record's `__retbuf`, a text return's
+        // buffer) is not a user parameter: an argument past the declared ones is too many,
+        // never a fill of the hidden buffer.  Counted as a parameter, `txt("a", "b", "c")`
+        // handed `"c"` to `txt`'s text buffer and answered `ab` in silence, and a record
+        // return's extra argument was refused as a type mismatch on the buffer.
+        // A compiler-built call (an enum-variant dispatcher forwarding its own buffer) does
+        // fill the hidden slot, and with a buffer variable: that is the one extra argument a
+        // hidden slot takes.
+        let attrs = self.data.def(d_nr).attributes();
+        let overfilled = list.len() > attrs.len()
+            || list.iter().enumerate().any(|(i, arg)| {
+                attrs[i].hidden
+                    && !matches!(arg.unspan(), Value::Var(v)
+                        if *v < self.vars.count() && self.vars.name(*v).starts_with("__"))
+            });
+        if overfilled {
             if report {
                 diagnostic!(
                     self.lexer,
@@ -16952,11 +17508,23 @@ impl Parser {
                 all_types[nr] = tp.clone();
                 continue;
             }
+            // A tuple local's TEXT member is a place as well, and no `&text` link reaches it
+            // yet: refused rather than handed a work copy that would drop the callee's write
+            // (`(B-Ref-Reshape)`, as the `&` bind of the same member refuses).
+            if matches!(tp.base(), Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)))
+                && let Value::TupleGet(t, i) = actual_code.unspan()
+                && let Err(elem) = self.linkable_tuple_member(*t, *i)
+            {
+                let i = *i;
+                self.refuse_tuple_member_link(&elem, i);
+            }
             if let Type::RefVar(inner) = &tp
                 && !matches!(inner.as_ref(), Type::Text(_))
                 && !matches!(&actual_code, Value::Var(_))
                 && !scalar_place
                 && !Self::is_addressable(&actual_code, &self.data)
+                && !Self::stored_tuple_dest(&actual_code)
+                    .is_some_and(|d| d.is_place_read(&self.data))
             {
                 // Defer on pass 1 (#375): a field access on a struct whose
                 // layout is not yet finalised — because one of its fields is a
@@ -16966,7 +17534,15 @@ impl Parser {
                 // complete and the access lowers to `OpGetField` (addressable),
                 // so the check passes.  A genuine literal-to-`&` is still an
                 // error: it is non-addressable on pass 2 too, where this fires.
-                if !self.first_pass {
+                let tuple_param = match inner.base() {
+                    Type::Tuple(_) => true,
+                    Type::Reference(t, _) => self.data.def(*t).name().starts_with("__tuple<"),
+                    _ => false,
+                };
+                if self.first_pass {
+                } else if tuple_param {
+                    self.refuse_tuple_value_link();
+                } else {
                     diagnostic!(
                         self.lexer,
                         Level::Error,
@@ -17990,6 +18566,28 @@ impl Parser {
     // * Parser functions *
     // ********************
 
+    /// C101 — a program type that shares a standard-library type's name shadows it wherever
+    /// it is written, above its declaration too.  Pass 1 resolves a name it has not seen
+    /// declared yet: an unknown one gets a forward-reference stub its declaration adopts, but a
+    /// stdlib name is found, so everything written above the program's own `struct File` bound
+    /// to the stdlib's (loft#1882).  Before pass 1 reads a program file, each type it declares
+    /// that would shadow a prelude type gets that stub in the file's own namespace — the lookup
+    /// asks the file before the stdlib — so the declaration adopts it like any forward reference.
+    fn claim_declared_type_names(&mut self, file: &str) {
+        if !self.first_pass || self.default || self.data.source == crate::data::STD_SOURCE {
+            return;
+        }
+        let src = self
+            .lexer
+            .source_text(file)
+            .map_or_else(|| Self::read_source(file), str::to_string);
+        for name in crate::libscan::scan_type_declarations(&src) {
+            if self.prelude_shadowed(&name) {
+                self.data.add_def(&name, self.lexer.pos(), DefType::Unknown);
+            }
+        }
+    }
+
     /// Parse data from the current lexer.
     #[expect(clippy::too_many_lines, reason = "inherited")]
     fn parse_file(&mut self) {
@@ -18020,6 +18618,7 @@ impl Parser {
         // before the use-loop may switch away.  Scanned for `lib::` references
         // after the use-region (see the load loop below).
         let auto_use_scan_file = self.lexer.pos().file.clone();
+        self.claim_declared_type_names(&auto_use_scan_file);
         // A file that writes any `use` — or the stdlib, parsed with
         // `self.default` — is in *explicit* mode: the author manages their
         // libraries by hand, so a `lib::` to an un-`use`d library is a forgotten
@@ -21500,8 +22099,16 @@ impl Parser {
     /// allowlist (place-GETTERS only) keeps temporary-builders like `OpGetTextSub`
     /// and every arithmetic / `n_*` op out.
     fn is_amp_place(val: &Value, data: &Data) -> bool {
+        // A stored tuple read with its address (`tuple_unbox`, built while a link parses): a
+        // vector element or a struct field of tuple type, the record a link names
+        // (`@FR-T-Ref-Src`, loft#1883).
+        if let Some(dbref) = Self::stored_tuple_dest(val) {
+            return dbref.is_place_read(data);
+        }
         match val.unspan() {
-            Value::Var(_) => true,
+            // A tuple local's member (`@FR-B-Ref-Lvalue`): the bind lowering decides which
+            // member types it can link, and refuses the rest by name.
+            Value::Var(_) | Value::TupleGet(_, _) => true,
             Value::Call(d_nr, args) => {
                 let name = data.def(*d_nr).name();
                 let listed = matches!(
@@ -21932,6 +22539,66 @@ impl Parser {
             }
         }
         written.extend(propagated);
+        // `@FR-B-Ref-Write` — a write through a local LINK is a write to the place it names:
+        // `c = &p; c += 10` modifies `p`.  A scalar link carries no deps
+        // (`@FR-O-Borrow-Scalar`), so the dep walk above cannot see it; the bind itself says
+        // which place the link names (`OpCreateStack(x)` for a local, `OpVarRef(b)` for a
+        // copy of another link), and a write to the link carries back along that chain.
+        // The bind is a `Set` of the link too, so the writes are measured on the body with the
+        // binds blanked: a link only READ leaves its target unwritten.
+        // A link to a tuple MEMBER (`c = &t.0`, `OpCreateStack(TupleGet(t, i))`) names a place
+        // inside `t`, so a write through it writes `t` (`@FR-B-Ref-Lvalue`).
+        let link_bind = |data: &Data, n: &Value| -> Option<(u16, u16)> {
+            if let Value::Set(v, rhs) = n.unspan()
+                && let Value::Call(op, args) = rhs.unspan()
+                && matches!(data.def(*op).name(), "OpCreateStack" | "OpVarRef")
+                && let Some(Value::Var(src) | Value::TupleGet(src, _)) =
+                    args.first().map(Value::unspan)
+            {
+                return Some((*v, *src));
+            }
+            None
+        };
+        let mut link_src: HashMap<u16, u16> = HashMap::new();
+        code.walk(&mut |n| {
+            if let Some((v, src)) = link_bind(&self.data, n) {
+                link_src.insert(v, src);
+            }
+        });
+        let mut through_written = crate::fxhash::FxHashSet::default();
+        if !link_src.is_empty() {
+            fn blank(code: &mut Value, data: &Data, is_bind: &impl Fn(&Data, &Value) -> bool) {
+                if is_bind(data, code) {
+                    *code = Value::Null;
+                    return;
+                }
+                code.for_each_child_mut(&mut |c| blank(c, data, is_bind));
+            }
+            let mut unbound = code.clone();
+            blank(&mut unbound, &self.data, &|d, n| link_bind(d, n).is_some());
+            find_written_vars(
+                &unbound,
+                &self.data,
+                &self.vars,
+                &mut through_written,
+                &mut callee_cache,
+            );
+            find_field_written_vars(&unbound, &self.data, &mut through_written);
+        }
+        let through: Vec<u16> = through_written
+            .iter()
+            .copied()
+            .filter(|w| link_src.contains_key(w))
+            .collect();
+        for w in through {
+            let (mut at, mut hops) = (w, 0);
+            while let Some(&src) = link_src.get(&at)
+                && hops < link_src.len()
+            {
+                written.insert(src);
+                (at, hops) = (src, hops + 1);
+            }
+        }
         // A write from inside a CLOSURE lives in the lambda's own definition, so walking this
         // function's code cannot see it.  Two routes reach the same fact and both feed the
         // `&`-parameter test below, so both are kept: this one reads the mutated-capture set
@@ -22235,7 +22902,73 @@ pub(crate) fn widen_bare_fn_ref(v: &mut Value, tp: &Type) -> bool {
     }
 }
 
-fn find_capturing_fn_ref(data: &Data, v: &Value) -> Option<(i32, u16)> {
+/// loft#1874 — for a lambda whose closure record is a fn field's UNION, the releases of the
+/// old record's capture slots this lambda's build does NOT write — `if old is live and the
+/// slot holds a store { free it }` — and those slots' positions, which the new record must
+/// start empty in.  The slots it does write are released against the new capture by the
+/// build's own leading ops, as for any rebuild.
+fn displaced_union_captures(
+    p: &mut Parser,
+    lambda_d: u32,
+    ops: &[Value],
+    w_var: u16,
+    old: &Value,
+) -> (Vec<Value>, Vec<i32>) {
+    let record = p.data.def(lambda_d).closure_record();
+    if record == u32::MAX || !p.data.def(record).name.starts_with("__closure_u_") {
+        return (Vec::new(), Vec::new());
+    }
+    let set_dbref = p.data.def_nr("OpSetDbRef");
+    let mut written: Vec<i32> = Vec::new();
+    for op in ops {
+        op.walk(&mut |n| {
+            if let Value::Call(d, args) = n.unspan()
+                && *d == set_dbref
+                && matches!(args.first().map(Value::unspan), Some(Value::Var(x)) if *x == w_var)
+                && let Some(Value::Int(pos)) = args.get(1).map(Value::unspan)
+            {
+                written.push(*pos);
+            }
+        });
+    }
+    let kt = p.data.def(record).known_type();
+    let attrs: Vec<(String, Type)> = p
+        .data
+        .def(record)
+        .attributes()
+        .iter()
+        .map(|a| (a.name.clone(), a.typedef.clone()))
+        .collect();
+    let mut out = Vec::new();
+    let mut unwritten = Vec::new();
+    for (name, tp) in attrs {
+        if !matches!(tp.base(), Type::Reference(_, deps) if !deps.is_empty()) {
+            continue;
+        }
+        let pos = i32::from(p.database.position(kt, &name));
+        if pos == i32::from(u16::MAX) || written.contains(&pos) {
+            continue;
+        }
+        unwritten.push(pos);
+        let slot = p.cl("OpGetDbRef", &[old.clone(), Value::Int(pos)]);
+        let held = p.cl("OpConvBoolFromRef", std::slice::from_ref(&slot));
+        let free = p.cl("OpFreeRef", &[slot]);
+        let live = p.cl("OpConvBoolFromRef", std::slice::from_ref(old));
+        out.push(v_if(live, v_if(held, free, Value::Null), Value::Null));
+    }
+    (out, unwritten)
+}
+
+/// Every read of variable `v` in `code` becomes `with`.
+fn replace_var(code: &mut Value, v: u16, with: &Value) {
+    if matches!(code.unspan(), Value::Var(x) if *x == v) {
+        *code = with.clone();
+        return;
+    }
+    code.for_each_child_mut(&mut |c| replace_var(c, v, with));
+}
+
+pub(crate) fn find_capturing_fn_ref(data: &Data, v: &Value) -> Option<(i32, u16)> {
     match v.unspan() {
         // `w != MAX` only appears in the second pass (`emit_lambda_code`
         // builds the closure-allocation block there).  In the FIRST
@@ -22326,6 +23059,79 @@ fn emit_fn_ref_field_write(
                 .take(bl.operators.len() - 1)
                 .cloned()
                 .collect();
+            // `@FR-L-Escape`, `@FR-L-CapOwn` — the record is built IN PLACE in the host's child
+            // slot (`OpChildRec`, loft#1867): `w` names that slot's record, the captures are
+            // written straight into it, and it is the HOST's, released with it and by its
+            // cascade.  Built apart and copied in, the frame then released the record it had
+            // built, and its cascade released the captures the copy still named.
+            let in_place = if w_var != u16::MAX && f_nr != usize::MAX && !p.first_pass {
+                let closure_rec_d = p.data.def(lambda_d as u32).closure_record();
+                (closure_rec_d != u32::MAX).then(|| {
+                    let kt = p.data.def(closure_rec_d).known_type();
+                    let crec_pos = match &pos_val {
+                        Value::Int(pi) => Value::Int(pi + 4),
+                        _ => Value::Int(0),
+                    };
+                    let field = p.cl(
+                        "OpGetField",
+                        &[ref_code.clone(), crec_pos, Value::Int(i32::from(kt))],
+                    );
+                    (kt, field)
+                })
+            } else {
+                None
+            };
+            if let Some((kt, field)) = &in_place {
+                let database = p.data.def_nr("OpDatabase");
+                // The release of what the record held before reads that record where it lives,
+                // in the field: the local names the record this SITE built last, which may sit
+                // in another host or be gone.
+                let old = p.cl("OpRefFromChildRec", std::slice::from_ref(field));
+                let build_at = ops.iter().position(|op| {
+                    matches!(op.unspan(), Value::Call(d, args) if *d == database
+                        && matches!(args.first().map(Value::unspan), Some(Value::Var(x)) if *x == w_var))
+                });
+                if let Some(at) = build_at {
+                    for op in &mut ops[..at] {
+                        replace_var(op, w_var, &old);
+                    }
+                    // loft#1874 — a fn field's UNION record (`unite_field_closure_records`) may
+                    // hold another lambda's captures: each capture slot this build does not
+                    // write is released from the old record as well, so the closure it replaces
+                    // gives up what it held whichever lambda that was.
+                    let (releases, unwritten) =
+                        displaced_union_captures(p, lambda_d as u32, &ops, w_var, &old);
+                    let n = releases.len();
+                    for (i, r) in releases.into_iter().enumerate() {
+                        ops.insert(at + i, r);
+                    }
+                    // …and the slots it does not write start as nothing: the new record is
+                    // claimed with whatever bytes the store held there (C137), and its cascade
+                    // reads every capture slot of the union.
+                    let null = p.data.def_nr("OpNullRefSentinel");
+                    for (i, pos) in unwritten.into_iter().enumerate() {
+                        let clear = p.cl(
+                            "OpSetDbRef",
+                            &[
+                                Value::Var(w_var),
+                                Value::Int(pos),
+                                Value::Call(null, Vec::new()),
+                            ],
+                        );
+                        ops.insert(at + n + 1 + i, clear);
+                    }
+                }
+                for op in &mut ops {
+                    if matches!(op.unspan(), Value::Call(d, args) if *d == database
+                        && matches!(args.first().map(Value::unspan), Some(Value::Var(x)) if *x == w_var))
+                    {
+                        let child =
+                            p.cl("OpChildRec", &[field.clone(), Value::Int(i32::from(*kt))]);
+                        *op = v_set(w_var, child);
+                    }
+                }
+                p.vars.set_skip_free(w_var);
+            }
             // Write the d_nr at the loft-attribute position (which maps
             // to the database-side `<attr>` field — the d_nr half).
             ops.push(p.cl(
@@ -22336,34 +23142,6 @@ fn emit_fn_ref_field_write(
             // `__closure_rec` vector at pos+4.  We need the host's
             // closure_rec field as a DbRef + the closure record's
             // known_type for `OpAppendVector`'s type parameter.
-            if w_var != u16::MAX && f_nr != usize::MAX && !p.first_pass {
-                let closure_rec_d = p.data.def(lambda_d as u32).closure_record();
-                if closure_rec_d != u32::MAX {
-                    let closure_kt = p.data.def(closure_rec_d).known_type();
-                    let crec_pos = match &pos_val {
-                        Value::Int(pi) => Value::Int(pi + 4),
-                        _ => Value::Int(0),
-                    };
-                    // OpGetField(host_ref, pos+4, type_id) yields a DbRef
-                    // pointing at the host's closure_rec field.
-                    let crec_field = p.cl(
-                        "OpGetField",
-                        &[
-                            ref_code.clone(),
-                            crec_pos,
-                            Value::Int(i32::from(closure_kt)),
-                        ],
-                    );
-                    ops.push(p.cl(
-                        "OpClaimChildRec",
-                        &[
-                            crec_field,
-                            Value::Var(w_var),
-                            Value::Int(i32::from(closure_kt)),
-                        ],
-                    ));
-                }
-            }
             v_block(ops, Type::Void, "fn_ref_field_set")
         }
         Value::Var(v) => {
@@ -22396,6 +23174,15 @@ fn emit_fn_ref_field_write(
             let source_is_noncapturing =
                 matches!(p.vars.tp(v), Type::Function(..)) && p.vars.closure_var_of(v).is_none();
             if target_is_4b && source_is_noncapturing {
+                return p.cl("OpSetInt4", &[ref_code, pos_val, Value::FnRefDnr(v)]);
+            }
+            // loft#1869, `@FR-L-Fn` — a closure record's capture of a fn-ref keeps the d_nr here
+            // and the closure half in the `<name>__clos` capture beside it.
+            if target_is_4b
+                && p.data
+                    .attr(d_nr, &format!("{}__clos", p.data.attr_name(d_nr, f_nr)))
+                    != usize::MAX
+            {
                 return p.cl("OpSetInt4", &[ref_code, pos_val, Value::FnRefDnr(v)]);
             }
             if !p.first_pass {
@@ -22436,7 +23223,22 @@ fn emit_fn_ref_field_write(
             // different arms of the same program.  The two spellings that WERE enumerated
             // got a diagnostic; the ones nobody thought of got the crash, which is the
             // difference this arm removes.
+            // loft#1869 — a closure record relaying a captured fn-ref from the record of the
+            // lambda it is built in: the d_nr half of that record's read lands here, and the
+            // closure half fills the `<name>__clos` capture beside it.
+            let relays_fn_ref = (d_nr as usize) < p.data.definitions.len()
+                && f_nr < p.data.def(d_nr).attributes().len()
+                && p.data
+                    .attr(d_nr, &format!("{}__clos", p.data.attr_name(d_nr, f_nr)))
+                    != usize::MAX;
             let d_nr_only = match other {
+                Value::Block(bl)
+                    if relays_fn_ref
+                        && bl.name == "fn_ref_field_read"
+                        && !bl.operators.is_empty() =>
+                {
+                    bl.operators[0].clone()
+                }
                 Value::FnRef(d, _, _) => Value::Int(d),
                 Value::Int(n) => Value::Int(n),
                 Value::Null => Value::Int(0),
@@ -22498,7 +23300,8 @@ fn field_id(key: &[(String, bool)], name: &mut String) {
 /// Collect all `Value::Var` indices reachable anywhere in `val`.
 fn collect_vars_in(val: &Value, result: &mut crate::fxhash::FxHashSet<u16>) {
     match val {
-        Value::Var(v) => {
+        // A tuple MEMBER names its tuple (`bump(t.0)` hands a place inside `t`).
+        Value::Var(v) | Value::TupleGet(v, _) => {
             result.insert(*v);
         }
         Value::Set(_, body) => collect_vars_in(body, result),

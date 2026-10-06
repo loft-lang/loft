@@ -206,7 +206,19 @@ id = param(req, "id") ?? return bad_request("missing id");
 val = lookup(id)       ?? return;    // void function: return nothing
 ```
 
-Rules: [formal/calls.md](formal/calls.md) `(F-Return)`, `(F-Ret)` (the value returned is a fresh, independent value); `?? return` is `(E-Coalesce)` with a return in the fallback.
+`?? break` and `?? continue` do the same for the enclosing loop: on a null they leave it or
+skip to its next turn, and otherwise the left side's value is bound, non-null:
+```
+for k in 0..len(v) {
+  x = v[k] ?? continue;     // skip the holes
+  s += x;
+}
+row = next_row(src) ?? break; // stop at the first absent row
+```
+A labelled jump (`i#break`, `i#continue`) is allowed there too.  Outside a loop each is
+refused as the bare word is.
+
+Rules: [formal/calls.md](formal/calls.md) `(F-Return)`, `(F-Ret)` (the value returned is a fresh, independent value); `?? return`, `?? break` and `?? continue` are `(E-Coalesce)` with a jump in the fallback, which `(C-Never)` in [formal/types.md](formal/types.md) admits at any type.
 
 ### Custom iterators (I13)
 
@@ -302,6 +314,42 @@ match shape {
 binding under that name, even when a variable of that name is in scope (`@FR-P-Point`).  A
 literal, a range or `_` in that position tests the field instead (`Circle { radius: 0 }`,
 `Circle { radius: 1..4 }`).
+
+**One arm for several variants.**  `|` and `,` both list the patterns of one arm — a
+*multi-pattern arm* (`@FR-P-Multi`) — whether the variants bind fields or not:
+
+```
+match s {
+    Circle { r } | Sphere { r } => r,     // or: Circle { r }, Sphere { r } => r
+    North | South => 0,
+    Pt => 0
+}
+```
+
+Each pattern binds from its own variant, and the body runs for whichever one matched.  A name
+every pattern binds takes the join of its types (`integer` and `u8` give `integer`); types with
+no join are refused, naming the capture (`@FR-P-Alt-Same`).  A name only some patterns bind is
+nullable in the body (`@FR-P-Alt-Diff`): `Circle { r } | Pt => r ?? 0`.  A rename links fields
+of different names into one variable: `Circle { r }, Rect { w: r, h } => r`.  A guard after the
+last pattern applies to whichever one matched.  A multi-pattern arm takes enum variants and,
+over a tuple subject, whole tuple patterns — so one arm covers both orders of a pair:
+
+```
+match (a, b) {
+    (Circle { r }, Square { s }) | (Square { s }, Circle { r }) => r * 10.0 + s,
+    _ => 0.0
+}
+```
+
+An alternative may also stand inside one tuple element — `(Circle { r } | Square { r }, k) =>
+r + k` — and a plain-struct subject lists patterns the same way: `P { x: 0, y: v } | P { x: v,
+y: 0 } => v` (a field's bare name, `y: v`, binds it).  A field's pattern lists alternatives the
+same way as a tuple element's: `Box { s: Circle { r } | Square { r }, n } => r + n`.
+
+`name:` before an arm's pattern binds the matched value itself, beside the pattern's own names —
+`whole: Rect { w, h } => w * h + area(whole)` — and `other: _ => area(other)` is the catch-all that
+binds it.  The name is a view of the subject, not a copy: a write through it reaches the subject.
+A bare lowercase name at the arm root is not a binding; it is refused as a misspelled variant.
 
 Whether a destructured field is a **view of the subject** or a **copy** depends on the
 field's type:
@@ -503,10 +551,9 @@ A slice arm takes an `if` guard like any other arm.
 An element written **after** a `..` takes the same forms as one before it — a name, `_`, a
 literal or a variant pattern (`[Kw { word }, .., End { e }]` binds `e` from the last element;
 guard `tests/scripts/1419-a-fixed-pattern-after-a-rest-is-a-tail-element.loft`).
-**One limit worth knowing.** A multi-pattern arm (`A { r }, B { r } => …`) is for enum
-variants only — it does not accept slice patterns.  A name only some of its patterns bind
-(`A { r }, B { s } => …`) is nullable in the body — `null` when a pattern without it matched
-(guard `tests/scripts/a-name-only-some-listed-patterns-bind-is-nullable.loft`).
+**One limit worth knowing.** A multi-pattern arm (`A { r }, B { r } => …`, § Match
+expressions) does not accept slice patterns (guard for its nullable partial names:
+`tests/scripts/a-name-only-some-listed-patterns-bind-is-nullable.loft`).
 
 ### `is` variant check
 

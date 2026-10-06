@@ -1303,6 +1303,35 @@ integer.  The second failure mode again, on the axis the fixes' own guards had h
   `tests/scripts/1380-an-else-if-chain-answers-in-its-first-arms-type.loft` and `1380b-…`,
   falsified at 2b992851 on both backends.
 
+## Deviations carried by types.md until 2026-10-06
+
+Opened and closed in the same change; the chapter's `OPEN:` count never carried them.
+
+* **D-types-25** *(opened 2026-10-06, CLOSED 2026-10-06)* — `(C-Never)`: a jump is a `Never` that
+  fits wherever a value is expected, and four positions disagreed.  (1) Whether a VALUE follows
+  `break`, `return` or `?? return` was answered three times, each asking only `;` and `}`: in
+  `k = match i { 4 => break, _ => i }` the `, _ => i` was parsed as the break's value, so the
+  loop RETURNED from the function — 4 on the interpreter, 0 on native, where 0+1+2+3 = 6, with
+  no diagnostic; `4 => return,` in a void function was refused.  (2) `?? break` and
+  `?? continue` were refused by name, though `(N-Coal)` checks the default against τ and
+  `(C-Never)` admits a jump there; the refusal had replaced an "Expect token ;" message and
+  recorded no decision.  (3) A labelled `i#break` / `i#continue` was typed `void`, not
+  `Never`, so `p = f() ?? i#break` was refused as a default of the wrong type; `i#break` outside a
+  loop said "Cannot continue".  (4) On `--native` a diverging `match` arm beside a text or boolean
+  arm took the arms' unify wrapper — `&*(return …)`, `({ return … } as u8)`, rustc E0614 / E0605
+  — and a `??` exit over a TEXT yielded a borrow of its own temporary (E0597), so text
+  `?? return` had never compiled natively.  **Fix.**  `Parser::control_value_follows`, the one
+  answer (`;` `}` `,` `)` `]`, end of input), asked by all three words; `?? break` / `?? continue`
+  parse the word as the expression it is anywhere else and share `?? return`'s block
+  (`null_coalesce_exit`); labelled jumps type `Never`; the emitter gives a diverging arm none of
+  the unify wrappers, and a text value block whose tail is its own local moves it out.
+  Measured: 17 cells before (13 held, `?? break`/`?? continue` refused, one silent-wrong, one
+  native compile failure), 15 more after, both backends.  Guards
+  `tests/scripts/a-bare-break-or-return-before-a-comma-carries-no-value.loft`,
+  `tests/scripts/a-null-can-leave-the-loop-through-a-coalesce.loft`,
+  `tests/scripts/a-diverging-arm-beside-a-text-or-boolean-arm-compiles-natively.loft`.
+  `Contract: strained` — `?? break` / `?? continue` were a documented refusal (@F2) and compile.
+
 ## Deviations carried by types.md until 2026-09-29
 
 Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), as written.

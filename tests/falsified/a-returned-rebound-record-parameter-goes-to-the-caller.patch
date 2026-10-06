@@ -1,0 +1,122 @@
+diff --git b/src/generation/hoist.rs a/src/generation/hoist.rs
+index 0f0693495..139f6065a 100644
+--- b/src/generation/hoist.rs
++++ a/src/generation/hoist.rs
+@@ -13084,13 +13084,8 @@ fn value_shape(node: &Value, ctx: &ShapeCtx) -> Option<u16> {
+             // the oracle reads it through the call as Borrowed of `a`: read as a view the copy
+             // was freed by nobody, one record per call on `--native` alone, in a concrete
+             // function and an instance alike (Found-via loft#1820).  A parameter is exempt —
+-            // the frame never owns it — unless the body REBINDS it: then it may hold a store
+-            // of its own (`@FR-F-ParamRebind`), which the record form hands to the caller to
+-            // release and the tuple form hands to nobody (`fn f(p: S, q: S) -> S { p = q; p }`,
+-            // one record per call, loft#1871).
+-            if !vars.is_argument(*var) && !vars.is_skip_free(*var)
+-                || vars.rebind_orig(*var).is_some()
+-            {
++            // the frame never owns it.
++            if !vars.is_argument(*var) && !vars.is_skip_free(*var) {
+                 return None;
+             }
+             // A VIEW by the ownership oracle (`@FR-O-Oracle`), not by the dep list: then_v
+diff --git b/src/scopes/get_free_vars.rs a/src/scopes/get_free_vars.rs
+index 66b26223b..62ab88dd6 100644
+--- b/src/scopes/get_free_vars.rs
++++ a/src/scopes/get_free_vars.rs
+@@ -1127,15 +1127,6 @@ impl Scopes<'_> {
+         if to_scope == 1 {
+             let free_distinct = data.def_nr("OpFreeRefIfDistinct");
+             for (param, orig) in function.rebind_params() {
+-                // A rebound parameter this exit HANDS OUT is not released here: the caller
+-                // takes it (`(F-ParamRebind)`).  Its call site already decides per run — it
+-                // copies a fresh store with `COPY_FREE_SOURCE` and protects its own argument
+-                // — so a release here freed the store the return was about to read
+-                // (`fn f(p: S) -> S { p = S { x: 5 }; p }`: a use-after-free on
+-                // `--interpret`, a panic on `--native`, loft#1871).
+-                if param == ret_var || return_sources.contains(&param) {
+-                    continue;
+-                }
+                 ls.push(Value::Call(
+                     free_distinct,
+                     vec![Value::Var(param), Value::Var(orig)],
+diff --git b/src/use_analysis.rs a/src/use_analysis.rs
+index 6f7c8e669..8c14c697b 100644
+--- b/src/use_analysis.rs
++++ a/src/use_analysis.rs
+@@ -7771,77 +7771,10 @@ fn write_through_params(data: &Data, callee: u32) -> HashSet<u16> {
+         func.is_argument(v)
+             && !matches!(func.tp(v), Type::RefVar(_))
+             && !func.name(v).starts_with("__")
+-            && (func.rebind_orig(v).is_none()
+-                || written_before_rebind(&def.code, data, v, &mut false))
+     });
+     written
+ }
+ 
+-/// Does the body write through parameter `p` BEFORE it first rebinds `p` (`(F-ParamRebind)`)?
+-/// After a rebind the binding may name a store of the callee's own, so a field write there
+-/// is not a write-through — `fn bump(p: S) -> S { p = S { x: p.x + 1 }; p }` builds its
+-/// literal by field writes into the fresh store, and read as writes through `p` they made
+-/// `bump(bump(a))` a lost write.  A rebind counts only where EVERY path rebinds first: an `if`
+-/// whose one arm rebinds leaves the other path writing through.  Walked in program order, a
+-/// `Set`'s value before the `Set`.
+-fn written_before_rebind(code: &Value, data: &Data, p: u16, rebound: &mut bool) -> bool {
+-    if *rebound {
+-        return false;
+-    }
+-    let is_p =
+-        |a: Option<&Value>| a.is_some_and(|a| matches!(a.unspan(), Value::Var(v) if *v == p));
+-    match code {
+-        Value::Span(b) => written_before_rebind(&b.1, data, p, rebound),
+-        Value::Block(bl) => bl
+-            .operators
+-            .iter()
+-            .any(|o| written_before_rebind(o, data, p, rebound)),
+-        // A loop may run no pass, so a rebind inside it ends the proof only for the rest of
+-        // its own body.
+-        Value::Loop(bl) => {
+-            let mut in_pass = false;
+-            bl.operators
+-                .iter()
+-                .any(|o| written_before_rebind(o, data, p, &mut in_pass))
+-        }
+-        Value::Insert(list) => list
+-            .iter()
+-            .any(|o| written_before_rebind(o, data, p, rebound)),
+-        Value::If(c, t, e) => {
+-            if written_before_rebind(c, data, p, rebound) {
+-                return true;
+-            }
+-            let mut in_then = false;
+-            let mut in_else = false;
+-            let hit = written_before_rebind(t, data, p, &mut in_then)
+-                || written_before_rebind(e, data, p, &mut in_else);
+-            *rebound = in_then && in_else;
+-            hit
+-        }
+-        Value::Set(v, body) => {
+-            let hit = written_before_rebind(body, data, p, rebound);
+-            *rebound |= *v == p;
+-            hit
+-        }
+-        Value::Return(x) | Value::Drop(x) => written_before_rebind(x, data, p, rebound),
+-        Value::Call(op, args)
+-            if is_p(args.first())
+-                && matches!(
+-                    data.def(*op).name(),
+-                    "OpDatabase" | "OpInitRefSentinel" | "OpFreeRefIfDistinct"
+-                ) =>
+-        {
+-            *rebound = true;
+-            false
+-        }
+-        _ => {
+-            let mut w = crate::fxhash::FxHashSet::default();
+-            crate::parser::find_field_written_vars(code, data, &mut w);
+-            w.contains(&p)
+-        }
+-    }
+-}
+-
+ /// Is `arg` a call that hands back a COPY of a place the caller can still reach?
+ ///
+ /// This is the difference between a write that LOSES data and one that merely writes into

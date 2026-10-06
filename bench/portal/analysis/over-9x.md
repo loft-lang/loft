@@ -125,6 +125,13 @@ per `resolve`); `default_resolver` 16 % — the fn-ref answers a DbRef, so the t
 | A+B+C+D | | | | 10.36 M | 6.5× |
 | + F | the kept buffer is REFILLED: a run's text overwritten in its own slot when it fits the slot's claim, replaced otherwise; a shorter result truncates | EXTEND (R-RefillBuffer): THE TEXT CLAUSE — `refillable_plain` (`hoist.rs:8976`) refuses any heap-owning field; F6's second half | M | 5.77 M | **3.6×** |
 
+**Re-priced and built.**  On the emission after `(R-RefillBuffer)`'s heap-element form (its
+entry clear a store reset), F alone is −20 %, A alone −8 % and A+F −31 % (26.74 → 18.52 M,
+three interleaved runs, hash unchanged; edits `over-9x/zttext_flow_layout_full/price_keep.py`).
+F is built as `(R-RefillText)`'s collection clause: 26.0 → 22.7 M (12.35×), the difference
+from its price being each kept slot still going through the append.  A is the next unit
+(worklist S1c).
+
 F is load-bearing, and it is the mechanism `msg_ping`, `decode` and `check_request` were
 priced against too: build it first, then B (reaches every fn-ref API), then A, C, D.  The
 hand price of F used `Store::delete` on a text block for the replace path; the built form
@@ -142,6 +149,7 @@ is twelve commits.  Joining main into the bench branch is the first action.
 | the pinned bench branch | 13.25 M | 9.8× |
 | the 0.9.8 form | 9.62 M | 7.1× |
 | + the stacks' headers held across the keep-range, the `draw_line__inv` call | 5.04 M | **3.7×** |
+| **BUILT** — `(R-Refresh)`'s keep-range clause (`LOFT_NO_KEEP_RANGE_REFRESH` off → on, the 0.9.8 form, stats.py) | 10.12 → 5.32 M | 7.46× → **4.08×** |
 | ceiling: the two stacks as an `(R-Apart)` instance (a `Vec<i64>` no store observes) | 3.16 M | 2.3× |
 
 The mechanism: `LOFT_TRACE_HOIST_DECLINE=1` names `OpKeepRange` (def 353) at line 457 as

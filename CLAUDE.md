@@ -467,6 +467,11 @@ when the ordinary tools no longer work). In **stability work** the file-instead-
 hatches do NOT apply either: fix in the same session with a regression test. Record scope + root
 cause, never origin commit.
 
+**Claim before you fix, on the issue:** `scripts/claim.py take N` before starting any fix, and
+`scripts/claim.py file …` for a bug you find and fix at once — other streams, on other machines,
+see the claim only there (`make work` hides it; the commit-msg hook warns on a duplicate `Fixes`).
+[ISSUE_TRACKING.md § Claiming an issue](doc/claude/ISSUE_TRACKING.md).
+
 **File only when NOT fixing now:** it blocks the current task (bookmark + workaround), or it's
 genuinely M+/needs-design (route to its canonical home). When you file: a **GitHub Issue**
 (`gh issue create`, `bug_report` template) — NOT a PROBLEMS.md row (that's the closed archive) —
@@ -655,7 +660,10 @@ start / what is the signature), the one-home rule that kills the drift already m
 between a library's guide and its copy in this repo, the REPL+debugger panel for the doc
 pages (`src/wasm_debug.rs` is built and the pages expose only ▶ Run), and the README's
 repositioning from one-game project to distribution ·
-[LAVITION.md](doc/claude/LAVITION.md) · [PROMPTS.md](doc/PROMPTS.md).
+[LAVITION.md](doc/claude/LAVITION.md) · [PROMPTS.md](doc/PROMPTS.md) ·
+**the owner's notes live OUTSIDE git** (`$LOFT_NOTES`, a folder on the owner's machine):
+his thoughts on what we build, blog subjects and ideas.  They can steer a feature or become a
+post, so read them when one is in question; never commit them, and never publish from them.
 
 **Skills** (`.claude/skills/`): `loft-write` (.loft authoring) · `loft-debug` (runtime crashes) ·
 `loft-test` · `loft-codegen` · `loft-optimize` (making code faster, both backends) · `loft-ship` (library cross-target + publish) · `engineering-rigor` /

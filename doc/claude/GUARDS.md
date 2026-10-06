@@ -194,7 +194,9 @@ lines is the disk: `df -h /`, then [RUN_BOUNDS.md § Scratch hygiene](RUN_BOUNDS
 The durable form carries the defect instead of pointing at it, and it stays durable only while
 it APPLIES.  A receipt the code moved out from under is cured at PR time, on a runner, not on
 each join: `.github/workflows/receipts.yml` (`scripts/receipts_ci.py`) re-applies every stale
-patch by a clean three-way merge, re-scores it with `falsify.sh --patch`, and then runs
+patch by a clean three-way merge, re-scores it with `falsify.sh --patch` — under every
+`LOFT_X=value` its receipt's **ARMED** label names, so a receipt that needs a switch is scored
+the way it was recorded — and then runs
 `doc_hygiene::every_patch_receipt_still_applies` (ignored per commit for that reason).  A
 dispatch on the branch commits the refreshed patches back (`scripts/derive-ci.sh --workflow
 receipts.yml`); the PR's own run fails only on a WILD SWING — a guard its patch fails to
@@ -223,6 +225,13 @@ control is scored.  Nothing outside the repository has to survive for it to be r
   guard keeps a marker saying its control is gone.  Score leak-channel receipts with
   `LOFT_STRICT_STORES=1` — unarmed gives a DIFFERENT channel, not a weaker one — and identify a
   leak by its store SHAPE (`St1295×42`); the `kt=` id shifts with the type table.
+- **A patch that applies may not BUILD.**  A receipt comes into reach only when it stops
+  applying.  A later change can add a call site the patch never touches, for example a new
+  caller of a function whose signature the patch reverts.  The patch then still applies over a
+  control that does not compile, and nothing reports it until the patch's context moves.  The
+  runner then reports a wild swing, `the control does not build`.  The cure is a hand
+  re-derivation: apply the patch in a scratch worktree, fix the new site the way the patch
+  fixes the others, write `git diff` back as the receipt, and re-score it.
 - **A guard covering TWO defects holds only ONE patch.**  Keep it for the receipt that moves on
   more channels and backends, record the other as its own `@falsified-at:` block with CHANNEL /
   WITNESS / HOLDS, and say in the file which receipt the patch belongs to
@@ -347,6 +356,12 @@ Each is one rule; the measured incident behind it is in
   A clean refusal traded for an ICE is the one direction a fix must not move.  When a refusal
   goes, rewrite its guard rather than deleting it: its cells are a survey of the shapes that
   reach the site.
+- **A write wider than its slot needs a cell whose NEIGHBOURS were written first.**  A build in
+  order repairs the spill: the next member, field or element is written after it, so every
+  construction cell reads right.  Only a write INTO an existing container — an element assigned
+  in the middle of a vector, a tuple field assigned ahead of another field — leaves the spill
+  standing; assert the neighbours (`a-stored-tuple-member-is-written-in-its-own-width.loft`:
+  five construction cells passed on the defective build, six in-place cells failed).
 - **A flag-driven feature needs a cell with something PARSED AFTER it.**  A parser-global set
   and read around `parse()` is erased when `parse()` re-enters for a sub-expression; the minimal
   spelling has nothing after the construct and hides it (loft#1214).

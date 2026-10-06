@@ -1,0 +1,44 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-T-Ref-Src` — a `&` to a tuple names a PLACE: a tuple variable, a vector element or a
+// struct field (`a-stored-tuple-is-a-place-a-link-names.loft`).  A tuple LITERAL and a CALL
+// RESULT are values with nothing behind them, so a link to one is refused where it is
+// written — by a `&` bind, an annotated bind and a `&(…)` argument alike — rather than handed
+// a copy that would take the write and drop it (`@FR-B-Ref-Reshape`).  One diagnostic each,
+// naming the place a link can take and the cure; the annotated spelling was reported as a
+// retype of the variable instead.
+//
+// @falsified-at: cca31ba0f — interpret exit 1 -> 0, interpret expectations FAIL/6 -> 0/6 (the
+//   suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/6 ->
+//   0/6 (the suite's verdict, not a count of matches).
+// @falsified-by: tests/falsified/a-tuple-value-has-no-place-to-link.patch — the same channels.
+// HOLDS: leak and panic are clean on both trees and both backends.
+//
+// CHANNEL: the expected diagnostics, one per refused link.
+//
+// @EXPECT_ERROR: a `&` to a tuple names a place
+// @EXPECT_ERROR: a `&` to a tuple names a place
+// @EXPECT_ERROR: a `&` to a tuple names a place
+// @EXPECT_ERROR: a `&` to a tuple names a place
+// @EXPECT_ERROR: a `&` to a tuple names a place
+// @EXPECT_ERROR: a `&` to a tuple names a place
+
+fn mk() -> (integer, integer) { (3, 4) }
+fn swap(p: &(integer, integer)) { t = p.0; p.0 = p.1; p.1 = t; }
+
+fn literal_by_amp() { c = &(1, 2); c.0 = 5; }
+fn literal_by_annotation() { c: &(integer, integer) = (1, 2); c.0 = 5; }
+fn literal_by_argument() { swap((1, 2)); }
+fn call_by_amp() { c = &mk(); c.0 = 5; }
+fn call_by_annotation() { c: &(integer, integer) = mk(); c.0 = 5; }
+fn call_by_argument() { swap(mk()); }
+
+fn main() {
+  literal_by_amp();
+  literal_by_annotation();
+  literal_by_argument();
+  call_by_amp();
+  call_by_annotation();
+  call_by_argument();
+}

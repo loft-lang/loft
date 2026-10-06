@@ -137,7 +137,7 @@ pub fn install(path: &str, stdlib_dir: &str, lib_dirs: &[String], running: &crat
         return;
     }
     for d in 0..running.definitions() {
-        if shadow.def(d).name != running.def(d).name {
+        if shadow.def_identity(d) != running.def_identity(d) {
             eprintln!(
                 "live-reload: def {d} name mismatch ('{}' vs '{}'); reload disabled",
                 shadow.def(d).name,

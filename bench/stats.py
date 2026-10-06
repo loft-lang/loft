@@ -57,6 +57,7 @@ otherwise, whatever the ratios say.
 """
 import argparse
 import os
+import platform
 import re
 import shutil
 import statistics
@@ -349,7 +350,6 @@ def run_metadata(a):
     """What a reader of a saved run needs to know about where it came from: the machine is
     part of every row (a ratio is between two lanes on ONE machine)."""
     import datetime
-    import platform
 
     def git(*args):
         p = subprocess.run(["git", "-C", ROOT, *args], capture_output=True, text=True)

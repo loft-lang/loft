@@ -1,0 +1,354 @@
+diff --git a/src/parser/control.rs b/src/parser/control.rs
+index 07f65a620..272641fcb 100644
+--- a/src/parser/control.rs
++++ b/src/parser/control.rs
+@@ -6390,34 +6390,18 @@ impl Parser {
+                         self.data.def(e_nr).name()
+                     );
+                 }
+-                let (struct_arms, exhaustive) = self.parse_match_struct_arm(
++                let (arm, exhaustive) = self.parse_match_struct_arm(
+                     e_nr,
+                     &subject_val,
+                     &mut result_type,
+                     &mut hoisted_bindings,
+                 );
+                 has_wildcard = exhaustive;
+-                arms.extend(struct_arms);
+-                self.lexer.has_token(",");
+-                // @FR-M-Wild — a pattern with no literal field matches every struct, so an arm
+-                // written after it can never be selected: say so, as the `_` arm does, and keep
+-                // parsing the arms (a `break` left them to the closing brace, which reported
+-                // "Expect token }").
+-                if has_wildcard && !self.lexer.peek_token("}") {
+-                    if !self.first_pass {
+-                        diagnostic!(
+-                            self.lexer,
+-                            Level::Error,
+-                            "this pattern matches every {}, so the arm after it can never be \
+-                             selected — move it to the end",
+-                            self.data.def(e_nr).name()
+-                        );
+-                    }
+-                    continue;
+-                }
++                arms.push(arm);
+                 if has_wildcard {
+                     break;
+                 }
++                self.lexer.has_token(",");
+                 continue;
+             }
+ 
+@@ -7439,176 +7423,91 @@ impl Parser {
+         }
+     }
+ 
+-    /// The `{ field, field: pattern, … }` of a plain-struct pattern: a bare field binds a new
+-    /// name (into `pattern_binds_pending`, restored at the arm's end), a `field: pattern` adds
+-    /// its sub-pattern's condition to `conds` and its names to the pending set.
+-    fn parse_struct_pattern_fields(
++    /// Parse a plain-struct match arm (field bindings + body).
++    /// Returns the arm and whether it is exhaustive.
++    fn parse_match_struct_arm(
+         &mut self,
+         e_nr: u32,
+         subject_val: &Value,
+-        binds: &mut Vec<Value>,
+-        conds: &mut Vec<Value>,
+-    ) {
++        result_type: &mut Type,
++        hoisted_bindings: &mut Vec<Value>,
++    ) -> (EnumArm, bool) {
++        let mut field_conditions: Vec<Value> = Vec::new();
+         // @PLN35 L2 — a nested struct-enum field sub-pattern binds via
+         // parse_match_enum_field_bindings, which uses the name-alias save list; a plain-struct
+         // arm has no arm-level alias restore, so give it a local sink (the existing scalar /
+         // plain-enum / wildcard sub-pattern branches never touch it → byte-identical).
+         let mut name_aliases: Vec<(String, Option<u16>)> = Vec::new();
+-        if !self.lexer.has_token("{") {
+-            return;
+-        }
+-        while !self.lexer.peek_token("}") {
+-            if let Some(field_name) = self.lexer.has_identifier() {
+-                let attr_idx = self.data.attr(e_nr, &field_name);
+-                if attr_idx != usize::MAX {
+-                    let field_val = self.get_field(e_nr, attr_idx, subject_val.clone());
+-                    let field_type = self.data.attr_type(e_nr, attr_idx);
+-                    if self.lexer.has_token(":") {
+-                        // `@FR-P-Point` — a bare lowercase NAME is a binding under that name
+-                        // (`P { y: v }`), as the variant arm reads it; read as a value it
+-                        // compared against an outer `v` (loft#1885).
+-                        if let Some(bind_name) = self.field_pattern_rename() {
+-                            let v = self.pattern_binding(&bind_name, &field_type);
++        if self.lexer.peek_token("{") {
++            self.lexer.token("{");
++            while !self.lexer.peek_token("}") {
++                if let Some(field_name) = self.lexer.has_identifier() {
++                    let attr_idx = self.data.attr(e_nr, &field_name);
++                    if attr_idx != usize::MAX {
++                        let field_val = self.get_field(e_nr, attr_idx, subject_val.clone());
++                        let field_type = self.data.attr_type(e_nr, attr_idx);
++                        if self.lexer.has_token(":") {
++                            if let Some(cond) = self.parse_field_sub_pattern(
++                                field_val,
++                                &field_type,
++                                hoisted_bindings,
++                                &mut field_conditions,
++                                &mut name_aliases,
++                            ) {
++                                field_conditions.push(cond);
++                            }
++                            // The names a sub-pattern bound belong to this arm; its end
++                            // restores them.
++                            self.pattern_binds_pending.append(&mut name_aliases);
++                        } else {
++                            let v = self.pattern_binding(&field_name, &field_type);
+                             self.vars.defined(v);
+                             let bound =
+                                 self.pattern_field_value(e_nr, attr_idx, subject_val.clone());
+-                            binds.push(v_set(v, bound));
+-                        } else if let Some(cond) = self.parse_field_sub_pattern(
+-                            field_val,
+-                            &field_type,
+-                            binds,
+-                            conds,
+-                            &mut name_aliases,
+-                        ) {
+-                            conds.push(cond);
++                            hoisted_bindings.push(v_set(v, bound));
+                         }
+-                        // The names a sub-pattern bound belong to this arm; its end
+-                        // restores them.
+-                        self.pattern_binds_pending.append(&mut name_aliases);
+-                    } else {
+-                        let v = self.pattern_binding(&field_name, &field_type);
+-                        self.vars.defined(v);
+-                        let bound = self.pattern_field_value(e_nr, attr_idx, subject_val.clone());
+-                        binds.push(v_set(v, bound));
++                    } else if !self.first_pass {
++                        diagnostic!(
++                            self.lexer,
++                            Level::Error,
++                            "unknown field '{}' on struct {}",
++                            field_name,
++                            self.data.def(e_nr).name()
++                        );
+                     }
+-                } else if !self.first_pass {
+-                    diagnostic!(
+-                        self.lexer,
+-                        Level::Error,
+-                        "unknown field '{}' on struct {}",
+-                        field_name,
+-                        self.data.def(e_nr).name()
+-                    );
++                }
++                if !self.lexer.has_token(",") {
++                    break;
+                 }
+             }
+-            if !self.lexer.has_token(",") {
+-                break;
+-            }
++            self.lexer.token("}");
+         }
+-        self.lexer.token("}");
+-    }
+-
+-    /// Parse a plain-struct match arm (field bindings + body).
+-    /// Returns the arm — one per listed pattern (`@FR-P-Multi`: `P { x: 0, y: v } | P { x: v,
+-    /// y: 0 } => v`) — and whether it is exhaustive.  The first pattern's bindings are hoisted
+-    /// ahead of the chain as before; each further pattern is its own arm that runs its bindings,
+-    /// linked into the first one's slots, ahead of a clone of the body.
+-    fn parse_match_struct_arm(
+-        &mut self,
+-        e_nr: u32,
+-        subject_val: &Value,
+-        result_type: &mut Type,
+-        hoisted_bindings: &mut Vec<Value>,
+-    ) -> (Vec<EnumArm>, bool) {
+-        let mut field_conditions: Vec<Value> = Vec::new();
+-        let first_names = self.pattern_binds_pending.len();
+-        let mut first_binds: Vec<Value> = Vec::new();
+-        self.parse_struct_pattern_fields(
+-            e_nr,
+-            subject_val,
+-            &mut first_binds,
+-            &mut field_conditions,
+-        );
+-        let struct_name = self.data.def(e_nr).name().to_string();
+-        let alternatives = self.parse_pattern_alternatives(
+-            first_names,
+-            &mut first_binds,
+-            |p| {
+-                let at = p.lexer.link();
+-                let named = p.lexer.has_identifier().is_some_and(|id| id == struct_name);
+-                if !named {
+-                    p.lexer.revert(at);
+-                }
+-                named
+-            },
+-            |p, binds, conds| p.parse_struct_pattern_fields(e_nr, subject_val, binds, conds),
+-        );
+         self.expect_match_arm_arrow();
+         let mut arm_code = Value::Null;
+         let arm_expected = self.match_arm_expected(result_type);
+         let arm_type = self.parse_match_arm_body(&arm_expected, &mut arm_code);
+-        let block = v_block(vec![arm_code.clone()], arm_type.clone(), "struct_match");
++        let block = v_block(vec![arm_code], arm_type.clone(), "struct_match");
+         if Self::match_result_unsettled(result_type) {
+-            *result_type = arm_type.clone();
++            *result_type = arm_type;
+         }
+-        let and_all = |conds: Vec<Value>| {
+-            conds
+-                .into_iter()
+-                .reduce(|a, b| v_if(a, b, Value::Boolean(false)))
+-        };
+-        let guard = and_all(field_conditions);
+-        // A pattern with no literal field always matches, so the arm covers the struct.
+-        let mut exhaustive = guard.is_none();
+-        if alternatives.is_empty() {
+-            // One pattern: its bindings are hoisted ahead of the chain, as they always were.
+-            hoisted_bindings.append(&mut first_binds);
+-            let arm = EnumArm {
+-                discs: vec![],
+-                code: block,
+-                tp: result_type.clone(),
+-                guard,
+-                bindings: Vec::new(),
+-                cond: None,
+-            };
+-            return (vec![arm], exhaustive);
+-        }
+-        // Several patterns write the same slots, so none is hoisted: each pattern's arm runs
+-        // its OWN bindings, then its literal-field test, then a clone of the body.
+-        let pattern_arm = |binds: Vec<Value>, guard: Option<Value>| {
+-            if let Some(g) = guard {
+-                // `cond: true` takes the chain's tested path, which runs `bindings` before the
+-                // guard.
+-                EnumArm {
+-                    discs: vec![],
+-                    code: v_block(vec![arm_code.clone()], arm_type.clone(), "struct_match"),
+-                    tp: result_type.clone(),
+-                    guard: Some(g),
+-                    bindings: binds,
+-                    cond: Some(Value::Boolean(true)),
+-                }
+-            } else {
+-                let mut stmts = binds;
+-                stmts.push(arm_code.clone());
+-                EnumArm {
+-                    discs: vec![],
+-                    code: v_block(stmts, arm_type.clone(), "struct_match"),
+-                    tp: result_type.clone(),
+-                    guard: None,
+-                    bindings: Vec::new(),
+-                    cond: None,
+-                }
++        let (guard, exhaustive) = if field_conditions.is_empty() {
++            (None, true)
++        } else {
++            let mut combined = field_conditions.remove(0);
++            for c in field_conditions {
++                combined = v_if(combined, c, Value::Boolean(false));
+             }
++            (Some(combined), false)
+         };
+-        let mut arms = vec![pattern_arm(first_binds, guard)];
+-        for (binds_i, conds_i) in alternatives {
+-            if exhaustive {
+-                break; // an earlier pattern always matches: the rest are unreachable
+-            }
+-            let guard_i = and_all(conds_i);
+-            exhaustive = guard_i.is_none();
+-            arms.push(pattern_arm(binds_i, guard_i));
+-        }
+-        (arms, exhaustive)
++        let arm = EnumArm {
++            discs: vec![],
++            code: block,
++            tp: result_type.clone(),
++            guard,
++            bindings: Vec::new(),
++            cond: None,
++        };
++        (arm, exhaustive)
+     }
+ 
+     /// The element reads a tuple VALUE read takes over a `&(…)` binding, with the element
+@@ -12314,7 +12213,13 @@ impl Parser {
+     }
+ 
+     /// `@FR-P-Multi` over a tuple subject — the further tuple patterns of one arm, after `|`
+-    /// or `,` (`(Circle { r }, Square { s }) | (Square { s }, Circle { r }) => r * s`).
++    /// or `,` (`(Circle { r }, Square { s }) | (Square { s }, Circle { r }) => r * s`).  Each
++    /// is parsed like the first, into its own bindings and conditions; a name the first
++    /// pattern bound is LINKED: the alternative's own variable is copied into the first one's
++    /// slot, after `@FR-P-Alt-Same` checks the types meet, so the one body reads whichever
++    /// alternative matched.  A name only some alternatives bind is `τ?` and null in the others
++    /// (`@FR-P-Alt-Diff`); `first_bindings` gains those nulls for the first pattern.  Answers the
++    /// alternatives, each `(bindings, conditions)`; an empty list is a single-pattern arm.
+     fn parse_tuple_alternatives(
+         &mut self,
+         tmp: u16,
+@@ -12322,39 +12227,6 @@ impl Parser {
+         first_names: usize,
+         first_bindings: &mut Vec<Value>,
+         bad_pattern: &mut bool,
+-    ) -> Vec<(Vec<Value>, Vec<Value>)> {
+-        let mut bad = false;
+-        let alternatives = self.parse_pattern_alternatives(
+-            first_names,
+-            first_bindings,
+-            |p| p.lexer.has_token("("),
+-            |p, binds, conds| {
+-                if p.parse_tuple_pattern_elements(tmp, elem_types, binds, conds) {
+-                    bad = true;
+-                }
+-            },
+-        );
+-        *bad_pattern |= bad;
+-        alternatives
+-    }
+-
+-    /// `@FR-P-Multi` — the further patterns of one arm after its first, listed with `|` or `,`,
+-    /// for a subject whose arms are not discriminant tests (a tuple, a plain struct).  `opens`
+-    /// consumes the start of an alternative and answers whether one is there (the cursor is put
+-    /// back when not); `parse_one` parses it into its own bindings and conditions.  A name the
+-    /// first pattern — or an earlier alternative — bound is LINKED: this alternative's own
+-    /// variable is copied into that slot, after `@FR-P-Alt-Same` checks the types meet, so the
+-    /// one body reads whichever alternative matched.  A name only some alternatives bind is
+-    /// `τ?` and null in the others (`@FR-P-Alt-Diff`); `first_bindings` gains those nulls for
+-    /// the first pattern.  `first_names` is where the first pattern's names start in
+-    /// `pattern_binds_pending`.  Answers each alternative's `(bindings, conditions)`; an empty
+-    /// list is a single-pattern arm.
+-    fn parse_pattern_alternatives(
+-        &mut self,
+-        first_names: usize,
+-        first_bindings: &mut Vec<Value>,
+-        opens: impl Fn(&mut Self) -> bool,
+-        mut parse_one: impl FnMut(&mut Self, &mut Vec<Value>, &mut Vec<Value>),
+     ) -> Vec<(Vec<Value>, Vec<Value>)> {
+         let mut alternatives: Vec<(Vec<Value>, Vec<Value>, HashSet<String>)> = Vec::new();
+         // name → (shared slot, its type); the first pattern's names, then each new one.
+@@ -12372,14 +12244,16 @@ impl Parser {
+             let at = self.lexer.link();
+             self.lexer.has_token("|");
+             self.lexer.has_token(",");
+-            if !opens(self) {
++            if !self.lexer.has_token("(") {
+                 self.lexer.revert(at);
+                 break;
+             }
+             let start = self.pattern_binds_pending.len();
+             let mut binds_i: Vec<Value> = Vec::new();
+             let mut conds_i: Vec<Value> = Vec::new();
+-            parse_one(self, &mut binds_i, &mut conds_i);
++            if self.parse_tuple_pattern_elements(tmp, elem_types, &mut binds_i, &mut conds_i) {
++                *bad_pattern = true;
++            }
+             let added: Vec<(String, Option<u16>)> =
+                 self.pattern_binds_pending.drain(start..).collect();
+             let mut names_i: HashSet<String> = HashSet::new();

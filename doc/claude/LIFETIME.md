@@ -360,9 +360,15 @@ it is not a store of the caller's, it is never freed, and it needs no identity g
 the result names the destination.  Admitted for a direct call to a loft-defined callee that
 FILLS the buffer it is handed on every exit.  Declined where an argument of the call reaches the
 destination — the callee clears its buffer before reading its arguments, so `h.v = grow(h.v)`
-would read an emptied vector — where the callee MINTS into a buffer parameter, which a returned
-vector literal does, and for a field of a struct-enum VARIANT, which exists only while the enum
-holds that variant.  A grouped destination is admitted: the group maintenance brackets the fill.
+would read an emptied vector — where the callee MINTS into a buffer parameter, which a
+projection chain (`return g().inner.v`) does, and for a field of a struct-enum VARIANT, which
+exists only while the enum holds that variant.  A returned collection LITERAL (`[x; n]`,
+`[a, b]`, a comprehension) is admitted: its `main_vector<T>` mint, handed a live buffer that is
+not that wrapper's own store, answers the buffer as the place, with the collection it held
+released (`Stores::mint_at_place`, both backends), and the literal builds in it.  A grouped destination is admitted: the group maintenance brackets the fill.
+The struct literal `H { v: f(…) }` takes the same admission (`place_buffer_of`, shared): its
+field exists once the header prime has written the empty handle — a variant literal's included,
+since it builds that variant — so the call is handed the field; a `?` field keeps the replace.
 `LOFT_NO_BUFFER_IS_PLACE=1` restores the copy; `tests/scripts/164-buffer-is-the-place.loft` and
 `tests/buffer_is_place.rs` are the receipts.
 

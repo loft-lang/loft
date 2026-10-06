@@ -1522,29 +1522,31 @@ impl Store {
     /// deterministic, reproducible failures.  Read once (cached); zero cost
     /// when off.  See `doc/claude/DEBUG_STORES.md` § store-ownership debugging.
     fn zero_claim_enabled() -> bool {
-        // Default ON: a claimed block's PAYLOAD must read as zero.  `claim` reuses freed blocks
-        // WITHOUT clearing them, so a caller that relies on zero-init — e.g. an empty `[]`
-        // collection placeholder (`V{a:[]}` / `parts: vector<T> = []`), which assumes the field/
-        // var handle is already 0 — instead inherits the freed block's STALE bytes.  That stale
-        // collection handle then resolves to a non-claimed record in `remove_claims`/`length_vector`
-        // → a use-after-free SIGSEGV (135-vector-u8-concat gate-on; @PLN25).  Zeroing the payload at
-        // the single claim chokepoint makes the invariant hold for every caller (interpreter only;
-        // native uses Rust ownership and never hits this).  `LOFT_NO_ZERO_CLAIM` disables it for
-        // perf benchmarking only.
+        // `@FR-H-Claim` (`@C137`) — OFF: a claim promises no value, so it writes none.  Every
+        // value is written by the code that builds it (its source, else its type's default),
+        // and a reader of a slot nothing wrote is the defect, found by `LOFT_POISON_CLAIM=1`
+        // and fixed where it reads — never papered over here.  The one zeroing that remains is
+        // a WRITE the program asks for (`[0; n]`, an all-zero-default record built in place),
+        // made at that site.  `LOFT_ZERO_CLAIM=1` (or `LOFT_LOG=zero_claim`) zeroes every claim
+        // again: a debugging lever that turns a read of stale bytes into a read of zeros.
         static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        *FLAG.get_or_init(|| std::env::var("LOFT_NO_ZERO_CLAIM").is_err())
+        *FLAG.get_or_init(|| {
+            std::env::var("LOFT_ZERO_CLAIM").is_ok_and(|v| v != "0")
+                || std::env::var("LOFT_LOG").is_ok_and(|v| v.split(',').any(|p| p == "zero_claim"))
+        })
     }
 
-    /// Common tail of every `claim` path: zero the claimed payload when
-    /// `zero_claim` is enabled (@P317 debugging lever).  No-op otherwise.
+    /// Common tail of every `claim` path: nothing by default (`@FR-H-Claim`); the claimed
+    /// payload poisoned under `LOFT_POISON_CLAIM=1`, zeroed under `LOFT_ZERO_CLAIM=1`.
     #[inline]
     fn finish_claim(&mut self, pos: u32) -> u32 {
         // `LOFT_POISON_CLAIM=1` — the dual of `LOFT_POISON`'s poison-on-FREE, and the
         // falsifier for the zero-on-claim question: fill a freshly claimed payload with
         // `0xDEADBEEF` instead of zeros, so a caller that RELIES on zero-init breaks
         // loudly and deterministically instead of inheriting recycled bytes that happen
-        // to look like zeros.  `LOFT_NO_ZERO_CLAIM=1` is the weak form of the same test
-        // (stale data is often benign); this one cannot be passed by luck.
+        // to look like zeros.  Without it a claim holds whatever the block held last — the
+        // weak form of the same test (stale data is often benign); this one cannot be passed
+        // by luck.
         if Self::poison_claim_enabled() {
             self.poison_fill(pos);
         } else if Self::zero_claim_enabled() {
@@ -1663,9 +1665,14 @@ impl Store {
             words -= nh;
         }
         if start > PRIMARY {
+            // The word before `start` is a free FOOTER only when the predecessor is free; a
+            // CLAIMED predecessor's last word is its payload, which holds any value
+            // (`@FR-H-Claim`) — `i32::MIN` included, which `-f` cannot negate.  The checks
+            // below reject a payload that merely looks like a footer.
             let f = self.read::<i32>(start - 1, 4);
-            if f < 0 {
-                let pw = -f;
+            if f < 0
+                && let Some(pw) = f.checked_neg()
+            {
                 if let Some(prev) = start.checked_sub(pw as u32)
                     && prev >= PRIMARY
                     && self.read::<i32>(prev, 0) == f
@@ -1910,17 +1917,17 @@ impl Store {
                     self.write(rec, 0, claim - next_size);
                     claim - next_size
                 };
-                // The absorbed region (old end `claim` .. new end) held the freed block's
-                // STALE bytes.  `claim`/`finish_claim` zero a payload on allocation so a
-                // freshly-exposed slot reads as 0 (the invariant `set_default_value` and the
-                // vector/text readers rely on); an in-place grow must uphold the SAME
-                // invariant or a newly-exposed vector element carries garbage text/vec
-                // handles that `remove_claims`/`length_vector` then follow into a UAF
-                // (cluster-462, #462 @ sim.loft:3546).  Zero only the grown tail; the old
-                // payload (words 1..claim) is preserved.  Same flag as `claim` so
-                // `LOFT_NO_ZERO_CLAIM` toggles both together.
-                if Self::zero_claim_enabled() {
-                    self.zero_range(rec, claim as u32 * 8, (new_size - claim) as u32 * 8);
+                // The absorbed region (old end `claim` .. new end) holds the freed block's
+                // stale bytes, and that is all it promises (`@FR-H-Claim`): a grown vector's
+                // new slots are written by the append that makes them live.  Treated exactly
+                // as a claim's payload — poisoned under `LOFT_POISON_CLAIM=1`, so a reader of a
+                // newly exposed slot fails loudly (cluster-462 was one), zeroed under
+                // `LOFT_ZERO_CLAIM=1`.  The old payload (words 1..claim) is preserved.
+                let (from, len) = (claim as u32 * 8, (new_size - claim) as u32 * 8);
+                if Self::poison_claim_enabled() {
+                    self.poison_range(rec, from, len);
+                } else if Self::zero_claim_enabled() {
+                    self.zero_range(rec, from, len);
                 }
                 return rec;
             }
@@ -1966,11 +1973,13 @@ impl Store {
         if rec <= PRIMARY {
             return None;
         }
+        // A claimed predecessor's last word is payload and holds any value (`@FR-H-Claim`):
+        // a "footer" that cannot be negated is not one.
         let f = self.read::<i32>(rec - 1, 4);
         if f >= 0 {
             return None;
         }
-        let words = -f;
+        let words = f.checked_neg()?;
         let prev = rec.checked_sub(words as u32)?;
         if prev < PRIMARY || words < MIN_FREE_TREE {
             return None;
@@ -3724,16 +3733,14 @@ impl Store {
 
     /// Read a field OUT of the store.  **The ordinary way to get a value.**
     ///
-    /// A store's allocation is `Layout::from_size_align(size * 8, 8)` and an address is
-    /// `base + rec * 8 + fld`, so for any alignment up to eight the address's alignment IS
-    /// `fld`'s — and `fld` is a BYTE offset the type layout assigns with no padding.  A
-    /// field is therefore aligned only by accident: measured over the corpus, `i64` reads
-    /// occur at all seven non-zero `fld % 8`, and `u32`, `u16` and `f64` at every remainder
-    /// of their own.  `read_unaligned` states the alignment the data actually has; it lowers
-    /// to the same single `mov` on x86-64, so saying the truth costs nothing here.
-    ///
-    /// Prefer this everywhere.  [`Store::addr`] hands out a `&T` instead and can only be
-    /// used where the field is provably aligned — see its own note (loft#1481).
+    /// `@FR-L-Align` (@C138): a store's allocation is `Layout::from_size_align(size * 8, 8)`
+    /// and an address is `base + rec * 8 + fld`, so for any alignment up to eight the
+    /// address's alignment IS `fld`'s — and the layout places every field on its natural
+    /// boundary and pads every record to a multiple of its alignment, so every element of a
+    /// collection is aligned too.  The read is therefore an aligned `ptr::read` behind one
+    /// alignment test; a misaligned `fld` is a layout defect and panics, in a release build
+    /// too.  Two kinds of bytes the layout does not place are read unaligned: a FOREIGN
+    /// store's, which its producer's buffer supplies, and the interpreter's stack frames.
     #[inline]
     pub fn read<T: Copy>(&self, rec: u32, fld: u32) -> T {
         if Self::is_foreign_rec(rec) {
@@ -3741,7 +3748,37 @@ impl Store {
             return unsafe { at.cast::<T>().read_unaligned() };
         }
         let at = self.offset_in_bounds(rec, fld, std::mem::size_of::<T>());
+        if !(fld as usize).is_multiple_of(std::mem::align_of::<T>()) {
+            return self.read_frame_slot::<T>(rec, fld, at);
+        }
+        // SAFETY: in bounds and aligned for `T`, both just tested.
+        unsafe { self.ptr.offset(at).cast::<T>().read() }
+    }
+
+    /// A misaligned [`Self::read`]: answered unaligned on the interpreter's STACK store, whose
+    /// frame slots the frame allocator lays out and `(L-Align)` does not cover (the bytecode's
+    /// rule: packed, read unaligned); a layout defect anywhere else.  Out of line, so the
+    /// aligned path stays a mask and a not-taken branch.
+    #[cold]
+    #[inline(never)]
+    fn read_frame_slot<T: Copy>(&self, rec: u32, fld: u32, at: isize) -> T {
+        if !self.stack_buffer {
+            self.raise_misaligned(rec, fld, std::mem::align_of::<T>());
+        }
+        // SAFETY: `at` was bounded by the caller; the read states the alignment it has.
         unsafe { self.ptr.offset(at).cast::<T>().read_unaligned() }
+    }
+
+    /// The refusal of a misaligned [`Self::read`] / [`Self::write`] (`@FR-R-Cold`).
+    #[cold]
+    #[inline(never)]
+    fn raise_misaligned(&self, rec: u32, fld: u32, align: usize) -> ! {
+        panic!(
+            "Store access misaligned: rec={rec} fld={fld} needs {align}-byte alignment, \
+             type={} — every field and element sits on its natural boundary (@C138), so \
+             the offset came from a layout that is not the store's",
+            self.known_type,
+        )
     }
 
     /// @PLN174 — the address of `width` bytes at field `fld` of the foreign record: the
@@ -4115,18 +4152,29 @@ impl Store {
     }
 
     /// Write a field INTO the store.  The mirror of [`Store::read`], and the ordinary way to
-    /// store a value.
-    ///
-    /// Same reason as its twin: `fld` is an unpadded byte offset, so the destination is
-    /// aligned only by accident, and `&mut T` at a misaligned address is undefined behaviour
-    /// exactly as `&T` is.  Measured — `Store::addr_mut: field 44 is not aligned for i64` on
-    /// the second test of the corpus.  `write_unaligned` states what the layout actually
-    /// guarantees (loft#1481).
+    /// store a value: an aligned `ptr::write` behind the same alignment test
+    /// (`@FR-L-Align`, @C138).
     #[inline]
     pub fn write<T: 'static + Copy>(&mut self, rec: u32, fld: u32, val: T) {
         let Some(at) = self.begin_write::<T>(rec, fld) else {
             return;
         };
+        if !(fld as usize).is_multiple_of(std::mem::align_of::<T>()) {
+            self.write_frame_slot(rec, fld, at, val);
+            return;
+        }
+        // SAFETY: `begin_write` bounded it; the test above aligned it.
+        unsafe { self.ptr.offset(at).cast::<T>().write(val) }
+    }
+
+    /// The write twin of [`Self::read_frame_slot`].
+    #[cold]
+    #[inline(never)]
+    fn write_frame_slot<T: Copy>(&mut self, rec: u32, fld: u32, at: isize, val: T) {
+        if !self.stack_buffer {
+            self.raise_misaligned(rec, fld, std::mem::align_of::<T>());
+        }
+        // SAFETY: `begin_write` bounded it; the write states the alignment it has.
         unsafe { self.ptr.offset(at).cast::<T>().write_unaligned(val) }
     }
 
@@ -4441,6 +4489,18 @@ impl Store {
         }
         // The tail below four bytes keeps whatever it had: a sub-word payload cannot
         // hold a handle, and writing past `bytes` would leave the block.
+    }
+
+    /// [`Self::poison_fill`] over `len` bytes at byte `pos` of record `rec` — a grown block's
+    /// newly exposed tail.  Whole words only; a sub-word remainder keeps what it had.
+    pub fn poison_range(&self, rec: u32, pos: u32, len: u32) {
+        let base = unsafe { self.ptr.offset(rec as isize * 8 + pos as isize) };
+        for i in 0..(len / 4) as usize {
+            unsafe {
+                base.add(i * 4)
+                    .copy_from_nonoverlapping(0xDEAD_BEEF_u32.to_ne_bytes().as_ptr(), 4);
+            }
+        }
     }
 
     pub fn zero_fill(&self, rec: u32) {
@@ -4992,6 +5052,35 @@ impl Store {
             );
         }
         res
+    }
+
+    /// `@FR-R-RefillText` — write `val` into the text slot at `(rec, fld)` reusing the block
+    /// the slot already owns: written over when `val` fits its claim (`len + 8 ≤ 8 × words`),
+    /// released and claimed anew when it does not, claimed when the slot is 0.  The caller
+    /// owes the rule's invariant — the slot holds 0 or a text block it owns — which the
+    /// emitter proves at the call site; a slot holding anything else is read as a block.
+    #[inline]
+    pub fn refill_str(&mut self, rec: u32, fld: u32, val: &str) {
+        let old = self.get_u32_raw(rec, fld);
+        if old != 0 && !self.read_only {
+            let words = self.read::<i32>(old, 0);
+            if words > 0 && val.len() + 8 <= words as usize * 8 {
+                #[cfg(feature = "op-census")]
+                crate::op_census::moved(crate::op_census::Moved::Text, val.len());
+                self.set_u32_raw(old, 4, val.len() as u32);
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        val.as_ptr(),
+                        self.ptr.offset(old as isize * 8 + 8),
+                        val.len(),
+                    );
+                }
+                return;
+            }
+            self.delete(old);
+        }
+        let res = self.set_str(val);
+        self.set_u32_raw(rec, fld, res);
     }
 
     #[inline]
@@ -5781,6 +5870,56 @@ mod tests {
         (plain, rec, foreign, froot)
     }
 
+    /// `@FR-R-RefillText` — the three cases of `refill_str`, read by value, by block and by
+    /// live-claim count: a 0 slot claims; a text that fits is written over the slot's own
+    /// block (same block, no claim); one that does not releases the block and claims a fit
+    /// (count flat); an empty text and a longer one after it ride the same rules.  A
+    /// one-word block holds 0 bytes of text, two words up to 8.
+    #[test]
+    fn refill_str_writes_over_a_fitting_block_and_replaces_one_that_does_not() {
+        let mut s = Store::new(64);
+        let rec = s.claim(2);
+        // The rule's precondition, as the zero-filling mint leaves it (a poisoned claim
+        // under `LOFT_POISON_CLAIM=1` is read as a block otherwise — the invariant).
+        s.set_u32_raw(rec, 8, 0);
+        let base = s.claims_count();
+        s.refill_str(rec, 8, "abcd");
+        let first = s.get_u32_raw(rec, 8);
+        assert_ne!(first, 0);
+        assert_eq!(s.get_str(first), "abcd");
+        assert_eq!(s.claims_count(), base + 1);
+        // Fits (12 ≤ 16): the same block, the shorter text.
+        s.refill_str(rec, 8, "xy");
+        assert_eq!(s.get_u32_raw(rec, 8), first);
+        assert_eq!(s.get_str(first), "xy");
+        assert_eq!(s.claims_count(), base + 1);
+        // Exactly the claim (8 + 8 = 16).
+        s.refill_str(rec, 8, "12345678");
+        assert_eq!(s.get_u32_raw(rec, 8), first);
+        assert_eq!(s.get_str(first), "12345678");
+        // Empty, then longer than the block: released and claimed anew, the count flat.
+        s.refill_str(rec, 8, "");
+        assert_eq!(s.get_u32_raw(rec, 8), first);
+        assert_eq!(s.get_str(first), "");
+        s.refill_str(rec, 8, "a text past two words");
+        let grown = s.get_u32_raw(rec, 8);
+        assert_eq!(s.get_str(grown), "a text past two words");
+        assert_eq!(s.claims_count(), base + 1);
+        assert!(!s.claims_record(first) || first == grown);
+        // A thousand refills of alternating sizes leave one block.
+        for i in 0..1000 {
+            let v = if i % 3 == 0 {
+                "a much longer text than the others"
+            } else {
+                "s"
+            };
+            s.refill_str(rec, 8, v);
+            assert_eq!(s.get_str(s.get_u32_raw(rec, 8)), v);
+        }
+        assert_eq!(s.claims_count(), base + 1);
+        assert_eq!(s.validate_structure(), Ok(()));
+    }
+
     fn sample_bytes() -> Vec<u8> {
         (0..37u8)
             .map(|i| i.wrapping_mul(7).wrapping_add(3))
@@ -5817,9 +5956,12 @@ mod tests {
             foreign.read::<u32>(FOREIGN_REC, 8),
             plain.read::<u32>(rec, 8)
         );
+        // A foreign span starts at any byte, so its reads are unaligned (`@FR-L-Align` covers
+        // only the bytes the layout places); the copy is compared by its bytes.
+        let at = len as usize - 2;
         assert_eq!(
             foreign.read::<u16>(FOREIGN_REC, 8 + len - 2),
-            plain.read::<u16>(rec, 8 + len - 2)
+            u16::from_ne_bytes([data[at], data[at + 1]])
         );
         let seen =
             unsafe { std::slice::from_raw_parts(foreign.elem_base(FOREIGN_REC), len as usize) };
@@ -5943,7 +6085,7 @@ mod tests {
         }
         assert_eq!(
             view.read::<u32>(FOREIGN_REC, 8),
-            plain.read::<u32>(rec, 8 + 5)
+            u32::from_ne_bytes([data[5], data[6], data[7], data[8]])
         );
         let seen = unsafe { std::slice::from_raw_parts(view.elem_base(FOREIGN_REC), 7) };
         assert_eq!(seen, &data[5..12]);
@@ -6101,23 +6243,18 @@ mod tests {
         let _ = store.addr::<i64>(rec, 4);
     }
 
-    /// The other half: the same read through [`Store::read`] is fine, because
-    /// `read_unaligned` states the alignment the data actually has.
-    ///
-    /// Without this the test above would pass for a reason it does not name — a `claim`
-    /// that failed, a `rec` out of bounds — rather than for the alignment.
+    /// The other half, `@FR-L-Align` (@C138): every field the layout places is aligned, so
+    /// [`Store::read`] at an offset the type's alignment does not divide is a layout defect,
+    /// refused in every build — where `read_unaligned` used to answer it.
     #[test]
-    fn read_accepts_the_same_misaligned_field() {
+    #[should_panic(expected = "Store access misaligned")]
+    fn read_refuses_the_same_misaligned_field() {
         let mut store = Store::new(8);
         store.free = false;
         let rec = store.claim(4);
         store.write::<i32>(rec, 4, -7);
         assert_eq!(store.read::<i32>(rec, 4), -7, "a 4-aligned i32 round-trips");
-        assert_eq!(
-            store.read::<i64>(rec, 4),
-            i64::from(-7i32) & 0xffff_ffff,
-            "and `read::<i64>` at the SAME 4-aligned offset is legal, where `addr` refuses"
-        );
+        let _ = store.read::<i64>(rec, 4);
     }
 
     /// loft#760 — the call bracket's `free_protected` marker must NOT block a delete.
@@ -7285,38 +7422,33 @@ mod tests {
         assert!(sentinel.free);
     }
 
-    /// cluster-462 / #462 regression: an in-place `resize` grow that absorbs an adjacent
-    /// freed block MUST zero the newly-absorbed region, upholding the same "claimed payload
-    /// reads zero" invariant `claim` provides. A freshly-exposed vector element slot that
-    /// keeps the freed block's stale bytes (garbage text/vec handles) is followed by
-    /// `remove_claims`/`length_vector` into a UAF (the sim.loft:3546 SIGSEGV). Pre-fix this
-    /// region kept `0xDEAD_BEEF`; post-fix it reads 0.
+    /// `@FR-H-Claim` — growing a record in place into the adjacent free block keeps the bytes
+    /// the record already wrote and makes no promise about the region it absorbs: that region is
+    /// claimed, and a claim's bytes are undefined until written (C137).  What made a stale slot
+    /// there a use-after-free was a reader of it, and C137 moved the duty onto the writers.
     #[test]
-    fn resize_in_place_zeroes_absorbed_region() {
+    fn resize_in_place_keeps_its_own_bytes() {
         let mut store = Store::new(256);
         store.free = false;
         let a = store.claim(4); // 4-word record
         let b = store.claim(16); // adjacent 16-word record
-        // Garbage at HIGH offsets in b, past the free-tree node header `delete` writes into
-        // b's first words — so it survives the free and is what `resize` must clear.
-        store.write::<u32>(b, 80, 0xDEAD_BEEF);
-        store.write::<u32>(b, 100, 0x00CA_FE00);
+        store.write::<u32>(a, 8, 0x0012_3456);
+        store.write::<u32>(a, 28, 0x0065_4321);
         store.delete(b); // b becomes a free block adjacent to a
         let a2 = store.resize(a, 12); // grow a in place into b's region
         assert_eq!(
             a2, a,
             "resize should grow a in place (absorb the adjacent free block)"
         );
-        // b started at word 4 relative to a; b byte 80/100 -> a byte 4*8+80 / 4*8+100.
         assert_eq!(
-            store.read::<u32>(a, 32 + 80),
-            0,
-            "absorbed region must be zeroed (kept 0xDEADBEEF pre-fix)"
+            store.read::<u32>(a, 8),
+            0x0012_3456,
+            "a's own bytes survive the growth"
         );
         assert_eq!(
-            store.read::<u32>(a, 32 + 100),
-            0,
-            "absorbed region must be zeroed (kept 0xCAFE pre-fix)"
+            store.read::<u32>(a, 28),
+            0x0065_4321,
+            "a's own bytes survive the growth"
         );
     }
 

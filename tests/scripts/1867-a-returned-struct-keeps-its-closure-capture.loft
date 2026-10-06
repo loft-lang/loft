@@ -1,0 +1,156 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1867, `@FR-L-Escape` / `@FR-L-CapOwn` — a struct whose fn field holds a CAPTURING
+// closure may leave the frame that built it, and keeps what the closure captured.
+//
+// The closure record is built in place in the struct's own store (`OpChildRec`), adopts its
+// captures when the struct leaves the frame, and the struct's drop cascade runs the record's.
+// So the struct owns what the closure adopted: one release, by the struct, whenever it dies.
+// A field REBUILT in place releases the record it replaces, read out of the field; a
+// non-capturing value written over an adopting closure runs that closure's cascade first.
+//
+// Every value is hand-computed.  The cells vary one axis each: the capture's kind (a record,
+// a vector, a vector of records, a mutated integer cell), the delivery (a literal in return
+// position, a local returned, one arm of a branch, a struct nested inline in another), the
+// capture reassigned after the build, two fn fields sharing one capture (`@FR-L-CapOne`), a
+// field rebuilt in a loop, an adopting closure replaced by a plain fn, and a closure written
+// into a struct the caller passed (one and two frames deep, rebuilt there).  A returned value
+// is used after the caller has allocated enough to reuse a freed store.  Each cell has its
+// own struct type: a fn field holds one lambda's record layout.
+//
+// @falsified-at: 6bcfcfbef — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: the EXIT — before loft#1867 every cell that delivers the struct is a compile-time
+//   refusal (#318's sinks R1 and R2), so the file does not build.
+//   HOLDS: every cell is clean under `LOFT_STRICT_STORES=1`, `LOFT_POISON=1` and
+//   `LOFT_POISON_CLAIM=1` with the exit leak check on this tree, both backends.
+
+struct V { a: integer }
+struct H1 { f: fn(integer) -> integer, tag: integer }
+struct H2 { f: fn(integer) -> integer }
+struct H3 { f: fn(integer) -> integer }
+struct H4 { f: fn(integer) -> integer, tag: integer }
+struct H5 { f: fn(integer) -> integer }
+struct H6 { f: fn(integer) -> integer }
+struct H9 { f: fn(integer) -> integer, g: fn(integer) -> integer }
+struct H11 { f: fn(integer) -> integer }
+struct G11 { h: H11, z: integer }
+struct H12 { f: fn(integer) -> integer }
+struct R2 { f: fn(integer) -> integer, t: integer }
+struct Counter { cb: fn() -> integer }
+struct H10 { f: fn(integer) -> integer, t: integer }
+
+fn id(x: integer) -> integer { x }
+fn churn() -> integer { junk = []; for i in 0..40 { junk += [V { a: 1000 + i }]; } junk.len() }
+
+fn k1(n: integer) -> H1 { v = V { a: n }; H1 { f: fn(x: integer) -> integer { v.a * 10 + x }, tag: 1 } }
+fn k2(n: integer) -> H2 { c = [n, n + 1]; H2 { f: fn(x: integer) -> integer { (c[1] ?? 0) * 100 + x } } }
+fn k3(n: integer) -> H3 { v = V { a: n }; h = H3 { f: fn(x: integer) -> integer { v.a + x } }; v = V { a: 500 }; h }
+fn k4(n: integer, p: boolean) -> H4 { v = V { a: n }; h = H4 { f: fn(x: integer) -> integer { v.a - x }, tag: 4 }; if p { h } else { H4 { f: id, tag: 5 } } }
+fn k5(n: integer) -> integer { v = V { a: n }; h = H5 { f: fn(x: integer) -> integer { v.a * 2 + x } }; h.f(1) }
+fn k6(n: integer) -> H6 { vs = [V { a: n }, V { a: n + 1 }]; H6 { f: fn(x: integer) -> integer { vs[1].a * 10 + x } } }
+fn k9(n: integer) -> H9 { v = V { a: n }; H9 { f: fn(x: integer) -> integer { v.a + x }, g: fn(x: integer) -> integer { v.a * x } } }
+fn k11(n: integer) -> G11 { v = V { a: n }; G11 { h: H11 { f: fn(x: integer) -> integer { v.a + x } }, z: 4 } }
+fn k12(n: integer) -> H12 { h = H12 { f: id }; for i in 0..n { v = V { a: i }; h.f = fn(x: integer) -> integer { v.a * 100 + x }; } h }
+fn r2(n: integer) -> R2 { v = V { a: n }; h = R2 { f: fn(x: integer) -> integer { v.a + x }, t: n * 2 }; h.f = id; h }
+fn set10(h: H10, n: integer) { v = V { a: n }; h.f = fn(x: integer) -> integer { v.a + x }; }
+fn twice10(h: H10, n: integer) { set10(h, n); }
+fn counter() -> Counter { n = 0; Counter { cb: fn() -> integer { n = n + 1; n } } }
+
+fn test_a_record_capture() {
+  h = k1(7);
+  assert(churn() == 40 && h.f(3) == 73 && h.tag == 1, "k1 {h.f(3)} {h.tag}, want 73 1");
+}
+
+fn test_a_vector_capture() {
+  h = k2(4);
+  assert(churn() == 40 && h.f(1) == 501, "k2 {h.f(1)}, want 501");
+}
+
+fn test_a_capture_reassigned_after_the_build() {
+  h = k3(9);
+  assert(churn() == 40 && h.f(2) == 11, "k3 {h.f(2)}, want 11 — the record keeps the build's store");
+}
+
+fn test_one_arm_delivers_the_capturing_struct() {
+  t = k4(20, true);
+  f = k4(20, false);
+  assert(t.f(5) == 15 && t.tag == 4, "k4 true {t.f(5)} {t.tag}, want 15 4");
+  assert(f.f(5) == 5 && f.tag == 5, "k4 false {f.f(5)} {f.tag}, want 5 5");
+}
+
+fn test_a_struct_that_stays_in_the_frame() {
+  assert(k5(8) == 17, "k5 {k5(8)}, want 17");
+}
+
+fn test_a_vector_of_records_capture() {
+  h = k6(3);
+  assert(churn() == 40 && h.f(1) == 41, "k6 {h.f(1)}, want 41");
+}
+
+fn test_two_fields_share_one_capture() {
+  h = k9(5);
+  assert(churn() == 40 && h.f(1) == 6 && h.g(3) == 15, "k9 {h.f(1)} {h.g(3)}, want 6 15");
+}
+
+fn test_a_struct_nested_inline() {
+  g = k11(6);
+  assert(churn() == 40 && g.h.f(1) == 7 && g.z == 4, "k11 {g.h.f(1)} {g.z}, want 7 4");
+}
+
+fn test_a_field_rebuilt_in_a_loop() {
+  h = k12(4);
+  assert(churn() == 40 && h.f(7) == 307, "k12 {h.f(7)}, want 307 — the last pass's capture");
+}
+
+fn test_an_adopting_closure_replaced_by_a_plain_fn() {
+  h = r2(5);
+  assert(h.f(7) == 7 && h.t == 10, "r2 {h.f(7)} {h.t}, want 7 10");
+}
+
+fn test_a_mutated_cell_capture() {
+  c = counter();
+  a = (c.cb)();
+  b = (c.cb)();
+  assert(churn() == 40 && a == 1 && b == 2 && (c.cb)() == 3, "counter {a} {b}, want 1 2 then 3");
+}
+
+fn test_returned_in_a_loop() {
+  sum = 0;
+  for i in 0..3 { h = k1(i); sum += h.f(i); }
+  assert(sum == 33, "loop sum {sum}, want 0 + 11 + 22");
+}
+
+fn test_written_into_an_argument_struct() {
+  h = H10 { f: id, t: 1 };
+  assert(h.f(2) == 2, "a0 {h.f(2)}, want 2");
+  set10(h, 40);
+  assert(churn() == 40 && h.f(2) == 42 && h.t == 1, "a1 {h.f(2)} {h.t}, want 42 1");
+  set10(h, 50);
+  assert(h.f(2) == 52, "a2 {h.f(2)}, want 52 — the displaced record's capture released");
+  twice10(h, 60);
+  assert(churn() == 40 && h.f(2) == 62, "a3 {h.f(2)}, want 62 — two frames deep");
+  for i in 0..3 { set10(h, i); }
+  assert(h.f(9) == 11, "a4 {h.f(9)}, want 11");
+}
+
+fn test_a_fn_field_called_off_the_call() {
+  assert(k1(7).f(3) == 73 && k6(3).f(1) == 41, "inline: {k1(7).f(3)} {k6(3).f(1)}, want 73 41");
+}
+
+fn main() {
+  test_a_record_capture();
+  test_a_vector_capture();
+  test_a_capture_reassigned_after_the_build();
+  test_one_arm_delivers_the_capturing_struct();
+  test_a_struct_that_stays_in_the_frame();
+  test_a_vector_of_records_capture();
+  test_two_fields_share_one_capture();
+  test_a_struct_nested_inline();
+  test_a_field_rebuilt_in_a_loop();
+  test_an_adopting_closure_replaced_by_a_plain_fn();
+  test_a_mutated_cell_capture();
+  test_returned_in_a_loop();
+  test_written_into_an_argument_struct();
+  test_a_fn_field_called_off_the_call();
+}

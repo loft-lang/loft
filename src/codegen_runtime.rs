@@ -411,6 +411,9 @@ fn op_database_inner(
             db.pos,
         );
     }
+    if stores.mint_at_place(&db, db_tp) {
+        return db;
+    }
     if db.store_nr == u16::MAX {
         // Null sentinel (no real store yet) — allocate a fresh one, which `null` has
         // already initialised.
@@ -1234,8 +1237,10 @@ pub fn OpCopyRecord(cell: &std::cell::UnsafeCell<Stores>, data: DbRef, to: DbRef
     // (`store_nr == u16::MAX`) has no store to read; `store(&data)` would index
     // `allocations[65535]` and panic (`allocation.rs:560`).  Guards the
     // pre-existing crash on `vec[i] = <runtime-null>` into a non-nullable inline
-    // element — leave the destination unchanged rather than crash.
+    // element — leave the destination unchanged rather than crash.  A FRESH destination is
+    // written absent instead (`Stores::copy_null_into`).
     if data.store_nr == u16::MAX {
+        stores.copy_null_into(&to, tp as u16);
         return;
     }
     // @FR-L-Null, the DESTINATION half — the twin of `state/io.rs::do_copy_record`'s.  An
@@ -4179,7 +4184,11 @@ where
     let n_threads = n_threads.max(1) as usize;
     let batches = crate::parallel::parallel_workers(stores, n_threads, n, |start, end, mut ws| {
         let row_count = end - start;
-        let array_words = (row_count * 4).div_ceil(8).max(1) as u32;
+        // `@FR-H-Claim` — the s_pos array record needs 4 bytes for the record-size header (fld 0..4) plus
+        // 4 bytes per row; writes start at fld 4 — writing from fld 0 overwrote the record's
+        // own header word, which a later claim then read as the block's size.  The twin of
+        // `parallel.rs`'s interpreter worker.
+        let array_words = (4 + row_count * 4).div_ceil(8) as u32;
         let slot = ws.add_output_slot(array_words);
         let array_rec = ws.stores.allocations[slot.store_nr as usize].claim(array_words);
         for (local_idx, row_idx) in (start..end).enumerate() {
@@ -4195,7 +4204,7 @@ where
             let s = worker(cell, elm);
             let slot_store = &mut ws.stores.allocations[slot.store_nr as usize];
             let s_pos = slot_store.set_str(&s);
-            slot_store.set_u32_raw(array_rec, (local_idx as u32) * 4, s_pos);
+            slot_store.set_u32_raw(array_rec, 4 + (local_idx as u32) * 4, s_pos);
         }
         (start, row_count, slot.store_nr, array_rec, ws.stores)
     });
@@ -4203,7 +4212,7 @@ where
     for (start, count, slot_nr, array_rec, worker_stores) in batches {
         let slot_store = &worker_stores.allocations[slot_nr as usize];
         for local_idx in 0..count {
-            let s_pos = slot_store.get_u32_raw(array_rec, (local_idx as u32) * 4);
+            let s_pos = slot_store.get_u32_raw(array_rec, 4 + (local_idx as u32) * 4);
             results[start + local_idx] = slot_store.get_str(s_pos).to_string();
         }
     }
@@ -6083,12 +6092,70 @@ pub fn cr_fnref_minted(
     let serial = slot.alloc_serial;
     FNREF_BUFS.with(|b| {
         let mut list = b.borrow_mut();
-        if list.iter().any(|(d, _)| d.store_nr == returned.store_nr) {
+        // One ALLOCATION is one entry, and a slot number is not an allocation: an entry left
+        // by a store its owner already freed names the same slot as a new store minted into
+        // it.  Refusing the new one on the number alone left it to nobody; appending beside
+        // the dead entry grew the list by one per pass of a loop, and every call scanned it.
+        // The dead entry is REPLACED where it stands — its store is gone (`release` skips it
+        // on the serial), and keeping its index leaves every frame's mark meaning what it did.
+        if let Some(at) = list
+            .iter()
+            .position(|(d, _)| d.store_nr == returned.store_nr)
+        {
+            list[at] = (returned, serial);
             return;
         }
         list.push((returned, serial));
         FNREF_LEN.with(|n| n.set(u32::try_from(list.len()).unwrap_or(u32::MAX)));
     });
+}
+
+/// `@FR-R-RefillText`'s collection clause — the exit half of a refilling callee's kept
+/// elements ([`Stores::refill_keep_close`]), run on EVERY return of the function by being
+/// dropped there: the texts of the kept slots the build did not reuse are released.  Armed
+/// right after [`Stores::refill_keep_open`] with the buffer as it arrived, which the mint
+/// kept whenever `keep` is not 0.
+pub struct RefillKeepGuard {
+    cell: *const std::cell::UnsafeCell<Stores>,
+    buf: DbRef,
+    field: u32,
+    keep: u32,
+    size: u32,
+    texts: &'static [u32],
+}
+
+impl RefillKeepGuard {
+    #[must_use]
+    #[inline]
+    pub fn new(
+        cell: &std::cell::UnsafeCell<Stores>,
+        buf: DbRef,
+        field: u32,
+        keep: u32,
+        size: u32,
+        texts: &'static [u32],
+    ) -> Self {
+        Self {
+            cell: std::ptr::from_ref(cell),
+            buf,
+            field,
+            keep,
+            size,
+            texts,
+        }
+    }
+}
+
+impl Drop for RefillKeepGuard {
+    #[inline]
+    fn drop(&mut self) {
+        if self.keep != 0 {
+            // SAFETY: the guard lives in the frame of the function it was armed in, inside
+            // the `cell`'s lifetime, and runs after that frame's last use of `stores`.
+            let stores: &mut Stores = unsafe { &mut *(*self.cell).get() };
+            stores.refill_keep_close(&self.buf, self.field, self.keep, self.size, self.texts);
+        }
+    }
 }
 
 /// Releases the fn-ref return buffers a frame delivered into, when that frame ends.

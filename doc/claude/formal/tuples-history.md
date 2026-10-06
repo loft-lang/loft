@@ -985,3 +985,18 @@ Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), 
 
   Until one is chosen the refusal is the safe answer: it is loud, both backends agree, and no
   guard pins it, so whichever way it is ruled costs no expectation.  `OPEN` stays **1**.
+
+## Every reference tuple became the record (2026-10-06, loft#1883)
+
+The owner chose to make every `&(…)` the `__tuple<…>` record (option A of loft#1883): *"it should
+work fine as a semantic construction; the internal representation is not that important, only
+when tuples grow big that will impact speed."*  Until then a scalar-only `&(…)` was STACK-backed
+and `(T-Ref-Src)` refused a vector element or a struct field of tuple type, on the basis that a
+stored tuple is read into a fresh by-value tuple.  Two things had contradicted that basis: the
+loop variable over a `vector<(…)>` already named a stored element in place, and C138 made a
+stored tuple's bytes exactly the record's layout.  Measured on the change: the link to a stored
+tuple costs what the same link to a struct element costs (200 µs and 201 µs for 8,192 updates on
+the release tier); a scalar `&(…)` local takes one claim before its loop and its member accesses
+are loads and stores through the hoisted address.  The change also fixed a record-backed
+`&(…)` callee declared below its caller (refused before, for any member type) and the
+annotated link to a struct place (`b: &P = v[1]`, which lost its write).

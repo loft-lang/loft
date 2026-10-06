@@ -19,6 +19,12 @@
 //   `a-closure-is-judged-by-its-own-function.loft` isolates.
 // @falsified-by: tests/falsified/a-closure-captures-what-its-body-names.patch — the same channels.  Score it with
 //   `scripts/falsify.sh <this file> --patch <that patch>` once 58acb001b is out of reach.
+// CONTROL GONE since 3c4389804 (loft#1869): a closure's capture of a fn-ref no longer reads the
+//   may-capture judgement — it stores the fn-ref's runtime closure half beside its d_nr, null for
+//   a plain function — so the misjudgement the receipts plant is unobservable here and both
+//   trees answer alike on both backends (INERT on the receipts re-derivation).  The judgement's one
+//   remaining reader is the void fn-ref call's write-back (`closure_var_of` in
+//   `parser/control.rs`), which no cell here reaches.
 // HOLDS: leak, panic and refusals are clean on both trees and both backends.
 
 struct P { x: integer, y: integer }

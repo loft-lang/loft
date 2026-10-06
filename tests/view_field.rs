@@ -126,7 +126,7 @@ fn a_joined_append_views_the_last_element() {
     for func in ["p1", "p11", "p12", "p14"] {
         let b = body(func);
         assert!(
-            b.contains("let _ve = vector::get_vector(&_vc, 12u32, -1, &stores.allocations)"),
+            b.contains("let _ve = vector::get_vector(&_vc, 16u32, -1, &stores.allocations)"),
             "{func} appends in more than one arm, so it views the last element:\n{b}"
         );
     }

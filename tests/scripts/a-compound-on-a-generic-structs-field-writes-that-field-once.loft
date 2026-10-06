@@ -1,0 +1,58 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `formal/interfaces.md` `@FR-G-Type`: inside a template, a field of `Bag<T>` is read and
+// written through the instance each monomorph closes it to (`Parser::TV_FIELD`), and behaves
+// as its hand-written twin's field.  Three compounds did not (found by loft#1868's matrix):
+//
+//  * `b.items += [x]` built the literal INTO the field and then appended that same vector to
+//    it again — every append doubled the field (two appends of one element left six);
+//  * `b.name += "x"` appended to a work text that nothing had read the field into or wrote
+//    back — a panic on `--interpret`, E0425 on `--native`;
+//  * the first fix's test for "built into the place" took a comprehension (which binds its
+//    accumulator to the place and then re-points it at a fresh store) for one, and dropped
+//    the append: `b.items += [for …]` answered 0.
+//
+// Values by hand: each cell says its count or text inline.
+//
+// Axes this file MOVES: the right-hand side (literal, two literals, variable, call result,
+// comprehension, the field itself), the field type (vector, text, integer, float), the text
+// operand (literal, format, character), `T` (integer, text, float).  Axes it HOLDS FIXED: one
+// generic struct, written in the template that built it.
+//
+// @falsified-by: tests/falsified/a-compound-on-a-generic-structs-field-writes-that-field-once.patch — interpret exit 101 -> 0, interpret panicked -> clean, native exit 101 -> 0, native panicked -> clean
+//   CHANNEL: panic on both backends — the text compound's unwritten work text stops the
+//   control (`src/state/codegen.rs`); the doubled appends are the asserts above, which read
+//   six where two belong on a build without the vector half.
+// HOLDS: leak is clean on both trees and both backends.
+
+struct Bag<T> { items: vector<T>, name: text, n: integer, f: float }
+
+fn fresh<T>(x: T) -> Bag<T> { Bag { items: [x], name: "a", n: 10, f: 1.5 } }
+fn mk<T>(x: T) -> vector<T> { [x, x] }
+fn lit<T>(x: T) -> Bag<T> { b = fresh(x); b.items += [x]; b.items += [x, x]; b }
+fn var<T>(x: T) -> Bag<T> { b = fresh(x); o = [x, x, x]; p = [x, x, x]; b.items += o; b.items += p; b }
+fn call<T>(x: T) -> Bag<T> { b = fresh(x); b.items += mk(x); b }
+fn comp<T>(x: T) -> Bag<T> { b = fresh(x); b.items += [for _ in 0..3 { x }]; b }
+fn twice<T>(x: T) -> Bag<T> { b = fresh(x); b.items += b.items; b.items += b.items; b }
+fn texts<T>(x: T) -> Bag<T> {
+  b = fresh(x);
+  b.name += "bc";
+  b.name += "{b.n}";
+  b.name += 'z';
+  b.n -= 3;
+  b.n *= 2;
+  b.f *= 2.0;
+  b
+}
+
+fn main() {
+  assert(len(lit(1).items) == 4 && len(lit("t").items) == 4, "two literal appends: 1 + 1 + 2");
+  assert(len(var(2.5).items) == 7, "two variables appended: 1 + 3 + 3");
+  assert(len(call("c").items) == 3, "a call result: 1 + 2");
+  assert(len(comp(7).items) == 4, "a comprehension: 1 + 3");
+  assert(len(twice(1).items) == 4, "the field onto itself: 1, 2, 4");
+  t = texts("q");
+  assert(t.name == "abc10z", "text compounds: {t.name}");
+  assert(t.n == 14 && t.f == 3.0, "scalar compounds: {t.n} {t.f}");
+}

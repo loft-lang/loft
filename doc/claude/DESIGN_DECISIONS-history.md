@@ -1305,6 +1305,18 @@ the deep-copy path gets a designed ownership transfer (claim the captured
 stores into the host, or re-point the record at host-owned copies) —
 verified on both backends.
 
+
+**Revised 2026-10-05 (loft#1867).**  The revisit condition was met by a different route than the
+one it named: no deep copy transfers the captured stores — the closure record is BUILT in the
+host's child-record slot (`OpChildRec`), adopts its captures there, and the host's drop cascade
+runs the record's.  The return route and the argument route are accepted; the collection route
+(C116) and a closure-carrying struct VALUE placed into another struct's field (loft#1877) stay
+refused.  The decision as it stood until then:
+
+> A struct that holds a capturing closure cannot leave the frame that owns the captures:
+> returning such a struct type, writing a capturing closure into a struct rooted at an argument,
+> and a collection of such structs are compile errors.  Local use and passing it down as an
+> argument are supported.
 ## C76 — Selective imports group with `()`, not Rust-style `{}`; flat comma list dropped
 
 **Catalogue:** @F47 (library imports / module system).
@@ -4636,3 +4648,32 @@ problem.  And with those problems gone and not worked around, the rest of the lo
 benefit also".  @PLN157 had worked to 4×.  The class split comes from the 2026-10-02 macOS portal
 run: 85 of 182 routines over 3×, 7 of 15 class medians over it — filing all 85 would have been
 noise, while the 23 outliers in healthy classes are individual bugs.
+
+## C137 — A claim promises no value; a slot is read only after it is written
+
+Owner, 2026-10-05, while pricing graphics' `filled` as `[value; count]`: *"if a type assumes
+zero fill that type is wrong"* — and the only legitimate zero fills are `[0; n]` and a record
+whose defaults are all zero written in place.  The poisoned suite (`LOFT_POISON_CLAIM=1`, every
+subject) then found the reliers: the JSON constructors' unwritten fields, a null copied into a
+fresh element, the nullable-slot writer releasing a slot the construction had just minted, a
+comprehension's element copy, the text parser's collection field, the interpreter's stack push
+assigning (dropping) into fresh memory, and on native the par workers — one of them a real
+overrun: the text worker's output record written from its own size header.  Each was fixed to
+write what it had assumed; a test that pinned the exact garbage a deliberately restored stale
+read returned was loosened to pin where it fails.
+
+## C138 — Every scalar in a store sits on its natural boundary; the bytecode stays byte-packed
+
+Decided 2026-10-06 by the owner, in steps: "evaluate how fields in records are stored, they
+adhere to alignment", "continue with a more strict alignment model", "this is a design
+decision", and then "can we move to more strict rust pointer handling too?" with the concern
+"the possible problem here is the bytecode".  The measurement that opened it: with
+`LOFT_TRACE_ALIGN` every corpus program carried misaligned fields, because the standard
+library's own types (`StructField`, `File`) did — records were packed with no tail padding, a
+tuple group was packed tight, and an inlined record could push the next field off its boundary.
+Padding cost, measured over the corpus's types: 1069 types grew, median +33 %, worst 9 → 16
+bytes; standalone records cost nothing because a claim is whole words.  The owner approved
+rounding in the layout routine rather than in each collection, and asked for every reader of
+stored bytes to be covered — persisted images (the layout identity changes, so `(L-Sound)`
+rebuilds), binary file I/O (kept at the wire width), remote and lazy stores (they verify the
+same identity) — and for the strict access to stop at the bytecode, whose operands stay packed.

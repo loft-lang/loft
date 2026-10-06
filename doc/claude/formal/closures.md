@@ -71,7 +71,9 @@ available). A bare `f` (a function's name used as a value) is a first-class func
                  value the variable had when the closure was formed.
   (L-CapHeap)    a captured HEAP value (struct/vector) is SHARED: a mutation-through the source
                  AFTER capture is visible inside the closure (consistent with calls.md
-                 F-ParamHeap — capture, like a call, shares heap state, copies scalars).
+                 F-ParamHeap — capture, like a call, shares heap state, copies scalars).  A
+                 captured FN-REF is such a value: its closure record is shared, and owned or
+                 borrowed by (L-CapOwn) exactly as a captured struct is.
   (L-CapWrite)   a captured SCALAR the closure REASSIGNS is SHARED IN THE WRITE DIRECTION:
                  the closure's write reaches the outer variable, and a later call sees what
                  the previous one wrote.  This does not weaken (L-CapScalar) — the closure
@@ -230,21 +232,7 @@ with the closure's environment in scope.
 
 ## Deviations
 
-**OPEN: 2.**  Every closed entry is recorded in [closures-history.md](closures-history.md).
-
-- **D-clo-47 (OPEN, loft#1867)** — violates <!-- doc-lint: ok -->
-  `(L-Escape)`: a function cannot return a struct whose field holds a CAPTURING closure — it is
-  refused at compile time (*"function returns a struct type that holds a capturing closure"*),
-  while the same closure returned BARE keeps its captures through the record's adoption
-  (`(L-CapOwn)`).  The adoption has to follow the closure out through a struct field as it does
-  out through the return.  Until then the cure the refusal names works: return the closure and
-  build the struct in the caller.
-- **D-clo-48 (OPEN, loft#1869)** — violates `(L-Fn)`: a closure cannot capture a fn-ref local <!-- doc-lint: ok -->
-  that holds a CAPTURING closure — refused with the fn-ref struct-field message, because the
-  closure record is the struct the capture is stored in.  A non-capturing fn-ref is captured.
-  The inner record's ownership has to follow into the outer record (`(L-CapOwn)`), as a
-  captured struct's does.  Until then: capture the inner closure's values and rebuild it in the
-  body, or pass it as an argument.
+**OPEN: 0.**  Every closed entry is recorded in [closures-history.md](closures-history.md).
 
 > **An `OPEN: 0` is a claim to re-measure, and this one moved four times in a day** — 0 → 1 → 2
 > → 0 → 1, each step a probe pushed one axis off what the oracle below holds fixed, and each

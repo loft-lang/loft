@@ -1,0 +1,31 @@
+diff --git a/src/codegen_runtime.rs b/src/codegen_runtime.rs
+index 99ce51d06..92f45defd 100644
+--- a/src/codegen_runtime.rs
++++ b/src/codegen_runtime.rs
+@@ -4185,7 +4185,7 @@ where
+         // 4 bytes per row; writes start at fld 4 — writing from fld 0 overwrote the record's
+         // own header word, which a later claim then read as the block's size.  The twin of
+         // `parallel.rs`'s interpreter worker.
+-        let array_words = (4 + row_count * 4).div_ceil(8) as u32;
++        let array_words = (row_count * 4).div_ceil(8).max(1) as u32;
+         let slot = ws.add_output_slot(array_words);
+         let array_rec = ws.stores.allocations[slot.store_nr as usize].claim(array_words);
+         for (local_idx, row_idx) in (start..end).enumerate() {
+@@ -4201,7 +4201,7 @@ where
+             let s = worker(cell, elm);
+             let slot_store = &mut ws.stores.allocations[slot.store_nr as usize];
+             let s_pos = slot_store.set_str(&s);
+-            slot_store.set_u32_raw(array_rec, 4 + (local_idx as u32) * 4, s_pos);
++            slot_store.set_u32_raw(array_rec, (local_idx as u32) * 4, s_pos);
+         }
+         (start, row_count, slot.store_nr, array_rec, ws.stores)
+     });
+@@ -4209,7 +4209,7 @@ where
+     for (start, count, slot_nr, array_rec, worker_stores) in batches {
+         let slot_store = &worker_stores.allocations[slot_nr as usize];
+         for local_idx in 0..count {
+-            let s_pos = slot_store.get_u32_raw(array_rec, 4 + (local_idx as u32) * 4);
++            let s_pos = slot_store.get_u32_raw(array_rec, (local_idx as u32) * 4);
+             results[start + local_idx] = slot_store.get_str(s_pos).to_string();
+         }
+     }

@@ -3,7 +3,7 @@
 //
 // A copy written through a VIEW bound off it, and read only through such views, is still a
 // copy nothing reads: the write is lost and `lost-write` must say so (loft#1864).  `es = w.es`
-// copies (`(B-View-Base)`); `e = es[0]` binds a view of the copy's element (`(B-View)`), so
+// copies (`@FR-B-View-Base`); `e = es[0]` binds a view of the copy's element (`(B-View)`), so
 // `e.awake = false` lands in `es`, and `es[0] = e` writes it back into `es` again — `w` never
 // changes, on both backends.  The two reads the lint counted — `es` read to bind `e`, `e` read
 // to write it back into `es` — observe nothing outside the copy.

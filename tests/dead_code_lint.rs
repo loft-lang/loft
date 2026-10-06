@@ -1101,3 +1101,49 @@ fn a_copy_written_through_its_own_view_is_a_lost_write_interpret() {
 fn a_copy_written_through_its_own_view_is_a_lost_write_native() {
     assert_copy_through_its_view("--native");
 }
+
+/// loft#1871 — a parameter the callee REBINDS before writing a field writes the callee's own
+/// store (`@FR-F-ParamRebind`), so a call result handed to it loses nothing.  The literal rebind
+/// `p = S { x: … }` is itself lowered as field writes into the fresh store, and those were read
+/// as writes through `p`: `bump(bump(a))` was reported as a lost write.  A rebind counts only
+/// where EVERY path rebinds first, so the callees that write through on some path stay reported.
+const REBIND_THEN_WRITE: &str = "struct S { x: integer }\n\
+struct H { s: S }\n\
+fn first(h: H) -> S { h.s }\n\
+fn rebind_only(p: S) -> S { p = S { x: p.x + 10 }; p }\n\
+fn both_arms(p: S) -> S { if p.x > 5 { p = S { x: 2 }; } else { p = S { x: 3 }; } p.x = 7; p }\n\
+fn in_pass(p: S) -> S { for i in 0..2 { p = S { x: 3 }; p.x = i; } p }\n\
+fn from_local(p: S) -> S { q = S { x: 4 }; p = q; p.x = 5; p }\n\
+fn write_first(p: S) -> S { p.x = 9; p = S { x: 2 }; p }\n\
+fn one_arm(p: S) -> S { if p.x > 5 { p = S { x: 2 }; } p.x = 7; p }\n\
+fn after_loop(p: S) -> S { for i in 0..2 { p = S { x: 3 }; } p.x = 7; p }\n\
+fn main() {\n\
+  h = H { s: S { x: 1 } };\n\
+  t = rebind_only(first(h)).x + both_arms(first(h)).x + in_pass(first(h)).x;\n\
+  t += from_local(first(h)).x + write_first(first(h)).x + one_arm(first(h)).x;\n\
+  t += after_loop(first(h)).x;\n\
+  print(\"r={h.s.x},{t}\");\n\
+}\n";
+
+#[test]
+fn a_rebound_parameter_written_after_the_rebind_is_not_a_lost_write() {
+    let (out, diag) = run_body(REBIND_THEN_WRITE, "--interpret", "rebind_write");
+    // 11 + 7 + 1 + 5 + 2 + 7 + 7: the caller's `h` is untouched.
+    assert!(out.contains("r=1,40"), "values: {out:?}\n{diag}");
+    for (callee, reported) in [
+        ("rebind_only", false),
+        ("both_arms", false),
+        ("in_pass", false),
+        ("from_local", false),
+        ("write_first", true),
+        ("one_arm", true),
+        ("after_loop", true),
+    ] {
+        let found = diag.contains(&format!("`{callee}` writes to `p`"));
+        assert_eq!(
+            found, reported,
+            "`{callee}`: a lost write is reported exactly where some path writes through `p` \
+             before rebinding it\n{diag}"
+        );
+    }
+}

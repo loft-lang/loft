@@ -3919,6 +3919,64 @@ impl Parser {
         self.set_delivered_vector_return(elm_ty, buf_attr);
     }
 
+    /// Does `Set(w, rhs)` bind the return buffer `buf` to a store the call MINTS?  Never a
+    /// projection (`OpGet…` answers a view into a store that already exists) and never a value
+    /// read out of the buffer itself, which clearing the buffer would empty before the adopt.
+    fn mints_into_buffer(data: &crate::data::Data, buf: u16, w: u16, rhs: &Value) -> bool {
+        w == buf
+            && Self::tail_forwards_own_store(rhs, data)
+            && !matches!(rhs.unspan(), Value::Call(d, _) if data.def(*d).name().starts_with("OpGet"))
+            && !rhs.reads_var(buf)
+    }
+
+    /// `@FR-O-Buffer` — a vector return buffer BOUND to a call that delivers its own store
+    /// (#409's forwarder, `o = text as vector<R>` with `o` promoted onto the buffer) is
+    /// filled, not rebound: the call runs into a `__fwd` local and its elements are adopted
+    /// into the buffer, the shape [`Self::emit_forward_copy_409`] gives the tail spelling of
+    /// the same call.  Rebound, the buffer var named the forwarder's store, which the
+    /// function returned while the caller released only the buffer it passed.
+    pub(crate) fn fill_buffer_bound_to_forwarder(&mut self, body: &mut Value) {
+        if self.first_pass {
+            return;
+        }
+        let Some((_, buf_var)) = self.return_buffer() else {
+            return;
+        };
+        let Type::Vector(elm, _) = self.vars.tp(buf_var).base().clone() else {
+            return;
+        };
+        let data = &self.data;
+        let fills = |w: u16, rhs: &Value| Self::mints_into_buffer(data, buf_var, w, rhs);
+        let bound = body.any_node(&mut |n| matches!(n, Value::Set(w, rhs) if fills(*w, rhs)));
+        if !bound {
+            return;
+        }
+        let fwd = self.create_var("__fwd", &Type::Vector(elm.clone(), Deps::none()));
+        if fwd == u16::MAX {
+            return;
+        }
+        let rec_tp = self.append_elem_tp(&elm);
+        let clear = self.cl("OpClearVector", &[Value::Var(buf_var)]);
+        let adopt = self.cl(
+            "OpAdoptVector",
+            &[Value::Var(buf_var), Value::Var(fwd), Value::Int(rec_tp)],
+        );
+        let data = &self.data;
+        let fills = |w: u16, rhs: &Value| Self::mints_into_buffer(data, buf_var, w, rhs);
+        body.map_nodes(&mut |n| {
+            if let Value::Set(w, rhs) = n
+                && fills(*w, rhs)
+            {
+                let call = std::mem::replace(rhs.as_mut(), Value::Null);
+                *n = crate::data::v_block(
+                    vec![crate::data::v_set(fwd, call), clear.clone(), adopt.clone()],
+                    Type::Void,
+                    "fwd_bind_409",
+                );
+            }
+        });
+    }
+
     /// Plan-14 phase 07 (P234 runtime): rewrite a body-tail
     /// `Value::Tuple([elem_0, elem_1, …])` into the synthetic-struct
     /// construction sequence that an inline struct literal would
@@ -6236,6 +6294,9 @@ impl Parser {
                 self.end_pattern_arm();
                 continue;
             }
+            // `@FR-P-Cap` at the arm root — `whole: Rect { w, h } => …` binds the matched subject
+            // beside the pattern's own names; `other: _ => …` is the catch-all that binds it.
+            self.root_capture(&subject_val, &subject_type, &mut hoisted_bindings);
             let Some(first_ident) = self.lexer.has_identifier() else {
                 if !self.first_pass {
                     diagnostic!(
@@ -6329,18 +6390,34 @@ impl Parser {
                         self.data.def(e_nr).name()
                     );
                 }
-                let (arm, exhaustive) = self.parse_match_struct_arm(
+                let (struct_arms, exhaustive) = self.parse_match_struct_arm(
                     e_nr,
                     &subject_val,
                     &mut result_type,
                     &mut hoisted_bindings,
                 );
                 has_wildcard = exhaustive;
-                arms.push(arm);
+                arms.extend(struct_arms);
+                self.lexer.has_token(",");
+                // @FR-M-Wild — a pattern with no literal field matches every struct, so an arm
+                // written after it can never be selected: say so, as the `_` arm does, and keep
+                // parsing the arms (a `break` left them to the closing brace, which reported
+                // "Expect token }").
+                if has_wildcard && !self.lexer.peek_token("}") {
+                    if !self.first_pass {
+                        diagnostic!(
+                            self.lexer,
+                            Level::Error,
+                            "this pattern matches every {}, so the arm after it can never be \
+                             selected — move it to the end",
+                            self.data.def(e_nr).name()
+                        );
+                    }
+                    continue;
+                }
                 if has_wildcard {
                     break;
                 }
-                self.lexer.has_token(",");
                 continue;
             }
 
@@ -6425,10 +6502,16 @@ impl Parser {
                 }
             };
 
-            // or-patterns — collect additional variants separated by `|`.
-            // Only for plain enum arms without field bindings.
+            // or-patterns — collect additional BARE variants separated by `|`.  A variant
+            // that opens `{` binds fields, so it is not bare: the lexer is rewound to its
+            // `|` and the multi-pattern loop below takes it with its bindings (`@FR-P-Multi`,
+            // where `|` and `,` are the same separator).
             let mut all_discs = vec![disc];
-            while self.lexer.has_token("|") {
+            loop {
+                let before_or = self.lexer.link();
+                if !self.lexer.has_token("|") {
+                    break;
+                }
                 let Some(first_or) = self.lexer.has_identifier() else {
                     if !self.first_pass {
                         diagnostic!(self.lexer, Level::Error, "expect variant name after '|'");
@@ -6447,6 +6530,10 @@ impl Parser {
                 } else {
                     first_or.clone()
                 };
+                if self.lexer.peek_token("{") {
+                    self.lexer.revert(before_or);
+                    break;
+                }
                 // @PLN22 Phase 1 — or-pattern variant resolves against the
                 // subject enum via the variant_of chokepoint (or-patterns are
                 // plain-enum only, so no struct fallback is needed).
@@ -6531,7 +6618,10 @@ impl Parser {
             // The variants this arm's EXTRA patterns marked covered, so a guard parsed after
             // them can take the marks back (`@FR-M-Total`: a guarded arm covers nothing).
             let mut multi_covered: Vec<u32> = Vec::new();
-            if self.lexer.peek_token(",") && valid_enum && e_nr != u32::MAX {
+            if (self.lexer.peek_token(",") || self.lexer.peek_token("|"))
+                && valid_enum
+                && e_nr != u32::MAX
+            {
                 let mut shared: std::collections::HashMap<String, (u16, Type)> = name_aliases
                     .iter()
                     .filter_map(|(name, _)| {
@@ -6541,7 +6631,7 @@ impl Parser {
                     .collect();
                 let first_names: HashSet<String> = shared.keys().cloned().collect();
                 let mut branch_names: Vec<HashSet<String>> = Vec::new();
-                while self.lexer.has_token(",") {
+                while self.lexer.has_token(",") || self.lexer.has_token("|") {
                     if self.lexer.peek_token("=>") || self.lexer.peek_token("}") {
                         break; // dangling comma / trailing arm separator
                     }
@@ -7241,91 +7331,284 @@ impl Parser {
         (arm, is_exhaustive)
     }
 
+    /// The fields of a plain-struct SUB-pattern `S { f: p, g }` over `subject` (loft#1870): each
+    /// `f: p` adds `p`'s condition, each bare `g` binds the field — the field loop of
+    /// [`Self::parse_match_struct_arm`], with the bindings and conditions going to the
+    /// enclosing arm.
+    fn parse_struct_sub_pattern(
+        &mut self,
+        s_nr: u32,
+        subject: &Value,
+        arm_stmts: &mut Vec<Value>,
+        field_conditions: &mut Vec<Value>,
+        name_aliases: &mut Vec<(String, Option<u16>)>,
+    ) {
+        if !self.lexer.has_token("{") {
+            return;
+        }
+        while !self.lexer.peek_token("}") {
+            if let Some(field_name) = self.lexer.has_identifier() {
+                let attr_idx = self.data.attr(s_nr, &field_name);
+                if attr_idx == usize::MAX {
+                    if !self.first_pass {
+                        diagnostic!(
+                            self.lexer,
+                            Level::Error,
+                            "unknown field '{}' on struct {}",
+                            field_name,
+                            self.data.def(s_nr).name()
+                        );
+                    }
+                } else {
+                    let field_val = self.get_field(s_nr, attr_idx, subject.clone());
+                    let field_type = self.data.attr_type(s_nr, attr_idx);
+                    if self.lexer.has_token(":") {
+                        if let Some(bind_name) = self.field_pattern_rename() {
+                            let v = self.pattern_binding(&bind_name, &field_type);
+                            self.vars.defined(v);
+                            let bound = self.pattern_field_value(s_nr, attr_idx, subject.clone());
+                            arm_stmts.push(v_set(v, bound));
+                        } else if let Some(cond) = self.parse_field_sub_pattern(
+                            field_val,
+                            &field_type,
+                            arm_stmts,
+                            field_conditions,
+                            name_aliases,
+                        ) {
+                            field_conditions.push(cond);
+                        }
+                    } else {
+                        let v = self.pattern_binding(&field_name, &field_type);
+                        self.vars.defined(v);
+                        let bound = self.pattern_field_value(s_nr, attr_idx, subject.clone());
+                        arm_stmts.push(v_set(v, bound));
+                    }
+                }
+            }
+            if !self.lexer.has_token(",") {
+                break;
+            }
+        }
+        self.lexer.token("}");
+    }
+
+    /// `@FR-P-Cap` at a match arm's ROOT: `whole: Rect { w, h }`, and `other: _` for the
+    /// catch-all.  The name binds the matched subject — the same value whichever arm runs, so
+    /// the binding is hoisted ahead of the arm chain with the others.  Like every pattern
+    /// capture it is a VIEW of what it names (`@FR-P-Cap-View`, here of the subject's own
+    /// place): a heap subject's capture skips its free and records the borrow of the subject's
+    /// source.  Consumes `name:`; anything else is left for the variant parse.  A BARE lowercase
+    /// name at the root stays what `@FR-M-Unit` makes it — a misspelled variant, refused — so a
+    /// typo never turns into a catch-all (a-match-arm-names-a-variant-that-exists.loft).
+    fn root_capture(&mut self, subject_val: &Value, subject_type: &Type, hoisted: &mut Vec<Value>) {
+        let Some(name) = self.lexer.peek_named_arg() else {
+            return;
+        };
+        if !Self::is_binding_name(&name) {
+            return;
+        }
+        self.lexer.has_identifier();
+        self.lexer.token(":");
+        let v = self.pattern_binding(&name, subject_type);
+        if v != u16::MAX {
+            self.vars.defined(v);
+            // A record subject is bound through the projection node a view is spelled as
+            // (`s = o.inner`, `@FR-R-CopyView`'s `OpGetField(a, 0)`): a plain `Set` from a
+            // record variable is a COPY at codegen (`@FR-B-Copy`), and the capture is a view.
+            let bound = match subject_type.base() {
+                Type::Reference(d, _) | Type::Enum(d, true, _) => {
+                    let kt = i32::from(self.data.def(*d).known_type());
+                    let get_field = self.data.def_nr("OpGetField");
+                    Value::Call(
+                        get_field,
+                        vec![subject_val.clone(), Value::Int(0), Value::Int(kt)],
+                    )
+                }
+                _ => subject_val.clone(),
+            };
+            hoisted.push(v_set(v, bound));
+            if !matches!(subject_type.base(), Type::Text(_))
+                && !crate::data::is_scalar(subject_type.base())
+            {
+                self.vars.set_skip_free(v);
+                if let Some(src) = self.match_borrow_source(subject_val) {
+                    let bound_tp = Self::element_view_of(&self.vars.tp(v).clone(), src);
+                    self.vars.set_type(v, bound_tp);
+                }
+            }
+        }
+    }
+
+    /// The `{ field, field: pattern, … }` of a plain-struct pattern: a bare field binds a new
+    /// name (into `pattern_binds_pending`, restored at the arm's end), a `field: pattern` adds
+    /// its sub-pattern's condition to `conds` and its names to the pending set.
+    fn parse_struct_pattern_fields(
+        &mut self,
+        e_nr: u32,
+        subject_val: &Value,
+        binds: &mut Vec<Value>,
+        conds: &mut Vec<Value>,
+    ) {
+        // @PLN35 L2 — a nested struct-enum field sub-pattern binds via
+        // parse_match_enum_field_bindings, which uses the name-alias save list; a plain-struct
+        // arm has no arm-level alias restore, so give it a local sink (the existing scalar /
+        // plain-enum / wildcard sub-pattern branches never touch it → byte-identical).
+        let mut name_aliases: Vec<(String, Option<u16>)> = Vec::new();
+        if !self.lexer.has_token("{") {
+            return;
+        }
+        while !self.lexer.peek_token("}") {
+            if let Some(field_name) = self.lexer.has_identifier() {
+                let attr_idx = self.data.attr(e_nr, &field_name);
+                if attr_idx != usize::MAX {
+                    let field_val = self.get_field(e_nr, attr_idx, subject_val.clone());
+                    let field_type = self.data.attr_type(e_nr, attr_idx);
+                    if self.lexer.has_token(":") {
+                        // `@FR-P-Point` — a bare lowercase NAME is a binding under that name
+                        // (`P { y: v }`), as the variant arm reads it; read as a value it
+                        // compared against an outer `v` (loft#1885).
+                        if let Some(bind_name) = self.field_pattern_rename() {
+                            let v = self.pattern_binding(&bind_name, &field_type);
+                            self.vars.defined(v);
+                            let bound =
+                                self.pattern_field_value(e_nr, attr_idx, subject_val.clone());
+                            binds.push(v_set(v, bound));
+                        } else if let Some(cond) = self.parse_field_sub_pattern(
+                            field_val,
+                            &field_type,
+                            binds,
+                            conds,
+                            &mut name_aliases,
+                        ) {
+                            conds.push(cond);
+                        }
+                        // The names a sub-pattern bound belong to this arm; its end
+                        // restores them.
+                        self.pattern_binds_pending.append(&mut name_aliases);
+                    } else {
+                        let v = self.pattern_binding(&field_name, &field_type);
+                        self.vars.defined(v);
+                        let bound = self.pattern_field_value(e_nr, attr_idx, subject_val.clone());
+                        binds.push(v_set(v, bound));
+                    }
+                } else if !self.first_pass {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "unknown field '{}' on struct {}",
+                        field_name,
+                        self.data.def(e_nr).name()
+                    );
+                }
+            }
+            if !self.lexer.has_token(",") {
+                break;
+            }
+        }
+        self.lexer.token("}");
+    }
+
     /// Parse a plain-struct match arm (field bindings + body).
-    /// Returns the arm and whether it is exhaustive.
+    /// Returns the arm — one per listed pattern (`@FR-P-Multi`: `P { x: 0, y: v } | P { x: v,
+    /// y: 0 } => v`) — and whether it is exhaustive.  The first pattern's bindings are hoisted
+    /// ahead of the chain as before; each further pattern is its own arm that runs its bindings,
+    /// linked into the first one's slots, ahead of a clone of the body.
     fn parse_match_struct_arm(
         &mut self,
         e_nr: u32,
         subject_val: &Value,
         result_type: &mut Type,
         hoisted_bindings: &mut Vec<Value>,
-    ) -> (EnumArm, bool) {
+    ) -> (Vec<EnumArm>, bool) {
         let mut field_conditions: Vec<Value> = Vec::new();
-        // @PLN35 L2 — a nested struct-enum field sub-pattern binds via
-        // parse_match_enum_field_bindings, which uses the name-alias save list; a plain-struct
-        // arm has no arm-level alias restore, so give it a local sink (the existing scalar /
-        // plain-enum / wildcard sub-pattern branches never touch it → byte-identical).
-        let mut name_aliases: Vec<(String, Option<u16>)> = Vec::new();
-        if self.lexer.peek_token("{") {
-            self.lexer.token("{");
-            while !self.lexer.peek_token("}") {
-                if let Some(field_name) = self.lexer.has_identifier() {
-                    let attr_idx = self.data.attr(e_nr, &field_name);
-                    if attr_idx != usize::MAX {
-                        let field_val = self.get_field(e_nr, attr_idx, subject_val.clone());
-                        let field_type = self.data.attr_type(e_nr, attr_idx);
-                        if self.lexer.has_token(":") {
-                            if let Some(cond) = self.parse_field_sub_pattern(
-                                field_val,
-                                &field_type,
-                                hoisted_bindings,
-                                &mut field_conditions,
-                                &mut name_aliases,
-                            ) {
-                                field_conditions.push(cond);
-                            }
-                            // The names a sub-pattern bound belong to this arm; its end
-                            // restores them.
-                            self.pattern_binds_pending.append(&mut name_aliases);
-                        } else {
-                            let v = self.pattern_binding(&field_name, &field_type);
-                            self.vars.defined(v);
-                            let bound =
-                                self.pattern_field_value(e_nr, attr_idx, subject_val.clone());
-                            hoisted_bindings.push(v_set(v, bound));
-                        }
-                    } else if !self.first_pass {
-                        diagnostic!(
-                            self.lexer,
-                            Level::Error,
-                            "unknown field '{}' on struct {}",
-                            field_name,
-                            self.data.def(e_nr).name()
-                        );
-                    }
+        let first_names = self.pattern_binds_pending.len();
+        let mut first_binds: Vec<Value> = Vec::new();
+        self.parse_struct_pattern_fields(
+            e_nr,
+            subject_val,
+            &mut first_binds,
+            &mut field_conditions,
+        );
+        let struct_name = self.data.def(e_nr).name().to_string();
+        let alternatives = self.parse_pattern_alternatives(
+            first_names,
+            &mut first_binds,
+            |p| {
+                let at = p.lexer.link();
+                let named = p.lexer.has_identifier().is_some_and(|id| id == struct_name);
+                if !named {
+                    p.lexer.revert(at);
                 }
-                if !self.lexer.has_token(",") {
-                    break;
-                }
-            }
-            self.lexer.token("}");
-        }
+                named
+            },
+            |p, binds, conds| p.parse_struct_pattern_fields(e_nr, subject_val, binds, conds),
+        );
         self.expect_match_arm_arrow();
         let mut arm_code = Value::Null;
         let arm_expected = self.match_arm_expected(result_type);
         let arm_type = self.parse_match_arm_body(&arm_expected, &mut arm_code);
-        let block = v_block(vec![arm_code], arm_type.clone(), "struct_match");
+        let block = v_block(vec![arm_code.clone()], arm_type.clone(), "struct_match");
         if Self::match_result_unsettled(result_type) {
-            *result_type = arm_type;
+            *result_type = arm_type.clone();
         }
-        let (guard, exhaustive) = if field_conditions.is_empty() {
-            (None, true)
-        } else {
-            let mut combined = field_conditions.remove(0);
-            for c in field_conditions {
-                combined = v_if(combined, c, Value::Boolean(false));
+        let and_all = |conds: Vec<Value>| {
+            conds
+                .into_iter()
+                .reduce(|a, b| v_if(a, b, Value::Boolean(false)))
+        };
+        let guard = and_all(field_conditions);
+        // A pattern with no literal field always matches, so the arm covers the struct.
+        let mut exhaustive = guard.is_none();
+        if alternatives.is_empty() {
+            // One pattern: its bindings are hoisted ahead of the chain, as they always were.
+            hoisted_bindings.append(&mut first_binds);
+            let arm = EnumArm {
+                discs: vec![],
+                code: block,
+                tp: result_type.clone(),
+                guard,
+                bindings: Vec::new(),
+                cond: None,
+            };
+            return (vec![arm], exhaustive);
+        }
+        // Several patterns write the same slots, so none is hoisted: each pattern's arm runs
+        // its OWN bindings, then its literal-field test, then a clone of the body.
+        let pattern_arm = |binds: Vec<Value>, guard: Option<Value>| {
+            if let Some(g) = guard {
+                // `cond: true` takes the chain's tested path, which runs `bindings` before the
+                // guard.
+                EnumArm {
+                    discs: vec![],
+                    code: v_block(vec![arm_code.clone()], arm_type.clone(), "struct_match"),
+                    tp: result_type.clone(),
+                    guard: Some(g),
+                    bindings: binds,
+                    cond: Some(Value::Boolean(true)),
+                }
+            } else {
+                let mut stmts = binds;
+                stmts.push(arm_code.clone());
+                EnumArm {
+                    discs: vec![],
+                    code: v_block(stmts, arm_type.clone(), "struct_match"),
+                    tp: result_type.clone(),
+                    guard: None,
+                    bindings: Vec::new(),
+                    cond: None,
+                }
             }
-            (Some(combined), false)
         };
-        let arm = EnumArm {
-            discs: vec![],
-            code: block,
-            tp: result_type.clone(),
-            guard,
-            bindings: Vec::new(),
-            cond: None,
-        };
-        (arm, exhaustive)
+        let mut arms = vec![pattern_arm(first_binds, guard)];
+        for (binds_i, conds_i) in alternatives {
+            if exhaustive {
+                break; // an earlier pattern always matches: the rest are unreachable
+            }
+            let guard_i = and_all(conds_i);
+            exhaustive = guard_i.is_none();
+            arms.push(pattern_arm(binds_i, guard_i));
+        }
+        (arms, exhaustive)
     }
 
     /// The element reads a tuple VALUE read takes over a `&(…)` binding, with the element
@@ -7859,6 +8142,22 @@ impl Parser {
             && self.data.def_type(*d_nr) == DefType::EnumValue
         {
             return Some((self.data.def(*d_nr).parent(), true));
+        }
+        // A `reference<E>` to a struct-enum (the recursive shape loft#1579's cycle refusal asks
+        // for, `Add { l: reference<Expr>, … }`) is a pointer to a record of `E`: its read is
+        // the record (`OpGetDbRef`), so a variant pattern asks it exactly as it asks an
+        // inline field.  Unrecognised, `l: Lit { v: 0 }` fell to the scalar path, which built
+        // a `Lit` and tested THAT: the arm never matched on the interpreter, `--native`
+        // refused its own output, and the binding form did not parse (loft#1870).
+        if let Type::Reference(d_nr, _) = tp.peel_link()
+            && self.data.def_type(*d_nr) == DefType::Enum
+            && self.data.def(*d_nr).attributes().iter().any(|a| {
+                matches!(a.value, Value::Enum(_, _))
+                    && self.data.def_type(self.data.variant_of(*d_nr, &a.name))
+                        == DefType::EnumValue
+            })
+        {
+            return Some((*d_nr, true));
         }
         let Type::Enum(e_nr, is_struct, _) = tp.peel_link() else {
             return None;
@@ -9530,16 +9829,23 @@ impl Parser {
     /// branch may capture the whole element it matched, `a:V | b:W` (`@FR-G-Pat-Prec`).  A
     /// varying-width MULTI-element alternative is `parse_multi_element_alternation`.  `elem`
     /// is the element value at this position; it is cloned for each tag test and field read.
+    ///
+    /// `parens` is false for a TUPLE element (`(Circle { r } | Square { r }, k)`, @PLN186 step
+    /// 4): the alternatives stand bare between the element separators, and each name joins the
+    /// arm's pending names so the arm's end restores what it meant before.
     #[expect(clippy::too_many_lines, reason = "inherited")]
     fn parse_slice_alternation_element(
         &mut self,
         e_nr: u32,
         elem: &Value,
-        borrow_src: u16,
+        borrow_src: Option<u16>,
         bindings: &mut Vec<Value>,
         elem_conds: &mut Vec<Value>,
+        parens: bool,
     ) {
-        self.lexer.token("(");
+        if parens {
+            self.lexer.token("(");
+        }
         // (disc, variant_def_nr, fields: [(name, attr_idx, type)]) — an `attr_idx` of
         // `usize::MAX` is a `name:` capture of the WHOLE element (`@FR-P-Cap`).
         let mut alts: Vec<(i32, u32, Vec<(String, usize, Type)>)> = Vec::new();
@@ -9629,7 +9935,9 @@ impl Parser {
                 break;
             }
         }
-        self.lexer.token(")");
+        if parens {
+            self.lexer.token(")");
+        }
         if alts.is_empty() {
             return;
         }
@@ -9701,7 +10009,10 @@ impl Parser {
                 }
             }
             bindings.push(v_set(v_nr, acc));
-            self.vars.set_name(fname, v_nr); // stays in scope for the arm body (as sub-patterns do)
+            let before = self.vars.set_name(fname, v_nr); // stays in scope for the arm body (as sub-patterns do)
+            if !parens {
+                self.pattern_binds_pending.push((fname.clone(), before));
+            }
             // A heap capture is a borrowed VIEW of the subject element: skip its free
             // and record the borrow dep on the subject source (mirrors the field-
             // sub-pattern path); a text payload is an OWNED copy (freed normally).
@@ -9709,8 +10020,10 @@ impl Parser {
             if !matches!(ftype.base(), Type::Text(_)) {
                 self.vars.set_skip_free(v_nr);
             }
-            let bound_tp = Self::element_view_of(&self.vars.tp(v_nr).clone(), borrow_src);
-            self.vars.set_type(v_nr, bound_tp);
+            if let Some(src) = borrow_src {
+                let bound_tp = Self::element_view_of(&self.vars.tp(v_nr).clone(), src);
+                self.vars.set_type(v_nr, bound_tp);
+            }
         }
     }
 
@@ -10058,6 +10371,26 @@ impl Parser {
         field_conditions: &mut Vec<Value>,
         name_aliases: &mut Vec<(String, Option<u16>)>,
     ) -> Option<Value> {
+        // `@FR-P-Alt` at a field or tuple-element position — `Box { s: Circle { r } | Square
+        // { r }, n }`, `(Circle { r } | Square { r }, k)`: the value matches when any
+        // alternative's tag does, each name is read from whichever variant matched, `τ?` where
+        // only some bind it (the slice element's alternation, without its parentheses).  The
+        // names borrow what the value borrows (`match_borrow_source`, a tuple member's own
+        // source included).  A PLAIN enum's `Red | Green` is the value-test loop below.
+        if let Some((e_nr, true)) = self.pattern_variant_enum(field_type)
+            && self.sub_pattern_lists_alternatives()
+        {
+            let src = self.match_borrow_source(&field_val);
+            self.parse_slice_alternation_element(
+                e_nr,
+                &field_val,
+                src,
+                arm_stmts,
+                field_conditions,
+                false,
+            );
+            return None;
+        }
         // @PLN35 L2 — Struct-enum field: the sub-pattern is `Variant { subfields }` (or a bare
         // `Variant`).  Tag-test the field's discriminant and recurse into the variant's payload
         // bindings — the same tag-test + payload-bind a top-level struct-enum arm emits, applied to
@@ -10182,6 +10515,27 @@ impl Parser {
                 }
             }
             return Some(cond);
+        }
+        // A plain STRUCT field — inline or through `reference<S>` — matched by the struct's own
+        // pattern `S { f: p, g }`, the spelling a top-level arm over `S` takes
+        // ([`Self::parse_match_struct_arm`]).  It has no tag, so it adds only its fields'
+        // conditions and bindings.  Unrecognised, the pattern fell to the scalar path below,
+        // which BUILT an `S` and tested that record: the arm never matched and `--native`
+        // refused its own output (loft#1870).
+        if let Type::Reference(s_nr, _) = field_type.peel_link()
+            && self.data.def_type(*s_nr) == DefType::Struct
+            && matches!(&self.lexer.peek().has, LexItem::Identifier(id) if *id == self.data.def(*s_nr).name())
+        {
+            let s_nr = *s_nr;
+            self.lexer.has_identifier();
+            self.parse_struct_sub_pattern(
+                s_nr,
+                &field_val,
+                arm_stmts,
+                field_conditions,
+                name_aliases,
+            );
+            return None;
         }
         // Wildcard for non-enum fields.
         if matches!(&self.lexer.peek().has, LexItem::Identifier(id) if id == "_") {
@@ -11363,9 +11717,10 @@ impl Parser {
                             self.parse_slice_alternation_element(
                                 e_nr,
                                 &read,
-                                borrow_src,
+                                Some(borrow_src),
                                 &mut bindings,
                                 &mut elem_conds,
+                                true,
                             );
                             head.push("_".to_string());
                         } else {
@@ -11765,6 +12120,16 @@ impl Parser {
         result_type
     }
 
+    /// Does the sub-pattern at the cursor list alternatives — a `|` before the `,`, `)`, `}`
+    /// or `=>` that ends it, outside any group?  Looks ahead and puts the cursor back.
+    fn sub_pattern_lists_alternatives(&mut self) -> bool {
+        let at = self.lexer.link();
+        let found =
+            self.lexer.recover_to(&[",", ")", "}", "=>", "|"]) && self.lexer.peek_token("|");
+        self.lexer.revert(at);
+        found
+    }
+
     /// The elements of a tuple pattern `( p₀, p₁, … )` over the tuple held in `tmp`, the lexer just
     /// past the `(`; consumes through the `)`.  Each position is `_`, a binding, a literal or a
     /// variant sub-pattern — `@FR-P-Point`: a tuple element is ONE value.  A binding lands in
@@ -11948,6 +12313,127 @@ impl Parser {
         bad_pattern
     }
 
+    /// `@FR-P-Multi` over a tuple subject — the further tuple patterns of one arm, after `|`
+    /// or `,` (`(Circle { r }, Square { s }) | (Square { s }, Circle { r }) => r * s`).
+    fn parse_tuple_alternatives(
+        &mut self,
+        tmp: u16,
+        elem_types: &[Type],
+        first_names: usize,
+        first_bindings: &mut Vec<Value>,
+        bad_pattern: &mut bool,
+    ) -> Vec<(Vec<Value>, Vec<Value>)> {
+        let mut bad = false;
+        let alternatives = self.parse_pattern_alternatives(
+            first_names,
+            first_bindings,
+            |p| p.lexer.has_token("("),
+            |p, binds, conds| {
+                if p.parse_tuple_pattern_elements(tmp, elem_types, binds, conds) {
+                    bad = true;
+                }
+            },
+        );
+        *bad_pattern |= bad;
+        alternatives
+    }
+
+    /// `@FR-P-Multi` — the further patterns of one arm after its first, listed with `|` or `,`,
+    /// for a subject whose arms are not discriminant tests (a tuple, a plain struct).  `opens`
+    /// consumes the start of an alternative and answers whether one is there (the cursor is put
+    /// back when not); `parse_one` parses it into its own bindings and conditions.  A name the
+    /// first pattern — or an earlier alternative — bound is LINKED: this alternative's own
+    /// variable is copied into that slot, after `@FR-P-Alt-Same` checks the types meet, so the
+    /// one body reads whichever alternative matched.  A name only some alternatives bind is
+    /// `τ?` and null in the others (`@FR-P-Alt-Diff`); `first_bindings` gains those nulls for
+    /// the first pattern.  `first_names` is where the first pattern's names start in
+    /// `pattern_binds_pending`.  Answers each alternative's `(bindings, conditions)`; an empty
+    /// list is a single-pattern arm.
+    fn parse_pattern_alternatives(
+        &mut self,
+        first_names: usize,
+        first_bindings: &mut Vec<Value>,
+        opens: impl Fn(&mut Self) -> bool,
+        mut parse_one: impl FnMut(&mut Self, &mut Vec<Value>, &mut Vec<Value>),
+    ) -> Vec<(Vec<Value>, Vec<Value>)> {
+        let mut alternatives: Vec<(Vec<Value>, Vec<Value>, HashSet<String>)> = Vec::new();
+        // name → (shared slot, its type); the first pattern's names, then each new one.
+        let mut shared: Vec<(String, u16, Type)> = self.pattern_binds_pending[first_names..]
+            .iter()
+            .map(|(name, _)| {
+                let v = self.vars.var(name);
+                (name.clone(), v, self.vars.tp(v).clone())
+            })
+            .collect();
+        let first_set: HashSet<String> = shared.iter().map(|(n, _, _)| n.clone()).collect();
+        while (self.lexer.peek_token("|") || self.lexer.peek_token(","))
+            && !self.lexer.peek_token("=>")
+        {
+            let at = self.lexer.link();
+            self.lexer.has_token("|");
+            self.lexer.has_token(",");
+            if !opens(self) {
+                self.lexer.revert(at);
+                break;
+            }
+            let start = self.pattern_binds_pending.len();
+            let mut binds_i: Vec<Value> = Vec::new();
+            let mut conds_i: Vec<Value> = Vec::new();
+            parse_one(self, &mut binds_i, &mut conds_i);
+            let added: Vec<(String, Option<u16>)> =
+                self.pattern_binds_pending.drain(start..).collect();
+            let mut names_i: HashSet<String> = HashSet::new();
+            for (name, before) in added {
+                let own = self.vars.var(&name);
+                names_i.insert(name.clone());
+                if let Some((_, slot, slot_tp)) = shared.iter().find(|(n, _, _)| *n == name) {
+                    // Linked the way the enum arm links (`join_later_sub_pattern_captures`):
+                    // this pattern's own variable is copied into the first one's slot.
+                    let (slot, slot_tp) = (*slot, slot_tp.clone());
+                    let own_tp = self.vars.tp(own).clone();
+                    self.shared_slot_accepts(&name, &own_tp, &slot_tp);
+                    // The copy reads this pattern's variable: it is not a never-read binding.
+                    self.var_usages(own, true);
+                    binds_i.push(v_set(slot, Value::Var(own)));
+                    self.vars.set_name(&name, slot);
+                } else {
+                    // A name no earlier pattern bound: its own variable is the shared slot,
+                    // and the arm's end restores what the name meant before the arm.
+                    shared.push((name.clone(), own, self.vars.tp(own).clone()));
+                    self.pattern_binds_pending.push((name, before));
+                }
+            }
+            alternatives.push((binds_i, conds_i, names_i));
+        }
+        if alternatives.is_empty() {
+            return Vec::new();
+        }
+        // `@FR-P-Alt-Diff`: a name some alternative does not bind is `τ?`, null there.
+        for (name, slot, tp) in &shared {
+            let everywhere = first_set.contains(name)
+                && alternatives
+                    .iter()
+                    .all(|(_, _, names)| names.contains(name));
+            if everywhere {
+                continue;
+            }
+            let opt = Type::optional(tp.clone());
+            self.vars.set_type(*slot, opt.clone());
+            if !first_set.contains(name) {
+                first_bindings.push(v_set(*slot, self.null(&opt)));
+            }
+            for (binds_i, _, names) in &mut alternatives {
+                if !names.contains(name) {
+                    binds_i.push(v_set(*slot, self.null(&opt)));
+                }
+            }
+        }
+        alternatives
+            .into_iter()
+            .map(|(binds, conds, _)| (binds, conds))
+            .collect()
+    }
+
     /// Parse a `match` expression whose subject is a `Type::Tuple`.
     ///
     /// Arm syntax: `_ => expr` (wildcard) or `(pat0, pat1, ...) => expr` (element patterns).
@@ -11995,6 +12481,9 @@ impl Parser {
             let mut bad_pattern = false;
             let mut bindings: Vec<Value> = Vec::new();
             let mut elem_conds: Vec<Value> = Vec::new();
+            // `@FR-P-Multi` over a tuple subject: the further `|` / `,` tuple patterns of this
+            // arm, each its own bindings and conditions (`parse_tuple_alternatives`).
+            let mut alternatives: Vec<(Vec<Value>, Vec<Value>)> = Vec::new();
 
             if let Some(id) = self.lexer.has_identifier() {
                 if id == "_" {
@@ -12007,6 +12496,7 @@ impl Parser {
                     );
                 }
             } else if self.lexer.has_token("(") {
+                let first_names = self.pattern_binds_pending.len();
                 if self.parse_tuple_pattern_elements(
                     tmp,
                     &elem_types,
@@ -12015,10 +12505,21 @@ impl Parser {
                 ) {
                     bad_pattern = true;
                 }
+                alternatives = self.parse_tuple_alternatives(
+                    tmp,
+                    &elem_types,
+                    first_names,
+                    &mut bindings,
+                    &mut bad_pattern,
+                );
                 // All element positions were wildcards/bindings with no literal conditions.
                 // The arm is effectively unconditional (wildcard) when there are no bindings
                 // either; if there are bindings it acts like a wildcard-with-capture.
-                if elem_conds.is_empty() && bindings.is_empty() && !bad_pattern {
+                if elem_conds.is_empty()
+                    && bindings.is_empty()
+                    && !bad_pattern
+                    && alternatives.is_empty()
+                {
                     is_wildcard = true;
                 }
             } else if !self.first_pass {
@@ -12056,6 +12557,14 @@ impl Parser {
             let mut arm_body = Value::Null;
             let arm_expected = self.match_arm_expected(&result_type);
             let mut arm_type = self.parse_match_arm_body(&arm_expected, &mut arm_body);
+            // The alternatives run the BODY under their own bindings, so they take it before
+            // the first pattern's bindings fold into it below.
+            let mut bare_body = if alternatives.is_empty() {
+                Value::Null
+            } else {
+                arm_body.clone()
+            };
+            let bare_type = arm_type.clone();
 
             // Combine element conditions with AND (short-circuit: if a { b } else { false })
             let cond: Option<Value> = if elem_conds.is_empty() {
@@ -12101,6 +12610,35 @@ impl Parser {
                 }
                 result_type = joined;
             }
+            // Each alternative runs a CLONE of the arm body under its own bindings, which
+            // assign the same shared slots the first pattern's do — the hand-expanded form.
+            // A tail the join above converted is converted in the clone the same way.
+            if !alternatives.is_empty() && bare_type != arm_type {
+                self.convert_arm_tail(&mut bare_body, &bare_type, &arm_type);
+            }
+            let alternative_arms: Vec<PatternArm> = alternatives
+                .into_iter()
+                .map(|(mut binds_i, conds_i)| {
+                    let cond_i = conds_i
+                        .into_iter()
+                        .reduce(|a, b| v_if(a, b, Value::Boolean(false)));
+                    let (code_i, bindings_i) = if guard_opt.is_some() || binds_i.is_empty() {
+                        (bare_body.clone(), binds_i)
+                    } else {
+                        binds_i.push(bare_body.clone());
+                        (
+                            v_block(binds_i, arm_type.clone(), "tuple_binding"),
+                            Vec::new(),
+                        )
+                    };
+                    PatternArm {
+                        cond: cond_i,
+                        guard: guard_opt.clone(),
+                        bindings: bindings_i,
+                        code: code_i,
+                    }
+                })
+                .collect();
             arm_types.push(arm_type.clone());
             arms.push(PatternArm {
                 cond,
@@ -12108,6 +12646,10 @@ impl Parser {
                 bindings: arm_bindings,
                 code: arm_body,
             });
+            for alt in alternative_arms {
+                arm_types.push(arm_type.clone());
+                arms.push(alt);
+            }
 
             if has_wildcard {
                 self.lexer.has_token(",");
@@ -13338,8 +13880,12 @@ impl Parser {
             // The tail arrives either already wrapped in a `Return` or as the bare branch —
             // a monomorph's body is the substituted TEMPLATE's, whose delivery has not run.
             let branch_is_tail = match bl.operators[last].unspan() {
-                Value::Return(inner) => self.is_borrowing_branch(inner),
-                other => self.is_borrowing_branch(other),
+                Value::Return(inner) => {
+                    self.is_borrowing_branch(inner) || self.is_borrowed_and_minted_branch(inner)
+                }
+                other => {
+                    self.is_borrowing_branch(other) || self.is_borrowed_and_minted_branch(other)
+                }
             };
             if branch_is_tail {
                 let tmp = self.create_unique("__ret_join", &ret);
@@ -13363,6 +13909,60 @@ impl Parser {
             &mut self.data.definitions[d_nr as usize].variables,
         );
         self.context = saved_ctx;
+    }
+
+    /// loft#1872, `@FR-F-Ret` — a value branch whose leaves hand back a PARAMETER on one arm
+    /// and a CALL's result on another: a recursive or delegating instance's Join.  Bound whole
+    /// into one owned local, the parameter arm is copied at that bind (both backends guard a
+    /// parameter's store there), and the result is a store the instance owns — so its caller
+    /// lifts it and frees it like the twin's.
+    fn is_borrowed_and_minted_branch(&self, tail: &Value) -> bool {
+        #[derive(Default)]
+        struct Leaves {
+            borrowed: bool,
+            minted: bool,
+            view: bool,
+        }
+        fn walk(
+            node: &Value,
+            data: &crate::data::Data,
+            vars: &crate::variables::Function,
+            seen: &mut Leaves,
+        ) {
+            match node.unspan() {
+                Value::If(_, then, els) => {
+                    walk(then, data, vars, seen);
+                    walk(els, data, vars, seen);
+                }
+                Value::Block(bl) => {
+                    if let Some(last) = bl.operators.last() {
+                        walk(last, data, vars, seen);
+                    }
+                }
+                Value::Var(x) if vars.is_argument(*x) => seen.borrowed = true,
+                // A local in a leaf owns what it holds: the join's arm owner
+                // (`{ __ref = call; __ref }`) holds a call's result.
+                Value::Var(_) => seen.minted = true,
+                // A VIEW into a parameter (`v[0]`) is neither: binding it into the owned local
+                // aliases it on native, where only a return buffer's copy would make it fresh
+                // (loft#1880).
+                Value::Call(d, _) if data.def(*d).name().starts_with("Op") => seen.view = true,
+                Value::Call(_, _) => seen.minted = true,
+                _ => {}
+            }
+        }
+        let mut top = tail.unspan();
+        while let Value::Block(bl) = top
+            && let Some(last) = bl.operators.last()
+        {
+            top = last.unspan();
+        }
+        if !matches!(top, Value::If(..)) {
+            return false;
+        }
+        let mut seen = Leaves::default();
+        walk(tail, &self.data, &self.vars, &mut seen);
+        seen.borrowed && seen.minted && !seen.view
     }
 
     pub(crate) fn promote_monomorph_vector_return(
@@ -13413,22 +14013,56 @@ impl Parser {
             for op in &mut bl.operators {
                 self.rewrite_generic_vector_binds(op, &tv_typed, &mut declared);
             }
-            // F-Ret: the borrowed return.
+            // F-Ret: a returned parameter is copied.  Every visible vector parameter a return
+            // leaf yields, not only the one a pure borrow names: a JOIN — the argument on one
+            // arm, a recursive call on the other (loft#1872) — handed the caller's own vector
+            // up on its borrow arm, and the call site's lift then freed the argument through
+            // the result.  The concrete twin copies that arm into its return buffer; this is
+            // the same copy, into one fresh local every such arm fills.
+            let n_attrs = self.data.def(d_nr).attributes().len();
+            let mut yielded: Vec<u16> = (0..n_attrs)
+                .filter(|&a| !self.data.def(d_nr).attributes()[a].hidden)
+                .filter_map(|a| u16::try_from(a).ok())
+                .filter(|&a| {
+                    (a as usize) < self.vars.count() as usize
+                        && self.vars.is_argument(a)
+                        && matches!(self.vars.tp(a).base(), Type::Vector(_, _))
+                        && Self::yields_var(&bl.operators, a)
+                })
+                .collect();
             if let Some(param) = borrowed_param
+                && !yielded.contains(&param)
                 && (param as usize) < self.vars.count() as usize
-                && let Type::Vector(elm, _) = self.vars.tp(param).base().clone()
+                && matches!(self.vars.tp(param).base(), Type::Vector(_, _))
                 && Self::yields_var(&bl.operators, param)
+            {
+                yielded.push(param);
+            }
+            if let Some(&first) = yielded.first()
+                && let Type::Vector(elm, _) = self.vars.tp(first).base().clone()
             {
                 let owned = Type::Vector(elm.clone(), Deps::none());
                 let copy = self.create_unique("__ret_copy", &owned);
                 if copy != u16::MAX {
                     self.vars.defined(copy);
                     let rec_tp = self.append_elem_tp(&elm);
+                    for &param in &yielded {
+                        for op in &mut bl.operators {
+                            self.copy_returned_var_into(op, param, copy, rec_tp, false);
+                        }
+                        if let Some(last) = bl.operators.last_mut() {
+                            self.copy_returned_var_into(last, param, copy, rec_tp, true);
+                        }
+                    }
+                    // A Join's other leaves — a local holding the recursive call's result
+                    // (the join's arm owner) — fill the same copy, so the return has ONE
+                    // source.  Two sources are each exempt from the frees on both paths, and
+                    // the one the path did not return was nobody's (loft#1872).
                     for op in &mut bl.operators {
-                        self.copy_returned_var_into(op, param, copy, rec_tp, false);
+                        self.copy_other_returned_locals(op, &yielded, copy, rec_tp, false);
                     }
                     if let Some(last) = bl.operators.last_mut() {
-                        self.copy_returned_var_into(last, param, copy, rec_tp, true);
+                        self.copy_other_returned_locals(last, &yielded, copy, rec_tp, true);
                     }
                     bl.operators
                         .insert(0, crate::data::v_set(copy, Value::Null));
@@ -13553,136 +14187,42 @@ impl Parser {
     /// A body with no leaf answers no, and so does any leaf this cannot read — the gate is a
     /// POSITIVE proof and an under-approximation, because answering yes wrongly makes a caller
     /// copy where the value was owned and orphan the store it was handed.
-    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn every_return_leaf_views_var(
         data: &crate::data::Data,
         ops: &[Value],
         x: u16,
+        self_d: u32,
     ) -> bool {
-        // Every definition of every local, so a leaf naming one can be resolved to the
-        // right-hand sides it was bound from.
-        fn collect_sets<'a>(v: &'a Value, out: &mut Vec<(u16, &'a Value)>) {
-            match v.unspan() {
-                Value::Set(y, rhs) => {
-                    out.push((*y, rhs));
-                    collect_sets(rhs, out);
-                }
-                Value::Return(inner) | Value::Drop(inner) => collect_sets(inner, out),
-                Value::If(c, t, e) => {
-                    collect_sets(c, out);
-                    collect_sets(t, out);
-                    collect_sets(e, out);
-                }
-                Value::Block(b) | Value::Loop(b) => {
-                    for op in &b.operators {
-                        collect_sets(op, out);
-                    }
-                }
-                Value::Insert(o) | Value::Parallel(o) => {
-                    for op in o {
-                        collect_sets(op, out);
-                    }
-                }
-                Value::Call(_, args) => {
-                    for a in args {
-                        collect_sets(a, out);
-                    }
-                }
-                _ => {}
-            }
-        }
+        Self::every_return_leaf_views_one_of(data, ops, &[x], self_d)
+    }
+
+    /// [`Self::every_return_leaf_views_var`] for a SET of parameters `xs`: every return leaf
+    /// views one of them.  A self call counts where, in each position of `xs`, it is handed a
+    /// view of one of them — so a recursion that SWAPS two arguments (`sw(b, a, i - 1)`) still
+    /// hands back a view of `a` or of `b`, the borrow its twin declares as `-> T["a", "b"]`
+    /// (loft#1880).
+    pub(crate) fn every_return_leaf_views_one_of(
+        data: &crate::data::Data,
+        ops: &[Value],
+        xs: &[u16],
+        self_d: u32,
+    ) -> bool {
         let mut sets: Vec<(u16, &Value)> = Vec::new();
         for op in ops {
-            collect_sets(op, &mut sets);
+            ViewWalk::collect_sets(op, &mut sets);
         }
-        // Does this local, through projections alone, still view `x`?  `seen` is the cycle
-        // guard a work-list over user code needs; a local reached twice answers no rather
-        // than looping.
-        fn local_views(
-            data: &crate::data::Data,
-            sets: &[(u16, &Value)],
-            y: u16,
-            x: u16,
-            seen: &mut Vec<u16>,
-        ) -> bool {
-            if y == x {
-                return true;
-            }
-            if seen.contains(&y) {
-                return false;
-            }
-            seen.push(y);
-            let mut any = false;
-            for (v, rhs) in sets.iter().filter(|(v, _)| *v == y) {
-                let _ = v;
-                // The one home for *which container did this view come out of* — it peels the
-                // whole chain, both projection spellings and a struct-enum payload base.
-                let Some(base) = crate::use_analysis::projection_container_var(data, rhs) else {
-                    return false;
-                };
-                if !local_views(data, sets, base, x, seen) {
-                    return false;
-                }
-                any = true;
-            }
-            any
-        }
-        fn leaf_views(
-            data: &crate::data::Data,
-            sets: &[(u16, &Value)],
-            leaf: &Value,
-            x: u16,
-        ) -> bool {
-            if let Value::Var(y) = leaf.unspan() {
-                return local_views(data, sets, *y, x, &mut Vec::new());
-            }
-            match crate::use_analysis::projection_container_var(data, leaf) {
-                Some(base) => local_views(data, sets, base, x, &mut Vec::new()),
-                None => false,
-            }
-        }
+        let w = ViewWalk {
+            data,
+            sets: &sets,
+            xs,
+            self_d,
+        };
         // (found, all) over the leaves reached: a body with no leaf answers no, and one
-        // leaf that does not view `x` refuses the whole body.
-        fn walk(
-            data: &crate::data::Data,
-            sets: &[(u16, &Value)],
-            v: &Value,
-            x: u16,
-            tail: bool,
-            acc: &mut (bool, bool),
-        ) {
-            match v.unspan() {
-                Value::Return(inner) => walk(data, sets, inner, x, true, acc),
-                Value::If(_, t, e) => {
-                    walk(data, sets, t, x, tail, acc);
-                    walk(data, sets, e, x, tail, acc);
-                }
-                Value::Block(b) | Value::Loop(b) => {
-                    let n = b.operators.len();
-                    for (i, op) in b.operators.iter().enumerate() {
-                        walk(data, sets, op, x, tail && i + 1 == n, acc);
-                    }
-                }
-                Value::Insert(ops) => {
-                    let n = ops.len();
-                    for (i, op) in ops.iter().enumerate() {
-                        walk(data, sets, op, x, tail && i + 1 == n, acc);
-                    }
-                }
-                Value::Null if tail => {}
-                other if tail => {
-                    acc.0 = true;
-                    if !leaf_views(data, sets, other, x) {
-                        acc.1 = false;
-                    }
-                }
-                _ => {}
-            }
-        }
+        // leaf that does not view `xs` refuses the whole body.
         let mut acc = (false, true);
         let n = ops.len();
         for (i, op) in ops.iter().enumerate() {
-            walk(data, &sets, op, x, i + 1 == n, &mut acc);
+            w.walk(op, i + 1 == n, &mut acc);
         }
         acc.0 && acc.1
     }
@@ -13774,6 +14314,67 @@ impl Parser {
             _ => {}
         }
     }
+    /// The other half of a copied return: a return leaf that is a LOCAL other than a copied
+    /// parameter (and other than `copy` itself) is copied into `copy` too, so every leaf hands
+    /// up the one store.  The local stays its own owner and is released at its scope's end.
+    fn copy_other_returned_locals(
+        &mut self,
+        node: &mut Value,
+        params: &[u16],
+        copy: u16,
+        rec_tp: i32,
+        tail: bool,
+    ) {
+        let other = |y: u16, this: &Self| {
+            y != copy
+                && !params.contains(&y)
+                && !this.vars.is_argument(y)
+                && matches!(this.vars.tp(y).base(), Type::Vector(_, _))
+        };
+        match node {
+            Value::Span(b) => self.copy_other_returned_locals(&mut b.1, params, copy, rec_tp, tail),
+            Value::Return(inner) => {
+                if let Value::Var(y) = inner.unspan()
+                    && other(*y, self)
+                {
+                    let y = *y;
+                    let replace = self.cl(
+                        "OpReplaceVector",
+                        &[Value::Var(copy), Value::Var(y), Value::Int(rec_tp)],
+                    );
+                    *node = Value::Insert(vec![replace, Value::Return(Box::new(Value::Var(copy)))]);
+                } else {
+                    self.copy_other_returned_locals(inner, params, copy, rec_tp, true);
+                }
+            }
+            Value::Var(y) if tail && other(*y, self) => {
+                let y = *y;
+                let replace = self.cl(
+                    "OpReplaceVector",
+                    &[Value::Var(copy), Value::Var(y), Value::Int(rec_tp)],
+                );
+                *node = Value::Insert(vec![replace, Value::Var(copy)]);
+            }
+            Value::If(_, t, e) => {
+                self.copy_other_returned_locals(t, params, copy, rec_tp, tail);
+                self.copy_other_returned_locals(e, params, copy, rec_tp, tail);
+            }
+            Value::Block(b) | Value::Loop(b) => {
+                let n = b.operators.len();
+                for (i, op) in b.operators.iter_mut().enumerate() {
+                    self.copy_other_returned_locals(op, params, copy, rec_tp, tail && i + 1 == n);
+                }
+            }
+            Value::Insert(ops) => {
+                let n = ops.len();
+                for (i, op) in ops.iter_mut().enumerate() {
+                    self.copy_other_returned_locals(op, params, copy, rec_tp, tail && i + 1 == n);
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// @PLN165 D5 — a template returning an OPEN instance (`-> Box<T>`) declares the
     /// `__retbuf` its twin has (a record whatever `T` becomes), but its literal tail was a
     /// deferred `TV_OBJECT` the template's own parse could not deliver.  Lowered, it is the
@@ -18434,7 +19035,7 @@ impl Parser {
         // validate if there is a defined return value
         let mut v = Value::Null;
         let r_type = self.data.def(self.context).returned().clone();
-        if !self.lexer.peek_token(";") && !self.lexer.peek_token("}") {
+        if self.control_value_follows() {
             // T1.7: save the position of the first token in the return expression,
             // used to report `not null` violations at the tuple literal site.
             let expr_start = self.lexer.peek().clone();
@@ -19154,6 +19755,17 @@ impl Parser {
         let mut types: Vec<Type> = Vec::new();
         let mut arg_pos: Vec<Position> = Vec::new();
         if self.lexer.has_token(")") {
+            // `@FR-L-Fn` — a fn-ref captured from an enclosing scope is called through the one
+            // home every other arity takes, which registers the capture and reads the value out
+            // of the closure record; resolved here as a plain local it was `Unknown function`.
+            if self
+                .capture_context
+                .iter()
+                .any(|(n, t)| n == name && matches!(t.base(), Type::Function(..)))
+                && let Some(tp) = self.try_fn_ref_call(val, name, &[], &[], name_pos)
+            {
+                return tp;
+            }
             // Check for zero-argument fn-ref call
             if self.vars.name_exists(name) {
                 let v_nr = self.vars.var(name);
@@ -19340,7 +19952,17 @@ impl Parser {
             // (in `process_call_args`) points the caret at the argument, not at
             // the cursor drifted to `)` / `,`.
             arg_pos.push(self.lexer.peek_pos().clone());
+            // loft#1883 — a record-backed `&(…)` parameter names its argument's record, so a
+            // struct field of tuple type is read with its address.
+            let prev_place = self.tuple_place_wanted;
+            self.tuple_place_wanted = fn_def_nr.is_some_and(|d| {
+                arg_idx < self.data.attributes(d)
+                    && matches!(self.data.attr_type(d, arg_idx).base(), Type::RefVar(inner)
+                        if matches!(inner.base(), Type::Reference(t, _)
+                            if self.data.def(*t).name().starts_with("__tuple<")))
+            });
             let mut t = self.expression(&mut p);
+            self.tuple_place_wanted = prev_place;
             // A member of a call result handed on as an argument is read where it lives
             // (`call_member_view`): the argument binds without copying, so the copy the terminal
             // projection made would be a structure nobody wrote.
@@ -19365,6 +19987,24 @@ impl Parser {
             }
         }
         self.lexer.token(")");
+        // `@FR-T-Ref-Rep` — a tuple LOCAL handed to a callee pass 1 cannot see yet; whether its
+        // parameter is a record-backed `&(…)` is judged between the passes
+        // (`record_forward_ref_tuple_links`).  A call to an unknown name leaves no IR to walk.
+        if self.first_pass {
+            for (i, arg) in list.iter().enumerate() {
+                if let Value::Var(v) = arg.unspan()
+                    && !self.vars.is_argument(*v)
+                    && matches!(self.vars.tp(*v).base(), Type::Tuple(_))
+                {
+                    self.pending_tuple_args.push((
+                        self.context,
+                        format!("n_{name}"),
+                        i,
+                        self.vars.name(*v).to_string(),
+                    ));
+                }
+            }
+        }
         let ret = self.dispatch_call(
             val,
             source,
@@ -20013,8 +20653,15 @@ impl Parser {
                 && let closure_rec_d = self.data.def(self.context).closure_record()
                 && closure_rec_d != u32::MAX
             {
-                let f_nr = self.data.attr(closure_rec_d, name);
+                let f_nr = self.capture_attr(self.context, closure_rec_d, name);
                 if f_nr != usize::MAX {
+                    // loft#1869, `@FR-L-CapOwn` — the local is a VIEW of the captured fn-ref:
+                    // the closure record it names belongs to this closure's record, never to
+                    // the call that reads it.
+                    if !self.first_pass {
+                        let tp = self.vars.tp(v_nr).depending(self.closure_param);
+                        self.change_var_type(v_nr, &tp);
+                    }
                     let load = self.closure_capture_read(closure_rec_d, f_nr);
                     *val = v_block(
                         vec![crate::data::v_set(v_nr, load), call_ir],
@@ -21356,4 +22003,145 @@ fn max_lookahead() -> i32 {
             .filter(|v| *v >= 0)
             .unwrap_or(1_000_000)
     })
+}
+
+/// The walk [`Parser::every_return_leaf_views_one_of`] makes: which locals, through projections
+/// and self calls alone, still view one of the parameters `xs`.
+struct ViewWalk<'a> {
+    data: &'a crate::data::Data,
+    /// Every definition of every local, so a leaf naming one is resolved to the right-hand
+    /// sides it was bound from.
+    sets: &'a [(u16, &'a Value)],
+    xs: &'a [u16],
+    self_d: u32,
+}
+
+impl<'a> ViewWalk<'a> {
+    fn collect_sets(v: &'a Value, out: &mut Vec<(u16, &'a Value)>) {
+        match v.unspan() {
+            Value::Set(y, rhs) => {
+                out.push((*y, rhs));
+                Self::collect_sets(rhs, out);
+            }
+            Value::Return(inner) | Value::Drop(inner) => Self::collect_sets(inner, out),
+            Value::If(c, t, e) => {
+                Self::collect_sets(c, out);
+                Self::collect_sets(t, out);
+                Self::collect_sets(e, out);
+            }
+            Value::Block(b) | Value::Loop(b) => {
+                for op in &b.operators {
+                    Self::collect_sets(op, out);
+                }
+            }
+            Value::Insert(o) | Value::Parallel(o) => {
+                for op in o {
+                    Self::collect_sets(op, out);
+                }
+            }
+            Value::Call(_, args) => {
+                for a in args {
+                    Self::collect_sets(a, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Does local `y`, through projections and self calls alone, still view one of `xs`?
+    /// `seen` is the cycle guard a work-list over user code needs; a local reached twice
+    /// answers no rather than looping.
+    fn local_views(&self, y: u16, seen: &mut Vec<u16>) -> bool {
+        if self.xs.contains(&y) {
+            return true;
+        }
+        if seen.contains(&y) {
+            return false;
+        }
+        seen.push(y);
+        let mut any = false;
+        for (_, rhs) in self.sets.iter().filter(|(v, _)| *v == y) {
+            // A null declaration (`Set(y, Null)`, the work-ref's entry init) names no store:
+            // it neither views `xs` nor refuses the local.
+            if matches!(rhs.unspan(), Value::Null) {
+                continue;
+            }
+            // loft#1880 — a SELF call handed views of `xs` in their own positions answers what
+            // this body answers, by the induction this walk is.
+            if self.self_call_views(rhs, seen) {
+                any = true;
+                continue;
+            }
+            // The one home for *which container did this view come out of* — it peels the
+            // whole chain, both projection spellings and a struct-enum payload base.
+            let Some(base) = crate::use_analysis::projection_container_var(self.data, rhs) else {
+                return false;
+            };
+            if !self.local_views(base, seen) {
+                return false;
+            }
+            any = true;
+        }
+        any
+    }
+
+    fn self_call_views(&self, rhs: &Value, seen: &[u16]) -> bool {
+        let Value::Call(d, args) = rhs.unspan() else {
+            return false;
+        };
+        if *d != self.self_d {
+            return false;
+        }
+        self.xs
+            .iter()
+            .all(|&x| match args.get(x as usize).map(Value::unspan) {
+                Some(Value::Var(y)) => self.local_views(*y, &mut seen.to_vec()),
+                Some(arg) => crate::use_analysis::projection_container_var(self.data, arg)
+                    .is_some_and(|base| self.local_views(base, &mut seen.to_vec())),
+                None => false,
+            })
+    }
+
+    fn leaf_views(&self, leaf: &Value) -> bool {
+        if let Value::Var(y) = leaf.unspan() {
+            return self.local_views(*y, &mut Vec::new());
+        }
+        if self.self_call_views(leaf, &[]) {
+            return true;
+        }
+        match crate::use_analysis::projection_container_var(self.data, leaf) {
+            Some(base) => self.local_views(base, &mut Vec::new()),
+            None => false,
+        }
+    }
+
+    fn walk(&self, v: &Value, tail: bool, acc: &mut (bool, bool)) {
+        match v.unspan() {
+            Value::Return(inner) => self.walk(inner, true, acc),
+            Value::If(_, t, e) => {
+                self.walk(t, tail, acc);
+                self.walk(e, tail, acc);
+            }
+            Value::Block(b) | Value::Loop(b) => {
+                let n = b.operators.len();
+                for (i, op) in b.operators.iter().enumerate() {
+                    self.walk(op, tail && i + 1 == n, acc);
+                }
+            }
+            Value::Insert(ops) => {
+                let n = ops.len();
+                for (i, op) in ops.iter().enumerate() {
+                    self.walk(op, tail && i + 1 == n, acc);
+                }
+            }
+            Value::Null if tail => {}
+            other if tail => {
+                acc.0 = true;
+                if !self.leaf_views(other) {
+                    acc.1 = false;
+                }
+            }
+            _ => {}
+        }
+    }
 }

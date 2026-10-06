@@ -6,7 +6,8 @@
 // allocation-local — inline fields and inline sub-records count FULLY, while a
 // `text` / collection / reference field counts as its 4-byte stored handle,
 // never the referenced content.  L-Struct packs fields by descending alignment
-// with NO tail padding.  The argument is still evaluated for its side effects
+// and pads the record to a multiple of its alignment (`@FR-L-Align`, @C138), so
+// the record is aligned as a vector element too.  The argument is still evaluated for its side effects
 // (verified: `size(make())` runs `make()` on both backends).
 //
 // Values verified against both backends (interpret + native) during Phase 1.
@@ -46,9 +47,9 @@ fn main() {
 
   // text / collection fields count as their 4-byte handle, not the content
   m = Mixed { name: "a longer string", id: 7 };
-  assert(size(m) == 12, "Mixed = int(8) + text handle(4), no tail pad: {size(m)}");
+  assert(size(m) == 16, "Mixed = int(8) + text handle(4), padded to 16: {size(m)}");
   w = WithVec { items: [1, 2, 3, 4, 5], k: 4 };
-  assert(size(w) == 12, "WithVec = int(8) + vector pointer(4): {size(w)}");
+  assert(size(w) == 16, "WithVec = int(8) + vector pointer(4), padded to 16: {size(w)}");
 
   // an inline sub-record is counted FULLY
   n = Nested {
@@ -57,9 +58,9 @@ fn main() {
   };
   assert(size(n) == 24, "Nested = inline Point(16) + int(8): {size(n)}");
 
-  // packed, no tail padding to the max alignment
+  // packed by alignment, then padded to a multiple of the largest one
   f = Flags { a: true, b: false, n: 5 };
-  assert(size(f) == 10, "Flags = int(8) + bool(1) + bool(1): {size(f)}");
+  assert(size(f) == 16, "Flags = int(8) + bool(1) + bool(1), padded to 16: {size(f)}");
   o = OneByte { f: true };
   assert(size(o) == 1, "OneByte = bool(1): {size(o)}");
 

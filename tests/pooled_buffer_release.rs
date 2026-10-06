@@ -154,10 +154,14 @@ fn native_lowers_the_release_to_remove_claims() {
         "loft_pooled_buffer_release_{}.rs",
         std::process::id()
     ));
+    // The release's LOWERING, asked where one is emitted: `@FR-R-RefillText`'s vector clause
+    // leaves c1's release out (its callee empties the vector field in place), so the question
+    // is asked with that clause off; the clause's own sites are pinned in tests/refill_text.rs.
     let out = loft()
         .arg("--native-emit")
         .arg(&out_path)
         .arg(cells())
+        .env("LOFT_NO_REFILL_VECTORS", "1")
         .output()
         .expect("spawn loft");
     assert!(

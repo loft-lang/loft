@@ -212,7 +212,9 @@ impl Output<'_> {
         let reassign = self.declared.contains(&var);
         if reassign && !owned {
             write!(w, "{{ ")?;
+            self.call_bind_owns = false;
             self.output_set_inner(w, var, to)?;
+            let copied = std::mem::take(&mut self.call_bind_owns);
             write!(
                 w,
                 // Clear the tracker only on the branch that actually freed.  A
@@ -232,7 +234,7 @@ impl Output<'_> {
             // store — the owner the first-decl branch below teaches the tracker about.  Name
             // it here too: where a displacement free emptied the slot before the bind, the
             // copy lands in a FRESH store, and a tracker left null releases nobody.
-            if self.materialises_element(var, to) {
+            if copied || self.materialises_element(var, to) {
                 write!(w, " _own_store_{name} = var_{name};")?;
             }
             write!(w, " }}")?;
@@ -299,11 +301,30 @@ impl Output<'_> {
         // rebound).  Asking `materialises_element` rather than widening the oracle keeps
         // this to the store that was actually allocated.
         let materialised = self.materialises_element(var, to);
+        self.call_bind_owns = false;
         self.output_set_body(w, var, to)?;
-        if owned || materialised {
+        // `@FR-O-Witness` — the call-return arm COPIES a borrowed result into a store of the
+        // local's own, an owner the oracle (which read the callee's return as a borrow) never
+        // saw: without the tracker the first owned reassignment nulled `var` over it, and the
+        // copy was released by nobody (one record per such local).
+        let copied = std::mem::take(&mut self.call_bind_owns);
+        if owned || materialised || copied {
             write!(w, "; _own_store_{name} = var_{name}")?;
         }
         Ok(())
+    }
+
+    /// `@FR-B-Ref-Lvalue` — the Rust place of member `i` of tuple `t`: a tuple local's field, a
+    /// `&(…)` parameter's (a `&mut` tuple, reached by auto-deref), or a LOCAL link's, which is a
+    /// raw pointer to the tuple and is dereferenced.  Used inside `unsafe`.
+    pub(super) fn tuple_member_place(&self, t: u16, i: u16) -> String {
+        let variables = self.data.def(self.def_nr).variables();
+        let name = sanitize(variables.name(t));
+        if matches!(variables.tp(t).base(), Type::RefVar(_)) && !variables.is_argument(t) {
+            format!("(*var_{name}).{i}")
+        } else {
+            format!("var_{name}.{i}")
+        }
     }
 
     /// Does a bind of `to` into `var` take the @PLN130 F1/F2 arm — the one that allocates a
@@ -413,11 +434,24 @@ impl Output<'_> {
                 // caller passed (an over-free / UAF).  Only a fn-owned
                 // intermediate (distinct from both the new value AND the witness)
                 // is freed.
-                let witness_guard = if is_retbuf_attr {
+                let mut witness_guard = if is_retbuf_attr {
                     format!(" && _old_{name}.store_nr != _rb_w_{name}.store_nr")
                 } else {
                     String::new()
                 };
+                // `@FR-O-Buffer` — nor the pooled buffer the call was handed: `v` held it from the
+                // previous pass, and a call answering another store displaces the buffer itself.
+                // A generator keeps the buffer as a coroutine field, as it keeps `var` below.
+                if let Some(buf) = variables.displaced_buffer_witness(var, to, self.data) {
+                    let buf_place = match self.coroutine_persistent_fields.get(&buf) {
+                        Some(field) => format!("self.var_{field}"),
+                        None => format!("var_{}", sanitize(variables.name(buf))),
+                    };
+                    let _ = std::fmt::Write::write_fmt(
+                        &mut witness_guard,
+                        format_args!(" && _old_{name}.store_nr != {buf_place}.store_nr"),
+                    );
+                }
                 let place = match self.coroutine_persistent_fields.get(&var) {
                     Some(field) => format!("self.var_{field}"),
                     None => format!("var_{name}"),
@@ -898,6 +932,26 @@ impl Output<'_> {
             } else if let Value::Call(d_nr, cargs) = to.unspan()
                 && self.data.def(*d_nr).name() == "OpCreateStack"
                 && let [src_arg] = cargs.as_slice()
+                && let Value::TupleGet(src, idx) = src_arg.unspan()
+            {
+                // `@FR-B-Ref-Lvalue` — a link to a tuple local's MEMBER: a pointer into the
+                // Rust tuple's field, the same raw shape as a link to a whole local.
+                let place = self.tuple_member_place(*src, *idx);
+                if self.declared.contains(&var) {
+                    write!(
+                        w,
+                        "var_{name} = unsafe {{ std::ptr::addr_of_mut!({place}) }}"
+                    )?;
+                } else {
+                    self.declared.insert(var);
+                    write!(
+                        w,
+                        "let mut var_{name}: *mut {base} = unsafe {{ std::ptr::addr_of_mut!({place}) }}"
+                    )?;
+                }
+            } else if let Value::Call(d_nr, cargs) = to.unspan()
+                && self.data.def(*d_nr).name() == "OpCreateStack"
+                && let [src_arg] = cargs.as_slice()
                 && let Value::Var(src) = src_arg.unspan()
             {
                 let src_name = sanitize(variables.name(*src));
@@ -1111,11 +1165,22 @@ impl Output<'_> {
                 current.to_string()
             }
         };
-        let displaced_free = |free: &str| -> String {
+        // `@FR-O-Buffer` — a local promoted onto the return buffer may still hold the store the
+        // CALLER handed (`_rb_w_<name>`), which a displaced free must never release: the next
+        // call fills that buffer again.  The rebind's own `_old_` free asks the same.
+        let entry_guard = if self.retbuf_witness.contains(&var) {
+            format!(" && _dst.store_nr != _rb_w_{name}.store_nr")
+        } else {
+            String::new()
+        };
+        let displaced_free = || -> String {
             if witnessed {
                 String::new()
             } else {
-                free.to_string()
+                format!(
+                    "if _dst.store_nr != u16::MAX && _dst.store_nr != _src.store_nr{entry_guard} \
+                     {{ OpFreeRef(cell, _dst, \"{name}(displaced)\"); }} "
+                )
             }
         };
         // P198 — most operators are wrapped in Value::Span by the parser.
@@ -1261,7 +1326,7 @@ impl Output<'_> {
             // Cluster-A A.4: ONE return-ownership query, shared with the
             // interpreter (`state/codegen.rs`).  Both backends read the same
             // fact, so they cannot diverge on the hidden-only / out-of-range edge.
-            let is_borrowed_view = self.data.def(fn_nr).returns_borrowed_view();
+            let is_borrowed_view = crate::use_analysis::may_return_a_borrow(self.data, fn_nr);
             // loft#981/#982 — a borrowed-view return is not always a borrow: the callee
             // may hand back the parameter's store OR one it minted (a `??` whose arms
             // split, a `return o` the return hoist materialises into a fresh `__ret_N`),
@@ -1315,7 +1380,18 @@ impl Output<'_> {
             // `_src == _dst` guard re-derived this and LEAKED the owned arm — `_src`
             // (a fresh `m_none()`) never equals `_dst` (the old slot), so it
             // materialised + dropped the owned store.
+            // The interpreter's twin takes this guard only where the right-hand side does not
+            // read the destination (`!stash_old_for_post_free`): `c = pick(d, c, k)` hands the
+            // callee the store the bind would adopt into, and the buffer arm then aliases the
+            // argument it was computed from (loft#1884, a leaked record once a later function
+            // re-took the slot).  Such a rebind keeps the copy below on both backends.
+            let rhs_reads_dst = self.declared.contains(&var) && {
+                let mut reads = false;
+                to.walk(&mut |n| reads |= matches!(n, Value::Var(x) if *x == var));
+                reads
+            };
             let join_witness = if crate::keys::join_own_enabled()
+                && !rhs_reads_dst
                 && let crate::use_analysis::Own::Join { base } =
                     crate::use_analysis::ownership_of(self.data, self.def_nr, to)
                 && base != u16::MAX
@@ -1349,6 +1425,13 @@ impl Output<'_> {
                 // narrow-int, text deref, typed-null, fn-ref) as the normal call
                 // path.  Re-deriving arg emission here is what dropped the
                 // boolean→u8 wrap and tripped rustc E0308 (issue #366).
+                //
+                // And under the context `output_call` gives every argument: an argument
+                // binds to the callee's parameter, never to the slot this call's result
+                // lands in.  Spelled here without that reset, a record bound for a fn-ref
+                // read (`mkl(5).f(4)`) emitted its integer argument as a fn-ref pair (E0308).
+                let saved_ctx = std::mem::replace(&mut self.fn_ref_context, false);
+                let saved_tuple = std::mem::replace(&mut self.tuple_text_to_string, false);
                 for (idx, arg) in args.iter().enumerate() {
                     write!(w, ", ")?;
                     // The callee this argument belongs to, for the questions `emit_call_arg`
@@ -1357,6 +1440,8 @@ impl Output<'_> {
                     self.current_call_def = fn_nr;
                     self.emit_call_arg(w, callee, idx, arg)?;
                 }
+                self.fn_ref_context = saved_ctx;
+                self.tuple_text_to_string = saved_tuple;
                 for extra in twin_args.iter().flatten() {
                     write!(w, ", {extra}")?;
                 }
@@ -1447,10 +1532,7 @@ impl Output<'_> {
             // COPY arm already makes (it clears `_dst` in place via
             // `OpDatabase`).  A same-store adopt (the NRVO alias) and the
             // null-sentinel `_dst` are excluded by the guard.
-            let disp = displaced_free(&format!(
-                "if _dst.store_nr != u16::MAX && _dst.store_nr != _src.store_nr \
-                 {{ OpFreeRef(cell, _dst, \"{name}(displaced)\"); }} "
-            ));
+            let disp = displaced_free();
             let target = copy_target("_dst", first_bind);
             // `@FR-H-SwapRebind` — the copy arm as one runtime call that exchanges the result's
             // store into the destination without resetting it first, when it can.
@@ -1486,6 +1568,9 @@ impl Output<'_> {
                 w,
                 "; if {adopt} {{ {disp}var_{name} = _src; }} {rebind}else {{ {copy} }}{unprotect} }}"
             )?;
+            // Adopted or copied, the local now holds its own store — unless the bind is an
+            // elided VIEW, which aliases on purpose.
+            self.call_bind_owns = !variables.is_view_elided(var);
             // @PLN130 — a MAY-copy site: the emitted code branches on store identity at
             // runtime and copies on the non-adopting arm.  Recorded regardless, because the
             // guard asks whether the diagnostic ACCOUNTS for the site, not whether this
@@ -1536,10 +1621,7 @@ impl Output<'_> {
             }
             write!(w, "{{ let _dst = var_{name}; let _src = ")?;
             self.output_code_inner(w, to)?;
-            let disp = displaced_free(&format!(
-                "if _dst.store_nr != u16::MAX && _dst.store_nr != _src.store_nr \
-                 {{ OpFreeRef(cell, _dst, \"{name}(displaced)\"); }} "
-            ));
+            let disp = displaced_free();
             let target = copy_target("_dst", first_bind);
             write!(
                 w,
@@ -1581,10 +1663,7 @@ impl Output<'_> {
             }
             write!(w, "{{ let _dst = var_{name}; let _src = ")?;
             self.output_code_inner(w, to)?;
-            let disp = displaced_free(&format!(
-                "if _dst.store_nr != u16::MAX && _dst.store_nr != _src.store_nr \
-                 {{ OpFreeRef(cell, _dst, \"{name}(displaced)\"); }} "
-            ));
+            let disp = displaced_free();
             let target = copy_target("_dst", first_bind);
             write!(
                 w,

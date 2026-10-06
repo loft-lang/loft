@@ -485,6 +485,30 @@ impl Scopes<'_> {
                         return Value::Insert(ops);
                     }
                 }
+                // `@FR-L-CapOwn`, `@FR-O-Witness` — a capture written into a closure record hands
+                // the local's store to the record: the witness stops naming it, so a later
+                // reassignment of the local does not free what the record holds.  Here, at the
+                // write, and not at the statement around it: a record built in place in a
+                // struct's field (loft#1867) is no `Set` of a fn-ref local.
+                if *d_nr == data.def_nr("OpSetDbRef")
+                    && let (Some(Value::Var(rec)), Some(Value::Var(c))) = (
+                        args.first().map(Value::unspan),
+                        args.get(2).map(Value::unspan),
+                    )
+                    && function
+                        .name(*self.var_mapping.get(rec).unwrap_or(rec))
+                        .starts_with("___clos_")
+                    && let Some(&cw) = self.owner_witness.get(self.var_mapping.get(c).unwrap_or(c))
+                {
+                    let (mut ops, ls, postamble) = self.scan_args(args, function, data, *d_nr);
+                    ops.push(Value::Call(*d_nr, ls));
+                    ops.extend(postamble);
+                    ops.push(v_set(
+                        cw,
+                        Value::Call(data.def_nr("OpNullRefSentinel"), vec![]),
+                    ));
+                    return Value::Insert(ops);
+                }
                 let (preamble, ls, postamble) = self.scan_args(args, function, data, *d_nr);
                 let call = Value::Call(*d_nr, ls);
                 // D-heap-14 — a copy that hands a droppable over inside a branch ARM records that

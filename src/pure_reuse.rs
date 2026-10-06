@@ -16,6 +16,8 @@
 //! - [`projection_of`]: a WRAPPER whose body is one call of such a function followed by a
 //!   read of the result (`d = decode(b); return d.ok`), or by a field handed back
 //!   (`d = decode(b); v = d.value; return v`) — its call is that read of the inner call.
+//!   The natural spelling of the same wrapper, the read written straight on the call
+//!   (`decode(b).ok`, `decode(b).value`, with or without `return`), is the same projection.
 //! - [`reuse_in_block`]: two such calls on the same argument variables, in statements that
 //!   always evaluate them, with nothing in between that writes a store or rebinds an
 //!   argument: the first statement is preceded by one call into a fresh local, and both
@@ -215,25 +217,16 @@ fn significant(ops: &[Value]) -> Vec<&Value> {
         .collect()
 }
 
-/// The [`Projection`] a wrapper's body spells, if it is one.
-pub fn projection_of(data: &Data, w: u32, free: &HashSet<u32>) -> Option<Projection> {
-    let def = data.def(w);
-    if def.hidden_return_buffer_attr().is_some() && !returns_field_copy(def.code()) {
-        return None;
-    }
-    let Value::Block(bl) = def.code().unspan() else {
-        return None;
-    };
-    let body = significant(&bl.operators);
-    let Value::Set(d, call) = body.first()?.unspan() else {
-        return None;
-    };
+/// `inner(args…)` as a call of an effect-free function on the parameters of wrapper `w`: the
+/// function and, per argument before its return buffer, the parameter position it is.
+fn inner_call(data: &Data, w: u32, free: &HashSet<u32>, call: &Value) -> Option<(u32, Vec<usize>)> {
     let Value::Call(inner, iargs) = call.unspan() else {
         return None;
     };
     if !free.contains(inner) {
         return None;
     }
+    let def = data.def(w);
     let iret = data.def(*inner).hidden_return_buffer_attr();
     let wattrs = def.attributes();
     let mut args = Vec::new();
@@ -249,34 +242,93 @@ pub fn projection_of(data: &Data, w: u32, free: &HashSet<u32>) -> Option<Project
             .position(|at| def.variables().var(&at.name) == *x)?;
         args.push(pos);
     }
-    let read_of = |v: &Value| -> Option<(u32, Vec<Value>)> {
-        let Value::Call(r, rargs) = v.unspan() else {
-            return None;
-        };
-        if !data.def(*r).name().starts_with("OpGet") {
-            return None;
-        }
-        let (first, rest) = rargs.split_first()?;
-        if !matches!(first.unspan(), Value::Var(x) if x == d) {
-            return None;
-        }
-        if !rest
+    Some((*inner, args))
+}
+
+/// `OpGet*(<base>, <constants>…)` whose base `is_base` accepts: the read and its constants.
+fn read_of(data: &Data, v: &Value, is_base: &dyn Fn(&Value) -> bool) -> Option<(u32, Vec<Value>)> {
+    let Value::Call(r, rargs) = v.unspan() else {
+        return None;
+    };
+    if !data.def(*r).name().starts_with("OpGet") {
+        return None;
+    }
+    let (first, rest) = rargs.split_first()?;
+    if !is_base(first)
+        || !rest
             .iter()
             .all(|c| matches!(c.unspan(), Value::Int(_) | Value::Long(_)))
-        {
-            return None;
-        }
-        Some((*r, rest.to_vec()))
+    {
+        return None;
+    }
+    Some((*r, rest.to_vec()))
+}
+
+/// The natural spelling of a projection wrapper: its body is ONE expression, the read written
+/// on the call itself — `inner(x).k` (a scalar field), or the materialised copy of
+/// `inner(x).k` into the result (a record field) — returned or as the block's value.
+fn natural_projection(
+    data: &Data,
+    w: u32,
+    free: &HashSet<u32>,
+    only: &Value,
+) -> Option<Projection> {
+    let e = match only.unspan() {
+        Value::Return(r) => r.unspan(),
+        v => v,
     };
+    let read = match e {
+        Value::Block(b) if b.name == "materialized_view_return" => {
+            b.operators.iter().find_map(|o| match o.unspan() {
+                Value::Call(c, cargs) if data.def(*c).name() == "OpCopyRecord" => cargs.first(),
+                _ => None,
+            })?
+        }
+        v => v,
+    };
+    let Value::Call(_, rargs) = read.unspan() else {
+        return None;
+    };
+    let (inner, args) = inner_call(data, w, free, rargs.first()?)?;
+    let (read, consts) = read_of(data, read, &|_| true)?;
+    if matches!(e, Value::Block(_)) && data.def(read).name() != "OpGetField" {
+        return None;
+    }
+    Some(Projection {
+        inner,
+        args,
+        read,
+        consts,
+    })
+}
+
+/// The [`Projection`] a wrapper's body spells, if it is one.
+pub fn projection_of(data: &Data, w: u32, free: &HashSet<u32>) -> Option<Projection> {
+    let def = data.def(w);
+    if def.hidden_return_buffer_attr().is_some() && !returns_field_copy(def.code()) {
+        return None;
+    }
+    let Value::Block(bl) = def.code().unspan() else {
+        return None;
+    };
+    let body = significant(&bl.operators);
+    if let [only] = body.as_slice() {
+        return natural_projection(data, w, free, only);
+    }
+    let Value::Set(d, call) = body.first()?.unspan() else {
+        return None;
+    };
+    let (inner, args) = inner_call(data, w, free, call)?;
+    let on_d = |b: &Value| matches!(b.unspan(), Value::Var(x) if x == d);
     match body.get(1..)? {
         // `return d.k`
         [ret] => {
             let Value::Return(inner_v) = ret.unspan() else {
                 return None;
             };
-            let (read, consts) = read_of(inner_v)?;
+            let (read, consts) = read_of(data, inner_v, &on_d)?;
             Some(Projection {
-                inner: *inner,
+                inner,
                 args,
                 read,
                 consts,
@@ -287,7 +339,7 @@ pub fn projection_of(data: &Data, w: u32, free: &HashSet<u32>) -> Option<Project
             let Value::Set(v, rv) = set.unspan() else {
                 return None;
             };
-            let (read, consts) = read_of(rv)?;
+            let (read, consts) = read_of(data, rv, &on_d)?;
             if data.def(read).name() != "OpGetField" {
                 return None;
             }
@@ -298,7 +350,7 @@ pub fn projection_of(data: &Data, w: u32, free: &HashSet<u32>) -> Option<Project
                 return None;
             }
             Some(Projection {
-                inner: *inner,
+                inner,
                 args,
                 read,
                 consts,
@@ -309,13 +361,19 @@ pub fn projection_of(data: &Data, w: u32, free: &HashSet<u32>) -> Option<Project
 }
 
 /// Does a function body end in the parser's materialised view return (`return {__retbuf =
-/// null; OpDatabase(__retbuf, tp); OpCopyRecord(v, __retbuf, tp); __retbuf}`)?
+/// null; OpDatabase(__retbuf, tp); OpCopyRecord(v, __retbuf, tp); __retbuf}`), returned or
+/// as the body's value?
 fn returns_field_copy(code: &Value) -> bool {
     let Value::Block(bl) = code.unspan() else {
         return false;
     };
-    matches!(significant(&bl.operators).last().map(|v| v.unspan()), Some(Value::Return(r))
-        if matches!(r.unspan(), Value::Block(b) if b.name == "materialized_view_return"))
+    let last = significant(&bl.operators).last().map(|v| v.unspan());
+    let tail = match last {
+        Some(Value::Return(r)) => r.unspan(),
+        Some(v) => v,
+        None => return false,
+    };
+    matches!(tail, Value::Block(b) if b.name == "materialized_view_return")
 }
 
 /// Is `r` the materialised copy of variable `v` into the return buffer?

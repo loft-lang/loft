@@ -1,0 +1,34 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Two refusals of a plain-struct match arm.  `@FR-P-Alt-Same`: the patterns of one arm bind a
+// name at types that meet — `v` is `integer` from `x` and `text` from `t`.  `@FR-M-Wild`: a
+// pattern with no literal field matches every struct, so an arm after it can never be selected —
+// said as such, where it read "Expect token }".
+//
+// @falsified-at: 755a70d73 — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 2/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 2/2 (the suite's verdict, not a count of matches)
+//   Before step 2 both programs were refused, but by other messages.
+//   CHANNEL: the expected diagnostics, on BOTH backends.
+//   ARMED: nothing.
+//   WITNESS: *"Unknown variable 'v'"* for the first, *"Expect token }"* for the second.
+//   HOLDS: each program is refused either way; only WHICH refusal moves.
+// @falsified-by: tests/falsified/a-struct-pattern-arm-refusals.patch — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 2/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 2/2 (the suite's verdict, not a count of matches)
+//   Step 2 reverted whole (the durable receipt).
+//   CHANNEL: the expected diagnostics, on BOTH backends.
+//   ARMED: nothing.
+//   WITNESS: as above.
+//   HOLDS: as above.
+
+struct S { x: integer, t: text }
+
+// @EXPECT_ERROR: multi-pattern arm: capture 'v' is text in this pattern but integer in the first
+fn test_a_capture_at_another_type_is_refused() {
+  r = match S { x: 1, t: "a" } { S { x: v } | S { t: v } => "x" };
+  assert(r == "x", "unreachable");
+}
+
+// @EXPECT_ERROR: this pattern matches every S, so the arm after it can never be selected
+fn test_an_arm_after_a_total_struct_pattern_is_refused() {
+  r = match S { x: 1, t: "a" } { S { x } => x, _ => -1 };
+  assert(r == 1, "unreachable");
+}

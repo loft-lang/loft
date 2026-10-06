@@ -80,7 +80,10 @@ jobs:
       - name: Build loft (release)
         run: cargo build --release --bin loft
 
+      # A swing fails this step, but whatever it DID refresh is still committed back below
+      # (dispatch), so a run that re-derives four of six is not thrown away for the other two.
       - name: Refresh and score
+        id: score
         run: |
           git config user.name "loft-derive-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -100,7 +103,7 @@ jobs:
           fi
 
       - name: Commit back (dispatch)
-        if: github.event_name != 'pull_request'
+        if: always() && github.event_name != 'pull_request' && steps.score.outcome != 'skipped'
         run: |
           set -euo pipefail
           if [ -z "$(git status --porcelain -- tests/falsified)" ]; then

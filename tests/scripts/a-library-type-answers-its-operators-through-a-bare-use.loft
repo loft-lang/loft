@@ -3,7 +3,7 @@
 //
 // @ARGS: --lib tests/lib
 //
-// `formal/operators.md` `(Op-Left)`: `a ⊕ b` calls the method of the LEFT operand's TYPE,
+// `formal/operators.md` `@FR-Op-Left`: `a ⊕ b` calls the method of the LEFT operand's TYPE,
 // chosen among that name's members as `a.m(b)` chooses.  A bare `use operatorlib;` brings in
 // only the `operatorlib::` qualifier (@C98), and a value of a library type must still answer
 // with the operators its package declares — as `x.method()` always did through the type.

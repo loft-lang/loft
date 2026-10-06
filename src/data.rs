@@ -3845,14 +3845,23 @@ pub fn element_stack_size(t: &Type) -> usize {
 /// is what makes `(u8, u16)` occupy 16 bytes where `struct { a: u8, b: u16 }`
 /// occupies 3.
 ///
-/// Records pack TIGHTLY — `struct { a: u8, b: u32, c: u16 }` is 1+4+2 = 7 bytes with
-/// no padding, because store access is unaligned-tolerant — so there is no alignment
-/// term here.
+/// `@FR-L-Align` (@C138) — every element sits on its natural boundary
+/// ([`element_storage_align`]), and a nested tuple's size is a multiple of its own
+/// alignment, exactly as the layout routine places a `__tuple<…>` record's members.
 #[must_use]
 pub fn element_storage_size(t: &Type) -> usize {
     match t.base() {
         Type::Integer(spec) => spec.byte_width(true) as usize,
-        Type::Tuple(elems) => elems.iter().map(element_storage_size).sum(),
+        Type::Tuple(elems) => {
+            let offsets = element_storage_offsets(elems);
+            let end = elems
+                .iter()
+                .zip(&offsets)
+                .map(|(e, o)| o + element_storage_size(e))
+                .max()
+                .unwrap_or(0);
+            end.next_multiple_of(element_storage_align(t))
+        }
         // Measured against the record oracle: `(u8, text)` is 5 bytes, so a stored
         // `text` element is the 4-byte heap pointer, NOT the 16-byte stack `Str`.
         // `read_tuple_at_wide` says the same ("text: 4-byte heap-pointer") and
@@ -3869,13 +3878,29 @@ pub fn element_storage_size(t: &Type) -> usize {
     }
 }
 
-/// Element offsets in the **STORAGE** (record) layout: cumulative
-/// [`element_storage_size`], packed tight. Sibling of [`element_stack_offsets`].
+/// The natural alignment of a tuple element as STORED — the alignment the layout routine
+/// gives the matching field of a `__tuple<…>` record: a narrow integer its own width, a
+/// text or a record pointer 4, a nested tuple its largest member's.
+#[must_use]
+pub fn element_storage_align(t: &Type) -> usize {
+    match t.base() {
+        Type::Integer(spec) => spec.byte_width(true) as usize,
+        Type::Tuple(elems) => elems.iter().map(element_storage_align).max().unwrap_or(1),
+        Type::Function(..) => 4,
+        other => element_stack_align(other) as usize,
+    }
+}
+
+/// Element offsets in the **STORAGE** (record) layout: each element at the next position
+/// its [`element_storage_align`] divides (`@FR-L-Align`, @C138).  Sibling of
+/// [`element_stack_offsets`]; the layout of the `__tuple<…>` record is the authority, and
+/// `tests/layout_alignment.rs` holds the two to the same answer.
 #[must_use]
 pub fn element_storage_offsets(types: &[Type]) -> Vec<usize> {
     let mut offsets = Vec::with_capacity(types.len());
     let mut pos = 0usize;
     for t in types {
+        pos = pos.next_multiple_of(element_storage_align(t));
         offsets.push(pos);
         pos += element_storage_size(t);
     }
@@ -4267,25 +4292,26 @@ mod tuple_stack_layout_tests {
         })
     }
 
-    /// @PLN114 D1 — the storage view sizes elements as record FIELDS.
+    /// @PLN114 D1 — the storage view sizes elements as record FIELDS; `@C138` places each on
+    /// its natural boundary.
     ///
-    /// Hand-computed against the record oracle: `struct { a: u8, b: u32, c: u16 }`
-    /// measures 7 bytes per record on this build, so the tuple of the same three
-    /// element types must compute 7 too.
+    /// Hand-computed: `(u8, u32, u16)` keeps its order, so the u32 waits for 4 and the u16
+    /// follows at 8 — 10 bytes, padded to 12, a multiple of the 4-byte alignment.  The
+    /// `__tuple<…>` record's layout answers the same (`tests/layout_alignment.rs`).
     #[test]
     fn storage_view_packs_like_a_record() {
         use super::{element_storage_offsets, element_storage_size};
         let elems = vec![narrow(1), narrow(4), narrow(2)];
-        assert_eq!(element_storage_offsets(&elems), vec![0, 1, 5]);
+        assert_eq!(element_storage_offsets(&elems), vec![0, 4, 8]);
         assert_eq!(
             element_storage_size(&Type::Tuple(elems)),
-            7,
-            "u8 + u32 + u16 packs to 7 bytes, as `struct M` does"
+            12,
+            "u8, pad 3, u32, u16, pad 2"
         );
 
         let pair = vec![narrow(1), narrow(2)];
-        assert_eq!(element_storage_offsets(&pair), vec![0, 1]);
-        assert_eq!(element_storage_size(&Type::Tuple(pair)), 3);
+        assert_eq!(element_storage_offsets(&pair), vec![0, 2]);
+        assert_eq!(element_storage_size(&Type::Tuple(pair)), 4);
     }
 
     /// The stack view is unchanged and deliberately WIDER — a push occupies a whole
@@ -4302,8 +4328,8 @@ mod tuple_stack_layout_tests {
         );
         assert_eq!(
             element_storage_size(&Type::Tuple(elems)),
-            7,
-            "storage: 1 + 4 + 2"
+            12,
+            "storage: 1, 4 and 2 on their own boundaries"
         );
     }
 
@@ -5511,7 +5537,15 @@ impl Definition {
                 sites.push((**inner).clone());
             }
         });
-        if let Value::Block(bl) = &self.code
+        // The body is a `Block`, or an `Insert` whose last element is one: the scope pass
+        // hoists a join's declaration out in front of the body it binds (loft#1872's
+        // `___ret_join`).  Read only as a `Block`, such a body had no tail at all, and the
+        // proofs that read these sites answered "not proven" for a body ending in a local.
+        let body = match &self.code {
+            Value::Insert(ops) => ops.last().unwrap_or(&self.code),
+            other => other,
+        };
+        if let Value::Block(bl) = body
             && let Some(tail) = bl.operators.last()
             && !matches!(tail.unspan(), Value::Return(_))
         {
@@ -6034,6 +6068,11 @@ impl Clone for OpSetCache {
     }
 }
 
+/// The suffix [`Data::retire_def_name`] gives a definition taken out of the name index.  A
+/// retired definition is still the one at its number: [`Data::def_identity`] reads the name it
+/// was declared under.
+pub const RETIRED: &str = "_retired";
+
 #[allow(dead_code)]
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Clone)]
@@ -6052,6 +6091,12 @@ pub struct Data {
     /// and a warm load marks the decoded `Data` closed rather than closing it a second time
     /// from a degraded table (loft#1858).
     pub program_closed: bool,
+    /// Definitions below this number have had their parse unit finished and their cascades
+    /// synthesized, so what their fn FIELDS hold is known ([`Self::fn_field_record`]).  A
+    /// field's closure record is learned while the parse meets the lambda written into it, so
+    /// during that parse the answer grows; [`Self::owns_droppable`] steers parse-time
+    /// lowerings that must answer alike in both passes, and asks it only for a settled host.
+    pub fn_fields_settled: u32,
     /// The run this program is compiled for OBSERVES function entries — `loft test`'s
     /// coverage, which counts a function covered when a call enters it.  A rewrite that
     /// removes calls (`leaf_inline::rewrite_program`, `@FR-R-InlineLeaf`) leaves them alone
@@ -6270,36 +6315,24 @@ pub fn v_if(test: Value, t: Value, f: Value) -> Value {
     Value::If(Box::new(test), Box::new(t), Box::new(f))
 }
 
-/// May a STACK-backed `&(…)` reference tuple hold an element of this type?
-///
-/// The scalar set is what the stack form addresses; a `&(…)` with any other element is
-/// record-backed instead and is admitted by [`ref_tuple_record_element_ok`].
-///
-/// Enforces @FR-T-Ref-Rep (which representation a `&(…)` names) and @FR-T-Ref-El (what each
-/// may hold), the pair binding.md's D-bind-11 was measured against.
-///
-/// A reference tuple's element is read and written through the tuple's stored DbRef with
-/// the same `(ref, offset)` opcodes an ordinary struct FIELD uses, so the admitted set is
-/// exactly the set those opcode pairs are laid out for.  This is the ONE list — the
-/// signature guard and both `RefTupleGet` / `RefTuplePut` arms read it, so the set the
-/// compiler ADMITS and the set codegen can EMIT cannot disagree.
-///
-/// `text` is not in this set because a stack tuple holds it as a 16-byte `Str` BORROW that the
-/// `(ref, offset)` opcodes — which speak the record form — would misread; the record-backed
-/// `&(…)` is where a `text` element lives, with a slot of its own.
-#[must_use]
-pub fn ref_tuple_element_ok(tp: &Type) -> bool {
-    is_scalar(tp.base())
-}
-
-/// May a RECORD-backed `&(…)` — the form a `&(…)` takes once an element is not a scalar —
-/// hold an element of this type?  Everything a struct field can hold, which is what the
+/// May a `&(…)` reference tuple — a `__tuple<…>` RECORD (`@FR-T-Ref-Rep`) — hold an element of
+/// this type?  Enforces @FR-T-Ref-El.  Everything a struct field can hold, which is what the
 /// `__tuple<…>` record is; what it cannot is what `tuple_def` cannot spell or lay out as a
 /// field: a nullable element (its `?` does not survive the synthetic name), a fn-ref, and a
 /// nested tuple.  Those stay refused, and the refusal names them (tuples.md T-Ref-El).
 #[must_use]
 pub fn ref_tuple_record_element_ok(tp: &Type) -> bool {
     !matches!(tp, Type::Optional(_) | Type::Function(..) | Type::Tuple(_))
+}
+
+/// `@FR-T-Ref-Rep` — is a `&(…)` over these members the `__tuple<…>` RECORD?  Every `&(…)` the
+/// record can lay out is (loft#1883): a scalar-only one as much as one with a heap member, so a
+/// link names a tuple local, a vector element and a struct field the same way, as a `&S` names
+/// a record.  What the record cannot spell ([`ref_tuple_record_element_ok`]) is refused where
+/// the `&` is written.  The ONE answer: the type, the local's build and the link bind ask it.
+#[must_use]
+pub fn ref_tuple_is_record(elems: &[Type]) -> bool {
+    !elems.is_empty() && elems.iter().all(ref_tuple_record_element_ok)
 }
 
 /// `@FR-N-Opt`'s side condition: does τ have a value to spend on ABSENCE?
@@ -6499,8 +6532,8 @@ pub fn holds_dbref(tp: &Type) -> bool {
 /// Is `tp` a SCALAR — a value that lives inline in its slot and owns no store?
 ///
 /// The one home for a membership test written at several sites and already drifted between
-/// them: `generation`'s two copies included `Enum(_, false, _)` and
-/// [`ref_tuple_element_ok`] did not, so `&(Col, Col)` over a value enum was refused while
+/// them: `generation`'s two copies included `Enum(_, false, _)` and the stack reference
+/// tuple's element list did not, so `&(Col, Col)` over a value enum was refused while
 /// `&(boolean, boolean)` was admitted — with an identical 1-byte layout
 /// (`element_stack_size`: `Boolean | Enum(_, false, _) => 1`).  Two spellings of one list
 /// disagreeing is the shape loft#1006 was.
@@ -6917,6 +6950,7 @@ impl Data {
             definitions: Vec::new(),
             open_world: false,
             program_closed: false,
+            fn_fields_settled: 0,
             observes_entries: false,
             lazy_drivers: LazyDriverCache::default(),
             def_names: DefIndex::default(),
@@ -8454,6 +8488,15 @@ impl Data {
             Some(key) if key.kind == KeyKind::Method && !key.rest.is_empty() => {
                 format!("{}.{}", key.spelling, key.rest)
             }
+            // An instance is the generic its author wrote (`i_7integer_n_gen` is `gen`).
+            Some(key) if key.kind == KeyKind::Instance && !key.rest.is_empty() => {
+                let template = self.def_nr(key.rest);
+                if template == u32::MAX {
+                    key.rest.strip_prefix("n_").unwrap_or(key.rest).to_string()
+                } else {
+                    self.user_facing_name(template)
+                }
+            }
             _ => name.to_string(),
         }
     }
@@ -9289,14 +9332,27 @@ impl Data {
         // This used to be refused only when the name also had a bare-name definition — which a
         // `both` method registers and a `self` method does not — so `fn doit(self: Pt)` followed
         // by `fn doit(p: Pt)` compiled, and `doit(p)` silently ran the method.
+        // `@FR-N-Shape` — `τ` and `τ?` are one receiver for this question: `(F-Recv)` sends a
+        // call to whichever of `m(τ)` / `m(τ?)` is declared, so a plain `m(p: P?)` beside
+        // `fn m(self: P)` was reached by neither spelling, dead in silence.  Both method keys
+        // are asked; a `self`/`self` pair over `τ` and `τ?` never reaches this test.
+        let nullability_twin = |tp: &Type| -> Type {
+            if matches!(tp, Type::Optional(_)) {
+                tp.base().clone()
+            } else {
+                Type::optional(tp.clone())
+            }
+        };
         let shadowed_method = if is_both || is_self {
             None
         } else {
-            arguments
-                .first()
-                .and_then(|a| receiver_key(self, &a.typedef))
-                .map(|key| own(self, &key))
-                .filter(|m| *m != u32::MAX)
+            arguments.first().and_then(|a| {
+                [a.typedef.clone(), nullability_twin(&a.typedef)]
+                    .iter()
+                    .filter_map(|tp| receiver_key(self, tp))
+                    .map(|key| own(self, &key))
+                    .find(|m| *m != u32::MAX)
+            })
         };
         let shadows_a_method = shadowed_method.is_some();
         // …and the other order: a `self`/`both` method declared after a plain function of its
@@ -9322,8 +9378,11 @@ impl Data {
                             && self.def(d).attributes.first().is_some_and(|p| {
                                 p.name != "self"
                                     && p.name != "both"
-                                    && receiver_key(self, &p.typedef).as_deref()
-                                        == Some(key.as_str())
+                                    && [p.typedef.clone(), nullability_twin(&p.typedef)]
+                                        .iter()
+                                        .any(|tp| {
+                                            receiver_key(self, tp).as_deref() == Some(key.as_str())
+                                        })
                             })
                     })
                 })
@@ -10544,6 +10603,21 @@ impl Data {
         bindings: &[(u32, Type)],
     ) {
         let tp = self.close_open(lexer, &f.typedef, bindings);
+        // A field that holds a TUPLE needs its record before the instance is laid out, as a
+        // declared struct's tuple field has it from its parse: missing, the layout waited for
+        // it (`lay_out_late`) and the record took an id after unrelated types, while the
+        // generated `init()` creates it with the instance's fields — every id past it
+        // disagreed on `--native` (a `W<integer>` with `p: (T, T)`).  Innermost first.
+        let mut tuples: Vec<Vec<Type>> = Vec::new();
+        tp.any_node(&mut |t| {
+            if let Type::Tuple(elems) = t.base() {
+                tuples.push(elems.clone());
+            }
+            false
+        });
+        for elems in tuples.into_iter().rev() {
+            self.tuple_def(lexer, &elems);
+        }
         let a_nr = self.add_attribute(lexer, d, &f.name, tp);
         let a = &mut self.definitions[d as usize].attributes[a_nr];
         a.mutable = f.mutable;
@@ -10581,14 +10655,13 @@ impl Data {
         });
         let mut pairs: Vec<(u32, Type)> = Vec::new();
         for o in opens {
-            let template = self.definitions[o as usize].instance_of;
             let args: Vec<Type> = self.definitions[o as usize]
                 .instance_args
                 .clone()
                 .iter()
                 .map(|a| self.close_open(lexer, a, bindings))
                 .collect();
-            let closed = self.instance_def(lexer, template, &args);
+            let closed = self.close_instance(lexer, o, &args);
             if closed != u32::MAX && closed != o {
                 pairs.push((o, Type::Reference(closed, Deps::none())));
             }
@@ -10737,6 +10810,12 @@ impl Data {
                 alignment,
                 size,
             });
+        // A tuple of a TYPE VARIABLE (`(T, U)` inside a template) is an OPEN instance of the
+        // anonymous tuple template (`(G-Type)`): it keeps its members as written, so each
+        // monomorph closes it to the tuple of their bindings ([`Data::close_instance`]).
+        if types.iter().any(|t| self.mentions_type_var(t)) {
+            self.definitions[d as usize].instance_args = types.to_vec();
+        }
         d
     }
 
@@ -11108,7 +11187,62 @@ impl Data {
                 .is_some_and(|p| p.def_type == DefType::Enum)
                 && self.is_open_instance(d.parent);
         }
-        d.instance_of != u32::MAX && d.instance_args.iter().any(|a| self.mentions_type_var(a))
+        (d.instance_of != u32::MAX || self.is_tuple_def(d_nr))
+            && d.instance_args.iter().any(|a| self.mentions_type_var(a))
+    }
+
+    /// The synthetic record of a tuple shape (`__tuple<…>`, [`Data::tuple_def`]) — told by
+    /// its Tuple field group, never by its name.
+    #[must_use]
+    pub fn is_tuple_def(&self, d_nr: u32) -> bool {
+        self.definitions.get(d_nr as usize).is_some_and(|d| {
+            d.field_groups
+                .iter()
+                .any(|g| matches!(g.kind, LinkedFieldKind::Tuple))
+        })
+    }
+
+    /// The open tuples (loft#1868) the template `g` names in its parameters, its return and
+    /// its variables — written as a tuple type or held as its record.
+    fn open_tuples_named_by(&self, g: u32) -> Vec<u32> {
+        let Some(def) = self.definitions.get(g as usize) else {
+            return Vec::new();
+        };
+        let vars = &def.variables;
+        let mut types: Vec<&Type> = def.attributes.iter().map(|a| &a.typedef).collect();
+        types.push(&def.returned);
+        types.extend((0..vars.count()).map(|v| vars.tp(v)));
+        let mut out: Vec<u32> = Vec::new();
+        for tp in types {
+            tp.any_node(&mut |t| {
+                let d = match t.base() {
+                    Type::Reference(r, _) => *r,
+                    tuple @ Type::Tuple(_) => self.type_def_nr(tuple),
+                    _ => u32::MAX,
+                };
+                if d != u32::MAX
+                    && self.is_tuple_def(d)
+                    && self.is_open_instance(d)
+                    && !out.contains(&d)
+                {
+                    out.push(d);
+                }
+                false
+            });
+        }
+        out
+    }
+
+    /// The instance an OPEN instance `open` closes to at the arguments `args`: its template's
+    /// instance, or — for an open TUPLE (loft#1868) — the tuple of those members, the record
+    /// a concrete `vector<(integer, text)>` stores.
+    pub fn close_instance(&mut self, lexer: &mut Lexer, open: u32, args: &[Type]) -> u32 {
+        let template = self.definitions[open as usize].instance_of;
+        if template == u32::MAX && self.is_tuple_def(open) {
+            self.tuple_def(lexer, args)
+        } else {
+            self.instance_def(lexer, template, args)
+        }
     }
 
     /// An instance of a generic FUNCTION bound to a type VARIABLE (`i_1U_n_hole`), minted while
@@ -11206,10 +11340,17 @@ impl Data {
         &mut self,
         lexer: &mut Lexer,
         bindings: &[(u32, Type)],
+        template: u32,
     ) -> Vec<(u32, Type)> {
         let mut pairs: Vec<(u32, Type)> = Vec::new();
+        // An open TUPLE is anonymous, so another template's `(T?, integer)` shares its
+        // placeholder with this one's `T` and would close too — minting tuples, and the
+        // `__nullable<S>` a member `S?` stores as, that nothing asked for (on pass 2, which
+        // H5 refuses).  Only the open tuples this template's own types name are closed.
+        let own_tuples = self.open_tuples_named_by(template);
         for d in 0..self.definitions() {
-            if !self.is_open_instance(d)
+            if (self.is_tuple_def(d) && !own_tuples.contains(&d))
+                || !self.is_open_instance(d)
                 || !bindings.iter().any(|(h, _)| {
                     self.definitions[d as usize]
                         .instance_args
@@ -11219,7 +11360,6 @@ impl Data {
             {
                 continue;
             }
-            let template = self.definitions[d as usize].instance_of;
             let all: Vec<(u32, Type)> = bindings.iter().chain(pairs.iter()).cloned().collect();
             let args: Vec<Type> = self.definitions[d as usize]
                 .instance_args
@@ -11227,7 +11367,7 @@ impl Data {
                 .into_iter()
                 .map(|a| a.substitute_all(&all))
                 .collect();
-            let bound = self.instance_def(lexer, template, &args);
+            let bound = self.close_instance(lexer, d, &args);
             if bound != u32::MAX && bound != d {
                 pairs.push((d, Type::Reference(bound, Deps::none())));
             }
@@ -11451,6 +11591,39 @@ impl Data {
         })
     }
 
+    /// Does anything in this program RELEASE on a value's death — a drop hook, or a closure
+    /// record's cascade over the stores it adopted (`@FR-L-CapOwn`)?  The gate of the rules
+    /// that judge a copy and a move ((H-Copy-Refuse), (H-Spent)): both kinds of release are
+    /// owned, and a copy of either releases it twice.
+    #[must_use]
+    pub fn any_release(&self) -> bool {
+        self.any_drop_hook() || self.any_closure_drop()
+    }
+
+    /// Take definition `d` out of the name index and rename it `<name>`[`RETIRED`], so no
+    /// lookup by its old name — a fresh one, or the index a cached program rebuilds from
+    /// names — finds it again.  The definition itself stays where it is: code that already
+    /// calls it keeps a valid target.
+    pub fn retire_def_name(&mut self, d: u32) {
+        debug_assert!(!self.definitions[d as usize].name.ends_with(RETIRED));
+        let name = self.definitions[d as usize].name.clone();
+        let source = self.definitions[d as usize].source;
+        self.def_names.remove(&name, source);
+        self.def_names.remove(&name, STD_SOURCE);
+        self.definitions[d as usize].name = format!("{name}{RETIRED}");
+        let renamed = self.definitions[d as usize].name.clone();
+        self.def_names.insert_if_absent(&renamed, source, d);
+    }
+
+    /// The name definition `d` was declared under — its name, less the suffix a retirement
+    /// added.  What two parses of one program agree on, when only one of them ran the pass
+    /// that retired it (a live-reload shadow session parses and stops).
+    #[must_use]
+    pub fn def_identity(&self, d: u32) -> &str {
+        let name = &self.def(d).name;
+        name.strip_suffix(RETIRED).unwrap_or(name)
+    }
+
     #[must_use]
     pub fn drop_cascade_nr(&self, type_def: u32) -> u32 {
         if type_def == u32::MAX || type_def as usize >= self.definitions.len() {
@@ -11537,6 +11710,28 @@ impl Data {
         self.owns_droppable_walk(type_def, &mut path)
     }
 
+    /// `@FR-L-CapOwn` — the closure record a struct's fn FIELD is built into, where that record
+    /// has something to release: a captured store it may adopt (an attribute typed `Reference`
+    /// with deps), or a captured droppable.  The record lives in the struct's own store
+    /// (`OpChildRec`, loft#1867), so the struct answers for what it adopted, as it answers for
+    /// any other member.  One lambda per field (`assigned_lambda_d_nr`).
+    #[must_use]
+    pub fn fn_field_record(&self, a: &Attribute) -> Option<u32> {
+        if !matches!(a.typedef.base(), Type::Function(..)) || a.assigned_lambda_d_nr == u32::MAX {
+            return None;
+        }
+        let record = self.def(a.assigned_lambda_d_nr).closure_record();
+        if record == u32::MAX {
+            return None;
+        }
+        let holds = self
+            .def(record)
+            .attributes()
+            .iter()
+            .any(|c| matches!(c.typedef.base(), Type::Reference(_, deps) if !deps.is_empty()));
+        (holds || self.owns_droppable(record)).then_some(record)
+    }
+
     fn owns_droppable_walk(&self, d_nr: u32, path: &mut HashSet<u32>) -> bool {
         if d_nr == u32::MAX || d_nr as usize >= self.definitions.len() {
             return false;
@@ -11547,12 +11742,10 @@ impl Data {
         if self.drop_hook_nr(d_nr) != u32::MAX || d_nr == self.iterator_def() {
             return true;
         }
-        if self
-            .def(d_nr)
-            .attributes()
-            .iter()
-            .any(|a| self.type_owns_droppable(&a.typedef, path))
-        {
+        if self.def(d_nr).attributes().iter().any(|a| {
+            self.type_owns_droppable(&a.typedef, path)
+                || (d_nr < self.fn_fields_settled && self.fn_field_record(a).is_some())
+        }) {
             return true;
         }
         // An enum's variants are its CHILDREN, not its attributes, and each carries its own
@@ -11568,9 +11761,8 @@ impl Data {
     /// Every heap-record constructor forwards to its record definition; `Vector` and the
     /// keyed collections forward to their element, because owning a collection of
     /// droppables is owning the droppables. `Optional` / `RefVar` / `Rewritten` are
-    /// wrappers over a base type and peel. A `Function` does NOT forward: a closure record
-    /// is owned by the fn-ref slot's own cascade, not by the type that names it, and
-    /// following it would make every fn-ref-holding struct answer for its captures.
+    /// wrappers over a base type and peel. A `Function` does NOT forward: what a closure holds
+    /// is known per FIELD, by the record that owns the field ([`Self::fn_fields_settled`]).
     /// Does a value of this TYPE own a droppable somewhere inside it — a struct through
     /// its fields, a vector through its elements, at any depth?  The type-level twin of
     /// [`Self::owns_droppable`], for a container that has no def of its own (a `vector<S>`).

@@ -61,6 +61,12 @@ callee a hoisting loop calls.
 a comprehension) hoist nothing — with it on, the pushed path keeps a PUSH header carrying the
 record's capacity, a push that fits is one store and a length bump, and every read of the path
 serves from it — and is the bisect step for a wrong element or length out of an appending loop.
+**`LOFT_NO_KEEP_RANGE_REFRESH=1`** (`(R-Refresh)`'s keep-range clause) makes a loop that POPS a
+vector by self-slice (`v = v[0..n]`, `OpKeepRange`) hoist nothing — with it on, the popped
+path keeps a push header whose length the op sets at its own site, so the loop's reads,
+pushes and callee inputs stay hoisted — and is the bisect step for a wrong element or length
+read after such a pop inside a loop.  `LOFT_HOIST_VERIFY=1` compares the refreshed header
+with one derived from the record at every pop.
 **`LOFT_NO_MINT_HOIST=1`** (@PLN157 § V-s) makes a loop that appends a RECORD element
 (`v += [Pt{…}]`, `v += [pt(…)]`) hoist nothing — with it on, the mint group is admitted as a
 mover and the loop's invariant record scalars are read once before it — and is the bisect step
@@ -90,8 +96,8 @@ the finish.  **`LOFT_NO_HEAP_RECORD_PUSH=1`** (`@FR-R-PushRec`'s heap clause) ke
 that OWNS heap (a `Frond { fpts, fwid }`) on its templates — with it off, such an element goes
 through the header too, its slot ZEROED at the mint, which is the whole of what the prefill did
 for its handles — and is the bisect step for a wrong or stale handle in an appended record
-whose fields own heap; `LOFT_POISON_CLAIM=1` is the falsifier (the plain run's zero-on-claim
-hides a missing zero).  **`LOFT_NO_REBOUND_MOVER=1`** (`@FR-R-Mint`'s rebound clause) makes a
+whose fields own heap; `LOFT_POISON_CLAIM=1` is the falsifier (a plain run's stale bytes can
+hide a missing zero).  **`LOFT_NO_REBOUND_MOVER=1`** (`@FR-R-Mint`'s rebound clause) makes a
 loop whose body REBINDS a pushed or minted vector decline every hoist again — with it off, a
 mover rebound to a § V-al loop buffer's or a § V-z element slot's projection simply takes no
 holder, the loop keeps its other headers and scalars, and the buffer's own mint, a loop
@@ -563,6 +569,29 @@ adopts the fresh result and hands `x`'s previous store to the call's hidden buff
 next execution.  The first bisect step for a wrong value after a rebind in a loop on
 `--native`.  Read where the rebind is emitted; `LOFT_TRACE_REBIND_BUFFER=1` names each
 rebind it declines and why.
+
+**`LOFT_NO_REFILL_TEXT=1`** (`@FR-R-RefillText`, default-ON) keeps a pooled call buffer's
+release walk before every call and the plain callee, instead of the callee's `__rt` twin
+writing each text over the block its slot already owns.  The first bisect step for a wrong
+text, or a store that grows, read back from a record-returning call in a loop.
+`LOFT_TRACE_REFILL_TEXT=1` names each pooled site's verdict (`refill-text: <caller> →
+<callee> admitted`, or the condition that declined).  Guard
+`tests/scripts/a-pooled-buffers-texts-are-refilled-in-their-slots.loft` (its `m1` is the
+live-record census that sees a text leaked per call); pin `tests/refill_text.rs`.
+
+**`LOFT_NO_REFILL_ELEMENTS=1`** (`@FR-R-RefillText`'s collection clause, default-ON)
+releases a heap-element refill buffer whole at entry and claims every element's texts anew,
+instead of keeping the elements and refilling their texts in their slots.  The first bisect
+step for a wrong text, a panic in a text set, or a store that grows, in a vector a function
+builds by appending records and returns.  `LOFT_TRACE_REFILL_TEXT=1` names each such
+buffer's verdict.  Guard `tests/scripts/a-kept-buffers-elements-are-refilled-in-their-slots.loft`.
+
+**`LOFT_NO_REFILL_VECTORS=1`** (`@FR-R-RefillText`'s vector clause, default-ON) releases a
+pooled call buffer whose heap is vectors of plain elements before every call again, instead
+of leaving its callee to empty each vector field in place.  The first bisect step for a stale
+or wrong vector field, or a store that grows, in a record a call builds in a loop.
+`LOFT_TRACE_REFILL_TEXT=1` prints `admitted (vectors)` for each site it takes.  Guard
+`tests/scripts/a-pooled-buffers-vectors-are-emptied-in-place.loft`.
 
 **`LOFT_NO_REFILL_IN_PLACE=1`** (`@FR-R-RefillBuffer`'s in-place clause, default-ON) empties
 and refills a refilled buffer's repeat-literal vector field every time — with it off, a kept

@@ -470,14 +470,21 @@ impl Stores {
                     store.set_u32_raw(r.rec, r.pos, v);
                 }
                 Parts::Vector(elem_tp) => {
+                    // Two widths (@C138): the STRIDE in the store, which carries
+                    // `@FR-L-Align`'s padding, and the element's WIRE width, its fields one
+                    // after another.  They agree for a scalar and differ for a padded record.
                     let elem_size = u32::from(self.size(elem_tp));
+                    let wire = match self.binary_size(elem_tp) {
+                        0 => elem_size as usize,
+                        w => w,
+                    };
                     if elem_size == 0 {
                         return;
                     }
-                    let n_elems = data.len() / elem_size as usize;
+                    let n_elems = data.len() / wire;
                     for i in 0..n_elems {
                         let elem_ref = vector::vector_append(r, elem_size, &mut self.allocations);
-                        let slice = &data[i * elem_size as usize..(i + 1) * elem_size as usize];
+                        let slice = &data[i * wire..(i + 1) * wire];
                         self.write_data(&elem_ref, elem_tp, little_endian, slice);
                         vector::vector_finish(r, &mut self.allocations);
                     }
@@ -589,6 +596,13 @@ impl Stores {
         }
     }
 
+    /// The size of a `File` record as the layout assigns it — the stride of a `files()` listing.
+    /// Read from the type table rather than written down: `@FR-L-Align` (@C138) pads a record
+    /// to its alignment, and a stride copied by hand went stale the day the layout changed.
+    fn file_record_size(&self) -> u32 {
+        u32::from(self.size(self.name("File")))
+    }
+
     #[cfg(not(host_fs))]
     pub fn get_dir(&mut self, file_path: &str, result: &DbRef) -> bool {
         // #255 / @PLN9: re-home a relative dir path against the program anchor.
@@ -616,7 +630,8 @@ impl Stores {
                 // listing: aborting here returned a silently truncated vector.
             }
             for (name, entry) in res {
-                let elm = vector::vector_append(&vector, 33, &mut self.allocations);
+                let elm =
+                    vector::vector_append(&vector, self.file_record_size(), &mut self.allocations);
                 let store = self.store_mut(result);
                 let name_pos = store.set_str(&name) as i32;
                 store.set_u32_raw(elm.rec, elm.pos + 24, name_pos as u32);
@@ -648,7 +663,8 @@ impl Stores {
         };
         for name in entries {
             let full = format!("{file_path}/{name}");
-            let elm = vector::vector_append(&vector, 33, &mut self.allocations);
+            let elm =
+                vector::vector_append(&vector, self.file_record_size(), &mut self.allocations);
             let store = self.store_mut(result);
             let name_pos = store.set_str(&full) as i32;
             store.set_u32_raw(elm.rec, elm.pos + 24, name_pos as u32);

@@ -140,8 +140,12 @@ struct Recorded {
     /// Where the consumed source ended when the token became the one held.
     prev_end: (u32, u32),
     /// The string-interpolation state the read left: a literal that opens a hole leaves
-    /// `Formatting`, with the string the closing `}` resumes.
-    scan: ScanState,
+    /// `Formatting`, with the string the closing `}` resumes.  `None` for a QUEUED piece
+    /// (the `.` after `5` in `5.tri()`): it was scanned with the token before it, so it
+    /// leaves the state as that token and the parser since left it.  Restoring the state of
+    /// the moment it was queued undid the parser's switch into code at a format hole that
+    /// starts with a number: `"{5.tri()}"` and `"{5..7}"` read the rest of the hole as text.
+    scan: Option<ScanState>,
 }
 
 /// A lexer that can remember a state via a link and then optionally return to that state.
@@ -1037,7 +1041,7 @@ impl Lexer {
             res: res.clone(),
             cursor: (self.position.line, self.position.pos),
             prev_end: (self.prev_end.line, self.prev_end.pos),
-            scan: self.scan_state(),
+            scan: Some(self.scan_state()),
         }
     }
 
@@ -1045,12 +1049,11 @@ impl Lexer {
     /// as it would be read, with the cursor and consumed end the scan leaves.
     fn queue(&mut self, res: LexResult) {
         let at = (self.position.line, self.position.pos);
-        let scan = self.scan_state();
         self.memory.push(Recorded {
             res,
             cursor: at,
             prev_end: at,
-            scan,
+            scan: None,
         });
     }
 
@@ -1068,7 +1071,9 @@ impl Lexer {
         self.position.pos = n.cursor.1;
         self.prev_end.line = n.prev_end.0;
         self.prev_end.pos = n.prev_end.1;
-        self.restore_scan_state(n.scan);
+        if let Some(scan) = n.scan {
+            self.restore_scan_state(scan);
+        }
         n.res
     }
 
@@ -1929,7 +1934,15 @@ impl Lexer {
                     self.ret_number(0, pos, false)
                 };
             }
-            if prev_was_field_dot {
+            // A letter or `_` after the dot starts a method or a field (`5.abs()`, `5.tri()`),
+            // never a float fraction: no decimal literal has one there.  Read as a float, the
+            // receiver was refused with "Problem parsing float" while `(5).tri()` and `x.tri()`
+            // worked.
+            let member_dot = self
+                .iter
+                .peek()
+                .is_some_and(|c| c.is_alphabetic() || *c == '_');
+            if prev_was_field_dot || member_dot {
                 // P195 + P234: when the previous emitted token was a `.`
                 // (field access), the current number is a tuple/struct
                 // field index — NEVER a float fragment.  This covers two
@@ -3160,9 +3173,30 @@ mod test {
         );
     }
 
+    /// A letter or `_` after an integer's dot starts a method or a field, never a float
+    /// fraction: `5.tri()` calls `tri` on `5`, as `(5).tri()` does.
+    #[test]
+    fn integer_then_member_does_not_glue_into_float() {
+        validate_cont(
+            "123.a",
+            &[
+                LexItem::Integer(123, false),
+                LexItem::Token(".".to_string()),
+                LexItem::Identifier("a".to_string()),
+            ],
+        );
+        validate_cont(
+            "5._x",
+            &[
+                LexItem::Integer(5, false),
+                LexItem::Token(".".to_string()),
+                LexItem::Identifier("_x".to_string()),
+            ],
+        );
+    }
+
     #[test]
     fn lexer_errors() {
-        error("123.a", "[\"Error: Problem parsing float at error:1:5\"]");
         error("12. ", "[\"Error: Problem parsing float at error:1:4\"]");
         error("1.12ea", "[\"Error: Problem parsing float at error:1:6\"]");
         error(

@@ -54,7 +54,7 @@ BIND_VIEW_BASE = re.compile(r"^\s*let (__vb_\d+) = (__[iv]b_\d+); //@FR-R-Base v
 BIND_RECPTR = re.compile(r"^\s*let (__pa_\d+): \*const u8 = vector::rec_ptr\(&\((.+?)\), &stores\.allocations\); //@FR-R-RecPtr record view address for")
 # R-RecPtr's base clause: the loop variable of `for e in v` takes its address from the element
 # base the loop holds — the header and the base it names must both be live, on one path.
-BIND_RECPTR_BASE = re.compile(r"^\s*let (__pa_\d+): \*const u8 = if \(var_\w+ as u64\) < u64::from\(([\w.]+)\.len\) \{ unsafe \{ (__vb_\d+)\.add\(var_\w+ as usize \* \d+(?: \+ \d+)?\) \} \} else \{ std::ptr::null\(\) \}; //@FR-R-RecPtr record view address for (\S+?),")
+BIND_RECPTR_BASE = re.compile(r"^\s*let (__pa_\d+): \*const u8 = if \(var_\w+ as u64\) < u64::from\(([\w.]+)\.len\) \{ unsafe \{ vector::held_elem_ptr\((__vb_\d+), var_\w+ as usize \* \d+(?: \+ \d+)?, (?:true|false)\) \} \} else \{ std::ptr::null\(\) \}; //@FR-R-RecPtr record view address for (\S+?),")
 USE_RECPTR = re.compile(r"vector::rec_(get|set)::<[^>]*>\((__pa_\d+), ")
 BIND_SCALAR = re.compile(r"^\s*let (__vs_\d+) = (.*);")
 # R-PushFill's window clause: a push WINDOW is opened on a live push header and is a second

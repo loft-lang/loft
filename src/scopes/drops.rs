@@ -272,12 +272,9 @@ impl Scopes<'_> {
             // displaces it (`displaced_drop`'s snapshot: the hook, then the store).  A record
             // with nothing to drop is rebuilt in place and frees nothing, so there the frame's
             // holder stays the store's release — detached, the store would leak.
-            let cascade = function
-                .tp(*rec)
-                .base()
-                .heap_def_nr()
-                .is_some_and(|r| data.drop_cascade_nr(r) != u32::MAX);
-            if !cascade || !builds.rebuilt_in_loop.contains(x) {
+            if !rebuild_releases_displaced(function, data, *rec)
+                || !builds.rebuilt_in_loop.contains(x)
+            {
                 return;
             }
             // A collection capture: a view over the literal's backing, which is the store.
@@ -419,7 +416,7 @@ impl Scopes<'_> {
             return None;
         };
         let v = *self.var_mapping.get(ov).unwrap_or(ov);
-        if !self.var_scope.contains_key(&v) {
+        if !self.var_scope.contains_key(&v) || self.prefix_released.contains(&v) {
             return None;
         }
         // A construction OWNS what it builds, on every iteration.
@@ -511,6 +508,9 @@ impl Scopes<'_> {
         }
         let d = function.tp(v).base().heap_def_nr()?;
         if data.drop_cascade_nr(d) == u32::MAX {
+            return None;
+        }
+        if !rebuild_releases_displaced(function, data, v) {
             return None;
         }
         let kt = data.def(d).known_type();
@@ -691,4 +691,52 @@ fn delivered_binding(function: &Function, buffer: u16) -> Option<u16> {
         found = Some(x);
     }
     found
+}
+
+/// Does rebuilding record local `v` release what the record it displaces held — the snapshot
+/// of `Scopes::displaced_drop`, its cascade, then its store?  The one answer for the snapshot
+/// and for the frame's holder of an adopted capture, which lets go of the store
+/// (`adopted_backing_detach`) exactly when the snapshot takes it: the two disagreeing either
+/// leak the store or release it twice.
+///
+/// A record type with no cascade releases nothing.  A CLOSURE record's rebuild releases the
+/// stores its previous run adopted only where every capture has an owner witness, and that is
+/// the rebuild PREFIX's to do (`@FR-L-CapRebind`, loft#1388).  A capture with none — a vector,
+/// which may be a call buffer the frame rotates and writes again on the next pass — stays the
+/// frame's.  So a closure record snapshots only when its cascade has HOOKS to run (a droppable
+/// capture's walk, loft#1606).
+fn rebuild_releases_displaced(function: &Function, data: &Data, v: u16) -> bool {
+    let Some(d) = function.tp(v).base().heap_def_nr() else {
+        return false;
+    };
+    data.drop_cascade_nr(d) != u32::MAX
+        && (!function.name(v).starts_with("___clos_") || closure_cascade_has_hooks(data, d))
+}
+
+/// Does closure record `d`'s cascade do more than release captured stores — run a hook, walk a
+/// droppable capture's elements?  Read off the cascade's body as synthesized, before the scope
+/// pass prunes it.
+fn closure_cascade_has_hooks(data: &Data, d: u32) -> bool {
+    let cascade = data.drop_cascade_nr(d);
+    if cascade == u32::MAX {
+        return false;
+    }
+    let release_only = [
+        data.def_nr("OpFreeRef"),
+        data.def_nr("OpGetDbRef"),
+        data.def_nr("OpConvBoolFromRef"),
+        data.def_nr("OpStoreLive"),
+    ];
+    let mut hooks = false;
+    data.def(cascade).code().walk(&mut |n| {
+        if let Value::Call(op, _) = n.unspan()
+            && !release_only.contains(op)
+        {
+            hooks = true;
+        }
+        if matches!(n.unspan(), Value::Loop(_)) {
+            hooks = true;
+        }
+    });
+    hooks
 }

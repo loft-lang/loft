@@ -72,20 +72,31 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 value (a reference that points at nothing), not a separate error state — the reference-typed
 analogue of `integer`'s `i64::MIN` null.
 
-### Allocation — a fresh store, zero-initialised
+### Allocation — a fresh store, every field written
 
 ```
   (H-Alloc)    ⟨alloc τ, ⟨ρ, H⟩⟩ → ⟨r, ⟨ρ, H'⟩⟩
                  where s = fresh(H),  r = (s, 0, 0),
-                       H' = H[s ↦ zeroed Store for τ]      (every field/element is its type's null/zero)
+                       H' = H[s ↦ Store for τ, every field/element WRITTEN to its type's default]
   (H-NewRec)   ⟨new-record r_v, ⟨ρ, H⟩⟩ → ⟨r_e, ⟨ρ, H'⟩⟩
                  a fresh record inside the vector/collection store r_v; r_e points at it,
-                 its fields zero/null-initialised, the container's length grown by one.
+                 its fields written before any read, the container's length grown by one.
+  (H-Claim)    the bytes of a claimed block are UNDEFINED until something writes them: a
+                 claim promises no value, zero included.  Every field a construction does not
+                 write from its source is written to the type's default (H-Alloc); a slot
+                 read before it is written is a defect of the code that reads it, never of
+                 the claim.  A zeroed claim is legitimate only as the implementation of a
+                 write the program makes anyway — `[0; n]`, and a record whose every field's
+                 default is zero built in place — and is requested at that site.  (@C137)
 ```
 
 **In words.** Allocating a struct/vector reserves a **fresh** store slot (`OpDatabase`) whose
-content starts fully null/zero — a fresh `store_nr` distinct from every live store, so a new
-value can never coincide with an existing one. Appending an element (`OpNewRecord` /
+fields are WRITTEN to their defaults — a fresh `store_nr` distinct from every live store, so a
+new value can never coincide with an existing one.  The defaults are a write, not the memory's
+state: a type, a constructor or a release walk that reads a slot its own code has not written
+relies on bytes nothing promised (H-Claim), and `LOFT_POISON_CLAIM=1` — which fills every claim
+with 0xDEADBEEF — is the instrument that makes such a read fail; the nightly runs the suite
+under it on both backends. Appending an element (`OpNewRecord` /
 `OpFinishRecord`) claims a record inside the container's store. Construction is a pure
 extension of `H`: it frees nothing and aliases nothing (this is why *constructing* a host
 value is unrestricted under [capabilities.md](capabilities.md)'s `Cap-Own`).
@@ -178,6 +189,10 @@ index becomes `nullref` plus a recoverable fault rather than a silent read.
                    DEVELOPMENT run halts with the lock report and a PRODUCTION run logs the
                    write and DISCARDS it — the store keeps its bytes (C80).  Never a silent
                    successful write.
+  (H-TextReplace)  an ASSIGNMENT to a text field (`o.s = t`, `v[i].s = t`, `o.s += t`)
+                   releases the text the slot held, or writes `t` over its block when `t`
+                   fits, once no borrow of that text is live.  A record LITERAL's write is
+                   an initialisation: it never reads the slot it fills.
 ```
 
 **In words.** A write updates the byte(s) at the target and yields the written value. A write
@@ -199,8 +214,30 @@ can reach, and never grows, moves or frees one the store holds) and the `--nativ
 writers all consult the same lock (`tests/locked_writes.rs`). The hoisted writers consult it
 ONCE per loop, not once per element: no loop the hoist admits can lock or unlock a store (every
 op that does is a writer it refuses), so the lock state is read with the vector header, the push
-window or the record address the loop holds, and a window over a locked store has no capacity —
-every push through it takes the runtime's refusing append. Crucially, a write's target ROOT decides whose state it touches: a
+window or the record address the loop holds.  A locked store then has no room on any fast path —
+a window over it has no capacity, a header over it no writable element, a record address in it
+leaves the fast path by the same test as a null one — so every write to it takes the runtime's
+refusing path, and the fast path carries no lock test of its own. An assignment to a text field frees what it replaces (`H-TextReplace`): the text a field held
+belongs to that field alone, so nothing else is left pointing at it — except a BORROW.  A
+`text` parameter is handed the field's bytes rather than a copy, and so is a walk over the
+field's characters, so `g(r.a, r)` whose body writes `q.a` would read its own parameter
+overwritten.  The release therefore waits for the borrows: it is taken where no borrow can be
+live in this frame — no text variable of the frame borrows from the record's owner, and the
+write is not inside another call's arguments — and in no frame above it.  The owner is then a
+local of this function, or a parameter whose every caller is a visible direct call that keeps
+the same property: every `text` parameter of the writer is only the value written, and at each
+call the argument is not inside another call's arguments and is owned there by a local no text
+variable borrows, or by a parameter of a caller that holds the same (a greatest fixpoint over
+the program's calls, so recursion is covered).  A text VARIABLE is no borrow: a local `text`
+is an owned copy (`x = r.a`, a `??` discharge, a `for c in r.a` walk temporary), and a native
+slice of a store's text (`(R-TextBorrow)`) is declined over any block a release can run in.  So
+an argument already evaluated is a borrow only when it can answer a text — a field read, a
+slice, a call answering text, a `text` parameter.  The initialisation is a
+different write because the slot it fills can hold bytes that are not a block: a record minted
+without zero-filling (`(R-CompleteWrite)`) or an element slot handed to a callee
+(`(R-Place)`).  The guard is
+`tests/scripts/1873-an-assigned-text-field-releases-the-text-it-replaces.loft`.
+Crucially, a write's target ROOT decides whose state it touches: a
 write whose root is a **parameter** mutates the caller's value; a write to a **local** touches
 only that local's own store (see `H-Copy`) — the exact fact [capabilities.md](capabilities.md)'s
 `Cap-Own`/raw-write admission rests on.
@@ -721,10 +758,10 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **0**.  Every entry the register has carried is CLOSED; the entries and the story of how each
-closed are in [heap-history.md](heap-history.md).  `tests/ownership_drop_gate.rs` gives every
-generated cell a lease verdict and ties each cell that must release once, and does not, to exactly
-one open entry.
+OPEN: **0**.  The entries the register closed, and how each closed, are in
+[heap-history.md](heap-history.md).  `tests/ownership_drop_gate.rs` gives every generated cell
+a lease verdict and ties each cell that must release once, and does not, to exactly one open
+entry.
 
 Writing these rules **shrinks** [operational.md](operational.md)'s D-op-1 — the heap/store
 steps it named as *"unwritten … the interpreter remains their spec"* now have a written
@@ -757,6 +794,23 @@ The rules are checkable directly, and every check is a program both backends mus
   possible host view.  The guard: `tests/scripts/201-bind-copies-projection-views.loft`, which
   reads every SOURCE back after the write (an unread source cannot tell a copy from an elided
   one), on both backends.
+- **An elided copy is unobservable (`H-Elide`)** — a copy off a parameter is elided only where
+  no write can reach a store the caller holds while the copy lives.  An aliasing parameter, a
+  view of one, a closure capture, a function reference and a generator's suspension each keep
+  the copy (`use_analysis::caller_stores_stable`), and an elided copy skips its `OpCopy` and its
+  drop together.  Guards: `tests/copy_lease.rs`
+  `an_elided_copy_reads_its_own_value_when_the_callers_store_is_written` (the value, with
+  controls that still elide) and `an_elided_copy_skips_its_hook_and_its_drop_together` (the
+  hooks), on both backends.
+- **The soundness bridge, on both backends (`H-Sound`, `H-FreeAll`)** — `tests/heap_sound.rs`
+  runs each cell on both backends under `LOFT_POISON`, with either `LOFT_STRICT_STORES` (no slot
+  is reused, so a read of a freed store is named and a store left at exit fails the run) or with
+  slots reused and the exit leak check (the only way to see a free decided by a slot NUMBER a
+  newer store now carries).  Its cells are the shapes that read or leaked a store on `--native`:
+  a caller's buffer released by a rebind or an adopt, a loop buffer kept while a binder frees
+  its store, a store handed up through a generic instance, a vector buffer bound to a forwarding
+  call, a lifted result beside a value record, a copied result later rebound, and a minted store
+  in a reused slot.  The nightly `native-poison` job sweeps the `--native` corpus the same way.
 - **A disturbed view materialises (`H-Materialise`)** — a removal, a re-key, a reassignment and
   a GROWTH of the container while the view is live take the copy step, in this frame
   (`tests/scripts/1373-growing-a-container-ends-the-places-inside-it.loft`) and one frame

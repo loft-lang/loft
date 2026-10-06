@@ -1,0 +1,289 @@
+diff --git b/src/generation/emit.rs a/src/generation/emit.rs
+index 8becd852f..481dc6016 100644
+--- b/src/generation/emit.rs
++++ a/src/generation/emit.rs
+@@ -2308,20 +2308,6 @@ impl Output<'_> {
+             }
+             _ => false,
+         };
+-        // A DIVERGING arm (`=> return "other"`, `=> break`) yields `!`, which coerces to what
+-        // its sibling yields, so it takes none of the unify wrappers: `&*(return …)` and
+-        // `({ return … } as u8)` are not Rust (E0614, E0605), and `.to_string()` on it is dead
+-        // code (@FR-C-Never — `Never ⤳ τ` whatever τ the sibling settles).  A `match` arm
+-        // reaches here bare, where an `if` arm is a block that already opted out.
+-        let unify = |arm: &Value| {
+-            if Self::arm_diverges(arm) {
+-                (false, false, false)
+-            } else {
+-                (text_string_unify, text_unify, bool_unify)
+-            }
+-        };
+-        let (text_string_unify, text_unify, bool_unify) = unify(true_v);
+-        let (f_text_string_unify, f_text_unify, f_bool_unify) = unify(false_v);
+         // For `text_string_unify` we emit `{ (<branch>).to_string() }` around
+         // each arm so the if-expression unifies on `String`.  Rust requires
+         // braces for if-arms regardless of inner expression form, so even if
+@@ -2399,11 +2385,11 @@ impl Output<'_> {
+         } else {
+             write!(w, "}} else ")?;
+         }
+-        let (false_braced, false_rest) = if f_text_string_unify {
++        let (false_braced, false_rest) = if text_string_unify {
+             (true, "(")
+-        } else if f_text_unify {
++        } else if text_unify {
+             (true, "&*(")
+-        } else if f_bool_unify {
++        } else if bool_unify {
+             (true, "({")
+         } else if stmt_discard || !b_false {
+             (true, "")
+@@ -2419,7 +2405,7 @@ impl Output<'_> {
+             None
+         };
+         write!(w, "{false_rest}")?;
+-        self.indent += u32::from(!b_false || f_text_string_unify || f_bool_unify);
++        self.indent += u32::from(!b_false || text_string_unify || bool_unify);
+         // When the else branch is Null and the true branch returns a value,
+         // emit a typed null sentinel instead of () to match the true branch type.
+         if matches!(false_v, Value::Null)
+@@ -2432,18 +2418,18 @@ impl Output<'_> {
+             self.clone_handed_tuple_local = None;
+         }
+         self.close_arm_pre_evals(false_pre);
+-        if f_text_string_unify {
++        if text_string_unify {
+             write!(w, ").to_string()}}")?;
+-        } else if f_text_unify {
++        } else if text_unify {
+             write!(w, ")}}")?;
+-        } else if f_bool_unify {
++        } else if bool_unify {
+             write!(w, "}} as u8)}}")?;
+         } else if stmt_discard {
+             write!(w, ";}}")?;
+         } else if !b_false {
+             write!(w, "}}")?;
+         }
+-        self.indent -= u32::from(!b_false || f_text_string_unify || f_bool_unify);
++        self.indent -= u32::from(!b_false || text_string_unify || bool_unify);
+         if wrap_block {
+             write!(w, " }}")?;
+         }
+@@ -3760,31 +3746,7 @@ impl Output<'_> {
+                     // nwb fns via the no-work-buffer arm).
+                     let tail_outer_owned =
+                         wrap_result && super::def_returns_owned_text(self.data.def(self.def_nr));
+-                    // A TEXT value block whose tail is one of its OWN locals — the temp of
+-                    // `t = f() ?? return "x"` (`ncr`) — hands that `String` out by value: the
+-                    // ordinary spelling `&var_x` borrows a local that drops at this block's
+-                    // `}` (E0597), the same hazard the `_ret.to_string()` tail above closes,
+-                    // and a text value block already yields an owned `String` there.
+-                    let own_text_tail = match v.unspan() {
+-                        Value::Var(x)
+-                            if is_return_expr
+-                                && !is_fn_body
+-                                && !wrap_result
+-                                && narrow_cast.is_none()
+-                                && !is_tail_capture_call
+-                                && matches!(bl.result, Type::Text(_)) =>
+-                        {
+-                            let vars = self.data.def(self.def_nr).variables();
+-                            (vars.scope(*x) == bl.scope
+-                                && matches!(vars.tp(*x), Type::Text(_))
+-                                && !self.text_borrowed(*x))
+-                            .then(|| sanitize(vars.name(*x)))
+-                        }
+-                        _ => None,
+-                    };
+-                    if own_text_tail.is_some() {
+-                        // written in place of the value below
+-                    } else if is_tail_capture_call {
++                    if is_tail_capture_call {
+                         // Wrap the captured value in a block.  A tail call whose
+                         // argument carries a store-lifetime "lift" pre-eval emits that
+                         // lift as a LEADING `{ … };` statement (it reassigns the lifted
+@@ -3818,13 +3780,9 @@ impl Output<'_> {
+                     } else if narrow_cast.is_some() {
+                         write!(w, "(")?;
+                     }
+-                    if let Some(name) = &own_text_tail {
+-                        write!(w, "var_{name}")?;
+-                    } else {
+-                        self.indent += 1;
+-                        self.output_code_inner(w, v)?;
+-                        self.indent -= 1;
+-                    }
++                    self.indent += 1;
++                    self.output_code_inner(w, v)?;
++                    self.indent -= 1;
+                     if is_tail_capture_call {
+                         // Close the block opened above; the call is its tail expr.
+                         write!(w, " }}")?;
+diff --git b/src/parser/collections.rs a/src/parser/collections.rs
+index dbd1ac99a..8516c2138 100644
+--- b/src/parser/collections.rs
++++ a/src/parser/collections.rs
+@@ -2421,7 +2421,7 @@ use #count instead"
+             }
+         } else if self.lexer.has_token("break") {
+             if !self.in_loop {
+-                diagnostic!(self.lexer, Level::Error, "Cannot break outside a loop");
++                diagnostic!(self.lexer, Level::Error, "Cannot continue outside a loop");
+             }
+             // loft#998 — `x#break` names the loop to leave by its VARIABLE, so a name that
+             // is not one has no level to jump. `Value::Null` rather than a level: every
+@@ -2432,10 +2432,7 @@ use #count instead"
+                 Some(lv) => Value::Break(lv),
+                 None => self.not_a_loop_variable(name, "break"),
+             };
+-            // A labelled jump leaves as the plain word does, so it is the same `Never` and fits
+-            // wherever a value is expected (@FR-C-Never): typed `void`, `p = f() ?? i#break`
+-            // was refused as a default of the wrong type.
+-            *t = Type::Never;
++            *t = Type::Void;
+         } else if self.lexer.has_token("continue") {
+             if !self.in_loop {
+                 diagnostic!(self.lexer, Level::Error, "Cannot continue outside a loop");
+@@ -2444,7 +2441,7 @@ use #count instead"
+                 Some(lv) => Value::Continue(lv),
+                 None => self.not_a_loop_variable(name, "continue"),
+             };
+-            *t = Type::Never;
++            *t = Type::Void;
+         } else if self.lexer.has_keyword("count") {
+             self.iter_op_count_or_first(code, name, t, false, index_var);
+         } else if self.lexer.has_keyword("first") {
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index 00ea9c481..31ea75cad 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -18985,7 +18985,7 @@ impl Parser {
+         // validate if there is a defined return value
+         let mut v = Value::Null;
+         let r_type = self.data.def(self.context).returned().clone();
+-        if self.control_value_follows() {
++        if !self.lexer.peek_token(";") && !self.lexer.peek_token("}") {
+             // T1.7: save the position of the first token in the return expression,
+             // used to report `not null` violations at the tuple literal site.
+             let expr_start = self.lexer.peek().clone();
+diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
+index abbcdb55f..c4949cecb 100644
+--- b/src/parser/expressions.rs
++++ a/src/parser/expressions.rs
+@@ -1192,19 +1192,6 @@ impl Parser {
+         }
+     }
+ 
+-    /// Does a value follow the control word just read — `break`, `return`, `?? return`?  Not
+-    /// when the next token ENDS the form the word stands in: a statement (`;`), a block
+-    /// (`}`), a match arm or a list element (`,`), a group or an argument list (`)`), a vector
+-    /// literal (`]`), or the input.  The one answer for all three words, so a bare word reads
+-    /// alike in every position a value does (@FR-C-Never): with only `;` and `}` asked, the
+-    /// `, _ => i` after `4 => break` was parsed as the break's value and returned.
+-    pub(crate) fn control_value_follows(&self) -> bool {
+-        ![";", "}", ",", ")", "]"]
+-            .iter()
+-            .any(|t| self.lexer.peek_token(t))
+-            && !matches!(self.lexer.peek().has, crate::lexer::LexItem::None)
+-    }
+-
+     // <expression> ::= <for> | 'continue' | 'break' | 'return' | 'yield' | '{' <block> | <operators>
+     /// @PLN86 step 0.1 — depth-guarded entry to expression parsing.  For trusted
+     /// code (`!in_sandbox`) this is a single bool check then a tail call — zero
+@@ -1270,7 +1257,10 @@ impl Parser {
+             // since loft loops are currently void-typed.  Covers the common
+             // find/search pattern where break-with-value exits the function.
+             // TODO: implement for...else for the general case.
+-            if self.control_value_follows() {
++            if !self.lexer.peek_token("}")
++                && !self.lexer.peek_token(";")
++                && !matches!(self.lexer.peek().has, crate::lexer::LexItem::None)
++            {
+                 let mut break_val = Value::Null;
+                 let break_tp = self.expression(&mut break_val);
+                 let ret_tp = self.data.def(self.context).returned().clone();
+diff --git b/src/parser/operators.rs a/src/parser/operators.rs
+index a55afdc36..1bfb5f884 100644
+--- b/src/parser/operators.rs
++++ a/src/parser/operators.rs
+@@ -3322,6 +3322,30 @@ impl Parser {
+             if matches!(self.data.def(*d).returned(), Type::Optional(_)))
+     }
+ 
++    /// `return` is the one control word `??` takes (@F2): a `continue` or `break` after it
++    /// was read as a missing default and reported only as "Expect token ;", which names
++    /// neither the rule nor the spelling that works.  Refuses it by name, with the cure, and
++    /// consumes the keyword so the statement ends where the author ended it.  Answers
++    /// whether it refused.
++    fn refuse_coalesce_loop_control(&mut self) -> bool {
++        let Some(kw) = ["continue", "break"]
++            .into_iter()
++            .find(|kw| self.lexer.peek_token(kw))
++        else {
++            return false;
++        };
++        self.lexer.has_token(kw);
++        if !self.first_pass {
++            diagnostic!(
++                self.lexer,
++                Level::Error,
++                "`?? {kw}` is not supported — after `??` comes a value or `return`.  To \
++                 {kw} on a null, test it first: `if v == null {{ {kw}; }}`"
++            );
++        }
++        true
++    }
++
+     /// Desugar `lhs ?? ...` — both the plain-default form and the
+     /// `?? return ret_expr` early-return form.  Lifted out of
+     /// [`Self::handle_operator`] so each shape has its own focused helper.
+@@ -3478,14 +3502,8 @@ impl Parser {
+         // `false ?? x` stays `false` (false is not null); `null ?? x` → x.
+         if self.lexer.has_token("return") {
+             self.build_null_coalesce_return(code, ctp, &lhs_type);
+-        } else if self.lexer.peek_token("break") || self.lexer.peek_token("continue") {
+-            // `?? break` / `?? continue` leave the loop on a null exactly as `?? return` leaves
+-            // the function: the word is parsed as the expression it is anywhere else, which
+-            // checks it stands in a loop and answers `Never` (@FR-N-Coal's `d ⇐ τ` through
+-            // @FR-C-Never).
+-            let mut exit = Value::Null;
+-            self.expression(&mut exit);
+-            self.null_coalesce_exit(code, ctp, &lhs_type, exit);
++        } else if self.refuse_coalesce_loop_control() {
++            // the operand stands as written; the refusal is reported
+         } else {
+             self.build_null_coalesce_default(var_tp, code, parent_tp, precedence, ctp, &lhs_type);
+         }
+@@ -3777,7 +3795,7 @@ impl Parser {
+         // produces the typed null sentinel.
+         let mut ret_val = Value::Null;
+         let r_type = self.data.def(self.context).returned().clone();
+-        if self.control_value_follows() {
++        if !self.lexer.peek_token(";") && !self.lexer.peek_token("}") {
+             let ret_pos = self.lexer.peek_pos().clone();
+             let t = self.expression(&mut ret_val);
+             // @FR-N-Store: `lhs ?? return ret` returns `ret` into the caller's non-null return
+@@ -3796,21 +3814,8 @@ impl Parser {
+             ret_val = self.null_value(&r_type);
+         }
+         let ret_stmt = Value::Return(Box::new(ret_val));
+-        self.null_coalesce_exit(code, ctp, lhs_type, ret_stmt);
+-    }
+ 
+-    /// `lhs ?? <exit>` — the block that leaves by `exit` (a `return`, `break` or `continue`)
+-    /// when `lhs` is null and otherwise evaluates to `lhs`.  The exit is a `Never`, so the
+-    /// block's type is `lhs`'s present type whatever the exit is (@FR-C-Never, @FR-N-Coal).
+-    fn null_coalesce_exit(
+-        &mut self,
+-        code: &mut Value,
+-        ctp: &mut Type,
+-        lhs_type: &Type,
+-        exit: Value,
+-    ) {
+-        let ret_stmt = exit;
+-        // { tmp = lhs; if (tmp == null) { <exit>; }; tmp }
++        // { tmp = lhs; if (tmp == null) { return ret_expr; }; tmp }
+         let tmp = self.create_unique("ncr", lhs_type);
+         let set_tmp = v_set(tmp, code.clone());
+         let is_null = if self.is_type_var_operand(lhs_type) {

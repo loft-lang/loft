@@ -1,0 +1,12 @@
+diff --git a/src/database/allocation.rs b/src/database/allocation.rs
+index 0cd551b83..880144aa2 100644
+--- a/src/database/allocation.rs
++++ b/src/database/allocation.rs
+@@ -4122,7 +4122,6 @@ impl Stores {
+                         self.store_mut(rec).set_u32_raw(rec.rec, rec.pos, 0);
+                     } else {
+                         let store = self.store_mut(rec);
+-                        store.delete(cur);
+                         store.set_u32_raw(rec.rec, rec.pos, 0);
+                     }
+                 }

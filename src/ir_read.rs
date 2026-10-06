@@ -455,6 +455,7 @@ fn read_data_with(stores: &Stores, root: DbRef, bodies: bool) -> Data {
         )
     }));
     data.rebuild_indices();
+    data.fn_fields_settled = data.definitions();
     data
 }
 

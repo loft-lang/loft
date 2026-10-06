@@ -38,18 +38,24 @@ gets a single defined owner first.  Decided 2026-06-10 — [record](DESIGN_DECIS
 `tests/issues.rs::issue_314_*`.
 **Catalogue:** @F22 (closures & lambdas).
 
-## C75 — Closure-carrying struct values are frame-bound
+## C75 — A closure-carrying struct owns what its closures adopted
 
-**Decision.** A struct that holds a capturing closure cannot leave the frame that owns the
-captures: returning such a struct type, writing a capturing closure into a struct rooted at an
-argument, and a collection of such structs are compile errors.  Local use and passing it down as
-an argument are supported.  **Why.** The closure record holds references into the frame's stores,
-which are freed at return, so an escaped closure would read and write unrelated live data.
+**Decision.** A struct whose fn field holds a capturing closure may leave the frame that built
+it — returned, or written into a struct received as an argument.  The closure record is built
+in the struct's own store and adopts its captures there, and the struct's drop cascade runs the
+record's, so the struct owns that release like any other member's.  A copy of such a struct is
+judged by `(H-Copy-Refuse)` and a move by `(H-Spent)`, as for any type that owns a release.  It
+may be placed into another struct's field, and overwriting that field releases what the
+displaced closures adopted.  A collection of such structs stays refused (C116).  **Why.** `(L-Escape)` makes a closure an ordinary value;
+building the record where the struct lives makes the transfer the ordinary ownership of a
+member, with every release emitted code (CODEGEN_METHOD.md § Ownership and copy semantics are
+emitted code).
 
-**Revisit when.** A consumer needs factory-built closure-holding structs AND the deep copy gains
-a designed ownership transfer of the captured stores, verified on both backends.
-Decided 2026-06-10 — [record](DESIGN_DECISIONS-history.md#c75--closure-carrying-struct-values-are-frame-bound).
-**Holds at:** `Parser::type_carries_closure` (`src/parser/mod.rs`); `tests/issues.rs::issue_318_*`.
+**Revisit when.** C116's collection refusal is reopened.  Decided 2026-06-10, revised
+2026-10-05 (loft#1867, loft#1877) — [record](DESIGN_DECISIONS-history.md#c75--closure-carrying-struct-values-are-frame-bound).
+**Holds at:** `OpChildRec` (`Parser::emit_fn_ref_field_write`), `Parser::cascade_fn_fields`,
+`capture_adoption::claimed_into_delivered`;
+`tests/scripts/1867-a-returned-struct-keeps-its-closure-capture.loft`, `tests/issues.rs::issue_1867_*`.
 **Catalogue:** @F22 (closures & lambdas).
 
 ## C77 — Binding ownership: heap aliases by default; `&` binds a live reference
@@ -212,3 +218,21 @@ state, as `(G-Own)` already says for a yielded record.
 
 **Revisit when.** Not stated.  Decided 2026-09-25 — [record](DESIGN_DECISIONS-history.md#c128--a-yielded-lambda-owns-copies-of-what-it-captures).
 **Catalogue:** loft#1676 · `formal/coroutines.md` `(G-Own)`
+
+## C137 — A claim promises no value; a slot is read only after it is written
+
+**Decision.** The store hands out claimed blocks whose bytes are undefined.  Every value is
+written by the code that builds it — its source's fields, else its type's defaults — and a
+type, constructor or reader that relies on a claim's bytes (zero included) is wrong.  A zeroed
+claim is legitimate only as the implementation of a write the program makes anyway: `[0; n]`,
+and a record whose every field defaults to zero built in place.  **Why.** Zero-on-claim hid
+every such defect behind one memset per claim — a cost paid by every program (two 16 MB
+passes in graphics' `canvas`) for a promise the formal rules never made, and the reason a
+read-before-write stayed invisible until a different filler ran.
+
+**Revisit when.** Not stated.  Decided 2026-10-05 — [record](DESIGN_DECISIONS-history.md#c137--a-claim-promises-no-value-a-slot-is-read-only-after-it-is-written).
+**Holds at:** `@C137` — the rule `(H-Claim)` in [formal/heap.md](formal/heap.md); the nightly
+`poison-claim` job (`LOFT_POISON_CLAIM=1` over both backends); guard
+`tests/scripts/a-par-text-result-leaves-its-output-record-intact.loft`.
+**Catalogue:** `formal/heap.md` `(H-Alloc)` `(H-NewRec)` · reads C125
+

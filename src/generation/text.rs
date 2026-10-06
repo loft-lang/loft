@@ -38,6 +38,27 @@ impl Output<'_> {
             // `@FR-R-RefillBuffer` — the entry clear of a refilling buffer resets the length
             // and keeps the record: the refill keeps a live buffer's store, and the group
             // refills the same vector record.  Released here, every call re-claimed it.
+            // `@FR-R-RefillText`'s collection clause — the entry keeps the elements where the
+            // mint will keep the buffer, and arms the exit that releases the slots not reused.
+            if self.refill.var == Some(*nr)
+                && let Some(k) = &self.refill.keep
+            {
+                let texts: Vec<String> = k.texts.iter().map(|t| format!("{t}_u32")).collect();
+                write!(
+                    w,
+                    "let __rk_keep: u32 = stores.refill_keep_open(&{v_nr}, {}_u16, {}_u32); \
+                     let __rk_end: u32 = 8 + __rk_keep * {}_u32; \
+                     let _rk_guard = loft::codegen_runtime::RefillKeepGuard::new(cell, {v_nr}, {}_u32, __rk_keep, {}_u32, &[{}]);",
+                    k.wrapper_tp,
+                    k.field,
+                    k.size,
+                    k.field,
+                    k.size,
+                    texts.join(", ")
+                )?;
+                crate::rewrite_census::fired("R-RefillText", 1);
+                return Ok(());
+            }
             if self.refill.var == Some(*nr) && !self.refill_keep_disabled && !self.refill.heap_elems
             {
                 write!(

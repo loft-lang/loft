@@ -252,11 +252,14 @@ fn collection_copy_ends(
     data: &Data,
 ) -> Option<(u16, u16)> {
     if d_nr == data.def_nr("OpAppendVector") || d_nr == data.def_nr("OpReplaceVector") {
-        let (Value::Var(dst), Value::Var(src)) = (args.first()?.unspan(), args.get(1)?.unspan())
-        else {
+        // `@FR-H-Move` — a FIELD destination (`T { v: u }`, `o.v += u`, an enum payload) is named by its root
+        // record, whose cascade releases what the copy placed there.  Read as no hand-off, the
+        // source kept its release too and every element was released twice.
+        let Value::Var(src) = args.get(1)?.unspan() else {
             return None;
         };
-        return Some((*dst, *src));
+        let dst = accessor_root_var(args.first()?, data)?;
+        return Some((dst, *src));
     }
     if d_nr == data.def_nr("OpCopyRecord")
         && let (Value::Var(src), Value::Var(dst)) = (args.first()?.unspan(), args.get(1)?.unspan())

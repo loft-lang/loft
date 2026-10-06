@@ -196,7 +196,8 @@ The keyed refinement is [collections.md](collections.md) `(Col-Axis)`.
   (L-Ref)     a stored reference / collection field (Reference, Vector, Hash, Sorted, Ordered,
               Index) is a 4-byte RECORD POINTER into the target store.  A ChildRec is a 4-byte
               co-located rec id.  The full 12-byte DbRef is stored only for Parts::DbRef (a
-              fn-ref field's closure half).  A collection's ELEMENT stride is width(element).
+              fn-ref field's closure half).  A collection's ELEMENT stride is width(element),
+              which for a record element is its size (L-Align: a multiple of its alignment).
 ```
 
 **In words.** A field that points at other records holds a small (4-byte) pointer, not the data
@@ -207,29 +208,47 @@ change even though the field pointer is unchanged.
 ### Structs, enums, tuples
 
 ```
+  (L-Align)   every scalar a store holds sits at an offset its alignment divides.  align(τ) is a
+              scalar's width (1, 2, 4 or 8; a text handle and a record pointer 4), a record's
+              is the largest of its fields', and size(τ) is a multiple of align(τ) — so the
+              element after it in a collection, and the field after it when it is inlined,
+              start aligned too.  A record starts on an 8-byte word, so an aligned offset is an
+              aligned address, and the store's reads and writes are aligned accesses.  The
+              bytes of a FOREIGN store (a producer's buffer), the interpreter's bytecode stream
+              and its stack frames (laid out by the frame allocator) are outside the rule: all
+              three are read unaligned.  (@C138)
   (L-Struct)  a struct record packs its fields by DESCENDING alignment; off(τ, fᵢ) is the packed
-              position; size(τ) is the packed total.  A field access is H[r ⊕ off(τ, f)].
+              position; size(τ) is the packed total rounded up to align(τ) (L-Align).  A field
+              access is H[r ⊕ off(τ, f)].
   (L-Enum)    an enum is a 1-byte discriminant; a data-carrying variant (EnumValue) is
               [tag byte] followed by the variant's fields (L-Struct packing).  Variants are
               numbered from 1: 0 is the absent value (L-Null) and 255 is the null a write
               spells, so an enum holds at most 254 variants and the parser refuses the 255th.
-  (L-Tuple)   a tuple (τ₀,…,τₙ) is a synthetic __tuple<…> struct.  Element offsets are
-              natural-alignment packing — off = the next position ≥ the element's alignment —
-              and a tuple has TWO layout views that must compute the SAME offsets: the STACK
-              view (data::element_stack_offsets / element_stack_size) and the STORAGE view
-              (the synthetic struct, calc::calculate_positions_with_groups, read back by
-              data::stored_tuple_offsets).  Their agreement is part of the rule, not an
-              implementation detail.
+  (L-Tuple)   a tuple (τ₀,…,τₙ) is stored as a synthetic __tuple<…> struct that KEEPS its
+              member order: each member at the next position its alignment divides, the size
+              rounded up to the largest member alignment (L-Align).  That placement is computed
+              by calc::calculate_positions_with_groups (read back by data::stored_tuple_offsets)
+              and restated by data::element_storage_offsets / element_storage_size for the par
+              paths that copy a stored row without the type table; the two must agree.  The
+              STACK form (data::element_stack_offsets / element_stack_size) is a different
+              layout — one 8-byte-stepped slot per member, a text member a 16-byte Str — and
+              is converted member by member at every boundary between the two, never read as
+              stored bytes.
 ```
 
-**In words.** Fields are packed largest-alignment first, so the record has no wasted padding and
-every field lands on its natural boundary. Enums carry a 1-byte tag; a variant with data is that
-tag plus the variant's own fields. A tuple is stored as a hidden struct, packed the same way.
+**In words.** Every field lands on its natural boundary. A struct packs its fields largest
+alignment first, so padding only appears at the end, where the size is rounded up to the
+record's alignment: `struct { n: integer, b: boolean }` is 9 bytes of fields and 16 bytes of
+record. That rounding is what keeps element 1 of a `vector` aligned. Enums carry a 1-byte tag; a
+variant with data is that tag plus the variant's own fields. A tuple is stored as a hidden
+struct that keeps its member order, so `(u8, u32, u16)` places its members at 0, 4 and 8 and
+takes 12 bytes.
 
 ⚠ A tuple lives in two places — on the stack and in a record — and the two are computed by
-different code. That is why `L-Tuple` names both and requires them to agree: @PLN114 split the
-one ambiguous `element_offsets` into the two named views precisely so a site has to declare which
-it means, and a site that picks the wrong one reads a plausible offset from the wrong model.
+different code. @PLN114 split the one ambiguous `element_offsets` into the two named views so a
+site has to declare which it means: a site that picks the wrong one reads a plausible offset
+from the wrong model. `tests/layout_alignment.rs` holds the restated storage view to the
+struct's own layout.
 
 ### Nullability is a sentinel, not a layout
 
@@ -387,6 +406,12 @@ remote store's layout identity (its `.dschema` / `layout_algo_hash`) before walk
 it silently misreads data fetched over the network. `schema_sidecar::check_beside` / `classify` is
 that gate, now applied across a network boundary.
 
+A layout change (`(L-Align)` was one) changes the identity, so a store written by an older
+build is refused by this rule and rebuilt from its source; it is never read under the new
+offsets. A binary file written with `f#write` is not a store: its records carry the WIRE width
+— the sum of the field widths, with no padding — so its format does not follow the store
+layout, and `f#read` infers a record count from the same width.
+
 ---
 
 ## Deviations
@@ -405,6 +430,11 @@ falsifier ([@PLN97](../plans/97-layout-contract/README.md)):
   spanning every storage kind. Any change is a red diff; proven to fail on a #477-class
   perturbation. The **coverage audit** (exhaustive over `Parts`) keeps a new storage kind from
   slipping in unpinned.
+- **`L-Align`** — `tests/layout_alignment.rs` asks `Stores::alignment_violations` of every
+  finished type (the standard library and a corpus of the spellings that reach the layout
+  differently), compares the restated tuple storage view with the `__tuple<…>` record's own
+  layout, and pins hand-computed sizes; `Store::read` / `write` panic on a misaligned offset
+  in every build, so the whole suite is the falsifier of the store half.
 - **`L-Tuple`, the two views AGREEING under either spelling** — a tuple type written both with a
   type annotation and left inferred, in one program, resolves to one def with ONE layout, and a
   read through either spelling answers the same value

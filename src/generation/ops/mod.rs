@@ -264,6 +264,7 @@ fn build_registry() -> std::collections::HashMap<&'static str, Box<dyn OpEmitter
         r.insert(op, Box::new(vector_ops::HoistedPushEmitter));
     }
     r.insert("OpPreAllocVector", Box::new(vector_ops::PreAllocEmitter));
+    r.insert("OpKeepRange", Box::new(vector_ops::KeepRangeEmitter));
     r.insert("OpNewRecord", Box::new(vector_ops::NewRecordEmitter));
     r.insert("OpFinishRecord", Box::new(vector_ops::FinishRecordEmitter));
 
@@ -581,9 +582,11 @@ mod tests {
         // `i32` and character kinds add two more (`OpPushInt4`, `OpPushCharacter`), and its
         // boolean and enum kinds two more (`OpPushBoolean`, `OpPushEnum`, the byte kind at
         // bias 0).  `(G-Hold)` adds one, `OpCoroutineRetainEmitter`: a second holder of a
-        // generator handle takes a hold on its frame.
+        // generator handle takes a hold on its frame.  `@FR-R-Refresh`'s keep-range clause adds
+        // one, `KeepRangeEmitter` for `OpKeepRange`: a self-slice pop on a vector whose push
+        // header the loop holds refreshes that header at its own site.
         assert!(
-            count <= 132,
+            count <= 133,
             "registry has {count} custom emitters — bump the cap if \
              this is intentional and document here"
         );

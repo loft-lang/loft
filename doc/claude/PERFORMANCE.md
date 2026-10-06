@@ -102,18 +102,22 @@ Both backends, in this order.  Each step's detail lives where it points; the ord
    `make rewrite-census`, and native's signatures unchanged — no change may make native or any
    routine's ratio worse.  Regenerate what it derives: `make compiled-stdlib` after a change to
    what stdlib functions compile to, `make surface-gen` after a new op or builtin.
-7. **Record it**: `make perf-check ARGS=--record` beside the change, and the measured
-   before/after in the commit and in the plan or ledger that owns the row.
+7. **Measure the routines the optimisation was scheduled against, and only those**:
+   `python3 bench/stats.py --routine <bench/routine,…>`, or `make perf-check ARGS="--routine
+   <bench/routine> --record"` to compare them with this machine's committed rows and keep the
+   new ones.  One optimisation never starts the full list (`make perf-portal`).  A row that
+   reads slower than its last committed measurement (`make perf-trend` lists them) is the
+   exception that needs no schedule: re-measure it alone, at any time, before explaining it.
+   The measured before/after goes in the commit and in the plan or ledger that owns the row.
 8. **Re-analyse after every few optimisations — never work a list of fixes to its end.**  A
    fix moves more than its own row: it changes what LLVM inlines and what other rewrites see,
    so it can add a cost somewhere else (a rewrite that gave a cold caller access to a hot
    helper changed how that helper was inlined into its hot caller, +30 % on an unrelated
    routine) and remove one nobody priced (two fixes aimed at one row lowered a neighbour by
-   19 %).  Re-measure the whole worst-offender band (`bench/stats.py --routine` over every
-   row at or past the bar, not only the target), compare per row against the previous run,
-   bisect any rise with the rewrites' switches, and re-derive the remaining analysis from the
-   CURRENT emitted code — an analysis written before the fixes describes a program that no
-   longer exists.
+   19 %).  So after a GROUP of steps — not after each one — run the full list once
+   (`make perf-portal`), compare per row against the previous run, bisect any rise with the
+   rewrites' switches, and re-derive the remaining analysis from the CURRENT emitted code — an
+   analysis written before the fixes describes a program the fixes have replaced.
 
 ---
 
@@ -791,8 +795,9 @@ class (`bench/portal/classes.tsv`):
   symptoms.
 
 `bench/portal/outliers.py <results.tsv>` splits a portal run this way and lists the outliers.
-File against the reference host's results only (bench/README.md); another host's ratios are a
-trend.  Before filing, the twin must have been audited like-for-like: a twin doing different
+File against the results of the host the work runs on, and call a bar met only when every
+host's latest run agrees ([bench/README.md § Which host's numbers
+count](../../bench/README.md#which-hosts-numbers-count)).  Before filing, the twin must have been audited like-for-like: a twin doing different
 work makes the ratio meaningless.
 
 ## Open performance work

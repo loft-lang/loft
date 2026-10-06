@@ -1,0 +1,85 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1868 — `formal/interfaces.md` `@FR-G-Mono`: a monomorph applies `[T ↦ C]` to "every
+// CONSTANT derived from a type", and `@FR-G-Type`: a type written at a template's own
+// variables is an OPEN instance each monomorph closes.  A tuple of a type variable held in a
+// collection, `vector<(T, U)>`, was neither: its record `__tuple<T,U>` was laid out once at
+// zero width and kept by every instance, so a parameter of that type read `null(oob)`
+// silently, a built one ran with NO output, text members panicked in the allocator, and
+// `--native` refused every cell (E0308).  The open tuple now closes to the concrete tuple's
+// record per monomorph, and its reads, member reads, writes and destructuring are deferred to
+// it as a generic struct's are.
+//
+// Values by hand: z = zip([1,2,3], ["a","bb","ccc"]) = [(1,a),(2,bb),(3,ccc)].
+//
+// Axes this file MOVES: the member types (integer, text, float, u8, boolean, enum, struct,
+// vector, a nested tuple, a nullable), the variable count (one · two · three), where the
+// vector lives (parameter · local · result · struct field), the access (loop variable ·
+// index · member · destructuring · whole element), read and write, and a generic calling a
+// generic.  Axes it HOLDS FIXED: `vector` as the container (a keyed collection takes record
+// elements, not tuples); elements built by `+=` or a literal.
+//
+// @falsified-by: tests/falsified/a-generic-over-a-vector-of-tuples-of-its-type-variables.patch — interpret exit 101 -> 0, interpret panicked -> clean, native exit 101 -> 0, native panicked -> clean
+//   CHANNEL: panic on both backends — the control stops in the parser (`src/data.rs`) on a
+//   cell this file adds over the filed repro, before the silent `null(oob)` cells run.
+// HOLDS: leak is clean on both trees and both backends.
+
+enum Hue { Red, Blue }
+struct P { x: integer, y: integer }
+struct Bag<T> { items: vector<(T, integer)> }
+
+fn zip<T, U>(a: vector<T>, b: vector<U>) -> vector<(T, U)> {
+  out: vector<(T, U)> = [];
+  for i in 0..len(a) { out += [(a[i], b[i])]; }
+  out
+}
+fn pairs<T>(a: vector<T>) -> vector<(T, T)> { out: vector<(T, T)> = []; for x in a { out += [(x, x)]; } out }
+fn firsts<T, U>(v: vector<(T, U)>) -> vector<T> { out: vector<T> = []; for e in v { out += [e.0]; } out }
+fn seconds<T, U>(v: vector<(T, U)>) -> vector<U> { out: vector<U> = []; for i in 0..len(v) { out += [v[i].1]; } out }
+fn local<T>(a: vector<T>) -> integer { out: vector<(T, T)> = []; for x in a { out += [(x, x)]; } len(out) }
+fn swapall<T, U>(v: vector<(T, U)>) -> vector<(U, T)> { out: vector<(U, T)> = []; for e in v { out += [(e.1, e.0)]; } out }
+fn relay<T, U>(a: vector<T>, b: vector<U>) -> vector<U> { seconds(zip(a, b)) }
+fn setfirst<T, U>(v: vector<(T, U)>, x: T) { for i in 0..len(v) { v[i].0 = x; } }
+fn replace<T, U>(v: vector<(T, U)>, x: T, y: U) { v[0] = (x, y); }
+fn last<T, U>(v: vector<(T, U)>) -> (T, U) { v[len(v) - 1] }
+fn destr<T, U>(v: vector<(T, U)>) -> U { (a, b) = v[1]; b }
+fn loopd<T, U>(v: vector<(T, U)>) -> vector<U> { out: vector<U> = []; for (a, b) in v { out += [b]; } out }
+fn three<A, B, C>(a: A, b: B, c: C) -> vector<(A, B, C)> { out: vector<(A, B, C)> = [(a, b, c)]; out += [(a, b, c)]; out }
+fn nest<T, U>(a: vector<T>, b: vector<U>) -> vector<((T, T), U)> {
+  out: vector<((T, T), U)> = [];
+  for i in 0..len(a) { out += [((a[i], a[i]), b[i])]; }
+  out
+}
+fn opt<T>(a: vector<T>) -> vector<(T, T?)> { out: vector<(T, T?)> = []; for x in a { out += [(x, null)]; } out }
+fn bag<T>(x: T) -> Bag<T> { b: Bag<T> = Bag { items: [] }; b.items += [(x, 1)]; b.items += [(x, 2)]; b }
+
+fn main() {
+  z = zip([1, 2, 3], ["a", "bb", "ccc"]);
+  assert(len(z) == 3 && z[2].0 == 3 && z[2].1 == "ccc", "integer/text");
+  ps = pairs(["x", "yz"]);
+  assert(ps[1].0 == "yz" && ps[1].1 == "yz" && pairs([4, 5])[1].1 == 5, "one variable");
+  assert(local(["p", "q", "r"]) == 3 && local([1.5]) == 1, "local only");
+  st = zip([P { x: 1, y: 2 }, P { x: 3, y: 4 }], [Hue.Blue, Hue.Red]);
+  assert(st[1].0.y == 4 && st[0].1 == Hue.Blue && firsts(st)[1].x == 3, "struct/enum members");
+  assert("{seconds(z)}" == "[\"a\",\"bb\",\"ccc\"]" && "{firsts(z)}" == "[1,2,3]", "index and loop reads");
+  sw = swapall(z);
+  assert(sw[0].0 == "a" && sw[0].1 == 1 && len(sw) == 3, "swapped members");
+  assert("{relay([true, false], [1.5, 2.5])}" == "[1.5,2.5]", "a generic calling a generic");
+  setfirst(z, 9);
+  replace(z, 0, "zz");
+  assert(z[0].0 == 0 && z[0].1 == "zz" && z[1].0 == 9 && z[1].1 == "bb", "member and element writes");
+  w = last(z);
+  assert(w.0 == 9 && w.1 == "ccc", "whole element");
+  assert(destr(z) == "bb" && "{loopd(z)}" == "[\"zz\",\"bb\",\"ccc\"]", "destructuring");
+  th = three(1 as u8, 2.5, "t");
+  assert(th[1].0 == 1 && th[1].1 == 2.5 && th[1].2 == "t" && len(th) == 2, "three variables");
+  ns = nest([1, 2], ["u", "v"]);
+  assert(ns[1].0.1 == 2 && ns[1].1 == "v", "nested tuple");
+  vv = zip([[1, 2], [3]], [10, 20]);
+  assert("{vv[0].0}" == "[1,2]" && "{vv[1].0}" == "[3]" && vv[1].1 == 20, "vector members");
+  o = opt([4, 5]);
+  assert(o[1].0 == 5 && (o[1].1 ?? -1) == -1, "nullable member");
+  b = bag("k");
+  assert(len(b.items) == 2 && b.items[1].0 == "k" && b.items[1].1 == 2, "a vector of tuples in a field");
+}
