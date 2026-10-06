@@ -18558,8 +18558,6 @@ impl Parser {
     // * Parser functions *
     // ********************
 
-    /// Parse data from the current lexer.
-    #[expect(clippy::too_many_lines, reason = "inherited")]
     /// C101 — a program type that shares a standard-library type's name shadows it wherever
     /// it is written, above its declaration too.  Pass 1 resolves a name it has not seen
     /// declared yet: an unknown one gets a forward-reference stub its declaration adopts, but a
@@ -18582,6 +18580,8 @@ impl Parser {
         }
     }
 
+    /// Parse data from the current lexer.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn parse_file(&mut self) {
         let start_def = self.data.definitions();
         // #255 / @PLN9: file-level `#cwd` directive — opt this program out of the
