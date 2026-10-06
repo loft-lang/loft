@@ -129,7 +129,7 @@ impl Parser {
                 misfit = Some(v_if(null, Value::Boolean(true), out));
             }
         }
-        inserts.sort_by(|a, b| (b.0, b.1).cmp(&(a.0, a.1)));
+        inserts.sort_by_key(|&(at, order, _)| std::cmp::Reverse((at, order)));
         for (at, _, group) in inserts {
             for v in group.into_iter().rev() {
                 steps.insert(at, v);
