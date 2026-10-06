@@ -663,3 +663,31 @@ construction) and is the first bisect step for a store-layout fault, a claim tha
 live block, or a store that grows instead of reusing a freed block.  The falsifiers are the free tree's
 own — `LOFT_POISON=1`, `LOFT_STRICT_STORES=1` — and the seeded unit tests in `src/store.rs`
 pin the untracked delete, the growth below the floor and the one sweep at the bound.
+
+## Falsifier: the emulated Windows host
+
+**`LOFT_POISON_HOST=windows`** (@PLN184 Track W, runtime, BOTH backends, Linux and macOS)
+runs a loft program as if on Windows.  It sits in the same family as `LOFT_POISON`: a run
+mode that changes what the program meets, so that a defect a normal run hides shows up.  It
+is real code in every build, and on Windows it changes nothing.
+
+Every path a program sees uses the Windows spelling on drive `L:`, which is the real root:
+`temp_dir()` is `L:/tmp`, and a listing hands back `L:/…`.  Every path a program hands
+loft is read under Windows' rules.  `file_access` (`src/file_access/emulated.rs`) applies
+Microsoft's naming rules over the real file system:
+- a reserved character or a device name is refused;
+- a trailing dot or space is stripped;
+- `name:stream` writes a silent alternate data stream;
+- a name matches an existing entry whatever its case.
+
+**Scope.** Only a program's file handling is covered: what `Stores::resolve_path` resolves,
+and the directories `file_access::given` hands out.  The compiler's own paths stay on the
+host's rules until @PLN184 Track A moves them into `file_access`.  Store persistence is
+exempt; the daily windows-latest run proves it.  `MAX_PATH` is not reproduced, because
+`std` hands a long path to Windows in the verbatim form.
+
+**The checks:**
+- the unit tests in `src/file_access/emulated.rs` (one per rule, through
+  `file_access::with_program_host`);
+- the platform guard `tests/scripts/a-program-cannot-tell-which-platform-it-runs-on.loft`
+  run under the switch.

@@ -32,9 +32,9 @@
 //! file read-write at the logical position — the program's `File` is one handle whichever
 //! operation came first (loft#1861: a write after a read failed with `Bad file descriptor`).
 
+use crate::file_access::PathText;
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom, Write};
-use std::path::PathBuf;
 
 /// Bytes a refill asks for.  A request at least this large bypasses the buffer.
 const CAPACITY: usize = 64 * 1024;
@@ -49,7 +49,7 @@ pub struct LoftFile {
     /// The bytes `buf` holds.
     len: usize,
     /// A read-only handle's path, kept to reopen it read-write on its first write.
-    reopen: Option<PathBuf>,
+    reopen: Option<PathText>,
 }
 
 impl LoftFile {
@@ -66,11 +66,12 @@ impl LoftFile {
         }
     }
 
-    /// A handle opened read-only from `path`; a write through it reopens `path` read-write.
+    /// A handle opened read-only from `path` — a path the runtime resolved, in the program's
+    /// spelling (`file_access::at`); a write through it reopens `path` read-write.
     #[must_use]
-    pub fn reader(file: File, path: impl Into<PathBuf>) -> LoftFile {
+    pub fn reader(file: File, path: &str) -> LoftFile {
         LoftFile {
-            reopen: Some(path.into()),
+            reopen: Some(crate::file_access::at(path)),
             ..LoftFile::new(file)
         }
     }
@@ -84,8 +85,7 @@ impl LoftFile {
         };
         self.realign()?;
         let at = self.file.stream_position()?;
-        let mut file =
-            crate::file_access::open_read_write(&crate::file_access::PathText::from_os(&path))?;
+        let mut file = crate::file_access::open_read_write(&path)?;
         file.seek(SeekFrom::Start(at))?;
         self.file = file;
         self.at = Some(at);

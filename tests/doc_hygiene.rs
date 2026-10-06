@@ -3182,6 +3182,7 @@ fn every_subject_claims_the_paths_it_names() {
         ("src/lsp.rs", "lsp"),
         ("src/ffi_deliver.rs", "wasm"),
         ("src/engine_host.rs", "host"),
+        ("src/file_access/emulated.rs", "winrules"),
         ("doc/claude/TESTING.md", "docs"),
     ];
     for (path, want) in cells {

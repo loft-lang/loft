@@ -40,6 +40,9 @@
 #   ./scripts/find_problems.sh --peek                  # in-flight peek
 #   ./scripts/find_problems.sh --wait                  # wait for a --bg run
 #   ./scripts/find_problems.sh --stop                  # stop THIS checkout's --bg run
+#   ./scripts/find_problems.sh --poison-host windows   # the selection under the emulated
+#                                                      #   Windows host (LOFT_POISON_HOST): on
+#                                                      #   request, never the standing gate
 #
 # The selection flags combine with --bg: `--full --bg`, `--subject parser --bg`.
 #
@@ -558,6 +561,12 @@ while [[ $# -gt 0 ]]; do
       else
         SELECT_LABEL="curated"; TEST_SELECT="$(curated_filter)"
       fi ;;
+    --poison-host)
+      # @PLN184 Track W — every selected test meets Windows' rules over this file system.
+      shift
+      [[ "${1:-}" == windows ]] || { echo "--poison-host takes: windows" >&2; exit 2; }
+      export LOFT_POISON_HOST=windows
+      shift ;;
     --list-subjects)
       echo "subjects (use: --subject <name>):"
       for s in $(subject_names); do
@@ -588,7 +597,7 @@ set -- "${_args[@]+"${_args[@]}"}"
 # Announced only by the modes that actually RUN something.  `--peek`/`--wait`/
 # `--stop` inspect an existing run, and telling them which selection they would
 # have used is noise about a decision they are not making.
-announce_selection() { echo "selection: $SELECT_LABEL"; }
+announce_selection() { echo "selection: $SELECT_LABEL${LOFT_POISON_HOST:+ under LOFT_POISON_HOST=$LOFT_POISON_HOST}"; }
 
 # A run of the curated or full set links every test binary — 382 of them, 16 GB under
 # `target/debug` (2026-09-28) — and a disk that cannot hold that ends the run in the

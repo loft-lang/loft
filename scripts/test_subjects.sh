@@ -72,7 +72,7 @@ pattern_matches() {
   esac
 }
 
-SUBJECT_NAMES='parser scopes codegen runtime store wasm packages lsp sql docs host'
+SUBJECT_NAMES='parser scopes codegen runtime store wasm packages lsp sql docs host winrules'
 
 # Spelled as a case-function, not `declare -A`: macOS ships bash 3.2 as BOTH /bin/sh and
 # /bin/bash, which has no associative arrays — the array form made every `--subject` run on a
@@ -91,6 +91,9 @@ subject_patterns() {
     (sql)       echo '~lazy_sql ~sql' ;;
     (docs)      echo '~compiled_stdlib ~doc ~features ~index_hygiene ~comment ~viewer ~check_line ~expectation ~function_coverage ~typst' ;;
     (host)      echo '~engine_host ~host_ ~multiplayer ~serve ~rpc ~mock ~audio ~crystal ~live_world' ;;
+    # @PLN184 Track W — the platform-sensitive set: `windows_rules` runs the file scripts under
+    # the emulated Windows host itself; the rest are the file, directory and process families.
+    (winrules)  echo '=windows_rules =fs_symlink =binary_io_matrix =scalar_file_read =lib_process =windows_probe' ;;
     (*)        return 1 ;;
   esac
 }
@@ -126,6 +129,7 @@ subject_paths() {
     (sql)      echo '^src/database/sql_|^src/database/lazy\.rs' ;;
     (docs)     echo '^doc/|^default/.*\.loft$|\.md$' ;;
     (host)     echo '^src/engine_host\.rs|^src/host\.rs|^src/rpc\.rs|^src/serve\.rs' ;;
+    (winrules) echo '^src/file_access/|^src/platform\.rs|^src/database/io\.rs|^src/database/loft_file\.rs|^src/state/io\.rs|^src/png_store\.rs' ;;
     (*)        return 1 ;;
   esac
 }
