@@ -308,8 +308,8 @@ fn prune_empty_cascades(data: &mut Data) {
     if pruned.is_empty() {
         return;
     }
-    // Every call of a pruned cascade does nothing: removed, so no analysis after this reads
-    // it as a call that uses its argument.
+    // Every call of a pruned cascade does nothing, so it is dropped: no analysis after this
+    // reads it as a call that uses its argument.
     fn drop_calls(v: &mut Value, pruned: &[u32]) {
         if matches!(v.unspan(), Value::Call(d, _) if pruned.contains(d)) {
             *v = Value::Null;

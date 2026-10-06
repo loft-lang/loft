@@ -1491,7 +1491,7 @@ handles, so every one of its 1 272 mints per call paid the dispatch and a `set_d
 walk whose whole effect was two zero words.  Falsified by sabotage: `push_record_hoisted_zero`
 made to skip its `zero_range` turns the reused-buffer cell red on `--native` under
 `LOFT_POISON_CLAIM=1` — the slot's poisoned handle is read as the element's `xs` vector, a
-store guard panic naming record `3735928559` — while a plain run can stay green on stale
+store guard panic naming the poisoned record — while a plain run can stay green on stale
 bytes that happen to read as an empty handle, which is why that falsifier and not the plain
 run guards the clause.  Switch
 `LOFT_NO_HEAP_RECORD_PUSH`; cells `tests/scripts/157-group-push.loft` g2, g3, g8–g10; pins

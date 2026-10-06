@@ -6245,7 +6245,7 @@ mod tests {
 
     /// The other half, `@FR-L-Align` (@C138): every field the layout places is aligned, so
     /// [`Store::read`] at an offset the type's alignment does not divide is a layout defect,
-    /// refused in every build — where `read_unaligned` used to answer it.
+    /// refused in every build.
     #[test]
     #[should_panic(expected = "Store access misaligned")]
     fn read_refuses_the_same_misaligned_field() {

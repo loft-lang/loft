@@ -4622,9 +4622,9 @@ pub(crate) fn populate_struct_from_jsonvalue(
                 _ => {
                     // Hash, Sorted, Index, Radix, Array and Base fields have no JSON form here
                     // yet, so the field is the EMPTY collection — written, not inherited from
-                    // the claim.  Unlike the narrow integers that used to share this arm, none
-                    // of them can be spelled in the document at all, so nothing is being
-                    // dropped silently.
+                    // the claim.  None of them can be spelled in a JSON document at all, so
+                    // nothing is dropped silently (a narrow integer can be, and takes its own
+                    // arm above).
                     let size = u32::from(stores.size(content_kt));
                     stores
                         .store_mut(dest)
