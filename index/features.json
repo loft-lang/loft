@@ -759,7 +759,7 @@
     "kind": "infra",
     "group": "inside",
     "keys": [],
-    "body": "## What it does\n\nLoads compiled native extension libraries (cdylibs) at runtime and connects their exported functions into the running program, letting a loft program call into prebuilt native code.\n\n## Where it lives\n\n`src/extensions.rs`\n\n\n## In real use\n\nWhere this feature carries real work, validated by `check_doc_drift.sh examples`:\n\nExample: @FTR-076 — a package's compiled cdylib linked and called at run time, with a NEGATIVE return as the oracle that the C ABI was read at the right width\n"
+    "body": "## What it does\n\nLoads compiled native extension libraries (cdylibs) at runtime and connects their exported functions into the running program, letting a loft program call into prebuilt native code.\n\nThe same wiring serves the standard library itself: an interpreted program runs the stdlib's looping loft functions compiled, from a bridge table BUILT INTO the loft binary (`src/compiled_stdlib_gen.rs`), looked up before `dlsym` — so no rustc and no cdylib are needed at run time.  A program whose type prefix or stdlib source does not match runs the loft bodies interpreted instead (INTERPRETER_PERFORMANCE.md § The compiled standard library; `LOFT_NO_COMPILED_STDLIB=1` switches it off).\n\n## Where it lives\n\n`src/extensions.rs`\n\n\n## In real use\n\nWhere this feature carries real work, validated by `check_doc_drift.sh examples`:\n\nExample: @FTR-076 — a package's compiled cdylib linked and called at run time, with a NEGATIVE return as the oracle that the C ABI was read at the right width\n\n"
   },
   {
     "number": 75,
