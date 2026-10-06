@@ -295,7 +295,7 @@ fn has_guide(dir: &Path) -> bool {
     use crate::file_access::{PathText, read_dir};
     read_dir(&PathText::from_os(&dir.join("docs"))).is_ok_and(|d| {
         d.iter()
-            .any(|e| e.parts().last().is_some_and(|n| n.ends_with(".loft")))
+            .any(|e| crate::file_access::has_extension(Path::new(&e.native_or_empty()), "loft"))
     })
 }
 
