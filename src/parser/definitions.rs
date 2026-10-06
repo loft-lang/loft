@@ -897,6 +897,8 @@ impl Parser {
                     } else {
                         false
                     };
+                    // @PLN187 (C139) — a variant field is private to its file, as a struct's is.
+                    let is_pub = self.lexer.has_token("pub");
                     // @PLN40 — a variant field may also be `const` (write-once).
                     let is_const = self.lexer.has_keyword("const");
                     let field_pos = self.lexer.peek_pos().clone();
@@ -920,6 +922,9 @@ impl Parser {
                         if idx != usize::MAX {
                             self.data.definitions[v_nr as usize].attributes[idx].lexeme = true;
                         }
+                    }
+                    if is_pub {
+                        self.mark_pub_field(v_nr, &a_name);
                     }
                     if is_const {
                         self.mark_const_field(v_nr, &a_name);
@@ -5807,7 +5812,8 @@ impl Parser {
         // SHAPE of the declaration has to point at.
         let mut field_at: Vec<(String, crate::lexer::Position)> = Vec::new();
         loop {
-            self.lexer.has_token("pub");
+            // @PLN187 (C139) — a field is private to its file; `pub` shows it.
+            let is_pub = self.lexer.has_token("pub");
             // @PLN40 — a `const` field is write-once at construction.  Consume the
             // keyword (if present) and mark the field once it has parsed; see
             // doc/claude/plans/40-const-fields/.
@@ -5831,6 +5837,9 @@ impl Parser {
             self.init_field_deps.clear();
             field_at.push((a_name.clone(), field_pos.clone()));
             self.parse_field(d_nr, &a_name);
+            if is_pub {
+                self.mark_pub_field(d_nr, &a_name);
+            }
             if is_const {
                 self.mark_const_field(d_nr, &a_name);
             }
@@ -6853,6 +6862,14 @@ impl Parser {
     /// after [`Self::parse_field`], once the field's attribute exists.  Rejects
     /// `const virtual(…)`: a virtual field is already computed and read-only, so
     /// `const` on it is redundant.  See doc/claude/plans/40-const-fields/.
+    /// @PLN187 (C139) — `pub` on a field: readable and writable wherever its type is visible.
+    fn mark_pub_field(&mut self, on_d: u32, a_name: &str) {
+        let idx = self.data.attr(on_d, a_name);
+        if idx != usize::MAX {
+            self.data.definitions[on_d as usize].attributes[idx].pub_field = true;
+        }
+    }
+
     fn mark_const_field(&mut self, on_d: u32, a_name: &str) {
         let idx = self.data.attr(on_d, a_name);
         if idx == usize::MAX {

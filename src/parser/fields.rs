@@ -562,6 +562,7 @@ impl Parser {
                     let recv = self.guard_variant_receiver(enum_d, &field, &t, code.clone());
                     *code = self.get_field(found_d_nr, found_fnr, recv);
                     self.data.attr_used(found_d_nr, found_fnr);
+                    self.trace_visibility("field", found_d_nr, found_fnr);
                 }
                 return t;
             } else if !self.first_pass {
@@ -796,6 +797,7 @@ impl Parser {
                         "EnumUnitLit",
                     );
                     self.data.attr_used(dnr, fnr);
+                    self.trace_visibility("variant", dnr, fnr);
                     return Type::Enum(dnr, true, crate::data::Deps::none());
                 }
             }
@@ -845,6 +847,7 @@ impl Parser {
             self.expr_not_null_name.clear();
         }
         self.data.attr_used(dnr, fnr);
+        self.trace_visibility("field", dnr, fnr);
         // `@FR-N-Chain` — the receiver's `?` reaches the RESULT TYPE, not just the lints above.
         self.wrap_projection_nullable(&mut t, receiver_optional);
         t

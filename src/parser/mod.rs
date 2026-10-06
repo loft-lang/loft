@@ -16631,6 +16631,88 @@ impl Parser {
         tp
     }
 
+    /// `LOFT_TRACE_VISIBILITY=1` — the census of @PLN187's enforcement (C139): one line per use,
+    /// in a file OTHER than the declaring one, of a struct or variant field (`field`: a read or a
+    /// write; `literal-field`, `pattern-field`, `key`), of a struct literal (`literal`) and of an
+    /// enum variant (`variant`, built or matched).  Each line is a place that needs `pub` once a
+    /// field, a literal or a variant is private to its file.  `d_nr` is the struct or the
+    /// variant; `f_nr` its field, or `usize::MAX` for the type itself.  `scripts/pub_census.sh`
+    /// collects it.
+    pub(crate) fn trace_visibility(&self, kind: &str, d_nr: u32, f_nr: usize) {
+        if self.first_pass
+            || !crate::env_once!(std::env::var_os("LOFT_TRACE_VISIBILITY").is_some())
+            || d_nr == u32::MAX
+            || d_nr >= self.data.definitions()
+        {
+            return;
+        }
+        let def = self.data.def(d_nr);
+        // A variant's fields and name are its enum's: the enum's file is the one that decides.
+        let owner = if matches!(def.def_type, DefType::EnumValue) && def.parent != u32::MAX {
+            self.data.def(def.parent)
+        } else {
+            def
+        };
+        // A generic INSTANCE carries the source it was minted in and its template's position:
+        // the file it was declared in is the position's.
+        if owner.source == self.data.source
+            || owner.position.file == self.lexer.pos().file
+            || owner.name.starts_with("__")
+        {
+            return;
+        }
+        let item = match def.attributes.get(f_nr) {
+            Some(a) if a.name.starts_with("__") || a.hidden => return,
+            Some(a) => format!("{}.{}", def.name, a.name),
+            None => def.name.clone(),
+        };
+        // The line a rewrite starts from: the struct's or the variant's own declaration for a
+        // field, the owning type's for a literal or a variant.
+        let at = if f_nr == usize::MAX { &owner.position } else { &def.position };
+        let here = self.lexer.pos();
+        eprintln!(
+            "[visibility] {}:{} {kind} {item} — declared in {}:{}",
+            here.file, here.line, owner.position.file, at.line
+        );
+    }
+
+    /// @PLN187 (C139) — a type that is NAME ONLY outside its file (not `pub`, but named by a
+    /// `pub` signature there) can be named, passed and stored there, never BUILT: a literal of it
+    /// outside its file is refused.  Building a non-`pub` type was refused before name-only
+    /// types existed, through the name itself; this keeps that refusal now the name is reachable.
+    /// The standard library's types are left to its migration (@PLN187 step 4).
+    pub(crate) fn refuse_building_a_name_only_type(&mut self, td_nr: u32) {
+        if self.first_pass || td_nr >= self.data.definitions() {
+            return;
+        }
+        let def = self.data.def(td_nr);
+        let owner_nr = if matches!(def.def_type, DefType::EnumValue) && def.parent != u32::MAX {
+            def.parent
+        } else {
+            td_nr
+        };
+        let owner = self.data.def(owner_nr);
+        if owner.source == self.data.source
+            || owner.source == crate::data::STD_SOURCE
+            || owner.position.file == self.lexer.pos().file
+            || owner.pub_visible
+            || !self.data.is_name_only(owner_nr)
+        {
+            return;
+        }
+        let lib = std::path::Path::new(&*owner.position.file)
+            .file_stem()
+            .map_or_else(String::new, |f| f.to_string_lossy().to_string());
+        let name = owner.name.clone();
+        diagnostic!(
+            self.lexer,
+            Level::Error,
+            "`{name}` is not `pub` in `{lib}`, so it cannot be built outside that file: `{lib}` \
+             only lets its `pub` functions hand it out.\n  fix: build it with `{lib}`'s \
+             functions, or `{lib}` declares it `pub`"
+        );
+    }
+
     /// `LOFT_TRACE_EQ_IDENTITY=1` — the census of @C91's flip (`@FR-E-Eq`): one line per
     /// `==` / `!=` this parse lowered to IDENTITY (`OpEqRef` / `OpNeRef`), naming the site, both
     /// operand types and the kind whose answer the content `==` changes.  Silent on a test

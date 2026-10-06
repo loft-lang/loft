@@ -377,27 +377,56 @@ pub fn signature_of(data: &Data, d: u32, kind: &str) -> String {
 }
 
 /// Every library def referenced through `d`'s SIGNATURE — the observable edges: a fn's
-/// return + params, a struct's field types, an enum's variant field types, a typedef's
-/// target. The body is never followed (it is not observable).
+/// return + params, a typedef's target, and the types of a struct's or a variant's `pub`
+/// fields.  The body is never followed (it is not observable), and neither is a private field:
+/// outside its file it cannot be read, so its type is not reachable through it (C139).
 fn referenced_defs_of(data: &Data, d: u32) -> Vec<u32> {
     let def = data.def(d);
     let mut out = Vec::new();
     collect_type_defs(&def.returned, &mut out); // return / typedef target
+    let record = matches!(def.def_type, DefType::Struct | DefType::EnumValue);
     for a in def.attributes() {
-        if !a.hidden {
-            collect_type_defs(&a.typedef, &mut out); // fields / parameters
+        if !a.hidden && (!record || a.pub_field) {
+            collect_type_defs(&a.typedef, &mut out); // `pub` fields / parameters
         }
     }
-    // An enum's variants are child defs; their fields are part of the enum's shape.
+    // An enum's variants are child defs; their `pub` fields are part of the enum's shape.
     if def.def_type == DefType::Enum {
         for v in 0..data.definitions() {
             let vd = data.def(v);
             if vd.parent == d && vd.def_type == DefType::EnumValue {
                 for a in vd.attributes() {
-                    if !a.hidden {
+                    if !a.hidden && a.pub_field {
                         collect_type_defs(&a.typedef, &mut out);
                     }
                 }
+            }
+        }
+    }
+    out
+}
+
+/// @PLN187 (C139) — every type that is NAME ONLY: not `pub`, but named by a `pub` item's
+/// signature in its own file, or by a `pub` field of a type visible there — transitively,
+/// through type arguments.  Outside its file such a type can be named, passed and stored,
+/// never built; it is the `Sealed` tier of [`surface`], computed for every file at once.
+/// A signature names only its own file's types into this set: a `pub fn` cannot make
+/// another file's private type visible, since it cannot name it.
+#[must_use]
+pub(crate) fn name_only_defs(data: &Data) -> HashSet<u32> {
+    let same_file = |a: u32, b: u32| data.def(a).position.file == data.def(b).position.file;
+    let mut out: HashSet<u32> = HashSet::new();
+    let mut work: Vec<u32> = (0..data.definitions())
+        .filter(|&d| data.def(d).pub_visible && classify(data, d).is_some())
+        .collect();
+    let mut seen: HashSet<u32> = work.iter().copied().collect();
+    while let Some(d) = work.pop() {
+        for r in referenced_defs_of(data, d) {
+            if r < data.definitions() && same_file(d, r) && classify(data, r).is_some() && seen.insert(r) {
+                if !data.def(r).pub_visible {
+                    out.insert(r);
+                }
+                work.push(r);
             }
         }
     }

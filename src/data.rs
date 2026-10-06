@@ -4658,6 +4658,9 @@ pub struct Attribute {
     /// bridge, the engine host, placement) reads this mark to hand it a scratch store or
     /// the null sentinel — never the caller's offered result record.
     pub work_buffer: bool,
+    /// @PLN187 (C139) — a field declared `pub`: outside its file it can be read, written,
+    /// matched and named in a literal.  Every field is private to its file without it.
+    pub pub_field: bool,
     /// The initial value of this attribute if it is not given.
     pub value: Value,
     /// A constraint expression checked on every field write.
@@ -6124,6 +6127,18 @@ impl Clone for OpSetCache {
     }
 }
 
+/// The answer to [`Data::is_name_only`], kept beside the definition count that produced it —
+/// the [`OpSetCache`] shape, for its reasons: the table is still growing when the first
+/// question arrives, and a clone's definitions diverge, so a clone starts EMPTY.
+#[derive(Default)]
+struct NameOnlyCache(std::sync::Mutex<Option<(u32, std::sync::Arc<HashSet<u32>>)>>);
+
+impl Clone for NameOnlyCache {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
 /// The suffix [`Data::retire_def_name`] gives a definition taken out of the name index.  A
 /// retired definition is still the one at its number: [`Data::def_identity`] reads the name it
 /// was declared under.
@@ -6364,6 +6379,8 @@ pub struct Data {
     /// Lazy cache of the op-number sets the use/dead-store/ownership walks read
     /// (see [`crate::use_analysis::OpSets`] and [`OpSetCache`]).
     op_sets: OpSetCache,
+    /// @PLN187 — the name-only types ([`Self::is_name_only`]).
+    name_only: NameOnlyCache,
 }
 
 #[must_use]
@@ -7044,6 +7061,7 @@ impl Data {
             declared_embeds: Vec::new(),
             caller_index: std::sync::OnceLock::new(),
             op_sets: OpSetCache::default(),
+            name_only: NameOnlyCache::default(),
         }
     }
 
@@ -7167,6 +7185,7 @@ impl Data {
         // could in principle land back on its old value over a different table.  This
         // is the one place that happens, and dropping the cache here costs one rebuild.
         self.op_sets = OpSetCache::default();
+        self.name_only = NameOnlyCache::default();
         self.def_names.clear();
         // loft#788 — derived from the imports exactly as `def_names` is, so it
         // is rebuilt by the same replay. Keeping stale entries would refuse a
@@ -7519,6 +7538,7 @@ impl Data {
             primary: false,
             hidden: false,
             work_buffer: false,
+            pub_field: false,
             value: Value::Null,
             check: Value::Null,
             check_message: Value::Null,
@@ -10679,6 +10699,7 @@ impl Data {
         a.mutable = f.mutable;
         a.constant = f.constant;
         a.const_field = f.const_field;
+        a.pub_field = f.pub_field;
         a.value_const = f.value_const;
         a.init = f.init;
         a.nullable = f.nullable;
@@ -12715,7 +12736,30 @@ impl Data {
     /// above its declaration was refused where a `pub` one compiled (loft#1856).
     fn passes_on(&self, d_nr: u32) -> bool {
         let d = &self.definitions[d_nr as usize];
-        d.pub_visible || matches!(d.def_type, DefType::Unknown)
+        d.pub_visible || matches!(d.def_type, DefType::Unknown) || self.is_name_only(d_nr)
+    }
+
+    /// @PLN187 (C139) — is `d_nr` a NAME-ONLY type: not `pub`, but named by a `pub` signature
+    /// (or a visible `pub` field) of its own file?  Outside that file it can be named, passed
+    /// and stored, never built — [`crate::api_surface::name_only_defs`] is the closure.
+    #[must_use]
+    pub fn is_name_only(&self, d_nr: u32) -> bool {
+        let n = self.definitions();
+        let mut cache = self
+            .name_only
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let set = match &*cache {
+            Some((at, set)) if *at == n => std::sync::Arc::clone(set),
+            _ => {
+                let set = std::sync::Arc::new(crate::api_surface::name_only_defs(self));
+                *cache = Some((n, std::sync::Arc::clone(&set)));
+                set
+            }
+        };
+        drop(cache);
+        set.contains(&d_nr)
     }
 
     /// @FR-F-Surface (loft#1848) — the error for a qualified `lib::name` that reaches what `lib`

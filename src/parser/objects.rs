@@ -4910,6 +4910,9 @@ impl Parser {
             return false;
         }
         let nr = self.data.attr(td_nr, &field);
+        if nr != usize::MAX {
+            self.trace_visibility("literal-field", td_nr, nr);
+        }
         if nr == usize::MAX {
             if let Some(s) = self.suggest_field_name(td_nr, &field) {
                 diagnostic!(
@@ -5709,6 +5712,13 @@ impl Parser {
 
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_object(&mut self, td_nr: u32, code: &mut Value) -> Type {
+        let built = if self.data.def_type(td_nr) == DefType::EnumValue {
+            "variant"
+        } else {
+            "literal"
+        };
+        self.trace_visibility(built, td_nr, usize::MAX);
+        self.refuse_building_a_name_only_type(td_nr);
         // @PLN25 single-payload: a `__nullable<S>::Some` variant's body uses S's field names,
         // which live in the inline `payload` field — not `Some`'s direct fields {enum, payload}.
         // Allocate the `Some` record, set the discriminant present, and parse the body as a

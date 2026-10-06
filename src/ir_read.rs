@@ -746,6 +746,7 @@ fn read_attribute(stores: &Stores, r: Record) -> Attribute {
         primary: r.field_bool(stores, ds::ATTR_PRIMARY),
         hidden: r.field_bool(stores, ds::ATTR_HIDDEN),
         work_buffer: r.field_bool(stores, ds::ATTR_WORK_BUFFER),
+        pub_field: r.field_bool(stores, ds::ATTR_PUB_FIELD),
         value: read_node_child(stores, r.field_vec(ds::ATTR_VALUE)),
         check: read_node_child(stores, r.field_vec(ds::ATTR_CHECK)),
         check_message: read_node_child(stores, r.field_vec(ds::ATTR_CHECK_MESSAGE)),

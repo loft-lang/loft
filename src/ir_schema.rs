@@ -847,7 +847,7 @@ fn write_attribute(out: &mut String, a: &Attribute) {
     write_type(out, &a.typedef);
     let _ = write!(
         out,
-        ",\"mutable\":{},\"constant\":{},\"init\":{},\"nullable\":{},\"primary\":{},\"hidden\":{},\"const_field\":{},\"value_const\":{},\"work_buffer\":{}",
+        ",\"mutable\":{},\"constant\":{},\"init\":{},\"nullable\":{},\"primary\":{},\"hidden\":{},\"const_field\":{},\"value_const\":{},\"work_buffer\":{},\"pub_field\":{}",
         a.mutable,
         a.constant,
         a.init,
@@ -856,7 +856,8 @@ fn write_attribute(out: &mut String, a: &Attribute) {
         a.hidden,
         a.const_field,
         a.value_const,
-        a.work_buffer
+        a.work_buffer,
+        a.pub_field
     );
     out.push_str(",\"value\":");
     write_value(out, &a.value);
@@ -909,6 +910,11 @@ fn attribute_from_parsed(p: &Parsed) -> Result<Attribute, TypeDecodeError> {
         hidden: as_bool(field(p, "hidden")?)?,
         // `@FR-R-WorkBuffer` — tolerant of older JSON without the field.
         work_buffer: match field(p, "work_buffer") {
+            Ok(f) => as_bool(f)?,
+            Err(_) => false,
+        },
+        // @PLN187 — tolerant of older JSON without the field.
+        pub_field: match field(p, "pub_field") {
             Ok(f) => as_bool(f)?,
             Err(_) => false,
         },
@@ -2186,6 +2192,7 @@ mod tests {
             primary: true,
             hidden: false,
             work_buffer: false,
+            pub_field: false,
             value: Value::Int(5),
             check: Value::Call(9, vec![Value::Var(0), Value::Int(100)]),
             check_message: Value::Text("too big".to_string()),
@@ -2223,6 +2230,7 @@ mod tests {
             primary: false,
             hidden: false,
             work_buffer: false,
+            pub_field: false,
             value: Value::Null,
             check: Value::Null,
             check_message: Value::Null,
@@ -2251,6 +2259,7 @@ mod tests {
             primary: false,
             hidden: false,
             work_buffer: false,
+            pub_field: false,
             value: Value::Null,
             check: Value::Null,
             check_message: Value::Null,
@@ -2261,7 +2270,7 @@ mod tests {
         };
         assert_eq!(
             attribute_to_json(&a),
-            r#"{"name":"x","typedef":{"k":"Boolean"},"mutable":false,"constant":true,"init":false,"nullable":false,"primary":false,"hidden":false,"const_field":false,"value_const":false,"work_buffer":false,"value":{"k":"Null"},"check":{"k":"Null"},"check_message":{"k":"Null"},"alias_d_nr":0,"assigned_lambda_d_nr":0,"links":""}"#
+            r#"{"name":"x","typedef":{"k":"Boolean"},"mutable":false,"constant":true,"init":false,"nullable":false,"primary":false,"hidden":false,"const_field":false,"value_const":false,"work_buffer":false,"pub_field":false,"value":{"k":"Null"},"check":{"k":"Null"},"check_message":{"k":"Null"},"alias_d_nr":0,"assigned_lambda_d_nr":0,"links":""}"#
         );
     }
 
@@ -2306,6 +2315,7 @@ mod tests {
                     primary: false,
                     hidden: false,
                     work_buffer: false,
+                    pub_field: false,
                     value: Value::Null,
                     check: Value::Null,
                     check_message: Value::Null,
@@ -2326,6 +2336,7 @@ mod tests {
                     primary: false,
                     hidden: false,
                     work_buffer: false,
+                    pub_field: false,
                     value: Value::Int(0),
                     check: Value::Null,
                     check_message: Value::Null,
