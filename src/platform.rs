@@ -795,9 +795,9 @@ mod reclaim_tests {
     /// — the two ways a native binary ended up spawned under a bare name through `PATH`.
     #[test]
     fn the_scratch_dir_is_never_empty_or_relative() {
-        let sys = std::path::PathBuf::from("/var/tmp/sys");
         // Absolute on every platform: on Windows `/x/y` has no drive, so it is relative and
-        // rightly resolved against the working directory.
+        // rightly resolved against the working directory — the system default too.
+        let sys = std::env::temp_dir().join("sys");
         let abs = std::env::temp_dir().join("x").join("y");
         assert_eq!(scratch_from(Some(abs.clone().into()), sys.clone()), abs);
         assert_eq!(scratch_from(Some("".into()), sys.clone()), sys);
