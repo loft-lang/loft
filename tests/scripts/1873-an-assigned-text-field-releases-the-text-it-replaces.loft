@@ -25,10 +25,9 @@
 //   read by the program; no `LOFT_*` switch is needed to see it.
 //   WITNESS: `m1 literal grows: 15 -> 1005` (`13 -> 1003` on --native).
 //   HOLDS: every value cell c1–c15 passes on both trees (the leak never moves a value).
-// @falsified-by: tests/falsified/1873-an-assigned-text-field-releases-the-text-it-replaces.patch
-//   — the admission accepting every site, so a parameter's field releases while the caller's
-//   argument still borrows it.  interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
-//   native exit 1 -> 0, native 1 assertion failures -> 0.
+// @falsified-by: tests/falsified/1873-an-assigned-text-field-releases-the-text-it-replaces.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   The admission accepting every site, so a parameter's field releases while the caller's
+//   argument still borrows it.
 //   CHANNEL: an assertion in c1, on BOTH backends.
 //   ARMED: nothing — the borrowed parameter reads the overwritten block in an ordinary run.
 //   WITNESS: `c1 zzllo world, a long first text|zz`.

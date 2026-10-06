@@ -26,17 +26,16 @@
 //   ARMED: nothing beyond the run itself — the census is `store_memory()`'s live-record count.
 //   WITNESS: `c_setp grows: 15 -> 1005` (`13 -> 1003` on --native).
 //   HOLDS: every value cell, on both trees (the leak never moves a value).
-// @falsified-by: tests/falsified/1876-a-text-field-written-through-a-parameter-releases-the-text-it-replaces.patch
-//   — every candidate parameter admitted without its call sites, so a caller's borrow is
+// @falsified-by: tests/falsified/1876-a-text-field-written-through-a-parameter-releases-the-text-it-replaces.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   Every candidate parameter admitted without its call sites, so a caller's borrow is
 //   released under it.
 //   CHANNEL: an assertion in a value cell, on BOTH backends.
 //   ARMED: nothing — the borrowed text reads the released block in an ordinary run.
 //   WITNESS: `p4 w7cond record text, long enough|w7` (the caller's parameter overwritten).
 //   HOLDS: the census cells (the admitted shapes are admitted either way).
-// @falsified-by: tests/falsified/1879-a-callers-text-local-is-a-copy-not-a-borrow.patch — a text
-//   local counted as a borrow again when it is an argument evaluated before the writing call.
-//   interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1
-//   assertion failures -> 0.
+// @falsified-by: tests/falsified/1879-a-callers-text-local-is-a-copy-not-a-borrow.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   A text local counted as a borrow again when it is an argument evaluated before the
+//   writing call.
 //   CHANNEL: an assertion in the census, on BOTH backends.
 //   ARMED: nothing beyond the run itself.
 //   WITNESS: `c_inflight grows: 15 -> 1005` (`13 -> 1003` on --native).
