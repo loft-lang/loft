@@ -281,7 +281,7 @@ fn remap(v: &Value, map: &HashMap<u16, Value>, scope: u16) -> Value {
             };
             Value::Set(t, Box::new(remap(e, map, scope)))
         }
-        Value::Span(s) => Value::Span(Box::new((s.0.clone(), remap(&s.1, map, scope)))),
+        Value::Span(s) => Value::Span(Box::new((s.0, remap(&s.1, map, scope)))),
         Value::Call(op, args) => {
             Value::Call(*op, args.iter().map(|a| remap(a, map, scope)).collect())
         }

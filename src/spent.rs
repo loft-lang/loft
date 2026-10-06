@@ -158,7 +158,7 @@ impl Flow<'_> {
     fn locate(&mut self, node: &Value) {
         if let Some(p) = node.span_pos() {
             self.line = p.line;
-            self.pos = Some(p.clone());
+            self.pos = Some(*p);
         } else if let Value::Line(n) = node {
             self.line = *n;
             self.pos = None;
@@ -295,7 +295,7 @@ impl Flow<'_> {
                 && self.seen.insert((self.line, moved_line, v))
             {
                 self.found.push(SpentRead {
-                    pos: self.pos.clone(),
+                    pos: self.pos,
                     line: self.line,
                     name: self.func.name(v).to_string(),
                     moved_line,

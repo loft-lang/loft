@@ -13,7 +13,6 @@ use std::fmt::{Debug, Display, Formatter};
 use std::io::Result as IoResult;
 use std::iter::Peekable;
 use std::rc::Rc;
-use std::sync::Arc;
 use std::vec::IntoIter;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -49,15 +48,16 @@ pub enum LexItem {
     None,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Copy, PartialEq)]
 pub struct Position {
-    /// The file name where this construct is found.
+    /// The file name where this construct is found — an INTERNED name ([`intern_file`]).
     ///
-    /// Shared, not owned: a position is cloned per token and per operator (about 1.4 M
-    /// times over a 12 826-line compile), and the name never changes within a file, so a
-    /// `String` here was the front end's largest remaining allocation source (@PLN166 B5).
-    /// [`Arc`] rather than `Rc` because a position travels with the IR into worker threads.
-    pub file: Arc<str>,
+    /// A position is copied per token and per operator, and the name never changes within a
+    /// file, so it is held once per distinct name for the life of the process and a position
+    /// only carries the reference: copying one is three words, with no allocation and no
+    /// reference count.  An `Arc<str>` here made every token's clone and drop an atomic
+    /// increment and decrement — measured, two thirds of the lexer's own time on a JSON parse.
+    pub file: &'static str,
     /// The line where this result was found.
     pub line: u32,
     /// The position on the line where this result was found.
@@ -65,12 +65,32 @@ pub struct Position {
 }
 
 /// The file name of a position that has none: a synthetic definition, a test fixture, a
-/// runtime error raised outside any source.  `Arc<str>`'s default is backed by a static
-/// (std, since 1.80), so this allocates nothing — which the allocation ratchet
-/// (`tests/frontend_counts.rs`) checks by demanding the same count from two runs in one
-/// process: a lazily minted shared name read one more on the first run.
-pub fn no_file() -> Arc<str> {
-    Arc::default()
+/// runtime error raised outside any source.
+#[must_use]
+pub fn no_file() -> &'static str {
+    ""
+}
+
+/// The process-wide copy of a file name, made once per distinct name and never freed: the
+/// names are few (one per source file, plus the fixed tags a lexer is opened with), and every
+/// position naming that file shares it.
+#[must_use]
+pub fn intern_file(name: &str) -> &'static str {
+    use std::sync::{Mutex, OnceLock};
+    if name.is_empty() {
+        return "";
+    }
+    static NAMES: OnceLock<Mutex<std::collections::HashSet<&'static str>>> = OnceLock::new();
+    let names = NAMES.get_or_init(|| Mutex::new(std::collections::HashSet::new()));
+    let mut names = names
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(&known) = names.get(name) {
+        return known;
+    }
+    let leaked: &'static str = Box::leak(name.to_owned().into_boxed_str());
+    names.insert(leaked);
+    leaked
 }
 
 impl Position {
@@ -554,7 +574,7 @@ impl Lexer {
             virtual_files: std::collections::HashMap::new(),
             parse_snapshot: std::collections::HashMap::new(),
             prev_end: Position {
-                file: filename.into(),
+                file: intern_file(filename),
                 line: 0,
                 pos: 0,
             },
@@ -562,13 +582,13 @@ impl Lexer {
             peek: LexResult {
                 has: LexItem::None,
                 position: Position {
-                    file: filename.into(),
+                    file: intern_file(filename),
                     line: 0,
                     pos: 0,
                 },
             },
             position: Position {
-                file: filename.into(),
+                file: intern_file(filename),
                 line: 0,
                 pos: 0,
             },
@@ -710,7 +730,7 @@ impl Lexer {
                 }
             }
         }
-        let pos = self.position.clone();
+        let pos = self.position;
         if let Some(&c) = self.iter.peek() {
             Some(match c {
                 '0'..='9' => self.number(),
@@ -810,7 +830,7 @@ impl Lexer {
                     self.iter = ln.chars().collect::<Vec<_>>().into_iter().peekable();
                     self.position.line += 1;
                     self.position.pos = 1;
-                    Some(LexResult::new(LexItem::None, self.position.clone()))
+                    Some(LexResult::new(LexItem::None, self.position))
                 }
                 Err(e) => {
                     self.position.line += 1;
@@ -883,7 +903,7 @@ impl Lexer {
         crate::diagnostics::audit_site(std::panic::Location::caller());
         let (line, pos) = self.report_pos();
         self.diagnostics
-            .add_at(level, message, &self.position.file, line, pos);
+            .add_at(level, message, self.position.file, line, pos);
     }
 
     /// Attach a machine-readable `suggestion` (a replacement token) to the
@@ -921,7 +941,7 @@ impl Lexer {
         crate::diagnostics::audit_site(std::panic::Location::caller());
         let (line, pos) = self.report_pos();
         self.diagnostics
-            .add_at_coded(level, Some(code), message, &self.position.file, line, pos);
+            .add_at_coded(level, Some(code), message, self.position.file, line, pos);
     }
 
     #[track_caller]
@@ -930,7 +950,7 @@ impl Lexer {
         self.diagnostics.add_at(
             level,
             message,
-            &self.position.file,
+            self.position.file,
             result.position.line,
             result.position.pos,
         );
@@ -940,7 +960,7 @@ impl Lexer {
     pub fn pos_diagnostic(&mut self, level: Level, pos: &Position, message: &str) {
         crate::diagnostics::audit_site(std::panic::Location::caller());
         self.diagnostics
-            .add_at(level, message, &pos.file, pos.line, pos.pos);
+            .add_at(level, message, pos.file, pos.line, pos.pos);
     }
 
     /// Like [`pos_diagnostic`], but carrying a stable `code` — the explicit-position twin of
@@ -955,7 +975,7 @@ impl Lexer {
     ) {
         crate::diagnostics::audit_site(std::panic::Location::caller());
         self.diagnostics
-            .add_at_coded(level, Some(code), message, &pos.file, pos.line, pos.pos);
+            .add_at_coded(level, Some(code), message, pos.file, pos.line, pos.pos);
     }
 
     pub fn diagnostics(&self) -> &Diagnostics {
@@ -1112,7 +1132,7 @@ impl Lexer {
 
     /// Parse a character constant for the lexer.
     fn char(&mut self) -> LexResult {
-        let pos = self.position.clone();
+        let pos = self.position;
         let mut res = String::new();
         while let Some(&c) = self.iter.peek() {
             if c == '\'' {
@@ -1354,7 +1374,7 @@ impl Lexer {
 
     /// Parse a string for the lexer.
     fn string(&mut self) -> LexResult {
-        let pos = self.position.clone();
+        let pos = self.position;
         let mut res = String::new();
         while let Some(&c) = self.iter.peek() {
             if c == '"' {
@@ -1466,7 +1486,7 @@ impl Lexer {
     }
 
     fn string_nested(&mut self, escaped_delim: bool, resumed: bool) -> LexResult {
-        let pos = self.position.clone();
+        let pos = self.position;
         let mut res = String::new();
         while let Some(&c) = self.iter.peek() {
             if c == '"' {
@@ -1617,7 +1637,7 @@ impl Lexer {
     /// time as the line is entered — which is what lets a literal with an
     /// interpolation in it be dedented at all (loft#990).
     fn backtick_string(&mut self, nested: bool) -> LexResult {
-        let pos = self.position.clone();
+        let pos = self.position;
         let mut lines: Vec<String> = Vec::new();
         let mut cur = String::new();
 
@@ -1725,7 +1745,7 @@ impl Lexer {
     /// Called from the `}` token handler when the backtick string owns the
     /// format context.
     fn backtick_string_resume(&mut self, nested: bool) -> LexResult {
-        let pos = self.position.clone();
+        let pos = self.position;
         let mut cur = String::new();
         loop {
             match self.iter.peek() {
@@ -1874,7 +1894,7 @@ impl Lexer {
     /// Parse a number for the lexer.
     #[expect(clippy::too_many_lines, reason = "inherited")]
     fn number(&mut self) -> LexResult {
-        let pos = self.position.clone();
+        let pos = self.position;
         let (mut val, int_groups) = self.get_number();
         // L11 thousands-grouping lint: warn (but still accept) when decimal `_`
         // separators don't carve standard 3-digit groups — the leftmost group
@@ -1913,10 +1933,7 @@ impl Lexer {
             if let Some('.') = self.iter.peek() {
                 self.next_char();
                 self.link = self.memory.len();
-                self.queue(LexResult::new(
-                    LexItem::Token("..".to_string()),
-                    pos.clone(),
-                ));
+                self.queue(LexResult::new(LexItem::Token("..".to_string()), pos));
                 // Through `ret_number`, NOT a bare `u32` parse (loft#1559).  This
                 // short-circuit is taken when a number is followed by `..`, and parsing it
                 // as `u32` skipped the width split every other integer literal goes
@@ -1961,7 +1978,7 @@ impl Lexer {
                 self.link = self.memory.len();
                 self.queue(LexResult::new(
                     LexItem::Token(".".to_string()),
-                    self.position.clone(),
+                    self.position,
                 ));
                 // Through `ret_number` for the same reason as the `..` site above: one
                 // home for what an integer literal's token is.  A tuple index this large is
@@ -2230,7 +2247,7 @@ impl Lexer {
 
     fn restart(&mut self, filename: &str) {
         self.position = Position {
-            file: filename.into(),
+            file: intern_file(filename),
             line: 0,
             pos: 0,
         };
@@ -2239,10 +2256,10 @@ impl Lexer {
         self.seek_return = None;
         // Likewise the consumed-source position: `report_pos` also checks the file, so
         // this is the second of two independent guards rather than the only one.
-        self.prev_end = self.position.clone();
+        self.prev_end = self.position;
         self.peek = LexResult {
             has: LexItem::None,
-            position: self.position.clone(),
+            position: self.position,
         };
         self.memory.clear();
         self.replay_return = None;
@@ -2307,7 +2324,7 @@ impl Lexer {
         // past the `{`.  Point the caret AT it instead of one past: the whole message is
         // about that character, and a reader following the caret to the space beside it
         // has to guess which of the two the compiler meant.
-        let mut at = self.position.clone();
+        let mut at = self.position;
         at.pos = at.pos.saturating_sub(1).max(1);
         diagnostic_at!(
             self,
@@ -2433,7 +2450,7 @@ impl Lexer {
     fn end(&mut self) {
         self.peek = LexResult {
             has: LexItem::None,
-            position: self.position.clone(),
+            position: self.position,
         }
     }
 
@@ -2449,7 +2466,7 @@ impl Lexer {
         let at_edge = self.link == self.memory.len();
         // Where the source the parser has consumed stops, captured before the cursor
         // runs on to the next token — see `report_pos`.
-        self.prev_end = self.position.clone();
+        self.prev_end = self.position;
         let Some(n) = self.next() else {
             self.end();
             return;
@@ -2552,7 +2569,7 @@ impl Lexer {
             // `checkpoint_parse` isn't on every token.
             bc_throttle = bc_throttle.wrapping_add(1);
             if bc_throttle.is_multiple_of(256) {
-                crate::timeout::checkpoint_parse(&self.peek.position.file, self.peek.position.line);
+                crate::timeout::checkpoint_parse(self.peek.position.file, self.peek.position.line);
             }
             if matches!(self.peek.has, LexItem::None) {
                 return false;
@@ -2826,7 +2843,7 @@ impl Lexer {
     pub fn has_identifier_pos(&mut self) -> Option<(String, Position)> {
         if let LexItem::Identifier(n) = &self.peek.has {
             let n = n.clone();
-            let pos = self.peek.position.clone();
+            let pos = self.peek.position;
             lex_trace(format_args!(
                 "idpos {n:?} @ {}:{} (cursor {}:{})",
                 pos.line, pos.pos, self.position.line, self.position.pos

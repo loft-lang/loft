@@ -1444,7 +1444,7 @@ pub(crate) fn run_tests(
                     continue;
                 }
                 // Skip standard library / operators.
-                if crate::file_access::is_stdlib_source(&def.position.file) {
+                if crate::file_access::is_stdlib_source(def.position.file) {
                     continue;
                 }
                 // skip library functions loaded via `use`. Only run
@@ -1947,7 +1947,7 @@ pub(crate) fn run_tests(
                                 if n_main != u32::MAX {
                                     run_cmd.env(
                                         "LOFT_NATIVE_MAIN_FILE",
-                                        native_data.def(n_main).position().file.to_string(),
+                                        native_data.def(n_main).position().file,
                                     );
                                 }
                                 if std::env::var("LOFT_SOURCE_DIR").is_err()
@@ -2319,7 +2319,7 @@ pub(crate) fn run_tests(
                 if !def.native.is_empty() {
                     continue;
                 }
-                let Some(src) = coverage_path(&def.position.file, &abs_file, pkg_root.as_deref())
+                let Some(src) = coverage_path(def.position.file, &abs_file, pkg_root.as_deref())
                 else {
                     continue;
                 };

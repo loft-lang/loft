@@ -6289,7 +6289,7 @@ impl Output<'_> {
                 let user_fn = name.starts_with("n_") || name.starts_with("t_");
                 let opaque = user_fn
                     && !matches!(callee.code(), Value::Block(_))
-                    && (!crate::file_access::is_stdlib_source(&callee.position.file)
+                    && (!crate::file_access::is_stdlib_source(callee.position.file)
                         || callee
                             .attributes()
                             .iter()
@@ -6525,7 +6525,7 @@ impl Output<'_> {
     /// the operators the program actually emits — a table entry is never a guess about
     /// what might run.
     fn ckpt_site(&mut self, symbol: &str) -> usize {
-        let pos = self.data.def(self.def_nr).position().clone();
+        let pos = *self.data.def(self.def_nr).position();
         // The statement-level `// loft:` stream is the only position the emitter carries.
         // Before the first one in a body it is still the PREVIOUS function's line, so a
         // body that has not emitted one yet falls back to the definition's own line
@@ -7215,7 +7215,7 @@ extern crate loft;"
                     ref t => format!(" -> {}", t.rust_type()),
                 };
                 use std::fmt::Write as _;
-                if data.c_symbol_is_lazy(&def.position().file) {
+                if data.c_symbol_is_lazy(def.position().file) {
                     let fn_ty = format!(
                         "unsafe extern \"C\" fn({}){ret}",
                         sig.params
@@ -9902,7 +9902,7 @@ extern crate loft;"
             writeln!(
                 w,
                 "// loft:{}:{}",
-                crate::file_access::portable_str(&def.position().file),
+                crate::file_access::portable_str(def.position().file),
                 def.position().line
             )?;
         }
@@ -10887,16 +10887,16 @@ extern crate loft;"
             // this symbol's — and one of them is the shim loft built itself,
             // which arc D deliberately made indistinguishable from a declared
             // one.  The package is the thing the author can act on.
-            let from =
-                self.data
-                    .c_owner_pkg(&def.position().file)
-                    .map_or_else(String::new, |pkg| {
-                        let stem = std::path::Path::new(pkg)
-                            .file_name()
-                            .and_then(|s| s.to_str())
-                            .unwrap_or(pkg);
-                        format!(" (package `{stem}`)")
-                    });
+            let from = self
+                .data
+                .c_owner_pkg(def.position().file)
+                .map_or_else(String::new, |pkg| {
+                    let stem = std::path::Path::new(pkg)
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or(pkg);
+                    format!(" (package `{stem}`)")
+                });
             writeln!(
                 w,
                 "{{ compile_error!(\"loft: `{name}` is bound to the C symbol '{}' with #c{from}, and the {which} target has no C ABI to reach it — a wasm module cannot open a shared library. Give the library a wasm implementation, host it out of process, or drop the {flag} claim\") }}",

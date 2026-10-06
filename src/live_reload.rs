@@ -155,7 +155,7 @@ pub fn install(path: &str, stdlib_dir: &str, lib_dirs: &[String], running: &crat
     // id the running program's `parse` did.
     let entry_source = (0..shadow.definitions())
         .map(|d| shadow.def(d))
-        .find(|def| &*def.position.file == path)
+        .find(|def| def.position.file == path)
         .map_or(crate::data::STD_SOURCE, |def| def.source);
     let mut files: Vec<WatchedFile> = vec![WatchedFile {
         path: path.to_string(),

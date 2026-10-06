@@ -253,12 +253,12 @@ pub fn lookup_in(
 /// stdlib/library ones).  Shared by [`symbol_at`] and [`lookup`].
 fn hover_of_def(data: &Data, d: u32, text: &str, name: &str, stdlib_dir: &str) -> Option<Hover> {
     let (kind, cname) = crate::api_surface::classify(data, d)?;
-    let pos = data.def(d).position.clone();
+    let pos = data.def(d).position;
     // Read the definition's own source ONCE — for the `///` doc AND to locate the
     // name (the parser records `pos` at the body start, past the name).
     let src = read_def_source(text, name, stdlib_dir, &pos);
     let doc = src.as_deref().map_or_else(Vec::new, |s| {
-        doc_block_above(s, pos.line, crate::file_access::is_stdlib_source(&pos.file))
+        doc_block_above(s, pos.line, crate::file_access::is_stdlib_source(pos.file))
     });
     let def_col = src
         .as_deref()
@@ -268,7 +268,7 @@ fn hover_of_def(data: &Data, d: u32, text: &str, name: &str, stdlib_dir: &str) -
         signature: render_signature(data, d, kind, &cname),
         name: cname,
         doc,
-        def_file: collapse_slashes(&pos.file),
+        def_file: collapse_slashes(pos.file),
         def_line: pos.line,
         def_col,
     })
@@ -333,12 +333,12 @@ pub fn resolve_at(text: &str, stdlib_dir: &str, line: u32, col: u32) -> Option<H
                 "{tname}.{fname}: {}",
                 p.data.display_type_name(&p.data.attr_type(type_def, attr))
             );
-            let pos = p.data.def(type_def).position.clone();
+            let pos = p.data.def(type_def).position;
             Some(Hover {
                 name: fname,
                 signature: sig,
                 doc: Vec::new(),
-                def_file: collapse_slashes(&pos.file),
+                def_file: collapse_slashes(pos.file),
                 def_line: pos.line,
                 def_col: pos.pos,
             })
@@ -388,13 +388,13 @@ fn render_signature(data: &Data, d: u32, kind: &str, name: &str) -> String {
 /// relative (e.g. `default/01_code.loft`); the stdlib root is the parent of
 /// `stdlib_dir` (`…/default`).  `None` when the source can't be read.
 fn read_def_source(buf: &str, buf_name: &str, stdlib_dir: &str, pos: &Position) -> Option<String> {
-    if &*pos.file == buf_name {
+    if pos.file == buf_name {
         return Some(buf.to_string());
     }
     let root = Path::new(stdlib_dir)
         .parent()
         .map_or_else(|| Path::new("").to_path_buf(), Path::to_path_buf);
-    std::fs::read_to_string(root.join(&*pos.file)).ok()
+    std::fs::read_to_string(root.join(pos.file)).ok()
 }
 
 /// The contiguous comment block directly above the declaration on `decl_line`

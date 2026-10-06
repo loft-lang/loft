@@ -644,9 +644,9 @@ impl<'a> IrNode<'a> {
     #[must_use]
     pub fn span_pos(&self) -> Position {
         match *self {
-            IrNode::Native(Value::Span(b)) => b.0.clone(),
+            IrNode::Native(Value::Span(b)) => b.0,
             IrNode::Store(s, n) => Position {
-                file: n.field_str(s, ds::SPAN_POS_FILE).into(),
+                file: crate::lexer::intern_file(n.field_str(s, ds::SPAN_POS_FILE)),
                 line: n.field_int(s, ds::SPAN_POS_LINE) as u32,
                 pos: n.field_int(s, ds::SPAN_POS_POS) as u32,
             },
@@ -898,7 +898,7 @@ mod tests {
 
     fn pos() -> Position {
         Position {
-            file: "f.loft".into(),
+            file: "f.loft",
             line: 1,
             pos: 1,
         }

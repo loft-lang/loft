@@ -196,9 +196,7 @@ impl Parser {
         // @PLN115 S6 — capture the member name's position for the resolution index,
         // but only when recording: `Position` holds a `String`, so an unconditional
         // clone would tax every field access on a normal compile.
-        let field_pos = self
-            .record_resolutions
-            .then(|| self.lexer.peek_pos().clone());
+        let field_pos = self.record_resolutions.then(|| *self.lexer.peek_pos());
         let Some(field) = self.lexer.has_identifier() else {
             // `.<digits>` is the TUPLE spelling and nothing else (`@FR-T-Proj`), so reaching
             // here with one means the receiver is not a tuple — a fact only this site knows,
@@ -354,10 +352,10 @@ impl Parser {
                 .unwrap_or_default();
             let read_count = reads.len();
             if !reads.is_empty() {
-                let pos = self.lexer.peek_pos().clone();
+                let pos = *self.lexer.peek_pos();
                 let entry = self.sandbox_field_reads.entry(self.context).or_default();
                 for t in reads {
-                    entry.push((t, pos.clone()));
+                    entry.push((t, pos));
                 }
             }
             // @PLN86 F5 — remember this field access so a raw write at the assignment
@@ -2872,9 +2870,9 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                 // the start of the end expression, and (after it is parsed) the start of the
                 // `]` that closes the slice.  Taken here because this is the only point that
                 // brackets the whole bound whatever it is spelled as.
-                let bound_start = self.lexer.peek_pos().clone();
+                let bound_start = *self.lexer.peek_pos();
                 let ot_type = self.expression(&mut other);
-                let bound_end = self.lexer.peek_pos().clone();
+                let bound_end = *self.lexer.peek_pos();
                 let bound_span = (bound_end.line == bound_start.line
                     && bound_end.pos > bound_start.pos)
                     .then(|| {

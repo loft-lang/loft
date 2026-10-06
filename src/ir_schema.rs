@@ -651,7 +651,7 @@ fn write_key_list(out: &mut String, keys: &[Key]) {
 
 fn write_position(out: &mut String, pos: &Position) {
     out.push_str("{\"file\":");
-    write_str(out, &pos.file);
+    write_str(out, pos.file);
     let _ = write!(out, ",\"line\":{},\"pos\":{}}}", pos.line, pos.pos);
 }
 
@@ -757,7 +757,7 @@ fn block_from_parsed(p: &Parsed) -> Result<Block, TypeDecodeError> {
 /// Decode a [`Position`] (V3 — carried by `Value::Span`).
 fn position_from_parsed(p: &Parsed) -> Result<Position, TypeDecodeError> {
     Ok(Position {
-        file: as_str(field(p, "file")?)?.into(),
+        file: crate::lexer::intern_file(&as_str(field(p, "file")?)?),
         line: as_u32(field(p, "line")?)?,
         pos: as_u32(field(p, "pos")?)?,
     })
@@ -1355,7 +1355,7 @@ fn definition_from_parsed(p: &Parsed) -> Result<Definition, TypeDecodeError> {
     // variables (C4): the per-function debug-symbol table.  The function's
     // name/file equal this def's name/position.file (set at add_def), so they
     // are reconstructed here rather than stored.
-    let variables = variables_from_parsed(field(p, "variables")?, &name, &position.file)?;
+    let variables = variables_from_parsed(field(p, "variables")?, &name, position.file)?;
     Ok(Definition {
         bound_holder: false,
         variables,
@@ -1951,7 +1951,7 @@ mod tests {
             Value::FnRef(2, 1, Box::new(Type::Boolean)),
             Value::Span(Box::new((
                 Position {
-                    file: "f.loft".into(),
+                    file: "f.loft",
                     line: 3,
                     pos: 7,
                 },
@@ -2045,7 +2045,7 @@ mod tests {
             Value::Loop(Box::new(block)),
             Value::Span(Box::new((
                 Position {
-                    file: "src/x.loft".into(),
+                    file: "src/x.loft",
                     line: 12,
                     pos: 4,
                 },
@@ -2084,7 +2084,7 @@ mod tests {
         assert_eq!(
             value_to_json(&Value::Span(Box::new((
                 Position {
-                    file: "f.loft".into(),
+                    file: "f.loft",
                     line: 3,
                     pos: 7
                 },
@@ -2146,7 +2146,7 @@ mod tests {
             Value::Loop(Box::new(block)),
             Value::Span(Box::new((
                 Position {
-                    file: "f".into(),
+                    file: "f",
                     line: 1,
                     pos: 1,
                 },
@@ -2289,7 +2289,7 @@ mod tests {
             first_child: u32::MAX,
             next_sibling: u32::MAX,
             position: Position {
-                file: "geo.loft".into(),
+                file: "geo.loft",
                 line: 4,
                 pos: 0,
             },

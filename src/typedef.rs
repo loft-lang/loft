@@ -310,7 +310,7 @@ pub fn actual_types_deferred(
             DefType::Unknown => {
                 if let Some(buf) = defer_unknown.as_deref_mut() {
                     let def = data.def(d);
-                    buf.push((def.source, d, def.position.clone()));
+                    buf.push((def.source, d, def.position));
                     continue;
                 }
                 let name = &data.def(d).name;
@@ -841,7 +841,7 @@ fn report_unknown_key_fields(data: &mut Data, lexer: &mut Lexer) {
              A keyed collection names its keys as FIELDS OF ITS ELEMENT — write \
              `hash<Element[key_field]>`, not `hash<key, Element>`"
         );
-        let position = data.def(decl_d).position.clone();
+        let position = data.def(decl_d).position;
         lexer.pos_diagnostic(Level::Error, &position, &msg);
     }
 }

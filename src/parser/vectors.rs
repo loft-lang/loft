@@ -434,7 +434,7 @@ impl Parser {
         }
         let mut second_code = Value::Null;
         let mut parent_tp = Type::Unknown(0);
-        let second_pos = self.lexer.peek_pos().clone();
+        let second_pos = *self.lexer.peek_pos();
         let second_type = self.parse_operators(
             &Type::Unknown(0),
             &mut second_code,
@@ -552,7 +552,7 @@ impl Parser {
             return Type::Void;
         }
         if self.lexer.has_token("!") {
-            let operand_pos = self.lexer.peek_pos().clone();
+            let operand_pos = *self.lexer.peek_pos();
             // The operand is a SUB-expression, so the assignment's destination hint does not
             // reach it (loft#1304 — see `Parser::prefix_operand`).
             let outer_prefix = std::mem::replace(&mut self.prefix_operand, true);
@@ -640,7 +640,7 @@ impl Parser {
             }
             self.call_op_as(val, "Not", "!", &[arg], &[t])
         } else if self.lexer.has_token("~") {
-            let operand_pos = self.lexer.peek_pos().clone();
+            let operand_pos = *self.lexer.peek_pos();
             // The operand is a SUB-expression, so the assignment's destination hint does not
             // reach it (loft#1304 — see `Parser::prefix_operand`).
             let outer_prefix = std::mem::replace(&mut self.prefix_operand, true);
@@ -651,7 +651,7 @@ impl Parser {
             let arg = val.clone();
             self.call_op_as(val, "BitNot", "~", &[arg], &[t])
         } else if self.lexer.has_token("-") {
-            let operand_pos = self.lexer.peek_pos().clone();
+            let operand_pos = *self.lexer.peek_pos();
             // The operand is a SUB-expression, so the assignment's destination hint does not
             // reach it (loft#1304 — see `Parser::prefix_operand`).
             let outer_prefix = std::mem::replace(&mut self.prefix_operand, true);
@@ -1073,7 +1073,7 @@ impl Parser {
             }
             self.parse_var(val, &name, parent_tp, &name_pos)
         } else if self.lexer.peek_token("$") {
-            let name_pos = self.lexer.peek_pos().clone();
+            let name_pos = *self.lexer.peek_pos();
             self.lexer.has_token("$");
             self.parse_var(val, "$", parent_tp, &name_pos)
         } else if let Some(nr) = self.lexer.has_integer() {
@@ -1450,7 +1450,7 @@ or build a local and use that."
         let outer_context = self.context;
         let outer_vars = std::mem::replace(
             &mut self.vars,
-            Function::new(&lambda_name, &self.lexer.pos().file),
+            Function::new(&lambda_name, self.lexer.pos().file),
         );
         let outer_loop = self.in_loop;
         self.in_loop = false;
@@ -1666,8 +1666,8 @@ or build a local and use that."
     /// would record ones no parse reads (a format string's holes) for the literal's second
     /// read to replay — against a table of its own, which the literal's read puts back.
     fn lambda_signature(&mut self) -> Type {
-        let file = self.lexer.pos().file.clone();
-        let outer_vars = std::mem::replace(&mut self.vars, Function::new("__lambda", &file));
+        let file = self.lexer.pos().file;
+        let outer_vars = std::mem::replace(&mut self.vars, Function::new("__lambda", file));
         self.lexer.token("(");
         let mut arguments = Vec::new();
         self.parse_arguments("__lambda", &mut arguments);
@@ -1690,8 +1690,8 @@ or build a local and use that."
     /// read is looking for, so it answers none, and the value holding it binds nothing
     /// (`Parser::discovery_skipped_lambda`).  Read as [`Self::lambda_signature`] reads a body.
     fn skip_short_lambda(&mut self, expect_close: bool) {
-        let file = self.lexer.pos().file.clone();
-        let outer_vars = std::mem::replace(&mut self.vars, Function::new("__lambda", &file));
+        let file = self.lexer.pos().file;
+        let outer_vars = std::mem::replace(&mut self.vars, Function::new("__lambda", file));
         let mut arguments = Vec::new();
         if expect_close {
             while let Some(name) = self.lexer.has_identifier() {
@@ -1828,7 +1828,7 @@ or build a local and use that."
         let outer_context = self.context;
         let outer_vars = std::mem::replace(
             &mut self.vars,
-            Function::new(&lambda_name, &self.lexer.pos().file),
+            Function::new(&lambda_name, self.lexer.pos().file),
         );
         let outer_loop = self.in_loop;
         self.in_loop = false;
@@ -3261,7 +3261,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
     fn refuse_mixed_comprehension(&mut self) {
         // The caret goes on the token that makes the literal mixed (the `for`, or the `,` after
         // a comprehension), read before the skip moves the scan past it.
-        let at = self.lexer.peek().position.clone();
+        let at = self.lexer.peek().position;
         if !self.first_pass {
             diagnostic_at!(
                 self.lexer,
@@ -3367,7 +3367,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         self.vars.defined(for_var);
         let if_step = if self.lexer.has_token("if") {
             let mut if_expr = Value::Null;
-            let at = self.lexer.peek().position.clone();
+            let at = self.lexer.peek().position;
             let tp = self.expression(&mut if_expr);
             // The filter is a CONDITION, and it took the expression raw: a store there
             // (`for x in r if n = x`) read a corrupt stack reference and panicked the
@@ -3436,7 +3436,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             // DECLARED `vector<?S>` (the first arm above).
             Type::Unknown(0)
         };
-        let body_pos = self.lexer.peek_pos().clone();
+        let body_pos = *self.lexer.peek_pos();
         let mut body = Value::Null;
         let body_type = self.parse_block("for", &mut body, &body_expected);
         // #319 — a struct-literal body returns `Rewritten(Reference(...))`.
@@ -5596,7 +5596,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             if Self::seeds_lambda_hint(in_t) {
                 self.expected = in_t.base().clone();
             }
-            let item_pos = self.lexer.peek_pos().clone();
+            let item_pos = *self.lexer.peek_pos();
             let parsed = self.parse_operators(&in_t.clone(), &mut p, &mut parent_tp, 0);
             // A name READ must resolve — the struct field value's gap (`parse_object_field`):
             // `[undefined]` reported only that `main_vector<unknown>` never resolved.

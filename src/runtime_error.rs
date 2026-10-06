@@ -194,12 +194,12 @@ impl RuntimeError {
     /// `file` / `line` come from the `panic("msg", file, line)` stub
     /// arguments injected by the parser at the loft call site.
     #[must_use]
-    pub fn user_panic(message: String, file: String, line: u32) -> Self {
+    pub fn user_panic(message: String, file: &str, line: u32) -> Self {
         let position = if file.is_empty() {
             None
         } else {
             Some(Position {
-                file: file.into(),
+                file: crate::lexer::intern_file(file),
                 line,
                 pos: 1,
             })
@@ -374,12 +374,12 @@ impl RuntimeError {
 
     /// Construct an `AssertionFailed` error at the loft surface call site.
     #[must_use]
-    pub fn assertion_failed(message: String, file: String, line: u32) -> Self {
+    pub fn assertion_failed(message: String, file: &str, line: u32) -> Self {
         let position = if file.is_empty() {
             None
         } else {
             Some(Position {
-                file: file.into(),
+                file: crate::lexer::intern_file(file),
                 line,
                 pos: 1,
             })
@@ -440,12 +440,12 @@ impl RuntimeError {
     }
 
     #[must_use]
-    pub fn stack_overflow(file: String, line: u32) -> Self {
+    pub fn stack_overflow(file: &str, line: u32) -> Self {
         let position = if file.is_empty() {
             None
         } else {
             Some(Position {
-                file: file.into(),
+                file: crate::lexer::intern_file(file),
                 line,
                 pos: 1,
             })
@@ -583,7 +583,7 @@ pub fn logged_in_production(
     // `[user_panic]` / `[assertion_failed]` label and the same C66 severity as every other
     // production-mode runtime event, on whichever backend produced it.
     let position = Position {
-        file: file.into(),
+        file: crate::lexer::intern_file(file),
         line,
         pos: 1,
     };
@@ -600,18 +600,18 @@ mod tests {
 
     #[test]
     fn user_panic_carries_message_and_position() {
-        let err = RuntimeError::user_panic("oops".into(), "test.loft".into(), 42);
+        let err = RuntimeError::user_panic("oops".into(), "test.loft", 42);
         assert!(matches!(err.kind, RuntimeErrorKind::UserPanic { .. }));
         assert_eq!(err.kind.label(), "user_panic");
         assert!(err.message.contains("oops"));
         let pos = err.position.as_ref().expect("position present");
-        assert_eq!(&*pos.file, "test.loft");
+        assert_eq!(pos.file, "test.loft");
         assert_eq!(pos.line, 42);
     }
 
     #[test]
     fn assertion_failed_carries_message_and_position() {
-        let err = RuntimeError::assertion_failed("x == 5".into(), "fixture.loft".into(), 7);
+        let err = RuntimeError::assertion_failed("x == 5".into(), "fixture.loft", 7);
         assert!(matches!(err.kind, RuntimeErrorKind::AssertionFailed { .. }));
         assert_eq!(err.kind.label(), "assertion_failed");
         assert!(err.message.contains("x == 5"));
@@ -621,13 +621,13 @@ mod tests {
 
     #[test]
     fn empty_file_means_no_position() {
-        let err = RuntimeError::user_panic("oops".into(), String::new(), 0);
+        let err = RuntimeError::user_panic("oops".into(), "", 0);
         assert!(err.position.is_none());
     }
 
     #[test]
     fn to_diag_entry_renders_level_and_position() {
-        let err = RuntimeError::user_panic("boom".into(), "x.loft".into(), 3);
+        let err = RuntimeError::user_panic("boom".into(), "x.loft", 3);
         let entry = err.to_diag_entry();
         assert_eq!(entry.level, Level::Error);
         assert_eq!(entry.file, "x.loft");
@@ -675,7 +675,7 @@ mod tests {
             "divide_by_zero".into(),
             "divide by zero".into(),
             Some(Position {
-                file: "lib.loft".into(),
+                file: "lib.loft",
                 line: 7,
                 pos: 1,
             }),

@@ -126,7 +126,7 @@ pub fn read_value(stores: &Stores, slot: Node) -> Value {
         // ── inlined sub-structs ───────────────────────────────────────────────
         ValueType::Span => {
             let position = Position {
-                file: slot.field_str(stores, ds::SPAN_POS_FILE).into(),
+                file: crate::lexer::intern_file(slot.field_str(stores, ds::SPAN_POS_FILE)),
                 line: slot.field_int(stores, ds::SPAN_POS_LINE) as u32,
                 pos: slot.field_int(stores, ds::SPAN_POS_POS) as u32,
             };
@@ -636,7 +636,7 @@ pub fn open_bundle_into(path: &str, database: &mut Stores) -> std::io::Result<Da
 pub fn read_definition(stores: &Stores, r: Record, bodies: bool) -> Definition {
     let name = r.field_str(stores, ds::DEF_NAME).to_string();
     let position = Position {
-        file: r.field_str(stores, ds::DEF_POSITION + ds::POS_FILE).into(),
+        file: crate::lexer::intern_file(r.field_str(stores, ds::DEF_POSITION + ds::POS_FILE)),
         line: r.field_int(stores, ds::DEF_POSITION + ds::POS_LINE) as u32,
         pos: r.field_int(stores, ds::DEF_POSITION + ds::POS_POS) as u32,
     };
@@ -1167,7 +1167,7 @@ mod tests {
     fn value_inline_substructs_round_trip() {
         round_trip_value(&Value::Span(Box::new((
             Position {
-                file: "f.loft".into(),
+                file: "f.loft",
                 line: 12,
                 pos: 3,
             },

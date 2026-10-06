@@ -1015,7 +1015,7 @@ impl Parser {
                     // unreachable statement, which is what the caret should sit on.  So
                     // this site names its position rather than taking `report_pos`'s
                     // consumed-source default, which would point at the terminator above.
-                    let at = self.lexer.peek().position.clone();
+                    let at = self.lexer.peek().position;
                     self.lexer.pos_diagnostic_coded(
                         Level::Warning,
                         &at,
@@ -1706,8 +1706,8 @@ impl Parser {
                 let at = l
                     .last()
                     .and_then(Value::span_pos)
-                    .cloned()
-                    .or_else(|| Some(self.data.def(self.context).position().clone()));
+                    .copied()
+                    .or_else(|| Some(*self.data.def(self.context).position()));
                 self.n_store_violation(&t, result, "the return value", at.as_ref());
             }
             // The accumulator IS the return value, so it carries the declared
@@ -2222,7 +2222,7 @@ impl Parser {
                 // The tail is what the message is about, and a call already carries its own
                 // span (wrapped at the `(` on pass 2).  Prefer it: the block-tail check can
                 // only run once the block is closed, so the default lands on the `}`.
-                if let Some(tail) = l[last].span_pos().cloned() {
+                if let Some(tail) = l[last].span_pos().copied() {
                     self.lexer.pos_diagnostic(Level::Error, &tail, msg);
                 } else {
                     diagnostic!(self.lexer, Level::Error, "{msg}");
@@ -2490,8 +2490,8 @@ impl Parser {
             let ret_at = if is_return {
                 l[last]
                     .span_pos()
-                    .cloned()
-                    .or_else(|| Some(self.data.def(self.context).position().clone()))
+                    .copied()
+                    .or_else(|| Some(*self.data.def(self.context).position()))
             } else {
                 None
             };
@@ -2549,7 +2549,7 @@ impl Parser {
                         test: t.clone(),
                         should: result.clone(),
                         context: context.to_string(),
-                        at: tail_pos.clone(),
+                        at: *tail_pos,
                     });
                 } else {
                     self.validate_convert(context, t, result, tail_pos);
@@ -5524,7 +5524,7 @@ impl Parser {
         // read as a struct literal here.
         let outer_head = self.in_control_head;
         self.in_control_head = true;
-        let cond_at = self.lexer.peek().position.clone();
+        let cond_at = self.lexer.peek().position;
         let tp = self.expression(&mut test);
         self.in_control_head = outer_head;
         self.warn_constant_condition(&tp, &cond_at, "if");
@@ -5629,7 +5629,7 @@ impl Parser {
         // NOT treat that synthesised null as a nullable branch (it would add a spurious `τ?`).
         let had_else = self.lexer.has_token("else");
         // Where the else arm starts: a tuple arm pair that does not join is reported there.
-        let else_pos = self.lexer.pos().clone();
+        let else_pos = *self.lexer.pos();
         if had_else {
             self.vars.restore_write_state(&write_state);
             self.vars.clear_write_state();
@@ -6022,7 +6022,7 @@ impl Parser {
             *self.complexity.entry(self.context).or_insert(0) += 1 + self.cc_nest;
         }
         // Save position of the match keyword for exhaustiveness diagnostics.
-        let match_pos = self.lexer.pos().clone();
+        let match_pos = *self.lexer.pos();
         // 1. Parse the subject expression.
         let mut subject = Value::Null;
         // A struct literal built in place types as `Rewritten(τ)` on the first pass — a signal to
@@ -6118,7 +6118,7 @@ impl Parser {
             Type::Iterator(elem_box, _) => {
                 let elm_tp = (**elem_box).clone();
                 let iter_tp = subject_type.clone();
-                let match_pos = self.lexer.pos().clone();
+                let match_pos = *self.lexer.pos();
                 let (buf, vec_tp, setup) =
                     self.collect_iterator_subject(subject, &iter_tp, &elm_tp, &match_pos);
                 let mut match_code = Value::Null;
@@ -7172,7 +7172,7 @@ impl Parser {
         } else {
             expected
         };
-        let at = self.lexer.pos().clone();
+        let at = *self.lexer.pos();
         // A bare arm is a block arm without the braces, so its value is hinted the way a
         // block tail's is: without it an empty `[]` arm had no element type to build with and
         // lowered to the placeholder `Insert([Null])`, which the chain emitted as a jump over
@@ -8460,7 +8460,7 @@ impl Parser {
                         "a `match` over an iterator read more than {limit} elements (max_lookahead) — \
                          the source may be endless; bound it, or raise LOFT_MAX_LOOKAHEAD"
                     )),
-                    Value::str(&match_pos.file),
+                    Value::str(match_pos.file),
                     Value::Int(match_pos.line as i32),
                 ],
             );
@@ -10599,7 +10599,7 @@ impl Parser {
             self.expression(&mut hi);
             return (Value::Boolean(false), Type::Boolean);
         }
-        let pat_pos = self.lexer.pos().clone();
+        let pat_pos = *self.lexer.pos();
         let mut lit = Value::Null;
         let negate = self.lexer.has_token("-");
         let lit_type = if let Some(n) = self.lexer.has_integer() {
@@ -11115,7 +11115,7 @@ impl Parser {
         self.lexer.token(":");
         // @PLN35 PC3 — record the sub-rule edge (enclosing rule -> invoked rule) at the invocation
         // site, so the post-parse termination pass can reject a left-recursive cycle.
-        let site = self.lexer.peek().position.clone();
+        let site = self.lexer.peek().position;
         self.lexer.has_identifier(); // rule
         if !self.first_pass && self.context != u32::MAX {
             self.subrule_edges.push((self.context, fn_nr, site));
@@ -11176,7 +11176,7 @@ impl Parser {
         let mut adj: std::collections::HashMap<u32, Vec<(u32, crate::lexer::Position)>> =
             std::collections::HashMap::new();
         for (from, to, pos) in &edges {
-            adj.entry(*from).or_default().push((*to, pos.clone()));
+            adj.entry(*from).or_default().push((*to, *pos));
         }
         let cycles = Self::find_subrule_cycles(&adj);
         for (site, cycle) in &cycles {
@@ -11240,7 +11240,7 @@ impl Parser {
     pub(crate) fn check_reshape_under_reference(&mut self) {
         for r in crate::scopes::reshape_refusals(&self.data, &self.database) {
             let pos = crate::lexer::Position {
-                file: r.file.into(),
+                file: crate::lexer::intern_file(&r.file),
                 line: r.line,
                 pos: 1,
             };
@@ -11299,7 +11299,7 @@ impl Parser {
                             let idx = path.iter().position(|x| x == callee).unwrap_or(0);
                             let mut cycle = path[idx..].to_vec();
                             cycle.push(*callee);
-                            out.push((pos.clone(), cycle));
+                            out.push((*pos, cycle));
                         }
                     }
                     0 => Self::dfs_subrule(*callee, adj, color, path, reported, out),
@@ -13167,7 +13167,7 @@ impl Parser {
                     self.data.def(variant_def_nr).name(),
                     self.data.def(variant_def_nr).name(),
                 );
-                self.capture_took_body = Some(self.lexer.peek().position.clone());
+                self.capture_took_body = Some(self.lexer.peek().position);
             }
             if condition.is_empty() {
                 *code = stable_check;
@@ -13673,7 +13673,7 @@ impl Parser {
             // running program promoted (@PLN162 step 14).  A session's eval is never promoted.
             let owned = def.source == crate::data::MAIN_SOURCE
                 || (def.source == crate::data::STD_SOURCE
-                    && !crate::file_access::is_stdlib_source(&def.position.file));
+                    && !crate::file_access::is_stdlib_source(def.position.file));
             if def.def_type != DefType::Function || !owned || def.is_reentered_eval() {
                 continue;
             }
@@ -19551,7 +19551,7 @@ impl Parser {
     /// Parse an assert or panic keyword call: `assert(expr, msg)` / `panic(msg)`.
     /// The opening `(` is consumed by the caller; this function parses args and `)`.
     pub(crate) fn parse_intrinsic_call(&mut self, val: &mut Value, name: &str) -> Type {
-        let call_pos = self.lexer.pos().clone();
+        let call_pos = *self.lexer.pos();
         let mut list = Vec::new();
         let mut types = Vec::new();
         if !self.lexer.has_token(")") {
@@ -19583,7 +19583,7 @@ impl Parser {
     /// Reads the line at `pos.file:pos.line`, finds `assert(`, and extracts
     /// the text up to the matching `)`.
     fn extract_assert_expr(pos: &crate::lexer::Position) -> String {
-        let line = Self::read_source_line(&pos.file, pos.line);
+        let line = Self::read_source_line(pos.file, pos.line);
         // Find "assert(" and extract the condition
         if let Some(start) = line.find("assert(") {
             let after = start + 7; // skip "assert("
@@ -19692,7 +19692,7 @@ impl Parser {
             let (a_file, a_line) = if list.len() >= 4 {
                 (list[2].clone(), list[3].clone())
             } else {
-                (Value::str(&call_pos.file), Value::Int(call_pos.line as i32))
+                (Value::str(call_pos.file), Value::Int(call_pos.line as i32))
             };
             let d_nr = self.data.def_nr("n_assert");
             *val = Value::Call(d_nr, vec![test, message, a_file, a_line]);
@@ -19712,7 +19712,7 @@ impl Parser {
                 d_nr,
                 vec![
                     message,
-                    Value::str(&call_pos.file),
+                    Value::str(call_pos.file),
                     Value::Int(call_pos.line as i32),
                 ],
             );
@@ -19734,7 +19734,7 @@ impl Parser {
                 d_nr,
                 vec![
                     message,
-                    Value::str(&call_pos.file),
+                    Value::str(call_pos.file),
                     Value::Int(call_pos.line as i32),
                 ],
             );
@@ -19750,7 +19750,7 @@ impl Parser {
         name: &str,
         name_pos: &Position,
     ) -> Type {
-        let call_pos = self.lexer.pos().clone();
+        let call_pos = *self.lexer.pos();
         let mut list = Vec::new();
         let mut types: Vec<Type> = Vec::new();
         let mut arg_pos: Vec<Position> = Vec::new();
@@ -19951,7 +19951,7 @@ impl Parser {
             // Capture each argument's start so a later type-mismatch diagnostic
             // (in `process_call_args`) points the caret at the argument, not at
             // the cursor drifted to `)` / `,`.
-            arg_pos.push(self.lexer.peek_pos().clone());
+            arg_pos.push(*self.lexer.peek_pos());
             // loft#1883 — a record-backed `&(…)` parameter names its argument's record, so a
             // struct field of tuple type is read with its address.
             let prev_place = self.tuple_place_wanted;
@@ -20059,7 +20059,7 @@ impl Parser {
         if matches!(arg.unspan(), Value::Var(_)) {
             return;
         }
-        let Some(pos) = arg_pos.first().cloned() else {
+        let Some(pos) = arg_pos.first().copied() else {
             return;
         };
         diagnostic_at!(
@@ -20418,7 +20418,7 @@ impl Parser {
                 args.push(Value::str(""));
                 tps.push(Type::Text(Deps::none()));
             }
-            args.push(Value::str(&call_pos.file));
+            args.push(Value::str(call_pos.file));
             tps.push(Type::Text(Deps::none()));
             args.push(Value::Int(call_pos.line as i32));
             tps.push(Type::Integer(IntegerSpec::wide()));
@@ -21552,8 +21552,8 @@ impl Parser {
         let name = Self::method_spelling(self.data.def(selected).name());
         let at = arg_pos
             .first()
-            .cloned()
-            .unwrap_or_else(|| self.lexer.peek_pos().clone());
+            .copied()
+            .unwrap_or_else(|| *self.lexer.peek_pos());
         Some(self.dispatch_call(
             val,
             u16::MAX,
@@ -21595,7 +21595,7 @@ impl Parser {
         let mut types = vec![on];
         // arg_pos aligns with `list` by index; slot 0 is the receiver (its
         // position is the method-name token, the best available caret).
-        let mut arg_pos: Vec<Position> = vec![self.lexer.peek_pos().clone()];
+        let mut arg_pos: Vec<Position> = vec![*self.lexer.peek_pos()];
         // @F17 — named arguments reach the METHOD spelling too.  `parse_call` and
         // this loop are the language's two argument lists, and only the free one
         // collected `name: value`, so `show(c, loud: true)` compiled while
@@ -21699,7 +21699,7 @@ impl Parser {
                 self.expected = h;
             }
             let mut p = Value::Null;
-            arg_pos.push(self.lexer.peek_pos().clone());
+            arg_pos.push(*self.lexer.peek_pos());
             let t = self.expression(&mut p);
             self.expected = Type::Unknown(0);
             types.push(t);

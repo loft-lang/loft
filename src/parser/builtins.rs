@@ -19,7 +19,7 @@ impl Parser {
             } else if self.lexer.peek_token("") {
                 break;
             }
-            let before = self.lexer.peek().position.clone();
+            let before = self.lexer.peek().position;
             let mut dummy = Value::Null;
             self.expression(&mut dummy);
             // Recovery must always make forward progress.  Consume an argument
@@ -554,7 +554,7 @@ impl Parser {
         ret_type: &Type,
         label: &str,
     ) -> u32 {
-        let pos = self.lexer.pos().clone();
+        let pos = *self.lexer.pos();
         let wname = format!("__par_nullable_w_{}_{}_{label}", pos.line, pos.pos);
         let w_d_nr = self
             .data
@@ -563,7 +563,7 @@ impl Parser {
             .data
             .add_attribute(&mut self.lexer, w_d_nr, "e", elem_tp.clone());
         self.data.set_returned(w_d_nr, ret_type.clone());
-        let mut wvars = crate::variables::Function::new(&wname, &pos.file);
+        let mut wvars = crate::variables::Function::new(&wname, pos.file);
         let e_var = wvars.add_variable("e", elem_tp, &mut self.lexer);
         wvars.become_argument(e_var);
         wvars.defined(e_var);

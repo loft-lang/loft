@@ -156,7 +156,7 @@ impl Fault {
             crate::host::LoftError::Runtime(err) => Fault {
                 message: err.message.clone(),
                 label: err.kind.label().to_string(),
-                position: err.position.clone(),
+                position: err.position,
                 call_chain: err.call_chain.clone(),
             },
             other => Fault::from(other.to_string()),
@@ -706,7 +706,7 @@ impl Frame {
         let (file, line, col) = e
             .position
             .as_ref()
-            .map_or(("", 0u32, 0u32), |p| (&*p.file, p.line, p.pos));
+            .map_or(("", 0u32, 0u32), |p| (p.file, p.line, p.pos));
         self.put_str(&e.message)
             && self.put_str(&e.label)
             && self.put_str(file)
@@ -735,7 +735,7 @@ impl Frame {
             // An empty file is "no position known", the same reading
             // `RuntimeError::user_panic` gives it.
             position: (!file.is_empty()).then_some(crate::lexer::Position {
-                file: file.into(),
+                file: crate::lexer::intern_file(&file),
                 line,
                 pos: col,
             }),

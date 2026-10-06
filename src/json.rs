@@ -522,7 +522,7 @@ impl<'a> JParser<'a> {
             }
             LexItem::Identifier(name) => {
                 let name = name.clone();
-                let pos = r.position.clone();
+                let pos = r.position;
                 self.parse_identifier_value(&name, &pos)
             }
             _ => {
