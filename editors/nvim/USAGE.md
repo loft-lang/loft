@@ -20,7 +20,7 @@ capabilities to `nvim-dap` API.
 | Feature | Server capability | Neovim | Default key | Status |
 |---|---|---|---|---|
 | Diagnostics | publishDiagnostics | `vim.diagnostic` | `]d` / `[d`, `<C-w>d` | ✅ built-in |
-| Hover (sig + `///` doc, or tracker-tag card) | hoverProvider | `vim.lsp.buf.hover` | `K` | ✅ |
+| Hover (sig + `///` doc; on `??`, `match`, `v[i]`, `+=` … the feature that documents it; on a library's item or `use` line, the library's card; or a tracker-tag card) | hoverProvider | `vim.lsp.buf.hover` | `K` | ✅ |
 | Go to definition | definitionProvider | `vim.lsp.buf.definition` | `gd` | ✅ |
 | Find references | referencesProvider | `vim.lsp.buf.references` | `grr` | ✅ |
 | Rename (locals + cross-file; refuses stdlib) | renameProvider + prepare | `vim.lsp.buf.rename` | `grn` | ✅ |
@@ -29,7 +29,7 @@ capabilities to `nvim-dap` API.
 | **What can I use here?** — every language feature, every library, and what the type under the cursor can do, as linked Markdown pages | codeActionProvider (`source.loft.overview`) + executeCommand `loft.overview` → `window/showDocument` | `code_action` anywhere; on a type name for its own page | `gra` | ✅ verified (Neovim 0.11: opens `index.md`, and `type-<T>.md` on a type) |
 | Outline / document symbols | documentSymbolProvider | `vim.lsp.buf.document_symbol` | `gO` | ✅ |
 | Format (`loft fmt`) | documentFormattingProvider | `vim.lsp.buf.format` | `<leader>f` | ✅ |
-| Completion | completionProvider | omni-complete / autotrigger / `nvim-cmp` | `<C-x><C-o>` | ✅ (nicer with a cmp plugin) |
+| Completion (each item documented when shown: a keyword's feature, a name's signature and doc) | completionProvider + `completionItem/resolve` | omni-complete / autotrigger / `nvim-cmp` | `<C-x><C-o>` | ✅ (nicer with a cmp plugin) |
 | Semantic highlighting | semanticTokensProvider | automatic | — | ✅ (Neovim 0.9+) |
 | Inlay hints (inferred types) | inlayHintProvider | `vim.lsp.inlay_hint` | auto-on | ✅ **Neovim 0.10+** only |
 | Tag links (`@PLN63` → issue) | documentLinkProvider | — | — | ⚠️ advertised, but Neovim has no built-in document-link UI — hover (`K`) shows the tag card; a clickable link needs a small handler (below) |

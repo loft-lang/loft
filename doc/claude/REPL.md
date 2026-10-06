@@ -110,7 +110,7 @@ machine (`loft search` or `loft install` fetches it once).
 |---|---|
 | `:features [word]` | Every language feature, grouped (values and types, collections, control flow, …). With a word, the features that mention it (`:features slice`). `:features inside` lists how loft itself is built. |
 | `:libs` | Every library in the registry, grouped by category, with its newest version, whether it is installed here, and its description. |
-| `:api <library> [word]` | Everything a library offers — each public function and type with its doc — or only the items whose signature contains `word`. |
+| `:api <library> [word]` | Everything a library offers — each public function and type with its doc — or only the items whose signature contains `word`.  It shows the version this project's `loft.lock` pins, else the newest. |
 | `:ops <Type>` | What a type can be written with: each operator and the definition behind it, its `[ ]` forms, and the interfaces it meets. |
 | `:doc <name>` | One thing in full: a feature (`:doc @F2`, `:doc ??`, `:doc match`), a function, type or method (`:doc split`), a library function (`:doc time::from_ymd`), or a library (`:doc time`). `:doc <feature> run` runs the feature's example in a scratch session, so its definitions never meet yours. |
 
