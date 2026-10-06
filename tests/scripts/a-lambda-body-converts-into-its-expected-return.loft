@@ -1,0 +1,40 @@
+// @FR-T-Chk-Lam — a lambda checked against `fn(σ) -> τ` checks its BODY against τ, so the body's
+// value converts into τ exactly as a named function's return does — at every position an expected
+// type reaches (argument, declared local, field, element, return, parameter default, tuple member,
+// an `if` / `match` arm, an alias, a lambda returning a lambda) — and the conversions a named
+// return refuses, a lambda refuses too (`integer` into `u8`, `text` into `integer`).
+// @falsified-at: none — the rules held when this walk measured them; the guard keeps them held.
+
+enum Shape { Circle { r: float }, Square { s: float } }
+struct H { f: fn(integer) -> float }
+type Op = fn(integer) -> float;
+
+fn area(s: Shape) -> float { match s { Circle { r } => r * r, Square { s } => s * s } }
+fn app_f(f: fn(integer) -> float, n: integer) -> float { f(n) }
+fn app_s(f: fn(float) -> Shape, n: float) -> Shape { f(n) }
+fn app_o(f: fn(integer) -> integer?, n: integer) -> integer? { f(n) }
+fn app_t(f: fn(integer) -> (integer, u8), n: integer) -> (integer, u8) { f(n) }
+fn app_r(f: fn(integer) -> integer, n: integer) -> integer { f(n) }
+fn make() -> fn(integer) -> float { |x| { x * 2 } }
+fn takes(n: integer, f: fn(integer) -> float = |x| { x + 1 }) -> float { f(n) }
+fn pick(c: boolean) -> fn(integer) -> float { if c { |x| { x * 2 } } else { |x| { x * 3 } } }
+fn pickm(n: integer) -> fn(integer) -> float { match n { 1 => |x| { x + 10 }, _ => |x| { x + 20 } } }
+fn adder() -> fn(integer) -> fn(integer) -> float { |x| { |y| { x + y } } }
+
+fn main() {
+  a = app_f(|x| { x }, 3);
+  assert(a == 3.0 && type_name(a) == "float", "an integer body into a float return: {a}");
+  assert(area(app_s(|x| { Circle { r: x } }, 2.0)) == 4.0, "a variant into its enum");
+  assert(app_o(|x| { if x > 0 { x } else { null } }, -1) == null, "null into a nullable return");
+  d = app_t(|x| { (x, 7) }, 5);
+  assert(d.0 == 5 && d.1 == 7, "a narrow tuple member");
+  assert(app_r(|x| { if x > 10 { return 99 }; x + 1 }, 50) == 99, "an early return");
+  l: fn(integer) -> float = |x| { x * 3 };
+  h = H { f: |x| { x * 4 } };
+  v: vector<fn(integer) -> float> = [|x| { x * 5 }, |x| { x * 6 }];
+  t: (fn(integer) -> float, integer) = (|x| { x * 7 }, 1);
+  o: Op = |x| { x * 9 };
+  hf = h.f; v1 = v[1]; m = make(); p = pick(false); q = pickm(2); inner = adder()(3);
+  assert("{l(1)} {hf(1)} {v1(1)} {m(1)} {takes(1)} {t.0(1)} {o(1)} {p(1)} {q(1)} {inner(4)}" == "3 4 6 2 2 7 9 3 21 7", "every position");
+  assert(type_name(inner(4)) == "float", "the inner lambda's return converts too");
+}

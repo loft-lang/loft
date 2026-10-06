@@ -1,0 +1,27 @@
+// @FR-L-Apply — calling a function VALUE whose result is itself a function: the call's
+// arguments are spelled for their own parameters, and an absent value answers the absent
+// function (`@FR-L-FnAbsent`).  `--native` emitted the integer argument as a function value
+// (`(3_i32 as u32, DbRef::NULL)` — the call's function-typed RESULT leaked its context into its
+// arguments) and the absent arm as `()`, so none of these compiled; the interpreter ran them.
+
+fn mk(n: integer) -> fn(integer) -> integer { |y| { n * y } }
+fn adder() -> fn(integer) -> fn(integer) -> integer { |x| { |y| { x + y } } }
+fn compose(f: fn(integer) -> integer, k: integer) -> fn(integer) -> integer { |y| { f(y) + k } }
+fn tag(p: text) -> fn(text) -> text { |s| { "{p}:{s}" } }
+
+fn main() {
+  f: fn(integer) -> fn(integer) -> integer = mk;
+  g = f(3);
+  assert(g(4) == 12, "a named function as the value: {g(4)}");
+  ad = adder(); inner = ad(3);
+  assert(inner(4) == 7, "a closure returning a closure: {inner(4)}");
+  c: fn(fn(integer) -> integer, integer) -> fn(integer) -> integer = compose;
+  d = c(|x| { x * 10 }, 3);
+  assert(d(2) == 23, "a function argument beside an integer: {d(2)}");
+  t: fn(text) -> fn(text) -> text = tag;
+  u = t("a");
+  assert(u("b") == "a:b", "text parameters: {u("b")}");
+  v: vector<fn(integer) -> fn(integer) -> integer> = [mk];
+  h = v[5]; gone = h(1);
+  assert(gone(2) == null, "an absent value answers the absent function");
+}
