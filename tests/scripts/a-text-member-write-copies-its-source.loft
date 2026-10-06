@@ -3,13 +3,17 @@
 // reach the member.  The cells cover every way a text variable can read: a loop that reuses
 // the compiler's work text for `t.0 += …`, a formatted append, an append after a copy of the
 // tuple, a user variable written after it was stored, a function whose work texts are the
-// CALLER's buffers (`keep`), and a `&text` parameter as the source.  Two controls already
+// CALLER's buffers (`copy_then_loop`), and a `&text` parameter as the source.  Two controls already
 // compiled: the tuple literal in a loop, and a single append with no loop.  Each value is
 // worked out by hand in the comment beside it.
-// @falsified-at: 2e3ef1057 — native exit 1 -> 0 (rustc E0382 on the moved work text, E0308 on `&*var.clone()`); interpret INERT (expected: the interpreter already copied)
-// CHANNEL: the native exit — the control does not compile; the interpreter answers every cell
-//   on both trees.
-// HOLDS: asserts 0, leak none, panic none on both trees for the interpreter.
+// @falsified-at: 2e3ef1057 — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/a-text-member-write-copies-its-source.patch — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// CHANNEL: the native exit — rustc refuses the control (E0382 on a moved work text, E0308 on
+//   `&*var_x.clone()`); the interpreter answers every cell on both trees.
+// HOLDS: asserts 0, leak none, panic none and free-refusals 0 on both trees and both backends,
+//   as measured by `make falsify` at 2e3ef1057.
 
 // "ab" + three "xy".
 fn loop_append() -> text { t = ("ab", 0); for _ in 0..3 { t.0 += "xy"; } t.0 }
