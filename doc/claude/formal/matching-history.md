@@ -30,6 +30,16 @@ after it.  The arm rule's "bare binding" wording stood for two months without th
 having it — corrected 2026-09-07, with the silence that hid it (an arm naming nothing was
 skipped without a diagnostic).
 
+- **D-match-21 — CLOSED 2026-10-06 (@PLN186 step 5).** `(P-Alt)` inside a field sub-pattern,
+  `Box { s: Circle | Square, n } => n`, was refused (*"Expect token }"*).  The alternation now lives
+  in `parse_field_sub_pattern`, the one path a struct field, a variant's field and a tuple element
+  all take: a `|` before the sub-pattern's end selects the slice element's alternation without its
+  parentheses.  Step 4's tuple-element branch folded into it, and with it a borrow-source slip:
+  step 4 gave the names the tuple TEMPORARY as their borrow source, where `match_borrow_source`
+  answers the member's own (loft#1526's lesson).  Guards:
+  `tests/scripts/a-field-sub-pattern-lists-alternatives.loft`,
+  `a-field-alternative-binds-a-name-at-another-type.loft`.
+
 - **D-match-18 — CLOSED 2026-10-06 (@PLN186 step 2).** `(P-Multi)` on a plain-struct subject,
   `P { x: 0, y: v } | P { x: v, y: 0 } => v`, was refused (*"Unknown variable 'v'"*).  The
   refusal was not about `|`: a struct arm read a field's bare-name pattern (`y: v`) as a VALUE,

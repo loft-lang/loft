@@ -1,0 +1,52 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-P-Alt` at a FIELD position — `Box { s: Circle { r } | Square { r }, n } => r * 10.0 + n`:
+// the field matches when any alternative's tag does, and each name is read from whichever variant
+// matched.  The same home serves a struct field (f1), a variant's field (f2), bare variants with
+// no fields (f3), a name only some alternatives bind, `τ?` (f4, `@FR-P-Alt-Diff`), a text and a
+// vector payload (f5, f5b — the names borrow what the field borrows), an alternation beside a
+// literal field (f6), and the arm's end restoring what a name meant before it (f7: an outer `r`
+// keeps 55).  A tuple element takes the same path (a-tuple-element-lists-alternatives.loft).
+// Values computed by hand, both backends.
+//
+// @falsified-at: 7138dfe64 — interpret exit 1 -> 0, native exit 1 -> 0
+//   Before step 5 a `|` inside a field's pattern did not parse.
+//   CHANNEL: a refusal (*"Expect token }"*), on BOTH backends.
+//   ARMED: nothing.
+//   WITNESS: exit 1 at the field's `|`.
+//   HOLDS: nothing runs; every cell is unreached.
+// @falsified-by: tests/falsified/a-field-sub-pattern-lists-alternatives.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   Step 5 reverted whole (the durable receipt): the same refusal.
+//   CHANNEL: a refusal, on BOTH backends.
+//   ARMED: nothing.
+//   WITNESS: as above.
+//   HOLDS: as above.
+
+enum Sh { Circle { r: float }, Square { r: float }, Named { t: text }, Label { t: text }, Bag { items: vector<integer> }, Sack { items: vector<integer> }, Dot }
+struct Box { s: Sh, n: float }
+enum Outer { Wrap { inner: Sh }, Empty }
+
+fn f1(b: Box) -> float { match b { Box { s: Circle { r } | Square { r }, n } => r * 10.0 + n } }
+fn f2(o: Outer) -> float { match o { Wrap { inner: Circle { r } | Square { r } } => r, Wrap { inner: _ } => -2.0, Empty => -3.0 } }
+fn f3(b: Box) -> float { match b { Box { s: Circle | Square, n } => n, Box { s: _, n } => -n } }
+fn f4(b: Box) -> float { match b { Box { s: Circle { r } | Dot, n } => (r ?? -1.0) * 10.0 + n, Box { s: _, n: _ } => -9.0 } }
+fn f5(b: Box) -> text { match b { Box { s: Named { t } | Label { t }, n } => "{t}{n}", Box { s: _, n: _ } => "none" } }
+fn f5b(b: Box) -> integer { match b { Box { s: Bag { items } | Sack { items }, n: _ } => len(items) * 100 + items[len(items) - 1], Box { s: _, n: _ } => -1 } }
+fn f6(b: Box) -> float { match b { Box { s: Circle { r } | Square { r }, n: 0.0 } => r, Box { s: _, n } => n * 100.0 } }
+fn f7(b: Box) -> float { r = 55.0; x = match b { Box { s: Circle { r } | Square { r }, n: _ } => r, Box { s: _, n: _ } => 0.0 }; r * 1000.0 + x }
+
+fn main() {
+  assert(f1(Box { s: Circle { r: 2.0 }, n: 3.0 }) == 23.0, "f1 a {f1(Box { s: Circle { r: 2.0 }, n: 3.0 })}");
+  assert(f1(Box { s: Square { r: 4.0 }, n: 1.0 }) == 41.0, "f1 b");
+  assert(f2(Wrap { inner: Square { r: 6.0 } }) == 6.0 && f2(Wrap { inner: Sh.Dot }) == -2.0 && f2(Outer.Empty) == -3.0, "f2 {f2(Wrap { inner: Square { r: 6.0 } })}");
+  assert(f3(Box { s: Square { r: 1.0 }, n: 7.0 }) == 7.0 && f3(Box { s: Sh.Dot, n: 7.0 }) == -7.0, "f3 {f3(Box { s: Square { r: 1.0 }, n: 7.0 })}");
+  assert(f4(Box { s: Circle { r: 2.0 }, n: 3.0 }) == 23.0, "f4 a {f4(Box { s: Circle { r: 2.0 }, n: 3.0 })}");
+  assert(f4(Box { s: Sh.Dot, n: 3.0 }) == -7.0, "f4 null {f4(Box { s: Sh.Dot, n: 3.0 })}");
+  assert(f4(Box { s: Square { r: 2.0 }, n: 3.0 }) == -9.0, "f4 none");
+  assert(f5(Box { s: Label { t: "lbl" }, n: 2.0 }) == "lbl2", "f5 {f5(Box { s: Label { t: "lbl" }, n: 2.0 })}");
+  assert(f5b(Box { s: Sack { items: [4, 5, 6] }, n: 0.0 }) == 306, "f5b {f5b(Box { s: Sack { items: [4, 5, 6] }, n: 0.0 })}");
+  assert(f6(Box { s: Circle { r: 8.0 }, n: 0.0 }) == 8.0 && f6(Box { s: Circle { r: 8.0 }, n: 2.0 }) == 200.0, "f6");
+  assert(f7(Box { s: Square { r: 3.0 }, n: 0.0 }) == 55003.0, "f7 {f7(Box { s: Square { r: 3.0 }, n: 0.0 })}");
+  println("all ok");
+}

@@ -331,8 +331,8 @@ match (a, b) {
 
 An alternative may also stand inside one tuple element — `(Circle { r } | Square { r }, k) =>
 r + k` — and a plain-struct subject lists patterns the same way: `P { x: 0, y: v } | P { x: v,
-y: 0 } => v` (a field's bare name, `y: v`, binds it).  An alternative inside a field sub-pattern is
-planned (@PLN186).
+y: 0 } => v` (a field's bare name, `y: v`, binds it).  A field's pattern lists alternatives the
+same way as a tuple element's: `Box { s: Circle { r } | Square { r }, n } => r + n`.
 
 Whether a destructured field is a **view of the subject** or a **copy** depends on the
 field's type:

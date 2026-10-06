@@ -276,13 +276,11 @@ is a view; `..rest` / repetition are fresh vectors); the pattern grammar + prece
 
 ## Deviations
 
-OPEN: **2** — the closed entries, `D-match-1` to `-20`, are in
-[matching-history.md](matching-history.md).  The two below are P-Alt / P-Cap positions the parser
-does not reach yet, each refused with a parse error (no wrong answer); @PLN186 closes them one
-step each, and `tests/scripts/an-or-pattern-arm-links-its-bindings.loft` lists them.
+OPEN: **1** — the closed entries, `D-match-1` to `-21`, are in
+[matching-history.md](matching-history.md).  The one below is a P-Cap position the parser does
+not reach yet, refused with a parse error (no wrong answer); @PLN186 closes it, and
+`tests/scripts/an-or-pattern-arm-links-its-bindings.loft` lists it.
 
-- **D-match-21 (OPEN, @PLN186)** — `(P-Alt)` inside a field sub-pattern, <!-- doc-lint: ok -->
-  `Box { s: Circle | Square, n } => n`, is refused (*"Expect token }"*).
 - **D-match-22 (OPEN, @PLN186)** — `(P-Cap)` at the arm root, <!-- doc-lint: ok -->
   `whole: Rect { w, h } => …`, is refused (*"'whole' is not a variant"*).
 
