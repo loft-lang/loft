@@ -8,6 +8,7 @@ use crate::database::Stores;
 use crate::ir_node::{IrBlock, IrNode};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::io::Write;
+pub mod apart;
 mod calls;
 mod coroutine;
 mod dispatch;
@@ -9056,6 +9057,11 @@ extern crate loft;"
         if !self.value_records_done {
             self.value_records_done = true;
             self.value_records = hoist::value_records(self.data, self.stores);
+            // `@FR-R-Apart` instance 2 — the gate, once per program.  Under construction:
+            // nothing reads it yet, so it runs only when its trace is asked for.
+            if std::env::var("LOFT_TRACE_APART").is_ok() {
+                let _ = apart::apart_values(self.data, self.stores);
+            }
             crate::rewrite_census::fired("R-ValueRecord", self.value_records.fns.len());
             // Every function's DEAD buffers, once: a loop judging a call reads the callee's
             // body with its own dead buffers exempt (`HoistOwned::for_callee`).

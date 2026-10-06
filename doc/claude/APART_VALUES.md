@@ -153,8 +153,9 @@ The list below is only the ORDER, set by measured payoff — the classes over th
 1. **Fixed-length scalar local vectors that never cross** — a `[T; N]` stack array for a
    `vector<T>` local of a scalar `T` whose length is the same constant for its whole life: a
    literal of `N` elements, then only index reads and writes, `len`, and `for` iteration.
-2. **The same vector as a field of a value record**, across calls the gate admits on both
-   sides — `(R-ValueRecord)`'s tuple carrying the array.  `Mat4` is the case.
+2. **The same vector as a field of a record**, across calls the gate admits on both sides —
+   the callee's APART TWIN taking and answering the array.  `Mat4` is the case; § Instance 2,
+   as built says why it is a twin and not `(R-ValueRecord)`'s tuple.
 3. **Variable-length vectors and texts** — an INLINE buffer with a spill to the heap past its
    capacity, never a bare Rust `Vec` / `String`: many short vectors grown by push pay a
    `malloc` and its reallocations each, more than the pooled work buffers they replace
@@ -162,6 +163,86 @@ The list below is only the ORDER, set by measured payoff — the classes over th
 4. **Every other type the bench shows paying the store protocol as a throwaway** — enums with a
    payload (cbor `decode`'s values), local keyed collections, iterators — each priced by hand
    first, each an instance under the same gate.
+
+## Instance 2, as built
+
+**The invariant.**  *An apart value is made only by a construction the gate counted, every
+vector field holding exactly its type's `N` elements, and nothing between that construction
+and the value's boundary can change a length.*  Every allowed use is then an operation on a
+`[T; N]` whose answer the store path would give for a vector of length `N`, and the boundary
+writes those `N` elements through the ordinary constructor.
+
+**Why a twin, not `(R-ValueRecord)`'s tuple.**  `(R-ValueRecord)` changes a function's ABI
+for every caller, and a tuple parameter is filled at the site from whatever record the caller
+holds.  The length of `Mat4.m` is a fact about a VALUE, not about the type.  A store `Mat4`
+read out of a field (`mat4_mul(cam.view, p)`) can hold any length, and a `[f64; 16]` cannot
+hold it.  So an admitted function gets an APART TWIN beside it (`__ap`, the `__inv` / `__rg` /
+`__rt` pattern), and a call site takes the twin only where every argument of the type is
+itself apart.  The plain function keeps its ABI, so a fn-ref, a library's cdylib bridge
+(`R-Escape`) and every store caller are untouched.
+
+**The type.**  A record whose every field is a scalar (`float`, `single`, 8-byte `integer`,
+`boolean`) or a `vector` of `float`, `single` or 8-byte `integer`, with at least one vector
+field: no text, no keyed or linked collection, no nested record, no nullable field.  A
+`vector<boolean>` is left out: its out-of-range read answers `null`, which a Rust `bool`
+cannot hold.  Its apart form is a Rust tuple of the scalars
+and one `[T; N]` per vector field.  `N` is per type and field.  It is the length every admitted
+construction in the program builds, and a type whose constructions disagree is not apart
+anywhere.
+
+**Producers** — the only ways an apart value comes to exist:
+
+- a literal into a buffer whose vector field fills are pushes and constant-count repeats
+  (`OpPush*`, `OpAppendCopy(f, k)`), counted to `N` statically;
+- a call that takes the twin;
+- a copy of another apart value (a Rust array copy; `x = a` copies in loft too).
+
+**Allowed uses** — anything else on the value declines it, and it lives in the store:
+
+- an element read `OpGet*(OpGetVector(OpGetField(v, f), w, i))`, answering `@FR-H-Index` (a
+  negative index counts from the end, out of range answers the element's null).  Not under
+  a format: there the store path also records the fault that prints `null(oob)`, a channel
+  the array does not keep;
+- an element write through the same path on a local the frame owns, answering
+  `@FR-H-WriteOOB` (out of range writes nothing);
+- a vector field's length (`N`), a scalar field's read or write;
+- a pass as an argument where the callee's twin takes it; a rebind from a producer;
+- the frame's buffer protocol around it (the mint guard, the vector field's zero, the
+  witness alias, the frees), which emits as nothing.
+
+**The boundary.**  A function that is not itself a twin and holds an apart local that it
+returns materialises it ONCE at the return: the mint guard on the caller's buffer, the vector
+field emptied, `N` typed appends.  This is the sequence the plain constructor emits.  Any
+other boundary declines the value in this instance (a store into a field or element, a pass
+to a non-twin callee, a capture, `par`, `yield`).
+
+**Failure paths and what holds each.**
+
+| failure | what holds it |
+|---|---|
+| a store value of unknown length becomes apart | only the three producers make one; a twin parameter is handed only apart arguments (the site gate) |
+| a length changes during the value's life | push, append, clear, remove and insert are not on the allow-list |
+| two live representations diverge | the only conversion is the one-way materialise at the frame's return |
+| an element read or write answers differently | two runtime helpers, `@FR-H-Index` and `@FR-H-WriteOOB`, cells per index class (negative, in range, `N`, beyond) |
+| a literal's values run in another order | the fill is emitted statement by statement at statically known indices, never as an array expression |
+| a native rewrite keys on the record form of an apart variable | a twin is emitted with the vector rewrites off (`hoist_disabled`); the array loops are LLVM's |
+| an emission site does not know the apart form | the array is a distinct Rust type: store code handed one is a `rustc` error, never a value |
+
+**Where the invariant is asserted.**  The gate (`hoist::apart_values`) decides, once, every
+apart variable of every function and every call that takes a twin.  The emitter reads that
+answer at a variable's declaration, at each allowed use, at a call and at a return.  An
+emission site that forgets is caught by `rustc`, so the one silent site is the gate itself,
+and the cells score it.
+
+**Switch and trace.**  `LOFT_NO_APART=1` emits no twin and no apart variable.
+`LOFT_TRACE_APART=1` names each candidate type's `N`, each function's twin verdict and each
+local's verdict, with the reason.
+
+**The build order.**  (1) The gate alone, traced and pinned on cells, emitting nothing.  (2)
+The twin of a function whose only apart value is its result (the constructors).  (3) Apart
+parameters and element reads (`mat4_transform`).  (4) Element writes and the renamed return
+buffer (`mat4_mul`).  (5) A host's apart local with its return boundary (`mul_op`).  Then the
+row, the census and `make perf-portal`.
 
 ## Verification
 
