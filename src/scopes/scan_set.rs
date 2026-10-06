@@ -1466,6 +1466,25 @@ impl Scopes<'_> {
         // Set(v, Insert([preamble..., final_call])).
         // This keeps Set(v, Call(...)) as a bare Call, which codegen's
         // gen_set_first_at_tos can handle correctly.
+        // The scanned value may carry its source position: a `Span` around the `Insert` hid the
+        // shape from the flatten (the `unspan` contract), so a call bound after an argument's
+        // preamble reached the bind dispatch as `Set(v, Insert(…))` and never had its result
+        // copied or adopted per `@FR-O-Move` — a callee answering its by-value parameter was
+        // ALIASED and then freed as the local's own (loft#1884).  The position stays on the
+        // final value.
+        let scanned = match scanned {
+            Value::Span(b) if matches!(&b.1, Value::Insert(ops) if ops.len() >= 2) => {
+                let (pos, inner) = *b;
+                let Value::Insert(mut ops) = inner else {
+                    unreachable!("matched as an Insert above")
+                };
+                if let Some(last) = ops.pop() {
+                    ops.push(Value::Span(Box::new((pos, last))));
+                }
+                Value::Insert(ops)
+            }
+            other => other,
+        };
         let (mut ls, mut set_value) = if let Value::Insert(mut ops) = scanned {
             if ops.len() >= 2 {
                 let final_val = ops.pop().unwrap();
