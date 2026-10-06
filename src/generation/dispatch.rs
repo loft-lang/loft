@@ -1380,7 +1380,18 @@ impl Output<'_> {
             // `_src == _dst` guard re-derived this and LEAKED the owned arm — `_src`
             // (a fresh `m_none()`) never equals `_dst` (the old slot), so it
             // materialised + dropped the owned store.
+            // The interpreter's twin takes this guard only where the right-hand side does not
+            // read the destination (`!stash_old_for_post_free`): `c = pick(d, c, k)` hands the
+            // callee the store the bind would adopt into, and the buffer arm then aliases the
+            // argument it was computed from (loft#1884, a leaked record once a later function
+            // re-took the slot).  Such a rebind keeps the copy below on both backends.
+            let rhs_reads_dst = self.declared.contains(&var) && {
+                let mut reads = false;
+                to.walk(&mut |n| reads |= matches!(n, Value::Var(x) if *x == var));
+                reads
+            };
             let join_witness = if crate::keys::join_own_enabled()
+                && !rhs_reads_dst
                 && let crate::use_analysis::Own::Join { base } =
                     crate::use_analysis::ownership_of(self.data, self.def_nr, to)
                 && base != u16::MAX

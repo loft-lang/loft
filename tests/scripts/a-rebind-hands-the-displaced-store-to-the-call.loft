@@ -104,8 +104,8 @@ fn b7() {
   assert(len(d.m) == 4 && d.m[0] == 7.0 && d.m[3] == 7.0, "b7 d {d.m}");
 }
 
-// b8: the FIRST call answers d, while the buffer is still null — `return d` is a copy into a
-//   fresh store, so it may be adopted.  k = 1..5: d, [14,..], d, [14,..]
+// b8: the FIRST call answers d, while the buffer is still null — a borrow of `d`, which the
+//   bind copies.  k = 1..5: d, [14,..], d, [14,..]
 fn b8() {
   d = M { m: [7.0, 7.0, 7.0, 7.0] };
   c = M { m: [1.0, 2.0, 3.0, 4.0] };

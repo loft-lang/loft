@@ -1,0 +1,84 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1884, `@FR-F-Ret` / `@FR-G-Mono` — a function that returns its by-value struct
+// PARAMETER on one path and a fresh value on another hands its caller an owned value on both:
+// the caller copies the parameter's record and adopts the fresh one, and freeing its result
+// never touches the record it passed in.
+//
+// The function's return is the JOIN of every delivery site — each early `return` as well as
+// the tail — so a parameter returned early makes the bind a store-identity guard
+// (`OpBindOrCopy`).  A call whose argument needs setup first (a vector literal) is bound as
+// the same call without one.  Two parameters returned on two paths are a borrow of one of
+// several, copied on every run, and a generic instance declares that as its concrete twin does.
+//
+// Every value is hand-computed: `base` is `99:[9,9]` and must stay so; a negative `k` answers
+// `base`, any other `k` answers `k:[k]`, and `0` answers null where the return is nullable.
+//
+// @falsified-at: eff213317 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1884-a-parameter-returned-on-one-path-is-the-callers-copy.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the VALUE — the caller's own record was freed and read back as the next call's.
+//   HOLDS: every cell is clean under `LOFT_STRICT_STORES=1`, `LOFT_POISON=1` and
+//   `LOFT_POISON_CLAIM=1` with the exit leak check on this tree, both backends.
+
+struct F { h: integer, xs: vector<integer> }
+
+fn mk_or(h: integer, xs: vector<integer>, other: F) -> F { if h < 0 { return other; } F { h: h, xs: xs } }
+fn mk_tail(h: integer, xs: vector<integer>, other: F) -> F { if h < 0 { other } else { F { h: h, xs: xs } } }
+fn mk_in_loop(h: integer, xs: vector<integer>, other: F) -> F { for x in xs { if x < 0 { return other; } } F { h: h, xs: xs } }
+fn mk_opt(h: integer, xs: vector<integer>, other: F?) -> F? { if h < 0 { return other; } if h == 0 { return null; } F { h: h, xs: xs } }
+fn pick<T>(c: boolean, a: T, b: T) -> T { if c { return a; } b }
+
+fn test_the_filed_shape() {
+  base = F { h: 99, xs: [9, 9] };
+  o = "";
+  for k in [-1, 2, -1, 3] { f = mk_or(k, [k], base); o += "{f.h}:{f.xs} "; }
+  assert(o == "99:[9,9] 2:[2] 99:[9,9] 3:[3] " && base.h == 99 && base.xs == [9, 9], "{o}base {base.h}:{base.xs}");
+}
+
+fn test_a_tail_a_loop_and_plain_arguments() {
+  base = F { h: 99, xs: [9, 9] };
+  o = "";
+  for k in [-1, 2] {
+    ys = [k];
+    a = mk_tail(k, [k], base);
+    b = mk_in_loop(k, [k], base);
+    c = mk_or(k, ys, base);
+    o += "{a.h}{b.h}{c.h} ";
+  }
+  assert(o == "999999 222 " && base.h == 99, "{o}base {base.h}");
+}
+
+fn test_a_reassigned_local_and_a_write_through_the_result() {
+  base = F { h: 99, xs: [9, 9] };
+  f = F { h: 0, xs: [] };
+  o = "";
+  for k in [-1, 2, -1] { f = mk_or(k, [k], base); o += "{f.h} "; }
+  g = mk_or(-1, [1], base);
+  g.h = 5;
+  g.xs += [7];
+  assert(o == "99 2 99 " && g.h == 5 && g.xs == [9, 9, 7] && base.h == 99 && base.xs == [9, 9], "{o}{g.h} {g.xs} base {base.h} {base.xs}");
+}
+
+fn test_a_nullable_return() {
+  base: F? = F { h: 99, xs: [9, 9] };
+  o = "";
+  for k in [-1, 2, 0, -1, 3] { f = mk_opt(k, [k], base); if f == null { o += "null "; } else { o += "{f.h}:{f.xs} "; } }
+  assert(o == "99:[9,9] 2:[2] null 99:[9,9] 3:[3] " && base.h == 99, "{o}base {base.h}");
+}
+
+fn test_one_of_two_parameters() {
+  x = F { h: 1, xs: [1] };
+  y = F { h: 2, xs: [2] };
+  o = "";
+  for c in [true, false, true] { f = pick(c, x, y); o += "{f.h} "; }
+  assert(o == "1 2 1 " && x.h == 1 && y.h == 2 && x.xs == [1] && y.xs == [2], "{o}x {x.h} y {y.h}");
+}
+
+fn main() {
+  test_the_filed_shape();
+  test_a_tail_a_loop_and_plain_arguments();
+  test_a_reassigned_local_and_a_write_through_the_result();
+  test_a_nullable_return();
+  test_one_of_two_parameters();
+}

@@ -2098,6 +2098,11 @@ impl Own {
             (Own::Borrowed { base: a }, Own::Borrowed { base: b }) if a == b => {
                 Own::Borrowed { base: a }
             }
+            // Two borrows of DIFFERENT stores are still a borrow — no arm owns anything — of
+            // one of several bases, which no single witness names (loft#1884: `if c { return
+            // a; } b` read as a `Join` witnessed by `a`, so the run that answered `b` adopted
+            // the caller's record and freed it).  Every reader copies that on every run.
+            (Own::Borrowed { .. }, Own::Borrowed { .. }) => Own::Borrowed { base: u16::MAX },
             _ => Own::Join {
                 base: self.base().or_else(|| other.base()).unwrap_or(u16::MAX),
             },
@@ -2493,6 +2498,15 @@ impl<'a> Ownership<'a> {
         let class = self.classify(tail.unwrap(), &def.variables, &defs);
         self.visiting_vars = outer_vars;
         self.visiting.remove(&d_nr);
+        // `@FR-F-Ret`, loft#1884 — every early `return` delivers as the tail does, so the
+        // function's return is the JOIN of all of them: `if c { return p; } F { … }` hands back
+        // its parameter on one path and a fresh value on the other, and read off the tail alone
+        // it was owned, the caller adopted the parameter's store, and its free released the
+        // caller's own record.  Joined, the bind copies the borrowed arm (`OpBindOrCopy`).
+        let class = self
+            .early_return_ownerships(d_nr)
+            .into_iter()
+            .fold(class, Own::join);
         self.ret_memo.insert(d_nr, class);
         class
     }

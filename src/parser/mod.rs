@@ -14369,12 +14369,20 @@ impl Parser {
                 _ => false,
             }
         }
+        // …a Join only: where no leaf mints (`if c { return a; } b`, a BORROW of one of
+        // several parameters), nothing binds an owned local, and the instance declares the set
+        // its twin does (`-> F["a", "b"]`) so the caller copies (loft#1884).
         let n = bl.operators.len();
-        if bl
-            .operators
-            .iter()
-            .enumerate()
-            .any(|(i, op)| bare_param_leaf(op, &def.variables, i + 1 == n))
+        let borrows_only = matches!(
+            crate::use_analysis::return_ownership(&self.data, d_nr),
+            crate::use_analysis::Own::Borrowed { .. }
+        );
+        if !borrows_only
+            && bl
+                .operators
+                .iter()
+                .enumerate()
+                .any(|(i, op)| bare_param_leaf(op, &def.variables, i + 1 == n))
         {
             return None;
         }
