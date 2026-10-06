@@ -253,7 +253,7 @@
     ],
     [
       "hygiene",
-      "cargo nextest run --release -E 'binary(doc_hygiene)'"
+      "cargo nextest run --release --test doc_hygiene"
     ]
   ],
   "shrink_files": [

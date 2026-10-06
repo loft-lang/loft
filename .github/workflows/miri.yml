@@ -1416,7 +1416,7 @@ jobs:
       - name: Build host loft binary + lib (required by `make index`)
         run: cargo build --release --lib --bin loft
       - name: Index hygiene (broken @-tags + markdown links)
-        run: cargo nextest run --profile ci -E 'binary(index_hygiene)'
+        run: cargo nextest run --profile ci --test index_hygiene
 
       # This leg failed intermittently (June 2026) with `crate::rpc`
       # unrewritten in a generated `/tmp/loft_native_<pid>.rs` — a shape that
