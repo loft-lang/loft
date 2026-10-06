@@ -686,7 +686,7 @@ mod tests {
             "divide_by_zero".into(),
             "divide by zero".into(),
             Some(Position {
-                file: "lib.loft",
+                file: "lib.loft".into(),
                 line: 7,
                 pos: 1,
             }),

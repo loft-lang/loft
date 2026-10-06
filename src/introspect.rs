@@ -385,7 +385,7 @@ fn emit_roundtrip(
         {
             continue;
         }
-        let from_default = crate::file_access::is_stdlib_source(def.position.file);
+        let from_default = crate::file_access::is_stdlib_source(def.position.file.as_str());
         let pass_filter =
             opts.fn_filter.is_empty() || opts.fn_filter.iter().any(|f| def.name.contains(f));
         if (from_default && !opts.all_fns) || !pass_filter {
@@ -489,7 +489,7 @@ fn emit_bytecode(
                 (def.def_type == DefType::Function
                     && def.name.starts_with("n_")
                     && !def.name.starts_with("n___lambda_")
-                    && !crate::compile::is_default_file(def.position.file))
+                    && !crate::compile::is_default_file(def.position.file.as_str()))
                 .then(|| def.name.clone())
             })
             .collect();
@@ -522,7 +522,7 @@ fn emit_slots(w: &mut dyn Write, data: &Data, end_def: u32, opts: &Options) -> s
         if !def.name.starts_with("n_") || def.name.starts_with("n___lambda_") {
             continue;
         }
-        if !opts.all_fns && crate::compile::is_default_file(def.position.file) {
+        if !opts.all_fns && crate::compile::is_default_file(def.position.file.as_str()) {
             continue;
         }
         if !opts.fn_filter.is_empty()
@@ -801,7 +801,7 @@ fn emit_ownership(
         for (var, why) in per_iteration_frees(data, def) {
             writeln!(w, "!! {}: `{var}` {why}", def.name)?;
         }
-        if !opts.all_fns && crate::compile::is_default_file(def.position.file) {
+        if !opts.all_fns && crate::compile::is_default_file(def.position.file.as_str()) {
             continue;
         }
         if !opts.fn_filter.is_empty()
@@ -928,7 +928,7 @@ fn emit_types(w: &mut dyn Write, data: &Data, end_def: u32, opts: &Options) -> s
         if !def.name.starts_with("n_") || def.name.starts_with("n___lambda_") {
             continue;
         }
-        if !opts.all_fns && crate::compile::is_default_file(def.position.file) {
+        if !opts.all_fns && crate::compile::is_default_file(def.position.file.as_str()) {
             continue;
         }
         if !opts.fn_filter.is_empty()

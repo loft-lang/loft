@@ -258,7 +258,11 @@ fn hover_of_def(data: &Data, d: u32, text: &str, name: &str, stdlib_dir: &str) -
     // name (the parser records `pos` at the body start, past the name).
     let src = read_def_source(text, name, stdlib_dir, &pos);
     let doc = src.as_deref().map_or_else(Vec::new, |s| {
-        doc_block_above(s, pos.line, crate::file_access::is_stdlib_source(pos.file))
+        doc_block_above(
+            s,
+            pos.line,
+            crate::file_access::is_stdlib_source(pos.file.as_str()),
+        )
     });
     let def_col = src
         .as_deref()
@@ -268,7 +272,7 @@ fn hover_of_def(data: &Data, d: u32, text: &str, name: &str, stdlib_dir: &str) -
         signature: render_signature(data, d, kind, &cname),
         name: cname,
         doc,
-        def_file: collapse_slashes(pos.file),
+        def_file: collapse_slashes(pos.file.as_str()),
         def_line: pos.line,
         def_col,
     })
@@ -338,7 +342,7 @@ pub fn resolve_at(text: &str, stdlib_dir: &str, line: u32, col: u32) -> Option<H
                 name: fname,
                 signature: sig,
                 doc: Vec::new(),
-                def_file: collapse_slashes(pos.file),
+                def_file: collapse_slashes(pos.file.as_str()),
                 def_line: pos.line,
                 def_col: pos.pos,
             })

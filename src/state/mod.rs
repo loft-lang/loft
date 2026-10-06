@@ -4034,7 +4034,9 @@ impl State {
             if def.def_type != crate::data::DefType::Function {
                 continue;
             }
-            if crate::file_access::file_name(def.position.file).as_deref() != Some(want.as_str()) {
+            if crate::file_access::file_name(def.position.file.as_str()).as_deref()
+                != Some(want.as_str())
+            {
                 continue;
             }
             if let Some(off) = self.set_breakpoint_fn_line(d, line, data) {
@@ -4057,7 +4059,7 @@ impl State {
         for d in 0..data.definitions() {
             let def = data.def(d);
             if def.def_type != crate::data::DefType::Function
-                || crate::file_access::file_name(def.position.file).as_deref()
+                || crate::file_access::file_name(def.position.file.as_str()).as_deref()
                     != Some(want.as_str())
             {
                 continue;

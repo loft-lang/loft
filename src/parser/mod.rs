@@ -808,7 +808,7 @@ pub struct Parser {
     program_scope: Option<crate::resolution_scope::ResolutionScope>,
     /// The entry file, as the lexer already holds it (a shared handle, no copy), for
     /// `program_scope`.  `None` before the entry file is loaded.
-    program_entry: Option<&'static str>,
+    program_entry: Option<crate::lexer::FileName>,
     /// loft#1687 — per package a declared scope could not satisfy from the cache: the
     /// constraint and the versions the cache holds, so "library not found" can say which
     /// declaration was unmet instead of implying nothing is there.
@@ -3956,7 +3956,7 @@ impl Parser {
                 .data
                 .native_packages
                 .iter()
-                .filter(|(_, pkg_dir)| crate::file_access::is_under(file, pkg_dir))
+                .filter(|(_, pkg_dir)| crate::file_access::is_under(file.as_str(), pkg_dir))
                 .max_by_key(|(_, pkg_dir)| pkg_dir.len())
             {
                 binds.push((sym, crate_name.replace('-', "_")));
@@ -19167,21 +19167,25 @@ impl Parser {
         // entirely — the author manages their libraries by hand there.  Read +
         // scan each remaining file at most once (cache keyed by path).
         if !had_use && *self.lexer.pos().file == *auto_use_scan_file {
-            let (refs, calls) = if let Some(c) = self.auto_use_scan_cache.get(auto_use_scan_file) {
-                c.clone()
-            } else {
-                let src = self
-                    .lexer
-                    .source_text(auto_use_scan_file)
-                    .map_or_else(|| Self::read_source(auto_use_scan_file), str::to_string);
-                let pair = (
-                    crate::libscan::scan_qualified_lib_refs(&src),
-                    crate::libscan::scan_method_calls(&src),
-                );
-                self.auto_use_scan_cache
-                    .insert(auto_use_scan_file.to_string(), pair.clone());
-                pair
-            };
+            let (refs, calls) =
+                if let Some(c) = self.auto_use_scan_cache.get(auto_use_scan_file.as_str()) {
+                    c.clone()
+                } else {
+                    let src = self
+                        .lexer
+                        .source_text(auto_use_scan_file.as_str())
+                        .map_or_else(
+                            || Self::read_source(auto_use_scan_file.as_str()),
+                            str::to_string,
+                        );
+                    let pair = (
+                        crate::libscan::scan_qualified_lib_refs(&src),
+                        crate::libscan::scan_method_calls(&src),
+                    );
+                    self.auto_use_scan_cache
+                        .insert(auto_use_scan_file.to_string(), pair.clone());
+                    pair
+                };
             // Tier-0: `lib::x` — the library is named directly.
             let mut to_load: Vec<String> = Vec::new();
             for name in refs {
@@ -19196,7 +19200,7 @@ impl Parser {
             // via the trigger surface of the current package (+ trigger-enabled
             // deps), derived once and cached.
             if !calls.is_empty() {
-                let map = self.trigger_map(auto_use_scan_file);
+                let map = self.trigger_map(auto_use_scan_file.as_str());
                 // Catalog fallback is built lazily — only read index.json once a
                 // method misses the local (current package + deps) trigger map.
                 let mut catalog: Option<std::collections::HashMap<String, String>> = None;
@@ -19550,7 +19554,7 @@ impl Parser {
     fn is_current_source(&self, f: &str) -> bool {
         let canon = |p: &str| crate::file_access::plain_canonical(std::path::Path::new(p));
         let cur = self.lexer.pos().file;
-        !cur.is_empty() && canon(cur) == canon(f)
+        !cur.is_empty() && canon(cur.as_str()) == canon(f)
     }
 
     fn lib_path(&mut self, id: &str) -> String {
@@ -19640,7 +19644,7 @@ impl Parser {
         // would put the old three-sites-must-agree brittleness back with one extra step
         // between it and the reader.
         if self.program_scope.is_none() {
-            let entry = self.program_entry;
+            let entry = self.program_entry.map(crate::lexer::FileName::as_str);
             self.program_scope = Some(crate::resolution_scope::resolution_scope(
                 entry.unwrap_or(&cur_script),
             ));
@@ -21591,7 +21595,7 @@ impl Parser {
                     if !candidates.iter().any(|c| c == def.name()) {
                         continue;
                     }
-                    if !crate::file_access::is_under(def.position().file, &pkg_dir) {
+                    if !crate::file_access::is_under(def.position().file.as_str(), &pkg_dir) {
                         continue;
                     }
                     rust_symbol.clone_into(&mut self.data.definitions[d_nr as usize].native);
@@ -21608,7 +21612,7 @@ impl Parser {
                 if sym.is_empty() {
                     continue;
                 }
-                if !crate::file_access::is_under(def.position().file, &pkg_dir) {
+                if !crate::file_access::is_under(def.position().file.as_str(), &pkg_dir) {
                     continue;
                 }
                 if self.data.native_symbol_crates.contains_key(sym) {
@@ -21953,7 +21957,7 @@ impl Parser {
                     if !candidates.iter().any(|c| c == def.name()) {
                         continue;
                     }
-                    if !crate::file_access::is_under(def.position().file, pkg_dir) {
+                    if !crate::file_access::is_under(def.position().file.as_str(), pkg_dir) {
                         continue;
                     }
                     rust_symbol.clone_into(&mut self.data.definitions[d_nr as usize].native);
@@ -21977,7 +21981,7 @@ impl Parser {
                 if sym.is_empty() {
                     continue;
                 }
-                if !crate::file_access::is_under(def.position().file, pkg_dir) {
+                if !crate::file_access::is_under(def.position().file.as_str(), pkg_dir) {
                     continue;
                 }
                 if self.data.native_symbol_crates.contains_key(sym) {
@@ -22268,7 +22272,7 @@ impl Parser {
         let d_nr = self.data.declared_by_importer(storage_name)?;
         let bare = storage_name.strip_prefix("n_").unwrap_or(storage_name);
         let pos = self.data.def(d_nr).position();
-        let file = crate::file_access::name_of(&pos.file);
+        let file = crate::file_access::name_of(pos.file.as_str());
         // When this file ALSO has a bare `use` of that file, the two files already `use`
         // each other, and a mutual import resolves both ways (the p173 cycle): the cure is
         // to import the name, `use errand::*;` or `use errand::(Errand);`, with no file moved.
@@ -24244,7 +24248,7 @@ mod p269_native_backfill_tests {
             .map(|d| p.data.def(d))
             .filter(|def| {
                 !def.native().is_empty()
-                    && crate::file_access::is_under(def.position().file, &imaging_dir)
+                    && crate::file_access::is_under(def.position().file.as_str(), &imaging_dir)
             })
             .map(|def| def.native().to_string())
             .collect();

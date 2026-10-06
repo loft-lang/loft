@@ -393,7 +393,7 @@ pub fn library_export_set(data: &Data, pkg_dir: &str) -> HashSet<u32> {
             matches!(def.def_type(), DefType::Function)
                 && def.pub_visible
                 && !is_synthetic_name(def.name())
-                && crate::file_access::is_under(def.position().file, pkg_dir)
+                && crate::file_access::is_under(def.position().file.as_str(), pkg_dir)
         })
         .collect();
     crate::native_gate::shared_store_dispatchable(data)

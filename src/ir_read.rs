@@ -1172,7 +1172,7 @@ mod tests {
     fn value_inline_substructs_round_trip() {
         round_trip_value(&Value::Span(Box::new((
             Position {
-                file: "f.loft",
+                file: "f.loft".into(),
                 line: 12,
                 pos: 3,
             },

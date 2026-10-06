@@ -418,7 +418,11 @@ fn write_definition(stores: &mut Stores, r: &Record, d: &Definition) {
         ds::DEF_POSITION + ds::POS_POS,
         i64::from(d.position.pos),
     );
-    r.set_field_str(stores, ds::DEF_POSITION + ds::POS_FILE, d.position.file);
+    r.set_field_str(
+        stores,
+        ds::DEF_POSITION + ds::POS_FILE,
+        d.position.file.as_str(),
+    );
     materialize_attributes(stores, r, ds::DEF_ATTRIBUTES, &d.attributes);
     node_child(stores, r, ds::DEF_CODE, &d.code);
     type_child(stores, r, ds::DEF_RETURNED, &d.returned);
@@ -954,7 +958,7 @@ fn write_into(stores: &mut Stores, slot: &Node, v: &Value) {
             slot.set_discriminant(stores, ds::DISC_SPAN);
             slot.set_field_int(stores, ds::SPAN_POS_LINE, i64::from(position.line));
             slot.set_field_int(stores, ds::SPAN_POS_POS, i64::from(position.pos));
-            slot.set_field_str(stores, ds::SPAN_POS_FILE, position.file);
+            slot.set_field_str(stores, ds::SPAN_POS_FILE, position.file.as_str());
             materialize_node(stores, slot.field_vec(ds::NDSPAN_INNER), inner);
         }
         // ── vector of a non-Node struct ───────────────────────────────────────
@@ -1255,7 +1259,7 @@ mod tests {
 
         let native = Value::Span(Box::new((
             Position {
-                file: "f.loft",
+                file: "f.loft".into(),
                 line: 12,
                 pos: 3,
             },
@@ -1339,7 +1343,7 @@ mod tests {
             Value::Line(3),
             Value::Span(Box::new((
                 Position {
-                    file: "f.loft",
+                    file: "f.loft".into(),
                     line: 12,
                     pos: 4,
                 },
