@@ -1,0 +1,18 @@
+// @FR-I-For — a filtered loop `for (a, b) in v if p { … }` tests `p` on THIS element, so the
+// header's unpack runs before the filter: it is a step of the loop, where the loop variable is
+// bound, not the head of the body.  Unpacked in the body, the filter read the binders before
+// they held anything, and the interpreter skipped every element in silence ("" for "y2zz3").
+
+fn g() -> iterator<(integer, text)> { yield (1, "x"); yield (2, "yy"); yield (3, "zzz"); }
+
+fn main() {
+  v = [(1, "x"), (2, "y"), (3, "zz")];
+  s = ""; for (a, b) in v if a > 1 { s += "{b}{a}" }
+  assert(s == "y2zz3", "a filter on the first member: {s}");
+  t = ""; for (a, b) in v if len(b) > 1 { t += "{b}{a};" }
+  assert(t == "zz3;", "a filter on a text member: {t}");
+  u = ""; for (a, b) in g() if a != 2 { u += "{b};" }
+  assert(u == "x;zzz;", "over a generator: {u}");
+  x = ""; for (a, b) in v if a > 1 { if a == 3 { break }; x += b }
+  assert(x == "y", "with a break in the body: {x}");
+}

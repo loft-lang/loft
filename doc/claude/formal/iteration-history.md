@@ -287,3 +287,19 @@ Opened and closed in the same change; the chapter's `OPEN:` line never carried i
   `for a` after a destructure was refused as shadowing a local.  **Fix.**  Each binder takes
   `loop_binding` + `create_loop_var` and is marked `served_as_loop_var`, as the loop variable is.
   Guard `tests/scripts/a-sibling-loop-destructure-is-its-own-binding.loft`.
+
+* **D-iter-13** *(opened 2026-10-06, CLOSED 2026-10-06; loft#1894)* — `(I-Comp)`: a comprehension
+  defines its header as a `for` loop's, but `[for (a, b) in v { … }]` was refused (*"Expect
+  variable after for"*).  **Fix.**  The comprehension parses the name list and binds it through
+  the loop statement's own code (`parse_destructure_names`, `destructure_binders`), one home for
+  both.  Guard `tests/scripts/a-comprehension-destructures-its-element.loft`.
+* **D-iter-14** *(opened 2026-10-06, CLOSED 2026-10-06)* — `(I-For)` with a filter:
+  `for (a, b) in v if a > 1 { … }` unpacked the element at the head of the BODY, after the filter
+  had been tested, so the filter read binders that held nothing yet — the interpreter skipped
+  every element in silence (`""` for `y2zz3`) and `--native` did not compile.  The binders were
+  also created after the filter was parsed.  **Fix.**  They are created before the filter, and
+  the unpack is a step of the loop ahead of the filter test (`destructure_into_filter`,
+  `push_filter_step`) — where the loop variable is assigned, so the body owns the binders as it
+  owns the loop variable.  A first version ran the unpack inside a block in the filter, and the
+  scope pass freed the text binder at that block's end.  Guard
+  `tests/scripts/a-filtered-destructure-reads-the-current-element.loft`.

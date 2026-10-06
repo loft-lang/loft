@@ -3307,7 +3307,18 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         // element type the destination's (a typed local, a field, a parameter, a return) or
         // still to be inferred from the body?
         let declared = declared_element(in_t);
-        let Some(src_id) = self.lexer.has_identifier() else {
+        // `(I-Comp)` — the comprehension's header IS a `for` loop's, so it destructures as one
+        // does: `[for (a, b) in v { … }]` binds the members, through the loop statement's own
+        // binder code (`destructure_binders`).
+        let Ok(destructure_names) = self.parse_destructure_names() else {
+            return Type::Null;
+        };
+        let src_id = if destructure_names.is_some() {
+            let pos = self.lexer.peek().position.clone();
+            format!("__destructure_t_{}_{}", pos.line, pos.pos)
+        } else if let Some(id) = self.lexer.has_identifier() {
+            id
+        } else {
             diagnostic!(self.lexer, Level::Error, "Expect variable after for");
             return Type::Null;
         };
@@ -3365,7 +3376,12 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             self.vars.set_name(&src_id, for_var);
         }
         self.vars.defined(for_var);
-        let if_step = if self.lexer.has_token("if") {
+        // The binders exist before the filter is parsed: it reads them.
+        let mut destructure_setup = match &destructure_names {
+            Some(names) => self.destructure_binders(names, for_var, &var_tp),
+            None => Vec::new(),
+        };
+        let mut if_step = if self.lexer.has_token("if") {
             let mut if_expr = Value::Null;
             let at = self.lexer.peek().position.clone();
             let tp = self.expression(&mut if_expr);
@@ -3409,6 +3425,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         }
         let for_next = v_set(for_var, iter_next);
         self.vars.loop_var(for_var);
+        Self::destructure_into_filter(&mut if_step, &mut destructure_setup);
         let in_loop = self.in_loop;
         self.in_loop = true;
         // Parse body as an expression-returning block: [for n in range { expr }]
@@ -3439,6 +3456,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         let body_pos = self.lexer.peek_pos().clone();
         let mut body = Value::Null;
         let body_type = self.parse_block("for", &mut body, &body_expected);
+        Self::prepend_destructure(&mut body, destructure_setup, &body_type);
         // #319 — a struct-literal body returns `Rewritten(Reference(...))`.
         // The wrapper is a parse-internal marker, not an element type:
         // leaking it into the vector's element type broke every later
@@ -3924,9 +3942,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 Value::Null,
             ));
         }
-        if if_step != Value::Null {
-            lp.push(v_if(if_step, Value::Null, Value::Continue(0)));
-        }
+        Self::push_filter_step(&mut lp, if_step);
         lp.push(v_set(comp_var, body));
         lp.push(v_set(
             elm,
