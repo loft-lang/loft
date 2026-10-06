@@ -19907,7 +19907,7 @@ impl Parser {
             let prev_place = self.tuple_place_wanted;
             self.tuple_place_wanted = fn_def_nr.is_some_and(|d| {
                 arg_idx < self.data.attributes(d)
-                    && matches!(self.data.attr_type(d, arg_idx), Type::RefVar(inner)
+                    && matches!(self.data.attr_type(d, arg_idx).base(), Type::RefVar(inner)
                         if matches!(inner.base(), Type::Reference(t, _)
                             if self.data.def(*t).name().starts_with("__tuple<")))
             });

@@ -4938,7 +4938,7 @@ use a separate collection or add after the loop"
             }
             // The refusal is the one diagnostic: an annotated link keeps its declared type, so
             // the bind is not reported a second time as a retype.
-            if var_nr != u16::MAX && matches!(self.vars.tp(var_nr), Type::RefVar(_)) {
+            if var_nr != u16::MAX && matches!(self.vars.tp(var_nr).base(), Type::RefVar(_)) {
                 s_type = self.vars.tp(var_nr).clone();
             }
         }
@@ -10552,7 +10552,7 @@ use a separate collection or add after the loop"
         };
         // The bind that declares a link to a heap PLACE made the variable the place's VIEW
         // (`b: &P = h.rec` IS `b = &h.rec`); that is the link, not a write through one.
-        if var_nr != u16::MAX && !matches!(self.vars.tp(var_nr), Type::RefVar(_)) {
+        if var_nr != u16::MAX && !matches!(self.vars.tp(var_nr).base(), Type::RefVar(_)) {
             return false;
         }
         // A struct-ENUM is the same record shape one former over — `Type::Enum(_, true, _)` is

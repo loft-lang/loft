@@ -503,7 +503,7 @@ impl Output<'_> {
                 // directly instead of dereferencing with *var_name.
                 write!(w, "var_{name}")?;
             } else if crate::generation::is_raw_tuple_link(caller_vars, *nr)
-                || matches!(caller_vars.tp(*nr), Type::RefVar(inner)
+                || matches!(caller_vars.tp(*nr).base(), Type::RefVar(inner)
                     if matches!(inner.base(), Type::Reference(..) | Type::Enum(_, true, _)))
             {
                 // A `&`-bound RECORD local (`b: &P = a`, and every `&(…)` since loft#1883) is

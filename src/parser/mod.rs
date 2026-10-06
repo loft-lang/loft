@@ -2933,7 +2933,7 @@ impl Parser {
             let Some(param) = self.data.def(d).attributes().get(index) else {
                 continue;
             };
-            let record_param = match &param.typedef {
+            let record_param = match param.typedef.base() {
                 Type::RefVar(inner) => match inner.base() {
                     Type::Reference(t, _) => self.data.def(*t).name().starts_with("__tuple<"),
                     Type::Tuple(elems) => crate::data::ref_tuple_is_record(elems),
