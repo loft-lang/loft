@@ -88,15 +88,24 @@ fn mints(b: &str) -> (usize, usize) {
             t.starts_with("var___ref_") && t.contains(" = OpDatabase(cell,var___ref_")
         })
         .count();
-    let guard = "store_nr == u16::MAX) as u8) == 1 {";
-    let guarded = b
-        .match_indices(guard)
-        .filter(|(i, _)| {
-            let after = b[i + guard.len()..].trim_start();
-            let line = after.split('\n').next().unwrap_or("");
-            after.starts_with("var___ref_") && line.contains(" = OpDatabase(cell,var___ref_")
-        })
-        .count();
+    // Two spellings of one guard: the generic `if` emitter's, and the pool statement a
+    // `@FR-R-RefillText` site keeps once its release is left out.
+    let mut guarded = 0;
+    for guard in [
+        "store_nr == u16::MAX) as u8) == 1 {",
+        ".store_nr == u16::MAX {",
+    ] {
+        guarded += b
+            .match_indices(guard)
+            .filter(|(i, _)| {
+                let after = b[i + guard.len()..].trim_start();
+                let line = after.split('\n').next().unwrap_or("");
+                after.starts_with("var___ref_")
+                    && (line.contains(" = OpDatabase(cell,var___ref_")
+                        || line.contains(" = OpDatabase(cell, var___ref_"))
+            })
+            .count();
+    }
     (entry, guarded)
 }
 
