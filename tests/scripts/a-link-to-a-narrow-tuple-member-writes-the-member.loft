@@ -1,11 +1,11 @@
-// @FR-T-Record / @FR-B-Ref-Lvalue — a narrow member of a by-value tuple is a field a `&` link
-// names: once a link names it, the member holds its field encoding, so the link is the `&u8`
-// (`&i8`, `&i16`, a `limit` type) that names a narrow field, and every other read and write of the
-// tuple decodes and encodes that member.  Each cell writes through the link and reads the value
-// back in a different way: the member itself, a whole copy, `==`, a by-value argument, a return,
-// a destructure, a text neighbour, a closure capture, a re-pointed link in a loop, a step past
-// the range, a nullable member, and a member of a `&(…)` parameter.  Each value is computed by
-// hand in the comment beside it.
+// @FR-T-Record / @FR-B-Ref-Lvalue / @C139 (a tuple IS a record) — a narrow member of a by-value
+// tuple is a field a `&` link names: once a link names it, the member holds its field encoding, so
+// the link is the `&u8` (`&i8`, `&i16`, a `limit` type) that names a narrow field, and every other
+// read and write of the tuple decodes and encodes that member.  Each cell writes through the link
+// and reads the value back in a different way: the member itself, a whole copy, `==`, a by-value
+// argument, a return, a destructure, a text neighbour, a closure capture, a re-pointed link in a
+// loop, a step past the range, a nullable member, and a member of a `&(…)` parameter.  Each value
+// is computed by hand in the comment beside it.
 // @falsified-at: b3d3c7348 — interpret exit 1 -> 0, native exit 1 -> 0 (the link was refused at compile time)
 // @falsified-by: tests/falsified/a-link-to-a-narrow-tuple-member-writes-the-member.patch — interpret exit 1 -> 0, native exit 1 -> 0
 // HOLDS: asserts 0, leak none, panic none and free-refusals 0 on both trees and both backends —
