@@ -320,14 +320,19 @@ for a wrong sum on either backend.  `LOFT_HOIST_VERIFY=1` re-checks each plain b
 kernel admits against the checked add.
 
 **A small record returned as a tuple (@PLN180, `@FR-R-ValueRecord`, default-ON, both
-backends, at the top of `byte_code_from`):** a function returning a flat record of scalars
-from an object literal, whose every caller only reads fields off the local it binds, returns
-a tuple, and its callers read tuple elements.  The call's buffer store, its mint and its
-frees leave the IR, so the interpreter claims no store per call.  A program parsed against
-again after compiling (the REPL, the debugger, live reload, a host calling by name) keeps
-records (`Data::open_world`).  **`LOFT_NO_IR_VALUE_RECORD=1`** restores the record form on
-both backends, leaving the case to `--native`'s own rewrite (`LOFT_NO_VALUE_RECORD`).  It is
-the first bisect step for a wrong field read out of a small-record call on the interpreter.
+backends, at the top of `byte_code_from`, `src/value_record.rs`):** a function returning a
+small record of scalars (flat, or with inline sub-records) from object literals returns a
+tuple in schema order, and the locals its callers bind carry it (`@FR-R-ValueLocal`): a field
+read is a `TupleGet`, a field write a `TuplePut`, and the local may be handed whole to an
+admitted parameter (a tuple parameter), copied into a place field by field, or forwarded.  A
+site that owes a record calls a TWIN that keeps it, so that site runs what it ran before.  The
+call's buffer store, its mint and its frees leave the IR, so the interpreter claims no store per
+call.  A program parsed against again after compiling (the REPL, the debugger, live reload, a
+host calling by name, a build that ships the live tier — plain `--native` among them) keeps
+records (`Data::open_world`); `--native-release` and `--interpret` run the pass.
+**`LOFT_NO_IR_VALUE_RECORD=1`** restores the record form, leaving the case to `--native`'s own
+rewrite (`LOFT_NO_VALUE_RECORD`); it is the first bisect step for a wrong field out of a
+small-record call.  **`LOFT_TRACE_IR_VALUEREC=1`** names each carrier the pass declines and why.
 
 **A scalar leaf's call is its body (`@FR-R-InlineLeaf`, default-ON, both backends, at the
 top of `byte_code_from` after the value records):** a call of a function whose parameters,
