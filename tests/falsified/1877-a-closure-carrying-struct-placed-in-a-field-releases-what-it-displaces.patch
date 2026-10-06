@@ -1,0 +1,268 @@
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index 0e2817ac9..9c6e71d55 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -14128,86 +14128,6 @@ impl Parser {
+     /// leaves dangling DbRefs — silent cross-object corruption once
+     /// the store slot is reused.  The three escape sinks reject on
+     /// this predicate; locals and downward argument passing stay free.
+-    /// loft#1877, `@FR-L-CapOwn` — the closure records an overwrite of the place `to` (a
+-    /// field holding a value of type `tp`) displaces, bound so their cascades run: `to`
+-    /// itself when the value holds none.  Each fn field of the value, and of every INLINE
+-    /// struct member of it, keeps its closure record as a child record in the host's store;
+-    /// the copy that overwrites the place frees those records' bytes, and what they ADOPTED
+-    /// is released by their cascades, which the scope pass places after each `___oldrec`
+-    /// bind (`capture_adoption::cascade_before_record_frees`).  Hooks do not run:
+-    /// `(H-Drop-Not)` leaves an overwritten field's droppables to the author, and adopted
+-    /// captures are not droppables but stores the closure owns.
+-    ///
+-    /// Built as the place argument of the overwriting copy, so it runs after the right-hand
+-    /// side is computed — which may read the old value — and before the copy replaces it.
+-    pub(crate) fn release_displaced_closures(&mut self, to: &Value, tp: &Type) -> Value {
+-        fn collect(
+-            p: &Parser,
+-            tp: &Type,
+-            path: &[(u16, u16)],
+-            out: &mut Vec<(Vec<(u16, u16)>, u16, u32)>,
+-            seen: &mut Vec<u32>,
+-        ) {
+-            let Type::Reference(d, deps) = tp.base() else {
+-                return;
+-            };
+-            if deps.contains(&u16::MAX) || seen.contains(d) {
+-                return;
+-            }
+-            seen.push(*d);
+-            let kt = p.data.def(*d).known_type();
+-            for a in p.data.def(*d).attributes() {
+-                let crec = p.database.position(kt, &format!("{}__closure_rec", a.name));
+-                if crec != u16::MAX && a.assigned_lambda_d_nr != u32::MAX {
+-                    let record = p.data.def(a.assigned_lambda_d_nr).closure_record();
+-                    if record != u32::MAX {
+-                        out.push((path.to_vec(), crec, record));
+-                    }
+-                } else if let Type::Reference(m, mdeps) = a.typedef.base()
+-                    && !mdeps.contains(&u16::MAX)
+-                {
+-                    let pos = p.database.position(kt, &a.name);
+-                    if pos != u16::MAX {
+-                        let mut deeper = path.to_vec();
+-                        deeper.push((pos, p.data.def(*m).known_type()));
+-                        collect(p, &a.typedef, &deeper, out, seen);
+-                    }
+-                }
+-            }
+-            seen.pop();
+-        }
+-        if self.first_pass || !to.is_place_read(&self.data) {
+-            return to.clone();
+-        }
+-        let mut fields = Vec::new();
+-        collect(self, tp, &[], &mut fields, &mut Vec::new());
+-        if fields.is_empty() {
+-            return to.clone();
+-        }
+-        let mut ops = Vec::new();
+-        for (path, crec, record) in fields {
+-            let mut place = to.clone();
+-            for (pos, kt) in path {
+-                place = self.cl(
+-                    "OpGetField",
+-                    &[place, Value::Int(i32::from(pos)), Value::Int(i32::from(kt))],
+-                );
+-            }
+-            let field = self.cl(
+-                "OpGetField",
+-                &[place, Value::Int(i32::from(crec)), Value::Int(0)],
+-            );
+-            let old = self.create_unique(
+-                "__oldrec",
+-                &Type::Reference(record, crate::data::Deps::none()),
+-            );
+-            self.vars.set_skip_free(old);
+-            ops.push(v_set(old, self.cl("OpRefFromChildRec", &[field])));
+-        }
+-        ops.push(to.clone());
+-        v_block(ops, tp.clone(), "displaced_closures")
+-    }
+-
+     pub(crate) fn type_carries_closure(&self, tp: &Type) -> bool {
+         // Like `fn_ref_field_is_split`, derive from the registered
+         // database layout (built from the COMPLETE first pass) rather
+@@ -15552,10 +15472,29 @@ impl Parser {
+         // transparent to it (nullability is read separately via `attr_nullable`).
+         let tp = tp.base().clone();
+         let nm = self.data.attr_name(d_nr, f_nr);
+-        // `@FR-L-Escape` (loft#1877) — a struct holding a capturing closure may be placed into
+-        // another struct's field: a fresh value or an owned one placed once moves its closure
+-        // records into the field's store, and a copy of a value this function does not own is
+-        // refused by `(H-Copy-Refuse)`, since such a type owns a release (C75).
++        // #318 sink R2: a closure-carrying struct value cannot be
++        // copied into another struct's field — the copy's closure
++        // record keeps raw DbRefs into the constructing frame, which
++        // the field's host may outlive (silent corruption on slot
++        // reuse).  The direct fn-field write (Type::Function arm) IS
++        // the supported feature and stays; `emit_check == false` is
++        // the closure-record population path (captures share by
++        // DbRef, no copy) and is exempt.
++        if emit_check
++            && !self.first_pass
++            && !matches!(tp, Type::Function(..))
++            && self.type_carries_closure(&tp)
++        {
++            diagnostic!(
++                self.lexer,
++                Level::Error,
++                "field `{nm}` would store a value of a type that holds a capturing \
++                 closure; such values are bound to the function frame that owns the \
++                 captures and cannot be copied into another struct — keep the closure \
++                 holder in a local variable and pass it down as an argument"
++            );
++            return Value::Null;
++        }
+         let pos = self
+             .database
+             .position(self.data.def(d_nr).known_type(), &nm);
+diff --git b/src/parser/operators.rs a/src/parser/operators.rs
+index 779ffc1bd..3a83f6b62 100644
+--- b/src/parser/operators.rs
++++ a/src/parser/operators.rs
+@@ -1202,10 +1202,10 @@ impl Parser {
+             };
+         #[cfg(feature = "wasm")]
+         let tp_val = i32::from(tp);
+-        // loft#1877 — the closure records the overwrite displaces release what they adopted,
+-        // between the right-hand side (argument one) and the copy.
+-        let place = self.release_displaced_closures(to, f_type);
+-        self.cl("OpCopyRecord", &[code.clone(), place, Value::Int(tp_val)])
++        self.cl(
++            "OpCopyRecord",
++            &[code.clone(), to.clone(), Value::Int(tp_val)],
++        )
+     }
+ 
+     /// `@FR-Op-Back` (@PLN182) — the form an `operator` definition backs, the symbol it is
+diff --git b/src/scopes/capture_adoption.rs a/src/scopes/capture_adoption.rs
+index 723d09961..db189b5c1 100644
+--- b/src/scopes/capture_adoption.rs
++++ a/src/scopes/capture_adoption.rs
+@@ -103,6 +103,7 @@ fn cascade_before_record_frees(data: &mut Data) {
+         free_ref: data.def_nr("OpFreeRef"),
+         live: data.def_nr("OpStoreLive"),
+         conv: data.def_nr("OpConvBoolFromRef"),
++        clear_keyed: data.def_nr("OpClearKeyed"),
+     };
+     // Paid only where a closure record can owe a release: this runs over every function the
+     // scope pass checked — the whole stdlib on every compile — so a program, or a function,
+@@ -133,6 +134,7 @@ struct ReleaseOps {
+     /// a store twice (`@FR-H-FreeTwice`) must not run its cascade twice.
+     live: u32,
+     conv: u32,
++    clear_keyed: u32,
+ }
+ 
+ impl ReleaseOps {
+@@ -147,25 +149,24 @@ impl ReleaseOps {
+     }
+ 
+     /// Place the cascades one statement list owes: before each release of a closure record,
+-    /// and after each bind of a displaced one.  The list is rebuilt only when it holds such a
+-    /// statement.
++    /// and before the clear of a fn field's old record.  The list is rebuilt only when it
++    /// holds such a statement.
+     fn patch(&self, list: &mut Vec<Value>, data: &Data, vars: &Function) {
+-        let owes = list.iter().any(|op| {
+-            self.owed(data, vars, op).is_some() || Self::old_record(op, data, vars).is_some()
++        let owes = list.iter().enumerate().any(|(i, op)| {
++            self.owed(data, vars, op).is_some()
++                || (i > 0 && self.old_record(list.get(i - 1), op, data, vars).is_some())
+         });
+         if !owes {
+             return;
+         }
+         let mut out: Vec<Value> = Vec::with_capacity(list.len() + 2);
+         for op in std::mem::take(list) {
+-            if let Some((t, c)) = Self::old_record(&op, data, vars) {
+-                out.push(op);
++            if let Some((t, c)) = self.old_record(out.last(), &op, data, vars) {
+                 out.push(v_if(
+                     Value::Call(self.conv, vec![Value::Var(t)]),
+                     Value::Call(c, vec![Value::Var(t)]),
+                     Value::Null,
+                 ));
+-                continue;
+             }
+             if let Some((v, c)) = self.owed(data, vars, &op) {
+                 // A cascade the scope pass already placed ahead of this free is re-guarded on
+@@ -209,15 +210,26 @@ impl ReleaseOps {
+         (c != u32::MAX).then_some((*v, c))
+     }
+ 
+-    /// A displaced closure record, bound so its cascade can run before its bytes go
+-    /// (`___oldrec_N = OpRefFromChildRec(field)`): a fn field's reset, and a struct-valued
+-    /// field's overwrite (loft#1877).  Its cascade runs right after the bind, and releases
+-    /// what the record adopted.
+-    fn old_record(op: &Value, data: &Data, vars: &Function) -> Option<(u16, u32)> {
+-        let Value::Set(t, _) = op.unspan() else {
++    /// A fn field's old closure record, bound just ahead of the clear that frees its bytes
++    /// (`___oldrec_N = OpRefFromChildRec(field)`, the parser's field reset): its cascade
++    /// releases what it adopted first.
++    fn old_record(
++        &self,
++        prev: Option<&Value>,
++        op: &Value,
++        data: &Data,
++        vars: &Function,
++    ) -> Option<(u16, u32)> {
++        let Value::Call(d, _) = op.unspan() else {
++            return None;
++        };
++        if *d != self.clear_keyed {
++            return None;
++        }
++        let Some(Value::Set(t, _)) = prev.map(Value::unspan) else {
+             return None;
+         };
+-        if *t >= vars.count() || !vars.name(*t).trim_start_matches('_').starts_with("oldrec") {
++        if !vars.name(*t).trim_start_matches('_').starts_with("oldrec") {
+             return None;
+         }
+         let Type::Reference(r, _) = vars.tp(*t).base() else {
+@@ -626,7 +638,7 @@ pub(super) fn capture_store_adopters(
+         // released where it is taken, never an adopter: named one, it became the witness the
+         // frame's conditional release reads, and the frame freed the capture under the live
+         // record (loft#1606).
+-        if !super::capture_builds::is_record_local(function, v) {
++        if function.is_argument(v) || function.name(v).starts_with("__disp_") {
+             continue;
+         }
+         let Type::Reference(record, _) = function.tp(v) else {
+diff --git b/src/scopes/capture_builds.rs a/src/scopes/capture_builds.rs
+index 7c5ddf13a..d0dd79078 100644
+--- b/src/scopes/capture_builds.rs
++++ a/src/scopes/capture_builds.rs
+@@ -800,7 +800,7 @@ pub(crate) fn backs_an_adopted_capture(
+ fn capture_is_adopted(data: &Data, function: &Function, builds: &CaptureBuilds, c: u16) -> bool {
+     let name = function.name(c);
+     for w in 0..function.next_var() {
+-        if !is_record_local(function, w) {
++        if function.is_argument(w) {
+             continue;
+         }
+         let Type::Reference(record, _) = function.tp(w) else {
+@@ -1061,11 +1061,9 @@ pub(super) fn free_unless_record_built(
+ }
+ 
+ /// Is local `w` a closure record this frame BUILDS (`___clos_N`, `emit_lambda_code`)?  The
+-/// other locals of a closure-record type are not: the lambda's own `__closure` parameter, a
+-/// rebuild's snapshot (`__disp_N`, `Scopes::displaced_drop`), which copies a record to run
+-/// its cascade, and a displaced field record (`___oldrec_N`, loft#1877), bound to run its
+-/// cascade — none is a record a capture lives in, and read as one it decided the record type
+-/// never adopts its capture, which strips that release for every record of the type.
+-pub(super) fn is_record_local(function: &Function, w: u16) -> bool {
++/// other locals of a closure-record type are not: the lambda's own `__closure` parameter, and
++/// a rebuild's snapshot (`__disp_N`, `Scopes::displaced_drop`), which copies a record to run
++/// its cascade and is never the record a capture lives in.
++fn is_record_local(function: &Function, w: u16) -> bool {
+     !function.is_argument(w) && function.name(w).starts_with("___clos_")
+ }

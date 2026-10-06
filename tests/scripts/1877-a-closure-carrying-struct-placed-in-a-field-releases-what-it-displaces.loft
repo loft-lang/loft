@@ -1,0 +1,75 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1877, `@FR-L-Escape` / `@FR-L-CapOwn` — a struct whose fn field holds a capturing
+// closure may be placed into another struct's field as a value, and overwriting such a field
+// releases what the displaced closure adopted.
+//
+// The closure record lives in the struct's store as a child record and owns its captures
+// (loft#1867).  Placed into a field, a fresh value or an owned one placed once moves its
+// records into the field's store.  Overwritten, the field's old records are bound
+// (`___oldrec_N`) and their cascades run after the right-hand side is computed — so a
+// right-hand side that reads the old value (`g.h = rebuild(g.h)`) still reads it — and before
+// the copy replaces them.  Hooks do not run: `(H-Drop-Not)`; an adopted capture is a store the
+// closure owns, not a droppable.  A copy of a value this function does not own is refused
+// (`(H-Copy-Refuse)`), since such a type owns a release.
+//
+// Every value is hand-computed: `k1(n).f(x)` is `n * 10 + x`.
+//
+// @falsified-at: e0d151d80 — interpret leaked kt=96 V×8 -> clean, native leaked kt=96 V×8 -> clean
+// @falsified-by: tests/falsified/1877-a-closure-carrying-struct-placed-in-a-field-releases-what-it-displaces.patch — interpret leaked kt=96 V×8 -> clean, native leaked kt=96 V×8 -> clean
+//   CHANNEL: the LEAK — every overwrite left the displaced closure's adopted `V` unreleased.
+//   HOLDS: every cell is clean under `LOFT_STRICT_STORES=1`, `LOFT_POISON=1` and
+//   `LOFT_POISON_CLAIM=1` with the exit leak check on this tree, both backends.
+
+struct V { a: integer }
+struct H1 { f: fn(integer) -> integer, tag: integer }
+struct G { h: H1, z: integer }
+struct O { g: G, w: integer }
+
+fn k1(n: integer) -> H1 { v = V { a: n }; H1 { f: fn(x: integer) -> integer { v.a * 10 + x }, tag: n } }
+fn mkg(n: integer) -> G { G { h: k1(n), z: 2 } }
+fn rebuild(h: H1) -> H1 { k1(h.f(0) / 10 + 1) }
+fn churn() -> integer { junk = []; for i in 0..30 { junk += [V { a: 100 + i }]; } junk.len() }
+
+fn test_placed_into_a_field() {
+  g = G { h: k1(3), z: 1 };
+  a = k1(4);
+  g2 = G { h: a, z: 5 };
+  g3 = mkg(6);
+  assert(churn() == 30, "churn");
+  assert(g.h.f(1) == 31 && g2.h.f(2) == 42 && g3.h.f(3) == 63, "placed: {g.h.f(1)} {g2.h.f(2)} {g3.h.f(3)}");
+  assert(g.z == 1 && g2.z == 5 && g3.z == 2, "the other fields");
+}
+
+fn test_an_overwrite_releases_the_displaced_capture() {
+  g = G { h: k1(3), z: 1 };
+  g.h = k1(7);
+  assert(churn() == 30 && g.h.f(4) == 74 && g.h.tag == 7 && g.z == 1, "overwrite {g.h.f(4)}, want 74");
+}
+
+fn test_overwritten_in_a_loop() {
+  g = G { h: k1(3), z: 1 };
+  for i in 0..5 { g.h = k1(20 + i); }
+  assert(churn() == 30 && g.h.f(5) == 245, "loop {g.h.f(5)}, want 245");
+}
+
+fn test_the_right_hand_side_reads_the_old_value() {
+  g = G { h: k1(4), z: 1 };
+  g.h = rebuild(g.h);
+  assert(churn() == 30 && g.h.f(6) == 56, "rebuild {g.h.f(6)}, want 56 — the old closure answered 40");
+}
+
+fn test_two_levels_deep() {
+  o = O { g: mkg(8), w: 0 };
+  o.g.h = k1(9);
+  assert(churn() == 30 && o.g.h.f(7) == 97 && o.g.z == 2, "nested {o.g.h.f(7)}, want 97");
+}
+
+fn main() {
+  test_placed_into_a_field();
+  test_an_overwrite_releases_the_displaced_capture();
+  test_overwritten_in_a_loop();
+  test_the_right_hand_side_reads_the_old_value();
+  test_two_levels_deep();
+}

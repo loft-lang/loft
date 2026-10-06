@@ -1258,6 +1258,15 @@ permanent refusal as distance from the spec overstates the register by one.
 
 Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), as written.
 
+- **D-clo-49** *(opened 2026-10-05, CLOSED 2026-10-06; loft#1877)* — `(L-Escape)` for a
+  struct that holds a capturing closure, placed into another struct's field as a VALUE.  It was
+  refused (*"field `h` would store a value of a type that holds a capturing closure"*).  Placing
+  one was already sound once the closure record lived in its host's store (D-clo-47): a fresh
+  or owned value moves its records into the field's store, and a copy of one the function does
+  not own is refused by `(H-Copy-Refuse)`.  The OVERWRITE lost the displaced closure's adopted
+  captures; it now binds the field's old records (`___oldrec_N`) after the right-hand side is
+  computed and runs their cascades before the copy replaces them — closure releases only, the
+  hooks staying `(H-Drop-Not)`'s.
 - **D-clo-47** *(opened 2026-10-05, CLOSED 2026-10-05; loft#1867)* — `(L-Escape)` through a
   struct field.  A function could not return a struct whose field holds a CAPTURING closure: it
   was refused at compile time, while the same closure returned BARE kept its captures through the
@@ -1688,4 +1697,4 @@ Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), 
 
 ## The closure record closures.md's OPEN line carried until 2026-10-05
 
-`D-clo-47` (opened and CLOSED 2026-10-05, loft#1867); `D-clo-46` (opened and CLOSED 2026-10-05, loft#1862); `D-clo-45` (opened and CLOSED 2026-09-28, loft#1725); `D-clo-44` (opened and CLOSED 2026-09-28, loft#1715); `D-clo-43` (opened and CLOSED 2026-09-27, found with loft#1700); `D-clo-42` (opened and CLOSED 2026-09-24, loft#1659); `D-clo-41` (opened and CLOSED 2026-09-24, loft#1658); `D-clo-40` (opened and CLOSED 2026-09-23, loft#1642); `D-clo-39` (opened and CLOSED 2026-09-23; `D-clo-38`, loft#1624, opened and CLOSED the same day; `D-clo-36` and `D-clo-37` opened 2026-09-22 with `D-clo-35` and CLOSED 2026-09-23; `D-clo-27` closed 2026-09-12).
+`D-clo-49` (opened 2026-10-05, CLOSED 2026-10-06, loft#1877); `D-clo-47` (opened and CLOSED 2026-10-05, loft#1867); `D-clo-46` (opened and CLOSED 2026-10-05, loft#1862); `D-clo-45` (opened and CLOSED 2026-09-28, loft#1725); `D-clo-44` (opened and CLOSED 2026-09-28, loft#1715); `D-clo-43` (opened and CLOSED 2026-09-27, found with loft#1700); `D-clo-42` (opened and CLOSED 2026-09-24, loft#1659); `D-clo-41` (opened and CLOSED 2026-09-24, loft#1658); `D-clo-40` (opened and CLOSED 2026-09-23, loft#1642); `D-clo-39` (opened and CLOSED 2026-09-23; `D-clo-38`, loft#1624, opened and CLOSED the same day; `D-clo-36` and `D-clo-37` opened 2026-09-22 with `D-clo-35` and CLOSED 2026-09-23; `D-clo-27` closed 2026-09-12).

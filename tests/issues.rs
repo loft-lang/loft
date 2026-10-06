@@ -16411,13 +16411,6 @@ fn test_it() {
          function's frame; keep closure holders in local variables and pass \
          them down as arguments \
          at issue_318_vector_of_closure_carrying_struct_rejected:5:19",
-    )
-    .error(
-        "field `vector` would store a value of a type that holds a capturing \
-         closure; such values are bound to the function frame that owns the \
-         captures and cannot be copied into another struct — keep the closure \
-         holder in a local variable and pass it down as an argument \
-         at issue_318_vector_of_closure_carrying_struct_rejected:5:55",
     );
 }
 

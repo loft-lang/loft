@@ -1202,10 +1202,10 @@ impl Parser {
             };
         #[cfg(feature = "wasm")]
         let tp_val = i32::from(tp);
-        self.cl(
-            "OpCopyRecord",
-            &[code.clone(), to.clone(), Value::Int(tp_val)],
-        )
+        // loft#1877 — the closure records the overwrite displaces release what they adopted,
+        // between the right-hand side (argument one) and the copy.
+        let place = self.release_displaced_closures(to, f_type);
+        self.cl("OpCopyRecord", &[code.clone(), place, Value::Int(tp_val)])
     }
 
     /// `@FR-Op-Back` (@PLN182) — the form an `operator` definition backs, the symbol it is

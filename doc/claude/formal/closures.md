@@ -230,7 +230,7 @@ with the closure's environment in scope.
 
 ## Deviations
 
-**OPEN: 2.**  Every closed entry is recorded in [closures-history.md](closures-history.md).
+**OPEN: 1.**  Every closed entry is recorded in [closures-history.md](closures-history.md).
 
 - **D-clo-48 (OPEN, loft#1869)** — violates `(L-Fn)`: a closure cannot capture a fn-ref local <!-- doc-lint: ok -->
   that holds a CAPTURING closure — refused with the fn-ref struct-field message, because the
@@ -238,12 +238,6 @@ with the closure's environment in scope.
   The inner record's ownership has to follow into the outer record (`(L-CapOwn)`), as a
   captured struct's does.  Until then: capture the inner closure's values and rebuild it in the
   body, or pass it as an argument.
-- **D-clo-49 (OPEN, loft#1877)** — violates `(L-Escape)`: a struct whose fn field holds a <!-- doc-lint: ok -->
-  CAPTURING closure cannot be placed into another struct's field as a value (*"field `h` would
-  store a value of a type that holds a capturing closure"*).  Placing it is sound — a literal
-  field, a move, a delivered struct — but OVERWRITING such a field does not release the
-  displaced closure's adopted captures.  Until then: write the inner struct as a literal in the
-  outer one (`G { h: H1 { f: fn(…) { … } } }`), which is accepted and released.
 
 > **An `OPEN: 0` is a claim to re-measure, and this one moved four times in a day** — 0 → 1 → 2
 > → 0 → 1, each step a probe pushed one axis off what the oracle below holds fixed, and each

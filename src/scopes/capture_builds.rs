@@ -800,7 +800,7 @@ pub(crate) fn backs_an_adopted_capture(
 fn capture_is_adopted(data: &Data, function: &Function, builds: &CaptureBuilds, c: u16) -> bool {
     let name = function.name(c);
     for w in 0..function.next_var() {
-        if function.is_argument(w) {
+        if !is_record_local(function, w) {
             continue;
         }
         let Type::Reference(record, _) = function.tp(w) else {
@@ -1061,9 +1061,11 @@ pub(super) fn free_unless_record_built(
 }
 
 /// Is local `w` a closure record this frame BUILDS (`___clos_N`, `emit_lambda_code`)?  The
-/// other locals of a closure-record type are not: the lambda's own `__closure` parameter, and
-/// a rebuild's snapshot (`__disp_N`, `Scopes::displaced_drop`), which copies a record to run
-/// its cascade and is never the record a capture lives in.
-fn is_record_local(function: &Function, w: u16) -> bool {
+/// other locals of a closure-record type are not: the lambda's own `__closure` parameter, a
+/// rebuild's snapshot (`__disp_N`, `Scopes::displaced_drop`), which copies a record to run
+/// its cascade, and a displaced field record (`___oldrec_N`, loft#1877), bound to run its
+/// cascade — none is a record a capture lives in, and read as one it decided the record type
+/// never adopts its capture, which strips that release for every record of the type.
+pub(super) fn is_record_local(function: &Function, w: u16) -> bool {
     !function.is_argument(w) && function.name(w).starts_with("___clos_")
 }

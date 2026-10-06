@@ -44,15 +44,15 @@ gets a single defined owner first.  Decided 2026-06-10 — [record](DESIGN_DECIS
 it — returned, or written into a struct received as an argument.  The closure record is built
 in the struct's own store and adopts its captures there, and the struct's drop cascade runs the
 record's, so the struct owns that release like any other member's.  A copy of such a struct is
-judged by `(H-Copy-Refuse)` and a move by `(H-Spent)`, as for any type that owns a release.  A
-collection of such structs stays refused (C116), and so does placing one into another struct's
-field as a value (loft#1877, D-clo-49).  **Why.** `(L-Escape)` makes a closure an ordinary value;
+judged by `(H-Copy-Refuse)` and a move by `(H-Spent)`, as for any type that owns a release.  It
+may be placed into another struct's field, and overwriting that field releases what the
+displaced closures adopted.  A collection of such structs stays refused (C116).  **Why.** `(L-Escape)` makes a closure an ordinary value;
 building the record where the struct lives makes the transfer the ordinary ownership of a
 member, with every release emitted code (CODEGEN_METHOD.md § Ownership and copy semantics are
 emitted code).
 
-**Revisit when.** loft#1877 settles how an overwritten field releases a displaced closure's
-captures.  Decided 2026-06-10, revised 2026-10-05 (loft#1867) — [record](DESIGN_DECISIONS-history.md#c75--closure-carrying-struct-values-are-frame-bound).
+**Revisit when.** C116's collection refusal is reopened.  Decided 2026-06-10, revised
+2026-10-05 (loft#1867, loft#1877) — [record](DESIGN_DECISIONS-history.md#c75--closure-carrying-struct-values-are-frame-bound).
 **Holds at:** `OpChildRec` (`Parser::emit_fn_ref_field_write`), `Parser::cascade_fn_fields`,
 `capture_adoption::claimed_into_delivered`;
 `tests/scripts/1867-a-returned-struct-keeps-its-closure-capture.loft`, `tests/issues.rs::issue_1867_*`.

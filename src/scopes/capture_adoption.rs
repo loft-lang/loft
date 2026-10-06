@@ -103,7 +103,6 @@ fn cascade_before_record_frees(data: &mut Data) {
         free_ref: data.def_nr("OpFreeRef"),
         live: data.def_nr("OpStoreLive"),
         conv: data.def_nr("OpConvBoolFromRef"),
-        clear_keyed: data.def_nr("OpClearKeyed"),
     };
     // Paid only where a closure record can owe a release: this runs over every function the
     // scope pass checked — the whole stdlib on every compile — so a program, or a function,
@@ -134,7 +133,6 @@ struct ReleaseOps {
     /// a store twice (`@FR-H-FreeTwice`) must not run its cascade twice.
     live: u32,
     conv: u32,
-    clear_keyed: u32,
 }
 
 impl ReleaseOps {
@@ -149,24 +147,25 @@ impl ReleaseOps {
     }
 
     /// Place the cascades one statement list owes: before each release of a closure record,
-    /// and before the clear of a fn field's old record.  The list is rebuilt only when it
-    /// holds such a statement.
+    /// and after each bind of a displaced one.  The list is rebuilt only when it holds such a
+    /// statement.
     fn patch(&self, list: &mut Vec<Value>, data: &Data, vars: &Function) {
-        let owes = list.iter().enumerate().any(|(i, op)| {
-            self.owed(data, vars, op).is_some()
-                || (i > 0 && self.old_record(list.get(i - 1), op, data, vars).is_some())
+        let owes = list.iter().any(|op| {
+            self.owed(data, vars, op).is_some() || Self::old_record(op, data, vars).is_some()
         });
         if !owes {
             return;
         }
         let mut out: Vec<Value> = Vec::with_capacity(list.len() + 2);
         for op in std::mem::take(list) {
-            if let Some((t, c)) = self.old_record(out.last(), &op, data, vars) {
+            if let Some((t, c)) = Self::old_record(&op, data, vars) {
+                out.push(op);
                 out.push(v_if(
                     Value::Call(self.conv, vec![Value::Var(t)]),
                     Value::Call(c, vec![Value::Var(t)]),
                     Value::Null,
                 ));
+                continue;
             }
             if let Some((v, c)) = self.owed(data, vars, &op) {
                 // A cascade the scope pass already placed ahead of this free is re-guarded on
@@ -210,26 +209,15 @@ impl ReleaseOps {
         (c != u32::MAX).then_some((*v, c))
     }
 
-    /// A fn field's old closure record, bound just ahead of the clear that frees its bytes
-    /// (`___oldrec_N = OpRefFromChildRec(field)`, the parser's field reset): its cascade
-    /// releases what it adopted first.
-    fn old_record(
-        &self,
-        prev: Option<&Value>,
-        op: &Value,
-        data: &Data,
-        vars: &Function,
-    ) -> Option<(u16, u32)> {
-        let Value::Call(d, _) = op.unspan() else {
+    /// A displaced closure record, bound so its cascade can run before its bytes go
+    /// (`___oldrec_N = OpRefFromChildRec(field)`): a fn field's reset, and a struct-valued
+    /// field's overwrite (loft#1877).  Its cascade runs right after the bind, and releases
+    /// what the record adopted.
+    fn old_record(op: &Value, data: &Data, vars: &Function) -> Option<(u16, u32)> {
+        let Value::Set(t, _) = op.unspan() else {
             return None;
         };
-        if *d != self.clear_keyed {
-            return None;
-        }
-        let Some(Value::Set(t, _)) = prev.map(Value::unspan) else {
-            return None;
-        };
-        if !vars.name(*t).trim_start_matches('_').starts_with("oldrec") {
+        if *t >= vars.count() || !vars.name(*t).trim_start_matches('_').starts_with("oldrec") {
             return None;
         }
         let Type::Reference(r, _) = vars.tp(*t).base() else {
@@ -638,7 +626,7 @@ pub(super) fn capture_store_adopters(
         // released where it is taken, never an adopter: named one, it became the witness the
         // frame's conditional release reads, and the frame freed the capture under the live
         // record (loft#1606).
-        if function.is_argument(v) || function.name(v).starts_with("__disp_") {
+        if !super::capture_builds::is_record_local(function, v) {
             continue;
         }
         let Type::Reference(record, _) = function.tp(v) else {

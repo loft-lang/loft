@@ -14128,6 +14128,86 @@ impl Parser {
     /// leaves dangling DbRefs — silent cross-object corruption once
     /// the store slot is reused.  The three escape sinks reject on
     /// this predicate; locals and downward argument passing stay free.
+    /// loft#1877, `@FR-L-CapOwn` — the closure records an overwrite of the place `to` (a
+    /// field holding a value of type `tp`) displaces, bound so their cascades run: `to`
+    /// itself when the value holds none.  Each fn field of the value, and of every INLINE
+    /// struct member of it, keeps its closure record as a child record in the host's store;
+    /// the copy that overwrites the place frees those records' bytes, and what they ADOPTED
+    /// is released by their cascades, which the scope pass places after each `___oldrec`
+    /// bind (`capture_adoption::cascade_before_record_frees`).  Hooks do not run:
+    /// `(H-Drop-Not)` leaves an overwritten field's droppables to the author, and adopted
+    /// captures are not droppables but stores the closure owns.
+    ///
+    /// Built as the place argument of the overwriting copy, so it runs after the right-hand
+    /// side is computed — which may read the old value — and before the copy replaces it.
+    pub(crate) fn release_displaced_closures(&mut self, to: &Value, tp: &Type) -> Value {
+        fn collect(
+            p: &Parser,
+            tp: &Type,
+            path: &[(u16, u16)],
+            out: &mut Vec<(Vec<(u16, u16)>, u16, u32)>,
+            seen: &mut Vec<u32>,
+        ) {
+            let Type::Reference(d, deps) = tp.base() else {
+                return;
+            };
+            if deps.contains(&u16::MAX) || seen.contains(d) {
+                return;
+            }
+            seen.push(*d);
+            let kt = p.data.def(*d).known_type();
+            for a in p.data.def(*d).attributes() {
+                let crec = p.database.position(kt, &format!("{}__closure_rec", a.name));
+                if crec != u16::MAX && a.assigned_lambda_d_nr != u32::MAX {
+                    let record = p.data.def(a.assigned_lambda_d_nr).closure_record();
+                    if record != u32::MAX {
+                        out.push((path.to_vec(), crec, record));
+                    }
+                } else if let Type::Reference(m, mdeps) = a.typedef.base()
+                    && !mdeps.contains(&u16::MAX)
+                {
+                    let pos = p.database.position(kt, &a.name);
+                    if pos != u16::MAX {
+                        let mut deeper = path.to_vec();
+                        deeper.push((pos, p.data.def(*m).known_type()));
+                        collect(p, &a.typedef, &deeper, out, seen);
+                    }
+                }
+            }
+            seen.pop();
+        }
+        if self.first_pass || !to.is_place_read(&self.data) {
+            return to.clone();
+        }
+        let mut fields = Vec::new();
+        collect(self, tp, &[], &mut fields, &mut Vec::new());
+        if fields.is_empty() {
+            return to.clone();
+        }
+        let mut ops = Vec::new();
+        for (path, crec, record) in fields {
+            let mut place = to.clone();
+            for (pos, kt) in path {
+                place = self.cl(
+                    "OpGetField",
+                    &[place, Value::Int(i32::from(pos)), Value::Int(i32::from(kt))],
+                );
+            }
+            let field = self.cl(
+                "OpGetField",
+                &[place, Value::Int(i32::from(crec)), Value::Int(0)],
+            );
+            let old = self.create_unique(
+                "__oldrec",
+                &Type::Reference(record, crate::data::Deps::none()),
+            );
+            self.vars.set_skip_free(old);
+            ops.push(v_set(old, self.cl("OpRefFromChildRec", &[field])));
+        }
+        ops.push(to.clone());
+        v_block(ops, tp.clone(), "displaced_closures")
+    }
+
     pub(crate) fn type_carries_closure(&self, tp: &Type) -> bool {
         // Like `fn_ref_field_is_split`, derive from the registered
         // database layout (built from the COMPLETE first pass) rather
@@ -15472,29 +15552,10 @@ impl Parser {
         // transparent to it (nullability is read separately via `attr_nullable`).
         let tp = tp.base().clone();
         let nm = self.data.attr_name(d_nr, f_nr);
-        // #318 sink R2: a closure-carrying struct value cannot be
-        // copied into another struct's field — the copy's closure
-        // record keeps raw DbRefs into the constructing frame, which
-        // the field's host may outlive (silent corruption on slot
-        // reuse).  The direct fn-field write (Type::Function arm) IS
-        // the supported feature and stays; `emit_check == false` is
-        // the closure-record population path (captures share by
-        // DbRef, no copy) and is exempt.
-        if emit_check
-            && !self.first_pass
-            && !matches!(tp, Type::Function(..))
-            && self.type_carries_closure(&tp)
-        {
-            diagnostic!(
-                self.lexer,
-                Level::Error,
-                "field `{nm}` would store a value of a type that holds a capturing \
-                 closure; such values are bound to the function frame that owns the \
-                 captures and cannot be copied into another struct — keep the closure \
-                 holder in a local variable and pass it down as an argument"
-            );
-            return Value::Null;
-        }
+        // `@FR-L-Escape` (loft#1877) — a struct holding a capturing closure may be placed into
+        // another struct's field: a fresh value or an owned one placed once moves its closure
+        // records into the field's store, and a copy of a value this function does not own is
+        // refused by `(H-Copy-Refuse)`, since such a type owns a release (C75).
         let pos = self
             .database
             .position(self.data.def(d_nr).known_type(), &nm);
