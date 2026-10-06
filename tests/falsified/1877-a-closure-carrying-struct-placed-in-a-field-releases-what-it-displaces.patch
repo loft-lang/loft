@@ -1,8 +1,8 @@
-diff --git b/src/parser/mod.rs a/src/parser/mod.rs
-index 0e2817ac9..9c6e71d55 100644
---- b/src/parser/mod.rs
-+++ a/src/parser/mod.rs
-@@ -14128,86 +14128,6 @@ impl Parser {
+diff --git a/src/parser/mod.rs b/src/parser/mod.rs
+index 633aafbb0..3afb4c19c 100644
+--- a/src/parser/mod.rs
++++ b/src/parser/mod.rs
+@@ -14151,86 +14151,6 @@ impl Parser {
      /// leaves dangling DbRefs — silent cross-object corruption once
      /// the store slot is reused.  The three escape sinks reject on
      /// this predicate; locals and downward argument passing stay free.
@@ -86,10 +86,10 @@ index 0e2817ac9..9c6e71d55 100644
 -        v_block(ops, tp.clone(), "displaced_closures")
 -    }
 -
-     pub(crate) fn type_carries_closure(&self, tp: &Type) -> bool {
-         // Like `fn_ref_field_is_split`, derive from the registered
-         // database layout (built from the COMPLETE first pass) rather
-@@ -15552,10 +15472,29 @@ impl Parser {
+     /// loft#1880 — the visible heap parameters an instance's every return leaf is a VIEW into
+     /// (`v[0]`, `w.h`), with self calls read by induction
+     /// ([`Self::every_return_leaf_views_one_of`]), or `None`.  A leaf that is a bare parameter
+@@ -15720,10 +15640,29 @@ impl Parser {
          // transparent to it (nullability is read separately via `attr_nullable`).
          let tp = tp.base().clone();
          let nm = self.data.attr_name(d_nr, f_nr);
@@ -123,10 +123,10 @@ index 0e2817ac9..9c6e71d55 100644
          let pos = self
              .database
              .position(self.data.def(d_nr).known_type(), &nm);
-diff --git b/src/parser/operators.rs a/src/parser/operators.rs
-index 779ffc1bd..3a83f6b62 100644
---- b/src/parser/operators.rs
-+++ a/src/parser/operators.rs
+diff --git a/src/parser/operators.rs b/src/parser/operators.rs
+index 4b62e154d..2c8043a45 100644
+--- a/src/parser/operators.rs
++++ b/src/parser/operators.rs
 @@ -1202,10 +1202,10 @@ impl Parser {
              };
          #[cfg(feature = "wasm")]
@@ -142,10 +142,10 @@ index 779ffc1bd..3a83f6b62 100644
      }
  
      /// `@FR-Op-Back` (@PLN182) — the form an `operator` definition backs, the symbol it is
-diff --git b/src/scopes/capture_adoption.rs a/src/scopes/capture_adoption.rs
-index 723d09961..db189b5c1 100644
---- b/src/scopes/capture_adoption.rs
-+++ a/src/scopes/capture_adoption.rs
+diff --git a/src/scopes/capture_adoption.rs b/src/scopes/capture_adoption.rs
+index 7446fc08a..fc376240b 100644
+--- a/src/scopes/capture_adoption.rs
++++ b/src/scopes/capture_adoption.rs
 @@ -103,6 +103,7 @@ fn cascade_before_record_frees(data: &mut Data) {
          free_ref: data.def_nr("OpFreeRef"),
          live: data.def_nr("OpStoreLive"),
@@ -237,10 +237,10 @@ index 723d09961..db189b5c1 100644
              continue;
          }
          let Type::Reference(record, _) = function.tp(v) else {
-diff --git b/src/scopes/capture_builds.rs a/src/scopes/capture_builds.rs
+diff --git a/src/scopes/capture_builds.rs b/src/scopes/capture_builds.rs
 index 7c5ddf13a..d0dd79078 100644
---- b/src/scopes/capture_builds.rs
-+++ a/src/scopes/capture_builds.rs
+--- a/src/scopes/capture_builds.rs
++++ b/src/scopes/capture_builds.rs
 @@ -800,7 +800,7 @@ pub(crate) fn backs_an_adopted_capture(
  fn capture_is_adopted(data: &Data, function: &Function, builds: &CaptureBuilds, c: u16) -> bool {
      let name = function.name(c);

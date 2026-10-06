@@ -1,8 +1,8 @@
 diff --git a/src/parser/definitions.rs b/src/parser/definitions.rs
-index aa119db8f..a6a3811cd 100644
+index b5215ddde..128eb47bc 100644
 --- a/src/parser/definitions.rs
 +++ b/src/parser/definitions.rs
-@@ -5056,7 +5056,9 @@ impl Parser {
+@@ -5041,7 +5041,9 @@ impl Parser {
                               elements are always dense (a key / slot denotes presence)"
                          );
                      }
@@ -14,10 +14,10 @@ index aa119db8f..a6a3811cd 100644
                      // A `?` written after the element's own modifiers (`integer limit(0, 9)?`)
                      // is read by `parse_type` itself, past the identifier-adjacent test above —
 diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
-index 1de2245ae..9b4b4ca10 100644
+index 6af879b08..a926fd71b 100644
 --- a/src/parser/expressions.rs
 +++ b/src/parser/expressions.rs
-@@ -3524,7 +3524,7 @@ use a separate collection or add after the loop"
+@@ -3536,7 +3536,7 @@ use a separate collection or add after the loop"
          // nothing, so `x = ;` silently bound null and `x += ;` compiled to a program whose
          // later output vanished (loft#1800's library parser met it: the compiler accepted
          // what no grammar of loft allows).
@@ -26,7 +26,7 @@ index 1de2245ae..9b4b4ca10 100644
              diagnostic!(self.lexer, Level::Error, "Expected a value after `{op}`");
              *code = Value::Null;
              return Type::Void;
-@@ -4216,12 +4216,7 @@ use a separate collection or add after the loop"
+@@ -4228,12 +4228,7 @@ use a separate collection or add after the loop"
          // itself, the literal had no member types to steer it.
          let link_tuple = self.ref_tuple_expected(op, to);
          let expect = link_tuple.as_ref().unwrap_or(f_type);
@@ -40,7 +40,7 @@ index 1de2245ae..9b4b4ca10 100644
          // loft#1840 — `(B-Copy)` for a text: `t = s.name` copies the text into `t`, so a `+=`
          // into it that nothing reads is a lost write.  A text has no copy lowering of its own
          // (the bind is the `Set`), so the verdict is recorded here, from the same place test
-@@ -7779,242 +7774,6 @@ use a separate collection or add after the loop"
+@@ -7791,243 +7786,6 @@ use a separate collection or add after the loop"
          binds
      }
  
@@ -270,7 +270,8 @@ index 1de2245ae..9b4b4ca10 100644
 -                || crate::data::element_stack_offsets(elems)[i] as u32,
 -                |offs| u32::from(offs[i]),
 -            );
--            self.get_val(elem, false, offset, Value::Var(tmp), u32::MAX)
+-            let nullable = matches!(elem, Type::Optional(_));
+-            self.get_val(elem, nullable, offset, Value::Var(tmp), u32::MAX)
 -        };
 -        let mut elem_tp = elem.clone();
 -        if let Some((syn, pointer)) = self.tagged_pointer_type(elem) {
@@ -283,7 +284,7 @@ index 1de2245ae..9b4b4ca10 100644
      /// Parse an assignment, keeping [`Parser::last_place_discharge`] the answer for the
      /// left-hand side that is being parsed HERE.
      ///
-@@ -8125,9 +7884,6 @@ use a separate collection or add after the loop"
+@@ -8138,9 +7896,6 @@ use a separate collection or add after the loop"
          // LHS parse.  Only ever SET here (never cleared): a nested parse_assign
          // inside the list must not un-mark the elements around it.  Restored
          // below, so the RHS — parsed further down — sees the outer state again.
@@ -293,7 +294,7 @@ index 1de2245ae..9b4b4ca10 100644
          let saved_tuple_lhs = self.in_tuple_lhs;
          if self.peek_tuple_lhs() {
              self.in_tuple_lhs = true;
-@@ -8353,7 +8109,6 @@ use a separate collection or add after the loop"
+@@ -8366,7 +8121,6 @@ use a separate collection or add after the loop"
                  );
              }
              let mut rhs = Value::Null;
@@ -301,7 +302,7 @@ index 1de2245ae..9b4b4ca10 100644
              let mut rhs_type = self.expression(&mut rhs);
              // `@FR-T-Destr` / `@FR-T-Ref` / `@FR-B-Ref-Uniform` — a `&(…)` binding denotes the
              // bound tuple itself, so `(a, b) = p` unpacks it exactly as `a = p.0; b = p.1` does.  The
-@@ -8420,9 +8175,6 @@ use a separate collection or add after the loop"
+@@ -8433,9 +8187,6 @@ use a separate collection or add after the loop"
                  if !self.first_pass {
                      self.change_var_type(tmp, &tmp_tp);
                  }
@@ -311,7 +312,7 @@ index 1de2245ae..9b4b4ca10 100644
                  let mut steps = vec![Value::Set(tmp, Box::new(rhs))];
                  for (i, &v_nr) in var_nrs.iter().enumerate() {
                      // The arity mismatch above is already an Error, but it only
-@@ -8462,26 +8214,12 @@ use a separate collection or add after the loop"
+@@ -8475,26 +8226,12 @@ use a separate collection or add after the loop"
                          && !matches!(self.vars.tp(v_nr), Type::Optional(_) | Type::RefVar(_))
                          && !self.vars.tp(v_nr).is_unknown()
                          && self.vars.tp(v_nr).is_equal(elem_tp.base());
@@ -340,7 +341,7 @@ index 1de2245ae..9b4b4ca10 100644
                          format!(
                              "{} `{}`",
                              if self.vars.is_argument(v_nr) {
-@@ -8499,28 +8237,12 @@ use a separate collection or add after the loop"
+@@ -8512,28 +8249,12 @@ use a separate collection or add after the loop"
                          self.change_var_type(v_nr, &member_tp);
                      }
                      let step = if ref_def_nr == u32::MAX {
@@ -372,7 +373,7 @@ index 1de2245ae..9b4b4ca10 100644
                          }
                          if owned_base
                              && Self::is_collection_type(rhs_elems[i].base())
-@@ -8559,21 +8281,8 @@ use a separate collection or add after the loop"
+@@ -8572,21 +8293,8 @@ use a separate collection or add after the loop"
                          if let Some((syn, _)) = tagged_member {
                              view = self.emit_nullable_slot_read(syn, view, &rhs_elems[i]);
                          }
@@ -397,7 +398,7 @@ index 1de2245ae..9b4b4ca10 100644
                          self.materialize_tuple_element(v_nr, tmp, &elem_tp, view)
                      };
 diff --git a/src/parser/mod.rs b/src/parser/mod.rs
-index df456d2e6..4a2c3fc76 100644
+index 633aafbb0..ccec92069 100644
 --- a/src/parser/mod.rs
 +++ b/src/parser/mod.rs
 @@ -388,9 +388,6 @@ pub struct Parser {
@@ -410,7 +411,7 @@ index df456d2e6..4a2c3fc76 100644
      /// The variable whose `x: const T = …` declaration is being parsed: its own initialising
      /// bind sets the value and is not a write `const` forbids (`@FR-Const-ConstructExempt`).
      /// `u16::MAX` outside one.
-@@ -1740,7 +1737,6 @@ impl Parser {
+@@ -1745,7 +1742,6 @@ impl Parser {
              rebuild_watch: u16::MAX,
              rebuild_watch_hit: false,
              in_tuple_lhs: false,

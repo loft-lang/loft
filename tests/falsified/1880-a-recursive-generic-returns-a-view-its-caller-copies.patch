@@ -1,8 +1,8 @@
-diff --git b/src/parser/control.rs a/src/parser/control.rs
-index de366c37a..ace15d6a8 100644
---- b/src/parser/control.rs
-+++ a/src/parser/control.rs
-@@ -13801,42 +13801,136 @@ impl Parser {
+diff --git a/src/parser/control.rs b/src/parser/control.rs
+index 07f5c1624..3d1a7acfe 100644
+--- a/src/parser/control.rs
++++ b/src/parser/control.rs
+@@ -14001,42 +14001,136 @@ impl Parser {
      /// A body with no leaf answers no, and so does any leaf this cannot read — the gate is a
      /// POSITIVE proof and an under-approximation, because answering yes wrongly makes a caller
      /// copy where the value was owned and orphan the store it was handed.
@@ -163,7 +163,7 @@ index de366c37a..ace15d6a8 100644
          }
          acc.0 && acc.1
      }
-@@ -21572,144 +21666,3 @@ fn max_lookahead() -> i32 {
+@@ -21772,144 +21866,3 @@ fn max_lookahead() -> i32 {
              .unwrap_or(1_000_000)
      })
  }
@@ -308,11 +308,11 @@ index de366c37a..ace15d6a8 100644
 -        }
 -    }
 -}
-diff --git b/src/parser/mod.rs a/src/parser/mod.rs
-index 7018d5c76..4278d7611 100644
---- b/src/parser/mod.rs
-+++ a/src/parser/mod.rs
-@@ -9089,18 +9089,12 @@ impl Parser {
+diff --git a/src/parser/mod.rs b/src/parser/mod.rs
+index 633aafbb0..4df8dfb8e 100644
+--- a/src/parser/mod.rs
++++ b/src/parser/mod.rs
+@@ -9095,18 +9095,12 @@ impl Parser {
          // local is owned, and the caller adopts it as before.
          if new_returned.depend().is_empty() && crate::data::has_lifetime_concern(&new_returned) {
              let attrs_n = self.data.def(d_nr).attributes().len();
@@ -333,7 +333,7 @@ index 7018d5c76..4278d7611 100644
              {
                  // Written directly: `set_returned` refuses a second write on purpose (a return
                  // type must not change), and this does not change it — it adds the deps the
-@@ -9118,17 +9112,6 @@ impl Parser {
+@@ -9124,17 +9118,6 @@ impl Parser {
                      .clone()
                      .with_deps(&crate::data::Deps::attrs(vec![base]));
                  self.data.definitions[d_nr as usize].returned = with_dep;
@@ -351,7 +351,7 @@ index 7018d5c76..4278d7611 100644
              }
          }
          // loft#1023 — a template declared BELOW its caller has not had its pass-2 body
-@@ -14225,57 +14208,6 @@ impl Parser {
+@@ -14231,57 +14214,6 @@ impl Parser {
          v_block(ops, tp.clone(), "displaced_closures")
      }
  
@@ -406,6 +406,6 @@ index 7018d5c76..4278d7611 100644
 -            .then_some(params)
 -    }
 -
-     pub(crate) fn type_carries_closure(&self, tp: &Type) -> bool {
-         // Like `fn_ref_field_is_split`, derive from the registered
-         // database layout (built from the COMPLETE first pass) rather
+     /// loft#1874 — point lambda `b` at the closure record lambda `a` already shares with any
+     /// other lambda written into the same fn field, growing that union record by `b`'s captures
+     /// (by name).  The first union gets a record of its own, `__closure_u_<a's record>`, so
