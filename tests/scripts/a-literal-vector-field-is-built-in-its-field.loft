@@ -1,0 +1,93 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-Place` — "the buffer IS the place", in a struct LITERAL: `H { v: f(…) }` hands `f` the
+// literal's field as its return buffer, so the vector is built where it lives instead of in a
+// buffer store copied in and freed (the assignment `h.v = f(…)` already did this).  The cells
+// cross what the admission reads: a callee that FILLS its buffer (placed) against one that MINTS
+// a literal into it (c2, declined — handed the field it would mint over it); a chain (c3); two
+// placed fields in one literal (c4); a `?` field, which keeps the replace (c5); the field of a
+// vector ELEMENT and of a nested literal (c6); a struct-enum variant (c7); an argument reading
+// the record being rebuilt (c8); text and record elements, which own heap (c9); a count of 0
+// (the callee's early return) and a literal rebuilt in a loop through a refilled return buffer
+// (c1).  Every value by hand; run under `LOFT_STORES=warn` / `LOFT_NATIVE_LEAK_CHECK=1` it leaks
+// nothing, and `LOFT_NO_BUFFER_IS_PLACE=1` (the copy) answers the same.
+//
+// @falsified-at: none — a rewrite with no earlier build to catch; the planted defect is recorded
+//   with `@falsified-by:` below.
+// @falsified-by: tests/falsified/a-literal-vector-field-is-built-in-its-field.patch — the
+//   admission no longer declines a callee that mints into its buffer.
+//   CHANNEL: an assertion or a store panic, on BOTH backends.
+//   WITNESS: c2 — the minted literal lands in a record the field does not name.
+//   HOLDS: LOFT_NO_BUFFER_IS_PLACE=1 green on both (the copy).
+
+struct H { n: integer, v: vector<integer> }
+struct T { v: vector<integer>, w: vector<integer> }
+struct O { v: vector<integer>? }
+struct S { t: vector<text> }
+struct P { a: integer, b: text }
+struct R { ps: vector<P> }
+struct Outer { h: H, k: integer }
+enum E { Leaf { v: vector<integer> }, Empty }
+
+fn fill(c: integer, x: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  if c <= 0 { return out; }
+  for i in 0..c { out += [x + i]; }
+  out
+}
+fn lit3(x: integer) -> vector<integer> { [x, x + 1, x + 2] }
+fn chain(c: integer) -> vector<integer> { fill(c, 100) }
+fn words(c: integer) -> vector<text> { out: vector<text> = []; for i in 0..c { out += ["w{i}"]; } out }
+fn recs(c: integer) -> vector<P> { out: vector<P> = []; for i in 0..c { out += [P { a: i * 3, b: "p{i}" }]; } out }
+fn total_of(v: vector<integer>) -> integer { s = 0; for e in v { s += e; } s }
+fn mk(c: integer) -> H { H { n: c, v: fill(c, 7) } }
+fn grow(v: vector<integer>) -> vector<integer> { out: vector<integer> = []; for e in v { out += [e * 2]; } out += [1]; out }
+
+fn main() {
+  // 1: the canvas shape; count 0; rebuilt in a loop through a refilled buffer.
+  h = mk(4);
+  assert(len(h.v) == 4 && total_of(h.v) == 7 + 8 + 9 + 10, "c1 {h.v}");
+  z = mk(0);
+  assert(len(z.v) == 0, "c1z {z.v}");
+  tot = 0;
+  for k in 1..5 { m = mk(k); tot += len(m.v) * 1000 + total_of(m.v); }
+  // k=1: 1000+7; k=2: 2000+15; k=3: 3000+24; k=4: 4000+34  ->  10000+80
+  assert(tot == 10080, "c1loop {tot}");
+  // 2: a callee that mints its literal into the buffer.
+  a = H { n: 1, v: lit3(5) };
+  assert("{a.v}" == "[5,6,7]", "c2 {a.v}");
+  // 3: a chain.
+  b = H { n: 2, v: chain(3) };
+  assert("{b.v}" == "[100,101,102]", "c3 {b.v}");
+  // 4: two fields from calls.
+  t = T { v: fill(2, 1), w: fill(3, 10) };
+  assert("{t.v} {t.w}" == "[1,2] [10,11,12]", "c4 {t.v} {t.w}");
+  // 5: a `?` field.
+  o = O { v: fill(2, 4) };
+  assert("{o.v}" == "[4,5]", "c5 {o.v}");
+  // 6: an element, and a nested literal.
+  vs: vector<H> = [];
+  for k in 1..4 { vs += [H { n: k, v: fill(k, k * 10) }]; }
+  assert("{vs[0].v}|{vs[1].v}|{vs[2].v}" == "[10]|[20,21]|[30,31,32]", "c6 {vs[0].v}|{vs[1].v}|{vs[2].v}");
+  ou = Outer { h: H { n: 9, v: fill(2, 90) }, k: 3 };
+  assert("{ou.h.v} {ou.k}" == "[90,91] 3", "c6n {ou.h.v}");
+  // 7: a variant.
+  e = E::Leaf { v: fill(3, 20) };
+  s7 = match e { Leaf { v } => "{v}", Empty => "empty" };
+  assert(s7 == "[20,21,22]", "c7 {s7}");
+  // 8: the argument reads the record being rebuilt.
+  g = H { n: 1, v: fill(2, 3) };
+  g = H { n: 2, v: grow(g.v) };
+  assert("{g.v}" == "[6,8,1]", "c8 {g.v}");
+  // 9: heap elements.
+  st = S { t: words(3) };
+  assert("{st.t}" == "[\"w0\",\"w1\",\"w2\"]", "c9t {st.t}");
+  r = R { ps: recs(3) };
+  assert(len(r.ps) == 3 && r.ps[2].a == 6 && r.ps[1].b == "p1", "c9r");
+  rt = 0;
+  for k in 0..20 { q = R { ps: recs(k % 4) }; rt += len(q.ps); }
+  // k%4 over 0..19: five of each of 0,1,2,3  ->  30
+  assert(rt == 30, "c9loop {rt}");
+  println("ok");
+}

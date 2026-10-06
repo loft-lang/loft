@@ -7010,6 +7010,21 @@ impl Parser {
                     } else {
                         "OpAppendVector"
                     };
+                    // `@FR-R-Place` — "the buffer IS the place": the literal's field exists (the
+                    // header prime wrote its empty handle) and a call that fills its buffer is
+                    // handed the field itself, so the result is built where it lives and the
+                    // bulk copy, with the buffer's mint and free, is gone.  The assignment's
+                    // twin is `buffer_is_the_place`; a `?` field keeps the replace, which is
+                    // what leaves it absent.
+                    if whole == "OpAppendVector"
+                        && let Some(vr) = self.place_buffer_of(&field_ref, value)
+                    {
+                        self.vars.mark_inline_ref(vr);
+                        self.vars.set_skip_free(vr);
+                        list.push(v_set(vr, field_ref.clone()));
+                        list.push(value.clone());
+                        return Some(field_ref);
+                    }
                     list.push(self.cl(
                         whole,
                         &[

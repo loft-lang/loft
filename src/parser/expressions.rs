@@ -3034,6 +3034,22 @@ use a separate collection or add after the loop"
         rhs: &Value,
         parent_tp: &Type,
     ) -> Option<Vec<Value>> {
+        let vr = self.place_buffer_of(to, rhs)?;
+        let mut ops = self.clear_vector_field(to, parent_tp);
+        self.vars.mark_inline_ref(vr);
+        self.vars.set_skip_free(vr);
+        ops.push(v_set(vr, to.clone()));
+        ops.push(rhs.clone());
+        Some(ops)
+    }
+
+    /// `(R-Place)`'s admission for "the buffer IS the place", shared by the assignment
+    /// (`h.v = f(…)`) and the struct literal (`H { v: f(…) }`): the hidden buffer variable
+    /// `rhs` was handed, when `to` may be handed to the call in its stead — a direct call to a
+    /// loft-defined callee that fills its buffer and never mints into it, a place that exists
+    /// unconditionally, and no other argument reaching the place's base.  The caller re-points
+    /// the buffer (`inline_ref` + `skip_free`) and drops its copy.
+    pub(crate) fn place_buffer_of(&self, to: &Value, rhs: &Value) -> Option<u16> {
         if !crate::keys::buffer_is_the_place_enabled() || self.first_pass {
             return None;
         }
@@ -3087,12 +3103,7 @@ use a separate collection or add after the loop"
         if rest.iter().any(|a| a.reads_var(base)) {
             return None;
         }
-        let mut ops = self.clear_vector_field(to, parent_tp);
-        self.vars.mark_inline_ref(vr);
-        self.vars.set_skip_free(vr);
-        ops.push(v_set(vr, to.clone()));
-        ops.push(rhs.clone());
-        Some(ops)
+        Some(vr)
     }
 
     fn clear_vector_field(&mut self, to: &Value, parent_tp: &Type) -> Vec<Value> {
