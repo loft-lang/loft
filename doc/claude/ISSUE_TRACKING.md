@@ -616,6 +616,35 @@ Together the two halves are the **combined workflow**: *work the queue* drains w
 agent can do; *what's blocked on you* surfaces, ranked, exactly what it can't — so
 nothing stalls silently and the maintainer's time goes to the highest-leverage call.
 
+## Claiming an issue — before you start, and when you file one you will fix
+
+Several streams fix bugs at once, on this machine and on others, and a stream does not reread an
+issue it did not file.  So the claim lives where every stream already looks — on the issue, in a
+form a script reads — and it is checked at the moments a stream cannot skip:
+
+```bash
+scripts/claim.py take N            # before starting ANY fix; refuses an issue another stream holds
+scripts/claim.py file --title … --body-file … --label …
+                                   # a bug you found and fix NOW: filed already claimed, so no
+                                   #   other stream can pick it up in between
+scripts/claim.py release N         # you stopped, or handed it on
+scripts/claim.py check N           # who holds it
+```
+
+- **A claim** is a comment (a body line, for `file`) starting `claim: <host>/<checkout>@<branch>`,
+  plus the `in-progress` label.  The earliest unreleased claim holds the issue: two streams that
+  claim at once both see it, and the later one withdraws itself.
+- **`make work` skips `in-progress`**, so a claimed issue is never offered as pick-up work.
+- **The `commit-msg` hook** warns when a `Fixes #N` names an issue another stream holds — the
+  last moment a duplicate fix is noticed without anyone remembering to look.  It reports and
+  never blocks: a merge legitimately carries another stream's fix forward.
+- **A claim with no activity for 48 hours** may be taken over (`take N --take-over`), and the
+  take-over is written on the issue.  `fixed-pending-merge` ends the race on its own: `take`
+  refuses an issue whose fix has already landed on a branch.
+
+A claim written in prose ("claimed by the … stream") is invisible to the script, the work queue
+and the hook.  Write it with the script.
+
 ## Beyond bugs — the unified model (plans · lib-plans · enhancements)
 
 **Initial design (2026-06) — draft.**  Bugs were the pilot; the same split

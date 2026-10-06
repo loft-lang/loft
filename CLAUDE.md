@@ -467,6 +467,11 @@ when the ordinary tools no longer work). In **stability work** the file-instead-
 hatches do NOT apply either: fix in the same session with a regression test. Record scope + root
 cause, never origin commit.
 
+**Claim before you fix, on the issue:** `scripts/claim.py take N` before starting any fix, and
+`scripts/claim.py file …` for a bug you find and fix at once — other streams, on other machines,
+see the claim only there (`make work` hides it; the commit-msg hook warns on a duplicate `Fixes`).
+[ISSUE_TRACKING.md § Claiming an issue](doc/claude/ISSUE_TRACKING.md).
+
 **File only when NOT fixing now:** it blocks the current task (bookmark + workaround), or it's
 genuinely M+/needs-design (route to its canonical home). When you file: a **GitHub Issue**
 (`gh issue create`, `bug_report` template) — NOT a PROBLEMS.md row (that's the closed archive) —

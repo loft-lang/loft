@@ -661,12 +661,18 @@ that loft would have broken, before this promise) is caught.
 
 ## Bug fixes — the one careful line
 
-A fix whose old behavior was a **crash, a fault, or undefined behavior** is always allowed:
-a program that crashes was not *functioning*, so nothing that functions relies on it.
+The promise is that **programs that worked before still work afterwards** — the contract keeps
+loft usable and developable, it never stops a bug being fixed; what it forbids is forcing a change
+on a user whose program runs perfectly.  The line between the two is **whether a test could rely
+on the old result**:
 
-A fix that changes the **observable result of a functioning program** is a **regression**,
-even when the old result was "wrong" — because the program functioned, and the promise is to
-that program, not to our sense of correctness. The reconciliation is the escape valve: if
+- **Not reliable in a test — always fixable.**  A crash, a fault, a segfault, uninitialized
+  garbage, an answer that varies with the run, the backend or the reuse of memory: no working
+  program depends on it, so the fix changes nothing anyone relied on.
+- **A stable result — kept, even when it is wrong.**  An answer a program gets every run, on every
+  backend, is one a test can pin, so a program may depend on it.  Changing it is a
+  **regression**, even when the old result was "wrong" — the promise is to that program, not to
+  our sense of correctness. The reconciliation is the escape valve: if
 the behavior genuinely must change, key the new behavior on a newer contract and keep the old
 one for old programs. "We fixed a bug" is never a licence to change what a working program
 does.
