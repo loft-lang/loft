@@ -22566,7 +22566,7 @@ impl Parser {
                     return Some((*v, *src));
                 }
                 if name == "OpGetField"
-                    && matches!(vars.tp(*v), Type::RefVar(_))
+                    && matches!(vars.tp(*v).base(), Type::RefVar(_))
                     && let Some(Value::Var(src)) = args.first().map(Value::unspan)
                     && matches!(vars.tp(*src).base(), Type::RefVar(inner)
                         if matches!(inner.base(), Type::Reference(d, _)
