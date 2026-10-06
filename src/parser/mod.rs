@@ -1647,6 +1647,7 @@ pub(super) mod fields;
 pub(super) mod fit;
 pub(super) mod objects;
 pub(super) mod operators;
+pub(super) mod store_else;
 pub(super) mod store_text;
 pub(super) mod vectors;
 pub(crate) mod work_buffer;

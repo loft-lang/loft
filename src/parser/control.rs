@@ -1109,6 +1109,12 @@ impl Parser {
             self.stmt_if_pending = self.lexer.peek_token("if") || self.lexer.peek_token("match");
             let pending_before = self.pending_arm_mismatch.take();
             t = self.expression(&mut n);
+            // `@FR-H-Write-Else` — an `else` left over after a whole statement can only be a
+            // store's failure arm: an `if` or a value-`if` has already consumed its own.
+            if self.lexer.peek_token("else") {
+                self.parse_store_else(&mut n);
+                t = Type::Void;
+            }
             self.block_tail_null_literal = matches!(&last_expr_peek.has, LexItem::Token(tok) if tok == "null")
                 && matches!(n.unspan(), Value::Null);
             self.stmt_if_pending = saved_stmt_if;
