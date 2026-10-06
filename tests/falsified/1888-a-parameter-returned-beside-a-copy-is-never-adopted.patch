@@ -47,10 +47,234 @@ index 55611228d..d4e32e347 100644
                  // witness's frame-relative `var_pos` accounts for `src` already on the
                  // eval stack. `OpBindOrCopy` pops witness (top) then src.
 diff --git b/src/use_analysis.rs a/src/use_analysis.rs
-index 006e481cc..1dcc309a7 100644
+index 2c94e8be1..1dcc309a7 100644
 --- b/src/use_analysis.rs
 +++ a/src/use_analysis.rs
-@@ -3689,24 +3689,7 @@ pub fn call_return_frees_source(data: &Data, d_nr: u32, call: &Value) -> bool {
+@@ -2052,24 +2052,6 @@ pub enum Own {
+     Unknown,
+ }
+ 
+-/// Rounds [`Ownership::return_ownership`]'s fixpoint may take before it keeps the
+-/// conservative reading of a self call.
+-const FIXPOINT_ROUNDS: usize = 6;
+-
+-/// What a function's call to ITSELF delivers on the first round of
+-/// [`Ownership::return_ownership`]'s fixpoint: nothing yet, the join's identity.
+-///
+-/// `@FR-F-Ret` — a recursion delivers what one of its other return sites delivers, because
+-/// a terminating run ends at one of those, so the function's class is the least fixpoint
+-/// of "join every site, the self call answering the class so far".  Read as the
+-/// conservative `Borrowed { base: MAX }` instead, the self call joined a `return a` into a
+-/// `Join` with NO witness, the caller's bind had no store to guard against and adopted, and
+-/// the free released the caller's own record (`fn mx(a, b, n) -> P { if n == 0 { return a;
+-/// } if n == 1 { y = b; return y; } mx(a, b, n - 2) }`).  Never returned to a reader: a
+-/// function whose every site is the self call answers `Unknown`.  Spelled as a borrow of a
+-/// slot no function has, so the lattice keeps its variants.
+-const NOT_YET: Own = Own::Borrowed { base: u16::MAX - 1 };
+-
+ impl Own {
+     /// The base var a `Borrowed`/`Join` value aliases, or `None` for `Owned`.
+     #[must_use]
+@@ -2089,9 +2071,6 @@ impl Own {
+     #[must_use]
+     fn join(self, other: Own) -> Own {
+         match (self, other) {
+-            // A self call that has delivered nothing YET is the join's identity: the round
+-            // it stands for is counted on the next one (see [`NOT_YET`]).
+-            (NOT_YET, o) | (o, NOT_YET) => o,
+             // An arm the oracle could not derive makes the JOIN underivable: a `Join`'s
+             // whole content is the witness its readers compare against, and an arm with no
+             // answer cannot supply or refute one.  Absorbing, so it cannot be lost in a
+@@ -2195,12 +2174,6 @@ struct Ownership<'a> {
+     /// during COMPILATION, reproducible with `--check` on two lines of valid-looking
+     /// source (crawler LOFT-HANDOFF H1).
+     visiting_vars: HashSet<u16>,
+-    /// The functions whose return sites are being classified, innermost last, and the
+-    /// class each one's self call answers on the current round of the fixpoint
+-    /// ([`NOT_YET`]).  Only the INNERMOST frame's self call reads it: a back edge to an
+-    /// outer frame is mutual recursion, where an inner function's class would be memoised
+-    /// off a provisional answer, and that keeps the conservative one.
+-    frames: Vec<(u32, Own)>,
+ }
+ 
+ /// The tail (value) expression of a function body, or `None` for a native/`#rust`
+@@ -2473,7 +2446,6 @@ impl<'a> Ownership<'a> {
+             ret_memo: HashMap::default(),
+             visiting: HashSet::default(),
+             visiting_vars: HashSet::default(),
+-            frames: Vec::new(),
+         }
+     }
+ 
+@@ -2505,49 +2477,12 @@ impl<'a> Ownership<'a> {
+             self.ret_memo.insert(d_nr, c);
+             return c;
+         }
+-        if self.visiting.contains(&d_nr) {
+-            // Recursion back-edge.  A call to the function being classified answers the
+-            // class its sites have reached so far ([`NOT_YET`]); one to an OUTER frame is
+-            // mutual recursion and stays conservatively Borrowed (never assume a self-
+-            // referential return is freshly owned), base unresolved.  Not memoised —
++        if !self.visiting.insert(d_nr) {
++            // Recursion back-edge: conservatively Borrowed (never assume a self-
++            // referential return is freshly owned), base unresolved. Not memoised —
+             // the enclosing frame computes and caches the real class.
+-            return match self.frames.last() {
+-                Some(&(f, so_far)) if f == d_nr => so_far,
+-                _ => Own::Borrowed { base: u16::MAX },
+-            };
++            return Own::Borrowed { base: u16::MAX };
+         }
+-        // The least fixpoint over the self call: each round joins every site with the self
+-        // call answering the previous round's class.  The lattice is a few levels high, so
+-        // it settles in two or three; one that has not by the cap keeps the conservative
+-        // reading of the back edge.
+-        let mut so_far = NOT_YET;
+-        let mut class = None;
+-        for _ in 0..FIXPOINT_ROUNDS {
+-            let next = self.return_ownership_round(d_nr, so_far);
+-            if next == so_far {
+-                class = Some(next);
+-                break;
+-            }
+-            so_far = next;
+-        }
+-        let class = match class {
+-            Some(NOT_YET) => Own::Unknown,
+-            Some(c) => c,
+-            None => self.return_ownership_round(d_nr, Own::Borrowed { base: u16::MAX }),
+-        };
+-        self.ret_memo.insert(d_nr, class);
+-        class
+-    }
+-
+-    /// One round of [`Self::return_ownership`]: the join of every site `d_nr` delivers from,
+-    /// its calls to itself answering `so_far`.
+-    fn return_ownership_round(&mut self, d_nr: u32, so_far: Own) -> Own {
+-        let def = self.data.def(d_nr);
+-        let Some(tail) = fn_body_tail(&def.code) else {
+-            return Own::Unknown;
+-        };
+-        self.visiting.insert(d_nr);
+-        self.frames.push((d_nr, so_far));
+         let mut defs = Defs::default();
+         collect_defs(&def.code, &FillOps::of(self.data), &mut defs);
+         // @FR-O-Oracle — the answer must be a function of the VALUE, never of who asked.
+@@ -2560,20 +2495,19 @@ impl<'a> Ownership<'a> {
+         // The FUNCTION-level guard above is the one that stops genuine recursion; this
+         // scoping does not weaken it.
+         let outer_vars = std::mem::take(&mut self.visiting_vars);
+-        let class = self.classify(tail, &def.variables, &defs);
++        let class = self.classify(tail.unwrap(), &def.variables, &defs);
++        self.visiting_vars = outer_vars;
++        self.visiting.remove(&d_nr);
+         // `@FR-F-Ret`, loft#1884 — every early `return` delivers as the tail does, so the
+         // function's return is the JOIN of all of them: `if c { return p; } F { … }` hands back
+         // its parameter on one path and a fresh value on the other, and read off the tail alone
+         // it was owned, the caller adopted the parameter's store, and its free released the
+         // caller's own record.  Joined, the bind copies the borrowed arm (`OpBindOrCopy`).
+-        let early = self.early_return_values(d_nr);
+         let class = self
+-            .classify_sites(&early, d_nr, &defs)
++            .early_return_ownerships(d_nr)
+             .into_iter()
+             .fold(class, Own::join);
+-        self.visiting_vars = outer_vars;
+-        self.frames.pop();
+-        self.visiting.remove(&d_nr);
++        self.ret_memo.insert(d_nr, class);
+         class
+     }
+ 
+@@ -2598,31 +2532,9 @@ impl<'a> Ownership<'a> {
+         // whose real tail forwards a borrow (`text_src(i, tag) { if i == 0 { return
+         // null } return tag }`), which is the promotion the framework's own verdict
+         // declines.
+-        let returned = self.early_return_values(d_nr);
+-        if returned.is_empty() || self.visiting.contains(&d_nr) {
+-            return Vec::new();
+-        }
+-        // A self call among them answers the function's converged class — asked first,
+-        // because the frame below would otherwise read as that class's own back edge.
+-        let so_far = self.return_ownership(d_nr);
+-        let mut defs = Defs::default();
+-        collect_defs(&def.code, &FillOps::of(self.data), &mut defs);
+-        self.visiting.insert(d_nr);
+-        self.frames.push((d_nr, so_far));
+-        let outer_vars = std::mem::take(&mut self.visiting_vars);
+-        let classes = self.classify_sites(&returned, d_nr, &defs);
+-        self.visiting_vars = outer_vars;
+-        self.frames.pop();
+-        self.visiting.remove(&d_nr);
+-        classes
+-    }
+-
+-    /// The early `return <e>` values of `d_nr` that deliver a store — a null sentinel
+-    /// delivers none (see [`Self::early_return_ownerships`]).
+-    fn early_return_values(&self, d_nr: u32) -> Vec<Value> {
+         let null_text = self.data.def_nr("OpConvTextFromNull");
+         let mut returned: Vec<Value> = Vec::new();
+-        self.data.def(d_nr).code.walk(&mut |v| {
++        def.code.walk(&mut |v| {
+             if let Value::Return(inner) = v
+                 && !matches!(inner.unspan(), Value::Null)
+                 && !matches!(inner.unspan(), Value::Call(d, args) if *d == null_text && args.is_empty())
+@@ -2630,20 +2542,22 @@ impl<'a> Ownership<'a> {
+                 returned.push((**inner).clone());
+             }
+         });
+-        returned
+-    }
+-
+-    /// Classify each of `sites` in `d_nr`'s variable space, each with a fresh in-flight
+-    /// var set (a site is its own expression, not a definition of another).
+-    fn classify_sites(&mut self, sites: &[Value], d_nr: u32, defs: &Defs) -> Vec<Own> {
+-        let def = self.data.def(d_nr);
+-        sites
++        if returned.is_empty() || !self.visiting.insert(d_nr) {
++            return Vec::new();
++        }
++        let mut defs = Defs::default();
++        collect_defs(&def.code, &FillOps::of(self.data), &mut defs);
++        let outer_vars = std::mem::take(&mut self.visiting_vars);
++        let classes = returned
+             .iter()
+             .map(|e| {
+                 self.visiting_vars.clear();
+-                self.classify(e, &def.variables, defs)
++                self.classify(e, &def.variables, &defs)
+             })
+-            .collect()
++            .collect();
++        self.visiting_vars = outer_vars;
++        self.visiting.remove(&d_nr);
++        classes
+     }
+ 
+     /// Classify a value expression within `func` (using `defs` to resolve local
+@@ -2828,9 +2742,6 @@ impl<'a> Ownership<'a> {
+                     return Own::Unknown;
+                 };
+                 let callee_own = self.return_ownership(d);
+-                if callee_own == NOT_YET {
+-                    return NOT_YET;
+-                }
+                 let callee_base = match callee_own {
+                     // The CALLEE's own summary.  `Owned` there is a real derivation — the
+                     // callee mints — and passes straight through; `Unknown` is the callee's
+@@ -2878,11 +2789,6 @@ impl<'a> Ownership<'a> {
+         defs: &Defs,
+     ) -> Own {
+         let callee_own = self.return_ownership(callee_d);
+-        // A self call that has delivered nothing yet stays that (see [`NOT_YET`]): it is no
+-        // borrow of an argument, and mapped as one it would name a witness of its own.
+-        if callee_own == NOT_YET {
+-            return NOT_YET;
+-        }
+         let callee_base = match callee_own {
+             // The `Call` twin of the `CallRef` arm above, and it must answer alike: a callee
+             // whose own summary is underivable does not become an owned result by being
+@@ -3783,34 +3689,7 @@ pub fn call_return_frees_source(data: &Data, d_nr: u32, call: &Value) -> bool {
      if callref_captures(data, d_nr, call) && capture_can_be_returned(data, d_nr, call) {
          return false;
      }
@@ -67,16 +291,26 @@ index 006e481cc..1dcc309a7 100644
 -/// the bit on the copy of `a` and the copy freed the caller's record (loft#1884).
 -#[must_use]
 -pub fn may_return_a_borrow(data: &Data, fn_nr: u32) -> bool {
--    data.def(fn_nr).returns_borrowed_view()
--        || matches!(
--            return_ownership(data, fn_nr),
--            Own::Borrowed { .. } | Own::Join { .. }
--        )
+-    data.def(fn_nr).returns_borrowed_view() || may_hand_back_a_caller_store(data, fn_nr)
+-}
+-
+-/// Does the oracle say `fn_nr` may hand back a store its CALLER holds — a borrow, on some
+-/// path, of a visible parameter, or of a base it cannot name?
+-///
+-/// A borrow of the callee's own LOCAL (`d = inner(n); v = d.value; return v`, promoted onto
+-/// its buffer) or of its hidden buffer is the callee's store going to the caller, which the
+-/// adopt exists for; read as a borrow it turned that adopt into a copy (one mint per call).
+-fn may_hand_back_a_caller_store(data: &Data, fn_nr: u32) -> bool {
+-    let (Own::Borrowed { base } | Own::Join { base }) = return_ownership(data, fn_nr) else {
+-        return false;
+-    };
+-    let attrs = data.def(fn_nr).attributes();
+-    base == u16::MAX || (usize::from(base) < attrs.len() && !attrs[usize::from(base)].hidden)
 +    !data.def(fn_nr).returns_borrowed_view() || protectable_ref_args(data, d_nr, call).1
  }
  
  /// loft#1550 — does `callee`'s return name MORE THAN ONE of its visible parameters?  Then a
-@@ -4251,16 +4234,6 @@ pub fn binds_the_callees_minted_store(
+@@ -4355,13 +4234,6 @@ pub fn binds_the_callees_minted_store(
      if deps.len() != 1 || usize::from(deps[0]) != buf {
          return false;
      }
@@ -84,10 +318,7 @@ index 006e481cc..1dcc309a7 100644
 -    // (`@FR-O-Oracle`).  A `return a` beside a copy materialised into the buffer keeps a dep
 -    // naming only the buffer, and adopted plainly the caller freed its own record on the run
 -    // that answered `a` (loft#1884).  A borrow on any path is the copy-or-adopt split's.
--    if matches!(
--        return_ownership(data, *fn_nr),
--        Own::Borrowed { .. } | Own::Join { .. }
--    ) {
+-    if may_hand_back_a_caller_store(data, *fn_nr) {
 -        return false;
 -    }
      if function.is_argument(v) || function.is_caller_hidden_buf(v) || function.is_skip_free(v) {
