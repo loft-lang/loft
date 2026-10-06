@@ -8,8 +8,9 @@
 //! releases the block the slot holds (`Store::refill_str`).  That is sound only where nothing
 //! still BORROWS the old block: a `text` parameter is handed the field's bytes, not a copy, so
 //! `g(r.a, r)` whose body writes `q.a` would read its own parameter changed or released.  This
-//! pass keeps the release where the absence of such a borrow is visible in the function itself,
-//! and turns every other site back into `OpSetText`, the write that releases nothing — a site
+//! pass keeps the release where the absence of such a borrow is proven — in the writing frame,
+//! and through a parameter in every frame that can call it ([`safe_params`]) — and turns every
+//! other site back into `OpSetText`, the write that releases nothing — a site
 //! declined here keeps the old block until its store dies, which is a leak and never a wrong
 //! value.
 
@@ -49,21 +50,23 @@ pub(super) fn admit(data: &mut Data, fresh: &[u32]) {
     }
 }
 
-/// What one function's variable table says about borrows, read once per function: each
-/// variable's deps, whether it is a parameter, and whether a `text` variable depends on it,
-/// directly or through other variables' deps.  `.base()`: a `text?` variable borrows exactly
-/// as a `text` one does.
+/// What one function's variable table says about ownership, read once per function: each
+/// variable's deps (to find the owner of a place) and whether it is a parameter.  A text
+/// VARIABLE is no borrow here: on the interpreter a local `text` is an owned copy (`x = r.a`,
+/// a `??` discharge, a `for c in r.a` walk temporary are each set from `OpGetText` and freed
+/// with `OpFreeText`), and the native slices that do borrow a store's text (`@FR-R-TextBorrow`)
+/// are declined over any block in which a write that is not in place can run — a text
+/// release is not in place.  What borrows across a release is a `text` PARAMETER and an
+/// argument already evaluated, and both are checked where the release is admitted.
 struct Facts<'a> {
     deps: Vec<Cow<'a, [u16]>>,
     argument: Vec<bool>,
-    text_borrowed: Vec<bool>,
 }
 
 impl<'a> Facts<'a> {
     /// The deps are BORROWED from the table (`Type::deps_ref`); only a tuple, whose deps are
     /// the union of its members', is built (`Type::depend`).
     fn of(vars: &'a Function) -> Facts<'a> {
-        let n = usize::from(vars.count());
         let deps: Vec<Cow<'a, [u16]>> = (0..vars.count())
             .map(|v| match vars.tp(v).deps_ref() {
                 Some(d) => Cow::Borrowed(d.as_slice()),
@@ -74,26 +77,7 @@ impl<'a> Facts<'a> {
             })
             .collect();
         let argument = (0..vars.count()).map(|v| vars.is_argument(v)).collect();
-        let mut text_borrowed = vec![false; n];
-        let mut todo = Vec::new();
-        for v in 0..vars.count() {
-            if matches!(vars.tp(v).base(), Type::Text(_)) {
-                todo.extend_from_slice(&deps[usize::from(v)]);
-            }
-        }
-        while let Some(d) = todo.pop() {
-            if let Some(b) = text_borrowed.get_mut(usize::from(d))
-                && !*b
-            {
-                *b = true;
-                todo.extend_from_slice(&deps[usize::from(d)]);
-            }
-        }
-        Facts {
-            deps,
-            argument,
-            text_borrowed,
-        }
+        Facts { deps, argument }
     }
 
     /// Follow single deps from `v` to the variable that owns its store; `None` for a chain
@@ -111,37 +95,56 @@ impl<'a> Facts<'a> {
     }
 }
 
-/// `under_call` is whether an enclosing CALL is still evaluating its arguments: a `text`
-/// argument already evaluated there is a borrow on the evaluation stack that no variable
-/// records, so a write nested inside one (`f(r.a, { r.a = "x"; 1 })`) is declined.  A
-/// statement in a block, a loop or a branch is not inside any argument list.
+/// `under_call` is whether an enclosing call has already evaluated an argument that may BORROW
+/// a text — a field read, a slice, a call answering text, a `text` parameter — and holds it on
+/// the evaluation stack while this node runs: a write nested there (`f(r.a, { r.a = "x"; 1 })`)
+/// is declined.  An argument evaluated before is a borrow only when [`borrows_text`] says so: the
+/// work text a format string appends into is a local, an owned copy, so `"{set(r)}"` is clean.
+/// A statement in a block, a loop or a branch is not inside any argument list.
 fn visit(n: &mut Value, under_call: bool, at: &Site<'_>, data: &Data, facts: &Facts<'_>) {
     // A `Span` only carries a source position: its child is in the same evaluation context.
     if let Value::Span(b) = n {
         return visit(&mut b.1, under_call, at, data, facts);
     }
-    let inner = match n {
+    let vars = &data.definitions[at.fn_nr as usize].variables;
+    match n {
         Value::Call(d, args) => {
             if *d == at.replace && (under_call || !admitted(args, at, data, facts)) {
                 *d = at.set;
             }
-            true
+            let mut held = under_call;
+            for a in args.iter_mut() {
+                visit(a, held, at, data, facts);
+                held = held || borrows_text(a, data, vars);
+            }
         }
-        Value::CallRef(..) | Value::Parallel(_) | Value::Iter(..) => true,
-        _ => under_call,
-    };
-    n.for_each_child_mut(&mut |c| visit(c, inner, at, data, facts));
+        Value::CallRef(..) | Value::Parallel(_) | Value::Iter(..) => {
+            n.for_each_child_mut(&mut |c| visit(c, true, at, data, facts));
+        }
+        _ => n.for_each_child_mut(&mut |c| visit(c, under_call, at, data, facts)),
+    }
+}
+
+/// Can evaluating `v` leave a BORROWED text on the evaluation stack?  Yes when it calls
+/// anything that answers `text` (a field read, a slice, a user function — whether its answer
+/// is a copy is the callee's business, so it counts) or reads a `text` parameter, whose bytes
+/// may be a caller's field.  A local text variable is an owned copy ([`Facts`]), and every
+/// other value — a number, a record reference — is no text at all.
+fn borrows_text(v: &Value, data: &Data, vars: &Function) -> bool {
+    v.any_node(&mut |n| match n {
+        Value::Call(d, _) => matches!(data.def(*d).returned().base(), Type::Text(_)),
+        Value::Var(x) => vars.is_argument(*x) && matches!(vars.tp(*x).base(), Type::Text(_)),
+        _ => false,
+    })
 }
 
 /// Is the write `OpSetTextReplace(place, fld, val)` free of a borrow of the block it replaces?
 ///
 /// Yes when the place's record resolves, through the deps of the variables that reach it, to an
-/// OWNER no `text` variable of this function depends on (a borrow this frame took — a
-/// `for c in r.a` walk, a `text?` local), and that owner is either a local of this function or a
-/// parameter [`safe_params`] proved no frame above can hold a borrow of.  A place with no
-/// recognisable root, a chain that branches or cycles, or an owner reached by a text borrow
-/// answers no: each is a shape whose borrows this pass cannot see, and declining one costs only
-/// the release.
+/// OWNER that is either a local of this function or a parameter [`safe_params`] proved no frame
+/// above can hold a borrow of.  A place with no recognisable root, or a chain that branches or
+/// cycles, answers no: each is a shape whose borrows this pass cannot see, and declining one
+/// costs only the release.
 fn admitted(args: &[Value], at: &Site<'_>, data: &Data, facts: &Facts<'_>) -> bool {
     let Some(root) = args
         .first()
@@ -152,11 +155,12 @@ fn admitted(args: &[Value], at: &Site<'_>, data: &Data, facts: &Facts<'_>) -> bo
     let Some(owner) = facts.owner_of(root) else {
         return false;
     };
-    let o = usize::from(owner);
-    if facts.text_borrowed.get(o).copied().unwrap_or(true) {
-        return false;
-    }
-    !facts.argument.get(o).copied().unwrap_or(true) || at.safe.contains(&(at.fn_nr, owner))
+    !facts
+        .argument
+        .get(usize::from(owner))
+        .copied()
+        .unwrap_or(true)
+        || at.safe.contains(&(at.fn_nr, owner))
 }
 
 /// The function being decided, the parameters proven safe across frames, and the two ops.
@@ -177,13 +181,12 @@ struct Call<'a> {
 
 /// `@FR-H-TextReplace` across frames — the parameters `(f, v)` through whose record `f` may
 /// release a text it replaces: no frame on the stack when `f` runs can still hold a borrow of
-/// that text.  A text is borrowed across frames in three ways only (a local `x = r.a` is a
-/// copy): a `text` parameter bound to the field, a `for c in r.a` walk, and an argument an
-/// enclosing call has already evaluated.  So `(f, v)` holds when every `text` parameter of `f`
-/// is only ever the value written, no text variable of `f` borrows `v`, every caller of `f` is
-/// a visible direct call (none through a fn-ref), and at each call the argument for `v` is not
-/// nested inside another call's arguments and is owned, in the caller, either by a local no
-/// text variable there borrows or by a parameter `(caller, u)` that itself holds.
+/// that text.  A text is borrowed across frames in two ways only (a text variable is a copy —
+/// [`Facts`]): a `text` parameter bound to the field, and an argument an enclosing call has
+/// already evaluated.  So `(f, v)` holds when every `text` parameter of `f` is only ever the
+/// value written, every caller of `f` is a visible direct call (none through a fn-ref), and at
+/// each call the argument for `v` is not nested inside another call's arguments and is owned,
+/// in the caller, either by a local or by a parameter `(caller, u)` that itself holds.
 ///
 /// A greatest fixpoint: every candidate starts true and is struck when one call refutes it, so
 /// a recursive function holds when its own calls keep the property.  Only the functions this
@@ -202,7 +205,7 @@ fn safe_params(data: &Data, fresh: &[u32], replace: u32) -> HashSet<(u32, u16)> 
                 escaped.insert(f);
             }
         });
-        collect_calls(code, false, g, &in_fresh, &mut calls);
+        collect_calls(code, false, g, &in_fresh, data, &mut calls);
     }
     let facts: HashMap<u32, Facts<'_>> = fresh
         .iter()
@@ -218,10 +221,7 @@ fn safe_params(data: &Data, fresh: &[u32], replace: u32) -> HashSet<(u32, u16)> 
         let fa = &facts[&f];
         for v in 0..def.variables.count() {
             let i = usize::from(v);
-            if fa.argument[i]
-                && !fa.text_borrowed[i]
-                && !matches!(def.variables.tp(v).base(), Type::Text(_))
-            {
+            if fa.argument[i] && !matches!(def.variables.tp(v).base(), Type::Text(_)) {
                 safe.insert((f, v));
             }
         }
@@ -265,24 +265,23 @@ fn holds(
                 .and_then(|r| cf.owner_of(r))
                 .is_some_and(|o| {
                     let ou = usize::from(o);
-                    !cf.text_borrowed.get(ou).copied().unwrap_or(true)
-                        && (!cf.argument.get(ou).copied().unwrap_or(true)
-                            || safe.contains(&(c.caller, o)))
+                    !cf.argument.get(ou).copied().unwrap_or(true) || safe.contains(&(c.caller, o))
                 })
     })
 }
 
-/// Every direct call of a function in `fresh` inside `n`, with whether an enclosing call's
-/// arguments are being evaluated around it — the same context [`visit`] tracks.
+/// Every direct call of a function in `fresh` inside `n`, with whether an enclosing call holds
+/// an argument that may borrow a text while it runs — the same context [`visit`] tracks.
 fn collect_calls<'a>(
     n: &'a Value,
     under_call: bool,
     caller: u32,
     fresh: &HashSet<u32>,
+    data: &'a Data,
     out: &mut HashMap<u32, Vec<Call<'a>>>,
 ) {
-    let inner = match n {
-        Value::Span(b) => return collect_calls(&b.1, under_call, caller, fresh, out),
+    match n {
+        Value::Span(b) => collect_calls(&b.1, under_call, caller, fresh, data, out),
         Value::Call(d, args) => {
             if fresh.contains(d) {
                 out.entry(*d).or_default().push(Call {
@@ -291,12 +290,18 @@ fn collect_calls<'a>(
                     clean: !under_call,
                 });
             }
-            true
+            let vars = &data.definitions[caller as usize].variables;
+            let mut held = under_call;
+            for a in args {
+                collect_calls(a, held, caller, fresh, data, out);
+                held = held || borrows_text(a, data, vars);
+            }
         }
-        Value::CallRef(..) | Value::Parallel(_) | Value::Iter(..) => true,
-        _ => under_call,
-    };
-    n.for_each_child(&mut |c| collect_calls(c, inner, caller, fresh, out));
+        Value::CallRef(..) | Value::Parallel(_) | Value::Iter(..) => {
+            n.for_each_child(&mut |c| collect_calls(c, true, caller, fresh, data, out));
+        }
+        _ => n.for_each_child(&mut |c| collect_calls(c, under_call, caller, fresh, data, out)),
+    }
 }
 
 /// Is every `text` parameter of `def` mentioned only as the value of a text-field assignment?

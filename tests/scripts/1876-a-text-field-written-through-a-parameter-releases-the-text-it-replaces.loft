@@ -13,7 +13,8 @@
 // the call (p4), a caller's walk over the field (p5), an argument an enclosing call has
 // already evaluated (p6), and a writer also reached through a fn-ref, whose callers cannot be
 // seen (p7).  A self-assignment through a parameter (p10) copies its value before the
-// release; a generator keeps its own copy of the text it was started with (p12).  The census
+// release; a generator keeps its own copy of the text it was started with (p12); a caller's
+// text local read from the record before the call is an owned copy and keeps its text (p13).  The census
 // cells count every store's live records after 10 and after 1 000 calls of each admitted
 // shape — a method, recursion, two levels, an element loop — with the record still alive.
 // `LOFT_POISON=1`, `LOFT_POISON_CLAIM=1` and `LOFT_STRICT_STORES=1` must answer identically.
@@ -32,6 +33,14 @@
 //   ARMED: nothing — the borrowed text reads the released block in an ordinary run.
 //   WITNESS: `p4 w7cond record text, long enough|w7` (the caller's parameter overwritten).
 //   HOLDS: the census cells (the admitted shapes are admitted either way).
+// @falsified-by: tests/falsified/1879-a-callers-text-local-is-a-copy-not-a-borrow.patch — a text
+//   local counted as a borrow again when it is an argument evaluated before the writing call.
+//   interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1
+//   assertion failures -> 0.
+//   CHANNEL: an assertion in the census, on BOTH backends.
+//   ARMED: nothing beyond the run itself.
+//   WITNESS: `c_inflight grows: 15 -> 1005` (`13 -> 1003` on --native).
+//   HOLDS: every value cell, on both trees (declining a release never moves a value).
 
 struct T2 { a: text, b: text, n: integer }
 
@@ -72,6 +81,25 @@ fn p10() -> text { r = T2 { a: "self assign text, long enough", b: "y", n: 1 }; 
 fn p12() -> text { r = T2 { a: "generator input, a long text", b: "y", n: 1 }; it = gen(r.a); setp(r, 3); out = ""; for s in it { out += s; out += ";"; } "{out}|{r.a}" }
 
 
+// #1879: a caller that keeps a text read from the record before the call.  `old` is an owned
+// copy, so the write through the parameter still releases, and `old` keeps the first text.
+fn k_name(self: T2, name: text) { self.a = name; }
+fn keep_old(r: T2) -> text { old = r.a; k_name(r, "new"); old }
+fn p13() -> text { r = T2 { a: "first text, long enough to own a block", b: "y", n: 1 }; "{keep_old(r)}|{r.a}" }
+fn c_keep(n: integer) -> integer { r = T2 { a: "x", b: "y", n: 1 }; for i in 0..n { k_name(r, "w{i}"); } assert(r.a == "w{n - 1}", "c_keep {r.a}"); census_records() }
+
+// #1879's in-flight half: a text LOCAL evaluated as an earlier argument is an owned copy, so
+// it holds no borrow while `setcount` writes through its parameter.
+fn setcount(q: T2, i: integer) -> integer { q.a = "s{i}"; i }
+fn tag(label: text, n: integer) -> integer { len(label) + n }
+fn c_inflight(n: integer) -> integer {
+  r = T2 { a: "x", b: "y", n: 1 };
+  t = 0;
+  for i in 0..n { lbl = "L{i % 10}"; t += tag(lbl, setcount(r, i)); }
+  assert(t == n * 2 + n * (n - 1) / 2, "c_inflight sum {t}");
+  census_records()
+}
+
 // Census helpers: each is called only from its own loop, so every caller is a safe frame.
 fn s_setp(q: T2, i: integer) { q.a = "w{i}"; }
 fn s_name(self: T2, name: text) { self.a = name; }
@@ -88,7 +116,10 @@ fn main() {
   assert(p7() == "fnref start text long enough|fr2", "p7 {p7()}");
   assert(p10() == "self assign text, long enough|assign text, long enough", "p10 {p10()}");
   assert(p12() == "generator input, a long text-0;generator input, a long text-1;|w3", "p12 {p12()}");
+  assert(p13() == "first text, long enough to own a block|new", "p13 {p13()}");
   assert(census_records() >= 0, "the census answers");
+  assert(c_keep(1000) == c_keep(10), "c_keep grows: {c_keep(10)} -> {c_keep(1000)}");
+  assert(c_inflight(1000) == c_inflight(10), "c_inflight grows: {c_inflight(10)} -> {c_inflight(1000)}");
   assert(c_setp(1000) == c_setp(10), "c_setp grows: {c_setp(10)} -> {c_setp(1000)}");
   assert(c_name(1000) == c_name(10), "c_name grows: {c_name(10)} -> {c_name(1000)}");
   assert(m_rec(1000) == m_rec(10), "m_rec grows: {m_rec(10)} -> {m_rec(1000)}");

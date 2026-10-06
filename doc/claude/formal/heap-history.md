@@ -2734,3 +2734,18 @@ it above the first `fn` binds at FILE level and would excuse the whole guard sil
 channel (`m55,55,V56,56` here, `m55,55,V56,56,56` with the witness disabled), which is what to
 bisect this family on: the loft#1336 guard only reports as a hang, and a control that can only
 time out cannot say which tree moved.
+
+### D-heap-45 — OPENED AND CLOSED (2026-10-06, loft#1873 → loft#1876 → loft#1879): an assigned text field kept the text it replaced
+
+`(H-TextReplace)` was written with #1873's fix, which released only where the record's owner
+was a local of the writing function.  The entry opened for a record reached through a
+PARAMETER (#1876): whether a caller still borrowed the text was a fact about the callers.
+`scopes::text_replace::safe_params` closed that with a greatest fixpoint over the program's
+direct calls.  It then narrowed to a caller holding a text local read from the record (#1879),
+which counted as a borrow.  Measured with every release admitted: such a local, the `??`
+discharge and the `for c in r.a` walk temporary are owned copies on the interpreter, and
+native's `(R-TextBorrow)` slices decline any block a release can run in.  The text-variable
+condition was dropped, and an enclosing call's argument now counts as an in-flight borrow
+only when it can answer a text.  Guards:
+`tests/scripts/1873-an-assigned-text-field-releases-the-text-it-replaces.loft` and
+`tests/scripts/1876-a-text-field-written-through-a-parameter-releases-the-text-it-replaces.loft`.

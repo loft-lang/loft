@@ -228,9 +228,11 @@ local of this function, or a parameter whose every caller is a visible direct ca
 the same property: every `text` parameter of the writer is only the value written, and at each
 call the argument is not inside another call's arguments and is owned there by a local no text
 variable borrows, or by a parameter of a caller that holds the same (a greatest fixpoint over
-the program's calls, so recursion is covered).  A text variable that only COPIES the field
-still counts as a borrow there, so its frame keeps the old text (D-heap-45).  The
-initialisation is a
+the program's calls, so recursion is covered).  A text VARIABLE is no borrow: a local `text`
+is an owned copy (`x = r.a`, a `??` discharge, a `for c in r.a` walk temporary), and a native
+slice of a store's text (`(R-TextBorrow)`) is declined over any block a release can run in.  So
+an argument already evaluated is a borrow only when it can answer a text — a field read, a
+slice, a call answering text, a `text` parameter.  The initialisation is a
 different write because the slot it fills can hold bytes that are not a block: a record minted
 without zero-filling (`(R-CompleteWrite)`) or an element slot handed to a callee
 (`(R-Place)`).  The guard is
@@ -756,16 +758,10 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **1**.  The entries the register closed, and how each closed, are in
+OPEN: **0**.  The entries the register closed, and how each closed, are in
 [heap-history.md](heap-history.md).  `tests/ownership_drop_gate.rs` gives every generated cell
 a lease verdict and ties each cell that must release once, and does not, to exactly one open
 entry.
-
-- **D-heap-45 (OPEN, loft#1879)** — violates <!-- doc-lint: ok -->
-  (`H-TextReplace`): a text variable whose deps reach a record (`old = r.a`) counts as a
-  borrow of its text, so every call of a method that writes that record's text through its
-  parameter keeps the text it replaces, though such a local is a copy on both backends.  The
-  walk temporary of `for c in r.a` is a real borrow, and the two are not yet told apart.
 
 Writing these rules **shrinks** [operational.md](operational.md)'s D-op-1 — the heap/store
 steps it named as *"unwritten … the interpreter remains their spec"* now have a written
