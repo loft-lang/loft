@@ -206,7 +206,19 @@ id = param(req, "id") ?? return bad_request("missing id");
 val = lookup(id)       ?? return;    // void function: return nothing
 ```
 
-Rules: [formal/calls.md](formal/calls.md) `(F-Return)`, `(F-Ret)` (the value returned is a fresh, independent value); `?? return` is `(E-Coalesce)` with a return in the fallback.
+`?? break` and `?? continue` do the same for the enclosing loop: on a null they leave it or
+skip to its next turn, and otherwise the left side's value is bound, non-null:
+```
+for k in 0..len(v) {
+  x = v[k] ?? continue;     // skip the holes
+  s += x;
+}
+row = next_row(src) ?? break; // stop at the first absent row
+```
+A labelled jump (`i#break`, `i#continue`) is allowed there too.  Outside a loop each is
+refused as the bare word is.
+
+Rules: [formal/calls.md](formal/calls.md) `(F-Return)`, `(F-Ret)` (the value returned is a fresh, independent value); `?? return`, `?? break` and `?? continue` are `(E-Coalesce)` with a jump in the fallback, which `(C-Never)` in [formal/types.md](formal/types.md) admits at any type.
 
 ### Custom iterators (I13)
 

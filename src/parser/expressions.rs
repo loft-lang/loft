@@ -1192,6 +1192,19 @@ impl Parser {
         }
     }
 
+    /// Does a value follow the control word just read — `break`, `return`, `?? return`?  Not
+    /// when the next token ENDS the form the word stands in: a statement (`;`), a block
+    /// (`}`), a match arm or a list element (`,`), a group or an argument list (`)`), a vector
+    /// literal (`]`), or the input.  The one answer for all three words, so a bare word reads
+    /// alike in every position a value does (@FR-C-Never): with only `;` and `}` asked, the
+    /// `, _ => i` after `4 => break` was parsed as the break's value and returned.
+    pub(crate) fn control_value_follows(&self) -> bool {
+        ![";", "}", ",", ")", "]"]
+            .iter()
+            .any(|t| self.lexer.peek_token(t))
+            && !matches!(self.lexer.peek().has, crate::lexer::LexItem::None)
+    }
+
     // <expression> ::= <for> | 'continue' | 'break' | 'return' | 'yield' | '{' <block> | <operators>
     /// @PLN86 step 0.1 — depth-guarded entry to expression parsing.  For trusted
     /// code (`!in_sandbox`) this is a single bool check then a tail call — zero
@@ -1257,10 +1270,7 @@ impl Parser {
             // since loft loops are currently void-typed.  Covers the common
             // find/search pattern where break-with-value exits the function.
             // TODO: implement for...else for the general case.
-            if !self.lexer.peek_token("}")
-                && !self.lexer.peek_token(";")
-                && !matches!(self.lexer.peek().has, crate::lexer::LexItem::None)
-            {
+            if self.control_value_follows() {
                 let mut break_val = Value::Null;
                 let break_tp = self.expression(&mut break_val);
                 let ret_tp = self.data.def(self.context).returned().clone();

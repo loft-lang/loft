@@ -19035,7 +19035,7 @@ impl Parser {
         // validate if there is a defined return value
         let mut v = Value::Null;
         let r_type = self.data.def(self.context).returned().clone();
-        if !self.lexer.peek_token(";") && !self.lexer.peek_token("}") {
+        if self.control_value_follows() {
             // T1.7: save the position of the first token in the return expression,
             // used to report `not null` violations at the tuple literal site.
             let expr_start = self.lexer.peek().clone();

@@ -2308,6 +2308,20 @@ impl Output<'_> {
             }
             _ => false,
         };
+        // A DIVERGING arm (`=> return "other"`, `=> break`) yields `!`, which coerces to what
+        // its sibling yields, so it takes none of the unify wrappers: `&*(return …)` and
+        // `({ return … } as u8)` are not Rust (E0614, E0605), and `.to_string()` on it is dead
+        // code (@FR-C-Never — `Never ⤳ τ` whatever τ the sibling settles).  A `match` arm
+        // reaches here bare, where an `if` arm is a block that already opted out.
+        let unify = |arm: &Value| {
+            if Self::arm_diverges(arm) {
+                (false, false, false)
+            } else {
+                (text_string_unify, text_unify, bool_unify)
+            }
+        };
+        let (text_string_unify, text_unify, bool_unify) = unify(true_v);
+        let (f_text_string_unify, f_text_unify, f_bool_unify) = unify(false_v);
         // For `text_string_unify` we emit `{ (<branch>).to_string() }` around
         // each arm so the if-expression unifies on `String`.  Rust requires
         // braces for if-arms regardless of inner expression form, so even if
@@ -2385,11 +2399,11 @@ impl Output<'_> {
         } else {
             write!(w, "}} else ")?;
         }
-        let (false_braced, false_rest) = if text_string_unify {
+        let (false_braced, false_rest) = if f_text_string_unify {
             (true, "(")
-        } else if text_unify {
+        } else if f_text_unify {
             (true, "&*(")
-        } else if bool_unify {
+        } else if f_bool_unify {
             (true, "({")
         } else if stmt_discard || !b_false {
             (true, "")
@@ -2405,7 +2419,7 @@ impl Output<'_> {
             None
         };
         write!(w, "{false_rest}")?;
-        self.indent += u32::from(!b_false || text_string_unify || bool_unify);
+        self.indent += u32::from(!b_false || f_text_string_unify || f_bool_unify);
         // When the else branch is Null and the true branch returns a value,
         // emit a typed null sentinel instead of () to match the true branch type.
         if matches!(false_v, Value::Null)
@@ -2418,18 +2432,18 @@ impl Output<'_> {
             self.clone_handed_tuple_local = None;
         }
         self.close_arm_pre_evals(false_pre);
-        if text_string_unify {
+        if f_text_string_unify {
             write!(w, ").to_string()}}")?;
-        } else if text_unify {
+        } else if f_text_unify {
             write!(w, ")}}")?;
-        } else if bool_unify {
+        } else if f_bool_unify {
             write!(w, "}} as u8)}}")?;
         } else if stmt_discard {
             write!(w, ";}}")?;
         } else if !b_false {
             write!(w, "}}")?;
         }
-        self.indent -= u32::from(!b_false || text_string_unify || bool_unify);
+        self.indent -= u32::from(!b_false || f_text_string_unify || f_bool_unify);
         if wrap_block {
             write!(w, " }}")?;
         }
@@ -3746,7 +3760,31 @@ impl Output<'_> {
                     // nwb fns via the no-work-buffer arm).
                     let tail_outer_owned =
                         wrap_result && super::def_returns_owned_text(self.data.def(self.def_nr));
-                    if is_tail_capture_call {
+                    // A TEXT value block whose tail is one of its OWN locals — the temp of
+                    // `t = f() ?? return "x"` (`ncr`) — hands that `String` out by value: the
+                    // ordinary spelling `&var_x` borrows a local that drops at this block's
+                    // `}` (E0597), the same hazard the `_ret.to_string()` tail above closes,
+                    // and a text value block already yields an owned `String` there.
+                    let own_text_tail = match v.unspan() {
+                        Value::Var(x)
+                            if is_return_expr
+                                && !is_fn_body
+                                && !wrap_result
+                                && narrow_cast.is_none()
+                                && !is_tail_capture_call
+                                && matches!(bl.result.base(), Type::Text(_)) =>
+                        {
+                            let vars = self.data.def(self.def_nr).variables();
+                            (vars.scope(*x) == bl.scope
+                                && matches!(vars.tp(*x).base(), Type::Text(_))
+                                && !self.text_borrowed(*x))
+                            .then(|| sanitize(vars.name(*x)))
+                        }
+                        _ => None,
+                    };
+                    if own_text_tail.is_some() {
+                        // written in place of the value below
+                    } else if is_tail_capture_call {
                         // Wrap the captured value in a block.  A tail call whose
                         // argument carries a store-lifetime "lift" pre-eval emits that
                         // lift as a LEADING `{ … };` statement (it reassigns the lifted
@@ -3780,9 +3818,13 @@ impl Output<'_> {
                     } else if narrow_cast.is_some() {
                         write!(w, "(")?;
                     }
-                    self.indent += 1;
-                    self.output_code_inner(w, v)?;
-                    self.indent -= 1;
+                    if let Some(name) = &own_text_tail {
+                        write!(w, "var_{name}")?;
+                    } else {
+                        self.indent += 1;
+                        self.output_code_inner(w, v)?;
+                        self.indent -= 1;
+                    }
                     if is_tail_capture_call {
                         // Close the block opened above; the call is its tail expr.
                         write!(w, " }}")?;

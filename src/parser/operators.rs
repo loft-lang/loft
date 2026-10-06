@@ -3322,30 +3322,6 @@ impl Parser {
             if matches!(self.data.def(*d).returned(), Type::Optional(_)))
     }
 
-    /// `return` is the one control word `??` takes (@F2): a `continue` or `break` after it
-    /// was read as a missing default and reported only as "Expect token ;", which names
-    /// neither the rule nor the spelling that works.  Refuses it by name, with the cure, and
-    /// consumes the keyword so the statement ends where the author ended it.  Answers
-    /// whether it refused.
-    fn refuse_coalesce_loop_control(&mut self) -> bool {
-        let Some(kw) = ["continue", "break"]
-            .into_iter()
-            .find(|kw| self.lexer.peek_token(kw))
-        else {
-            return false;
-        };
-        self.lexer.has_token(kw);
-        if !self.first_pass {
-            diagnostic!(
-                self.lexer,
-                Level::Error,
-                "`?? {kw}` is not supported — after `??` comes a value or `return`.  To \
-                 {kw} on a null, test it first: `if v == null {{ {kw}; }}`"
-            );
-        }
-        true
-    }
-
     /// Desugar `lhs ?? ...` — both the plain-default form and the
     /// `?? return ret_expr` early-return form.  Lifted out of
     /// [`Self::handle_operator`] so each shape has its own focused helper.
@@ -3502,8 +3478,14 @@ impl Parser {
         // `false ?? x` stays `false` (false is not null); `null ?? x` → x.
         if self.lexer.has_token("return") {
             self.build_null_coalesce_return(code, ctp, &lhs_type);
-        } else if self.refuse_coalesce_loop_control() {
-            // the operand stands as written; the refusal is reported
+        } else if self.lexer.peek_token("break") || self.lexer.peek_token("continue") {
+            // `?? break` / `?? continue` leave the loop on a null exactly as `?? return` leaves
+            // the function: the word is parsed as the expression it is anywhere else, which
+            // checks it stands in a loop and answers `Never` (@FR-N-Coal's `d ⇐ τ` through
+            // @FR-C-Never).
+            let mut exit = Value::Null;
+            self.expression(&mut exit);
+            self.null_coalesce_exit(code, ctp, &lhs_type, exit);
         } else {
             self.build_null_coalesce_default(var_tp, code, parent_tp, precedence, ctp, &lhs_type);
         }
@@ -3795,7 +3777,7 @@ impl Parser {
         // produces the typed null sentinel.
         let mut ret_val = Value::Null;
         let r_type = self.data.def(self.context).returned().clone();
-        if !self.lexer.peek_token(";") && !self.lexer.peek_token("}") {
+        if self.control_value_follows() {
             let ret_pos = self.lexer.peek_pos().clone();
             let t = self.expression(&mut ret_val);
             // @FR-N-Store: `lhs ?? return ret` returns `ret` into the caller's non-null return
@@ -3814,8 +3796,21 @@ impl Parser {
             ret_val = self.null_value(&r_type);
         }
         let ret_stmt = Value::Return(Box::new(ret_val));
+        self.null_coalesce_exit(code, ctp, lhs_type, ret_stmt);
+    }
 
-        // { tmp = lhs; if (tmp == null) { return ret_expr; }; tmp }
+    /// `lhs ?? <exit>` — the block that leaves by `exit` (a `return`, `break` or `continue`)
+    /// when `lhs` is null and otherwise evaluates to `lhs`.  The exit is a `Never`, so the
+    /// block's type is `lhs`'s present type whatever the exit is (@FR-C-Never, @FR-N-Coal).
+    fn null_coalesce_exit(
+        &mut self,
+        code: &mut Value,
+        ctp: &mut Type,
+        lhs_type: &Type,
+        exit: Value,
+    ) {
+        let ret_stmt = exit;
+        // { tmp = lhs; if (tmp == null) { <exit>; }; tmp }
         let tmp = self.create_unique("ncr", lhs_type);
         let set_tmp = v_set(tmp, code.clone());
         let is_null = if self.is_type_var_operand(lhs_type) {

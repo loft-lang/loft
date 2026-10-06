@@ -2421,7 +2421,7 @@ use #count instead"
             }
         } else if self.lexer.has_token("break") {
             if !self.in_loop {
-                diagnostic!(self.lexer, Level::Error, "Cannot continue outside a loop");
+                diagnostic!(self.lexer, Level::Error, "Cannot break outside a loop");
             }
             // loft#998 — `x#break` names the loop to leave by its VARIABLE, so a name that
             // is not one has no level to jump. `Value::Null` rather than a level: every
@@ -2432,7 +2432,10 @@ use #count instead"
                 Some(lv) => Value::Break(lv),
                 None => self.not_a_loop_variable(name, "break"),
             };
-            *t = Type::Void;
+            // A labelled jump leaves as the plain word does, so it is the same `Never` and fits
+            // wherever a value is expected (@FR-C-Never): typed `void`, `p = f() ?? i#break`
+            // was refused as a default of the wrong type.
+            *t = Type::Never;
         } else if self.lexer.has_token("continue") {
             if !self.in_loop {
                 diagnostic!(self.lexer, Level::Error, "Cannot continue outside a loop");
@@ -2441,7 +2444,7 @@ use #count instead"
                 Some(lv) => Value::Continue(lv),
                 None => self.not_a_loop_variable(name, "continue"),
             };
-            *t = Type::Void;
+            *t = Type::Never;
         } else if self.lexer.has_keyword("count") {
             self.iter_op_count_or_first(code, name, t, false, index_var);
         } else if self.lexer.has_keyword("first") {

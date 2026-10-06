@@ -1683,7 +1683,7 @@ fn the_cure_lists_the_enclosing_loops_innermost_first() {
 #[test]
 fn outside_a_loop_keeps_its_own_message() {
     code!("fn test() { k = 0; k#break }")
-        .error("Cannot continue outside a loop at outside_a_loop_keeps_its_own_message:1:29");
+        .error("Cannot break outside a loop at outside_a_loop_keeps_its_own_message:1:29");
 }
 
 /// loft#996, C132 — a SLICE on a program's type is ONE refusal, never `Expect token ]` at the
