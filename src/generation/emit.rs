@@ -1486,14 +1486,8 @@ impl Output<'_> {
                 )
                 && crate::generation::dispatch::tuple_has_text_leaf(param_elems)
             {
-                let name = self
-                    .data
-                    .def(self.def_nr)
-                    .variables()
-                    .name(*var)
-                    .to_string();
                 Some(crate::generation::dispatch::borrowed_tuple_from_owned(
-                    &format!("var_{name}"),
+                    &self.var_place(*var),
                     param_elems,
                 ))
             } else {
