@@ -467,6 +467,17 @@ compiler ACCEPTS can break a cell in a subject it never names (a new refusal bro
 in `codegen` from a `.loft` under `doc/claude/plans/`, 2026-09-24).  A fix to a constant, a
 fixture, a derived row, formatting or a lint attribute is not that.
 
+**The same holds for a set of subject runs, a corpus suite, or any run larger than the failure it
+reports.**  When `find_problems.sh` subjects (or `cargo test` over several binaries) come back
+with one or a few failures, the answer is EXACTLY those tests — `cargo test --release --test
+<binary> <name>`, or the one subject that holds them — plus `--changed` for what the fix itself
+touches.  Never re-launch the whole set because a failure was fixed, and never stop a run that is
+still answering to start the same set again on a newer build: every subject the earlier run
+passed is still answered unless the fix's reach is unknown in the sense of the paragraph above,
+and then it is ONE new run, not a restart per fix.  Re-running everything is the easy reflex
+because it needs no thought about what moved; deciding what moved is the work, and a rerun of
+forty-five minutes for one test is the cost of skipping it.
+
 ### Sizing the checks for a performance change
 
 Size the local checks to how far the change reaches and how quietly it could fail.
