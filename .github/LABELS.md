@@ -207,6 +207,39 @@ the ratio and folds it into neither side.
 gh issue list --state all --label contract:strained
 ```
 
+## `contract:before-1` — must land before the freeze; later, `contract:compat`
+
+On **issues and plans alike** (`loft-lang/loft` and `loft-lang/plans`).  It marks work that
+the contract-1 freeze would otherwise forbid, because after the flip loft may never add a refusal,
+change what existing code means, or break a covered surface
+([COMPATIBILITY.md § The promise](../doc/claude/COMPATIBILITY.md)).  Set it when the item is FILED
+or triaged — unlike `contract:settled` / `contract:strained`, which describe a fix and are set at
+fix time — whenever the work does any of:
+
+- **(a)** adds a refusal or compile error that some program compiling today would hit;
+- **(b)** changes the observable meaning of existing code (an operator, a default, a value);
+- **(c)** changes or removes a published library's API, or forces its republish as a breaking
+  release;
+- **(d)** changes a covered format: a stored store layout, a file format, a wire format;
+- **(e)** is an item of the pre-freeze audit
+  ([COMPATIBILITY.md § Before the flip](../doc/claude/COMPATIBILITY.md)).
+
+Purely additive work — a new feature, a library, a speed-up, tooling, a refusal turned into an
+answer — does not get it, however urgent: the promise allows all of that after the flip.  A plan
+that needs it for one track only says which track in its body.
+
+**After contract 1 it becomes `contract:compat`.**  The same kinds of change are still possible
+then, but only through the escape valve
+([COMPATIBILITY.md § The escape valve](../doc/claude/COMPATIBILITY.md)): the new behaviour is
+keyed on the `contract` a program declares, and every older program keeps the old one.  So an item
+labelled `contract:compat` is TWO jobs, and the label is there so neither is forgotten: build the
+new behaviour, and keep the old one working beside it, each with its own guard.  Carrying two
+behaviours brings its own problems — they share code, they must not leak into each other, and
+the old one has no users filing bugs against it — so the item's body names the contract key, the
+old behaviour it keeps, and the guard that proves it still holds.  At the flip, open
+`contract:before-1` items are either finished or relabelled `contract:compat`; the label then
+retires.
+
 ## `area:` — which part of loft (plain-English, with orienting files — NOT required reading)
 
 loft is a tree-walking interpreter **and** a native code generator for a

@@ -413,6 +413,10 @@ a breaking-change tracker:
 
 ## Before the flip: the pre-freeze audit (the one-way door)
 
+**Tracking.** Every issue or plan that must land before the flip carries `contract:before-1`;
+after the flip the same kind of work carries `contract:compat` and keeps the old behaviour beside
+the new one ([LABELS.md § `contract:before-1`](../../.github/LABELS.md)).
+
 The `0 → 1` flip is **irreversible** — every wart it freezes is frozen forever. So the flip
 is **gated on a thorough, surface-by-surface examination** of everything the promise will
 cover, done while contract 0 still lets us change it. Anything we would not want to live
