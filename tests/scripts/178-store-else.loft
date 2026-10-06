@@ -12,6 +12,11 @@
 //         (u8 field, u8 local, i8, limit), lock fault, and the LANDED twin of each}
 //       × operator {=, +=, -=, *=} × the arm {flag, continue, break, nested store-else}
 //       × context {straight line, loop, lambda, generator, par worker}
+//
+// @falsified-at: 57afdec2c — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/178-store-else.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the ASSERTIONS — with the arm never emitted, the first cell's `out` stays empty
+//   where "CFHN" is right, on both backends.  The patch drops only the final `if` that runs it.
 
 struct In { m: integer }
 struct P { x: integer, n: u8, t: text, inner: In }
