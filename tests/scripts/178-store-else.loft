@@ -1,9 +1,9 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// `@FR-H-Write-Else` — `place = v else { B }` runs B exactly when the write did not take, and
-// never when it landed.  Every cell writes a distinctive letter into `out` from its arm, so a
-// cell whose arm ran wrongly — or failed to run — changes the string; the landed values are
+// @C130, `@FR-H-Write-Else` — `place = v else { B }` runs B exactly when the write did not
+// take, and never when it landed.  Every cell writes a distinctive letter into `out` from its
+// arm, so a cell whose arm ran wrongly — or failed to run — changes the string; the landed values are
 // asserted beside it.  Every expected value is hand-computed in the comment above its assert.
 //
 //   axes: place {local, tuple element, vector element, text element, field through an

@@ -104,6 +104,7 @@ canonical; these pages are its generated shadow. Regenerate with
 | [@F123](F123.md) | Foreign stores — a mapped file or a library's buffer read in place, a slice of it a view |
 | [@F124](F124.md) | Operators on a program's own type — `operator compare`, `plus`, `minus`, `times`, `negate`, `divided_by`, `remainder`, `to_<type>` |
 | [@F125](F125.md) | Text slicing — `s[a..b]`, `s[a..]`, `s[..b]`, `s[i]` (byte offsets; `char_slice` for characters) |
+| [@F126](F126.md) | A store's failure arm — `place = value else { … }` runs when the write did not land |
 
 ## Infrastructure (`@I`)
 

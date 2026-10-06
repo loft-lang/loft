@@ -82,6 +82,7 @@ or `??` would give "or" a third meaning; a result wrapper is declined by C89.
 **Revisit when.** A consumer shows the Warn line is noise in a real program — and even then the
 answer is a cheaper guard (`else {}`), never a mode split or a compile-time nag.  Decided
 2026-09-28 — [record](DESIGN_DECISIONS-history.md#c130--a-store-carries-its-own-failure-arm-else-after-the-assignment).
+**Holds at:** `@C130` — `./scripts/idx tag:@C130`.
 **Catalogue:** @F1 (null model), @F38 (arithmetic safety) · [@PLN178](plans/178-store-else.md) · `formal/heap.md` `(H-WriteOOB)` / `(H-WriteNull)` / `(H-WriteLocked)`, `formal/operational.md` `(E-Uncomp-Seen)` / `(E-Report)`.
 
 ## C131 — A cast to a variant answers the variant: a provable miss is refused, an unproven one defaults and warns
