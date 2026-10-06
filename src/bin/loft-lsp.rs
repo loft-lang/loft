@@ -857,7 +857,7 @@ fn execute_overview(
         let page = loft::doc_site::type_page(&caps);
         let path = dir.join(&page.name);
         return Some(
-            std::fs::write(&path, &page.text)
+            loft::file_access::write(&loft::file_access::PathText::from_os(&path), &page.text)
                 .map(|()| path)
                 .map_err(|e| e.to_string()),
         );
@@ -875,11 +875,13 @@ fn overview_pages(file: Option<&str>) -> (Vec<loft::doc_site::Page>, String) {
             .ancestors()
             .skip(1)
             .map(|d| d.join("loft.lock"))
-            .find(|p| p.is_file())
+            .find(|p| loft::file_access::is_file(&loft::file_access::PathText::from_os(p)))
     });
     let lock_text = lock_path
         .as_ref()
-        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|p| {
+            loft::file_access::read_to_string(&loft::file_access::PathText::from_os(p)).ok()
+        })
         .unwrap_or_default();
     let locked: Vec<(String, String)> = loft::lockfile::parse(&lock_text)
         .map(|l| {
@@ -892,9 +894,10 @@ fn overview_pages(file: Option<&str>) -> (Vec<loft::doc_site::Page>, String) {
     #[cfg(feature = "registry")]
     let index_stamp = {
         let (idx_path, _, _) = loft::registry_index::index_paths();
-        let index_stamp = std::fs::metadata(&idx_path)
-            .map(|m| format!("{} {:?}", m.len(), m.modified().ok()))
-            .unwrap_or_default();
+        let index_stamp =
+            loft::file_access::metadata(&loft::file_access::PathText::from_os(&idx_path))
+                .map(|m| format!("{} {:?}", m.len(), m.modified().ok()))
+                .unwrap_or_default();
         let installed: Vec<(String, String)> = loft::registry_index::installed_packages()
             .into_iter()
             .map(|(n, v, _)| (n, v))

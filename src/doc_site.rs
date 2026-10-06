@@ -292,8 +292,10 @@ fn library_page(
 /// gendoc publishes as `lib-<name>-guide.html`.
 #[cfg(feature = "registry")]
 fn has_guide(dir: &Path) -> bool {
-    std::fs::read_dir(dir.join("docs")).is_ok_and(|mut d| {
-        d.any(|e| e.is_ok_and(|e| e.path().extension().is_some_and(|x| x == "loft")))
+    use crate::file_access::{PathText, read_dir};
+    read_dir(&PathText::from_os(&dir.join("docs"))).is_ok_and(|d| {
+        d.iter()
+            .any(|e| e.parts().last().is_some_and(|n| n.ends_with(".loft")))
     })
 }
 
@@ -304,7 +306,7 @@ fn has_guide(dir: &Path) -> bool {
 #[cfg(feature = "registry")]
 #[must_use]
 pub fn library_card(dir: &Path) -> Option<String> {
-    let base = dir.file_name()?.to_str()?;
+    let base = crate::file_access::file_name(dir)?;
     let (name, version) = base.rsplit_once('-')?;
     if !version.chars().next().is_some_and(|c| c.is_ascii_digit()) {
         return None;
@@ -332,7 +334,7 @@ pub fn locked_version(name: &str, project: &Path) -> Option<String> {
     let lock = project
         .ancestors()
         .map(|d| d.join("loft.lock"))
-        .find(|l| l.is_file())?;
+        .find(|l| crate::file_access::is_file(&crate::file_access::PathText::from_os(l)))?;
     crate::lockfile::read_lockfile(&lock)
         .ok()
         .flatten()?
@@ -525,13 +527,15 @@ pub fn site_dir() -> PathBuf {
 /// A page or the stamp could not be written.
 pub fn write_site(dir: &Path, pages: &[Page], stamp: &str) -> std::io::Result<bool> {
     let stamp_path = dir.join(".stamp");
-    if dir.join(ROOT).is_file() && std::fs::read_to_string(&stamp_path).is_ok_and(|s| s == stamp) {
+    use crate::file_access::{PathText, create_dir_all, is_file, read_to_string, write};
+    let at = |p: &Path| PathText::from_os(p);
+    if is_file(&at(&dir.join(ROOT))) && read_to_string(&at(&stamp_path)).is_ok_and(|s| s == stamp) {
         return Ok(false);
     }
-    std::fs::create_dir_all(dir)?;
+    create_dir_all(&at(dir))?;
     for p in pages {
-        std::fs::write(dir.join(&p.name), &p.text)?;
+        write(&at(&dir.join(&p.name)), &p.text)?;
     }
-    std::fs::write(stamp_path, stamp)?;
+    write(&at(&stamp_path), stamp)?;
     Ok(true)
 }
