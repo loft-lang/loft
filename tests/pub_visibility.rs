@@ -191,7 +191,10 @@ fn main() {
 ";
     for enforce in [false, true] {
         let (out, err, ok) = run(&format!("tuple{enforce}"), program, enforce);
-        assert!(ok && out == "7 seven 7 seven 3 three\n", "enforce={enforce}: {out}{err}");
+        assert!(
+            ok && out == "7 seven 7 seven 3 three\n",
+            "enforce={enforce}: {out}{err}"
+        );
     }
     let hidden = "use units;
 fn main() { h = units::hold(); println(\"{h.hidden.0}\"); }

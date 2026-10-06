@@ -315,7 +315,7 @@ pub(crate) const NAMENR_NAME: u32 = 8; // text
 /// `Definition` record (element of `Data.definitions` = `vector<Definition>`).
 /// Inlines `Position` (`DEF_POSITION` base) and `Function` (`DEF_VARIABLES`
 /// base).  `def_type` / `purity` store integer codes (see `ir_store`).
-pub(crate) const DEFINITION_STRIDE: u32 = 192; // @PLN24 arc A — +8 for the two #c text refs; @PLN165 D2/D3 — +16 for type_params, instance_of, instance_args; arc E — +1 for builtin; @PLN182 — +1 for operator
+pub(crate) const DEFINITION_STRIDE: u32 = 200; // @PLN24 arc A — +8 for the two #c text refs; @PLN165 D2/D3 — +16 for type_params, instance_of, instance_args; arc E — +1 for builtin; @PLN182 — +1 for operator; @PLN187 — +8 for returned_alias
 pub(crate) const DEF_SOURCE: u32 = 0;
 pub(crate) const DEF_DEF_TYPE: u32 = 8;
 pub(crate) const DEF_PARENT: u32 = 16;
@@ -325,30 +325,31 @@ pub(crate) const DEF_KNOWN_TYPE: u32 = 56;
 pub(crate) const DEF_CLOSURE_RECORD: u32 = 64;
 pub(crate) const DEF_FORCED_SIZE: u32 = 72; // Option<u8>; 0 = None
 pub(crate) const DEF_PURITY: u32 = 80;
-pub(crate) const DEF_NAME: u32 = 96;
-pub(crate) const DEF_ATTRIBUTES: u32 = 100; // vector<Attribute>
-pub(crate) const DEF_CODE: u32 = 104; // vector<Node> (box-of-one)
-pub(crate) const DEF_RETURNED: u32 = 108; // vector<TypeT> (box-of-one)
-pub(crate) const DEF_RUST: u32 = 112;
-pub(crate) const DEF_NATIVE: u32 = 116;
-pub(crate) const DEF_VARIABLES: u32 = 120; // inlined Function base (20 bytes)
-pub(crate) const DEF_MUTATED_CAPTURES: u32 = 140; // vector<NameRef>
-pub(crate) const DEF_SCALARS_TO_BOX: u32 = 144; // vector<NameRef>
-pub(crate) const DEF_BOUNDS: u32 = 148; // vector<integer>
-pub(crate) const DEF_FIELD_GROUPS: u32 = 152; // vector<LinkedFieldGroup>
-pub(crate) const DEF_SYNTHETIC: u32 = 156; // Option<&str>; "" = None
-pub(crate) const DEF_CAP: u32 = 160; // @PLN86 the group#right call-gate link; "" = unlinked
-pub(crate) const DEF_SUPERSEDED: u32 = 164; // @PLN102 arc C #superseded "Y"; "" = not superseded
-pub(crate) const DEF_RETURNED_NOT_NULL: u32 = 184;
-pub(crate) const DEF_PUB_VISIBLE: u32 = 185;
-pub(crate) const DEF_NULL_SAFE: u32 = 186; // @PLN46 W2 #null_safe; false = unannotated
-pub(crate) const DEF_BUILTIN: u32 = 187; // @PLN165 arc E #builtin; false = an ordinary body
-pub(crate) const DEF_OPERATOR_FORM: u32 = 188; // @PLN182 written `operator`; false = a plain `fn`
-pub(crate) const DEF_C_SYMBOL: u32 = 168; // @PLN24 #c "sym"; "" = not a C binding
-pub(crate) const DEF_C_SIG: u32 = 172; // @PLN24 the declared C signature; "" = none
-pub(crate) const DEF_TYPE_PARAMS: u32 = 176; // @PLN165 D2 vector<integer>, header order
+pub(crate) const DEF_NAME: u32 = 104;
+pub(crate) const DEF_ATTRIBUTES: u32 = 108; // vector<Attribute>
+pub(crate) const DEF_CODE: u32 = 112; // vector<Node> (box-of-one)
+pub(crate) const DEF_RETURNED: u32 = 116; // vector<TypeT> (box-of-one)
+pub(crate) const DEF_RUST: u32 = 120;
+pub(crate) const DEF_NATIVE: u32 = 124;
+pub(crate) const DEF_VARIABLES: u32 = 128; // inlined Function base (20 bytes)
+pub(crate) const DEF_MUTATED_CAPTURES: u32 = 148; // vector<NameRef>
+pub(crate) const DEF_SCALARS_TO_BOX: u32 = 152; // vector<NameRef>
+pub(crate) const DEF_BOUNDS: u32 = 156; // vector<integer>
+pub(crate) const DEF_FIELD_GROUPS: u32 = 160; // vector<LinkedFieldGroup>
+pub(crate) const DEF_SYNTHETIC: u32 = 164; // Option<&str>; "" = None
+pub(crate) const DEF_CAP: u32 = 168; // @PLN86 the group#right call-gate link; "" = unlinked
+pub(crate) const DEF_SUPERSEDED: u32 = 172; // @PLN102 arc C #superseded "Y"; "" = not superseded
+pub(crate) const DEF_RETURNED_NOT_NULL: u32 = 192;
+pub(crate) const DEF_PUB_VISIBLE: u32 = 193;
+pub(crate) const DEF_NULL_SAFE: u32 = 194; // @PLN46 W2 #null_safe; false = unannotated
+pub(crate) const DEF_BUILTIN: u32 = 195; // @PLN165 arc E #builtin; false = an ordinary body
+pub(crate) const DEF_OPERATOR_FORM: u32 = 196; // @PLN182 written `operator`; false = a plain `fn`
+pub(crate) const DEF_C_SYMBOL: u32 = 176; // @PLN24 #c "sym"; "" = not a C binding
+pub(crate) const DEF_C_SIG: u32 = 180; // @PLN24 the declared C signature; "" = none
+pub(crate) const DEF_TYPE_PARAMS: u32 = 184; // @PLN165 D2 vector<integer>, header order
 pub(crate) const DEF_INSTANCE_OF: u32 = 88; // @PLN165 D3 the template; -1 = not an instance
-pub(crate) const DEF_INSTANCE_ARGS: u32 = 180; // @PLN165 D3 vector<TypeT>
+pub(crate) const DEF_RETURNED_ALIAS: u32 = 96; // @PLN187 the declared result alias; -1 = none
+pub(crate) const DEF_INSTANCE_ARGS: u32 = 188; // @PLN165 D3 vector<TypeT>
 
 /// `Data` record (the root).
 pub(crate) const DATA_SOURCE: u32 = 0;
@@ -1550,6 +1551,7 @@ mod tests {
         assert_eq!(pos(ids.definition, "null_safe"), DEF_NULL_SAFE);
         assert_eq!(pos(ids.definition, "builtin"), DEF_BUILTIN);
         assert_eq!(pos(ids.definition, "operator_form"), DEF_OPERATOR_FORM);
+        assert_eq!(pos(ids.definition, "returned_alias"), DEF_RETURNED_ALIAS);
 
         // Data record (root).
         assert_eq!(pos(ids.data, "source"), DATA_SOURCE);

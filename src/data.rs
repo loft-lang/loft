@@ -4989,6 +4989,10 @@ pub struct Definition {
     /// Related type for fields, and the return type for functions
     pub returned: Type,
     /// Whether the return type was declared `not null` (only meaningful for functions)
+    /// @PLN187 — the `type` alias the result was DECLARED with (`-> Handle`), or `u32::MAX`.
+    /// `returned` holds the alias's underlying type; this keeps the name a caller in another
+    /// file sees, so a non-`pub` alias can stay abstract there (C140).
+    pub returned_alias: u32,
     pub returned_not_null: bool,
     /// Rust code
     pub rust: String,
@@ -7595,6 +7599,7 @@ impl Data {
             code: Value::Null,
             returned: Type::Unknown(rec),
             returned_not_null: false,
+            returned_alias: u32::MAX,
             rust: String::new(),
             native: String::new(),
             cap: String::new(),

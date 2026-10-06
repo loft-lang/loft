@@ -495,6 +495,16 @@ pub struct Parser {
     /// `param_locks` once the function's def_nr is known (parameters parse BEFORE the def
     /// is created).  Cleared at the start of each parameter list; consumed per function.
     pub(crate) pending_param_locks: Vec<(usize, String)>,
+    /// @PLN187 — each parameter's declared `type` alias (`u32::MAX` for none), in order,
+    /// ferried to `parse_function` like `pending_param_locks` and stored on the parameter's
+    /// attribute (`Attribute::alias_d_nr`).
+    pub(crate) pending_param_aliases: Vec<u32>,
+    /// @PLN187 — how deep `parse_type` is nested (a generic argument, a tuple member): only the
+    /// OUTERMOST type is the one a declaration was written with.
+    pub(crate) type_nesting: u32,
+    /// @PLN187 — the user `type` alias the last outermost type was spelled with, or
+    /// `u32::MAX`.  A site that wants it resets it before parsing the type.
+    pub(crate) declared_alias: u32,
     /// @PLN115 tail — a parameter's `(arg_index, name_pos, name_len)` captured while
     /// reading the signature (positions there, but the def_nr / var_nr are not yet
     /// established), ferried to `parse_function` to record each param's DECLARATION
@@ -1784,6 +1794,9 @@ impl Parser {
             sandbox_param_overrides: HashMap::new(),
             len_bound_locals: HashMap::new(),
             pending_param_locks: Vec::new(),
+            pending_param_aliases: Vec::new(),
+            type_nesting: 0,
+            declared_alias: u32::MAX,
             pending_param_positions: Vec::new(),
             amp_pending: false,
             first_bind_targets: Vec::new(),

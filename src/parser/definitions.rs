@@ -2997,6 +2997,16 @@ impl Parser {
             for (idx, token) in std::mem::take(&mut self.pending_param_locks) {
                 self.param_locks.insert((self.context, idx as u32), token);
             }
+            // @PLN187 — each parameter keeps the alias it was declared with.
+            let aliases = std::mem::take(&mut self.pending_param_aliases);
+            if self.context != u32::MAX {
+                let attrs = &mut self.data.definitions[self.context as usize].attributes;
+                for (a, alias) in attrs.iter_mut().zip(aliases) {
+                    if alias != u32::MAX {
+                        a.alias_d_nr = alias;
+                    }
+                }
+            }
         }
         // @PLN115 tail — now `self.context` (the fn's def_nr) is known, record each
         // parameter's DECLARATION occurrence: `Local{fn_def, var_nr}` at the signature
@@ -3082,6 +3092,7 @@ impl Parser {
         }
         let mut returned_not_null = false;
         self.pending_forward_return = None;
+        self.declared_alias = u32::MAX;
         let mut result = if self.lexer.has_token("->") {
             // Will be the correct def_nr on the second pass
             if let Some(tp) = self.parse_type_full(self.data.def_nr(&fn_name), true) {
@@ -3298,11 +3309,13 @@ impl Parser {
         if generic_return_promotable && needs_tuple_rewrite {
             result = self.boxed_tuple_return(result);
         }
+        let returned_alias = self.declared_alias;
         self.vars
             .append(&mut self.data.definitions[self.context as usize].variables);
         if self.first_pass {
             self.data.set_returned(self.context, result);
             self.data.definitions[self.context as usize].returned_not_null = returned_not_null;
+            self.data.definitions[self.context as usize].returned_alias = returned_alias;
             if let Some((stub, args)) = self.pending_forward_return.take() {
                 self.forward_generic_returns
                     .push((self.context, stub, args));
@@ -3929,6 +3942,7 @@ impl Parser {
         // @PLN86 §7.2 (F7) — collect this list's `…#default` parameter locks fresh; the
         // caller (`parse_function`) records them once the function's def_nr exists.
         self.pending_param_locks.clear();
+        self.pending_param_aliases.clear();
         // @PLN115 tail — likewise collect each parameter's name position; the def_nr /
         // var_nr are not established until after this list, so the DECLARATION
         // occurrence is recorded in `parse_function` (param arg-index == var_nr).
@@ -3942,6 +3956,7 @@ impl Parser {
             let attr_pos = self
                 .record_resolutions
                 .then(|| self.lexer.peek_pos().clone());
+            self.declared_alias = u32::MAX;
             let Some(attr_name) = self.lexer.has_identifier() else {
                 diagnostic!(self.lexer, Level::Error, "Expect attribute");
                 return false;
@@ -4217,6 +4232,7 @@ impl Parser {
                     typedef.source_name(&self.data)
                 );
             }
+            self.pending_param_aliases.push(self.declared_alias);
             (*arguments).push(Argument {
                 name: attr_name,
                 typedef,
@@ -4348,7 +4364,10 @@ impl Parser {
         type_name: &str,
         returned: bool,
     ) -> Option<Type> {
-        let t = self.parse_type_inner(on_d, type_name, returned)?;
+        self.type_nesting += 1;
+        let t = self.parse_type_inner(on_d, type_name, returned);
+        self.type_nesting -= 1;
+        let t = t?;
         // @PLN125 arc A step A2b — `Self.X`, an interface's ASSOCIATED TYPE used in one
         // of its own method signatures:
         //
@@ -4703,6 +4722,13 @@ impl Parser {
                 DefType::Type | DefType::Enum | DefType::EnumValue | DefType::Struct
             )
         {
+            // @PLN187 — the outermost type of a declaration was spelled with a user alias.
+            if dt == DefType::Type
+                && self.type_nesting == 1
+                && self.data.def(tp_nr).source != crate::data::STD_SOURCE
+            {
+                self.declared_alias = tp_nr;
+            }
             if matches!(dt, DefType::EnumValue)
                 || (self.first_pass && matches!(dt, DefType::Struct))
             {
@@ -4800,7 +4826,10 @@ impl Parser {
                 if self.lexer.peek_token(")") {
                     break;
                 }
-                if let Some(tp) = self.parse_type_full(on_d, false) {
+                self.type_nesting += 1;
+                let member = self.parse_type_full(on_d, false);
+                self.type_nesting -= 1;
+                if let Some(tp) = member {
                     types.push(tp);
                 } else {
                     break;
@@ -6940,7 +6969,10 @@ impl Parser {
                         self.expression(&mut q);
                     }
                     self.lexer.token(")");
-                } else if let Some(tp) = self.parse_type(d_nr, &id, false) {
+                } else if let Some(tp) = {
+                    self.declared_alias = u32::MAX;
+                    self.parse_type(d_nr, &id, false)
+                } {
                     defined = true;
                     // If the type carries a not-null flag (e.g. integer not null),
                     // propagate it to the field's nullable flag so is_null and
@@ -6956,6 +6988,11 @@ impl Parser {
                     // captures its alias and stores at the narrow width like `u8`.
                     if matches!(tp.base(), Type::Integer(_)) && id != "integer" {
                         alias_d_nr = self.data.def_nr(&id);
+                    } else if self.declared_alias != u32::MAX {
+                        // @PLN187 — any other user alias is kept too: a non-`pub` one stays
+                        // abstract outside its file (C140).  It has no `size(N)`, so the
+                        // `forced_size` readers of this field see no width from it.
+                        alias_d_nr = self.declared_alias;
                     }
                     a_type = tp;
                     // '= expr' shorthand for a field default value
