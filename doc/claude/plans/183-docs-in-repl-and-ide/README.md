@@ -1,20 +1,32 @@
-# @PLN183 — documentation in the REPL and the IDE: P0 design + probes
+# @PLN183 — documentation in the REPL and the IDE
 
-**Status: P0 done — design reviewed, the catalogue carries the groups and keys, the six gaps
-closed (2026-10-02).  Next: P1.**  The plan itself (goal, surfaces,
-phases) is the tracker issue, [loft-lang/plans#183](https://github.com/loft-lang/plans/issues/183);
-this directory holds P0's deliverables:
+**Status: DONE — finished 2026-10-07.**  [loft-lang/plans#183](https://github.com/loft-lang/plans/issues/183)
+(`status:finished`).  This directory keeps P0's design and probes as the record; what was built
+lives here:
 
-| file | what |
+| What | Home |
 |---|---|
-| `grouping.tsv` + `probe_grouping.py` | probe 1 — every catalogue entry placed in exactly one overview group |
-| `constructs.tsv` + `probe_constructs.py` | probe 2 — 28 constructs resolved to their entries by hand, each answer checked against the entry's own code |
+| The catalogue inside the build | `src/doc_catalogue.rs` (embeds `index/features.json`) |
+| One renderer, three back-ends | `src/doc_render.rs` — gendoc's pages, the REPL, every hover |
+| The REPL's overview and lookups | `src/repl_doc.rs`; REPL.md § the documentation commands |
+| The editor's overview site | `src/doc_site.rs`; `loft-lsp`'s `source.loft.overview` action / `loft.overview` command |
+| The construct under the cursor | `src/doc_construct.rs` (`CONSTRUCTS`, the parse's vocabulary) |
+| Hover, completion, library cards | `src/lsp.rs` (`construct_hover`, `completion_documentation`), `src/bin/loft-lsp.rs` |
+| What the user sees | `editors/nvim/USAGE.md`; the catalogue entries @F49 (REPL) and @I91 (editor tooling) |
 
-Both probes exit 1 on a regression and were made to fail once (an entry dropped, an entry doubled;
-a recorded gap that no longer matches).  Run them from the repository root:
-`python3 doc/claude/plans/183-docs-in-repl-and-ide/probe_grouping.py`.
+| Phase | Guard |
+|---|---|
+| P1 renderer + embedded catalogue | `tests/doc_render.rs` |
+| P2 REPL | `tests/repl_doc.rs` |
+| P3 IDE overview | `tests/lsp_overview.rs` (the whole-catalogue guard, the transport, the stamp); Neovim 0.11 measured opening the site |
+| P4 hover + completion | `tests/lsp_construct.rs` (every construct owned once and reached; the keys not reached, pinned); `tests/lsp_overview.rs` |
+| P5 libraries | `tests/lsp_overview.rs` (every library item on its page; the locked version; the library card) |
 
-## The probes' answers
+The clients: Neovim is measured.  VS Code's extension does not host the language server yet,
+and the IntelliJ (LSP4IJ) and Eclipse (LSP4E) setups are configured by the user; none of the
+three runs on the box this was built on, so none is claimed — the extension is @PLN171's item.
+
+## P0 — the probes' answers
 
 **Probe 1 — the grouping.**  All 123 entries placed, none twice:
 
