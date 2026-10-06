@@ -4678,6 +4678,18 @@ stored bytes to be covered — persisted images (the layout identity changes, so
 rebuilds), binary file I/O (kept at the wire width), remote and lazy stores (they verify the
 same identity) — and for the strict access to stop at the bytecode, whose operands stay packed.
 
+**Amended 2026-10-06 — the check moved from the access to the compiler.**  As first built,
+`Store::read` / `Store::write` were aligned `ptr::read` / `ptr::write` behind a per-access
+alignment test that panicked in every build.  A renewed portal run measured that test at 11–13 %
+on native store-heavy routines (gridmesh `build_index` 18.0 → 20.6 ms, cbor `encode_bytes` 760 →
+880 µs, Rust twins unchanged): it kept `read` from inlining into the keyed and vector paths.  The
+owner's ruling: "Introducing runtime overhead for validation is not a good idea. Those should be
+done compile time and certainly out of optimized pathes."  So `Stores::validate_all_layouts` now
+reports a misaligned place as a compile-time `type layout:` error, and `read` / `write` claim no
+alignment (`read_unaligned` / `write_unaligned`, defined at any offset).  A first draft asserted
+it in `Stores::finish`, which the emitted native `init()` also runs at startup, so it moved to the
+compiler's own layout validation.  The layout guarantee itself is unchanged.
+
 ## C139 — A tuple IS a record; foreign data is value-const and never presented as writable
 
 Decided 2026-10-06 by the owner, in the discussion of loft#1875 (a `&` link to a narrow or text

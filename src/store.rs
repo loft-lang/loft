@@ -3735,14 +3735,14 @@ impl Store {
 
     /// Read a field OUT of the store.  **The ordinary way to get a value.**
     ///
-    /// `@FR-L-Align` (@C138): a store's allocation is `Layout::from_size_align(size * 8, 8)`
-    /// and an address is `base + rec * 8 + fld`, so for any alignment up to eight the
-    /// address's alignment IS `fld`'s — and the layout places every field on its natural
-    /// boundary and pads every record to a multiple of its alignment, so every element of a
-    /// collection is aligned too.  The read is therefore an aligned `ptr::read` behind one
-    /// alignment test; a misaligned `fld` is a layout defect and panics, in a release build
-    /// too.  Two kinds of bytes the layout does not place are read unaligned: a FOREIGN
-    /// store's, which its producer's buffer supplies, and the interpreter's stack frames.
+    /// `@FR-L-Align` (@C138): the layout places every field on its natural boundary, and the
+    /// compiler checks that once (`Stores::validate_all_layouts`) — so the alignment is a fact
+    /// of the layout, never re-tested at run time.  The read itself states no alignment:
+    /// `read_unaligned` is the same single `mov` as an aligned read on x86-64 and is defined
+    /// at ANY offset, so a layout defect can answer a wrong value but never undefined
+    /// behaviour.  A per-access alignment test cost 11–13 % on store-heavy native routines
+    /// (it kept `read` from inlining into the keyed and vector paths).  The bytes the layout
+    /// does not place — a FOREIGN store's, the interpreter's stack frames — need no other path.
     #[inline]
     pub fn read<T: Copy>(&self, rec: u32, fld: u32) -> T {
         if Self::is_foreign_rec(rec) {
@@ -3750,37 +3750,8 @@ impl Store {
             return unsafe { at.cast::<T>().read_unaligned() };
         }
         let at = self.offset_in_bounds(rec, fld, std::mem::size_of::<T>());
-        if !(fld as usize).is_multiple_of(std::mem::align_of::<T>()) {
-            return self.read_frame_slot::<T>(rec, fld, at);
-        }
-        // SAFETY: in bounds and aligned for `T`, both just tested.
-        unsafe { self.ptr.offset(at).cast::<T>().read() }
-    }
-
-    /// A misaligned [`Self::read`]: answered unaligned on the interpreter's STACK store, whose
-    /// frame slots the frame allocator lays out and `(L-Align)` does not cover (the bytecode's
-    /// rule: packed, read unaligned); a layout defect anywhere else.  Out of line, so the
-    /// aligned path stays a mask and a not-taken branch.
-    #[cold]
-    #[inline(never)]
-    fn read_frame_slot<T: Copy>(&self, rec: u32, fld: u32, at: isize) -> T {
-        if !self.stack_buffer {
-            self.raise_misaligned(rec, fld, std::mem::align_of::<T>());
-        }
-        // SAFETY: `at` was bounded by the caller; the read states the alignment it has.
+        // SAFETY: bounded by `offset_in_bounds`; the read claims no alignment.
         unsafe { self.ptr.offset(at).cast::<T>().read_unaligned() }
-    }
-
-    /// The refusal of a misaligned [`Self::read`] / [`Self::write`] (`@FR-R-Cold`).
-    #[cold]
-    #[inline(never)]
-    fn raise_misaligned(&self, rec: u32, fld: u32, align: usize) -> ! {
-        panic!(
-            "Store access misaligned: rec={rec} fld={fld} needs {align}-byte alignment, \
-             type={} — every field and element sits on its natural boundary (@C138), so \
-             the offset came from a layout that is not the store's",
-            self.known_type,
-        )
     }
 
     /// @PLN174 — the address of `width` bytes at field `fld` of the foreign record: the
@@ -4154,29 +4125,14 @@ impl Store {
     }
 
     /// Write a field INTO the store.  The mirror of [`Store::read`], and the ordinary way to
-    /// store a value: an aligned `ptr::write` behind the same alignment test
-    /// (`@FR-L-Align`, @C138).
+    /// store a value: like its twin it claims no alignment, which the layout already
+    /// guarantees (`@FR-L-Align`, @C138).
     #[inline]
     pub fn write<T: 'static + Copy>(&mut self, rec: u32, fld: u32, val: T) {
         let Some(at) = self.begin_write::<T>(rec, fld) else {
             return;
         };
-        if !(fld as usize).is_multiple_of(std::mem::align_of::<T>()) {
-            self.write_frame_slot(rec, fld, at, val);
-            return;
-        }
-        // SAFETY: `begin_write` bounded it; the test above aligned it.
-        unsafe { self.ptr.offset(at).cast::<T>().write(val) }
-    }
-
-    /// The write twin of [`Self::read_frame_slot`].
-    #[cold]
-    #[inline(never)]
-    fn write_frame_slot<T: Copy>(&mut self, rec: u32, fld: u32, at: isize, val: T) {
-        if !self.stack_buffer {
-            self.raise_misaligned(rec, fld, std::mem::align_of::<T>());
-        }
-        // SAFETY: `begin_write` bounded it; the write states the alignment it has.
+        // SAFETY: `begin_write` bounded it; the write claims no alignment.
         unsafe { self.ptr.offset(at).cast::<T>().write_unaligned(val) }
     }
 
@@ -6255,18 +6211,19 @@ mod tests {
         let _ = store.addr::<i64>(rec, 4);
     }
 
-    /// The other half, `@FR-L-Align` (@C138): every field the layout places is aligned, so
-    /// [`Store::read`] at an offset the type's alignment does not divide is a layout defect,
-    /// refused in every build.
+    /// The other half, `@FR-L-Align` (@C138): [`Store::read`] / [`Store::write`] hand out a
+    /// VALUE, not a reference, so they claim no alignment and are defined at the same field
+    /// `addr` refuses.  The layout's alignment is checked at compile time
+    /// (`Stores::validate_all_layouts`), not re-tested per access.
     #[test]
-    #[should_panic(expected = "Store access misaligned")]
-    fn read_refuses_the_same_misaligned_field() {
+    fn read_and_write_claim_no_alignment() {
         let mut store = Store::new(8);
         store.free = false;
         let rec = store.claim(4);
-        store.write::<i32>(rec, 4, -7);
-        assert_eq!(store.read::<i32>(rec, 4), -7, "a 4-aligned i32 round-trips");
-        let _ = store.read::<i64>(rec, 4);
+        store.write::<i64>(rec, 4, -0x0123_4567_89ab_cdef);
+        assert_eq!(store.read::<i64>(rec, 4), -0x0123_4567_89ab_cdef);
+        store.write::<i32>(rec, 12, -7);
+        assert_eq!(store.read::<i32>(rec, 12), -7);
     }
 
     /// loft#760 — the call bracket's `free_protected` marker must NOT block a delete.
