@@ -773,6 +773,11 @@ pub(super) fn pass_confined_records(
     function: &Function,
     code: &Value,
 ) -> HashSet<u32> {
+    // Only a fn-ref local can be confined, and most functions hold none: answered before any of
+    // the walk's sets is built, since this runs twice per function on every compile.
+    if !(0..function.count()).any(|v| matches!(function.tp(v).base(), Type::Function(..))) {
+        return HashSet::default();
+    }
     let ops = |names: &[&str]| -> HashSet<u32> {
         names
             .iter()
