@@ -70,7 +70,7 @@ pub fn linked_narrow_members(data: &Data, def_nr: u32) -> HashMap<u16, u64> {
 /// Every `OpCreateStack(TupleGet(t, i))` in `v`, as `(t, i)`.  Any other node is searched
 /// through its children: a link can sit anywhere an expression can.
 fn collect(v: &Value, create_stack: u32, found: &mut impl FnMut(u16, usize)) {
-    if let Value::Call(d, args) = v
+    if let Value::Call(d, args) = v.unspan()
         && *d == create_stack
         && let Some(Value::TupleGet(t, i)) = args.first().map(Value::unspan)
     {
