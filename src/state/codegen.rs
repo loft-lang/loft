@@ -402,6 +402,31 @@ impl State {
                 self.code_add(slot.min);
                 self.code_add(slot.code());
             }
+            // `@FR-T-Record` — the same for a by-value TUPLE parameter's narrow members a `&`
+            // names: each arrives as the caller's 8-byte value and is re-encoded in place at
+            // entry, member by member, so the calling convention is untouched.
+            if stack.function.is_argument(v)
+                && stack.function.stack(v) != u16::MAX
+                && let Type::Tuple(elems) = stack.function.tp(v).base().clone()
+            {
+                let offsets = crate::data::element_stack_offsets(&elems);
+                for (i, off) in offsets.iter().enumerate().take(elems.len()) {
+                    let Some(slot) =
+                        crate::tuple_links::member_slot(&stack.linked_members, &elems, v, i)
+                    else {
+                        continue;
+                    };
+                    let member_abs = stack.function.stack(v) + *off as u16;
+                    let read_pos = stack.position - member_abs;
+                    stack.add_op("OpVarInt", self);
+                    self.code_add(read_pos);
+                    let put_pos = stack.position - member_abs;
+                    stack.add_op("OpPutNarrow", self);
+                    self.code_add(put_pos);
+                    self.code_add(slot.min);
+                    self.code_add(slot.code());
+                }
+            }
         }
         if console {
             println!("{} ", stack.data.def(def_nr).header(stack.data, def_nr));
@@ -910,6 +935,9 @@ impl State {
                 let elem_tp = elems[idx].clone();
                 let offsets = crate::data::element_stack_offsets(elems);
                 let elem_offset = offsets[idx] as u16;
+                // `@FR-T-Record` — a narrow member a `&` names holds its field encoding.
+                let narrow =
+                    crate::tuple_links::member_slot(&stack.linked_members, elems, var_nr, idx);
                 // The element is at tuple_var_stack_pos + elem_offset.
                 // Compute distance from current stack top to that position.
                 let tuple_var_pos = stack.function.stack(var_nr);
@@ -924,10 +952,11 @@ impl State {
                     // from the outer var's slot + outer offset).  The
                     // helper walks inner offsets and emits one OpVar*
                     // per leaf.
-                    self.emit_tuple_var_push_recursive(stack, inner_elems, elem_abs_pos);
+                    self.emit_tuple_var_push_recursive(stack, inner_elems, elem_abs_pos, u16::MAX);
                     return self.insert_types(elem_tp.clone(), code_pos, stack);
                 }
                 match elem_tp.base() {
+                    Type::Integer(_) if narrow.is_some() => stack.add_op("OpVarNarrow", self),
                     Type::Integer(_) => {
                         stack.add_op("OpVarInt", self);
                     }
@@ -968,6 +997,10 @@ impl State {
                     _ => panic!("TupleGet: unsupported element type {elem_tp:?}"),
                 }
                 self.code_add(var_pos);
+                if let Some(slot) = narrow {
+                    self.code_add(slot.min);
+                    self.code_add(slot.code());
+                }
                 self.insert_types(elem_tp.clone(), code_pos, stack)
             }
             ValueType::TuplePut => {
@@ -1024,6 +1057,9 @@ impl State {
                 let elem_tp = elems[idx].clone();
                 let offsets = crate::data::element_stack_offsets(elems);
                 let elem_offset = offsets[idx] as u16;
+                // `@FR-T-Record` — a narrow member a `&` names holds its field encoding.
+                let narrow =
+                    crate::tuple_links::member_slot(&stack.linked_members, elems, var_nr, idx);
                 // Generate the value to write.  A `Function` element's put-op below is
                 // `OpPutFnRef`, which pops the full 20-byte pair, so the push has to be
                 // the pair too — the same decision the FIRST-Set path makes in
@@ -1051,11 +1087,12 @@ impl State {
                 // `elem_abs_pos`.  Mirrors the read-side
                 // `emit_tuple_var_push_recursive` at line 394.
                 if let Type::Tuple(inner_elems) = &elem_tp {
-                    self.emit_tuple_var_pop_put(stack, inner_elems, elem_abs_pos);
+                    self.emit_tuple_var_pop_put(stack, inner_elems, elem_abs_pos, u16::MAX);
                     self.record_store_span(from, var_nr);
                     return Type::Void;
                 }
                 match elem_tp.base() {
+                    Type::Integer(_) if narrow.is_some() => stack.add_op("OpPutNarrow", self),
                     Type::Integer(_) => {
                         stack.add_op("OpPutInt", self);
                     }
@@ -1099,6 +1136,10 @@ impl State {
                     _ => panic!("TuplePut: unsupported element type {elem_tp:?}"),
                 }
                 self.code_add(var_pos);
+                if let Some(slot) = narrow {
+                    self.code_add(slot.min);
+                    self.code_add(slot.code());
+                }
                 self.record_store_span(from, var_nr);
                 Type::Void
             }
@@ -1834,23 +1875,32 @@ impl State {
             return;
         };
         let tuple_var_base = stack.function.stack(v);
-        self.emit_tuple_null_init(stack, &elems, tuple_var_base);
+        self.emit_tuple_null_init(stack, &elems, tuple_var_base, v);
     }
 
     /// Recursive helper for `TupleGet` on a `Type::Tuple` element.
     /// The outer tuple variable is already at a known stack base; this
     /// pushes the inner tuple's leaves from the outer variable's slot
     /// at the inner offsets.  Recurses for nested-nested tuples.
-    fn emit_tuple_var_push_recursive(&mut self, stack: &mut Stack, elems: &[Type], base: u16) {
+    fn emit_tuple_var_push_recursive(
+        &mut self,
+        stack: &mut Stack,
+        elems: &[Type],
+        base: u16,
+        var: u16,
+    ) {
         let offsets = crate::data::element_stack_offsets(elems);
         for (i, elem) in elems.iter().enumerate() {
             let elem_abs = base + offsets[i] as u16;
             if let Type::Tuple(inner_elems) = elem {
-                self.emit_tuple_var_push_recursive(stack, inner_elems, elem_abs);
+                self.emit_tuple_var_push_recursive(stack, inner_elems, elem_abs, u16::MAX);
                 continue;
             }
             let var_pos = stack.position - elem_abs;
+            // `@FR-T-Record` — a narrow member a `&` names holds its field encoding.
+            let narrow = crate::tuple_links::member_slot(&stack.linked_members, elems, var, i);
             match elem.base() {
+                Type::Integer(_) if narrow.is_some() => stack.add_op("OpVarNarrow", self),
                 Type::Integer(_) => {
                     stack.add_op("OpVarInt", self);
                 }
@@ -1884,6 +1934,10 @@ impl State {
                 other => panic!("Tuple push: unsupported element type {other:?}"),
             }
             self.code_add(var_pos);
+            if let Some(slot) = narrow {
+                self.code_add(slot.min);
+                self.code_add(slot.code());
+            }
         }
     }
 
@@ -1893,16 +1947,19 @@ impl State {
     /// most-recently-pushed leaf and writes it to the corresponding
     /// slot offset within the variable.  For nested `Type::Tuple`
     /// elements, recurses with the inner offsets added to `base`.
-    fn emit_tuple_var_pop_put(&mut self, stack: &mut Stack, elems: &[Type], base: u16) {
+    fn emit_tuple_var_pop_put(&mut self, stack: &mut Stack, elems: &[Type], base: u16, var: u16) {
         let offsets = crate::data::element_stack_offsets(elems);
         for i in (0..elems.len()).rev() {
             let elem_abs = base + offsets[i] as u16;
             if let Type::Tuple(inner_elems) = &elems[i] {
-                self.emit_tuple_var_pop_put(stack, inner_elems, elem_abs);
+                self.emit_tuple_var_pop_put(stack, inner_elems, elem_abs, u16::MAX);
                 continue;
             }
             let pos = stack.position - elem_abs;
+            // `@FR-T-Record` — a narrow member a `&` names holds its field encoding.
+            let narrow = crate::tuple_links::member_slot(&stack.linked_members, elems, var, i);
             match elems[i].base() {
+                Type::Integer(_) if narrow.is_some() => stack.add_op("OpPutNarrow", self),
                 Type::Integer(_) => {
                     stack.add_op("OpPutInt", self);
                 }
@@ -1928,6 +1985,10 @@ impl State {
                 other => panic!("Tuple set: unsupported element type {other:?}"),
             }
             self.code_add(pos);
+            if let Some(slot) = narrow {
+                self.code_add(slot.min);
+                self.code_add(slot.code());
+            }
         }
     }
 
@@ -1935,12 +1996,12 @@ impl State {
     /// and pushes/OpPut's a zero value at each leaf primitive's
     /// absolute stack slot.  For nested `Type::Tuple` elements,
     /// recurses with the inner offsets added to `base`.
-    fn emit_tuple_null_init(&mut self, stack: &mut Stack, elems: &[Type], base: u16) {
+    fn emit_tuple_null_init(&mut self, stack: &mut Stack, elems: &[Type], base: u16, var: u16) {
         let offsets = crate::data::element_stack_offsets(elems);
         for (i, elem) in elems.iter().enumerate() {
             let elem_abs = base + offsets[i] as u16;
             if let Type::Tuple(inner_elems) = elem {
-                self.emit_tuple_null_init(stack, inner_elems, elem_abs);
+                self.emit_tuple_null_init(stack, inner_elems, elem_abs, u16::MAX);
                 continue;
             }
             match elem.base() {
@@ -1985,7 +2046,10 @@ impl State {
                 other => panic!("emit_tuple_null_init: unsupported element type {other:?}"),
             }
             let pos = stack.position - elem_abs;
+            // `@FR-T-Record` — a narrow member a `&` names holds its field encoding.
+            let narrow = crate::tuple_links::member_slot(&stack.linked_members, elems, var, i);
             match elem.base() {
+                Type::Integer(_) if narrow.is_some() => stack.add_op("OpPutNarrow", self),
                 Type::Integer(_) | Type::Function(..) => stack.add_op("OpPutInt", self),
                 Type::Boolean => stack.add_op("OpPutBool", self),
                 Type::Single => stack.add_op("OpPutSingle", self),
@@ -1997,6 +2061,10 @@ impl State {
                 _ => unreachable!(),
             }
             self.code_add(pos);
+            if let Some(slot) = narrow {
+                self.code_add(slot.min);
+                self.code_add(slot.code());
+            }
         }
     }
 
@@ -3296,12 +3364,12 @@ impl State {
     // "unsupported elem". The full set: emit_tuple_put_ops, emit_tuple_var_pop_put,
     // emit_tuple_var_push_recursive, emit_tuple_null_init, and the generate_node/generate_var
     // TupleGet/TuplePut element matches.
-    fn emit_tuple_put_ops(&mut self, stack: &mut Stack, elems: &[Type], tuple_base: u16) {
+    fn emit_tuple_put_ops(&mut self, stack: &mut Stack, elems: &[Type], tuple_base: u16, var: u16) {
         let offsets = crate::data::element_stack_offsets(elems);
         for i in (0..elems.len()).rev() {
             let elem_abs = tuple_base + offsets[i] as u16;
             if let Type::Tuple(inner) = &elems[i] {
-                self.emit_tuple_put_ops(stack, inner, elem_abs);
+                self.emit_tuple_put_ops(stack, inner, elem_abs, u16::MAX);
                 continue;
             }
             // Compute pos BEFORE add_op — `stack.add_op` calls
@@ -3312,7 +3380,10 @@ impl State {
             // time, which is then `stack_pos + size - pos` inside
             // `put_var`).  Mirrors the original flat-tuple loop.
             let pos = stack.position - elem_abs;
+            // `@FR-T-Record` — a narrow member a `&` names holds its field encoding.
+            let narrow = crate::tuple_links::member_slot(&stack.linked_members, elems, var, i);
             match elems[i].base() {
+                Type::Integer(_) if narrow.is_some() => stack.add_op("OpPutNarrow", self),
                 Type::Integer(_) => stack.add_op("OpPutInt", self),
                 // P249 — fn-ref slot is 20 B (8 d_nr + 12 closure
                 // DbRef).  OpPutInt would only pop 8 B and leave the
@@ -3337,6 +3408,10 @@ impl State {
                 other => panic!("emit_tuple_put_ops: unsupported elem {other:?}"),
             }
             self.code_add(pos);
+            if let Some(slot) = narrow {
+                self.code_add(slot.min);
+                self.code_add(slot.code());
+            }
         }
     }
 
@@ -3736,7 +3811,7 @@ impl State {
                 Type::RefVar(_) => stack.add_op("OpPutRef", self),
                 Type::Tuple(elems) => {
                     let tuple_var_base = stack.function.stack(v);
-                    self.emit_tuple_put_ops(stack, &elems, tuple_var_base);
+                    self.emit_tuple_put_ops(stack, &elems, tuple_var_base, v);
                     return;
                 }
                 other => panic!(
@@ -5518,7 +5593,7 @@ impl State {
                 // store local answering the zero initialiser on native.
                 let elems = elems.clone();
                 let tuple_base = stack.function.stack(variable);
-                self.emit_tuple_var_push_recursive(stack, &elems, tuple_base);
+                self.emit_tuple_var_push_recursive(stack, &elems, tuple_base, variable);
                 return self.insert_types(stack.function.tp(variable).clone(), code, stack);
             }
             _ => panic!(
@@ -6368,7 +6443,7 @@ impl State {
                 // OpPut* calls at the correct sub-offsets.
                 let elems = elems.clone();
                 let tuple_var_base = stack.function.stack(var);
-                self.emit_tuple_var_pop_put(stack, &elems, tuple_var_base);
+                self.emit_tuple_var_pop_put(stack, &elems, tuple_var_base, var);
                 return;
             }
             _ => panic!(
