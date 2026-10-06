@@ -6085,11 +6085,12 @@ pub fn cr_fnref_minted(
         let mut list = b.borrow_mut();
         // One ALLOCATION is one entry, and a slot number is not an allocation: an entry left
         // by a store its owner already freed names the same slot as a new store minted into
-        // it, and refusing the new one on the number alone left it to nobody.
-        if list
-            .iter()
-            .any(|(d, s)| d.store_nr == returned.store_nr && *s == serial)
-        {
+        // it.  Refusing the new one on the number alone left it to nobody; appending beside
+        // the dead entry grew the list by one per pass of a loop, and every call scanned it.
+        // The dead entry is REPLACED where it stands — its store is gone (`release` skips it
+        // on the serial), and keeping its index leaves every frame's mark meaning what it did.
+        if let Some(at) = list.iter().position(|(d, _)| d.store_nr == returned.store_nr) {
+            list[at] = (returned, serial);
             return;
         }
         list.push((returned, serial));
