@@ -3077,16 +3077,7 @@ use a separate collection or add after the loop"
         // A WRAPPER mint — a returned collection literal's `main_vector<T>` — is not one: on a
         // live place it answers the place, the collection there released
         // (`Stores::mint_at_place`, both backends), so the literal FILLS what it is handed.
-        let callee = self.data.def(*d_nr);
-        let mint = self.data.def_nr("OpDatabase");
-        let cvars = &callee.variables;
-        let database = &self.database;
-        if callee.code.any_node(&mut |n| {
-            matches!(n, Value::Call(d, a) if *d == mint
-                && matches!(a.first().map(Value::unspan), Some(Value::Var(w)) if cvars.is_argument(*w))
-                && !matches!(a.get(1).map(Value::unspan),
-                    Some(Value::Int(tp)) if u16::try_from(*tp).is_ok_and(|tp| database.is_vector_wrapper(tp))))
-        }) {
+        if !self.callee_fills_its_buffer(*d_nr, &mut Vec::new()) {
             return None;
         }
         // The place must EXIST at the call, unconditionally.  A field of a struct-ENUM VARIANT
@@ -3108,6 +3099,72 @@ use a separate collection or add after the loop"
             return None;
         }
         Some(vr)
+    }
+
+    /// `(R-Place)`'s callee clause for "the buffer IS the place": `d_nr` FILLS the buffer it is
+    /// handed and answers it on every exit, so a caller that ignores the answer loses nothing.
+    ///
+    /// Two halves.  It never mints a RECORD into an argument (a wrapper mint is the place path,
+    /// see [`Self::place_buffer_of`]).  And every exit — each `return` and the body's tail —
+    /// answers the buffer: the buffer variable, a local every assignment of which answers it, the
+    /// field view `OpGetField(buf, 0, …)`, a block or both arms of an `if` that do, or a CHAIN
+    /// call handed the buffer to a callee of which this holds (a cycle declines).  An exit that
+    /// answers another store — a global constant (`return NAMES`), a parameter, a field of
+    /// one — is exactly the rule's *"a callee that on some exit answers a store other than the
+    /// buffer it was handed"*: placed, its value never reaches the destination.
+    fn callee_fills_its_buffer(&self, d_nr: u32, active: &mut Vec<u32>) -> bool {
+        if active.contains(&d_nr) {
+            return false;
+        }
+        let callee = self.data.def(d_nr);
+        let cvars = &callee.variables;
+        let mint = self.data.def_nr("OpDatabase");
+        let database = &self.database;
+        if callee.code.any_node(&mut |n| {
+            matches!(n, Value::Call(d, a) if *d == mint
+                && matches!(a.first().map(Value::unspan), Some(Value::Var(w)) if cvars.is_argument(*w))
+                && !matches!(a.get(1).map(Value::unspan),
+                    Some(Value::Int(tp)) if u16::try_from(*tp).is_ok_and(|tp| database.is_vector_wrapper(tp))))
+        }) {
+            return false;
+        }
+        let Some(buf) = callee
+            .hidden_return_buffer_attr()
+            .and_then(|i| callee.attributes().get(i))
+            .map(|a| cvars.var(&a.name))
+            .filter(|&v| v != u16::MAX)
+        else {
+            return false;
+        };
+        let Value::Block(body) = callee.code.unspan() else {
+            return false;
+        };
+        let mut assigns: std::collections::HashMap<u16, Vec<&Value>> = std::collections::HashMap::new();
+        let mut exits: Vec<&Value> = Vec::new();
+        callee.code.any_node(&mut |n| {
+            match n {
+                Value::Set(v, val) => assigns.entry(*v).or_default().push(val),
+                Value::Return(e) => exits.push(e),
+                _ => {}
+            }
+            false
+        });
+        if let Some(tail) = body.operators.last()
+            && !matches!(tail.unspan(), Value::Return(_))
+        {
+            exits.push(tail);
+        }
+        active.push(d_nr);
+        let mut cx = BufferExits {
+            parser: self,
+            buf,
+            assigns: &assigns,
+            seen: Vec::new(),
+            active,
+        };
+        let all = !exits.is_empty() && exits.iter().all(|e| cx.answers(e));
+        active.pop();
+        all
     }
 
     fn clear_vector_field(&mut self, to: &Value, parent_tp: &Type) -> Vec<Value> {
@@ -11459,6 +11516,52 @@ use a separate collection or add after the loop"
                 self.vars.depend(var_nr, db);
             }
             *code = Value::Insert(stmts);
+        }
+    }
+}
+
+/// The exit walk of [`Parser::callee_fills_its_buffer`]: does a value answer the buffer?
+struct BufferExits<'a> {
+    parser: &'a Parser,
+    buf: u16,
+    assigns: &'a std::collections::HashMap<u16, Vec<&'a Value>>,
+    seen: Vec<u16>,
+    active: &'a mut Vec<u32>,
+}
+
+impl BufferExits<'_> {
+    fn answers(&mut self, v: &Value) -> bool {
+        match v.unspan() {
+            Value::Var(x) if *x == self.buf => true,
+            Value::Var(x) => {
+                if self.seen.contains(x) {
+                    return false;
+                }
+                let Some(vals) = self.assigns.get(x) else {
+                    return false;
+                };
+                self.seen.push(*x);
+                let all = vals.iter().all(|val| self.answers(val));
+                self.seen.pop();
+                all
+            }
+            Value::Return(e) => self.answers(e),
+            Value::Block(b) => b.operators.last().is_some_and(|last| self.answers(last)),
+            Value::Insert(ls) => ls.last().is_some_and(|last| self.answers(last)),
+            Value::If(_, then, other) => self.answers(then) && self.answers(other),
+            Value::Call(d, args) => {
+                let def = self.parser.data.def(*d);
+                if def.name == "OpGetField" {
+                    matches!(args.get(1).map(Value::unspan), Some(Value::Int(0)))
+                        && args.first().is_some_and(|a| self.answers(a))
+                } else if def.name.starts_with("n_") {
+                    args.last().is_some_and(|a| self.answers(a))
+                        && self.parser.callee_fills_its_buffer(*d, self.active)
+                } else {
+                    false
+                }
+            }
+            _ => false,
         }
     }
 }
