@@ -3181,7 +3181,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         if d != u32::MAX {
             return d;
         }
-        let pos = self.lexer.pos().clone();
+        let pos = *self.lexer.pos();
         self.data.add_def(FN_RECORD, &pos, DefType::Struct)
     }
 

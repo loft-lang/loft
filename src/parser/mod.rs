@@ -14401,7 +14401,7 @@ impl Parser {
             ra
         } else {
             let name = format!("__closure_u_{}", self.data.def(ra).name);
-            let pos = self.data.def(ra).position().clone();
+            let pos = *self.data.def(ra).position();
             let u = self.data.add_def(&name, &pos, DefType::Struct);
             self.merge_closure_attrs(u, ra, a);
             u
