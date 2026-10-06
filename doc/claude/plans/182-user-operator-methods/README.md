@@ -5,7 +5,13 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 # @PLN182 — operator syntax for user types, through named methods
 
-**Status: P0, P1 (`compare`), P2 (`plus` / `minus` / `times`) and P5 (loft#1833: `next`,
+**Status: FINISHED (2026-10-06).  What ships is the subset the plan's constraint 4 and Q10 chose;
+the reserved forms (`at` / `set_at`, the slices, `power`, the bit operators) are placed by name in
+[formal/operators.md](../../formal/operators.md) and refused until a program needs them.  The
+users' page is @F124 with LOFT.md § Operators on your own type, INTERFACES.md and the loft-write
+skill.  What follows is the record.**
+
+**Built: P0, P1 (`compare`), P2 (`plus` / `minus` / `times`) and P5 (loft#1833: `next`,
 `to_text` and `to_<type>` as `operator` forms, a user `fn Op…` retired, `[…]` given back to the
 built-in collections, `time` and `server` migrated) and P5b (Q13: the stdlib interfaces spelled
 with `operator` members, `op ⊕` refused naming the member, the built-in types declaring their

@@ -565,6 +565,9 @@ package's own gate red (C123, [COMPATIBILITY.md](../../../doc/claude/COMPATIBILI
 
 Unary: `!` (logical not / null check), `-` (negation), `~` (bitwise NOT, integer only)
 Assignment: `=`, `+=`, `-=`, `*=`, `/=`, `%=`
+**On your own type** (`operator` in place of `fn`, `self` first, the type's own package only): `compare` → `< <= > >=` (answers `Ordering`); `plus minus times divided_by remainder negate` → `+ - * / %` and unary `-` (`a += b` is `a = a.plus(b)`); `to_<type>` → `as`; `to_text` / `next` → `"{x}"` / `for`.
+`==` / `!=` stay structural for every type, and a plain `fn` named like one drives nothing.  `[…]` is the built-in collections' (a type reads through a named method, `x.at(i)`).
+Full list and rules: LOFT.md § Operators on your own type, `formal/operators.md`, feature @F124.
 
 ```grammar
 name = record.field ?? "default"   // null-coalescing
