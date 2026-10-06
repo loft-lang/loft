@@ -497,6 +497,107 @@ fn name_col_on_line(src: &str, decl_line: u32, name: &str) -> Option<u32> {
     Some(line[..byte_idx].chars().count() as u32 + 1)
 }
 
+/// The type name a local's resolved signature names (`v: vector<integer>` → `vector`,
+/// `p: Point` → `Point`), for deciding which `[ ]` construct is under the cursor.
+fn operand_type(text: &str, stdlib_dir: &str, line: u32, col: u32) -> Option<String> {
+    let h = resolve_at(text, stdlib_dir, line, col)?;
+    let ty = h.signature.split_once(": ")?.1.trim();
+    let name: String = ty
+        .trim_start_matches('&')
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
+        .collect();
+    (!name.is_empty()).then_some(name)
+}
+
+/// @PLN183 P4 — the hover on a language construct (`??`, `match`, `v[1]`, `a..b`, `+=`):
+/// the catalogue entry that documents it, as Markdown — its title, its one-paragraph summary
+/// and where the whole entry lives.  An operator whose left operand is a program type with an
+/// `operator` definition for it shows that definition first: on `m + m` the reader wants
+/// `operator plus`, then the feature.  `None` when the cursor is on no named construct.
+#[must_use]
+pub fn construct_hover(text: &str, stdlib_dir: &str, line: u32, col: u32) -> Option<String> {
+    let type_of = |c: u32| operand_type(text, stdlib_dir, line, c);
+    use std::fmt::Write as _;
+    let key = crate::doc_construct::construct_at(text, line, col, &type_of)?;
+    let entry = crate::doc_catalogue::by_key(key)?;
+    let mut out = String::new();
+    if matches!(key, "op:arith" | "op:compare" | "op:compound")
+        && let Some(def) = operator_definition(text, stdlib_dir, line, col)
+    {
+        let _ = write!(out, "```loft\n{def}\n```\n\n");
+    }
+    let _ = write!(
+        out,
+        "**@{} — {}**\n\n{}\n\n[The whole entry]({})",
+        entry.tag,
+        entry.title,
+        entry.summary(),
+        entry.page()
+    );
+    Some(out)
+}
+
+/// @PLN183 P4 — a completion item's documentation, asked for when the editor shows the item
+/// (`completionItem/resolve`): a keyword's catalogue entry (its summary and where the whole
+/// entry lives), or a name's signature and `///` doc — the hover's own text.
+#[must_use]
+pub fn completion_documentation(
+    text: &str,
+    stdlib_dir: &str,
+    label: &str,
+    keyword: bool,
+) -> Option<String> {
+    if keyword {
+        let entry = crate::doc_catalogue::by_key(crate::doc_construct::keyword_construct(label)?)?;
+        return Some(format!(
+            "**@{} — {}**\n\n{}\n\n[The whole entry]({})",
+            entry.tag,
+            entry.title,
+            entry.summary(),
+            entry.page()
+        ));
+    }
+    let parser = parse_lsp_buffer(text, "buf.loft", stdlib_dir);
+    let h = lookup_in(&parser.data, label, text, "buf.loft", stdlib_dir)
+        .into_iter()
+        .next()?;
+    let mut out = format!("```loft\n{}\n```", h.signature);
+    if !h.doc.is_empty() {
+        out.push_str("\n\n");
+        out.push_str(&h.doc.join("\n"));
+    }
+    Some(out)
+}
+
+/// The `operator` definition behind the operator at `line:col`, when its left operand is a
+/// program type that defines one (the type capabilities `:ops` shows).
+fn operator_definition(text: &str, stdlib_dir: &str, line: u32, col: u32) -> Option<String> {
+    let chars: Vec<char> = text
+        .lines()
+        .nth(line.saturating_sub(1) as usize)?
+        .chars()
+        .collect();
+    let at = (col as usize).checked_sub(1)?;
+    let ops = "+-*/%<>=";
+    let start = at
+        - chars[..at]
+            .iter()
+            .rev()
+            .take_while(|c| ops.contains(**c))
+            .count();
+    let end = at + chars[at..].iter().take_while(|c| ops.contains(**c)).count();
+    let op: String = chars[start..end].iter().collect();
+    let left = chars[..start].iter().rposition(|c| !c.is_whitespace())?;
+    let ty = operand_type(text, stdlib_dir, line, u32::try_from(left + 1).ok()?)?;
+    let parser = parse_lsp_buffer(text, "buf.loft", stdlib_dir);
+    let caps = crate::doc_site::type_capabilities(&parser, &ty)?;
+    caps.operators
+        .iter()
+        .find(|(symbols, _)| symbols.split_whitespace().any(|s| s == op))
+        .map(|(_, sig)| sig.clone())
+}
+
 /// @PLN183 P3 — what the type named at `line:col` (1-based) can do, read from this buffer's
 /// own program: the editor's type page.  `None` when the word there names no type in scope.
 #[must_use]

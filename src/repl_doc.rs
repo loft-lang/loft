@@ -187,6 +187,20 @@ pub fn libs(
 #[cfg(feature = "registry")]
 #[must_use]
 pub fn api(index: Result<&RegistryIndex, &str>, lib: &str, filter: &str, width: usize) -> String {
+    api_for(index, lib, filter, width, None)
+}
+
+/// [`api`] for the version a project uses (`version`, its `loft.lock` pin, @PLN183 P5) when
+/// the index knows it — the surface the program actually compiles against — else the newest.
+#[cfg(feature = "registry")]
+#[must_use]
+pub fn api_for(
+    index: Result<&RegistryIndex, &str>,
+    lib: &str,
+    filter: &str,
+    width: usize,
+    version: Option<&str>,
+) -> String {
     let index = match index {
         Ok(i) => i,
         Err(why) => return format!("{why}\n"),
@@ -194,7 +208,8 @@ pub fn api(index: Result<&RegistryIndex, &str>, lib: &str, filter: &str, width: 
     let Some(pkg) = index.packages.get(lib) else {
         return format!("no library `{lib}` in the registry — `:libs` lists them\n");
     };
-    let Some(v) = find_best_version(pkg, "*", false) else {
+    let pinned = version.and_then(|want| pkg.versions.values().find(|v| v.semver == want));
+    let Some(v) = pinned.or_else(|| find_best_version(pkg, "*", false)) else {
         return format!("`{lib}` has no published version\n");
     };
     if v.api.is_empty() {

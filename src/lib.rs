@@ -467,6 +467,7 @@ pub mod triggers;
 pub mod verify_self;
 
 pub mod doc_catalogue;
+pub mod doc_construct;
 pub mod doc_render;
 pub mod doc_site;
 pub mod documentation;

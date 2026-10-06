@@ -269,6 +269,74 @@ fn library_page(name: &str, desc: &str, shown: &crate::registry_index::Version) 
     }
 }
 
+/// @PLN183 P4/P5 — a library's card for a hover: which library, the version this program
+/// uses, what it is, and where its guide and API pages are.  `dir` is the installed copy the
+/// program resolved (`~/.loft/registry/<name>-<version>/`); its `docs/` says whether a guide
+/// exists, and the registry index on this machine gives the description when it is here.
+#[cfg(feature = "registry")]
+#[must_use]
+pub fn library_card(dir: &Path) -> Option<String> {
+    let base = dir.file_name()?.to_str()?;
+    let (name, version) = base.rsplit_once('-')?;
+    if !version.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    let site = crate::documentation::SITE_BASE;
+    let desc = crate::install::cached_index()
+        .ok()
+        .and_then(|i| i.packages.get(name).and_then(|p| p.description.clone()))
+        .unwrap_or_default();
+    let has_guide = std::fs::read_dir(dir.join("docs")).is_ok_and(|mut d| {
+        d.any(|e| e.is_ok_and(|e| e.path().extension().is_some_and(|x| x == "loft")))
+    });
+    let mut card = format!("**library `{name}`** {version}");
+    if !desc.is_empty() {
+        let _ = write!(card, " — {desc}");
+    }
+    let _ = write!(card, "\n\n[API]({site}lib-{name}-api.html)");
+    if has_guide {
+        let _ = write!(card, " · [guide]({site}lib-{name}-guide.html)");
+    }
+    Some(card)
+}
+
+/// The version of library `name` the `loft.lock` nearest above `project` pins, if any.
+#[must_use]
+pub fn locked_version(name: &str, project: &Path) -> Option<String> {
+    let lock = project
+        .ancestors()
+        .map(|d| d.join("loft.lock"))
+        .find(|l| l.is_file())?;
+    crate::lockfile::read_lockfile(&lock)
+        .ok()
+        .flatten()?
+        .packages
+        .into_iter()
+        .find(|p| p.name == name)
+        .map(|p| p.version)
+}
+
+/// The installed copy of library `name` a program in `project` uses: the version its
+/// `loft.lock` pins when that copy is installed, else the newest installed copy.
+#[cfg(feature = "registry")]
+#[must_use]
+pub fn installed_library(name: &str, project: Option<&Path>) -> Option<PathBuf> {
+    let installed: Vec<(String, String, PathBuf)> = crate::registry_index::installed_packages()
+        .into_iter()
+        .filter(|(n, _, _)| n == name)
+        .collect();
+    let locked = project.and_then(|p| locked_version(name, p));
+    if let Some(v) = locked
+        && let Some((_, _, dir)) = installed.iter().find(|(_, iv, _)| *iv == v)
+    {
+        return Some(dir.clone());
+    }
+    installed
+        .into_iter()
+        .max_by(|a, b| crate::registry_index::compare_semver(&a.1, &b.1))
+        .map(|(_, _, dir)| dir)
+}
+
 /// What one type can be written with — @PLN182's operator forms with the definition behind
 /// each, the `[ ]` forms, the interfaces it meets.  The REPL's `:ops` and the editor's type page
 /// both render this, so the two cannot disagree.

@@ -21,6 +21,9 @@ impl Session {
     fn start(home: &std::path::Path) -> Self {
         let mut child = Command::new(env!("CARGO_BIN_EXE_loft-lsp"))
             .env("LOFT_HOME", home)
+            // Resolution never reaches the network: a library the test needs is installed
+            // under its own LOFT_HOME.
+            .env("LOFT_OFFLINE", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -286,6 +289,111 @@ fn a_session_with_nothing_open_still_ends_cleanly() {
     let mut s = Session::start(&home);
     s.request(1, "initialize", "{}");
     let _ = s.recv();
+    s.end();
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+/// Hover over the hover text of `(line, ch)` (0-based).
+fn hover_at(s: &mut Session, id: i64, uri: &str, line: i64, ch: i64) -> String {
+    s.request(
+        id,
+        "textDocument/hover",
+        &format!(
+            r#"{{"textDocument":{{"uri":"{uri}"}},"position":{{"line":{line},"character":{ch}}}}}"#
+        ),
+    );
+    let reply = s.recv();
+    field(field(&reply, "result").unwrap_or(&Parsed::Null), "contents")
+        .map(|c| text_of(field(c, "value")))
+        .unwrap_or_default()
+}
+
+/// A library installed under `home`'s registry cache: `demo` 1.2.0, one documented function,
+/// a guide.
+fn install_demo(home: &std::path::Path) {
+    let dir = home.join(".loft").join("registry").join("demo-1.2.0");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("docs")).unwrap();
+    std::fs::write(
+        dir.join("loft.toml"),
+        "[package]\nname = \"demo\"\nversion = \"1.2.0\"\n\n[library]\nentry = \"src/demo.loft\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src").join("demo.loft"),
+        "/// Twice the value.\npub fn dbl(x: integer) -> integer { x * 2 }\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("docs").join("01-start.loft"), "fn main() {}\n").unwrap();
+}
+
+#[test]
+fn hover_names_the_construct_the_operator_and_the_library() {
+    let home = home("hover");
+    install_demo(&home);
+    let mut s = Session::start(&home);
+    s.request(1, "initialize", "{}");
+    let _ = s.recv();
+    s.notify("initialized", "{}");
+    let uri = "file:///hover/main.loft";
+    let program = "use demo;\n\
+                   struct Money { cents: integer }\n\
+                   pub operator plus(self: Money, other: Money) -> Money { Money { cents: self.cents + other.cents } }\n\
+                   /// Whole units in an amount.\n\
+                   fn whole(m: Money) -> integer { m.cents / 100 }\n\
+                   fn main() {\n  m = Money { cents: 5 };\n  n = m + m;\n  a = demo::dbl(2) ?? 0;\n  v = [1, 2];\n  b = v[1];\n  println(\"{n.cents} {a} {b}\");\n}\n";
+    s.open(uri, program);
+
+    // `??`: the entry that declares it, nothing about the neighbouring name.
+    let coalesce = hover_at(&mut s, 2, uri, 8, 19);
+    assert!(coalesce.starts_with("**@F2 — "), "{coalesce}");
+    assert!(
+        coalesce.contains("https://github.com/loft-lang/features/issues/2"),
+        "{coalesce}"
+    );
+    // `[` on a vector: the vector entry, decided by the operand's type.
+    let index = hover_at(&mut s, 3, uri, 10, 7);
+    assert!(index.starts_with("**@F6 — "), "{index}");
+    // `+` between two `Money`: the definition behind it, then the operator entry.
+    let plus = hover_at(&mut s, 4, uri, 7, 8);
+    assert!(
+        plus.contains("operator plus(self: Money, other: Money) -> Money"),
+        "{plus}"
+    );
+    assert!(plus.contains("**@F37 — "), "{plus}");
+    // A library's function: its own card, then the library's — the version in use, the guide.
+    let lib = hover_at(&mut s, 5, uri, 8, 12);
+    assert!(
+        lib.contains("fn dbl(x: integer) -> integer") && lib.contains("Twice the value."),
+        "{lib}"
+    );
+    assert!(lib.contains("**library `demo`** 1.2.0"), "{lib}");
+    assert!(
+        lib.contains("lib-demo-guide.html"),
+        "a guide is installed: {lib}"
+    );
+    // The `use` line: the library's card.
+    let use_line = hover_at(&mut s, 6, uri, 0, 5);
+    assert!(
+        use_line.starts_with("**library `demo`** 1.2.0"),
+        "{use_line}"
+    );
+
+    // Completion items are documented when shown: a keyword by its entry, a name by its doc.
+    s.request(
+        7,
+        "completionItem/resolve",
+        &format!(r#"{{"label":"match","kind":14,"data":{{"uri":"{uri}"}}}}"#),
+    );
+    let kw = format!("{:?}", s.recv());
+    assert!(kw.contains("@F29 — "), "{kw}");
+    s.request(
+        8,
+        "completionItem/resolve",
+        &format!(r#"{{"label":"whole","kind":3,"data":{{"uri":"{uri}"}}}}"#),
+    );
+    let name = format!("{:?}", s.recv());
+    assert!(name.contains("Whole units in an amount."), "{name}");
     s.end();
     let _ = std::fs::remove_dir_all(&home);
 }

@@ -839,11 +839,15 @@ fn process_line<W: Write>(
                 let word = filter.get(1).map_or("", String::as_str);
                 print!(
                     "{}",
-                    crate::repl_doc::api(
+                    crate::repl_doc::api_for(
                         index.as_ref().map_err(String::as_str),
                         lib,
                         word,
-                        crate::repl_doc::WIDTH
+                        crate::repl_doc::WIDTH,
+                        std::env::current_dir()
+                            .ok()
+                            .and_then(|d| crate::doc_site::locked_version(lib, &d))
+                            .as_deref(),
                     )
                 );
             }

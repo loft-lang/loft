@@ -493,6 +493,11 @@ impl Parser {
             return Type::Reference(self.context, crate::data::Deps::none());
         }
         let mut source = u16::MAX;
+        // Where the NAME of a call stands: `name_pos` for a bare `f(…)`, the token after `::`
+        // for a qualified `lib::f(…)` — the occurrence a hover or a rename resolves, and where
+        // a diagnostic about the call points (@PLN183: hovering `dbl` in `demo::dbl(2)` found
+        // nothing, the recorded span covering `dem` instead).
+        let mut call_pos = name_pos.clone();
         let qualified = self.lexer.has_token("::");
         let nm = if qualified {
             source = self.data.get_source(name);
@@ -504,7 +509,8 @@ impl Parser {
             if source == u16::MAX && self.own_lib.as_deref() == Some(name) {
                 source = self.data.source;
             }
-            if let Some(id) = self.lexer.has_identifier() {
+            if let Some((id, id_pos)) = self.lexer.has_identifier_pos() {
+                call_pos = id_pos;
                 // loft#1848 — `lib::name` reaches only what `use lib::*` would.
                 if source != u16::MAX
                     && source != self.data.source
@@ -731,7 +737,7 @@ impl Parser {
                 });
                 *code = Value::Int(i32::from(tp));
             } else {
-                t = self.parse_call(code, source, &nm, name_pos);
+                t = self.parse_call(code, source, &nm, &call_pos);
             }
         } else if self.closure_param != u16::MAX
             && !self.first_pass
