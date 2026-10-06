@@ -242,9 +242,108 @@ pub fn scan_method_calls(content: &str) -> Vec<String> {
     calls
 }
 
+/// The CamelCase names a file DECLARES as types — `struct X`, `enum X`, `type X` at the top level
+/// of the file — outside comments, strings and every `{ … }` block.  Read before pass 1 so a
+/// program type that shares a standard-library type's name owns that name in its file from the
+/// first line on (C101: the program's definition shadows the stdlib's wherever it is written),
+/// not only below its declaration.  Order-preserving, de-duplicated.
+#[must_use]
+pub fn scan_type_declarations(content: &str) -> Vec<String> {
+    let b = content.as_bytes();
+    let n = b.len();
+    let mut names: Vec<String> = Vec::new();
+    let mut i = 0usize;
+    let mut depth = 0usize;
+    let mut keyword_pending = false;
+    while i < n {
+        let c = b[i];
+        if c == b'/' && i + 1 < n && b[i + 1] == b'/' {
+            while i < n && b[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        }
+        if c == b'"' {
+            // A string literal, interpolations included, holds no declaration.
+            i += 1;
+            let mut inner = 0usize;
+            while i < n {
+                match b[i] {
+                    b'\\' => i += 2,
+                    b'{' => {
+                        inner += 1;
+                        i += 1;
+                    }
+                    b'}' => {
+                        inner = inner.saturating_sub(1);
+                        i += 1;
+                    }
+                    b'"' if inner == 0 => {
+                        i += 1;
+                        break;
+                    }
+                    _ => i += 1,
+                }
+            }
+            keyword_pending = false;
+            continue;
+        }
+        // A character literal (`'{'`, `'\\''`) is no brace.
+        if c == b'\'' {
+            let close = if i + 1 < n && b[i + 1] == b'\\' {
+                i + 3
+            } else {
+                i + 2
+            };
+            if close < n && b[close] == b'\'' {
+                i = close + 1;
+                keyword_pending = false;
+                continue;
+            }
+        }
+        match c {
+            b'{' => depth += 1,
+            b'}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        if is_ident_start(c) {
+            let start = i;
+            while i < n && is_ident_char(b[i]) {
+                i += 1;
+            }
+            let word = &content[start..i];
+            if keyword_pending {
+                if word.as_bytes()[0].is_ascii_uppercase() && !names.iter().any(|w| w == word) {
+                    names.push(word.to_string());
+                }
+                keyword_pending = false;
+            } else {
+                keyword_pending = depth == 0 && matches!(word, "struct" | "enum" | "type");
+            }
+            continue;
+        }
+        if !c.is_ascii_whitespace() {
+            keyword_pending = false;
+        }
+        i += 1;
+    }
+    names
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn finds_top_level_type_declarations() {
+        let src = "// struct Commented { }\nfn f() -> File { file(\"struct Quoted\") }\n\
+                   pub struct File { name: text, open: character = '{' }\n\
+                   enum Format { A, B }\nfn g() { struct_like = 1; }\ntype Meters = float;\n";
+        assert_eq!(
+            scan_type_declarations(src),
+            vec!["File", "Format", "Meters"]
+        );
+    }
 
     #[test]
     fn finds_method_calls() {

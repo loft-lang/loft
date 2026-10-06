@@ -1,0 +1,194 @@
+diff --git b/src/libscan.rs a/src/libscan.rs
+index 9fca7761f..88c8eb338 100644
+--- b/src/libscan.rs
++++ a/src/libscan.rs
+@@ -242,109 +242,10 @@ pub fn scan_method_calls(content: &str) -> Vec<String> {
+     calls
+ }
+ 
+-/// The CamelCase names a file DECLARES as types — `struct X`, `enum X`, `type X` at the top level
+-/// of the file — outside comments, strings and every `{ … }` block.  Read before pass 1 so a
+-/// program type that shares a standard-library type's name owns that name in its file from the
+-/// first line on (C101: the program's definition shadows the stdlib's wherever it is written),
+-/// not only below its declaration.  Order-preserving, de-duplicated.
+-#[must_use]
+-pub fn scan_type_declarations(content: &str) -> Vec<String> {
+-    let b = content.as_bytes();
+-    let n = b.len();
+-    let mut names: Vec<String> = Vec::new();
+-    let mut i = 0usize;
+-    let mut depth = 0usize;
+-    let mut keyword_pending = false;
+-    while i < n {
+-        let c = b[i];
+-        if c == b'/' && i + 1 < n && b[i + 1] == b'/' {
+-            while i < n && b[i] != b'\n' {
+-                i += 1;
+-            }
+-            continue;
+-        }
+-        if c == b'"' {
+-            // A string literal, interpolations included, holds no declaration.
+-            i += 1;
+-            let mut inner = 0usize;
+-            while i < n {
+-                match b[i] {
+-                    b'\\' => i += 2,
+-                    b'{' => {
+-                        inner += 1;
+-                        i += 1;
+-                    }
+-                    b'}' => {
+-                        inner = inner.saturating_sub(1);
+-                        i += 1;
+-                    }
+-                    b'"' if inner == 0 => {
+-                        i += 1;
+-                        break;
+-                    }
+-                    _ => i += 1,
+-                }
+-            }
+-            keyword_pending = false;
+-            continue;
+-        }
+-        // A character literal (`'{'`, `'\\''`) is no brace.
+-        if c == b'\'' {
+-            let close = if i + 1 < n && b[i + 1] == b'\\' {
+-                i + 3
+-            } else {
+-                i + 2
+-            };
+-            if close < n && b[close] == b'\'' {
+-                i = close + 1;
+-                keyword_pending = false;
+-                continue;
+-            }
+-        }
+-        match c {
+-            b'{' => depth += 1,
+-            b'}' => depth = depth.saturating_sub(1),
+-            _ => {}
+-        }
+-        if is_ident_start(c) {
+-            let start = i;
+-            while i < n && is_ident_char(b[i]) {
+-                i += 1;
+-            }
+-            let word = &content[start..i];
+-            if keyword_pending {
+-                if word.as_bytes()[0].is_ascii_uppercase() && !names.iter().any(|w| w == word) {
+-                    names.push(word.to_string());
+-                }
+-                keyword_pending = false;
+-            } else {
+-                keyword_pending = depth == 0 && matches!(word, "struct" | "enum" | "type");
+-            }
+-            continue;
+-        }
+-        if !c.is_ascii_whitespace() {
+-            keyword_pending = false;
+-        }
+-        i += 1;
+-    }
+-    names
+-}
+-
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+ 
+-    #[test]
+-    fn finds_top_level_type_declarations() {
+-        let src = "// struct Commented { }\nfn f() -> File { file(\"struct Quoted\") }\n\
+-                   pub struct File { name: text, open: character = '{' }\n\
+-                   enum Format { A, B }\nfn g() { struct_like = 1; }\ntype Meters = float;\n";
+-        assert_eq!(
+-            scan_type_declarations(src),
+-            vec!["File", "Format", "Meters"]
+-        );
+-    }
+-
+     #[test]
+     fn finds_method_calls() {
+         assert_eq!(
+diff --git b/src/parser/definitions.rs a/src/parser/definitions.rs
+index a4a2ceeb3..4457bdc63 100644
+--- b/src/parser/definitions.rs
++++ a/src/parser/definitions.rs
+@@ -1051,7 +1051,7 @@ impl Parser {
+         true
+     }
+ 
+-    pub(crate) fn prelude_shadowed(&self, name: &str) -> bool {
++    fn prelude_shadowed(&self, name: &str) -> bool {
+         let cur = self.data.source;
+         // the stdlib itself (source 0) never shadows; and a name already in THIS
+         // source's namespace (a real def or a cross-file forward-ref imported
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index a9c75d9a6..65b5159c4 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -7221,24 +7221,12 @@ impl Parser {
+                 self.data.type_def_nr(test_type),
+             );
+             if want == have && want_nr != have_nr && want_nr != u32::MAX && have_nr != u32::MAX {
+-                // C101 — the program's type shadows a standard-library one wherever the bare
+-                // name is written; `std::` names the standard library's (loft#1882).
+-                let std_cure = if self.data.def(have_nr).source == crate::data::STD_SOURCE
+-                    || self.data.def(want_nr).source == crate::data::STD_SOURCE
+-                {
+-                    format!(
+-                        "; the program's `{want}` shadows the standard library's — write \
+-                         `std::{want}` where the standard library's is meant"
+-                    )
+-                } else {
+-                    String::new()
+-                };
+                 diagnostic_at!(
+                     self.lexer,
+                     pos,
+                     Level::Error,
+                     "expected the `{want}` declared at {}, got the one declared at {} — two \
+-                     different types share this name on {context}{std_cure}",
++                     different types share this name on {context}",
+                     self.data.def(want_nr).position(),
+                     self.data.def(have_nr).position()
+                 );
+@@ -18560,28 +18548,6 @@ impl Parser {
+ 
+     /// Parse data from the current lexer.
+     #[expect(clippy::too_many_lines, reason = "inherited")]
+-    /// C101 — a program type that shares a standard-library type's name shadows it wherever
+-    /// it is written, above its declaration too.  Pass 1 resolves a name it has not seen
+-    /// declared yet: an unknown one gets a forward-reference stub its declaration adopts, but a
+-    /// stdlib name is found, so everything written above the program's own `struct File` bound
+-    /// to the stdlib's (loft#1882).  Before pass 1 reads a program file, each type it declares
+-    /// that would shadow a prelude type gets that stub in the file's own namespace — the lookup
+-    /// asks the file before the stdlib — so the declaration adopts it like any forward reference.
+-    fn claim_declared_type_names(&mut self, file: &str) {
+-        if !self.first_pass || self.default || self.data.source == crate::data::STD_SOURCE {
+-            return;
+-        }
+-        let src = self
+-            .lexer
+-            .source_text(file)
+-            .map_or_else(|| Self::read_source(file), str::to_string);
+-        for name in crate::libscan::scan_type_declarations(&src) {
+-            if self.prelude_shadowed(&name) {
+-                self.data.add_def(&name, self.lexer.pos(), DefType::Unknown);
+-            }
+-        }
+-    }
+-
+     fn parse_file(&mut self) {
+         let start_def = self.data.definitions();
+         // #255 / @PLN9: file-level `#cwd` directive — opt this program out of the
+@@ -18610,7 +18576,6 @@ impl Parser {
+         // before the use-loop may switch away.  Scanned for `lib::` references
+         // after the use-region (see the load loop below).
+         let auto_use_scan_file = self.lexer.pos().file.clone();
+-        self.claim_declared_type_names(&auto_use_scan_file);
+         // A file that writes any `use` — or the stdlib, parsed with
+         // `self.default` — is in *explicit* mode: the author manages their
+         // libraries by hand, so a `lib::` to an un-`use`d library is a forgotten

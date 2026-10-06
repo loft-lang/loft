@@ -1051,7 +1051,7 @@ impl Parser {
         true
     }
 
-    fn prelude_shadowed(&self, name: &str) -> bool {
+    pub(crate) fn prelude_shadowed(&self, name: &str) -> bool {
         let cur = self.data.source;
         // the stdlib itself (source 0) never shadows; and a name already in THIS
         // source's namespace (a real def or a cross-file forward-ref imported

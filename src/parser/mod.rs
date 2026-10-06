@@ -7221,12 +7221,24 @@ impl Parser {
                 self.data.type_def_nr(test_type),
             );
             if want == have && want_nr != have_nr && want_nr != u32::MAX && have_nr != u32::MAX {
+                // C101 — the program's type shadows a standard-library one wherever the bare
+                // name is written; `std::` names the standard library's (loft#1882).
+                let std_cure = if self.data.def(have_nr).source == crate::data::STD_SOURCE
+                    || self.data.def(want_nr).source == crate::data::STD_SOURCE
+                {
+                    format!(
+                        "; the program's `{want}` shadows the standard library's — write \
+                         `std::{want}` where the standard library's is meant"
+                    )
+                } else {
+                    String::new()
+                };
                 diagnostic_at!(
                     self.lexer,
                     pos,
                     Level::Error,
                     "expected the `{want}` declared at {}, got the one declared at {} — two \
-                     different types share this name on {context}",
+                     different types share this name on {context}{std_cure}",
                     self.data.def(want_nr).position(),
                     self.data.def(have_nr).position()
                 );
@@ -18548,6 +18560,28 @@ impl Parser {
 
     /// Parse data from the current lexer.
     #[expect(clippy::too_many_lines, reason = "inherited")]
+    /// C101 — a program type that shares a standard-library type's name shadows it wherever
+    /// it is written, above its declaration too.  Pass 1 resolves a name it has not seen
+    /// declared yet: an unknown one gets a forward-reference stub its declaration adopts, but a
+    /// stdlib name is found, so everything written above the program's own `struct File` bound
+    /// to the stdlib's (loft#1882).  Before pass 1 reads a program file, each type it declares
+    /// that would shadow a prelude type gets that stub in the file's own namespace — the lookup
+    /// asks the file before the stdlib — so the declaration adopts it like any forward reference.
+    fn claim_declared_type_names(&mut self, file: &str) {
+        if !self.first_pass || self.default || self.data.source == crate::data::STD_SOURCE {
+            return;
+        }
+        let src = self
+            .lexer
+            .source_text(file)
+            .map_or_else(|| Self::read_source(file), str::to_string);
+        for name in crate::libscan::scan_type_declarations(&src) {
+            if self.prelude_shadowed(&name) {
+                self.data.add_def(&name, self.lexer.pos(), DefType::Unknown);
+            }
+        }
+    }
+
     fn parse_file(&mut self) {
         let start_def = self.data.definitions();
         // #255 / @PLN9: file-level `#cwd` directive — opt this program out of the
@@ -18576,6 +18610,7 @@ impl Parser {
         // before the use-loop may switch away.  Scanned for `lib::` references
         // after the use-region (see the load loop below).
         let auto_use_scan_file = self.lexer.pos().file.clone();
+        self.claim_declared_type_names(&auto_use_scan_file);
         // A file that writes any `use` — or the stdlib, parsed with
         // `self.default` — is in *explicit* mode: the author manages their
         // libraries by hand, so a `lib::` to an un-`use`d library is a forgotten
