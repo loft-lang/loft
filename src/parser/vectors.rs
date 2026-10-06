@@ -1330,7 +1330,7 @@ impl Parser {
         // loft#1869 — which lambda each captured fn-ref local holds, read where the outer table is.
         let mut fn_lambdas = self.capture_fn_lambda.clone();
         for (name, tp) in &ctx {
-            if !matches!(tp, Type::Function(..)) {
+            if !matches!(tp.base(), Type::Function(..)) {
                 continue;
             }
             let v = outer_vars.var(name);

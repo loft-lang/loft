@@ -841,7 +841,7 @@ fn capture_is_adopted(data: &Data, function: &Function, builds: &CaptureBuilds, 
                 continue;
             }
             // A fn-ref capture's d_nr half shares the name and holds no store (loft#1869).
-            if matches!(data.attr_type(record, a), Type::Function(..)) {
+            if matches!(data.attr_type(record, a).base(), Type::Function(..)) {
                 continue;
             }
             if !capture_attr_is_cascade_relevant(data, record, a) {

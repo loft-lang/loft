@@ -9228,7 +9228,7 @@ use a separate collection or add after the loop"
                     self.divisor_nonzero.retain(|&x| x != var_nr);
                     self.math_sign_proven.retain(|(slot, _)| *slot != var_nr);
                 }
-                if var_nr != u16::MAX && matches!(self.vars.tp(var_nr), Type::Function(..)) {
+                if var_nr != u16::MAX && matches!(self.vars.tp(var_nr).base(), Type::Function(..)) {
                     let lambda = self.last_closure_lambda;
                     self.vars.note_fn_lambda(
                         var_nr,

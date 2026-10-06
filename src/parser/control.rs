@@ -19711,7 +19711,7 @@ impl Parser {
             if self
                 .capture_context
                 .iter()
-                .any(|(n, t)| n == name && matches!(t, Type::Function(..)))
+                .any(|(n, t)| n == name && matches!(t.base(), Type::Function(..)))
                 && let Some(tp) = self.try_fn_ref_call(val, name, &[], &[], name_pos)
             {
                 return tp;
