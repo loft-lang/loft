@@ -1,0 +1,30 @@
+// @FR-T-Absent — a tuple has no null of its own, so a read that MISSES answers a present tuple
+// whose every member is null: past a vector's end, and past a generator's.  An exhausted
+// `next()` on a tuple generator answered the bytes the channel left (`""`, `0`) — and on the
+// interpreter an `(integer, integer)`, which is a `Str`'s size, read the text null's POINTER as
+// its first member.
+
+struct P { k: integer }
+struct Holder { g: iterator<(integer, integer)> }
+
+fn ti() -> iterator<(text, integer)> { yield ("ab", 1); }
+fn ii() -> iterator<(integer, integer)> { yield (3, 4); }
+fn pi() -> iterator<(integer, P)> { yield (5, P { k: 6 }); }
+
+fn main() {
+  a = ti(); x = next(a); z = next(a);
+  assert("{x.0}{x.1}" == "ab1", "the present tuple: {x.0}{x.1}");
+  assert(z.0 == null && z.1 == null, "text and integer null: [{z.0}] [{z.1}]");
+  b = ii(); y = next(b); w = next(b); w2 = next(b);
+  assert(y.0 == 3 && y.1 == 4, "the present tuple: {y.0} {y.1}");
+  assert(w.0 == null && w.1 == null && w2.0 == null, "every later advance is null: [{w.0}] [{w2.0}]");
+  c = pi(); p = next(c); q = next(c);
+  assert(p.0 == 5 && p.1.k == 6, "a record member: {p.0} {p.1.k}");
+  assert(q.0 == null && q.1 == null, "a record member is null: [{q.0}]");
+  h = Holder { g: ii() };
+  r = next(h.g); s = next(h.g);
+  assert(r.0 == 3 && s.0 == null, "through a field: {r.0} [{s.0}]");
+  d = ii(); n = 0;
+  for _ in 0..5 { t = next(d); if exhausted(d) { break }; n += t.0 + t.1 }
+  assert(n == 7, "a manual drain: {n}");
+}

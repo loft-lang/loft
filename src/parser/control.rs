@@ -20413,6 +20413,42 @@ impl Parser {
                     if let Some(kinds) = &tkinds {
                         args.extend(kinds.iter().map(|k| Value::Int(k.code())));
                     }
+                    // A TUPLE has no null of its own: an exhausted advance answers a present
+                    // tuple whose every member is null — what a missed read of a tuple answers
+                    // (`v[i]` past the end, `@FR-T-Absent`).  The channel cannot say so (the
+                    // interpreter's null is chosen by byte size, and an `(integer, integer)` is
+                    // a `Str`'s), so the advance is followed by the generator's own state: the
+                    // handle is bound once, and an advance that found it done is replaced.
+                    if let Type::Tuple(members) = yield_tp.base()
+                        && !members.is_empty()
+                        && !args.is_empty()
+                    {
+                        let members = members.clone();
+                        let handle = self.create_unique("next_gen", &types[0]);
+                        self.vars.defined(handle);
+                        // A view of the caller's handle: advancing it must not release it.
+                        self.vars.set_skip_free(handle);
+                        let got = self.create_unique("next_val", &yield_tp);
+                        self.vars.defined(got);
+                        // A pass-through: the tuple is handed to whoever binds this `next()`
+                        // (`@FR-G-Own`), so this temporary releases nothing it holds.
+                        self.vars.set_skip_free(got);
+                        let source = std::mem::replace(&mut args[0], Value::Var(handle));
+                        let done = self.cl("OpCoroutineExhausted", &[Value::Var(handle)]);
+                        let nulls =
+                            Value::Tuple(members.iter().map(|m| self.null_value(m)).collect());
+                        *val = v_block(
+                            vec![
+                                v_set(handle, source),
+                                v_set(got, Value::Call(op, args)),
+                                v_if(done, nulls, Value::Var(got)),
+                            ],
+                            yield_tp.clone(),
+                            "next_tuple",
+                        );
+                        self.expr_not_null = false;
+                        return yield_tp;
+                    }
                     *val = Value::Call(op, args);
                     // The advance answers null once the generator is done, whatever the
                     // argument was: a handle read out of a field (`next(t.g)`, loft#1585) must
