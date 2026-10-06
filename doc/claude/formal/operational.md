@@ -339,8 +339,15 @@ a / b?          // null  — `?` is TIGHTEST: this is `a / (b?)`, and the DIVISI
                silent `*Nullable` op and reports NOTHING (the guard owns the null).
                Integer OVERFLOW is silent at every site (the null IS the signal — also
                the rustc-release default); the value is null, never a wrapped wrong answer.
+               A DROPPED WRITE (H-Write-Else's "did not take", a lock fault excepted, which
+               reports its own under (H-WriteLocked)) is reported the same way: unguarded — no
+               `else` on the statement — it emits one Warn-level `write_dropped` naming the
+               place, the index or key and the length, in every build kind; a store with an
+               `else` reports nothing (the arm owns the failure).
 
-  (E-Uncomp-Seen)  where (E-Uncomp-NN) applies — the target type cannot hold null, so the
+  (E-Uncomp-Seen)  `place = v else { B }` (H-Write-Else) is the form that observes it; the
+               older `if !place` on the next statement stays accepted, with this meaning.
+               Where (E-Uncomp-NN) applies — the target type cannot hold null, so the
                slot took `default(τ)` and the null IS NOT the signal — the failure is
                nonetheless OBSERVABLE, by `!place` in the condition of the `if` that is the
                statement immediately after the store.  It answers true exactly when

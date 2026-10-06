@@ -189,6 +189,16 @@ index becomes `nullref` plus a recoverable fault rather than a silent read.
                    DEVELOPMENT run halts with the lock report and a PRODUCTION run logs the
                    write and DISCARDS it — the store keeps its bytes (C80).  Never a silent
                    successful write.
+  (H-Write-Else)  an assignment STATEMENT may end in `else { B }`: `place = v else { B }`
+                   (and `place op= v else { B }`).  The place and `v` are each evaluated
+                   ONCE, the write is attempted, and B runs exactly when it did NOT take —
+                   (H-WriteNull) or (H-WriteOOB) at the element, an absent key or a null view
+                   at any step of the place's path, a value the slot cannot hold
+                   ((E-Uncomp-NN), a narrow non-nullable slot), or a write (H-WriteLocked)
+                   discards.  A write that landed never runs B, whatever it wrote (a stored
+                   null is a landed write).  `else` belongs to the nearest statement that can
+                   take one: in `x = if c { 1 } else { 2 }` it is the `if`'s.  A store in
+                   CONDITION position (`if place = v`) is refused, naming the cure.
   (H-TextReplace)  an ASSIGNMENT to a text field (`o.s = t`, `v[i].s = t`, `o.s += t`)
                    releases the text the slot held, or writes `t` over its block when `t`
                    fits, once no borrow of that text is live.  A record LITERAL's write is
