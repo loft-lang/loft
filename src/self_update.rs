@@ -22,12 +22,12 @@
 //!   reported as such, not silently skipped, because "no update available" and "no
 //!   build for your platform" send a user to different places;
 //! * yanked and prerelease versions are excluded by reusing
-//!   [`registry_index::find_best_version`], not by a second rule that could drift;
+//!   [`registry_index::find_newest_release`], not by a second rule that could drift;
 //! * an update is only ever offered UPWARDS.  Everything else here is a report, but a
 //!   downgrade is the one outcome that could hand a user a known-vulnerable release,
 //!   so the direction is enforced in the planner rather than at the call site.
 
-use crate::registry_index::{Package, RegistryIndex, compare_semver, find_best_version};
+use crate::registry_index::{Package, RegistryIndex, compare_semver, find_newest_release};
 use std::path::{Path, PathBuf};
 
 /// The registry package name that carries the loft toolchain itself.
@@ -126,9 +126,10 @@ pub fn plan(index: &RegistryIndex, current: &str, triple: &str) -> Plan {
 }
 
 fn plan_for_package(pkg: &Package, current: &str, triple: &str) -> Plan {
-    // `"*"` = "any version"; `find_best_version` applies the yanked + prerelease rules,
-    // which is why they are not restated here.
-    let Some(best) = find_best_version(pkg, "*", false) else {
+    // `"*"` = "any version"; `find_newest_release` applies the yanked + prerelease rules,
+    // which is why they are not restated here — and no `loft` floor, which names the loft a
+    // release needs: the update is how this loft gets there.
+    let Some(best) = find_newest_release(pkg, "*", false) else {
         return Plan::NoEntry;
     };
     // Upwards only.  A registry that offered an older release — through a rollback, a
@@ -561,6 +562,21 @@ mod tests {
         assert_eq!(sha256, format!("hash-2026.8.0-{T}"));
     }
 
+    /// A loft release's `loft` floor names the loft it needs — usually itself — so it is
+    /// above the running loft by construction.  Library resolution skips such a release
+    /// (loft#1890); the self-updater must not, or the loft that needs the update never
+    /// sees it.
+    #[test]
+    fn a_release_floored_above_this_loft_is_still_offered() {
+        let mut newer = version("9999.1.0", &[T]);
+        newer.loft = ">=9999.1.0".to_string();
+        let idx = index(vec![version("2026.7.2", &[T]), newer], vec![]);
+        let Plan::Available { to, .. } = plan(&idx, "2026.7.2", T) else {
+            panic!("a newer loft must be offered whatever its own floor says");
+        };
+        assert_eq!(to, "9999.1.0");
+    }
+
     /// Calendar versions must order as versions, not as text — "2026.10.0" is newer
     /// than "2026.9.0" even though it sorts earlier as a string.
     #[test]
@@ -604,7 +620,7 @@ mod tests {
         );
     }
 
-    /// A yanked newest is skipped — and the rule is `find_best_version`'s, not a copy.
+    /// A yanked newest is skipped — and the rule is the resolver's, not a copy.
     #[test]
     fn a_yanked_newest_is_not_offered() {
         let idx = index(

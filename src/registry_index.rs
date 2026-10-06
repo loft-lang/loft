@@ -513,6 +513,28 @@ pub fn find_best_version<'a>(
     constraint: &str,
     allow_prerelease: bool,
 ) -> Option<&'a Version> {
+    best_version(pkg, constraint, allow_prerelease, true)
+}
+
+/// The newest release of the TOOLCHAIN package, by the same yanked and prerelease rules as
+/// [`find_best_version`] but with no `loft` floor: a loft release's floor names the loft IT
+/// needs, and the self-updater exists to fetch exactly a release the running loft is older
+/// than — a floor filter there would hide every update from the loft that needs it.
+#[must_use]
+pub fn find_newest_release<'a>(
+    pkg: &'a Package,
+    constraint: &str,
+    allow_prerelease: bool,
+) -> Option<&'a Version> {
+    best_version(pkg, constraint, allow_prerelease, false)
+}
+
+fn best_version<'a>(
+    pkg: &'a Package,
+    constraint: &str,
+    allow_prerelease: bool,
+    floors: bool,
+) -> Option<&'a Version> {
     let yanked: std::collections::HashSet<&str> = pkg.yanked.iter().map(String::as_str).collect();
     // An exact pin names one release and is what a lockfile records; anything else is the
     // resolver choosing on the consumer's behalf, where a yanked version must stay excluded.
@@ -531,7 +553,7 @@ pub fn find_best_version<'a>(
         // A release this loft cannot load is not a candidate — the newest one it CAN load is
         // (PACKAGES.md § The `loft` floor).  An exact pin still names its release: the load then
         // says why it refuses, as it does for a yanked pin's retention.
-        if !exact_pin && !floor_admits(ver) {
+        if floors && !exact_pin && !floor_admits(ver) {
             continue;
         }
         if best
