@@ -6,7 +6,8 @@
 // a destructure, a text neighbour, a closure capture, a re-pointed link in a loop, a step past
 // the range, a nullable member, and a member of a `&(…)` parameter.  Each value is computed by
 // hand in the comment beside it.
-// @falsified-at: b3d3c7348 — the narrow member link is refused at compile time on both backends.
+// @falsified-at: b3d3c7348 — interpret exit 1 -> 0, native exit 1 -> 0 (the link was refused at compile time)
+// @falsified-by: tests/falsified/a-link-to-a-narrow-tuple-member-writes-the-member.patch — interpret exit 1 -> 0, native exit 1 -> 0
 
 type Small = integer limit(-5, 5);
 fn nb(p: &u8) { p += 1; }
