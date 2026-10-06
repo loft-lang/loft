@@ -600,6 +600,13 @@ impl Output<'_> {
                     // spellings below can apply to this base.
                     return write!(w, "unsafe {{ {name}.{idx} }}");
                 }
+                // `@FR-T-Record` — a narrow member a `&` names holds its field encoding.
+                if let Some(Some(slot)) = self
+                    .linked_tuple_slots(var)
+                    .and_then(|s| s.get(usize::from(idx)).copied())
+                {
+                    return write!(w, "{}", slot.decode_rust(&format!("{name}.{idx}")));
+                }
                 // loft#1038 — one derivation for what the slot holds, shared with the
                 // WRITE arm and with `set_var`'s clone rule (`tuple_elem_is_text`).
                 let elem_is_text =
@@ -676,6 +683,21 @@ impl Output<'_> {
                     write!(w, "unsafe {{ ")?;
                 }
                 write!(w, "{name}.{idx} = ")?;
+                // `@FR-T-Record` — a narrow member a `&` names takes its value encoded.
+                let narrow = self
+                    .linked_tuple_slots(var)
+                    .and_then(|s| s.get(usize::from(idx)).copied().flatten());
+                let (narrow_open, narrow_close) = match narrow {
+                    Some(slot) => {
+                        let both = slot.encode_rust("\u{0}");
+                        let (a, b) = both
+                            .split_once('\u{0}')
+                            .expect("the marker is in the template");
+                        (a.to_string(), b.to_string())
+                    }
+                    None => (String::new(), String::new()),
+                };
+                write!(w, "{narrow_open}")?;
                 if bool_cast.is_some() {
                     write!(w, "(")?;
                 }
@@ -712,6 +734,7 @@ impl Output<'_> {
                 if let Some(cast) = bool_cast {
                     write!(w, ") as {cast}")?;
                 }
+                write!(w, "{narrow_close}")?;
                 if deref {
                     write!(w, " }}")?;
                 }
