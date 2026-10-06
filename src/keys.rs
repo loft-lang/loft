@@ -518,6 +518,26 @@ pub fn poison_enabled() -> bool {
     *POISON.get_or_init(|| env_set("LOFT_POISON"))
 }
 
+/// `LOFT_POISON_HOST=windows` (@PLN184 Track W) — a loft PROGRAM runs as if on Windows, on
+/// Linux and macOS: its paths are read under Windows' rules and the file system answers by
+/// them (`file_access`'s emulated host).  Same family as `LOFT_POISON`: a run-mode switch that
+/// makes a defect invisible on a normal run show, real code in every build.  `None` when
+/// unset; an unknown value says so once and is off.  On Windows it changes nothing.
+#[must_use]
+pub fn poison_host() -> Option<crate::file_access::Flavor> {
+    static HOST: OnceLock<Option<crate::file_access::Flavor>> = OnceLock::new();
+    *HOST.get_or_init(|| match env_value("LOFT_POISON_HOST").as_deref() {
+        None | Some("" | "0") => None,
+        Some(v) if v.eq_ignore_ascii_case("windows") => Some(crate::file_access::Flavor::Windows),
+        Some(v) => {
+            crate::loft_eprintln!(
+                "loft: LOFT_POISON_HOST={v} is not a host loft emulates (windows); ignored"
+            );
+            None
+        }
+    })
+}
+
 /// `LOFT_COPY_DUMP=1` (@PLN90 phase 1) — print one line per executed deep STRUCTURE copy
 /// (a record copy `OpCopyRecord`, or a vector append that deep-copies its source elements
 /// `vector_add`). The instrument that makes copies VISIBLE: it is the runtime ground truth

@@ -31,6 +31,27 @@ pub enum Flavor {
     Windows,
 }
 
+thread_local! {
+    /// A test's [`with_program_host`]; `None` defers to the switch.
+    static PROGRAM_HOST: std::cell::Cell<Option<Flavor>> = const { std::cell::Cell::new(None) };
+}
+
+/// Run `body` with this thread's programs on `flavor`, as `LOFT_POISON_HOST` would put them —
+/// how a test asks the emulated host on any host without a process of its own.
+pub fn with_program_host<T>(flavor: Flavor, body: impl FnOnce() -> T) -> T {
+    struct Restore(Option<Flavor>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            PROGRAM_HOST.with(|h| h.set(self.0));
+        }
+    }
+    let _restore = Restore(PROGRAM_HOST.with(|h| h.replace(Some(flavor))));
+    body()
+}
+
+/// The drive the emulated Windows host mounts the real file system on: `/a/b` is `L:\a\b`.
+pub const EMULATED_DRIVE: &str = "L:";
+
 impl Flavor {
     /// The flavor of the platform the compiler runs on.
     pub const HOST: Flavor = if cfg!(windows) {
@@ -38,6 +59,24 @@ impl Flavor {
     } else {
         Flavor::Unix
     };
+
+    /// The platform a loft PROGRAM's paths are read under: [`Flavor::HOST`], or Windows under
+    /// `LOFT_POISON_HOST=windows` (@PLN184 Track W).  The compiler's own paths stay on
+    /// [`Flavor::HOST`]: they still reach the disk through `std` at sites that do not go
+    /// through `file_access`, and a Windows spelling there names nothing on Linux.
+    #[must_use]
+    pub fn program_host() -> Flavor {
+        PROGRAM_HOST
+            .with(std::cell::Cell::get)
+            .or_else(crate::keys::poison_host)
+            .unwrap_or(Flavor::HOST)
+    }
+
+    /// Does a program run on an emulated platform — Windows' rules over a Unix file system?
+    #[must_use]
+    pub fn emulating() -> bool {
+        Flavor::program_host() != Flavor::HOST
+    }
 
     #[must_use]
     pub fn is_separator(self, c: char) -> bool {
@@ -85,14 +124,15 @@ impl PathText {
     /// A path a loft PROGRAM wrote, judged by the portable contract of `formal/paths.md` and
     /// parsed by the same code as every other path: `\` separates on every host
     /// (`@FR-Path-Sep`), and each name must be one every platform can hold
-    /// (`@FR-Path-Name`).  The answer is a HOST path, so it reaches the OS.  A drive prefix is
+    /// (`@FR-Path-Name`).  The answer is a path on the program's host
+    /// ([`Flavor::program_host`]), so it reaches the OS through `file_access`.  A drive prefix is
     /// a Windows host's; on Unix `C:` is a name, and `:` refuses it — an absolute path names
     /// a place on this host and was never portable.
     ///
     /// # Errors
     /// The refused name and why.
     pub fn program(raw: &str) -> Result<PathText, String> {
-        PathText::program_in(raw, Flavor::HOST)
+        PathText::program_in(raw, Flavor::program_host())
     }
 
     /// [`PathText::program`] under `flavor`'s rules — the form the tests ask on every host.
@@ -166,6 +206,47 @@ impl PathText {
     #[must_use]
     pub fn host(text: &str) -> PathText {
         PathText::parse(text, Flavor::HOST)
+    }
+
+    /// A host path as a PROGRAM sees it: itself, or under the emulated host the same place
+    /// in Windows' spelling (`/a/b` is `L:\a\b`, a relative path keeps its names).
+    #[must_use]
+    pub fn for_program(&self) -> PathText {
+        if self.flavor != Flavor::HOST || !Flavor::emulating() {
+            return self.clone();
+        }
+        PathText {
+            flavor: Flavor::Windows,
+            prefix: if self.rooted {
+                EMULATED_DRIVE.to_string()
+            } else {
+                String::new()
+            },
+            rooted: self.rooted,
+            parts: self.parts.clone(),
+        }
+    }
+
+    /// The host path an emulated-Windows path names — the inverse of
+    /// [`PathText::for_program`].  A rooted path without a drive is on the current drive,
+    /// which is [`EMULATED_DRIVE`].
+    ///
+    /// # Errors
+    /// Another drive or a UNC share: the emulated host has neither.
+    pub fn from_emulated(&self) -> Result<PathText, String> {
+        if self.prefix.is_empty() || self.prefix == EMULATED_DRIVE {
+            Ok(PathText {
+                flavor: Flavor::HOST,
+                prefix: String::new(),
+                rooted: self.rooted,
+                parts: self.parts.clone(),
+            })
+        } else {
+            Err(format!(
+                "{}: the emulated Windows host has only drive {EMULATED_DRIVE}",
+                self.portable()
+            ))
+        }
     }
 
     fn from_parts(

@@ -19,7 +19,7 @@
 
 pub mod path;
 
-pub use path::{Flavor, PathText};
+pub use path::{EMULATED_DRIVE, Flavor, PathText, with_program_host};
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -32,16 +32,33 @@ impl PathText {
         PathText::host(&path.to_string_lossy())
     }
 
-    /// The spelling the OS is handed.  Only a HOST path reaches the OS: a path parsed
-    /// under the other flavor (a test's Windows path on Linux) is not a file here.
+    /// The spelling the OS is handed.  A HOST path reaches the OS as it is, and under the
+    /// emulated host (`LOFT_POISON_HOST`) a path in the program's Windows spelling reaches the
+    /// place it names; any other path parsed under the other flavor (a test's Windows path on
+    /// Linux) is not a file here.
     fn os(&self) -> io::Result<PathBuf> {
         if self.flavor() == Flavor::HOST {
             Ok(PathBuf::from(self.native()))
+        } else if self.flavor() == Flavor::program_host() {
+            self.from_emulated()
+                .map(|real| PathBuf::from(real.native()))
+                .map_err(|why| io::Error::new(io::ErrorKind::NotFound, why))
         } else {
             Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 format!("{}: not a path on this platform", self.portable()),
             ))
+        }
+    }
+
+    /// A host path the OS handed over, in the flavor of `asked` — the path whose operation
+    /// answered it — so a listing or a resolution of an emulated path stays emulated.
+    fn from_os_as(path: &Path, asked: &PathText) -> PathText {
+        let real = PathText::from_os(path);
+        if asked.flavor() == Flavor::HOST {
+            real
+        } else {
+            real.for_program()
         }
     }
 }
@@ -188,7 +205,7 @@ pub fn read_dir(path: &PathText) -> io::Result<Vec<PathText>> {
     run(path, |p| {
         let mut out = Vec::new();
         for entry in std::fs::read_dir(p)? {
-            out.push(PathText::from_os(&entry?.path()));
+            out.push(PathText::from_os_as(&entry?.path(), path));
         }
         out.sort_by_key(PathText::portable);
         Ok(out)
@@ -217,7 +234,7 @@ pub fn canonical(path: &PathText) -> Option<PathText> {
     let os = path.os().ok()?;
     std::fs::canonicalize(os)
         .ok()
-        .map(|abs| PathText::from_os(&abs))
+        .map(|abs| PathText::from_os_as(&abs, path))
 }
 
 /// Do two spellings name the same file on disk?  `false` when either does not exist.
@@ -339,13 +356,14 @@ pub fn case_clash(full: &str) -> Result<(), String> {
 
 /// `@FR-Path-Sep` — a host path in the form loft GIVES a program: `/` only and no trailing
 /// separator (`C:/Users/x/Temp`, `/tmp`), so a program joining `"{dir}/{name}"` builds one
-/// spelling on every platform.  Empty stays empty (no directory to give).
+/// spelling on every platform.  Under the emulated host it is that host's spelling
+/// (`L:/tmp`).  Empty stays empty (no directory to give).
 #[must_use]
 pub fn given(path: &str) -> String {
     if path.is_empty() {
         String::new()
     } else {
-        PathText::host(path).portable()
+        PathText::host(path).for_program().portable()
     }
 }
 
@@ -661,6 +679,89 @@ mod tests {
         let w = |t: &str| PathText::parse(t, Flavor::Windows);
         assert!(w(r"C:\libs\server\src\a.loft").starts_with(&w("c:/LIBS/server")));
         assert_eq!(w(r"C:\libs\server\").file_name(), Some("server"));
+    }
+
+    /// @PLN184 W0.1 — under the emulated host a program's `\` separates; off it, a Unix
+    /// host reads it as a name character.
+    #[test]
+    fn the_program_host_follows_the_switch() {
+        let parts = |f: Flavor| PathText::parse(r"a\b", f).parts().len();
+        assert_eq!(
+            with_program_host(Flavor::Windows, || parts(Flavor::program_host())),
+            2
+        );
+        assert_eq!(
+            parts(Flavor::program_host()),
+            if Flavor::HOST == Flavor::Windows {
+                2
+            } else {
+                1
+            }
+        );
+        assert_eq!(
+            with_program_host(Flavor::Windows, Flavor::emulating),
+            Flavor::HOST == Flavor::Unix
+        );
+    }
+
+    /// @PLN184 W0.2 — a host path seen by a program and handed back reaches the same place:
+    /// real → program spelling → real is the identity, over generated paths.
+    #[test]
+    fn the_emulated_spelling_round_trips() {
+        let mut seed: u64 = 0x5eed_1984;
+        let mut next = |n: u64| {
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            (seed >> 33) % n
+        };
+        let names = ["a", "B.txt", "src", "Ünï", "x y", ".hidden", "d.e.f", "tmp"];
+        with_program_host(Flavor::Windows, || {
+            for _ in 0..200 {
+                let rooted = next(2) == 0;
+                let depth = next(5);
+                let mut text = String::from(if rooted { "/" } else { "" });
+                for i in 0..depth {
+                    if i > 0 {
+                        text.push('/');
+                    }
+                    text.push_str(names[usize::try_from(next(names.len() as u64)).unwrap()]);
+                }
+                let real = PathText::host(&text);
+                let program = real.for_program();
+                assert_eq!(program.flavor(), Flavor::program_host(), "{text}");
+                assert_eq!(program.os().unwrap(), real.os().unwrap(), "{text}");
+            }
+            if Flavor::emulating() {
+                assert_eq!(given("/tmp/x/"), "L:/tmp/x");
+                assert_eq!(PathText::host("/a/b").for_program().native(), r"L:\a\b");
+                let other = PathText::parse(r"C:\a", Flavor::Windows);
+                assert_eq!(read(&other).unwrap_err().kind(), io::ErrorKind::NotFound);
+            }
+        });
+    }
+
+    /// @PLN184 W0.2 — the emulated host's operations, verbatim twin included: a listing and a
+    /// resolution answer in the program's spelling, and reach the real files.
+    #[test]
+    fn operations_reach_the_disk_through_the_emulated_spelling() {
+        let dir = scratch("emul");
+        with_program_host(Flavor::Windows, || {
+            let d = dir.for_program();
+            let f = d.join("a.txt");
+            write(&f, "x").unwrap();
+            assert_eq!(read_to_string(&f).unwrap(), "x");
+            let listed = read_dir(&d).unwrap();
+            assert_eq!(listed.len(), 1);
+            assert_eq!(listed[0].flavor(), Flavor::program_host());
+            assert!(same_file(&listed[0], &f));
+            let c = canonical(&f).expect("exists");
+            assert_eq!(c.flavor(), Flavor::program_host());
+            if Flavor::emulating() {
+                let verbatim = PathText::parse(&format!(r"\\?\{}", f.native()), Flavor::Windows);
+                assert!(same_file(&verbatim, &f), "{}", verbatim.native());
+            }
+        });
+        assert_eq!(read_to_string(&dir.join("a.txt")).unwrap(), "x");
+        remove_dir_all(&dir).unwrap();
     }
 
     #[test]
