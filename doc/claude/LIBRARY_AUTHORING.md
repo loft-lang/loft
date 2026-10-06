@@ -739,8 +739,9 @@ release whose `loft` floor names the first loft build that has it.  The steps, i
    ([PACKAGES.md § The `loft` floor names a release or a DAY](PACKAGES.md)).  Check that no
    earlier `main` commit carries the same date without the change.  A loft below the floor
    skips this release and keeps resolving to the previous one, whose layout matches it — from
-   the loft whose resolver reads the floor (loft#1890) on; an older loft resolves the release
-   and its load refuses it, naming the floor, so a user there pins the previous version.
+   the loft whose resolver reads the floor (`registry_index::floor_admits`) on; an older loft
+   resolves the release and its load refuses it, naming the floor, so a user there pins the
+   previous version.
 4. **Publish through a library PR with auto-merge**, then the loft-ship skill.  A release that
    already went out with a floor too low is corrected by a follow-up release with the right
    floor, and the earlier one is yanked when lofts it does not fit would otherwise resolve to
