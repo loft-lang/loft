@@ -4677,3 +4677,29 @@ rounding in the layout routine rather than in each collection, and asked for eve
 stored bytes to be covered — persisted images (the layout identity changes, so `(L-Sound)`
 rebuilds), binary file I/O (kept at the wire width), remote and lazy stores (they verify the
 same identity) — and for the strict access to stop at the bytecode, whose operands stay packed.
+
+## C139 — A tuple IS a record; foreign data is value-const and never presented as writable
+
+Decided 2026-10-06 by the owner, in the discussion of loft#1875 (a `&` link to a narrow or text
+tuple member is refused).  The question as it arrived was a choice of storage for the two
+members; the owner reframed it: a tuple is just a record with fixed field names, its layout is
+no different from any record's, and it should be able to live on the stack and interact well with
+rustc — rustc's own types and field order are an optimisation that can be read from the record
+layout, or kept out of the records entirely where the rewrite rules allow.
+
+Foreign data came up through text: a rustc library returns a string, and loft should read it
+without first copying it into its own structure.  The owner then generalised it — foreign data is
+any structure, traversed and read whole or in parts — and settled writes in two steps.  A first
+reading (a write through a link copies the part and rebinds the name, `c += "!"` ≡
+`c = c + "!"`) was reconsidered the same day: foreign data is never presented as writable, the
+write is an error, and `c = t.0 + "!"` is the way to get the same result.  Last, the owner pointed
+out that foreign structures are their own type presenting as a normal loft structure, and loft
+already has read-only (value-const) structures, so the compiler refuses the write with no runtime
+check.  Measured while writing it down: `file_map`'s read-only vector is refused at run time
+today (loft#1897).
+
+The last question — whether a stored tuple keeps its written member order (`(L-Tuple)` as it
+read) or packs by descending alignment like a struct — the owner settled the same day: a stored
+tuple is nothing other than a record, so its fields may change order with the larger aligned ones
+first, with no effect on their names or their text presentation.  Measured: `(u8, u32, u16)` is
+12 bytes today against 8 for the equivalent struct (loft#1898).

@@ -32,6 +32,7 @@ Every entry, by the subject it decides.  Ids are one flat sequence across the su
 - [C120](DESIGN_DECISIONS_VALUES.md#c120--integer-arithmetic-on-native-stays-sentinel-aware-after-a-fault-the-non-null-proof-does-not-close-over----) — Integer arithmetic on native stays sentinel-aware after a fault; the non-null proof does not close over `+`, `-`, `*`
 - [C127](DESIGN_DECISIONS_VALUES.md#c127--a-narrow-type-without--has-no-null-an-unfitting-value-takes-the-types-default-and-says-so) — A narrow type without `?` has no null: an unfitting value takes the type's DEFAULT, and says so
 - [C129](DESIGN_DECISIONS_VALUES.md#c129--no-opt-in-to-the-processors-arithmetic-no-machine-dependent-scope-or-type) — No opt-in to the processor's arithmetic (no machine-dependent scope or type)
+- [C139](DESIGN_DECISIONS_VALUES.md#c139--a-tuple-is-a-record-foreign-data-is-value-const-and-never-presented-as-writable) — A tuple IS a record; foreign data is value-const and never presented as writable
 
 ## Binding, ownership and closures — [DESIGN_DECISIONS_OWNERSHIP.md](DESIGN_DECISIONS_OWNERSHIP.md)
 

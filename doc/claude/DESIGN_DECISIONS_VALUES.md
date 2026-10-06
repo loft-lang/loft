@@ -210,3 +210,27 @@ target, silently; a value-range proof is portable by construction.
 **Revisit when.** Never for the machine-dependent form.  Decided 2026-09-08, amended 2026-09-15
 (renumbered from a duplicate C67) — [record](DESIGN_DECISIONS-history.md#c129--no-opt-in-to-the-processors-arithmetic-no-machine-dependent-scope-or-type).
 **Catalogue:** @F38 (arithmetic safety).
+
+## C139 — A tuple IS a record; foreign data is value-const and never presented as writable
+
+**Decision.** A tuple is a record whose fields are named `0` … `n`: its layout is that record's,
+each member is what a field of its type is, and a `&` link names a member as it names a field.
+It may live on the stack.  Stored, it packs like any record, largest alignment first, which
+changes neither a member's name (`t.0` stays the written first member) nor the text a tuple
+prints as.  A native representation — a Rust tuple of native types in rustc's
+order — is an optimisation derived from the record layout, kept only where no program can tell
+it apart.  FOREIGN data — any structure whose bytes loft does not own: a native library's text,
+record, tuple or vector, a mapped file — presents as an ordinary loft type that is value-const
+(`const T`, declared by its producer).  It is read in place, whole or in parts, without a copy;
+a `&` link to a part is a read-only view; every write is a compile-time error whose cure is a
+copy (`c = t.0 + "!"`).  **Why.** One layout for a tuple wherever it lives leaves nothing to
+special-case in a link, a copy or a release, and rustc still gets its own representation where
+it is unobservable.  A library's string read without being copied into loft's structure is the
+point of foreign data, and making it value-const reuses a check loft already has, at compile
+time, instead of a runtime refusal (C80).
+
+**Revisit when.** A foreign producer needs its data written in place by loft.  Decided
+2026-10-06 (loft#1875, loft#1897, loft#1898) — [record](DESIGN_DECISIONS-history.md#c139--a-tuple-is-a-record-foreign-data-is-value-const-and-never-presented-as-writable).
+Holds at `(T-Record)`, [formal/tuples.md](formal/tuples.md), `(L-Tuple)`,
+[formal/layout.md](formal/layout.md), and `(Const-Foreign)`, [formal/binding.md](formal/binding.md);
+the guards land with loft#1875, loft#1897 and loft#1898.
