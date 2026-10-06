@@ -8,6 +8,9 @@
 // hand in the comment beside it.
 // @falsified-at: b3d3c7348 — interpret exit 1 -> 0, native exit 1 -> 0 (the link was refused at compile time)
 // @falsified-by: tests/falsified/a-link-to-a-narrow-tuple-member-writes-the-member.patch — interpret exit 1 -> 0, native exit 1 -> 0
+// HOLDS: asserts 0, leak none, panic none and free-refusals 0 on both trees and both backends —
+//   only the exit moves (the control refuses the narrow member link at compile time), as
+//   measured by `make falsify` at b3d3c7348.
 
 type Small = integer limit(-5, 5);
 fn nb(p: &u8) { p += 1; }
