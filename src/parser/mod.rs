@@ -16631,19 +16631,21 @@ impl Parser {
         tp
     }
 
-    /// `LOFT_TRACE_VISIBILITY=1` — the census of @PLN187's enforcement (C139): one line per use,
-    /// in a file OTHER than the declaring one, of a struct or variant field (`field`: a read or a
-    /// write; `literal-field`, `pattern-field`, `key`), of a struct literal (`literal`) and of an
-    /// enum variant (`variant`, built or matched).  Each line is a place that needs `pub` once a
-    /// field, a literal or a variant is private to its file.  `d_nr` is the struct or the
-    /// variant; `f_nr` its field, or `usize::MAX` for the type itself.  `scripts/pub_census.sh`
-    /// collects it.
-    pub(crate) fn trace_visibility(&self, kind: &str, d_nr: u32, f_nr: usize) {
-        if self.first_pass
-            || !crate::env_once!(std::env::var_os("LOFT_TRACE_VISIBILITY").is_some())
-            || d_nr == u32::MAX
-            || d_nr >= self.data.definitions()
-        {
+    /// @PLN187 (C139) — the one visibility check for a use, OUTSIDE its declaring file, of a
+    /// struct or variant field (`field`: a read or a write; `literal-field`, `pattern-field`,
+    /// `key`), of a struct literal (`literal`) and of an enum variant (`variant`, built or
+    /// matched).  `d_nr` is the struct or the variant; `f_nr` its field, or `usize::MAX` for the
+    /// type itself.  A use that lacks its `pub` is:
+    ///
+    /// * printed under `LOFT_TRACE_VISIBILITY=1` — the census (`scripts/pub_census.sh`), so the
+    ///   census lists exactly what is still missing and is empty once everything is migrated;
+    /// * refused under `LOFT_PUB_ENFORCE=1` — the rule, with the item, its file and the cure.
+    ///
+    /// Building a type that is not `pub` at all is [`Self::refuse_building_a_name_only_type`]'s.
+    pub(crate) fn check_visibility(&mut self, kind: &str, d_nr: u32, f_nr: usize) {
+        let trace = crate::env_once!(std::env::var_os("LOFT_TRACE_VISIBILITY").is_some());
+        let enforce = crate::env_once!(std::env::var_os("LOFT_PUB_ENFORCE").is_some());
+        if self.first_pass || !(trace || enforce) || d_nr >= self.data.definitions() {
             return;
         }
         let def = self.data.def(d_nr);
@@ -16661,19 +16663,72 @@ impl Parser {
         {
             return;
         }
-        let item = match def.attributes.get(f_nr) {
-            Some(a) if a.name.starts_with("__") || a.hidden => return,
-            Some(a) => format!("{}.{}", def.name, a.name),
-            None => def.name.clone(),
+        let attr = def.attributes.get(f_nr);
+        if attr.is_some_and(|a| a.name.starts_with("__") || a.hidden) {
+            return;
+        }
+        let lib = std::path::Path::new(&*owner.position.file)
+            .file_stem()
+            .map_or_else(String::new, |f| f.to_string_lossy().to_string());
+        let (why, fix) = match (kind, attr) {
+            ("field" | "literal-field" | "pattern-field" | "key", Some(a)) if !a.pub_field => (
+                format!("field `{}` of `{}` is not `pub` in `{lib}`", a.name, def.name),
+                format!("`{lib}` declares it `pub {}`", a.name),
+            ),
+            ("literal", _) if !owner.pub_visible => {
+                if !trace {
+                    return; // `refuse_building_a_name_only_type` refuses it
+                }
+                (
+                    format!("`{}` is not `pub` in `{lib}`", owner.name),
+                    format!("`{lib}` declares it `pub`"),
+                )
+            }
+            ("literal", _) => {
+                let Some(private) = def.attributes.iter().find(|a| {
+                    !a.pub_field && !a.hidden && !a.name.starts_with("__") && a.name != "enum"
+                }) else {
+                    return;
+                };
+                (
+                    format!(
+                        "`{}` cannot be built outside `{lib}`: its field `{}` is not `pub`",
+                        def.name, private.name
+                    ),
+                    format!(
+                        "`{lib}` declares every field of `{}` `pub`, or the program builds it \
+                         with `{lib}`'s functions",
+                        def.name
+                    ),
+                )
+            }
+            ("variant", _) if !owner.pub_visible => (
+                format!("`{}` is a variant of `{}`, which is not `pub` in `{lib}`", def.name, owner.name),
+                format!("`{lib}` declares `pub enum {}`", owner.name),
+            ),
+            _ => return,
         };
-        // The line a rewrite starts from: the struct's or the variant's own declaration for a
-        // field, the owning type's for a literal or a variant.
-        let at = if f_nr == usize::MAX { &owner.position } else { &def.position };
-        let here = self.lexer.pos();
-        eprintln!(
-            "[visibility] {}:{} {kind} {item} — declared in {}:{}",
-            here.file, here.line, owner.position.file, at.line
-        );
+        if trace {
+            let item = attr.map_or_else(|| def.name.clone(), |a| format!("{}.{}", def.name, a.name));
+            // The line a rewrite starts from: the struct's or the variant's own declaration for
+            // a field, the owning type's for a literal or a variant.  Paths canonical, so a census
+            // run from any directory names the same file.
+            let at = if f_nr == usize::MAX { &owner.position } else { &def.position };
+            let canon = |f: &str| {
+                std::fs::canonicalize(f).map_or_else(|_| f.to_string(), |p| p.display().to_string())
+            };
+            let here = self.lexer.pos();
+            eprintln!(
+                "[visibility] {}:{} {kind} {item} — declared in {}:{}",
+                canon(&here.file),
+                here.line,
+                canon(&owner.position.file),
+                at.line
+            );
+        }
+        if enforce {
+            diagnostic!(self.lexer, Level::Error, "{why}.\n  fix: {fix}");
+        }
     }
 
     /// @PLN187 (C139) — a type that is NAME ONLY outside its file (not `pub`, but named by a

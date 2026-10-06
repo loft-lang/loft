@@ -6383,7 +6383,7 @@ impl Parser {
                 variant_def_nr = self.data.def_nr(&pattern_name);
             }
             if self.data.def_type(variant_def_nr) == DefType::EnumValue {
-                self.trace_visibility("variant", variant_def_nr, usize::MAX);
+                self.check_visibility("variant", variant_def_nr, usize::MAX);
             }
 
             // for plain struct match, the pattern name must match the struct type.
@@ -7358,7 +7358,7 @@ impl Parser {
             if let Some(field_name) = self.lexer.has_identifier() {
                 let attr_idx = self.data.attr(s_nr, &field_name);
                 if attr_idx != usize::MAX {
-                    self.trace_visibility("pattern-field", s_nr, attr_idx);
+                    self.check_visibility("pattern-field", s_nr, attr_idx);
                 }
                 if attr_idx == usize::MAX {
                     if !self.first_pass {
@@ -7472,7 +7472,7 @@ impl Parser {
             if let Some(field_name) = self.lexer.has_identifier() {
                 let attr_idx = self.data.attr(e_nr, &field_name);
                 if attr_idx != usize::MAX {
-                    self.trace_visibility("pattern-field", e_nr, attr_idx);
+                    self.check_visibility("pattern-field", e_nr, attr_idx);
                 }
                 if attr_idx != usize::MAX {
                     let field_val = self.get_field(e_nr, attr_idx, subject_val.clone());
@@ -7959,7 +7959,7 @@ impl Parser {
 
             match attr_idx_and_type {
                 Some((attr_idx, field_type)) => {
-                    self.trace_visibility("pattern-field", variant_def_nr, attr_idx);
+                    self.check_visibility("pattern-field", variant_def_nr, attr_idx);
                     let field_read = self.get_field(variant_def_nr, attr_idx, subject_val.clone());
                     if self.lexer.has_token(":") {
                         // `@FR-P-Point` — a bare lowercase NAME as a field's sub-pattern is a
@@ -10269,7 +10269,7 @@ impl Parser {
             };
             match attr_idx_and_type {
                 Some((attr_idx, field_type)) => {
-                    self.trace_visibility("pattern-field", variant_def_nr, attr_idx);
+                    self.check_visibility("pattern-field", variant_def_nr, attr_idx);
                     // `@FR-P-Point` — a field may itself be a pattern.  In a listed pattern
                     // it TESTS the field and captures nothing, so it becomes this branch's
                     // condition (the caller ANDs it into the branch's own guard).  A
@@ -12968,7 +12968,7 @@ impl Parser {
         // global def_nr.  `is` is always enum-typed here (see the match above).
         let variant_def_nr = self.data.variant_of(e_nr, variant_name);
         if variant_def_nr != u32::MAX && self.data.def_type(variant_def_nr) == DefType::EnumValue {
-            self.trace_visibility("variant", variant_def_nr, usize::MAX);
+            self.check_visibility("variant", variant_def_nr, usize::MAX);
         }
         if variant_def_nr == u32::MAX || self.data.def_type(variant_def_nr) != DefType::EnumValue {
             if !self.first_pass {

@@ -4911,7 +4911,7 @@ impl Parser {
         }
         let nr = self.data.attr(td_nr, &field);
         if nr != usize::MAX {
-            self.trace_visibility("literal-field", td_nr, nr);
+            self.check_visibility("literal-field", td_nr, nr);
         }
         if nr == usize::MAX {
             if let Some(s) = self.suggest_field_name(td_nr, &field) {
@@ -5717,7 +5717,7 @@ impl Parser {
         } else {
             "literal"
         };
-        self.trace_visibility(built, td_nr, usize::MAX);
+        self.check_visibility(built, td_nr, usize::MAX);
         self.refuse_building_a_name_only_type(td_nr);
         // @PLN25 single-payload: a `__nullable<S>::Some` variant's body uses S's field names,
         // which live in the inline `payload` field — not `Some`'s direct fields {enum, payload}.
