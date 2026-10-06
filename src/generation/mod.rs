@@ -9828,7 +9828,7 @@ extern crate loft;"
             // carried on (loft#1263).
             writeln!(
                 w,
-                "  if test != 1 {{\n    let stores: &mut Stores = unsafe {{ &mut *cell.get() }};\n    let kind = loft::runtime_error::RuntimeErrorKind::AssertionFailed {{ message: msg.to_string() }};\n    if loft::runtime_error::logged_in_production(stores, &kind, &file.to_string(), line as u32) {{ return; }}\n    loft::runtime_error::RuntimeError::assertion_failed(msg.to_string(), file.to_string(), line as u32).report_and_exit();\n  }}"
+                "  if test != 1 {{\n    let stores: &mut Stores = unsafe {{ &mut *cell.get() }};\n    let kind = loft::runtime_error::RuntimeErrorKind::AssertionFailed {{ message: msg.to_string() }};\n    if loft::runtime_error::logged_in_production(stores, &kind, &file.to_string(), line as u32) {{ return; }}\n    loft::runtime_error::RuntimeError::assertion_failed(msg.to_string(), &file.to_string(), line as u32).report_and_exit();\n  }}"
             )?;
             writeln!(w, "}}\n")?;
             return Ok(());
@@ -9889,7 +9889,7 @@ extern crate loft;"
             // Same shared decision as `n_assert` above (loft#1263).
             writeln!(
                 w,
-                "  let stores: &mut Stores = unsafe {{ &mut *cell.get() }};\n  let kind = loft::runtime_error::RuntimeErrorKind::UserPanic {{ message: msg.to_string() }};\n  if loft::runtime_error::logged_in_production(stores, &kind, &file.to_string(), line as u32) {{ return; }}\n  loft::runtime_error::RuntimeError::user_panic(msg.to_string(), file.to_string(), line as u32).report_and_exit();"
+                "  let stores: &mut Stores = unsafe {{ &mut *cell.get() }};\n  let kind = loft::runtime_error::RuntimeErrorKind::UserPanic {{ message: msg.to_string() }};\n  if loft::runtime_error::logged_in_production(stores, &kind, &file.to_string(), line as u32) {{ return; }}\n  loft::runtime_error::RuntimeError::user_panic(msg.to_string(), &file.to_string(), line as u32).report_and_exit();"
             )?;
             writeln!(w, "}}\n")?;
             return Ok(());
