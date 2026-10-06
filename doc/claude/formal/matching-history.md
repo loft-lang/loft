@@ -30,6 +30,18 @@ after it.  The arm rule's "bare binding" wording stood for two months without th
 having it — corrected 2026-09-07, with the silence that hid it (an arm naming nothing was
 skipped without a diagnostic).
 
+- **D-match-18 — CLOSED 2026-10-06 (@PLN186 step 2).** `(P-Multi)` on a plain-struct subject,
+  `P { x: 0, y: v } | P { x: v, y: 0 } => v`, was refused (*"Unknown variable 'v'"*).  The
+  refusal was not about `|`: a struct arm read a field's bare-name pattern (`y: v`) as a VALUE,
+  against `(P-Point)` — refused when no `v` was in scope, and a silent comparison with an outer `v`
+  when one was (loft#1885).  Closed by both halves: the struct arm binds a bare name through the
+  variant arm's `field_pattern_rename`, and its further patterns are parsed by the tuple arm's
+  `parse_pattern_alternatives` — each its own arm with its own bindings (nothing hoisted when an
+  arm lists alternatives) and literal-field test.  Alongside, an arm after a total struct pattern
+  is refused by name (`@FR-M-Wild`), where the loop's `break` left it to "Expect token }".
+  Guards: `tests/scripts/a-struct-or-pattern-arm-links-its-bindings.loft`,
+  `a-struct-pattern-arm-refusals.loft`.
+
 - **D-match-20 — CLOSED 2026-10-06 (@PLN186 step 4).** `(P-Alt)` inside a tuple element,
   `(Circle { r } | Square { r }, k) => r + k`, was refused (*"expected ',' between tuple pattern
   elements"*).  A tuple element that lists alternatives (a `|` before the `,` or `)` that ends it)

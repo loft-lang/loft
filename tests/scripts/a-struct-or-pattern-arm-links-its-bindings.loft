@@ -1,0 +1,56 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-P-Multi` on a plain STRUCT subject — `P { x: 0, y: v } | P { x: v, y: 0 } => v` is one
+// arm: each pattern runs its own bindings, linked into the first one's slots, then its own
+// literal-field test, then the body.  `,` lists them the same way (t4).  A name only some
+// patterns bind is `τ?` (t3, `@FR-P-Alt-Diff`); a pattern with no literal field always matches,
+// so a later alternative is unreachable and harmless (t5).  Single-pattern struct arms keep their
+// meaning (t6).  Values computed by hand, both backends; bodies are order-sensitive.
+//
+// `@FR-P-Point` — a bare lowercase name as a field's pattern BINDS (`P { y: v }`), as it does in
+// a variant arm.  It was read as a comparison with whatever `v` was in scope: with an outer `v =
+// 2`, `P { y: 7 }` answered the fallback (loft#1885, the `rename` cell below).
+//
+// @falsified-at: 755a70d73 — interpret exit 1 -> 0, native exit 1 -> 0
+//   Before step 2 the struct arm read `y: v` as a value and took one pattern only.
+//   CHANNEL: a refusal (*"Unknown variable 'v'"*), on BOTH backends.
+//   ARMED: nothing.
+//   WITNESS: exit 1 at `P { x: 0, y: v }`; with an outer `v` the `rename` cell compiled and
+//   compared instead (loft#1885), but the file stops at the first refusal.
+//   HOLDS: nothing runs; every cell is unreached.
+// @falsified-by: tests/falsified/a-struct-or-pattern-arm-links-its-bindings.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   Step 2 reverted whole (the durable receipt): the same refusal.
+//   CHANNEL: a refusal, on BOTH backends.
+//   ARMED: nothing.
+//   WITNESS: as above.
+//   HOLDS: as above.
+
+struct P { x: integer, y: integer }
+struct L { n: integer, tag: text }
+
+fn t1(p: P) -> integer { match p { P { x: 0, y: v } | P { x: v, y: 0 } => v * 10 + 1, P { x, y } => x * 100 + y } }
+fn t2(l: L) -> text { match l { L { n: 0, tag } | L { n: 1, tag } => "{tag}!", L { n, tag: _ } => "{n}" } }
+fn t3(p: P) -> integer { match p { P { x: 0, y } | P { y: 0 } => (y ?? -5) * 10, _ => -1 } }
+fn t4(p: P) -> integer { match p { P { x: 0, y: v }, P { x: v, y: 0 } => v * 10 + 2, _ => -2 } }
+fn t5(p: P) -> integer { match p { P { x } | P { y: 0, x } => x * 3 } }
+fn t6(p: P) -> integer { match p { P { x: 0 } => 1, P { y: 0 } => 2, P { x, y } => x + y } }
+
+fn rename(p: P) -> integer { v = 2; match p { P { y: v } => v * 100 + 1 } }
+
+fn main() {
+  assert(t1(P { x: 0, y: 7 }) == 71, "t1 a {t1(P { x: 0, y: 7 })}");
+  assert(t1(P { x: 8, y: 0 }) == 81, "t1 b {t1(P { x: 8, y: 0 })}");
+  assert(t1(P { x: 3, y: 4 }) == 304, "t1 none {t1(P { x: 3, y: 4 })}");
+  assert(t2(L { n: 0, tag: "zero" }) == "zero!", "t2 a {t2(L { n: 0, tag: "zero" })}");
+  assert(t2(L { n: 1, tag: "one" }) == "one!", "t2 b {t2(L { n: 1, tag: "one" })}");
+  assert(t2(L { n: 5, tag: "five" }) == "5", "t2 none");
+  assert(t3(P { x: 0, y: 6 }) == 60, "t3 a {t3(P { x: 0, y: 6 })}");
+  assert(t3(P { x: 9, y: 0 }) == -50, "t3 b {t3(P { x: 9, y: 0 })}");
+  assert(t3(P { x: 2, y: 2 }) == -1, "t3 none");
+  assert(t4(P { x: 5, y: 0 }) == 52, "t4 {t4(P { x: 5, y: 0 })}");
+  assert(t5(P { x: 4, y: 0 }) == 12, "t5 {t5(P { x: 4, y: 0 })}");
+  assert(t6(P { x: 0, y: 3 }) == 1 && t6(P { x: 2, y: 0 }) == 2 && t6(P { x: 2, y: 3 }) == 5, "t6");
+  assert(rename(P { x: 1, y: 7 }) == 701 && rename(P { x: 1, y: 2 }) == 201, "rename {rename(P { x: 1, y: 7 })}");
+  println("all ok");
+}

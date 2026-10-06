@@ -12,10 +12,11 @@
 // another pattern's bindings (c6), a text payload written back to the first pattern's field
 // (c11, #673), and a bare variant after `|` swallowing the next pattern's braces (c4's `Dot |`).
 //
-// Still refused, each a deviation @PLN186 closes (formal/matching.md D-match-18, -21, -22): a
-// plain-struct subject, an alternative inside a field sub-pattern, and `name: pattern` at the
-// arm root.  A tuple subject's alternatives are `a-tuple-or-pattern-arm-links-its-bindings.loft`'s,
-// an alternative inside a tuple element `a-tuple-element-lists-alternatives.loft`'s.
+// Still refused, each a deviation @PLN186 closes (formal/matching.md D-match-21, -22): an
+// alternative inside a field sub-pattern, and `name: pattern` at the arm root.  A tuple subject's
+// alternatives are `a-tuple-or-pattern-arm-links-its-bindings.loft`'s, an alternative inside a
+// tuple element `a-tuple-element-lists-alternatives.loft`'s, a plain-struct subject's
+// `a-struct-or-pattern-arm-links-its-bindings.loft`'s.
 //
 // @falsified-at: a2e060c6f — interpret exit 101 -> 0, interpret panicked -> clean, native exit 101 -> 0, native panicked -> clean
 //   The control does not merely refuse the file: c4's `Dot | Circle { r }` sent the bare `|`
