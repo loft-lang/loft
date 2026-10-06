@@ -7680,7 +7680,10 @@ mod p318_hash_deepcopy {
         let cell_words = words(stores.size(cell));
         let holder_words = words(stores.size(holder));
 
+        // The holder's `h` is written to its default (the empty hash), as `OpDatabase`
+        // writes it — the claim alone promises no value (`@FR-H-Claim`).
         let root = stores.database(holder_words);
+        stores.set_default_value(holder, &root);
         let h = DbRef {
             store_nr: root.store_nr,
             rec: root.rec,
@@ -7726,7 +7729,10 @@ mod p318_hash_deepcopy {
         let holder_words = words(stores.size(holder_tp));
 
         // --- source Holder with a populated hash (n=14 -> room 17) ---
+        // Both holders' `h` written to its default (the empty hash), as `OpDatabase` writes
+        // it — the claim alone promises no value (`@FR-H-Claim`).
         let src = stores.database(holder_words);
+        stores.set_default_value(holder_tp, &src);
         let src_h = DbRef {
             store_nr: src.store_nr,
             rec: src.rec,
@@ -7745,6 +7751,7 @@ mod p318_hash_deepcopy {
 
         // --- destination Holder + an engineered over-size free block ---
         let dst = stores.database(holder_words);
+        stores.set_default_value(holder_tp, &dst);
         let dst_h = DbRef {
             store_nr: dst.store_nr,
             rec: dst.rec,
@@ -7917,6 +7924,9 @@ mod tests {
         // A record holding one trie field at payload offset 0.
         let coll = stores.database(4);
         let store_nr = coll.store_nr;
+        // The field names the empty trie — written, since a claim promises no value
+        // (`@FR-H-Claim`).
+        stores.allocations[store_nr as usize].set_u32_raw(coll.rec, coll.pos, 0);
         let baseline = stores.allocations[store_nr as usize].claims_count();
 
         let keys = stores.types[trie_tp as usize].keys.clone();

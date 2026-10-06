@@ -1078,7 +1078,7 @@ mod tests {
     fn round_trip_value(v: &Value) {
         let mut stores = Stores::new();
         let _ids = register_ir_schema(&mut stores);
-        let root = ValuesVector::new(stores.database(16));
+        let root = ValuesVector::new(stores.vector_buffer(16));
         materialize_node(&mut stores, root, v);
         let back = read_value(&stores, root.get(0, &stores));
         assert_eq!(*v, back, "Value round-trip mismatch");
@@ -1088,7 +1088,7 @@ mod tests {
     fn round_trip_type(t: &Type) {
         let mut stores = Stores::new();
         let _ids = register_ir_schema(&mut stores);
-        let root = RecVector::new(stores.database(16), ds::TYPET_STRIDE);
+        let root = RecVector::new(stores.vector_buffer(16), ds::TYPET_STRIDE);
         materialize_type(&mut stores, root, t);
         let back = read_type(&stores, root.get(0, &stores));
         assert_eq!(*t, back, "Type round-trip mismatch");
@@ -1276,7 +1276,7 @@ mod tests {
     fn integer_forced_size_round_trips_exactly() {
         let mut stores = Stores::new();
         let _ids = register_ir_schema(&mut stores);
-        let root = RecVector::new(stores.database(16), ds::TYPET_STRIDE);
+        let root = RecVector::new(stores.vector_buffer(16), ds::TYPET_STRIDE);
         materialize_type(&mut stores, root, &Type::Integer(IntegerSpec::u8()));
         let Type::Integer(spec) = read_type(&stores, root.get(0, &stores)) else {
             panic!("expected Integer");
@@ -2329,7 +2329,7 @@ mod tests {
 
         let mut ir = Stores::new();
         let _ids = register_ir_schema(&mut ir);
-        let host = Record::new(ir.database(16));
+        let host = Record::new(ir.vector_buffer(16));
         crate::ir_store::materialize_schema(&mut ir, &host, 0, &p.database.types);
 
         let loaded = read_schema(&ir, host, 0);

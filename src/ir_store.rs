@@ -993,7 +993,7 @@ mod tests {
     /// A standalone host record whose offset-0 field is the root
     /// `vector<Node>` the materializer writes into.
     fn root_vector(stores: &mut Stores) -> ValuesVector {
-        ValuesVector::new(stores.database(16))
+        ValuesVector::new(stores.vector_buffer(16))
     }
 
     #[test]
@@ -1403,7 +1403,7 @@ mod tests {
     /// A standalone host record whose offset-0 field is the root
     /// `vector<TypeT>` the type materializer writes into.
     fn root_type_vector(stores: &mut Stores) -> RecVector {
-        RecVector::new(stores.database(16), ds::TYPET_STRIDE)
+        RecVector::new(stores.vector_buffer(16), ds::TYPET_STRIDE)
     }
 
     #[test]
@@ -1571,7 +1571,7 @@ mod tests {
         }];
 
         // Host record whose field 0 is the root vector<Attribute>.
-        let host = Record::new(stores.database(16));
+        let host = Record::new(stores.vector_buffer(16));
         materialize_attributes(&mut stores, &host, 0, &attrs);
 
         let v = host.field_recvec(0, ds::ATTRIBUTE_STRIDE);
@@ -1637,7 +1637,7 @@ mod tests {
             },
         ];
 
-        let host = Record::new(stores.database(16));
+        let host = Record::new(stores.vector_buffer(16));
         materialize_field_groups(&mut stores, &host, 0, &groups);
 
         let v = host.field_recvec(0, ds::LFG_STRIDE);
@@ -1732,7 +1732,7 @@ mod tests {
 
         let mut ir = Stores::new();
         let _ids = register_ir_schema(&mut ir);
-        let host = Record::new(ir.database(16));
+        let host = Record::new(ir.vector_buffer(16));
         materialize_schema(&mut ir, &host, 0, schema);
 
         let dst = host.field_recvec(0, ds::DBTYPE_STRIDE);

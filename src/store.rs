@@ -5844,6 +5844,16 @@ mod tests {
         }
     }
 
+    /// A root record whose vector slot at offset 8 names the EMPTY vector — the shape a
+    /// vector local's store has once the parser's `OpSetInt4(__vdb, 0, 0)` writes it.
+    /// `make_foreign` reads that slot to release what it named; a bare claim promises no value
+    /// there (`@FR-H-Claim`), so the slot is written here.
+    fn empty_root(store: &mut Store) -> u32 {
+        let root = store.claim(4);
+        store.set_u32_raw(root, 8, 0);
+        root
+    }
+
     /// The two stores every foreign-store test reads beside each other: `data` copied into
     /// an ordinary vector store (its record), and the same bytes served by a foreign store
     /// (its root, whose slot at `+8` names `FOREIGN_REC`).
@@ -5856,7 +5866,7 @@ mod tests {
         let owned = data.to_vec();
         let base = owned.as_ptr();
         let mut foreign = Store::new(8);
-        let froot = foreign.claim(4);
+        let froot = empty_root(&mut foreign);
         foreign.make_foreign(
             froot,
             8,
@@ -6026,7 +6036,7 @@ mod tests {
         };
         drop(owner);
         let mut handle = Store::new(8);
-        let hroot = handle.claim(4);
+        let hroot = empty_root(&mut handle);
         handle.make_foreign(hroot, 8, span);
         for i in 0..40 {
             assert_eq!(
@@ -6038,7 +6048,7 @@ mod tests {
         assert_eq!(handle.get_u32_raw(FOREIGN_REC, 4), 40);
         // A view cut from the handle shares the block; the handle goes first.
         let mut view = Store::new(8);
-        let vroot = view.claim(4);
+        let vroot = empty_root(&mut view);
         view.make_foreign(vroot, 8, handle.foreign_span(10, 20).expect("span"));
         assert_eq!(view.bytes_of(FOREIGN_REC), &plain.bytes_of(rec)[10..20]);
         assert_eq!(handle.foreign_handle(), Some((hroot, 8)));
@@ -6069,7 +6079,7 @@ mod tests {
         // A VIEW (F4b): elements 5..12 served by a SECOND store — the local's own — from a
         // span of the first, read through the same accessors against the copied form.
         let mut view = Store::new(8);
-        let vroot = view.claim(4);
+        let vroot = empty_root(&mut view);
         let span = foreign.foreign_span(5, 12).expect("a span");
         assert_eq!((span.len, span.elem_size), (7, 1));
         view.make_foreign(vroot, 8, span);

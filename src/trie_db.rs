@@ -375,12 +375,7 @@ mod tests {
 
     /// A collection field holding the tree id, plus an element record per word.
     fn collection(store: &mut Store) -> (DbRef, Vec<(&'static str, u32)>) {
-        let coll_rec = store.claim(1);
-        let coll = DbRef {
-            store_nr: 0,
-            rec: coll_rec,
-            pos: 4,
-        };
+        let coll = crate::radix_tree::empty_collection(store);
         let keys = vec![w_key()];
         let mut recs = Vec::new();
         for w in WORDS {
@@ -679,12 +674,7 @@ mod paged {
         let words = corpus();
         let keys = vec![w_key()];
         let mut store = Store::new_in_use(1 << 20);
-        let coll_rec = store.claim(1);
-        let coll = DbRef {
-            store_nr: 0,
-            rec: coll_rec,
-            pos: 4,
-        };
+        let coll = crate::radix_tree::empty_collection(&mut store);
         let mut order: Vec<usize> = (0..words.len()).collect();
         for i in 0..words.len() {
             if i % DUP_EVERY == 0 {
@@ -877,12 +867,7 @@ mod paged {
         ];
         let keys = vec![w_key()];
         let mut store = Store::new_in_use(1 << 14);
-        let coll_rec = store.claim(1);
-        let coll = DbRef {
-            store_nr: 0,
-            rec: coll_rec,
-            pos: 4,
-        };
+        let coll = crate::radix_tree::empty_collection(&mut store);
         for w in SIX {
             let ptr = store.set_str(w);
             let rec = store.claim(4);

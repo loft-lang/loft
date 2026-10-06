@@ -920,7 +920,7 @@ mod tests {
     fn both_backings(v: &Value) -> (Stores, ValuesVector) {
         let mut stores = Stores::new();
         let _ids = register_ir_schema(&mut stores);
-        let root = ValuesVector::new(stores.database(16));
+        let root = ValuesVector::new(stores.vector_buffer(16));
         materialize_node(&mut stores, root, v);
         (stores, root)
     }

@@ -1146,12 +1146,15 @@ mod tests {
     use super::*;
     use crate::ir_schema_gen::register_ir_schema;
 
-    /// Claim a fresh `Node` record and write its discriminant.
+    /// Claim a fresh `Node` record and write it as [`ValuesVector::push`] does: zeroed (its
+    /// nested vector headers empty), then the discriminant.  The claim alone promises no
+    /// value (`@FR-H-Claim`), so a node that only had its discriminant written handed the
+    /// readers whatever bytes the block held.
     fn new_node(stores: &mut Stores, disc: u8) -> DbRef {
         let rec = stores.database(16);
-        stores
-            .store_mut(&rec)
-            .set_byte(rec.rec, rec.pos, 0, i32::from(disc));
+        let store = stores.store_mut(&rec);
+        store.zero_range(rec.rec, rec.pos, NODE_STRIDE);
+        store.set_byte(rec.rec, rec.pos, 0, i32::from(disc));
         rec
     }
 
